@@ -21,7 +21,20 @@ pub struct HistoryEntry {
 
 /// Only real web pages go into history (no built-in pages, data:, about:).
 pub fn should_record(url: &str) -> bool {
-    (url.starts_with("http://") || url.starts_with("https://")) && !pages::is_pages_origin(url) && url.len() <= 8192
+    (url.starts_with("http://") || url.starts_with("https://"))
+        && !pages::is_pages_origin(url)
+        && !pages::is_shell_origin(url)
+        && url.len() <= 8192
+}
+
+/// The URL to store for a completed top-level navigation, or `None` if it
+/// must not be recorded (private tab, built-in page, non-web URL). Tracking
+/// parameters are stripped first.
+pub fn visit_url(url: &str, private: bool) -> Option<String> {
+    if private || !should_record(url) {
+        return None;
+    }
+    Some(crate::urlclean::strip_tracking_params(url).unwrap_or_else(|| url.to_string()))
 }
 
 impl Store {
@@ -186,6 +199,18 @@ mod tests {
         assert_eq!(rust.len(), 2);
         assert!(rust.iter().all(|e| e.visit_count == 2 && e.title == "Rust"));
         assert_eq!(s.last_visit("https://rust-lang.org/").unwrap(), Some(3000));
+    }
+
+    #[test]
+    fn visit_policy() {
+        assert_eq!(
+            visit_url("https://a.example/?utm_source=x&id=1", false).as_deref(),
+            Some("https://a.example/?id=1")
+        );
+        assert_eq!(visit_url("https://a.example/", true), None, "private tabs are never recorded");
+        assert_eq!(visit_url(&crate::pages::Page::History.url(), false), None);
+        assert_eq!(visit_url("https://shell.lightbrowser.invalid/shell.html", false), None);
+        assert_eq!(visit_url("about:blank", false), None);
     }
 
     #[test]

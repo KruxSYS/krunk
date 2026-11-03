@@ -62,9 +62,20 @@ pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> Pop
         PopupKind::Fill => (340.0, 110.0 + 42.0 * entries.clamp(1, 6) as f64),
         PopupKind::Menu => (280.0, 482.0),
         PopupKind::Shield => (300.0, 180.0),
+        PopupKind::BookmarkFolder => (280.0, folder_height(entries)),
     };
     let x = (shell_width_css - w - 8.0).max(0.0);
     PopupRect { x, y: SHELL_HEIGHT_DIP - 4.0, width: w, height: h }
+}
+
+fn folder_height(items: usize) -> f64 {
+    (14.0 + 32.0 * items.max(1) as f64).min(600.0)
+}
+
+/// A bookmarks-bar folder dropdown anchored under the folder button
+/// (`anchor` is the button's rect in shell CSS pixels).
+pub fn folder_popup_rect(anchor: PopupRect, items: usize) -> PopupRect {
+    PopupRect { x: anchor.x, y: anchor.y + anchor.height + 2.0, width: 280.0, height: folder_height(items) }
 }
 
 /// Zoom levels offered by Ctrl +/- (like Chromium).
@@ -124,6 +135,15 @@ mod tests {
         assert!(r.is_valid());
         assert!(prompt_rect(PopupKind::Fill, 3, 1200.0).height > prompt_rect(PopupKind::Fill, 1, 1200.0).height);
         assert!(prompt_rect(PopupKind::Fill, 99, 200.0).is_valid());
+    }
+
+    #[test]
+    fn folder_dropdown() {
+        let anchor = PopupRect { x: 120.0, y: 78.0, width: 90.0, height: 24.0 };
+        let r = folder_popup_rect(anchor, 3);
+        assert_eq!((r.x, r.y, r.width, r.height), (120.0, 104.0, 280.0, 110.0));
+        assert_eq!(folder_popup_rect(anchor, 0).height, 46.0, "room for an 'empty' line");
+        assert_eq!(folder_popup_rect(anchor, 500).height, 600.0, "scrolls beyond 600px");
     }
 
     #[test]

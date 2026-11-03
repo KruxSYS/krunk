@@ -13,6 +13,7 @@
 //!
 //! Outbound messages are [`Event`]s.
 
+use crate::downloads::DownloadItem;
 use crate::keys::Command;
 use crate::pages::{self, Page};
 use crate::settings::{Settings, Theme};
@@ -79,6 +80,8 @@ pub struct ClearData {
     pub history: bool,
     pub cookies: bool,
     pub cache: bool,
+    /// Local storage, IndexedDB, service workers and other site storage.
+    pub site_data: bool,
     pub downloads: bool,
     /// Unix milliseconds; `None` = everything.
     pub since: Option<i64>,
@@ -108,6 +111,8 @@ pub enum PopupKind {
     Shield,
     SavePassword,
     Fill,
+    /// A folder of the bookmarks bar (opened with `ShowBookmarkFolder`).
+    BookmarkFolder,
 }
 
 impl PopupKind {
@@ -172,6 +177,25 @@ pub enum PopupContent {
         origin: String,
         entries: Vec<FillChoice>,
     },
+    /// Contents of a bookmarks-bar folder.
+    BookmarkFolder {
+        id: i64,
+        title: String,
+        items: Vec<BarItem>,
+    },
+}
+
+/// An entry of the bookmarks bar or of a folder dropdown.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BarItem {
+    pub id: i64,
+    pub title: String,
+    /// `None` for folders.
+    pub url: Option<String>,
+    pub is_folder: bool,
+    /// Same-origin URL of the cached favicon (`/favicon?host=...`), if any.
+    pub favicon: Option<String>,
 }
 
 impl PopupContent {
@@ -181,6 +205,7 @@ impl PopupContent {
             PopupContent::Shield { .. } => PopupKind::Shield,
             PopupContent::SavePassword { .. } => PopupKind::SavePassword,
             PopupContent::Fill { .. } => PopupKind::Fill,
+            PopupContent::BookmarkFolder { .. } => PopupKind::BookmarkFolder,
         }
     }
 }
@@ -237,6 +262,14 @@ pub enum Request {
         rect: PopupRect,
     },
     HidePopup,
+    /// Opens a bookmarks-bar folder in the popup. The shell passes the
+    /// rect under the folder button; the popup passes `None` to show a
+    /// subfolder in place.
+    ShowBookmarkFolder {
+        id: i64,
+        #[serde(default)]
+        rect: Option<PopupRect>,
+    },
     /// A browser command from a menu item or button.
     Command {
         command: Command,
@@ -385,6 +418,8 @@ pub enum Request {
 
     // ---- downloads ----
     GetDownloads,
+    /// Removes finished, failed and cancelled downloads from the list.
+    ClearDownloads,
     DownloadAction {
         id: u32,
         action: DownloadAction,
@@ -502,6 +537,7 @@ impl Sender {
                     | R::ToggleBookmark
                     | R::ShowPopup { .. }
                     | R::HidePopup
+                    | R::ShowBookmarkFolder { .. }
                     | R::Command { .. }
                     | R::Find { .. }
                     | R::FindClose
@@ -519,6 +555,7 @@ impl Sender {
                 req,
                 R::Command { .. }
                     | R::HidePopup
+                    | R::ShowBookmarkFolder { rect: None, .. }
                     | R::NewTab { .. }
                     | R::ReopenClosedTab
                     | R::Zoom { .. }
@@ -578,7 +615,9 @@ impl Sender {
                     | R::VaultChangePassword { .. }
                     | R::GetAbout
             ),
-            Sender::Page(Page::Downloads) => matches!(req, R::GetDownloads | R::DownloadAction { .. }),
+            Sender::Page(Page::Downloads) => {
+                matches!(req, R::GetDownloads | R::ClearDownloads | R::DownloadAction { .. })
+            }
             Sender::Page(Page::About) => matches!(req, R::GetAbout),
             Sender::Page(Page::HttpsOnly) => matches!(req, R::HttpsOnlyProceed { .. }),
         }
@@ -708,6 +747,14 @@ pub enum Event {
     },
     /// To the shell: the popup was hidden (un-highlight its button).
     PopupClosed,
+    /// To the shell: the bookmarks bar contents.
+    BookmarksBar {
+        items: Vec<BarItem>,
+    },
+    /// To the downloads page: the full list.
+    Downloads {
+        items: Vec<DownloadItem>,
+    },
     VaultState {
         exists: bool,
         locked: bool,
@@ -906,6 +953,55 @@ mod tests {
         assert_eq!(parse_request(Sender::Popup, r#"{"cmd":"closeTab","id":1}"#), Err(ProtocolError::Forbidden));
     }
 
+    /// Web pages can never reach history or bookmark commands: their only
+    /// channel is `parse_content`, and no built-in page outside History and
+    /// Bookmarks (and Settings for clearing data) is allowed them either.
+    #[test]
+    fn web_content_cannot_touch_history_or_bookmarks() {
+        let privileged = [
+            r#"{"cmd":"deleteHistory","ids":[1,2]}"#,
+            r#"{"cmd":"deleteHistoryRange","from":0,"to":9999999999999}"#,
+            r#"{"cmd":"clearBrowsingData","data":{"history":true}}"#,
+            r#"{"cmd":"queryHistory","text":""}"#,
+            r#"{"cmd":"getBookmarks"}"#,
+            r#"{"cmd":"addBookmark","parent":1,"title":"x","url":"https://evil.example/"}"#,
+            r#"{"cmd":"editBookmark","id":3,"title":"x"}"#,
+            r#"{"cmd":"moveBookmark","id":3,"parent":2,"index":0}"#,
+            r#"{"cmd":"deleteBookmark","id":3}"#,
+            r#"{"cmd":"searchBookmarks","text":""}"#,
+            r#"{"cmd":"importBookmarks"}"#,
+            r#"{"cmd":"exportBookmarks"}"#,
+            r#"{"cmd":"getDownloads"}"#,
+            r#"{"cmd":"downloadAction","id":1,"action":"open"}"#,
+        ];
+        // A web origin is classified as web content, never privileged...
+        assert!(matches!(classify(Channel::Tab, "https://evil.example/history.html", true), Ok(Source::Web { .. })));
+        for json in privileged {
+            // ...and the content parser rejects every privileged command.
+            assert!(parse_content(json).is_err(), "web content accepted {json}");
+            // Built-in pages without the permission are refused too.
+            for page in [Page::NewTab, Page::About, Page::Passwords, Page::HttpsOnly] {
+                assert_eq!(parse_request(Sender::Page(page), json), Err(ProtocolError::Forbidden), "{page:?} {json}");
+            }
+        }
+        assert!(parse_request(Sender::Page(Page::History), privileged[0]).is_ok());
+        assert!(parse_request(Sender::Page(Page::Bookmarks), privileged[5]).is_ok());
+        assert!(parse_request(Sender::Page(Page::Downloads), privileged[13]).is_ok());
+        assert_eq!(parse_request(Sender::Page(Page::History), privileged[8]), Err(ProtocolError::Forbidden));
+        assert_eq!(parse_request(Sender::Page(Page::Bookmarks), privileged[0]), Err(ProtocolError::Forbidden));
+    }
+
+    #[test]
+    fn bookmark_folder_popup_permissions() {
+        let shell = r#"{"cmd":"showBookmarkFolder","id":5,"rect":{"x":100,"y":78,"width":90,"height":24}}"#;
+        let inplace = r#"{"cmd":"showBookmarkFolder","id":6}"#;
+        assert!(parse_request(Sender::Shell, shell).is_ok());
+        assert!(parse_request(Sender::Popup, inplace).is_ok());
+        // The popup cannot move itself around the screen.
+        assert_eq!(parse_request(Sender::Popup, shell), Err(ProtocolError::Forbidden));
+        assert_eq!(parse_request(Sender::Page(Page::NewTab), inplace), Err(ProtocolError::Forbidden));
+    }
+
     #[test]
     fn content_messages_are_strict() {
         assert_eq!(parse_content(r#"{"lb":"loginForm"}"#), Ok(ContentMessage::LoginForm {}));
@@ -975,6 +1071,12 @@ mod tests {
             },
             Request::GeneratePassword { length: 24, symbols: false },
             Request::DownloadAction { id: 1, action: DownloadAction::ShowInFolder },
+            Request::ClearDownloads,
+            Request::ShowBookmarkFolder { id: 4, rect: Some(rect) },
+            Request::ShowBookmarkFolder { id: 4, rect: None },
+            Request::ClearBrowsingData {
+                data: ClearData { cookies: true, cache: true, site_data: true, since: Some(1), ..ClearData::default() },
+            },
             Request::HttpsOnlyProceed { url: "http://a.example/".into() },
         ];
         for r in samples {
@@ -1042,6 +1144,35 @@ mod tests {
                 },
             },
             Event::PopupClosed,
+            Event::Popup {
+                content: PopupContent::BookmarkFolder {
+                    id: 3,
+                    title: "News".into(),
+                    items: vec![BarItem {
+                        id: 4,
+                        title: "BBC".into(),
+                        url: Some("https://www.bbc.co.uk/".into()),
+                        is_folder: false,
+                        favicon: Some("/favicon?host=www.bbc.co.uk".into()),
+                    }],
+                },
+            },
+            Event::BookmarksBar {
+                items: vec![BarItem { id: 5, title: "Dev".into(), url: None, is_folder: true, favicon: None }],
+            },
+            Event::Downloads {
+                items: vec![DownloadItem {
+                    id: 1,
+                    url: "https://e.com/a.zip".into(),
+                    file_name: "a.zip".into(),
+                    path: "C:\\dl\\a.zip".into(),
+                    state: crate::downloads::DownloadState::InProgress,
+                    received: 10,
+                    total: Some(100),
+                    started: 5,
+                    reason: None,
+                }],
+            },
             Event::VaultState { exists: true, locked: false },
             Event::DownloadsChanged { active: 1 },
             Event::Theme { dark: false },

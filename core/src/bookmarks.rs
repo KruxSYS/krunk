@@ -221,6 +221,20 @@ impl Store {
         rows.collect()
     }
 
+    /// Children of `folder` for the bookmarks bar or a folder dropdown.
+    pub fn bar_items(&self, folder: i64) -> DbResult<Vec<crate::protocol::BarItem>> {
+        self.children(folder)?
+            .into_iter()
+            .map(|b| {
+                let favicon = match b.url.as_deref().and_then(crate::urlclean::host_of) {
+                    Some(h) => self.favicon_url(&h)?,
+                    None => None,
+                };
+                Ok(crate::protocol::BarItem { id: b.id, title: b.title, url: b.url, is_folder: b.is_folder, favicon })
+            })
+            .collect()
+    }
+
     pub fn is_bookmarked(&self, url: &str) -> DbResult<bool> {
         Ok(!self.bookmarks_for_url(url)?.is_empty())
     }
@@ -318,6 +332,20 @@ mod tests {
         let tree = s.bookmark_tree().unwrap();
         assert_eq!(tree.len(), 2);
         assert_eq!(tree[1].children[0].children[0].item.title, "Example News");
+    }
+
+    #[test]
+    fn bar_items_include_folders_and_favicons() {
+        let s = Store::open_in_memory().unwrap();
+        s.add_bookmark(BOOKMARKS_BAR, "Rust", "https://www.rust-lang.org/").unwrap();
+        let f = s.add_folder(BOOKMARKS_BAR, "News").unwrap();
+        s.add_bookmark(f, "BBC", "https://www.bbc.co.uk/news").unwrap();
+        s.set_favicon("www.rust-lang.org", b"\x89PNG\r\n\x1a\n", 1).unwrap();
+        let bar = s.bar_items(BOOKMARKS_BAR).unwrap();
+        assert_eq!(bar.len(), 2);
+        assert_eq!(bar[0].favicon.as_deref(), Some("/favicon?host=www.rust-lang.org"));
+        assert!(bar[1].is_folder && bar[1].url.is_none());
+        assert_eq!(s.bar_items(f).unwrap()[0].title, "BBC");
     }
 
     #[test]

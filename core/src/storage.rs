@@ -16,7 +16,7 @@ pub const BOOKMARKS_BAR: i64 = 1;
 /// Id of the "Other bookmarks" root folder.
 pub const OTHER_BOOKMARKS: i64 = 2;
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA_V1: &str = "
 CREATE TABLE urls (
@@ -69,6 +69,20 @@ CREATE TABLE kv (
 );
 ";
 
+/// v2: favicons are stored as PNG bytes (served from the internal origins)
+/// instead of data: URLs.
+const SCHEMA_V2: &str = "
+DROP TABLE favicons;
+CREATE TABLE favicons (
+    host    TEXT PRIMARY KEY,
+    png     BLOB NOT NULL,
+    updated INTEGER NOT NULL
+);
+";
+
+/// Largest favicon we keep.
+pub const MAX_FAVICON_BYTES: usize = 48 * 1024;
+
 /// Handle to the browser database.
 pub struct Store {
     pub(crate) conn: Connection,
@@ -99,6 +113,12 @@ impl Store {
         if version < 1 {
             let tx = self.conn.transaction()?;
             tx.execute_batch(SCHEMA_V1)?;
+            tx.pragma_update(None, "user_version", 1)?;
+            tx.commit()?;
+        }
+        if version < 2 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(SCHEMA_V2)?;
             tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             tx.commit()?;
         }
@@ -133,20 +153,30 @@ impl Store {
         self.kv_set("settings", &json)
     }
 
-    /// Stores the favicon (a `data:image/...` URL) for a host.
-    pub fn set_favicon(&self, host: &str, data_url: &str) -> DbResult<()> {
-        if !data_url.starts_with("data:image/") || data_url.len() > 64 * 1024 {
+    /// Stores a host's favicon (PNG bytes, as captured from the page).
+    pub fn set_favicon(&self, host: &str, png: &[u8], now: i64) -> DbResult<()> {
+        if png.is_empty() || png.len() > MAX_FAVICON_BYTES || !png.starts_with(b"\x89PNG\r\n\x1a\n") {
             return Ok(());
         }
         self.conn.execute(
-            "INSERT INTO favicons(host, data) VALUES (?1, ?2) ON CONFLICT(host) DO UPDATE SET data = excluded.data",
-            params![host, data_url],
+            "INSERT INTO favicons(host, png, updated) VALUES (?1, ?2, ?3)
+             ON CONFLICT(host) DO UPDATE SET png = excluded.png, updated = excluded.updated",
+            params![host, png, now],
         )?;
         Ok(())
     }
 
-    pub fn favicon(&self, host: &str) -> DbResult<Option<String>> {
-        self.conn.query_row("SELECT data FROM favicons WHERE host = ?1", [host], |r| r.get(0)).optional()
+    pub fn favicon(&self, host: &str) -> DbResult<Option<Vec<u8>>> {
+        self.conn.query_row("SELECT png FROM favicons WHERE host = ?1", [host], |r| r.get(0)).optional()
+    }
+
+    pub fn has_favicon(&self, host: &str) -> DbResult<bool> {
+        Ok(self.conn.query_row("SELECT 1 FROM favicons WHERE host = ?1", [host], |_| Ok(())).optional()?.is_some())
+    }
+
+    /// Same-origin URL of a host's cached favicon, if there is one.
+    pub fn favicon_url(&self, host: &str) -> DbResult<Option<String>> {
+        Ok(self.has_favicon(host)?.then(|| crate::assets::favicon_url(host)))
     }
 
     /// Reclaims space after large deletions.
@@ -210,11 +240,40 @@ mod tests {
     }
 
     #[test]
-    fn favicons_only_accept_image_data_urls() {
+    fn favicons_only_accept_png() {
         let s = Store::open_in_memory().unwrap();
-        s.set_favicon("a.com", "javascript:alert(1)").unwrap();
+        s.set_favicon("a.com", b"<svg onload=alert(1)>", 1).unwrap();
         assert_eq!(s.favicon("a.com").unwrap(), None);
-        s.set_favicon("a.com", "data:image/png;base64,AAAA").unwrap();
-        assert_eq!(s.favicon("a.com").unwrap().as_deref(), Some("data:image/png;base64,AAAA"));
+        assert_eq!(s.favicon_url("a.com").unwrap(), None);
+        let png = b"\x89PNG\r\n\x1a\nxyz";
+        s.set_favicon("a.com", png, 1).unwrap();
+        assert_eq!(s.favicon("a.com").unwrap().as_deref(), Some(&png[..]));
+        assert_eq!(s.favicon_url("a.com").unwrap().as_deref(), Some("/favicon?host=a.com"));
+        s.set_favicon("big.com", &[png.as_slice(), &[0u8; MAX_FAVICON_BYTES]].concat(), 1).unwrap();
+        assert_eq!(s.favicon("big.com").unwrap(), None);
+    }
+
+    #[test]
+    fn migrates_v1_database() {
+        let dir = std::env::temp_dir().join(format!("lb-migrate-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("old.db");
+        {
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch(SCHEMA_V1).unwrap();
+            c.pragma_update(None, "user_version", 1).unwrap();
+            c.execute(
+                "INSERT INTO urls(url, title, visit_count, last_visit) VALUES ('https://a.example/', 'A', 1, 5)",
+                [],
+            )
+            .unwrap();
+        }
+        let s = Store::open(&path).unwrap();
+        assert_eq!(s.last_visit("https://a.example/").unwrap(), Some(5), "data kept");
+        s.set_favicon("a.example", b"\x89PNG\r\n\x1a\n", 1).unwrap();
+        let v: i64 = s.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(v, SCHEMA_VERSION);
+        drop(s);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

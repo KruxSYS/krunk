@@ -72,6 +72,32 @@ pub fn resolve(url: &str) -> Option<Asset> {
     Some(Asset { host, key, bytes, mime: mime_for(key) })
 }
 
+/// Path of the cached-favicon endpoint on both internal origins.
+pub const FAVICON_PATH: &str = "/favicon";
+
+/// `/favicon?host=<host>` (same-origin, relative).
+pub fn favicon_url(host: &str) -> String {
+    let enc: String = url::form_urlencoded::byte_serialize(host.as_bytes()).collect();
+    format!("{FAVICON_PATH}?host={enc}")
+}
+
+/// If `url` asks one of our origins for a cached favicon, the host name.
+pub fn favicon_request(url: &str) -> Option<String> {
+    let u = Url::parse(url).ok()?;
+    let origin = u.origin().ascii_serialization();
+    if (origin != pages::SHELL_ORIGIN && origin != pages::PAGES_ORIGIN) || u.path() != FAVICON_PATH {
+        return None;
+    }
+    let host = u.query_pairs().find(|(k, _)| k == "host").map(|(_, v)| v.to_ascii_lowercase())?;
+    crate::settings::is_hostname(&host).then_some(host)
+}
+
+/// Headers for a favicon response.
+pub fn favicon_headers() -> &'static str {
+    "Content-Type: image/png\r\nX-Content-Type-Options: nosniff\r\nCross-Origin-Resource-Policy: same-origin\r\n\
+     Cache-Control: max-age=3600"
+}
+
 /// Turns favicon PNG bytes into a `data:` URL for the tab strip (the shell
 /// may only load images from itself or `data:`). Oversized icons are dropped.
 pub fn png_data_url(png: &[u8]) -> Option<String> {
@@ -190,6 +216,21 @@ mod tests {
         assert!(h.contains("connect-src 'none'"), "new tab page makes no network calls");
         assert!(h.contains("X-Frame-Options: DENY"));
         assert!(!h.contains('\n') || h.contains("\r\n"));
+    }
+
+    #[test]
+    fn favicon_endpoint() {
+        assert_eq!(favicon_url("a.example"), "/favicon?host=a.example");
+        assert_eq!(
+            favicon_request("https://lightbrowser.invalid/favicon?host=A.Example").as_deref(),
+            Some("a.example")
+        );
+        assert_eq!(favicon_request("https://shell.lightbrowser.invalid/favicon?host=x.org").as_deref(), Some("x.org"));
+        assert_eq!(favicon_request("https://lightbrowser.invalid/favicon?host=../../etc"), None);
+        assert_eq!(favicon_request("https://lightbrowser.invalid/favicon?host="), None);
+        assert_eq!(favicon_request("https://lightbrowser.invalid/favicon"), None);
+        assert_eq!(favicon_request("https://evil.example/favicon?host=a.com"), None);
+        assert_eq!(favicon_request("https://lightbrowser.invalid/favicon.ico?host=a.com"), None);
     }
 
     #[test]

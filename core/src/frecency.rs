@@ -51,7 +51,7 @@ pub struct Tile {
     pub url: String,
     pub title: String,
     pub pinned: bool,
-    /// `data:` URL of the host's favicon, if known.
+    /// Same-origin URL of the host's cached favicon, if known.
     pub favicon: Option<String>,
     #[serde(skip)]
     pub score: f64,
@@ -126,7 +126,7 @@ impl Store {
         pinned.extend(rank(&candidates, now, room));
         for t in &mut pinned {
             if let Some(h) = host_of(&t.url) {
-                t.favicon = self.favicon(&h)?;
+                t.favicon = self.favicon_url(&h)?;
             }
         }
         Ok(pinned)
@@ -244,11 +244,12 @@ mod tests {
         );
         s.pin_site("https://d.example/", "D").unwrap();
         s.hide_site("https://b.example/").unwrap();
-        s.set_favicon("a.example", "data:image/png;base64,AA").unwrap();
+        s.set_favicon("a.example", b"\x89PNG\r\n\x1a\n", 1).unwrap();
         let tiles = s.top_sites(3, NOW).unwrap();
         assert!(tiles[0].pinned);
         assert_eq!(urls(tiles.clone()), ["https://d.example/", "https://a.example/", "https://c.example/"]);
-        assert_eq!(tiles[1].favicon.as_deref(), Some("data:image/png;base64,AA"));
+        assert_eq!(tiles[1].favicon.as_deref(), Some("/favicon?host=a.example"));
+        assert_eq!(tiles[2].favicon, None);
         s.unpin_site("https://d.example/").unwrap();
         assert_eq!(
             urls(s.top_sites(8, NOW).unwrap()),
