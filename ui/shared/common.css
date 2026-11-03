@@ -39,3 +39,4 @@ button { font: inherit; color: inherit; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
 .btn.primary:hover { filter: brightness(1.08); }
 .muted { color: var(--fg-muted); }
+[hidden] { display: none !important; }

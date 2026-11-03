@@ -152,7 +152,7 @@
   });
 
   // ---------- popups (menu, shield) ----------
-  const POPUP_SIZES = { menu: [280, 440], shield: [300, 180] };
+  const POPUP_SIZES = { menu: [280, 482], shield: [300, 180] };
   function togglePopup(kind, button) {
     if (state.popup === kind) {
       LB.post('hidePopup');

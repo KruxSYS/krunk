@@ -1,4 +1,5 @@
 html, body { height: 100%; overflow: hidden; user-select: none; }
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
 body { display: flex; flex-direction: column; background: var(--bg); }
 
 /* ---- tab strip ---- */

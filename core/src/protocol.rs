@@ -116,9 +116,12 @@ impl PopupKind {
         matches!(self, PopupKind::Menu | PopupKind::Shield)
     }
 
-    /// Popups with buttons or inputs take keyboard focus.
+    /// Every popup has buttons, so every popup takes keyboard focus. This
+    /// also makes dismissal reliable: clicking anywhere else deactivates the
+    /// popup window (a no-activate window gets no such signal when the page
+    /// it covers already had focus).
     pub fn takes_focus(self) -> bool {
-        !matches!(self, PopupKind::Shield)
+        true
     }
 }
 
