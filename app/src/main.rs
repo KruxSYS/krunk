@@ -4,7 +4,7 @@
 //! the binary is a stub so that `cargo build --workspace` works everywhere.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 #![deny(unsafe_code)]
-#![cfg_attr(windows, deny(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
+#![cfg_attr(all(windows, not(test)), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 #[cfg(windows)]
 mod browser;

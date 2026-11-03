@@ -25,6 +25,7 @@ use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::System::Com::{CoTaskMemFree, IStream, STREAM_SEEK_SET};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_MENU, VK_SHIFT};
 use windows::Win32::UI::Shell::SHCreateMemStream;
+use zeroize::Zeroizing;
 
 /// Profile used by normal tabs, the shell and the popup.
 pub const PROFILE_DEFAULT: &str = "default";
@@ -39,6 +40,23 @@ fn take(p: PWSTR) -> String {
     // SAFETY: WebView2 returns NUL-terminated CoTaskMem strings; we free it once.
     unsafe {
         let s = p.to_string().unwrap_or_default();
+        CoTaskMemFree(Some(p.0 as *const c_void));
+        s
+    }
+}
+
+/// Like [`take`] for strings that may hold secrets: the CoTaskMem buffer is
+/// zeroed before it is freed and the copy is `Zeroizing`.
+fn take_wiped(p: PWSTR) -> Zeroizing<String> {
+    if p.is_null() {
+        return Zeroizing::new(String::new());
+    }
+    // SAFETY: NUL-terminated CoTaskMem wide string from WebView2; we read it,
+    // overwrite it in place (same length) and free it exactly once.
+    unsafe {
+        let len = p.len();
+        let s = Zeroizing::new(p.to_string().unwrap_or_default());
+        std::ptr::write_bytes(p.0, 0, len);
         CoTaskMemFree(Some(p.0 as *const c_void));
         s
     }
@@ -676,13 +694,21 @@ impl Controller {
     // ---------------- events ----------------
 
     /// `WebMessageReceived` from the top-level document: `(source, json)`.
-    pub fn on_message(&self, mut f: impl FnMut(String, String) + 'static) {
+    ///
+    /// The message text may contain a password (vault and login messages),
+    /// so both WebView2's buffer and our copy are wiped after the callback.
+    pub fn on_message(&self, mut f: impl FnMut(String, &str) + 'static) {
         let handler = WebMessageReceivedEventHandler::create(Box::new(move |_, args| {
             if let Some(args) = args {
                 // SAFETY: live event args during the callback.
                 let source = get_string(|p| unsafe { args.Source(p) });
-                let json = get_string(|p| unsafe { args.WebMessageAsJson(p) });
-                f(source, json);
+                let mut p = PWSTR::null();
+                // SAFETY: as above; `take_wiped` frees the returned buffer.
+                let json = match unsafe { args.WebMessageAsJson(&mut p) } {
+                    Ok(()) => take_wiped(p),
+                    Err(_) => Zeroizing::new(String::new()),
+                };
+                f(source, &json);
             }
             Ok(())
         }));

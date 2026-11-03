@@ -1,7 +1,5 @@
 # LightBrowser security notes
 
-*Draft. The full vault threat model comes with the vault milestone.*
-
 ## Trusted UI vs. web content
 
 ### Origin split
@@ -69,3 +67,56 @@ Consequences:
   avoid revealing the user's IP outside the proxy.
 - No telemetry: the only background requests LightBrowser itself makes are these downloads, at
   most once a day.
+
+## Password vault: design and threat model
+
+### Cryptography
+```
+master password --Argon2id(16-byte random salt, m=64 MiB, t=3, p=1)--> KEK (32 B, never stored)
+KEK --XChaCha20-Poly1305--> key-check record     (wrong password -> rejected)
+KEK --XChaCha20-Poly1305--> wrapped vault key VK (random 32 B)
+    --DPAPI CryptProtectData (CurrentUser, extra entropy)--> stored in vault.json
+VK  --XChaCha20-Poly1305, fresh random 24-byte nonce, AAD = entry id--> each login
+VK  --XChaCha20-Poly1305--> manifest (ordered entry ids + generation)
+```
+- **File:** `%LOCALAPPDATA%\LightBrowser\vault.json`, separate from `browser.db`. It stores
+  only the KDF parameters, the salt and ciphertexts; usernames, origins and notes are encrypted
+  too.
+- **Integrity:** every record is authenticated.
+  - Changing the salt or the KDF parameters changes the KEK, so the key check fails.
+  - Swapping, removing or reordering entries is caught by the AAD and the manifest.
+  - Flipping any ciphertext byte is detected.
+  - All of this is covered by tests in `core::vault`.
+- **Changing the master password:** new salt, new KEK and a new VK. Every entry is re-encrypted
+  and written to a temp file, synced and renamed. A failure at any step (wrapping error,
+  unwritable temp file) leaves the old file byte-identical and the vault usable with the old
+  password (test `failed_password_change_keeps_old_vault`).
+
+### What it protects against
+| Threat | Protection |
+|--------|------------|
+| Someone copies `vault.json` (backup, cloud sync, stolen disk image) | They also need the master password (Argon2id makes guessing slow) **and** the user's DPAPI keys. On another account or PC the wrapped vault key cannot be unwrapped, even with the right password. |
+| Someone with the file and the user's DPAPI keys (same account) | Still needs the master password; there is no offline shortcut. |
+| A malicious web page | Can't read the vault: web content can only send `ContentMessage` (`loginForm`, `submit`, `requestFill`), and none of these returns secrets. A page gets a password only after the user picked that login in the trusted prompt, and only for its own exact origin (see below). |
+| Phishing look-alike domains | Fill needs an exact origin match (scheme, host and port after IDNA normalization; `vault::fill_allowed`). `https://аpple.com` (Cyrillic) never matches `https://apple.com`, nor do `http://`, subdomains or other ports. The origin compared is the one WebView2 reports for the message, never a URL the page claims. |
+| Cross-origin iframes (ads, embedded widgets) | The login script runs only in the top-level document (`window.top === window`). The host only listens to top-level `WebMessageReceived` (no frame events). `PostWebMessage` reaches only the top-level document. |
+| Click-jacking or spoofed prompts | "Save password?", "Fill saved login?" and "Unlock" are drawn in the browser's own popup window, outside the page. The page can't draw over them or click them. Each prompt carries its tab id and origin, and the host re-checks that the tab is still active and on that origin before saving or filling. Hiding the prompt for any reason is a dismissal. |
+| Online guessing through the UI | The host (not the UI) enforces an exponential delay after failures: 1 s, 2 s, 4 s … 60 s. The failure count is persisted, so restarting doesn't reset it. Wrong master passwords on "Show password" count too. |
+| Unattended unlocked vault | Auto-lock after N minutes without vault use (setting, default 15), on Windows session lock (`WTS_SESSION_LOCK`), on sleep or hibernate (`PBT_APMSUSPEND`) and on exit. Locking drops and wipes the keys and decrypted entries. |
+| Passwords left on the clipboard | Copies are flagged `ExcludeClipboardContentFromMonitorProcessing`, `CanIncludeInClipboardHistory=0` and `CanUploadToCloudClipboard=0`. The clipboard is emptied after 30 s, but only if its sequence number is unchanged, so a newer copy by the user is never wiped. |
+| Leaks via logs, database, session, errors | No password or master-password material is ever logged, stored in SQLite, or put into error strings (see `.pipeline/ac5-audit.md`). Parse errors never echo input. Session and history URLs lose any `user:pass@`. |
+
+### What it does not protect against (by design)
+- **Malware running as the same user while the vault is unlocked.** It can read process memory
+  or inject into the browser. No user-mode password manager can stop this.
+- **A keylogger capturing the master password.**
+- **A compromised web page that you log in to.** It sees what you type or what is filled into
+  its own form, as with any browser.
+- **Weak master passwords.** Argon2id only slows guessing. The setup page shows a strength hint
+  and requires at least 8 characters.
+- **Memory hygiene is best effort.** Secrets live in `Zeroizing` buffers and are wiped on drop,
+  including the master password parsed from JSON (`protocol::Secret`) and WebView2's message
+  buffer. serde_json's internal scratch buffer for escaped strings, the page's DOM, and
+  clipboard memory (owned by Windows) are outside our control.
+- **Rolling the whole vault file back to an older copy.** This is not detected; it would
+  restore older (still encrypted) logins.

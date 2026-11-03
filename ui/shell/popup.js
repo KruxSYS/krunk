@@ -88,11 +88,61 @@
       LB.post('fillReply', { tabId: c.tabId, origin: c.origin, entryId: id });
       close();
     };
+    if (!c.entries.length) {
+      return [el('div', { class: 'panel' }, [
+        el('h2', { text: 'No saved logins' }),
+        el('p', {}, ['Nothing saved for ', el('span', { class: 'origin', text: c.origin }), '.']),
+        el('div', { class: 'row' }, [
+          el('button', { class: 'btn', onclick: () => { LB.post('openPage', { page: 'passwords' }); close(); }, text: 'Open passwords' }),
+          el('button', { class: 'btn primary', id: 'default', onclick: () => reply(null), text: 'OK' }),
+        ]),
+      ])];
+    }
     return [el('div', { class: 'panel' }, [
       el('h2', { text: 'Fill saved login?' }),
       el('p', { class: 'origin', text: c.origin }),
     ].concat(c.entries.map((e) => el('button', { class: 'choice', onclick: () => reply(e.id), text: e.username || '(no username)' })))
       .concat([el('div', { class: 'row' }, [el('button', { class: 'btn', onclick: () => reply(null), text: 'Cancel' })])]))];
+  }
+
+  // Master-password prompt before saving or filling. The host enforces the
+  // retry delay; the countdown here is only a hint.
+  let countdown = null;
+  function renderUnlock(c) {
+    clearInterval(countdown);
+    const input = el('input', { type: 'password', id: 'master', autocomplete: 'off', 'aria-label': 'Master password', placeholder: 'Master password' });
+    const button = el('button', { class: 'btn primary', id: 'unlock', type: 'submit', text: 'Unlock' });
+    const err = el('p', { class: 'error', role: 'alert', text: c.error || '' });
+    const form = el('form', {
+      onsubmit: (e) => {
+        e.preventDefault();
+        if (!input.value || button.disabled) return;
+        button.disabled = true;
+        button.textContent = 'Unlocking…';
+        LB.post('vaultUnlock', { password: input.value });
+        input.value = '';
+      },
+    }, [input, el('div', { class: 'row' }, [
+      el('button', { class: 'btn', type: 'button', onclick: close, text: 'Cancel' }),
+      button,
+    ])]);
+    let wait = c.waitMs || 0;
+    if (wait > 0) {
+      button.disabled = true;
+      const tick = () => {
+        wait -= 1000;
+        if (wait <= 0) { clearInterval(countdown); button.disabled = false; err.textContent = c.error ? c.error.replace(/ Try again in \d+ s\./, '') : ''; }
+        else err.textContent = 'Too many attempts. Try again in ' + Math.ceil(wait / 1000) + ' s.';
+      };
+      countdown = setInterval(tick, 1000);
+    }
+    setTimeout(() => input.focus(), 0);
+    return [el('div', { class: 'panel' }, [
+      el('h2', { text: c.purpose === 'save' ? 'Unlock to save this password' : 'Unlock to fill this login' }),
+      el('p', { class: 'origin', text: c.origin }),
+      form,
+      err,
+    ])];
   }
 
   function renderFolder(c) {
@@ -117,11 +167,11 @@
   LB.on('popup', function (m) {
     current = m.content;
     const c = m.content;
-    const render = { menu: renderMenu, shield: renderShield, savePassword: renderSave, fill: renderFill, bookmarkFolder: renderFolder }[c.kind];
+    const render = { menu: renderMenu, shield: renderShield, savePassword: renderSave, fill: renderFill, bookmarkFolder: renderFolder, unlock: renderUnlock }[c.kind];
     root.textContent = '';
     root.dataset.kind = c.kind;
     (render ? render(c) : []).forEach((n) => n && root.appendChild(n));
-    const first = document.getElementById('default') || root.querySelector('button');
+    const first = document.getElementById('master') || document.getElementById('default') || root.querySelector('button');
     if (first) first.focus();
   });
 

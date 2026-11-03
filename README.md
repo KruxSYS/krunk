@@ -85,6 +85,18 @@ ui/     the browser's own UI (HTML/CSS/JS), embedded into the exe at build time.
   - Optional HTTPS-only mode with a "Continue to HTTP site" interstitial; exceptions last only
     for the session.
 
+### Password vault
+- **Storage:** passwords live in `vault.json`, separate from the SQLite database.
+  - Encryption: Argon2id (64 MiB, t=3) → XChaCha20-Poly1305 per entry with fresh nonces.
+  - The vault key is additionally wrapped with DPAPI (CurrentUser).
+  - Details and threat model: `docs/SECURITY.md`.
+- **Unlocking:** off the UI thread; the host enforces an exponential retry delay (1 s → 60 s).
+- **Auto-lock:** after inactivity, on Windows lock and on sleep.
+- **Login detection** (top frame only) offers "Save password?" in the browser's popup window.
+- **Fill:** a key icon in the address bar fills a login only after the user picks it, and only
+  on an exact origin match.
+- **Copies:** excluded from clipboard history and cleared after 30 s.
+
 ### Chromium switches (`AdditionalBrowserArguments`)
 Always passed (`core::settings::Settings::browser_arguments`):
 - `--no-pings` disables hyperlink auditing (`<a ping>`).

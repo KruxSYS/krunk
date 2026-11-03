@@ -79,6 +79,8 @@ pub(super) struct TabNet {
     /// Ad blocking is off for this page (allowlisted site).
     pub allowed: Cell<bool>,
     pub blocked: Cell<u32>,
+    /// The page has a login form (key icon in the address bar).
+    pub login_form: Cell<bool>,
     /// Site-specific cosmetic CSS and generic-hide data for the page.
     pub css: RefCell<String>,
     pub generichide: Cell<bool>,
@@ -270,6 +272,8 @@ impl Browser {
         if self.filters.enabled.get() {
             c.add_document_script(assets::inject_script("page-tokens.js"));
         }
+        // Login form detection and fill (top-level frame only).
+        c.add_document_script(assets::inject_script("login.js"));
         c.intercept_all(env, self.request_handler(id, net.clone()));
 
         let weak = self.me.clone();
@@ -357,6 +361,7 @@ impl Browser {
         // A real navigation: reset the shield and prepare cosmetic filters.
         *net.top_url.borrow_mut() = uri.to_string();
         net.blocked.set(0);
+        net.login_form.set(false);
         let host = urlclean::host_of(uri).unwrap_or_default();
         let allowed = !host.is_empty() && self.filters.allowlist.borrow().contains(&host);
         net.allowed.set(allowed);

@@ -40,3 +40,4 @@ button { font: inherit; color: inherit; }
 .btn.primary:hover { filter: brightness(1.08); }
 .muted { color: var(--fg-muted); }
 [hidden] { display: none !important; }
+.btn:disabled { opacity: .5; cursor: default; }

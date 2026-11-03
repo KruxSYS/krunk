@@ -51,6 +51,11 @@ impl DataDirs {
         self.root.join("engine.dat")
     }
 
+    /// The encrypted password vault.
+    pub fn vault(&self) -> PathBuf {
+        self.root.join("vault.json")
+    }
+
     pub fn log_file(&self) -> PathBuf {
         self.root.join("lightbrowser.log")
     }

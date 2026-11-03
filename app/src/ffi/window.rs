@@ -37,6 +37,10 @@ pub trait WindowEvents {
     fn app_message(&self, _code: usize) {}
     /// A timer started with [`Window::set_timer`] fired.
     fn timer(&self, _id: usize) {}
+    /// The Windows session was locked (Win+L, lock screen).
+    fn session_locked(&self) {}
+    /// The machine is about to sleep or hibernate.
+    fn suspending(&self) {}
 }
 
 thread_local! {
@@ -46,6 +50,11 @@ thread_local! {
 fn events(hwnd: HWND) -> Option<Rc<dyn WindowEvents>> {
     EVENTS.with(|e| e.borrow().get(&(hwnd.0 as isize)).cloned())
 }
+
+const WM_WTSSESSION_CHANGE: u32 = 0x02B1;
+const WTS_SESSION_LOCK: usize = 0x7;
+const WM_POWERBROADCAST: u32 = 0x0218;
+const PBT_APMSUSPEND: usize = 0x4;
 
 const MAIN_CLASS: PCWSTR = w!("LightBrowserWindow");
 const POPUP_CLASS: PCWSTR = w!("LightBrowserPopup");
@@ -241,6 +250,13 @@ impl Window {
         let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::KillTimer(Some(self.0), id) };
     }
 
+    /// Delivers `session_locked` notifications for this window.
+    pub fn watch_session_lock(self) {
+        use windows::Win32::System::RemoteDesktop::{WTSRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION};
+        // SAFETY: registering our own top-level window.
+        let _ = unsafe { WTSRegisterSessionNotification(self.0, NOTIFY_FOR_THIS_SESSION) };
+    }
+
     /// A `Send` handle for posting `WM_APP` to this window from worker threads.
     pub fn notifier(self) -> AppNotifier {
         AppNotifier(self.0 .0 as isize)
@@ -304,6 +320,22 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                 mmi.ptMinTrackSize = POINT { x: (480.0 * scale) as i32, y: (320.0 * scale) as i32 };
             }
             LRESULT(0)
+        }
+        WM_WTSSESSION_CHANGE => {
+            if wparam.0 == WTS_SESSION_LOCK {
+                if let Some(ev) = ev {
+                    ev.session_locked();
+                }
+            }
+            LRESULT(0)
+        }
+        WM_POWERBROADCAST => {
+            if wparam.0 == PBT_APMSUSPEND {
+                if let Some(ev) = ev {
+                    ev.suspending();
+                }
+            }
+            LRESULT(1)
         }
         windows::Win32::UI::WindowsAndMessaging::WM_TIMER => {
             if let Some(ev) = ev {

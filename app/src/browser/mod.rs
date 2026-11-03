@@ -40,7 +40,12 @@ const SESSION_DEBOUNCE_MS: u32 = 2000;
 mod blocking;
 mod downloads;
 mod find;
+mod jobs;
 mod library;
+mod vault;
+
+use jobs::{Jobs, APP_JOB};
+use vault::{VaultHost, CLIPBOARD_TIMER, VAULT_TIMER};
 
 use blocking::{Deferred, FilterState, TabNet, APP_DEFERRED, APP_FILTERS_READY, SHIELD_TIMER, UPDATE_TIMER};
 /// Background behind the UI WebViews (matches --bg in common.css).
@@ -91,6 +96,8 @@ pub struct Browser {
     /// A shield counter update is scheduled.
     shield_pending: Cell<bool>,
     deferred: RefCell<Vec<Deferred>>,
+    vaults: VaultHost,
+    jobs: Jobs,
     closing: Cell<bool>,
 }
 
@@ -122,11 +129,14 @@ impl Browser {
             filters: Rc::new(FilterState::new()),
             shield_pending: Cell::new(false),
             deferred: RefCell::new(Vec::new()),
+            vaults: VaultHost::default(),
+            jobs: Jobs::new(),
             closing: Cell::new(false),
         });
         let window = Window::create_main("LightBrowser", browser.clone())?;
         let _ = browser.window.set(window);
         browser.init_filters();
+        browser.init_vault();
 
         let config = {
             let s = browser.settings.borrow();
@@ -201,7 +211,7 @@ impl Browser {
         let weak = self.me.clone();
         shell.on_message(move |source, json| {
             if let Some(b) = weak.upgrade() {
-                b.on_ui_message(Channel::Shell, &source, &json);
+                b.on_ui_message(Channel::Shell, &source, json);
             }
         });
         self.hook_common(&shell);
@@ -409,7 +419,7 @@ impl Browser {
         let weak = self.me.clone();
         c.on_message(move |source, json| {
             if let Some(b) = weak.upgrade() {
-                b.on_tab_message(id, &source, &json);
+                b.on_tab_message(id, &source, json);
             }
         });
     }
@@ -538,7 +548,7 @@ impl Browser {
             site_allowed: view.is_some_and(|v| v.net.allowed.get()),
             zoom: view.map(|v| v.controller.zoom()).unwrap_or(1.0),
             private: tab.private,
-            login_form: false,
+            login_form: view.is_some_and(|v| v.net.login_form.get()),
         })
     }
 
@@ -745,12 +755,24 @@ impl Browser {
                 Ok(env) => self.dispatch(sender, Some(id), env),
                 Err(e) => warning!("tab {id}: rejected {sender:?} message: {e}"),
             },
-            Ok(Source::Web { origin }) => {
-                // Login form messages are handled in milestone 6.
-                if let Ok(msg @ ContentMessage::PageTokens { .. }) = protocol::parse_content(json) {
-                    self.page_tokens(id, &origin, msg);
+            Ok(Source::Web { origin }) => match protocol::parse_content(json) {
+                Ok(msg @ ContentMessage::PageTokens { .. }) => self.page_tokens(id, &origin, msg),
+                Ok(ContentMessage::LoginForm {}) => {
+                    let net = self.views.borrow().get(&id).map(|v| v.net.clone());
+                    if let Some(net) = net {
+                        // Only for the page currently shown in the tab.
+                        if urlclean::origin_of(&net.top_url.borrow()).as_deref() == Some(origin.as_str()) {
+                            net.login_form.set(true);
+                            self.send_nav();
+                        }
+                    }
                 }
-            }
+                Ok(ContentMessage::Submit { username, password }) => {
+                    self.login_submitted(id, &origin, username, password)
+                }
+                Ok(ContentMessage::RequestFill {}) => self.request_fill(id, Some(&origin)),
+                Err(_) => {}
+            },
             Err(_) => {}
         }
     }
@@ -846,7 +868,28 @@ impl Browser {
             }
             // Prompts and the remaining features arrive in later milestones;
             // the popup still treats a reply as "dismissed" by hiding.
-            Request::SavePasswordReply { .. } | Request::FillReply { .. } => self.hide_popup(),
+            Request::SavePasswordReply { tab_id, origin, accept, never } => {
+                self.save_password_reply(tab_id, &origin, accept, never)
+            }
+            Request::FillReply { tab_id, origin, entry_id } => self.fill_reply(tab_id, &origin, entry_id),
+            Request::RequestFill => {
+                if let Some(id) = self.model.borrow().active_id() {
+                    self.request_fill(id, None);
+                }
+            }
+            r @ (Request::VaultStatus
+            | Request::VaultSetup { .. }
+            | Request::VaultUnlock { .. }
+            | Request::VaultLock
+            | Request::VaultList
+            | Request::VaultReveal { .. }
+            | Request::VaultCopy { .. }
+            | Request::VaultSave { .. }
+            | Request::VaultDelete { .. }
+            | Request::VaultChangePassword { .. }
+            | Request::GeneratePassword { .. }
+            | Request::GetNeverSave
+            | Request::NeverSaveRemove { .. }) => self.dispatch_vault(tab, req_id, r),
             Request::ShieldAllowSite { allow } => self.shield_allow_site(allow),
             r @ (Request::GetAllowlist
             | Request::AllowlistAdd { .. }
@@ -946,7 +989,7 @@ impl Browser {
         let weak = self.me.clone();
         c.on_message(move |source, json| {
             if let Some(b) = weak.upgrade() {
-                b.on_ui_message(Channel::Popup, &source, &json);
+                b.on_ui_message(Channel::Popup, &source, json);
             }
         });
         let weak = self.me.clone();
@@ -980,16 +1023,18 @@ impl Browser {
 
     /// Hides the popup. A hidden prompt counts as dismissed, never confirmed.
     fn hide_popup(&self) {
-        let was_visible = {
+        let (was_visible, content) = {
             let Ok(mut guard) = self.popup.try_borrow_mut() else { return };
             let Some(p) = guard.as_mut() else { return };
             let visible = p.window.is_visible();
             if visible {
                 p.window.hide();
             }
-            p.content = None;
-            visible
+            (visible, p.content.take())
         };
+        if let Some(c) = &content {
+            self.prompt_dismissed(c);
+        }
         if was_visible {
             self.post_shell(&Event::PopupClosed);
         }
@@ -1032,6 +1077,7 @@ impl Browser {
         }
         self.save_session();
         self.save_downloads();
+        self.shutdown_vault();
         self.new_windows.borrow_mut().clear();
         let views: Vec<TabView> = self.views.borrow_mut().drain().map(|(_, v)| v).collect();
         for v in views {
@@ -1097,6 +1143,14 @@ impl WindowEvents for Browser {
         self.shutdown();
     }
 
+    fn session_locked(&self) {
+        self.lock_vault("Windows session locked");
+    }
+
+    fn suspending(&self) {
+        self.lock_vault("system suspend");
+    }
+
     fn timer(&self, id: usize) {
         match id {
             SESSION_TIMER => {
@@ -1106,6 +1160,8 @@ impl WindowEvents for Browser {
                 self.save_session();
             }
             SHIELD_TIMER => self.shield_timer(),
+            VAULT_TIMER => self.vault_timer(),
+            CLIPBOARD_TIMER => self.clipboard_timer(),
             UPDATE_TIMER => {
                 if let Some(w) = self.window() {
                     w.kill_timer(UPDATE_TIMER);
@@ -1120,6 +1176,7 @@ impl WindowEvents for Browser {
         match code {
             APP_FILTERS_READY => self.filters_ready(),
             APP_DEFERRED => self.run_deferred(),
+            APP_JOB => self.jobs_ready(),
             _ => {}
         }
     }

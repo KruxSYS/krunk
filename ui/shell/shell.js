@@ -103,6 +103,7 @@
     state.navTab = n.tabId;
     const zoomed = Math.abs((n.zoom || 1) - 1) > 0.001;
     $('zoom').hidden = !zoomed;
+    $('key').hidden = !n.loginForm;
     $('zoom').textContent = Math.round((n.zoom || 1) * 100) + '%';
     $('back').disabled = !n.canGoBack;
     $('forward').disabled = !n.canGoForward;
@@ -237,6 +238,7 @@
     let t;
     return function () { clearTimeout(t); t = setTimeout(fn, ms); };
   }
+  $('key').addEventListener('click', function () { LB.post('requestFill'); });
   $('zoom').addEventListener('click', function () { LB.post('zoom', { action: 'reset' }); });
   $('menu').addEventListener('click', function () { togglePopup('menu', $('menu')); });
   $('shield').addEventListener('click', function () { togglePopup('shield', $('shield')); });

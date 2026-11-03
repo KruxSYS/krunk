@@ -608,6 +608,162 @@ async function testShieldAndHttpsOnly(browser) {
   check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
 }
 
+async function testPasswords(browser) {
+  console.log('passwords page');
+  const vaultMock = (st) => {
+    const h = window.__host.handlers;
+    window.__vault = st;
+    h.vaultStatus = () => ({ exists: st.exists, locked: st.locked, busy: false, waitMs: st.waitMs });
+    h.vaultSetup = (m) => { if (m.password.length < 8) throw new Error('too short'); st.exists = true; st.locked = false; return null; };
+    h.vaultUnlock = (m) => {
+      if (m.password === 'correct horse battery') { st.locked = false; st.waitMs = 0; return null; }
+      st.failures = (st.failures || 0) + 1;
+      st.waitMs = 1000 * Math.pow(2, st.failures - 1);
+      throw new Error('Wrong master password. Try again in ' + st.waitMs / 1000 + ' s.');
+    };
+    h.vaultList = () => st.entries;
+    h.getNeverSave = () => ['https://ads.example'];
+    h.vaultReveal = (m) => { if (m.password !== 'correct horse battery') throw new Error('Wrong master password.'); return { password: 'Tr0ub4dor&3' }; };
+    h.generatePassword = () => ({ password: 'k7#Vq2!mZp9@Lr4$Wx8e' });
+  };
+  const entries = [
+    { id: 'a1', origin: 'https://github.com', username: 'octocat', hasNote: false, updated: 1 },
+    { id: 'a2', origin: 'https://mail.example.org', username: 'alice@example.org', hasNote: true, updated: 2 },
+    { id: 'a3', origin: 'https://bank.example:8443', username: 'alice', hasNote: false, updated: 3 },
+  ];
+
+  // Setup.
+  let { page, errors, external } = await openPage(browser, 'https://lightbrowser.invalid/passwords.html', { width: 1000, height: 560 }, 1, vaultMock, { exists: false, locked: true, waitMs: 0, entries });
+  await page.waitForSelector('#setup:not([hidden])');
+  await page.fill('#setup-pw', 'correct horse battery');
+  await page.fill('#setup-pw2', 'correct horse battery!');
+  await page.click('#setup-btn');
+  check((await page.textContent('#setup-error')).includes('do not match'), 'setup: mismatch caught in the page');
+  check(!(await sent(page)).some((m) => m.cmd === 'vaultSetup'), 'mismatched passwords are not sent');
+  await page.fill('#setup-pw2', 'correct horse battery');
+  check((await page.textContent('#setup-error')) === '', 'error cleared while typing');
+  await page.waitForTimeout(300);
+  await shot(page, 'vault-setup.png');
+  await page.click('#setup-btn');
+  await page.waitForSelector('#list-section:not([hidden])');
+  const setup = await lastSent(page, 'vaultSetup');
+  check(setup && setup.password === 'correct horse battery', 'setup sends vaultSetup{password}');
+  check(await page.inputValue('#setup-pw') === '', 'setup field cleared afterwards');
+
+  // Unlock + rate limit.
+  ({ page, errors } = await openPage(browser, 'https://lightbrowser.invalid/passwords.html', { width: 1000, height: 420 }, 1, vaultMock, { exists: true, locked: true, waitMs: 0, entries }));
+  await page.waitForSelector('#unlock:not([hidden])');
+  await shot(page, 'vault-unlock.png');
+  await page.fill('#unlock-pw', 'wrong');
+  await page.click('#unlock-btn');
+  await page.waitForTimeout(80);
+  check((await page.textContent('#unlock-error')).includes('Try again in'), 'wrong password shows the retry delay');
+  await page.waitForTimeout(1200);
+  await page.fill('#unlock-pw', 'wrong again');
+  await page.click('#unlock-btn');
+  await page.waitForTimeout(80);
+  check(await page.locator('#unlock-btn').isDisabled(), 'unlock disabled during the delay');
+  check((await page.textContent('#unlock-error')).includes('2 s'), 'second failure: 2 s');
+  check(await page.inputValue('#unlock-pw') === '', 'password field cleared after an attempt');
+  await shot(page, 'vault-rate-limited.png');
+  await page.waitForTimeout(2300);
+  await page.fill('#unlock-pw', 'correct horse battery');
+  await page.click('#unlock-btn');
+  await page.waitForSelector('#list-section:not([hidden])');
+  check(true, 'correct password unlocks');
+
+  // List.
+  await page.setViewportSize({ width: 1000, height: 560 });
+  await page.waitForSelector('.pw-row');
+  check((await page.locator('.pw-row').count()) === 3, 'lists 3 logins');
+  check(!(await page.content()).includes('Tr0ub4dor'), 'no password in the page before reveal');
+  await page.waitForTimeout(100);
+  await shot(page, 'passwords-list.png');
+  await page.locator('.pw-row[data-id="a1"]').hover();
+  await page.locator('.pw-row[data-id="a1"] button', { hasText: 'Copy password' }).click();
+  const cp = await lastSent(page, 'vaultCopy');
+  check(cp && cp.id === 'a1' && cp.field === 'password', 'copy sends vaultCopy{password}');
+  check((await page.locator('.toast').textContent()).includes('30 s'), 'copy toast mentions the 30 s clear');
+  await page.locator('.pw-row[data-id="a1"] button', { hasText: 'Show' }).click();
+  await page.fill('#reveal-pw', 'nope');
+  await page.locator('#reveal-dialog button[value="ok"]').click();
+  await page.waitForTimeout(60);
+  check((await page.textContent('#reveal-error')).includes('Wrong'), 'reveal with a wrong master password fails');
+  await page.fill('#reveal-pw', 'correct horse battery');
+  await page.locator('#reveal-dialog button[value="ok"]').click();
+  await page.waitForTimeout(60);
+  check((await page.textContent('.pw-row[data-id="a1"] .secret')) === 'Tr0ub4dor&3', 'reveal shows the password after re-entering the master password');
+  const rv = await lastSent(page, 'vaultReveal');
+  check(rv && rv.id === 'a1' && rv.password === 'correct horse battery', 'reveal sends the master password with the entry id');
+  await page.click('#add');
+  await page.fill('#e-origin', 'news.example.com');
+  await page.fill('#e-user', 'reader');
+  await page.click('#e-gen');
+  await page.waitForTimeout(50);
+  check(await page.inputValue('#e-pw') === 'k7#Vq2!mZp9@Lr4$Wx8e', 'generate fills a strong password');
+  await page.locator('#entry-dialog button[value="ok"]').click();
+  await page.waitForTimeout(60);
+  const sv = await lastSent(page, 'vaultSave');
+  check(sv && sv.entry.origin === 'https://news.example.com' && sv.entry.username === 'reader' && sv.entry.password === 'k7#Vq2!mZp9@Lr4$Wx8e', 'add sends vaultSave with https:// origin');
+  await page.click('#change');
+  await page.fill('#c-old', 'correct horse battery');
+  await page.fill('#c-new', 'new master pass 1');
+  await page.fill('#c-new2', 'new master pass 2');
+  await page.locator('#change-dialog button[value="ok"]').click();
+  check((await page.textContent('#c-error')).includes('do not match'), 'change: mismatch caught');
+  await page.fill('#c-new', 'new master pass 1');
+  await page.fill('#c-new2', 'new master pass 1');
+  await page.locator('#change-dialog button[value="ok"]').click();
+  const ch = await lastSent(page, 'vaultChangePassword');
+  check(ch && ch.old === 'correct horse battery' && ch.new === 'new master pass 1', 'change sends old and new');
+  check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
+
+  // Popup unlock prompt + save prompt.
+  ({ page, errors } = await openPage(browser, 'https://shell.lightbrowser.invalid/popup.html', { width: 360, height: 200 }, 1));
+  await emit(page, { event: 'popup', content: { kind: 'unlock', tabId: 4, origin: 'https://bank.example', purpose: 'fill', error: null, waitMs: 0 } });
+  await page.waitForSelector('#master');
+  check(await page.evaluate(() => document.activeElement.id) === 'master', 'unlock prompt focuses the password field');
+  await page.fill('#master', 'correct horse battery');
+  await shot(page, 'popup-unlock.png');
+  await page.click('#unlock');
+  const un = await lastSent(page, 'vaultUnlock');
+  check(un && un.password === 'correct horse battery', 'unlock prompt sends vaultUnlock');
+  await emit(page, { event: 'popup', content: { kind: 'unlock', tabId: 4, origin: 'https://bank.example', purpose: 'fill', error: 'Wrong master password. Try again in 4 s.', waitMs: 4000 } });
+  await page.waitForTimeout(60);
+  check(await page.locator('#unlock').isDisabled(), 'unlock prompt disabled during the host-side delay');
+  await shot(page, 'popup-unlock-rate-limited.png');
+  await page.setViewportSize({ width: 360, height: 150 });
+  await emit(page, { event: 'popup', content: { kind: 'savePassword', tabId: 4, origin: 'https://bank.example', username: 'alice', update: false } });
+  await page.waitForTimeout(60);
+  await shot(page, 'popup-save-password.png');
+  await page.locator('button', { hasText: 'Never for this site' }).click();
+  const nv = await lastSent(page, 'savePasswordReply');
+  check(nv && nv.never === true && nv.accept === false, 'Never sends never:true');
+  await page.setViewportSize({ width: 340, height: 150 });
+  await emit(page, { event: 'popup', content: { kind: 'fill', tabId: 4, origin: 'https://bank.example', entries: [] } });
+  await page.waitForTimeout(60);
+  check((await page.textContent('h2')) === 'No saved logins', 'fill prompt with no entries');
+  check(errors.length === 0, 'popup: no console errors (' + errors.join(' | ') + ')');
+
+  // Shell key icon.
+  ({ page, errors } = await openPage(browser, 'https://shell.lightbrowser.invalid/shell.html', { width: 1000, height: 76 }, 1));
+  await page.evaluate(() => {
+    const h = window.__host;
+    h.state.tabs = [{ id: 4, title: 'Sign in – Example Bank', url: 'https://bank.example/login', favicon: null, loading: false, private: false, sleeping: false }];
+    h.state.active = 4;
+    h.tabsEvent();
+    h.navEvent({ loginForm: false });
+  });
+  await page.waitForTimeout(40);
+  check(await page.locator('#key').isHidden(), 'no key icon without a login form');
+  await page.evaluate(() => window.__host.navEvent({ loginForm: true }));
+  await page.waitForTimeout(40);
+  check(await page.locator('#key').isVisible(), 'key icon shown for a login form');
+  await page.click('#key');
+  check((await lastSent(page, 'requestFill')) !== undefined, 'key icon sends requestFill');
+  check(external.length === 0, 'no network requests');
+}
+
 async function testFolderPopup(browser) {
   console.log('popup: bookmark folder');
   const { page, errors } = await openPage(browser, 'https://shell.lightbrowser.invalid/popup.html', { width: 280, height: 110 }, 1);
@@ -642,6 +798,7 @@ async function testFolderPopup(browser) {
     await testShellM4(browser);
     await testFolderPopup(browser);
     await testShieldAndHttpsOnly(browser);
+    await testPasswords(browser);
   } finally {
     await browser.close();
   }

@@ -158,3 +158,63 @@
 11. **Offline fallback:** disconnect the network, delete `engine.dat` and `filters\`, and start
     the browser. Blocking still works with the embedded lists, and the log shows the download
     errors.
+
+## Password vault (M6)
+1. **Setup:**
+   - Open ⋮ → Passwords. Create a vault; mismatched or short passwords are refused.
+   - `%LOCALAPPDATA%\LightBrowser\vault.json` appears. Open it in Notepad: no usernames,
+     sites or passwords are readable, only base64, and `"wrap": "dpapi"`.
+2. **Save prompt:**
+   - Log in on `https://github.com/login` with a test account. "Save password?" appears under
+     the toolbar (outside the page) with the username and origin.
+   - Save → the login appears on the passwords page.
+   - Log in again with a different password: the prompt says "Update". With the same password
+     there is no prompt.
+3. **Never:** on another site choose "Never for this site". No more prompts there; the origin
+   is listed under "Never saved" and can be removed.
+4. **Prompt dismissal:** trigger the save prompt, then press Ctrl+Tab, or click into the page, or
+   press Escape. The prompt disappears and nothing is saved.
+5. **Fill:**
+   - Open the login page again. A key icon appears in the address bar; nothing is filled
+     automatically.
+   - Click the key, pick the account: the username and password are filled.
+   - With the vault locked, the key first asks for the master password.
+6. **Exact origin:**
+   - Save a login for `https://bank.example`, or any site where you can use two hosts or ports.
+   - On `https://www.bank.example`, `http://bank.example` and `https://bank.example:8443` the
+     fill prompt shows "No saved logins".
+7. **Cross-origin iframe (must not fill):**
+   - Use a page whose login form is in a cross-origin iframe. For example, save
+     `<iframe src="https://github.com/login" width=600 height=500></iframe>` as a local `.html`
+     file served from `http://localhost`, or use any site that embeds a third-party login widget.
+   - No key icon appears for the iframe's form. Submitting inside the iframe gives no save
+     prompt, and nothing is ever filled into the iframe.
+   - Record the result.
+8. **Reveal and copy:**
+   - Passwords page → Show: the master password is required again, and a wrong one is
+     refused (and counts towards the delay).
+   - Copy password: paste it into Notepad. Press Win+V: it is **not** in the clipboard history.
+   - Wait 30 s and paste again: the clipboard is empty.
+   - Copy, then copy some other text yourself within 30 s: your text is not wiped.
+9. **Rate limit:**
+   - Enter a wrong master password 4 times. The messages say "Try again in 1 s / 2 s / 4 s /
+     8 s", and Unlock is disabled meanwhile.
+   - Restart the browser: the delay still applies.
+   - The correct password resets it.
+10. **Auto-lock:**
+    - Unlock, then press Win+L and log back in: the passwords page shows "locked".
+    - Unlock, sleep the PC, wake it: locked.
+    - Unlock and leave the vault unused for longer than the auto-lock time (lower it to 1 min
+      once the M7 settings exist): locked.
+11. **Change master password:**
+    - Change it; the old one no longer works and the new one does, with all logins intact.
+    - Interrupt test: make `vault.tmp` a folder (`mkdir vault.tmp` in the data dir) and try to
+      change it. An error is shown, the old password still works, and `vault.json` is
+      unchanged. Delete the folder afterwards.
+12. **Copied vault on another account (DPAPI):**
+    - Copy `vault.json` into `%LOCALAPPDATA%\LightBrowser\` of a *different* Windows user
+      account (or another PC), with LightBrowser.exe alongside.
+    - Unlocking with the **correct** master password fails with "This vault can only be opened
+      by the Windows account (and PC) that created it."
+13. **Leak check:** search `lightbrowser.log` and `browser.db` (DB Browser for SQLite, or
+    `findstr /s /i` over the data dir) for the test password: there are no hits.
