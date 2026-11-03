@@ -28,6 +28,9 @@ pub trait WindowEvents {
     fn moved(&self) {}
     /// The window was activated or deactivated.
     fn activated(&self, _active: bool) {}
+    /// The window itself received keyboard focus (e.g. after a click on its
+    /// frame); the browser passes it on to a WebView.
+    fn got_focus(&self) {}
     /// Return `true` to let the window close.
     fn close_requested(&self) -> bool {
         true
@@ -41,6 +44,8 @@ pub trait WindowEvents {
     fn session_locked(&self) {}
     /// The machine is about to sleep or hibernate.
     fn suspending(&self) {}
+    /// Windows switched between light and dark app mode.
+    fn system_theme_changed(&self) {}
 }
 
 thread_local! {
@@ -250,6 +255,21 @@ impl Window {
         let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::KillTimer(Some(self.0), id) };
     }
 
+    /// Dark or light native title bar (Windows 10 20H1+ / Windows 11).
+    pub fn set_dark_frame(self, dark: bool) {
+        use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_USE_IMMERSIVE_DARK_MODE};
+        let value = windows::core::BOOL::from(dark);
+        // SAFETY: valid window handle; the attribute value is a BOOL on the stack.
+        let _ = unsafe {
+            DwmSetWindowAttribute(
+                self.0,
+                DWMWA_USE_IMMERSIVE_DARK_MODE,
+                &value as *const _ as *const std::ffi::c_void,
+                std::mem::size_of::<windows::core::BOOL>() as u32,
+            )
+        };
+    }
+
     /// Delivers `session_locked` notifications for this window.
     pub fn watch_session_lock(self) {
         use windows::Win32::System::RemoteDesktop::{WTSRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION};
@@ -288,6 +308,12 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
             // SAFETY: default processing for messages we only observe.
             unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
         }
+        windows::Win32::UI::WindowsAndMessaging::WM_SETFOCUS => {
+            if let Some(ev) = ev {
+                ev.got_focus();
+            }
+            LRESULT(0)
+        }
         WM_ACTIVATE => {
             if let Some(ev) = ev {
                 ev.activated((wparam.0 & 0xffff) as u32 != WA_INACTIVE);
@@ -320,6 +346,20 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                 mmi.ptMinTrackSize = POINT { x: (480.0 * scale) as i32, y: (320.0 * scale) as i32 };
             }
             LRESULT(0)
+        }
+        windows::Win32::UI::WindowsAndMessaging::WM_SETTINGCHANGE => {
+            // lParam names the changed setting; "ImmersiveColorSet" = app theme.
+            let changed = lparam.0 != 0 && {
+                // SAFETY: for WM_SETTINGCHANGE lParam is null or a NUL-terminated wide string.
+                unsafe { PCWSTR(lparam.0 as *const u16).to_string() }.is_ok_and(|s| s == "ImmersiveColorSet")
+            };
+            if changed {
+                if let Some(ev) = ev {
+                    ev.system_theme_changed();
+                }
+            }
+            // SAFETY: default processing.
+            unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
         }
         WM_WTSSESSION_CHANGE => {
             if wparam.0 == WTS_SESSION_LOCK {
@@ -413,4 +453,24 @@ impl AppNotifier {
             )
         };
     }
+}
+
+/// Does Windows use dark mode for apps? (`AppsUseLightTheme` = 0)
+pub fn system_prefers_dark() -> bool {
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
+    let mut value: u32 = 1;
+    let mut size = std::mem::size_of::<u32>() as u32;
+    // SAFETY: reading a DWORD into a properly sized local.
+    let r = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
+            w!("AppsUseLightTheme"),
+            RRF_RT_REG_DWORD,
+            None,
+            Some(&mut value as *mut u32 as *mut std::ffi::c_void),
+            Some(&mut size),
+        )
+    };
+    r.is_ok() && value == 0
 }

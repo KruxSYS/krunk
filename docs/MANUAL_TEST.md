@@ -218,3 +218,58 @@
       by the Windows account (and PC) that created it."
 13. **Leak check:** search `lightbrowser.log` and `browser.db` (DB Browser for SQLite, or
     `findstr /s /i` over the data dir) for the test password: there are no hits.
+
+## Settings (M7)
+Open ⋮ → Settings, or type `lb://settings` in the address bar.
+1. **Search engine:** choose Google: address-bar searches go to Google. Choose Custom with
+   `https://search.example/?q=` (no `%s`): an inline error appears and the setting is not saved.
+   Add `%s` and searches use the template.
+2. **Startup:**
+   - "Open the homepage" with an empty or `ftp://` homepage gives an inline error.
+   - A valid homepage opens on the next start.
+   - "Continue where you left off" restores the tabs; only the active one loads.
+3. **Hardware acceleration:** untick it and the "Restart required" banner appears. Click
+   "Restart now": the browser closes and reopens with the same tabs. `lb://about` → "Browser
+   arguments" now contains `--disable-gpu`.
+4. **Sleep and discard:** sleep 0 is accepted (never). Discard enabled with a time ≤ the sleep time
+   gives an inline error. Values above 1440 give an error.
+5. **Ad blocking:**
+   - Untick "Block ads and trackers": the shield counter stays at 0 on a news site.
+   - Untick EasyList: a rebuild happens (the log says "filter engine rebuilt").
+   - "Update now" shows the last check time.
+   - Add `bad host` to the allowlist: inline error. Add `example.com`, then remove it.
+6. **Privacy:**
+   - Tracking prevention levels apply live.
+   - HTTPS-only: `http://example.com` opens as https.
+   - DNT/GPC unticked: `https://httpbin.org/headers` no longer shows `Dnt` / `Sec-Gpc` (headers
+     change immediately; `navigator.*` on new tabs).
+   - SmartScreen shows the restart banner.
+7. **Clear on exit:**
+   - Tick "Cookies and site data" and "Browsing history".
+   - Visit `https://httpbin.org/cookies/set?lbtest=42`, then close the window. It disappears
+     after the data is cleared (the log says "clearing data on exit", then "data cleared,
+     closing").
+   - Start again: `https://httpbin.org/cookies` shows `{}` and History is empty apart from new
+     visits.
+8. **Passwords:** set auto-lock to 1 minute; the vault locks after a minute without use.
+   "Change master password…" opens the passwords page with the change dialog.
+9. **Downloads:**
+   - "Change…" opens a native folder picker. Downloads then go to that folder (a name clash
+     gives `name (1).ext`).
+   - "Ask where to save" shows a Save dialog for each download; cancelling it cancels the
+     download.
+10. **Advanced:**
+    - User agent `Test/1.0`: `https://httpbin.org/headers` in an existing tab shows it after a
+      reload; clearing the field restores the default.
+    - Proxy `not a proxy` gives an inline error; `127.0.0.1:8888` shows the restart banner.
+    - Extra flags: `--no-sandbox`, `"--x"` and `--a=` are refused inline; `--force-dark-mode`
+      shows the banner.
+11. **Zoom and theme:**
+    - Default zoom 125 %: new tabs open at 125 %.
+    - Theme Dark: the shell, built-in pages, web pages that support `prefers-color-scheme`, and
+      the window title bar all turn dark.
+    - System follows Windows (Settings → Personalization → Colors).
+12. **Reset:** "Reset settings…" asks first. After OK, every value is back to its default, and the
+    restart banner appears if restart-only values were different.
+13. **Isolation:** only `lb://settings` can change settings. In DevTools on any website,
+    `chrome.webview.postMessage({cmd:"saveSettings",settings:{}})` has no effect.

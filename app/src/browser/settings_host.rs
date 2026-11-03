@@ -159,6 +159,7 @@ impl Browser {
             }
         }
         self.send_shell_config();
+        self.apply_frame_theme();
         let e = Event::Theme { theme }.to_json();
         if let Some(c) = self.popup.borrow().as_ref().and_then(|p| p.controller.clone()) {
             c.post_json(&e);
@@ -169,6 +170,18 @@ impl Browser {
             if let Some(c) = self.controller(id) {
                 c.post_json(&e);
             }
+        }
+    }
+
+    /// Native title bars (main window and popup) follow the theme.
+    pub(super) fn apply_frame_theme(&self) {
+        let dark = match self.settings.borrow().theme {
+            Theme::Dark => true,
+            Theme::Light => false,
+            Theme::System => crate::ffi::window::system_prefers_dark(),
+        };
+        if let Some(w) = self.window() {
+            w.set_dark_frame(dark);
         }
     }
 
@@ -203,7 +216,6 @@ impl Browser {
         info!("clearing data on exit");
         self.hide_popup();
         w.hide();
-        let now = lb_core::storage::now_ms();
         if clear.history {
             let _ = self.store.borrow_mut().clear_history();
         }
@@ -224,10 +236,12 @@ impl Browser {
             }),
             None => self.finish_exit(),
         }
-        let _ = now;
     }
 
     pub(super) fn finish_exit(&self) {
+        if !self.exit_cleared.get() {
+            info!("data cleared, closing");
+        }
         self.exit_cleared.set(true);
         if let Some(w) = self.window() {
             w.kill_timer(EXIT_TIMER);

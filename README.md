@@ -59,7 +59,7 @@ ui/     the browser's own UI (HTML/CSS/JS), embedded into the exe at build time.
   uBlock filters, privacy and unbreak; see `assets/filters/ATTRIBUTION.md`). The lists are
   embedded deflated (1.4 MB).
 - **Cache:** at startup the compiled engine is loaded from `%LOCALAPPDATA%\LightBrowser\engine.dat`
-  (about 1 ms on Linux, about 7 ms measured under Wine). The cache key covers the engine
+  (about 1 ms on Linux; 4–20 ms measured at startup on a Windows 11 VM). The cache key covers the engine
   version, which lists are enabled, and where each comes from (embedded copy or download) with
   its content hash. If anything differs, the engine is rebuilt on a worker thread (about 70 ms).
 - **Interception:** every content WebView, private tabs included, intercepts all requests
@@ -119,6 +119,8 @@ Each WebView disables WebView2's general autofill and password autosave, because
 has its own vault.
 
 ## Development
+- Testing on Windows: `scripts/vm.sh` deploys `dist/LightBrowser.exe` to a Windows test machine
+  over SSH and drives it (start, stop, screenshots, keys, clicks).
 - Core tests: `cargo test -p core`
 - Windows build: `cargo build --release --target x86_64-pc-windows-gnu`
 - UI tests (mock host, no exe):

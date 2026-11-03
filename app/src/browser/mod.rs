@@ -151,6 +151,7 @@ impl Browser {
         });
         let window = Window::create_main("LightBrowser", browser.clone())?;
         let _ = browser.window.set(window);
+        browser.apply_frame_theme();
         browser.init_filters();
         browser.init_vault();
 
@@ -360,7 +361,7 @@ impl Browser {
         );
         if active {
             self.layout();
-            self.focus_active(true);
+            self.focus_active();
         }
         self.send_nav();
     }
@@ -473,7 +474,7 @@ impl Browser {
             t.set_visible(true);
         }
         self.layout();
-        self.focus_active(false);
+        self.focus_active();
         self.update_title();
     }
 
@@ -491,14 +492,12 @@ impl Browser {
     }
 
     /// New tab pages put the caret in the address bar; other pages get focus.
-    fn focus_active(&self, only_if_new_tab: bool) {
+    fn focus_active(&self) {
         let is_new_tab = self.model.borrow().active().is_some_and(|t| Page::from_url(&t.url) == Some(Page::NewTab));
         if is_new_tab {
             self.focus_address_bar();
-        } else if !only_if_new_tab {
-            if let Some(c) = self.active_controller() {
-                c.focus();
-            }
+        } else if let Some(c) = self.active_controller() {
+            c.focus();
         }
     }
 
@@ -1174,6 +1173,16 @@ impl WindowEvents for Browser {
         if let Some(c) = self.active_controller() {
             c.notify_parent_moved();
         }
+    }
+
+    fn system_theme_changed(&self) {
+        self.apply_frame_theme();
+    }
+
+    fn got_focus(&self) {
+        // Keyboard shortcuts arrive through the WebViews, so the frame
+        // must never keep the focus itself.
+        self.focus_active();
     }
 
     fn close_requested(&self) -> bool {
