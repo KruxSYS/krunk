@@ -177,13 +177,15 @@
   });
   $('restart').addEventListener('click', function () { LB.post('restart'); });
   $('reset').addEventListener('click', function () {
-    if (!confirm('Reset all settings to their defaults? History, bookmarks and passwords are kept.')) return;
-    LB.request('resetSettings').then(function (r) {
-      settings = r.settings;
-      showErrors([]);
-      banner(r.restartRequired);
-      render();
-      Page.toast('Settings reset');
+    Page.confirm('Reset all settings to their defaults? History, bookmarks and passwords are kept.', { ok: 'Reset', danger: true }).then(function (yes) {
+      if (!yes) return;
+      LB.request('resetSettings').then(function (r) {
+        settings = r.settings;
+        showErrors([]);
+        banner(r.restartRequired);
+        render();
+        Page.toast('Settings reset');
+      });
     });
   });
   $('filter').addEventListener('input', function () {

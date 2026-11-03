@@ -59,5 +59,35 @@
     };
   }
 
-  window.Page = { host: host, favicon: favicon, toast: toast, svg: svg, ICONS: ICONS, iconButton: iconButton, debounce: debounce };
+  // In-page replacements for confirm()/prompt(): the native dialogs show the
+  // internal origin ("lightbrowser.invalid says") and block the page.
+  function dialog(message, opts) {
+    return new Promise(function (resolve) {
+      const input = opts.input ? el('input', { type: 'text', id: 'lb-dialog-input', 'aria-label': message }) : null;
+      if (input) input.value = opts.value || '';
+      const ok = el('button', { class: 'btn ' + (opts.danger ? 'danger-fill' : 'primary'), id: 'lb-dialog-ok', value: 'ok', text: opts.ok || 'OK' });
+      const cancel = el('button', { class: 'btn', id: 'lb-dialog-cancel', value: 'cancel', type: 'button', text: opts.cancel || 'Cancel' });
+      const form = el('form', { method: 'dialog' }, [
+        el('p', { class: 'lb-dialog-text', text: message }),
+        input,
+        el('div', { class: 'buttons' }, [cancel, ok]),
+      ]);
+      const d = el('dialog', { class: 'lb-dialog', role: 'alertdialog', 'aria-label': message }, [form]);
+      cancel.addEventListener('click', function () { d.close('cancel'); });
+      d.addEventListener('close', function () {
+        const value = d.returnValue === 'ok' ? (input ? input.value : true) : (input ? null : false);
+        d.remove();
+        resolve(value);
+      });
+      document.body.appendChild(d);
+      d.showModal();
+      (input || ok).focus();
+      if (input) input.select();
+    });
+  }
+  function confirmDialog(message, opts) { return dialog(message, Object.assign({}, opts || {})); }
+  function promptDialog(message, value, opts) { return dialog(message, Object.assign({ input: true, value: value }, opts || {})); }
+
+  window.Page = { host: host, favicon: favicon, toast: toast, svg: svg, ICONS: ICONS, iconButton: iconButton, debounce: debounce,
+    confirm: confirmDialog, prompt: promptDialog };
 })();

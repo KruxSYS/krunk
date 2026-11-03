@@ -106,8 +106,9 @@
 
   function remove(n) {
     const what = n.isFolder ? 'the folder “' + n.title + '” and everything in it' : '“' + n.title + '”';
-    if (!confirm('Delete ' + what + '?')) return;
-    LB.request('deleteBookmark', { id: n.id }).then(function () { Page.toast('Deleted'); load(); });
+    Page.confirm('Delete ' + what + '?', { ok: 'Delete', danger: true }).then(function (yes) {
+      if (yes) LB.request('deleteBookmark', { id: n.id }).then(function () { Page.toast('Deleted'); load(); });
+    });
   }
 
   const dialog = document.getElementById('edit-dialog');
@@ -142,9 +143,9 @@
   });
 
   document.getElementById('add-folder').addEventListener('click', function () {
-    const name = prompt('Folder name', 'New folder');
-    if (name === null) return;
-    LB.request('addFolder', { parent: selected, title: name }).then(load);
+    Page.prompt('Folder name', 'New folder', { ok: 'Create' }).then(function (name) {
+      if (name !== null) LB.request('addFolder', { parent: selected, title: name }).then(load);
+    });
   });
   document.getElementById('import').addEventListener('click', function () {
     LB.request('importBookmarks').then(function (r) {

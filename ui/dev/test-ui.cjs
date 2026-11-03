@@ -85,12 +85,19 @@ async function openPage(browser, url, viewport, scale, setup, setupArg) {
   await context.addInitScript({ path: path.join(__dirname, 'mock-host.js') });
   if (setup) await context.addInitScript(setup, setupArg === undefined ? null : setupArg);
   const page = await context.newPage();
-  page.on('dialog', (d) => d.accept());
   const errors = [];
+  // Built-in pages must never use native dialogs (they show the internal origin).
+  page.on('dialog', (d) => { errors.push('native ' + d.type() + ' dialog: ' + d.message()); d.dismiss(); });
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
   page.on('pageerror', (e) => errors.push(String(e)));
   await page.goto(url);
   return { page, context, errors, external };
+}
+
+async function acceptInPage(page) {
+  await page.waitForSelector('#lb-dialog-ok');
+  await page.click('#lb-dialog-ok');
+  await page.waitForTimeout(50);
 }
 
 const sent = (page) => page.evaluate(() => window.__host.sent);
@@ -361,10 +368,12 @@ async function testHistory(browser) {
   check((await page.locator('.row').count()) === 4, 'row removed');
   await page.selectOption('#range', '3600000');
   await page.click('#delete-range');
+  await acceptInPage(page);
   const range = await lastSent(page, 'deleteHistoryRange');
   check(range && Math.abs(range.to - range.from - 3600001) < 5000, 'delete last hour sends a 1 h range');
   await page.selectOption('#range', 'all');
   await page.click('#delete-range');
+  await acceptInPage(page);
   check((await lastSent(page, 'deleteHistoryRange')).from === 0, 'delete all time starts at 0');
   await page.click('#clear');
   await page.uncheck('#c-cache');
@@ -448,6 +457,7 @@ async function testBookmarks(browser) {
   check((await page.locator('#items .row').count()) === 2, 'search finds 2 bookmarks');
   await page.locator('#items .row').first().hover();
   await page.locator('#items .row').first().locator('.icon-btn[title="Delete"]').click();
+  await acceptInPage(page);
   check((await lastSent(page, 'deleteBookmark')) !== undefined, 'delete (after confirm) sends deleteBookmark');
   await page.click('#import');
   await page.waitForTimeout(50);
@@ -894,7 +904,18 @@ async function testSettings(browser) {
   check(await page.evaluate(() => document.documentElement.classList.contains('light')), 'host theme event switches to light');
 
   // Reset (confirm is accepted by the harness).
+  // Cancel first: nothing happens.
   await page.click('#reset');
+  await page.waitForSelector('#lb-dialog-cancel');
+  check((await page.textContent('.lb-dialog-text')).includes('Reset all settings'), 'in-page reset confirmation');
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await page.waitForTimeout(50);
+  await shot(page, 'settings-reset-confirm.png');
+  await page.click('#lb-dialog-cancel');
+  await page.waitForTimeout(50);
+  check((await lastSent(page, 'resetSettings')) === undefined, 'cancel does not reset');
+  await page.click('#reset');
+  await acceptInPage(page);
   await page.waitForTimeout(80);
   check((await lastSent(page, 'resetSettings')) !== undefined, 'reset sends resetSettings after confirm');
   check(await page.isChecked('[data-key=hardwareAcceleration]') && await page.inputValue('#proxy') === '', 'reset restores defaults');

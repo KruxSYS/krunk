@@ -77,10 +77,12 @@
     const v = sel.value;
     const now = Date.now();
     const from = v === 'all' ? 0 : now - Number(v);
-    if (!confirm('Delete history from ' + sel.options[sel.selectedIndex].text.toLowerCase() + '?')) return;
-    LB.request('deleteHistoryRange', { from: from, to: now + 1 }).then(function () {
-      Page.toast('History deleted');
-      load(false);
+    Page.confirm('Delete history from ' + sel.options[sel.selectedIndex].text.toLowerCase() + '?', { ok: 'Delete', danger: true }).then(function (yes) {
+      if (!yes) return;
+      LB.request('deleteHistoryRange', { from: from, to: now + 1 }).then(function () {
+        Page.toast('History deleted');
+        load(false);
+      });
     });
   });
 

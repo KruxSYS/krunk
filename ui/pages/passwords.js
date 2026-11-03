@@ -150,8 +150,8 @@
   }
 
   function remove(e) {
-    if (!confirm('Delete the saved login for ' + (e.username || '(no username)') + ' on ' + e.origin + '?')) return;
-    LB.request('vaultDelete', { id: e.id }).then(load, (err) => Page.toast(err.message));
+    Page.confirm('Delete the saved login for ' + (e.username || '(no username)') + ' on ' + e.origin + '?', { ok: 'Delete', danger: true })
+      .then(function (yes) { if (yes) LB.request('vaultDelete', { id: e.id }).then(load, (err) => Page.toast(err.message)); });
   }
 
   // Revealing needs the master password again; the value is shown for 20 s.
