@@ -538,6 +538,7 @@ impl Browser {
             site_allowed: view.is_some_and(|v| v.net.allowed.get()),
             zoom: view.map(|v| v.controller.zoom()).unwrap_or(1.0),
             private: tab.private,
+            login_form: false,
         })
     }
 

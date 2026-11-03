@@ -16,7 +16,7 @@ pub const BOOKMARKS_BAR: i64 = 1;
 /// Id of the "Other bookmarks" root folder.
 pub const OTHER_BOOKMARKS: i64 = 2;
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 const SCHEMA_V1: &str = "
 CREATE TABLE urls (
@@ -88,6 +88,14 @@ CREATE TABLE adblock_allowlist (
 );
 ";
 
+/// v4: origins where the user chose "Never save passwords" (no secrets).
+const SCHEMA_V4: &str = "
+CREATE TABLE vault_never (
+    origin TEXT PRIMARY KEY,
+    added  INTEGER NOT NULL
+);
+";
+
 /// Largest favicon we keep.
 pub const MAX_FAVICON_BYTES: usize = 48 * 1024;
 
@@ -146,6 +154,12 @@ impl Store {
                     tx.execute("INSERT OR IGNORE INTO adblock_allowlist(host, added) VALUES (?1, 0)", [h])?;
                 }
             }
+            tx.pragma_update(None, "user_version", 3)?;
+            tx.commit()?;
+        }
+        if version < 4 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(SCHEMA_V4)?;
             tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             tx.commit()?;
         }
@@ -225,6 +239,43 @@ impl Store {
     pub fn allowlist_remove(&self, host: &str) -> DbResult<bool> {
         let Some(h) = crate::blocker::normalize_host(host) else { return Ok(false) };
         Ok(self.conn.execute("DELETE FROM adblock_allowlist WHERE host = ?1", [h])? > 0)
+    }
+
+    /// "Never save passwords" list: exact origins (`scheme://host[:port]`).
+    pub fn never_save(&self, origin: &str) -> DbResult<bool> {
+        Ok(self
+            .conn
+            .query_row("SELECT 1 FROM vault_never WHERE origin = ?1", [origin], |_| Ok(()))
+            .optional()?
+            .is_some())
+    }
+
+    pub fn never_save_add(&self, origin: &str, now: i64) -> DbResult<()> {
+        let o =
+            crate::urlclean::origin_of(origin).ok_or_else(|| DbError::InvalidParameterName("Not an origin".into()))?;
+        self.conn.execute("INSERT OR IGNORE INTO vault_never(origin, added) VALUES (?1, ?2)", params![o, now])?;
+        Ok(())
+    }
+
+    pub fn never_save_remove(&self, origin: &str) -> DbResult<()> {
+        self.conn.execute("DELETE FROM vault_never WHERE origin = ?1", [origin])?;
+        Ok(())
+    }
+
+    pub fn never_save_list(&self) -> DbResult<Vec<String>> {
+        let mut stmt = self.conn.prepare_cached("SELECT origin FROM vault_never ORDER BY origin")?;
+        let rows = stmt.query_map([], |r| r.get(0))?;
+        rows.collect()
+    }
+
+    /// Persisted unlock rate limiter (failure count and time; no secrets).
+    pub fn load_rate_limiter(&self) -> DbResult<crate::vault::RateLimiter> {
+        Ok(self.kv_get("vault_rate")?.and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default())
+    }
+
+    pub fn save_rate_limiter(&self, r: &crate::vault::RateLimiter) -> DbResult<()> {
+        let json = serde_json::to_string(r).map_err(|e| DbError::ToSqlConversionFailure(Box::new(e)))?;
+        self.kv_set("vault_rate", &json)
     }
 
     /// Reclaims space after large deletions.
@@ -309,6 +360,27 @@ mod tests {
         let s = Store::init(c).unwrap();
         assert_eq!(s.allowlist().unwrap(), ["shop.example"]);
         assert!(s.load_settings().unwrap().https_only, "other settings kept");
+    }
+
+    #[test]
+    fn never_save_list_and_rate_limiter() {
+        let s = Store::open_in_memory().unwrap();
+        s.never_save_add("https://bank.example/login?x=1", 1).unwrap();
+        assert!(s.never_save("https://bank.example").unwrap());
+        assert!(!s.never_save("https://bank.example:8443").unwrap());
+        assert!(s.never_save_add("data:text/html,x", 1).is_err());
+        assert_eq!(s.never_save_list().unwrap(), ["https://bank.example"]);
+        s.never_save_remove("https://bank.example").unwrap();
+        assert!(s.never_save_list().unwrap().is_empty());
+
+        let mut r = s.load_rate_limiter().unwrap();
+        assert_eq!(r.failures, 0);
+        r.record_failure(5000);
+        r.record_failure(6000);
+        s.save_rate_limiter(&r).unwrap();
+        let back = s.load_rate_limiter().unwrap();
+        assert_eq!(back, r);
+        assert_eq!(back.wait_ms(6000), 2000, "delay survives a restart");
     }
 
     #[test]

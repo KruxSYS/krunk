@@ -117,6 +117,8 @@ pub enum PopupKind {
     Fill,
     /// A folder of the bookmarks bar (opened with `ShowBookmarkFolder`).
     BookmarkFolder,
+    /// Master-password prompt before saving or filling a login.
+    Unlock,
 }
 
 impl PopupKind {
@@ -181,12 +183,30 @@ pub enum PopupContent {
         origin: String,
         entries: Vec<FillChoice>,
     },
+    /// "Unlock your passwords" before saving or filling on `origin`.
+    Unlock {
+        tab_id: u32,
+        origin: String,
+        purpose: UnlockPurpose,
+        /// Last error (wrong password, too many attempts).
+        error: Option<String>,
+        /// Milliseconds before the next attempt is accepted.
+        wait_ms: u64,
+    },
     /// Contents of a bookmarks-bar folder.
     BookmarkFolder {
         id: i64,
         title: String,
         items: Vec<BarItem>,
     },
+}
+
+/// Why the vault must be unlocked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UnlockPurpose {
+    Save,
+    Fill,
 }
 
 /// An entry of the bookmarks bar or of a folder dropdown.
@@ -210,6 +230,7 @@ impl PopupContent {
             PopupContent::SavePassword { .. } => PopupKind::SavePassword,
             PopupContent::Fill { .. } => PopupKind::Fill,
             PopupContent::BookmarkFolder { .. } => PopupKind::BookmarkFolder,
+            PopupContent::Unlock { .. } => PopupKind::Unlock,
         }
     }
 }
@@ -302,6 +323,8 @@ pub enum Request {
         #[serde(default)]
         never: bool,
     },
+    /// Key icon in the address bar: offer to fill the active page's login.
+    RequestFill,
     /// Reply to the fill prompt: the chosen entry, or `None` to dismiss.
     FillReply {
         tab_id: u32,
@@ -417,6 +440,11 @@ pub enum Request {
     },
     VaultDelete {
         id: String,
+    },
+    /// Origins on the "never save" list, and removing one.
+    GetNeverSave,
+    NeverSaveRemove {
+        origin: String,
     },
     VaultChangePassword {
         old: Secret,
@@ -558,6 +586,7 @@ impl Sender {
                     | R::Print
                     | R::DevTools
                     | R::Quit
+                    | R::RequestFill
                     | R::GetBookmarks
                     | R::VaultStatus
                     | R::VaultUnlock { .. }
@@ -614,6 +643,8 @@ impl Sender {
                     | R::VaultSave { .. }
                     | R::VaultDelete { .. }
                     | R::VaultChangePassword { .. }
+                    | R::GetNeverSave
+                    | R::NeverSaveRemove { .. }
                     | R::GeneratePassword { .. }
             ),
             Sender::Page(Page::Settings) => matches!(
@@ -749,6 +780,9 @@ pub struct NavState {
     pub site_allowed: bool,
     pub zoom: f64,
     pub private: bool,
+    /// The page has a login form (shows the key icon).
+    #[serde(default)]
+    pub login_form: bool,
 }
 
 /// Messages to the shell or a built-in page.
@@ -1161,6 +1195,11 @@ mod tests {
             },
             Request::HttpsOnlyProceed { url: "http://a.example/".into() },
             Request::GetFilterStatus,
+            Request::RequestFill,
+            Request::GetNeverSave,
+            Request::NeverSaveRemove { origin: "https://a.example".into() },
+            Request::VaultUnlock { password: Secret::from("pw") },
+            Request::VaultChangePassword { old: Secret::from("a"), new: Secret::from("b") },
             Request::GetAllowlist,
             Request::AllowlistAdd { host: "a.example".into() },
             Request::AllowlistRemove { host: "a.example".into() },
@@ -1207,6 +1246,7 @@ mod tests {
                     site_allowed: false,
                     zoom: 1.25,
                     private: false,
+                    login_form: true,
                 },
             },
             Event::ShellConfig { show_home_button: true, show_bookmarks_bar: false, theme: Theme::Dark },
@@ -1230,6 +1270,15 @@ mod tests {
                 },
             },
             Event::PopupClosed,
+            Event::Popup {
+                content: PopupContent::Unlock {
+                    tab_id: 1,
+                    origin: "https://a.example".into(),
+                    purpose: UnlockPurpose::Fill,
+                    error: Some("Wrong master password".into()),
+                    wait_ms: 2000,
+                },
+            },
             Event::Popup {
                 content: PopupContent::BookmarkFolder {
                     id: 3,

@@ -433,7 +433,10 @@ impl TabModel {
         let saved: Vec<&Tab> = self.tabs.iter().filter(|t| !t.private).collect();
         let active = saved.iter().position(|t| Some(t.id) == self.active).unwrap_or(0);
         Session {
-            tabs: saved.iter().map(|t| SessionTab { url: t.url.clone(), title: t.title.clone() }).collect(),
+            tabs: saved
+                .iter()
+                .map(|t| SessionTab { url: crate::urlclean::strip_credentials(&t.url), title: t.title.clone() })
+                .collect(),
             active,
         }
     }
@@ -666,6 +669,15 @@ mod tests {
         // Closing an unloaded tab has no view to destroy.
         let e = m.close(b, 2);
         assert!(e.is_empty());
+    }
+
+    #[test]
+    fn session_never_stores_credentials() {
+        let mut m = TabModel::new();
+        m.open("https://alice:secret@intranet.example/", false, Position::End, true, true, 0);
+        let s = m.session();
+        assert_eq!(s.tabs[0].url, "https://intranet.example/");
+        assert!(!serde_json::to_string(&s).unwrap().contains("secret"));
     }
 
     #[test]

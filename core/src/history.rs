@@ -34,7 +34,8 @@ pub fn visit_url(url: &str, private: bool) -> Option<String> {
     if private || !should_record(url) {
         return None;
     }
-    Some(crate::urlclean::strip_tracking_params(url).unwrap_or_else(|| url.to_string()))
+    let url = crate::urlclean::strip_credentials(url);
+    Some(crate::urlclean::strip_tracking_params(&url).unwrap_or(url))
 }
 
 impl Store {
@@ -211,6 +212,11 @@ mod tests {
         assert_eq!(visit_url(&crate::pages::Page::History.url(), false), None);
         assert_eq!(visit_url("https://shell.lightbrowser.invalid/shell.html", false), None);
         assert_eq!(visit_url("about:blank", false), None);
+        assert_eq!(
+            visit_url("https://u:pw@a.example/", false).as_deref(),
+            Some("https://a.example/"),
+            "no credentials"
+        );
     }
 
     #[test]

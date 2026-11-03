@@ -251,12 +251,18 @@ fn unb64(s: &str) -> VResult<Vec<u8>> {
     Base64::decode_vec(s).map_err(|_| VaultError::Corrupt("bad base64".into()))
 }
 
+/// serde errors can quote input; keep only the class (never decrypted data).
+fn json_err(e: serde_json::Error) -> VaultError {
+    VaultError::Corrupt(format!("invalid data ({:?})", e.classify()))
+}
+
 fn derive_kek(password: &str, salt: &[u8], p: KdfParams) -> VResult<Zeroizing<[u8; KEY_LEN]>> {
-    let params = Params::new(p.m_kib, p.t, p.p, Some(KEY_LEN)).map_err(|e| VaultError::Corrupt(e.to_string()))?;
+    let params = Params::new(p.m_kib, p.t, p.p, Some(KEY_LEN))
+        .map_err(|_| VaultError::Corrupt("invalid KDF parameters".into()))?;
     let mut out = Zeroizing::new([0u8; KEY_LEN]);
     Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
         .hash_password_into(password.as_bytes(), salt, out.as_mut())
-        .map_err(|e| VaultError::Corrupt(e.to_string()))?;
+        .map_err(|_| VaultError::Corrupt("key derivation failed".into()))?;
     Ok(out)
 }
 
@@ -321,6 +327,44 @@ impl RateLimiter {
     }
 }
 
+/// Checks a master password against an unlocked vault's key (see
+/// [`Vault::verifier`]). Wiped on drop.
+#[derive(Clone)]
+pub struct Verifier {
+    salt: [u8; SALT_LEN],
+    params: KdfParams,
+    kek: Zeroizing<[u8; KEY_LEN]>,
+}
+
+impl Verifier {
+    pub fn verify(&self, password: &str) -> bool {
+        derive_kek(password, &self.salt, self.params).is_ok_and(|k| {
+            // Constant-time comparison of the two derived keys.
+            k.iter().zip(self.kek.iter()).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0
+        })
+    }
+}
+
+/// May the stored login for `entry_origin` be filled into a page whose
+/// top-level document is `sender_url`? Only on an exact origin match
+/// (scheme, host and port), where `sender_url` must be the origin the
+/// browser reported for the message, never a URL the page claims.
+/// Hosts are compared after IDNA normalization, so a look-alike Unicode
+/// host never matches the ASCII one.
+pub fn fill_allowed(entry_origin: &str, sender_url: &str) -> bool {
+    match (origin_of(entry_origin), origin_of(sender_url)) {
+        (Some(a), Some(b)) => a == b && (a.starts_with("https://") || a.starts_with("http://")),
+        _ => false,
+    }
+}
+
+/// Is a password prompt raised for (`prompt_tab`, `prompt_origin`) still
+/// valid now that the user answered? Only if that tab is still the active
+/// tab and still shows the same origin.
+pub fn prompt_still_valid(prompt_tab: u32, prompt_origin: &str, active_tab: Option<u32>, active_url: &str) -> bool {
+    active_tab == Some(prompt_tab) && fill_allowed(prompt_origin, active_url)
+}
+
 /// Is there a vault at `path`?
 pub fn exists(path: &Path) -> bool {
     path.is_file()
@@ -374,7 +418,7 @@ impl Vault {
     }
 
     fn open_str(path: &Path, text: &str, password: &str, wrapper: &dyn KeyWrapper) -> VResult<Vault> {
-        let file: VaultFile = serde_json::from_str(text).map_err(|e| VaultError::Corrupt(e.to_string()))?;
+        let file: VaultFile = serde_json::from_str(text).map_err(json_err)?;
         if file.format != FORMAT || file.kdf.alg != "argon2id" {
             return Err(VaultError::Corrupt("unsupported format".into()));
         }
@@ -412,8 +456,7 @@ impl Vault {
 
         let manifest_bytes = open_sealed(&vk, &file.manifest, AAD_MANIFEST)
             .ok_or_else(|| VaultError::Corrupt("manifest failed authentication".into()))?;
-        let manifest: Manifest =
-            serde_json::from_slice(&manifest_bytes).map_err(|e| VaultError::Corrupt(e.to_string()))?;
+        let manifest: Manifest = serde_json::from_slice(&manifest_bytes).map_err(json_err)?;
         let ids: Vec<&str> = file.entries.iter().map(|e| e.id.as_str()).collect();
         if manifest.ids.iter().map(String::as_str).ne(ids.iter().copied()) {
             return Err(VaultError::Corrupt("entries were added, removed or reordered".into()));
@@ -423,7 +466,7 @@ impl Vault {
         for se in &file.entries {
             let pt = open_sealed(&vk, &Sealed { nonce: se.nonce.clone(), ct: se.ct.clone() }, &entry_aad(&se.id))
                 .ok_or_else(|| VaultError::Corrupt("entry failed authentication".into()))?;
-            let e: EntryIn = serde_json::from_slice(&pt).map_err(|e| VaultError::Corrupt(e.to_string()))?;
+            let e: EntryIn = serde_json::from_slice(&pt).map_err(json_err)?;
             entries.push(Entry {
                 id: se.id.clone(),
                 origin: e.origin,
@@ -439,10 +482,13 @@ impl Vault {
 
     /// Re-checks the master password (for revealing a password).
     pub fn verify_password(&self, password: &str) -> bool {
-        derive_kek(password, &self.salt, self.params).is_ok_and(|k| {
-            // Constant-time comparison of the two derived keys.
-            k.iter().zip(self.kek.iter()).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0
-        })
+        self.verifier().verify(password)
+    }
+
+    /// A `Send` copy of what is needed to check the master password, so the
+    /// slow Argon2 run can happen off the UI thread.
+    pub fn verifier(&self) -> Verifier {
+        Verifier { salt: self.salt, params: self.params, kek: self.kek.clone() }
     }
 
     pub fn entries(&self) -> &[Entry] {
@@ -615,14 +661,14 @@ impl Vault {
                     updated: e.updated,
                 },
             )
-            .map_err(|e| VaultError::Corrupt(e.to_string()))?;
+            .map_err(|_| VaultError::Corrupt("encoding failed".into()))?;
             let s = seal(&self.vk, &pt, &entry_aad(&e.id))?;
             entries.push(SealedEntry { id: e.id.clone(), nonce: s.nonce, ct: s.ct });
         }
         let manifest = Manifest { generation, ids: self.entries.iter().map(|e| e.id.clone()).collect() };
         let manifest = seal(
             &self.vk,
-            &serde_json::to_vec(&manifest).map_err(|e| VaultError::Corrupt(e.to_string()))?,
+            &serde_json::to_vec(&manifest).map_err(|_| VaultError::Corrupt("encoding failed".into()))?,
             AAD_MANIFEST,
         )?;
         let file = VaultFile {
@@ -634,7 +680,7 @@ impl Vault {
             manifest,
             entries,
         };
-        let json = serde_json::to_vec_pretty(&file).map_err(|e| VaultError::Corrupt(e.to_string()))?;
+        let json = serde_json::to_vec_pretty(&file).map_err(|_| VaultError::Corrupt("encoding failed".into()))?;
         write_atomic(&self.path, &json).map_err(|e| VaultError::Io(e.to_string()))?;
         self.generation = generation;
         Ok(())
@@ -964,6 +1010,87 @@ mod tests {
         // Simulates DPAPI failing on another machine: password alone is not enough.
         assert!(matches!(Vault::open(&dir.file(), PW, &FailingWrap), Err(VaultError::Wrap(_))));
         assert!(matches!(Vault::open(&dir.file(), PW, &NoWrap), Err(VaultError::Wrap(_))));
+    }
+
+    #[test]
+    fn fill_requires_exact_origin() {
+        let e = "https://bank.example";
+        assert!(fill_allowed(e, "https://bank.example/login?next=/"));
+        assert!(fill_allowed(e, "https://BANK.example:443/"));
+        assert!(!fill_allowed(e, "https://bank.example:8443/"), "port");
+        assert!(!fill_allowed(e, "http://bank.example/"), "scheme");
+        assert!(!fill_allowed(e, "https://login.bank.example/"), "subdomain");
+        assert!(!fill_allowed("https://login.bank.example", "https://bank.example/"), "parent domain");
+        assert!(!fill_allowed(e, "https://bank.example.evil.com/"), "suffix");
+        assert!(!fill_allowed(e, "https://evilbank.example/"), "prefix");
+        // Cyrillic 'а' look-alike: normalizes to punycode, never equals the ASCII host.
+        assert!(!fill_allowed("https://apple.com", "https://аpple.com/"));
+        assert!(!fill_allowed("https://apple.com", "https://xn--pple-43d.com/"));
+        assert!(fill_allowed("https://xn--pple-43d.com", "https://аpple.com/"), "same IDN host matches itself");
+        // Opaque or non-web origins never match.
+        assert!(!fill_allowed("null", "data:text/html,x"));
+        assert!(!fill_allowed("file:///C:/x", "file:///C:/x"));
+        assert!(!fill_allowed(e, "not a url"));
+    }
+
+    #[test]
+    fn prompts_are_revalidated() {
+        assert!(prompt_still_valid(3, "https://a.example", Some(3), "https://a.example/next"));
+        assert!(!prompt_still_valid(3, "https://a.example", Some(4), "https://a.example/"), "tab switched");
+        assert!(!prompt_still_valid(3, "https://a.example", Some(3), "https://b.example/"), "navigated away");
+        assert!(!prompt_still_valid(3, "https://a.example", None, "https://a.example/"));
+    }
+
+    #[test]
+    fn verifier_off_thread() {
+        let dir = TestDir::new("verifier");
+        let v = fast_vault(&dir);
+        let ver = v.verifier();
+        let ok = std::thread::spawn(move || (ver.verify(PW), ver.verify("nope"))).join().unwrap();
+        assert_eq!(ok, (true, false));
+    }
+
+    #[test]
+    fn failed_password_change_keeps_old_vault() {
+        let dir = TestDir::new("change-fail");
+        let mut v = Vault::create(&dir.file(), PW, KdfParams::insecure_for_tests(), &XorWrap).unwrap();
+        v.save_login("https://a.example/", "alice", z(SECRET), 1, &XorWrap).unwrap();
+        let before = std::fs::read(dir.file()).unwrap();
+
+        // 1. Failure before anything is written (key wrapping fails).
+        assert!(matches!(v.change_password(PW, "new password 1", &FailingWrap), Err(VaultError::Wrap(_))));
+        assert_eq!(std::fs::read(dir.file()).unwrap(), before, "file untouched");
+        assert!(v.verify_password(PW), "in-memory key reverted");
+
+        // 2. Failure while writing: the temp file cannot be created.
+        std::fs::create_dir(dir.0.join("vault.tmp")).unwrap();
+        assert!(matches!(v.change_password(PW, "new password 2", &XorWrap), Err(VaultError::Io(_))));
+        assert_eq!(std::fs::read(dir.file()).unwrap(), before, "file untouched");
+        assert!(v.verify_password(PW));
+        std::fs::remove_dir(dir.0.join("vault.tmp")).unwrap();
+
+        // The old vault still opens with the old password and its data.
+        drop(v);
+        let v = Vault::open(&dir.file(), PW, &XorWrap).unwrap();
+        assert_eq!(v.for_origin("https://a.example/")[0].password.as_str(), SECRET);
+        assert!(Vault::open(&dir.file(), "new password 1", &XorWrap).is_err());
+    }
+
+    #[test]
+    fn file_never_contains_plaintext_after_edits() {
+        let dir = TestDir::new("leak");
+        let mut v = fast_vault(&dir);
+        let id = v.save_login("https://shop.example/", "carol@example.org", z("Correct-Horse-42"), 3, &NoWrap).unwrap();
+        v.upsert(Some(&id), "https://shop.example/", "carol@example.org", None, z("recovery code 9911"), 4, &NoWrap)
+            .unwrap();
+        v.change_password(PW, "another master pw", &NoWrap).unwrap();
+        let bytes = std::fs::read(dir.file()).unwrap();
+        let text = String::from_utf8_lossy(&bytes);
+        for needle in
+            ["carol", "Correct-Horse-42", "recovery code", "shop.example", "another master pw", PW, "alice", SECRET]
+        {
+            assert!(!text.contains(needle), "{needle} found in vault file");
+        }
     }
 
     #[test]

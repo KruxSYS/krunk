@@ -161,6 +161,19 @@ fn as_url(input: &str) -> Option<String> {
     }
 }
 
+/// Removes `user:password@` from a URL before it is stored anywhere
+/// (history, session). Other URLs are returned unchanged.
+pub fn strip_credentials(url: &str) -> String {
+    match Url::parse(url) {
+        Ok(mut u) if !u.username().is_empty() || u.password().is_some() => {
+            let _ = u.set_username("");
+            let _ = u.set_password(None);
+            u.into()
+        }
+        _ => url.to_string(),
+    }
+}
+
 /// The ASCII serialization of a URL's origin (`scheme://host[:port]`), or
 /// `None` for opaque origins (data:, about:, file:, invalid URLs).
 pub fn origin_of(url: &str) -> Option<String> {
@@ -335,6 +348,14 @@ mod tests {
     fn javascript_urls_are_searched_not_run() {
         let u = input_to_url("javascript:alert(1)", DDG);
         assert!(u.starts_with("https://duckduckgo.com/?q="), "{u}");
+    }
+
+    #[test]
+    fn credentials_are_stripped() {
+        assert_eq!(strip_credentials("https://alice:hunter2@example.com/x"), "https://example.com/x");
+        assert_eq!(strip_credentials("ftp://bob@files.example/"), "ftp://files.example/");
+        assert_eq!(strip_credentials("https://example.com/?q=a:b@c"), "https://example.com/?q=a:b@c");
+        assert_eq!(strip_credentials("not a url"), "not a url");
     }
 
     #[test]
