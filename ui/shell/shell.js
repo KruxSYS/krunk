@@ -182,8 +182,8 @@
   LB.on('nav', function (m) { state.nav = m.state; renderNav(); });
   LB.on('shellConfig', function (m) {
     $('home').hidden = !m.showHomeButton;
-    document.documentElement.classList.toggle('dark', !!m.dark);
-    document.documentElement.classList.toggle('light', !m.dark);
+    document.documentElement.classList.toggle('dark', m.theme === 'dark');
+    document.documentElement.classList.toggle('light', m.theme === 'light');
   });
   LB.on('focusAddressBar', function () { address.focus(); address.select(); });
   LB.on('popupClosed', function () { setPopup(null); });

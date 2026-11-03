@@ -11,6 +11,7 @@ pub mod frecency;
 pub mod history;
 pub mod integrity;
 pub mod keys;
+pub mod layout;
 pub mod netscape;
 pub mod pages;
 pub mod passgen;

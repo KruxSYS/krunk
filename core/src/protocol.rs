@@ -15,7 +15,7 @@
 
 use crate::keys::Command;
 use crate::pages::{self, Page};
-use crate::settings::Settings;
+use crate::settings::{Settings, Theme};
 use serde::{Deserialize, Serialize};
 
 /// Maximum size of a privileged message (settings JSON is the largest).
@@ -697,7 +697,7 @@ pub enum Event {
     ShellConfig {
         show_home_button: bool,
         show_bookmarks_bar: bool,
-        dark: bool,
+        theme: Theme,
     },
     /// To the popup WebView: render this content.
     Popup {
@@ -753,7 +753,6 @@ impl Event {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::Settings;
 
     const SHELL: &str = "https://shell.lightbrowser.invalid/shell.html";
     const POPUP: &str = "https://shell.lightbrowser.invalid/popup.html";
@@ -1019,7 +1018,7 @@ mod tests {
                     private: false,
                 },
             },
-            Event::ShellConfig { show_home_button: true, show_bookmarks_bar: false, dark: true },
+            Event::ShellConfig { show_home_button: true, show_bookmarks_bar: false, theme: Theme::Dark },
             Event::Popup { content: PopupContent::Menu { zoom: 1.0, can_reopen: true } },
             Event::Popup {
                 content: PopupContent::Shield { host: "a.example".into(), blocked: 3, allowed: false, enabled: true },

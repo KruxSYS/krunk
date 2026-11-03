@@ -1,0 +1,138 @@
+//! Window layout math (pure, so it is testable without Windows).
+
+use crate::protocol::{PopupKind, PopupRect};
+
+/// Height of the shell strip (tab row 36 + toolbar 40) in DIPs.
+pub const SHELL_HEIGHT_DIP: f64 = 76.0;
+/// Extra height when the bookmarks bar is shown.
+pub const BOOKMARKS_BAR_DIP: f64 = 28.0;
+
+/// A rectangle in physical pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rect {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+/// Shell strip height in physical pixels for a DPI scale.
+pub fn shell_height(scale: f64, bookmarks_bar: bool) -> i32 {
+    let dip = SHELL_HEIGHT_DIP + if bookmarks_bar { BOOKMARKS_BAR_DIP } else { 0.0 };
+    (dip * sane_scale(scale)).round() as i32
+}
+
+fn sane_scale(scale: f64) -> f64 {
+    if scale.is_finite() && (0.5..=8.0).contains(&scale) {
+        scale
+    } else {
+        1.0
+    }
+}
+
+/// Shell and content bounds for a client area of `width` x `height`.
+pub fn split(width: i32, height: i32, scale: f64, bookmarks_bar: bool) -> (Rect, Rect) {
+    let width = width.max(0);
+    let height = height.max(0);
+    let sh = shell_height(scale, bookmarks_bar).min(height);
+    (Rect { x: 0, y: 0, width, height: sh }, Rect { x: 0, y: sh, width, height: height - sh })
+}
+
+/// Converts a popup rect in CSS pixels (relative to the shell viewport,
+/// whose top-left is at `origin` on screen) into screen pixels, clamped to
+/// the monitor work area.
+pub fn popup_screen_rect(css: PopupRect, scale: f64, origin: (i32, i32), work: Rect) -> Rect {
+    let s = sane_scale(scale);
+    let mut w = (css.width * s).round() as i32;
+    let mut h = (css.height * s).round() as i32;
+    w = w.clamp(1, work.width.max(1));
+    h = h.clamp(1, work.height.max(1));
+    let mut x = origin.0 + (css.x * s).round() as i32;
+    let mut y = origin.1 + (css.y * s).round() as i32;
+    x = x.clamp(work.x, work.x + work.width - w);
+    y = y.clamp(work.y, work.y + work.height - h);
+    Rect { x, y, width: w, height: h }
+}
+
+/// Where host-initiated prompts (save/fill password) appear: under the
+/// right end of the toolbar, in CSS pixels of the shell viewport.
+pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> PopupRect {
+    let (w, h) = match kind {
+        PopupKind::SavePassword => (360.0, 150.0),
+        PopupKind::Fill => (340.0, 110.0 + 42.0 * entries.clamp(1, 6) as f64),
+        PopupKind::Menu => (280.0, 440.0),
+        PopupKind::Shield => (300.0, 180.0),
+    };
+    let x = (shell_width_css - w - 8.0).max(0.0);
+    PopupRect { x, y: SHELL_HEIGHT_DIP - 4.0, width: w, height: h }
+}
+
+/// Zoom levels offered by Ctrl +/- (like Chromium).
+pub const ZOOM_STEPS: [f64; 17] =
+    [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0, 5.0];
+
+/// The next zoom step in or out from `current`.
+pub fn next_zoom(current: f64, zoom_in: bool) -> f64 {
+    let eps = 1e-3;
+    if zoom_in {
+        ZOOM_STEPS.iter().copied().find(|z| *z > current + eps).unwrap_or(ZOOM_STEPS[ZOOM_STEPS.len() - 1])
+    } else {
+        ZOOM_STEPS.iter().rev().copied().find(|z| *z < current - eps).unwrap_or(ZOOM_STEPS[0])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_scales_with_dpi() {
+        assert_eq!(shell_height(1.0, false), 76);
+        assert_eq!(shell_height(1.5, false), 114);
+        assert_eq!(shell_height(2.0, true), 208);
+        assert_eq!(shell_height(f64::NAN, false), 76);
+        let (s, c) = split(1000, 700, 1.25, false);
+        assert_eq!(s, Rect { x: 0, y: 0, width: 1000, height: 95 });
+        assert_eq!(c, Rect { x: 0, y: 95, width: 1000, height: 605 });
+        let (s, c) = split(300, 50, 1.0, false);
+        assert_eq!((s.height, c.height), (50, 0), "tiny window");
+    }
+
+    #[test]
+    fn popup_placement_at_150_percent() {
+        let work = Rect { x: 0, y: 0, width: 1920, height: 1040 };
+        let css = PopupRect { x: 900.0, y: 40.0, width: 280.0, height: 440.0 };
+        let r = popup_screen_rect(css, 1.5, (100, 200), work);
+        assert_eq!(r, Rect { x: 100 + 1350, y: 200 + 60, width: 420, height: 660 });
+        // Pushed back inside the work area on the right and bottom.
+        let r = popup_screen_rect(css, 1.5, (1500, 600), work);
+        assert_eq!(r.x + r.width, 1920);
+        assert_eq!(r.y + r.height, 1040);
+        // Second monitor with a negative origin.
+        let left = Rect { x: -1280, y: 0, width: 1280, height: 1000 };
+        let r = popup_screen_rect(PopupRect { x: 0.0, y: 0.0, width: 100.0, height: 100.0 }, 1.0, (-2000, -50), left);
+        assert_eq!((r.x, r.y), (-1280, 0));
+        // Larger than the screen: shrunk to fit.
+        let r = popup_screen_rect(PopupRect { x: 0.0, y: 0.0, width: 4000.0, height: 4000.0 }, 1.0, (0, 0), work);
+        assert_eq!((r.width, r.height), (1920, 1040));
+    }
+
+    #[test]
+    fn prompts_sit_under_the_toolbar_right() {
+        let r = prompt_rect(PopupKind::SavePassword, 0, 1200.0);
+        assert_eq!(r.x + r.width, 1192.0);
+        assert!(r.is_valid());
+        assert!(prompt_rect(PopupKind::Fill, 3, 1200.0).height > prompt_rect(PopupKind::Fill, 1, 1200.0).height);
+        assert!(prompt_rect(PopupKind::Fill, 99, 200.0).is_valid());
+    }
+
+    #[test]
+    fn zoom_steps() {
+        assert_eq!(next_zoom(1.0, true), 1.1);
+        assert_eq!(next_zoom(1.0, false), 0.9);
+        assert_eq!(next_zoom(1.05, true), 1.1);
+        assert_eq!(next_zoom(1.05, false), 1.0);
+        assert_eq!(next_zoom(5.0, true), 5.0);
+        assert_eq!(next_zoom(0.25, false), 0.25);
+    }
+}

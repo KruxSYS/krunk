@@ -72,6 +72,17 @@ pub fn resolve(url: &str) -> Option<Asset> {
     Some(Asset { host, key, bytes, mime: mime_for(key) })
 }
 
+/// Turns favicon PNG bytes into a `data:` URL for the tab strip (the shell
+/// may only load images from itself or `data:`). Oversized icons are dropped.
+pub fn png_data_url(png: &[u8]) -> Option<String> {
+    const PNG_MAGIC: &[u8] = b"\x89PNG\r\n\x1a\n";
+    if png.is_empty() || png.len() > 48 * 1024 || !png.starts_with(PNG_MAGIC) {
+        return None;
+    }
+    use base64ct::Encoding;
+    Some(format!("data:image/png;base64,{}", base64ct::Base64::encode_string(png)))
+}
+
 /// Content-Security-Policy for our documents: only our own scripts and
 /// styles, no network access, no framing.
 pub fn csp(host: Host) -> &'static str {
@@ -179,6 +190,14 @@ mod tests {
         assert!(h.contains("connect-src 'none'"), "new tab page makes no network calls");
         assert!(h.contains("X-Frame-Options: DENY"));
         assert!(!h.contains('\n') || h.contains("\r\n"));
+    }
+
+    #[test]
+    fn favicon_data_urls() {
+        let png = b"\x89PNG\r\n\x1a\nrest";
+        assert_eq!(png_data_url(png).unwrap(), "data:image/png;base64,iVBORw0KGgpyZXN0");
+        assert_eq!(png_data_url(b"<svg onload=x>"), None);
+        assert_eq!(png_data_url(&[]), None);
     }
 
     #[test]
