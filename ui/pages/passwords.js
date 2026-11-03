@@ -187,6 +187,7 @@
     $('e-pw').placeholder = e ? '(unchanged)' : '';
     $('e-pw').type = 'password';
     $('e-note').value = '';
+    $('e-note').placeholder = e && e.hasNote ? '(unchanged)' : '';
     $('e-error').textContent = '';
     $('entry-dialog').showModal();
   }
@@ -205,7 +206,8 @@
     if (origin && !/^https?:\/\//i.test(origin)) origin = 'https://' + origin;
     const pw = $('e-pw').value;
     if (!editing && !pw) { $('e-error').textContent = 'Enter or generate a password.'; return; }
-    const entry = { id: editing ? editing.id : null, origin: origin, username: $('e-user').value, password: pw || null, note: $('e-note').value };
+    // Like the password, an empty note field keeps the stored note when editing.
+    const entry = { id: editing ? editing.id : null, origin: origin, username: $('e-user').value, password: pw || null, note: editing && $('e-note').value === '' ? null : $('e-note').value };
     LB.request('vaultSave', { entry: entry }).then(function () {
       $('e-pw').value = '';
       $('entry-dialog').close();

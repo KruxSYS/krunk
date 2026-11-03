@@ -101,8 +101,10 @@ pub struct EntryInput {
     pub username: String,
     /// `None` keeps the stored password when editing.
     pub password: Option<Secret>,
+    /// `None` (or absent) keeps the stored note when editing; notes are not
+    /// sent to the page, so it cannot pre-fill them.
     #[serde(default)]
-    pub note: String,
+    pub note: Option<String>,
 }
 
 /// Privileged commands. Secrets travel as plain `String` only as far as the
@@ -1153,6 +1155,21 @@ mod tests {
 
     /// Error messages never echo the input, which may contain a password.
     #[test]
+    fn vault_save_note_is_optional() {
+        let parse = |entry: &str| match parse_request(
+            Sender::Page(Page::Passwords),
+            &format!(r#"{{"cmd":"vaultSave","entry":{entry}}}"#),
+        ) {
+            Ok(Envelope { request: Request::VaultSave { entry }, .. }) => entry.note,
+            other => panic!("unexpected {other:?}"),
+        };
+        let base = r#""id":"a1","origin":"https://a.example","username":"u","password":null"#;
+        assert_eq!(parse(&format!("{{{base},\"note\":null}}")), None, "null keeps the stored note");
+        assert_eq!(parse(&format!("{{{base}}}")), None, "absent keeps the stored note");
+        assert_eq!(parse(&format!("{{{base},\"note\":\"\"}}")), Some(String::new()), "empty string clears it");
+    }
+
+    #[test]
     fn errors_do_not_leak_values() {
         let secret = "Tr0ub4dor&3-super-secret";
         let cases = [
@@ -1239,7 +1256,7 @@ mod tests {
                     origin: "https://a.example".into(),
                     username: "u".into(),
                     password: Some(Secret::from("p")),
-                    note: String::new(),
+                    note: None,
                 },
             },
             Request::GeneratePassword { length: 24, symbols: false },

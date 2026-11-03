@@ -767,6 +767,16 @@ async function testPasswords(browser) {
   await page.waitForTimeout(60);
   const sv = await lastSent(page, 'vaultSave');
   check(sv && sv.entry.origin === 'https://news.example.com' && sv.entry.username === 'reader' && sv.entry.password === 'k7#Vq2!mZp9@Lr4$Wx8e', 'add sends vaultSave with https:// origin');
+  // Editing an entry that has a note: the page cannot see the note, so an
+  // empty field must keep it (note: null), not overwrite it with "".
+  await page.locator('.pw-row[data-id="a2"]').hover();
+  await page.locator('.pw-row[data-id="a2"] .icon-btn[title="Edit"]').click();
+  check(await page.getAttribute('#e-note', 'placeholder') === '(unchanged)', 'edit shows "(unchanged)" for an existing note');
+  await page.fill('#e-user', 'alice.renamed@example.org');
+  await page.press('#e-user', 'Enter');
+  await page.waitForTimeout(60);
+  const ed = await lastSent(page, 'vaultSave');
+  check(ed && ed.entry.id === 'a2' && ed.entry.note === null && ed.entry.password === null, 'edit keeps the stored note and password (null) (got ' + JSON.stringify(ed && ed.entry) + ')');
   await page.click('#change');
   await page.fill('#c-old', 'correct horse battery');
   await page.fill('#c-new', 'new master pass 1');

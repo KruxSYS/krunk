@@ -420,7 +420,7 @@ impl Browser {
                 &origin,
                 &username,
                 password.map(Secret::into_zeroizing),
-                Zeroizing::new(note),
+                note.map(Zeroizing::new),
                 now_ms(),
                 &Dpapi,
             ),

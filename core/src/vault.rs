@@ -569,12 +569,12 @@ impl Vault {
         url: &str,
         username: &str,
         password: Option<Zeroizing<String>>,
-        note: Zeroizing<String>,
+        note: Option<Zeroizing<String>>,
         now: i64,
         wrapper: &dyn KeyWrapper,
     ) -> VResult<String> {
         let origin = origin_of(url).ok_or(VaultError::InvalidEntry("origin"))?;
-        validate(username, password.as_deref().map(String::as_str), &note)?;
+        validate(username, password.as_deref().map(String::as_str), note.as_deref().map_or("", String::as_str))?;
         let id = match id {
             Some(id) => {
                 let e = self.entries.iter_mut().find(|e| e.id == id).ok_or(VaultError::NotFound)?;
@@ -583,7 +583,9 @@ impl Vault {
                 if let Some(p) = password {
                     e.password = p;
                 }
-                e.note = note;
+                if let Some(n) = note {
+                    e.note = n;
+                }
                 e.updated = now;
                 id.to_string()
             }
@@ -595,7 +597,7 @@ impl Vault {
                     origin,
                     username: username.to_string(),
                     password,
-                    note,
+                    note: note.unwrap_or_default(),
                     created: now,
                     updated: now,
                 });
@@ -950,11 +952,15 @@ mod tests {
         let id = v.save_login("https://bank.example/", "alice", z("rotated"), 5, &NoWrap).unwrap();
         assert_eq!(v.entries().len(), 2);
         assert_eq!(v.entry(&id).unwrap().password.as_str(), "rotated");
-        v.upsert(Some(&id), "https://bank.example/", "alice2", None, z("note"), 6, &NoWrap).unwrap();
+        v.upsert(Some(&id), "https://bank.example/", "alice2", None, Some(z("note")), 6, &NoWrap).unwrap();
         assert_eq!(v.entry(&id).unwrap().password.as_str(), "rotated", "None keeps password");
-        assert_eq!(v.entry(&id).unwrap().username, "alice2");
-        assert!(v.upsert(None, "not a url", "x", Some(z("p")), z(""), 7, &NoWrap).is_err());
-        assert!(v.upsert(None, "https://x.example/", "x", Some(z("")), z(""), 7, &NoWrap).is_err());
+        assert_eq!(v.entry(&id).unwrap().note.as_str(), "note");
+        // Editing without a note (the page sends null when the field is left empty) keeps it.
+        v.upsert(Some(&id), "https://bank.example/", "alice3", None, None, 7, &NoWrap).unwrap();
+        assert_eq!(v.entry(&id).unwrap().note.as_str(), "note", "None keeps note");
+        assert_eq!(v.entry(&id).unwrap().username, "alice3");
+        assert!(v.upsert(None, "not a url", "x", Some(z("p")), None, 7, &NoWrap).is_err());
+        assert!(v.upsert(None, "https://x.example/", "x", Some(z("")), None, 7, &NoWrap).is_err());
         v.delete(&id, &NoWrap).unwrap();
         assert_eq!(v.delete(&id, &NoWrap), Err(VaultError::NotFound));
         drop(v);
@@ -1081,8 +1087,16 @@ mod tests {
         let dir = TestDir::new("leak");
         let mut v = fast_vault(&dir);
         let id = v.save_login("https://shop.example/", "carol@example.org", z("Correct-Horse-42"), 3, &NoWrap).unwrap();
-        v.upsert(Some(&id), "https://shop.example/", "carol@example.org", None, z("recovery code 9911"), 4, &NoWrap)
-            .unwrap();
+        v.upsert(
+            Some(&id),
+            "https://shop.example/",
+            "carol@example.org",
+            None,
+            Some(z("recovery code 9911")),
+            4,
+            &NoWrap,
+        )
+        .unwrap();
         v.change_password(PW, "another master pw", &NoWrap).unwrap();
         let bytes = std::fs::read(dir.file()).unwrap();
         let text = String::from_utf8_lossy(&bytes);
