@@ -544,6 +544,15 @@ impl Browser {
         }
     }
 
+    /// Opens the find bar with keyboard focus in it: the shell WebView must
+    /// get focus first, or typing still goes to the page.
+    pub(super) fn show_find_bar(&self) {
+        if let Some(s) = self.shell() {
+            s.focus();
+            s.post_json(&Event::ShowFind.to_json());
+        }
+    }
+
     // ------------------------------------------------------------ layout & state
 
     fn layout(&self) {
@@ -769,7 +778,7 @@ impl Browser {
             Command::Downloads => self.open_page(Page::Downloads),
             // Wired up in milestone 4 (bookmarks, find in page).
             Command::Bookmark => self.toggle_bookmark(),
-            Command::Find => self.post_shell(&Event::ShowFind),
+            Command::Find => self.show_find_bar(),
             Command::FindNext => self.find_step(false),
             Command::FindPrev => self.find_step(true),
         }

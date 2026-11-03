@@ -40,7 +40,7 @@ impl Browser {
             .filter(|q| !q.is_empty());
         match has_query {
             Some(q) => self.find(&q, backwards),
-            None => self.post_shell(&Event::ShowFind),
+            None => self.show_find_bar(),
         }
     }
 
