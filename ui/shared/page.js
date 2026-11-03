@@ -85,6 +85,15 @@
       if (input) input.select();
     });
   }
+  // Cancel buttons in the pages' <form method="dialog"> dialogs are
+  // type="button": a submit button placed first would be the form's default,
+  // so Enter in a field would cancel instead of confirm. Close them here with
+  // the same returnValue the form would have set.
+  document.addEventListener('click', function (e) {
+    const b = e.target.closest && e.target.closest('dialog button[type="button"][value="cancel"]');
+    if (b) b.closest('dialog').close('cancel');
+  });
+
   function confirmDialog(message, opts) { return dialog(message, Object.assign({}, opts || {})); }
   function promptDialog(message, value, opts) { return dialog(message, Object.assign({ input: true, value: value }, opts || {})); }
 

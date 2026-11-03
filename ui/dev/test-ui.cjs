@@ -397,6 +397,10 @@ async function testHistory(browser) {
   await page.check('#c-downloads');
   await page.selectOption('#clear-range', '86400000');
   await shot(page, 'history-clear-dialog.png');
+  check(await page.evaluate(() => Array.from(document.querySelectorAll('dialog form[method="dialog"]')).every((f) => {
+    const def = f.querySelector('button:not([type="button"])');
+    return def && def.value === 'ok';
+  })), 'history dialogs: Enter confirms (default button is not Cancel)');
   await page.click('#clear-ok');
   await page.waitForTimeout(50);
   const cbd = await lastSent(page, 'clearBrowsingData');
@@ -439,6 +443,10 @@ async function testBookmarks(browser) {
   await page.waitForSelector('.folder');
   check((await page.locator('.folder').count()) === 6, 'tree shows 6 folders');
   check((await page.locator('#items .row').count()) === 4, 'bar folder lists 4 items');
+  check(await page.evaluate(() => Array.from(document.querySelectorAll('dialog form[method="dialog"]')).every((f) => {
+    const def = f.querySelector('button:not([type="button"])');
+    return def && def.value === 'ok';
+  })), 'bookmarks dialogs: Enter confirms (default button is not Cancel)');
   // A bookmark removed in another tab disappears when this tab is shown again.
   await page.evaluate(() => {
     const h = window.__host.handlers;
@@ -730,12 +738,25 @@ async function testPasswords(browser) {
   await page.locator('#reveal-dialog button[value="ok"]').click();
   await page.waitForTimeout(60);
   check((await page.textContent('#reveal-error')).includes('Wrong'), 'reveal with a wrong master password fails');
+  // Enter in the field confirms (the Cancel button must not be the form's default).
   await page.fill('#reveal-pw', 'correct horse battery');
-  await page.locator('#reveal-dialog button[value="ok"]').click();
+  await page.press('#reveal-pw', 'Enter');
   await page.waitForTimeout(60);
-  check((await page.textContent('.pw-row[data-id="a1"] .secret')) === 'Tr0ub4dor&3', 'reveal shows the password after re-entering the master password');
+  check((await page.textContent('.pw-row[data-id="a1"] .secret')) === 'Tr0ub4dor&3', 'reveal (Enter) shows the password after re-entering the master password');
   const rv = await lastSent(page, 'vaultReveal');
   check(rv && rv.id === 'a1' && rv.password === 'correct horse battery', 'reveal sends the master password with the entry id');
+  // Cancel closes the dialog without a request.
+  const revealsBefore = (await sent(page)).filter((m) => m.cmd === 'vaultReveal').length;
+  await page.locator('.pw-row[data-id="a1"] button', { hasText: 'Show' }).click();
+  await page.fill('#reveal-pw', 'typed then cancelled');
+  await page.locator('#reveal-dialog button[value="cancel"]').click();
+  await page.waitForTimeout(60);
+  check(!(await page.locator('#reveal-dialog').evaluate((d) => d.open)) &&
+    (await sent(page)).filter((m) => m.cmd === 'vaultReveal').length === revealsBefore, 'reveal Cancel closes without sending');
+  check(await page.evaluate(() => Array.from(document.querySelectorAll('dialog form[method="dialog"]')).every((f) => {
+    const def = f.querySelector('button:not([type="button"])');
+    return def && def.value === 'ok';
+  })), 'every passwords dialog has the confirm button as its default (Enter)');
   await page.click('#add');
   await page.fill('#e-origin', 'news.example.com');
   await page.fill('#e-user', 'reader');
