@@ -723,7 +723,10 @@ impl Browser {
             Command::NewTab => self.new_tab(None, false),
             Command::NewPrivateTab => self.new_tab(None, true),
             Command::CloseTab => {
-                if let Some(id) = self.model.borrow().active_id() {
+                // Bind first: an `if let` scrutinee's `Ref` lives for the whole
+                // block, and `with_model` needs the model mutably.
+                let active = self.model.borrow().active_id();
+                if let Some(id) = active {
                     let effects = self.with_model(|m| m.close(id, now));
                     self.apply(effects);
                 }
@@ -951,7 +954,8 @@ impl Browser {
             }
             Request::FillReply { tab_id, origin, entry_id } => self.fill_reply(tab_id, &origin, entry_id),
             Request::RequestFill => {
-                if let Some(id) = self.model.borrow().active_id() {
+                let active = self.model.borrow().active_id();
+                if let Some(id) = active {
                     self.request_fill(id, None);
                 }
             }

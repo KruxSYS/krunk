@@ -26,7 +26,8 @@ impl Browser {
             Request::ShowBookmarkFolder { id, rect } => self.show_bookmark_folder(id, rect),
             Request::Find { query, backwards } => self.find(&query, backwards),
             Request::FindClose => {
-                if let Some(id) = self.model.borrow().active_id() {
+                let active = self.model.borrow().active_id();
+                if let Some(id) = active {
                     self.stop_find(id);
                 }
             }

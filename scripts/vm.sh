@@ -11,6 +11,7 @@
 #   scripts/vm.sh shot NAME [DIR]        screenshot the desktop to DIR/NAME.png
 #   scripts/vm.sh keys "SENDKEYS"        type with System.Windows.Forms.SendKeys
 #   scripts/vm.sh click X Y              left click at screen coordinates
+#   scripts/vm.sh drag X1 Y1 X2 Y2       left-button drag in small steps
 #   scripts/vm.sh sh 'POWERSHELL'        run a command over ssh (non-interactive)
 set -euo pipefail
 VM=windows
@@ -68,6 +69,15 @@ Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; pu
 [M]::mouse_event(2,0,0,0,[UIntPtr]::Zero); Start-Sleep -Milliseconds 60; [M]::mouse_event(4,0,0,0,[UIntPtr]::Zero)
 PS
     run_ps1 "$tmp" ;;
+  drag)
+    cat > "$tmp" <<PS
+Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class M { [DllImport("user32.dll")] public static extern bool SetCursorPos(int x,int y); [DllImport("user32.dll")] public static extern void mouse_event(uint f,int x,int y,uint d,UIntPtr e); }'
+[M]::SetCursorPos($2, $3) | Out-Null; Start-Sleep -Milliseconds 150
+[M]::mouse_event(2,0,0,0,[UIntPtr]::Zero); Start-Sleep -Milliseconds 150
+for (\$i = 1; \$i -le 20; \$i++) { [M]::SetCursorPos($2 + ($4 - $2) * \$i / 20, $3 + ($5 - $3) * \$i / 20) | Out-Null; Start-Sleep -Milliseconds 30 }
+Start-Sleep -Milliseconds 150; [M]::mouse_event(4,0,0,0,[UIntPtr]::Zero)
+PS
+    run_ps1 "$tmp" ;;
   sh) ssh "$VM" "$2" ;;
-  *) sed -n '2,16p' "$0"; exit 1 ;;
+  *) sed -n '2,17p' "$0"; exit 1 ;;
 esac
