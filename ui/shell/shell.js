@@ -111,7 +111,8 @@
     $('reload').title = n.loading ? 'Stop (Esc)' : 'Reload (Ctrl+R)';
     if (!state.editing) $('address').value = n.url;
     $('star').classList.toggle('bookmarked', !!n.bookmarked);
-    $('star').hidden = !n.url;
+    // Built-in pages (lb://) cannot be bookmarked.
+    $('star').hidden = !n.url || n.url.startsWith('lb://');
     const secure = n.secure;
     $('site-icon').classList.toggle('secure', secure);
     $('site-icon-use').setAttribute('href', secure ? '#i-lock' : '#i-info');

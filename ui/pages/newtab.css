@@ -21,3 +21,4 @@ main { width: min(820px, 92vw); padding-top: 16vh; }
 .tile .pinned-mark .icon { width: 13px; height: 13px; }
 .tile.pinned .tools .pin { color: var(--accent); }
 #empty { margin-top: 40px; text-align: center; color: var(--fg-muted); }
+#empty { grid-column: 1 / -1; }
