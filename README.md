@@ -1,10 +1,85 @@
 # LightBrowser
 
-A lightweight Windows 10/11 (x64) browser: a Rust host around the Microsoft Edge WebView2
-(Evergreen, Chromium) runtime. *Work in progress; full build and usage instructions arrive with
-the packaging milestone.*
+LightBrowser is a lightweight, privacy-minded web browser for Windows 10/11 (x64). It is a
+single small Rust executable (about 6 MB) around the Microsoft Edge **WebView2** runtime, which
+is Chromium and is kept up to date by Windows. It includes:
+- tabs and private tabs
+- history and bookmarks
+- a new-tab page with your most-visited sites
+- built-in ad and tracker blocking
+- an encrypted password vault
+- downloads, find, zoom, print and DevTools
+- session restore
+- background-tab sleep, to save memory
 
-## Architecture
+## Download and requirements
+- **The file:** `LightBrowser.exe` is the whole program, with no installer. Verify it against
+  `SHA256SUMS`:
+  - PowerShell: `Get-FileHash LightBrowser.exe`
+  - Linux: `sha256sum -c SHA256SUMS`
+- **System:** Windows 10 or 11, 64-bit.
+- **Runtime:** the Microsoft Edge WebView2 Runtime (Evergreen). It is preinstalled on Windows 11
+  and on current Windows 10. If it is missing, LightBrowser says so at startup and offers to
+  open the download page (https://developer.microsoft.com/microsoft-edge/webview2/).
+- **Data location:** everything is stored in `%LOCALAPPDATA%\LightBrowser`:
+  - `browser.db` (history, bookmarks, settings, session)
+  - `vault.json` (encrypted passwords)
+  - `engine.dat` (the compiled filter engine)
+  - `profile\` (WebView2 cookies, cache and site data)
+  - `lightbrowser.log`
+
+  Delete that folder to reset the browser completely.
+- **Unsigned binary:** the exe isn't code-signed, so SmartScreen may warn the first time it runs.
+
+## Usage
+Type a URL or search words in the address bar. Search uses DuckDuckGo by default; this can be
+changed in Settings. Built-in pages:
+- `lb://settings`
+- `lb://history`
+- `lb://bookmarks`
+- `lb://passwords`
+- `lb://downloads`
+- `lb://about`
+
+| Keys | Action |
+|------|--------|
+| Ctrl+T / Ctrl+Shift+N | New tab / new private tab |
+| Ctrl+W, Ctrl+Shift+T | Close tab, reopen closed tab |
+| Ctrl+Tab / Ctrl+Shift+Tab, Ctrl+1…8, Ctrl+9 | Next / previous tab, tab by position, last tab |
+| Ctrl+L, Alt+D, F6 | Address bar |
+| F5 / Ctrl+R, Ctrl+F5 / Ctrl+Shift+R | Reload, reload bypassing the cache |
+| Alt+Left / Alt+Right, Alt+Home | Back / forward, home page |
+| Ctrl+D | Bookmark this page |
+| Ctrl+H, Ctrl+Shift+O, Ctrl+J | History, bookmarks, downloads |
+| Ctrl+F, F3 / Shift+F3 (Ctrl+G / Ctrl+Shift+G) | Find, next / previous match |
+| Ctrl+= / Ctrl+-, Ctrl+0 | Zoom in / out, reset |
+| Ctrl+P | Print |
+| F12, Ctrl+Shift+I | DevTools |
+
+- **Shield:** the shield in the toolbar shows how many ads and trackers were blocked on the
+  page. Click it to allow ads on that site.
+- **Passwords:**
+  - When you sign in to a site, LightBrowser asks "Save password?". The first save asks you to
+    create the vault with a master password.
+  - To fill a login, click the key icon in the address bar.
+  - Manage logins on `lb://passwords`. Showing a password asks for the master password again.
+- **Private tabs:** they use a separate InPrivate profile. Nothing from them is written to
+  history, the session or the favicon cache. Their cookies and site data stay in memory and
+  are not written to disk (WebView2 InPrivate).
+- **Memory:** background tabs go to sleep after 5 minutes. Optionally they can be unloaded
+  completely after a longer time; turn this on in Settings → Performance.
+
+Command-line options (all optional):
+
+| Option | Effect |
+|--------|--------|
+| `--update-filters` | Update the filter lists and run a blocking self-test, without opening a window |
+| `--mem-report` | Log the memory of the browser's process tree to `memory-report.log` every 10 s |
+| `--sleep-test-seconds=N` | Testing only: run the tab sleep/suspend/discard timers in seconds instead of minutes |
+
+## How it works
+
+### Architecture
 
 ```
 core/   platform-independent library (lb_core): storage, history, bookmarks, frecency,
@@ -86,10 +161,23 @@ ui/     the browser's own UI (HTML/CSS/JS), embedded into the exe at build time.
     for the session.
 
 ### Password vault
-- **Storage:** passwords live in `vault.json`, separate from the SQLite database.
-  - Encryption: Argon2id (64 MiB, t=3) → XChaCha20-Poly1305 per entry with fresh nonces.
-  - The vault key is additionally wrapped with DPAPI (CurrentUser).
-  - Details and threat model: `docs/SECURITY.md`.
+```
+master password --Argon2id (random 16-byte salt, 64 MiB, t=3, p=1)--> KEK      (never stored)
+KEK --XChaCha20-Poly1305--> key-check record + wrapped vault key VK (random 32 bytes)
+wrapped VK --DPAPI (CurrentUser)--> stored in vault.json
+VK  --XChaCha20-Poly1305 (fresh 24-byte nonce, AAD = entry id)--> each login; manifest of ids
+```
+- **Storage:** passwords live in `vault.json`, separate from the SQLite database. Origins,
+  usernames and notes are encrypted too. Every record is authenticated, so tampering,
+  swapping or removing entries is detected.
+- **Copying the file is not enough:** someone who copies `vault.json` needs the master
+  password *and* the same Windows account on the same PC (DPAPI).
+- **Changing the master password** re-keys everything (new salt, KEK and VK) and replaces the
+  file atomically.
+- **Secrets in memory** are held in `Zeroizing` buffers and wiped when the vault locks. They are
+  never logged and never stored in SQLite.
+- Threat model (assets, attackers, mitigations, out of scope): `docs/SECURITY.md` (in the
+  release download: `SECURITY.md` next to this file).
 - **Unlocking:** off the UI thread; the host enforces an exponential retry delay (1 s → 60 s).
 - **Auto-lock:** after inactivity, on Windows lock and on sleep.
 - **Login detection** (top frame only) offers "Save password?" in the browser's popup window.
@@ -174,10 +262,91 @@ How to read these numbers:
 To reproduce: enable discard in Settings, start with `--sleep-test-seconds=90 --mem-report`,
 open the sites and read `memory-report.log` (steps in `docs/MANUAL_TEST.md`).
 
-## Development
+## Building from source
+Requirements: Rust stable (1.85 or newer). The workspace has two crates:
+- `core`: platform-independent, `#![forbid(unsafe_code)]`
+- `app`: the Windows host; all `unsafe` is confined to `app/src/ffi/`
+
+The WebView2 loader DLL is embedded in the exe and checked against its SHA-256 at load time,
+so there is nothing to ship next to the exe.
+
+### Linux → Windows cross-compile (GNU toolchain; how the release is built)
+```sh
+sudo apt install gcc-mingw-w64-x86-64            # linker + windres (for the manifest/version resource)
+rustup target add x86_64-pc-windows-gnu
+# ~/.cargo/config.toml:
+#   [target.x86_64-pc-windows-gnu]
+#   linker = "x86_64-w64-mingw32-gcc"
+cargo build --release --target x86_64-pc-windows-gnu
+# -> target/x86_64-pc-windows-gnu/release/LightBrowser.exe
+```
+The release profile uses LTO, `opt-level = "s"`, strip and `panic = "abort"`. A clean build
+takes about 1 minute on a fast machine. If the machine is short on RAM, use `-j 4`.
+
+### Linux → Windows with the MSVC ABI (optional, cargo-xwin)
+```sh
+cargo install cargo-xwin
+rustup target add x86_64-pc-windows-msvc
+cargo xwin build --release --target x86_64-pc-windows-msvc
+```
+`cargo-xwin` downloads the MSVC CRT and Windows SDK, which means accepting Microsoft's licence.
+*This path was not built in this project's pipeline; the GNU build above is the tested one.*
+
+### Native Windows
+- **MSVC** (Visual Studio Build Tools with the "Desktop development with C++" workload):
+  `cargo build --release`. `embed-resource` uses `rc.exe` from the Windows SDK.
+- **GNU:** install MSYS2 with `mingw-w64-x86_64-toolchain`, which provides `gcc` and `windres`,
+  run `rustup target add x86_64-pc-windows-gnu`, then
+  `cargo build --release --target x86_64-pc-windows-gnu`.
+
+*Neither native path was exercised in this pipeline. The code is not GNU-specific.*
+
+### Checks
+```sh
+cargo test -p core                                                       # 164 unit tests
+cargo clippy --workspace --all-targets -- -D warnings                    # Linux
+cargo clippy --workspace --all-targets --target x86_64-pc-windows-gnu -- -D warnings
+cargo fmt --all -- --check
+cargo audit
+NODE_PATH=/usr/lib/node_modules/@playwright/mcp/node_modules node ui/dev/test-ui.cjs [shots-dir]   # UI pages with a mock host
+```
 - Testing on Windows: `scripts/vm.sh` deploys `dist/LightBrowser.exe` to a Windows test machine
   over SSH and drives it (start, stop, screenshots, keys, clicks).
-- Core tests: `cargo test -p core`
-- Windows build: `cargo build --release --target x86_64-pc-windows-gnu`
-- UI tests (mock host, no exe):
-  `NODE_PATH=/usr/lib/node_modules/@playwright/mcp/node_modules node ui/dev/test-ui.cjs [shots-dir]`
+- `scripts/vm-mem.ps1` lists the process tree with memory figures and the WebView2 command line.
+- `scripts/vm-leak-scan.ps1` searches the data folder for strings that must never be stored,
+  such as a test password.
+- The Windows checklist is `docs/MANUAL_TEST.md`.
+
+## Known limitations
+- **No tab pinning in the UI.** The memory policy supports pinned tabs, but the tab strip
+  cannot pin yet.
+- **Discarding loses back/forward history.** A discarded tab reloads its last URL; its history
+  and any unsaved form input are lost. Discard is off by default.
+- **uBlock Origin scriptlets (`+js(...)`) are not executed.** Network and cosmetic (CSS) rules
+  work; scriptlet-based anti-adblock and annoyance fixes do not.
+  - Cosmetic filtering of generic rules is limited to the first 2000 class names and ids a
+    page reports.
+- **Some settings need a restart:** hardware acceleration, proxy, extra flags and SmartScreen.
+  This is because all tabs share one WebView2 environment. The settings page says when.
+- **The WebView2 runtime determines the engine version.** LightBrowser cannot pin or patch
+  Chromium; security updates come from Windows/Edge updates.
+- **Memory figures:**
+  - Sleep and suspend trim the working set but do not release committed memory; only discard
+    does.
+  - WebView2 shares renderer processes between same-site tabs, so discarding one of two tabs of
+    the same site frees less.
+- **The vault does not detect rollback.** Replacing `vault.json` with an older copy is not
+  detected. See `docs/SECURITY.md` for the full threat model and what is out of scope.
+- **Platform support:** no Windows on ARM build, no installer, no auto-update and no extensions.
+- **Unsigned:** the exe is not code-signed.
+
+## Third-party components
+- Microsoft WebView2 loader (`assets/webview2/`, `LICENSE.txt` and `NOTICE.txt`): BSD-style
+  licence, redistributable.
+- Filter lists:
+  - EasyList and EasyPrivacy: GPL-3.0-or-later or CC BY-SA 3.0.
+  - uBlock Origin uAssets: GPL-3.0.
+  - Attribution and licences are in `assets/filters/`. The lists are used unmodified, as data.
+- Rust crates: see `Cargo.lock`. The main ones are `webview2-com`/`windows` (MIT/Apache-2.0),
+  `adblock` (MPL-2.0), `rusqlite` with bundled SQLite (MIT, public domain), and RustCrypto
+  `argon2`/`chacha20poly1305` (MIT/Apache-2.0).

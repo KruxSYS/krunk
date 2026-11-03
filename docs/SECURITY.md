@@ -70,6 +70,50 @@ Consequences:
 
 ## Password vault: design and threat model
 
+### Assets
+| Asset | Where it lives |
+|-------|----------------|
+| Saved logins (origin, username, password, note) | `vault.json`, encrypted. Plaintext exists only in memory while the vault is unlocked, in the UI while an entry is shown or edited, and on the clipboard for at most 30 s after "Copy". |
+| Master password | Never stored. It passes once through the passwords page or the unlock prompt to the host, is wiped after the KDF, and is never logged. |
+| Keys (KEK, vault key VK) | KEK is derived on unlock and dropped right away. VK is held in a `Zeroizing` buffer only while unlocked, and is stored only wrapped (KEK, then DPAPI). |
+| Unlock state | The host only. The UI never decides whether the vault is unlocked. |
+| Never-save list | `browser.db` (`vault_never`): origins only, no secrets. |
+
+### Attackers considered
+1. **Someone with a copy of the file:** `vault.json` from a backup, cloud sync, a stolen disk or
+   another account.
+2. **Malware running as the same Windows user:** it can read the user's files and call DPAPI as
+   that user.
+3. **A shoulder-surfer or a person at an unlocked, unattended PC.**
+4. **A malicious web page or iframe:** script on a site the user visits, including third-party
+   iframes, ads and look-alike phishing domains.
+
+How each one is handled:
+- **(1) Copied file:** without the master password, they get ciphertext only. On another
+  account or PC, DPAPI can't unwrap VK even with the password. Usernames and origins are
+  encrypted too, so the file doesn't reveal which sites the user has accounts on. Tampering is
+  detected.
+- **(2) Same-user malware, vault locked:** it can unwrap the DPAPI layer, but it still needs the
+  master password. Each guess costs one Argon2id run (64 MiB, t=3), so offline guessing is slow
+  but possible against a weak password. **Vault unlocked:** out of scope (see below).
+- **(3) Shoulder-surfer or unattended PC:**
+  - Passwords are masked on the passwords page and in prompts.
+  - "Show" asks for the master password again, and failures share the unlock rate limit.
+  - The vault auto-locks after N minutes without use (default 15), on Windows lock, on
+    sleep/hibernate and on exit.
+  - Copied passwords leave the clipboard after 30 s and stay out of clipboard history and the
+    cloud clipboard.
+  - Someone at an unlocked session within the auto-lock window can still use "Copy" or fill
+    logins, as in any password manager. Lower the auto-lock time to reduce this.
+- **(4) Malicious page or iframe:**
+  - A page can only send the three `ContentMessage` kinds, and none of them returns secrets.
+  - Iframes are never heard: messages are top-level only, and the script runs only where
+    `window.top === window`.
+  - Fill needs a user click in the trusted popup window, plus an exact origin match taken from
+    WebView2's own view of the sender.
+  - Built-in pages are on a separate `.invalid` origin that pages can't navigate to or frame.
+  - Details are in the table below.
+
 ### Cryptography
 ```
 master password --Argon2id(16-byte random salt, m=64 MiB, t=3, p=1)--> KEK (32 B, never stored)
@@ -104,9 +148,9 @@ VK  --XChaCha20-Poly1305--> manifest (ordered entry ids + generation)
 | Online guessing through the UI | The host (not the UI) enforces an exponential delay after failures: 1 s, 2 s, 4 s … 60 s. The failure count is persisted, so restarting doesn't reset it. Wrong master passwords on "Show password" count too. |
 | Unattended unlocked vault | Auto-lock after N minutes without vault use (setting, default 15), on Windows session lock (`WTS_SESSION_LOCK`), on sleep or hibernate (`PBT_APMSUSPEND`) and on exit. Locking drops and wipes the keys and decrypted entries. |
 | Passwords left on the clipboard | Copies are flagged `ExcludeClipboardContentFromMonitorProcessing`, `CanIncludeInClipboardHistory=0` and `CanUploadToCloudClipboard=0`. The clipboard is emptied after 30 s, but only if its sequence number is unchanged, so a newer copy by the user is never wiped. |
-| Leaks via logs, database, session, errors | No password or master-password material is ever logged, stored in SQLite, or put into error strings (see `.pipeline/ac5-audit.md`). Parse errors never echo input. Session and history URLs lose any `user:pass@`. |
+| Leaks via logs, database, session, errors | No password or master-password material is ever logged, stored in SQLite, or put into error strings (checked at every release: greps of all log/format calls, a schema review, the `no_plaintext_in_file` tests, and a scan of the whole data dir, WebView2 profile included, on Windows after saving a login). Parse errors never echo input. Session and history URLs lose any `user:pass@`. |
 
-### What it does not protect against (by design)
+### Out of scope (what it does not protect against)
 - **Malware running as the same user while the vault is unlocked.** It can read process memory
   or inject into the browser. No user-mode password manager can stop this.
 - **A keylogger capturing the master password.**

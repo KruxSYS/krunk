@@ -1,6 +1,75 @@
 # Manual test checklist (Windows 10/11 x64)
 
-*Draft; the complete checklist (all screenshots, RAM measurements) comes with packaging.*
+Run these on a real Windows 10 or 11 x64 machine with the release `LightBrowser.exe`.
+Sections 1–3 are the release smoke test. The remaining sections cover each feature in detail.
+Last full pass: 2026-11-03 on a Windows 11 Pro VM (build 26200, WebView2 156.0.4314.58),
+driven with `scripts/vm.sh`.
+
+## 1. Install and first run
+1. Check the hash: `Get-FileHash LightBrowser.exe` matches `SHA256SUMS`.
+2. **Without the WebView2 runtime:** on a machine without it (for example Windows Sandbox
+   after uninstalling it, or an old Windows 10 image), starting the exe shows the "LightBrowser – WebView2
+   Runtime required" dialog with the download link, and offers to open the page. Nothing
+   else happens.
+3. **With the runtime:**
+   - The window opens with one new tab and the address bar focused.
+   - `%LOCALAPPDATA%\LightBrowser\` is created with `browser.db`, `engine.dat`, `profile\`,
+     `bin\WebView2Loader.dll` and `lightbrowser.log`.
+   - The log shows the runtime version and "filter engine loaded from cache" (on the second
+     start).
+4. Only one `LightBrowser.exe` process runs. All other processes are `msedgewebview2.exe`
+   children (`scripts/vm-mem.ps1`). There are no services and no scheduled tasks.
+
+## 2. Release screenshot set (AC4)
+Take these with the final exe. The reference set from the 2026-11-03 pass is in the pipeline
+workspace under `screenshots/final/`.
+
+| Shot | How |
+|------|-----|
+| `final-newtab` | Ctrl+T after browsing a few sites: tiles with favicons, address bar focused |
+| `final-tabs` | 10+ tabs open, a bookmarked page (filled star), bookmarks bar |
+| `final-shield` | A news site (theguardian.com, about 13 blocked), then click the shield: popover with the count and "Allow ads on this site" |
+| `final-save-password` | `https://the-internet.herokuapp.com/login`, sign in as tomsmith / SuperSecretPassword!: "Save password?" popup |
+| `final-passwords` | After "Save" and creating the vault: the entry on lb://passwords, masked |
+| `final-settings` | lb://settings |
+| `final-history` | Ctrl+H: today's visits with favicons |
+| `final-bookmarks` | Ctrl+Shift+O: the bookmarks bar folder with entries |
+
+After the save-password shot, close the browser and run
+`scripts/vm-leak-scan.ps1 -Needles 'SuperSecretPassword','<your master password>'`.
+Expected: `hits=0`.
+
+## 3. Memory figures
+Follow "Memory (M8)" below and record:
+- 1 tab
+- 10 sites awake
+- 10 sites after sleep/suspend
+- after discard
+
+The 2026-11-03 figures are in the README under "Memory".
+
+## Tabs and shell (M3)
+1. Ctrl+T opens a tab. Ctrl+W closes it. Closing the last tab leaves a fresh new-tab page.
+   Ctrl+Shift+T reopens closed tabs in order, with their URLs.
+2. Click tabs to switch. Ctrl+Tab and Ctrl+Shift+Tab cycle. Ctrl+1…8 pick by position and
+   Ctrl+9 picks the last tab.
+3. Drag a tab to a new position: the order sticks and is kept after a restart.
+4. Double-click a tab (not on its ×): a duplicate opens next to it.
+5. Titles and favicons update as pages load. A spinner shows while a tab is loading.
+6. A link with `target=_blank` or `window.open` opens a new tab next to the opener.
+7. **Private tabs:** Ctrl+Shift+N opens a tab with the private badge. Log in to a site there:
+   the normal tabs are not logged in. Close all private tabs and open a new one: you are
+   logged out.
+8. **Address bar:**
+   - `example.com` → `https://example.com/`.
+   - `rust borrow checker` → a DuckDuckGo search.
+   - `lb://history` opens History.
+   - `javascript:alert(1)` typed there becomes a search; it is never run.
+9. A web page can't navigate to `https://lightbrowser.invalid/settings.html` or
+   `https://shell.lightbrowser.invalid/shell.html`. The navigation is blocked, and the log has
+   "blocked navigation to an internal or unsupported URL".
+10. Every shortcut in the README's Usage table works with focus in the page, in the address
+    bar, and after clicking the title bar.
 
 ## Popup window
 1. At 100 % display scaling, open the ⋮ menu. It appears directly under the button, right-aligned,
