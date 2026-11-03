@@ -16,6 +16,7 @@
 use crate::downloads::DownloadItem;
 use crate::keys::Command;
 use crate::pages::{self, Page};
+use crate::secret::Secret;
 use crate::settings::{Settings, Theme};
 use serde::{Deserialize, Serialize};
 
@@ -99,7 +100,7 @@ pub struct EntryInput {
     pub origin: String,
     pub username: String,
     /// `None` keeps the stored password when editing.
-    pub password: Option<String>,
+    pub password: Option<Secret>,
     #[serde(default)]
     pub note: String,
 }
@@ -395,17 +396,17 @@ pub enum Request {
     // ---- vault ----
     VaultStatus,
     VaultSetup {
-        password: String,
+        password: Secret,
     },
     VaultUnlock {
-        password: String,
+        password: Secret,
     },
     VaultLock,
     VaultList,
     /// Shows one password; requires the master password again.
     VaultReveal {
         id: String,
-        password: String,
+        password: Secret,
     },
     VaultCopy {
         id: String,
@@ -418,8 +419,8 @@ pub enum Request {
         id: String,
     },
     VaultChangePassword {
-        old: String,
-        new: String,
+        old: Secret,
+        new: Secret,
     },
     GeneratePassword {
         #[serde(default = "default_pw_len")]
@@ -648,19 +649,28 @@ pub struct Envelope {
     pub request: Request,
 }
 
+#[derive(Deserialize)]
+struct Wire {
+    #[serde(rename = "reqId", default)]
+    req_id: Option<u32>,
+    #[serde(flatten)]
+    request: Request,
+}
+
+/// A parse error without any of the input: serde messages can quote values
+/// (which may be passwords), so only the error class and position are kept.
+fn malformed(e: serde_json::Error) -> ProtocolError {
+    ProtocolError::Malformed(format!("{:?} error at line {} column {}", e.classify(), e.line(), e.column()))
+}
+
 /// Parses and authorizes a privileged message.
 pub fn parse_request(sender: Sender, json: &str) -> Result<Envelope, ProtocolError> {
     if json.len() > MAX_REQUEST_BYTES {
         return Err(ProtocolError::TooLarge);
     }
-    let mut value: serde_json::Value =
-        serde_json::from_str(json).map_err(|e| ProtocolError::Malformed(e.to_string()))?;
-    let obj = value.as_object_mut().ok_or(ProtocolError::Invalid("not an object"))?;
-    let req_id = match obj.remove("reqId") {
-        None | Some(serde_json::Value::Null) => None,
-        Some(v) => Some(v.as_u64().and_then(|n| u32::try_from(n).ok()).ok_or(ProtocolError::Invalid("reqId"))?),
-    };
-    let request: Request = serde_json::from_value(value).map_err(|e| ProtocolError::Malformed(e.to_string()))?;
+    // Parsed straight from the text (no intermediate JSON tree), so secret
+    // fields are allocated once, inside `Secret`.
+    let Wire { req_id, request } = serde_json::from_str(json).map_err(malformed)?;
     if !sender.permits(&request) {
         return Err(ProtocolError::Forbidden);
     }
@@ -675,7 +685,7 @@ pub enum ContentMessage {
     /// unit variants, so that `deny_unknown_fields` applies to them.)
     LoginForm {},
     /// A login form was submitted; the host may offer to save it.
-    Submit { username: String, password: String },
+    Submit { username: String, password: Secret },
     /// The user clicked the key badge in a login field. The host shows a
     /// trusted confirmation in the shell before anything is filled.
     RequestFill {},
@@ -689,7 +699,7 @@ pub fn parse_content(json: &str) -> Result<ContentMessage, ProtocolError> {
     if json.len() > MAX_CONTENT_BYTES {
         return Err(ProtocolError::TooLarge);
     }
-    let msg: ContentMessage = serde_json::from_str(json).map_err(|e| ProtocolError::Malformed(e.to_string()))?;
+    let msg: ContentMessage = serde_json::from_str(json).map_err(malformed)?;
     if let ContentMessage::PageTokens { classes, ids } = &msg {
         if classes.len() + ids.len() > MAX_PAGE_TOKENS
             || classes.iter().chain(ids).any(|t| t.is_empty() || t.chars().count() > MAX_TOKEN_CHARS)
@@ -854,11 +864,12 @@ mod tests {
     fn rejects_malformed_and_unknown() {
         let s = Sender::Shell;
         assert!(matches!(parse_request(s, "nope"), Err(ProtocolError::Malformed(_))));
-        assert!(matches!(parse_request(s, "[1]"), Err(ProtocolError::Invalid(_))));
+        assert!(matches!(parse_request(s, "[1]"), Err(ProtocolError::Malformed(_))));
         assert!(matches!(parse_request(s, r#"{"cmd":"rmRf"}"#), Err(ProtocolError::Malformed(_))));
         assert!(matches!(parse_request(s, r#"{"cmd":"closeTab","id":1,"extra":1}"#), Err(ProtocolError::Malformed(_))));
         assert!(matches!(parse_request(s, r#"{"cmd":"closeTab","id":-1}"#), Err(ProtocolError::Malformed(_))));
-        assert!(matches!(parse_request(s, r#"{"cmd":"back","reqId":"x"}"#), Err(ProtocolError::Invalid(_))));
+        assert!(matches!(parse_request(s, r#"{"cmd":"back","reqId":"x"}"#), Err(ProtocolError::Malformed(_))));
+        assert!(matches!(parse_request(s, r#"{"cmd":"back","reqId":-1}"#), Err(ProtocolError::Malformed(_))));
         let big = format!(r#"{{"cmd":"navigate","input":"{}"}}"#, "a".repeat(MAX_REQUEST_BYTES));
         assert_eq!(parse_request(s, &big), Err(ProtocolError::TooLarge));
     }
@@ -1049,12 +1060,36 @@ mod tests {
         assert!(parse_content(add).is_err(), "web pages cannot allowlist themselves");
     }
 
+    /// Error messages never echo the input, which may contain a password.
+    #[test]
+    fn errors_do_not_leak_values() {
+        let secret = "Tr0ub4dor&3-super-secret";
+        let cases = [
+            format!(r#"{{"cmd":"vaultUnlock","password":"{secret}","extra":"{secret}"}}"#),
+            format!(r#"{{"cmd":"vaultUnlock","password":["{secret}"]}}"#),
+            format!(r#"{{"cmd":"{secret}"}}"#),
+            format!(r#"{{"cmd":"vaultUnlock","password":"{secret}","#),
+        ];
+        for json in &cases {
+            let e = parse_request(Sender::Page(Page::Passwords), json).unwrap_err();
+            assert!(!e.to_string().contains("secret"), "{e}");
+        }
+        let e =
+            parse_content(&format!(r#"{{"lb":"submit","username":"u","password":{{"x":"{secret}"}}}}"#)).unwrap_err();
+        assert!(!e.to_string().contains("secret"), "{e}");
+        // Debug output of parsed requests redacts secrets too.
+        let ok =
+            parse_request(Sender::Page(Page::Passwords), &format!(r#"{{"cmd":"vaultUnlock","password":"{secret}"}}"#))
+                .unwrap();
+        assert!(!format!("{ok:?}").contains("secret"));
+    }
+
     #[test]
     fn content_messages_are_strict() {
         assert_eq!(parse_content(r#"{"lb":"loginForm"}"#), Ok(ContentMessage::LoginForm {}));
         assert_eq!(
             parse_content(r#"{"lb":"submit","username":"a","password":"b"}"#),
-            Ok(ContentMessage::Submit { username: "a".into(), password: "b".into() })
+            Ok(ContentMessage::Submit { username: "a".into(), password: Secret::from("b") })
         );
         assert!(parse_content(r#"{"cmd":"vaultList"}"#).is_err());
         assert!(parse_content(r#"{"lb":"vaultList"}"#).is_err());
@@ -1112,7 +1147,7 @@ mod tests {
                     id: None,
                     origin: "https://a.example".into(),
                     username: "u".into(),
-                    password: Some("p".into()),
+                    password: Some(Secret::from("p")),
                     note: String::new(),
                 },
             },

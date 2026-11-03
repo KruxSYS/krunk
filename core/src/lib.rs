@@ -18,6 +18,7 @@ pub mod netscape;
 pub mod pages;
 pub mod passgen;
 pub mod protocol;
+pub mod secret;
 pub mod settings;
 pub mod storage;
 pub mod tabs;
