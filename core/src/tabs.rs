@@ -34,6 +34,8 @@ pub struct Tab {
     pub opener: Option<TabId>,
     /// Unix ms of the last time the tab was active (used by tab sleeping).
     pub last_active: i64,
+    /// Live but put to sleep (low memory / suspended); shown dimmed.
+    pub asleep: bool,
 }
 
 impl Tab {
@@ -191,6 +193,7 @@ impl TabModel {
                 state,
                 opener,
                 last_active: now,
+                asleep: false,
             },
         );
         let mut effects = Vec::new();
@@ -226,6 +229,7 @@ impl TabModel {
         }
         let tab = &mut self.tabs[idx];
         tab.last_active = now;
+        tab.asleep = false;
         if tab.state == LoadState::Unloaded {
             tab.state = LoadState::Live;
             tab.loading = true;
@@ -290,6 +294,7 @@ impl TabModel {
                 state: LoadState::Live,
                 opener: None,
                 last_active: now,
+                asleep: false,
             },
         );
         let mut effects = vec![Effect::CreateView(id)];
@@ -315,6 +320,7 @@ impl TabModel {
                 state: LoadState::Live,
                 opener: None,
                 last_active: now,
+                asleep: false,
             },
         );
         let mut effects = vec![Effect::CreateView(new_id)];
@@ -372,6 +378,12 @@ impl TabModel {
             Some(t) if t.is_live() => {
                 t.state = LoadState::Unloaded;
                 t.loading = false;
+                t.asleep = false;
+                // A discarded private tab keeps only its URL.
+                if t.private {
+                    t.favicon = None;
+                    t.title = initial_title(&t.url);
+                }
                 vec![Effect::DestroyView(id)]
             }
             _ => Vec::new(),
@@ -404,6 +416,13 @@ impl TabModel {
         }
     }
 
+    /// Marks a live background tab as asleep (or awake again).
+    pub fn set_asleep(&mut self, id: TabId, asleep: bool) {
+        if let Some(t) = self.get_mut(id) {
+            t.asleep = asleep && t.is_live();
+        }
+    }
+
     pub fn set_loading(&mut self, id: TabId, loading: bool) {
         if let Some(t) = self.get_mut(id) {
             t.loading = loading;
@@ -423,7 +442,7 @@ impl TabModel {
                 favicon: t.favicon.clone(),
                 loading: t.loading,
                 private: t.private,
-                sleeping: !t.is_live(),
+                sleeping: !t.is_live() || t.asleep,
             })
             .collect()
     }
@@ -678,6 +697,30 @@ mod tests {
         let s = m.session();
         assert_eq!(s.tabs[0].url, "https://intranet.example/");
         assert!(!serde_json::to_string(&s).unwrap().contains("secret"));
+    }
+
+    #[test]
+    fn sleeping_and_discarding() {
+        let mut m = three(0);
+        m.set_asleep(2, true);
+        assert!(m.infos()[1].sleeping);
+        m.activate(2, 5);
+        assert!(!m.get(2).unwrap().asleep, "activation wakes");
+        let (p, _) = m.open("https://secret.example/", true, Position::End, false, true, 6);
+        m.set_title(p, "Secret page");
+        m.set_favicon(p, Some("data:image/png;base64,AA".into()));
+        m.unload(p);
+        let t = m.get(p).unwrap();
+        assert_eq!(t.url, "https://secret.example/");
+        assert_eq!(t.title, "secret.example", "private discard keeps only the URL");
+        assert_eq!(t.favicon, None);
+        m.set_title(3, "Gamma");
+        m.set_favicon(3, Some("data:image/png;base64,BB".into()));
+        m.unload(3);
+        assert_eq!(m.get(3).unwrap().title, "Gamma", "normal tabs keep title and favicon");
+        assert!(m.get(3).unwrap().favicon.is_some());
+        m.set_asleep(3, true);
+        assert!(!m.get(3).unwrap().asleep, "only live tabs can be asleep");
     }
 
     #[test]
