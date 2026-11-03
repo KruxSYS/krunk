@@ -4,16 +4,19 @@
 //! (`app`) only adds the WebView2/Win32 glue on top.
 #![forbid(unsafe_code)]
 
+pub mod assets;
 pub mod blocker;
 pub mod bookmarks;
 pub mod frecency;
 pub mod history;
 pub mod integrity;
+pub mod keys;
 pub mod netscape;
 pub mod pages;
 pub mod passgen;
 pub mod protocol;
 pub mod settings;
 pub mod storage;
+pub mod tabs;
 pub mod urlclean;
 pub mod vault;

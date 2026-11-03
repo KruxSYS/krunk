@@ -13,6 +13,7 @@
 //!
 //! Outbound messages are [`Event`]s.
 
+use crate::keys::Command;
 use crate::pages::{self, Page};
 use crate::settings::Settings;
 use serde::{Deserialize, Serialize};
@@ -84,7 +85,7 @@ pub struct ClearData {
 }
 
 /// A vault entry as edited on the passwords page.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EntryInput {
     /// `None` creates a new entry.
@@ -99,7 +100,89 @@ pub struct EntryInput {
 
 /// Privileged commands. Secrets travel as plain `String` only as far as the
 /// host's message handler, which moves them into `Zeroizing` immediately.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+/// Popups the shell may ask for. Password prompts are opened by the host only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PopupKind {
+    Menu,
+    Shield,
+    SavePassword,
+    Fill,
+}
+
+impl PopupKind {
+    /// Prompts about passwords must come from the host, never the shell.
+    pub fn shell_may_open(self) -> bool {
+        matches!(self, PopupKind::Menu | PopupKind::Shield)
+    }
+
+    /// Popups with buttons or inputs take keyboard focus.
+    pub fn takes_focus(self) -> bool {
+        !matches!(self, PopupKind::Shield)
+    }
+}
+
+/// A rectangle in CSS pixels relative to the shell's viewport.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PopupRect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl PopupRect {
+    pub const MAX: f64 = 4096.0;
+
+    pub fn is_valid(&self) -> bool {
+        [self.x, self.y, self.width, self.height].iter().all(|v| v.is_finite() && (0.0..=Self::MAX).contains(v))
+            && self.width >= 1.0
+            && self.height >= 1.0
+    }
+}
+
+/// What the popup WebView shows.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum PopupContent {
+    Menu {
+        zoom: f64,
+        can_reopen: bool,
+    },
+    Shield {
+        host: String,
+        blocked: u32,
+        allowed: bool,
+        enabled: bool,
+    },
+    /// "Save password for `username` on `origin`?" (no password is sent to the UI).
+    SavePassword {
+        tab_id: u32,
+        origin: String,
+        username: String,
+        update: bool,
+    },
+    /// "Fill the login for `origin`?" with the matching entries.
+    Fill {
+        tab_id: u32,
+        origin: String,
+        entries: Vec<FillChoice>,
+    },
+}
+
+impl PopupContent {
+    pub fn kind(&self) -> PopupKind {
+        match self {
+            PopupContent::Menu { .. } => PopupKind::Menu,
+            PopupContent::Shield { .. } => PopupKind::Shield,
+            PopupContent::SavePassword { .. } => PopupKind::SavePassword,
+            PopupContent::Fill { .. } => PopupKind::Fill,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "camelCase", rename_all_fields = "camelCase", deny_unknown_fields)]
 pub enum Request {
     /// The page has loaded and wants its initial state.
@@ -145,9 +228,15 @@ pub enum Request {
         page: String,
     },
     ToggleBookmark,
-    /// The shell needs the whole window (menus, popups) or just its strip.
-    SetOverlay {
-        open: bool,
+    /// Opens the popup WebView at `rect` (shell: menu and shield only).
+    ShowPopup {
+        popup: PopupKind,
+        rect: PopupRect,
+    },
+    HidePopup,
+    /// A browser command from a menu item or button.
+    Command {
+        command: Command,
     },
     Find {
         query: String,
@@ -164,14 +253,19 @@ pub enum Request {
     ShieldAllowSite {
         allow: bool,
     },
-    /// Reply to the "Save password?" prompt.
+    /// Reply to the "Save password?" prompt. `tab_id` and `origin` echo the
+    /// prompt; the host re-checks both before saving.
     SavePasswordReply {
+        tab_id: u32,
+        origin: String,
         accept: bool,
         #[serde(default)]
         never: bool,
     },
     /// Reply to the fill prompt: the chosen entry, or `None` to dismiss.
     FillReply {
+        tab_id: u32,
+        origin: String,
         entry_id: Option<String>,
     },
     Quit,
@@ -312,26 +406,74 @@ fn yes() -> bool {
 }
 
 /// Who sent a privileged message, derived by the host from the WebView it
-/// arrived on *and* the `Source` URI the runtime reports.
+/// arrived on *and* the `Source` URI the runtime reports (see [`classify`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sender {
     Shell,
+    Popup,
     Page(Page),
 }
 
+/// Which WebView a message arrived on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Channel {
+    Shell,
+    Popup,
+    Tab,
+}
+
+/// Classification of a message source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Source {
+    /// Our own UI: parse with [`parse_request`].
+    Privileged(Sender),
+    /// An ordinary web page on this origin: parse with [`parse_content`] only.
+    Web { origin: String },
+}
+
+pub const SHELL_PATH: &str = "/shell.html";
+pub const POPUP_PATH: &str = "/popup.html";
+
+/// Decides how a message may be treated, from the channel it came in on,
+/// the `Source` URI and whether it came from the top-level document.
+///
+/// * The shell and popup WebViews accept only their exact document on the
+///   exact shell origin; anything else on those channels is rejected.
+/// * A tab accepts privileged messages only from a built-in page on the
+///   exact pages origin; other http(s) pages are web content.
+/// * Messages from sub-frames are always rejected.
+pub fn classify(channel: Channel, source: &str, top_level: bool) -> Result<Source, ProtocolError> {
+    if !top_level {
+        return Err(ProtocolError::Forbidden);
+    }
+    let url = url::Url::parse(source).map_err(|_| ProtocolError::Forbidden)?;
+    let origin = url.origin().ascii_serialization();
+    match channel {
+        Channel::Shell | Channel::Popup => {
+            let want = if channel == Channel::Shell { SHELL_PATH } else { POPUP_PATH };
+            if origin == pages::SHELL_ORIGIN && url.path() == want {
+                Ok(Source::Privileged(if channel == Channel::Shell { Sender::Shell } else { Sender::Popup }))
+            } else {
+                Err(ProtocolError::Forbidden)
+            }
+        }
+        Channel::Tab => {
+            if let Some(page) = Page::from_url(source) {
+                return Ok(Source::Privileged(Sender::Page(page)));
+            }
+            // Our own origins never count as web content.
+            if origin == pages::SHELL_ORIGIN || origin == pages::PAGES_ORIGIN {
+                return Err(ProtocolError::Forbidden);
+            }
+            match url.scheme() {
+                "http" | "https" => Ok(Source::Web { origin }),
+                _ => Err(ProtocolError::Forbidden),
+            }
+        }
+    }
+}
+
 impl Sender {
-    /// Classifies a message from the shell WebView: only the exact shell
-    /// origin is trusted.
-    pub fn from_shell_source(source: &str) -> Option<Sender> {
-        pages::is_shell_origin(source).then_some(Sender::Shell)
-    }
-
-    /// Classifies a message from a tab WebView: only a built-in page on the
-    /// exact pages origin is privileged. Everything else is web content.
-    pub fn from_tab_source(source: &str) -> Option<Sender> {
-        Page::from_url(source).map(Sender::Page)
-    }
-
     /// Least privilege: each built-in page can only use its own commands.
     pub fn permits(self, req: &Request) -> bool {
         use Request as R;
@@ -355,21 +497,34 @@ impl Sender {
                     | R::Stop
                     | R::Home
                     | R::ToggleBookmark
-                    | R::SetOverlay { .. }
+                    | R::ShowPopup { .. }
+                    | R::HidePopup
+                    | R::Command { .. }
                     | R::Find { .. }
                     | R::FindClose
                     | R::Zoom { .. }
                     | R::Print
                     | R::DevTools
-                    | R::ShieldAllowSite { .. }
-                    | R::SavePasswordReply { .. }
-                    | R::FillReply { .. }
                     | R::Quit
                     | R::GetBookmarks
                     | R::VaultStatus
                     | R::VaultUnlock { .. }
                     | R::VaultLock
                     | R::GeneratePassword { .. }
+            ),
+            Sender::Popup => matches!(
+                req,
+                R::Command { .. }
+                    | R::HidePopup
+                    | R::NewTab { .. }
+                    | R::ReopenClosedTab
+                    | R::Zoom { .. }
+                    | R::ShieldAllowSite { .. }
+                    | R::SavePasswordReply { .. }
+                    | R::FillReply { .. }
+                    | R::VaultStatus
+                    | R::VaultUnlock { .. }
+                    | R::Quit
             ),
             Sender::Page(Page::NewTab) => matches!(
                 req,
@@ -486,7 +641,7 @@ pub fn parse_content(json: &str) -> Result<ContentMessage, ProtocolError> {
 }
 
 /// State of one tab, as shown in the tab strip.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TabInfo {
     pub id: u32,
@@ -502,7 +657,7 @@ pub struct TabInfo {
 }
 
 /// Navigation state of the active tab.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NavState {
     pub tab_id: u32,
@@ -519,7 +674,7 @@ pub struct NavState {
 }
 
 /// Messages to the shell or a built-in page.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum Event {
     /// Answer to a request carrying `reqId`.
@@ -538,17 +693,18 @@ pub enum Event {
     Nav {
         state: NavState,
     },
-    /// Ask the user whether to save a login (no password is sent to the UI).
-    SavePasswordPrompt {
-        origin: String,
-        username: String,
-        update: bool,
+    /// Shell layout options.
+    ShellConfig {
+        show_home_button: bool,
+        show_bookmarks_bar: bool,
+        dark: bool,
     },
-    /// Offer to fill one of these entries on `origin`.
-    FillPrompt {
-        origin: String,
-        entries: Vec<FillChoice>,
+    /// To the popup WebView: render this content.
+    Popup {
+        content: PopupContent,
     },
+    /// To the shell: the popup was hidden (un-highlight its button).
+    PopupClosed,
     VaultState {
         exists: bool,
         locked: bool,
@@ -572,7 +728,7 @@ pub enum Event {
     RestartRequired,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FillChoice {
     pub id: String,
@@ -597,19 +753,26 @@ impl Event {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::settings::Settings;
 
     const SHELL: &str = "https://shell.lightbrowser.invalid/shell.html";
+    const POPUP: &str = "https://shell.lightbrowser.invalid/popup.html";
 
     #[test]
     fn parses_shell_commands() {
-        let s = Sender::from_shell_source(SHELL).unwrap();
-        let e = parse_request(s, r#"{"cmd":"newTab","private":true,"reqId":7}"#).unwrap();
+        let e = parse_request(Sender::Shell, r#"{"cmd":"newTab","private":true,"reqId":7}"#).unwrap();
         assert_eq!(e.req_id, Some(7));
         assert_eq!(e.request, Request::NewTab { url: None, private: true });
-        let e = parse_request(s, r#"{"cmd":"moveTab","id":3,"index":0}"#).unwrap();
+        let e = parse_request(Sender::Shell, r#"{"cmd":"moveTab","id":3,"index":0}"#).unwrap();
         assert_eq!(e.request, Request::MoveTab { id: 3, index: 0 });
-        let e = parse_request(s, r#"{"cmd":"fillReply","entryId":"abc"}"#).unwrap();
-        assert_eq!(e.request, Request::FillReply { entry_id: Some("abc".into()) });
+        let e = parse_request(Sender::Shell, r#"{"cmd":"command","command":{"command":"selectTab","arg":2}}"#).unwrap();
+        assert_eq!(e.request, Request::Command { command: Command::SelectTab(2) });
+        let e = parse_request(
+            Sender::Shell,
+            r#"{"cmd":"showPopup","popup":"menu","rect":{"x":900,"y":40,"width":260,"height":400}}"#,
+        )
+        .unwrap();
+        assert!(matches!(e.request, Request::ShowPopup { popup: PopupKind::Menu, rect } if rect.is_valid()));
     }
 
     #[test]
@@ -626,21 +789,99 @@ mod tests {
     }
 
     #[test]
-    fn origin_classification() {
-        assert_eq!(Sender::from_shell_source(SHELL), Some(Sender::Shell));
-        assert_eq!(Sender::from_shell_source("https://evil.example/"), None);
-        assert_eq!(Sender::from_shell_source("https://lightbrowser.invalid/settings.html"), None);
-        assert_eq!(
-            Sender::from_tab_source("https://lightbrowser.invalid/settings.html"),
-            Some(Sender::Page(Page::Settings))
-        );
-        // A tab can never claim to be the shell.
-        assert_eq!(Sender::from_tab_source(SHELL), None);
-        assert_eq!(Sender::from_tab_source("https://evil.example/settings.html"), None);
+    fn popup_rects_and_kinds() {
+        let ok = PopupRect { x: 10.0, y: 40.0, width: 200.0, height: 300.0 };
+        assert!(ok.is_valid());
+        for bad in [
+            PopupRect { x: f64::NAN, ..ok },
+            PopupRect { width: 0.0, ..ok },
+            PopupRect { height: 1e9, ..ok },
+            PopupRect { x: -5.0, ..ok },
+            PopupRect { y: f64::INFINITY, ..ok },
+        ] {
+            assert!(!bad.is_valid(), "{bad:?}");
+        }
+        assert!(PopupKind::Menu.shell_may_open() && PopupKind::Shield.shell_may_open());
+        assert!(!PopupKind::SavePassword.shell_may_open() && !PopupKind::Fill.shell_may_open());
+    }
+
+    fn privileged(ch: Channel, src: &str) -> Option<Sender> {
+        match classify(ch, src, true) {
+            Ok(Source::Privileged(s)) => Some(s),
+            _ => None,
+        }
     }
 
     #[test]
-    fn least_privilege_per_page() {
+    fn origin_checks_shell_and_popup() {
+        assert_eq!(privileged(Channel::Shell, SHELL), Some(Sender::Shell));
+        assert_eq!(privileged(Channel::Popup, POPUP), Some(Sender::Popup));
+        // Each channel only accepts its own document.
+        assert_eq!(privileged(Channel::Shell, POPUP), None);
+        assert_eq!(privileged(Channel::Popup, SHELL), None);
+        for bad in [
+            "https://shell.lightbrowser.invalid:8443/shell.html",     // port
+            "http://shell.lightbrowser.invalid/shell.html",           // scheme
+            "https://x.shell.lightbrowser.invalid/shell.html",        // subdomain
+            "https://shell.lightbrowser.invalid.evil.com/shell.html", // look-alike suffix
+            "https://shell-lightbrowser.invalid/shell.html",          // look-alike host
+            "https://lightbrowser.invalid/shell.html",                // pages origin
+            "https://evil.example/shell.html",
+            "data:text/html,<script>",
+            "about:blank",
+            "not a url",
+        ] {
+            assert_eq!(classify(Channel::Shell, bad, true), Err(ProtocolError::Forbidden), "{bad}");
+            assert_eq!(
+                classify(Channel::Popup, &bad.replace("shell.html", "popup.html"), true),
+                Err(ProtocolError::Forbidden),
+                "{bad}"
+            );
+        }
+        // Sub-frames are never trusted, even on the right origin.
+        assert_eq!(classify(Channel::Shell, SHELL, false), Err(ProtocolError::Forbidden));
+        assert_eq!(classify(Channel::Popup, POPUP, false), Err(ProtocolError::Forbidden));
+    }
+
+    #[test]
+    fn origin_checks_tabs() {
+        assert_eq!(
+            privileged(Channel::Tab, "https://lightbrowser.invalid/settings.html"),
+            Some(Sender::Page(Page::Settings))
+        );
+        assert_eq!(
+            privileged(Channel::Tab, "https://lightbrowser.invalid/history.html?q=x#y"),
+            Some(Sender::Page(Page::History))
+        );
+        for bad in [
+            "https://lightbrowser.invalid:444/settings.html",
+            "http://lightbrowser.invalid/settings.html",
+            "https://www.lightbrowser.invalid/settings.html",
+            "https://lightbrowser.invalid.evil.com/settings.html",
+            "https://lightbrowser.invalid/unknown.html",
+            SHELL, // a tab can never act as the shell or popup
+            POPUP,
+        ] {
+            assert_eq!(privileged(Channel::Tab, bad), None, "{bad}");
+        }
+        // Ordinary pages are web content with their exact origin.
+        assert_eq!(
+            classify(Channel::Tab, "https://bank.example:8443/login?x=1", true),
+            Ok(Source::Web { origin: "https://bank.example:8443".into() })
+        );
+        assert!(matches!(
+            classify(Channel::Tab, "https://lightbrowser.invalid.evil.com/settings.html", true),
+            Ok(Source::Web { .. })
+        ));
+        // Our origins on unknown paths, opaque origins and sub-frames are rejected.
+        assert_eq!(classify(Channel::Tab, "https://lightbrowser.invalid/x.html", true), Err(ProtocolError::Forbidden));
+        assert_eq!(classify(Channel::Tab, "data:text/html,x", true), Err(ProtocolError::Forbidden));
+        assert_eq!(classify(Channel::Tab, "file:///C:/x.html", true), Err(ProtocolError::Forbidden));
+        assert_eq!(classify(Channel::Tab, "https://bank.example/", false), Err(ProtocolError::Forbidden));
+    }
+
+    #[test]
+    fn least_privilege_per_sender() {
         let newtab = Sender::Page(Page::NewTab);
         assert!(parse_request(newtab, r#"{"cmd":"getTopSites"}"#).is_ok());
         assert_eq!(
@@ -651,10 +892,16 @@ mod tests {
         let history = Sender::Page(Page::History);
         assert_eq!(parse_request(history, r#"{"cmd":"vaultList"}"#), Err(ProtocolError::Forbidden));
         assert_eq!(parse_request(history, r#"{"cmd":"closeTab","id":1}"#), Err(ProtocolError::Forbidden));
-        // The shell cannot dump the vault either.
         assert_eq!(parse_request(Sender::Shell, r#"{"cmd":"vaultList"}"#), Err(ProtocolError::Forbidden));
         assert!(parse_request(Sender::Page(Page::Passwords), r#"{"cmd":"vaultList"}"#).is_ok());
         assert!(parse_request(Sender::Page(Page::Settings), r#"{"cmd":"saveSettings","settings":{}}"#).is_ok());
+        // Password prompt replies come from the popup only.
+        let reply = r#"{"cmd":"savePasswordReply","tabId":1,"origin":"https://a.example","accept":true}"#;
+        assert!(parse_request(Sender::Popup, reply).is_ok());
+        assert_eq!(parse_request(Sender::Shell, reply), Err(ProtocolError::Forbidden));
+        assert_eq!(parse_request(newtab, reply), Err(ProtocolError::Forbidden));
+        assert_eq!(parse_request(Sender::Popup, r#"{"cmd":"vaultList"}"#), Err(ProtocolError::Forbidden));
+        assert_eq!(parse_request(Sender::Popup, r#"{"cmd":"closeTab","id":1}"#), Err(ProtocolError::Forbidden));
     }
 
     #[test]
@@ -664,9 +911,9 @@ mod tests {
             parse_content(r#"{"lb":"submit","username":"a","password":"b"}"#),
             Ok(ContentMessage::Submit { username: "a".into(), password: "b".into() })
         );
-        // Privileged commands cannot be expressed on this channel.
         assert!(parse_content(r#"{"cmd":"vaultList"}"#).is_err());
         assert!(parse_content(r#"{"lb":"vaultList"}"#).is_err());
+        assert!(parse_content(r#"{"cmd":"savePasswordReply","tabId":1,"origin":"x","accept":true}"#).is_err());
         assert!(parse_content(r#"{"lb":"loginForm","origin":"https://bank.example"}"#).is_err());
         assert!(parse_content(r#"{"lb":"submit","username":"a","password":""}"#).is_err());
         let long = format!(r#"{{"lb":"submit","username":"{}","password":"x"}}"#, "u".repeat(600));
@@ -675,11 +922,142 @@ mod tests {
         assert_eq!(parse_content(&huge), Err(ProtocolError::TooLarge));
     }
 
+    /// Every request variant survives JSON in both directions.
     #[test]
-    fn events_serialize_camel_case() {
+    fn requests_round_trip() {
+        let rect = PopupRect { x: 1.0, y: 2.0, width: 3.0, height: 4.0 };
+        let samples = vec![
+            Request::Ready,
+            Request::NewTab { url: Some("https://a.example/".into()), private: true },
+            Request::CloseTab { id: 1 },
+            Request::ActivateTab { id: 2 },
+            Request::MoveTab { id: 3, index: 4 },
+            Request::DuplicateTab { id: 5 },
+            Request::ReopenClosedTab,
+            Request::Navigate { input: "rust lang".into() },
+            Request::Back,
+            Request::Forward,
+            Request::Reload,
+            Request::Stop,
+            Request::Home,
+            Request::OpenUrl { url: "https://b.example/".into(), new_tab: true },
+            Request::OpenPage { page: "settings".into() },
+            Request::ToggleBookmark,
+            Request::ShowPopup { popup: PopupKind::Shield, rect },
+            Request::HidePopup,
+            Request::Command { command: Command::ZoomIn },
+            Request::Find { query: "x".into(), backwards: true },
+            Request::FindClose,
+            Request::Zoom { action: ZoomAction::Reset },
+            Request::Print,
+            Request::DevTools,
+            Request::ShieldAllowSite { allow: true },
+            Request::SavePasswordReply { tab_id: 1, origin: "https://a.example".into(), accept: true, never: false },
+            Request::FillReply { tab_id: 1, origin: "https://a.example".into(), entry_id: None },
+            Request::Quit,
+            Request::GetTopSites,
+            Request::PinSite { url: "https://a.example/".into(), title: "A".into() },
+            Request::QueryHistory { text: "q".into(), before: Some(5), limit: 10 },
+            Request::DeleteHistoryRange { from: 1, to: 2 },
+            Request::ClearBrowsingData { data: ClearData { history: true, ..ClearData::default() } },
+            Request::MoveBookmark { id: 1, parent: 2, index: 0 },
+            Request::SaveSettings { settings: Box::new(Settings::default()) },
+            Request::VaultSave {
+                entry: EntryInput {
+                    id: None,
+                    origin: "https://a.example".into(),
+                    username: "u".into(),
+                    password: Some("p".into()),
+                    note: String::new(),
+                },
+            },
+            Request::GeneratePassword { length: 24, symbols: false },
+            Request::DownloadAction { id: 1, action: DownloadAction::ShowInFolder },
+            Request::HttpsOnlyProceed { url: "http://a.example/".into() },
+        ];
+        for r in samples {
+            let json = serde_json::to_string(&r).unwrap();
+            let back: Request = serde_json::from_str(&json).unwrap_or_else(|e| panic!("{json}: {e}"));
+            assert_eq!(back, r, "{json}");
+        }
+    }
+
+    #[test]
+    fn events_round_trip_and_shape() {
         let j = Event::ok(Some(3), vec![1, 2]).to_json();
         assert_eq!(j, r#"{"event":"reply","reqId":3,"ok":true,"data":[1,2]}"#);
-        let j = Event::FindResult { active: 1, total: 4 }.to_json();
-        assert_eq!(j, r#"{"event":"findResult","active":1,"total":4}"#);
+        assert_eq!(
+            Event::FindResult { active: 1, total: 4 }.to_json(),
+            r#"{"event":"findResult","active":1,"total":4}"#
+        );
+        let samples = vec![
+            Event::err(None, "nope"),
+            Event::Tabs {
+                tabs: vec![TabInfo {
+                    id: 1,
+                    title: "T".into(),
+                    url: "lb://settings".into(),
+                    favicon: Some("data:image/png;base64,AA".into()),
+                    loading: true,
+                    private: true,
+                    sleeping: false,
+                }],
+                active: Some(1),
+            },
+            Event::Nav {
+                state: NavState {
+                    tab_id: 1,
+                    url: "https://a.example/".into(),
+                    can_go_back: true,
+                    can_go_forward: false,
+                    loading: false,
+                    secure: true,
+                    bookmarked: false,
+                    blocked: 7,
+                    site_allowed: false,
+                    zoom: 1.25,
+                    private: false,
+                },
+            },
+            Event::ShellConfig { show_home_button: true, show_bookmarks_bar: false, dark: true },
+            Event::Popup { content: PopupContent::Menu { zoom: 1.0, can_reopen: true } },
+            Event::Popup {
+                content: PopupContent::Shield { host: "a.example".into(), blocked: 3, allowed: false, enabled: true },
+            },
+            Event::Popup {
+                content: PopupContent::SavePassword {
+                    tab_id: 2,
+                    origin: "https://a.example".into(),
+                    username: "u".into(),
+                    update: false,
+                },
+            },
+            Event::Popup {
+                content: PopupContent::Fill {
+                    tab_id: 2,
+                    origin: "https://a.example".into(),
+                    entries: vec![FillChoice { id: "e1".into(), username: "u".into() }],
+                },
+            },
+            Event::PopupClosed,
+            Event::VaultState { exists: true, locked: false },
+            Event::DownloadsChanged { active: 1 },
+            Event::Theme { dark: false },
+            Event::FocusAddressBar,
+            Event::ShowFind,
+            Event::Toast { message: "hi".into() },
+            Event::RestartRequired,
+        ];
+        for e in samples {
+            let json = e.to_json();
+            let back: Event = serde_json::from_str(&json).unwrap_or_else(|err| panic!("{json}: {err}"));
+            assert_eq!(back, e, "{json}");
+        }
+        // The save prompt never carries a password.
+        let j = Event::Popup {
+            content: PopupContent::SavePassword { tab_id: 1, origin: "o".into(), username: "u".into(), update: true },
+        }
+        .to_json();
+        assert!(!j.contains("password\":"), "{j}");
     }
 }

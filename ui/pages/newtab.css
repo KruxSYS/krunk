@@ -1,0 +1,6 @@
+body { min-height: 100vh; display: flex; justify-content: center; }
+main { width: min(760px, 92vw); padding-top: 18vh; }
+#search input { width: 100%; height: 46px; padding: 0 20px; border: 1px solid var(--border); border-radius: 23px;
+                background: var(--bg-raised); color: var(--fg); font: inherit; font-size: 16px; outline: none; }
+#search input:focus { border-color: var(--accent); }
+#tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 12px; margin-top: 36px; }
