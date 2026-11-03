@@ -439,6 +439,20 @@ async function testBookmarks(browser) {
   await page.waitForSelector('.folder');
   check((await page.locator('.folder').count()) === 6, 'tree shows 6 folders');
   check((await page.locator('#items .row').count()) === 4, 'bar folder lists 4 items');
+  // A bookmark removed in another tab disappears when this tab is shown again.
+  await page.evaluate(() => {
+    const h = window.__host.handlers;
+    window.__origGetBookmarks = h.getBookmarks;
+    h.getBookmarks = () => { const t = JSON.parse(JSON.stringify(window.__origGetBookmarks())); t[0].children.shift(); return t; };
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await page.waitForFunction(() => document.querySelectorAll('#items .row').length === 3, null, { timeout: 2000 }).catch(() => {});
+  check((await page.locator('#items .row').count()) === 3, 'manager re-reads bookmarks when it becomes visible again');
+  await page.evaluate(() => {
+    window.__host.handlers.getBookmarks = window.__origGetBookmarks;
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await page.waitForFunction(() => document.querySelectorAll('#items .row').length === 4, null, { timeout: 2000 }).catch(() => {});
   await page.locator('.folder', { hasText: 'News' }).click();
   check((await page.locator('#items .row').count()) === 3, 'News folder has 3 items');
   await page.waitForTimeout(150);

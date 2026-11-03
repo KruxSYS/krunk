@@ -161,6 +161,12 @@
     render();
   }, 150));
 
+  // Bookmarks can change while this tab is in the background (star,
+  // Ctrl+D, imports in another tab): re-read them when it is shown again.
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) load();
+  });
+
   LB.post('ready');
   load();
 })();
