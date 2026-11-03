@@ -8,6 +8,7 @@ pub mod blocker;
 pub mod bookmarks;
 pub mod frecency;
 pub mod history;
+pub mod integrity;
 pub mod netscape;
 pub mod pages;
 pub mod passgen;
