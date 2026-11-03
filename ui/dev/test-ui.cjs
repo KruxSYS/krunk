@@ -559,6 +559,55 @@ async function testShellM4(browser) {
   check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
 }
 
+async function testShieldAndHttpsOnly(browser) {
+  console.log('shield popover and HTTPS-only interstitial');
+  // Shell: the counter as the host pushes it while a news page loads.
+  let { page, errors } = await openPage(browser, 'https://shell.lightbrowser.invalid/shell.html', { width: 1100, height: 76 }, 1);
+  await page.evaluate(() => {
+    const h = window.__host;
+    h.state.tabs = [{ id: 1, title: 'World news – The Daily Example', url: 'https://news.example.com/world', favicon: null, loading: false, private: false, sleeping: false }];
+    h.state.active = 1;
+    h.tabsEvent();
+  });
+  for (const n of [3, 17, 42]) {
+    await page.evaluate((n) => window.__host.navEvent({ blocked: n, url: 'https://news.example.com/world' }), n);
+    await page.waitForTimeout(20);
+  }
+  check(await page.locator('#shield-count').textContent() === '42', 'shield badge shows the latest count (42)');
+  await page.evaluate(() => window.__host.navEvent({ blocked: 0, siteAllowed: true, url: 'https://news.example.com/world' }));
+  await page.waitForTimeout(20);
+  check(await page.locator('#shield.allowed').count() === 1 && await page.locator('#shield-count').isHidden(), 'allowed site: grey shield, no badge');
+  check(errors.length === 0, 'no console errors');
+
+  // Popup: shield popover with a count, then the allowed state.
+  ({ page, errors } = await openPage(browser, 'https://shell.lightbrowser.invalid/popup.html', { width: 300, height: 180 }, 1));
+  await emit(page, { event: 'popup', content: { kind: 'shield', host: 'news.example.com', blocked: 42, allowed: false, enabled: true } });
+  await page.waitForSelector('.panel');
+  check((await page.locator('.big').textContent()) === '42', 'popover shows 42 blocked');
+  check((await page.textContent('.origin')) === 'news.example.com', 'popover shows the site');
+  await shot(page, 'popup-shield-count.png');
+  await page.locator('button', { hasText: 'Allow ads on this site' }).click();
+  const al = await lastSent(page, 'shieldAllowSite');
+  check(al && al.allow === true, '"Allow ads on this site" sends shieldAllowSite{allow:true}');
+  await emit(page, { event: 'popup', content: { kind: 'shield', host: 'news.example.com', blocked: 0, allowed: true, enabled: true } });
+  await page.waitForTimeout(30);
+  await page.locator('button', { hasText: 'Block on this site again' }).click();
+  check((await lastSent(page, 'shieldAllowSite')).allow === false, 'toggle back sends allow:false');
+
+  // HTTPS-only interstitial.
+  const target = 'http://legacy.example.org/page?id=7';
+  ({ page, errors } = await openPage(browser, 'https://lightbrowser.invalid/https-only.html?url=' + encodeURIComponent(target), { width: 900, height: 520 }, 1));
+  await page.waitForSelector('#continue');
+  check((await page.textContent('#host')) === 'legacy.example.org', 'interstitial names the host');
+  await shot(page, 'https-only-interstitial.png');
+  await page.click('#continue');
+  const go = await lastSent(page, 'httpsOnlyProceed');
+  check(go && go.url === target, 'continue sends httpsOnlyProceed{url}');
+  ({ page } = await openPage(browser, 'https://lightbrowser.invalid/https-only.html?url=' + encodeURIComponent('javascript:alert(1)'), { width: 900, height: 520 }, 1));
+  check(await page.locator('#continue').isDisabled(), 'continue disabled for a non-http URL');
+  check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
+}
+
 async function testFolderPopup(browser) {
   console.log('popup: bookmark folder');
   const { page, errors } = await openPage(browser, 'https://shell.lightbrowser.invalid/popup.html', { width: 280, height: 110 }, 1);
@@ -592,6 +641,7 @@ async function testFolderPopup(browser) {
     await testDownloads(browser);
     await testShellM4(browser);
     await testFolderPopup(browser);
+    await testShieldAndHttpsOnly(browser);
   } finally {
     await browser.close();
   }

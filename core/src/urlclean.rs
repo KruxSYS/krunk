@@ -255,6 +255,28 @@ pub fn navigation_rewrite(
     changed.then_some(Rewrite { url, upgraded })
 }
 
+/// After an HTTPS-only upgrade failed, the interstitial URL to show (with
+/// the original `http://` address), or `None` to leave the error page.
+/// Cancelled navigations, unknown hosts and authentication prompts are not
+/// HTTPS problems.
+pub fn https_only_fallback(upgraded_from: Option<&str>, success: bool, web_error_status: i32) -> Option<String> {
+    const OPERATION_CANCELED: i32 = 14;
+    const HOST_NAME_NOT_RESOLVED: i32 = 13;
+    const AUTH_REQUIRED: i32 = 17;
+    const PROXY_AUTH_REQUIRED: i32 = 18;
+    let http = upgraded_from?;
+    if success
+        || matches!(web_error_status, OPERATION_CANCELED | HOST_NAME_NOT_RESOLVED | AUTH_REQUIRED | PROXY_AUTH_REQUIRED)
+    {
+        return None;
+    }
+    if !http.starts_with("http://") {
+        return None;
+    }
+    let enc: String = url::form_urlencoded::byte_serialize(http.as_bytes()).collect();
+    Some(format!("{}?url={enc}", pages::Page::HttpsOnly.url()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,6 +390,24 @@ mod tests {
         assert!(navigation_rewrite("http://sub.old.example/", opts, &ex).is_some(), "not for subdomains");
         // Private/loopback hosts are never upgraded.
         assert_eq!(navigation_rewrite("http://192.168.0.1/", opts, &HashSet::new()), None);
+    }
+
+    #[test]
+    fn https_only_interstitial_decision() {
+        let http = Some("http://old.example/a?b=1");
+        let page = https_only_fallback(http, false, 12).unwrap();
+        assert!(
+            page.starts_with("https://lightbrowser.invalid/https-only.html?url=http%3A%2F%2Fold.example%2Fa%3Fb%3D1")
+        );
+        assert_eq!(pages::Page::from_url(&page), Some(pages::Page::HttpsOnly));
+        for cert_error in 1..=5 {
+            assert!(https_only_fallback(http, false, cert_error).is_some());
+        }
+        assert_eq!(https_only_fallback(http, true, 0), None, "upgrade worked");
+        assert_eq!(https_only_fallback(None, false, 12), None, "was not upgraded");
+        assert_eq!(https_only_fallback(http, false, 14), None, "cancelled");
+        assert_eq!(https_only_fallback(http, false, 13), None, "host does not exist at all");
+        assert_eq!(https_only_fallback(Some("https://x/"), false, 12), None);
     }
 
     #[test]

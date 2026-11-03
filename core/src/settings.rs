@@ -335,6 +335,30 @@ impl Settings {
     }
 }
 
+/// How the filter-list updater may reach the network, given the proxy setting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdaterProxy {
+    /// Use the system proxy configuration.
+    System,
+    /// Use this `host:port` HTTP proxy.
+    Named(String),
+    /// Don't download: the browser goes through a SOCKS proxy, which the
+    /// updater (WinHTTP) cannot use, and bypassing it would leak the user's IP.
+    Skip,
+}
+
+pub fn updater_proxy(proxy: &str) -> UpdaterProxy {
+    let p = proxy.trim();
+    if p.is_empty() || p == "direct://" {
+        return UpdaterProxy::System;
+    }
+    match p.split_once("://") {
+        Some(("http" | "https", rest)) => UpdaterProxy::Named(rest.trim_end_matches('/').to_string()),
+        Some(_) => UpdaterProxy::Skip,
+        None => UpdaterProxy::Named(p.to_string()),
+    }
+}
+
 fn is_web_url(s: &str, https_only: bool) -> bool {
     match url::Url::parse(s) {
         Ok(u) => {
@@ -481,6 +505,16 @@ mod tests {
         for bad in ["proxy", "ftp://x:1", "x:0", "x:99999", "a b:80", "http://x:80 --no-sandbox"] {
             assert!(!is_proxy(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn updater_follows_the_browser_proxy() {
+        assert_eq!(updater_proxy(""), UpdaterProxy::System);
+        assert_eq!(updater_proxy("direct://"), UpdaterProxy::System);
+        assert_eq!(updater_proxy("127.0.0.1:8080"), UpdaterProxy::Named("127.0.0.1:8080".into()));
+        assert_eq!(updater_proxy("http://proxy.corp:3128"), UpdaterProxy::Named("proxy.corp:3128".into()));
+        assert_eq!(updater_proxy("socks5://127.0.0.1:9050"), UpdaterProxy::Skip);
+        assert_eq!(updater_proxy("socks4://h:1"), UpdaterProxy::Skip);
     }
 
     #[test]

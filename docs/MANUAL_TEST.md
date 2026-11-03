@@ -98,3 +98,63 @@
    - Private tabs are not restored.
    - Kill the process from Task Manager about 3 seconds after changing tabs. The session is
      still restored (it is saved about 2 seconds after each change).
+
+## Ad and tracker blocking (M5)
+0. **Updater smoke test (no window):**
+   - Run `LightBrowser.exe --update-filters` in a terminal. The exit code is 0.
+   - `%LOCALAPPDATA%\LightBrowser\lightbrowser.log` ends with `filter update: downloaded [...]`
+     and `filter self-test: ... decisions OK`.
+   - `engine.dat` and `filters\*.txt` exist.
+1. **News-site counter:**
+   - Open a large ad-supported news site, such as `https://www.cnn.com/`,
+     `https://www.dailymail.co.uk/` or `https://www.theguardian.com/`.
+   - The orange shield badge counts up while the page loads (typically 20–150) and settles. It
+     updates smoothly, not once per request.
+   - Navigate to another article: the count restarts from 0.
+   - **Record:** the site, the final count, and a screenshot of the toolbar.
+2. **Shield popover:**
+   - Click the shield. It shows the site, "N blocked on this page", and "Allow ads on this site".
+   - Click that button. The page reloads, the badge disappears, the shield turns grey, and ads
+     are visible again.
+   - Click the shield, choose "Block on this site again", and the ads are gone after the reload.
+   - The choice survives a restart (it is stored in the `adblock_allowlist` table).
+3. **Network check:**
+   - Open DevTools (F12) → Network on the news site and filter for `doubleclick` or
+     `googlesyndication`.
+   - Those requests show status 403 with an empty response.
+   - The page's own document request is never blocked, even when you open an ad link directly
+     (for example a `https://ad.doubleclick.net/...` link in a new tab still loads).
+4. **Cosmetic filtering:**
+   - Open `https://www.advfn.com/`. The ad slot areas (for example `#APS_300_X_600`) are hidden,
+     with no empty boxes.
+   - On a page with generic ad containers (classes like `ad-banner-300`), they collapse.
+5. **Private tabs:** repeat step 1 in a private tab (Ctrl+Shift+N). Blocking and the counter work
+   the same.
+6. **Tracking parameters:**
+   - Visit `https://example.com/?utm_source=newsletter&fbclid=abc&id=1`. The address bar ends up
+     at `https://example.com/?id=1`.
+   - Pressing Back does not bounce back to the long URL (no redirect loop).
+7. **DNT / GPC:**
+   - Open `https://globalprivacycontrol.org/`. It reports "GPC signal detected".
+   - In DevTools, `navigator.globalPrivacyControl === true` and `navigator.doNotTrack === "1"`.
+   - Network → any request → Request Headers include `DNT: 1` and `Sec-GPC: 1`.
+8. **Tracking prevention:**
+   - `edge://settings` is not available in WebView2. Instead, open a site that embeds
+     third-party trackers (such as a news site) and check DevTools → Application → Cookies:
+     third-party tracker cookies are absent.
+   - Strict tracking prevention is the default.
+9. **HTTPS-only** (after M7 adds the toggle; until then, set `"httpsOnly": true` in the settings
+   JSON in `browser.db`):
+   - `http://neverssl.com/` is upgraded and fails over HTTPS, so the "This site doesn't support
+     a secure connection" page appears.
+   - "Continue to HTTP site" loads it over HTTP. Revisiting it in the same session doesn't show
+     the page again. After a restart it does.
+   - `http://example.com/` silently ends up on `https://example.com/`.
+10. **Daily update:**
+    - Delete `filters\state.json` and start the browser. About a minute later the log shows
+      `filter engine rebuilt`, or no rebuild if the downloads match the cache.
+    - Start again within 24 h: there is no download.
+    - The next start logs `filter engine loaded from cache in N ms` (expected under 20 ms).
+11. **Offline fallback:** disconnect the network, delete `engine.dat` and `filters\`, and start
+    the browser. Blocking still works with the embedded lists, and the log shows the download
+    errors.

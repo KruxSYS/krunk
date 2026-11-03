@@ -46,3 +46,26 @@ Consequences:
   on that origin; otherwise the reply is dropped.
 - Hiding the popup for any reason (focus loss, Escape, window move or resize, tab switch) counts
   as a dismissal, never a confirmation.
+
+## Scripts injected into web pages
+- **Which scripts:** three small scripts from `ui/inject/`, embedded and never served over any
+  origin.
+  - `gpc.js` and `dnt.js` only define read-only navigator properties.
+  - `page-tokens.js` (top frame only) reports the page's class names and ids for generic
+    cosmetic filtering.
+- **What a page can do with the token message:** it can forge or flood it, but the message is
+  strictly parsed (at most 2000 tokens of up to 100 characters each). Its only effect is extra
+  hiding CSS on that same page, and the host applies it only if the sender's origin equals the
+  tab's current top-level origin.
+- **How the CSS is injected:** as a JSON string literal into a fixed script template, so it
+  can't break out into code (`assets::style_injection_script`, tested).
+
+## Filter-list updater
+- It downloads only from the fixed HTTPS URLs in `core::blocker::list_url`, over WinHTTP with
+  TLS 1.2 or higher, a 16 MB cap and a 30 s timeout.
+- Content is validated before use. A stored download is used only if its hash matches
+  `state.json`; otherwise the embedded list is used.
+- It respects the configured HTTP proxy. With a SOCKS proxy it does not download at all, to
+  avoid revealing the user's IP outside the proxy.
+- No telemetry: the only background requests LightBrowser itself makes are these downloads, at
+  most once a day.

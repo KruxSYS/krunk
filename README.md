@@ -54,6 +54,58 @@ ui/     the browser's own UI (HTML/CSS/JS), embedded into the exe at build time.
 - Message origins are checked by `core::protocol::classify`: exact origin, exact document,
   top-level frame only. Web pages can only send the small `ContentMessage` type.
 
+### Ad and tracker blocking
+- **Engine:** Brave's `adblock` engine with five bundled lists (EasyList, EasyPrivacy, and
+  uBlock filters, privacy and unbreak; see `assets/filters/ATTRIBUTION.md`). The lists are
+  embedded deflated (1.4 MB).
+- **Cache:** at startup the compiled engine is loaded from `%LOCALAPPDATA%\LightBrowser\engine.dat`
+  (about 1 ms on Linux, about 7 ms measured under Wine). The cache key covers the engine
+  version, which lists are enabled, and where each comes from (embedded copy or download) with
+  its content hash. If anything differs, the engine is rebuilt on a worker thread (about 70 ms).
+- **Interception:** every content WebView, private tabs included, intercepts all requests
+  (`AddWebResourceRequestedFilterWithRequestSourceKinds`: all contexts, documents and workers).
+  - Blocked requests get an empty 403.
+  - The tab's own top-level navigation and the internal origins are never checked.
+  - The handler uses only in-memory state. The allowlist is a `HashSet`, and the per-site
+    decision is made once per navigation.
+- **Cosmetic filtering:** site-specific hiding rules are injected on `DOMContentLoaded` as a
+  constructed stylesheet, which page CSP doesn't block. Generic rules are applied for the
+  class names and ids the page reports, capped at 2000.
+- **Updates:** at most once every 24 h, a worker thread downloads the lists over WinHTTP
+  (HTTPS only, 16 MB cap, 30 s timeout). It validates each download: no HTML, a list header,
+  at least 50 rules, at least 2 KB. A failed or suspicious download keeps the previous source.
+  - The updater uses the browser's HTTP proxy setting.
+  - With a SOCKS proxy it skips the download rather than bypass the proxy.
+  - `LightBrowser.exe --update-filters` runs the update and a self-test without a window.
+- **Privacy:**
+  - Tracking prevention: Strict by default.
+  - Tracking parameters (`utm_*`, `fbclid`, `gclid`, ...) are stripped before navigating.
+  - `DNT: 1` and `Sec-GPC: 1` headers, plus `navigator.doNotTrack` and
+    `navigator.globalPrivacyControl`.
+  - Optional HTTPS-only mode with a "Continue to HTTP site" interstitial; exceptions last only
+    for the session.
+
+### Chromium switches (`AdditionalBrowserArguments`)
+Always passed (`core::settings::Settings::browser_arguments`):
+- `--no-pings` disables hyperlink auditing (`<a ping>`).
+- `--disable-domain-reliability` disables Chromium's domain reliability telemetry.
+- `--disable-features=AutofillServerCommunication,MediaRouter,OptimizationHints,InterestFeedContentSuggestions,msEdgeShoppingAssistant`
+  turns off autofill crowdsourcing, Cast discovery, optimization-guide downloads, feed
+  suggestions and the Edge shopping assistant.
+- `msSmartScreenProtection` is added to `--disable-features` unless the user turns SmartScreen
+  on.
+
+Conditional:
+- `--disable-gpu` when hardware acceleration is off.
+- `--proxy-server=<value>` when a proxy is set.
+- The user's extra flags, validated. `--disable-features` and `--enable-features` lists are
+  merged; security-weakening switches such as `--no-sandbox` and
+  `--disable-web-security` are rejected.
+
+The environment also sets extensions off, OS single sign-on off, and tracking prevention on.
+Each WebView disables WebView2's general autofill and password autosave, because the browser
+has its own vault.
+
 ## Development
 - Core tests: `cargo test -p core`
 - Windows build: `cargo build --release --target x86_64-pc-windows-gnu`

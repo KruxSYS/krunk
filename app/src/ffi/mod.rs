@@ -3,6 +3,7 @@
 #![allow(unsafe_code)]
 
 pub mod dialogs;
+pub mod http;
 pub mod loader;
 pub mod process;
 pub mod webview;

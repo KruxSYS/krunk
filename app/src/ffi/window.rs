@@ -241,6 +241,11 @@ impl Window {
         let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::KillTimer(Some(self.0), id) };
     }
 
+    /// A `Send` handle for posting `WM_APP` to this window from worker threads.
+    pub fn notifier(self) -> AppNotifier {
+        AppNotifier(self.0 .0 as isize)
+    }
+
     pub fn destroy(self) {
         // SAFETY: valid window handle owned by this thread.
         let _ = unsafe { DestroyWindow(self.0) };
@@ -357,4 +362,23 @@ pub fn run_message_loop() -> i32 {
         }
     }
     msg.wParam.0 as i32
+}
+
+/// Posts `WM_APP` messages to a window from any thread.
+#[derive(Debug, Clone, Copy)]
+pub struct AppNotifier(isize);
+
+impl AppNotifier {
+    /// Wakes the UI thread; `WindowEvents::app_message(code)` runs there.
+    pub fn notify(self, code: usize) {
+        // SAFETY: PostMessageW is thread-safe; a stale handle only fails.
+        let _ = unsafe {
+            windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+                Some(HWND(self.0 as *mut std::ffi::c_void)),
+                WM_APP,
+                WPARAM(code),
+                LPARAM(0),
+            )
+        };
+    }
 }

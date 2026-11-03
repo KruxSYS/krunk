@@ -16,7 +16,8 @@ use lb_core::keys::{self, Command};
 use lb_core::layout;
 use lb_core::pages::{self, Page};
 use lb_core::protocol::{
-    self, Channel, Envelope, Event, NavState, PopupContent, PopupKind, PopupRect, Request, Sender, Source, ZoomAction,
+    self, Channel, ContentMessage, Envelope, Event, NavState, PopupContent, PopupKind, PopupRect, Request, Sender,
+    Source, ZoomAction,
 };
 use lb_core::settings::{Settings, Startup, TrackingPrevention};
 use lb_core::storage::{now_ms, Store};
@@ -30,16 +31,18 @@ use std::rc::{Rc, Weak};
 const SHELL_URL: &str = "https://shell.lightbrowser.invalid/shell.html";
 const POPUP_URL: &str = "https://shell.lightbrowser.invalid/popup.html";
 const SHELL_FILTER: &str = "https://shell.lightbrowser.invalid/*";
-const PAGES_FILTER: &str = "https://lightbrowser.invalid/*";
 const SESSION_KEY: &str = "session";
 const DOWNLOADS_KEY: &str = "downloads";
 /// Timer that saves the session shortly after the last tab change.
 const SESSION_TIMER: usize = 1;
 const SESSION_DEBOUNCE_MS: u32 = 2000;
 
+mod blocking;
 mod downloads;
 mod find;
 mod library;
+
+use blocking::{Deferred, FilterState, TabNet, APP_DEFERRED, APP_FILTERS_READY, SHIELD_TIMER, UPDATE_TIMER};
 /// Background behind the UI WebViews (matches --bg in common.css).
 const UI_BACKGROUND: u32 = 0xFFF3_F4F6;
 
@@ -54,6 +57,8 @@ struct TabView {
     /// Find-in-page session and its current term.
     find: Option<Find>,
     find_query: String,
+    /// Shield counter, cosmetic data and HTTPS-only state of the page.
+    net: Rc<TabNet>,
 }
 
 /// The popup WebView in its owned popup window (created on first use).
@@ -81,6 +86,11 @@ pub struct Browser {
     download_ops: RefCell<HashMap<u32, Download>>,
     /// Button rect of the open bookmarks-bar folder dropdown.
     folder_anchor: Cell<Option<PopupRect>>,
+    dirs: DataDirs,
+    filters: Rc<FilterState>,
+    /// A shield counter update is scheduled.
+    shield_pending: Cell<bool>,
+    deferred: RefCell<Vec<Deferred>>,
     closing: Cell<bool>,
 }
 
@@ -108,10 +118,15 @@ impl Browser {
             downloads: RefCell::new(Downloads::new()),
             download_ops: RefCell::new(HashMap::new()),
             folder_anchor: Cell::new(None),
+            dirs: dirs.clone(),
+            filters: Rc::new(FilterState::new()),
+            shield_pending: Cell::new(false),
+            deferred: RefCell::new(Vec::new()),
             closing: Cell::new(false),
         });
         let window = Window::create_main("LightBrowser", browser.clone())?;
         let _ = browser.window.set(window);
+        browser.init_filters();
 
         let config = {
             let s = browser.settings.borrow();
@@ -169,6 +184,12 @@ impl Browser {
         shell.set_background(UI_BACKGROUND);
         shell.serve(env, SHELL_FILTER, self.server());
         self.apply_download_folder(&shell);
+        shell.set_tracking_prevention(match self.settings.borrow().tracking_prevention {
+            TrackingPrevention::None => 0,
+            TrackingPrevention::Basic => 1,
+            TrackingPrevention::Balanced => 2,
+            TrackingPrevention::Strict => 3,
+        });
         shell.on_navigation_starting(|nav| assets::allow_navigation(Channel::Shell, "", &nav.uri, true));
         let weak = self.me.clone();
         shell.on_new_window(move |nw| {
@@ -270,7 +291,9 @@ impl Browser {
             }
         };
         let host_navigation = Rc::new(Cell::new(false));
-        self.hook_tab(id, &c, host_navigation.clone());
+        let net = Rc::new(TabNet::default());
+        self.hook_tab(id, &c, host_navigation.clone(), net.clone());
+        self.hook_blocking(id, &c, net.clone());
         self.apply_download_folder(&c);
         c.set_zoom(self.settings.borrow().default_zoom);
         let pending = self.new_windows.borrow_mut().remove(&id);
@@ -293,6 +316,7 @@ impl Browser {
                 can_go_forward: false,
                 find: None,
                 find_query: String::new(),
+                net,
             },
         );
         if active {
@@ -302,29 +326,34 @@ impl Browser {
         self.send_nav();
     }
 
-    fn hook_tab(&self, id: TabId, c: &Controller, host_navigation: Rc<Cell<bool>>) {
-        let Some(env) = self.env.get() else { return };
-        c.serve(env, PAGES_FILTER, self.server());
+    fn hook_tab(&self, id: TabId, c: &Controller, host_navigation: Rc<Cell<bool>>, net: Rc<TabNet>) {
         self.hook_common(c);
         self.hook_downloads(c);
 
         let weak = self.me.clone();
+        let net_start = net.clone();
         c.on_navigation_starting(move |nav| {
             let Some(b) = weak.upgrade() else { return false };
             let host = host_navigation.replace(false);
             let current = b.model.borrow().get(id).map(|t| t.url.clone()).unwrap_or_default();
             let allow = assets::allow_navigation(Channel::Tab, &current, &nav.uri, host);
-            if allow {
-                b.model.borrow_mut().set_loading(id, true);
-                b.tab_changed(id);
-            } else {
+            if !allow {
                 info!("tab {id}: blocked navigation to an internal or unsupported URL");
+                return false;
             }
-            allow
+            if let Some(rewritten) = b.navigation_starting(&net_start, &nav.uri) {
+                // Cancel and restart at the cleaned/upgraded URL.
+                b.defer(move |b| b.navigate_tab(id, &rewritten));
+                return false;
+            }
+            b.model.borrow_mut().set_loading(id, true);
+            b.tab_changed(id);
+            true
         });
         let weak = self.me.clone();
-        c.on_navigation_completed(move |ok| {
+        c.on_navigation_completed(move |ok, status| {
             if let Some(b) = weak.upgrade() {
+                b.navigation_completed(id, &net, ok, status);
                 b.model.borrow_mut().set_loading(id, false);
                 if ok {
                     b.record_visit(id);
@@ -505,8 +534,8 @@ impl Browser {
             loading: tab.loading,
             secure,
             bookmarked,
-            blocked: 0,
-            site_allowed: false,
+            blocked: view.map(|v| v.net.blocked.get()).unwrap_or(0),
+            site_allowed: view.is_some_and(|v| v.net.allowed.get()),
             zoom: view.map(|v| v.controller.zoom()).unwrap_or(1.0),
             private: tab.private,
         })
@@ -715,9 +744,11 @@ impl Browser {
                 Ok(env) => self.dispatch(sender, Some(id), env),
                 Err(e) => warning!("tab {id}: rejected {sender:?} message: {e}"),
             },
-            // Web content messages (login forms) are handled in milestone 6.
-            Ok(Source::Web { .. }) => {
-                let _ = protocol::parse_content(json);
+            Ok(Source::Web { origin }) => {
+                // Login form messages are handled in milestone 6.
+                if let Ok(msg @ ContentMessage::PageTokens { .. }) = protocol::parse_content(json) {
+                    self.page_tokens(id, &origin, msg);
+                }
             }
             Err(_) => {}
         }
@@ -815,6 +846,13 @@ impl Browser {
             // Prompts and the remaining features arrive in later milestones;
             // the popup still treats a reply as "dismissed" by hiding.
             Request::SavePasswordReply { .. } | Request::FillReply { .. } => self.hide_popup(),
+            Request::ShieldAllowSite { allow } => self.shield_allow_site(allow),
+            r @ (Request::GetAllowlist
+            | Request::AllowlistAdd { .. }
+            | Request::AllowlistRemove { .. }
+            | Request::UpdateFilterLists
+            | Request::GetFilterStatus
+            | Request::HttpsOnlyProceed { .. }) => self.dispatch_blocking(tab, req_id, r),
             other => self.dispatch_library(sender, tab, req_id, other),
         }
     }
@@ -830,11 +868,6 @@ impl Browser {
     fn menu_content(&self) -> PopupContent {
         let zoom = self.active_controller().map(|c| c.zoom()).unwrap_or(1.0);
         PopupContent::Menu { zoom, can_reopen: self.model.borrow().closed_count() > 0 }
-    }
-
-    fn shield_content(&self) -> PopupContent {
-        let host = self.model.borrow().active().and_then(|t| urlclean::host_of(&t.url)).unwrap_or_default();
-        PopupContent::Shield { host, blocked: 0, allowed: false, enabled: self.settings.borrow().adblock_enabled }
     }
 
     /// Shows `content` in the popup. `rect` is in shell CSS pixels; `None`
@@ -1064,11 +1097,29 @@ impl WindowEvents for Browser {
     }
 
     fn timer(&self, id: usize) {
-        if id == SESSION_TIMER {
-            if let Some(w) = self.window() {
-                w.kill_timer(SESSION_TIMER);
+        match id {
+            SESSION_TIMER => {
+                if let Some(w) = self.window() {
+                    w.kill_timer(SESSION_TIMER);
+                }
+                self.save_session();
             }
-            self.save_session();
+            SHIELD_TIMER => self.shield_timer(),
+            UPDATE_TIMER => {
+                if let Some(w) = self.window() {
+                    w.kill_timer(UPDATE_TIMER);
+                }
+                self.update_filter_lists(None);
+            }
+            _ => {}
+        }
+    }
+
+    fn app_message(&self, code: usize) {
+        match code {
+            APP_FILTERS_READY => self.filters_ready(),
+            APP_DEFERRED => self.run_deferred(),
+            _ => {}
         }
     }
 }

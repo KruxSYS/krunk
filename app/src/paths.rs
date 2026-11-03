@@ -41,6 +41,16 @@ impl DataDirs {
         self.root.join("browser.db")
     }
 
+    /// Downloaded filter lists and their update state.
+    pub fn filters(&self) -> PathBuf {
+        self.root.join("filters")
+    }
+
+    /// The compiled, serialized ad-blocking engine.
+    pub fn engine_cache(&self) -> PathBuf {
+        self.root.join("engine.dat")
+    }
+
     pub fn log_file(&self) -> PathBuf {
         self.root.join("lightbrowser.log")
     }

@@ -9,14 +9,16 @@ use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use webview2_com::Microsoft::Web::WebView2::Win32::*;
 use webview2_com::{
-    AcceleratorKeyPressedEventHandler, BytesReceivedChangedEventHandler, CallDevToolsProtocolMethodCompletedHandler,
-    ClearBrowsingDataCompletedHandler, CoreWebView2EnvironmentOptions, CreateCoreWebView2ControllerCompletedHandler,
-    CreateCoreWebView2EnvironmentCompletedHandler, DocumentTitleChangedEventHandler, DownloadStartingEventHandler,
-    FaviconChangedEventHandler, FindActiveMatchIndexChangedEventHandler, FindMatchCountChangedEventHandler,
-    FindStartCompletedHandler, FocusChangedEventHandler, GetFaviconCompletedHandler, HistoryChangedEventHandler,
-    NavigationCompletedEventHandler, NavigationStartingEventHandler, NewWindowRequestedEventHandler,
-    SourceChangedEventHandler, StateChangedEventHandler, WebMessageReceivedEventHandler,
-    WebResourceRequestedEventHandler, ZoomFactorChangedEventHandler,
+    AcceleratorKeyPressedEventHandler, AddScriptToExecuteOnDocumentCreatedCompletedHandler,
+    BytesReceivedChangedEventHandler, CallDevToolsProtocolMethodCompletedHandler, ClearBrowsingDataCompletedHandler,
+    CoreWebView2EnvironmentOptions, CreateCoreWebView2ControllerCompletedHandler,
+    CreateCoreWebView2EnvironmentCompletedHandler, DOMContentLoadedEventHandler, DocumentTitleChangedEventHandler,
+    DownloadStartingEventHandler, ExecuteScriptCompletedHandler, FaviconChangedEventHandler,
+    FindActiveMatchIndexChangedEventHandler, FindMatchCountChangedEventHandler, FindStartCompletedHandler,
+    FocusChangedEventHandler, GetFaviconCompletedHandler, HistoryChangedEventHandler, NavigationCompletedEventHandler,
+    NavigationStartingEventHandler, NewWindowRequestedEventHandler, SourceChangedEventHandler,
+    StateChangedEventHandler, WebMessageReceivedEventHandler, WebResourceRequestedEventHandler,
+    ZoomFactorChangedEventHandler,
 };
 use windows::core::{Interface, BOOL, HSTRING, PWSTR};
 use windows::Win32::Foundation::{HWND, RECT};
@@ -136,7 +138,7 @@ impl Environment {
     ) -> Option<ICoreWebView2WebResourceResponse> {
         // SAFETY: creating a memory stream copy of `body` and a response object.
         unsafe {
-            let stream: Option<IStream> = SHCreateMemStream(Some(body));
+            let stream: Option<IStream> = if body.is_empty() { None } else { SHCreateMemStream(Some(body)) };
             self.0
                 .CreateWebResourceResponse(stream.as_ref(), status, &HSTRING::from(reason), &HSTRING::from(headers))
                 .ok()
@@ -166,6 +168,27 @@ pub struct InternalResponse {
     pub reason: &'static str,
     pub headers: String,
     pub body: Cow<'static, [u8]>,
+}
+
+/// A request seen by [`Controller::intercept_all`].
+pub struct ResourceRequest<'a> {
+    pub uri: &'a str,
+    /// `COREWEBVIEW2_WEB_RESOURCE_CONTEXT` value.
+    pub context: i32,
+}
+
+/// What to do with an intercepted request.
+pub enum ResourceAction {
+    /// Answer from the host (internal origins).
+    Serve(InternalResponse),
+    NotFound,
+    /// Answer with an empty 403 (blocked by the ad/tracker filter).
+    Block,
+    /// Let it go to the network, optionally adding privacy headers.
+    Continue {
+        dnt: bool,
+        gpc: bool,
+    },
 }
 
 /// Which kinds of profile data to clear.
@@ -687,11 +710,19 @@ impl Controller {
     }
 
     /// `NavigationCompleted(success)`.
-    pub fn on_navigation_completed(&self, mut f: impl FnMut(bool) + 'static) {
+    /// `NavigationCompleted(success, COREWEBVIEW2_WEB_ERROR_STATUS)`.
+    pub fn on_navigation_completed(&self, mut f: impl FnMut(bool, i32) + 'static) {
         let handler = NavigationCompletedEventHandler::create(Box::new(move |_, args| {
-            // SAFETY: live event args during the callback.
-            let ok = args.map(|a| get_bool(|b| unsafe { a.IsSuccess(b) })).unwrap_or(false);
-            f(ok);
+            let (ok, status) = match args {
+                Some(a) => {
+                    let mut st = COREWEBVIEW2_WEB_ERROR_STATUS::default();
+                    // SAFETY: live event args during the callback.
+                    let _ = unsafe { a.WebErrorStatus(&mut st) };
+                    (get_bool(|b| unsafe { a.IsSuccess(b) }), st.0)
+                }
+                None => (false, 0),
+            };
+            f(ok, status);
             Ok(())
         }));
         let mut token = 0i64;
@@ -848,6 +879,106 @@ impl Controller {
         let mut token = 0i64;
         // SAFETY: registering a handler on a live controller.
         let _ = unsafe { self.controller.add_ZoomFactorChanged(&handler, &mut token) };
+    }
+
+    /// Intercepts every request of this WebView (all resource contexts, and
+    /// documents, shared workers and service workers where the runtime
+    /// supports source kinds). Runs on the UI thread for each request, so
+    /// `decide` must be cheap.
+    pub fn intercept_all(&self, env: &Environment, decide: impl Fn(&ResourceRequest<'_>) -> ResourceAction + 'static) {
+        let env = env.clone();
+        let handler = WebResourceRequestedEventHandler::create(Box::new(move |_, args| {
+            let Some(args) = args else { return Ok(()) };
+            // SAFETY: live event args during the callback.
+            unsafe {
+                let Ok(req) = args.Request() else { return Ok(()) };
+                let uri = get_string(|p| req.Uri(p));
+                let mut ctx = COREWEBVIEW2_WEB_RESOURCE_CONTEXT::default();
+                let _ = args.ResourceContext(&mut ctx);
+                let action = decide(&ResourceRequest { uri: &uri, context: ctx.0 });
+                let resp = match action {
+                    ResourceAction::Serve(r) => env.response(r.status, r.reason, &r.headers, &r.body),
+                    ResourceAction::NotFound => {
+                        env.response(404, "Not Found", "Content-Type: text/plain", b"Not found")
+                    }
+                    ResourceAction::Block => env.response(403, "Blocked", "Content-Length: 0", b""),
+                    ResourceAction::Continue { dnt, gpc } => {
+                        if dnt || gpc {
+                            if let Ok(h) = req.Headers() {
+                                if dnt {
+                                    let _ = h.SetHeader(&HSTRING::from("DNT"), &HSTRING::from("1"));
+                                }
+                                if gpc {
+                                    let _ = h.SetHeader(&HSTRING::from("Sec-GPC"), &HSTRING::from("1"));
+                                }
+                            }
+                        }
+                        None
+                    }
+                };
+                if let Some(resp) = resp {
+                    let _ = args.SetResponse(&resp);
+                }
+            }
+            Ok(())
+        }));
+        let mut token = 0i64;
+        // SAFETY: registering a filter and handler on a live WebView.
+        unsafe {
+            let all = HSTRING::from("*");
+            let with_kinds = self.webview.cast::<ICoreWebView2_22>().ok().is_some_and(|w22| {
+                w22.AddWebResourceRequestedFilterWithRequestSourceKinds(
+                    &all,
+                    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
+                    COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL,
+                )
+                .is_ok()
+            });
+            if !with_kinds {
+                let _ = self.webview.AddWebResourceRequestedFilter(&all, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+            }
+            let _ = self.webview.add_WebResourceRequested(&handler, &mut token);
+        }
+    }
+
+    /// Runs `js` in every new document (all frames) before page scripts.
+    pub fn add_document_script(&self, js: &str) {
+        let done = AddScriptToExecuteOnDocumentCreatedCompletedHandler::create(Box::new(|_, _| Ok(())));
+        // SAFETY: live WebView; HSTRING outlives the call.
+        let _ = unsafe { self.webview.AddScriptToExecuteOnDocumentCreated(&HSTRING::from(js), &done) };
+    }
+
+    /// Runs `js` once in the current top-level document.
+    pub fn execute_script(&self, js: &str) {
+        let done = ExecuteScriptCompletedHandler::create(Box::new(|_, _| Ok(())));
+        // SAFETY: live WebView; HSTRING outlives the call.
+        let _ = unsafe { self.webview.ExecuteScript(&HSTRING::from(js), &done) };
+    }
+
+    /// `DOMContentLoaded` of the top-level document.
+    pub fn on_dom_content_loaded(&self, mut f: impl FnMut() + 'static) {
+        let Ok(wv2) = self.webview.cast::<ICoreWebView2_2>() else { return };
+        let handler = DOMContentLoadedEventHandler::create(Box::new(move |_, _| {
+            f();
+            Ok(())
+        }));
+        let mut token = 0i64;
+        // SAFETY: registering a handler on a live WebView.
+        let _ = unsafe { wv2.add_DOMContentLoaded(&handler, &mut token) };
+    }
+
+    /// Sets the profile's tracking prevention: 0 none, 1 basic, 2 balanced, 3 strict.
+    pub fn set_tracking_prevention(&self, level: u8) {
+        let lvl = match level {
+            0 => COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_NONE,
+            1 => COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_BASIC,
+            2 => COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_BALANCED,
+            _ => COREWEBVIEW2_TRACKING_PREVENTION_LEVEL_STRICT,
+        };
+        if let Some(p) = self.profile().and_then(|p| p.cast::<ICoreWebView2Profile3>().ok()) {
+            // SAFETY: live profile.
+            let _ = unsafe { p.SetPreferredTrackingPreventionLevel(lvl) };
+        }
     }
 
     /// Serves requests matching `filter` (e.g. `https://lightbrowser.invalid/*`)
