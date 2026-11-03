@@ -1,6 +1,23 @@
-body { min-height: 100vh; display: flex; justify-content: center; }
-main { width: min(760px, 92vw); padding-top: 18vh; }
-#search input { width: 100%; height: 46px; padding: 0 20px; border: 1px solid var(--border); border-radius: 23px;
-                background: var(--bg-raised); color: var(--fg); font: inherit; font-size: 16px; outline: none; }
+body { display: flex; justify-content: center; }
+main { width: min(820px, 92vw); padding-top: 16vh; }
+#search input { width: 100%; height: 48px; padding: 0 22px; border: 1px solid var(--border); border-radius: 24px;
+                background: var(--bg-raised); color: var(--fg); font: inherit; font-size: 16px; outline: none;
+                box-shadow: 0 1px 4px rgba(0,0,0,.06); }
 #search input:focus { border-color: var(--accent); }
-#tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 12px; margin-top: 36px; }
+#tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 14px; margin-top: 40px; }
+.tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 18px 8px 12px;
+        border-radius: 12px; color: var(--fg); text-decoration: none; }
+.tile:hover { background: var(--bg-raised); box-shadow: 0 1px 6px rgba(0,0,0,.08); }
+.tile .avatar { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px;
+                border-radius: 50%; background: var(--bg-raised); border: 1px solid var(--border); }
+.tile .avatar img, .tile .avatar .fav { width: 24px; height: 24px; }
+.tile .avatar .fav.letter { width: 48px; height: 48px; border-radius: 50%; font-size: 20px; background: transparent; }
+.tile .label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.tile .tools { position: absolute; top: 4px; right: 4px; display: flex; opacity: 0; }
+.tile:hover .tools, .tile:focus-within .tools { opacity: 1; }
+.tile .tools .icon-btn { min-width: 22px; height: 22px; padding: 0 3px; }
+.tile .tools .icon { width: 13px; height: 13px; }
+.tile .pinned-mark { position: absolute; top: 14px; left: calc(50% + 16px); display: flex; padding: 2px; border-radius: 50%; background: var(--bg-raised); color: var(--accent); }
+.tile .pinned-mark .icon { width: 13px; height: 13px; }
+.tile.pinned .tools .pin { color: var(--accent); }
+#empty { margin-top: 40px; text-align: center; color: var(--fg-muted); }

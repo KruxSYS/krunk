@@ -69,10 +69,25 @@
   }
 
   window.chrome = window.chrome || {};
+  // Request handlers: host.handlers[cmd] = function (msg) { return data; }.
+  // Requests with a reqId get a reply (ok + data, or the thrown error).
+  host.handlers = {};
+  function answer(msg) {
+    if (msg.reqId === undefined) return;
+    const h = host.handlers[msg.cmd];
+    try {
+      const data = h ? h(msg) : null;
+      host.emit({ event: 'reply', reqId: msg.reqId, ok: true, data: data === undefined ? null : data });
+    } catch (e) {
+      host.emit({ event: 'reply', reqId: msg.reqId, ok: false, error: String(e.message || e) });
+    }
+  }
+
   window.chrome.webview = {
     postMessage: function (msg) {
       host.sent.push(JSON.parse(JSON.stringify(msg)));
       if (host.autoSimulate) simulate(msg);
+      answer(msg);
     },
     addEventListener: function (type, fn) { if (type === 'message') listeners.push(fn); },
     removeEventListener: function () {},

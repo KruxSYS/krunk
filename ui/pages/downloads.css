@@ -1,0 +1,11 @@
+.dl { align-items: flex-start; padding: 12px 14px; gap: 12px; }
+.dl .file-icon { width: 32px; height: 32px; flex: none; display: flex; align-items: center; justify-content: center;
+                 border-radius: 6px; background: var(--bg-hover); font-size: 10px; font-weight: 700; color: var(--fg-muted); }
+.dl .info { flex: 1; min-width: 0; }
+.dl .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dl.failed .name { color: var(--fg-muted); text-decoration: line-through; }
+.dl .sub { margin-top: 2px; }
+.dl progress { width: 100%; height: 6px; margin-top: 6px; accent-color: var(--accent); }
+.dl .links { display: flex; gap: 12px; margin-top: 6px; }
+.dl .links button { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font: inherit; }
+.dl .links button:hover { text-decoration: underline; }

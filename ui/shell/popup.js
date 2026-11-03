@@ -95,11 +95,29 @@
       .concat([el('div', { class: 'row' }, [el('button', { class: 'btn', onclick: () => reply(null), text: 'Cancel' })])]))];
   }
 
+  function renderFolder(c) {
+    if (!c.items.length) return [el('div', { class: 'panel muted', text: '(empty)' })];
+    return c.items.map(function (b) {
+      const icon = b.isFolder ? el('span', { class: 'folder-glyph', text: '▸' })
+        : b.favicon ? el('img', { class: 'fav', src: b.favicon, alt: '' }) : el('span', { class: 'fav dot' });
+      const btn = el('button', { class: 'item', title: b.url || b.title }, [icon, el('span', { class: 'label', text: b.title })]);
+      btn.addEventListener('click', function (e) {
+        if (b.isFolder) { LB.post('showBookmarkFolder', { id: b.id }); return; }
+        LB.post('openUrl', { url: b.url, newTab: e.ctrlKey });
+        close();
+      });
+      btn.addEventListener('auxclick', function (e) {
+        if (e.button === 1 && b.url) { LB.post('openUrl', { url: b.url, newTab: true }); close(); }
+      });
+      return btn;
+    });
+  }
+
   let current = null;
   LB.on('popup', function (m) {
     current = m.content;
     const c = m.content;
-    const render = { menu: renderMenu, shield: renderShield, savePassword: renderSave, fill: renderFill }[c.kind];
+    const render = { menu: renderMenu, shield: renderShield, savePassword: renderSave, fill: renderFill, bookmarkFolder: renderFolder }[c.kind];
     root.textContent = '';
     root.dataset.kind = c.kind;
     (render ? render(c) : []).forEach((n) => n && root.appendChild(n));

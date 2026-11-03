@@ -23,3 +23,7 @@ body { background: var(--bg-raised); border: 1px solid var(--border); border-rad
 .choice { display: flex; align-items: center; gap: 8px; width: 100%; margin: 0 0 4px; padding: 8px 10px;
           border: 1px solid var(--border); background: var(--bg); border-radius: 6px; cursor: pointer; text-align: left; }
 .choice:hover, .choice:focus-visible { border-color: var(--accent); outline: none; }
+.item .fav { width: 16px; height: 16px; flex: none; }
+.item .fav.dot { border-radius: 50%; background: var(--border); }
+.item .folder-glyph { width: 16px; text-align: center; color: #d97706; }
+#root[data-kind="bookmarkFolder"] { max-height: 100vh; overflow-y: auto; }

@@ -1,0 +1,14 @@
+.page.wide { max-width: 1120px; }
+.layout { display: grid; grid-template-columns: 260px 1fr; gap: 18px; align-items: start; }
+#tree { padding: 6px; }
+.folder { display: flex; align-items: center; gap: 8px; width: 100%; height: 32px; padding: 0 8px; border: 0;
+          border-radius: 6px; background: none; color: var(--fg); text-align: left; cursor: pointer; }
+.folder:hover { background: var(--bg-hover); }
+.folder.selected { background: var(--bg-hover); font-weight: 600; }
+.folder.drop { outline: 2px solid var(--accent); }
+.folder .icon { color: #d97706; }
+.row.dragging { opacity: .4; }
+.row.drop-before { box-shadow: 0 2px 0 var(--accent) inset; }
+.row .folder-icon { color: #d97706; }
+.row .main .name { cursor: pointer; }
+#folder-title { margin-top: 0; }

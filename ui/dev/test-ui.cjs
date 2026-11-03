@@ -10,6 +10,7 @@
 'use strict';
 const { chromium } = require('playwright');
 const fs = require('fs');
+const zlib = require('zlib');
 const path = require('path');
 
 const UI = path.resolve(__dirname, '..');
@@ -24,9 +25,45 @@ function check(cond, name) {
   if (cond) { passes++; console.log('  ok   ' + name); } else { failures++; console.log('  FAIL ' + name); }
 }
 
-async function route(context) {
+// A 16x16 PNG circle in a colour derived from the host (stands in for
+// cached favicons served by the host at /favicon?host=).
+function faviconPng(host) {
+  let h = 0;
+  for (const c of host) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  const rgb = [60 + (h & 0x7f), 60 + ((h >> 7) & 0x7f), 60 + ((h >> 14) & 0x7f)];
+  const rows = [];
+  for (let y = 0; y < 16; y++) {
+    const row = [0];
+    for (let x = 0; x < 16; x++) {
+      const inside = (x - 7.5) ** 2 + (y - 7.5) ** 2 < 56;
+      row.push(...(inside ? [...rgb, 255] : [0, 0, 0, 0]));
+    }
+    rows.push(Buffer.from(row));
+  }
+  const crcTable = [];
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; crcTable[n] = c >>> 0; }
+  const crc = (buf) => { let c = 0xffffffff; for (const b of buf) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const td = Buffer.concat([Buffer.from(type), data]);
+    const c = Buffer.alloc(4); c.writeUInt32BE(crc(td));
+    return Buffer.concat([len, td, c]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(16, 0); ihdr.writeUInt32BE(16, 4); ihdr[8] = 8; ihdr[9] = 6;
+  return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr),
+    chunk('IDAT', zlib.deflateSync(Buffer.concat(rows))), chunk('IEND', Buffer.alloc(0))]);
+}
+
+async function route(context, external) {
+  // Anything not on our internal origins is a network request the built-in
+  // UI must never make: record it and abort.
+  await context.route('**/*', (r) => { external.push(r.request().url()); return r.abort(); });
   const handler = (dir) => async (r) => {
     const url = new URL(r.request().url());
+    if (url.pathname === '/favicon') {
+      return r.fulfill({ status: 200, headers: { 'content-type': 'image/png' }, body: faviconPng(url.searchParams.get('host') || '') });
+    }
     let p = url.pathname.replace(/^\//, '');
     const file = p.startsWith('shared/') ? path.join(UI, p) : path.join(UI, dir, p);
     if (!file.startsWith(UI) || !fs.existsSync(file)) return r.fulfill({ status: 404, body: 'not found' });
@@ -41,16 +78,19 @@ async function route(context) {
   await context.route('https://lightbrowser.invalid/**', handler('pages'));
 }
 
-async function openPage(browser, url, viewport, scale) {
+async function openPage(browser, url, viewport, scale, setup, setupArg) {
   const context = await browser.newContext({ viewport: viewport, deviceScaleFactor: scale || 1 });
-  await route(context);
+  const external = [];
+  await route(context, external);
   await context.addInitScript({ path: path.join(__dirname, 'mock-host.js') });
+  if (setup) await context.addInitScript(setup, setupArg === undefined ? null : setupArg);
   const page = await context.newPage();
+  page.on('dialog', (d) => d.accept());
   const errors = [];
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
   page.on('pageerror', (e) => errors.push(String(e)));
   await page.goto(url);
-  return { page, context, errors };
+  return { page, context, errors, external };
 }
 
 const sent = (page) => page.evaluate(() => window.__host.sent);
@@ -247,13 +287,287 @@ async function testPopup(browser) {
   check(errors.length === 0, 'prompts: no console errors (' + errors.join(' | ') + ')');
 }
 
+const DAY = 86400000;
+
 async function testNewTab(browser) {
   console.log('new tab page');
-  const { page, errors } = await openPage(browser, 'https://lightbrowser.invalid/newtab.html', { width: 1000, height: 600 }, 1);
+  const tiles = [
+    ['https://www.rust-lang.org/', 'Rust Programming Language', true],
+    ['https://news.ycombinator.com/', 'Hacker News'],
+    ['https://en.wikipedia.org/wiki/Main_Page', 'Wikipedia'],
+    ['https://github.com/', 'GitHub'],
+    ['https://www.bbc.co.uk/news', 'BBC News'],
+    ['https://docs.rs/', 'Docs.rs'],
+    ['https://duckduckgo.com/', 'DuckDuckGo'],
+    ['https://example.org/', 'Example Domain'],
+    ['https://www.theguardian.com/', 'The Guardian'],
+    ['https://192.168.1.1/', 'Router admin'],
+  ].map(([url, title, pinned], i) => ({ url, title, pinned: !!pinned, favicon: i === 9 ? null : '/favicon?host=' + new URL(url).hostname }));
+  const { page, errors, external } = await openPage(browser, 'https://lightbrowser.invalid/newtab.html', { width: 1100, height: 640 }, 1,
+    (t) => { window.__host.handlers.getTopSites = () => t; }, tiles);
+  await page.waitForSelector('.tile');
+  check((await page.locator('.tile').count()) === 10, 'renders 10 tiles');
+  check((await page.locator('.tile.pinned').count()) === 1, 'one pinned tile');
+  await page.waitForTimeout(150);
+  await shot(page, 'newtab-tiles.png');
+  await page.locator('.tile').nth(1).hover();
+  await page.locator('.tile').nth(1).locator('.pin').click();
+  const pin = await lastSent(page, 'pinSite');
+  check(pin && pin.url === 'https://news.ycombinator.com/' && pin.title === 'Hacker News', 'pin sends pinSite{url,title}');
+  await page.locator('.tile').nth(2).hover();
+  await page.locator('.tile').nth(2).locator('.icon-btn[title="Remove"]').click();
+  const hide = await lastSent(page, 'hideSite');
+  check(hide && hide.url === 'https://en.wikipedia.org/wiki/Main_Page', 'remove sends hideSite{url}');
+  await page.locator('.tile').nth(0).hover();
+  await page.locator('.tile').nth(0).locator('.pin').click();
+  check((await lastSent(page, 'unpinSite')).url === 'https://www.rust-lang.org/', 'unpin on a pinned tile');
   await page.fill('#q', 'weather');
   await page.keyboard.press('Enter');
   const n = await lastSent(page, 'navigate');
   check(n && n.input === 'weather', 'search box sends navigate');
+  check(external.length === 0, 'new tab page makes zero network requests (' + external.join(', ') + ')');
+  check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
+}
+
+async function testHistory(browser) {
+  console.log('history page');
+  const now = Date.now();
+  const all = [
+    ['https://www.rust-lang.org/learn', 'Learn Rust', 0.1],
+    ['https://doc.rust-lang.org/book/', 'The Rust Programming Language book', 0.3],
+    ['https://news.ycombinator.com/', 'Hacker News', 0.5],
+    ['https://docs.rs/serde/latest/serde/', 'serde - Rust', 1.2],
+    ['https://github.com/rust-lang/rust', 'rust-lang/rust: Empowering everyone', 1.4],
+    ['https://en.wikipedia.org/wiki/Rust_(programming_language)', 'Rust (programming language) - Wikipedia', 3.2],
+  ].map(([url, title, days], i) => ({ id: i + 1, url, title, ts: now - days * DAY, visitCount: 1 + i }));
+  const { page, errors, external } = await openPage(browser, 'https://lightbrowser.invalid/history.html', { width: 1100, height: 700 }, 1,
+    (rows) => {
+      window.__host.handlers.queryHistory = (m) => rows.filter((r) => !m.text || (r.title + r.url).toLowerCase().includes(m.text.toLowerCase()));
+    }, all);
+  await page.waitForSelector('.row');
+  check((await page.locator('.row').count()) === 6, 'lists 6 visits');
+  check((await page.locator('.group-title').count()) >= 3, 'grouped by day');
+  await page.fill('#q', 'rust');
+  await page.waitForTimeout(300);
+  const q = await lastSent(page, 'queryHistory');
+  check(q && q.text === 'rust' && q.limit === 100, 'search sends queryHistory{text}');
+  check((await page.locator('.row').count()) === 5, 'shows 5 results for "rust"');
+  await shot(page, 'history-search.png');
+  await page.locator('.row').first().hover();
+  await page.locator('.row').first().locator('.icon-btn').click();
+  const del = await lastSent(page, 'deleteHistory');
+  check(del && del.ids.length === 1 && del.ids[0] === 1, 'remove sends deleteHistory{ids:[1]}');
+  await page.waitForTimeout(50);
+  check((await page.locator('.row').count()) === 4, 'row removed');
+  await page.selectOption('#range', '3600000');
+  await page.click('#delete-range');
+  const range = await lastSent(page, 'deleteHistoryRange');
+  check(range && Math.abs(range.to - range.from - 3600001) < 5000, 'delete last hour sends a 1 h range');
+  await page.selectOption('#range', 'all');
+  await page.click('#delete-range');
+  check((await lastSent(page, 'deleteHistoryRange')).from === 0, 'delete all time starts at 0');
+  await page.click('#clear');
+  await page.uncheck('#c-cache');
+  await page.check('#c-downloads');
+  await page.selectOption('#clear-range', '86400000');
+  await shot(page, 'history-clear-dialog.png');
+  await page.click('#clear-ok');
+  await page.waitForTimeout(50);
+  const cbd = await lastSent(page, 'clearBrowsingData');
+  check(cbd && cbd.data.history && cbd.data.cookies && cbd.data.siteData && !cbd.data.cache && cbd.data.downloads &&
+    Math.abs(Date.now() - DAY - cbd.data.since) < 5000, 'clear dialog sends the chosen kinds and range');
+  check(external.length === 0, 'history page makes no network requests (' + external.join(', ') + ')');
+  check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
+}
+
+function bookmarkTree() {
+  const b = (id, parent, title, url) => ({ id, parent, isFolder: false, title, url, position: 0, added: 0 });
+  const f = (id, parent, title, children) => ({ id, parent, isFolder: true, title, url: null, position: 0, added: 0, children });
+  return [
+    f(1, null, 'Bookmarks bar', [
+      b(10, 1, 'Rust', 'https://www.rust-lang.org/'),
+      f(11, 1, 'News', [b(12, 11, 'BBC News', 'https://www.bbc.co.uk/news'), b(13, 11, 'Hacker News', 'https://news.ycombinator.com/'),
+        f(14, 11, 'Tech', [b(15, 14, 'Ars Technica', 'https://arstechnica.com/')])]),
+      f(16, 1, 'Dev', [b(17, 16, 'GitHub', 'https://github.com/'), b(18, 16, 'Docs.rs', 'https://docs.rs/')]),
+      b(19, 1, 'Wikipedia', 'https://en.wikipedia.org/'),
+    ]),
+    f(2, null, 'Other bookmarks', [b(20, 2, 'Example', 'https://example.org/'), f(21, 2, 'Recipes', [])]),
+  ];
+}
+
+async function testBookmarks(browser) {
+  console.log('bookmarks manager');
+  const { page, errors, external } = await openPage(browser, 'https://lightbrowser.invalid/bookmarks.html', { width: 1100, height: 600 }, 1,
+    (tree) => {
+      const h = window.__host.handlers;
+      h.getBookmarks = () => tree;
+      h.searchBookmarks = (m) => {
+        const out = [];
+        const walk = (ns) => ns.forEach((n) => { if (!n.isFolder && (n.title + n.url).toLowerCase().includes(m.text.toLowerCase())) out.push(n); walk(n.children || []); });
+        walk(tree);
+        return out;
+      };
+      h.importBookmarks = () => ({ bookmarks: 42, folders: 5, skipped: 1 });
+      h.exportBookmarks = () => 'C:\\Users\\me\\Documents\\bookmarks.html';
+    }, bookmarkTree());
+  await page.waitForSelector('.folder');
+  check((await page.locator('.folder').count()) === 6, 'tree shows 6 folders');
+  check((await page.locator('#items .row').count()) === 4, 'bar folder lists 4 items');
+  await page.locator('.folder', { hasText: 'News' }).click();
+  check((await page.locator('#items .row').count()) === 3, 'News folder has 3 items');
+  await page.waitForTimeout(150);
+  await shot(page, 'bookmarks-manager.png');
+  // Drag "BBC News" onto the "Dev" folder.
+  await page.locator('#items .row', { hasText: 'BBC News' }).dragTo(page.locator('.folder', { hasText: 'Dev' }));
+  const mv = await lastSent(page, 'moveBookmark');
+  check(mv && mv.id === 12 && mv.parent === 16, 'drag onto a folder sends moveBookmark{parent}');
+  // Reorder inside the folder: drop Hacker News before BBC News.
+  await page.locator('#items .row', { hasText: 'Hacker News' }).dragTo(page.locator('#items .row', { hasText: 'BBC News' }));
+  const re = await lastSent(page, 'moveBookmark');
+  check(re && re.id === 13 && re.parent === 11 && re.index === 0, 'drag within the list reorders (index 0)');
+  // Edit + move via the dialog.
+  await page.locator('#items .row', { hasText: 'BBC News' }).hover();
+  await page.locator('#items .row', { hasText: 'BBC News' }).locator('.icon-btn[title="Edit"]').click();
+  await page.fill('#edit-name', 'BBC');
+  await page.selectOption('#edit-folder', '2');
+  await page.locator('#edit-dialog button[value="ok"]').click();
+  await page.waitForTimeout(80);
+  const ed = await lastSent(page, 'editBookmark');
+  check(ed && ed.id === 12 && ed.title === 'BBC' && ed.url === 'https://www.bbc.co.uk/news', 'edit dialog sends editBookmark');
+  const mv2 = await lastSent(page, 'moveBookmark');
+  check(mv2 && mv2.id === 12 && mv2.parent === 2, '"Move to folder" sends moveBookmark to Other bookmarks');
+  // A folder cannot be offered as its own destination.
+  await page.locator('.folder', { hasText: 'Bookmarks bar' }).click();
+  await page.locator('#items .row', { hasText: 'News' }).first().hover();
+  await page.locator('#items .row', { hasText: 'News' }).first().locator('.icon-btn[title="Edit"]').click();
+  const opts = await page.$$eval('#edit-folder option', (o) => o.map((x) => x.textContent.trim()));
+  check(!opts.includes('News') && !opts.includes('Tech'), 'folder dialog excludes itself and its subfolders');
+  await page.keyboard.press('Escape');
+  await page.fill('#q', 'news');
+  await page.waitForTimeout(300);
+  check((await page.locator('#items .row').count()) === 2, 'search finds 2 bookmarks');
+  await page.locator('#items .row').first().hover();
+  await page.locator('#items .row').first().locator('.icon-btn[title="Delete"]').click();
+  check((await lastSent(page, 'deleteBookmark')) !== undefined, 'delete (after confirm) sends deleteBookmark');
+  await page.click('#import');
+  await page.waitForTimeout(50);
+  check((await lastSent(page, 'importBookmarks')) !== undefined, 'import asks the host (native file dialog)');
+  check((await page.locator('.toast').textContent()).includes('Imported 42'), 'import result shown');
+  await page.click('#export');
+  check((await lastSent(page, 'exportBookmarks')) !== undefined, 'export asks the host');
+  check(external.length === 0, 'no network requests (' + external.join(', ') + ')');
+  check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
+}
+
+async function testDownloads(browser) {
+  console.log('downloads page');
+  const now = Date.now();
+  const items = [
+    { id: 3, url: 'https://releases.example.org/tool-2.4.1-x64.msi', fileName: 'tool-2.4.1-x64.msi', path: 'C:\\Users\\me\\Downloads\\tool-2.4.1-x64.msi', state: 'inProgress', received: 23500000, total: 61200000, started: now, reason: null },
+    { id: 2, url: 'https://arxiv.org/pdf/1234.5678', fileName: 'paper.pdf', path: 'C:\\Users\\me\\Downloads\\paper.pdf', state: 'completed', received: 2400000, total: 2400000, started: now - 60000, reason: null },
+    { id: 1, url: 'https://cdn.example.com/video.mp4', fileName: 'video.mp4', path: 'C:\\Users\\me\\Downloads\\video.mp4', state: 'interrupted', received: 1000, total: null, started: now - 120000, reason: 'Network error' },
+  ];
+  const { page, errors, external } = await openPage(browser, 'https://lightbrowser.invalid/downloads.html', { width: 1000, height: 420 }, 1,
+    (d) => { window.__host.handlers.getDownloads = () => d; }, items);
+  await page.waitForSelector('.dl');
+  check((await page.locator('.dl').count()) === 3, 'lists 3 downloads');
+  check((await page.locator('progress').count()) === 1, 'progress bar for the running download');
+  await shot(page, 'downloads.png');
+  await page.locator('.dl[data-id="2"] button', { hasText: 'Show in folder' }).click();
+  const a = await lastSent(page, 'downloadAction');
+  check(a && a.id === 2 && a.action === 'showInFolder', 'show in folder sends downloadAction');
+  await page.locator('.dl[data-id="3"] button', { hasText: 'Cancel' }).click();
+  check((await lastSent(page, 'downloadAction')).action === 'cancel', 'cancel sends downloadAction{cancel}');
+  items[0].state = 'completed'; items[0].received = items[0].total;
+  await emit(page, { event: 'downloads', items });
+  await page.waitForTimeout(50);
+  check((await page.locator('progress').count()) === 0, 'pushed update re-renders the list');
+  await page.click('#clear');
+  check((await lastSent(page, 'clearDownloads')) !== undefined, 'clear list sends clearDownloads');
+  check(external.length === 0, 'no network requests');
+  check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
+}
+
+async function testShellM4(browser) {
+  console.log('shell: bookmarks bar, find, zoom');
+  const { page, errors, external } = await openPage(browser, 'https://shell.lightbrowser.invalid/shell.html', { width: 1100, height: 104 }, 1);
+  await page.evaluate(() => {
+    const h = window.__host;
+    h.state.tabs = [
+      { id: 1, title: 'The Rust Programming Language', url: 'https://doc.rust-lang.org/book/', favicon: null, loading: false, private: false, sleeping: false },
+      { id: 2, title: 'Hacker News', url: 'https://news.ycombinator.com/', favicon: null, loading: false, private: false, sleeping: false },
+    ];
+    h.state.active = 1;
+    h.tabsEvent();
+    h.navEvent({ zoom: 1.25, bookmarked: true });
+    h.emit({ event: 'shellConfig', showHomeButton: true, showBookmarksBar: true, theme: 'system' });
+    h.emit({ event: 'bookmarksBar', items: [
+      { id: 10, title: 'Rust', url: 'https://www.rust-lang.org/', isFolder: false, favicon: '/favicon?host=www.rust-lang.org' },
+      { id: 11, title: 'News', url: null, isFolder: true, favicon: null },
+      { id: 16, title: 'Dev', url: null, isFolder: true, favicon: null },
+      { id: 19, title: 'Wikipedia', url: 'https://en.wikipedia.org/', isFolder: false, favicon: '/favicon?host=en.wikipedia.org' },
+    ] });
+  });
+  await page.waitForSelector('.bm');
+  check(await page.locator('#bookmarks-bar').isVisible(), 'bookmarks bar visible');
+  check((await page.locator('.bm').count()) === 4, 'bar shows 4 items');
+  check(await page.locator('#zoom').textContent() === '125%' && await page.locator('#zoom').isVisible(), 'zoom chip shows 125%');
+  check(await page.locator('#star.bookmarked').count() === 1, 'star filled for a bookmarked page');
+  await page.click('#zoom');
+  check((await lastSent(page, 'zoom')).action === 'reset', 'zoom chip resets zoom');
+  await page.locator('.bm', { hasText: 'Rust' }).click();
+  const ou = await lastSent(page, 'openUrl');
+  check(ou && ou.url === 'https://www.rust-lang.org/' && ou.newTab === false, 'bar bookmark sends openUrl');
+  await page.locator('.bm', { hasText: 'Wikipedia' }).click({ button: 'middle' });
+  check((await lastSent(page, 'openUrl')).newTab === true, 'middle click opens in a new tab');
+  await page.locator('.bm', { hasText: 'News' }).click();
+  const sf = await lastSent(page, 'showBookmarkFolder');
+  check(sf && sf.id === 11 && sf.rect.y >= 76 && sf.rect.width > 10, 'folder sends showBookmarkFolder{id, rect under the button}');
+  check(await page.locator('.bm.on[data-folder="11"]').count() === 1, 'open folder highlighted');
+  await emit(page, { event: 'popupClosed' });
+  await page.waitForTimeout(20);
+  await page.waitForTimeout(150);
+  await shot(page, 'shell-bookmarks-bar.png');
+  // Find bar.
+  await emit(page, { event: 'showFind' });
+  await page.waitForSelector('#findbar:not([hidden])');
+  check(await page.evaluate(() => document.activeElement.id) === 'find', 'find input focused');
+  await page.keyboard.type('borrow');
+  await page.waitForTimeout(250);
+  const f = await lastSent(page, 'find');
+  check(f && f.query === 'borrow' && f.backwards === false, 'typing sends find{query}');
+  await emit(page, { event: 'findResult', active: 3, total: 12 });
+  await page.waitForTimeout(20);
+  check(await page.locator('#find-count').textContent() === '3/12', 'shows 3/12');
+  await page.keyboard.press('Shift+Enter');
+  check((await lastSent(page, 'find')).backwards === true, 'Shift+Enter searches backwards');
+  await shot(page, 'shell-find-bar.png');
+  await emit(page, { event: 'findResult', active: 0, total: 0 });
+  await page.waitForTimeout(20);
+  check(await page.locator('#findbar.nomatch').count() === 1, 'no matches shown in red');
+  await page.keyboard.press('Escape');
+  check((await lastSent(page, 'findClose')) !== undefined && await page.locator('#findbar').isHidden(), 'Escape closes find');
+  check(external.length === 0, 'shell makes no network requests (' + external.join(', ') + ')');
+  check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
+}
+
+async function testFolderPopup(browser) {
+  console.log('popup: bookmark folder');
+  const { page, errors } = await openPage(browser, 'https://shell.lightbrowser.invalid/popup.html', { width: 280, height: 110 }, 1);
+  await emit(page, { event: 'popup', content: { kind: 'bookmarkFolder', id: 11, title: 'News', items: [
+    { id: 12, title: 'BBC News', url: 'https://www.bbc.co.uk/news', isFolder: false, favicon: '/favicon?host=www.bbc.co.uk' },
+    { id: 13, title: 'Hacker News', url: 'https://news.ycombinator.com/', isFolder: false, favicon: null },
+    { id: 14, title: 'Tech', url: null, isFolder: true, favicon: null },
+  ] } });
+  await page.waitForSelector('.item');
+  await page.waitForTimeout(100);
+  await shot(page, 'popup-bookmark-folder.png');
+  await page.locator('.item', { hasText: 'Tech' }).click();
+  const sf = await lastSent(page, 'showBookmarkFolder');
+  check(sf && sf.id === 14 && sf.rect === undefined, 'subfolder opens in place (no rect)');
+  await page.locator('.item', { hasText: 'BBC News' }).click();
+  const ou = await lastSent(page, 'openUrl');
+  check(ou && ou.url === 'https://www.bbc.co.uk/news', 'bookmark opens url');
   check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
 }
 
@@ -265,6 +579,11 @@ async function testNewTab(browser) {
     await testShellHiDpi(browser);
     await testPopup(browser);
     await testNewTab(browser);
+    await testHistory(browser);
+    await testBookmarks(browser);
+    await testDownloads(browser);
+    await testShellM4(browser);
+    await testFolderPopup(browser);
   } finally {
     await browser.close();
   }

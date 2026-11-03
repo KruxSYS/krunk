@@ -61,3 +61,28 @@ body { display: flex; flex-direction: column; background: var(--bg); }
 #shield-count { position: absolute; right: 0; bottom: 2px; min-width: 15px; padding: 0 3px; border-radius: 8px;
                 background: #ea580c; color: #fff; font-size: 10px; line-height: 14px; text-align: center; }
 #shield-count[hidden] { display: none; }
+
+/* ---- zoom chip ---- */
+.chip { height: 22px; padding: 0 8px; border: 1px solid var(--border); border-radius: 11px; background: var(--bg-raised);
+        color: var(--fg); font-size: 12px; cursor: pointer; }
+.chip:hover { background: var(--bg-hover); }
+
+/* ---- find bar ---- */
+#findbar { display: flex; align-items: center; gap: 2px; height: 32px; padding: 0 4px 0 10px; margin-right: 4px;
+           border: 1px solid var(--accent); border-radius: 16px; background: var(--bg-raised); }
+#findbar[hidden] { display: none; }
+#find { width: 180px; border: 0; outline: 0; background: none; color: var(--fg); font: inherit; }
+#find-count { min-width: 48px; color: var(--fg-muted); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+#findbar.nomatch #find-count { color: var(--danger); }
+
+/* ---- bookmarks bar ---- */
+#bookmarks-bar { display: flex; align-items: center; gap: 2px; height: 28px; padding: 0 8px; overflow: hidden;
+                 background: var(--bg-raised); border-bottom: 1px solid var(--border); }
+#bookmarks-bar[hidden] { display: none; }
+.bm { display: flex; align-items: center; gap: 6px; max-width: 180px; height: 24px; padding: 0 8px; border: 0;
+      border-radius: 12px; background: none; color: var(--fg); font: inherit; font-size: 12px; cursor: pointer; flex: none; }
+.bm:hover, .bm.on { background: var(--bg-hover); }
+.bm img, .bm .icon { width: 16px; height: 16px; flex: none; }
+.bm .folder-icon { color: #d97706; }
+.bm span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bm-empty { color: var(--fg-muted); font-size: 12px; padding: 0 6px; }

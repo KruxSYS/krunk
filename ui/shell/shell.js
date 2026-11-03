@@ -99,6 +99,11 @@
   function renderNav() {
     const n = state.nav;
     if (!n) return;
+    if (state.navTab !== undefined && state.navTab !== n.tabId) closeFind(false);
+    state.navTab = n.tabId;
+    const zoomed = Math.abs((n.zoom || 1) - 1) > 0.001;
+    $('zoom').hidden = !zoomed;
+    $('zoom').textContent = Math.round((n.zoom || 1) * 100) + '%';
     $('back').disabled = !n.canGoBack;
     $('forward').disabled = !n.canGoForward;
     $('reload-icon').setAttribute('href', n.loading ? '#i-stop' : '#i-reload');
@@ -169,7 +174,70 @@
     state.popup = kind;
     $('menu').classList.toggle('on', kind === 'menu');
     $('shield').classList.toggle('on', kind === 'shield');
+    document.querySelectorAll('.bm[data-folder]').forEach(function (b) {
+      b.classList.toggle('on', kind === 'folder:' + b.dataset.folder);
+    });
   }
+
+  // ---------- bookmarks bar ----------
+  function renderBar(items) {
+    const bar = $('bookmarks-bar');
+    bar.textContent = '';
+    if (!items.length) {
+      bar.appendChild(el('span', { class: 'bm-empty', text: 'Bookmarks in the “Bookmarks bar” folder appear here (Ctrl+D adds the page).' }));
+      return;
+    }
+    items.forEach(function (b) {
+      if (b.isFolder) {
+        const btn = el('button', { class: 'bm', title: b.title, 'data-folder': b.id }, [
+          svgIcon('i-folder', 'folder-icon'), el('span', { text: b.title }),
+        ]);
+        btn.addEventListener('click', function () {
+          const key = 'folder:' + b.id;
+          if (state.popup === key) { LB.post('hidePopup'); setPopup(null); return; }
+          const r = btn.getBoundingClientRect();
+          LB.post('showBookmarkFolder', { id: b.id, rect: { x: r.left, y: r.top, width: Math.max(1, r.width), height: Math.max(1, r.height) } });
+          setPopup(key);
+        });
+        bar.appendChild(btn);
+      } else {
+        const btn = el('button', { class: 'bm', title: b.title + '\n' + b.url }, [
+          b.favicon ? el('img', { src: b.favicon, alt: '' }) : svgIcon('i-globe'),
+          el('span', { text: b.title }),
+        ]);
+        btn.addEventListener('click', function (e) { LB.post('openUrl', { url: b.url, newTab: e.ctrlKey }); });
+        btn.addEventListener('auxclick', function (e) { if (e.button === 1) LB.post('openUrl', { url: b.url, newTab: true }); });
+        bar.appendChild(btn);
+      }
+    });
+  }
+
+  // ---------- find in page ----------
+  const find = $('find');
+  function runFind(backwards) {
+    const q = find.value;
+    if (!q) { $('find-count').textContent = ''; $('findbar').classList.remove('nomatch'); LB.post('findClose'); return; }
+    LB.post('find', { query: q, backwards: !!backwards });
+  }
+  function closeFind(notify) {
+    if ($('findbar').hidden) return;
+    $('findbar').hidden = true;
+    if (notify) LB.post('findClose');
+  }
+  find.addEventListener('input', Page_debounce(function () { runFind(false); }, 120));
+  find.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); runFind(e.shiftKey); }
+    if (e.key === 'Escape') { e.preventDefault(); closeFind(true); }
+  });
+  $('find-next').addEventListener('click', function () { runFind(false); });
+  $('find-prev').addEventListener('click', function () { runFind(true); });
+  $('find-close').addEventListener('click', function () { closeFind(true); });
+  $('findbar').addEventListener('submit', function (e) { e.preventDefault(); });
+  function Page_debounce(fn, ms) {
+    let t;
+    return function () { clearTimeout(t); t = setTimeout(fn, ms); };
+  }
+  $('zoom').addEventListener('click', function () { LB.post('zoom', { action: 'reset' }); });
   $('menu').addEventListener('click', function () { togglePopup('menu', $('menu')); });
   $('shield').addEventListener('click', function () { togglePopup('shield', $('shield')); });
 
@@ -182,10 +250,22 @@
   LB.on('nav', function (m) { state.nav = m.state; renderNav(); });
   LB.on('shellConfig', function (m) {
     $('home').hidden = !m.showHomeButton;
+    $('bookmarks-bar').hidden = !m.showBookmarksBar;
     document.documentElement.classList.toggle('dark', m.theme === 'dark');
     document.documentElement.classList.toggle('light', m.theme === 'light');
   });
   LB.on('focusAddressBar', function () { address.focus(); address.select(); });
+  LB.on('bookmarksBar', function (m) { renderBar(m.items); });
+  LB.on('showFind', function () {
+    $('findbar').hidden = false;
+    find.focus();
+    find.select();
+    if (find.value) runFind(false);
+  });
+  LB.on('findResult', function (m) {
+    $('find-count').textContent = find.value ? (m.total > 0 ? m.active + '/' + m.total : '0/0') : '';
+    $('findbar').classList.toggle('nomatch', !!find.value && m.total === 0);
+  });
   LB.on('popupClosed', function () { setPopup(null); });
 
   // Keep keyboard shortcuts working while the shell has focus: the host sees
