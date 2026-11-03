@@ -118,6 +118,62 @@ The environment also sets extensions off, OS single sign-on off, and tracking pr
 Each WebView disables WebView2's general autofill and password autosave, because the browser
 has its own vault.
 
+Checked at runtime on the Windows 11 VM (WebView2 156.0.4314.58) with
+`scripts/vm-mem.ps1 -CommandLine`, which reads the `msedgewebview2.exe` browser process command
+line from the process list. With default settings it contains:
+```
+--user-data-dir="C:\Users\pipe\AppData\Local\LightBrowser\profile\EBWebView" ...
+--disable-domain-reliability
+--disable-features=AutofillServerCommunication,MediaRouter,OptimizationHints,InterestFeedContentSuggestions,msEdgeShoppingAssistant,msSmartScreenProtection
+--no-pings
+```
+LightBrowser runs no telemetry, update service or background process of its own. The only
+network traffic it starts itself is the daily filter-list update (WinHTTP, see above).
+
+### Memory
+- **Lazy restore:** restored tabs show their saved title and the cached favicon. They get no
+  controller (and so no renderer process) until they are first activated.
+- **Background sleep:** after `tab_sleep_minutes` (default 5) without activation, a background
+  tab gets `MemoryUsageTargetLevel=Low`; 60 s later it is suspended with `TrySuspend`.
+  Activating it calls `Resume` and restores the normal memory level, with no reload.
+- **Discard** (optional, off by default): after `tab_discard_minutes` the tab's controller is
+  closed. URL, title and favicon are kept, and the tab reloads when activated. A discarded
+  private tab keeps only its URL. The last live private tab is never discarded, so the InPrivate
+  session (cookies, logins) survives.
+- **Never touched:** the active tab, tabs playing audio, tabs with a download in progress, and
+  the UI shell and popup.
+- The rules are pure functions in `core::memory` (`decide`, `exempt`), with unit tests. The
+  host evaluates them on a timer.
+- Hidden options, not shown in the UI:
+  - `--sleep-test-seconds=N` scales the timers for testing: sleep after N s, suspend N s later,
+    discard after 4N s when discard is enabled.
+  - `--mem-report` appends the summed working set and private bytes of the browser process
+    tree, with tab, renderer and suspended counts, to `%LOCALAPPDATA%\LightBrowser\memory-report.log`
+    every 10 s. The tree is our process plus every descendant, which includes the
+    `msedgewebview2.exe` processes of our user data folder.
+
+Measured on the Windows 11 VM (WebView2 156.0.4314.58), as the sum over the whole process tree.
+"10 sites" were Wikipedia, GitHub, Hacker News, MDN, BBC News, The Guardian, Stack Overflow,
+Reddit, NYTimes and CNN, plus the new-tab page:
+
+| Scenario | Processes | Renderers | Working set | Private bytes |
+|----------|-----------|-----------|-------------|---------------|
+| 1 tab (new-tab page) | 8 | 2 | 379 MB | 140 MB |
+| 11-tab session restored (lazy) | 8 | 2 | 379 MB | 137 MB |
+| 10 sites open, awake | 23 | 15 | 2131–2173 MB | 1165–1291 MB |
+| 10 background tabs at low memory | 23 | 15 | 1179 MB | 1186 MB |
+| 10 background tabs suspended | 23 | 15 | 1084–1104 MB | 1179–1186 MB |
+| after discard (9 unloaded, CNN active) | 13 | 5 | 973–988 MB | 660 MB |
+
+How to read these numbers:
+- The working-set sum counts shared DLL pages once per process, so it overstates physical RAM.
+- Low memory and suspend trim the working set by about half, but they do not free committed
+  memory.
+- Discard frees committed memory too (about −44 %) and ends the renderer processes.
+
+To reproduce: enable discard in Settings, start with `--sleep-test-seconds=90 --mem-report`,
+open the sites and read `memory-report.log` (steps in `docs/MANUAL_TEST.md`).
+
 ## Development
 - Testing on Windows: `scripts/vm.sh` deploys `dist/LightBrowser.exe` to a Windows test machine
   over SSH and drives it (start, stop, screenshots, keys, clicks).

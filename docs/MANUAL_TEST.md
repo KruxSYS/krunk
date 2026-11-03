@@ -269,7 +269,55 @@ Open ⋮ → Settings, or type `lb://settings` in the address bar.
     - Theme Dark: the shell, built-in pages, web pages that support `prefers-color-scheme`, and
       the window title bar all turn dark.
     - System follows Windows (Settings → Personalization → Colors).
-12. **Reset:** "Reset settings…" asks first. After OK, every value is back to its default, and the
+12. **Reset:** "Reset settings…" asks first, in an in-page dialog (no native
+    "lightbrowser.invalid says" box; the same applies to every delete prompt on the built-in
+    pages). After "Reset", every value is back to its default, and the
     restart banner appears if restart-only values were different.
 13. **Isolation:** only `lb://settings` can change settings. In DevTools on any website,
     `chrome.webview.postMessage({cmd:"saveSettings",settings:{}})` has no effect.
+
+## Memory (M8)
+Use `scripts/vm-mem.ps1` (PowerShell) to list the process tree with each process's type and
+working set. With `-CommandLine` it also prints the WebView2 browser process command line.
+1. **Flags at runtime:** start normally and run `vm-mem.ps1 -CommandLine`. The browser command
+   line contains:
+   - `--no-pings`
+   - `--disable-domain-reliability`
+   - `--disable-features=AutofillServerCommunication,…,msSmartScreenProtection`
+
+   After turning SmartScreen on and restarting, `msSmartScreenProtection` is gone.
+2. **Lazy restore:**
+   - Set "Continue where you left off", open 5 sites, close and start again.
+   - Every tab shows its title and favicon, but the background tabs are dimmed. `vm-mem.ps1`
+     shows 2 renderers: the shell and the active tab.
+   - Click one restored tab: it loads, and there are 3 renderers.
+3. **1-tab baseline:** start with `--mem-report` and one new tab. Wait 10 s and note the last
+   `tick:` line of `%LOCALAPPDATA%\LightBrowser\memory-report.log`
+   (about 380 MB working set, 2 renderers).
+4. **Sleep and suspend** (test scale):
+   - In Settings, turn on "Discard background tabs".
+   - Start with `--sleep-test-seconds=90 --mem-report` (sleep 90 s, suspend 90 s later,
+     discard 360 s after the tab was last active). `lightbrowser.log` has "tab sleep test mode".
+   - Open 10 real sites, one per tab. Note the `tick:` line (about 2.1 GB working set,
+     15 renderers).
+   - Do not touch the browser for about 3 minutes. Background tabs dim. `lightbrowser.log` has
+     "tab N: low memory", then "tab N: suspended" for each background tab. The mem-report shows
+     `suspended=10` and roughly half the working set.
+   - Never slept:
+     - the active tab
+     - a tab playing audio (start a YouTube video in a background tab)
+     - a tab with a download in progress
+5. **Wake:** click a dimmed tab. It shows at once with no reload, and the log has
+   "tab N: woken (Suspended)".
+6. **Discard:**
+   - About 6 minutes after a tab was last active, the log has "tab N: discarded". The
+     mem-report shows `unloaded=` rising and fewer processes and renderers.
+   - Clicking a discarded tab reloads its URL. Its back history is gone, which is expected.
+7. **Private discard:**
+   - Open two private tabs and log in to a site in one of them. Let the other one be
+     discarded.
+   - The discarded private tab shows only its host as the title, with no favicon. Activating it
+     reloads it in the same InPrivate session, so you are still logged in.
+   - The last live private tab is never discarded.
+8. The test options are not in the Settings UI. Without `--sleep-test-seconds`, the timers are
+   the settings values in minutes.
