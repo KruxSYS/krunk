@@ -764,6 +764,145 @@ async function testPasswords(browser) {
   check(external.length === 0, 'no network requests');
 }
 
+// Mock of the settings host: simplified versions of the core rules (the real
+// ones are unit-tested in core/src/settings.rs).
+function settingsMock(defaults) {
+  const h = window.__host.handlers;
+  const clone = (x) => JSON.parse(JSON.stringify(x));
+  const running = clone(defaults);
+  const st = { settings: clone(defaults), allow: ['news.example.com'] };
+  window.__settings = st;
+  const restart = (s) => ['hardwareAcceleration', 'proxy', 'extraFlags', 'smartscreen'].some((k) => s[k] !== running[k]);
+  h.getSettings = () => ({ settings: st.settings, restartRequired: restart(st.settings), about: { version: '0.1.0', runtime: '142.0.3595.53', dataDir: 'C:\\Users\\me\\AppData\\Local\\LightBrowser' } });
+  h.saveSettings = (m) => {
+    const s = m.settings;
+    const errs = [];
+    if (s.proxy && !/^((https?|socks[45]):\/\/)?[A-Za-z0-9.-]+:\d{1,5}$/.test(s.proxy)) errs.push({ field: 'proxy', message: 'Use host:port, scheme://host:port (http, https, socks4, socks5) or direct://' });
+    if (s.searchEngine === 'custom' && !/%s|\{searchTerms\}/.test(s.customSearchUrl)) errs.push({ field: 'customSearchUrl', message: 'Must contain %s where the search terms go' });
+    if (s.extraFlags.split(/\s+/).some((t) => t && !/^--[A-Za-z0-9][\w.-]*(=[^\s"'`;&|<>]+)?$/.test(t))) errs.push({ field: 'extraFlags', message: 'Not a valid flag (use --flag or --flag=value)' });
+    if (s.tabSleepMinutes > 1440) errs.push({ field: 'tabSleepMinutes', message: 'Must be between 0 and 1440 minutes' });
+    if (errs.length) { const e = new Error('Some settings are not valid'); e.data = errs; throw e; }
+    st.settings = s;
+    return { settings: s, restartRequired: restart(s) };
+  };
+  h.resetSettings = () => { st.settings = clone(defaults); return { settings: st.settings, restartRequired: false }; };
+  h.getFilterStatus = () => ({ enabled: true, lastCheck: Date.now() - 3 * 3600e3, lastError: null, busy: false, lists: [
+    { id: 'easylist', title: 'EasyList (ads)', enabled: true, source: 'downloaded', fetched: Date.now() - 3 * 3600e3 },
+    { id: 'easyprivacy', title: 'EasyPrivacy (trackers)', enabled: true, source: 'downloaded', fetched: Date.now() - 3 * 3600e3 },
+    { id: 'ublock-filters', title: 'uBlock filters', enabled: true, source: 'embedded', fetched: null },
+    { id: 'ublock-privacy', title: 'uBlock filters – Privacy', enabled: true, source: 'embedded', fetched: null },
+    { id: 'ublock-unbreak', title: 'uBlock filters – Unbreak', enabled: true, source: 'embedded', fetched: null },
+  ] });
+  h.updateFilterLists = () => h.getFilterStatus();
+  h.getAllowlist = () => st.allow;
+  h.allowlistAdd = (m) => { if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(m.host)) throw new Error('Not a valid host name'); st.allow.push(m.host.toLowerCase()); return m.host; };
+  h.allowlistRemove = (m) => { st.allow = st.allow.filter((x) => x !== m.host); return true; };
+  h.pickDownloadFolder = () => 'D:\\Downloads\\Browser';
+}
+
+async function testSettings(browser) {
+  console.log('settings page');
+  const defaults = JSON.parse(fs.readFileSync(path.join(__dirname, 'default-settings.json'), 'utf8'));
+  const { page, errors, external } = await openPage(browser, 'https://lightbrowser.invalid/settings.html', { width: 1000, height: 2900 }, 1, settingsMock, defaults);
+  await page.waitForSelector('#lists .row');
+  check(await page.inputValue('#searchEngine') === 'duckDuckGo', 'defaults: DuckDuckGo');
+  check(await page.isChecked('input[name=startup][value=restoreSession]'), 'defaults: restore session');
+  check(await page.inputValue('#trackingPrevention') === 'strict', 'defaults: strict tracking prevention');
+  check(await page.isChecked('[data-key=hardwareAcceleration]'), 'defaults: GPU on');
+  check(await page.locator('#restart-banner').isHidden(), 'no restart banner at first');
+  check((await page.locator('#lists .row').count()) === 5, '5 filter lists with checkboxes');
+  await page.waitForTimeout(100);
+  await shot(page, 'settings-light.png');
+
+  // Inline validation: invalid proxy is rejected and shown, nothing stored.
+  await page.fill('#proxy', 'not a proxy');
+  await page.press('#proxy', 'Tab');
+  await page.waitForTimeout(80);
+  check((await page.textContent('[data-error-for=proxy]')).includes('host:port'), 'invalid proxy: inline error');
+  check(await page.locator('#proxy.invalid').count() === 1, 'invalid proxy: field marked');
+  check(await page.evaluate(() => window.__settings.settings.proxy) === '', 'invalid proxy not persisted');
+  check(await page.locator('#restart-banner').isHidden(), 'no restart banner for a rejected value');
+  await page.locator('#proxy').scrollIntoViewIfNeeded();
+  await page.screenshot({ path: SHOTS ? path.join(SHOTS, 'settings-validation-error.png') : '/dev/null', clip: await (async () => { const b = await page.locator('section[data-section^=advanced]').boundingBox(); return { x: 0, y: b.y - 10, width: 1000, height: b.height + 20 }; })() });
+  await page.fill('#proxy', '127.0.0.1:8080');
+  await page.press('#proxy', 'Tab');
+  await page.waitForTimeout(80);
+  check((await page.textContent('[data-error-for=proxy]')) === '', 'valid proxy clears the error');
+  check(await page.evaluate(() => window.__settings.settings.proxy) === '127.0.0.1:8080', 'valid proxy persisted');
+  check(await page.locator('#restart-banner').isVisible(), 'restart banner after changing the proxy');
+
+  // Custom search without %s; extra flags.
+  await page.selectOption('#searchEngine', 'custom');
+  await page.waitForTimeout(60);
+  check(await page.locator('#custom-row').isVisible(), 'custom search URL field shown');
+  await page.fill('#customSearchUrl', 'https://search.example/?q=');
+  await page.press('#customSearchUrl', 'Tab');
+  await page.waitForTimeout(60);
+  check((await page.textContent('[data-error-for=customSearchUrl]')).includes('%s'), 'custom search needs %s');
+  await page.fill('#customSearchUrl', 'https://search.example/?q=%s');
+  await page.press('#customSearchUrl', 'Tab');
+  await page.waitForTimeout(60);
+  check(await page.evaluate(() => window.__settings.settings.customSearchUrl) === 'https://search.example/?q=%s', 'custom search saved');
+  await page.fill('#extraFlags', '--force-dark-mode "--x"');
+  await page.press('#extraFlags', 'Tab');
+  await page.waitForTimeout(60);
+  check((await page.textContent('[data-error-for=extraFlags]')).length > 0, 'malformed extra flag rejected inline');
+  await page.fill('#extraFlags', '');
+  await page.press('#extraFlags', 'Tab');
+  await page.fill('#tabSleepMinutes', '');
+  await page.press('#tabSleepMinutes', 'Tab');
+  await page.waitForTimeout(60);
+  check((await page.textContent('[data-error-for=tabSleepMinutes]')).includes('1440'), 'empty sleep time gets a range error');
+  await page.fill('#tabSleepMinutes', '10');
+  await page.press('#tabSleepMinutes', 'Tab');
+
+  // Restart badge for the GPU toggle (restart-only) and restart button.
+  await page.uncheck('[data-key=hardwareAcceleration]');
+  await page.waitForTimeout(60);
+  check(await page.locator('#restart-banner').isVisible(), 'GPU toggle shows the restart banner');
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(50);
+  await page.screenshot({ path: SHOTS ? path.join(SHOTS, 'settings-restart-banner.png') : '/dev/null', clip: { x: 0, y: 0, width: 1000, height: 420 } });
+  await page.click('#restart');
+  check((await lastSent(page, 'restart')) !== undefined, 'Restart now sends restart');
+
+  // Allowlist, folder picker, update now.
+  await page.fill('#allow-host', 'bad host');
+  await page.click('#allow-form button');
+  await page.waitForTimeout(50);
+  check((await page.textContent('#allow-error')).includes('valid host'), 'allowlist validation error');
+  await page.fill('#allow-host', 'shop.example.org');
+  await page.click('#allow-form button');
+  await page.waitForTimeout(50);
+  check((await page.locator('#allowlist .row').count()) === 2, 'allowlist entry added');
+  await page.click('#pick-dir');
+  await page.waitForTimeout(80);
+  check((await page.textContent('#download-dir')) === 'D:\\Downloads\\Browser', 'download folder from the native picker');
+  await page.click('#update-lists');
+  check((await lastSent(page, 'updateFilterLists')) !== undefined, 'Update now sends updateFilterLists');
+
+  // Theme switch (live) and a dark screenshot.
+  await page.check('input[name=theme][value=dark]');
+  await page.waitForTimeout(80);
+  check(await page.evaluate(() => document.documentElement.classList.contains('dark')), 'dark theme applied live');
+  check(await page.evaluate(() => window.__settings.settings.theme) === 'dark', 'theme saved');
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(100);
+  await shot(page, 'settings-dark.png');
+  await emit(page, { event: 'theme', theme: 'light' });
+  await page.waitForTimeout(30);
+  check(await page.evaluate(() => document.documentElement.classList.contains('light')), 'host theme event switches to light');
+
+  // Reset (confirm is accepted by the harness).
+  await page.click('#reset');
+  await page.waitForTimeout(80);
+  check((await lastSent(page, 'resetSettings')) !== undefined, 'reset sends resetSettings after confirm');
+  check(await page.isChecked('[data-key=hardwareAcceleration]') && await page.inputValue('#proxy') === '', 'reset restores defaults');
+  check(await page.locator('#restart-banner').isHidden(), 'banner gone after reset');
+  check(external.length === 0, 'no network requests (' + external.join(', ') + ')');
+  check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
+}
+
 async function testFolderPopup(browser) {
   console.log('popup: bookmark folder');
   const { page, errors } = await openPage(browser, 'https://shell.lightbrowser.invalid/popup.html', { width: 280, height: 110 }, 1);
@@ -799,6 +938,7 @@ async function testFolderPopup(browser) {
     await testFolderPopup(browser);
     await testShieldAndHttpsOnly(browser);
     await testPasswords(browser);
+    await testSettings(browser);
   } finally {
     await browser.close();
   }

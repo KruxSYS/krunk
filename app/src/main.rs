@@ -31,6 +31,12 @@ fn main() {
 fn run() -> Result<i32, String> {
     use log::info;
 
+    // After "Restart now": wait until the previous instance has exited and
+    // released the WebView2 profile.
+    if let Some(pid) = std::env::args().find_map(|a| a.strip_prefix("--wait-for-pid=").and_then(|p| p.parse().ok())) {
+        ffi::process::wait_for_process(pid, 15_000);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
     ffi::process::init_ui_thread()?;
     let dirs = paths::DataDirs::resolve()?;
     log::init(&dirs.log_file());

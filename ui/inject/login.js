@@ -6,6 +6,8 @@
   'use strict';
   if (window.top !== window || !window.chrome || !window.chrome.webview) return;
   if (location.protocol !== 'https:' && location.protocol !== 'http:') return;
+  // Never on LightBrowser's own pages (they are not web content).
+  if (/(^|\.)lightbrowser\.invalid$/.test(location.hostname)) return;
   var webview = window.chrome.webview;
   var announced = false;
   var lastSubmit = { value: null, time: 0 };

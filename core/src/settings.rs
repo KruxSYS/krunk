@@ -735,6 +735,19 @@ mod tests {
         }
     }
 
+    /// The UI tests use `ui/dev/default-settings.json`; it must match the real
+    /// defaults. Regenerate with `LB_UPDATE_FIXTURES=1 cargo test -p core`.
+    #[test]
+    fn ui_default_settings_fixture_is_current() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../ui/dev/default-settings.json");
+        let want = serde_json::to_string_pretty(&Settings::default()).unwrap() + "\n";
+        if std::env::var_os("LB_UPDATE_FIXTURES").is_some() {
+            std::fs::write(path, &want).unwrap();
+        }
+        let have = std::fs::read_to_string(path).unwrap_or_default();
+        assert_eq!(have, want, "ui/dev/default-settings.json is stale; run with LB_UPDATE_FIXTURES=1");
+    }
+
     #[test]
     fn older_settings_json_gets_defaults() {
         // A record written by an older version: few fields, one removed field.

@@ -42,7 +42,10 @@ mod downloads;
 mod find;
 mod jobs;
 mod library;
+mod settings_host;
 mod vault;
+
+use settings_host::EXIT_TIMER;
 
 use jobs::{Jobs, APP_JOB};
 use vault::{VaultHost, CLIPBOARD_TIMER, VAULT_TIMER};
@@ -98,6 +101,13 @@ pub struct Browser {
     deferred: RefCell<Vec<Deferred>>,
     vaults: VaultHost,
     jobs: Jobs,
+    /// Settings the browser was started with (for "restart required").
+    running_settings: Settings,
+    /// The runtime's own user agent (restored when the custom one is cleared).
+    default_ua: RefCell<Option<String>>,
+    restart_after_exit: Cell<bool>,
+    exit_clearing: Cell<bool>,
+    exit_cleared: Cell<bool>,
     closing: Cell<bool>,
 }
 
@@ -110,6 +120,7 @@ impl Browser {
         settings: Settings,
         runtime_version: String,
     ) -> Result<Rc<Browser>, String> {
+        let running_settings = settings.clone();
         let browser = Rc::new_cyclic(|me| Browser {
             me: me.clone(),
             window: OnceCell::new(),
@@ -131,6 +142,11 @@ impl Browser {
             deferred: RefCell::new(Vec::new()),
             vaults: VaultHost::default(),
             jobs: Jobs::new(),
+            running_settings,
+            default_ua: RefCell::new(None),
+            restart_after_exit: Cell::new(false),
+            exit_clearing: Cell::new(false),
+            exit_cleared: Cell::new(false),
             closing: Cell::new(false),
         });
         let window = Window::create_main("LightBrowser", browser.clone())?;
@@ -194,6 +210,11 @@ impl Browser {
         shell.set_background(UI_BACKGROUND);
         shell.serve(env, SHELL_FILTER, self.server());
         self.apply_download_folder(&shell);
+        shell.set_color_scheme(match self.settings.borrow().theme {
+            lb_core::settings::Theme::System => None,
+            lb_core::settings::Theme::Light => Some(false),
+            lb_core::settings::Theme::Dark => Some(true),
+        });
         shell.set_tracking_prevention(match self.settings.borrow().tracking_prevention {
             TrackingPrevention::None => 0,
             TrackingPrevention::Basic => 1,
@@ -304,6 +325,14 @@ impl Browser {
         let net = Rc::new(TabNet::default());
         self.hook_tab(id, &c, host_navigation.clone(), net.clone());
         self.hook_blocking(id, &c, net.clone());
+        self.apply_user_agent(&c);
+        if c.is_private() {
+            c.set_color_scheme(match self.settings.borrow().theme {
+                lb_core::settings::Theme::System => None,
+                lb_core::settings::Theme::Light => Some(false),
+                lb_core::settings::Theme::Dark => Some(true),
+            });
+        }
         self.apply_download_folder(&c);
         c.set_zoom(self.settings.borrow().default_zoom);
         let pending = self.new_windows.borrow_mut().remove(&id);
@@ -796,8 +825,17 @@ impl Browser {
                     self.send_bookmarks_bar();
                     self.post_shell(&Event::DownloadsChanged { active: self.downloads.borrow().active_count() });
                 }
-                Sender::Popup => self.popup_ready(),
-                Sender::Page(_) => {}
+                Sender::Popup => {
+                    if let Some(c) = self.popup.borrow().as_ref().and_then(|p| p.controller.clone()) {
+                        self.send_theme_to(&c);
+                    }
+                    self.popup_ready();
+                }
+                Sender::Page(_) => {
+                    if let Some(c) = tab.and_then(|t| self.controller(t)) {
+                        self.send_theme_to(&c);
+                    }
+                }
             },
             Request::NewTab { url, private } => {
                 let url = url.filter(|u| u.starts_with("https://") || u.starts_with("http://"));
@@ -861,11 +899,13 @@ impl Browser {
                 }
             }
             Request::HidePopup => self.hide_popup(),
-            Request::Quit => {
-                if let Some(w) = self.window() {
-                    w.destroy();
-                }
-            }
+            Request::Quit => self.begin_exit(),
+            r @ (Request::GetSettings
+            | Request::SaveSettings { .. }
+            | Request::ResetSettings
+            | Request::PickDownloadFolder
+            | Request::Restart
+            | Request::GetAbout) => self.dispatch_settings(tab, req_id, r),
             // Prompts and the remaining features arrive in later milestones;
             // the popup still treats a reply as "dismissed" by hiding.
             Request::SavePasswordReply { tab_id, origin, accept, never } => {
@@ -1078,6 +1118,7 @@ impl Browser {
         self.save_session();
         self.save_downloads();
         self.shutdown_vault();
+        self.relaunch_if_requested();
         self.new_windows.borrow_mut().clear();
         let views: Vec<TabView> = self.views.borrow_mut().drain().map(|(_, v)| v).collect();
         for v in views {
@@ -1136,6 +1177,11 @@ impl WindowEvents for Browser {
     }
 
     fn close_requested(&self) -> bool {
+        // With clear-on-exit, close only after the data has been cleared.
+        if self.settings.borrow().clear_on_exit.any() && !self.exit_cleared.get() {
+            self.begin_exit();
+            return false;
+        }
         true
     }
 
@@ -1161,6 +1207,7 @@ impl WindowEvents for Browser {
             }
             SHIELD_TIMER => self.shield_timer(),
             VAULT_TIMER => self.vault_timer(),
+            EXIT_TIMER => self.finish_exit(),
             CLIPBOARD_TIMER => self.clipboard_timer(),
             UPDATE_TIMER => {
                 if let Some(w) = self.window() {

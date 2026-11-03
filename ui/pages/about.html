@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>About LightBrowser</title>
+<link rel="stylesheet" href="shared/common.css">
+<link rel="stylesheet" href="shared/page.css">
+<link rel="stylesheet" href="about.css">
+</head>
+<body>
+<div class="page">
+  <section class="card about">
+    <h1>LightBrowser <span id="version"></span></h1>
+    <p class="muted">A lightweight, private browser built on Microsoft Edge WebView2 (Chromium).</p>
+    <table>
+      <tr><th>WebView2 runtime</th><td id="runtime"></td></tr>
+      <tr><th>WebView2 loader</th><td id="loader"></td></tr>
+      <tr><th>Data folder</th><td id="dataDir"></td></tr>
+      <tr><th>Browser arguments</th><td id="arguments" class="mono"></td></tr>
+    </table>
+    <p class="muted">The runtime updates itself through Microsoft Edge Update (Evergreen).
+      Ad and tracker blocking uses EasyList, EasyPrivacy and uBlock Origin filter lists (see the README for licences).</p>
+  </section>
+</div>
+<script src="shared/bridge.js"></script>
+<script src="about.js"></script>
+</body>
+</html>

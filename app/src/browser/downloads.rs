@@ -36,8 +36,18 @@ impl Browser {
     }
 
     fn download_starting(&self, start: DownloadStart, private: bool) {
-        let ask = self.settings.borrow().ask_where_to_save;
+        let (ask, dir) = {
+            let st = self.settings.borrow();
+            (st.ask_where_to_save, st.download_dir.clone())
+        };
         let mut path = start.suggested_path.clone();
+        // Configured download folder: choose the final path ourselves.
+        if !dir.is_empty() && Path::new(&dir).is_dir() {
+            let name =
+                sanitize_file_name(&path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+            path = lb_core::downloads::unique_path(Path::new(&dir), &name, |p| p.exists());
+            start.set_path(&path);
+        }
         if ask {
             let name =
                 sanitize_file_name(&path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());

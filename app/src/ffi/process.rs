@@ -16,3 +16,23 @@ pub fn init_ui_thread() -> Result<(), String> {
         CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok().map_err(|e| format!("CoInitializeEx failed: {e}"))
     }
 }
+
+/// Waits (up to `timeout_ms`) for process `pid` to exit. Used by "Restart
+/// now": the new instance waits until the old one has released the profile.
+pub fn wait_for_process(pid: u32, timeout_ms: u32) {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
+    // SAFETY: opening a process handle only for waiting, closed afterwards.
+    unsafe {
+        if let Ok(h) = OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {
+            let _ = WaitForSingleObject(h, timeout_ms);
+            let _ = CloseHandle(h);
+        }
+    }
+}
+
+/// Starts a new instance of this executable with `args`.
+pub fn relaunch(args: &[String]) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    std::process::Command::new(exe).args(args).spawn().map(|_| ()).map_err(|e| e.to_string())
+}

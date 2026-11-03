@@ -1,0 +1,6 @@
+.about { max-width: 720px; margin: 40px auto; padding: 8px 28px 20px; }
+.about h1 { font-size: 24px; }
+.about table { border-collapse: collapse; margin: 16px 0; width: 100%; }
+.about th { text-align: left; padding: 6px 16px 6px 0; color: var(--fg-muted); font-weight: 600; white-space: nowrap; vertical-align: top; }
+.about td { padding: 6px 0; word-break: break-all; }
+.mono { font-family: Consolas, monospace; font-size: 12px; }

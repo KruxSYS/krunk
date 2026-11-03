@@ -20,7 +20,12 @@
     return LB.request('vaultStatus').then(function (s) {
       if (!s.exists) show('setup');
       else if (s.locked) { show('unlock'); rateLimit(s.waitMs, ''); }
-      else { show('list-section'); load(); }
+      else {
+        show('list-section');
+        load();
+        // Linked from Settings → "Change master password…".
+        if (location.hash === '#change') { history.replaceState(null, '', location.pathname); $('change').click(); }
+      }
       return s;
     });
   }

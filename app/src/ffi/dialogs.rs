@@ -127,6 +127,26 @@ pub fn save_file(
     }
 }
 
+/// Native folder picker. Returns `None` if cancelled.
+pub fn pick_folder(owner: HWND, title: &str, start: Option<&Path>) -> Option<PathBuf> {
+    // SAFETY: creating and showing the standard file dialog on the UI thread.
+    unsafe {
+        let d: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
+        let base: IFileDialog = d.cast().ok()?;
+        base.SetTitle(&HSTRING::from(title)).ok()?;
+        if let Some(dir) = start {
+            if let Ok(item) = SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(dir.as_os_str()), None) {
+                let _ = base.SetFolder(&item);
+            }
+        }
+        let opts = base.GetOptions().ok()?;
+        base.SetOptions(opts | windows::Win32::UI::Shell::FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST)
+            .ok()?;
+        base.Show(Some(owner)).ok()?;
+        result_path(&base)
+    }
+}
+
 /// Opens a downloaded file with its associated program.
 pub fn open_path(path: &Path) {
     // SAFETY: ShellExecute "open" on an existing local file path.

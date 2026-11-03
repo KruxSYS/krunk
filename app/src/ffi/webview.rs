@@ -993,6 +993,38 @@ impl Controller {
         let _ = unsafe { wv2.add_DOMContentLoaded(&handler, &mut token) };
     }
 
+    /// The WebView's current user agent string.
+    pub fn user_agent(&self) -> String {
+        let Ok(settings) = (unsafe { self.webview.Settings() }) else { return String::new() };
+        let Ok(s2) = settings.cast::<ICoreWebView2Settings2>() else { return String::new() };
+        // SAFETY: live settings object; out-pointer handled by `get_string`.
+        get_string(|p| unsafe { s2.UserAgent(p) })
+    }
+
+    /// Overrides the user agent (applies to the next request).
+    pub fn set_user_agent(&self, ua: &str) {
+        // SAFETY: live WebView settings; HSTRING outlives the call.
+        unsafe {
+            if let Ok(s2) = self.webview.Settings().and_then(|s| s.cast::<ICoreWebView2Settings2>()) {
+                let _ = s2.SetUserAgent(&HSTRING::from(ua));
+            }
+        }
+    }
+
+    /// Light/dark preference for this profile's pages (`prefers-color-scheme`):
+    /// `None` = follow Windows.
+    pub fn set_color_scheme(&self, dark: Option<bool>) {
+        let scheme = match dark {
+            None => COREWEBVIEW2_PREFERRED_COLOR_SCHEME_AUTO,
+            Some(true) => COREWEBVIEW2_PREFERRED_COLOR_SCHEME_DARK,
+            Some(false) => COREWEBVIEW2_PREFERRED_COLOR_SCHEME_LIGHT,
+        };
+        if let Some(p) = self.profile() {
+            // SAFETY: live profile.
+            let _ = unsafe { p.SetPreferredColorScheme(scheme) };
+        }
+    }
+
     /// Sets the profile's tracking prevention: 0 none, 1 basic, 2 balanced, 3 strict.
     pub fn set_tracking_prevention(&self, level: u8) {
         let lvl = match level {

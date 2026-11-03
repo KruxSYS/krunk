@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Settings</title>
+<link rel="stylesheet" href="shared/common.css">
+<link rel="stylesheet" href="shared/page.css">
+<link rel="stylesheet" href="settings.css">
+</head>
+<body>
+<div class="page">
+  <div class="page-header">
+    <h1>Settings</h1>
+    <input id="filter" class="search" type="search" placeholder="Search settings" aria-label="Search settings">
+  </div>
+
+  <div id="restart-banner" class="banner" role="status" hidden>
+    <span><strong>Restart required.</strong> Some changes (marked <span class="tag">restart</span>) take effect after LightBrowser restarts.</span>
+    <button id="restart" class="btn primary">Restart now</button>
+  </div>
+  <p id="save-error" class="error banner-error" role="alert" hidden></p>
+
+  <section class="card" data-section="search">
+    <h2>Search</h2>
+    <div class="field">
+      <label for="searchEngine">Search engine</label>
+      <select id="searchEngine" data-key="searchEngine">
+        <option value="duckDuckGo">DuckDuckGo</option>
+        <option value="google">Google</option>
+        <option value="bing">Bing</option>
+        <option value="brave">Brave Search</option>
+        <option value="startpage">Startpage</option>
+        <option value="ecosia">Ecosia</option>
+        <option value="custom">Custom…</option>
+      </select>
+    </div>
+    <div class="field" id="custom-row">
+      <label for="customSearchUrl">Custom search URL</label>
+      <input type="text" id="customSearchUrl" data-key="customSearchUrl" placeholder="https://search.example/?q=%s" spellcheck="false">
+      <p class="help">Use <code>%s</code> where the search terms go.</p>
+      <p class="field-error" data-error-for="customSearchUrl"></p>
+    </div>
+  </section>
+
+  <section class="card" data-section="startup appearance">
+    <h2>On startup</h2>
+    <div class="field radios" role="radiogroup" aria-label="On startup">
+      <label><input type="radio" name="startup" value="newTab"> Open a new tab</label>
+      <label><input type="radio" name="startup" value="restoreSession"> Continue where you left off</label>
+      <label><input type="radio" name="startup" value="homepage"> Open the homepage</label>
+    </div>
+    <div class="field">
+      <label for="homepage">Homepage</label>
+      <input type="text" id="homepage" data-key="homepage" placeholder="https://…" spellcheck="false">
+      <p class="field-error" data-error-for="homepage"></p>
+    </div>
+    <label class="toggle"><input type="checkbox" data-key="showHomeButton"> Show the home button</label>
+    <label class="toggle"><input type="checkbox" data-key="showBookmarksBar"> Show the bookmarks bar</label>
+
+    <h2>Appearance</h2>
+    <div class="field radios" role="radiogroup" aria-label="Theme">
+      <label><input type="radio" name="theme" value="system"> System</label>
+      <label><input type="radio" name="theme" value="light"> Light</label>
+      <label><input type="radio" name="theme" value="dark"> Dark</label>
+    </div>
+    <div class="field">
+      <label for="defaultZoom">Default zoom for new tabs</label>
+      <select id="defaultZoom" data-key="defaultZoom" data-type="number">
+        <option value="0.5">50%</option><option value="0.67">67%</option><option value="0.75">75%</option>
+        <option value="0.8">80%</option><option value="0.9">90%</option><option value="1">100%</option>
+        <option value="1.1">110%</option><option value="1.25">125%</option><option value="1.5">150%</option>
+        <option value="1.75">175%</option><option value="2">200%</option><option value="3">300%</option>
+      </select>
+      <p class="field-error" data-error-for="defaultZoom"></p>
+    </div>
+  </section>
+
+  <section class="card" data-section="performance memory tabs gpu">
+    <h2>Performance</h2>
+    <label class="toggle"><input type="checkbox" data-key="hardwareAcceleration"> Use hardware acceleration (GPU) <span class="tag">restart</span></label>
+    <div class="field inline">
+      <label for="tabSleepMinutes">Put background tabs to sleep after</label>
+      <input type="number" id="tabSleepMinutes" data-key="tabSleepMinutes" data-type="number" min="0" max="1440"> minutes
+      <span class="help">(0 = never)</span>
+      <p class="field-error" data-error-for="tabSleepMinutes"></p>
+    </div>
+    <label class="toggle"><input type="checkbox" data-key="tabDiscardEnabled"> Unload background tabs to free memory</label>
+    <div class="field inline" id="discard-row">
+      <label for="tabDiscardMinutes">Unload after</label>
+      <input type="number" id="tabDiscardMinutes" data-key="tabDiscardMinutes" data-type="number" min="1" max="1440"> minutes
+      <p class="field-error" data-error-for="tabDiscardMinutes"></p>
+    </div>
+  </section>
+
+  <section class="card" data-section="privacy security tracking https cookies">
+    <h2>Privacy and security</h2>
+    <div class="field">
+      <label for="trackingPrevention">Tracking prevention</label>
+      <select id="trackingPrevention" data-key="trackingPrevention">
+        <option value="none">Off</option><option value="basic">Basic</option>
+        <option value="balanced">Balanced</option><option value="strict">Strict (recommended)</option>
+      </select>
+    </div>
+    <label class="toggle"><input type="checkbox" data-key="httpsOnly"> HTTPS-only mode (upgrade every site; warn before plain HTTP)</label>
+    <label class="toggle"><input type="checkbox" data-key="stripTrackingParams"> Remove tracking parameters from links (utm_*, fbclid, …)</label>
+    <label class="toggle"><input type="checkbox" data-key="sendDnt"> Send “Do Not Track”</label>
+    <label class="toggle"><input type="checkbox" data-key="sendGpc"> Send “Global Privacy Control”</label>
+    <label class="toggle"><input type="checkbox" data-key="smartscreen"> Microsoft Defender SmartScreen (sends visited addresses to Microsoft) <span class="tag">restart</span></label>
+    <h3>When LightBrowser closes, clear</h3>
+    <label class="toggle"><input type="checkbox" data-key="clearOnExit.cookies"> Cookies and site data</label>
+    <label class="toggle"><input type="checkbox" data-key="clearOnExit.cache"> Cached images and files</label>
+    <label class="toggle"><input type="checkbox" data-key="clearOnExit.history"> Browsing history</label>
+    <label class="toggle"><input type="checkbox" data-key="clearOnExit.downloads"> Download list</label>
+    <p><a href="history.html">Clear browsing data now…</a></p>
+  </section>
+
+  <section class="card" data-section="ads ad blocking filters allowlist trackers">
+    <h2>Ad and tracker blocking</h2>
+    <label class="toggle"><input type="checkbox" data-key="adblockEnabled"> Block ads and trackers</label>
+    <div id="lists" class="sublist" aria-label="Filter lists"></div>
+    <p class="field-error" data-error-for="filterLists"></p>
+    <div class="field inline">
+      <button id="update-lists" class="btn">Update now</button>
+      <span id="lists-status" class="help"></span>
+    </div>
+    <h3>Sites where ads are allowed</h3>
+    <div id="allowlist" class="sublist"></div>
+    <form id="allow-form" class="field inline" autocomplete="off">
+      <input type="text" id="allow-host" placeholder="example.com" spellcheck="false" aria-label="Host to allow">
+      <button class="btn" type="submit">Add</button>
+      <p class="field-error" id="allow-error"></p>
+    </form>
+  </section>
+
+  <section class="card" data-section="passwords vault">
+    <h2>Passwords</h2>
+    <label class="toggle"><input type="checkbox" data-key="offerSavePasswords"> Offer to save passwords</label>
+    <div class="field inline">
+      <label for="vaultAutolockMinutes">Lock the vault after</label>
+      <input type="number" id="vaultAutolockMinutes" data-key="vaultAutolockMinutes" data-type="number" min="1" max="1440"> minutes without use
+      <p class="field-error" data-error-for="vaultAutolockMinutes"></p>
+    </div>
+    <p><a href="passwords.html#change">Change master password…</a> · <a href="passwords.html">Manage passwords</a></p>
+  </section>
+
+  <section class="card" data-section="downloads folder">
+    <h2>Downloads</h2>
+    <div class="field inline">
+      <label>Save files to</label>
+      <span id="download-dir" class="path"></span>
+      <button id="pick-dir" class="btn">Change…</button>
+      <button id="default-dir" class="btn">Use default</button>
+      <p class="field-error" data-error-for="downloadDir"></p>
+    </div>
+    <label class="toggle"><input type="checkbox" data-key="askWhereToSave"> Ask where to save each file</label>
+  </section>
+
+  <section class="card" data-section="advanced proxy flags user agent">
+    <h2>Advanced</h2>
+    <div class="field">
+      <label for="userAgent">Custom user agent</label>
+      <input type="text" id="userAgent" data-key="userAgent" placeholder="(default)" spellcheck="false">
+      <p class="help">Applies immediately to all tabs. Leave empty for the default.</p>
+      <p class="field-error" data-error-for="userAgent"></p>
+    </div>
+    <div class="field">
+      <label for="proxy">Proxy server <span class="tag">restart</span></label>
+      <input type="text" id="proxy" data-key="proxy" placeholder="host:port or socks5://host:port (empty = system proxy)" spellcheck="false">
+      <p class="field-error" data-error-for="proxy"></p>
+    </div>
+    <div class="field">
+      <label for="extraFlags">Extra Chromium flags <span class="tag">restart</span></label>
+      <textarea id="extraFlags" data-key="extraFlags" rows="2" spellcheck="false" placeholder="--flag --other-flag=value"></textarea>
+      <p class="help">For experts. Only <code>--flag</code> and <code>--flag=value</code>; flags that weaken security are refused.</p>
+      <p class="field-error" data-error-for="extraFlags"></p>
+    </div>
+  </section>
+
+  <section class="card" data-section="reset about">
+    <h2>Reset</h2>
+    <p>Restore every setting to its default. Your history, bookmarks and passwords are not affected.</p>
+    <button id="reset" class="btn danger">Reset settings…</button>
+    <h2>About</h2>
+    <p id="about" class="help"></p>
+  </section>
+</div>
+<script src="shared/bridge.js"></script>
+<script src="shared/page.js"></script>
+<script src="settings.js"></script>
+</body>
+</html>

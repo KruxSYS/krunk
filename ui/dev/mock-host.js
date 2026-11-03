@@ -79,7 +79,7 @@
       const data = h ? h(msg) : null;
       host.emit({ event: 'reply', reqId: msg.reqId, ok: true, data: data === undefined ? null : data });
     } catch (e) {
-      host.emit({ event: 'reply', reqId: msg.reqId, ok: false, error: String(e.message || e) });
+      host.emit({ event: 'reply', reqId: msg.reqId, ok: false, error: String(e.message || e), data: e.data });
     }
   }
 

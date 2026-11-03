@@ -1,0 +1,41 @@
+{
+  "searchEngine": "duckDuckGo",
+  "customSearchUrl": "",
+  "startup": "restoreSession",
+  "homepage": "https://duckduckgo.com/",
+  "showHomeButton": true,
+  "showBookmarksBar": true,
+  "hardwareAcceleration": true,
+  "tabSleepMinutes": 5,
+  "tabDiscardEnabled": false,
+  "tabDiscardMinutes": 30,
+  "adblockEnabled": true,
+  "filterLists": [
+    "easylist",
+    "easyprivacy",
+    "ublock-filters",
+    "ublock-privacy",
+    "ublock-unbreak"
+  ],
+  "trackingPrevention": "strict",
+  "httpsOnly": false,
+  "sendDnt": true,
+  "sendGpc": true,
+  "stripTrackingParams": true,
+  "smartscreen": false,
+  "clearOnExit": {
+    "history": false,
+    "cookies": false,
+    "cache": false,
+    "downloads": false
+  },
+  "vaultAutolockMinutes": 15,
+  "offerSavePasswords": true,
+  "downloadDir": "",
+  "askWhereToSave": false,
+  "userAgent": "",
+  "proxy": "",
+  "extraFlags": "",
+  "defaultZoom": 1.0,
+  "theme": "system"
+}

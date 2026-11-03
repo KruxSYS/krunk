@@ -35,7 +35,12 @@
       const p = pending.get(msg.reqId);
       if (!p) return;
       pending.delete(msg.reqId);
-      if (msg.ok) p.resolve(msg.data); else p.reject(new Error(msg.error || 'request failed'));
+      if (msg.ok) p.resolve(msg.data);
+      else {
+        const err = new Error(msg.error || 'request failed');
+        err.data = msg.data;
+        p.reject(err);
+      }
       return;
     }
     (listeners.get(msg.event) || []).forEach(function (h) {
@@ -62,5 +67,13 @@
     return n;
   }
 
-  window.LB = { post: post, request: request, on: on, el: el, _dispatch: dispatch };
+  // Theme for every built-in page: "system" follows prefers-color-scheme.
+  function applyTheme(theme) {
+    const root = document.documentElement;
+    root.classList.toggle('dark', theme === 'dark');
+    root.classList.toggle('light', theme === 'light');
+  }
+  on('theme', function (m) { applyTheme(m.theme); });
+
+  window.LB = { post: post, request: request, on: on, el: el, applyTheme: applyTheme, _dispatch: dispatch };
 })();
