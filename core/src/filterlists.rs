@@ -96,6 +96,9 @@ pub fn validate_download(bytes: &[u8]) -> Result<String, String> {
     Ok(text.to_string())
 }
 
+/// Downloads a URL (WinHTTP in the app, a stub in tests).
+pub type Fetch<'a> = &'a dyn Fn(&str) -> Result<Vec<u8>, String>;
+
 /// Result of [`rebuild`].
 pub struct Rebuilt {
     pub state: UpdateState,
@@ -124,7 +127,7 @@ pub fn rebuild(
     dir: &std::path::Path,
     enabled: &[String],
     mut state: UpdateState,
-    fetch: Option<&dyn Fn(&str) -> Result<Vec<u8>, String>>,
+    fetch: Option<Fetch<'_>>,
     current_key: Option<u64>,
     now_ms: i64,
 ) -> Rebuilt {
