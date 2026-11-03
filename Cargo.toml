@@ -15,8 +15,7 @@ strip = true
 panic = "abort"
 codegen-units = 1
 
-# Argon2 with 64 MiB is painfully slow unoptimized; keep debug tests fast.
-[profile.dev.package.argon2]
-opt-level = 3
-[profile.dev.package.blake2]
-opt-level = 3
+# Optimize dependencies in dev/test builds: Argon2 with 64 MiB and compiling
+# the full filter lists are painfully slow unoptimized.
+[profile.dev.package."*"]
+opt-level = 2

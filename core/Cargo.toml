@@ -12,6 +12,8 @@ name = "lb_core"
 path = "src/lib.rs"
 
 [dependencies]
+adblock = { version = "0.13", default-features = false, features = ["embedded-domain-resolver", "full-regex-handling"] }
+miniz_oxide = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 url = "2"
@@ -21,3 +23,6 @@ chacha20poly1305 = { version = "0.11", default-features = false, features = ["al
 zeroize = { version = "1.8", features = ["std"] }
 getrandom = "0.4"
 base64ct = { version = "1.8", features = ["alloc"] }
+
+[build-dependencies]
+miniz_oxide = "0.9"

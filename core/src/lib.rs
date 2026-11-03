@@ -4,6 +4,7 @@
 //! (`app`) only adds the WebView2/Win32 glue on top.
 #![forbid(unsafe_code)]
 
+pub mod blocker;
 pub mod bookmarks;
 pub mod frecency;
 pub mod history;
