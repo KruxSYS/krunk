@@ -28,10 +28,19 @@
         'data-id': t.id,
         'data-index': index,
         onmousedown: function (e) {
-          if (e.button === 0 && !e.target.closest('.close')) LB.post('activateTab', { id: t.id });
+          if (e.button !== 0 || e.target.closest('.close')) return;
+          // Double-click duplicates. Detected here rather than with dblclick:
+          // the first press activates the tab, which re-renders the strip, so
+          // a dblclick on an inactive tab would never fire.
+          if (lastPress.id === t.id && e.timeStamp - lastPress.at < DOUBLE_PRESS_MS) {
+            lastPress = { id: null, at: 0 };
+            LB.post('duplicateTab', { id: t.id });
+            return;
+          }
+          lastPress = { id: t.id, at: e.timeStamp };
+          LB.post('activateTab', { id: t.id });
         },
         onauxclick: function (e) { if (e.button === 1) { e.preventDefault(); LB.post('closeTab', { id: t.id }); } },
-        ondblclick: function (e) { if (!e.target.closest('.close')) LB.post('duplicateTab', { id: t.id }); },
       }, [
         t.private ? el('span', { class: 'private-mark', title: 'Private tab' }, [svgIcon('i-mask')]) : null,
         icon,
@@ -56,8 +65,17 @@
     return svg;
   }
 
+  let lastPress = { id: null, at: 0 };
+  const DOUBLE_PRESS_MS = 500;
+
   // ---------- drag to reorder ----------
   let dragId = null;
+  // Right half of the tab? Measured on the tab itself: offsetX would be
+  // relative to whichever child (title, icon, close button) is under the cursor.
+  function inRightHalf(e, node) {
+    const r = node.getBoundingClientRect();
+    return e.clientX - r.left > r.width / 2;
+  }
   function attachDrag(node, id) {
     node.addEventListener('dragstart', function (e) {
       dragId = id;
@@ -74,7 +92,7 @@
     node.addEventListener('dragover', function (e) {
       if (dragId === null || dragId === id) return;
       e.preventDefault();
-      const after = e.offsetX > node.clientWidth / 2;
+      const after = inRightHalf(e, node);
       node.classList.toggle('drop-after', after);
       node.classList.toggle('drop-before', !after);
     });
@@ -82,7 +100,7 @@
     node.addEventListener('drop', function (e) {
       e.preventDefault();
       if (dragId === null || dragId === id) return;
-      const after = e.offsetX > node.clientWidth / 2;
+      const after = inRightHalf(e, node);
       const from = state.tabs.findIndex(function (t) { return t.id === dragId; });
       let to = state.tabs.findIndex(function (t) { return t.id === id; }) + (after ? 1 : 0);
       if (from < to) to -= 1; // index after removing the dragged tab

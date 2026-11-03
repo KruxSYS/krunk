@@ -179,6 +179,23 @@ async function testShell(browser) {
   const mv2 = await lastSent(page, 'moveTab');
   check(mv2 && mv2.id === 1 && mv2.index === 0, 'drag to the front sends index 0');
 
+  // Dropping on the last tab's close button (right half) still means "after".
+  await page.waitForTimeout(50);
+  const count = await page.locator('.tab').count();
+  await page.locator('.tab[data-id="1"]').dragTo(page.locator('.tab').last().locator('.close'), { force: true });
+  const mv3 = await lastSent(page, 'moveTab');
+  check(mv3 && mv3.id === 1 && mv3.index === count - 1, 'drop over a child of the right half moves after it (got ' + JSON.stringify(mv3) + ')');
+
+  // Double-click on an inactive tab duplicates it, although the first press
+  // activates the tab and re-renders the strip.
+  await page.waitForTimeout(50);
+  const inactive = await page.$eval('.tab:not(.active)', (n) => +n.dataset.id);
+  const dupBefore = (await sent(page)).filter((m) => m.cmd === 'duplicateTab').length;
+  await page.locator('.tab[data-id="' + inactive + '"] .title').dblclick();
+  await page.waitForTimeout(50);
+  const dups = (await sent(page)).filter((m) => m.cmd === 'duplicateTab');
+  check(dups.length === dupBefore + 1 && dups[dups.length - 1].id === inactive, 'double-click on an inactive tab sends one duplicateTab{id:' + inactive + '}');
+
   // Address bar.
   await page.click('#address');
   await page.keyboard.type('rust borrow checker');
@@ -833,7 +850,7 @@ async function testSettings(browser) {
   check(await page.evaluate(() => window.__settings.settings.proxy) === '', 'invalid proxy not persisted');
   check(await page.locator('#restart-banner').isHidden(), 'no restart banner for a rejected value');
   await page.locator('#proxy').scrollIntoViewIfNeeded();
-  await page.screenshot({ path: SHOTS ? path.join(SHOTS, 'settings-validation-error.png') : '/dev/null', clip: await (async () => { const b = await page.locator('section[data-section^=advanced]').boundingBox(); return { x: 0, y: b.y - 10, width: 1000, height: b.height + 20 }; })() });
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'settings-validation-error.png'), clip: await (async () => { const b = await page.locator('section[data-section^=advanced]').boundingBox(); return { x: 0, y: b.y - 10, width: 1000, height: b.height + 20 }; })() });
   await page.fill('#proxy', '127.0.0.1:8080');
   await page.press('#proxy', 'Tab');
   await page.waitForTimeout(80);
@@ -872,7 +889,7 @@ async function testSettings(browser) {
   check(await page.locator('#restart-banner').isVisible(), 'GPU toggle shows the restart banner');
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.waitForTimeout(50);
-  await page.screenshot({ path: SHOTS ? path.join(SHOTS, 'settings-restart-banner.png') : '/dev/null', clip: { x: 0, y: 0, width: 1000, height: 420 } });
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'settings-restart-banner.png'), clip: { x: 0, y: 0, width: 1000, height: 420 } });
   await page.click('#restart');
   check((await lastSent(page, 'restart')) !== undefined, 'Restart now sends restart');
 
