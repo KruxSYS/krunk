@@ -126,6 +126,58 @@ pub fn needs_wake(stage: Stage) -> bool {
     stage != Stage::Awake
 }
 
+/// All processes descended from `root` (children, grandchildren, ...),
+/// given `(pid, parent pid)` pairs from a process snapshot. Robust against
+/// cycles caused by PID reuse.
+pub fn descendants(root: u32, procs: &[(u32, u32)]) -> Vec<u32> {
+    let mut out = Vec::new();
+    let mut frontier = vec![root];
+    let mut seen = std::collections::HashSet::from([root]);
+    while let Some(p) = frontier.pop() {
+        for &(pid, parent) in procs {
+            if parent == p && pid != parent && seen.insert(pid) {
+                out.push(pid);
+                frontier.push(pid);
+            }
+        }
+    }
+    out.sort_unstable();
+    out
+}
+
+/// One line of the `--mem-report` log.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MemorySample {
+    pub tabs: usize,
+    pub live: usize,
+    pub asleep: usize,
+    pub suspended: usize,
+    pub unloaded: usize,
+    pub processes: usize,
+    pub renderers: usize,
+    /// Summed working set of the browser process tree, bytes.
+    pub working_set: u64,
+    /// Summed private bytes (commit charge), bytes.
+    pub private: u64,
+}
+
+impl MemorySample {
+    pub fn line(&self, now_ms: i64, label: &str) -> String {
+        format!(
+            "{now_ms} {label}: tabs={} live={} asleep={} suspended={} unloaded={} processes={} renderers={} working_set_mb={:.1} private_mb={:.1}",
+            self.tabs,
+            self.live,
+            self.asleep,
+            self.suspended,
+            self.unloaded,
+            self.processes,
+            self.renderers,
+            self.working_set as f64 / 1_048_576.0,
+            self.private as f64 / 1_048_576.0
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -231,6 +283,35 @@ mod tests {
         assert_eq!(Policy::from_settings(&s, Some(0)), p, "0 = not in test mode");
         assert!(t.tick_ms() >= 1_000 && t.tick_ms() <= 2_500);
         assert_eq!(p.tick_ms(), 15_000);
+    }
+
+    #[test]
+    fn process_tree() {
+        // 10 = us; 20 = WebView2 browser; 21..23 = its children; 30 = unrelated.
+        let procs = [(10, 1), (20, 10), (21, 20), (22, 20), (23, 22), (30, 1), (31, 30)];
+        assert_eq!(descendants(10, &procs), vec![20, 21, 22, 23]);
+        assert_eq!(descendants(99, &procs), Vec::<u32>::new());
+        // PID reuse can create a cycle; it must terminate.
+        assert_eq!(descendants(1, &[(2, 1), (1, 2)]), vec![2]);
+    }
+
+    #[test]
+    fn sample_line() {
+        let s = MemorySample {
+            tabs: 10,
+            live: 3,
+            asleep: 2,
+            suspended: 1,
+            unloaded: 7,
+            processes: 9,
+            renderers: 4,
+            working_set: 300 * 1_048_576,
+            private: 150 * 1_048_576,
+        };
+        assert_eq!(
+            s.line(5, "tick"),
+            "5 tick: tabs=10 live=3 asleep=2 suspended=1 unloaded=7 processes=9 renderers=4 working_set_mb=300.0 private_mb=150.0"
+        );
     }
 
     #[test]

@@ -42,7 +42,11 @@ mod downloads;
 mod find;
 mod jobs;
 mod library;
+mod power;
 mod settings_host;
+
+pub use power::PowerOptions;
+use power::{MEMREPORT_TIMER, POWER_TIMER};
 mod vault;
 
 use settings_host::EXIT_TIMER;
@@ -67,6 +71,13 @@ struct TabView {
     find_query: String,
     /// Shield counter, cosmetic data and HTTPS-only state of the page.
     net: Rc<TabNet>,
+    /// Sleep stage and when it was entered.
+    stage: Cell<lb_core::memory::Stage>,
+    stage_since: Cell<i64>,
+    /// The page is playing audio (never put to sleep).
+    audio: Rc<Cell<bool>>,
+    /// Downloads in progress started by this tab (never put to sleep).
+    downloads: Rc<Cell<u32>>,
 }
 
 /// The popup WebView in its owned popup window (created on first use).
@@ -99,6 +110,7 @@ pub struct Browser {
     /// A shield counter update is scheduled.
     shield_pending: Cell<bool>,
     deferred: RefCell<Vec<Deferred>>,
+    power: PowerOptions,
     vaults: VaultHost,
     jobs: Jobs,
     /// Settings the browser was started with (for "restart required").
@@ -119,6 +131,7 @@ impl Browser {
         store: Store,
         settings: Settings,
         runtime_version: String,
+        power: PowerOptions,
     ) -> Result<Rc<Browser>, String> {
         let running_settings = settings.clone();
         let browser = Rc::new_cyclic(|me| Browser {
@@ -140,6 +153,7 @@ impl Browser {
             filters: Rc::new(FilterState::new()),
             shield_pending: Cell::new(false),
             deferred: RefCell::new(Vec::new()),
+            power,
             vaults: VaultHost::default(),
             jobs: Jobs::new(),
             running_settings,
@@ -242,6 +256,8 @@ impl Browser {
         *self.shell.borrow_mut() = Some(shell);
         self.layout();
         self.restore_or_open_start();
+        self.start_power_timer();
+        self.mem_report_line("start");
     }
 
     /// Accelerators and focus handling shared by every controller.
@@ -324,6 +340,9 @@ impl Browser {
         };
         let host_navigation = Rc::new(Cell::new(false));
         let net = Rc::new(TabNet::default());
+        let audio = Rc::new(Cell::new(false));
+        let audio2 = audio.clone();
+        c.on_audio_changed(move |playing| audio2.set(playing));
         self.hook_tab(id, &c, host_navigation.clone(), net.clone());
         self.hook_blocking(id, &c, net.clone());
         self.apply_user_agent(&c);
@@ -357,6 +376,10 @@ impl Browser {
                 find: None,
                 find_query: String::new(),
                 net,
+                stage: Cell::new(lb_core::memory::Stage::Awake),
+                stage_since: Cell::new(now_ms()),
+                audio,
+                downloads: Rc::new(Cell::new(0)),
             },
         );
         if active {
@@ -368,7 +391,7 @@ impl Browser {
 
     fn hook_tab(&self, id: TabId, c: &Controller, host_navigation: Rc<Cell<bool>>, net: Rc<TabNet>) {
         self.hook_common(c);
-        self.hook_downloads(c);
+        self.hook_downloads(c, Some(id));
 
         let weak = self.me.clone();
         let net_start = net.clone();
@@ -463,6 +486,7 @@ impl Browser {
     }
 
     fn activate_view(&self, from: Option<TabId>, to: TabId) {
+        self.wake_tab(to);
         self.hide_popup();
         if let Some(f) = from {
             self.stop_find(f);
@@ -1215,6 +1239,8 @@ impl WindowEvents for Browser {
                 self.save_session();
             }
             SHIELD_TIMER => self.shield_timer(),
+            POWER_TIMER => self.power_tick(),
+            MEMREPORT_TIMER => self.mem_report_line("tick"),
             VAULT_TIMER => self.vault_timer(),
             EXIT_TIMER => self.finish_exit(),
             CLIPBOARD_TIMER => self.clipboard_timer(),

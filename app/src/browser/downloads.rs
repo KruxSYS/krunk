@@ -25,17 +25,19 @@ impl Browser {
         }
     }
 
-    pub(super) fn hook_downloads(&self, c: &Controller) {
+    /// `tab`: the tab whose WebView this is (a tab with a running download
+    /// is never put to sleep).
+    pub(super) fn hook_downloads(&self, c: &Controller, tab: Option<TabId>) {
         let weak = self.me.clone();
         let private = c.is_private();
         c.on_download_starting(move |start| {
             if let Some(b) = weak.upgrade() {
-                b.download_starting(start, private);
+                b.download_starting(start, private, tab);
             }
         });
     }
 
-    fn download_starting(&self, start: DownloadStart, private: bool) {
+    fn download_starting(&self, start: DownloadStart, private: bool, tab: Option<TabId>) {
         let (ask, dir) = {
             let st = self.settings.borrow();
             (st.ask_where_to_save, st.download_dir.clone())
@@ -65,6 +67,9 @@ impl Browser {
             }
         }
         let op = start.operation.clone();
+        if let Some(v) = tab.and_then(|t| self.views.borrow().get(&t).map(|v| v.downloads.clone())) {
+            v.set(v.get() + 1);
+        }
         let id = self.downloads.borrow_mut().start(&start.uri, &path, start.total, now_ms(), private);
         info!("download {id} started");
         self.download_ops.borrow_mut().insert(id, op.clone());
@@ -102,7 +107,10 @@ impl Browser {
                 d.set_path(id, &op3.path());
                 d.set_state(id, state, reason);
             }
-            if state.is_finished() {
+            if state.is_finished() && b.download_ops.borrow().contains_key(&id) {
+                if let Some(v) = tab.and_then(|t| b.views.borrow().get(&t).map(|v| v.downloads.clone())) {
+                    v.set(v.get().saturating_sub(1));
+                }
                 b.download_ops.borrow_mut().remove(&id);
                 info!("download {id} finished: {state:?}");
             }

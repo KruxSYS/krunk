@@ -15,10 +15,10 @@ use webview2_com::{
     CreateCoreWebView2EnvironmentCompletedHandler, DOMContentLoadedEventHandler, DocumentTitleChangedEventHandler,
     DownloadStartingEventHandler, ExecuteScriptCompletedHandler, FaviconChangedEventHandler,
     FindActiveMatchIndexChangedEventHandler, FindMatchCountChangedEventHandler, FindStartCompletedHandler,
-    FocusChangedEventHandler, GetFaviconCompletedHandler, HistoryChangedEventHandler, NavigationCompletedEventHandler,
-    NavigationStartingEventHandler, NewWindowRequestedEventHandler, SourceChangedEventHandler,
-    StateChangedEventHandler, WebMessageReceivedEventHandler, WebResourceRequestedEventHandler,
-    ZoomFactorChangedEventHandler,
+    FocusChangedEventHandler, GetFaviconCompletedHandler, HistoryChangedEventHandler,
+    IsDocumentPlayingAudioChangedEventHandler, NavigationCompletedEventHandler, NavigationStartingEventHandler,
+    NewWindowRequestedEventHandler, SourceChangedEventHandler, StateChangedEventHandler, TrySuspendCompletedHandler,
+    WebMessageReceivedEventHandler, WebResourceRequestedEventHandler, ZoomFactorChangedEventHandler,
 };
 use windows::core::{Interface, BOOL, HSTRING, PWSTR};
 use windows::Win32::Foundation::{HWND, RECT};
@@ -144,6 +144,34 @@ impl Environment {
                 .CreateCoreWebView2ControllerWithOptions(parent, &options, &handler)
                 .map_err(|e| format!("CreateCoreWebView2Controller failed: {e}"))
         }
+    }
+
+    /// `(process id, kind)` of every process of the environment.
+    pub fn process_kinds(&self) -> Vec<(u32, &'static str)> {
+        let mut out = Vec::new();
+        let Ok(env8) = self.0.cast::<ICoreWebView2Environment8>() else { return out };
+        // SAFETY: reading a live process-info collection.
+        unsafe {
+            let Ok(list) = env8.GetProcessInfos() else { return out };
+            let mut n = 0u32;
+            let _ = list.Count(&mut n);
+            for i in 0..n {
+                let Ok(info) = list.GetValueAtIndex(i) else { continue };
+                let mut pid = 0i32;
+                let mut kind = COREWEBVIEW2_PROCESS_KIND::default();
+                let _ = info.ProcessId(&mut pid);
+                let _ = info.Kind(&mut kind);
+                let k = match kind {
+                    COREWEBVIEW2_PROCESS_KIND_BROWSER => "browser",
+                    COREWEBVIEW2_PROCESS_KIND_RENDERER => "renderer",
+                    COREWEBVIEW2_PROCESS_KIND_GPU => "gpu",
+                    COREWEBVIEW2_PROCESS_KIND_UTILITY => "utility",
+                    _ => "other",
+                };
+                out.push((pid as u32, k));
+            }
+        }
+        out
     }
 
     /// Builds a response from bytes and a CRLF header block.
@@ -1023,6 +1051,63 @@ impl Controller {
             // SAFETY: live profile.
             let _ = unsafe { p.SetPreferredColorScheme(scheme) };
         }
+    }
+
+    /// `MemoryUsageTargetLevel`: low for sleeping background tabs.
+    pub fn set_memory_low(&self, low: bool) {
+        let level = if low {
+            COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW
+        } else {
+            COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL
+        };
+        if let Ok(w) = self.webview.cast::<ICoreWebView2_19>() {
+            // SAFETY: live WebView.
+            let _ = unsafe { w.SetMemoryUsageTargetLevel(level) };
+        }
+    }
+
+    /// `TrySuspend` (the WebView must be hidden); `done(suspended)`.
+    pub fn try_suspend(&self, done: impl FnOnce(bool) + 'static) {
+        let Ok(w) = self.webview.cast::<ICoreWebView2_3>() else {
+            done(false);
+            return;
+        };
+        let done = std::rc::Rc::new(std::cell::RefCell::new(Some(done)));
+        let d2 = done.clone();
+        let handler = TrySuspendCompletedHandler::create(Box::new(move |result, suspended| {
+            if let Some(f) = d2.borrow_mut().take() {
+                f(result.is_ok() && suspended);
+            }
+            Ok(())
+        }));
+        // SAFETY: live WebView; the handler is kept alive by WebView2.
+        if unsafe { w.TrySuspend(&handler) }.is_err() {
+            if let Some(f) = done.borrow_mut().take() {
+                f(false);
+            }
+        }
+    }
+
+    /// Resumes a suspended WebView (showing it also resumes it).
+    pub fn resume(&self) {
+        if let Ok(w) = self.webview.cast::<ICoreWebView2_3>() {
+            // SAFETY: live WebView.
+            let _ = unsafe { w.Resume() };
+        }
+    }
+
+    /// `IsDocumentPlayingAudio` changes.
+    pub fn on_audio_changed(&self, mut f: impl FnMut(bool) + 'static) {
+        let Ok(w8) = self.webview.cast::<ICoreWebView2_8>() else { return };
+        let w = w8.clone();
+        let handler = IsDocumentPlayingAudioChangedEventHandler::create(Box::new(move |_, _| {
+            // SAFETY: live WebView.
+            f(get_bool(|b| unsafe { w.IsDocumentPlayingAudio(b) }));
+            Ok(())
+        }));
+        let mut token = 0i64;
+        // SAFETY: registering a handler on a live WebView.
+        let _ = unsafe { w8.add_IsDocumentPlayingAudioChanged(&handler, &mut token) };
     }
 
     /// Sets the profile's tracking prevention: 0 none, 1 basic, 2 balanced, 3 strict.

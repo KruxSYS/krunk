@@ -60,7 +60,9 @@ fn run() -> Result<i32, String> {
     };
     info!("WebView2 runtime version {version}");
 
-    let _browser = browser::Browser::start(&loader, &dirs, store, settings, version)?;
+    let args: Vec<String> = std::env::args().collect();
+    let power = browser::PowerOptions::from_args(&args);
+    let _browser = browser::Browser::start(&loader, &dirs, store, settings, version, power)?;
     Ok(ffi::window::run_message_loop())
 }
 

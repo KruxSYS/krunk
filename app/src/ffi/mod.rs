@@ -6,6 +6,7 @@ pub mod dialogs;
 pub mod http;
 pub mod loader;
 pub mod process;
+pub mod procmem;
 pub mod secure;
 pub mod webview;
 pub mod window;

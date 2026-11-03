@@ -73,6 +73,12 @@ impl Browser {
 
     /// Applies everything that works without a restart.
     fn apply_settings(&self, old: &Settings, new: &Settings) {
+        if old.tab_sleep_minutes != new.tab_sleep_minutes
+            || old.tab_discard_enabled != new.tab_discard_enabled
+            || old.tab_discard_minutes != new.tab_discard_minutes
+        {
+            self.start_power_timer();
+        }
         if old.theme != new.theme {
             self.apply_theme();
         }
