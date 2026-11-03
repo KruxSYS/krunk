@@ -3,6 +3,27 @@
 *Draft. The full vault threat model comes with the vault milestone.*
 
 ## Trusted UI vs. web content
+
+### Origin split
+The browser's own UI is split across **two separate origins** under the reserved `.invalid` TLD:
+
+| Origin | Documents | Loaded in |
+|--------|-----------|-----------|
+| `https://shell.lightbrowser.invalid` | `/shell.html` (tab strip, toolbar, bookmarks bar, find bar) and `/popup.html` (menu, shield, bookmark folders, password prompts) | only the shell WebView and the popup WebView |
+| `https://lightbrowser.invalid` | built-in pages: new tab, history, bookmarks, downloads, settings, passwords, about | tabs |
+
+Consequences:
+- **Tabs can't become the shell.** A tab can never load the shell origin; `allow_navigation`
+  cancels it. Messages from tabs are classified on the tab channel, which never yields
+  `Sender::Shell` or `Sender::Popup`. So even a compromised built-in page can't use shell-only
+  commands such as closing or reordering tabs.
+- **Separate browser storage.** Each origin has its own storage, so a built-in page can't read
+  or tamper with shell state.
+- **Exact matching.** The shell and popup channels accept only their own document path on the
+  shell origin. Sub-frames are never trusted. A different scheme, port or subdomain, or a
+  look-alike host, is rejected (`core::protocol::classify` tests).
+- **Cached favicons.** `/favicon?host=` serves cached favicon bytes on both origins. Only valid
+  host names are accepted, and the response is a PNG with `nosniff`.
 - The browser chrome (shell), the popup and the built-in pages run on two internal origins under
   the reserved `.invalid` TLD. They are served from bytes embedded in the exe, with a strict CSP.
 - The host accepts privileged messages only after `core::protocol::classify` has checked:

@@ -240,11 +240,11 @@ impl Store {
     }
 
     /// Star button: removes all bookmarks for `url` if any exist, otherwise
-    /// adds one to "Other bookmarks". Returns the new bookmarked state.
+    /// adds one to the bookmarks bar. Returns the new bookmarked state.
     pub fn toggle_bookmark(&mut self, url: &str, title: &str) -> DbResult<bool> {
         let ids = self.bookmarks_for_url(url)?;
         if ids.is_empty() {
-            self.add_bookmark(OTHER_BOOKMARKS, title, url)?;
+            self.add_bookmark(BOOKMARKS_BAR, title, url)?;
             Ok(true)
         } else {
             for id in ids {
@@ -280,7 +280,7 @@ mod tests {
         let mut s = Store::open_in_memory().unwrap();
         assert!(s.toggle_bookmark("https://rust-lang.org/", "Rust").unwrap());
         assert!(s.is_bookmarked("https://rust-lang.org/").unwrap());
-        assert_eq!(titles(&s, OTHER_BOOKMARKS), ["Rust"]);
+        assert_eq!(titles(&s, BOOKMARKS_BAR), ["Rust"]);
         assert!(!s.toggle_bookmark("https://rust-lang.org/", "Rust").unwrap());
         assert!(!s.is_bookmarked("https://rust-lang.org/").unwrap());
         assert!(s.add_bookmark(BOOKMARKS_BAR, "x", "javascript:alert(1)").is_err());

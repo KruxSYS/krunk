@@ -4,11 +4,14 @@
 
 use crate::ffi::dialogs;
 use crate::ffi::loader::Loader;
-use crate::ffi::webview::{Controller, Environment, EnvironmentConfig, InternalResponse, KeyPress, NewWindow};
+use crate::ffi::webview::{
+    Controller, Download, Environment, EnvironmentConfig, Find, InternalResponse, KeyPress, NewWindow,
+};
 use crate::ffi::window::{ScreenRect, Window, WindowEvents};
 use crate::log::{info, warning};
 use crate::paths::DataDirs;
 use lb_core::assets;
+use lb_core::downloads::Downloads;
 use lb_core::keys::{self, Command};
 use lb_core::layout;
 use lb_core::pages::{self, Page};
@@ -19,6 +22,7 @@ use lb_core::settings::{Settings, Startup, TrackingPrevention};
 use lb_core::storage::{now_ms, Store};
 use lb_core::tabs::{Effect, Position, Session, TabId, TabModel};
 use lb_core::urlclean;
+use std::borrow::Cow;
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
@@ -28,6 +32,14 @@ const POPUP_URL: &str = "https://shell.lightbrowser.invalid/popup.html";
 const SHELL_FILTER: &str = "https://shell.lightbrowser.invalid/*";
 const PAGES_FILTER: &str = "https://lightbrowser.invalid/*";
 const SESSION_KEY: &str = "session";
+const DOWNLOADS_KEY: &str = "downloads";
+/// Timer that saves the session shortly after the last tab change.
+const SESSION_TIMER: usize = 1;
+const SESSION_DEBOUNCE_MS: u32 = 2000;
+
+mod downloads;
+mod find;
+mod library;
 /// Background behind the UI WebViews (matches --bg in common.css).
 const UI_BACKGROUND: u32 = 0xFFF3_F4F6;
 
@@ -39,6 +51,9 @@ struct TabView {
     host_navigation: Rc<Cell<bool>>,
     can_go_back: bool,
     can_go_forward: bool,
+    /// Find-in-page session and its current term.
+    find: Option<Find>,
+    find_query: String,
 }
 
 /// The popup WebView in its owned popup window (created on first use).
@@ -62,6 +77,10 @@ pub struct Browser {
     shell: RefCell<Option<Controller>>,
     popup: RefCell<Option<Popup>>,
     new_windows: RefCell<HashMap<TabId, NewWindow>>,
+    downloads: RefCell<Downloads>,
+    download_ops: RefCell<HashMap<u32, Download>>,
+    /// Button rect of the open bookmarks-bar folder dropdown.
+    folder_anchor: Cell<Option<PopupRect>>,
     closing: Cell<bool>,
 }
 
@@ -86,6 +105,9 @@ impl Browser {
             shell: RefCell::new(None),
             popup: RefCell::new(None),
             new_windows: RefCell::new(HashMap::new()),
+            downloads: RefCell::new(Downloads::new()),
+            download_ops: RefCell::new(HashMap::new()),
+            folder_anchor: Cell::new(None),
             closing: Cell::new(false),
         });
         let window = Window::create_main("LightBrowser", browser.clone())?;
@@ -145,7 +167,8 @@ impl Browser {
         let Some(env) = self.env.get() else { return };
         shell.lock_down_ui();
         shell.set_background(UI_BACKGROUND);
-        shell.serve(env, SHELL_FILTER, serve_internal);
+        shell.serve(env, SHELL_FILTER, self.server());
+        self.apply_download_folder(&shell);
         shell.on_navigation_starting(|nav| assets::allow_navigation(Channel::Shell, "", &nav.uri, true));
         let weak = self.me.clone();
         shell.on_new_window(move |nw| {
@@ -181,6 +204,9 @@ impl Browser {
     }
 
     fn restore_or_open_start(&self) {
+        if let Ok(Some(json)) = self.store.borrow().kv_get(DOWNLOADS_KEY) {
+            *self.downloads.borrow_mut() = Downloads::from_json(&json);
+        }
         let (startup, homepage) = {
             let s = self.settings.borrow();
             (s.startup, s.homepage.clone())
@@ -245,6 +271,7 @@ impl Browser {
         };
         let host_navigation = Rc::new(Cell::new(false));
         self.hook_tab(id, &c, host_navigation.clone());
+        self.apply_download_folder(&c);
         c.set_zoom(self.settings.borrow().default_zoom);
         let pending = self.new_windows.borrow_mut().remove(&id);
         match pending {
@@ -257,9 +284,17 @@ impl Browser {
             }
         }
         c.set_visible(active);
-        self.views
-            .borrow_mut()
-            .insert(id, TabView { controller: c, host_navigation, can_go_back: false, can_go_forward: false });
+        self.views.borrow_mut().insert(
+            id,
+            TabView {
+                controller: c,
+                host_navigation,
+                can_go_back: false,
+                can_go_forward: false,
+                find: None,
+                find_query: String::new(),
+            },
+        );
         if active {
             self.layout();
             self.focus_active(true);
@@ -269,8 +304,9 @@ impl Browser {
 
     fn hook_tab(&self, id: TabId, c: &Controller, host_navigation: Rc<Cell<bool>>) {
         let Some(env) = self.env.get() else { return };
-        c.serve(env, PAGES_FILTER, serve_internal);
+        c.serve(env, PAGES_FILTER, self.server());
         self.hook_common(c);
+        self.hook_downloads(c);
 
         let weak = self.me.clone();
         c.on_navigation_starting(move |nav| {
@@ -287,9 +323,12 @@ impl Browser {
             allow
         });
         let weak = self.me.clone();
-        c.on_navigation_completed(move |_ok| {
+        c.on_navigation_completed(move |ok| {
             if let Some(b) = weak.upgrade() {
                 b.model.borrow_mut().set_loading(id, false);
+                if ok {
+                    b.record_visit(id);
+                }
                 b.tab_changed(id);
             }
         });
@@ -304,6 +343,7 @@ impl Browser {
         c.on_title_changed(move |title| {
             if let Some(b) = weak.upgrade() {
                 b.model.borrow_mut().set_title(id, &title);
+                b.record_title(id);
                 b.tab_changed(id);
             }
         });
@@ -321,6 +361,7 @@ impl Browser {
         c.on_favicon_changed(move |png| {
             if let Some(b) = weak.upgrade() {
                 b.model.borrow_mut().set_favicon(id, assets::png_data_url(&png));
+                b.cache_favicon(id, &png);
                 b.send_tabs();
             }
         });
@@ -354,6 +395,9 @@ impl Browser {
 
     fn activate_view(&self, from: Option<TabId>, to: TabId) {
         self.hide_popup();
+        if let Some(f) = from {
+            self.stop_find(f);
+        }
         if let Some(f) = from.and_then(|f| self.controller(f)) {
             f.set_visible(false);
         }
@@ -402,7 +446,7 @@ impl Browser {
     fn layout(&self) {
         let Some(w) = self.window() else { return };
         let (width, height) = w.client_size();
-        let bar = false; // bookmarks bar arrives in milestone 4
+        let bar = self.settings.borrow().show_bookmarks_bar;
         let (shell, content) = layout::split(width, height, w.scale(), bar);
         if let Some(s) = self.shell() {
             s.set_bounds(shell.x, shell.y, shell.width, shell.height);
@@ -413,6 +457,7 @@ impl Browser {
     }
 
     fn tab_changed(&self, id: TabId) {
+        self.schedule_session_save();
         self.send_tabs();
         if self.model.borrow().active_id() == Some(id) {
             self.send_nav();
@@ -476,9 +521,21 @@ impl Browser {
     fn send_shell_config(&self) {
         let e = {
             let s = self.settings.borrow();
-            Event::ShellConfig { show_home_button: s.show_home_button, show_bookmarks_bar: false, theme: s.theme }
+            Event::ShellConfig {
+                show_home_button: s.show_home_button,
+                show_bookmarks_bar: s.show_bookmarks_bar,
+                theme: s.theme,
+            }
         };
         self.post_shell(&e);
+    }
+
+    /// Saves the session shortly after the last change (titles and URLs
+    /// change often while pages load).
+    fn schedule_session_save(&self) {
+        if let Some(w) = self.window() {
+            w.set_timer(SESSION_TIMER, SESSION_DEBOUNCE_MS);
+        }
     }
 
     fn save_session(&self) {
@@ -604,9 +661,10 @@ impl Browser {
             Command::Bookmarks => self.open_page(Page::Bookmarks),
             Command::Downloads => self.open_page(Page::Downloads),
             // Wired up in milestone 4 (bookmarks, find in page).
-            Command::Bookmark | Command::Find | Command::FindNext | Command::FindPrev => {
-                info!("command {cmd:?} not implemented yet");
-            }
+            Command::Bookmark => self.toggle_bookmark(),
+            Command::Find => self.post_shell(&Event::ShowFind),
+            Command::FindNext => self.find_step(false),
+            Command::FindPrev => self.find_step(true),
         }
     }
 
@@ -681,6 +739,8 @@ impl Browser {
                     self.send_shell_config();
                     self.send_tabs();
                     self.send_nav();
+                    self.send_bookmarks_bar();
+                    self.post_shell(&Event::DownloadsChanged { active: self.downloads.borrow().active_count() });
                 }
                 Sender::Popup => self.popup_ready(),
                 Sender::Page(_) => {}
@@ -755,11 +815,14 @@ impl Browser {
             // Prompts and the remaining features arrive in later milestones;
             // the popup still treats a reply as "dismissed" by hiding.
             Request::SavePasswordReply { .. } | Request::FillReply { .. } => self.hide_popup(),
-            other => {
-                info!("{sender:?}: request not implemented yet: {}", request_name(&other));
-                self.reply(tab, Event::err(req_id, "Not available yet"));
-            }
+            other => self.dispatch_library(sender, tab, req_id, other),
         }
+    }
+
+    /// Fallback for requests no milestone implements yet.
+    fn not_available(&self, sender: Sender, tab: Option<TabId>, req_id: Option<u32>, request: &Request) {
+        info!("{sender:?}: request not implemented yet: {}", request_name(request));
+        self.reply(tab, Event::err(req_id, "Not available yet"));
     }
 
     // ------------------------------------------------------------ popup
@@ -843,7 +906,7 @@ impl Browser {
         let Some(env) = self.env.get() else { return };
         c.lock_down_ui();
         c.set_background(UI_BACKGROUND);
-        c.serve(env, SHELL_FILTER, serve_internal);
+        c.serve(env, SHELL_FILTER, self.server());
         c.on_navigation_starting(|nav| assets::allow_navigation(Channel::Popup, "", &nav.uri, true));
         c.on_new_window(|_| {});
         let weak = self.me.clone();
@@ -898,13 +961,43 @@ impl Browser {
         }
     }
 
+    // ------------------------------------------------------------ internal origins
+
+    /// Request handler for our internal origins: embedded UI files, and the
+    /// cached favicons from the database.
+    fn server(&self) -> impl Fn(&str) -> Option<InternalResponse> + 'static {
+        let weak = self.me.clone();
+        move |uri: &str| {
+            if let Some(host) = assets::favicon_request(uri) {
+                let png = weak.upgrade()?.store.try_borrow().ok()?.favicon(&host).ok()??;
+                return Some(InternalResponse {
+                    status: 200,
+                    reason: "OK",
+                    headers: assets::favicon_headers().to_string(),
+                    body: Cow::Owned(png),
+                });
+            }
+            let asset = assets::resolve(uri)?;
+            Some(InternalResponse {
+                status: 200,
+                reason: "OK",
+                headers: assets::response_headers(&asset),
+                body: Cow::Borrowed(asset.bytes),
+            })
+        }
+    }
+
     // ------------------------------------------------------------ shutdown
 
     fn shutdown(&self) {
         if self.closing.replace(true) {
             return;
         }
+        if let Some(w) = self.window() {
+            w.kill_timer(SESSION_TIMER);
+        }
         self.save_session();
+        self.save_downloads();
         self.new_windows.borrow_mut().clear();
         let views: Vec<TabView> = self.views.borrow_mut().drain().map(|(_, v)| v).collect();
         for v in views {
@@ -969,12 +1062,15 @@ impl WindowEvents for Browser {
     fn destroyed(&self) {
         self.shutdown();
     }
-}
 
-/// Serves an embedded UI file with its security headers.
-fn serve_internal(uri: &str) -> Option<InternalResponse> {
-    let asset = assets::resolve(uri)?;
-    Some(InternalResponse { status: 200, reason: "OK", headers: assets::response_headers(&asset), body: asset.bytes })
+    fn timer(&self, id: usize) {
+        if id == SESSION_TIMER {
+            if let Some(w) = self.window() {
+                w.kill_timer(SESSION_TIMER);
+            }
+            self.save_session();
+        }
+    }
 }
 
 /// Short name of a request for logs (never its contents).

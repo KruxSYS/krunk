@@ -528,6 +528,14 @@ async function testShellM4(browser) {
   await page.waitForTimeout(20);
   await page.waitForTimeout(150);
   await shot(page, 'shell-bookmarks-bar.png');
+  // Downloads button.
+  check(await page.locator('#downloads').isHidden(), 'downloads button hidden before any download');
+  await emit(page, { event: 'downloadsChanged', active: 2 });
+  await page.waitForTimeout(20);
+  check(await page.locator('#downloads').isVisible() && await page.locator('#downloads-count').textContent() === '2', 'downloads button shows 2 active');
+  await page.click('#downloads');
+  const dc = await lastSent(page, 'command');
+  check(dc && dc.command.command === 'downloads', 'downloads button opens the downloads page');
   // Find bar.
   await emit(page, { event: 'showFind' });
   await page.waitForSelector('#findbar:not([hidden])');

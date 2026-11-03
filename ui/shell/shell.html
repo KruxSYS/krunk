@@ -24,6 +24,7 @@
   <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6h6l2 2h10v11H3z"/></symbol>
   <symbol id="i-up" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></symbol>
   <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 19h14"/></symbol>
   <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
 </svg>
 
@@ -51,6 +52,7 @@
     <button type="button" id="find-next" class="tb small" title="Next (Enter)" aria-label="Next match"><svg class="icon"><use href="#i-down"/></svg></button>
     <button type="button" id="find-close" class="tb small" title="Close (Esc)" aria-label="Close find bar"><svg class="icon"><use href="#i-close"/></svg></button>
   </form>
+  <button id="downloads" class="tb" title="Downloads (Ctrl+J)" aria-label="Downloads" hidden><svg class="icon"><use href="#i-download"/></svg><span id="downloads-count" class="badge">0</span></button>
   <button id="shield" class="tb" title="Ad and tracker blocking" aria-label="Shield"><svg class="icon"><use href="#i-shield"/></svg><span id="shield-count" hidden>0</span></button>
   <button id="menu" class="tb" title="Menu" aria-label="Menu"><svg class="icon"><use href="#i-menu"/></svg></button>
 </div>

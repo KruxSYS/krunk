@@ -256,6 +256,14 @@
   });
   LB.on('focusAddressBar', function () { address.focus(); address.select(); });
   LB.on('bookmarksBar', function (m) { renderBar(m.items); });
+  LB.on('downloadsChanged', function (m) {
+    // Shown once something was downloaded in this session; badge while active.
+    if (m.active > 0) $('downloads').hidden = false;
+    $('downloads').classList.toggle('idle', m.active === 0);
+    $('downloads-count').textContent = String(m.active);
+    $('downloads').title = m.active ? m.active + ' download(s) in progress (Ctrl+J)' : 'Downloads (Ctrl+J)';
+  });
+  $('downloads').addEventListener('click', function () { LB.post('command', { command: { command: 'downloads' } }); });
   LB.on('showFind', function () {
     $('findbar').hidden = false;
     find.focus();

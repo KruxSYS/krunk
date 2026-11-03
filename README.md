@@ -48,6 +48,9 @@ ui/     the browser's own UI (HTML/CSS/JS), embedded into the exe at build time.
   The `.invalid` TLD never resolves, so they can't leak to the network.
 - Every response carries a strict CSP (`default-src 'none'`, no inline code, no network,
   `frame-ancestors 'none'`).
+- Both origins also serve `/favicon?host=<host>`: PNG favicons captured from pages, cached in
+  SQLite (never from private tabs). The new-tab page and bookmarks use them, so they show
+  favicons without any network request.
 - Message origins are checked by `core::protocol::classify`: exact origin, exact document,
   top-level frame only. Web pages can only send the small `ContentMessage` type.
 

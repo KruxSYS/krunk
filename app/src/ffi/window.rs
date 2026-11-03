@@ -35,6 +35,8 @@ pub trait WindowEvents {
     fn destroyed(&self) {}
     /// A `WM_APP` message posted to this window.
     fn app_message(&self, _code: usize) {}
+    /// A timer started with [`Window::set_timer`] fired.
+    fn timer(&self, _id: usize) {}
 }
 
 thread_local! {
@@ -228,6 +230,17 @@ impl Window {
         let _ = unsafe { SetWindowTextW(self.0, &HSTRING::from(title)) };
     }
 
+    /// Starts (or restarts) timer `id` firing every `ms` milliseconds.
+    pub fn set_timer(self, id: usize, ms: u32) {
+        // SAFETY: timer on our own window.
+        unsafe { windows::Win32::UI::WindowsAndMessaging::SetTimer(Some(self.0), id, ms, None) };
+    }
+
+    pub fn kill_timer(self, id: usize) {
+        // SAFETY: timer on our own window.
+        let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::KillTimer(Some(self.0), id) };
+    }
+
     pub fn destroy(self) {
         // SAFETY: valid window handle owned by this thread.
         let _ = unsafe { DestroyWindow(self.0) };
@@ -284,6 +297,12 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                 let mmi = &mut *(lparam.0 as *mut MINMAXINFO);
                 let scale = f64::from(GetDpiForWindow(hwnd).max(96)) / 96.0;
                 mmi.ptMinTrackSize = POINT { x: (480.0 * scale) as i32, y: (320.0 * scale) as i32 };
+            }
+            LRESULT(0)
+        }
+        windows::Win32::UI::WindowsAndMessaging::WM_TIMER => {
+            if let Some(ev) = ev {
+                ev.timer(wparam.0);
             }
             LRESULT(0)
         }

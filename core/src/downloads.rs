@@ -38,6 +38,9 @@ pub struct DownloadItem {
     pub started: i64,
     /// Why the download was interrupted, if it was.
     pub reason: Option<String>,
+    /// Started from a private tab: shown this session, never saved.
+    #[serde(default)]
+    pub private: bool,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,8 +68,11 @@ impl Downloads {
         d
     }
 
+    /// Serialized list for persistence (private downloads are left out).
     pub fn to_json(&self) -> String {
-        serde_json::to_string(self).unwrap_or_else(|_| "{}".into())
+        let saved =
+            Downloads { items: self.items.iter().filter(|i| !i.private).cloned().collect(), next_id: self.next_id };
+        serde_json::to_string(&saved).unwrap_or_else(|_| "{}".into())
     }
 
     /// Newest first.
@@ -82,7 +88,7 @@ impl Downloads {
         self.items.iter().filter(|i| !i.state.is_finished()).count() as u32
     }
 
-    pub fn start(&mut self, url: &str, path: &Path, total: Option<i64>, now: i64) -> u32 {
+    pub fn start(&mut self, url: &str, path: &Path, total: Option<i64>, now: i64, private: bool) -> u32 {
         let id = self.next_id.max(1);
         self.next_id = id + 1;
         self.items.push(DownloadItem {
@@ -95,6 +101,7 @@ impl Downloads {
             total: total.filter(|t| *t >= 0),
             started: now,
             reason: None,
+            private,
         });
         // Drop the oldest finished entries beyond the cap.
         while self.items.len() > MAX_ITEMS {
@@ -198,8 +205,8 @@ mod tests {
     #[test]
     fn lifecycle() {
         let mut d = Downloads::new();
-        let a = d.start("https://e.com/a.zip", Path::new("C:/dl/a.zip"), Some(100), 1);
-        let b = d.start("https://e.com/b.pdf", Path::new("C:/dl/b.pdf"), None, 2);
+        let a = d.start("https://e.com/a.zip", Path::new("C:/dl/a.zip"), Some(100), 1, false);
+        let b = d.start("https://e.com/b.pdf", Path::new("C:/dl/b.pdf"), None, 2, false);
         assert_eq!(d.active_count(), 2);
         d.progress(a, 40, None);
         assert_eq!(d.get(a).unwrap().received, 40);
@@ -218,20 +225,31 @@ mod tests {
     #[test]
     fn restore_marks_running_as_interrupted() {
         let mut d = Downloads::new();
-        let a = d.start("https://e.com/a", Path::new("a"), None, 1);
+        let a = d.start("https://e.com/a", Path::new("a"), None, 1, false);
         let json = d.to_json();
         let r = Downloads::from_json(&json);
         assert_eq!(r.get(a).unwrap().state, DownloadState::Interrupted);
         let mut r = r;
-        assert_ne!(r.start("https://e.com/b", Path::new("b"), None, 2), a, "ids not reused");
+        assert_ne!(r.start("https://e.com/b", Path::new("b"), None, 2, false), a, "ids not reused");
         assert_eq!(Downloads::from_json("junk").items().len(), 0);
+    }
+
+    #[test]
+    fn private_downloads_are_not_saved() {
+        let mut d = Downloads::new();
+        d.start("https://e.com/public", Path::new("a"), None, 1, false);
+        d.start("https://e.com/secret", Path::new("b"), None, 2, true);
+        assert_eq!(d.items().len(), 2, "shown during the session");
+        let json = d.to_json();
+        assert!(!json.contains("secret"));
+        assert_eq!(Downloads::from_json(&json).items().len(), 1);
     }
 
     #[test]
     fn capped() {
         let mut d = Downloads::new();
         for i in 0..MAX_ITEMS + 10 {
-            let id = d.start("https://e.com/", Path::new("f"), None, i as i64);
+            let id = d.start("https://e.com/", Path::new("f"), None, i as i64, false);
             d.set_state(id, DownloadState::Completed, None);
         }
         assert_eq!(d.items().len(), MAX_ITEMS);

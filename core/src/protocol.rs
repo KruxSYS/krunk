@@ -1171,6 +1171,7 @@ mod tests {
                     total: Some(100),
                     started: 5,
                     reason: None,
+                    private: false,
                 }],
             },
             Event::VaultState { exists: true, locked: false },

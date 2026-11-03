@@ -4,15 +4,18 @@
 //! Event handlers registered here live as long as their controller.
 
 use super::loader::Loader;
+use std::borrow::Cow;
 use std::ffi::c_void;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use webview2_com::Microsoft::Web::WebView2::Win32::*;
 use webview2_com::{
-    AcceleratorKeyPressedEventHandler, CallDevToolsProtocolMethodCompletedHandler, CoreWebView2EnvironmentOptions,
-    CreateCoreWebView2ControllerCompletedHandler, CreateCoreWebView2EnvironmentCompletedHandler,
-    DocumentTitleChangedEventHandler, FaviconChangedEventHandler, FocusChangedEventHandler, GetFaviconCompletedHandler,
-    HistoryChangedEventHandler, NavigationCompletedEventHandler, NavigationStartingEventHandler,
-    NewWindowRequestedEventHandler, SourceChangedEventHandler, WebMessageReceivedEventHandler,
+    AcceleratorKeyPressedEventHandler, BytesReceivedChangedEventHandler, CallDevToolsProtocolMethodCompletedHandler,
+    ClearBrowsingDataCompletedHandler, CoreWebView2EnvironmentOptions, CreateCoreWebView2ControllerCompletedHandler,
+    CreateCoreWebView2EnvironmentCompletedHandler, DocumentTitleChangedEventHandler, DownloadStartingEventHandler,
+    FaviconChangedEventHandler, FindActiveMatchIndexChangedEventHandler, FindMatchCountChangedEventHandler,
+    FindStartCompletedHandler, FocusChangedEventHandler, GetFaviconCompletedHandler, HistoryChangedEventHandler,
+    NavigationCompletedEventHandler, NavigationStartingEventHandler, NewWindowRequestedEventHandler,
+    SourceChangedEventHandler, StateChangedEventHandler, WebMessageReceivedEventHandler,
     WebResourceRequestedEventHandler, ZoomFactorChangedEventHandler,
 };
 use windows::core::{Interface, BOOL, HSTRING, PWSTR};
@@ -103,7 +106,7 @@ impl Environment {
     ) -> Result<(), String> {
         let handler = CreateCoreWebView2ControllerCompletedHandler::create(Box::new(move |result, controller| {
             done(match (result, controller) {
-                (Ok(()), Some(c)) => Controller::wrap(c),
+                (Ok(()), Some(c)) => Controller::wrap(c, private),
                 (Err(e), _) => Err(format!("WebView2 controller creation failed: {e}")),
                 (Ok(()), None) => Err("WebView2 returned no controller".into()),
             });
@@ -162,7 +165,199 @@ pub struct InternalResponse {
     pub status: i32,
     pub reason: &'static str,
     pub headers: String,
-    pub body: &'static [u8],
+    pub body: Cow<'static, [u8]>,
+}
+
+/// Which kinds of profile data to clear.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ClearKinds {
+    pub cookies: bool,
+    pub cache: bool,
+    pub site_data: bool,
+}
+
+/// A `DownloadStarting` event; dropping it lets the download proceed.
+pub struct DownloadStart {
+    args: ICoreWebView2DownloadStartingEventArgs,
+    deferral: ICoreWebView2Deferral,
+    pub operation: Download,
+    pub uri: String,
+    /// Where WebView2 intends to save the file.
+    pub suggested_path: PathBuf,
+    pub total: Option<i64>,
+}
+
+impl DownloadStart {
+    pub fn set_path(&self, path: &Path) {
+        // SAFETY: live event args (kept valid by the deferral).
+        let _ = unsafe { self.args.SetResultFilePath(&HSTRING::from(path.as_os_str())) };
+    }
+
+    /// Cancels the download before it starts (e.g. "Save as" was cancelled).
+    pub fn cancel(&self) {
+        // SAFETY: live event args.
+        let _ = unsafe { self.args.SetCancel(true) };
+    }
+}
+
+impl Drop for DownloadStart {
+    fn drop(&mut self) {
+        // SAFETY: live deferral, completed exactly once here.
+        let _ = unsafe { self.deferral.Complete() };
+    }
+}
+
+/// State of a download operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DownloadStatus {
+    InProgress,
+    Interrupted(i32),
+    Completed,
+}
+
+/// A running download (`ICoreWebView2DownloadOperation`).
+#[derive(Clone)]
+pub struct Download(ICoreWebView2DownloadOperation);
+
+impl Download {
+    pub fn received(&self) -> i64 {
+        let mut n = 0i64;
+        // SAFETY: live operation, valid out pointer.
+        let _ = unsafe { self.0.BytesReceived(&mut n) };
+        n
+    }
+
+    pub fn total(&self) -> Option<i64> {
+        let mut n = 0i64;
+        // SAFETY: as above.
+        let _ = unsafe { self.0.TotalBytesToReceive(&mut n) };
+        (n > 0).then_some(n)
+    }
+
+    pub fn path(&self) -> PathBuf {
+        // SAFETY: as above.
+        PathBuf::from(get_string(|p| unsafe { self.0.ResultFilePath(p) }))
+    }
+
+    pub fn status(&self) -> DownloadStatus {
+        let mut st = COREWEBVIEW2_DOWNLOAD_STATE::default();
+        let mut reason = COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON::default();
+        // SAFETY: as above.
+        unsafe {
+            let _ = self.0.State(&mut st);
+            let _ = self.0.InterruptReason(&mut reason);
+        }
+        match st {
+            COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED => DownloadStatus::Completed,
+            COREWEBVIEW2_DOWNLOAD_STATE_INTERRUPTED => DownloadStatus::Interrupted(reason.0),
+            _ => DownloadStatus::InProgress,
+        }
+    }
+
+    pub fn cancel(&self) {
+        // SAFETY: live operation.
+        let _ = unsafe { self.0.Cancel() };
+    }
+
+    pub fn pause(&self) {
+        // SAFETY: live operation.
+        let _ = unsafe { self.0.Pause() };
+    }
+
+    pub fn resume(&self) {
+        // SAFETY: live operation.
+        let _ = unsafe { self.0.Resume() };
+    }
+
+    pub fn on_progress(&self, mut f: impl FnMut() + 'static) {
+        let handler = BytesReceivedChangedEventHandler::create(Box::new(move |_, _| {
+            f();
+            Ok(())
+        }));
+        let mut token = 0i64;
+        // SAFETY: registering a handler on a live operation.
+        let _ = unsafe { self.0.add_BytesReceivedChanged(&handler, &mut token) };
+    }
+
+    pub fn on_state(&self, mut f: impl FnMut() + 'static) {
+        let handler = StateChangedEventHandler::create(Box::new(move |_, _| {
+            f();
+            Ok(())
+        }));
+        let mut token = 0i64;
+        // SAFETY: registering a handler on a live operation.
+        let _ = unsafe { self.0.add_StateChanged(&handler, &mut token) };
+    }
+}
+
+/// Find-in-page session of one WebView (`ICoreWebView2Find`).
+#[derive(Clone)]
+pub struct Find(ICoreWebView2Find);
+
+impl Find {
+    /// Starts a new search for `term` (stops any previous one).
+    pub fn start(&self, env: &Environment, term: &str) -> bool {
+        // SAFETY: COM calls on live objects; needs runtime 1.0.2849+.
+        unsafe {
+            let Ok(env15) = env.0.cast::<ICoreWebView2Environment15>() else { return false };
+            let Ok(opts) = env15.CreateFindOptions() else { return false };
+            let _ = opts.SetFindTerm(&HSTRING::from(term));
+            let _ = opts.SetShouldHighlightAllMatches(true);
+            let _ = opts.SetSuppressDefaultFindDialog(true);
+            let done = FindStartCompletedHandler::create(Box::new(|_| Ok(())));
+            self.0.Start(&opts, &done).is_ok()
+        }
+    }
+
+    pub fn next(&self) {
+        // SAFETY: live find object.
+        let _ = unsafe { self.0.FindNext() };
+    }
+
+    pub fn previous(&self) {
+        // SAFETY: live find object.
+        let _ = unsafe { self.0.FindPrevious() };
+    }
+
+    pub fn stop(&self) {
+        // SAFETY: live find object.
+        let _ = unsafe { self.0.Stop() };
+    }
+
+    /// `(active match, match count)`; the active index is 1-based for display.
+    pub fn result(&self) -> (i32, i32) {
+        let (mut active, mut total) = (0i32, 0i32);
+        // SAFETY: live find object, valid out pointers.
+        unsafe {
+            let _ = self.0.ActiveMatchIndex(&mut active);
+            let _ = self.0.MatchCount(&mut total);
+        }
+        (if total > 0 { active + 1 } else { 0 }, total.max(0))
+    }
+
+    /// Calls `f` whenever the active match or the match count changes.
+    pub fn on_change(&self, f: impl FnMut() + 'static) {
+        let f = std::rc::Rc::new(std::cell::RefCell::new(f));
+        let f2 = f.clone();
+        let a = FindActiveMatchIndexChangedEventHandler::create(Box::new(move |_, _| {
+            if let Ok(mut f) = f.try_borrow_mut() {
+                f();
+            }
+            Ok(())
+        }));
+        let m = FindMatchCountChangedEventHandler::create(Box::new(move |_, _| {
+            if let Ok(mut f) = f2.try_borrow_mut() {
+                f();
+            }
+            Ok(())
+        }));
+        let mut token = 0i64;
+        // SAFETY: registering handlers on a live find object.
+        unsafe {
+            let _ = self.0.add_ActiveMatchIndexChanged(&a, &mut token);
+            let _ = self.0.add_MatchCountChanged(&m, &mut token);
+        }
+    }
 }
 
 /// A pending `NewWindowRequested`: the host must call [`NewWindow::attach`]
@@ -198,13 +393,14 @@ impl Drop for NewWindow {
 pub struct Controller {
     controller: ICoreWebView2Controller,
     webview: ICoreWebView2,
+    private: bool,
 }
 
 impl Controller {
-    fn wrap(controller: ICoreWebView2Controller) -> Result<Controller, String> {
+    fn wrap(controller: ICoreWebView2Controller, private: bool) -> Result<Controller, String> {
         // SAFETY: a freshly created controller always has a CoreWebView2.
         let webview = unsafe { controller.CoreWebView2() }.map_err(|e| e.to_string())?;
-        let c = Controller { controller, webview };
+        let c = Controller { controller, webview, private };
         c.apply_base_settings();
         Ok(c)
     }
@@ -249,6 +445,11 @@ impl Controller {
                 }
             }
         }
+    }
+
+    /// Whether this WebView uses the InPrivate profile.
+    pub fn is_private(&self) -> bool {
+        self.private
     }
 
     pub fn set_bounds(&self, left: i32, top: i32, width: i32, height: i32) {
@@ -356,6 +557,97 @@ impl Controller {
     pub fn close(&self) {
         // SAFETY: live controller; closing twice is harmless.
         let _ = unsafe { self.controller.Close() };
+    }
+
+    /// The find-in-page object (`None` on runtimes older than 1.0.2849).
+    pub fn find(&self) -> Option<Find> {
+        let wv: ICoreWebView2_28 = self.webview.cast().ok()?;
+        // SAFETY: live WebView.
+        unsafe { wv.Find() }.ok().map(Find)
+    }
+
+    fn profile(&self) -> Option<ICoreWebView2Profile> {
+        let wv: ICoreWebView2_13 = self.webview.cast().ok()?;
+        // SAFETY: live WebView.
+        unsafe { wv.Profile() }.ok()
+    }
+
+    /// Sets the profile's default download folder.
+    pub fn set_download_folder(&self, dir: &Path) {
+        if let Some(p) = self.profile() {
+            // SAFETY: live profile; HSTRING outlives the call.
+            let _ = unsafe { p.SetDefaultDownloadFolderPath(&HSTRING::from(dir.as_os_str())) };
+        }
+    }
+
+    /// Clears cookies/cache/site data of this WebView's profile, everything
+    /// or since `since_ms` (Unix ms). `done(ok)` runs on the UI thread.
+    pub fn clear_browsing_data(&self, kinds: ClearKinds, since_ms: Option<i64>, done: impl FnOnce(bool) + 'static) {
+        let mut k = COREWEBVIEW2_BROWSING_DATA_KINDS(0);
+        if kinds.cookies {
+            k.0 |= COREWEBVIEW2_BROWSING_DATA_KINDS_COOKIES.0;
+        }
+        if kinds.cache {
+            k.0 |= COREWEBVIEW2_BROWSING_DATA_KINDS_DISK_CACHE.0 | COREWEBVIEW2_BROWSING_DATA_KINDS_CACHE_STORAGE.0;
+        }
+        if kinds.site_data {
+            k.0 |= COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_DOM_STORAGE.0;
+        }
+        let profile = self.profile().and_then(|p| p.cast::<ICoreWebView2Profile2>().ok());
+        let (Some(profile), true) = (profile, k.0 != 0) else {
+            done(k.0 == 0);
+            return;
+        };
+        let done = std::rc::Rc::new(std::cell::RefCell::new(Some(done)));
+        let d2 = done.clone();
+        let handler = ClearBrowsingDataCompletedHandler::create(Box::new(move |result| {
+            if let Some(f) = d2.borrow_mut().take() {
+                f(result.is_ok());
+            }
+            Ok(())
+        }));
+        // SAFETY: live profile; the handler is kept alive by WebView2.
+        let started = unsafe {
+            match since_ms {
+                Some(ms) => {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs_f64())
+                        .unwrap_or(0.0);
+                    profile.ClearBrowsingDataInTimeRange(k, ms as f64 / 1000.0, now + 60.0, &handler)
+                }
+                None => profile.ClearBrowsingData(k, &handler),
+            }
+        };
+        if started.is_err() {
+            if let Some(f) = done.borrow_mut().take() {
+                f(false);
+            }
+        }
+    }
+
+    /// `DownloadStarting`. The default download UI is suppressed; the
+    /// callback decides the path (or cancels).
+    pub fn on_download_starting(&self, mut f: impl FnMut(DownloadStart) + 'static) {
+        let Ok(wv4) = self.webview.cast::<ICoreWebView2_4>() else { return };
+        let handler = DownloadStartingEventHandler::create(Box::new(move |_, args| {
+            let Some(args) = args else { return Ok(()) };
+            // SAFETY: live event args; the deferral keeps them valid until
+            // `DownloadStart` is dropped.
+            unsafe {
+                let (Ok(op), Ok(deferral)) = (args.DownloadOperation(), args.GetDeferral()) else { return Ok(()) };
+                let _ = args.SetHandled(true);
+                let uri = get_string(|p| op.Uri(p));
+                let suggested_path = PathBuf::from(get_string(|p| args.ResultFilePath(p)));
+                let operation = Download(op);
+                let total = operation.total();
+                f(DownloadStart { args, deferral, operation, uri, suggested_path, total });
+            }
+            Ok(())
+        }));
+        let mut token = 0i64;
+        // SAFETY: registering a handler on a live WebView.
+        let _ = unsafe { wv4.add_DownloadStarting(&handler, &mut token) };
     }
 
     // ---------------- events ----------------
@@ -569,7 +861,7 @@ impl Controller {
                 let Ok(req) = args.Request() else { return Ok(()) };
                 let uri = get_string(|p| req.Uri(p));
                 let resp = match resolve(&uri) {
-                    Some(r) => env.response(r.status, r.reason, &r.headers, r.body),
+                    Some(r) => env.response(r.status, r.reason, &r.headers, &r.body),
                     None => env.response(404, "Not Found", "Content-Type: text/plain", b"Not found"),
                 };
                 if let Some(resp) = resp {
