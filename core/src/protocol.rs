@@ -404,6 +404,8 @@ pub enum Request {
         settings: Box<Settings>,
     },
     ResetSettings,
+    /// Opens the native folder picker for the download folder.
+    PickDownloadFolder,
     UpdateFilterLists,
     /// Last filter-list update time, sources and error (settings page).
     GetFilterStatus,
@@ -652,6 +654,7 @@ impl Sender {
                 R::GetSettings
                     | R::SaveSettings { .. }
                     | R::ResetSettings
+                    | R::PickDownloadFolder
                     | R::UpdateFilterLists
                     | R::GetFilterStatus
                     | R::GetAllowlist
@@ -836,8 +839,10 @@ pub enum Event {
     DownloadsChanged {
         active: u32,
     },
+    /// The theme for the shell, popup and built-in pages (`System` follows
+    /// the OS through `prefers-color-scheme`).
     Theme {
-        dark: bool,
+        theme: Theme,
     },
     FocusAddressBar,
     ShowFind,
@@ -858,6 +863,16 @@ pub struct FillChoice {
 impl Event {
     pub fn ok(req_id: Option<u32>, data: impl Serialize) -> Event {
         Event::Reply { req_id, ok: true, data: serde_json::to_value(data).ok(), error: None }
+    }
+
+    /// Settings rejected by validation: the field errors go back to the page.
+    pub fn invalid(req_id: Option<u32>, errors: &[crate::settings::FieldError]) -> Event {
+        Event::Reply {
+            req_id,
+            ok: false,
+            data: serde_json::to_value(errors).ok(),
+            error: Some("Some settings are not valid".into()),
+        }
     }
 
     pub fn err(req_id: Option<u32>, error: impl Into<String>) -> Event {
@@ -1083,6 +1098,48 @@ mod tests {
         let long = serde_json::json!({"lb": "pageTokens", "classes": ["x".repeat(101)], "ids": []}).to_string();
         assert_eq!(parse_content(&long), Err(ProtocolError::Invalid("page tokens")));
         assert!(parse_content(r#"{"lb":"pageTokens","classes":[""],"ids":[]}"#).is_err());
+    }
+
+    /// Settings commands are accepted only from the settings page.
+    #[test]
+    fn settings_commands_are_settings_page_only() {
+        let cmds = [
+            r#"{"cmd":"getSettings"}"#,
+            r#"{"cmd":"saveSettings","settings":{"proxy":"127.0.0.1:8080"}}"#,
+            r#"{"cmd":"resetSettings"}"#,
+            r#"{"cmd":"pickDownloadFolder"}"#,
+            r#"{"cmd":"restart"}"#,
+            r#"{"cmd":"updateFilterLists"}"#,
+            r#"{"cmd":"allowlistAdd","host":"evil.example"}"#,
+        ];
+        for json in cmds {
+            assert!(parse_request(Sender::Page(Page::Settings), json).is_ok(), "{json}");
+            assert!(parse_content(json).is_err(), "web content: {json}");
+            for other in [
+                Sender::Shell,
+                Sender::Popup,
+                Sender::Page(Page::NewTab),
+                Sender::Page(Page::Passwords),
+                Sender::Page(Page::History),
+            ] {
+                assert_eq!(parse_request(other, json), Err(ProtocolError::Forbidden), "{other:?} {json}");
+            }
+        }
+        // A web page that loads the settings URL in an iframe or claims it is
+        // still classified by its real origin.
+        assert!(matches!(classify(Channel::Tab, "https://evil.example/settings.html", true), Ok(Source::Web { .. })));
+        assert_eq!(classify(Channel::Tab, &Page::Settings.url(), false), Err(ProtocolError::Forbidden), "sub-frame");
+    }
+
+    #[test]
+    fn invalid_settings_reply_carries_field_errors() {
+        let s = crate::settings::Settings { proxy: "nope".into(), ..Default::default() };
+        let errs = s.validate().unwrap_err();
+        let j = Event::invalid(Some(9), &errs).to_json();
+        let v: serde_json::Value = serde_json::from_str(&j).unwrap();
+        assert_eq!(v["ok"], false);
+        assert_eq!(v["reqId"], 9);
+        assert_eq!(v["data"][0]["field"], "proxy");
     }
 
     #[test]
@@ -1311,7 +1368,7 @@ mod tests {
             },
             Event::VaultState { exists: true, locked: false },
             Event::DownloadsChanged { active: 1 },
-            Event::Theme { dark: false },
+            Event::Theme { theme: Theme::Light },
             Event::FocusAddressBar,
             Event::ShowFind,
             Event::Toast { message: "hi".into() },

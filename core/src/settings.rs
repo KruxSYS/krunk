@@ -186,7 +186,23 @@ const FORBIDDEN_FLAGS: &[&str] = &[
     "--ignore-certificate-errors-spki-list",
     "--unsafely-treat-insecure-origin-as-secure",
     "--proxy-server",
+    "--user-agent",
+    "--single-process",
+    "--disable-gpu-sandbox",
+    "--disable-setuid-sandbox",
+    "--no-zygote",
+    "--remote-debugging-address",
+    "--allow-file-access-from-files",
+    "--disable-client-side-phishing-detection",
+    "--js-flags",
+    "--renderer-cmd-prefix",
+    "--gpu-launcher",
+    "--utility-cmd-prefix",
+    "--browser-subprocess-path",
 ];
+
+/// Features that must not be switched off through the extra flags.
+const PROTECTED_FEATURES: &[&str] = &["IsolateOrigins", "SitePerProcess", "StrictOriginIsolation"];
 
 /// Features we always disable: background traffic and services that a
 /// lightweight browser with its own vault does not need.
@@ -218,9 +234,9 @@ impl Settings {
 
         if self.search_engine == SearchEngine::Custom {
             let t = &self.custom_search_url;
-            if !t.contains("{searchTerms}") {
-                err("customSearchUrl", "Must contain {searchTerms}");
-            } else if !is_web_url(&t.replace("{searchTerms}", "x"), true) {
+            if !(t.contains("%s") || t.contains("{searchTerms}")) {
+                err("customSearchUrl", "Must contain %s where the search terms go");
+            } else if t.len() > 2048 || !is_web_url(&t.replace("{searchTerms}", "x").replace("%s", "x"), true) {
                 err("customSearchUrl", "Must be an https:// URL");
             }
         }
@@ -302,6 +318,12 @@ impl Settings {
 
     /// The `AdditionalBrowserArguments` for the WebView2 environment.
     /// Changes only take effect after a restart.
+    /// Did a field that only takes effect after a restart change compared
+    /// with the settings the browser was started with?
+    pub fn restart_required(&self, running: &Settings) -> bool {
+        self.browser_arguments() != running.browser_arguments()
+    }
+
     pub fn browser_arguments(&self) -> String {
         let mut args: Vec<String> = BASE_SWITCHES.iter().map(|s| s.to_string()).collect();
         if !self.hardware_acceleration {
@@ -326,11 +348,18 @@ impl Settings {
                 args.push(flag.to_string());
             }
         }
-        disabled.dedup();
+        dedup_keep_first(&mut disabled);
+        dedup_keep_first(&mut enabled);
+        // A feature both enabled and disabled stays disabled.
+        enabled.retain(|f| !disabled.contains(f));
         args.push(format!("--disable-features={}", disabled.join(",")));
         if !enabled.is_empty() {
             args.push(format!("--enable-features={}", enabled.join(",")));
         }
+        // The same switch twice (e.g. --disable-gpu from the toggle and the
+        // extra flags): keep the first.
+        let mut seen = std::collections::HashSet::new();
+        args.retain(|a| seen.insert(a.split('=').next().unwrap_or(a).to_ascii_lowercase()));
         args.join(" ")
     }
 }
@@ -357,6 +386,11 @@ pub fn updater_proxy(proxy: &str) -> UpdaterProxy {
         Some(_) => UpdaterProxy::Skip,
         None => UpdaterProxy::Named(p.to_string()),
     }
+}
+
+fn dedup_keep_first(v: &mut Vec<String>) {
+    let mut seen = std::collections::HashSet::new();
+    v.retain(|x| seen.insert(x.clone()));
 }
 
 fn is_web_url(s: &str, https_only: bool) -> bool {
@@ -412,16 +446,38 @@ fn validate_flags(flags: &str) -> Result<(), String> {
         return Err("Too long".into());
     }
     for flag in flags.split_whitespace() {
-        if !flag.starts_with("--") || flag.len() < 3 {
-            return Err(format!("Each flag must start with --: {flag}"));
+        // Accepted forms: --flag and --flag=value.
+        let (name, value) = match flag.split_once('=') {
+            Some((n, v)) => (n, Some(v)),
+            None => (flag, None),
+        };
+        let body = name.strip_prefix("--").unwrap_or("");
+        let name_ok = body.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
+            && body.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+        if !name.starts_with("--") || !name_ok {
+            return Err(format!("Not a valid flag (use --flag or --flag=value): {flag}"));
         }
-        if flag.chars().any(|c| c.is_control() || c == '"' || c == '\'') {
-            return Err(format!("Quotes and control characters are not allowed: {flag}"));
+        if let Some(v) = value {
+            if v.is_empty() {
+                return Err(format!("Missing value after '=': {flag}"));
+            }
+            if v.chars().any(|c| c.is_control() || matches!(c, '"' | '\'' | '`' | ';' | '&' | '|' | '<' | '>')) {
+                return Err(format!("Quotes and shell characters are not allowed: {flag}"));
+            }
         }
-        let name = flag.split('=').next().unwrap_or(flag).to_ascii_lowercase();
-        if FORBIDDEN_FLAGS.contains(&name.as_str()) {
-            let hint = if name == "--proxy-server" { " (use the proxy field)" } else { " (weakens security)" };
-            return Err(format!("{name} is not allowed{hint}"));
+        let lname = name.to_ascii_lowercase();
+        if FORBIDDEN_FLAGS.contains(&lname.as_str()) {
+            let hint = match lname.as_str() {
+                "--proxy-server" => " (use the proxy field)",
+                "--user-agent" => " (use the user agent field)",
+                _ => " (weakens security)",
+            };
+            return Err(format!("{lname} is not allowed{hint}"));
+        }
+        if lname == "--disable-features" {
+            if let Some(f) = value.and_then(|v| v.split(',').find(|f| PROTECTED_FEATURES.contains(f))) {
+                return Err(format!("Disabling {f} is not allowed (weakens site isolation)"));
+            }
         }
     }
     Ok(())
@@ -477,11 +533,79 @@ mod tests {
     #[test]
     fn custom_search_requires_https_and_placeholder() {
         let mut s = Settings { search_engine: SearchEngine::Custom, ..Settings::default() };
-        s.custom_search_url = "http://s.example/?q={searchTerms}".into();
+        s.custom_search_url = "http://s.example/?q=%s".into();
         assert_eq!(fields(&s), vec!["customSearchUrl"]);
-        s.custom_search_url = "https://s.example/?q={searchTerms}".into();
+        s.custom_search_url = "https://s.example/?q=".into();
+        assert_eq!(fields(&s), vec!["customSearchUrl"], "no placeholder");
+        s.custom_search_url = "javascript:alert('%s')".into();
+        assert_eq!(fields(&s), vec!["customSearchUrl"]);
+        s.custom_search_url = "https://s.example/?q=%s".into();
         assert_eq!(s.validate(), Ok(()));
-        assert_eq!(s.search_template(), "https://s.example/?q={searchTerms}");
+        assert_eq!(s.search_template(), "https://s.example/?q=%s");
+        s.custom_search_url = "https://s.example/?q={searchTerms}".into();
+        assert_eq!(s.validate(), Ok(()), "OpenSearch placeholder also accepted");
+        // Presets need no custom URL.
+        for e in [
+            SearchEngine::Google,
+            SearchEngine::Bing,
+            SearchEngine::Brave,
+            SearchEngine::Startpage,
+            SearchEngine::Ecosia,
+        ] {
+            let s = Settings { search_engine: e, custom_search_url: "junk".into(), ..Settings::default() };
+            assert_eq!(s.validate(), Ok(()), "{e:?}");
+            assert!(s.search_template().starts_with("https://"));
+        }
+    }
+
+    #[test]
+    fn startup_and_homepage() {
+        let mut s = Settings { startup: Startup::Homepage, homepage: String::new(), ..Settings::default() };
+        assert_eq!(fields(&s), vec!["homepage"], "homepage startup needs a URL");
+        s.homepage = "ftp://files.example/".into();
+        assert_eq!(fields(&s), vec!["homepage"]);
+        s.homepage = "https://start.example/".into();
+        assert_eq!(s.validate(), Ok(()));
+        let s = Settings { startup: Startup::NewTab, homepage: String::new(), ..Settings::default() };
+        assert_eq!(s.validate(), Ok(()), "empty homepage is fine when not used");
+    }
+
+    #[test]
+    fn sleep_and_discard_ranges() {
+        let ok = |sleep, enabled, discard| {
+            Settings {
+                tab_sleep_minutes: sleep,
+                tab_discard_enabled: enabled,
+                tab_discard_minutes: discard,
+                ..Settings::default()
+            }
+            .validate()
+            .is_ok()
+        };
+        assert!(ok(0, false, 30), "sleep off");
+        assert!(ok(5, false, 1), "discard off: its value is not checked against sleep");
+        assert!(ok(1440, false, 30));
+        assert!(!ok(1441, false, 30));
+        assert!(ok(5, true, 6));
+        assert!(!ok(5, true, 5), "discard must be longer than sleep");
+        assert!(!ok(5, true, 0));
+        assert!(!ok(5, true, 1441));
+        assert!(ok(0, true, 1), "sleep off: any valid discard time");
+    }
+
+    #[test]
+    fn autolock_zoom_ua_dir() {
+        let bad = |s: Settings| fields(&s);
+        assert_eq!(bad(Settings { vault_autolock_minutes: 0, ..Settings::default() }), ["vaultAutolockMinutes"]);
+        assert_eq!(bad(Settings { vault_autolock_minutes: 1441, ..Settings::default() }), ["vaultAutolockMinutes"]);
+        assert_eq!(bad(Settings { default_zoom: 0.1, ..Settings::default() }), ["defaultZoom"]);
+        assert_eq!(bad(Settings { default_zoom: f64::NAN, ..Settings::default() }), ["defaultZoom"]);
+        assert_eq!(bad(Settings { user_agent: "Mozilla/5.0 \u{e9}".into(), ..Settings::default() }), ["userAgent"]);
+        assert_eq!(bad(Settings { user_agent: "x".repeat(513), ..Settings::default() }), ["userAgent"]);
+        assert_eq!(bad(Settings { download_dir: "C:\\dl\n".into(), ..Settings::default() }), ["downloadDir"]);
+        assert!(Settings { user_agent: "Mozilla/5.0 (Windows NT 10.0) Custom/1".into(), ..Settings::default() }
+            .validate()
+            .is_ok());
     }
 
     #[test]
@@ -521,15 +645,114 @@ mod tests {
     fn dangerous_flags_rejected() {
         for bad in [
             "--no-sandbox",
+            "--NO-SANDBOX",
             "--remote-debugging-port=9222",
             "--user-data-dir=C:\\x",
-            "-x",
-            "--a=\"b\"",
             "--proxy-server=x:1",
+            "--user-agent=Foo",
+            "--single-process",
+            "--disable-gpu-sandbox",
+            "--renderer-cmd-prefix=calc.exe",
+            "--disable-features=Foo,IsolateOrigins",
+            "--disable-features=SitePerProcess",
         ] {
             assert!(validate_flags(bad).is_err(), "{bad}");
         }
-        assert!(validate_flags("--enable-features=Foo --force-dark-mode").is_ok());
+    }
+
+    #[test]
+    fn malformed_flags_rejected() {
+        for bad in [
+            "-x",
+            "--",
+            "--=1",
+            "-- x",
+            "--a=",
+            "--a=\"b\"",
+            "--a='b'",
+            "--a=b;calc",
+            "--a=$(x)|y",
+            "--é",
+            "--a b=",
+            "flag",
+            "--a=b\u{7}",
+        ] {
+            assert!(validate_flags(bad).is_err(), "{bad:?}");
+        }
+        for good in [
+            "--force-dark-mode",
+            "--enable-features=Foo,Bar",
+            "--lang=de-DE",
+            "--force-device-scale-factor=1.25",
+            "--log-file=C:\\temp\\x.log",
+        ] {
+            assert!(validate_flags(good).is_ok(), "{good}");
+        }
+        assert!(validate_flags(&"--x ".repeat(2000)).is_err(), "length cap");
+    }
+
+    #[test]
+    fn arguments_have_no_duplicates() {
+        let s = Settings {
+            hardware_acceleration: false,
+            extra_flags:
+                "--disable-gpu --no-pings --disable-features=MediaRouter,Foo,Foo --enable-features=Foo,Bar,Bar".into(),
+            ..Settings::default()
+        };
+        let a = s.browser_arguments();
+        let names: Vec<&str> = a.split(' ').map(|f| f.split('=').next().unwrap()).collect();
+        let mut unique = names.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(names.len(), unique.len(), "{a}");
+        let disabled = a.split(' ').find(|f| f.starts_with("--disable-features=")).unwrap();
+        assert_eq!(disabled.matches("MediaRouter").count(), 1);
+        assert_eq!(disabled.matches("Foo").count(), 1);
+        let enabled = a.split(' ').find(|f| f.starts_with("--enable-features=")).unwrap();
+        assert_eq!(enabled, "--enable-features=Bar", "Foo stays disabled");
+    }
+
+    #[test]
+    fn restart_detection() {
+        let running = Settings::default();
+        let live_only = Settings {
+            theme: Theme::Dark,
+            user_agent: "UA/1".into(),
+            default_zoom: 1.5,
+            https_only: true,
+            tracking_prevention: TrackingPrevention::Basic,
+            adblock_enabled: false,
+            ..Settings::default()
+        };
+        assert!(!live_only.restart_required(&running), "these apply without a restart");
+        for changed in [
+            Settings { hardware_acceleration: false, ..Settings::default() },
+            Settings { proxy: "127.0.0.1:8080".into(), ..Settings::default() },
+            Settings { extra_flags: "--force-dark-mode".into(), ..Settings::default() },
+            Settings { smartscreen: true, ..Settings::default() },
+        ] {
+            assert!(changed.restart_required(&running), "{changed:?}");
+        }
+    }
+
+    #[test]
+    fn older_settings_json_gets_defaults() {
+        // A record written by an older version: few fields, one removed field.
+        let old = r#"{"searchEngine":"google","theme":"dark","adblockAllowlist":["x.example"],"tabSleepMinutes":10}"#;
+        let s = Settings::from_json_lenient(old);
+        assert_eq!(s.search_engine, SearchEngine::Google);
+        assert_eq!(s.theme, Theme::Dark);
+        assert_eq!(s.tab_sleep_minutes, 10);
+        let d = Settings::default();
+        assert_eq!(s.hardware_acceleration, d.hardware_acceleration);
+        assert_eq!(s.tracking_prevention, TrackingPrevention::Strict);
+        assert_eq!(s.vault_autolock_minutes, d.vault_autolock_minutes);
+        assert_eq!(s.filter_lists, d.filter_lists);
+        assert_eq!(s.validate(), Ok(()));
+        // Round trip of the full record.
+        let json = serde_json::to_string(&s).unwrap();
+        assert_eq!(Settings::from_json_lenient(&json), s);
+        assert!(!json.contains("adblockAllowlist"), "removed fields are dropped on save");
     }
 
     #[test]

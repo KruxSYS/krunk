@@ -118,7 +118,7 @@ pub fn input_to_url(input: &str, search_template: &str) -> String {
 /// Builds a search URL from a template.
 pub fn search_url(query: &str, search_template: &str) -> String {
     let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
-    search_template.replace("{searchTerms}", &encoded)
+    search_template.replace("{searchTerms}", &encoded).replace("%s", &encoded)
 }
 
 fn as_url(input: &str) -> Option<String> {
@@ -342,6 +342,12 @@ mod tests {
         assert_eq!(input_to_url("version 1.2", DDG), "https://duckduckgo.com/?q=version+1.2");
         assert_eq!(input_to_url("lb://settings", DDG), pages::Page::Settings.url());
         assert_eq!(input_to_url("", DDG), pages::Page::NewTab.url());
+    }
+
+    #[test]
+    fn percent_s_templates() {
+        assert_eq!(search_url("a b", "https://s.example/search?q=%s&src=lb"), "https://s.example/search?q=a+b&src=lb");
+        assert_eq!(input_to_url("100% sure", "https://s.example/?q=%s"), "https://s.example/?q=100%25+sure");
     }
 
     #[test]
