@@ -205,6 +205,56 @@ pub fn https_upgrade(url: &str) -> Option<String> {
     Some(u.into())
 }
 
+/// Privacy rewrites applied to a top-level navigation in `NavigationStarting`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RewriteOptions {
+    pub strip_tracking: bool,
+    pub https_only: bool,
+}
+
+/// Result of [`navigation_rewrite`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rewrite {
+    /// The URL to navigate to instead.
+    pub url: String,
+    /// The navigation was upgraded to HTTPS (the host must show the
+    /// HTTPS-only interstitial if it then fails).
+    pub upgraded: bool,
+}
+
+/// Decides whether a top-level navigation must be cancelled and restarted
+/// at another URL (tracking parameters removed, `http://` upgraded).
+/// `http_exceptions` holds hosts the user allowed over HTTP this session.
+///
+/// The result is a fixed point: rewriting its URL again yields `None`, so
+/// cancel-and-renavigate can never loop.
+pub fn navigation_rewrite(
+    uri: &str,
+    opts: RewriteOptions,
+    http_exceptions: &std::collections::HashSet<String>,
+) -> Option<Rewrite> {
+    let mut url = uri.to_string();
+    let mut changed = false;
+    let mut upgraded = false;
+    if opts.strip_tracking {
+        if let Some(clean) = strip_tracking_params(&url) {
+            url = clean;
+            changed = true;
+        }
+    }
+    if opts.https_only {
+        let excepted = host_of(&url).is_some_and(|h| http_exceptions.contains(&h));
+        if !excepted {
+            if let Some(https) = https_upgrade(&url) {
+                url = https;
+                changed = true;
+                upgraded = true;
+            }
+        }
+    }
+    changed.then_some(Rewrite { url, upgraded })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,6 +323,51 @@ mod tests {
         assert!(!same_origin("https://a.com/", "https://sub.a.com/"));
         assert!(!same_origin("data:text/html,x", "data:text/html,x"));
         assert_eq!(origin_of("https://A.com:443/p").as_deref(), Some("https://a.com"));
+    }
+
+    #[test]
+    fn navigation_rewrites_are_fixed_points() {
+        use std::collections::HashSet;
+        let both = RewriteOptions { strip_tracking: true, https_only: true };
+        let none = HashSet::new();
+        let r = navigation_rewrite("http://shop.example/p?utm_source=x&id=3", both, &none).unwrap();
+        assert_eq!(r, Rewrite { url: "https://shop.example/p?id=3".into(), upgraded: true });
+        assert_eq!(navigation_rewrite(&r.url, both, &none), None, "no loop");
+        for u in [
+            "https://a.example/?fbclid=1&gclid=2&utm_campaign=3",
+            "http://a.example/?q=1",
+            "http://localhost:8080/?utm_source=x",
+            "https://youtu.be/x?si=abc&t=10",
+            "http://10.0.0.1/",
+            "https://clean.example/",
+        ] {
+            if let Some(first) = navigation_rewrite(u, both, &none) {
+                assert_eq!(navigation_rewrite(&first.url, both, &none), None, "{u} -> {}", first.url);
+            }
+        }
+        // Options off: nothing happens.
+        let off = RewriteOptions { strip_tracking: false, https_only: false };
+        assert_eq!(navigation_rewrite("http://a.example/?utm_source=x", off, &none), None);
+        // Only stripping: no upgrade flag.
+        let strip = RewriteOptions { strip_tracking: true, https_only: false };
+        assert_eq!(
+            navigation_rewrite("http://a.example/?utm_source=x", strip, &none),
+            Some(Rewrite { url: "http://a.example/".into(), upgraded: false })
+        );
+    }
+
+    #[test]
+    fn https_only_session_exceptions() {
+        use std::collections::HashSet;
+        let opts = RewriteOptions { strip_tracking: false, https_only: true };
+        let mut ex = HashSet::new();
+        assert!(navigation_rewrite("http://old.example/page", opts, &ex).unwrap().upgraded);
+        ex.insert("old.example".to_string());
+        assert_eq!(navigation_rewrite("http://old.example/page", opts, &ex), None, "user chose HTTP once");
+        assert!(navigation_rewrite("http://other.example/", opts, &ex).is_some(), "exception is per host");
+        assert!(navigation_rewrite("http://sub.old.example/", opts, &ex).is_some(), "not for subdomains");
+        // Private/loopback hosts are never upgraded.
+        assert_eq!(navigation_rewrite("http://192.168.0.1/", opts, &HashSet::new()), None);
     }
 
     #[test]

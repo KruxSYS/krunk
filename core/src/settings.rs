@@ -97,8 +97,6 @@ pub struct Settings {
     // Privacy
     pub adblock_enabled: bool,
     pub filter_lists: Vec<String>,
-    /// Hosts on which ad blocking is disabled.
-    pub adblock_allowlist: Vec<String>,
     pub tracking_prevention: TrackingPrevention,
     pub https_only: bool,
     pub send_dnt: bool,
@@ -144,7 +142,6 @@ impl Default for Settings {
             tab_discard_minutes: 30,
             adblock_enabled: true,
             filter_lists: FILTER_LISTS.iter().map(|s| s.to_string()).collect(),
-            adblock_allowlist: Vec::new(),
             tracking_prevention: TrackingPrevention::Strict,
             https_only: false,
             send_dnt: true,
@@ -243,11 +240,6 @@ impl Settings {
         if let Some(bad) = self.filter_lists.iter().find(|l| !FILTER_LISTS.contains(&l.as_str())) {
             err("filterLists", &format!("Unknown filter list: {bad}"));
         }
-        if self.adblock_allowlist.len() > 10_000 {
-            err("adblockAllowlist", "Too many entries");
-        } else if let Some(bad) = self.adblock_allowlist.iter().find(|h| !is_hostname(h)) {
-            err("adblockAllowlist", &format!("Not a valid host name: {bad}"));
-        }
         if self.vault_autolock_minutes == 0 || self.vault_autolock_minutes > MAX_AUTOLOCK_MINUTES {
             err("vaultAutolockMinutes", "Must be between 1 and 1440 minutes");
         }
@@ -292,7 +284,6 @@ impl Settings {
                         s.tab_discard_minutes = d.tab_discard_minutes;
                     }
                     "filterLists" => s.filter_lists.retain(|l| FILTER_LISTS.contains(&l.as_str())),
-                    "adblockAllowlist" => s.adblock_allowlist.clear(),
                     "vaultAutolockMinutes" => s.vault_autolock_minutes = d.vault_autolock_minutes,
                     "downloadDir" => s.download_dir.clear(),
                     "userAgent" => s.user_agent.clear(),
@@ -442,7 +433,6 @@ mod tests {
             user_agent: "bad\nua".into(),
             default_zoom: 9.0,
             filter_lists: vec!["nope".into()],
-            adblock_allowlist: vec!["exa mple.com".into()],
             ..Settings::default()
         };
         let f = fields(&s);
@@ -455,7 +445,6 @@ mod tests {
             "userAgent",
             "defaultZoom",
             "filterLists",
-            "adblockAllowlist",
         ] {
             assert!(f.contains(&want), "missing {want} in {f:?}");
         }

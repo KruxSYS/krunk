@@ -98,6 +98,24 @@ pub fn favicon_headers() -> &'static str {
      Cache-Control: max-age=3600"
 }
 
+/// An injected content script (`ui/inject/*.js`). These are embedded but
+/// never served over the internal origins.
+pub fn inject_script(name: &str) -> &'static str {
+    get(&format!("inject/{name}")).and_then(|(_, b)| std::str::from_utf8(b).ok()).unwrap_or("")
+}
+
+/// Script that adds `css` to the page as a constructed stylesheet (not
+/// blocked by the page's CSP, unlike a `<style>` element).
+pub fn style_injection_script(css: &str) -> String {
+    let lit = serde_json::to_string(css).unwrap_or_else(|_| "\"\"".into());
+    format!(
+        "(function(c){{try{{var s=new CSSStyleSheet();s.replaceSync(c);\
+         document.adoptedStyleSheets=document.adoptedStyleSheets.concat([s]);}}catch(e){{\
+         var e2=document.createElement('style');e2.textContent=c;\
+         (document.head||document.documentElement).appendChild(e2);}}}})({lit});"
+    )
+}
+
 /// Turns favicon PNG bytes into a `data:` URL for the tab strip (the shell
 /// may only load images from itself or `data:`). Oversized icons are dropped.
 pub fn png_data_url(png: &[u8]) -> Option<String> {
@@ -175,7 +193,16 @@ mod tests {
     #[test]
     fn table_is_sorted_and_has_required_files() {
         assert!(UI_ASSETS.windows(2).all(|w| w[0].0 < w[1].0), "sorted for binary search");
-        for key in ["shell/shell.html", "shell/shell.js", "shell/shell.css", "shell/popup.html", "pages/newtab.html"] {
+        for key in [
+            "shell/shell.html",
+            "shell/shell.js",
+            "shell/shell.css",
+            "shell/popup.html",
+            "pages/newtab.html",
+            "pages/https-only.html",
+            "inject/gpc.js",
+            "inject/page-tokens.js",
+        ] {
             assert!(get(key).is_some(), "{key} missing");
         }
         assert!(UI_ASSETS.iter().all(|(k, _)| !k.starts_with("dev/")), "dev tooling is not embedded");
@@ -199,6 +226,8 @@ mod tests {
             "https://lightbrowser.invalid/shared/..%2fshell.html",
             "https://lightbrowser.invalid/",
             "https://lightbrowser.invalid/dev/mock-host.js",
+            "https://lightbrowser.invalid/inject/gpc.js",
+            "https://shell.lightbrowser.invalid/inject/page-tokens.js",
             "https://lightbrowser.invalid:8443/newtab.html",
             "http://lightbrowser.invalid/newtab.html",
             "https://evil.example/newtab.html",
@@ -216,6 +245,17 @@ mod tests {
         assert!(h.contains("connect-src 'none'"), "new tab page makes no network calls");
         assert!(h.contains("X-Frame-Options: DENY"));
         assert!(!h.contains('\n') || h.contains("\r\n"));
+    }
+
+    #[test]
+    fn injected_scripts() {
+        assert!(inject_script("gpc.js").contains("globalPrivacyControl"));
+        assert!(inject_script("dnt.js").contains("doNotTrack"));
+        assert!(inject_script("page-tokens.js").contains("pageTokens"));
+        assert_eq!(inject_script("missing.js"), "");
+        // CSS is passed as a JSON string literal, so it cannot break out.
+        let js = style_injection_script("a{}</script>\"); alert(1); (\"");
+        assert!(js.contains(r#"("a{}</script>\"); alert(1); (\"")"#), "{js}");
     }
 
     #[test]

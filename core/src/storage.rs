@@ -16,7 +16,7 @@ pub const BOOKMARKS_BAR: i64 = 1;
 /// Id of the "Other bookmarks" root folder.
 pub const OTHER_BOOKMARKS: i64 = 2;
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 const SCHEMA_V1: &str = "
 CREATE TABLE urls (
@@ -80,6 +80,14 @@ CREATE TABLE favicons (
 );
 ";
 
+/// v3: per-site ad-blocking allowlist (it used to live in the settings JSON).
+const SCHEMA_V3: &str = "
+CREATE TABLE adblock_allowlist (
+    host  TEXT PRIMARY KEY,
+    added INTEGER NOT NULL
+);
+";
+
 /// Largest favicon we keep.
 pub const MAX_FAVICON_BYTES: usize = 48 * 1024;
 
@@ -119,6 +127,25 @@ impl Store {
         if version < 2 {
             let tx = self.conn.transaction()?;
             tx.execute_batch(SCHEMA_V2)?;
+            tx.pragma_update(None, "user_version", 2)?;
+            tx.commit()?;
+        }
+        if version < 3 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(SCHEMA_V3)?;
+            // Move an allowlist from an older settings record into the table.
+            let old: Option<String> =
+                tx.query_row("SELECT value FROM kv WHERE key = 'settings'", [], |r| r.get(0)).optional()?;
+            if let Some(json) = old {
+                let hosts = serde_json::from_str::<serde_json::Value>(&json)
+                    .ok()
+                    .and_then(|v| v.get("adblockAllowlist").cloned())
+                    .and_then(|v| serde_json::from_value::<Vec<String>>(v).ok())
+                    .unwrap_or_default();
+                for h in hosts.iter().filter_map(|h| crate::blocker::normalize_host(h)) {
+                    tx.execute("INSERT OR IGNORE INTO adblock_allowlist(host, added) VALUES (?1, 0)", [h])?;
+                }
+            }
             tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             tx.commit()?;
         }
@@ -179,6 +206,27 @@ impl Store {
         Ok(self.has_favicon(host)?.then(|| crate::assets::favicon_url(host)))
     }
 
+    /// All allowlisted hosts, sorted.
+    pub fn allowlist(&self) -> DbResult<Vec<String>> {
+        let mut stmt = self.conn.prepare_cached("SELECT host FROM adblock_allowlist ORDER BY host")?;
+        let rows = stmt.query_map([], |r| r.get(0))?;
+        rows.collect()
+    }
+
+    /// Adds a host (normalized; invalid names are rejected). Returns the
+    /// stored form.
+    pub fn allowlist_add(&self, host: &str, now: i64) -> DbResult<String> {
+        let h = crate::blocker::normalize_host(host)
+            .ok_or_else(|| DbError::InvalidParameterName("Not a valid host name".into()))?;
+        self.conn.execute("INSERT OR IGNORE INTO adblock_allowlist(host, added) VALUES (?1, ?2)", params![h, now])?;
+        Ok(h)
+    }
+
+    pub fn allowlist_remove(&self, host: &str) -> DbResult<bool> {
+        let Some(h) = crate::blocker::normalize_host(host) else { return Ok(false) };
+        Ok(self.conn.execute("DELETE FROM adblock_allowlist WHERE host = ?1", [h])? > 0)
+    }
+
     /// Reclaims space after large deletions.
     pub fn vacuum(&self) -> DbResult<()> {
         self.conn.execute_batch("VACUUM")
@@ -232,6 +280,35 @@ mod tests {
         assert_eq!(s.load_settings().unwrap(), custom);
         s.kv_set("settings", "{broken").unwrap();
         assert_eq!(s.load_settings().unwrap(), Settings::default());
+    }
+
+    #[test]
+    fn allowlist_crud() {
+        let s = Store::open_in_memory().unwrap();
+        assert_eq!(s.allowlist_add("WWW.Example.com", 1).unwrap(), "www.example.com");
+        assert_eq!(s.allowlist_add("*.news.org", 1).unwrap(), "news.org");
+        s.allowlist_add("news.org", 2).unwrap();
+        assert!(s.allowlist_add("bad host", 1).is_err());
+        assert_eq!(s.allowlist().unwrap(), ["news.org", "www.example.com"]);
+        assert!(s.allowlist_remove("NEWS.org").unwrap());
+        assert!(!s.allowlist_remove("news.org").unwrap());
+        assert_eq!(s.allowlist().unwrap(), ["www.example.com"]);
+    }
+
+    #[test]
+    fn v3_migrates_settings_allowlist() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(SCHEMA_V1).unwrap();
+        c.execute_batch(SCHEMA_V2).unwrap();
+        c.pragma_update(None, "user_version", 2).unwrap();
+        c.execute(
+            "INSERT INTO kv(key, value) VALUES ('settings', ?1)",
+            [r#"{"adblockAllowlist":["Shop.example","not valid"],"httpsOnly":true}"#],
+        )
+        .unwrap();
+        let s = Store::init(c).unwrap();
+        assert_eq!(s.allowlist().unwrap(), ["shop.example"]);
+        assert!(s.load_settings().unwrap().https_only, "other settings kept");
     }
 
     #[test]

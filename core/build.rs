@@ -22,12 +22,12 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 }
 
-/// Writes `ui_assets.rs`: a table of every file under ui/shell, ui/pages and
-/// ui/shared (ui/dev is test tooling and is never embedded).
+/// Writes `ui_assets.rs`: a table of every file under ui/shell, ui/pages,
+/// ui/shared and ui/inject (ui/dev is test tooling and is never embedded).
 fn embed_ui(ui: &std::path::Path, out: &std::path::Path) {
     println!("cargo:rerun-if-changed={}", ui.display());
     let mut entries = Vec::new();
-    for dir in ["shell", "pages", "shared"] {
+    for dir in ["shell", "pages", "shared", "inject"] {
         collect(&ui.join(dir), dir, &mut entries);
     }
     entries.sort();

@@ -22,7 +22,10 @@ use serde::{Deserialize, Serialize};
 /// Maximum size of a privileged message (settings JSON is the largest).
 pub const MAX_REQUEST_BYTES: usize = 256 * 1024;
 /// Maximum size of a message from web content.
-pub const MAX_CONTENT_BYTES: usize = 8 * 1024;
+pub const MAX_CONTENT_BYTES: usize = 64 * 1024;
+/// Class/id tokens a page may report for generic cosmetic filtering.
+pub const MAX_PAGE_TOKENS: usize = 2000;
+pub const MAX_TOKEN_CHARS: usize = 100;
 pub const MAX_USERNAME_CHARS: usize = 512;
 pub const MAX_PASSWORD_CHARS: usize = 1024;
 
@@ -378,6 +381,15 @@ pub enum Request {
     },
     ResetSettings,
     UpdateFilterLists,
+    /// Last filter-list update time, sources and error (settings page).
+    GetFilterStatus,
+    GetAllowlist,
+    AllowlistAdd {
+        host: String,
+    },
+    AllowlistRemove {
+        host: String,
+    },
     Restart,
 
     // ---- vault ----
@@ -609,6 +621,10 @@ impl Sender {
                     | R::SaveSettings { .. }
                     | R::ResetSettings
                     | R::UpdateFilterLists
+                    | R::GetFilterStatus
+                    | R::GetAllowlist
+                    | R::AllowlistAdd { .. }
+                    | R::AllowlistRemove { .. }
                     | R::Restart
                     | R::ClearBrowsingData { .. }
                     | R::VaultStatus
@@ -663,6 +679,9 @@ pub enum ContentMessage {
     /// The user clicked the key badge in a login field. The host shows a
     /// trusted confirmation in the shell before anything is filled.
     RequestFill {},
+    /// Class names and ids used on the page, for generic cosmetic filters.
+    /// (A page can only affect which elements get hidden on itself.)
+    PageTokens { classes: Vec<String>, ids: Vec<String> },
 }
 
 /// Parses a message from web content.
@@ -671,6 +690,13 @@ pub fn parse_content(json: &str) -> Result<ContentMessage, ProtocolError> {
         return Err(ProtocolError::TooLarge);
     }
     let msg: ContentMessage = serde_json::from_str(json).map_err(|e| ProtocolError::Malformed(e.to_string()))?;
+    if let ContentMessage::PageTokens { classes, ids } = &msg {
+        if classes.len() + ids.len() > MAX_PAGE_TOKENS
+            || classes.iter().chain(ids).any(|t| t.is_empty() || t.chars().count() > MAX_TOKEN_CHARS)
+        {
+            return Err(ProtocolError::Invalid("page tokens"));
+        }
+    }
     if let ContentMessage::Submit { username, password } = &msg {
         if username.chars().count() > MAX_USERNAME_CHARS {
             return Err(ProtocolError::Invalid("username too long"));
@@ -1003,6 +1029,27 @@ mod tests {
     }
 
     #[test]
+    fn page_tokens_are_capped() {
+        let ok = r#"{"lb":"pageTokens","classes":["ad-banner","content"],"ids":["sidebar"]}"#;
+        assert!(matches!(parse_content(ok), Ok(ContentMessage::PageTokens { .. })));
+        let many: Vec<String> = (0..MAX_PAGE_TOKENS + 1).map(|i| format!("c{i}")).collect();
+        let j = serde_json::json!({"lb": "pageTokens", "classes": many, "ids": []}).to_string();
+        assert_eq!(parse_content(&j), Err(ProtocolError::Invalid("page tokens")));
+        let long = serde_json::json!({"lb": "pageTokens", "classes": ["x".repeat(101)], "ids": []}).to_string();
+        assert_eq!(parse_content(&long), Err(ProtocolError::Invalid("page tokens")));
+        assert!(parse_content(r#"{"lb":"pageTokens","classes":[""],"ids":[]}"#).is_err());
+    }
+
+    #[test]
+    fn allowlist_commands_are_settings_only() {
+        let add = r#"{"cmd":"allowlistAdd","host":"example.com"}"#;
+        assert!(parse_request(Sender::Page(Page::Settings), add).is_ok());
+        assert_eq!(parse_request(Sender::Page(Page::NewTab), add), Err(ProtocolError::Forbidden));
+        assert_eq!(parse_request(Sender::Shell, add), Err(ProtocolError::Forbidden), "shell uses shieldAllowSite");
+        assert!(parse_content(add).is_err(), "web pages cannot allowlist themselves");
+    }
+
+    #[test]
     fn content_messages_are_strict() {
         assert_eq!(parse_content(r#"{"lb":"loginForm"}"#), Ok(ContentMessage::LoginForm {}));
         assert_eq!(
@@ -1078,6 +1125,10 @@ mod tests {
                 data: ClearData { cookies: true, cache: true, site_data: true, since: Some(1), ..ClearData::default() },
             },
             Request::HttpsOnlyProceed { url: "http://a.example/".into() },
+            Request::GetFilterStatus,
+            Request::GetAllowlist,
+            Request::AllowlistAdd { host: "a.example".into() },
+            Request::AllowlistRemove { host: "a.example".into() },
         ];
         for r in samples {
             let json = serde_json::to_string(&r).unwrap();

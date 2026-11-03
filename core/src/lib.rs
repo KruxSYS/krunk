@@ -8,6 +8,7 @@ pub mod assets;
 pub mod blocker;
 pub mod bookmarks;
 pub mod downloads;
+pub mod filterlists;
 pub mod frecency;
 pub mod history;
 pub mod integrity;
