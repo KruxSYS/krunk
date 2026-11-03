@@ -292,6 +292,18 @@ impl Browser {
                 _ => m.open("", false, Position::End, true, true, now_ms()).1,
             }
         };
+        // Restored tabs show their favicons from the local cache (no network).
+        {
+            let store = self.store.borrow();
+            let mut m = self.model.borrow_mut();
+            let hosts: Vec<(TabId, String)> =
+                m.tabs().iter().filter_map(|t| urlclean::host_of(&t.url).map(|h| (t.id, h))).collect();
+            for (id, host) in hosts {
+                if let Ok(Some(png)) = store.favicon(&host) {
+                    m.set_favicon(id, assets::png_data_url(&png));
+                }
+            }
+        }
         self.apply(effects);
     }
 
@@ -847,6 +859,9 @@ impl Browser {
                     self.send_nav();
                     self.send_bookmarks_bar();
                     self.post_shell(&Event::DownloadsChanged { active: self.downloads.borrow().active_count() });
+                    // A new-tab page activated before the shell finished
+                    // loading could not focus the address bar yet.
+                    self.focus_active();
                 }
                 Sender::Popup => {
                     if let Some(c) = self.popup.borrow().as_ref().and_then(|p| p.controller.clone()) {
