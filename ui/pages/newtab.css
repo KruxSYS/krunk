@@ -11,7 +11,8 @@ main { width: min(820px, 92vw); padding-top: 16vh; }
 .tile .avatar { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px;
                 border-radius: 50%; background: var(--bg-raised); border: 1px solid var(--border); }
 .tile .avatar img, .tile .avatar .fav { width: 24px; height: 24px; }
-.tile .avatar .fav.letter { width: 48px; height: 48px; border-radius: 50%; font-size: 20px; background: transparent; }
+.tile .avatar .fav.letter { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px;
+                            border-radius: 50%; font-size: 20px; background: transparent; }
 .tile .label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .tile .tools { position: absolute; top: 4px; right: 4px; display: flex; opacity: 0; }
 .tile:hover .tools, .tile:focus-within .tools { opacity: 1; }

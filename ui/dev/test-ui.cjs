@@ -62,6 +62,8 @@ async function route(context, external) {
   const handler = (dir) => async (r) => {
     const url = new URL(r.request().url());
     if (url.pathname === '/favicon') {
+      // Like the host: no cached favicon for this one -> 404 -> letter badge.
+      if (url.searchParams.get('host') === '192.168.1.1') return r.fulfill({ status: 404, body: '' });
       return r.fulfill({ status: 200, headers: { 'content-type': 'image/png' }, body: faviconPng(url.searchParams.get('host') || '') });
     }
     let p = url.pathname.replace(/^\//, '');
@@ -88,7 +90,10 @@ async function openPage(browser, url, viewport, scale, setup, setupArg) {
   const errors = [];
   // Built-in pages must never use native dialogs (they show the internal origin).
   page.on('dialog', (d) => { errors.push('native ' + d.type() + ' dialog: ' + d.message()); d.dismiss(); });
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  page.on('console', (m) => {
+    // A favicon the host has not cached is a 404 by design (the page shows a letter instead).
+    if (m.type() === 'error' && !(m.text().includes('404') && (m.location().url || '').includes('/favicon?host='))) errors.push(m.text());
+  });
   page.on('pageerror', (e) => errors.push(String(e)));
   await page.goto(url);
   return { page, context, errors, external };
@@ -332,6 +337,15 @@ async function testNewTab(browser) {
   await page.waitForSelector('.tile');
   check((await page.locator('.tile').count()) === 10, 'renders 10 tiles');
   check((await page.locator('.tile.pinned').count()) === 1, 'one pinned tile');
+  // A tile without a favicon shows its letter centred in the circle.
+  const off = await page.evaluate(() => {
+    const letter = document.querySelector('.tile .fav.letter');
+    if (!letter) return null;
+    const r = document.createRange(); r.selectNodeContents(letter);
+    const g = r.getBoundingClientRect(); const a = letter.closest('.avatar').getBoundingClientRect();
+    return Math.max(Math.abs((g.left + g.right) / 2 - (a.left + a.right) / 2), Math.abs((g.top + g.bottom) / 2 - (a.top + a.bottom) / 2));
+  });
+  check(off !== null && off < 4, 'letter badge is centred in the tile circle (offset ' + off + ' px)');
   await page.waitForTimeout(150);
   await shot(page, 'newtab-tiles.png');
   await page.locator('.tile').nth(1).hover();
