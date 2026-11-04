@@ -532,6 +532,12 @@ Testing on Windows:
   and any unsaved form input are lost. Discard is off by default.
   - Cosmetic filtering of generic rules is limited to the first 2000 class names and ids a
     page reports.
+- **uBO's procedural cosmetic filters** (`:has-text()`, `:upward()`, `:remove()` and similar) are not
+  executed: only plain CSS selectors hide elements. Scriptlets written for uBO's isolated world
+  run in the page's world, because CEF provides no isolated world for them.
+- **YouTube** keeps changing its ad delivery. Krunk carries uBO's YouTube defences (scriptlets
+  and Quick Fixes, updated daily) and was verified on 2026-11-04 (no ads, no anti-adblock wall
+  on three videos). A YouTube change can still get through until the lists catch up.
 - **The vault does not detect rollback.** Replacing `vault.json` with an older copy is not
   detected. See `docs/SECURITY.md` for the full threat model and what is out of scope.
 - **No tab pinning in the UI.** The memory policy supports pinned tabs, but the tab strip
