@@ -111,15 +111,17 @@
     }
     shown.forEach(function (e) {
       const secret = el('span', { class: 'secret', text: '••••••••••' });
+      const note = el('span', { class: 'note', hidden: true });
       box.appendChild(el('div', { class: 'row pw-row', 'data-id': e.id }, [
         Page.favicon(e.origin),
         el('span', { class: 'main' }, [
           el('a', { href: e.origin, text: Page.host(e.origin) || e.origin, title: e.origin }),
           el('span', { class: 'user', text: e.username || '(no username)' }),
+          note,
         ]),
         secret,
         el('span', { class: 'actions' }, [
-          el('button', { class: 'btn small', text: 'Show', onclick: () => reveal(e, secret) }),
+          el('button', { class: 'btn small', text: 'Show', onclick: () => reveal(e, secret, note) }),
           el('button', { class: 'btn small', text: 'Copy user', onclick: () => copy(e, 'username') }),
           el('button', { class: 'btn small', text: 'Copy password', onclick: () => copy(e, 'password') }),
           Page.iconButton('edit', 'Edit', () => edit(e)),
@@ -156,8 +158,8 @@
 
   // Revealing needs the master password again; the value is shown for 20 s.
   let revealTarget = null;
-  function reveal(e, secretEl) {
-    revealTarget = { e: e, el: secretEl };
+  function reveal(e, secretEl, noteEl) {
+    revealTarget = { e: e, el: secretEl, note: noteEl };
     $('reveal-error').textContent = '';
     $('reveal-pw').value = '';
     $('reveal-dialog').showModal();
@@ -172,7 +174,12 @@
       $('reveal-dialog').close();
       t.el.textContent = r.password;
       t.el.classList.add('shown');
-      setTimeout(function () { t.el.textContent = '••••••••••'; t.el.classList.remove('shown'); }, 20000);
+      // The note is shown with the password, behind the same re-authentication.
+      if (t.note && r.note) { t.note.textContent = 'Note: ' + r.note; t.note.hidden = false; }
+      setTimeout(function () {
+        t.el.textContent = '••••••••••'; t.el.classList.remove('shown');
+        if (t.note) { t.note.textContent = ''; t.note.hidden = true; }
+      }, 20000);
     }, function (err) { $('reveal-error').textContent = err.message; });
   });
 

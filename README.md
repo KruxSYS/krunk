@@ -335,9 +335,6 @@ NODE_PATH=/usr/lib/node_modules/@playwright/mcp/node_modules node ui/dev/test-ui
     does.
   - WebView2 shares renderer processes between same-site tabs, so discarding one of two tabs of
     the same site frees less.
-- **Vault notes are write-only in the UI.** A login's note is stored encrypted like the
-  password, but it is never sent back to the passwords page. Editing a login keeps its note; to
-  change it, type a new one.
 - **The vault does not detect rollback.** Replacing `vault.json` with an older copy is not
   detected. See `docs/SECURITY.md` for the full threat model and what is out of scope.
 - **Platform support:** no Windows on ARM build, no installer, no auto-update and no extensions.

@@ -70,8 +70,8 @@ fn vault_error_message(e: &VaultError) -> String {
 
 /// A reply carrying a secret, built in a zeroizing buffer (the generic
 /// `Event::ok` would leave unwiped copies in a serde_json::Value).
-fn secret_reply(req_id: Option<u32>, secret: &str) -> Zeroizing<String> {
-    let mut out = Zeroizing::new(String::with_capacity(secret.len() + 64));
+fn secret_reply(req_id: Option<u32>, secret: &str, note: Option<&str>) -> Zeroizing<String> {
+    let mut out = Zeroizing::new(String::with_capacity(secret.len() + note.map_or(0, str::len) + 80));
     out.push_str("{\"event\":\"reply\",\"reqId\":");
     match req_id {
         Some(id) => out.push_str(&id.to_string()),
@@ -79,6 +79,10 @@ fn secret_reply(req_id: Option<u32>, secret: &str) -> Zeroizing<String> {
     }
     out.push_str(",\"ok\":true,\"data\":{\"password\":");
     push_json_string(&mut out, secret);
+    if let Some(note) = note {
+        out.push_str(",\"note\":");
+        push_json_string(&mut out, note);
+    }
     out.push_str("}}");
     out
 }
@@ -220,7 +224,7 @@ impl Browser {
                 self.reply(tab, Event::ok(req_id, ()));
             }
             Request::GeneratePassword { length, symbols } => match passgen::generate(length, symbols) {
-                Ok(pw) => self.reply_secret(tab, req_id, &pw),
+                Ok(pw) => self.reply_secret(tab, req_id, &pw, None),
                 Err(_) => self.reply(tab, Event::err(req_id, "Random number generator failed")),
             },
             Request::GetNeverSave => self.reply_db(tab, req_id, self.store.borrow().never_save_list()),
@@ -263,9 +267,9 @@ impl Browser {
         }
     }
 
-    fn reply_secret(&self, tab: Option<TabId>, req_id: Option<u32>, secret: &str) {
+    fn reply_secret(&self, tab: Option<TabId>, req_id: Option<u32>, secret: &str, note: Option<&str>) {
         if let Some(c) = tab.and_then(|t| self.controller(t)) {
-            let json = secret_reply(req_id, secret);
+            let json = secret_reply(req_id, secret, note);
             c.post_json(&json);
         }
     }
@@ -381,9 +385,15 @@ impl Browser {
                 }
                 b.vaults.rate.borrow_mut().record_success();
                 let _ = b.store.borrow().save_rate_limiter(&b.vaults.rate.borrow());
-                let pw = b.vaults.vault.borrow().as_ref().and_then(|v| v.entry(&id).map(|e| e.password.clone()));
-                match pw {
-                    Some(pw) => b.reply_secret(tab, req_id, &pw),
+                // The note is a secret too: shown only after the same re-authentication.
+                let found = b
+                    .vaults
+                    .vault
+                    .borrow()
+                    .as_ref()
+                    .and_then(|v| v.entry(&id).map(|e| (e.password.clone(), e.note.clone())));
+                match found {
+                    Some((pw, note)) => b.reply_secret(tab, req_id, &pw, Some(&note)),
                     None => b.reply(tab, Event::err(req_id, "Entry not found (or the vault was locked)")),
                 }
             },
@@ -708,9 +718,13 @@ mod tests {
         let mut s = String::new();
         push_json_string(&mut s, "a\"b\\c\n\u{1}\u{2028}é");
         assert_eq!(s, r#""a\"b\\c\n\u0001\u2028é""#);
-        let r = secret_reply(Some(5), "p\"w");
+        let r = secret_reply(Some(5), "p\"w", None);
         let v: serde_json::Value = serde_json::from_str(&r).unwrap();
         assert_eq!(v["data"]["password"], "p\"w");
         assert_eq!(v["reqId"], 5);
+        assert!(v["data"].get("note").is_none());
+        let r = secret_reply(None, "pw", Some("PIN 1234\nline 2"));
+        let v: serde_json::Value = serde_json::from_str(&r).unwrap();
+        assert_eq!(v["data"]["note"], "PIN 1234\nline 2");
     }
 }

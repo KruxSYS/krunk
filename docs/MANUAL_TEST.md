@@ -345,6 +345,8 @@ Open ⋮ → Settings, or type `lb://settings` in the address bar.
     - Cancel (or Escape) closes without changes.
 13. **Editing keeps the note:** add a login with a note, then edit only its username. Reopen the
     editor: the note field still says "(unchanged)", so the note was kept.
+    "Show" (after the master password) displays the note under the username for 20 s, together
+    with the password.
 14. **Reset:** "Reset settings…" asks first, in an in-page dialog (no native
     "lightbrowser.invalid says" box; the same applies to every delete prompt on the built-in
     pages). After "Reset", every value is back to its default, and the

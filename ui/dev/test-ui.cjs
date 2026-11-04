@@ -686,7 +686,7 @@ async function testPasswords(browser) {
     };
     h.vaultList = () => st.entries;
     h.getNeverSave = () => ['https://ads.example'];
-    h.vaultReveal = (m) => { if (m.password !== 'correct horse battery') throw new Error('Wrong master password.'); return { password: 'Tr0ub4dor&3' }; };
+    h.vaultReveal = (m) => { if (m.password !== 'correct horse battery') throw new Error('Wrong master password.'); return m.id === 'a2' ? { password: 'mail-pw', note: 'Recovery code 4417' } : { password: 'Tr0ub4dor&3', note: '' }; };
     h.generatePassword = () => ({ password: 'k7#Vq2!mZp9@Lr4$Wx8e' });
   };
   const entries = [
@@ -759,6 +759,15 @@ async function testPasswords(browser) {
   check((await page.textContent('.pw-row[data-id="a1"] .secret')) === 'Tr0ub4dor&3', 'reveal (Enter) shows the password after re-entering the master password');
   const rv = await lastSent(page, 'vaultReveal');
   check(rv && rv.id === 'a1' && rv.password === 'correct horse battery', 'reveal sends the master password with the entry id');
+  check(await page.locator('.pw-row[data-id="a1"] .note').isHidden(), 'an entry without a note shows no note after reveal');
+  // An entry with a note: the note is shown with the password after re-authentication only.
+  check(await page.locator('.pw-row[data-id="a2"] .note').isHidden(), 'note hidden before reveal');
+  await page.locator('.pw-row[data-id="a2"]').hover();
+  await page.locator('.pw-row[data-id="a2"] button', { hasText: 'Show' }).click();
+  await page.fill('#reveal-pw', 'correct horse battery');
+  await page.press('#reveal-pw', 'Enter');
+  await page.waitForTimeout(60);
+  check((await page.textContent('.pw-row[data-id="a2"] .note')) === 'Note: Recovery code 4417', 'reveal shows the note too');
   // Cancel closes the dialog without a request.
   const revealsBefore = (await sent(page)).filter((m) => m.cmd === 'vaultReveal').length;
   await page.locator('.pw-row[data-id="a1"] button', { hasText: 'Show' }).click();
