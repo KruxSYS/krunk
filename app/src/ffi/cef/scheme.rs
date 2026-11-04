@@ -65,6 +65,12 @@ wrap_scheme_handler_factory! {
     }
 }
 
+/// A handler that answers with `response` at once (no UI-thread lookup);
+/// used for the stand-ins of `$redirect` filters.
+pub(super) fn static_handler(response: InternalResponse) -> ResourceHandler {
+    InternalHandler::new(Arc::new(Mutex::new(Exchange { response: Some(response), offset: 0 })))
+}
+
 /// State of one request, shared between the IO thread and the UI thread
 /// that resolves it.
 #[derive(Default)]
@@ -84,6 +90,13 @@ wrap_resource_handler! {
             handle_request: Option<&mut ::std::os::raw::c_int>,
             callback: Option<&mut Callback>,
         ) -> ::std::os::raw::c_int {
+            // A response known up front (a `$redirect` stand-in).
+            if self.state.lock().is_ok_and(|s| s.response.is_some()) {
+                if let Some(h) = handle_request {
+                    *h = 1;
+                }
+                return 1;
+            }
             let (Some(request), Some(callback)) = (request, callback) else { return 0 };
             let url = CefString::from(&request.url()).to_string();
             if let Some(h) = handle_request {

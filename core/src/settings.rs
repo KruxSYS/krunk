@@ -47,7 +47,21 @@ pub enum Theme {
 }
 
 /// Identifiers of the bundled filter lists (see `assets/filters`).
-pub const FILTER_LISTS: &[&str] = &["easylist", "easyprivacy", "ublock-filters", "ublock-privacy", "ublock-unbreak"];
+pub const FILTER_LISTS: &[&str] = &[
+    "easylist",
+    "easyprivacy",
+    "ublock-filters",
+    "ublock-privacy",
+    "ublock-unbreak",
+    "ublock-quick-fixes",
+    "ublock-badware",
+];
+
+/// Lists added after the first release, by revision: settings saved before
+/// a revision get its lists enabled once (the user never saw them).
+const LISTS_ADDED: &[(u32, &[&str])] = &[(1, &["ublock-quick-fixes", "ublock-badware"])];
+/// The current filter-list revision (see `Settings::filter_lists_rev`).
+pub const FILTER_LISTS_REV: u32 = 1;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -88,6 +102,9 @@ pub struct Settings {
     // Privacy
     pub adblock_enabled: bool,
     pub filter_lists: Vec<String>,
+    /// Which lists of `FILTER_LISTS` existed when these settings were saved
+    /// (newer ones are enabled once on load).
+    pub filter_lists_rev: u32,
     /// Block all third-party cookies: network cookies through the engine's
     /// cookie filter (`core::cookies`, applies at once), script access
     /// (`document.cookie`) through Chromium's switch (needs a restart).
@@ -140,6 +157,7 @@ impl Default for Settings {
             tab_discard_minutes: 30,
             adblock_enabled: true,
             filter_lists: FILTER_LISTS.iter().map(|s| s.to_string()).collect(),
+            filter_lists_rev: FILTER_LISTS_REV,
             block_third_party_cookies: true,
             https_only: false,
             send_dnt: true,
@@ -305,6 +323,21 @@ impl Settings {
     /// instead of failing (a corrupt settings file must not brick startup).
     pub fn from_json_lenient(json: &str) -> Settings {
         let mut s: Settings = serde_json::from_str(json).unwrap_or_default();
+        // Filter lists added since these settings were saved start enabled.
+        let saved_rev = serde_json::from_str::<serde_json::Value>(json)
+            .ok()
+            .and_then(|v| v.get("filterListsRev").and_then(serde_json::Value::as_u64))
+            .unwrap_or(0) as u32;
+        for (rev, lists) in LISTS_ADDED {
+            if saved_rev < *rev {
+                for l in *lists {
+                    if !s.filter_lists.iter().any(|x| x == l) {
+                        s.filter_lists.push(l.to_string());
+                    }
+                }
+            }
+        }
+        s.filter_lists_rev = FILTER_LISTS_REV;
         if let Err(errs) = s.validate() {
             let d = Settings::default();
             for e in errs {
@@ -876,6 +909,22 @@ mod tests {
         assert_eq!(s.browser_arguments(), switches.join(" "));
         let disabled = switches.iter().find(|a| a.starts_with("--disable-features=")).unwrap();
         assert!(disabled.ends_with(",AimServerRequestOnStartupEnabled,Foo"), "{disabled}");
+    }
+
+    #[test]
+    fn new_filter_lists_are_enabled_once() {
+        // Saved by a version before quick fixes and badware existed.
+        let old = r#"{"filterLists":["easylist","ublock-filters"]}"#;
+        let s = Settings::from_json_lenient(old);
+        assert_eq!(s.filter_lists, ["easylist", "ublock-filters", "ublock-quick-fixes", "ublock-badware"]);
+        assert_eq!(s.filter_lists_rev, FILTER_LISTS_REV);
+        // Turned off later by the user: stays off.
+        let mut s2 = s.clone();
+        s2.filter_lists.retain(|l| l != "ublock-badware");
+        let saved = serde_json::to_string(&s2).unwrap();
+        assert!(!Settings::from_json_lenient(&saved).filter_lists.iter().any(|l| l == "ublock-badware"));
+        // Defaults include every list.
+        assert_eq!(Settings::default().filter_lists.len(), FILTER_LISTS.len());
     }
 
     #[test]

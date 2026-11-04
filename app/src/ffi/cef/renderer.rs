@@ -9,11 +9,13 @@
 //! browser process decides what a message may do from the sending frame's
 //! committed URL and main-frame flag, never from its contents.
 
+use super::scriptlets;
 use super::view::Scripts;
 use cef::*;
 use lb_core::assets;
+use lb_core::blocker::{Allowlist, ScriptletEngine};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Process message names.
 pub(super) const TO_BROWSER: &str = "lb.msg";
@@ -82,7 +84,36 @@ const AUDIO_TRACKER: &str = r#"(function (report) {
   });
 })"#;
 
+/// The uBO scriptlets of this renderer process (one engine for all its
+/// browsers; see `scriptlets.rs`).
+#[derive(Default)]
+struct ProcessScriptlets {
+    version: String,
+    engine: Option<ScriptletEngine>,
+    allow: Allowlist,
+    enabled: bool,
+    /// Browsers that told the browser process which version we have.
+    greeted: HashSet<i32>,
+}
+
+impl ProcessScriptlets {
+    fn apply(&mut self, r: scriptlets::Received) {
+        self.allow = Allowlist::new(r.allow.lines().map(str::to_string));
+        self.enabled = r.enabled;
+        if r.version == self.version {
+            return;
+        }
+        if let Some(bytes) = r.bytes {
+            if let Ok(engine) = ScriptletEngine::deserialize(&bytes) {
+                self.engine = Some(engine);
+                self.version = r.version;
+            }
+        }
+    }
+}
+
 thread_local! {
+    static SCRIPTLETS: RefCell<ProcessScriptlets> = RefCell::new(ProcessScriptlets::default());
     /// Content scripts per browser identifier (from the browser's extra info).
     static SCRIPTS: RefCell<HashMap<i32, Scripts>> = RefCell::new(HashMap::new());
     /// The dispatch function of each main frame, by frame identifier.
@@ -100,6 +131,8 @@ wrap_render_process_handler! {
             let (Some(browser), Some(info)) = (browser, extra_info) else { return };
             let scripts = Scripts::from_dictionary(info);
             SCRIPTS.with(|s| s.borrow_mut().insert(browser.identifier(), scripts));
+            let received = scriptlets::from_extra_info(info);
+            SCRIPTLETS.with(|s| s.borrow_mut().apply(received));
         }
 
         fn on_browser_destroyed(&self, browser: Option<&mut Browser>) {
@@ -115,6 +148,8 @@ wrap_render_process_handler! {
             context: Option<&mut V8Context>,
         ) {
             let (Some(browser), Some(frame), Some(context)) = (browser, frame, context) else { return };
+            // First, before anything of the page runs: uBO's scriptlets.
+            run_scriptlets(browser, frame, context);
             let scripts = SCRIPTS.with(|s| s.borrow().get(&browser.identifier()).copied()).unwrap_or_default();
             context_created(scripts, frame, context);
         }
@@ -139,7 +174,15 @@ wrap_render_process_handler! {
             message: Option<&mut ProcessMessage>,
         ) -> ::std::os::raw::c_int {
             let (Some(frame), Some(message)) = (frame, message) else { return 0 };
-            if CefString::from(&message.name()).to_string() != TO_PAGE {
+            let name = CefString::from(&message.name()).to_string();
+            if name == scriptlets::TO_RENDERER {
+                if let Some(args) = message.argument_list() {
+                    let received = scriptlets::from_message(&args);
+                    SCRIPTLETS.with(|s| s.borrow_mut().apply(received));
+                }
+                return 1;
+            }
+            if name != TO_PAGE {
                 return 0;
             }
             let Some(args) = message.argument_list() else { return 1 };
@@ -172,6 +215,51 @@ fn context_created(scripts: Scripts, frame: &mut Frame, context: &mut V8Context)
     if scripts.login {
         eval(context, assets::inject_script("login.js"));
     }
+}
+
+/// Runs the scriptlets matching the frame's document. About:blank and
+/// srcdoc frames inherit their parent's URL (they run with its origin).
+/// Nothing runs on allowlisted sites or with blocking off.
+fn run_scriptlets(browser: &mut Browser, frame: &mut Frame, context: &mut V8Context) {
+    let url = document_url(frame);
+    let top = browser.main_frame().map(|f| CefString::from(&f.url()).to_string()).filter(|u| u.starts_with("http"));
+    let site_url = top.unwrap_or_else(|| url.clone());
+    let script = SCRIPTLETS.with(|s| {
+        let mut s = s.borrow_mut();
+        // Tell the browser process once which engine this process has.
+        if s.greeted.insert(browser.identifier()) {
+            hello(frame, &s.version);
+        }
+        if !s.enabled {
+            return None;
+        }
+        let host = url::Url::parse(&site_url).ok().and_then(|u| u.host_str().map(str::to_string));
+        if host.as_deref().is_some_and(|h| s.allow.contains(h)) {
+            return None;
+        }
+        s.engine.as_ref()?.script_for(&url)
+    });
+    if let Some(js) = script {
+        eval(context, &js);
+    }
+}
+
+fn document_url(frame: &Frame) -> String {
+    let url = CefString::from(&frame.url()).to_string();
+    if url.is_empty() || url.starts_with("about:") {
+        if let Some(parent) = frame.parent() {
+            return document_url(&parent);
+        }
+    }
+    url
+}
+
+fn hello(frame: &mut Frame, version: &str) {
+    let Some(mut message) = process_message_create(Some(&CefString::from(scriptlets::HELLO))) else { return };
+    if let Some(args) = message.argument_list() {
+        args.set_string(0, Some(&CefString::from(version)));
+    }
+    frame.send_process_message(ProcessId::BROWSER, Some(&mut message));
 }
 
 fn eval(context: &mut V8Context, code: &str) -> Option<V8Value> {

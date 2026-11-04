@@ -30,6 +30,7 @@ public static class SI {
   [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public MOUSEINPUT mi; }
   [DllImport("user32.dll", SetLastError=true)] public static extern uint SendInput(uint n, INPUT[] i, int size);
   public static uint Mouse(uint flags, int dx, int dy) { var a = new INPUT[1]; a[0].type = 0; a[0].mi.dwFlags = flags; a[0].mi.dx = dx; a[0].mi.dy = dy; return SendInput(1, a, Marshal.SizeOf(typeof(INPUT))); }
+  public static uint Wheel(int delta) { var a = new INPUT[1]; a[0].type = 0; a[0].mi.dwFlags = 0x0800; a[0].mi.mouseData = (uint)delta; return SendInput(1, a, Marshal.SizeOf(typeof(INPUT))); }
 }
 '@
 # Physical pixels everywhere (screenshots, cursor, window rects), also after a live DPI
@@ -62,6 +63,12 @@ function DoubleClick([int]$x, [int]$y) {
   [U]::SetCursorPos($x, $y) | Out-Null; AbsMove $x $y; Start-Sleep -Milliseconds 300
   for ($i = 0; $i -lt 2; $i++) { [SI]::Mouse(2, 0, 0) | Out-Null; Start-Sleep -Milliseconds 30; [SI]::Mouse(4, 0, 0) | Out-Null; Start-Sleep -Milliseconds 60 }
   Start-Sleep -Milliseconds 500
+}
+# Mouse wheel at a point: notches > 0 scroll down.
+function Wheel([int]$x, [int]$y, [int]$notches) {
+  [U]::SetCursorPos($x, $y) | Out-Null; AbsMove $x $y; Start-Sleep -Milliseconds 100
+  for ($i = 0; $i -lt [Math]::Abs($notches); $i++) { [SI]::Wheel($(if ($notches -gt 0) { -120 } else { 120 })) | Out-Null; Start-Sleep -Milliseconds 60 }
+  Start-Sleep -Milliseconds 400
 }
 function RightClick([int]$x, [int]$y, [int]$wait = 500) {
   [U]::SetCursorPos($x, $y) | Out-Null; AbsMove $x $y; Start-Sleep -Milliseconds 150

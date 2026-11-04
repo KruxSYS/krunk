@@ -15,8 +15,11 @@
     "easyprivacy",
     "ublock-filters",
     "ublock-privacy",
-    "ublock-unbreak"
+    "ublock-unbreak",
+    "ublock-quick-fixes",
+    "ublock-badware"
   ],
+  "filterListsRev": 1,
   "blockThirdPartyCookies": true,
   "httpsOnly": false,
   "sendDnt": true,

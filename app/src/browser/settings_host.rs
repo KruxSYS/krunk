@@ -105,6 +105,7 @@ impl Browser {
                     self.spawn_filter_job(false);
                 }
             }
+            self.set_scriptlet_engine(None);
             info!("ad blocking {}", if new.adblock_enabled { "on" } else { "off" });
         }
         // Everything else (search engine, startup, HTTPS-only, tracking

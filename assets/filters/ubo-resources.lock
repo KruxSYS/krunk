@@ -1,0 +1,5 @@
+# uBlock Origin release whose scriptlets and redirect resources are bundled
+# (assets/filters/ubo-resources.json, made by scripts/update-ubo-resources.sh).
+UBO_VERSION=1.75.4
+UBO_TARBALL=https://codeload.github.com/gorhill/uBlock/tar.gz/refs/tags/1.75.4
+UBO_SHA256=ca3a6fd43aec99c002e3bb1cb1d97b34eea4228ef35f8c076b55644caa397870

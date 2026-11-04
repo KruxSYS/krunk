@@ -361,6 +361,9 @@ impl View {
             None
         };
         let mut extra = self.0.scripts.to_dictionary();
+        if let Some(d) = extra.as_mut() {
+            super::scriptlets::add_to_extra_info(d);
+        }
         let ok = browser_host_create_browser(
             Some(&window_info),
             Some(&mut client),

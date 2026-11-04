@@ -122,7 +122,22 @@ pub struct Rebuilt {
     pub engine: Option<crate::blocker::Blocker>,
     /// Serialized engine to store as the cache (with `engine`).
     pub cache: Option<Vec<u8>>,
+    /// The serialized scriptlet engine of the same lists (with `engine`):
+    /// stored next to the cache and handed to the renderers.
+    pub scriptlets: Option<Vec<u8>>,
     pub key: u64,
+}
+
+/// Downloads a list and the sub-lists it includes, inlined in place.
+fn fetch_list(url: &str, fetch: Fetch<'_>) -> Result<String, String> {
+    let text = fetch(url).and_then(|bytes| validate_download(&bytes))?;
+    if crate::preprocess::includes(&text).is_empty() {
+        return Ok(text);
+    }
+    crate::preprocess::inline_includes(&text, |name| {
+        let sub = crate::preprocess::sibling_url(url, name).ok_or("not next to the list")?;
+        fetch(&sub).and_then(|bytes| crate::preprocess::validate_include(&bytes))
+    })
 }
 
 fn list_path(dir: &std::path::Path, id: &str) -> std::path::PathBuf {
@@ -151,7 +166,7 @@ pub fn rebuild(
         let mut errors = Vec::new();
         for id in &ids {
             let Some(url) = crate::blocker::list_url(id) else { continue };
-            match fetch(url).and_then(|bytes| validate_download(&bytes)) {
+            match fetch_list(url, fetch) {
                 Ok(text) => {
                     let hash = fnv64(text.as_bytes());
                     let path = list_path(dir, id);
@@ -178,23 +193,24 @@ pub fn rebuild(
             (fnv64(&text) == d.hash).then(|| validate_download(&text).ok()).flatten()
         });
         match downloaded {
-            Some(t) => texts.push(t),
+            Some(t) => texts.push((*id, t)),
             None => {
                 state.downloaded.remove(*id);
                 if let Some(t) = crate::blocker::bundled_list(id) {
-                    texts.push(t);
+                    texts.push((*id, t));
                 }
             }
         }
     }
     let key = cache_key(enabled, &state);
     if current_key == Some(key) {
-        return Rebuilt { state, engine: None, cache: None, key };
+        return Rebuilt { state, engine: None, cache: None, scriptlets: None, key };
     }
-    let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+    let refs: Vec<(&str, &str)> = texts.iter().map(|(i, t)| (*i, t.as_str())).collect();
     let engine = crate::blocker::Blocker::from_lists(&refs, key);
     let cache = engine.serialize();
-    Rebuilt { state, engine: Some(engine), cache: Some(cache), key }
+    let scriptlets = crate::blocker::ScriptletEngine::from_lists(&refs, key).serialize();
+    Rebuilt { state, engine: Some(engine), cache: Some(cache), scriptlets: Some(scriptlets), key }
 }
 
 #[cfg(test)]

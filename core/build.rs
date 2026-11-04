@@ -1,11 +1,19 @@
-//! Compresses the bundled filter lists (assets/filters/*.txt) into OUT_DIR so
-//! they are embedded deflated (~1.4 MB instead of ~4.5 MB) and inflated only
-//! when the engine cache has to be rebuilt.
+//! Compresses the bundled filter lists (assets/filters/*.txt) and uBO's
+//! resources into OUT_DIR so they are embedded deflated and inflated only
+//! when needed.
 
 use std::path::PathBuf;
 
 /// Must match `settings::FILTER_LISTS`.
-const LISTS: &[&str] = &["easylist", "easyprivacy", "ublock-filters", "ublock-privacy", "ublock-unbreak"];
+const LISTS: &[&str] = &[
+    "easylist",
+    "easyprivacy",
+    "ublock-filters",
+    "ublock-privacy",
+    "ublock-unbreak",
+    "ublock-quick-fixes",
+    "ublock-badware",
+];
 
 fn main() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
@@ -18,6 +26,11 @@ fn main() {
         let packed = miniz_oxide::deflate::compress_to_vec(&raw, 9);
         std::fs::write(out.join(format!("{name}.txt.deflate")), packed).unwrap();
     }
+    // uBlock Origin's scriptlets and redirect resources (scripts/update-ubo-resources.sh).
+    let res = src.join("ubo-resources.json");
+    println!("cargo:rerun-if-changed={}", res.display());
+    let raw = std::fs::read(&res).unwrap_or_else(|e| panic!("missing {}: {e}", res.display()));
+    std::fs::write(out.join("ubo-resources.json.deflate"), miniz_oxide::deflate::compress_to_vec(&raw, 9)).unwrap();
     embed_ui(&manifest.join("../ui"), &out);
     println!("cargo:rerun-if-changed=build.rs");
 }

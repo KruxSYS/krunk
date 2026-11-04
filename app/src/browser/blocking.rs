@@ -12,7 +12,7 @@ use crate::ffi::http::{self, ProxyMode};
 use crate::ffi::window::AppNotifier;
 use crate::log::{info, warning};
 use lb_core::assets;
-use lb_core::blocker::{self, Allowlist, Blocker, Decision, ResourceKind};
+use lb_core::blocker::{self, Allowlist, Blocker, Decision, ResourceKind, ScriptletEngine};
 use lb_core::cookies;
 use lb_core::filterlists::{self, Rebuilt, UpdateState, MAX_LIST_BYTES};
 use lb_core::pages::Page;
@@ -164,12 +164,14 @@ impl RequestPolicy for TabPolicy {
         let Some(kind) = ResourceKind::from_cef_resource_type(req.resource_type, req.url) else { return headers };
         let Some(engine) = self.net.engine() else { return headers };
         let top = self.tab.top_url.lock().map(|t| t.clone()).unwrap_or_default();
-        if engine.check(req.url, &top, kind) != Decision::Block {
-            return headers;
-        }
+        let verdict = match engine.check(req.url, &top, kind) {
+            Decision::Allow => return headers,
+            Decision::Block => NetVerdict::Block,
+            Decision::Redirect { content_type, body } => NetVerdict::Respond { content_type, body },
+        };
         self.tab.blocked.fetch_add(1, Relaxed);
         self.net.blocked_one();
-        NetVerdict::Block
+        verdict
     }
 
     fn cookie_allowed(&self, url: &str) -> bool {
@@ -270,14 +272,26 @@ impl Browser {
             std::fs::read(self.dirs.engine_cache()).ok().and_then(|data| Blocker::deserialize(&data, key).ok());
         info!("filter lists: {}", state.schedule_note(now_ms()));
         *f.update.borrow_mut() = state;
-        match cached {
-            Some(engine) => {
-                info!("filter engine loaded from cache in {} ms", t.elapsed().as_millis());
+        let scriptlets = std::fs::read(self.dirs.scriptlet_cache())
+            .ok()
+            .filter(|b| ScriptletEngine::stored_key(b) == Some(blocker::scriptlet_key(key)));
+        match (cached, scriptlets) {
+            (Some(engine), Some(scriptlets)) => {
+                info!(
+                    "filter engine loaded from cache in {} ms; scriptlet engine {} KB",
+                    t.elapsed().as_millis(),
+                    scriptlets.len() / 1024
+                );
                 self.net.set_engine(engine);
+                self.set_scriptlet_engine(Some(scriptlets));
             }
-            None => {
+            (cached, _) => {
                 info!("filter engine cache missing or stale; compiling");
-                self.spawn_filter_job(false);
+                if let Some(engine) = cached {
+                    // Block with it meanwhile; the scriptlets come with the rebuild.
+                    self.net.set_engine(engine);
+                }
+                self.spawn_filter_job_forced(false, true);
             }
         }
         if let Some(w) = self.window() {
@@ -301,6 +315,12 @@ impl Browser {
 
     /// Starts the worker that (optionally downloads and) rebuilds the engine.
     pub(super) fn spawn_filter_job(&self, download: bool) {
+        self.spawn_filter_job_forced(download, false);
+    }
+
+    /// Like [`Browser::spawn_filter_job`]; `force` compiles even if the
+    /// lists did not change (the scriptlet engine cache is missing).
+    fn spawn_filter_job_forced(&self, download: bool, force: bool) {
         let f = &self.filters;
         if f.busy.replace(true) {
             return;
@@ -312,12 +332,13 @@ impl Browser {
         let notifier = window.notifier();
         let dir = self.dirs.filters();
         let cache_path = self.dirs.engine_cache();
+        let scriptlet_path = self.dirs.scriptlet_cache();
         let (lists, proxy) = {
             let s = self.settings.borrow();
             (s.filter_lists.clone(), updater_proxy(&s.proxy))
         };
         let mut state = f.update.borrow().clone();
-        let current_key = self.net.engine().map(|e| e.key());
+        let current_key = if force { None } else { self.net.engine().map(|e| e.key()) };
         let (tx, rx) = mpsc::channel();
         *f.rx.borrow_mut() = Some(rx);
         let skip_reason = (download && proxy == UpdaterProxy::Skip)
@@ -338,6 +359,9 @@ impl Browser {
             if let Some(cache) = &r.cache {
                 let _ = lb_core::vault::write_atomic(&cache_path, cache);
             }
+            if let Some(scriptlets) = &r.scriptlets {
+                let _ = lb_core::vault::write_atomic(&scriptlet_path, scriptlets);
+            }
             let _ = lb_core::vault::write_atomic(&dir.join("state.json"), r.state.to_json().as_bytes());
             let _ = tx.send(r);
             notifier.notify(APP_FILTERS_READY);
@@ -355,8 +379,9 @@ impl Browser {
         let Some(r) = result else { return };
         f.busy.set(false);
         if let Some(engine) = r.engine {
-            info!("filter engine rebuilt");
+            info!("filter engine rebuilt; scriptlet engine {} KB", r.scriptlets.as_ref().map_or(0, |s| s.len() / 1024));
             self.net.set_engine(engine);
+            self.set_scriptlet_engine(r.scriptlets);
         }
         let checked = r.state.last_check_ms != f.update.borrow().last_check_ms;
         if let Some(e) = &r.state.last_error {
@@ -370,6 +395,14 @@ impl Browser {
         for (tab, req_id) in replies {
             self.reply(tab, Event::ok(req_id, &status));
         }
+    }
+
+    /// Hands the scriptlet engine (or, with `None`, just the allowlist and
+    /// the on/off state) to the renderers.
+    pub(super) fn set_scriptlet_engine(&self, bytes: Option<Vec<u8>>) {
+        let bytes = bytes.and_then(|b| ScriptletEngine::stored_key(&b).map(|k| (k, b)));
+        let allow = self.filters.allowlist.borrow().hosts();
+        crate::ffi::cef::set_scriptlets(bytes, allow, self.net.enabled());
     }
 
     /// "Update now" (settings page) or the scheduled daily check.
@@ -596,6 +629,7 @@ impl Browser {
                 self.filters.allowlist.borrow_mut().remove(&entry);
             }
         }
+        self.set_scriptlet_engine(None);
         self.hide_popup();
         self.run_command(lb_core::keys::Command::Reload);
     }
@@ -609,11 +643,13 @@ impl Browser {
                 if let Ok(h) = &r {
                     self.filters.allowlist.borrow_mut().insert(h);
                 }
+                self.set_scriptlet_engine(None);
                 self.reply_db(tab, req_id, r);
             }
             Request::AllowlistRemove { host } => {
                 let r = self.store.borrow().allowlist_remove(&host);
                 self.filters.allowlist.borrow_mut().remove(&host);
+                self.set_scriptlet_engine(None);
                 self.reply_db(tab, req_id, r);
             }
             Request::UpdateFilterLists => self.update_filter_lists(Some((tab, req_id))),

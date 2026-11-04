@@ -4,7 +4,7 @@
 //! which requests may send and store cookies.
 
 use cef::*;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// A request about to be sent.
 pub struct NetRequest<'a> {
@@ -17,7 +17,7 @@ pub struct NetRequest<'a> {
 }
 
 /// What to do with a request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NetVerdict {
     /// Send it, optionally with `DNT: 1` / `Sec-GPC: 1`.
     Allow {
@@ -25,6 +25,11 @@ pub enum NetVerdict {
         gpc: bool,
     },
     Block,
+    /// Do not send it; answer with this body instead (`$redirect`).
+    Respond {
+        content_type: String,
+        body: Vec<u8>,
+    },
 }
 
 /// The per-tab network policy. Runs on the IO thread for every request, so it
@@ -36,16 +41,21 @@ pub trait RequestPolicy: Send + Sync {
     fn cookie_allowed(&self, url: &str) -> bool;
 }
 
+/// A `$redirect` stand-in (content type, body) waiting to be served.
+type Standin = Arc<Mutex<Option<(String, Vec<u8>)>>>;
+
 /// `RequestHandler::get_resource_request_handler` for a tab.
 pub(super) fn handler_for(policy: &Arc<dyn RequestPolicy>, initiator: Option<&CefString>) -> ResourceRequestHandler {
     let initiator = initiator.map(|i| i.to_string()).unwrap_or_default();
-    TabRequests::new(policy.clone(), initiator)
+    TabRequests::new(policy.clone(), initiator, Arc::new(Mutex::new(None)))
 }
 
 wrap_resource_request_handler! {
     struct TabRequests {
         policy: Arc<dyn RequestPolicy>,
         initiator: String,
+        // A stand-in response decided in `on_before_resource_load`.
+        respond: Standin,
     }
     impl ResourceRequestHandler {
         fn cookie_access_filter(
@@ -55,6 +65,23 @@ wrap_resource_request_handler! {
             _request: Option<&mut Request>,
         ) -> Option<CookieAccessFilter> {
             Some(CookieFilter::new(self.policy.clone()))
+        }
+
+        fn resource_handler(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            _request: Option<&mut Request>,
+        ) -> Option<ResourceHandler> {
+            let (content_type, body) = self.respond.lock().ok()?.take()?;
+            Some(super::scheme::static_handler(super::InternalResponse {
+                status: 200,
+                reason: "OK",
+                headers: format!(
+                    "Content-Type: {content_type}\r\nAccess-Control-Allow-Origin: *\r\nCache-Control: no-store"
+                ),
+                body: std::borrow::Cow::Owned(body),
+            }))
         }
 
         fn on_before_resource_load(
@@ -70,6 +97,12 @@ wrap_resource_request_handler! {
             let verdict = self.policy.check(&NetRequest { url: &url, resource_type, initiator: &self.initiator });
             match verdict {
                 NetVerdict::Block => ReturnValue::CANCEL,
+                NetVerdict::Respond { content_type, body } => {
+                    if let Ok(mut r) = self.respond.lock() {
+                        *r = Some((content_type, body));
+                    }
+                    ReturnValue::CONTINUE
+                }
                 NetVerdict::Allow { dnt, gpc } => {
                     if dnt {
                         request.set_header_by_name(Some(&CefString::from("DNT")), Some(&CefString::from("1")), 1);

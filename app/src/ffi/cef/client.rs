@@ -95,6 +95,11 @@ wrap_client! {
         ) -> c_int {
             let (Some(browser), Some(frame), Some(message)) = (browser, frame, message) else { return 0 };
             let name = CefString::from(&message.name()).to_string();
+            if name == super::scriptlets::HELLO {
+                let have = message.argument_list().map(|a| CefString::from(&a.string(0)).to_string()).unwrap_or_default();
+                super::scriptlets::hello(frame, &have);
+                return 1;
+            }
             if name == AUDIO_TO_BROWSER {
                 let playing = message.argument_list().is_some_and(|a| a.bool(0) == 1);
                 if let Some(view) = lookup(self.key) {
@@ -169,6 +174,9 @@ wrap_life_span_handler! {
             }
             if let Some(e) = extra_info {
                 *e = adopted.0.scripts.to_dictionary();
+                if let Some(d) = e.as_mut() {
+                    super::scriptlets::add_to_extra_info(d);
+                }
             }
             adopted.mark_started();
             0
@@ -333,7 +341,7 @@ wrap_download_image_callback! {
     }
 }
 
-fn binary_bytes(bin: &BinaryValue) -> Vec<u8> {
+pub(super) fn binary_bytes(bin: &BinaryValue) -> Vec<u8> {
     let (ptr, len) = (bin.raw_data() as *const u8, bin.size());
     if ptr.is_null() || len == 0 {
         return Vec::new();

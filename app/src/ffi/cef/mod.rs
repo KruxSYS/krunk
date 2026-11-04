@@ -16,12 +16,14 @@ pub mod entry;
 mod net;
 mod renderer;
 mod scheme;
+mod scriptlets;
 mod view;
 
 pub use cookies::{delete_cookies, list_cookies, Profile};
 pub use data::clear_profile_data;
 pub use net::{NetRequest, NetVerdict, RequestPolicy};
 pub use scheme::InternalResponse;
+pub use scriptlets::set_scriptlets;
 pub use view::{
     ClearKinds, DownloadControl, DownloadStart, DownloadStatus, DownloadUpdate, KeyPress, LoadingState, MessageSource,
     NewWindow, Role, Scripts, View, ViewOptions,

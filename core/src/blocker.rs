@@ -13,14 +13,79 @@
 use crate::settings::FILTER_LISTS;
 use ::adblock::lists::{FilterSet, ParseOptions};
 use ::adblock::request::Request;
+use ::adblock::resources::{PermissionMask, Resource};
 use ::adblock::Engine;
 use std::collections::HashSet;
+use std::sync::OnceLock;
 
 const CACHE_MAGIC: &[u8; 4] = b"LBAB";
 const CACHE_VERSION: u32 = 2;
-/// Version of the `adblock` crate the cache was made with (bumped by hand
-/// when the dependency is upgraded).
-const ENGINE_VERSION: &str = "adblock-0.13";
+/// Version of the `adblock` crate and of our list processing the cache was
+/// made with (bumped by hand when either changes).
+const ENGINE_VERSION: &str = "adblock-0.13+preprocess1";
+
+/// uBO's `requiresTrust` scriptlets (`trusted-*`) may only be used by the
+/// uBlock Origin lists, as in uBO.
+const TRUSTED: PermissionMask = PermissionMask::from_bits(1);
+
+/// uBlock Origin's scriptlets and redirect resources (JSON, deflated by
+/// `build.rs`; made by `scripts/update-ubo-resources.sh`).
+const RESOURCES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/ubo-resources.json.deflate"));
+
+#[derive(serde::Deserialize)]
+struct ResourceFile {
+    ubo: String,
+    resources: Vec<Resource>,
+}
+
+fn resource_file() -> &'static ResourceFile {
+    static FILE: OnceLock<ResourceFile> = OnceLock::new();
+    FILE.get_or_init(|| {
+        miniz_oxide::inflate::decompress_to_vec(RESOURCES)
+            .ok()
+            .and_then(|raw| serde_json::from_slice(&raw).ok())
+            .unwrap_or(ResourceFile { ubo: String::new(), resources: Vec::new() })
+    })
+}
+
+/// All bundled resources (scriptlets, their helpers, redirect resources).
+pub fn bundled_resources() -> Vec<Resource> {
+    resource_file().resources.clone()
+}
+
+/// Only the scriptlets and their helpers (what a page's renderer needs).
+pub fn scriptlet_resources() -> Vec<Resource> {
+    resource_file()
+        .resources
+        .iter()
+        .filter(|r| r.name.ends_with(".js") || r.name.ends_with(".fn"))
+        .filter(|r| {
+            matches!(
+                serde_json::to_value(&r.kind).ok().and_then(|k| k.get("mime").and_then(|m| m.as_str().map(String::from))),
+                Some(ref m) if m == "application/javascript" || m == "fn/javascript"
+            )
+        })
+        .cloned()
+        .collect()
+}
+
+/// The uBlock Origin release the resources come from.
+pub fn ubo_version() -> &'static str {
+    &resource_file().ubo
+}
+
+/// Hash of the embedded resources (part of the scriptlet engine's key).
+pub fn resources_hash() -> u64 {
+    fnv64(RESOURCES)
+}
+
+fn parse_options(list_id: &str) -> ParseOptions {
+    if list_id.starts_with("ublock-") {
+        ParseOptions { permissions: TRUSTED, ..ParseOptions::default() }
+    } else {
+        ParseOptions::default()
+    }
+}
 
 /// Bundled lists, deflated by `build.rs`.
 const BUNDLED: &[(&str, &[u8])] = &[
@@ -29,6 +94,8 @@ const BUNDLED: &[(&str, &[u8])] = &[
     ("ublock-filters", include_bytes!(concat!(env!("OUT_DIR"), "/ublock-filters.txt.deflate"))),
     ("ublock-privacy", include_bytes!(concat!(env!("OUT_DIR"), "/ublock-privacy.txt.deflate"))),
     ("ublock-unbreak", include_bytes!(concat!(env!("OUT_DIR"), "/ublock-unbreak.txt.deflate"))),
+    ("ublock-quick-fixes", include_bytes!(concat!(env!("OUT_DIR"), "/ublock-quick-fixes.txt.deflate"))),
+    ("ublock-badware", include_bytes!(concat!(env!("OUT_DIR"), "/ublock-badware.txt.deflate"))),
 ];
 
 /// Where each list can be refreshed from (used by the daily updater).
@@ -39,6 +106,8 @@ pub fn list_url(id: &str) -> Option<&'static str> {
         "ublock-filters" => "https://ublockorigin.github.io/uAssets/filters/filters.txt",
         "ublock-privacy" => "https://ublockorigin.github.io/uAssets/filters/privacy.txt",
         "ublock-unbreak" => "https://ublockorigin.github.io/uAssets/filters/unbreak.txt",
+        "ublock-quick-fixes" => "https://ublockorigin.github.io/uAssets/filters/quick-fixes.txt",
+        "ublock-badware" => "https://ublockorigin.github.io/uAssets/filters/badware.txt",
         _ => return None,
     })
 }
@@ -51,6 +120,8 @@ pub fn list_title(id: &str) -> &'static str {
         "ublock-filters" => "uBlock filters",
         "ublock-privacy" => "uBlock filters – Privacy",
         "ublock-unbreak" => "uBlock filters – Unbreak",
+        "ublock-quick-fixes" => "uBlock filters – Quick fixes",
+        "ublock-badware" => "uBlock filters – Badware risks",
         _ => "Unknown list",
     }
 }
@@ -193,6 +264,13 @@ impl Allowlist {
     pub fn contains(&self, host: &str) -> bool {
         self.matching(host).is_some()
     }
+
+    /// The entries, sorted.
+    pub fn hosts(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.hosts.iter().cloned().collect();
+        v.sort();
+        v
+    }
 }
 
 /// Lower-cases and validates an allowlist host (`*.` prefixes are dropped).
@@ -206,6 +284,31 @@ pub fn normalize_host(host: &str) -> Option<String> {
 pub enum Decision {
     Allow,
     Block,
+    /// Answer with a harmless stand-in (`$redirect`): uBO's resource, e.g.
+    /// a no-op script or a 1x1 GIF, instead of the real response.
+    Redirect {
+        content_type: String,
+        body: Vec<u8>,
+    },
+}
+
+impl Decision {
+    /// The real request does not go out (blocked, or answered with a stand-in).
+    pub fn is_blocked(&self) -> bool {
+        !matches!(self, Decision::Allow)
+    }
+}
+
+/// Decodes the `data:<mime>;base64,<data>` URL the engine returns for a
+/// redirect.
+pub fn decode_data_url(url: &str) -> Option<(String, Vec<u8>)> {
+    use base64ct::{Base64, Encoding};
+    let rest = url.strip_prefix("data:")?;
+    let (meta, data) = rest.split_once(',')?;
+    let mime = meta.strip_suffix(";base64")?;
+    let body = Base64::decode_vec(data).ok()?;
+    let mime = if mime.is_empty() { "text/plain" } else { mime };
+    Some((mime.to_string(), body))
 }
 
 /// Cosmetic filtering data for one page.
@@ -251,23 +354,32 @@ pub fn engine_version() -> &'static str {
 }
 
 impl Blocker {
-    /// Compiles an engine from list texts; `key` identifies the sources.
-    pub fn from_lists(lists: &[&str], key: u64) -> Blocker {
+    /// Compiles an engine from `(list id, text)` pairs; `key` identifies the
+    /// sources. uBO's `!#if` blocks are resolved first; the uBO lists may
+    /// use trusted scriptlets.
+    pub fn from_lists(lists: &[(&str, &str)], key: u64) -> Blocker {
         let mut set = FilterSet::new(false);
-        for text in lists {
-            set.add_filter_list(text.to_string(), ParseOptions::default());
+        for (id, text) in lists {
+            set.add_filter_list(crate::preprocess::preprocess(text).into_owned(), parse_options(id));
         }
-        Blocker { engine: Engine::new_with_filter_set(set), key }
+        let mut engine = Engine::new_with_filter_set(set);
+        engine.use_resources(bundled_resources());
+        Blocker { engine, key }
     }
 
-    /// Compiles the enabled bundled lists (used when nothing was downloaded).
-    pub fn bundled(enabled: &[String]) -> Blocker {
-        let texts: Vec<String> = FILTER_LISTS
+    /// The enabled bundled lists as `(id, text)` (used when nothing was downloaded).
+    pub fn bundled_texts(enabled: &[String]) -> Vec<(String, String)> {
+        FILTER_LISTS
             .iter()
             .filter(|id| enabled.iter().any(|e| e == *id))
-            .filter_map(|id| bundled_list(id))
-            .collect();
-        let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+            .filter_map(|id| bundled_list(id).map(|t| (id.to_string(), t)))
+            .collect()
+    }
+
+    /// Compiles the enabled bundled lists.
+    pub fn bundled(enabled: &[String]) -> Blocker {
+        let texts = Blocker::bundled_texts(enabled);
+        let refs: Vec<(&str, &str)> = texts.iter().map(|(i, t)| (i.as_str(), t.as_str())).collect();
         let key = crate::filterlists::cache_key(enabled, &crate::filterlists::UpdateState::default());
         Blocker::from_lists(&refs, key)
     }
@@ -304,6 +416,8 @@ impl Blocker {
         }
         let mut engine = Engine::default();
         engine.deserialize(&data[16..]).map_err(|e| format!("{e:?}"))?;
+        // Resources are not part of the serialized engine.
+        engine.use_resources(bundled_resources());
         Ok(Blocker { engine, key: expect })
     }
 
@@ -317,6 +431,9 @@ impl Blocker {
             return Decision::Allow;
         };
         let r = self.engine.check_network_request(&req);
+        if let Some((content_type, body)) = r.redirect.as_deref().and_then(decode_data_url) {
+            return Decision::Redirect { content_type, body };
+        }
         if r.should_block() {
             Decision::Block
         } else {
@@ -337,6 +454,95 @@ impl Blocker {
     }
 }
 
+const SCRIPTLET_MAGIC: &[u8; 4] = b"KRSC";
+const SCRIPTLET_VERSION: u32 = 1;
+
+/// The scriptlet filters (`##+js(...)`, `#@#+js(...)`) of the lists, compiled
+/// on their own. Small enough to hand to every renderer process, which
+/// injects the matching scriptlets into each frame before the page's own
+/// scripts run (see the app's renderer).
+pub struct ScriptletEngine {
+    engine: Engine,
+    key: u64,
+}
+
+impl std::fmt::Debug for ScriptletEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScriptletEngine").field("key", &self.key).finish()
+    }
+}
+
+/// Is this (preprocessed) line a scriptlet filter or exception?
+fn is_scriptlet_line(line: &str) -> bool {
+    !line.starts_with('!') && (line.contains("##+js(") || line.contains("#@#+js("))
+}
+
+/// The scriptlet engine's key: the lists' key and the resources.
+pub fn scriptlet_key(lists_key: u64) -> u64 {
+    fnv64(format!("{lists_key:016x}|{:016x}", resources_hash()).as_bytes())
+}
+
+impl ScriptletEngine {
+    /// Compiles the scriptlet filters of `(list id, text)` pairs; `lists_key`
+    /// is the key of the full engine built from the same lists.
+    pub fn from_lists(lists: &[(&str, &str)], lists_key: u64) -> ScriptletEngine {
+        let mut set = FilterSet::new(false);
+        for (id, text) in lists {
+            let pre = crate::preprocess::preprocess(text);
+            let lines: Vec<&str> = pre.lines().map(str::trim).filter(|l| is_scriptlet_line(l)).collect();
+            set.add_filter_list(lines.join("\n"), parse_options(id));
+        }
+        let mut engine = Engine::new_with_filter_set(set);
+        engine.use_resources(scriptlet_resources());
+        ScriptletEngine { engine, key: scriptlet_key(lists_key) }
+    }
+
+    pub fn key(&self) -> u64 {
+        self.key
+    }
+
+    pub fn serialize(&self) -> Vec<u8> {
+        let body = self.engine.serialize();
+        let mut out = Vec::with_capacity(body.len() + 16);
+        out.extend_from_slice(SCRIPTLET_MAGIC);
+        out.extend_from_slice(&SCRIPTLET_VERSION.to_le_bytes());
+        out.extend_from_slice(&self.key.to_le_bytes());
+        out.extend_from_slice(&body);
+        out
+    }
+
+    /// The key stored in serialized bytes, without loading them.
+    pub fn stored_key(data: &[u8]) -> Option<u64> {
+        if data.len() < 16 || &data[..4] != SCRIPTLET_MAGIC || data[4..8] != SCRIPTLET_VERSION.to_le_bytes() {
+            return None;
+        }
+        Some(u64::from_le_bytes(data[8..16].try_into().ok()?))
+    }
+
+    /// Loads serialized bytes (the renderer gets them from the browser).
+    pub fn deserialize(data: &[u8]) -> Result<ScriptletEngine, String> {
+        let key = ScriptletEngine::stored_key(data).ok_or("not a scriptlet engine")?;
+        let mut engine = Engine::default();
+        engine.deserialize(&data[16..]).map_err(|e| format!("{e:?}"))?;
+        engine.use_resources(scriptlet_resources());
+        Ok(ScriptletEngine { engine, key })
+    }
+
+    /// The script to run in a frame showing `url` before its own scripts,
+    /// or `None`. Wrapped as uBO does: a private scope with the
+    /// `scriptletGlobals` object the scriptlets share.
+    pub fn script_for(&self, url: &str) -> Option<String> {
+        if !(url.starts_with("https://") || url.starts_with("http://")) || is_internal(url) {
+            return None;
+        }
+        let script = self.engine.url_cosmetic_resources(url).injected_script;
+        if script.trim().is_empty() {
+            return None;
+        }
+        Some(format!("(function() {{\nconst scriptletGlobals = {{}};\n{script}\n}})();"))
+    }
+}
+
 /// Builds a `display: none` stylesheet from selectors. Selectors that could
 /// break out of the rule are dropped.
 pub fn hide_css<'a>(selectors: impl Iterator<Item = &'a String>) -> String {
@@ -347,10 +553,13 @@ pub fn hide_css<'a>(selectors: impl Iterator<Item = &'a String>) -> String {
     if safe.is_empty() {
         return String::new();
     }
-    let mut css = String::new();
-    // Chunk so one invalid selector only disables its own group.
-    for chunk in safe.chunks(64) {
-        css.push_str(&chunk.join(",\n"));
+    // One rule per selector: a selector the engine does not understand (an
+    // extended uBO selector, or CSS this Chromium rejects) then drops only
+    // itself. In a grouped rule it would drop the whole group; on YouTube
+    // that left no rule at all.
+    let mut css = String::with_capacity(safe.iter().map(|s| s.len() + 32).sum());
+    for sel in safe {
+        css.push_str(sel);
         css.push_str(" { display: none !important; }\n");
     }
     css
@@ -395,7 +604,7 @@ mod tests {
             ("https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js", ResourceKind::Script),
             ("https://connect.facebook.net/en_US/fbevents.js", ResourceKind::Script),
         ] {
-            assert_eq!(b.check(url, NEWS, kind), Decision::Block, "{url} should be blocked");
+            assert!(b.check(url, NEWS, kind).is_blocked(), "{url} should be blocked");
         }
     }
 
@@ -431,7 +640,7 @@ mod tests {
 
     #[test]
     fn serialize_round_trip() {
-        let lists = ["||ads.example^\n||tracker.example^$third-party\nexample.org##.promo\n"];
+        let lists = [("easylist", "||ads.example^\n||tracker.example^$third-party\nexample.org##.promo\n")];
         let fp = 0x1234;
         let b = Blocker::from_lists(&lists, fp);
         let bytes = b.serialize();
@@ -450,10 +659,9 @@ mod tests {
         // The full engine round-trips too.
         let full_bytes = full().serialize();
         let full_back = Blocker::deserialize(&full_bytes, full().key()).unwrap();
-        assert_eq!(
-            full_back.check("https://securepubads.g.doubleclick.net/tag/js/gpt.js", NEWS, ResourceKind::Script),
-            Decision::Block
-        );
+        assert!(full_back
+            .check("https://securepubads.g.doubleclick.net/tag/js/gpt.js", NEWS, ResourceKind::Script)
+            .is_blocked());
     }
 
     #[test]
@@ -532,6 +740,145 @@ mod tests {
         let ad_frame = "https://googleads.g.doubleclick.net/pagead/ads?client=ca-pub-1";
         assert_eq!(b.check(ad_frame, NEWS, ResourceKind::SubFrame), Decision::Block);
         assert_eq!(ResourceKind::from_cef_resource_type(0, NEWS), None);
+    }
+
+    #[test]
+    fn resources_are_bundled() {
+        assert_eq!(ubo_version(), "1.75.4");
+        let all = bundled_resources();
+        assert!(all.len() > 150, "{}", all.len());
+        let names: HashSet<String> = scriptlet_resources().into_iter().map(|r| r.name).collect();
+        for n in ["set-constant.js", "json-prune.js", "trusted-replace-fetch-response.js", "safe-self.fn"] {
+            assert!(names.contains(n), "{n}");
+        }
+        assert!(!names.contains("1x1.gif"), "redirect resources stay in the browser process");
+    }
+
+    fn scriptlets(lists: &[(&str, &str)]) -> ScriptletEngine {
+        ScriptletEngine::from_lists(lists, 7)
+    }
+
+    #[test]
+    fn scriptlets_are_injected() {
+        let e = scriptlets(&[("ublock-filters", "example.com##+js(set-constant, foo, 1)\n")]);
+        let js = e.script_for("https://www.example.com/page").expect("a script for example.com");
+        assert!(js.starts_with("(function() {"), "wrapped in a private scope");
+        assert!(js.contains("const scriptletGlobals = {};"));
+        assert!(js.contains("function setConstant("), "the scriptlet's function is included");
+        assert!(js.contains("function safeSelf("), "with its dependencies");
+        assert!(js.contains("setConstant(\"foo\", \"1\")"), "and called with the filter's arguments");
+        assert_eq!(e.script_for("https://other.example/"), None);
+        assert_eq!(e.script_for("krunk://settings"), None);
+        assert_eq!(e.script_for("https://krunk.invalid/settings.html"), None);
+        // Exceptions switch it off.
+        let ex = scriptlets(&[("ublock-filters", "example.com##+js(set-constant, foo, 1)\nwww.example.com#@#+js()\n")]);
+        assert_eq!(ex.script_for("https://www.example.com/"), None);
+        assert!(ex.script_for("https://example.com/").is_some());
+    }
+
+    #[test]
+    fn trusted_scriptlets_only_from_ubo_lists() {
+        let rule = "example.com##+js(trusted-set-constant, foo, '{\"a\":1}')\n";
+        assert_eq!(scriptlets(&[("easylist", rule)]).script_for("https://example.com/"), None);
+        let js = scriptlets(&[("ublock-quick-fixes", rule)]).script_for("https://example.com/").unwrap();
+        assert!(js.contains("trustedSetConstant("));
+    }
+
+    #[test]
+    fn scriptlet_filters_respect_preprocessor_blocks() {
+        let list = "!#if env_firefox\nexample.com##+js(set-constant, ff, 1)\n!#else\nexample.com##+js(set-constant, cr, 1)\n!#endif\n";
+        let js = scriptlets(&[("ublock-filters", list)]).script_for("https://example.com/").unwrap();
+        assert!(js.contains("\"cr\"") && !js.contains("\"ff\""));
+    }
+
+    #[test]
+    fn scriptlet_engine_round_trip() {
+        let e = scriptlets(&[("ublock-filters", "example.com##+js(set-constant, foo, 1)\n")]);
+        let bytes = e.serialize();
+        assert_eq!(ScriptletEngine::stored_key(&bytes), Some(scriptlet_key(7)));
+        let back = ScriptletEngine::deserialize(&bytes).unwrap();
+        assert_eq!(back.key(), e.key());
+        assert_eq!(back.script_for("https://example.com/"), e.script_for("https://example.com/"));
+        assert!(ScriptletEngine::deserialize(b"junk").is_err());
+        assert_ne!(scriptlet_key(7), scriptlet_key(8));
+    }
+
+    #[test]
+    fn youtube_gets_scriptlets_from_the_bundled_lists() {
+        let all: Vec<String> = FILTER_LISTS.iter().map(|s| s.to_string()).collect();
+        let texts = Blocker::bundled_texts(&all);
+        let refs: Vec<(&str, &str)> = texts.iter().map(|(i, t)| (i.as_str(), t.as_str())).collect();
+        let e = ScriptletEngine::from_lists(&refs, 1);
+        let js = e.script_for("https://www.youtube.com/watch?v=dQw4w9WgXcQ").expect("YouTube scriptlets");
+        // uBO's YouTube ad defences are JSON-pruning and fetch/XHR response rewriting scriptlets.
+        assert!(
+            js.contains("jsonPrune")
+                || js.contains("trustedReplaceFetchResponse")
+                || js.contains("jsonPruneFetchResponse"),
+            "{}",
+            &js[..js.len().min(400)]
+        );
+        assert!(e.serialize().len() < 4 << 20, "small enough for every renderer: {} bytes", e.serialize().len());
+    }
+
+    /// The Playwright UI tests run this script at document start in a real
+    /// Chromium page (`ui/dev/scriptlet-fixture.js`). Regenerate with
+    /// `LB_UPDATE_FIXTURES=1 cargo test -p core`.
+    #[test]
+    fn scriptlet_fixture_is_current() {
+        let rules = "example.com##+js(set-constant, krunkTest, 1)\nexample.com##+js(json-prune, adPlacements)\n";
+        let js = scriptlets(&[("ublock-filters", rules)]).script_for("https://example.com/fixture.html").unwrap();
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../ui/dev/scriptlet-fixture.js");
+        let want = format!("// Generated by core blocker::tests::scriptlet_fixture_is_current.\n{js}\n");
+        if std::env::var_os("LB_UPDATE_FIXTURES").is_some() {
+            std::fs::write(path, &want).unwrap();
+        }
+        let have = std::fs::read_to_string(path).unwrap_or_default();
+        // The engine does not keep the scriptlets in a fixed order, so the
+        // fixture must hold the same pieces, not the same text.
+        let pieces = |t: &str| {
+            let mut v: Vec<String> = t
+                .lines()
+                .filter(|l| l.starts_with("function ") || l.contains("(\"") && l.ends_with(')'))
+                .map(str::to_string)
+                .collect();
+            v.sort();
+            v
+        };
+        assert!(have.contains("setConstant(\"krunkTest\", \"1\")") && have.contains("jsonPrune(\"adPlacements\")"));
+        assert_eq!(pieces(&have), pieces(&want), "ui/dev/scriptlet-fixture.js is stale; run with LB_UPDATE_FIXTURES=1");
+    }
+
+    #[test]
+    fn redirect_rules_answer_with_resources() {
+        let b = Blocker::from_lists(
+            &[("ublock-filters", "||ads.example^$script,redirect=noop.js\n||px.example^$image,redirect=1x1.gif\n")],
+            1,
+        );
+        match b.check("https://ads.example/ad.js", NEWS, ResourceKind::Script) {
+            Decision::Redirect { content_type, body } => {
+                assert_eq!(content_type, "application/javascript");
+                assert!(String::from_utf8_lossy(&body).contains("function") || !body.is_empty());
+            }
+            d => panic!("expected a redirect, got {d:?}"),
+        }
+        match b.check("https://px.example/p.gif", NEWS, ResourceKind::Image) {
+            Decision::Redirect { content_type, body } => {
+                assert_eq!(content_type, "image/gif");
+                assert!(body.starts_with(b"GIF8"));
+            }
+            d => panic!("expected a redirect, got {d:?}"),
+        }
+        assert_eq!(decode_data_url("data:text/plain;base64,aGk="), Some(("text/plain".into(), b"hi".to_vec())));
+        assert_eq!(decode_data_url("https://x/"), None);
+    }
+
+    #[test]
+    fn one_rule_per_selector() {
+        let sels = [".ad".to_string(), "div:upward(2)".to_string(), "#b".to_string()];
+        let css = hide_css(sels.iter());
+        assert_eq!(css.lines().count(), 3, "{css}");
+        assert!(css.lines().all(|l| l.ends_with("{ display: none !important; }")));
     }
 
     #[test]

@@ -210,29 +210,52 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
   the origin the login belongs to.
 
 ### Ad and tracker blocking
-- **Engine:** Brave's `adblock` engine with five bundled lists (EasyList, EasyPrivacy, and
-  uBlock filters, privacy and unbreak; see `assets/filters/ATTRIBUTION.md`). The lists are
-  embedded deflated (1.4 MB).
-- **Cache:** at startup the compiled engine is loaded from `%LOCALAPPDATA%\Krunk\engine.dat`
-  (about 4 ms on the Windows 11 VM). The cache key covers the engine version, which lists are
-  enabled, and where each comes from (embedded copy or download) with its content hash. If
-  anything differs, the engine is rebuilt on a worker thread.
+- **Engine:** Brave's `adblock` engine with seven bundled lists: EasyList, EasyPrivacy, and the
+  uBlock Origin lists (filters, privacy, unbreak, quick fixes and badware risks; see
+  `assets/filters/ATTRIBUTION.md`). The lists are embedded deflated.
+  - uBO's sub-lists (`!#include`) are inlined, and its `!#if` blocks are resolved for desktop
+    Chromium before compiling (`core::preprocess`). Otherwise Firefox-only or mobile-only rules
+    would apply too.
+  - Rules from the uBO lists may use uBO's trusted scriptlets (`trusted-*`); EasyList's may not,
+    as in uBO.
+- **Cache:** at startup the compiled engine is loaded from `%LOCALAPPDATA%\Krunk\engine.dat`, and
+  the scriptlet engine (below) from `scriptlets.dat`. The cache key covers the engine version,
+  which lists are enabled, and where each comes from (embedded copy or download) with its content
+  hash. If anything differs, both are rebuilt on a worker thread.
 - **Interception:** every request of every tab, private tabs included (sub-resources, frames,
   workers), passes `CefResourceRequestHandler::OnBeforeResourceLoad` on CEF's IO thread.
-  - Blocked requests are cancelled. The shield count is kept in atomics and pushed to the UI
-    thread at most about four times a second; the log gets one line per page with the count.
+  - Blocked requests are cancelled. For `$redirect` rules the request is not sent either, and
+    a resource handler answers with uBO's stand-in: a no-op script, an empty JSON or VAST
+    response, or a 1x1 GIF. Pages that expect the script to exist then keep working.
+  - The shield counts both. The count is kept in atomics and pushed to the UI thread at most
+    about four times a second; the log gets one line per page with the count.
   - The tab's own top-level navigation is never checked.
   - The handler uses only in-memory state shared with the UI thread (`Arc`/atomics); the
     allowlist decision is made once per navigation.
+- **Scriptlets (`##+js(...)`):** uBlock Origin's scriptlets come from uBO release 1.75.4
+  (`assets/filters/ubo-resources.json`, pinned by hash). They patch what a page sees before its
+  own scripts run, for example by pruning ad fields from JSON and fetch/XHR responses
+  (`json-prune*`, `trusted-replace-fetch-response`), fixing constants (`set-constant`) or
+  stopping anti-adblock checks. This is how uBO, and now Krunk, keep YouTube ads and the "ad
+  blockers" wall away.
+  - The browser compiles the lists' scriptlet filters into a small separate engine and hands
+    it to every renderer process. It travels with each browser's `extra_info` and is
+    re-sent after list updates.
+  - In `CefRenderProcessHandler::OnContextCreated`, which fires for every frame before any page
+    script, the renderer runs the scripts matching the frame's URL. They run in the page's
+    world, wrapped in a private scope as uBO does.
+  - Nothing runs on allowlisted sites or with ad blocking off.
 - **Cosmetic filtering:** site-specific hiding rules are injected when a page commits, as a
   constructed stylesheet, which page CSP doesn't block. Generic rules are applied for the class
   names and ids the page reports, capped at 2000.
-- **Updates:** at most once every 24 h (checked hourly), a worker thread downloads the lists
-  over WinHTTP (HTTPS only, 16 MB cap, 30 s timeout) and validates them: no HTML, a list header,
-  at least 50 rules, at least 2 KB. A failed or suspicious download keeps the previous source.
+- **Updates:** at most once every 24 h (checked hourly), a worker thread downloads the lists and
+  their sub-lists over WinHTTP (HTTPS only, 16 MB cap, 30 s timeout) and validates them: no HTML,
+  a list header, at least 50 rules, at least 2 KB. A failed or suspicious download, including a
+  missing sub-list, keeps the previous source.
   - The updater uses the browser's HTTP proxy setting; with a SOCKS proxy it skips the download
     rather than bypass the proxy.
-  - `Krunk.exe --update-filters` runs the update and a self-test without a window.
+  - `Krunk.exe --update-filters` runs the update and a self-test without a window: blocking
+    decisions, plus the scriptlet engine giving a YouTube watch page its scripts.
 
 ### Privacy
 - **Third-party cookies:** blocked by default (Settings → Privacy):
@@ -507,8 +530,6 @@ Testing on Windows:
   CEF locales and SwiftShader (software rendering for machines without a usable GPU) are kept.
 - **Discarding loses back/forward history.** A discarded tab reloads its last URL; its history
   and any unsaved form input are lost. Discard is off by default.
-- **uBlock Origin scriptlets (`+js(...)`) are not executed.** Network and cosmetic (CSS) rules
-  work; scriptlet-based anti-adblock and annoyance fixes do not.
   - Cosmetic filtering of generic rules is limited to the first 2000 class names and ids a
     page reports.
 - **The vault does not detect rollback.** Replacing `vault.json` with an older copy is not

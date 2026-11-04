@@ -155,6 +155,9 @@ fn update_filters_headless(dirs: &paths::DataDirs, settings: &lb_core::settings:
     if let Some(cache) = &r.cache {
         let _ = lb_core::vault::write_atomic(&dirs.engine_cache(), cache);
     }
+    if let Some(scriptlets) = &r.scriptlets {
+        let _ = lb_core::vault::write_atomic(&dirs.scriptlet_cache(), scriptlets);
+    }
     let _ = lb_core::vault::write_atomic(&dir.join("state.json"), r.state.to_json().as_bytes());
     let summary: Vec<String> = r.state.downloaded.iter().map(|(id, d)| format!("{id}={}B", d.bytes)).collect();
     log::write(
@@ -167,8 +170,8 @@ fn update_filters_headless(dirs: &paths::DataDirs, settings: &lb_core::settings:
             t.elapsed().as_millis()
         ),
     );
-    // Reload the cache exactly as startup does and check a few decisions.
-    use lb_core::blocker::{Blocker, Decision, ResourceKind};
+    // Reload the caches exactly as startup does and check a few decisions.
+    use lb_core::blocker::{Blocker, ResourceKind, ScriptletEngine};
     let key = filterlists::cache_key(&settings.filter_lists, &r.state);
     let t = std::time::Instant::now();
     let loaded = std::fs::read(dirs.engine_cache()).ok().and_then(|d| Blocker::deserialize(&d, key).ok());
@@ -177,20 +180,32 @@ fn update_filters_headless(dirs: &paths::DataDirs, settings: &lb_core::settings:
         return 2;
     };
     let src = "https://news.example.com/";
+    // Blocked or answered with uBO's stand-in (`$redirect`): either way the
+    // real request does not go out.
     let checks = [
-        ("https://securepubads.g.doubleclick.net/tag/js/gpt.js", ResourceKind::Script, Decision::Block),
-        ("https://www.google-analytics.com/analytics.js", ResourceKind::Script, Decision::Block),
-        ("https://example.com/app.js", ResourceKind::Script, Decision::Allow),
+        ("https://securepubads.g.doubleclick.net/tag/js/gpt.js", ResourceKind::Script, true),
+        ("https://www.google-analytics.com/analytics.js", ResourceKind::Script, true),
+        ("https://example.com/app.js", ResourceKind::Script, false),
     ];
-    let ok = checks.iter().all(|(u, k, want)| engine.check(u, src, *k) == *want);
+    let decisions_ok = checks.iter().all(|(u, k, blocked)| engine.check(u, src, *k).is_blocked() == *blocked);
+    let loaded_in = t.elapsed().as_micros();
+    // Scriptlets: the cache loads and YouTube gets uBO's ad defences.
+    let t = std::time::Instant::now();
+    let scriptlets = std::fs::read(dirs.scriptlet_cache()).ok().and_then(|d| ScriptletEngine::deserialize(&d).ok());
+    let youtube = scriptlets.as_ref().and_then(|s| s.script_for("https://www.youtube.com/watch?v=dQw4w9WgXcQ"));
+    let scriptlets_ok = youtube.as_ref().is_some_and(|js| js.contains("function "));
     log::write(
         "INFO",
         &format!(
-            "filter self-test: cache loaded in {} us, decisions {}",
+            "filter self-test: cache loaded in {loaded_in} us, decisions {}; scriptlet engine loaded in {} us, \
+             YouTube script {} bytes ({})",
+            if decisions_ok { "OK" } else { "WRONG" },
             t.elapsed().as_micros(),
-            if ok { "OK" } else { "WRONG" }
+            youtube.as_ref().map_or(0, String::len),
+            if scriptlets_ok { "OK" } else { "MISSING" }
         ),
     );
+    let ok = decisions_ok && scriptlets_ok;
     match (ok, r.state.last_error.is_some()) {
         (false, _) => 2,
         (true, true) => 1,

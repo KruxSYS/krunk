@@ -52,6 +52,11 @@ impl DataDirs {
         self.root.join("engine.dat")
     }
 
+    /// The serialized scriptlet engine (same lists as `engine.dat`).
+    pub fn scriptlet_cache(&self) -> PathBuf {
+        self.root.join("scriptlets.dat")
+    }
+
     /// The encrypted password vault.
     pub fn vault(&self) -> PathBuf {
         self.root.join("vault.json")
