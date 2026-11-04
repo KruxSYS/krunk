@@ -47,6 +47,15 @@ used. It installs per user without administrator rights, or runs portable from a
   happened. If LightBrowser is still running, Krunk asks you to close it first. If a Krunk
   folder already exists, the LightBrowser folder is left alone. Old `lb://` addresses open the
   matching `krunk://` page, and saved tabs and bookmarks of built-in pages keep working.
+  The old name remains on purpose in only these places:
+  - two vault constants that existing vaults depend on: the key-check plaintext
+    `"LightBrowser vault key check v1"` and the DPAPI entropy `"LightBrowser vault key wrap v1"`
+    (changing them would make saved passwords unreadable);
+  - the migration itself: the `LightBrowser` folder name, the `LightBrowserWindow` class check
+    and its messages;
+  - the `lb://` and `https://lightbrowser.invalid/` redirect for old saved tabs and bookmarks;
+  - internal identifiers no user sees: the crate name `lb_core` and message names (`lb.*`,
+    `__lbHost`).
 - **Coming from the WebView2 version:** settings, history, bookmarks, the session, the vault and
   `engine.dat` are used as they are. Cookies and site data are not migrated: the old
   `profile\EBWebView` folder (WebView2's profile) is left untouched and unused, and you can
@@ -526,7 +535,7 @@ limitations"). To move to a newer CEF:
 
 ### Checks
 ```sh
-cargo test --workspace                                                   # core: 182 unit tests
+cargo test --workspace                                                   # core: 238 unit tests
 cargo clippy --workspace --all-targets -- -D warnings                    # Linux
 cargo xwin clippy --target x86_64-pc-windows-msvc --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check

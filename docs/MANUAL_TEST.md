@@ -1,7 +1,8 @@
 # Manual test checklist (Windows 10/11 x64)
 
-Run these on a real Windows 10 or 11 x64 machine with the release folder
-`Krunk-win-x64` (from the zip). Sections 1–3 are the release smoke test. The remaining
+Run these on a real Windows 10 or 11 x64 machine with `Krunk-Setup-<version>.exe` or the release
+folder `Krunk-win-x64` (from the zip). Sections 1–3 are the release smoke test; "Krunk 0.2"
+covers the round-2 features (installer, updates, window, storage, YouTube, games). The remaining
 sections cover each feature in detail. Last full pass: 2026-11-04 on a Windows 11 Pro VM (build
 26200), CEF 156.0.15 / Chromium 156.0.8078.80, driven with `scripts/vm.sh` (screenshots in the
 pipeline workspace under `screenshots/cef/`).
@@ -421,6 +422,105 @@ working set.
 8. The test options are not in the Settings UI. Without `--sleep-test-seconds`, the timers are
    the settings values in minutes.
 
+## Krunk 0.2 (round 2)
+Last pass: 2026-11-04 on the Windows 11 VM; screenshots in the pipeline workspace under
+`screenshots/krunk/` (`m1-*` … `m7-*`). VM helpers: `scripts/vm-frame-test.ps1`, `vm-dpi.ps1`,
+`vm-res.ps1`, `vm-youtube.ps1`, `vm-install.ps1`, `vm-update.ps1`.
+
+### Rename and migration
+1. With `%LOCALAPPDATA%\LightBrowser` from 0.1 (history, bookmarks, a logged-in cookie, a vault)
+   and no Krunk folder, start Krunk: the log says "data migration: renamed …". History,
+   bookmarks, passwords and the login are all there.
+2. While `LightBrowser.exe` runs, Krunk refuses to start and asks to close it first.
+3. `lb://history` opens `krunk://history`; restored old tabs show the Krunk pages.
+
+### Window and tabs (100 % and 150 % scaling)
+1. Drag the window by empty tab-row space; double-click it to maximize and restore. Resize from
+   every edge and corner, including the top.
+2. Hover the maximize button: the Snap Layouts flyout appears. Right-click the tab row, or press
+   Alt+Space: the system menu opens.
+3. Maximized, the window covers the work area exactly; the taskbar stays visible.
+4. Ctrl+T, "+", menu → New tab, and the first window at start: typing goes into the address bar.
+5. Tabs are 256 px wide when few, shrink evenly to 72 px, then the row scrolls with the active tab
+   in view.
+
+### Cookies, site data, Inspect
+1. `krunk://storage` lists sites with their cookie counts. Search, expand, delete a cookie, a site,
+   then all; the site is signed out.
+2. Shield → "Cookies and site data" on a test origin: view, edit and add localStorage entries.
+   The page sees the edit (reload); DevTools → Application agrees.
+3. In a private tab the same page shows only the private context's data.
+4. Right-click → Inspect selects that element in DevTools; Ctrl+Shift+C inspects at the cursor.
+
+### YouTube
+1. `Krunk.exe --update-filters` exits 0; the log says "YouTube script … bytes (OK)".
+2. Open three watch pages, cold and warm cache. After about 40 s in the DevTools console:
+   `document.querySelector('.ad-showing')` is null, there is no enforcement wall, the video
+   plays, and no sponsored card shows in the sidebar.
+3. Search, comments, seeking and pause work.
+4. Control: Shield → "Allow ads on this site" brings the sponsored card back.
+
+### Pointer lock and full screen
+1. Serve `ui/dev/pointer-lock.html` (it is in `scripts/vm-www/8090`) and click the stage:
+   - the state is LOCKED, the cursor is hidden and confined;
+   - moving far past the screen edge keeps adding movement;
+   - `isTrusted` is true;
+   - "Press Esc to show your cursor" shows for 3 s.
+2. Esc releases the lock, and the page gets no Escape keydown. Alt+Tab, a tab switch and
+   navigation release it too.
+3. "Lock, unadjustedMovement": raw mouse counts (no acceleration).
+4. "Full screen + lock": the window fills the monitor and the lock works. The first Esc unlocks,
+   the second leaves full screen. F11 hides the shell and fills the monitor; F11 again restores.
+5. krunker.io: join a match. The view turns with the mouse, windowed and in F11.
+
+### Installer
+1. Run `Krunk-Setup-<version>.exe`:
+   - no UAC prompt (it asks for no elevation);
+   - components "Krunk" and "Desktop shortcut";
+   - folder `%LOCALAPPDATA%\Programs\Krunk`;
+   - Finish → Start Krunk.
+2. Start Menu → Krunk starts it. Settings → Apps → Installed apps lists "Krunk" with its version
+   (`HKCU\…\Uninstall\Krunk`; nothing under HKLM).
+3. With Krunk running, `Krunk-Setup-<version>.exe /S` closes it, installs within about 20 s and
+   keeps an existing desktop shortcut. Without `/S`, it asks you to close Krunk (Retry/Cancel).
+4. Uninstall from Installed apps: "Also delete my Krunk data" is unticked by default. The program,
+   shortcuts and entry are removed; `%LOCALAPPDATA%\Krunk` is kept. With the box ticked, it is
+   deleted too.
+5. On a standard (non-admin) account with UAC on, steps 1–4 work the same.
+   *Not run on the VM: it has UAC off and an admin user.*
+
+### Update check
+Use a dev build that points at a test server:
+- `UPDATE_BASE_URL=http://127.0.0.1:18080 KRUNK_UPDATE_PUBKEY_FILE=core/tests/fixtures/update/test-signing.pub scripts/build-dist.sh --dev`;
+- once at 0.2.0 and once with the version bumped to 0.2.1;
+- the 0.2.1 build published with `dist/server/publish-release.sh … --key core/tests/fixtures/update/test-signing.key`
+  into a local folder or the staging volume;
+- on the test PC: `ssh -R 127.0.0.1:18080:<server>`.
+
+1. Install dev 0.2.0 and start it. After about 60 s the prompt "Krunk 0.2.1 is available"
+   appears (Release notes / Later / Update now).
+2. Update now: a progress bar, then Krunk closes, and about 20 s later reopens with the tabs
+   restored. Settings → About says 0.2.1, and so does the HKCU entry. `%TEMP%\Krunk-update` is
+   gone after the next start.
+3. Tampered manifest (change the version in `latest.json`, keep the old `.sig`): Settings →
+   About → Check for updates says "The update check failed: the manifest signature is not valid
+   for Krunk's release key", and `krunk.log` has "update check rejected: …".
+4. Wrong hash (re-sign a manifest whose `sha256` is wrong): Update now downloads, then the prompt
+   says "the download's SHA-256 does not match the manifest", with Try again. The file is deleted
+   and Krunk keeps running.
+5. Turn off "Check for updates automatically" and restart: no request reaches the server
+   within 2 minutes. "Check for updates" still works.
+6. A release build (`https://krunk.example`) reports "The update check failed: …" in About,
+   because the placeholder domain doesn't resolve. Nothing else happens.
+
+### Download server (`dist/server`)
+See `dist/server/README.md` → "Checks". After publishing:
+- `curl -I` shows the content types and cache headers;
+- the downloads' SHA-256s match `SHA256SUMS`;
+- `openssl pkeyutl -verify -pubin -inkey assets/keys/update-signing.pub -rawin -in latest.json -sigfile <(base64 -d latest.json.sig)`
+  succeeds;
+- the landing page shows the version, both downloads and their hashes.
+
 ## Background traffic
 1. Run a logging HTTP proxy (`screenshots/verify2/proxy.ps1` in the pipeline workspace listens on
    `127.0.0.1:8888`) and set Settings → Advanced → Proxy to `127.0.0.1:8888` (restart).
@@ -482,9 +582,11 @@ HTTP/CONNECT proxy on 127.0.0.1:8888.
      `filter lists checked; … next check in 24.0 h`.
 6. **New-tab page makes no network requests:** on the new-tab page, open DevTools → Network,
    press Ctrl+R, and filter `-domain:krunk.invalid`. Expected "0 / N requests".
-7. **WebRTC and the firewall:** open a Stack Overflow question. No "Windows Firewall has blocked
-   some features" prompt appears, and `Get-NetUDPEndpoint` shows no Krunk socket on
-   UDP 5353 (no mDNS responder).
+7. **WebRTC and the firewall:** open a Stack Overflow question (it creates an
+   RTCPeerConnection). The first time for this `Krunk.exe` path, Windows Firewall may ask about
+   public and private networks: Chromium's mDNS responder on UDP 5353, as in Chrome. Cancel it;
+   WebRTC keeps working and `browserleaks.com/webrtc` still shows no private IP (see "Background
+   traffic", step 5).
 8. **Download folder:** Settings → Downloads → "Change…" opens a native folder picker. After
    picking a folder, the next download is saved there.
 9. **Startup with the homepage:** set the homepage and choose "Open the homepage", then restart.
