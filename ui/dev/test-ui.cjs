@@ -867,7 +867,7 @@ function settingsMock(defaults) {
   const running = clone(defaults);
   const st = { settings: clone(defaults), allow: ['news.example.com'] };
   window.__settings = st;
-  const restart = (s) => ['hardwareAcceleration', 'proxy', 'extraFlags', 'smartscreen'].some((k) => s[k] !== running[k]);
+  const restart = (s) => ['hardwareAcceleration', 'proxy', 'extraFlags', 'smartscreen', 'blockThirdPartyCookies'].some((k) => s[k] !== running[k]);
   h.getSettings = () => ({ settings: st.settings, restartRequired: restart(st.settings), about: { version: '0.1.0', runtime: '142.0.3595.53', dataDir: 'C:\\Users\\me\\AppData\\Local\\LightBrowser' } });
   h.saveSettings = (m) => {
     const s = m.settings;
@@ -904,6 +904,7 @@ async function testSettings(browser) {
   check(await page.isChecked('input[name=startup][value=restoreSession]'), 'defaults: restore session');
   check(await page.inputValue('#trackingPrevention') === 'strict', 'defaults: strict tracking prevention');
   check(await page.isChecked('[data-key=hardwareAcceleration]'), 'defaults: GPU on');
+  check(await page.isChecked('[data-key=blockThirdPartyCookies]'), 'defaults: third-party cookies blocked');
   check(await page.locator('#restart-banner').isHidden(), 'no restart banner at first');
   check((await page.locator('#lists .row').count()) === 5, '5 filter lists with checkboxes');
   await page.waitForTimeout(100);
@@ -951,6 +952,13 @@ async function testSettings(browser) {
   await page.fill('#tabSleepMinutes', '10');
   await page.press('#tabSleepMinutes', 'Tab');
 
+  // Third-party cookie blocking is restart-only too, and is saved.
+  await page.uncheck('[data-key=blockThirdPartyCookies]');
+  await page.waitForTimeout(60);
+  const tp = await lastSent(page, 'saveSettings');
+  check(tp && tp.settings.blockThirdPartyCookies === false && await page.locator('#restart-banner').isVisible(), 'third-party cookie toggle saves and shows the restart banner');
+  await page.check('[data-key=blockThirdPartyCookies]');
+  await page.waitForTimeout(60);
   // Restart badge for the GPU toggle (restart-only) and restart button.
   await page.uncheck('[data-key=hardwareAcceleration]');
   await page.waitForTimeout(60);

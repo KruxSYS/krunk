@@ -101,6 +101,8 @@
         <option value="balanced">Balanced</option><option value="strict">Strict (recommended)</option>
       </select>
     </div>
+    <label class="toggle"><input type="checkbox" data-key="blockThirdPartyCookies"> Block third-party cookies <span class="tag">restart</span></label>
+    <p class="help">Strict tracking prevention only blocks known trackers; this blocks every site's cookies inside other sites. It may break embedded sign-ins, comments and video widgets on some sites; turn it off if a site misbehaves. It applies to all sites (no per-site exceptions).</p>
     <label class="toggle"><input type="checkbox" data-key="httpsOnly"> HTTPS-only mode (upgrade every site; warn before plain HTTP)</label>
     <label class="toggle"><input type="checkbox" data-key="stripTrackingParams"> Remove tracking parameters from links (utm_*, fbclid, …)</label>
     <label class="toggle"><input type="checkbox" data-key="sendDnt"> Send “Do Not Track”</label>

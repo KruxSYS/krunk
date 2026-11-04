@@ -18,6 +18,7 @@
     "ublock-unbreak"
   ],
   "trackingPrevention": "strict",
+  "blockThirdPartyCookies": true,
   "httpsOnly": false,
   "sendDnt": true,
   "sendGpc": true,

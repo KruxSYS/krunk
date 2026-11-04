@@ -153,7 +153,10 @@ ui/     the browser's own UI (HTML/CSS/JS), embedded into the exe at build time.
   - With a SOCKS proxy it skips the download rather than bypass the proxy.
   - `LightBrowser.exe --update-filters` runs the update and a self-test without a window.
 - **Privacy:**
-  - Tracking prevention: Strict by default.
+  - Tracking prevention: Strict by default. Strict blocks storage and requests of *known trackers*
+    only; it does not block third-party cookies in general.
+  - Third-party cookies: blocked by default (Settings → Privacy, restart required) with
+    Chromium's `--test-third-party-cookie-phaseout` switch, browser-wide.
   - Tracking parameters (`utm_*`, `fbclid`, `gclid`, ...) are stripped before navigating.
   - `DNT: 1` and `Sec-GPC: 1` headers, plus `navigator.doNotTrack` and
     `navigator.globalPrivacyControl`.
@@ -196,6 +199,8 @@ Always passed (`core::settings::Settings::browser_arguments`):
   on.
 
 Conditional:
+- `--test-third-party-cookie-phaseout` when "Block third-party cookies" is on (the default).
+  Passed once even if also typed into the extra flags.
 - `--disable-gpu` when hardware acceleration is off.
 - `--proxy-server=<value>` when a proxy is set.
 - The user's extra flags, validated. `--disable-features` and `--enable-features` lists are
@@ -326,7 +331,8 @@ NODE_PATH=/usr/lib/node_modules/@playwright/mcp/node_modules node ui/dev/test-ui
   work; scriptlet-based anti-adblock and annoyance fixes do not.
   - Cosmetic filtering of generic rules is limited to the first 2000 class names and ids a
     page reports.
-- **Some settings need a restart:** hardware acceleration, proxy, extra flags and SmartScreen.
+- **Some settings need a restart:** hardware acceleration, third-party cookie blocking, proxy,
+  extra flags and SmartScreen.
   This is because all tabs share one WebView2 environment. The settings page says when.
 - **The WebView2 runtime determines the engine version.** LightBrowser cannot pin or patch
   Chromium; security updates come from Windows/Edge updates.
@@ -335,6 +341,11 @@ NODE_PATH=/usr/lib/node_modules/@playwright/mcp/node_modules node ui/dev/test-ui
     does.
   - WebView2 shares renderer processes between same-site tabs, so discarding one of two tabs of
     the same site frees less.
+- **Third-party cookie blocking uses a Chromium test switch.**
+  `--test-third-party-cookie-phaseout` comes from Chromium's third-party-cookie phase-out testing;
+  a future WebView2 runtime could rename or drop it. It is global: there are no per-site
+  exceptions, so if an embedded sign-in, comment or video widget breaks, the only fix is to turn
+  the setting off (and restart).
 - **The vault does not detect rollback.** Replacing `vault.json` with an older copy is not
   detected. See `docs/SECURITY.md` for the full threat model and what is out of scope.
 - **Platform support:** no Windows on ARM build, no installer, no auto-update and no extensions.

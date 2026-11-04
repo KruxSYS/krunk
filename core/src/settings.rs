@@ -98,6 +98,9 @@ pub struct Settings {
     pub adblock_enabled: bool,
     pub filter_lists: Vec<String>,
     pub tracking_prevention: TrackingPrevention,
+    /// Block all third-party cookies (browser-wide, needs a restart). Strict
+    /// tracking prevention alone only blocks known trackers' storage.
+    pub block_third_party_cookies: bool,
     pub https_only: bool,
     pub send_dnt: bool,
     pub send_gpc: bool,
@@ -143,6 +146,7 @@ impl Default for Settings {
             adblock_enabled: true,
             filter_lists: FILTER_LISTS.iter().map(|s| s.to_string()).collect(),
             tracking_prevention: TrackingPrevention::Strict,
+            block_third_party_cookies: true,
             https_only: false,
             send_dnt: true,
             send_gpc: true,
@@ -216,6 +220,11 @@ pub const DISABLED_FEATURES: &[&str] = &[
 
 /// Switches we always pass (documented in the README).
 pub const BASE_SWITCHES: &[&str] = &["--no-pings", "--disable-domain-reliability"];
+
+/// Blocks third-party cookies browser-wide. Chromium's third-party-cookie
+/// phase-out switch: WebView2 has no API for this, and Strict tracking
+/// prevention only covers known trackers. A future runtime may rename it.
+pub const BLOCK_THIRD_PARTY_COOKIES_SWITCH: &str = "--test-third-party-cookie-phaseout";
 
 pub const MAX_SLEEP_MINUTES: u32 = 24 * 60;
 pub const MAX_AUTOLOCK_MINUTES: u32 = 24 * 60;
@@ -328,6 +337,9 @@ impl Settings {
         let mut args: Vec<String> = BASE_SWITCHES.iter().map(|s| s.to_string()).collect();
         if !self.hardware_acceleration {
             args.push("--disable-gpu".into());
+        }
+        if self.block_third_party_cookies {
+            args.push(BLOCK_THIRD_PARTY_COOKIES_SWITCH.into());
         }
         if !self.proxy.is_empty() {
             args.push(format!("--proxy-server={}", self.proxy));
@@ -749,6 +761,25 @@ mod tests {
     }
 
     #[test]
+    fn third_party_cookie_switch() {
+        let count = |s: &Settings| {
+            s.browser_arguments().split_whitespace().filter(|a| *a == BLOCK_THIRD_PARTY_COOKIES_SWITCH).count()
+        };
+        let on = Settings::default();
+        assert!(on.block_third_party_cookies, "on by default");
+        assert_eq!(count(&on), 1);
+        // Also typed into the extra flags: still passed exactly once.
+        let twice =
+            Settings { extra_flags: format!("{BLOCK_THIRD_PARTY_COOKIES_SWITCH} --force-dark-mode"), ..on.clone() };
+        assert_eq!(twice.validate(), Ok(()));
+        assert_eq!(count(&twice), 1);
+        assert!(twice.browser_arguments().contains("--force-dark-mode"));
+        let off = Settings { block_third_party_cookies: false, ..on.clone() };
+        assert_eq!(count(&off), 0);
+        assert!(off.restart_required(&on), "toggling it needs a restart");
+    }
+
+    #[test]
     fn older_settings_json_gets_defaults() {
         // A record written by an older version: few fields, one removed field.
         let old = r#"{"searchEngine":"google","theme":"dark","adblockAllowlist":["x.example"],"tabSleepMinutes":10}"#;
@@ -759,6 +790,7 @@ mod tests {
         let d = Settings::default();
         assert_eq!(s.hardware_acceleration, d.hardware_acceleration);
         assert_eq!(s.tracking_prevention, TrackingPrevention::Strict);
+        assert!(s.block_third_party_cookies, "a settings file from before the toggle blocks third-party cookies");
         assert_eq!(s.vault_autolock_minutes, d.vault_autolock_minutes);
         assert_eq!(s.filter_lists, d.filter_lists);
         assert_eq!(s.validate(), Ok(()));
