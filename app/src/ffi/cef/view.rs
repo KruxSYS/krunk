@@ -236,6 +236,7 @@ pub(super) struct Events {
     pub open_tab: Slot<dyn FnMut(String, bool)>,
     pub key: Slot<dyn FnMut(KeyPress) -> bool>,
     pub got_focus: Slot<dyn FnMut()>,
+    pub set_focus: Slot<dyn FnMut(bool) -> bool>,
     pub message: Slot<MessageFn>,
     pub find: Slot<dyn FnMut(i32, i32)>,
     pub download_start: Slot<dyn FnMut(DownloadStart)>,
@@ -380,6 +381,11 @@ impl View {
 
     fn host(&self) -> Option<BrowserHost> {
         self.browser()?.host()
+    }
+
+    /// The browser's own child window, once it exists.
+    pub fn window_handle(&self) -> Option<HWND> {
+        self.hwnd()
     }
 
     fn hwnd(&self) -> Option<HWND> {
@@ -673,6 +679,13 @@ impl View {
 
     pub fn on_got_focus(&self, f: impl FnMut() + 'static) {
         self.0.ev.got_focus.set(Box::new(f));
+    }
+
+    /// The engine is about to focus this browser (`true`: because a page is
+    /// loading, `false`: a click or other system focus). Return `false` to
+    /// refuse.
+    pub fn on_set_focus(&self, f: impl FnMut(bool) -> bool + 'static) {
+        self.0.ev.set_focus.set(Box::new(f));
     }
 
     /// A message from the page's `__lbHost.postMessage`. The JSON may hold a

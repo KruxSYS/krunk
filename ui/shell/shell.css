@@ -3,11 +3,16 @@ html, body { height: 100%; overflow: hidden; user-select: none; }
 body { display: flex; flex-direction: column; background: var(--bg); }
 
 /* ---- tab strip ---- */
-#tabstrip { display: flex; align-items: flex-end; height: 36px; padding: 0 6px; gap: 2px; }
-#tabs { display: flex; flex: 0 1 auto; min-width: 0; height: 100%; align-items: flex-end; gap: 2px; overflow: hidden; }
+/* The tab row is the window's title bar: empty space in it drags the window
+   (hit-tested by the host from the rects shell.js reports). */
+#tabstrip { display: flex; align-items: flex-end; height: 36px; padding: 0 0 0 6px; gap: 2px; }
+#tabs { display: flex; flex: 0 1 0; min-width: 0; height: 100%; align-items: flex-end; gap: 2px;
+        overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+#tabs::-webkit-scrollbar { display: none; }
+/* Tabs prefer 256 DIP and shrink evenly to 72; past that the row scrolls. */
 .tab {
   position: relative; display: flex; align-items: center; gap: 6px;
-  flex: 0 1 220px; min-width: 44px; height: 30px; padding: 0 6px 0 10px;
+  flex: 0 1 256px; min-width: 72px; height: 30px; padding: 0 6px 0 10px;
   border-radius: 8px 8px 0 0; cursor: default; color: var(--fg-muted);
 }
 .tab:hover { background: var(--bg-hover); }
@@ -35,6 +40,23 @@ body { display: flex; flex-direction: column; background: var(--bg); }
 }
 .tab .close:hover { background: var(--bg-hover); color: var(--fg); }
 .tab .close .icon { width: 12px; height: 12px; }
+/* Narrow tabs: only the active (or hovered) tab keeps its close button. */
+#tabs.narrow .tab:not(.active):not(:hover) .close { display: none; }
+#tabs.narrow .tab { padding: 0 4px 0 8px; gap: 4px; }
+#newtab { flex: none; align-self: center; margin-top: 4px; }
+#drag-space { flex: 1 0 40px; height: 100%; }
+
+/* ---- caption buttons (minimize, maximize/restore, close) ---- */
+#caption { display: flex; flex: none; align-self: flex-start; height: 36px; }
+.cap { display: flex; align-items: center; justify-content: center; width: 46px; height: 36px; border: 0;
+       padding: 0; background: none; color: var(--fg); }
+.cap .icon { width: 10px; height: 10px; stroke-width: 1; }
+.cap.hover { background: var(--bg-hover); }
+.cap.pressed { background: var(--border); }
+.cap.close.hover { background: #c42b1c; color: #fff; }
+.cap.close.pressed { background: #c94f4f; color: #fff; }
+html.inactive .cap, html.inactive #tabs .tab:not(.active) { color: var(--fg-muted); }
+html.fullscreen #caption, html.fullscreen #drag-space { display: none; }
 
 /* ---- toolbar ---- */
 #toolbar { display: flex; align-items: center; height: 40px; padding: 0 6px; gap: 2px; background: var(--bg-raised);

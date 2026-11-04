@@ -1,7 +1,9 @@
 //! Top-level windows (main frame and the popup). The message loop is CEF's
 //! (`ffi::cef`), which dispatches to these window procedures as usual.
 
-use std::cell::RefCell;
+pub use lb_core::frame::Hit;
+pub use lb_core::protocol::CaptionButton;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use windows::core::{w, HSTRING, PCWSTR};
@@ -15,10 +17,10 @@ use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, IsWindowVisible, LoadCursorW, LoadIconW,
     RegisterClassExW, SetWindowPos, SetWindowTextW, ShowWindow, CS_DROPSHADOW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT,
-    HWND_TOP, IDC_ARROW, IDI_APPLICATION, MINMAXINFO, SIZE_MINIMIZED, SWP_NOACTIVATE, SWP_NOZORDER, SWP_SHOWWINDOW,
-    SW_HIDE, SW_SHOW, WA_INACTIVE, WINDOW_EX_STYLE, WM_ACTIVATE, WM_APP, WM_CLOSE, WM_DESTROY, WM_DPICHANGED,
-    WM_GETMINMAXINFO, WM_MOVE, WM_MOVING, WM_SIZE, WNDCLASSEXW, WS_CLIPCHILDREN, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_OVERLAPPEDWINDOW, WS_POPUP,
+    HWND_TOP, IDC_ARROW, IDI_APPLICATION, MINMAXINFO, SIZE_MINIMIZED, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_HIDE, SW_SHOW, WA_INACTIVE, WINDOW_EX_STYLE, WM_ACTIVATE, WM_APP,
+    WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_GETMINMAXINFO, WM_MOVE, WM_MOVING, WM_SIZE, WNDCLASSEXW, WS_CLIPCHILDREN,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_OVERLAPPEDWINDOW, WS_POPUP,
 };
 
 /// Callbacks from the window procedure. Implementations must tolerate
@@ -47,6 +49,14 @@ pub trait WindowEvents {
     fn suspending(&self) {}
     /// Windows switched between light and dark app mode.
     fn system_theme_changed(&self) {}
+    /// Frameless main window: what is at this client point (physical px)?
+    fn frame_hit(&self, _x: i32, _y: i32) -> Hit {
+        Hit::Client
+    }
+    /// The mouse is over (or pressing) a caption button, or left them.
+    fn caption_state(&self, _hover: Option<CaptionButton>, _pressed: bool) {}
+    /// Maximized or restored.
+    fn maximized_changed(&self, _maximized: bool) {}
 }
 
 thread_local! {
@@ -78,7 +88,9 @@ pub struct ScreenRect {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Window(HWND);
 
-fn register(class: PCWSTR, style: u32) -> Result<(), String> {
+type WndProc = unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT;
+
+fn register(class: PCWSTR, style: u32, proc_: WndProc) -> Result<(), String> {
     // SAFETY: registering a window class with a static name and a window
     // procedure that lives for the whole program.
     unsafe {
@@ -86,7 +98,7 @@ fn register(class: PCWSTR, style: u32) -> Result<(), String> {
         let wc = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
             style: windows::Win32::UI::WindowsAndMessaging::WNDCLASS_STYLES(style),
-            lpfnWndProc: Some(wndproc),
+            lpfnWndProc: Some(proc_),
             hInstance: instance.into(),
             hIcon: app_icon(instance.into(), 32),
             hIconSm: app_icon(instance.into(), 16),
@@ -127,7 +139,7 @@ impl Window {
     /// otherwise use up the process's right to activate a window); the
     /// browser attaches its events with [`Window::set_events`].
     pub fn create_main(title: &str) -> Result<Window, String> {
-        register(MAIN_CLASS, (CS_HREDRAW | CS_VREDRAW).0)?;
+        register(MAIN_CLASS, (CS_HREDRAW | CS_VREDRAW).0, main_wndproc)?;
         // SAFETY: standard window creation on the UI thread.
         let hwnd = unsafe {
             let instance = GetModuleHandleW(None).map_err(|e| e.to_string())?;
@@ -147,9 +159,77 @@ impl Window {
             )
             .map_err(|e| format!("CreateWindowExW failed: {e}"))?
         };
-        // SAFETY: valid window handle.
-        let _ = unsafe { ShowWindow(hwnd, SW_SHOW) };
+        // SAFETY: valid window handle. SWP_FRAMECHANGED makes Windows ask
+        // WM_NCCALCSIZE again now that the frameless handling is in place.
+        unsafe {
+            let _ = SetWindowPos(
+                hwnd,
+                None,
+                0,
+                0,
+                0,
+                0,
+                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+            let _ = ShowWindow(hwnd, SW_SHOW);
+        }
         Ok(Window(hwnd))
+    }
+
+    /// Is the window maximized?
+    pub fn is_maximized(self) -> bool {
+        // SAFETY: valid window handle.
+        unsafe { windows::Win32::UI::WindowsAndMessaging::IsZoomed(self.0) }.as_bool()
+    }
+
+    /// Minimize, maximize/restore or close (the caption buttons).
+    pub fn control(self, action: lb_core::protocol::WindowAction) {
+        use lb_core::protocol::WindowAction;
+        use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE};
+        // SAFETY: our own window.
+        unsafe {
+            match action {
+                WindowAction::Minimize => {
+                    let _ = ShowWindow(self.0, SW_MINIMIZE);
+                }
+                WindowAction::Maximize => {
+                    let _ = ShowWindow(self.0, if self.is_maximized() { SW_RESTORE } else { SW_MAXIMIZE });
+                }
+                WindowAction::Close => {
+                    let _ = PostMessageW(Some(self.0), WM_CLOSE, WPARAM(0), LPARAM(0));
+                }
+            }
+        }
+    }
+
+    /// Opens the window's system menu (Alt+Space) at its top-left corner.
+    pub fn show_system_menu(self) {
+        use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, SC_KEYMENU, WM_SYSCOMMAND};
+        // SAFETY: our own window; SC_KEYMENU with ' ' is what Alt+Space sends.
+        let _ =
+            unsafe { PostMessageW(Some(self.0), WM_SYSCOMMAND, WPARAM(SC_KEYMENU as usize), LPARAM(b' ' as isize)) };
+    }
+
+    /// Lets the frame hit-test through `root` and all its child windows
+    /// (the shell browser's): where [`WindowEvents::frame_hit`] says the
+    /// point is not client area, they answer `HTTRANSPARENT` and the main
+    /// window decides (drag, resize, caption buttons). Call again when the
+    /// browser may have created new child windows; repeats are harmless.
+    pub fn pass_hit_tests_through(self, root: HWND) {
+        use windows::Win32::UI::Shell::SetWindowSubclass;
+        use windows::Win32::UI::WindowsAndMessaging::EnumChildWindows;
+        extern "system" fn each(child: HWND, _: LPARAM) -> windows::core::BOOL {
+            // SAFETY: subclassing a window of our own process and thread.
+            unsafe {
+                let _ = SetWindowSubclass(child, Some(transparent_subclass), SUBCLASS_ID, 0);
+            }
+            true.into()
+        }
+        // SAFETY: as above; EnumChildWindows walks all descendants.
+        unsafe {
+            let _ = SetWindowSubclass(root, Some(transparent_subclass), SUBCLASS_ID, 0);
+            let _ = EnumChildWindows(Some(root), Some(each), LPARAM(0));
+        }
     }
 
     /// Delivers this window's events to `events`.
@@ -166,7 +246,7 @@ impl Window {
     /// Creates the (hidden) popup window owned by `owner`.
     pub fn create_popup(owner: Window, events: Rc<dyn WindowEvents>) -> Result<Window, String> {
         static REGISTERED: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
-        REGISTERED.get_or_init(|| register(POPUP_CLASS, CS_DROPSHADOW.0)).clone()?;
+        REGISTERED.get_or_init(|| register(POPUP_CLASS, CS_DROPSHADOW.0, wndproc)).clone()?;
         let ex = WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
         // SAFETY: creating an owned popup window on the UI thread.
         let hwnd = unsafe {
@@ -332,6 +412,283 @@ impl Window {
         // SAFETY: valid window handle owned by this thread.
         let _ = unsafe { DestroyWindow(self.0) };
     }
+}
+
+const SUBCLASS_ID: usize = 0x4b52_4e4b; // "KRNK"
+/// Timer of the main window that follows the mouse over the caption buttons.
+const CAPTION_TIMER: usize = 0x4b52;
+
+thread_local! {
+    /// The caption button under the mouse, and whether it is pressed.
+    static CAPTION: Cell<(Option<CaptionButton>, bool)> = const { Cell::new((None, false)) };
+}
+
+fn hit_code(hit: Hit) -> u32 {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        HTCAPTION, HTCLIENT, HTCLOSE, HTMAXBUTTON, HTMINBUTTON, HTTOP, HTTOPLEFT, HTTOPRIGHT,
+    };
+    match hit {
+        Hit::Client => HTCLIENT,
+        Hit::Caption => HTCAPTION,
+        Hit::Top => HTTOP,
+        Hit::TopLeft => HTTOPLEFT,
+        Hit::TopRight => HTTOPRIGHT,
+        Hit::Minimize => HTMINBUTTON,
+        Hit::Maximize => HTMAXBUTTON,
+        Hit::Close => HTCLOSE,
+    }
+}
+
+fn caption_button(ht: usize) -> Option<CaptionButton> {
+    use windows::Win32::UI::WindowsAndMessaging::{HTCLOSE, HTMAXBUTTON, HTMINBUTTON};
+    match ht as u32 {
+        HTMINBUTTON => Some(CaptionButton::Minimize),
+        HTMAXBUTTON => Some(CaptionButton::Maximize),
+        HTCLOSE => Some(CaptionButton::Close),
+        _ => None,
+    }
+}
+
+fn set_caption(hwnd: HWND, ev: &Option<Rc<dyn WindowEvents>>, hover: Option<CaptionButton>, pressed: bool) {
+    let before = CAPTION.with(|c| c.replace((hover, pressed)));
+    if before == (hover, pressed) {
+        return;
+    }
+    // The mouse is over the shell's child windows (which only pass hit tests
+    // through), so TrackMouseEvent reports leaving at once and is no use:
+    // a short timer checks whether the mouse is still over the button.
+    // SAFETY: timers on our own window.
+    unsafe {
+        if hover.is_some() {
+            windows::Win32::UI::WindowsAndMessaging::SetTimer(Some(hwnd), CAPTION_TIMER, 50, None);
+        } else {
+            let _ = windows::Win32::UI::WindowsAndMessaging::KillTimer(Some(hwnd), CAPTION_TIMER);
+        }
+    }
+    if let Some(ev) = ev {
+        ev.caption_state(hover, pressed);
+    }
+}
+
+/// The caption button under the mouse right now, if any.
+fn caption_under_cursor(hwnd: HWND) -> Option<CaptionButton> {
+    use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, WindowFromPoint};
+    let mut p = POINT::default();
+    // SAFETY: plain queries; the point is ours.
+    unsafe {
+        GetCursorPos(&mut p).ok()?;
+        // Another window (a menu, another app) on top of ours: not hovering.
+        let under = WindowFromPoint(p);
+        if windows::Win32::UI::WindowsAndMessaging::GetAncestor(under, windows::Win32::UI::WindowsAndMessaging::GA_ROOT)
+            != hwnd
+        {
+            return None;
+        }
+        let _ = windows::Win32::Graphics::Gdi::ScreenToClient(hwnd, &mut p);
+    }
+    match events(hwnd)?.frame_hit(p.x, p.y) {
+        Hit::Minimize => Some(CaptionButton::Minimize),
+        Hit::Maximize => Some(CaptionButton::Maximize),
+        Hit::Close => Some(CaptionButton::Close),
+        _ => None,
+    }
+}
+
+/// Opens the system menu at a screen point and runs the chosen command.
+fn system_menu_at(hwnd: HWND, x: i32, y: i32) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnableMenuItem, GetSystemMenu, PostMessageW, SetMenuDefaultItem, TrackPopupMenu, MF_BYCOMMAND, MF_ENABLED,
+        MF_GRAYED, SC_CLOSE, SC_MAXIMIZE, SC_MINIMIZE, SC_MOVE, SC_RESTORE, SC_SIZE, TPM_RETURNCMD, TPM_RIGHTBUTTON,
+        WM_SYSCOMMAND,
+    };
+    // SAFETY: our own window's system menu; the command is posted back to it.
+    unsafe {
+        let menu = GetSystemMenu(hwnd, false);
+        if menu.is_invalid() {
+            return;
+        }
+        let max = windows::Win32::UI::WindowsAndMessaging::IsZoomed(hwnd).as_bool();
+        let state = |on: bool| if on { MF_BYCOMMAND | MF_ENABLED } else { MF_BYCOMMAND | MF_GRAYED };
+        let _ = EnableMenuItem(menu, SC_RESTORE, state(max));
+        let _ = EnableMenuItem(menu, SC_MOVE, state(!max));
+        let _ = EnableMenuItem(menu, SC_SIZE, state(!max));
+        let _ = EnableMenuItem(menu, SC_MINIMIZE, state(true));
+        let _ = EnableMenuItem(menu, SC_MAXIMIZE, state(!max));
+        let _ = EnableMenuItem(menu, SC_CLOSE, state(true));
+        let _ = SetMenuDefaultItem(menu, SC_CLOSE, 0);
+        let cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, x, y, None, hwnd, None);
+        if cmd.0 != 0 {
+            let _ = PostMessageW(Some(hwnd), WM_SYSCOMMAND, WPARAM(cmd.0 as usize), LPARAM(0));
+        }
+    }
+}
+
+/// Thickness of the resize border Windows keeps around a sizable window
+/// (outside the visible frame on Windows 10/11).
+fn frame_thickness(hwnd: HWND) -> i32 {
+    use windows::Win32::UI::HiDpi::GetSystemMetricsForDpi;
+    use windows::Win32::UI::WindowsAndMessaging::{SM_CXPADDEDBORDER, SM_CYFRAME};
+    // SAFETY: plain queries.
+    unsafe {
+        let dpi = GetDpiForWindow(hwnd).max(96);
+        GetSystemMetricsForDpi(SM_CYFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi)
+    }
+}
+
+/// The main window has no title bar: the tab strip (the shell view) is the
+/// top of the window. Left, right and bottom keep the native resize border;
+/// the caption and the top border are removed in `WM_NCCALCSIZE`, and
+/// `WM_NCHITTEST` asks the browser what is under the mouse (see
+/// `lb_core::frame`). Mouse clicks on the caption buttons are handled here
+/// (Windows would draw classic buttons otherwise); returning `HTMAXBUTTON`
+/// is what gives the Windows 11 Snap Layouts flyout.
+extern "system" fn main_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        HTCLIENT, NCCALCSIZE_PARAMS, WM_NCCALCSIZE, WM_NCHITTEST, WM_NCLBUTTONDBLCLK, WM_NCLBUTTONDOWN, WM_NCLBUTTONUP,
+        WM_NCMOUSELEAVE, WM_NCMOUSEMOVE,
+    };
+    match msg {
+        WM_NCCALCSIZE if wparam.0 != 0 => {
+            // SAFETY: with wParam TRUE, lParam points to NCCALCSIZE_PARAMS.
+            unsafe {
+                let params = &mut *(lparam.0 as *mut NCCALCSIZE_PARAMS);
+                let top = params.rgrc[0].top;
+                let r = DefWindowProcW(hwnd, msg, wparam, lparam);
+                params.rgrc[0].top = top;
+                // Maximized, the window hangs over the monitor by its resize
+                // border on every side: keep the client area on screen.
+                if windows::Win32::UI::WindowsAndMessaging::IsZoomed(hwnd).as_bool() && !is_fullscreen(hwnd) {
+                    params.rgrc[0].top += frame_thickness(hwnd);
+                }
+                r
+            }
+        }
+        WM_NCHITTEST => {
+            // SAFETY: default processing gives the native side and bottom borders.
+            let native = unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
+            if native.0 as u32 != HTCLIENT {
+                return native;
+            }
+            let ev = events(hwnd);
+            let (sx, sy) = ((lparam.0 & 0xffff) as i16 as i32, ((lparam.0 >> 16) & 0xffff) as i16 as i32);
+            let mut p = POINT { x: sx, y: sy };
+            // SAFETY: valid window handle and point.
+            let _ = unsafe { windows::Win32::Graphics::Gdi::ScreenToClient(hwnd, &mut p) };
+            let hit = ev.map(|e| e.frame_hit(p.x, p.y)).unwrap_or(Hit::Client);
+            LRESULT(hit_code(hit) as isize)
+        }
+        WM_NCMOUSEMOVE => {
+            let ev = events(hwnd);
+            let hover = caption_button(wparam.0);
+            let pressed = CAPTION.with(|c| c.get().1) && hover.is_some();
+            set_caption(hwnd, &ev, hover, pressed);
+            // SAFETY: default processing.
+            unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+        }
+        WM_NCMOUSELEAVE => {
+            if caption_under_cursor(hwnd).is_none() {
+                set_caption(hwnd, &events(hwnd), None, false);
+            }
+            // SAFETY: default processing.
+            unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+        }
+        windows::Win32::UI::WindowsAndMessaging::WM_TIMER if wparam.0 == CAPTION_TIMER => {
+            let now = caption_under_cursor(hwnd);
+            let (hover, pressed) = CAPTION.with(|c| c.get());
+            if now != hover {
+                set_caption(hwnd, &events(hwnd), now, pressed && now.is_some());
+            }
+            LRESULT(0)
+        }
+        windows::Win32::UI::WindowsAndMessaging::WM_NCRBUTTONUP
+            if wparam.0 as u32 == windows::Win32::UI::WindowsAndMessaging::HTCAPTION =>
+        {
+            let (x, y) = ((lparam.0 & 0xffff) as i16 as i32, ((lparam.0 >> 16) & 0xffff) as i16 as i32);
+            system_menu_at(hwnd, x, y);
+            LRESULT(0)
+        }
+        WM_NCLBUTTONDOWN | WM_NCLBUTTONDBLCLK if caption_button(wparam.0).is_some() => {
+            set_caption(hwnd, &events(hwnd), caption_button(wparam.0), true);
+            LRESULT(0)
+        }
+        WM_NCLBUTTONUP if caption_button(wparam.0).is_some() => {
+            let button = caption_button(wparam.0);
+            let (_, pressed) = CAPTION.with(|c| c.get());
+            set_caption(hwnd, &events(hwnd), button, false);
+            if pressed {
+                use lb_core::protocol::WindowAction;
+                let action = match button {
+                    Some(CaptionButton::Minimize) => WindowAction::Minimize,
+                    Some(CaptionButton::Maximize) => WindowAction::Maximize,
+                    _ => WindowAction::Close,
+                };
+                // Minimizing or restoring moves the window away from the mouse.
+                if action != WindowAction::Close {
+                    set_caption(hwnd, &events(hwnd), None, false);
+                }
+                Window(hwnd).control(action);
+            }
+            LRESULT(0)
+        }
+        WM_SIZE => {
+            let maximized = wparam.0 as u32 == windows::Win32::UI::WindowsAndMessaging::SIZE_MAXIMIZED;
+            let was = MAXIMIZED.with(|m| m.replace(maximized));
+            let r = wndproc(hwnd, msg, wparam, lparam);
+            if was != maximized && wparam.0 as u32 != SIZE_MINIMIZED {
+                if let Some(ev) = events(hwnd) {
+                    ev.maximized_changed(maximized);
+                }
+            }
+            r
+        }
+        _ => wndproc(hwnd, msg, wparam, lparam),
+    }
+}
+
+thread_local! {
+    static MAXIMIZED: Cell<bool> = const { Cell::new(false) };
+    static FULLSCREEN: Cell<isize> = const { Cell::new(0) };
+}
+
+/// Is `hwnd` the window currently shown fullscreen?
+fn is_fullscreen(hwnd: HWND) -> bool {
+    FULLSCREEN.with(|f| f.get() == hwnd.0 as isize)
+}
+
+/// Subclass of the shell browser's windows: points that are not client area
+/// (tab-row background, caption buttons, top resize band) fall through to
+/// the main window's `WM_NCHITTEST`.
+extern "system" fn transparent_subclass(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _id: usize,
+    _data: usize,
+) -> LRESULT {
+    use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass};
+    use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GA_ROOT, HTTRANSPARENT, WM_NCDESTROY, WM_NCHITTEST};
+    if msg == WM_NCHITTEST {
+        // SAFETY: plain window queries on our own windows.
+        let root = unsafe { GetAncestor(hwnd, GA_ROOT) };
+        if let Some(ev) = events(root) {
+            let (sx, sy) = ((lparam.0 & 0xffff) as i16 as i32, ((lparam.0 >> 16) & 0xffff) as i16 as i32);
+            let mut p = POINT { x: sx, y: sy };
+            // SAFETY: valid window handle and point.
+            let _ = unsafe { windows::Win32::Graphics::Gdi::ScreenToClient(root, &mut p) };
+            if ev.frame_hit(p.x, p.y) != Hit::Client {
+                return LRESULT(HTTRANSPARENT as isize);
+            }
+        }
+    }
+    if msg == WM_NCDESTROY {
+        // SAFETY: removing our own subclass from a window being destroyed.
+        unsafe {
+            let _ = RemoveWindowSubclass(hwnd, Some(transparent_subclass), SUBCLASS_ID);
+        }
+    }
+    // SAFETY: default subclass processing.
+    unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
 }
 
 extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {

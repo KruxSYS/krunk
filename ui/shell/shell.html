@@ -26,12 +26,22 @@
   <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
   <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 19h14"/></symbol>
   <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3M15 8l2 2"/></symbol>
+  <symbol id="i-win-min" viewBox="0 0 10 10"><path d="M0 5.5h10"/></symbol>
+  <symbol id="i-win-max" viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9" rx="1"/></symbol>
+  <symbol id="i-win-restore" viewBox="0 0 10 10"><rect x=".5" y="2.5" width="7" height="7" rx="1"/><path d="M2.5 2.5V1.5a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1h-1"/></symbol>
+  <symbol id="i-win-close" viewBox="0 0 10 10"><path d="M.5 .5l9 9M9.5 .5l-9 9"/></symbol>
   <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
 </svg>
 
-<div id="tabstrip" role="tablist" aria-label="Tabs">
-  <div id="tabs"></div>
+<div id="tabstrip">
+  <div id="tabs" role="tablist" aria-label="Tabs"></div>
   <button id="newtab" class="tb" title="New tab (Ctrl+T)" aria-label="New tab"><svg class="icon"><use href="#i-plus"/></svg></button>
+  <div id="drag-space"></div>
+  <div id="caption" aria-label="Window">
+    <button id="win-min" class="cap" tabindex="-1" title="Minimize" aria-label="Minimize"><svg class="icon"><use href="#i-win-min"/></svg></button>
+    <button id="win-max" class="cap" tabindex="-1" title="Maximize" aria-label="Maximize"><svg class="icon"><use id="win-max-use" href="#i-win-max"/></svg></button>
+    <button id="win-close" class="cap close" tabindex="-1" title="Close" aria-label="Close"><svg class="icon"><use href="#i-win-close"/></svg></button>
+  </div>
 </div>
 
 <div id="toolbar">

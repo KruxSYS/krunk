@@ -242,6 +242,92 @@ async function testShell(browser) {
   check(errors.length === 0, 'no console errors / CSP violations (' + errors.join(' | ') + ')');
 }
 
+// Frameless window: caption buttons, hit-test map, tab widths, new-tab focus.
+async function testShellFrame(browser) {
+  console.log('shell frame + tab widths');
+  const { page, errors } = await openPage(browser, 'https://shell.krunk.invalid/shell.html', { width: 1280, height: 76 }, 1);
+  const setTabs = (n, active) => page.evaluate(([n, active]) => {
+    const h = window.__host;
+    h.state.tabs = [];
+    for (let i = 1; i <= n; i++) h.state.tabs.push({ id: i, title: 'Tab number ' + i, url: 'https://t' + i + '.example/', favicon: null, loading: false, private: false, sleeping: false });
+    h.state.active = active;
+    h.tabsEvent();
+    h.navEvent();
+  }, [n, active]);
+  await setTabs(3, 1);
+  await page.waitForFunction(() => document.querySelectorAll('.tab').length === 3);
+  const widths3 = await page.$$eval('.tab', (ns) => ns.map((n) => n.getBoundingClientRect().width));
+  check(widths3.every((w) => Math.abs(w - 256) < 0.5), 'with 3 tabs each is 256 DIP wide (' + widths3.join(',') + ')');
+  await shot(page, 'shell-frame-3-tabs.png');
+
+  // Hit-test map: the tabs band, "+" and the caption buttons at the right edge.
+  await page.waitForTimeout(50);
+  const hm = (await lastSent(page, 'hitMap')).map;
+  check(hm.stripHeight === 36, 'hit map: tab row height 36');
+  const band = hm.interactive.find((r) => r.width > 700);
+  check(band && Math.abs(band.x + band.width - (6 + 3 * 256 + 2 * 2)) < 2, 'hit map: tabs band ends after the last tab (' + JSON.stringify(band) + ')');
+  check(Math.abs(hm.close.x + hm.close.width - 1280) < 0.5 && hm.close.width === 46 && hm.close.y === 0, 'hit map: close button at the right edge, 46 wide');
+  check(hm.maximize.x + hm.maximize.width === hm.close.x && hm.minimize.x + hm.minimize.width === hm.maximize.x, 'hit map: minimize, maximize, close side by side');
+  const plus = await page.locator('#newtab').boundingBox();
+  check(hm.interactive.some((r) => Math.abs(r.x - plus.x) < 0.5 && r.width === plus.width), 'hit map: the + button is interactive');
+
+  // 20 tabs: they shrink evenly, keep 72 DIP and the active close button.
+  await setTabs(20, 20);
+  await page.waitForFunction(() => document.querySelectorAll('.tab').length === 20);
+  await page.waitForTimeout(50);
+  const widths20 = await page.$$eval('.tab', (ns) => ns.map((n) => n.getBoundingClientRect().width));
+  const minW = Math.min(...widths20), maxW = Math.max(...widths20);
+  check(maxW - minW < 0.5, 'with 20 tabs all have the same width (' + minW.toFixed(1) + '–' + maxW.toFixed(1) + ')');
+  check(minW >= 72 - 0.01, 'tabs never get narrower than 72 DIP (' + minW.toFixed(1) + ')');
+  check(await page.locator('#tabs').evaluate((n) => n.classList.contains('narrow')), 'narrow tabs mode');
+  check(await page.locator('.tab.active .close').isVisible(), 'the active tab keeps its close button');
+  check(!(await page.locator('.tab:not(.active) .close').first().isVisible()), 'inactive narrow tabs hide theirs');
+  const scrolled = await page.locator('#tabs').evaluate((n) => ({ sw: n.scrollWidth, cw: n.clientWidth, sl: n.scrollLeft }));
+  check(scrolled.sw > scrolled.cw && scrolled.sl > 0, 'the row scrolls and the active (last) tab is scrolled into view');
+  const activeBox = await page.locator('.tab.active').boundingBox();
+  const rowBox = await page.locator('#tabs').boundingBox();
+  check(activeBox.x >= rowBox.x - 0.5 && activeBox.x + activeBox.width <= rowBox.x + rowBox.width + 0.5, 'active tab fully visible');
+  await shot(page, 'shell-frame-20-tabs.png');
+  await setTabs(12, 3);
+  await page.waitForTimeout(50);
+  const widths12 = await page.$$eval('.tab', (ns) => ns.map((n) => n.getBoundingClientRect().width));
+  check(Math.max(...widths12) - Math.min(...widths12) < 0.5 && widths12[0] < 256 && widths12[0] > 72, '12 tabs shrink evenly between 72 and 256 (' + widths12[0].toFixed(1) + ')');
+  await shot(page, 'shell-frame-12-tabs.png');
+
+  // Caption buttons: hover and pressed states come from the host.
+  await emit(page, { event: 'captionState', hover: 'close', pressed: false });
+  check(await page.locator('#win-close.hover').count() === 1, 'captionState hover highlights close');
+  await shot(page, 'shell-frame-close-hover.png');
+  await emit(page, { event: 'captionState', hover: 'maximize', pressed: true });
+  check(await page.locator('#win-max.hover.pressed').count() === 1 && await page.locator('#win-close.hover').count() === 0, 'pressed maximize, close no longer hovered');
+  await emit(page, { event: 'captionState', hover: null, pressed: false });
+  check(await page.locator('.cap.hover').count() === 0, 'hover cleared');
+  await emit(page, { event: 'windowState', maximized: true, active: true, fullscreen: false });
+  check(await page.locator('#win-max-use').getAttribute('href') === '#i-win-restore' && await page.locator('#win-max').getAttribute('title') === 'Restore', 'maximized: restore glyph');
+  await emit(page, { event: 'windowState', maximized: false, active: false, fullscreen: false });
+  check(await page.locator('#win-max-use').getAttribute('href') === '#i-win-max', 'restored: maximize glyph');
+  check(await page.evaluate(() => document.documentElement.classList.contains('inactive')), 'inactive window state');
+  await page.click('#win-max');
+  check((await lastSent(page, 'windowControl')).action === 'maximize', 'maximize button (keyboard/click fallback) sends windowControl');
+  await page.click('#win-min');
+  check((await lastSent(page, 'windowControl')).action === 'minimize', 'minimize sends windowControl');
+
+  // Double-click on empty tab-row space no longer opens a tab (Windows maximizes there).
+  const before = (await sent(page)).filter((m) => m.cmd === 'newTab').length;
+  await page.dblclick('#drag-space');
+  check((await sent(page)).filter((m) => m.cmd === 'newTab').length === before, 'double-click on the tab row background opens no tab');
+
+  // New tab: the host focuses the address bar; the caret is there and typing goes in.
+  await page.evaluate(() => { document.getElementById('address').value = 'https://t3.example/'; });
+  await emit(page, { event: 'focusAddressBar' });
+  const focus = await page.evaluate(() => { const a = document.getElementById('address'); return { active: document.activeElement === a, all: a.selectionStart === 0 && a.selectionEnd === a.value.length }; });
+  check(focus.active && focus.all, 'focusAddressBar focuses the address bar with its text selected');
+  await page.keyboard.type('kru');
+  check(await page.locator('#address').inputValue() === 'kru', 'typing replaces the address bar text');
+
+  check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
+}
+
 async function testShellHiDpi(browser) {
   console.log('shell @150%');
   const { page } = await openPage(browser, 'https://shell.krunk.invalid/shell.html', { width: 900, height: 76 }, 1.5);
@@ -1103,6 +1189,7 @@ async function testLoginScript(browser) {
   const browser = await chromium.launch();
   try {
     await testShell(browser);
+    await testShellFrame(browser);
     await testShellHiDpi(browser);
     await testPopup(browser);
     await testNewTab(browser);

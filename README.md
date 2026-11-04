@@ -217,8 +217,14 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
   `navigator.globalPrivacyControl` in every frame.
 - **HTTPS-only mode** (optional) with a "Continue to HTTP site" interstitial; exceptions last only
   for the session.
-- **WebRTC** uses only the default public interface: local IP addresses are not exposed and no
-  mDNS responder listens on the network.
+- **WebRTC** uses only the default public interface, and local addresses are replaced with
+  random mDNS names, as in Chrome, so pages never see your private IP. To answer for those
+  names, Chromium's mDNS responder listens on UDP port 5353 (IPv6) once a page creates a WebRTC
+  connection. Windows Firewall therefore asks once per program path whether Krunk may use public
+  and private networks. **Cancel is safe:** it only blocks inbound mDNS, and WebRTC and the
+  hiding of local addresses keep working. The installer can't pre-answer this, because adding a
+  firewall rule needs administrator rights. Updates keep the same path
+  (`%LOCALAPPDATA%\Programs\Krunk\Krunk.exe`), so your choice carries over to later versions.
 - **No background contact with Google:** see "Engine background traffic" below.
 
 ### Engine background traffic

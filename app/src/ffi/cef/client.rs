@@ -383,6 +383,12 @@ wrap_focus_handler! {
                 view.ev.got_focus.with(|f| f());
             }
         }
+
+        fn on_set_focus(&self, _browser: Option<&mut Browser>, source: FocusSource) -> c_int {
+            let navigation = source.get_raw() == FocusSource::NAVIGATION.get_raw();
+            let allow = lookup(self.key).and_then(|v| v.ev.set_focus.with(|f| f(navigation))).unwrap_or(true);
+            c_int::from(!allow)
+        }
     }
 }
 

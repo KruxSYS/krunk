@@ -39,6 +39,7 @@ const SESSION_DEBOUNCE_MS: u32 = 2000;
 mod blocking;
 mod downloads;
 mod find;
+mod frame;
 mod jobs;
 mod library;
 mod power;
@@ -123,6 +124,12 @@ pub struct Browser {
     exit_clearing: Cell<bool>,
     exit_cleared: Cell<bool>,
     closing: Cell<bool>,
+    /// The shell's tab-row layout, for hit testing the frameless window.
+    hit_map: RefCell<Option<lb_core::frame::HitMap>>,
+    window_active: Cell<bool>,
+    /// A new-tab page whose address bar must keep the keyboard focus until
+    /// the user clicks into the page or navigates.
+    address_focus: Cell<Option<TabId>>,
 }
 
 impl Browser {
@@ -165,6 +172,9 @@ impl Browser {
             exit_clearing: Cell::new(false),
             exit_cleared: Cell::new(false),
             closing: Cell::new(false),
+            hit_map: RefCell::new(None),
+            window_active: Cell::new(true),
+            address_focus: Cell::new(None),
         });
         window.set_events(browser.clone());
         let _ = browser.window.set(window);
@@ -401,8 +411,13 @@ impl Browser {
                 }
                 b.model.borrow_mut().set_loading(id, state.loading);
                 b.tab_changed(id);
+                if !state.loading {
+                    b.address_focus_loaded(id);
+                }
             }
         });
+        let weak = self.me.clone();
+        c.on_set_focus(move |from_navigation| weak.upgrade().is_none_or(|b| b.tab_wants_focus(id, from_navigation)));
         let weak = self.me.clone();
         let net_done = net.clone();
         c.on_load_finished(move |error| {
@@ -418,6 +433,7 @@ impl Browser {
         let weak = self.me.clone();
         c.on_address(move |url| {
             if let Some(b) = weak.upgrade() {
+                b.release_address_focus_unless(id, &url);
                 b.model.borrow_mut().set_url(id, &url);
                 b.tab_changed(id);
             }
@@ -483,6 +499,9 @@ impl Browser {
     }
 
     fn activate_view(&self, from: Option<TabId>, to: TabId) {
+        if self.address_focus.get().is_some_and(|held| held != to) {
+            self.address_focus.set(None);
+        }
         self.hide_popup();
         if let Some(f) = from {
             self.stop_find(f);
@@ -649,8 +668,17 @@ impl Browser {
     }
 
     fn new_tab(&self, url: Option<&str>, private: bool) {
-        let effects = self.with_model(|m| m.open(url.unwrap_or(""), private, Position::End, true, true, now_ms()).1);
+        let (id, effects) =
+            self.with_model(|m| m.open(url.unwrap_or(""), private, Position::End, true, true, now_ms()));
+        // A new-tab page: typing goes to the address bar at once, and the
+        // page loading must not take the focus away.
+        if url.is_none() {
+            self.address_focus.set(Some(id));
+        }
         self.apply(effects);
+        if url.is_none() {
+            self.hold_address_focus(id);
+        }
     }
 
     /// A page in tab `opener` opened a window: it becomes a tab next to the
@@ -712,6 +740,14 @@ impl Browser {
     // ------------------------------------------------------------ commands
 
     fn on_key(&self, key: KeyPress) -> bool {
+        // Alt+Space: the window's system menu (there is no title bar to
+        // receive it natively).
+        if key.alt && !key.ctrl && !key.shift && key.vk == 0x20 {
+            if let Some(w) = self.window() {
+                w.show_system_menu();
+            }
+            return true;
+        }
         let Some(cmd) = keys::command_for(key.vk, key.ctrl, key.shift, key.alt) else { return false };
         // Holding a key down repeats only commands where that makes sense.
         let repeatable = matches!(cmd, Command::ZoomIn | Command::ZoomOut | Command::NextTab | Command::PrevTab);
@@ -866,9 +902,21 @@ impl Browser {
                     self.send_nav();
                     self.send_bookmarks_bar();
                     self.post_shell(&Event::DownloadsChanged { active: self.downloads.borrow().active_count() });
+                    self.send_window_state();
+                    self.pass_shell_hit_tests();
                     // A new-tab page activated before the shell finished
-                    // loading could not focus the address bar yet.
-                    self.focus_active();
+                    // loading (the first window at start-up) could not focus
+                    // the address bar yet.
+                    let start_tab = self
+                        .model
+                        .borrow()
+                        .active()
+                        .filter(|t| Page::from_url(&t.url) == Some(Page::NewTab))
+                        .map(|t| t.id);
+                    match start_tab {
+                        Some(id) => self.hold_address_focus(id),
+                        None => self.focus_active(),
+                    }
                 }
                 Sender::Popup => {
                     let popup = self.popup.borrow().as_ref().and_then(|p| p.view.clone());
@@ -945,6 +993,12 @@ impl Browser {
                 }
             }
             Request::HidePopup => self.hide_popup(),
+            Request::HitMap { map } => self.set_hit_map(map),
+            Request::WindowControl { action } => {
+                if let Some(w) = self.window() {
+                    w.control(action);
+                }
+            }
             Request::Quit => self.begin_exit(),
             r @ (Request::GetSettings
             | Request::SaveSettings { .. }
@@ -1193,6 +1247,23 @@ impl WindowEvents for PopupEvents {
 }
 
 impl WindowEvents for Browser {
+    fn frame_hit(&self, x: i32, y: i32) -> lb_core::frame::Hit {
+        self.frame_hit_at(x, y)
+    }
+
+    fn caption_state(&self, hover: Option<lb_core::protocol::CaptionButton>, pressed: bool) {
+        self.post_shell(&Event::CaptionState { hover, pressed });
+    }
+
+    fn maximized_changed(&self, _maximized: bool) {
+        self.send_window_state();
+    }
+
+    fn activated(&self, active: bool) {
+        self.window_active.set(active);
+        self.send_window_state();
+    }
+
     fn resized(&self, _width: i32, _height: i32) {
         self.hide_popup();
         self.layout();

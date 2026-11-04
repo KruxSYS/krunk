@@ -431,8 +431,10 @@ working set.
    `*.googleapis.com` or `*.gvt1.com` host, and no `krunk.invalid` host.
 4. With "Download engine security components" on (restart), `update.googleapis.com` and
    `edgedl.me.gvt1.com` appear, and nothing else from Google.
-5. Open `https://stackoverflow.com/`: no Windows Firewall prompt appears, and
-   `Get-NetUDPEndpoint` shows no Krunk socket on port 5353.
+5. WebRTC: open `https://browserleaks.com/webrtc`. The first time for this `Krunk.exe` path, Windows
+   Firewall may ask whether Krunk may use public and private networks. That is Chromium's mDNS
+   responder on UDP `[::]:5353`, which `Get-NetUDPEndpoint` shows. Click **Cancel**. The page
+   must still say **No leak** and list no private (LAN) IP address under "Local IP Address".
 
 ## Verification recipes (final pass)
 These are the methods used on the Windows 11 VM (`scripts/vm.sh`). The test server, test pages

@@ -31,7 +31,7 @@ APP="$DIR\\app"
 run_ps1() { # local file
   scp -q "$1" "$VM:$FWD/task.ps1"
   ssh "$VM" "Start-ScheduledTask -TaskName KrunkTask; Start-Sleep -Milliseconds 500;
-    \$t = 0; while ((Get-ScheduledTask -TaskName KrunkTask).State -eq 'Running' -and \$t -lt 120) { Start-Sleep -Milliseconds 250; \$t++ }" >/dev/null
+    \$t = 0; while ((Get-ScheduledTask -TaskName KrunkTask).State -eq 'Running' -and \$t -lt 2400) { Start-Sleep -Milliseconds 250; \$t++ }" >/dev/null
 }
 
 tmp=$(mktemp --suffix=.ps1)

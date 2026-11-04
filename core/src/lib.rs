@@ -10,6 +10,7 @@ pub mod bookmarks;
 pub mod cookies;
 pub mod downloads;
 pub mod filterlists;
+pub mod frame;
 pub mod frecency;
 pub mod history;
 pub mod keys;

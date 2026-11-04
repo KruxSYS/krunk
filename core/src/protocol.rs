@@ -138,6 +138,25 @@ impl PopupKind {
     }
 }
 
+/// Caption-button actions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WindowAction {
+    Minimize,
+    /// Maximize, or restore when maximized.
+    Maximize,
+    Close,
+}
+
+/// A caption button.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CaptionButton {
+    Minimize,
+    Maximize,
+    Close,
+}
+
 /// A rectangle in CSS pixels relative to the shell's viewport.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -283,6 +302,15 @@ pub enum Request {
         page: String,
     },
     ToggleBookmark,
+    /// The shell's tab-row layout for hit testing the frameless window.
+    HitMap {
+        map: crate::frame::HitMap,
+    },
+    /// Minimize, maximize/restore or close the window (keyboard use of the
+    /// caption buttons; mouse clicks on them are handled natively).
+    WindowControl {
+        action: WindowAction,
+    },
     /// Opens the popup view at `rect` (shell: menu and shield only).
     ShowPopup {
         popup: PopupKind,
@@ -580,6 +608,8 @@ impl Sender {
                     | R::Stop
                     | R::Home
                     | R::ToggleBookmark
+                    | R::HitMap { .. }
+                    | R::WindowControl { .. }
                     | R::ShowPopup { .. }
                     | R::HidePopup
                     | R::ShowBookmarkFolder { .. }
@@ -847,6 +877,19 @@ pub enum Event {
         theme: Theme,
     },
     FocusAddressBar,
+    /// To the shell: the mouse is over (or pressing) a caption button. The
+    /// buttons are hit-tested natively, so the shell never sees the mouse
+    /// over them.
+    CaptionState {
+        hover: Option<CaptionButton>,
+        pressed: bool,
+    },
+    /// To the shell: window state for the caption buttons and the tab row.
+    WindowState {
+        maximized: bool,
+        active: bool,
+        fullscreen: bool,
+    },
     ShowFind,
     Toast {
         message: String,
@@ -1073,6 +1116,24 @@ mod tests {
         assert_eq!(parse_request(Sender::Popup, r#"{"cmd":"closeTab","id":1}"#), Err(ProtocolError::Forbidden));
     }
 
+    /// Only the shell lays out the tab row and drives the window buttons.
+    #[test]
+    fn window_frame_commands_are_shell_only() {
+        let map = r#"{"cmd":"hitMap","map":{"stripHeight":36,"interactive":[],
+            "minimize":{"x":0,"y":0,"width":46,"height":36},"maximize":{"x":46,"y":0,"width":46,"height":36},
+            "close":{"x":92,"y":0,"width":46,"height":36}}}"#;
+        let control = r#"{"cmd":"windowControl","action":"close"}"#;
+        for msg in [map, control] {
+            assert!(parse_request(Sender::Shell, msg).is_ok());
+            assert_eq!(parse_request(Sender::Popup, msg), Err(ProtocolError::Forbidden));
+            for p in Page::ALL {
+                assert_eq!(parse_request(Sender::Page(p), msg), Err(ProtocolError::Forbidden));
+            }
+            assert!(parse_content(msg).is_err());
+        }
+        assert!(parse_request(Sender::Shell, r#"{"cmd":"windowControl","action":"explode"}"#).is_err());
+    }
+
     /// Web pages can never reach history or bookmark commands: their only
     /// channel is `parse_content`, and no built-in page outside History and
     /// Bookmarks (and Settings for clearing data) is allowed them either.
@@ -1263,6 +1324,16 @@ mod tests {
             Request::OpenUrl { url: "https://b.example/".into(), new_tab: true },
             Request::OpenPage { page: "settings".into() },
             Request::ToggleBookmark,
+            Request::HitMap {
+                map: crate::frame::HitMap {
+                    strip_height: 36.0,
+                    interactive: vec![rect],
+                    minimize: rect,
+                    maximize: rect,
+                    close: rect,
+                },
+            },
+            Request::WindowControl { action: WindowAction::Maximize },
             Request::ShowPopup { popup: PopupKind::Shield, rect },
             Request::HidePopup,
             Request::Command { command: Command::ZoomIn },
@@ -1376,6 +1447,9 @@ mod tests {
                 },
             },
             Event::PopupClosed,
+            Event::CaptionState { hover: Some(CaptionButton::Maximize), pressed: false },
+            Event::CaptionState { hover: None, pressed: false },
+            Event::WindowState { maximized: true, active: false, fullscreen: false },
             Event::Popup {
                 content: PopupContent::Unlock {
                     tab_id: 1,

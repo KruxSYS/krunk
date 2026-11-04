@@ -15,10 +15,26 @@ public static class U {
   [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
   [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h, int x, int y, int w, int hh, bool r);
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+  [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr c);
+  [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
+  [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
   [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
 }
 '@
+Add-Type -TypeDefinition @'
+using System; using System.Runtime.InteropServices;
+public static class SI {
+  [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT { public int dx, dy; public uint mouseData, dwFlags, time; public IntPtr extra; }
+  [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public MOUSEINPUT mi; }
+  [DllImport("user32.dll", SetLastError=true)] public static extern uint SendInput(uint n, INPUT[] i, int size);
+  public static uint Mouse(uint flags, int dx, int dy) { var a = new INPUT[1]; a[0].type = 0; a[0].mi.dwFlags = flags; a[0].mi.dx = dx; a[0].mi.dy = dy; return SendInput(1, a, Marshal.SizeOf(typeof(INPUT))); }
+}
+'@
+# Physical pixels everywhere (screenshots, cursor, window rects), also after a live DPI
+# change: per-monitor-v2 awareness (-4).
+[U]::SetProcessDpiAwarenessContext([IntPtr](-4)) | Out-Null
 $Shots = 'C:\pipeline\krunk\shots'
 New-Item -ItemType Directory -Force $Shots | Out-Null
 function Shot([string]$name) {
@@ -30,26 +46,45 @@ function Shot([string]$name) {
   $g.Dispose(); $bmp.Dispose()
 }
 function Keys([string]$k, [int]$wait = 300) { [System.Windows.Forms.SendKeys]::SendWait($k); Start-Sleep -Milliseconds $wait }
-function Move([int]$x, [int]$y) { [U]::SetCursorPos($x, $y) | Out-Null; Start-Sleep -Milliseconds 80 }
+# Real mouse-move input (absolute, normalized to 0..65535): the window
+# move/size loop ignores cursor jumps made with SetCursorPos.
+function Move([int]$x, [int]$y) {
+  $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+  $nx = [int](($x - $b.Left) * 65535 / ($b.Width - 1)); $ny = [int](($y - $b.Top) * 65535 / ($b.Height - 1))
+  [U]::SetCursorPos($x, $y) | Out-Null; [U]::mouse_event(0x8001, $nx, $ny, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 40
+}
 function Click([int]$x, [int]$y, [int]$wait = 300) {
-  Move $x $y; [U]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 60
-  [U]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds $wait
+  [U]::SetCursorPos($x, $y) | Out-Null; AbsMove $x $y; Start-Sleep -Milliseconds 150
+  [SI]::Mouse(2, 0, 0) | Out-Null; Start-Sleep -Milliseconds 60; [SI]::Mouse(4, 0, 0) | Out-Null; Start-Sleep -Milliseconds $wait
 }
 function DoubleClick([int]$x, [int]$y) {
-  Move $x $y
-  for ($i = 0; $i -lt 2; $i++) { [U]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero); [U]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 70 }
-  Start-Sleep -Milliseconds 400
+  [U]::SetCursorPos($x, $y) | Out-Null; AbsMove $x $y; Start-Sleep -Milliseconds 300
+  for ($i = 0; $i -lt 2; $i++) { [SI]::Mouse(2, 0, 0) | Out-Null; Start-Sleep -Milliseconds 30; [SI]::Mouse(4, 0, 0) | Out-Null; Start-Sleep -Milliseconds 60 }
+  Start-Sleep -Milliseconds 500
 }
 function RightClick([int]$x, [int]$y, [int]$wait = 500) {
-  Move $x $y; [U]::mouse_event(8, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 60
-  [U]::mouse_event(16, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds $wait
+  [U]::SetCursorPos($x, $y) | Out-Null; AbsMove $x $y; Start-Sleep -Milliseconds 150
+  [SI]::Mouse(8, 0, 0) | Out-Null; Start-Sleep -Milliseconds 60; [SI]::Mouse(16, 0, 0) | Out-Null; Start-Sleep -Milliseconds $wait
+}
+# Window moves and resizes need SendInput moves and a hold after the press
+# (the modal move/size loop starts late); page drags work the same way.
+function AbsMove([int]$x, [int]$y) {
+  $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+  [SI]::Mouse(0x8001, [int](($x - $b.Left) * 65535 / ($b.Width - 1)), [int](($y - $b.Top) * 65535 / ($b.Height - 1))) | Out-Null
 }
 function Drag([int]$x1, [int]$y1, [int]$x2, [int]$y2, [int]$steps = 20) {
-  Move $x1 $y1; [U]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 150
-  for ($i = 1; $i -le $steps; $i++) { Move ($x1 + ($x2 - $x1) * $i / $steps) ($y1 + ($y2 - $y1) * $i / $steps) }
-  Start-Sleep -Milliseconds 150; [U]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 300
+  [U]::SetCursorPos($x1, $y1) | Out-Null; AbsMove $x1 $y1; Start-Sleep -Milliseconds 150
+  [SI]::Mouse(2, 0, 0) | Out-Null; Start-Sleep -Milliseconds 500
+  for ($i = 1; $i -le $steps; $i++) { AbsMove ($x1 + ($x2 - $x1) * $i / $steps) ($y1 + ($y2 - $y1) * $i / $steps); Start-Sleep -Milliseconds 30 }
+  Start-Sleep -Milliseconds 300; [SI]::Mouse(4, 0, 0) | Out-Null; Start-Sleep -Milliseconds 400
 }
-function MainWindow([string]$class = 'KrunkWindow') { [U]::FindWindow($class, $null) }
+function MainWindow([string]$class = 'KrunkWindow') { [U]::FindWindow($class, [NullString]::Value) }
 function WindowRect([IntPtr]$h) { $r = New-Object U+RECT; [U]::GetWindowRect($h, [ref]$r) | Out-Null; $r }
+# Client area of a window in screen coordinates, and its DPI scale.
+function ClientRect([IntPtr]$h) {
+  $c = New-Object U+RECT; [U]::GetClientRect($h, [ref]$c) | Out-Null
+  $p = New-Object U+POINT; [U]::ClientToScreen($h, [ref]$p) | Out-Null
+  [pscustomobject]@{ Left = $p.X; Top = $p.Y; Right = $p.X + $c.Right; Bottom = $p.Y + $c.Bottom; Scale = [U]::GetDpiForWindow($h) / 96.0 }
+}
 function Log([string]$line) { Add-Content "$Shots\run.log" "$(Get-Date -Format HH:mm:ss.fff) $line" }
 function Go([string]$url, [int]$wait = 2500) { Keys '^l'; Keys $url 100; Keys '{ENTER}' $wait }

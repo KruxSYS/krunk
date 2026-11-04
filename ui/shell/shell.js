@@ -53,7 +53,88 @@
       attachDrag(tab, t.id);
       box.appendChild(tab);
     });
+    layoutTabs();
   }
+
+  // Narrow tabs hide inactive close buttons; the active tab stays in view
+  // when the row scrolls; the host gets the new hit-test map.
+  const TAB_WIDTH = 256, TAB_GAP = 2;
+  function layoutTabs() {
+    const box = $('tabs');
+    // The row asks for every tab at full width and shrinks (evenly, through
+    // the tabs' own flex-shrink) when the window is narrower.
+    const n = box.children.length;
+    box.style.flexBasis = n ? (n * TAB_WIDTH + (n - 1) * TAB_GAP) + 'px' : '0px';
+    const first = box.querySelector('.tab');
+    box.classList.toggle('narrow', !!first && first.getBoundingClientRect().width < 100);
+    const active = box.querySelector('.tab.active');
+    if (active) active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    reportHitMap();
+  }
+
+  // ---------- frameless window ----------
+  // The host hit-tests the window: everything in the tab row that is not a
+  // tab, the "+" button or a caption button drags the window.
+  function rectOf(node) {
+    const r = node.getBoundingClientRect();
+    return { x: Math.max(0, r.left), y: Math.max(0, r.top), width: Math.max(0, r.width), height: Math.max(0, r.height) };
+  }
+  let lastMap = '';
+  function reportHitMap() {
+    const box = $('tabs');
+    const tabs = box.querySelectorAll('.tab');
+    const interactive = [rectOf($('newtab'))];
+    if (tabs.length) {
+      // The tabs as one band: the visible part of the scrolling row.
+      const row = box.getBoundingClientRect();
+      const last = tabs[tabs.length - 1].getBoundingClientRect();
+      const right = Math.min(row.right, last.right);
+      interactive.push({ x: Math.max(0, row.left), y: Math.max(0, last.top), width: Math.max(0, right - row.left), height: last.height });
+    }
+    const map = {
+      stripHeight: $('tabstrip').getBoundingClientRect().height,
+      interactive: interactive,
+      minimize: rectOf($('win-min')),
+      maximize: rectOf($('win-max')),
+      close: rectOf($('win-close')),
+    };
+    const json = JSON.stringify(map);
+    if (json === lastMap) return;
+    lastMap = json;
+    LB.post('hitMap', { map: map });
+  }
+  new ResizeObserver(function () { layoutTabs(); }).observe($('tabstrip'));
+  $('tabs').addEventListener('scroll', reportHitMap);
+  $('tabs').addEventListener('wheel', function (e) {
+    const box = $('tabs');
+    if (box.scrollWidth <= box.clientWidth) return;
+    e.preventDefault();
+    box.scrollLeft += Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+  }, { passive: false });
+
+  // Mouse clicks on these are handled natively (they are hit-tested as
+  // caption buttons); a click event only arrives from keyboard or tests.
+  [['win-min', 'minimize'], ['win-max', 'maximize'], ['win-close', 'close']].forEach(function (b) {
+    $(b[0]).addEventListener('click', function () { LB.post('windowControl', { action: b[1] }); });
+  });
+  const CAPTION_IDS = { minimize: 'win-min', maximize: 'win-max', close: 'win-close' };
+  LB.on('captionState', function (m) {
+    Object.keys(CAPTION_IDS).forEach(function (k) {
+      const node = $(CAPTION_IDS[k]);
+      node.classList.toggle('hover', m.hover === k);
+      node.classList.toggle('pressed', m.hover === k && !!m.pressed);
+    });
+  });
+  LB.on('windowState', function (m) {
+    const root = document.documentElement;
+    root.classList.toggle('maximized', !!m.maximized);
+    root.classList.toggle('inactive', !m.active);
+    root.classList.toggle('fullscreen', !!m.fullscreen);
+    $('win-max-use').setAttribute('href', m.maximized ? '#i-win-restore' : '#i-win-max');
+    $('win-max').title = m.maximized ? 'Restore' : 'Maximize';
+    $('win-max').setAttribute('aria-label', $('win-max').title);
+    reportHitMap();
+  });
 
   function svgIcon(name, cls) {
     const ns = 'http://www.w3.org/2000/svg';
@@ -153,9 +234,6 @@
   $('home').addEventListener('click', function () { LB.post('home'); });
   $('newtab').addEventListener('click', function () { LB.post('newTab', {}); });
   $('star').addEventListener('click', function () { LB.post('toggleBookmark'); });
-  $('tabstrip').addEventListener('dblclick', function (e) {
-    if (e.target === $('tabstrip') || e.target === $('tabs')) LB.post('newTab', {});
-  });
 
   // ---------- address bar ----------
   const address = $('address');
@@ -276,6 +354,9 @@
     document.documentElement.classList.toggle('light', m.theme === 'light');
   });
   LB.on('focusAddressBar', function () { address.focus(); address.select(); });
+  // The address bar may be focused before the shell itself has the keyboard
+  // focus: select again when it arrives, so typing replaces the text.
+  window.addEventListener('focus', function () { if (document.activeElement === address) address.select(); });
   LB.on('bookmarksBar', function (m) { renderBar(m.items); });
   LB.on('downloadsChanged', function (m) {
     // Shown once something was downloaded in this session; badge while active.
