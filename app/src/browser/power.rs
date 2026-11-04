@@ -103,9 +103,13 @@ impl Browser {
                 info!("tab {id}: low memory");
             }
             Action::Suspend => {
-                c.freeze();
+                // The second stage does not freeze the page: in CEF 156 a
+                // windowed browser never repaints after an unfreeze
+                // (Page.setWebLifecycleState). It collects garbage again;
+                // Chromium throttles the hidden page's timers meanwhile.
+                c.set_memory_low(true);
                 self.set_stage(id, Stage::Suspended, now);
-                info!("tab {id}: frozen");
+                info!("tab {id}: asleep (second stage)");
                 self.mem_report_line("suspend");
             }
             Action::Discard => {
@@ -130,9 +134,6 @@ impl Browser {
             return;
         };
         if needs_wake(stage) {
-            if stage == Stage::Suspended {
-                c.wake();
-            }
             c.set_memory_low(false);
             self.set_stage(id, Stage::Awake, now_ms());
             info!("tab {id}: woken ({stage:?})");

@@ -47,12 +47,20 @@ pub struct Scripts {
     pub page_tokens: bool,
     /// Login form detection and fill (main frame).
     pub login: bool,
+    /// Report whether the page plays audio (all frames).
+    pub audio: bool,
 }
 
 impl Scripts {
     pub(super) fn to_dictionary(self) -> Option<DictionaryValue> {
         let d = dictionary_value_create()?;
-        for (k, v) in [("gpc", self.gpc), ("dnt", self.dnt), ("tokens", self.page_tokens), ("login", self.login)] {
+        for (k, v) in [
+            ("gpc", self.gpc),
+            ("dnt", self.dnt),
+            ("tokens", self.page_tokens),
+            ("login", self.login),
+            ("audio", self.audio),
+        ] {
             d.set_bool(Some(&CefString::from(k)), i32::from(v));
         }
         Some(d)
@@ -60,7 +68,13 @@ impl Scripts {
 
     pub(super) fn from_dictionary(d: &DictionaryValue) -> Scripts {
         let get = |k: &str| d.bool(Some(&CefString::from(k))) == 1;
-        Scripts { gpc: get("gpc"), dnt: get("dnt"), page_tokens: get("tokens"), login: get("login") }
+        Scripts {
+            gpc: get("gpc"),
+            dnt: get("dnt"),
+            page_tokens: get("tokens"),
+            login: get("login"),
+            audio: get("audio"),
+        }
     }
 }
 
@@ -228,6 +242,7 @@ pub(super) struct Events {
     pub download_update: Slot<dyn FnMut(DownloadUpdate)>,
     pub created: Slot<dyn FnMut()>,
     pub crashed: Slot<dyn FnMut(String)>,
+    pub audio: Slot<dyn FnMut(bool)>,
 }
 
 /// Remembered until the browser exists.
@@ -253,7 +268,12 @@ pub(super) struct ViewInner {
     closed: Cell<bool>,
     /// Net error of the current load cycle (reported when loading stops).
     pub load_error: Cell<Option<i32>>,
+    /// Frames (by identifier) that report playing audio.
+    audible_frames: RefCell<std::collections::HashSet<String>>,
     devtools_id: Cell<i32>,
+    /// DevTools protocol calls in flight (id -> method), for error logs.
+    devtools_calls: RefCell<HashMap<i32, String>>,
+    devtools_observer: RefCell<Option<Registration>>,
     pub ev: Events,
 }
 
@@ -304,7 +324,10 @@ impl View {
             started: Cell::new(false),
             closed: Cell::new(false),
             load_error: Cell::new(None),
+            audible_frames: RefCell::new(std::collections::HashSet::new()),
             devtools_id: Cell::new(0),
+            devtools_calls: RefCell::new(HashMap::new()),
+            devtools_observer: RefCell::new(None),
             ev: Events::default(),
         });
         VIEWS.with(|v| v.borrow_mut().insert(key, Rc::downgrade(&inner)));
@@ -554,25 +577,25 @@ impl View {
         let Some(mut dict) = value.dictionary() else { return };
         let id = self.0.devtools_id.get() + 1;
         self.0.devtools_id.set(id);
-        h.execute_dev_tools_method(id, Some(&CefString::from(method)), Some(&mut dict));
-    }
-
-    /// Background-tab sleep, first stage: a memory-pressure signal makes the
-    /// renderer drop caches and collect garbage (the view is already hidden).
-    pub fn set_memory_low(&self, low: bool) {
-        if low {
-            self.devtools_method("Memory.simulatePressureNotification", &serde_json::json!({ "level": "critical" }));
+        if self.0.devtools_observer.borrow().is_none() {
+            let mut observer = client::devtools_observer(self.0.key);
+            *self.0.devtools_observer.borrow_mut() = h.add_dev_tools_message_observer(Some(&mut observer));
+        }
+        self.0.devtools_calls.borrow_mut().insert(id, method.to_string());
+        if h.execute_dev_tools_method(id, Some(&CefString::from(method)), Some(&mut dict)) == 0 {
+            self.0.devtools_calls.borrow_mut().remove(&id);
+            crate::log::warning!("DevTools method {method} could not be sent");
         }
     }
 
-    /// Second stage: freeze the page (no timers, tasks or network callbacks
-    /// run until [`View::wake`]).
-    pub fn freeze(&self) {
-        self.devtools_method("Page.setWebLifecycleState", &serde_json::json!({ "state": "frozen" }));
-    }
-
-    pub fn wake(&self) {
-        self.devtools_method("Page.setWebLifecycleState", &serde_json::json!({ "state": "active" }));
+    /// Background-tab sleep, first stage (the view is already hidden): a
+    /// full garbage collection of the page's JavaScript heap. (A simulated
+    /// memory-pressure signal would reach every renderer, the visible tab's
+    /// included, and left it unable to paint.)
+    pub fn set_memory_low(&self, low: bool) {
+        if low {
+            self.devtools_method("HeapProfiler.collectGarbage", &serde_json::json!({}));
+        }
     }
 
     /// `prefers-color-scheme` for this browser's pages: `None` follows
@@ -676,6 +699,11 @@ impl View {
         self.0.ev.created.set(Box::new(f));
     }
 
+    /// The page started or stopped playing audio (any frame).
+    pub fn on_audio(&self, f: impl FnMut(bool) + 'static) {
+        self.0.ev.audio.set(Box::new(f));
+    }
+
     /// The renderer process of this view ended unexpectedly.
     pub fn on_crashed(&self, f: impl FnMut(String) + 'static) {
         self.0.ev.crashed.set(Box::new(f));
@@ -683,6 +711,37 @@ impl View {
 }
 
 impl ViewInner {
+    /// A DevTools protocol call finished; failures are logged.
+    pub(super) fn devtools_result(&self, id: i32, success: bool, result: &[u8]) {
+        let Some(method) = self.devtools_calls.borrow_mut().remove(&id) else { return };
+        if !success {
+            let text = String::from_utf8_lossy(&result[..result.len().min(300)]).into_owned();
+            crate::log::warning!("DevTools method {method} failed: {text}");
+        }
+    }
+
+    /// A frame reported its audio state (`frame` = None: forget all frames,
+    /// e.g. a new top-level document).
+    pub(super) fn frame_audio(&self, frame: Option<String>, playing: bool) {
+        let (before, after) = {
+            let mut set = self.audible_frames.borrow_mut();
+            let before = !set.is_empty();
+            match frame {
+                Some(f) if playing => {
+                    set.insert(f);
+                }
+                Some(f) => {
+                    set.remove(&f);
+                }
+                None => set.clear(),
+            }
+            (before, !set.is_empty())
+        };
+        if before != after {
+            self.ev.audio.with(|f| f(after));
+        }
+    }
+
     /// Wipes our copy of a page message after the callback ran.
     pub(super) fn deliver_message(&self, source: &MessageSource, json: Zeroizing<String>) {
         self.ev.message.with(|f| f(source, &json));

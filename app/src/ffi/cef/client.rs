@@ -4,7 +4,7 @@
 //! touches only the view's `Send + Sync` network policy.
 
 use super::net::{self, RequestPolicy};
-use super::renderer::TO_BROWSER;
+use super::renderer::{AUDIO_TO_BROWSER, TO_BROWSER};
 use super::view::{
     child_window_info, lookup, DownloadControl, DownloadStart, DownloadStatus, DownloadUpdate, KeyPress, LoadingState,
     MessageSource, NavigationStart, NewWindow, Role, View, ViewInner,
@@ -93,7 +93,15 @@ wrap_client! {
             message: Option<&mut ProcessMessage>,
         ) -> c_int {
             let (Some(browser), Some(frame), Some(message)) = (browser, frame, message) else { return 0 };
-            if CefString::from(&message.name()).to_string() != TO_BROWSER {
+            let name = CefString::from(&message.name()).to_string();
+            if name == AUDIO_TO_BROWSER {
+                let playing = message.argument_list().is_some_and(|a| a.bool(0) == 1);
+                if let Some(view) = lookup(self.key) {
+                    view.frame_audio(Some(CefString::from(&frame.identifier()).to_string()), playing);
+                }
+                return 1;
+            }
+            if name != TO_BROWSER {
                 return 0;
             }
             let Some(view) = lookup(self.key) else { return 1 };
@@ -233,6 +241,8 @@ wrap_load_handler! {
                 return;
             }
             if let Some(view) = lookup(self.key) {
+                // A new document: frames of the old one no longer play.
+                view.frame_audio(None, false);
                 view.ev.load_start.with(|f| f());
             }
         }
@@ -614,6 +624,30 @@ wrap_life_span_handler! {
         fn on_before_close(&self, browser: Option<&mut Browser>) {
             if let Some(b) = browser {
                 browser_closed(b, false);
+            }
+        }
+    }
+}
+
+/// Observer of this view's DevTools protocol results (UI thread).
+pub(super) fn devtools_observer(key: u64) -> DevToolsMessageObserver {
+    ResultLogger::new(key)
+}
+
+wrap_dev_tools_message_observer! {
+    struct ResultLogger {
+        key: u64,
+    }
+    impl DevToolsMessageObserver {
+        fn on_dev_tools_method_result(
+            &self,
+            _browser: Option<&mut Browser>,
+            message_id: c_int,
+            success: c_int,
+            result: Option<&[u8]>,
+        ) {
+            if let Some(view) = lookup(self.key) {
+                view.devtools_result(message_id, success == 1, result.unwrap_or_default());
             }
         }
     }

@@ -310,7 +310,7 @@ impl Browser {
         let net = Rc::new(TabNet::new(self.net.clone()));
         let scripts = {
             let s = self.settings.borrow();
-            Scripts { gpc: s.send_gpc, dnt: s.send_dnt, page_tokens: s.adblock_enabled, login: true }
+            Scripts { gpc: s.send_gpc, dnt: s.send_dnt, page_tokens: s.adblock_enabled, login: true, audio: true }
         };
         let view =
             View::new(ViewOptions { role: Role::Tab, private, scripts, background: 0, policy: Some(net.policy()) });
@@ -330,6 +330,9 @@ impl Browser {
         let popup = adopted.is_some();
         let (view, net) = adopted.unwrap_or_else(|| self.new_tab_view(private));
         let host_navigation = Rc::new(Cell::new(false));
+        let audio = Rc::new(Cell::new(false));
+        let audio2 = audio.clone();
+        view.on_audio(move |playing| audio2.set(playing));
         self.hook_tab(id, &view, host_navigation.clone(), net.clone());
         self.hook_blocking(&view, net.clone());
         self.hook_downloads(&view, Some(id));
@@ -352,7 +355,7 @@ impl Browser {
                 net,
                 stage: Cell::new(lb_core::memory::Stage::Awake),
                 stage_since: Cell::new(now_ms()),
-                audio: Rc::new(Cell::new(false)),
+                audio,
                 downloads: Rc::new(Cell::new(0)),
             },
         );
@@ -477,7 +480,6 @@ impl Browser {
     }
 
     fn activate_view(&self, from: Option<TabId>, to: TabId) {
-        self.wake_tab(to);
         self.hide_popup();
         if let Some(f) = from {
             self.stop_find(f);
@@ -488,6 +490,8 @@ impl Browser {
         if let Some(t) = self.tab_view(to) {
             t.set_visible(true);
         }
+        // Wake after showing: a frozen page resumes as a visible one.
+        self.wake_tab(to);
         self.layout();
         self.focus_active();
         self.update_title();

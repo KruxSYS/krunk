@@ -18,6 +18,8 @@ use std::collections::HashMap;
 /// Process message names.
 pub(super) const TO_BROWSER: &str = "lb.msg";
 pub(super) const TO_PAGE: &str = "lb.evt";
+/// A frame started or stopped playing audio (`bool`).
+pub(super) const AUDIO_TO_BROWSER: &str = "lb.audio";
 /// Bigger messages from a page are dropped (the largest legitimate ones are
 /// bookmark imports, capped by the UI at a few MB).
 const MAX_MESSAGE: usize = 8 * 1024 * 1024;
@@ -45,6 +47,39 @@ const SHIM: &str = r#"(function (send) {
       try { copy[i](ev); } catch (e) { setTimeout(function () { throw e; }); }
     }
   };
+})"#;
+
+/// Reports whether this frame plays audio: unmuted media elements that
+/// are playing (in the document or not) and running Web Audio contexts.
+/// The native `report` function stays in the closure.
+const AUDIO_TRACKER: &str = r#"(function (report) {
+  'use strict';
+  var playing = new Set(), contexts = new Set(), last = false, hooked = new WeakSet();
+  function update() {
+    var now = playing.size > 0 || contexts.size > 0;
+    if (now !== last) { last = now; report(now); }
+  }
+  function track(el) {
+    if (hooked.has(el)) return;
+    hooked.add(el);
+    var on = function () { if (!el.paused && !el.muted && el.volume > 0) playing.add(el); else playing.delete(el); update(); };
+    ['playing', 'pause', 'ended', 'emptied', 'volumechange'].forEach(function (t) { el.addEventListener(t, on); });
+    on();
+  }
+  document.addEventListener('play', function (e) { if (e.target instanceof HTMLMediaElement) track(e.target); }, true);
+  var play = HTMLMediaElement.prototype.play;
+  HTMLMediaElement.prototype.play = function () { track(this); return play.apply(this, arguments); };
+  ['AudioContext', 'webkitAudioContext'].forEach(function (name) {
+    var AC = window[name];
+    if (typeof AC !== 'function') return;
+    window[name] = new Proxy(AC, { construct: function (t, a, n) {
+      var c = Reflect.construct(t, a, n);
+      var on = function () { if (c.state === 'running') contexts.add(c); else contexts.delete(c); update(); };
+      c.addEventListener('statechange', on);
+      on();
+      return c;
+    } });
+  });
 })"#;
 
 thread_local! {
@@ -124,6 +159,9 @@ fn context_created(scripts: Scripts, frame: &mut Frame, context: &mut V8Context)
     if scripts.dnt {
         eval(context, assets::inject_script("dnt.js"));
     }
+    if scripts.audio {
+        install_audio_tracker(context);
+    }
     if !main {
         return;
     }
@@ -159,6 +197,15 @@ fn install_bridge(frame: &mut Frame, context: &mut V8Context) {
         let id = CefString::from(&frame.identifier()).to_string();
         DISPATCH.with(|d| d.borrow_mut().insert(id, dispatch));
     }
+}
+
+fn install_audio_tracker(context: &mut V8Context) {
+    let Some(tracker) = eval(context, AUDIO_TRACKER) else { return };
+    let mut handler = ReportAudio::new();
+    let Some(report) = v8_value_create_function(Some(&CefString::from("report")), Some(&mut handler)) else {
+        return;
+    };
+    let _ = tracker.execute_function(None, Some(&[Some(report)]));
 }
 
 /// Browser to page: calls the frame's dispatch function with the JSON text.
@@ -201,6 +248,29 @@ wrap_v8_handler! {
             let Some(mut message) = process_message_create(Some(&CefString::from(TO_BROWSER))) else { return 1 };
             if let Some(args) = message.argument_list() {
                 args.set_string(0, Some(&text));
+            }
+            frame.send_process_message(ProcessId::BROWSER, Some(&mut message));
+            1
+        }
+    }
+}
+
+wrap_v8_handler! {
+    struct ReportAudio;
+    impl V8Handler {
+        fn execute(
+            &self,
+            _name: Option<&CefString>,
+            _object: Option<&mut V8Value>,
+            arguments: Option<&[Option<V8Value>]>,
+            _retval: Option<&mut Option<V8Value>>,
+            _exception: Option<&mut CefString>,
+        ) -> ::std::os::raw::c_int {
+            let playing = arguments.and_then(|a| a.first()).and_then(|a| a.as_ref()).is_some_and(|v| v.bool_value() == 1);
+            let Some(frame) = v8_context_get_current_context().and_then(|c| c.frame()) else { return 1 };
+            let Some(mut message) = process_message_create(Some(&CefString::from(AUDIO_TO_BROWSER))) else { return 1 };
+            if let Some(args) = message.argument_list() {
+                args.set_bool(0, i32::from(playing));
             }
             frame.send_process_message(ProcessId::BROWSER, Some(&mut message));
             1
