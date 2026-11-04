@@ -7,10 +7,15 @@ driven with `scripts/vm.sh`.
 
 ## 1. Install and first run
 1. Check the hash: `Get-FileHash LightBrowser.exe` matches `SHA256SUMS`.
-2. **Without the WebView2 runtime:** on a machine without it (for example Windows Sandbox
-   after uninstalling it, or an old Windows 10 image), starting the exe shows the "LightBrowser – WebView2
-   Runtime required" dialog with the download link, and offers to open the page. Nothing
-   else happens.
+2. **Without the WebView2 runtime:** the runtime cannot be removed from Windows 11, so point
+   LightBrowser at an empty runtime folder instead:
+   - Non-elevated: start it with `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER=C:\empty`.
+   - Elevated (WebView2 ignores `WEBVIEW2_*` variables there), as administrator:
+     `reg add HKLM\Software\Policies\Microsoft\Edge\WebView2\BrowserExecutableFolder /v LightBrowser.exe /d C:\empty`
+   - Expected: the "LightBrowser – WebView2 Runtime required" dialog with the download link.
+     "No" exits with no crash; the log says "WebView2 runtime not found".
+   - **Remove the registry value afterwards**
+     (`reg delete … /v LightBrowser.exe /f`) and check that the browser starts normally again.
 3. **With the runtime:**
    - The window opens with one new tab and the address bar focused.
    - `%LOCALAPPDATA%\LightBrowser\` is created with `browser.db`, `engine.dat`, `profile\`,
@@ -399,3 +404,65 @@ working set. With `-CommandLine` it also prints the WebView2 browser process com
    - The last live private tab is never discarded.
 8. The test options are not in the Settings UI. Without `--sleep-test-seconds`, the timers are
    the settings values in minutes.
+
+## Verification recipes (final pass)
+These are the methods used on the Windows 11 VM (`scripts/vm.sh`). The test server, test pages
+and proxy are in the pipeline workspace under `screenshots/verify2/`. They are small PowerShell
+scripts: `serve.ps1` is an HttpListener with one folder per port; `proxy.ps1` is a logging
+HTTP/CONNECT proxy on 127.0.0.1:8888.
+1. **Cross-origin iframe never filled:**
+   - Serve `login.html` on `http://127.0.0.1:8081`. It has a login form plus an iframe of
+     `http://localhost:8082/frame.html`, which has a login form of its own.
+   - Save a login for each origin on `lb://passwords`.
+   - On the top page: nothing is filled on load. The key icon offers only the 127.0.0.1:8081
+     login, and filling it leaves the iframe's fields empty.
+   - Submitting a login inside the iframe gives no "Save password?".
+   - Control: `http://localhost:8082/frame.html` opened directly offers its own login.
+2. **Auto-lock on Windows lock and sleep:**
+   - On a real PC, unlock the vault, press **Win+L**, sign in again: the log says
+     "vault locked (Windows session locked)".
+   - Unlock, then sleep the PC (Start → Power → Sleep) and wake it: "vault locked (system suspend)".
+   - Without locking the session (VM): post `WM_WTSSESSION_CHANGE` (0x2B1, wParam 7) and
+     `WM_POWERBROADCAST` (0x218, wParam 4) to the `LightBrowserWindow` window from a helper in the
+     same session. The log lines are the same.
+3. **Cosmetic filtering:**
+   - On `https://edition.cnn.com/` (rules `cnn.com##.stack__ads`, `##.zone__ads`,
+     `##.ad-slot-header__wrapper`), run this in the DevTools console:
+     `Array.from(document.querySelectorAll(".stack__ads, .zone__ads, .ad-slot-header__wrapper")).map(e => getComputedStyle(e).display)`.
+     Every value is `none`.
+   - Shield → "Allow ads on this site", then run it again: the values are `block`, and the top ad
+     slot is visible.
+4. **Third-party cookies:**
+   - Serve `cookie-top.html` on `http://127.0.0.1:8081`. It embeds `http://localhost:8082/set-cookie`,
+     which answers `Set-Cookie: tp_header=1; SameSite=None; Secure`, sets `tp_js` from script, and
+     reports `document.cookie`.
+   - With "Block third-party cookies" on (the default): the iframe reports `[]`, and a reload sends
+     no Cookie header (server log).
+   - Open `http://localhost:8082/set-cookie` directly: both cookies are set (first party). Back on
+     the top page, the iframe still reports `[]`.
+   - With the setting off and after a restart: the iframe reports `[tp_header=1; tp_js=1]`, and the
+     reload sends them.
+5. **Daily list update:**
+   - The log at start says `filter lists: last checked X h ago; next check in Y h`. A relaunch
+     within 24 h downloads nothing: `state.json` `lastCheckMs` and the list files are unchanged
+     after more than 60 s.
+   - Subtract 25 h from `lastCheckMs` in `%LOCALAPPDATA%\LightBrowser\filters\state.json` and
+     start: about 60 s later the log says `update due; updating`, then
+     `filter lists checked; … next check in 24.0 h`.
+6. **New-tab page makes no network requests:** on the new-tab page, open DevTools → Network,
+   press Ctrl+R, and filter `-domain:lightbrowser.invalid`. Expected "0 / N requests".
+7. **Tracking-prevention level:**
+   - On a tracker-heavy page (for example a Stack Overflow question), filter the DevTools console
+     on "Tracking Prevention". At Strict there are many "blocked" messages.
+   - Set the level to Off (applies without a restart) and reload: none.
+8. **Download folder:** Settings → Downloads → "Change…" opens a native folder picker. After
+   picking a folder, the next download is saved there.
+9. **Startup with the homepage:** set the homepage and choose "Open the homepage", then restart.
+   A single tab opens on the homepage.
+10. **Update now:** the "Last checked" time changes, and the log says "filter lists checked".
+11. **Proxy:**
+    - Run a local proxy, set "Proxy server" to `127.0.0.1:8888`, and click "Restart now". The
+      browser arguments contain `--proxy-server=127.0.0.1:8888`.
+    - The proxy log shows `CONNECT host:443` for every site visited.
+    - With the proxy stopped, pages show "You're not connected".
+

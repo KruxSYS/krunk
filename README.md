@@ -217,6 +217,7 @@ line from the process list. With default settings it contains:
 ```
 --user-data-dir="C:\Users\pipe\AppData\Local\LightBrowser\profile\EBWebView" ...
 --disable-domain-reliability
+--test-third-party-cookie-phaseout
 --disable-features=AutofillServerCommunication,MediaRouter,OptimizationHints,InterestFeedContentSuggestions,msEdgeShoppingAssistant,msSmartScreenProtection
 --no-pings
 ```
