@@ -1,0 +1,6 @@
+# Windows (MSVC) builds of LightBrowser.dll.
+# - Static CRT (/MT): CEF's libcef_dll_wrapper is built with the static CRT, and a static CRT
+#   means LightBrowser.dll needs no Visual C++ redistributable on the user's PC.
+# - /ignore:4099: lld-link notes that libcmt.lib ships without PDBs; harmless.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=/ignore:4099"]

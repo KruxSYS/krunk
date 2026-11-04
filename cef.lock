@@ -1,0 +1,10 @@
+# CEF binary distribution used by LightBrowser (read by scripts/fetch-cef.sh).
+# To move to a newer CEF: bump the `cef` crate pin in app/Cargo.toml, update these values from
+# https://cef-builds.spotifycdn.com/index.json (windows64, "minimal"), run `scripts/fetch-cef.sh --pin`
+# to record the SHA-256, then `scripts/build-dist.sh --release`.
+CEF_CRATE=156.3.0+156.0.15
+CEF_VERSION=156.0.15
+CHROMIUM_VERSION=156.0.8078.80
+CEF_ARCHIVE=cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_windows64_minimal.tar.bz2
+CEF_SHA1=b690e035689ee20ba9d2500ac8953815bc7ed46a
+CEF_SHA256=371efdf09dce30569d9a0880727be79fea96ab5ba6f7be533c9332bb0790385a

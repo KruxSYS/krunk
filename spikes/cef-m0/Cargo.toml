@@ -1,0 +1,17 @@
+[package]
+name = "cef-m0"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "M0 spike: minimal CEF window through the bootstrap (not part of the product)"
+
+[lib]
+name = "LightBrowser"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+cef = { version = "=156.3.0", default-features = false, features = ["sandbox"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi"] }
+
+[workspace]

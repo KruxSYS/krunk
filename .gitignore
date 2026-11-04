@@ -17,3 +17,6 @@ __pycache__/
 *.pyc
 # Tool caches
 .serena/
+
+# CEF spike / cross builds
+spikes/*/target/
