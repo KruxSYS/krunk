@@ -1,4 +1,4 @@
-# Searches every file under LightBrowser's data dir (WebView2 profile included)
+# Searches every file under LightBrowser's data dir (engine profile included)
 # for the given strings, as ASCII and UTF-16LE. Use after saving a test login
 # to check that no password or master password is written in plaintext.
 #   powershell -NoProfile -ExecutionPolicy Bypass -File vm-leak-scan.ps1 -Needles 'pw1','master pw'

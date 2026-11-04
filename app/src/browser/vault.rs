@@ -642,8 +642,8 @@ impl Browser {
             m.push_str("}}");
             m
         };
-        // Posted to the top-level document only (WebView2 never delivers
-        // PostWebMessage to iframes).
+        // Posted to the main frame only (`View::post_json` sends the process
+        // message to the main frame; iframes have no bridge).
         if let Some(c) = self.tab_view(tab_id) {
             c.post_json(&message);
             self.touch_vault();
