@@ -213,9 +213,10 @@ impl Browser {
             info!("filter engine rebuilt");
             *f.engine.borrow_mut() = Some(engine);
         }
+        let checked = r.state.last_check_ms != f.update.borrow().last_check_ms;
         if let Some(e) = &r.state.last_error {
             warning!("filter-list update: {e}");
-        } else {
+        } else if checked {
             info!("filter lists checked; {}", r.state.schedule_note(now_ms()));
         }
         *f.update.borrow_mut() = r.state;

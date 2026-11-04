@@ -309,7 +309,7 @@ cargo xwin build --release --target x86_64-pc-windows-msvc
 
 ### Checks
 ```sh
-cargo test -p core                                                       # 166 unit tests
+cargo test -p core                                                       # 167 unit tests
 cargo clippy --workspace --all-targets -- -D warnings                    # Linux
 cargo clippy --workspace --all-targets --target x86_64-pc-windows-gnu -- -D warnings
 cargo fmt --all -- --check
