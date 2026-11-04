@@ -140,6 +140,11 @@ impl Browser {
     pub(super) fn apply_theme(&self) {
         let theme = self.settings.borrow().theme;
         engine::set_color_scheme(self.color_scheme());
+        let dark = self.color_scheme();
+        let views: Vec<engine::View> = self.views.borrow().values().map(|v| v.view.clone()).collect();
+        for v in views {
+            v.set_color_scheme(dark);
+        }
         self.send_shell_config();
         self.apply_frame_theme();
         let e = Event::Theme { theme }.to_json();

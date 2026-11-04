@@ -575,6 +575,21 @@ impl View {
         self.devtools_method("Page.setWebLifecycleState", &serde_json::json!({ "state": "active" }));
     }
 
+    /// `prefers-color-scheme` for this browser's pages: `None` follows
+    /// Windows. (The profile-wide colour scheme of CEF does not reach web
+    /// content in Alloy-style browsers.)
+    pub fn set_color_scheme(&self, dark: Option<bool>) {
+        let value = match dark {
+            None => "",
+            Some(true) => "dark",
+            Some(false) => "light",
+        };
+        self.devtools_method(
+            "Emulation.setEmulatedMedia",
+            &serde_json::json!({ "features": [{ "name": "prefers-color-scheme", "value": value }] }),
+        );
+    }
+
     /// Overrides the user agent of this browser (`None` = the default).
     pub fn set_user_agent(&self, ua: Option<&str>) {
         self.devtools_method("Emulation.setUserAgentOverride", &serde_json::json!({ "userAgent": ua.unwrap_or("") }));

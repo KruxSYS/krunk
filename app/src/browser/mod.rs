@@ -458,6 +458,9 @@ impl Browser {
         c.on_created(move || {
             if let Some(b) = weak.upgrade() {
                 b.apply_user_agent_to(id);
+                if let (Some(dark), Some(v)) = (b.color_scheme(), b.tab_view(id)) {
+                    v.set_color_scheme(Some(dark));
+                }
             }
         });
         c.on_crashed(move |reason| warning!("tab {id}: renderer ended ({reason})"));
