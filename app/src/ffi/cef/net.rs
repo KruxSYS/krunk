@@ -1,6 +1,7 @@
 //! Network hooks of a tab, on CEF's IO thread: every request of every tab
 //! (sub-resources, sub-frames, workers) goes through [`RequestPolicy`],
-//! which blocks ads and trackers and adds the privacy headers.
+//! which blocks ads and trackers, adds the privacy headers and decides
+//! which requests may send and store cookies.
 
 use cef::*;
 use std::sync::Arc;
@@ -30,6 +31,9 @@ pub enum NetVerdict {
 /// must be cheap and must not block.
 pub trait RequestPolicy: Send + Sync {
     fn check(&self, request: &NetRequest<'_>) -> NetVerdict;
+
+    /// May a request to `url` send or store cookies (third-party blocking)?
+    fn cookie_allowed(&self, url: &str) -> bool;
 }
 
 /// `RequestHandler::get_resource_request_handler` for a tab.
@@ -44,6 +48,15 @@ wrap_resource_request_handler! {
         initiator: String,
     }
     impl ResourceRequestHandler {
+        fn cookie_access_filter(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            _request: Option<&mut Request>,
+        ) -> Option<CookieAccessFilter> {
+            Some(CookieFilter::new(self.policy.clone()))
+        }
+
         fn on_before_resource_load(
             &self,
             _browser: Option<&mut Browser>,
@@ -67,6 +80,36 @@ wrap_resource_request_handler! {
                     ReturnValue::CONTINUE
                 }
             }
+        }
+    }
+}
+
+wrap_cookie_access_filter! {
+    struct CookieFilter {
+        policy: Arc<dyn RequestPolicy>,
+    }
+    impl CookieAccessFilter {
+        fn can_send_cookie(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            request: Option<&mut Request>,
+            _cookie: Option<&Cookie>,
+        ) -> ::std::os::raw::c_int {
+            let url = request.map(|r| CefString::from(&r.url()).to_string()).unwrap_or_default();
+            ::std::os::raw::c_int::from(self.policy.cookie_allowed(&url))
+        }
+
+        fn can_save_cookie(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            request: Option<&mut Request>,
+            _response: Option<&mut Response>,
+            _cookie: Option<&Cookie>,
+        ) -> ::std::os::raw::c_int {
+            let url = request.map(|r| CefString::from(&r.url()).to_string()).unwrap_or_default();
+            ::std::os::raw::c_int::from(self.policy.cookie_allowed(&url))
         }
     }
 }

@@ -45,8 +45,6 @@ pub struct EngineConfig {
     pub switches: Vec<String>,
     /// Empty = the engine's default user agent.
     pub user_agent: String,
-    /// Block third-party cookies (profile preference, see `net`).
-    pub block_third_party_cookies: bool,
 }
 
 /// Starts the browser once the engine is ready; returns what must stay alive
@@ -72,12 +70,6 @@ thread_local! {
     static INTERNAL: RefCell<Option<InternalServer>> = RefCell::new(None);
     /// A second `LightBrowser.exe` was started: its command-line arguments.
     static RELAUNCH: RefCell<Option<RelaunchHandler>> = RefCell::new(None);
-    static ENGINE: RefCell<Option<EngineState>> = const { RefCell::new(None) };
-}
-
-/// Engine settings needed after start-up (request contexts created later).
-struct EngineState {
-    block_third_party_cookies: bool,
 }
 
 /// Initializes CEF, runs `start` when it is ready, then runs the message loop
@@ -101,8 +93,6 @@ pub fn run_engine(config: EngineConfig, start: Start) -> Result<i32, String> {
         user_agent: CefString::from(config.user_agent.as_str()),
         ..Default::default()
     };
-    ENGINE
-        .with(|e| *e.borrow_mut() = Some(EngineState { block_third_party_cookies: config.block_third_party_cookies }));
     START.with(|s| *s.borrow_mut() = Some(start));
     let mut app = app::browser_app(config.switches);
     if initialize(Some(&main_args), Some(&settings), Some(&mut app), sandbox_info) != 1 {
@@ -237,10 +227,6 @@ fn private_context() -> Option<RequestContext> {
     PRIVATE_CONTEXT.with(|c| *c.borrow_mut() = Some(ctx.clone()));
     info!("private session started");
     Some(ctx)
-}
-
-fn block_third_party_cookies() -> bool {
-    ENGINE.with(|e| e.borrow().as_ref().is_some_and(|e| e.block_third_party_cookies))
 }
 
 /// Light/dark preference for web content (`prefers-color-scheme`) in both

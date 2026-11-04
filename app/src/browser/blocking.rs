@@ -13,6 +13,7 @@ use crate::ffi::window::AppNotifier;
 use crate::log::{info, warning};
 use lb_core::assets;
 use lb_core::blocker::{self, Allowlist, Blocker, Decision, ResourceKind};
+use lb_core::cookies;
 use lb_core::filterlists::{self, Rebuilt, UpdateState, MAX_LIST_BYTES};
 use lb_core::pages::Page;
 use lb_core::protocol::{ContentMessage, Event, PopupContent, Request};
@@ -77,6 +78,7 @@ pub(super) struct NetShared {
     enabled: AtomicBool,
     dnt: AtomicBool,
     gpc: AtomicBool,
+    block_third_party_cookies: AtomicBool,
     notifier: OnceLock<AppNotifier>,
     /// An APP_SHIELD message is on its way to the UI thread.
     shield_posted: AtomicBool,
@@ -108,6 +110,10 @@ impl NetShared {
     pub fn set_privacy_headers(&self, dnt: bool, gpc: bool) {
         self.dnt.store(dnt, Relaxed);
         self.gpc.store(gpc, Relaxed);
+    }
+
+    pub fn set_block_third_party_cookies(&self, on: bool) {
+        self.block_third_party_cookies.store(on, Relaxed);
     }
 
     pub fn set_notifier(&self, n: AppNotifier) {
@@ -165,6 +171,14 @@ impl RequestPolicy for TabPolicy {
         self.net.blocked_one();
         NetVerdict::Block
     }
+
+    fn cookie_allowed(&self, url: &str) -> bool {
+        if !self.net.block_third_party_cookies.load(Relaxed) {
+            return true;
+        }
+        let top = self.tab.top_url.lock().map(|t| t.clone()).unwrap_or_default();
+        !cookies::is_third_party(&top, url)
+    }
 }
 
 /// Per-tab network state (UI thread), with the part shared with the IO thread.
@@ -184,6 +198,11 @@ pub(super) struct TabNet {
     /// A rewrite navigation we issued and its chain length.
     rewriting: Cell<bool>,
     rewrites: Cell<u8>,
+    /// A top-level navigation started and has not been recorded in history
+    /// (a page can stop and start loading several times).
+    pub visit_pending: Cell<bool>,
+    /// The blocked count last written to the log.
+    logged_blocked: Cell<u32>,
 }
 
 impl TabNet {
@@ -199,6 +218,8 @@ impl TabNet {
             pending_upgrade: RefCell::new(None),
             rewriting: Cell::new(false),
             rewrites: Cell::new(0),
+            visit_pending: Cell::new(false),
+            logged_blocked: Cell::new(0),
         }
     }
 
@@ -226,13 +247,14 @@ impl Browser {
     /// Loads the allowlist and the engine (from cache if valid, otherwise
     /// compiled on a worker) and schedules the daily update check.
     pub(super) fn init_filters(&self) {
-        let (enabled, dnt, gpc) = {
+        let (enabled, dnt, gpc, block_3pc) = {
             let s = self.settings.borrow();
-            (s.adblock_enabled, s.send_dnt, s.send_gpc)
+            (s.adblock_enabled, s.send_dnt, s.send_gpc, s.block_third_party_cookies)
         };
         let f = &self.filters;
         self.net.set_enabled(enabled);
         self.net.set_privacy_headers(dnt, gpc);
+        self.net.set_block_third_party_cookies(block_3pc);
         *f.allowlist.borrow_mut() = Allowlist::new(self.store.borrow().allowlist().unwrap_or_default());
         if !enabled {
             info!("ad blocking is off");
@@ -456,6 +478,8 @@ impl Browser {
             *top = uri.to_string();
         }
         net.io.blocked.store(0, Relaxed);
+        net.logged_blocked.set(0);
+        net.visit_pending.set(true);
         net.login_form.set(false);
         let host = urlclean::host_of(uri).unwrap_or_default();
         let allowed = !host.is_empty() && self.filters.allowlist.borrow().contains(&host);
@@ -477,7 +501,7 @@ impl Browser {
     /// failed, show the interstitial.
     pub(super) fn navigation_completed(&self, id: TabId, net: &TabNet, failure: Option<LoadFailure>) {
         let blocked = net.blocked();
-        if blocked > 0 {
+        if blocked > net.logged_blocked.replace(blocked) {
             info!("tab {id}: {blocked} requests blocked on this page");
         }
         let upgraded = net.upgraded_from.borrow().clone();

@@ -99,10 +99,8 @@ pub(super) fn context_handler() -> RequestContextHandler {
 }
 
 /// Profile preferences of every request context: no password manager or
-/// autofill (LightBrowser has its own vault), no network prediction, and
-/// third-party cookie blocking.
+/// autofill (LightBrowser has its own vault) and no network prediction.
 fn apply_profile_prefs(ctx: &mut RequestContext) {
-    let block_3pc = super::block_third_party_cookies();
     let prefs: &[(&str, Pref)] = &[
         ("credentials_enable_service", Pref::Bool(false)),
         ("credentials_enable_autosignin", Pref::Bool(false)),
@@ -111,8 +109,6 @@ fn apply_profile_prefs(ctx: &mut RequestContext) {
         ("autofill.credit_card_enabled", Pref::Bool(false)),
         // 2 = never predict (no DNS prefetch or preconnect to link targets).
         ("net.network_prediction_options", Pref::Int(2)),
-        // 1 = block third-party cookies, 0 = allow.
-        ("profile.cookie_controls_mode", Pref::Int(if block_3pc { 1 } else { 0 })),
     ];
     for (name, value) in prefs {
         set_pref(ctx, name, *value);

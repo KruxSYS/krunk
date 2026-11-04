@@ -100,6 +100,8 @@
     <label class="toggle"><input type="checkbox" data-key="stripTrackingParams"> Remove tracking parameters from links (utm_*, fbclid, …)</label>
     <label class="toggle"><input type="checkbox" data-key="sendDnt"> Send “Do Not Track”</label>
     <label class="toggle"><input type="checkbox" data-key="sendGpc"> Send “Global Privacy Control”</label>
+    <label class="toggle"><input type="checkbox" data-key="engineSecurityComponents"> Download engine security components from Google (certificate revocation list, Certificate Transparency list) <span class="tag">restart</span></label>
+    <p class="help">Off: LightBrowser's engine never contacts Google in the background, and these lists are only updated with new LightBrowser releases. On: the engine fetches them from Google's update servers.</p>
     <h3>When LightBrowser closes, clear</h3>
     <label class="toggle"><input type="checkbox" data-key="clearOnExit.cookies"> Cookies and site data</label>
     <label class="toggle"><input type="checkbox" data-key="clearOnExit.cache"> Cached images and files</label>

@@ -402,7 +402,8 @@ impl Browser {
         c.on_load_finished(move |error| {
             if let Some(b) = weak.upgrade() {
                 b.navigation_completed(id, &net_done, error.map(LoadFailure::from_net_error));
-                if error.is_none() {
+                // Once per top-level navigation, when it loaded.
+                if net_done.visit_pending.replace(false) && error.is_none() {
                     b.record_visit(id);
                 }
                 b.tab_changed(id);

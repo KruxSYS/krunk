@@ -14,8 +14,16 @@
 #   scripts/vm.sh click X Y              left click at screen coordinates
 #   scripts/vm.sh drag X1 Y1 X2 Y2       left-button drag in small steps
 #   scripts/vm.sh sh 'POWERSHELL'        run a command over ssh (non-interactive)
+#   scripts/vm.sh put LOCAL REMOTE       copy a file to the VM (REMOTE like C:/pipeline/lightbrowser/x)
+#   scripts/vm.sh get REMOTE LOCAL       copy a file from the VM
+# Batch work into one ps1 per round where possible (each call is a session on the VM).
 set -euo pipefail
 VM=windows
+# One shared SSH connection for every call: the VM's sshd stops accepting
+# logins when many short sessions are opened in quick succession.
+SSHOPTS=(-o ControlMaster=auto -o "ControlPath=$HOME/.ssh/cm-lightbrowser-%r@%h-%p" -o ControlPersist=10m)
+ssh() { command ssh "${SSHOPTS[@]}" "$@"; }
+scp() { command scp "${SSHOPTS[@]}" "$@"; }
 DIR='C:\pipeline\lightbrowser'
 FWD='C:/pipeline/lightbrowser'
 APP="$DIR\\app"
@@ -96,5 +104,7 @@ Start-Sleep -Milliseconds 150; [M]::mouse_event(4,0,0,0,[UIntPtr]::Zero)
 PS
     run_ps1 "$tmp" ;;
   sh) ssh "$VM" "$2" ;;
-  *) sed -n '2,17p' "$0"; exit 1 ;;
+  put) scp -q "$2" "$VM:$3" ;;
+  get) scp -q "$VM:$2" "$3" ;;
+  *) sed -n '2,21p' "$0"; exit 1 ;;
 esac

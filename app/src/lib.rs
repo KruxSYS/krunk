@@ -67,7 +67,6 @@ fn run() -> Result<i32, String> {
         log_file: dirs.root().join("cef.log"),
         switches: settings.browser_switches(),
         user_agent: settings.user_agent.clone(),
-        block_third_party_cookies: settings.block_third_party_cookies,
     };
     info!("browser arguments: {}", settings.browser_arguments());
     let window = ffi::window::Window::create_main("LightBrowser")?;

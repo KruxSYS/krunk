@@ -867,7 +867,7 @@ function settingsMock(defaults) {
   const running = clone(defaults);
   const st = { settings: clone(defaults), allow: ['news.example.com'] };
   window.__settings = st;
-  const restart = (s) => ['hardwareAcceleration', 'proxy', 'extraFlags', 'blockThirdPartyCookies'].some((k) => s[k] !== running[k]);
+  const restart = (s) => ['hardwareAcceleration', 'proxy', 'extraFlags', 'blockThirdPartyCookies', 'engineSecurityComponents'].some((k) => s[k] !== running[k]);
   h.getSettings = () => ({ settings: st.settings, restartRequired: restart(st.settings), about: { version: '0.1.0', cef: '156.0.15', chromium: '156.0.8078.80', dataDir: 'C:\\Users\\me\\AppData\\Local\\LightBrowser' } });
   h.saveSettings = (m) => {
     const s = m.settings;
@@ -903,6 +903,7 @@ async function testSettings(browser) {
   check(await page.inputValue('#searchEngine') === 'duckDuckGo', 'defaults: DuckDuckGo');
   check(await page.isChecked('input[name=startup][value=restoreSession]'), 'defaults: restore session');
   check((await page.locator('#trackingPrevention, [data-key=smartscreen]').count()) === 0, 'no Edge-only settings');
+  check(!(await page.isChecked('[data-key=engineSecurityComponents]')), 'defaults: no engine downloads from Google');
   check((await page.textContent('#about')).includes('Chromium 156.0.8078.80 (CEF 156.0.15)'), 'engine versions in the footer');
   check(await page.isChecked('[data-key=hardwareAcceleration]'), 'defaults: GPU on');
   check(await page.isChecked('[data-key=blockThirdPartyCookies]'), 'defaults: third-party cookies blocked');
@@ -977,6 +978,13 @@ async function testSettings(browser) {
   const tp = await lastSent(page, 'saveSettings');
   check(tp && tp.settings.blockThirdPartyCookies === false && await page.locator('#restart-banner').isVisible(), 'third-party cookie toggle saves and shows the restart banner');
   await page.check('[data-key=blockThirdPartyCookies]');
+  await page.waitForTimeout(60);
+  // Engine security components: opt-in, restart-only.
+  await page.check('[data-key=engineSecurityComponents]');
+  await page.waitForTimeout(60);
+  const ec = await lastSent(page, 'saveSettings');
+  check(ec && ec.settings.engineSecurityComponents === true && await page.locator('#restart-banner').isVisible(), 'engine components toggle saves and shows the restart banner');
+  await page.uncheck('[data-key=engineSecurityComponents]');
   await page.waitForTimeout(60);
   // Restart badge for the GPU toggle (restart-only) and restart button.
   await page.uncheck('[data-key=hardwareAcceleration]');

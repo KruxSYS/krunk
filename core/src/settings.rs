@@ -88,12 +88,19 @@ pub struct Settings {
     // Privacy
     pub adblock_enabled: bool,
     pub filter_lists: Vec<String>,
-    /// Block all third-party cookies (browser-wide, needs a restart).
+    /// Block all third-party cookies: network cookies through the engine's
+    /// cookie filter (`core::cookies`, applies at once), script access
+    /// (`document.cookie`) through Chromium's switch (needs a restart).
     pub block_third_party_cookies: bool,
     pub https_only: bool,
     pub send_dnt: bool,
     pub send_gpc: bool,
     pub strip_tracking_params: bool,
+    /// Let the engine download its security components from Google
+    /// (certificate revocation list, Certificate Transparency list). Off:
+    /// no contact with Google at all; these lists then only update with
+    /// LightBrowser releases. Needs a restart.
+    pub engine_security_components: bool,
     pub clear_on_exit: ClearOnExit,
 
     // Passwords
@@ -138,6 +145,7 @@ impl Default for Settings {
             send_dnt: true,
             send_gpc: true,
             strip_tracking_params: true,
+            engine_security_components: false,
             clear_on_exit: ClearOnExit::default(),
             vault_autolock_minutes: 15,
             offer_save_passwords: true,
@@ -195,15 +203,44 @@ const FORBIDDEN_FLAGS: &[&str] = &[
 const PROTECTED_FEATURES: &[&str] = &["IsolateOrigins", "SitePerProcess", "StrictOriginIsolation"];
 
 /// Features we always disable: background traffic and services that a
-/// lightweight browser with its own vault does not need.
-pub const DISABLED_FEATURES: &[&str] =
-    &["AutofillServerCommunication", "MediaRouter", "OptimizationHints", "InterestFeedContentSuggestions"];
+/// lightweight browser with its own vault does not need. Each entry was
+/// found with the logging-proxy audit (`.pipeline/cef-network-audit.md`).
+pub const DISABLED_FEATURES: &[&str] = &[
+    "AutofillServerCommunication",
+    "MediaRouter",
+    "OptimizationHints",
+    "InterestFeedContentSuggestions",
+    // Secure-time queries to clients2.google.com/time.
+    "NetworkTimeServiceQuerying",
+    // "AI mode" eligibility request to www.google.com at start-up.
+    "AimEnabled",
+    "AimServerEligibilityEnabled",
+    "AimServerRequestOnStartupEnabled",
+    // Segmentation platform: its own URL-keyed database (ukm_db) of visits.
+    "SegmentationPlatformFeature",
+    "SegmentationPlatformUkmEngine",
+    // OptimizationGuide model and hint downloads (the models-manifest component).
+    "OptimizationGuideModelDownloading",
+    "OptimizationHintsFetching",
+    "OptimizationGuideOnDeviceModel",
+];
 
 /// Switches we always pass (documented in the README).
-pub const BASE_SWITCHES: &[&str] = &["--no-pings", "--disable-domain-reliability"];
+pub const BASE_SWITCHES: &[&str] = &["--no-pings", "--disable-domain-reliability", "--disable-background-networking"];
 
-/// Blocks third-party cookies browser-wide. Chromium's third-party-cookie
-/// phase-out switch; a future Chromium may rename it.
+/// No component updater: no contact with Google's update servers. Left out
+/// when the user opts in to the engine's security components.
+pub const NO_COMPONENT_UPDATE_SWITCH: &str = "--disable-component-update";
+
+/// Our internal origins never reach DNS or a proxy, even if the engine
+/// preconnects to them before our handler answers the request.
+pub const INTERNAL_HOST_RULES_SWITCH: &str =
+    "--host-resolver-rules=MAP lightbrowser.invalid ~NOTFOUND, MAP *.lightbrowser.invalid ~NOTFOUND";
+pub const INTERNAL_PROXY_BYPASS_SWITCH: &str = "--proxy-bypass-list=lightbrowser.invalid;*.lightbrowser.invalid";
+
+/// Blocks third-party cookies for scripts (`document.cookie`). Chromium's
+/// third-party-cookie phase-out switch; a future Chromium may rename it.
+/// Network cookies are filtered by the browser itself (`core::cookies`).
 pub const BLOCK_THIRD_PARTY_COOKIES_SWITCH: &str = "--test-third-party-cookie-phaseout";
 
 pub const MAX_SLEEP_MINUTES: u32 = 24 * 60;
@@ -320,6 +357,10 @@ impl Settings {
     /// The Chromium switches for the engine (`--name` or `--name=value`).
     pub fn browser_switches(&self) -> Vec<String> {
         let mut args: Vec<String> = BASE_SWITCHES.iter().map(|s| s.to_string()).collect();
+        if !self.engine_security_components {
+            args.push(NO_COMPONENT_UPDATE_SWITCH.into());
+        }
+        args.push(INTERNAL_HOST_RULES_SWITCH.into());
         if !self.hardware_acceleration {
             args.push("--disable-gpu".into());
         }
@@ -328,6 +369,7 @@ impl Settings {
         }
         if !self.proxy.is_empty() {
             args.push(format!("--proxy-server={}", self.proxy));
+            args.push(INTERNAL_PROXY_BYPASS_SWITCH.into());
         }
         let mut disabled: Vec<String> = DISABLED_FEATURES.iter().map(|s| s.to_string()).collect();
         let mut enabled: Vec<String> = Vec::new();
@@ -692,16 +734,16 @@ mod tests {
                 "--disable-gpu --no-pings --disable-features=MediaRouter,Foo,Foo --enable-features=Foo,Bar,Bar".into(),
             ..Settings::default()
         };
-        let a = s.browser_arguments();
-        let names: Vec<&str> = a.split(' ').map(|f| f.split('=').next().unwrap()).collect();
+        let a = s.browser_switches();
+        let names: Vec<&str> = a.iter().map(|f| f.split('=').next().unwrap()).collect();
         let mut unique = names.clone();
         unique.sort();
         unique.dedup();
-        assert_eq!(names.len(), unique.len(), "{a}");
-        let disabled = a.split(' ').find(|f| f.starts_with("--disable-features=")).unwrap();
+        assert_eq!(names.len(), unique.len(), "{a:?}");
+        let disabled = a.iter().find(|f| f.starts_with("--disable-features=")).unwrap();
         assert_eq!(disabled.matches("MediaRouter").count(), 1);
         assert_eq!(disabled.matches("Foo").count(), 1);
-        let enabled = a.split(' ').find(|f| f.starts_with("--enable-features=")).unwrap();
+        let enabled = a.iter().find(|f| f.starts_with("--enable-features=")).unwrap();
         assert_eq!(enabled, "--enable-features=Bar", "Foo stays disabled");
     }
 
@@ -834,7 +876,59 @@ mod tests {
         }
         assert_eq!(s.browser_arguments(), switches.join(" "));
         let disabled = switches.iter().find(|a| a.starts_with("--disable-features=")).unwrap();
-        assert_eq!(disabled, "--disable-features=AutofillServerCommunication,MediaRouter,OptimizationHints,InterestFeedContentSuggestions,Foo");
+        assert!(disabled.ends_with(",OptimizationGuideOnDeviceModel,Foo"), "{disabled}");
+    }
+
+    #[test]
+    fn no_background_contact_by_default() {
+        let d = Settings::default();
+        assert!(!d.engine_security_components, "off by default");
+        let a = d.browser_switches();
+        for want in [
+            "--disable-background-networking",
+            "--disable-component-update",
+            "--no-pings",
+            "--disable-domain-reliability",
+            INTERNAL_HOST_RULES_SWITCH,
+        ] {
+            assert!(a.iter().any(|s| s == want), "missing {want} in {a:?}");
+        }
+        let disabled = a.iter().find(|f| f.starts_with("--disable-features=")).unwrap();
+        for f in [
+            "NetworkTimeServiceQuerying",
+            "AimServerRequestOnStartupEnabled",
+            "SegmentationPlatformUkmEngine",
+            "OptimizationGuideModelDownloading",
+        ] {
+            assert!(disabled.split([',', '=']).any(|x| x == f), "missing {f}");
+        }
+        // No proxy: nothing to bypass.
+        assert!(!a.iter().any(|s| s.starts_with("--proxy-bypass-list")));
+    }
+
+    #[test]
+    fn engine_components_opt_in() {
+        let on = Settings { engine_security_components: true, ..Settings::default() };
+        let a = on.browser_switches();
+        assert!(!a.iter().any(|s| s == NO_COMPONENT_UPDATE_SWITCH), "the updater may run");
+        assert!(a.iter().any(|s| s == "--disable-background-networking"), "everything else stays off");
+        assert!(a.iter().any(|f| f.starts_with("--disable-features=") && f.contains("NetworkTimeServiceQuerying")));
+        assert!(on.restart_required(&Settings::default()), "needs a restart");
+        // Old settings files have no such field: off.
+        assert!(!Settings::from_json_lenient(r#"{"theme":"dark"}"#).engine_security_components);
+    }
+
+    #[test]
+    fn internal_origins_bypass_the_proxy() {
+        let s = Settings { proxy: "127.0.0.1:8888".into(), ..Settings::default() };
+        let a = s.browser_switches();
+        assert!(a.iter().any(|x| x == INTERNAL_PROXY_BYPASS_SWITCH));
+        assert!(a.iter().any(|x| x == INTERNAL_HOST_RULES_SWITCH));
+        // A user's own host rules cannot replace ours (first one wins).
+        let s = Settings { extra_flags: "--host-resolver-rules=MAP*~NOTFOUND".into(), ..Settings::default() };
+        let rules: Vec<_> =
+            s.browser_switches().into_iter().filter(|x| x.starts_with("--host-resolver-rules")).collect();
+        assert_eq!(rules, [INTERNAL_HOST_RULES_SWITCH]);
     }
 
     #[test]
