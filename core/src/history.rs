@@ -120,6 +120,23 @@ impl Store {
         tx.commit()
     }
 
+    /// Web origins (`scheme://host[:port]`) with a visit at or after
+    /// `since` (all visits if `None`), for clearing their site data.
+    pub fn visited_origins(&self, since: Option<i64>) -> DbResult<Vec<String>> {
+        let mut stmt =
+            self.conn.prepare("SELECT DISTINCT u.url FROM urls u JOIN visits v ON v.url_id = u.id WHERE v.ts >= ?1")?;
+        let rows = stmt.query_map([since.unwrap_or(i64::MIN)], |r| r.get::<_, String>(0))?;
+        let mut origins: Vec<String> = rows
+            .filter_map(Result::ok)
+            .filter_map(|u| url::Url::parse(&u).ok())
+            .filter(|u| matches!(u.scheme(), "http" | "https"))
+            .map(|u| u.origin().ascii_serialization())
+            .collect();
+        origins.sort();
+        origins.dedup();
+        Ok(origins)
+    }
+
     /// The most recent visit for `url`, if any.
     pub fn last_visit(&self, url: &str) -> DbResult<Option<i64>> {
         self.conn
@@ -286,5 +303,20 @@ mod tests {
         assert_eq!(s.visit_total().unwrap(), 2);
         s.delete_urls(&["https://docs.rs/serde".to_string()]).unwrap();
         assert_eq!(s.visit_total().unwrap(), 1);
+    }
+
+    #[test]
+    fn origins_for_clearing_site_data() {
+        let s = Store::open_in_memory().unwrap();
+        s.record_visit("https://a.example/x", "", 1_000).unwrap();
+        s.record_visit("https://a.example/y?q=1", "", 2_000).unwrap();
+        s.record_visit("http://b.example:8080/", "", 3_000).unwrap();
+        s.record_visit("https://c.example/", "", 500).unwrap();
+        assert_eq!(
+            s.visited_origins(None).unwrap(),
+            ["http://b.example:8080", "https://a.example", "https://c.example"]
+        );
+        assert_eq!(s.visited_origins(Some(1_500)).unwrap(), ["http://b.example:8080", "https://a.example"]);
+        assert!(s.visited_origins(Some(9_000)).unwrap().is_empty());
     }
 }

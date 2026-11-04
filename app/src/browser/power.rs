@@ -3,7 +3,7 @@
 
 use super::Browser;
 use crate::ffi::procmem;
-use crate::log::{info, warning};
+use crate::log::info;
 use lb_core::memory::{decide, needs_wake, Action, MemorySample, Policy, Stage, TabState};
 use lb_core::storage::now_ms;
 use lb_core::tabs::TabId;
@@ -66,7 +66,7 @@ impl Browser {
             let m = self.model.borrow();
             let views = self.views.borrow();
             let active = m.active_id();
-            let live_private = views.values().filter(|v| v.controller.is_private()).count();
+            let live_private = views.values().filter(|v| v.view.is_private()).count();
             m.tabs()
                 .iter()
                 .filter_map(|t| {
@@ -93,7 +93,7 @@ impl Browser {
     }
 
     fn apply_power(&self, id: TabId, action: Action, now: i64) {
-        let Some(c) = self.controller(id) else { return };
+        let Some(c) = self.tab_view(id) else { return };
         match action {
             Action::SetLowMemory => {
                 c.set_memory_low(true);
@@ -103,21 +103,10 @@ impl Browser {
                 info!("tab {id}: low memory");
             }
             Action::Suspend => {
-                let weak = self.me.clone();
-                c.try_suspend(move |ok| {
-                    let Some(b) = weak.upgrade() else { return };
-                    if ok {
-                        b.set_stage(id, Stage::Suspended, now_ms());
-                        info!("tab {id}: suspended");
-                        b.mem_report_line("suspend");
-                    } else {
-                        // Try again on a later tick (e.g. the page was busy).
-                        b.set_stage(id, Stage::LowMemory, now_ms());
-                        warning!("tab {id}: TrySuspend declined");
-                    }
-                });
-                // Prevent a second request while this one is pending.
+                c.freeze();
                 self.set_stage(id, Stage::Suspended, now);
+                info!("tab {id}: frozen");
+                self.mem_report_line("suspend");
             }
             Action::Discard => {
                 info!("tab {id}: discarded");
@@ -137,12 +126,12 @@ impl Browser {
 
     /// Activation: back to normal memory and resumed.
     pub(super) fn wake_tab(&self, id: TabId) {
-        let Some((c, stage)) = self.views.borrow().get(&id).map(|v| (v.controller.clone(), v.stage.get())) else {
+        let Some((c, stage)) = self.views.borrow().get(&id).map(|v| (v.view.clone(), v.stage.get())) else {
             return;
         };
         if needs_wake(stage) {
             if stage == Stage::Suspended {
-                c.resume();
+                c.wake();
             }
             c.set_memory_low(false);
             self.set_stage(id, Stage::Awake, now_ms());
@@ -154,8 +143,7 @@ impl Browser {
 
     fn memory_sample(&self) -> MemorySample {
         let procs = procmem::browser_tree();
-        let renderers =
-            self.env.get().map(|e| e.process_kinds().iter().filter(|(_, k)| *k == "renderer").count()).unwrap_or(0);
+        let renderers = procs.iter().filter(|p| p.kind == procmem::Kind::Renderer).count();
         let m = self.model.borrow();
         let views = self.views.borrow();
         let stages: Vec<Stage> = views.values().map(|v| v.stage.get()).collect();

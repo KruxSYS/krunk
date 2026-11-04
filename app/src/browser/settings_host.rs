@@ -2,13 +2,13 @@
 //! setting that does not need a restart, restart, and clear-on-exit.
 
 use super::Browser;
+use crate::ffi::cef::{self as engine, ClearKinds};
 use crate::ffi::dialogs;
 use crate::ffi::process;
-use crate::ffi::webview::{ClearKinds, Controller};
 use crate::log::{info, warning};
 use lb_core::pages::Page;
 use lb_core::protocol::{Event, Request};
-use lb_core::settings::{Settings, Theme, TrackingPrevention};
+use lb_core::settings::{Settings, Theme};
 use lb_core::tabs::TabId;
 use std::path::Path;
 
@@ -44,10 +44,11 @@ impl Browser {
     }
 
     pub(super) fn about(&self) -> serde_json::Value {
+        let (cef, chromium) = engine::versions();
         serde_json::json!({
             "version": env!("CARGO_PKG_VERSION"),
-            "runtime": self.runtime_version,
-            "loader": crate::ffi::loader::LOADER_VERSION,
+            "cef": cef,
+            "chromium": chromium,
             "dataDir": self.dirs.root().display().to_string(),
             "arguments": self.running_settings.browser_arguments(),
         })
@@ -87,34 +88,18 @@ impl Browser {
             self.layout();
         }
         if old.user_agent != new.user_agent {
-            for c in self.content_controllers() {
-                self.apply_user_agent(&c);
-            }
-        }
-        if old.tracking_prevention != new.tracking_prevention {
-            if let Some(s) = self.shell() {
-                s.set_tracking_prevention(tracking_level(new.tracking_prevention));
-            }
-            for c in self.content_controllers() {
-                c.set_tracking_prevention(tracking_level(new.tracking_prevention));
-            }
-        }
-        if old.download_dir != new.download_dir {
-            if let Some(s) = self.shell() {
-                self.apply_download_folder(&s);
-            }
-            for c in self.content_controllers() {
-                self.apply_download_folder(&c);
+            let ids: Vec<TabId> = self.views.borrow().keys().copied().collect();
+            for id in ids {
+                self.apply_user_agent_to(id);
             }
         }
         // Privacy headers and ad blocking switch immediately (the navigator
         // properties for DNT/GPC follow on newly opened tabs).
-        self.filters.dnt.set(new.send_dnt);
-        self.filters.gpc.set(new.send_gpc);
+        self.net.set_privacy_headers(new.send_dnt, new.send_gpc);
         if old.adblock_enabled != new.adblock_enabled || old.filter_lists != new.filter_lists {
-            self.filters.enabled.set(new.adblock_enabled);
+            self.net.set_enabled(new.adblock_enabled);
             if new.adblock_enabled {
-                if self.filters.engine.borrow().is_none() {
+                if !self.net.has_engine() {
                     self.init_filters();
                 } else if old.filter_lists != new.filter_lists {
                     self.spawn_filter_job(false);
@@ -123,57 +108,49 @@ impl Browser {
             info!("ad blocking {}", if new.adblock_enabled { "on" } else { "off" });
         }
         // Everything else (search engine, startup, HTTPS-only, tracking
-        // parameters, vault auto-lock, zoom for new tabs, clear on exit) is
-        // read from the settings when it is used.
+        // parameters, vault auto-lock, default zoom, download folder, clear
+        // on exit) is read from the settings when it is used.
     }
 
-    fn content_controllers(&self) -> Vec<Controller> {
-        self.views.borrow().values().map(|v| v.controller.clone()).collect()
-    }
-
-    /// Custom user agent, or the runtime's default when the field is empty.
-    pub(super) fn apply_user_agent(&self, c: &Controller) {
-        if self.default_ua.borrow().is_none() {
-            let ua = c.user_agent();
-            if !ua.is_empty() {
-                *self.default_ua.borrow_mut() = Some(ua);
-            }
+    /// The user agent: the engine starts with the one from the settings; a
+    /// change made while running is applied per tab (DevTools protocol)
+    /// until the next start.
+    pub(super) fn apply_user_agent_to(&self, id: TabId) {
+        let (now, at_start) = (self.settings.borrow().user_agent.clone(), self.running_settings.user_agent.clone());
+        if now == at_start {
+            return;
         }
-        let custom = self.settings.borrow().user_agent.clone();
-        if !custom.is_empty() {
-            c.set_user_agent(&custom);
-        } else if let Some(d) = self.default_ua.borrow().as_ref() {
-            c.set_user_agent(d);
+        let ua = if now.is_empty() { engine::default_user_agent() } else { now };
+        if let Some(c) = self.tab_view(id) {
+            c.set_user_agent(Some(&ua));
+        }
+    }
+
+    /// Default zoom for a page that has no zoom level of its own yet (the
+    /// engine remembers zoom per site, like Chrome).
+    pub(super) fn apply_default_zoom(&self, c: &engine::View) {
+        let default = self.settings.borrow().default_zoom;
+        if (default - 1.0).abs() > 1e-3 && (c.zoom() - 1.0).abs() < 1e-3 {
+            c.set_zoom(default);
         }
     }
 
     /// The theme for the shell, popup, built-in pages and (through the
-    /// profile's preferred colour scheme) web pages.
+    /// profiles' preferred colour scheme) web pages.
     pub(super) fn apply_theme(&self) {
         let theme = self.settings.borrow().theme;
-        let dark = match theme {
-            Theme::System => None,
-            Theme::Light => Some(false),
-            Theme::Dark => Some(true),
-        };
-        if let Some(s) = self.shell() {
-            s.set_color_scheme(dark);
-        }
-        for c in self.content_controllers() {
-            if c.is_private() {
-                c.set_color_scheme(dark);
-            }
-        }
+        engine::set_color_scheme(self.color_scheme());
         self.send_shell_config();
         self.apply_frame_theme();
         let e = Event::Theme { theme }.to_json();
-        if let Some(c) = self.popup.borrow().as_ref().and_then(|p| p.controller.clone()) {
+        let popup = self.popup.borrow().as_ref().and_then(|p| p.view.clone());
+        if let Some(c) = popup {
             c.post_json(&e);
         }
         let internal: Vec<TabId> =
             self.model.borrow().tabs().iter().filter(|t| Page::from_url(&t.url).is_some()).map(|t| t.id).collect();
         for id in internal {
-            if let Some(c) = self.controller(id) {
+            if let Some(c) = self.tab_view(id) {
                 c.post_json(&e);
             }
         }
@@ -192,7 +169,7 @@ impl Browser {
     }
 
     /// Theme for one page that just loaded.
-    pub(super) fn send_theme_to(&self, c: &Controller) {
+    pub(super) fn send_theme_to(&self, c: &engine::View) {
         c.post_json(&Event::Theme { theme: self.settings.borrow().theme }.to_json());
     }
 
@@ -222,6 +199,8 @@ impl Browser {
         info!("clearing data on exit");
         self.hide_popup();
         w.hide();
+        // Sites whose storage to clear, before their history goes.
+        let origins = self.origins_to_clear(clear.cookies, None);
         if clear.history {
             let _ = self.store.borrow_mut().clear_history();
         }
@@ -231,17 +210,14 @@ impl Browser {
         let kinds = ClearKinds { cookies: clear.cookies, cache: clear.cache, site_data: clear.cookies };
         w.set_timer(EXIT_TIMER, EXIT_TIMEOUT_MS);
         let weak = self.me.clone();
-        match self.shell() {
-            Some(shell) => shell.clear_browsing_data(kinds, None, move |ok| {
-                if let Some(b) = weak.upgrade() {
-                    if !ok {
-                        warning!("clearing data on exit failed");
-                    }
-                    b.finish_exit();
+        self.clear_engine_data(kinds, None, origins, move |ok| {
+            if let Some(b) = weak.upgrade() {
+                if !ok {
+                    warning!("clearing data on exit failed");
                 }
-            }),
-            None => self.finish_exit(),
-        }
+                b.finish_exit();
+            }
+        });
     }
 
     pub(super) fn finish_exit(&self) {
@@ -263,14 +239,5 @@ impl Browser {
                 warning!("restart failed: {e}");
             }
         }
-    }
-}
-
-pub(super) fn tracking_level(t: TrackingPrevention) -> u8 {
-    match t {
-        TrackingPrevention::None => 0,
-        TrackingPrevention::Basic => 1,
-        TrackingPrevention::Balanced => 2,
-        TrackingPrevention::Strict => 3,
     }
 }

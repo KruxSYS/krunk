@@ -1,5 +1,5 @@
 //! Background-tab memory policy: when a live background tab is put into
-//! low-memory mode, suspended, or discarded (its WebView closed).
+//! low-memory mode, suspended, or discarded (its browser view closed).
 //!
 //! The host runs [`decide`] for every tab on a timer and applies the
 //! returned action; everything here is pure so it can be unit-tested.
@@ -77,7 +77,7 @@ impl Policy {
 /// Facts about one tab, gathered by the host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TabState {
-    /// Has a WebView (not restored-but-unloaded or already discarded).
+    /// Has a browser view (not restored-but-unloaded or already discarded).
     pub live: bool,
     pub active: bool,
     pub pinned: bool,
@@ -287,7 +287,7 @@ mod tests {
 
     #[test]
     fn process_tree() {
-        // 10 = us; 20 = WebView2 browser; 21..23 = its children; 30 = unrelated.
+        // 10 = us; 20 = an engine subprocess; 21..23 = its children; 30 = unrelated.
         let procs = [(10, 1), (20, 10), (21, 20), (22, 20), (23, 22), (30, 1), (31, 30)];
         assert_eq!(descendants(10, &procs), vec![20, 21, 22, 23]);
         assert_eq!(descendants(99, &procs), Vec::<u32>::new());

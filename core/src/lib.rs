@@ -1,7 +1,7 @@
 //! Platform-independent core of LightBrowser.
 //!
 //! Everything here builds and is tested natively on Linux; the Windows host
-//! (`app`) only adds the WebView2/Win32 glue on top.
+//! (`app`) only adds the CEF/Win32 glue on top.
 #![forbid(unsafe_code)]
 
 pub mod assets;
@@ -11,7 +11,6 @@ pub mod downloads;
 pub mod filterlists;
 pub mod frecency;
 pub mod history;
-pub mod integrity;
 pub mod keys;
 pub mod layout;
 pub mod memory;
@@ -25,3 +24,4 @@ pub mod storage;
 pub mod tabs;
 pub mod urlclean;
 pub mod vault;
+pub mod zoom;

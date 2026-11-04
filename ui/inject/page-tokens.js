@@ -3,7 +3,7 @@
 // "##.ad-banner" style rules. Capped to keep it cheap.
 (function () {
   'use strict';
-  if (window.top !== window || !window.chrome || !window.chrome.webview) return;
+  if (window.top !== window || !window.__lbHost) return;
   if (location.protocol !== 'https:' && location.protocol !== 'http:') return;
   // Never on LightBrowser's own pages (they are not web content).
   if (/(^|\.)lightbrowser\.invalid$/.test(location.hostname)) return;
@@ -21,7 +21,7 @@
       }
     }
     if (classes.size || ids.size) {
-      window.chrome.webview.postMessage({ lb: 'pageTokens', classes: Array.from(classes), ids: Array.from(ids) });
+      window.__lbHost.postMessage({ lb: 'pageTokens', classes: Array.from(classes), ids: Array.from(ids) });
     }
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', collect, { once: true });

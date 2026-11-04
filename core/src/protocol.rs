@@ -3,7 +3,7 @@
 //! There are two inbound channels with very different trust levels:
 //!
 //! * [`Request`]: privileged commands from the browser chrome (shell
-//!   WebView) and from built-in pages. The host has to check the sender's
+//!   browser view) and from built-in pages. The host has to check the sender's
 //!   origin first ([`Sender`]); each sender can only use the commands that
 //!   [`Sender::permits`] allows.
 //! * [`ContentMessage`]: messages from scripts we inject into ordinary web
@@ -158,7 +158,7 @@ impl PopupRect {
     }
 }
 
-/// What the popup WebView shows.
+/// What the popup view shows.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum PopupContent {
@@ -283,7 +283,7 @@ pub enum Request {
         page: String,
     },
     ToggleBookmark,
-    /// Opens the popup WebView at `rect` (shell: menu and shield only).
+    /// Opens the popup view at `rect` (shell: menu and shield only).
     ShowPopup {
         popup: PopupKind,
         rect: PopupRect,
@@ -488,8 +488,8 @@ fn yes() -> bool {
     true
 }
 
-/// Who sent a privileged message, derived by the host from the WebView it
-/// arrived on *and* the `Source` URI the runtime reports (see [`classify`]).
+/// Who sent a privileged message, derived by the host from the browser view it
+/// arrived on *and* the committed URL of the sending frame (see [`classify`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sender {
     Shell,
@@ -497,7 +497,7 @@ pub enum Sender {
     Page(Page),
 }
 
-/// Which WebView a message arrived on.
+/// Which browser view a message arrived on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Channel {
     Shell,
@@ -520,7 +520,7 @@ pub const POPUP_PATH: &str = "/popup.html";
 /// Decides how a message may be treated, from the channel it came in on,
 /// the `Source` URI and whether it came from the top-level document.
 ///
-/// * The shell and popup WebViews accept only their exact document on the
+/// * The shell and popup views accept only their exact document on the
 ///   exact shell origin; anything else on those channels is rejected.
 /// * A tab accepts privileged messages only from a built-in page on the
 ///   exact pages origin; other http(s) pages are web content.
@@ -816,7 +816,7 @@ pub enum Event {
         show_bookmarks_bar: bool,
         theme: Theme,
     },
-    /// To the popup WebView: render this content.
+    /// To the popup view: render this content.
     Popup {
         content: PopupContent,
     },
@@ -1015,6 +1015,41 @@ mod tests {
         assert_eq!(classify(Channel::Tab, "data:text/html,x", true), Err(ProtocolError::Forbidden));
         assert_eq!(classify(Channel::Tab, "file:///C:/x.html", true), Err(ProtocolError::Forbidden));
         assert_eq!(classify(Channel::Tab, "https://bank.example/", false), Err(ProtocolError::Forbidden));
+    }
+
+    /// The engine reports the sender as the frame's committed URL plus its
+    /// main-frame flag; these are the URLs a CEF frame can have.
+    #[test]
+    fn cef_frame_urls() {
+        let forbidden =
+            |ch, url: &str, main| assert_eq!(classify(ch, url, main), Err(ProtocolError::Forbidden), "{url}");
+        for ch in [Channel::Shell, Channel::Popup, Channel::Tab] {
+            // Not yet navigated, srcdoc, error and DevTools frames.
+            forbidden(ch, "", true);
+            forbidden(ch, "about:blank", true);
+            forbidden(ch, "about:srcdoc", true);
+            forbidden(ch, "chrome-error://chromewebdata/", true);
+            forbidden(ch, "devtools://devtools/bundled/devtools_app.html", true);
+            forbidden(ch, "data:text/html,<script>x</script>", true);
+            // blob: URLs carry our origin but are not our documents.
+            forbidden(ch, "blob:https://shell.lightbrowser.invalid/0b1c-uuid", true);
+            forbidden(ch, "blob:https://lightbrowser.invalid/0b1c-uuid", true);
+        }
+        // The shell document in a sub-frame (is_main false) is never privileged.
+        forbidden(Channel::Shell, SHELL, false);
+        forbidden(Channel::Tab, &Page::Settings.url(), false);
+        // A page iframed into a tab cannot speak for the tab's origin.
+        forbidden(Channel::Tab, "https://bank.example/login", false);
+        // Main frames: exactly as before.
+        assert_eq!(classify(Channel::Shell, SHELL, true), Ok(Source::Privileged(Sender::Shell)));
+        assert_eq!(
+            classify(Channel::Tab, &Page::Settings.url(), true),
+            Ok(Source::Privileged(Sender::Page(Page::Settings)))
+        );
+        assert_eq!(
+            classify(Channel::Tab, "http://plain.example/x", true),
+            Ok(Source::Web { origin: "http://plain.example".into() })
+        );
     }
 
     #[test]

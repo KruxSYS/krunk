@@ -1,8 +1,12 @@
-//! LightBrowser host executable.
+//! LightBrowser.dll: the browser.
 //!
-//! The browser itself only exists on Windows (WebView2). On other platforms
-//! the binary is a stub so that `cargo build --workspace` works everywhere.
-#![cfg_attr(windows, windows_subsystem = "windows")]
+//! `LightBrowser.exe` is CEF's sandbox bootstrap (`bootstrap.exe`, renamed).
+//! It loads this DLL and calls `RunWinMain` (`ffi::cef::entry`) in the
+//! browser process and in every engine subprocess. The browser only exists
+//! on Windows; elsewhere the crate is empty so the workspace still builds.
+// The cdylib must be called LightBrowser.dll (the bootstrap loads
+// `<exe name>.dll`).
+#![allow(non_snake_case)]
 #![deny(unsafe_code)]
 #![cfg_attr(all(windows, not(test)), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
@@ -15,14 +19,18 @@ mod log;
 #[cfg(windows)]
 mod paths;
 
+/// The browser process, after the engine's subprocess check: data folder,
+/// settings, then the engine and the browser window. Returns the exit code.
 #[cfg(windows)]
-fn main() {
+fn browser_main() -> i32 {
+    // A panic aborts the process (release builds): leave its message in the log.
+    std::panic::set_hook(Box::new(|info| log::write("PANIC", &info.to_string())));
     match run() {
-        Ok(code) => std::process::exit(code),
+        Ok(code) => code,
         Err(e) => {
             log::write("ERROR", &e);
             ffi::dialogs::error("LightBrowser", &e);
-            std::process::exit(1);
+            1
         }
     }
 }
@@ -32,7 +40,7 @@ fn run() -> Result<i32, String> {
     use log::info;
 
     // After "Restart now": wait until the previous instance has exited and
-    // released the WebView2 profile.
+    // released the profile.
     if let Some(pid) = std::env::args().find_map(|a| a.strip_prefix("--wait-for-pid=").and_then(|p| p.parse().ok())) {
         ffi::process::wait_for_process(pid, 15_000);
         std::thread::sleep(std::time::Duration::from_millis(300));
@@ -51,19 +59,28 @@ fn run() -> Result<i32, String> {
         return Ok(update_filters_headless(&dirs, &settings));
     }
 
-    let loader = ffi::loader::Loader::load(&dirs.bin())?;
-    info!("WebView2Loader {} loaded", ffi::loader::LOADER_VERSION);
-    let Some(version) = loader.runtime_version() else {
-        log::write("WARN", "WebView2 runtime not found");
-        ffi::dialogs::runtime_missing("");
-        return Ok(2);
-    };
-    info!("WebView2 runtime version {version}");
-
     let args: Vec<String> = std::env::args().collect();
     let power = browser::PowerOptions::from_args(&args);
-    let _browser = browser::Browser::start(&loader, &dirs, store, settings, version, power)?;
-    Ok(ffi::window::run_message_loop())
+    let config = ffi::cef::EngineConfig {
+        root_cache: dirs.profile(),
+        cache: dirs.profile().join("default"),
+        log_file: dirs.root().join("cef.log"),
+        switches: settings.browser_switches(),
+        user_agent: settings.user_agent.clone(),
+        block_third_party_cookies: settings.block_third_party_cookies,
+    };
+    info!("browser arguments: {}", settings.browser_arguments());
+    let window = ffi::window::Window::create_main("LightBrowser")?;
+    let start: ffi::cef::Start =
+        Box::new(move || match browser::Browser::start(window, &dirs, store, settings, power) {
+            Ok(b) => Some(Box::new(b) as Box<dyn std::any::Any>),
+            Err(e) => {
+                log::write("ERROR", &e);
+                ffi::dialogs::error("LightBrowser", &e);
+                None
+            }
+        });
+    ffi::cef::run_engine(config, start)
 }
 
 /// `LightBrowser.exe --update-filters`: downloads the filter lists, rebuilds
@@ -130,10 +147,4 @@ fn update_filters_headless(dirs: &paths::DataDirs, settings: &lb_core::settings:
         (true, true) => 1,
         (true, false) => 0,
     }
-}
-
-#[cfg(not(windows))]
-fn main() {
-    eprintln!("LightBrowser runs on Windows only; build with --target x86_64-pc-windows-gnu.");
-    std::process::exit(1);
 }

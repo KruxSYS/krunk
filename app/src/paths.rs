@@ -17,7 +17,7 @@ impl DataDirs {
             .or_else(|| std::env::var_os("USERPROFILE").map(|p| PathBuf::from(p).join("AppData").join("Local")))
             .ok_or("Cannot find the local application data folder (LOCALAPPDATA is not set)")?;
         let dirs = DataDirs { root: base.join(APP_DIR) };
-        for d in [dirs.root.clone(), dirs.bin(), dirs.profile()] {
+        for d in [dirs.root.clone(), dirs.profile()] {
             std::fs::create_dir_all(&d).map_err(|e| format!("Cannot create {}: {e}", d.display()))?;
         }
         Ok(dirs)
@@ -27,12 +27,9 @@ impl DataDirs {
         &self.root
     }
 
-    /// Where the embedded WebView2Loader.dll is extracted.
-    pub fn bin(&self) -> PathBuf {
-        self.root.join("bin")
-    }
-
-    /// WebView2 user data folder (cookies, cache, site data).
+    /// The engine's profile root (CEF `root_cache_path`); the profile itself
+    /// (cookies, cache, site data) is `profile\default`. A `profile\EBWebView`
+    /// folder left by the WebView2-based versions is not used or touched.
     pub fn profile(&self) -> PathBuf {
         self.root.join("profile")
     }

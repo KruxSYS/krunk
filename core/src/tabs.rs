@@ -1,5 +1,5 @@
 //! The tab model: an ordered list of tabs, the active tab, the closed-tab
-//! stack and lazy loading. It knows nothing about WebViews; every operation
+//! stack and lazy loading. It knows nothing about browser views; every operation
 //! returns the [`Effect`]s the host has to apply to its controllers.
 
 use crate::pages::{self, Page};
@@ -12,7 +12,7 @@ pub type TabId = u32;
 /// Maximum entries remembered for "reopen closed tab".
 pub const CLOSED_STACK_CAP: usize = 25;
 
-/// Whether a tab currently has a WebView.
+/// Whether a tab currently has a browser view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoadState {
     /// No controller (restored from a session, or discarded); loads when activated.
@@ -44,7 +44,7 @@ impl Tab {
     }
 }
 
-/// What the host must do to its WebViews after a model change.
+/// What the host must do to its browser views after a model change.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
     /// Create a controller for the tab (private tabs need an InPrivate one)
@@ -369,7 +369,7 @@ impl TabModel {
         self.activate_index(next, now)
     }
 
-    /// Unloads a background tab's WebView, keeping its URL (tab discard).
+    /// Unloads a background tab's browser view, keeping its URL (tab discard).
     pub fn unload(&mut self, id: TabId) -> Vec<Effect> {
         if self.active == Some(id) {
             return Vec::new();
@@ -390,7 +390,7 @@ impl TabModel {
         }
     }
 
-    // ---- updates from WebView events ----
+    // ---- updates from browser view events ----
 
     pub fn set_url(&mut self, id: TabId, url: &str) {
         if let Some(t) = self.get_mut(id) {

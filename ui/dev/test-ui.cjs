@@ -867,8 +867,8 @@ function settingsMock(defaults) {
   const running = clone(defaults);
   const st = { settings: clone(defaults), allow: ['news.example.com'] };
   window.__settings = st;
-  const restart = (s) => ['hardwareAcceleration', 'proxy', 'extraFlags', 'smartscreen', 'blockThirdPartyCookies'].some((k) => s[k] !== running[k]);
-  h.getSettings = () => ({ settings: st.settings, restartRequired: restart(st.settings), about: { version: '0.1.0', runtime: '142.0.3595.53', dataDir: 'C:\\Users\\me\\AppData\\Local\\LightBrowser' } });
+  const restart = (s) => ['hardwareAcceleration', 'proxy', 'extraFlags', 'blockThirdPartyCookies'].some((k) => s[k] !== running[k]);
+  h.getSettings = () => ({ settings: st.settings, restartRequired: restart(st.settings), about: { version: '0.1.0', cef: '156.0.15', chromium: '156.0.8078.80', dataDir: 'C:\\Users\\me\\AppData\\Local\\LightBrowser' } });
   h.saveSettings = (m) => {
     const s = m.settings;
     const errs = [];
@@ -902,7 +902,8 @@ async function testSettings(browser) {
   await page.waitForSelector('#lists .row');
   check(await page.inputValue('#searchEngine') === 'duckDuckGo', 'defaults: DuckDuckGo');
   check(await page.isChecked('input[name=startup][value=restoreSession]'), 'defaults: restore session');
-  check(await page.inputValue('#trackingPrevention') === 'strict', 'defaults: strict tracking prevention');
+  check((await page.locator('#trackingPrevention, [data-key=smartscreen]').count()) === 0, 'no Edge-only settings');
+  check((await page.textContent('#about')).includes('Chromium 156.0.8078.80 (CEF 156.0.15)'), 'engine versions in the footer');
   check(await page.isChecked('[data-key=hardwareAcceleration]'), 'defaults: GPU on');
   check(await page.isChecked('[data-key=blockThirdPartyCookies]'), 'defaults: third-party cookies blocked');
   check(await page.locator('#restart-banner').isHidden(), 'no restart banner at first');
@@ -1065,11 +1066,10 @@ async function testLoginScript(browser) {
   await context.route('**/*', (r) => { external.push(r.request().url()); return r.abort(); });
   await context.route('https://login.example/**', (r) => r.fulfill({ status: 200, headers: { 'content-type': 'text/html' },
     body: '<!doctype html><title>SPA</title><body><div id="app">loading</div></body>' }));
-  // Minimal chrome.webview stand-in that records what the script posts.
+  // Minimal __lbHost stand-in (the renderer bridge) that records what the script posts.
   await context.addInitScript(() => {
     window.__posted = [];
-    window.chrome = window.chrome || {};
-    window.chrome.webview = { postMessage: (m) => window.__posted.push(m), addEventListener: () => {} };
+    window.__lbHost = { postMessage: (m) => window.__posted.push(m), addEventListener: () => {} };
   });
   await context.addInitScript({ path: path.join(__dirname, '..', 'inject', 'login.js') });
   const page = await context.newPage();

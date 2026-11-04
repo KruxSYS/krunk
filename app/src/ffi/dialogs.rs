@@ -1,4 +1,4 @@
-//! Message boxes and opening URLs in the system browser.
+//! Message boxes and the native file dialogs.
 
 use std::path::{Path, PathBuf};
 use windows::core::{w, Interface, HSTRING, PCWSTR};
@@ -11,44 +11,22 @@ use windows::Win32::UI::Shell::{
     SHCreateItemFromParsingName, FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM, FOS_OVERWRITEPROMPT, FOS_PATHMUSTEXIST,
     SIGDN_FILESYSPATH,
 };
-use windows::Win32::UI::WindowsAndMessaging::{
-    MessageBoxW, IDYES, MB_ICONERROR, MB_ICONWARNING, MB_OK, MB_YESNO, SW_SHOWNORMAL,
-};
-
-pub const WEBVIEW2_DOWNLOAD_URL: &str = "https://developer.microsoft.com/microsoft-edge/webview2/";
+use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK, SW_SHOWNORMAL};
 
 pub fn error(title: &str, text: &str) {
     // SAFETY: modal message box without owner; strings outlive the call.
     unsafe { MessageBoxW(None, &HSTRING::from(text), &HSTRING::from(title), MB_OK | MB_ICONERROR) };
 }
 
-/// Yes/No question; returns `true` for Yes.
-pub fn ask(title: &str, text: &str, warning: bool) -> bool {
-    let icon = if warning { MB_ICONWARNING } else { Default::default() };
-    // SAFETY: as above.
-    unsafe { MessageBoxW(None, &HSTRING::from(text), &HSTRING::from(title), MB_YESNO | icon) == IDYES }
-}
-
-/// Opens an https:// URL in the user's default browser.
-pub fn open_external(url: &str) {
-    if !url.starts_with("https://") {
-        return;
-    }
-    // SAFETY: ShellExecute with the "open" verb on an https URL.
-    unsafe { ShellExecuteW(None, w!("open"), &HSTRING::from(url), None, None, SW_SHOWNORMAL) };
-}
-
-/// Explains that the WebView2 runtime is missing and offers the download page.
-pub fn runtime_missing(detail: &str) {
-    let text = format!(
-        "LightBrowser needs the Microsoft Edge WebView2 Runtime, which was not found on this PC.\n\n\
-         It is included in Windows 11 and most Windows 10 installations, and can be installed for free \
-         (the \"Evergreen Bootstrapper\" or \"Evergreen Standalone Installer\").\n\n\
-         Download page:\n{WEBVIEW2_DOWNLOAD_URL}\n\n{detail}\nOpen the download page now?"
+/// LightBrowser's own runtime files (next to the exe) are missing or damaged.
+pub fn runtime_damaged(detail: &str) {
+    error(
+        "LightBrowser",
+        &format!(
+            "LightBrowser cannot start because some of its files are missing or damaged.\n\n{detail}\n\n\
+             Extract the LightBrowser download again and keep all of its files together in one folder."
+        ),
     );
-    if ask("LightBrowser – WebView2 Runtime required", &text, true) {
-        open_external(WEBVIEW2_DOWNLOAD_URL);
-    }
 }
 
 /// File type filter for the file dialogs, e.g. `("HTML files", "*.html;*.htm")`.
@@ -124,6 +102,18 @@ pub fn save_file(
         base.SetOptions(opts | FOS_FORCEFILESYSTEM | FOS_OVERWRITEPROMPT | FOS_PATHMUSTEXIST).ok()?;
         base.Show(Some(owner)).ok()?;
         result_path(&base)
+    }
+}
+
+/// The user's Downloads folder.
+pub fn downloads_folder() -> Option<PathBuf> {
+    use windows::Win32::UI::Shell::{FOLDERID_Downloads, SHGetKnownFolderPath, KF_FLAG_DEFAULT};
+    // SAFETY: the returned CoTaskMem string is read once and freed.
+    unsafe {
+        let p = SHGetKnownFolderPath(&FOLDERID_Downloads, KF_FLAG_DEFAULT, None).ok()?;
+        let s = p.to_string().ok();
+        CoTaskMemFree(Some(p.0 as *const std::ffi::c_void));
+        s.map(PathBuf::from)
     }
 }
 

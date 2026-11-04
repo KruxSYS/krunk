@@ -53,6 +53,8 @@ fi
 if [ ! -f "$out/.lightbrowser-exported" ] || [ "$(cat "$out/.lightbrowser-exported")" != "$sha256" ]; then
   export-cef-dir --force --target x86_64-pc-windows-msvc --version "$CEF_VERSION" \
     --archive "$archive" "$out" >&2
+  # CEF's own licence file is not part of the exported layout.
+  tar -xjf "$archive" -O "${CEF_ARCHIVE%.tar.bz2}/LICENSE.txt" > "$out/LICENSE.txt"
   echo "$sha256" > "$out/.lightbrowser-exported"
 fi
 echo "$out"

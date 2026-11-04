@@ -1,5 +1,5 @@
-//! The downloads list (state only; the host drives it from WebView2's
-//! `DownloadStarting` and `DownloadOperation` events).
+//! The downloads list (state only; the host drives it from the engine's
+//! download events) and the helpers for naming downloaded files.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -136,7 +136,7 @@ impl Downloads {
         }
     }
 
-    /// Updates the final path (WebView2 may rename the file).
+    /// Updates the final path (the engine may rename the file).
     pub fn set_path(&mut self, id: u32, path: &Path) {
         if let Some(i) = self.items.iter_mut().find(|i| i.id == id) {
             i.path = path.to_string_lossy().into_owned();
@@ -156,6 +156,29 @@ impl Downloads {
 }
 
 /// Makes a server-suggested file name safe for Windows.
+/// Readable text for Chromium's `DownloadInterruptReason` (`None` for a
+/// cancel by the user, which is not an error).
+pub fn interrupt_reason_text(code: i32) -> Option<String> {
+    Some(match code {
+        40 => return None,
+        2 => "Access denied".into(),
+        3 => "Disk full".into(),
+        5 => "File name too long".into(),
+        6 => "File too large".into(),
+        7 => "Virus detected".into(),
+        11 => "Blocked by policy".into(),
+        12 => "Security check failed".into(),
+        1 | 10 | 13..=15 => "File error".into(),
+        20..=24 => "Network error".into(),
+        34 | 36 => "Not allowed by the server".into(),
+        35 => "Certificate problem".into(),
+        30..=39 => "Server error".into(),
+        41 => "Browser closed".into(),
+        50 => "Download process crashed".into(),
+        _ => format!("Interrupted (code {code})"),
+    })
+}
+
 pub fn sanitize_file_name(name: &str) -> String {
     const RESERVED: &[&str] = &[
         "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1",
@@ -276,5 +299,17 @@ mod tests {
         assert_eq!(unique_path(Path::new("C:/dl"), "b.zip", exists), Path::new("C:/dl/b.zip"));
         assert_eq!(unique_path(Path::new("C:/dl"), "a.zip", exists), Path::new("C:/dl/a (2).zip"));
         assert_eq!(unique_path(Path::new("C:/dl"), "README", exists), Path::new("C:/dl/README (1)"));
+    }
+
+    #[test]
+    fn interrupt_reasons() {
+        assert_eq!(interrupt_reason_text(40), None, "user cancel is not an error");
+        assert_eq!(interrupt_reason_text(3).as_deref(), Some("Disk full"));
+        assert_eq!(interrupt_reason_text(21).as_deref(), Some("Network error"));
+        assert_eq!(interrupt_reason_text(35).as_deref(), Some("Certificate problem"));
+        assert_eq!(interrupt_reason_text(36).as_deref(), Some("Not allowed by the server"));
+        assert_eq!(interrupt_reason_text(33).as_deref(), Some("Server error"));
+        assert_eq!(interrupt_reason_text(41).as_deref(), Some("Browser closed"));
+        assert_eq!(interrupt_reason_text(99).as_deref(), Some("Interrupted (code 99)"));
     }
 }

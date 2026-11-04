@@ -1,8 +1,8 @@
 //! History, bookmarks, new-tab tiles and clearing browsing data.
 
 use super::Browser;
+use crate::ffi::cef::ClearKinds;
 use crate::ffi::dialogs;
-use crate::ffi::webview::ClearKinds;
 use crate::log::{info, warning};
 use lb_core::bookmarks::bookmarkable;
 use lb_core::history;
@@ -151,6 +151,8 @@ impl Browser {
 
     fn clear_browsing_data(&self, tab: Option<TabId>, req_id: Option<u32>, data: ClearData) {
         let now = now_ms();
+        // Sites whose storage to clear, before their history goes.
+        let origins = self.origins_to_clear(data.site_data, data.since);
         if data.history {
             let r = match data.since {
                 Some(since) => self.store.borrow_mut().delete_history_range(since, now + 1).map(|_| ()),
@@ -173,17 +175,34 @@ impl Browser {
             "clearing browsing data (history {}, cookies {}, cache {}, site data {})",
             data.history, data.cookies, data.cache, data.site_data
         );
-        // The shell uses the default profile, so it can clear it.
-        let Some(shell) = self.shell() else {
-            self.reply(tab, Event::err(req_id, "Browser not ready"));
-            return;
-        };
         let weak = self.me.clone();
-        shell.clear_browsing_data(kinds, data.since, move |ok| {
+        self.clear_engine_data(kinds, data.since, origins, move |ok| {
             if let Some(b) = weak.upgrade() {
                 b.reply(tab, if ok { Event::ok(req_id, ()) } else { Event::err(req_id, "Clearing site data failed") });
             }
         });
+    }
+
+    /// Origins visited (in the range) whose site data is cleared.
+    pub(super) fn origins_to_clear(&self, site_data: bool, since: Option<i64>) -> Vec<String> {
+        if !site_data {
+            return Vec::new();
+        }
+        self.store.borrow().visited_origins(since).unwrap_or_default()
+    }
+
+    /// Cookies, cache and the site data of `origins` in the default profile.
+    pub(super) fn clear_engine_data(
+        &self,
+        kinds: ClearKinds,
+        since: Option<i64>,
+        origins: Vec<String>,
+        done: impl FnOnce(bool) + 'static,
+    ) {
+        // The shell uses the default profile, so its DevTools session can
+        // clear the profile's site data.
+        let shell = self.shell();
+        crate::ffi::cef::clear_profile_data(kinds, since, &origins, shell.as_ref(), done);
     }
 
     // ------------------------------------------------------------ bookmarks

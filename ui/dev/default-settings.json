@@ -17,13 +17,11 @@
     "ublock-privacy",
     "ublock-unbreak"
   ],
-  "trackingPrevention": "strict",
   "blockThirdPartyCookies": true,
   "httpsOnly": false,
   "sendDnt": true,
   "sendGpc": true,
   "stripTrackingParams": true,
-  "smartscreen": false,
   "clearOnExit": {
     "history": false,
     "cookies": false,

@@ -202,7 +202,7 @@
   LB.request('getSettings').then(function (r) {
     settings = r.settings;
     banner(r.restartRequired);
-    $('about').textContent = 'LightBrowser ' + r.about.version + ' · WebView2 runtime ' + r.about.runtime + ' · data in ' + r.about.dataDir;
+    $('about').textContent = 'LightBrowser ' + r.about.version + ' · Chromium ' + r.about.chromium + ' (CEF ' + r.about.cef + ')' + ' · data in ' + r.about.dataDir;
     render();
     loadFilterStatus();
     loadAllowlist();

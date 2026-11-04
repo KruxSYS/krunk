@@ -1,11 +1,10 @@
-//! Embeds the Windows resources (application manifest, version info) when
-//! building for Windows.
+//! Windows link setup for LightBrowser.dll.
 
 fn main() {
-    println!("cargo:rerun-if-changed=res/app.rc");
-    println!("cargo:rerun-if-changed=res/app.manifest");
-    println!("cargo:rerun-if-changed=../assets/webview2/x64/WebView2Loader.dll");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
-        embed_resource::compile("res/app.rc", embed_resource::NONE).manifest_required().unwrap();
+        // libcef.dll is loaded on first use, so a missing or damaged runtime
+        // folder can be reported with a message box instead of failing
+        // silently inside the loader (the bootstrap shows nothing).
+        println!("cargo:rustc-link-arg=/DELAYLOAD:libcef.dll");
     }
 }

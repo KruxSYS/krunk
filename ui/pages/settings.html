@@ -94,20 +94,12 @@
 
   <section class="card" data-section="privacy security tracking https cookies">
     <h2>Privacy and security</h2>
-    <div class="field">
-      <label for="trackingPrevention">Tracking prevention</label>
-      <select id="trackingPrevention" data-key="trackingPrevention">
-        <option value="none">Off</option><option value="basic">Basic</option>
-        <option value="balanced">Balanced</option><option value="strict">Strict (recommended)</option>
-      </select>
-    </div>
     <label class="toggle"><input type="checkbox" data-key="blockThirdPartyCookies"> Block third-party cookies <span class="tag">restart</span></label>
-    <p class="help">Strict tracking prevention only blocks known trackers; this blocks every site's cookies inside other sites. It may break embedded sign-ins, comments and video widgets on some sites; turn it off if a site misbehaves. It applies to all sites (no per-site exceptions).</p>
+    <p class="help">Ad and tracker blocking (above) stops known trackers; this blocks every site's cookies inside other sites. It may break embedded sign-ins, comments and video widgets on some sites; turn it off if a site misbehaves. It applies to all sites (no per-site exceptions).</p>
     <label class="toggle"><input type="checkbox" data-key="httpsOnly"> HTTPS-only mode (upgrade every site; warn before plain HTTP)</label>
     <label class="toggle"><input type="checkbox" data-key="stripTrackingParams"> Remove tracking parameters from links (utm_*, fbclid, …)</label>
     <label class="toggle"><input type="checkbox" data-key="sendDnt"> Send “Do Not Track”</label>
     <label class="toggle"><input type="checkbox" data-key="sendGpc"> Send “Global Privacy Control”</label>
-    <label class="toggle"><input type="checkbox" data-key="smartscreen"> Microsoft Defender SmartScreen (sends visited addresses to Microsoft) <span class="tag">restart</span></label>
     <h3>When LightBrowser closes, clear</h3>
     <label class="toggle"><input type="checkbox" data-key="clearOnExit.cookies"> Cookies and site data</label>
     <label class="toggle"><input type="checkbox" data-key="clearOnExit.cache"> Cached images and files</label>

@@ -1,11 +1,10 @@
-//! Browser host: owns the window, the shell/popup WebViews and one
-//! controller per live tab, and turns `TabModel` effects into WebView calls.
+//! Browser host: owns the window, the shell/popup views and one browser
+//! view per live tab, and turns `TabModel` effects into engine calls.
 //! All policy (tabs, shortcuts, origins, navigation, layout) lives in core.
 
-use crate::ffi::dialogs;
-use crate::ffi::loader::Loader;
-use crate::ffi::webview::{
-    Controller, Download, Environment, EnvironmentConfig, Find, InternalResponse, KeyPress, NewWindow,
+use crate::ffi::cef::{
+    self as engine, DownloadControl, InternalResponse, KeyPress, LoadingState, MessageSource, NewWindow, Role, Scripts,
+    View, ViewOptions,
 };
 use crate::ffi::window::{ScreenRect, Window, WindowEvents};
 use crate::log::{info, warning};
@@ -19,18 +18,18 @@ use lb_core::protocol::{
     self, Channel, ContentMessage, Envelope, Event, NavState, PopupContent, PopupKind, PopupRect, Request, Sender,
     Source, ZoomAction,
 };
-use lb_core::settings::{Settings, Startup, TrackingPrevention};
+use lb_core::settings::{Settings, Startup};
 use lb_core::storage::{now_ms, Store};
 use lb_core::tabs::{Effect, Position, Session, TabId, TabModel};
-use lb_core::urlclean;
+use lb_core::urlclean::{self, LoadFailure};
 use std::borrow::Cow;
 use std::cell::{Cell, OnceCell, RefCell};
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
+use std::sync::Arc;
 
 const SHELL_URL: &str = "https://shell.lightbrowser.invalid/shell.html";
 const POPUP_URL: &str = "https://shell.lightbrowser.invalid/popup.html";
-const SHELL_FILTER: &str = "https://shell.lightbrowser.invalid/*";
 const SESSION_KEY: &str = "session";
 const DOWNLOADS_KEY: &str = "downloads";
 /// Timer that saves the session shortly after the last tab change.
@@ -54,20 +53,21 @@ use settings_host::EXIT_TIMER;
 use jobs::{Jobs, APP_JOB};
 use vault::{VaultHost, CLIPBOARD_TIMER, VAULT_TIMER};
 
-use blocking::{Deferred, FilterState, TabNet, APP_DEFERRED, APP_FILTERS_READY, SHIELD_TIMER, UPDATE_TIMER};
-/// Background behind the UI WebViews (matches --bg in common.css).
+use blocking::{
+    Deferred, FilterState, NetShared, TabNet, APP_DEFERRED, APP_FILTERS_READY, APP_SHIELD, SHIELD_TIMER, UPDATE_TIMER,
+};
+/// Background behind the UI views (matches --bg in common.css).
 const UI_BACKGROUND: u32 = 0xFFF3_F4F6;
 
-/// Live state of a tab's WebView.
+/// Live state of a tab's browser view.
 struct TabView {
-    controller: Controller,
+    view: View,
     /// Set right before the host itself navigates, so the navigation
     /// policy can tell host navigations from page-initiated ones.
     host_navigation: Rc<Cell<bool>>,
     can_go_back: bool,
     can_go_forward: bool,
-    /// Find-in-page session and its current term.
-    find: Option<Find>,
+    /// The current find-in-page term.
     find_query: String,
     /// Shield counter, cosmetic data and HTTPS-only state of the page.
     net: Rc<TabNet>,
@@ -80,10 +80,10 @@ struct TabView {
     downloads: Rc<Cell<u32>>,
 }
 
-/// The popup WebView in its owned popup window (created on first use).
+/// The popup view in its owned popup window (created on first use).
 struct Popup {
     window: Window,
-    controller: Option<Controller>,
+    view: Option<View>,
     ready: bool,
     /// Content shown now, or waiting for the popup document to be ready.
     content: Option<PopupContent>,
@@ -92,21 +92,25 @@ struct Popup {
 pub struct Browser {
     me: Weak<Browser>,
     window: OnceCell<Window>,
-    env: OnceCell<Environment>,
     store: RefCell<Store>,
     settings: RefCell<Settings>,
-    runtime_version: String,
     model: RefCell<TabModel>,
     views: RefCell<HashMap<TabId, TabView>>,
-    shell: RefCell<Option<Controller>>,
+    shell: RefCell<Option<View>>,
     popup: RefCell<Option<Popup>>,
-    new_windows: RefCell<HashMap<TabId, NewWindow>>,
+    /// Views the engine is creating for a page's `window.open`, waiting for
+    /// their tab's CreateView effect.
+    adopted: RefCell<HashMap<TabId, (View, Rc<TabNet>)>>,
     downloads: RefCell<Downloads>,
-    download_ops: RefCell<HashMap<u32, Download>>,
+    /// Running downloads by engine download id: our id and the controls
+    /// (known after the first progress update).
+    download_ops: RefCell<HashMap<u32, (u32, Option<DownloadControl>)>>,
     /// Button rect of the open bookmarks-bar folder dropdown.
     folder_anchor: Cell<Option<PopupRect>>,
     dirs: DataDirs,
     filters: Rc<FilterState>,
+    /// Blocking state shared with the engine's IO thread.
+    net: Arc<NetShared>,
     /// A shield counter update is scheduled.
     shield_pending: Cell<bool>,
     deferred: RefCell<Vec<Deferred>>,
@@ -115,8 +119,6 @@ pub struct Browser {
     jobs: Jobs,
     /// Settings the browser was started with (for "restart required").
     running_settings: Settings,
-    /// The runtime's own user agent (restored when the custom one is cleared).
-    default_ua: RefCell<Option<String>>,
     restart_after_exit: Cell<bool>,
     exit_clearing: Cell<bool>,
     exit_cleared: Cell<bool>,
@@ -124,67 +126,68 @@ pub struct Browser {
 }
 
 impl Browser {
-    /// Opens the window and starts creating the WebView2 environment.
+    /// Opens the window, the shell and the first tabs. Runs once the engine
+    /// is ready.
     pub fn start(
-        loader: &Loader,
+        window: Window,
         dirs: &DataDirs,
         store: Store,
         settings: Settings,
-        runtime_version: String,
         power: PowerOptions,
     ) -> Result<Rc<Browser>, String> {
+        if !window.exists() {
+            return Err("The window was closed during start-up".into());
+        }
         let running_settings = settings.clone();
         let browser = Rc::new_cyclic(|me| Browser {
             me: me.clone(),
             window: OnceCell::new(),
-            env: OnceCell::new(),
             store: RefCell::new(store),
             settings: RefCell::new(settings),
-            runtime_version,
             model: RefCell::new(TabModel::new()),
             views: RefCell::new(HashMap::new()),
             shell: RefCell::new(None),
             popup: RefCell::new(None),
-            new_windows: RefCell::new(HashMap::new()),
+            adopted: RefCell::new(HashMap::new()),
             downloads: RefCell::new(Downloads::new()),
             download_ops: RefCell::new(HashMap::new()),
             folder_anchor: Cell::new(None),
             dirs: dirs.clone(),
             filters: Rc::new(FilterState::new()),
+            net: Arc::new(NetShared::default()),
             shield_pending: Cell::new(false),
             deferred: RefCell::new(Vec::new()),
             power,
             vaults: VaultHost::default(),
             jobs: Jobs::new(),
             running_settings,
-            default_ua: RefCell::new(None),
             restart_after_exit: Cell::new(false),
             exit_clearing: Cell::new(false),
             exit_cleared: Cell::new(false),
             closing: Cell::new(false),
         });
-        let window = Window::create_main("LightBrowser", browser.clone())?;
+        window.set_events(browser.clone());
         let _ = browser.window.set(window);
+        browser.net.set_notifier(window.notifier());
         browser.apply_frame_theme();
         browser.init_filters();
         browser.init_vault();
-
-        let config = {
-            let s = browser.settings.borrow();
-            EnvironmentConfig {
-                browser_arguments: s.browser_arguments(),
-                tracking_prevention: s.tracking_prevention != TrackingPrevention::None,
-            }
-        };
-        info!("browser arguments: {}", config.browser_arguments);
+        engine::set_internal_server(browser.server());
         let weak = browser.me.clone();
-        Environment::create(loader, &dirs.profile(), &config, move |result| {
-            let Some(b) = weak.upgrade() else { return };
-            match result {
-                Ok(env) => b.environment_ready(env),
-                Err(e) => b.fatal(&e),
+        engine::on_relaunch(move |_args| {
+            if let Some(b) = weak.upgrade() {
+                info!("LightBrowser was started again; opening a new tab");
+                if let Some(w) = b.window() {
+                    w.bring_to_front();
+                }
+                b.new_tab(None, false);
             }
-        })?;
+        });
+        engine::set_color_scheme(browser.color_scheme());
+        browser.create_shell(window)?;
+        browser.restore_or_open_start();
+        browser.start_power_timer();
+        browser.mem_report_line("start");
         Ok(browser)
     }
 
@@ -192,84 +195,64 @@ impl Browser {
         self.window.get().copied()
     }
 
-    fn fatal(&self, error: &str) {
-        warning!("fatal: {error}");
-        dialogs::runtime_missing(&format!("Details: {error}\n"));
-        if let Some(w) = self.window() {
-            w.destroy();
-        }
-    }
-
     // ------------------------------------------------------------ startup
 
-    fn environment_ready(&self, env: Environment) {
-        info!("WebView2 environment created (runtime {})", self.runtime_version);
-        let _ = self.env.set(env.clone());
-        let Some(window) = self.window() else { return };
+    fn create_shell(&self, window: Window) -> Result<(), String> {
+        let shell = View::new(ViewOptions {
+            role: Role::Shell,
+            private: false,
+            scripts: Scripts::default(),
+            background: UI_BACKGROUND,
+            policy: None,
+        });
+        shell.on_before_browse(|nav| assets::allow_navigation(Channel::Shell, "", &nav.url, true));
         let weak = self.me.clone();
-        let started = env.create_controller(window.hwnd(), false, move |result| {
-            let Some(b) = weak.upgrade() else { return };
-            match result {
-                Ok(c) => b.shell_ready(c),
-                Err(e) => b.fatal(&e),
-            }
-        });
-        if let Err(e) = started {
-            self.fatal(&e);
-        }
-    }
-
-    fn shell_ready(&self, shell: Controller) {
-        let Some(env) = self.env.get() else { return };
-        shell.lock_down_ui();
-        shell.set_background(UI_BACKGROUND);
-        shell.serve(env, SHELL_FILTER, self.server());
-        self.apply_download_folder(&shell);
-        shell.set_color_scheme(match self.settings.borrow().theme {
-            lb_core::settings::Theme::System => None,
-            lb_core::settings::Theme::Light => Some(false),
-            lb_core::settings::Theme::Dark => Some(true),
-        });
-        shell.set_tracking_prevention(match self.settings.borrow().tracking_prevention {
-            TrackingPrevention::None => 0,
-            TrackingPrevention::Basic => 1,
-            TrackingPrevention::Balanced => 2,
-            TrackingPrevention::Strict => 3,
-        });
-        shell.on_navigation_starting(|nav| assets::allow_navigation(Channel::Shell, "", &nav.uri, true));
-        let weak = self.me.clone();
-        shell.on_new_window(move |nw| {
+        shell.on_open_tab(move |url, _| {
             // Links in the shell never open windows; open them as tabs instead.
             if let Some(b) = weak.upgrade() {
-                b.open_url(&nw.uri, true, false);
+                b.open_url(&url, true, false);
             }
         });
         let weak = self.me.clone();
         shell.on_message(move |source, json| {
             if let Some(b) = weak.upgrade() {
-                b.on_ui_message(Channel::Shell, &source, json);
+                b.on_ui_message(Channel::Shell, source, json);
+            }
+        });
+        let weak = self.me.clone();
+        shell.on_crashed(move |reason| {
+            warning!("the shell's renderer ended ({reason}); reloading it");
+            if let Some(s) = weak.upgrade().and_then(|b| b.shell()) {
+                s.navigate(SHELL_URL);
             }
         });
         self.hook_common(&shell);
-        let _ = shell.navigate(SHELL_URL);
+        shell.start(window.hwnd(), SHELL_URL).map_err(|e| format!("Cannot create the browser window: {e}"))?;
         shell.set_visible(true);
         *self.shell.borrow_mut() = Some(shell);
         self.layout();
-        self.restore_or_open_start();
-        self.start_power_timer();
-        self.mem_report_line("start");
+        Ok(())
     }
 
-    /// Accelerators and focus handling shared by every controller.
-    fn hook_common(&self, c: &Controller) {
+    /// Accelerators and focus handling shared by every view.
+    fn hook_common(&self, c: &View) {
         let weak = self.me.clone();
-        c.on_accelerator(move |key| weak.upgrade().is_some_and(|b| b.on_key(key)));
+        c.on_key(move |key| weak.upgrade().is_some_and(|b| b.on_key(key)));
         let weak = self.me.clone();
         c.on_got_focus(move || {
             if let Some(b) = weak.upgrade() {
                 b.hide_popup();
             }
         });
+    }
+
+    /// Light/dark preference for web content: `None` follows Windows.
+    fn color_scheme(&self) -> Option<bool> {
+        match self.settings.borrow().theme {
+            lb_core::settings::Theme::System => None,
+            lb_core::settings::Theme::Light => Some(false),
+            lb_core::settings::Theme::Dark => Some(true),
+        }
     }
 
     fn restore_or_open_start(&self) {
@@ -322,75 +305,54 @@ impl Browser {
         self.save_session();
     }
 
-    fn create_view(&self, id: TabId) {
-        let (Some(env), Some(window)) = (self.env.get(), self.window()) else { return };
-        let Some(private) = self.model.borrow().get(id).map(|t| t.private) else { return };
-        let weak = self.me.clone();
-        let started = env.create_controller(window.hwnd(), private, move |result| {
-            let Some(b) = weak.upgrade() else { return };
-            match result {
-                Ok(c) => b.view_ready(id, c),
-                Err(e) => warning!("tab {id}: {e}"),
-            }
-        });
-        if let Err(e) = started {
-            warning!("tab {id}: {e}");
-        }
+    /// A new (not started) tab view, with its network state.
+    fn new_tab_view(&self, private: bool) -> (View, Rc<TabNet>) {
+        let net = Rc::new(TabNet::new(self.net.clone()));
+        let scripts = {
+            let s = self.settings.borrow();
+            Scripts { gpc: s.send_gpc, dnt: s.send_dnt, page_tokens: s.adblock_enabled, login: true }
+        };
+        let view =
+            View::new(ViewOptions { role: Role::Tab, private, scripts, background: 0, policy: Some(net.policy()) });
+        (view, net)
     }
 
-    fn view_ready(&self, id: TabId, c: Controller) {
-        let (url, active) = {
+    fn create_view(&self, id: TabId) {
+        let Some(window) = self.window() else { return };
+        let (url, private, active) = {
             let m = self.model.borrow();
             match m.get(id) {
-                Some(t) if t.is_live() => (t.url.clone(), m.active_id() == Some(id)),
-                // Closed or unloaded while the controller was being created.
-                _ => {
-                    c.close();
-                    return;
-                }
+                Some(t) if t.is_live() => (t.url.clone(), t.private, m.active_id() == Some(id)),
+                _ => return,
             }
         };
+        let adopted = self.adopted.borrow_mut().remove(&id);
+        let popup = adopted.is_some();
+        let (view, net) = adopted.unwrap_or_else(|| self.new_tab_view(private));
         let host_navigation = Rc::new(Cell::new(false));
-        let net = Rc::new(TabNet::default());
-        let audio = Rc::new(Cell::new(false));
-        let audio2 = audio.clone();
-        c.on_audio_changed(move |playing| audio2.set(playing));
-        self.hook_tab(id, &c, host_navigation.clone(), net.clone());
-        self.hook_blocking(id, &c, net.clone());
-        self.apply_user_agent(&c);
-        if c.is_private() {
-            c.set_color_scheme(match self.settings.borrow().theme {
-                lb_core::settings::Theme::System => None,
-                lb_core::settings::Theme::Light => Some(false),
-                lb_core::settings::Theme::Dark => Some(true),
-            });
-        }
-        self.apply_download_folder(&c);
-        c.set_zoom(self.settings.borrow().default_zoom);
-        let pending = self.new_windows.borrow_mut().remove(&id);
-        match pending {
-            Some(nw) => nw.attach(&c),
-            None => {
-                host_navigation.set(true);
-                if let Err(e) = c.navigate(&url) {
-                    warning!("tab {id}: navigate failed: {e}");
-                }
+        self.hook_tab(id, &view, host_navigation.clone(), net.clone());
+        self.hook_blocking(&view, net.clone());
+        self.hook_downloads(&view, Some(id));
+        // A popup's browser is being created by the engine already.
+        if !popup {
+            host_navigation.set(true);
+            if let Err(e) = view.start(window.hwnd(), &url) {
+                warning!("tab {id}: {e}");
             }
         }
-        c.set_visible(active);
+        view.set_visible(active);
         self.views.borrow_mut().insert(
             id,
             TabView {
-                controller: c,
+                view,
                 host_navigation,
                 can_go_back: false,
                 can_go_forward: false,
-                find: None,
                 find_query: String::new(),
                 net,
                 stage: Cell::new(lb_core::memory::Stage::Awake),
                 stage_since: Cell::new(now_ms()),
-                audio,
+                audio: Rc::new(Cell::new(false)),
                 downloads: Rc::new(Cell::new(0)),
             },
         );
@@ -401,22 +363,21 @@ impl Browser {
         self.send_nav();
     }
 
-    fn hook_tab(&self, id: TabId, c: &Controller, host_navigation: Rc<Cell<bool>>, net: Rc<TabNet>) {
+    fn hook_tab(&self, id: TabId, c: &View, host_navigation: Rc<Cell<bool>>, net: Rc<TabNet>) {
         self.hook_common(c);
-        self.hook_downloads(c, Some(id));
 
         let weak = self.me.clone();
         let net_start = net.clone();
-        c.on_navigation_starting(move |nav| {
+        c.on_before_browse(move |nav| {
             let Some(b) = weak.upgrade() else { return false };
             let host = host_navigation.replace(false);
             let current = b.model.borrow().get(id).map(|t| t.url.clone()).unwrap_or_default();
-            let allow = assets::allow_navigation(Channel::Tab, &current, &nav.uri, host);
+            let allow = assets::allow_navigation(Channel::Tab, &current, &nav.url, host);
             if !allow {
                 info!("tab {id}: blocked navigation to an internal or unsupported URL");
                 return false;
             }
-            if let Some(rewritten) = b.navigation_starting(&net_start, &nav.uri, nav.redirected) {
+            if let Some(rewritten) = b.navigation_starting(&net_start, &nav.url, nav.redirected) {
                 // Cancel and restart at the cleaned/upgraded URL.
                 b.defer(move |b| b.navigate_tab(id, &rewritten));
                 return false;
@@ -426,25 +387,36 @@ impl Browser {
             true
         });
         let weak = self.me.clone();
-        c.on_navigation_completed(move |ok, status| {
+        c.on_loading(move |state: LoadingState| {
             if let Some(b) = weak.upgrade() {
-                b.navigation_completed(id, &net, ok, status);
-                b.model.borrow_mut().set_loading(id, false);
-                if ok {
+                if let Some(v) = b.views.try_borrow_mut().ok().as_mut().and_then(|v| v.get_mut(&id)) {
+                    v.can_go_back = state.can_go_back;
+                    v.can_go_forward = state.can_go_forward;
+                }
+                b.model.borrow_mut().set_loading(id, state.loading);
+                b.tab_changed(id);
+            }
+        });
+        let weak = self.me.clone();
+        let net_done = net.clone();
+        c.on_load_finished(move |error| {
+            if let Some(b) = weak.upgrade() {
+                b.navigation_completed(id, &net_done, error.map(LoadFailure::from_net_error));
+                if error.is_none() {
                     b.record_visit(id);
                 }
                 b.tab_changed(id);
             }
         });
         let weak = self.me.clone();
-        c.on_source_changed(move |url| {
+        c.on_address(move |url| {
             if let Some(b) = weak.upgrade() {
                 b.model.borrow_mut().set_url(id, &url);
                 b.tab_changed(id);
             }
         });
         let weak = self.me.clone();
-        c.on_title_changed(move |title| {
+        c.on_title(move |title| {
             if let Some(b) = weak.upgrade() {
                 b.model.borrow_mut().set_title(id, &title);
                 b.record_title(id);
@@ -452,17 +424,7 @@ impl Browser {
             }
         });
         let weak = self.me.clone();
-        c.on_history_changed(move |back, fwd| {
-            if let Some(b) = weak.upgrade() {
-                if let Some(v) = b.views.borrow_mut().get_mut(&id) {
-                    v.can_go_back = back;
-                    v.can_go_forward = fwd;
-                }
-                b.send_nav();
-            }
-        });
-        let weak = self.me.clone();
-        c.on_favicon_changed(move |png| {
+        c.on_favicon(move |png| {
             if let Some(b) = weak.upgrade() {
                 b.model.borrow_mut().set_favicon(id, assets::png_data_url(&png));
                 b.cache_favicon(id, &png);
@@ -470,30 +432,43 @@ impl Browser {
             }
         });
         let weak = self.me.clone();
-        c.on_new_window(move |nw| {
+        c.on_new_window(move |nw| weak.upgrade().and_then(|b| b.open_new_window(id, nw)));
+        let weak = self.me.clone();
+        c.on_open_tab(move |url, foreground| {
             if let Some(b) = weak.upgrade() {
-                b.open_new_window(id, nw);
+                b.open_link_in_tab(id, &url, foreground);
             }
         });
         let weak = self.me.clone();
-        c.on_zoom_changed(move |_| {
+        c.on_find_result(move |active, total| {
             if let Some(b) = weak.upgrade() {
-                b.send_nav();
+                if b.model.borrow().active_id() == Some(id) {
+                    b.post_shell(&Event::FindResult { active, total });
+                }
             }
         });
         let weak = self.me.clone();
         c.on_message(move |source, json| {
             if let Some(b) = weak.upgrade() {
-                b.on_tab_message(id, &source, json);
+                b.on_tab_message(id, source, json);
             }
         });
+        let weak = self.me.clone();
+        c.on_created(move || {
+            if let Some(b) = weak.upgrade() {
+                b.apply_user_agent_to(id);
+            }
+        });
+        c.on_crashed(move |reason| warning!("tab {id}: renderer ended ({reason})"));
     }
 
     fn destroy_view(&self, id: TabId) {
-        self.new_windows.borrow_mut().remove(&id);
+        if let Some((v, _)) = self.adopted.borrow_mut().remove(&id) {
+            v.close();
+        }
         let view = self.views.borrow_mut().remove(&id);
         if let Some(v) = view {
-            v.controller.close();
+            v.view.close();
         }
     }
 
@@ -503,10 +478,10 @@ impl Browser {
         if let Some(f) = from {
             self.stop_find(f);
         }
-        if let Some(f) = from.and_then(|f| self.controller(f)) {
+        if let Some(f) = from.and_then(|f| self.tab_view(f)) {
             f.set_visible(false);
         }
-        if let Some(t) = self.controller(to) {
+        if let Some(t) = self.tab_view(to) {
             t.set_visible(true);
         }
         self.layout();
@@ -514,16 +489,16 @@ impl Browser {
         self.update_title();
     }
 
-    fn controller(&self, id: TabId) -> Option<Controller> {
-        self.views.try_borrow().ok()?.get(&id).map(|v| v.controller.clone())
+    fn tab_view(&self, id: TabId) -> Option<View> {
+        self.views.try_borrow().ok()?.get(&id).map(|v| v.view.clone())
     }
 
-    fn active_controller(&self) -> Option<Controller> {
+    fn active_view(&self) -> Option<View> {
         let id = self.model.try_borrow().ok()?.active_id()?;
-        self.controller(id)
+        self.tab_view(id)
     }
 
-    fn shell(&self) -> Option<Controller> {
+    fn shell(&self) -> Option<View> {
         self.shell.try_borrow().ok()?.clone()
     }
 
@@ -532,7 +507,7 @@ impl Browser {
         let is_new_tab = self.model.borrow().active().is_some_and(|t| Page::from_url(&t.url) == Some(Page::NewTab));
         if is_new_tab {
             self.focus_address_bar();
-        } else if let Some(c) = self.active_controller() {
+        } else if let Some(c) = self.active_view() {
             c.focus();
         }
     }
@@ -544,7 +519,7 @@ impl Browser {
         }
     }
 
-    /// Opens the find bar with keyboard focus in it: the shell WebView must
+    /// Opens the find bar with keyboard focus in it: the shell view must
     /// get focus first, or typing still goes to the page.
     pub(super) fn show_find_bar(&self) {
         if let Some(s) = self.shell() {
@@ -563,7 +538,7 @@ impl Browser {
         if let Some(s) = self.shell() {
             s.set_bounds(shell.x, shell.y, shell.width, shell.height);
         }
-        if let Some(c) = self.active_controller() {
+        if let Some(c) = self.active_view() {
             c.set_bounds(content.x, content.y, content.width, content.height);
         }
     }
@@ -617,9 +592,9 @@ impl Browser {
             loading: tab.loading,
             secure,
             bookmarked,
-            blocked: view.map(|v| v.net.blocked.get()).unwrap_or(0),
-            site_allowed: view.is_some_and(|v| v.net.allowed.get()),
-            zoom: view.map(|v| v.controller.zoom()).unwrap_or(1.0),
+            blocked: view.map(|v| v.net.blocked()).unwrap_or(0),
+            site_allowed: view.is_some_and(|v| v.net.allowed()),
+            zoom: view.map(|v| v.view.zoom()).unwrap_or(1.0),
             private: tab.private,
             login_form: view.is_some_and(|v| v.net.login_form.get()),
         })
@@ -671,14 +646,29 @@ impl Browser {
         self.apply(effects);
     }
 
-    fn open_new_window(&self, opener: TabId, nw: NewWindow) {
+    /// A page in tab `opener` opened a window: it becomes a tab next to the
+    /// opener, and the engine creates its browser for the returned view.
+    fn open_new_window(&self, opener: TabId, nw: &NewWindow) -> Option<(View, windows::Win32::Foundation::HWND)> {
+        let window = self.window()?;
         let private = self.model.borrow().get(opener).is_some_and(|t| t.private);
-        let url = nw.uri.clone();
         let (id, effects) =
-            self.with_model(|m| m.open(&url, private, Position::AfterOpener(opener), true, true, now_ms()));
-        // The view for `id` is created by the CreateView effect; it picks
-        // up the pending request and attaches itself as the new window.
-        self.new_windows.borrow_mut().insert(id, nw);
+            self.with_model(|m| m.open(&nw.url, private, Position::AfterOpener(opener), nw.foreground, true, now_ms()));
+        let (view, net) = self.new_tab_view(private);
+        // The CreateView effect picks this view up and hooks it.
+        self.adopted.borrow_mut().insert(id, (view.clone(), net));
+        self.apply(effects);
+        Some((view, window.hwnd()))
+    }
+
+    /// A link opened "in a new tab" (middle click, Ctrl+click) from tab `opener`.
+    fn open_link_in_tab(&self, opener: TabId, url: &str, foreground: bool) {
+        let ok = url.starts_with("https://") || url.starts_with("http://");
+        if !ok {
+            return;
+        }
+        let private = self.model.borrow().get(opener).is_some_and(|t| t.private);
+        let (_, effects) =
+            self.with_model(|m| m.open(url, private, Position::AfterOpener(opener), foreground, true, now_ms()));
         self.apply(effects);
     }
 
@@ -697,11 +687,7 @@ impl Browser {
 
     fn navigate_active(&self, url: &str) {
         let Some(id) = self.model.borrow().active_id() else { return };
-        let views = self.views.borrow();
-        if let Some(v) = views.get(&id) {
-            v.host_navigation.set(true);
-            let _ = v.controller.navigate(url);
-        }
+        self.navigate_tab(id, url);
     }
 
     /// Built-in pages replace a new-tab page, otherwise open in a new tab.
@@ -772,7 +758,11 @@ impl Browser {
             Command::ZoomOut => self.zoom(ZoomAction::Out),
             Command::ZoomReset => self.zoom(ZoomAction::Reset),
             Command::Print => self.active_do(|c| c.print()),
-            Command::DevTools => self.active_do(|c| c.open_devtools()),
+            Command::DevTools => {
+                if let Some(w) = self.window() {
+                    self.active_do(|c| c.open_devtools(w.hwnd()));
+                }
+            }
             Command::History => self.open_page(Page::History),
             Command::Bookmarks => self.open_page(Page::Bookmarks),
             Command::Downloads => self.open_page(Page::Downloads),
@@ -784,8 +774,8 @@ impl Browser {
         }
     }
 
-    fn active_do(&self, f: impl FnOnce(&Controller)) {
-        if let Some(c) = self.active_controller() {
+    fn active_do(&self, f: impl FnOnce(&View)) {
+        if let Some(c) = self.active_view() {
             f(&c);
         }
     }
@@ -811,8 +801,8 @@ impl Browser {
 
     // ------------------------------------------------------------ messages
 
-    fn on_ui_message(&self, channel: Channel, source: &str, json: &str) {
-        let sender = match protocol::classify(channel, source, true) {
+    fn on_ui_message(&self, channel: Channel, source: &MessageSource, json: &str) {
+        let sender = match protocol::classify(channel, &source.url, source.main_frame) {
             Ok(Source::Privileged(s)) => s,
             _ => {
                 warning!("rejected message on {channel:?} channel from an unexpected origin");
@@ -825,8 +815,8 @@ impl Browser {
         }
     }
 
-    fn on_tab_message(&self, id: TabId, source: &str, json: &str) {
-        match protocol::classify(Channel::Tab, source, true) {
+    fn on_tab_message(&self, id: TabId, source: &MessageSource, json: &str) {
+        match protocol::classify(Channel::Tab, &source.url, source.main_frame) {
             Ok(Source::Privileged(sender)) => match protocol::parse_request(sender, json) {
                 Ok(env) => self.dispatch(sender, Some(id), env),
                 Err(e) => warning!("tab {id}: rejected {sender:?} message: {e}"),
@@ -837,7 +827,7 @@ impl Browser {
                     let net = self.views.borrow().get(&id).map(|v| v.net.clone());
                     if let Some(net) = net {
                         // Only for the page currently shown in the tab.
-                        if urlclean::origin_of(&net.top_url.borrow()).as_deref() == Some(origin.as_str()) {
+                        if urlclean::origin_of(&net.top_url()).as_deref() == Some(origin.as_str()) {
                             net.login_form.set(true);
                             self.send_nav();
                         }
@@ -855,7 +845,7 @@ impl Browser {
 
     /// Sends a reply to whoever asked (a built-in page in tab `tab`).
     fn reply(&self, tab: Option<TabId>, event: Event) {
-        if let Some(c) = tab.and_then(|t| self.controller(t)) {
+        if let Some(c) = tab.and_then(|t| self.tab_view(t)) {
             c.post_json(&event.to_json());
         }
     }
@@ -876,13 +866,14 @@ impl Browser {
                     self.focus_active();
                 }
                 Sender::Popup => {
-                    if let Some(c) = self.popup.borrow().as_ref().and_then(|p| p.controller.clone()) {
+                    let popup = self.popup.borrow().as_ref().and_then(|p| p.view.clone());
+                    if let Some(c) = popup {
                         self.send_theme_to(&c);
                     }
                     self.popup_ready();
                 }
                 Sender::Page(_) => {
-                    if let Some(c) = tab.and_then(|t| self.controller(t)) {
+                    if let Some(c) = tab.and_then(|t| self.tab_view(t)) {
                         self.send_theme_to(&c);
                     }
                 }
@@ -919,7 +910,7 @@ impl Browser {
                 let url = urlclean::input_to_url(&input, &template);
                 self.navigate_active(&url);
                 if sender == Sender::Shell {
-                    if let Some(c) = self.active_controller() {
+                    if let Some(c) = self.active_view() {
                         c.focus();
                     }
                 }
@@ -1001,7 +992,7 @@ impl Browser {
     // ------------------------------------------------------------ popup
 
     fn menu_content(&self) -> PopupContent {
-        let zoom = self.active_controller().map(|c| c.zoom()).unwrap_or(1.0);
+        let zoom = self.active_view().map(|c| c.zoom()).unwrap_or(1.0);
         PopupContent::Menu { zoom, can_reopen: self.model.borrow().closed_count() > 0 }
     }
 
@@ -1028,7 +1019,7 @@ impl Browser {
             );
             popup.window.set_activatable(kind.takes_focus());
             popup.window.show_at(ScreenRect { x: r.x, y: r.y, width: r.width, height: r.height }, kind.takes_focus());
-            if let Some(c) = &popup.controller {
+            if let Some(c) = &popup.view {
                 c.set_bounds(0, 0, r.width, r.height);
                 c.set_visible(true);
                 if kind.takes_focus() {
@@ -1037,14 +1028,13 @@ impl Browser {
             }
         }
         if popup.ready {
-            if let Some(c) = &popup.controller {
+            if let Some(c) = &popup.view {
                 c.post_json(&Event::Popup { content }.to_json());
             }
         }
     }
 
     fn create_popup(&self, main: Window) -> bool {
-        let Some(env) = self.env.get().cloned() else { return false };
         let events: Rc<dyn WindowEvents> = Rc::new(PopupEvents(self.me.clone()));
         let window = match Window::create_popup(main, events) {
             Ok(w) => w,
@@ -1053,46 +1043,33 @@ impl Browser {
                 return false;
             }
         };
-        *self.popup.borrow_mut() = Some(Popup { window, controller: None, ready: false, content: None });
-        let weak = self.me.clone();
-        // The popup always uses the default (shell) profile, never a private one.
-        let started = env.create_controller(window.hwnd(), false, move |result| {
-            let Some(b) = weak.upgrade() else { return };
-            match result {
-                Ok(c) => b.popup_controller_ready(c),
-                Err(e) => warning!("popup: {e}"),
-            }
+        // The popup always uses the default profile, never a private one.
+        let c = View::new(ViewOptions {
+            role: Role::Popup,
+            private: false,
+            scripts: Scripts::default(),
+            background: UI_BACKGROUND,
+            policy: None,
         });
-        if let Err(e) = started {
-            warning!("popup: {e}");
-            return false;
-        }
-        true
-    }
-
-    fn popup_controller_ready(&self, c: Controller) {
-        let Some(env) = self.env.get() else { return };
-        c.lock_down_ui();
-        c.set_background(UI_BACKGROUND);
-        c.serve(env, SHELL_FILTER, self.server());
-        c.on_navigation_starting(|nav| assets::allow_navigation(Channel::Popup, "", &nav.uri, true));
-        c.on_new_window(|_| {});
+        c.on_before_browse(|nav| assets::allow_navigation(Channel::Popup, "", &nav.url, true));
         let weak = self.me.clone();
         c.on_message(move |source, json| {
             if let Some(b) = weak.upgrade() {
-                b.on_ui_message(Channel::Popup, &source, json);
+                b.on_ui_message(Channel::Popup, source, json);
             }
         });
         let weak = self.me.clone();
-        c.on_accelerator(move |key| weak.upgrade().is_some_and(|b| b.on_key(key)));
-        let _ = c.navigate(POPUP_URL);
-        let mut guard = self.popup.borrow_mut();
-        if let Some(p) = guard.as_mut() {
-            let (w, h) = p.window.client_size();
-            c.set_bounds(0, 0, w, h);
-            c.set_visible(p.window.is_visible());
-            p.controller = Some(c);
+        c.on_key(move |key| weak.upgrade().is_some_and(|b| b.on_key(key)));
+        if let Err(e) = c.start(window.hwnd(), POPUP_URL) {
+            warning!("popup: {e}");
+            window.destroy();
+            return false;
         }
+        let (w, h) = window.client_size();
+        c.set_bounds(0, 0, w, h);
+        c.set_visible(window.is_visible());
+        *self.popup.borrow_mut() = Some(Popup { window, view: Some(c), ready: false, content: None });
+        true
     }
 
     fn popup_ready(&self) {
@@ -1101,7 +1078,7 @@ impl Browser {
             let Some(p) = guard.as_mut() else { return };
             p.ready = true;
             if p.window.is_visible() {
-                p.content.clone().zip(p.controller.clone())
+                p.content.clone().zip(p.view.clone())
             } else {
                 None
             }
@@ -1135,25 +1112,30 @@ impl Browser {
 
     /// Request handler for our internal origins: embedded UI files, and the
     /// cached favicons from the database.
-    fn server(&self) -> impl Fn(&str) -> Option<InternalResponse> + 'static {
+    fn server(&self) -> impl Fn(&str) -> InternalResponse + 'static {
         let weak = self.me.clone();
         move |uri: &str| {
             if let Some(host) = assets::favicon_request(uri) {
-                let png = weak.upgrade()?.store.try_borrow().ok()?.favicon(&host).ok()??;
-                return Some(InternalResponse {
+                let png = weak.upgrade().and_then(|b| b.store.try_borrow().ok()?.favicon(&host).ok()?);
+                return match png {
+                    Some(png) => InternalResponse {
+                        status: 200,
+                        reason: "OK",
+                        headers: assets::favicon_headers().to_string(),
+                        body: Cow::Owned(png),
+                    },
+                    None => InternalResponse::not_found(),
+                };
+            }
+            match assets::resolve(uri) {
+                Some(asset) => InternalResponse {
                     status: 200,
                     reason: "OK",
-                    headers: assets::favicon_headers().to_string(),
-                    body: Cow::Owned(png),
-                });
+                    headers: assets::response_headers(&asset),
+                    body: Cow::Borrowed(asset.bytes),
+                },
+                None => InternalResponse::not_found(),
             }
-            let asset = assets::resolve(uri)?;
-            Some(InternalResponse {
-                status: 200,
-                reason: "OK",
-                headers: assets::response_headers(&asset),
-                body: Cow::Borrowed(asset.bytes),
-            })
         }
     }
 
@@ -1170,13 +1152,16 @@ impl Browser {
         self.save_downloads();
         self.shutdown_vault();
         self.relaunch_if_requested();
-        self.new_windows.borrow_mut().clear();
+        let adopted: Vec<View> = self.adopted.borrow_mut().drain().map(|(_, (v, _))| v).collect();
+        for v in adopted {
+            v.close();
+        }
         let views: Vec<TabView> = self.views.borrow_mut().drain().map(|(_, v)| v).collect();
         for v in views {
-            v.controller.close();
+            v.view.close();
         }
         if let Some(p) = self.popup.borrow_mut().take() {
-            if let Some(c) = p.controller {
+            if let Some(c) = p.view {
                 c.close();
             }
             p.window.destroy();
@@ -1184,6 +1169,8 @@ impl Browser {
         if let Some(s) = self.shell.borrow_mut().take() {
             s.close();
         }
+        // The message loop ends when the engine has closed every browser.
+        engine::quit_when_closed();
     }
 }
 
@@ -1208,8 +1195,8 @@ impl WindowEvents for Browser {
 
     fn minimized(&self, minimized: bool) {
         self.hide_popup();
-        // Hidden WebViews use less CPU and memory.
-        if let Some(c) = self.active_controller() {
+        // Hidden views use less CPU and memory.
+        if let Some(c) = self.active_view() {
             c.set_visible(!minimized);
         }
         if let Some(s) = self.shell() {
@@ -1220,10 +1207,10 @@ impl WindowEvents for Browser {
     fn moved(&self) {
         self.hide_popup();
         if let Some(s) = self.shell() {
-            s.notify_parent_moved();
+            s.notify_moved();
         }
-        if let Some(c) = self.active_controller() {
-            c.notify_parent_moved();
+        if let Some(c) = self.active_view() {
+            c.notify_moved();
         }
     }
 
@@ -1232,7 +1219,7 @@ impl WindowEvents for Browser {
     }
 
     fn got_focus(&self) {
-        // Keyboard shortcuts arrive through the WebViews, so the frame
+        // Keyboard shortcuts arrive through the views, so the frame
         // must never keep the focus itself.
         self.focus_active();
     }
@@ -1287,6 +1274,7 @@ impl WindowEvents for Browser {
             APP_FILTERS_READY => self.filters_ready(),
             APP_DEFERRED => self.run_deferred(),
             APP_JOB => self.jobs_ready(),
+            APP_SHIELD => self.shield_changed(),
             _ => {}
         }
     }

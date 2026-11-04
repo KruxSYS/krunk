@@ -12,7 +12,6 @@ name = "lb_core"
 path = "src/lib.rs"
 
 [dependencies]
-sha2 = "0.11"
 adblock = { version = "0.13", default-features = false, features = ["embedded-domain-resolver", "full-regex-handling"] }
 miniz_oxide = "0.9"
 serde = { version = "1", features = ["derive"] }

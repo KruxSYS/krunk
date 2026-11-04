@@ -3,7 +3,8 @@
 // Events: LB.on(eventName, handler).
 (function () {
   'use strict';
-  const wv = window.chrome && window.chrome.webview;
+  // window.__lbHost is installed by the browser before any page script runs.
+  const wv = window.__lbHost;
   let nextId = 1;
   const pending = new Map();
   const listeners = new Map();

@@ -147,7 +147,7 @@ impl Browser {
             .map(|t| t.id)
             .collect();
         for id in tabs {
-            if let Some(c) = self.controller(id) {
+            if let Some(c) = self.tab_view(id) {
                 c.post_json(&e);
             }
         }
@@ -268,7 +268,7 @@ impl Browser {
     }
 
     fn reply_secret(&self, tab: Option<TabId>, req_id: Option<u32>, secret: &str, note: Option<&str>) {
-        if let Some(c) = tab.and_then(|t| self.controller(t)) {
+        if let Some(c) = tab.and_then(|t| self.tab_view(t)) {
             let json = secret_reply(req_id, secret, note);
             c.post_json(&json);
         }
@@ -644,7 +644,7 @@ impl Browser {
         };
         // Posted to the top-level document only (WebView2 never delivers
         // PostWebMessage to iframes).
-        if let Some(c) = self.controller(tab_id) {
+        if let Some(c) = self.tab_view(tab_id) {
             c.post_json(&message);
             self.touch_vault();
         }

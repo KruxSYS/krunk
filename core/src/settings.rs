@@ -40,15 +40,6 @@ pub enum Startup {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub enum TrackingPrevention {
-    None,
-    Basic,
-    Balanced,
-    Strict,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub enum Theme {
     System,
     Light,
@@ -91,21 +82,18 @@ pub struct Settings {
     /// Minutes in the background before a tab is put to sleep; 0 = never.
     pub tab_sleep_minutes: u32,
     pub tab_discard_enabled: bool,
-    /// Minutes in the background before a tab's WebView is unloaded.
+    /// Minutes in the background before a tab's browser view is unloaded.
     pub tab_discard_minutes: u32,
 
     // Privacy
     pub adblock_enabled: bool,
     pub filter_lists: Vec<String>,
-    pub tracking_prevention: TrackingPrevention,
-    /// Block all third-party cookies (browser-wide, needs a restart). Strict
-    /// tracking prevention alone only blocks known trackers' storage.
+    /// Block all third-party cookies (browser-wide, needs a restart).
     pub block_third_party_cookies: bool,
     pub https_only: bool,
     pub send_dnt: bool,
     pub send_gpc: bool,
     pub strip_tracking_params: bool,
-    pub smartscreen: bool,
     pub clear_on_exit: ClearOnExit,
 
     // Passwords
@@ -118,7 +106,7 @@ pub struct Settings {
     pub ask_where_to_save: bool,
 
     // Advanced
-    /// Empty = the WebView2 default user agent.
+    /// Empty = the engine's default user agent.
     pub user_agent: String,
     /// Empty = system proxy settings. Passed as `--proxy-server`.
     pub proxy: String,
@@ -145,13 +133,11 @@ impl Default for Settings {
             tab_discard_minutes: 30,
             adblock_enabled: true,
             filter_lists: FILTER_LISTS.iter().map(|s| s.to_string()).collect(),
-            tracking_prevention: TrackingPrevention::Strict,
             block_third_party_cookies: true,
             https_only: false,
             send_dnt: true,
             send_gpc: true,
             strip_tracking_params: true,
-            smartscreen: false,
             clear_on_exit: ClearOnExit::default(),
             vault_autolock_minutes: 15,
             offer_save_passwords: true,
@@ -210,20 +196,14 @@ const PROTECTED_FEATURES: &[&str] = &["IsolateOrigins", "SitePerProcess", "Stric
 
 /// Features we always disable: background traffic and services that a
 /// lightweight browser with its own vault does not need.
-pub const DISABLED_FEATURES: &[&str] = &[
-    "AutofillServerCommunication",
-    "MediaRouter",
-    "OptimizationHints",
-    "InterestFeedContentSuggestions",
-    "msEdgeShoppingAssistant",
-];
+pub const DISABLED_FEATURES: &[&str] =
+    &["AutofillServerCommunication", "MediaRouter", "OptimizationHints", "InterestFeedContentSuggestions"];
 
 /// Switches we always pass (documented in the README).
 pub const BASE_SWITCHES: &[&str] = &["--no-pings", "--disable-domain-reliability"];
 
 /// Blocks third-party cookies browser-wide. Chromium's third-party-cookie
-/// phase-out switch: WebView2 has no API for this, and Strict tracking
-/// prevention only covers known trackers. A future runtime may rename it.
+/// phase-out switch; a future Chromium may rename it.
 pub const BLOCK_THIRD_PARTY_COOKIES_SWITCH: &str = "--test-third-party-cookie-phaseout";
 
 pub const MAX_SLEEP_MINUTES: u32 = 24 * 60;
@@ -325,15 +305,20 @@ impl Settings {
         s
     }
 
-    /// The `AdditionalBrowserArguments` for the WebView2 environment.
-    /// Changes only take effect after a restart.
     /// Did a field that only takes effect after a restart change compared
     /// with the settings the browser was started with?
     pub fn restart_required(&self, running: &Settings) -> bool {
         self.browser_arguments() != running.browser_arguments()
     }
 
+    /// The Chromium switches for the engine, as one string (shown on the
+    /// About page). Changes only take effect after a restart.
     pub fn browser_arguments(&self) -> String {
+        self.browser_switches().join(" ")
+    }
+
+    /// The Chromium switches for the engine (`--name` or `--name=value`).
+    pub fn browser_switches(&self) -> Vec<String> {
         let mut args: Vec<String> = BASE_SWITCHES.iter().map(|s| s.to_string()).collect();
         if !self.hardware_acceleration {
             args.push("--disable-gpu".into());
@@ -345,9 +330,6 @@ impl Settings {
             args.push(format!("--proxy-server={}", self.proxy));
         }
         let mut disabled: Vec<String> = DISABLED_FEATURES.iter().map(|s| s.to_string()).collect();
-        if !self.smartscreen {
-            disabled.push("msSmartScreenProtection".into());
-        }
         let mut enabled: Vec<String> = Vec::new();
         for flag in self.extra_flags.split_whitespace() {
             // Chromium only honours the last --disable-features/--enable-features,
@@ -372,7 +354,7 @@ impl Settings {
         // extra flags): keep the first.
         let mut seen = std::collections::HashSet::new();
         args.retain(|a| seen.insert(a.split('=').next().unwrap_or(a).to_ascii_lowercase()));
-        args.join(" ")
+        args
     }
 }
 
@@ -509,7 +491,6 @@ mod tests {
         assert_eq!(s.validate(), Ok(()));
         assert_eq!(s.search_engine, SearchEngine::DuckDuckGo);
         assert!(s.hardware_acceleration && s.adblock_enabled);
-        assert_eq!(s.tracking_prevention, TrackingPrevention::Strict);
         assert_eq!(s.tab_sleep_minutes, 5);
     }
 
@@ -732,7 +713,6 @@ mod tests {
             user_agent: "UA/1".into(),
             default_zoom: 1.5,
             https_only: true,
-            tracking_prevention: TrackingPrevention::Basic,
             adblock_enabled: false,
             ..Settings::default()
         };
@@ -741,7 +721,7 @@ mod tests {
             Settings { hardware_acceleration: false, ..Settings::default() },
             Settings { proxy: "127.0.0.1:8080".into(), ..Settings::default() },
             Settings { extra_flags: "--force-dark-mode".into(), ..Settings::default() },
-            Settings { smartscreen: true, ..Settings::default() },
+            Settings { block_third_party_cookies: false, ..Settings::default() },
         ] {
             assert!(changed.restart_required(&running), "{changed:?}");
         }
@@ -789,7 +769,6 @@ mod tests {
         assert_eq!(s.tab_sleep_minutes, 10);
         let d = Settings::default();
         assert_eq!(s.hardware_acceleration, d.hardware_acceleration);
-        assert_eq!(s.tracking_prevention, TrackingPrevention::Strict);
         assert!(s.block_third_party_cookies, "a settings file from before the toggle blocks third-party cookies");
         assert_eq!(s.vault_autolock_minutes, d.vault_autolock_minutes);
         assert_eq!(s.filter_lists, d.filter_lists);
@@ -806,11 +785,9 @@ mod tests {
         let a = s.browser_arguments();
         assert!(!a.contains("--disable-gpu"));
         assert!(a.contains("--no-pings"));
-        assert!(a.contains("msSmartScreenProtection"));
 
         let s = Settings {
             hardware_acceleration: false,
-            smartscreen: true,
             proxy: "socks5://127.0.0.1:9050".into(),
             extra_flags: "--force-dark-mode --disable-features=Foo --enable-features=Bar".into(),
             ..Settings::default()
@@ -819,10 +796,45 @@ mod tests {
         assert!(a.contains("--disable-gpu"));
         assert!(a.contains("--proxy-server=socks5://127.0.0.1:9050"));
         assert!(a.contains("--force-dark-mode"));
-        assert!(!a.contains("msSmartScreenProtection"));
         assert_eq!(a.matches("--disable-features=").count(), 1);
         assert!(a.contains(",Foo"));
         assert!(a.contains("--enable-features=Bar"));
+    }
+
+    #[test]
+    fn settings_from_the_webview2_version_still_load() {
+        // Written by the WebView2-based release: Edge-only fields are ignored
+        // (and dropped on the next save); everything else is kept.
+        let old = r#"{"searchEngine":"brave","trackingPrevention":"balanced","smartscreen":true,
+            "blockThirdPartyCookies":false,"sendDnt":false,"defaultZoom":1.25,"theme":"light"}"#;
+        let s = Settings::from_json_lenient(old);
+        assert_eq!(s.search_engine, SearchEngine::Brave);
+        assert!(!s.block_third_party_cookies && !s.send_dnt);
+        assert_eq!(s.default_zoom, 1.25);
+        assert_eq!(s.theme, Theme::Light);
+        assert_eq!(s.validate(), Ok(()));
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(!json.contains("trackingPrevention") && !json.contains("smartscreen"), "{json}");
+    }
+
+    #[test]
+    fn no_edge_specific_switches() {
+        // Every setting that adds switches, turned on.
+        let s = Settings {
+            hardware_acceleration: false,
+            proxy: "127.0.0.1:8080".into(),
+            extra_flags: "--force-dark-mode --disable-features=Foo".into(),
+            ..Settings::default()
+        };
+        let switches = s.browser_switches();
+        for a in &switches {
+            assert!(a.starts_with("--"), "{a}");
+            assert!(!a.contains("msSmartScreen") && !a.contains("msEdge") && !a.contains("ms-"), "{a}");
+            assert_ne!(a.to_ascii_lowercase(), "--no-sandbox");
+        }
+        assert_eq!(s.browser_arguments(), switches.join(" "));
+        let disabled = switches.iter().find(|a| a.starts_with("--disable-features=")).unwrap();
+        assert_eq!(disabled, "--disable-features=AutofillServerCommunication,MediaRouter,OptimizationHints,InterestFeedContentSuggestions,Foo");
     }
 
     #[test]

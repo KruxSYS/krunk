@@ -1,32 +1,37 @@
 //! Ad and tracker blocking, privacy headers, tracking-parameter stripping,
 //! HTTPS-only mode and the filter-list updater.
 //!
-//! Hot path: [`Browser::request_handler`] runs on the UI thread for every
-//! request of a tab. It touches only in-memory state (engine, allowlist
-//! flags precomputed per navigation) and never the database.
+//! Hot path: [`TabPolicy::check`] runs on the engine's IO thread for every
+//! request of a tab. It touches only in-memory state shared through
+//! [`NetShared`] (engine, flags precomputed per navigation) and never the
+//! database.
 
 use super::Browser;
+use crate::ffi::cef::{NetRequest, NetVerdict, RequestPolicy, View};
 use crate::ffi::http::{self, ProxyMode};
-use crate::ffi::webview::{Controller, ResourceAction, ResourceRequest};
+use crate::ffi::window::AppNotifier;
 use crate::log::{info, warning};
 use lb_core::assets;
 use lb_core::blocker::{self, Allowlist, Blocker, Decision, ResourceKind};
 use lb_core::filterlists::{self, Rebuilt, UpdateState, MAX_LIST_BYTES};
 use lb_core::pages::Page;
 use lb_core::protocol::{ContentMessage, Event, PopupContent, Request};
-use lb_core::settings::{updater_proxy, TrackingPrevention, UpdaterProxy, FILTER_LISTS};
+use lb_core::settings::{updater_proxy, UpdaterProxy, FILTER_LISTS};
 use lb_core::storage::now_ms;
 use lb_core::tabs::TabId;
-use lb_core::urlclean::{self, RewriteOptions};
+use lb_core::urlclean::{self, LoadFailure, RewriteOptions};
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::rc::Rc;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
+use std::sync::{mpsc, Arc, Mutex, OnceLock, RwLock};
 
 /// `WM_APP` code: the filter worker finished.
 pub(super) const APP_FILTERS_READY: usize = 1;
 /// `WM_APP` code: run deferred tasks.
 pub(super) const APP_DEFERRED: usize = 2;
+/// `WM_APP` code: a request was blocked (posted from the IO thread).
+pub(super) const APP_SHIELD: usize = 4;
 /// Timer: push the shield counter (at most ~4 times a second).
 pub(super) const SHIELD_TIMER: usize = 2;
 const SHIELD_DEBOUNCE_MS: u32 = 250;
@@ -40,13 +45,9 @@ pub(super) const UPDATE_CHECK_INTERVAL_MS: u32 = 60 * 60 * 1000;
 const MAX_REWRITES: u8 = 3;
 const DOWNLOAD_TIMEOUT_MS: i32 = 30_000;
 
-/// Blocking state shared by every tab's request handler.
+/// Blocking state of the UI thread (lists, allowlist, updater).
 pub(super) struct FilterState {
-    pub engine: RefCell<Option<Blocker>>,
     pub allowlist: RefCell<Allowlist>,
-    pub enabled: Cell<bool>,
-    pub dnt: Cell<bool>,
-    pub gpc: Cell<bool>,
     pub update: RefCell<UpdateState>,
     busy: Cell<bool>,
     rx: RefCell<Option<mpsc::Receiver<Rebuilt>>>,
@@ -59,11 +60,7 @@ pub(super) struct FilterState {
 impl FilterState {
     pub fn new() -> FilterState {
         FilterState {
-            engine: RefCell::new(None),
             allowlist: RefCell::new(Allowlist::default()),
-            enabled: Cell::new(false),
-            dnt: Cell::new(false),
-            gpc: Cell::new(false),
             update: RefCell::new(UpdateState::default()),
             busy: Cell::new(false),
             rx: RefCell::new(None),
@@ -73,14 +70,107 @@ impl FilterState {
     }
 }
 
-/// Per-tab network state, shared with the tab's request handler.
+/// Blocking state read by the engine's IO thread for every request.
 #[derive(Default)]
-pub(super) struct TabNet {
+pub(super) struct NetShared {
+    engine: RwLock<Option<Arc<Blocker>>>,
+    enabled: AtomicBool,
+    dnt: AtomicBool,
+    gpc: AtomicBool,
+    notifier: OnceLock<AppNotifier>,
+    /// An APP_SHIELD message is on its way to the UI thread.
+    shield_posted: AtomicBool,
+}
+
+impl NetShared {
+    pub fn engine(&self) -> Option<Arc<Blocker>> {
+        self.engine.read().ok()?.clone()
+    }
+
+    pub fn set_engine(&self, engine: Blocker) {
+        if let Ok(mut e) = self.engine.write() {
+            *e = Some(Arc::new(engine));
+        }
+    }
+
+    pub fn has_engine(&self) -> bool {
+        self.engine.read().is_ok_and(|e| e.is_some())
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.enabled.load(Relaxed)
+    }
+
+    pub fn set_enabled(&self, on: bool) {
+        self.enabled.store(on, Relaxed);
+    }
+
+    pub fn set_privacy_headers(&self, dnt: bool, gpc: bool) {
+        self.dnt.store(dnt, Relaxed);
+        self.gpc.store(gpc, Relaxed);
+    }
+
+    pub fn set_notifier(&self, n: AppNotifier) {
+        let _ = self.notifier.set(n);
+    }
+
+    /// IO thread: wake the UI thread to refresh the shield (once per batch).
+    fn blocked_one(&self) {
+        if !self.shield_posted.swap(true, Relaxed) {
+            if let Some(n) = self.notifier.get() {
+                n.notify(APP_SHIELD);
+            }
+        }
+    }
+}
+
+/// The part of a tab's network state the IO thread reads.
+#[derive(Default)]
+struct TabShared {
     /// URL of the top-level navigation in progress or loaded.
-    pub top_url: RefCell<String>,
+    top_url: Mutex<String>,
     /// Ad blocking is off for this page (allowlisted site).
-    pub allowed: Cell<bool>,
-    pub blocked: Cell<u32>,
+    allowed: AtomicBool,
+    blocked: AtomicU32,
+}
+
+/// The network policy of one tab (runs on the IO thread).
+struct TabPolicy {
+    net: Arc<NetShared>,
+    tab: Arc<TabShared>,
+}
+
+impl RequestPolicy for TabPolicy {
+    fn check(&self, req: &NetRequest<'_>) -> NetVerdict {
+        if blocker::is_internal(req.url) {
+            // Only built-in pages may load from the internal origins.
+            let top_level = req.resource_type == 0;
+            return if assets::internal_request_allowed(req.url, req.initiator, top_level) {
+                NetVerdict::Allow { dnt: false, gpc: false }
+            } else {
+                NetVerdict::Block
+            };
+        }
+        let headers = NetVerdict::Allow { dnt: self.net.dnt.load(Relaxed), gpc: self.net.gpc.load(Relaxed) };
+        if !self.net.enabled() || self.tab.allowed.load(Relaxed) || !blocker::is_filterable(req.url) {
+            return headers;
+        }
+        let Some(kind) = ResourceKind::from_cef_resource_type(req.resource_type, req.url) else { return headers };
+        let Some(engine) = self.net.engine() else { return headers };
+        let top = self.tab.top_url.lock().map(|t| t.clone()).unwrap_or_default();
+        if engine.check(req.url, &top, kind) != Decision::Block {
+            return headers;
+        }
+        self.tab.blocked.fetch_add(1, Relaxed);
+        self.net.blocked_one();
+        NetVerdict::Block
+    }
+}
+
+/// Per-tab network state (UI thread), with the part shared with the IO thread.
+pub(super) struct TabNet {
+    io: Arc<TabShared>,
+    net: Arc<NetShared>,
     /// The page has a login form (key icon in the address bar).
     pub login_form: Cell<bool>,
     /// Site-specific cosmetic CSS and generic-hide data for the page.
@@ -96,6 +186,40 @@ pub(super) struct TabNet {
     rewrites: Cell<u8>,
 }
 
+impl TabNet {
+    pub fn new(net: Arc<NetShared>) -> TabNet {
+        TabNet {
+            io: Arc::new(TabShared::default()),
+            net,
+            login_form: Cell::new(false),
+            css: RefCell::new(String::new()),
+            generichide: Cell::new(false),
+            exceptions: RefCell::new(HashSet::new()),
+            upgraded_from: RefCell::new(None),
+            pending_upgrade: RefCell::new(None),
+            rewriting: Cell::new(false),
+            rewrites: Cell::new(0),
+        }
+    }
+
+    /// The request policy for this tab's view.
+    pub fn policy(&self) -> Arc<dyn RequestPolicy> {
+        Arc::new(TabPolicy { net: self.net.clone(), tab: self.io.clone() })
+    }
+
+    pub fn blocked(&self) -> u32 {
+        self.io.blocked.load(Relaxed)
+    }
+
+    pub fn allowed(&self) -> bool {
+        self.io.allowed.load(Relaxed)
+    }
+
+    pub fn top_url(&self) -> String {
+        self.io.top_url.lock().map(|t| t.clone()).unwrap_or_default()
+    }
+}
+
 impl Browser {
     // ------------------------------------------------------------ startup
 
@@ -107,9 +231,8 @@ impl Browser {
             (s.adblock_enabled, s.send_dnt, s.send_gpc)
         };
         let f = &self.filters;
-        f.enabled.set(enabled);
-        f.dnt.set(dnt);
-        f.gpc.set(gpc);
+        self.net.set_enabled(enabled);
+        self.net.set_privacy_headers(dnt, gpc);
         *f.allowlist.borrow_mut() = Allowlist::new(self.store.borrow().allowlist().unwrap_or_default());
         if !enabled {
             info!("ad blocking is off");
@@ -128,7 +251,7 @@ impl Browser {
         match cached {
             Some(engine) => {
                 info!("filter engine loaded from cache in {} ms", t.elapsed().as_millis());
-                *f.engine.borrow_mut() = Some(engine);
+                self.net.set_engine(engine);
             }
             None => {
                 info!("filter engine cache missing or stale; compiling");
@@ -148,7 +271,7 @@ impl Browser {
             let u = self.filters.update.borrow();
             (u.update_due(now), u.schedule_note(now))
         };
-        if due && self.filters.enabled.get() && !self.filters.busy.get() {
+        if due && self.net.enabled() && !self.filters.busy.get() {
             info!("filter lists: {note}; updating");
             self.update_filter_lists(None);
         }
@@ -172,7 +295,7 @@ impl Browser {
             (s.filter_lists.clone(), updater_proxy(&s.proxy))
         };
         let mut state = f.update.borrow().clone();
-        let current_key = f.engine.borrow().as_ref().map(Blocker::key);
+        let current_key = self.net.engine().map(|e| e.key());
         let (tx, rx) = mpsc::channel();
         *f.rx.borrow_mut() = Some(rx);
         let skip_reason = (download && proxy == UpdaterProxy::Skip)
@@ -211,7 +334,7 @@ impl Browser {
         f.busy.set(false);
         if let Some(engine) = r.engine {
             info!("filter engine rebuilt");
-            *f.engine.borrow_mut() = Some(engine);
+            self.net.set_engine(engine);
         }
         let checked = r.state.last_check_ms != f.update.borrow().last_check_ms;
         if let Some(e) = &r.state.last_error {
@@ -232,7 +355,7 @@ impl Browser {
         if let Some(r) = reply_to {
             self.filters.pending_replies.borrow_mut().push(r);
         }
-        if !self.filters.enabled.get() {
+        if !self.net.enabled() {
             let replies: Vec<_> = self.filters.pending_replies.borrow_mut().drain(..).collect();
             for (tab, req_id) in replies {
                 self.reply(tab, Event::err(req_id, "Ad blocking is turned off"));
@@ -259,7 +382,7 @@ impl Browser {
             })
             .collect();
         serde_json::json!({
-            "enabled": self.filters.enabled.get(),
+            "enabled": self.net.enabled(),
             "lastCheck": (state.last_check_ms > 0).then_some(state.last_check_ms),
             "lastError": state.last_error,
             "busy": self.filters.busy.get(),
@@ -269,35 +392,15 @@ impl Browser {
 
     // ------------------------------------------------------------ per tab
 
-    /// Request interception, privacy scripts and cosmetic filtering for a
-    /// new tab controller.
-    pub(super) fn hook_blocking(&self, id: TabId, c: &Controller, net: Rc<TabNet>) {
-        let Some(env) = self.env.get() else { return };
-        let level = match self.settings.borrow().tracking_prevention {
-            TrackingPrevention::None => 0,
-            TrackingPrevention::Basic => 1,
-            TrackingPrevention::Balanced => 2,
-            TrackingPrevention::Strict => 3,
-        };
-        c.set_tracking_prevention(level);
-        if self.filters.gpc.get() {
-            c.add_document_script(assets::inject_script("gpc.js"));
-        }
-        if self.filters.dnt.get() {
-            c.add_document_script(assets::inject_script("dnt.js"));
-        }
-        if self.filters.enabled.get() {
-            c.add_document_script(assets::inject_script("page-tokens.js"));
-        }
-        // Login form detection and fill (top-level frame only).
-        c.add_document_script(assets::inject_script("login.js"));
-        c.intercept_all(env, self.request_handler(id, net.clone()));
-
+    /// Cosmetic filtering for a new tab view (request blocking and the
+    /// privacy scripts are part of the view's options).
+    pub(super) fn hook_blocking(&self, c: &View, net: Rc<TabNet>) {
         let weak = self.me.clone();
         let c2 = c.clone();
-        c.on_dom_content_loaded(move || {
+        c.on_load_start(move || {
             let Some(b) = weak.upgrade() else { return };
-            if !b.filters.enabled.get() || net.allowed.get() {
+            b.apply_default_zoom(&c2);
+            if !b.net.enabled() || net.allowed() {
                 return;
             }
             let css = net.css.borrow().clone();
@@ -307,42 +410,7 @@ impl Browser {
         });
     }
 
-    /// The per-request decision function for tab `id`.
-    fn request_handler(&self, id: TabId, net: Rc<TabNet>) -> impl Fn(&ResourceRequest<'_>) -> ResourceAction + 'static {
-        let filters = self.filters.clone();
-        let server = self.server();
-        let weak = self.me.clone();
-        move |req: &ResourceRequest<'_>| {
-            if blocker::is_internal(req.uri) {
-                return match server(req.uri) {
-                    Some(r) => ResourceAction::Serve(r),
-                    None => ResourceAction::NotFound,
-                };
-            }
-            let headers = ResourceAction::Continue { dnt: filters.dnt.get(), gpc: filters.gpc.get() };
-            if !filters.enabled.get() || net.allowed.get() || !blocker::is_filterable(req.uri) {
-                return headers;
-            }
-            let top = net.top_url.borrow();
-            let Some(kind) =
-                ResourceKind::from_webview2_context(req.context, blocker::is_top_level_request(req.uri, &top))
-            else {
-                return headers;
-            };
-            let blocked =
-                filters.engine.borrow().as_ref().is_some_and(|e| e.check(req.uri, &top, kind) == Decision::Block);
-            if !blocked {
-                return headers;
-            }
-            net.blocked.set(net.blocked.get().saturating_add(1));
-            if let Some(b) = weak.upgrade() {
-                b.shield_changed(id);
-            }
-            ResourceAction::Block
-        }
-    }
-
-    /// `NavigationStarting` for a tab, after the internal-page policy
+    /// A top-level navigation is starting in a tab, after the internal-page policy
     /// allowed it. Returns `Some(url)` if the navigation must be cancelled
     /// and restarted at `url` (tracking parameters, HTTPS upgrade).
     pub(super) fn navigation_starting(&self, net: &TabNet, uri: &str, redirected: bool) -> Option<String> {
@@ -384,14 +452,16 @@ impl Browser {
         }
 
         // A real navigation: reset the shield and prepare cosmetic filters.
-        *net.top_url.borrow_mut() = uri.to_string();
-        net.blocked.set(0);
+        if let Ok(mut top) = net.io.top_url.lock() {
+            *top = uri.to_string();
+        }
+        net.io.blocked.store(0, Relaxed);
         net.login_form.set(false);
         let host = urlclean::host_of(uri).unwrap_or_default();
         let allowed = !host.is_empty() && self.filters.allowlist.borrow().contains(&host);
-        net.allowed.set(allowed);
-        let (css, generichide, exceptions) = match self.filters.engine.borrow().as_ref() {
-            Some(e) if self.filters.enabled.get() && !allowed && blocker::is_filterable(uri) => {
+        net.io.allowed.store(allowed, Relaxed);
+        let (css, generichide, exceptions) = match self.net.engine() {
+            Some(e) if self.net.enabled() && !allowed && blocker::is_filterable(uri) => {
                 let c = e.cosmetic(uri);
                 (c.css, c.generichide, c.exceptions)
             }
@@ -403,14 +473,19 @@ impl Browser {
         None
     }
 
-    /// `NavigationCompleted`: if an HTTPS upgrade failed, show the interstitial.
-    pub(super) fn navigation_completed(&self, id: TabId, net: &TabNet, ok: bool, status: i32) {
+    /// Loading stopped (`failure` is `None` on success): if an HTTPS upgrade
+    /// failed, show the interstitial.
+    pub(super) fn navigation_completed(&self, id: TabId, net: &TabNet, failure: Option<LoadFailure>) {
+        let blocked = net.blocked();
+        if blocked > 0 {
+            info!("tab {id}: {blocked} requests blocked on this page");
+        }
         let upgraded = net.upgraded_from.borrow().clone();
-        if ok {
+        if failure.is_none() {
             // The upgrade is done; later http:// links upgrade afresh.
             *net.upgraded_from.borrow_mut() = None;
         }
-        if let Some(page) = urlclean::https_only_fallback(upgraded.as_deref(), ok, status) {
+        if let Some(page) = urlclean::https_only_fallback(upgraded.as_deref(), failure) {
             *net.upgraded_from.borrow_mut() = None;
             self.defer(move |b| b.navigate_tab(id, &page));
         }
@@ -419,19 +494,15 @@ impl Browser {
     /// Generic cosmetic filtering: the page reported its classes and ids.
     pub(super) fn page_tokens(&self, id: TabId, origin: &str, msg: ContentMessage) {
         let ContentMessage::PageTokens { classes, ids } = msg else { return };
-        let Some((c, net)) = self.views.borrow().get(&id).map(|v| (v.controller.clone(), v.net.clone())) else {
+        let Some((c, net)) = self.views.borrow().get(&id).map(|v| (v.view.clone(), v.net.clone())) else {
             return;
         };
         // Only for the page currently loaded in this tab.
-        let current = urlclean::origin_of(&net.top_url.borrow());
-        if current.as_deref() != Some(origin)
-            || !self.filters.enabled.get()
-            || net.allowed.get()
-            || net.generichide.get()
-        {
+        let current = urlclean::origin_of(&net.top_url());
+        if current.as_deref() != Some(origin) || !self.net.enabled() || net.allowed() || net.generichide.get() {
             return;
         }
-        let selectors = match self.filters.engine.borrow().as_ref() {
+        let selectors = match self.net.engine() {
             Some(e) => e.generic_selectors(&classes, &ids, &net.exceptions.borrow()),
             None => return,
         };
@@ -442,11 +513,10 @@ impl Browser {
 
     // ------------------------------------------------------------ shield
 
-    /// A request was blocked in tab `id`: refresh the shield soon.
-    fn shield_changed(&self, id: TabId) {
-        if self.model.try_borrow().ok().and_then(|m| m.active_id()) != Some(id) {
-            return;
-        }
+    /// Requests were blocked (APP_SHIELD from the IO thread): refresh the
+    /// shield soon.
+    pub(super) fn shield_changed(&self) {
+        self.net.shield_posted.store(false, Relaxed);
         if !self.shield_pending.replace(true) {
             if let Some(w) = self.window() {
                 w.set_timer(SHIELD_TIMER, SHIELD_DEBOUNCE_MS);
@@ -473,14 +543,14 @@ impl Browser {
         self.views
             .try_borrow()
             .ok()
-            .and_then(|v| v.get(&id).map(|v| (v.net.blocked.get(), v.net.allowed.get())))
+            .and_then(|v| v.get(&id).map(|v| (v.net.blocked(), v.net.allowed())))
             .unwrap_or((0, false))
     }
 
     pub(super) fn shield_content(&self) -> PopupContent {
         let host = self.model.borrow().active().and_then(|t| urlclean::host_of(&t.url)).unwrap_or_default();
         let (blocked, allowed) = self.shield_state();
-        PopupContent::Shield { host, blocked, allowed, enabled: self.filters.enabled.get() }
+        PopupContent::Shield { host, blocked, allowed, enabled: self.net.enabled() }
     }
 
     /// Shield toggle: allow (or block again) ads on the active tab's site,
@@ -545,17 +615,20 @@ impl Browser {
         self.navigate_tab(tab, url);
     }
 
-    /// Navigates a specific tab as the host.
+    /// Navigates a specific tab as the host. No borrow is held while the
+    /// engine runs: it may call back into the browser synchronously.
     pub(super) fn navigate_tab(&self, id: TabId, url: &str) {
-        let views = self.views.borrow();
-        if let Some(v) = views.get(&id) {
+        let view = self.views.borrow().get(&id).map(|v| {
             v.host_navigation.set(true);
-            let _ = v.controller.navigate(url);
+            v.view.clone()
+        });
+        if let Some(view) = view {
+            view.navigate(url);
         }
     }
 }
 
-/// Deferred work (run after the current WebView2 event handler returns).
+/// Deferred work (run after the current engine callback returns).
 pub(super) type Deferred = Box<dyn FnOnce(&Browser)>;
 
 impl Browser {

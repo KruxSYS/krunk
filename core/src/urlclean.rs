@@ -268,20 +268,48 @@ pub fn navigation_rewrite(
     changed.then_some(Rewrite { url, upgraded })
 }
 
+/// Why a top-level navigation failed, from Chromium's net error code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoadFailure {
+    /// Stopped by the user, by us (a rewrite) or replaced by another navigation.
+    Cancelled,
+    /// The host name does not exist.
+    HostNotFound,
+    /// A proxy or server asked for credentials.
+    AuthRequired,
+    /// TLS or certificate problem.
+    Tls,
+    /// Refused, reset, timed out, unreachable or offline.
+    Connection,
+    Other,
+}
+
+impl LoadFailure {
+    /// Maps a Chromium `net::Error` (negative) code.
+    pub fn from_net_error(code: i32) -> LoadFailure {
+        match code {
+            -3 => LoadFailure::Cancelled,
+            -105 | -137 | -166 | -803 => LoadFailure::HostNotFound,
+            -115 | -127 | -323 | -338 => LoadFailure::AuthRequired,
+            // SSL_PROTOCOL_ERROR, version/cipher mismatch, client auth, pins,
+            // unrecognized name, and the whole certificate range.
+            -107 | -113 | -117 | -150 | -159 => LoadFailure::Tls,
+            c if (-299..=-200).contains(&c) => LoadFailure::Tls,
+            -7 | -102..=-100 | -104 | -106 | -109 | -118 | -324 => LoadFailure::Connection,
+            _ => LoadFailure::Other,
+        }
+    }
+}
+
 /// After an HTTPS-only upgrade failed, the interstitial URL to show (with
 /// the original `http://` address), or `None` to leave the error page.
 /// Cancelled navigations, unknown hosts and authentication prompts are not
-/// HTTPS problems.
-pub fn https_only_fallback(upgraded_from: Option<&str>, success: bool, web_error_status: i32) -> Option<String> {
-    const OPERATION_CANCELED: i32 = 14;
-    const HOST_NAME_NOT_RESOLVED: i32 = 13;
-    const AUTH_REQUIRED: i32 = 17;
-    const PROXY_AUTH_REQUIRED: i32 = 18;
+/// HTTPS problems. `failure` is `None` when the navigation succeeded.
+pub fn https_only_fallback(upgraded_from: Option<&str>, failure: Option<LoadFailure>) -> Option<String> {
     let http = upgraded_from?;
-    if success
-        || matches!(web_error_status, OPERATION_CANCELED | HOST_NAME_NOT_RESOLVED | AUTH_REQUIRED | PROXY_AUTH_REQUIRED)
-    {
-        return None;
+    match failure? {
+        LoadFailure::Cancelled | LoadFailure::HostNotFound | LoadFailure::AuthRequired => return None,
+        LoadFailure::Tls | LoadFailure::Connection | LoadFailure::Other => {}
     }
     if !http.starts_with("http://") {
         return None;
@@ -434,19 +462,52 @@ mod tests {
     #[test]
     fn https_only_interstitial_decision() {
         let http = Some("http://old.example/a?b=1");
-        let page = https_only_fallback(http, false, 12).unwrap();
+        let fail = |code| Some(LoadFailure::from_net_error(code));
+        // ERR_CONNECTION_REFUSED: nothing listens on port 443.
+        let page = https_only_fallback(http, fail(-102)).unwrap();
         assert!(
             page.starts_with("https://lightbrowser.invalid/https-only.html?url=http%3A%2F%2Fold.example%2Fa%3Fb%3D1")
         );
         assert_eq!(pages::Page::from_url(&page), Some(pages::Page::HttpsOnly));
-        for cert_error in 1..=5 {
-            assert!(https_only_fallback(http, false, cert_error).is_some());
+        // Certificate errors (name, date, authority), SSL protocol, timeouts, resets.
+        for code in [-200, -201, -202, -107, -113, -118, -101, -324, -999] {
+            assert!(https_only_fallback(http, fail(code)).is_some(), "{code}");
         }
-        assert_eq!(https_only_fallback(http, true, 0), None, "upgrade worked");
-        assert_eq!(https_only_fallback(None, false, 12), None, "was not upgraded");
-        assert_eq!(https_only_fallback(http, false, 14), None, "cancelled");
-        assert_eq!(https_only_fallback(http, false, 13), None, "host does not exist at all");
-        assert_eq!(https_only_fallback(Some("https://x/"), false, 12), None);
+        assert_eq!(https_only_fallback(http, None), None, "upgrade worked");
+        assert_eq!(https_only_fallback(None, fail(-102)), None, "was not upgraded");
+        assert_eq!(https_only_fallback(http, fail(-3)), None, "cancelled");
+        assert_eq!(https_only_fallback(http, fail(-105)), None, "host does not exist at all");
+        assert_eq!(https_only_fallback(http, fail(-127)), None, "proxy wants credentials");
+        assert_eq!(https_only_fallback(Some("https://x/"), fail(-102)), None);
+    }
+
+    #[test]
+    fn net_error_classes() {
+        use LoadFailure as F;
+        let cases = [
+            (-3, F::Cancelled),
+            (-105, F::HostNotFound),
+            (-137, F::HostNotFound),
+            (-803, F::HostNotFound),
+            (-115, F::AuthRequired),
+            (-338, F::AuthRequired),
+            (-107, F::Tls),
+            (-200, F::Tls),
+            (-202, F::Tls),
+            (-217, F::Tls),
+            (-7, F::Connection),
+            (-100, F::Connection),
+            (-102, F::Connection),
+            (-106, F::Connection),
+            (-118, F::Connection),
+            (-324, F::Connection),
+            (-2, F::Other),
+            (-20, F::Other),
+            (-311, F::Other),
+        ];
+        for (code, want) in cases {
+            assert_eq!(LoadFailure::from_net_error(code), want, "{code}");
+        }
     }
 
     #[test]

@@ -153,9 +153,27 @@ pub fn response_headers(asset: &Asset) -> String {
     )
 }
 
-/// Navigation policy for a WebView.
+/// Access from a tab to our internal origins, checked for every request the
+/// tab's pages make: a top-level navigation is decided by
+/// [`allow_navigation`]; anything else (sub-resources, frames, fetches)
+/// needs to come from a document on the same internal origin. Requests to
+/// other URLs are not affected.
+pub fn internal_request_allowed(url: &str, initiator: &str, top_level_navigation: bool) -> bool {
+    let Ok(u) = Url::parse(url) else { return true };
+    let origin = u.origin().ascii_serialization();
+    if origin != pages::SHELL_ORIGIN && origin != pages::PAGES_ORIGIN {
+        return true;
+    }
+    if top_level_navigation {
+        return true;
+    }
+    // The shell origin is never reachable from a tab.
+    origin == pages::PAGES_ORIGIN && initiator.trim_end_matches('/') == pages::PAGES_ORIGIN
+}
+
+/// Navigation policy for a browser view.
 ///
-/// * The shell and popup WebViews may only ever show their own document.
+/// * The shell and popup views may only ever show their own document.
 /// * A tab may not show the shell origin at all.
 /// * A web page may not navigate a tab to a built-in page by itself; only
 ///   the host (address bar, menu, new tab) may (`host_initiated`). Built-in
@@ -234,6 +252,32 @@ mod tests {
         ] {
             assert!(resolve(bad).is_none(), "{bad}");
         }
+    }
+
+    #[test]
+    fn internal_origins_only_from_themselves() {
+        let page = "https://lightbrowser.invalid/history.html";
+        let fav = "https://lightbrowser.invalid/favicon?host=bank.example";
+        let shell = "https://shell.lightbrowser.invalid/shell.js";
+        // Built-in pages load their own files and favicons.
+        assert!(internal_request_allowed(fav, "https://lightbrowser.invalid", false));
+        assert!(internal_request_allowed(
+            "https://lightbrowser.invalid/shared/page.css",
+            "https://lightbrowser.invalid/",
+            false
+        ));
+        // Web pages cannot probe or embed them, nor anything on the shell origin.
+        assert!(!internal_request_allowed(fav, "https://evil.example", false));
+        assert!(!internal_request_allowed(page, "https://evil.example", false), "iframe or fetch");
+        assert!(!internal_request_allowed(fav, "", false));
+        assert!(!internal_request_allowed(fav, "null", false));
+        assert!(!internal_request_allowed(shell, "https://lightbrowser.invalid", false));
+        assert!(!internal_request_allowed(shell, "https://shell.lightbrowser.invalid", false), "no shell in tabs");
+        // Top-level navigations are the navigation policy's job.
+        assert!(internal_request_allowed(page, "", true));
+        // Everything else is untouched.
+        assert!(internal_request_allowed("https://cdn.example/a.js", "https://evil.example", false));
+        assert!(internal_request_allowed("not a url", "", false));
     }
 
     #[test]

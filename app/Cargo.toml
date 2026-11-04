@@ -1,15 +1,18 @@
 [package]
 name = "app"
-description = "LightBrowser Windows host (WebView2)"
+description = "LightBrowser Windows host (CEF)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 build = "build.rs"
 
-[[bin]]
+# LightBrowser.dll, loaded by LightBrowser.exe (CEF's renamed sandbox
+# bootstrap.exe) for the browser process and every subprocess.
+[lib]
 name = "LightBrowser"
-path = "src/main.rs"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
 
 [dependencies]
 lb_core = { path = "../core", package = "core" }
@@ -19,8 +22,8 @@ url = "2"
 zeroize = "1.8"
 
 [target.'cfg(windows)'.dependencies]
-webview2-com = "0.39"
-windows-core = "0.62"
+# Pinned exactly: the binary distribution in cef.lock must match this crate.
+cef = { version = "=156.3.0", default-features = false, features = ["sandbox"] }
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
@@ -43,7 +46,5 @@ windows = { version = "0.62", features = [
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",
     "Win32_UI_WindowsAndMessaging",
+    "Wdk_System_Threading",
 ] }
-
-[build-dependencies]
-embed-resource = "3"

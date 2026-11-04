@@ -1,4 +1,5 @@
-//! Top-level windows (main frame and the popup) and the message loop.
+//! Top-level windows (main frame and the popup). The message loop is CEF's
+//! (`ffi::cef`), which dispatches to these window procedures as usual.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -12,12 +13,12 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetMessageW, IsWindowVisible,
-    LoadCursorW, LoadIconW, PostQuitMessage, RegisterClassExW, SetWindowPos, SetWindowTextW, ShowWindow,
-    TranslateMessage, CS_DROPSHADOW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, HWND_TOP, IDC_ARROW, IDI_APPLICATION,
-    MINMAXINFO, MSG, SIZE_MINIMIZED, SWP_NOACTIVATE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_HIDE, SW_SHOW, WA_INACTIVE,
-    WINDOW_EX_STYLE, WM_ACTIVATE, WM_APP, WM_CLOSE, WM_DESTROY, WM_DPICHANGED, WM_GETMINMAXINFO, WM_MOVE, WM_MOVING,
-    WM_SIZE, WNDCLASSEXW, WS_CLIPCHILDREN, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_OVERLAPPEDWINDOW, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, GetClientRect, IsWindowVisible, LoadCursorW, LoadIconW,
+    RegisterClassExW, SetWindowPos, SetWindowTextW, ShowWindow, CS_DROPSHADOW, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT,
+    HWND_TOP, IDC_ARROW, IDI_APPLICATION, MINMAXINFO, SIZE_MINIMIZED, SWP_NOACTIVATE, SWP_NOZORDER, SWP_SHOWWINDOW,
+    SW_HIDE, SW_SHOW, WA_INACTIVE, WINDOW_EX_STYLE, WM_ACTIVATE, WM_APP, WM_CLOSE, WM_DESTROY, WM_DPICHANGED,
+    WM_GETMINMAXINFO, WM_MOVE, WM_MOVING, WM_SIZE, WNDCLASSEXW, WS_CLIPCHILDREN, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_OVERLAPPEDWINDOW, WS_POPUP,
 };
 
 /// Callbacks from the window procedure. Implementations must tolerate
@@ -101,8 +102,11 @@ fn register(class: PCWSTR, style: u32) -> Result<(), String> {
 }
 
 impl Window {
-    /// Creates and shows the main browser window.
-    pub fn create_main(title: &str, events: Rc<dyn WindowEvents>) -> Result<Window, String> {
+    /// Creates and shows the main browser window. It is shown before the
+    /// engine starts so it gets the foreground (the engine's start-up would
+    /// otherwise use up the process's right to activate a window); the
+    /// browser attaches its events with [`Window::set_events`].
+    pub fn create_main(title: &str) -> Result<Window, String> {
         register(MAIN_CLASS, (CS_HREDRAW | CS_VREDRAW).0)?;
         // SAFETY: standard window creation on the UI thread.
         let hwnd = unsafe {
@@ -123,10 +127,20 @@ impl Window {
             )
             .map_err(|e| format!("CreateWindowExW failed: {e}"))?
         };
-        EVENTS.with(|e| e.borrow_mut().insert(hwnd.0 as isize, events));
         // SAFETY: valid window handle.
         let _ = unsafe { ShowWindow(hwnd, SW_SHOW) };
         Ok(Window(hwnd))
+    }
+
+    /// Delivers this window's events to `events`.
+    pub fn set_events(self, events: Rc<dyn WindowEvents>) {
+        EVENTS.with(|e| e.borrow_mut().insert(self.0 .0 as isize, events));
+    }
+
+    /// Does the window still exist (it may be closed during start-up)?
+    pub fn exists(self) -> bool {
+        // SAFETY: IsWindow accepts any handle value.
+        unsafe { windows::Win32::UI::WindowsAndMessaging::IsWindow(Some(self.0)) }.as_bool()
     }
 
     /// Creates the (hidden) popup window owned by `owner`.
@@ -226,6 +240,18 @@ impl Window {
             if new != ex {
                 SetWindowLongPtrW(self.0, GWL_EXSTYLE, new);
             }
+        }
+    }
+
+    /// Restores the window if minimized and brings it to the foreground.
+    pub fn bring_to_front(self) {
+        use windows::Win32::UI::WindowsAndMessaging::{IsIconic, SetForegroundWindow, SW_RESTORE};
+        // SAFETY: valid window handle.
+        unsafe {
+            if IsIconic(self.0).as_bool() {
+                let _ = ShowWindow(self.0, SW_RESTORE);
+            }
+            let _ = SetForegroundWindow(self.0);
         }
     }
 
@@ -397,43 +423,17 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
             LRESULT(0)
         }
         WM_DESTROY => {
-            let is_main = ev.is_some() && {
-                // The main window is the only one without an owner.
-                // SAFETY: valid handle.
-                unsafe {
-                    windows::Win32::UI::WindowsAndMessaging::GetWindow(
-                        hwnd,
-                        windows::Win32::UI::WindowsAndMessaging::GW_OWNER,
-                    )
-                }
-                .is_err()
-            };
+            // The browser ends the engine's message loop once its views
+            // have closed (see `Browser::shutdown`).
             if let Some(ev) = ev {
                 ev.destroyed();
             }
             EVENTS.with(|e| e.borrow_mut().remove(&(hwnd.0 as isize)));
-            if is_main {
-                // SAFETY: ends the message loop of this thread.
-                unsafe { PostQuitMessage(0) };
-            }
             LRESULT(0)
         }
         // SAFETY: default processing for everything else.
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     }
-}
-
-/// Runs the message loop until `WM_QUIT`; returns the exit code.
-pub fn run_message_loop() -> i32 {
-    let mut msg = MSG::default();
-    // SAFETY: standard message loop on the UI thread.
-    unsafe {
-        while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
-            let _ = TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
-    }
-    msg.wParam.0 as i32
 }
 
 /// Posts `WM_APP` messages to a window from any thread.

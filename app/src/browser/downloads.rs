@@ -1,10 +1,10 @@
-//! Downloads: DownloadStarting, progress, the downloads page and actions.
+//! Downloads: the engine's download events, the downloads page and actions.
 
 use super::{Browser, DOWNLOADS_KEY};
+use crate::ffi::cef::{DownloadStart, DownloadStatus, DownloadUpdate, View};
 use crate::ffi::dialogs;
-use crate::ffi::webview::{Controller, DownloadStart, DownloadStatus};
 use crate::log::{info, warning};
-use lb_core::downloads::{sanitize_file_name, DownloadState};
+use lb_core::downloads::{interrupt_reason_text, sanitize_file_name, unique_path, DownloadState};
 use lb_core::pages::Page;
 use lb_core::protocol::{DownloadAction, Event, Request};
 use lb_core::storage::now_ms;
@@ -17,108 +17,109 @@ use std::rc::Rc;
 const PROGRESS_PUSH_MS: i64 = 400;
 
 impl Browser {
-    /// Uses the configured download folder (if any) for this WebView's profile.
-    pub(super) fn apply_download_folder(&self, c: &Controller) {
-        let dir = self.settings.borrow().download_dir.clone();
-        if !dir.is_empty() && Path::new(&dir).is_dir() {
-            c.set_download_folder(Path::new(&dir));
-        }
-    }
-
-    /// `tab`: the tab whose WebView this is (a tab with a running download
+    /// `tab`: the tab whose view this is (a tab with a running download
     /// is never put to sleep).
-    pub(super) fn hook_downloads(&self, c: &Controller, tab: Option<TabId>) {
+    pub(super) fn hook_downloads(&self, c: &View, tab: Option<TabId>) {
         let weak = self.me.clone();
         let private = c.is_private();
-        c.on_download_starting(move |start| {
+        c.on_download_start(move |start| {
             if let Some(b) = weak.upgrade() {
-                b.download_starting(start, private, tab);
+                // The save dialog runs its own message loop: not inside the
+                // engine's callback.
+                b.defer(move |b| b.download_starting(start, private, tab));
             }
         });
+        let weak = self.me.clone();
+        let last_push = Rc::new(Cell::new(0i64));
+        c.on_download_update(move |update| {
+            if let Some(b) = weak.upgrade() {
+                b.download_updated(update, tab, &last_push);
+            }
+        });
+    }
+
+    /// The folder downloads go to: the configured one, else the user's
+    /// Downloads folder.
+    fn download_folder(&self) -> Option<PathBuf> {
+        let dir = self.settings.borrow().download_dir.clone();
+        if !dir.is_empty() && Path::new(&dir).is_dir() {
+            return Some(PathBuf::from(dir));
+        }
+        dialogs::downloads_folder()
     }
 
     fn download_starting(&self, start: DownloadStart, private: bool, tab: Option<TabId>) {
-        let (ask, dir) = {
-            let st = self.settings.borrow();
-            (st.ask_where_to_save, st.download_dir.clone())
+        let ask = self.settings.borrow().ask_where_to_save;
+        let name = sanitize_file_name(&start.suggested_name);
+        let Some(folder) = self.download_folder() else {
+            warning!("download {}: no download folder", start.id);
+            return;
         };
-        let mut path = start.suggested_path.clone();
-        // Configured download folder: choose the final path ourselves.
-        if !dir.is_empty() && Path::new(&dir).is_dir() {
-            let name =
-                sanitize_file_name(&path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
-            path = lb_core::downloads::unique_path(Path::new(&dir), &name, |p| p.exists());
-            start.set_path(&path);
-        }
+        let mut path = unique_path(&folder, &name, |p| p.exists());
         if ask {
-            let name =
-                sanitize_file_name(&path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
-            let folder = path.parent().map(Path::to_path_buf);
             let Some(w) = self.window() else { return };
-            match dialogs::save_file(w.hwnd(), "Save as", &name, ("All files", "*.*"), folder.as_deref()) {
-                Some(p) => {
-                    start.set_path(&p);
-                    path = p;
-                }
-                None => {
-                    start.cancel();
-                    return;
-                }
+            match dialogs::save_file(w.hwnd(), "Save as", &name, ("All files", "*.*"), Some(&folder)) {
+                Some(p) => path = p,
+                // Dropping `start` cancels the download.
+                None => return,
             }
         }
-        let op = start.operation.clone();
         if let Some(v) = tab.and_then(|t| self.views.borrow().get(&t).map(|v| v.downloads.clone())) {
             v.set(v.get() + 1);
         }
-        let id = self.downloads.borrow_mut().start(&start.uri, &path, start.total, now_ms(), private);
+        let id = self.downloads.borrow_mut().start(&start.url, &path, start.total, now_ms(), private);
         info!("download {id} started");
-        self.download_ops.borrow_mut().insert(id, op.clone());
-
-        let last_push = Rc::new(Cell::new(0i64));
-        let weak = self.me.clone();
-        let op2 = op.clone();
-        op.on_progress(move || {
-            let Some(b) = weak.upgrade() else { return };
-            b.downloads.borrow_mut().progress(id, op2.received(), op2.total());
-            let now = now_ms();
-            if now - last_push.get() >= PROGRESS_PUSH_MS {
-                last_push.set(now);
-                b.push_downloads();
-            }
-        });
-        let weak = self.me.clone();
-        let op3 = op.clone();
-        op.on_state(move || {
-            let Some(b) = weak.upgrade() else { return };
-            let (state, reason) = match op3.status() {
-                DownloadStatus::Completed => (DownloadState::Completed, None),
-                DownloadStatus::Interrupted(code) => {
-                    let cancelled = code == 26; // COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON_USER_CANCELED
-                    if cancelled {
-                        (DownloadState::Cancelled, None)
-                    } else {
-                        (DownloadState::Interrupted, Some(interrupt_reason(code)))
-                    }
-                }
-                DownloadStatus::InProgress => (DownloadState::InProgress, None),
-            };
-            {
-                let mut d = b.downloads.borrow_mut();
-                d.set_path(id, &op3.path());
-                d.set_state(id, state, reason);
-            }
-            if state.is_finished() && b.download_ops.borrow().contains_key(&id) {
-                if let Some(v) = tab.and_then(|t| b.views.borrow().get(&t).map(|v| v.downloads.clone())) {
-                    v.set(v.get().saturating_sub(1));
-                }
-                b.download_ops.borrow_mut().remove(&id);
-                info!("download {id} finished: {state:?}");
-            }
-            b.save_downloads();
-            b.push_downloads();
-        });
-        drop(start);
+        self.download_ops.borrow_mut().insert(start.id, (id, None));
+        start.accept(&path);
         self.push_downloads();
+    }
+
+    fn download_updated(&self, update: DownloadUpdate, tab: Option<TabId>, last_push: &Cell<i64>) {
+        // Updates before the download was accepted are not ours yet.
+        let Some(id) = self.download_ops.borrow().get(&update.id).map(|(id, _)| *id) else { return };
+        if let Some(op) = self.download_ops.borrow_mut().get_mut(&update.id) {
+            op.1 = Some(update.control.clone());
+        }
+        let (state, reason) = match update.status {
+            DownloadStatus::Completed => (DownloadState::Completed, None),
+            DownloadStatus::Cancelled => (DownloadState::Cancelled, None),
+            DownloadStatus::Interrupted(code) => match interrupt_reason_text(code) {
+                None => (DownloadState::Cancelled, None),
+                reason => (DownloadState::Interrupted, reason),
+            },
+            DownloadStatus::Paused => (DownloadState::Paused, None),
+            DownloadStatus::InProgress => (DownloadState::InProgress, None),
+        };
+        let changed = {
+            let mut d = self.downloads.borrow_mut();
+            let before = d.get(id).map(|i| i.state);
+            d.progress(id, update.received, update.total);
+            if !update.path.as_os_str().is_empty() {
+                d.set_path(id, &update.path);
+            }
+            d.set_state(id, state, reason);
+            before != Some(state)
+        };
+        if state.is_finished() {
+            if let Some(v) = tab.and_then(|t| self.views.borrow().get(&t).map(|v| v.downloads.clone())) {
+                v.set(v.get().saturating_sub(1));
+            }
+            self.download_ops.borrow_mut().remove(&update.id);
+            info!("download {id} finished: {state:?}");
+        }
+        let now = now_ms();
+        if changed {
+            self.save_downloads();
+        }
+        if changed || now - last_push.get() >= PROGRESS_PUSH_MS {
+            last_push.set(now);
+            self.push_downloads();
+        }
+    }
+
+    /// The engine's controls for our download `id`, if it is running.
+    fn download_control(&self, id: u32) -> Option<crate::ffi::cef::DownloadControl> {
+        self.download_ops.borrow().values().find(|(ours, _)| *ours == id).and_then(|(_, c)| c.clone())
     }
 
     pub(super) fn dispatch_downloads(&self, tab: Option<TabId>, req_id: Option<u32>, request: Request) {
@@ -139,7 +140,7 @@ impl Browser {
                     self.reply(tab, Event::err(req_id, "Download not found"));
                     return;
                 };
-                let op = self.download_ops.borrow().get(&id).cloned();
+                let op = self.download_control(id);
                 let path = PathBuf::from(&item.path);
                 match action {
                     DownloadAction::Open | DownloadAction::ShowInFolder => {
@@ -208,31 +209,10 @@ impl Browser {
             .map(|t| t.id)
             .collect();
         for id in tabs {
-            if let Some(c) = self.controller(id) {
+            if let Some(c) = self.tab_view(id) {
                 c.post_json(&event);
             }
         }
         self.post_shell(&Event::DownloadsChanged { active });
-    }
-}
-
-/// Readable text for a COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON code.
-fn interrupt_reason(code: i32) -> String {
-    match code {
-        2 => "Access denied".into(),
-        3 => "Disk full".into(),
-        4 => "File name too long".into(),
-        5 => "File too large".into(),
-        6 => "Virus detected".into(),
-        8 => "Blocked by policy".into(),
-        9 => "Security check failed".into(),
-        1 | 7 | 10 | 11 => "File error".into(),
-        12..=16 => "Network error".into(),
-        20 | 22 => "Not allowed by the server".into(),
-        21 => "Certificate problem".into(),
-        17..=25 => "Server error".into(),
-        27 => "Browser closed".into(),
-        29 => "Download process crashed".into(),
-        _ => format!("Interrupted (code {code})"),
     }
 }

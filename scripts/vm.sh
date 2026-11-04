@@ -4,7 +4,8 @@
 # session through the scheduled task "LightBrowserTask", which executes
 # C:\pipeline\lightbrowser\task.ps1.
 #
-#   scripts/vm.sh deploy                 copy dist/LightBrowser.exe to the VM
+#   scripts/vm.sh deploy                 install dist/LightBrowser-win-x64 as C:\pipeline\lightbrowser\app
+#                                        (full zip on a new CEF version, else just our DLL)
 #   scripts/vm.sh ps1 FILE.ps1           run a PowerShell script on the desktop (waits)
 #   scripts/vm.sh start [ARGS...]        launch LightBrowser.exe on the desktop
 #   scripts/vm.sh stop                   close LightBrowser (WM_CLOSE, then kill)
@@ -17,6 +18,7 @@ set -euo pipefail
 VM=windows
 DIR='C:\pipeline\lightbrowser'
 FWD='C:/pipeline/lightbrowser'
+APP="$DIR\\app"
 
 run_ps1() { # local file
   scp -q "$1" "$VM:$FWD/task.ps1"
@@ -28,15 +30,30 @@ tmp=$(mktemp --suffix=.ps1)
 trap 'rm -f "$tmp"' EXIT
 case "${1:-}" in
   deploy)
+    dist="$(dirname "$0")/../dist"
+    # shellcheck source=/dev/null
+    source "$(dirname "$0")/../cef.lock"
     ssh "$VM" "Get-Process LightBrowser -ErrorAction SilentlyContinue | Stop-Process -Force" >/dev/null || true
-    scp -q "$(dirname "$0")/../dist/LightBrowser.exe" "$VM:$FWD/LightBrowser.exe"
-    echo deployed ;;
+    have=$(ssh "$VM" "Get-Content -ErrorAction SilentlyContinue '$FWD/app/.cef-version'" | tr -d '\r' || true)
+    if [ "$have" = "$CEF_VERSION" ]; then
+      for f in LightBrowser.dll LightBrowser.exe README.md SECURITY.md THIRD-PARTY-NOTICES.txt; do
+        scp -q "$dist/LightBrowser-win-x64/$f" "$VM:$FWD/app/$f"
+      done
+      echo "deployed LightBrowser.dll (CEF $CEF_VERSION already installed)"
+    else
+      scp -q "$dist/LightBrowser-win-x64.zip" "$VM:$FWD/LightBrowser-win-x64.zip"
+      ssh "$VM" "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '$FWD/app';
+        Expand-Archive -Force '$FWD/LightBrowser-win-x64.zip' '$FWD/unpack';
+        Move-Item '$FWD/unpack/LightBrowser-win-x64' '$FWD/app'; Remove-Item -Recurse -Force '$FWD/unpack';
+        Remove-Item '$FWD/LightBrowser-win-x64.zip'; Set-Content '$FWD/app/.cef-version' '$CEF_VERSION'" >/dev/null
+      echo "deployed the full folder (CEF $CEF_VERSION)"
+    fi ;;
   ps1) run_ps1 "$2" ;;
   start)
     shift
     args=""; for a in "$@"; do args+="'$a',"; done
     if [ -n "$args" ]; then argline="-ArgumentList @(${args%,})"; else argline=""; fi
-    printf 'Start-Process -FilePath "%s\\LightBrowser.exe" -WorkingDirectory "%s" %s\n' "$DIR" "$DIR" "$argline" > "$tmp"
+    printf 'Start-Process -FilePath "%s\\LightBrowser.exe" -WorkingDirectory "%s" %s\n' "$APP" "$APP" "$argline" > "$tmp"
     run_ps1 "$tmp" ;;
   stop)
     cat > "$tmp" <<'PS'

@@ -73,7 +73,7 @@ pub fn looks_like_list(text: &str) -> bool {
     lines >= 50 && !text.trim_start().starts_with('<') && text.len() < 32 * 1024 * 1024
 }
 
-/// Request type, mapped from the WebView2 resource context.
+/// Request type, mapped from the engine's resource type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceKind {
     Document,
@@ -106,21 +106,26 @@ impl ResourceKind {
         }
     }
 
-    /// Maps `COREWEBVIEW2_WEB_RESOURCE_CONTEXT`. A document request is a
-    /// sub-frame unless it is the tab's own top-level navigation, which is
-    /// never checked (`None`).
-    pub fn from_webview2_context(context: i32, top_level_document: bool) -> Option<ResourceKind> {
-        Some(match context {
-            1 if top_level_document => return None,
-            1 => ResourceKind::SubFrame,
+    /// Maps CEF's `cef_resource_type_t`. The tab's own top-level navigation
+    /// is never checked (`None`); `ws://`/`wss://` URLs are WebSockets.
+    pub fn from_cef_resource_type(resource_type: i32, url: &str) -> Option<ResourceKind> {
+        if url.starts_with("wss://") || url.starts_with("ws://") {
+            return Some(ResourceKind::WebSocket);
+        }
+        Some(match resource_type {
+            // RT_MAIN_FRAME, RT_NAVIGATION_PRELOAD_MAIN_FRAME
+            0 | 19 => return None,
+            // RT_SUB_FRAME, RT_NAVIGATION_PRELOAD_SUB_FRAME
+            1 | 20 => ResourceKind::SubFrame,
             2 => ResourceKind::Stylesheet,
-            3 => ResourceKind::Image,
-            4 | 9 => ResourceKind::Media,
+            // RT_SCRIPT and the worker scripts
+            3 | 9 | 10 | 15 => ResourceKind::Script,
+            // RT_IMAGE, RT_FAVICON
+            4 | 12 => ResourceKind::Image,
             5 => ResourceKind::Font,
-            6 => ResourceKind::Script,
-            7 | 8 | 10 => ResourceKind::Xhr,
-            11 => ResourceKind::WebSocket,
-            14 | 15 => ResourceKind::Ping,
+            8 => ResourceKind::Media,
+            13 => ResourceKind::Xhr,
+            14 => ResourceKind::Ping,
             _ => ResourceKind::Other,
         })
     }
@@ -136,13 +141,6 @@ pub fn is_internal(uri: &str) -> bool {
 pub fn is_filterable(uri: &str) -> bool {
     (uri.starts_with("https://") || uri.starts_with("http://") || uri.starts_with("wss://") || uri.starts_with("ws://"))
         && !is_internal(uri)
-}
-
-/// Is `uri` the tab's own top-level navigation? Compares without the
-/// fragment, which never reaches the network.
-pub fn is_top_level_request(uri: &str, top_level_url: &str) -> bool {
-    let strip = |u: &str| u.split('#').next().unwrap_or(u).trim_end_matches('/').to_string();
-    !top_level_url.is_empty() && strip(uri) == strip(top_level_url)
 }
 
 /// Sites where ad blocking is turned off. Kept in memory as a set; an entry
@@ -482,32 +480,37 @@ mod tests {
     }
 
     #[test]
-    fn webview2_resource_contexts() {
+    fn cef_resource_types() {
         use ResourceKind as K;
+        let page = "https://news.example/a.js";
         let cases = [
+            (1, K::SubFrame),
+            (20, K::SubFrame),
             (2, K::Stylesheet),
-            (3, K::Image),
-            (4, K::Media),
-            (9, K::Media),
+            (3, K::Script),
+            (9, K::Script),
+            (10, K::Script),
+            (15, K::Script),
+            (4, K::Image),
+            (12, K::Image),
             (5, K::Font),
-            (6, K::Script),
-            (7, K::Xhr),
-            (8, K::Xhr),
-            (10, K::Xhr),
-            (11, K::WebSocket),
+            (8, K::Media),
+            (13, K::Xhr),
             (14, K::Ping),
-            (15, K::Ping),
-            (12, K::Other),
-            (13, K::Other),
+            (6, K::Other),
+            (7, K::Other),
+            (11, K::Other),
             (16, K::Other),
-            (0, K::Other),
+            (17, K::Other),
+            (99, K::Other),
         ];
-        for (ctx, kind) in cases {
-            assert_eq!(ResourceKind::from_webview2_context(ctx, false), Some(kind), "context {ctx}");
-            assert_eq!(ResourceKind::from_webview2_context(ctx, true), Some(kind), "only documents are special");
+        for (rt, kind) in cases {
+            assert_eq!(ResourceKind::from_cef_resource_type(rt, page), Some(kind), "type {rt}");
         }
-        assert_eq!(ResourceKind::from_webview2_context(1, true), None, "top-level navigation never checked");
-        assert_eq!(ResourceKind::from_webview2_context(1, false), Some(K::SubFrame));
+        assert_eq!(ResourceKind::from_cef_resource_type(0, page), None, "top-level navigation never checked");
+        assert_eq!(ResourceKind::from_cef_resource_type(19, page), None, "navigation preload of the main frame");
+        assert_eq!(ResourceKind::from_cef_resource_type(6, "wss://live.example/s"), Some(K::WebSocket));
+        assert_eq!(ResourceKind::from_cef_resource_type(13, "ws://live.example/s"), Some(K::WebSocket));
     }
 
     #[test]
@@ -520,10 +523,6 @@ mod tests {
         assert!(is_filterable("wss://live.example/socket"));
         assert!(!is_filterable("data:image/png;base64,AA"));
         assert!(!is_filterable("blob:https://a.example/123"));
-        assert!(is_top_level_request("https://news.example/a#top", "https://news.example/a"));
-        assert!(is_top_level_request("https://news.example/", "https://news.example"));
-        assert!(!is_top_level_request("https://ads.example/frame.html", "https://news.example/a"));
-        assert!(!is_top_level_request("https://news.example/a", ""));
     }
 
     #[test]
@@ -532,7 +531,7 @@ mod tests {
         let b = full();
         let ad_frame = "https://googleads.g.doubleclick.net/pagead/ads?client=ca-pub-1";
         assert_eq!(b.check(ad_frame, NEWS, ResourceKind::SubFrame), Decision::Block);
-        assert_eq!(ResourceKind::from_webview2_context(1, is_top_level_request(NEWS, NEWS)), None);
+        assert_eq!(ResourceKind::from_cef_resource_type(0, NEWS), None);
     }
 
     #[test]
@@ -542,5 +541,15 @@ mod tests {
         assert!(css.contains(".ad"));
         assert!(!css.contains("body"));
         assert_eq!(hide_css(Vec::<String>::new().iter()), "");
+    }
+}
+
+#[cfg(test)]
+mod thread_tests {
+    #[test]
+    fn engine_is_shareable_across_threads() {
+        fn shareable<T: Send + Sync>() {}
+        shareable::<super::Blocker>();
+        shareable::<super::Allowlist>();
     }
 }

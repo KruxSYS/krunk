@@ -1,7 +1,8 @@
 // Mock of the Rust host for testing the built-in UI in a normal browser
 // (Playwright). NOT embedded in the exe: core/build.rs skips ui/dev.
 //
-// Provides window.chrome.webview (postMessage/addEventListener) and
+// Provides window.__lbHost (postMessage/addEventListener, as installed by
+// the browser's renderer bridge) and
 // window.__host with:
 //   sent         - every message the page posted, in order
 //   emit(event)  - deliver a host event to the page
@@ -68,7 +69,6 @@
     }
   }
 
-  window.chrome = window.chrome || {};
   // Request handlers: host.handlers[cmd] = function (msg) { return data; }.
   // Requests with a reqId get a reply (ok + data, or the thrown error).
   host.handlers = {};
@@ -89,7 +89,7 @@
     }
   }
 
-  window.chrome.webview = {
+  window.__lbHost = {
     postMessage: function (msg) {
       host.sent.push(JSON.parse(JSON.stringify(msg)));
       if (host.autoSimulate) simulate(msg);
