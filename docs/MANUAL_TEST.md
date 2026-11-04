@@ -212,10 +212,11 @@ The 2026-11-03 figures are in the README under "Memory".
      third-party trackers (such as a news site) and check DevTools → Application → Cookies:
      third-party tracker cookies are absent.
    - Strict tracking prevention is the default.
-9. **HTTPS-only** (after M7 adds the toggle; until then, set `"httpsOnly": true` in the settings
-   JSON in `browser.db`):
+9. **HTTPS-only** (Settings → Privacy and security → HTTPS-only mode):
    - `http://neverssl.com/` is upgraded and fails over HTTPS, so the "This site doesn't support
      a secure connection" page appears.
+   - `http://http.badssl.com/` (its HTTPS answers with a redirect back to HTTP) shows the same
+     page within a second or two. It must not keep loading forever.
    - "Continue to HTTP site" loads it over HTTP. Revisiting it in the same session doesn't show
      the page again. After a restart it does.
    - `http://example.com/` silently ends up on `https://example.com/`.
@@ -338,11 +339,17 @@ Open ⋮ → Settings, or type `lb://settings` in the address bar.
     - Theme Dark: the shell, built-in pages, web pages that support `prefers-color-scheme`, and
       the window title bar all turn dark.
     - System follows Windows (Settings → Personalization → Colors).
-12. **Reset:** "Reset settings…" asks first, in an in-page dialog (no native
+12. **Enter in dialogs:** in every built-in dialog, pressing Enter in a field confirms. Examples:
+    - Passwords → Show → type the master password → Enter reveals the password.
+    - Add or edit login, change master password, Clear browsing data, edit bookmark.
+    - Cancel (or Escape) closes without changes.
+13. **Editing keeps the note:** add a login with a note, then edit only its username. Reopen the
+    editor: the note field still says "(unchanged)", so the note was kept.
+14. **Reset:** "Reset settings…" asks first, in an in-page dialog (no native
     "lightbrowser.invalid says" box; the same applies to every delete prompt on the built-in
     pages). After "Reset", every value is back to its default, and the
     restart banner appears if restart-only values were different.
-13. **Isolation:** only `lb://settings` can change settings. In DevTools on any website,
+15. **Isolation:** only `lb://settings` can change settings. In DevTools on any website,
     `chrome.webview.postMessage({cmd:"saveSettings",settings:{}})` has no effect.
 
 ## Memory (M8)
