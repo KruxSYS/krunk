@@ -385,8 +385,11 @@ for them; `build-dist.sh` sets `XWIN_ACCEPT_LICENSE=1` for this (and only there)
 are pinned so that builds are reproducible: `XWIN_VERSION=17`, CRT `14.44.17.14` (MSVC 14.44.35220),
 SDK `10.0.26100`; the download is cached in `~/.cache/lightbrowser-xwin`.
 
-A clean build takes a few minutes, most of it for CEF's C++ wrapper and LTO; rebuilds take about
-40 s. The release profile uses LTO, `opt-level = "s"`, strip and `panic = "abort"`.
+A clean build from a fresh clone took 1 min 27 s on the build machine (CEF's C++ wrapper and
+LTO), plus the one-time downloads of CEF (175 MB) and the MSVC CRT/SDK; it has no warnings. The
+release profile uses LTO, `opt-level = "s"`, strip and `panic = "abort"`. Two clean builds
+from the same checkout path give the same `LightBrowser.dll` except for 20 bytes: the PE time
+stamp and the debug-directory GUID. `LightBrowser.exe` and the CEF files are always identical.
 
 **Alternative: native build on Windows** (documented, not used for the release). With Visual
 Studio 2022 Build Tools ("Desktop development with C++", MSVC 14.44, Windows SDK 10.0.26100),
