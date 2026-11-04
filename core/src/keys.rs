@@ -38,6 +38,8 @@ pub enum Command {
     ZoomReset,
     Print,
     DevTools,
+    /// DevTools with the element under the mouse selected (Ctrl+Shift+C).
+    InspectElement,
 }
 
 /// Virtual-key codes (winuser.h).
@@ -119,6 +121,7 @@ pub fn command_for(vk: u32, ctrl: bool, shift: bool, alt: bool) -> Option<Comman
         (true, false, false, k) if k == vk::letter('P') => Print,
         (false, false, false, vk::F12) => DevTools,
         (true, true, false, k) if k == vk::letter('I') => DevTools,
+        (true, true, false, k) if k == vk::letter('C') => InspectElement,
         _ => return None,
     };
     Some(cmd)
@@ -172,6 +175,8 @@ mod tests {
         assert_eq!(ctrl(l('F')), Some(Find));
         assert_eq!(plain(vk::F12), Some(DevTools));
         assert_eq!(ctrl_shift(l('I')), Some(DevTools));
+        assert_eq!(ctrl_shift(l('C')), Some(InspectElement));
+        assert_eq!(ctrl(l('C')), None, "Ctrl+C stays copy");
         assert_eq!(ctrl(vk::OEM_PLUS), Some(ZoomIn));
         assert_eq!(ctrl_shift(vk::OEM_PLUS), Some(ZoomIn), "Ctrl+Shift+= is Ctrl++");
         assert_eq!(ctrl(vk::ADD), Some(ZoomIn));

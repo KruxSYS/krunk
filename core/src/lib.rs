@@ -23,6 +23,7 @@ pub mod passgen;
 pub mod protocol;
 pub mod secret;
 pub mod settings;
+pub mod sitedata;
 pub mod storage;
 pub mod tabs;
 pub mod urlclean;

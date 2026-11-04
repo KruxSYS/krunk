@@ -221,6 +221,11 @@ impl<F: ?Sized> Slot<F> {
 }
 
 type NewWindowFn = dyn FnMut(&NewWindow) -> Option<(View, HWND)>;
+/// Result of a DevTools protocol call: the result object, or the error.
+pub type DevToolsResult = Result<serde_json::Value, String>;
+type DevToolsDone = Box<dyn FnOnce(DevToolsResult)>;
+/// A DevTools call that gets no answer in this time fails.
+const DEVTOOLS_TIMEOUT_MS: i64 = 10_000;
 type MessageFn = dyn FnMut(&MessageSource, &str);
 
 #[derive(Default)]
@@ -272,8 +277,9 @@ pub(super) struct ViewInner {
     /// Frames (by identifier) that report playing audio.
     audible_frames: RefCell<std::collections::HashSet<String>>,
     devtools_id: Cell<i32>,
-    /// DevTools protocol calls in flight (id -> method), for error logs.
-    devtools_calls: RefCell<HashMap<i32, String>>,
+    /// DevTools protocol calls in flight: method (for error logs) and the
+    /// callback waiting for the result, if any.
+    devtools_calls: RefCell<HashMap<i32, (String, Option<DevToolsDone>)>>,
     devtools_observer: RefCell<Option<Registration>>,
     pub ev: Events,
 }
@@ -291,6 +297,12 @@ pub(super) fn lookup(key: u64) -> Option<Rc<ViewInner>> {
 impl Drop for ViewInner {
     fn drop(&mut self) {
         let _ = VIEWS.try_with(|v| v.borrow_mut().remove(&self.key));
+        // Waiting DevTools calls fail (later, not inside whatever dropped us).
+        for (_, (_, done)) in self.devtools_calls.borrow_mut().drain() {
+            if let Some(d) = done {
+                super::post_ui(move || d(Err("the page was closed".into())));
+            }
+        }
         // The host let go of the view: its browser goes too.
         if let Some(b) = self.browser.borrow_mut().take() {
             if let Some(h) = b.host() {
@@ -564,33 +576,90 @@ impl View {
 
     /// Opens DevTools for this view in its own top-level window.
     pub fn open_devtools(&self) {
+        self.open_devtools_at(None);
+    }
+
+    /// Opens DevTools with the element at `(x, y)` (view coordinates, DIP)
+    /// selected; an open DevTools window is focused and inspects it too.
+    pub fn open_devtools_at(&self, at: Option<(i32, i32)>) {
         let Some(h) = self.host() else { return };
         // No parent: with one, CEF creates the DevTools window as a child
         // inside the main window.
         let window_info = WindowInfo { runtime_style: RuntimeStyle::ALLOY, ..Default::default() }
             .set_as_popup(sys::HWND(std::ptr::null_mut()), "DevTools – Krunk");
         let mut client = client::for_tool();
-        h.show_dev_tools(Some(&window_info), Some(&mut client), Some(&BrowserSettings::default()), None);
+        let point = at.map(|(x, y)| Point { x, y });
+        h.show_dev_tools(Some(&window_info), Some(&mut client), Some(&BrowserSettings::default()), point.as_ref());
+    }
+
+    /// The mouse position in this view (DIP), if it is over the view.
+    pub fn cursor_position(&self) -> Option<(i32, i32)> {
+        use windows::Win32::Foundation::{POINT, RECT};
+        use windows::Win32::Graphics::Gdi::ScreenToClient;
+        use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, GetCursorPos};
+        let hwnd = self.hwnd()?;
+        let mut p = POINT::default();
+        let mut r = RECT::default();
+        // SAFETY: plain queries on the browser's own window.
+        unsafe {
+            GetCursorPos(&mut p).ok()?;
+            let _ = ScreenToClient(hwnd, &mut p);
+            GetClientRect(hwnd, &mut r).ok()?;
+        }
+        if p.x < 0 || p.y < 0 || p.x >= r.right || p.y >= r.bottom {
+            return None;
+        }
+        // SAFETY: plain query.
+        let dpi = unsafe { windows::Win32::UI::HiDpi::GetDpiForWindow(hwnd) }.max(96);
+        let scale = f64::from(dpi) / 96.0;
+        Some(((f64::from(p.x) / scale) as i32, (f64::from(p.y) / scale) as i32))
     }
 
     /// Calls a DevTools protocol method on this browser (fire and forget).
     pub fn devtools_method(&self, method: &str, params: &serde_json::Value) {
-        let Some(h) = self.host() else { return };
+        self.send_devtools(method, params, None);
+    }
+
+    /// Calls a DevTools protocol method; `done` gets the result object or
+    /// the error (also when the browser is gone or no answer came in time).
+    pub fn devtools_call(&self, method: &str, params: &serde_json::Value, done: impl FnOnce(DevToolsResult) + 'static) {
+        self.send_devtools(method, params, Some(Box::new(done)));
+    }
+
+    fn send_devtools(&self, method: &str, params: &serde_json::Value, done: Option<DevToolsDone>) {
+        let fail = |done: Option<DevToolsDone>, why: &str| {
+            if let Some(d) = done {
+                d(Err(why.to_string()));
+            }
+        };
+        let Some(h) = self.host() else { return fail(done, "the page is not open") };
         let Some(value) = parse_json(Some(&CefString::from(params.to_string().as_str())), JsonParserOptions::RFC)
         else {
-            return;
+            return fail(done, "bad parameters");
         };
-        let Some(mut dict) = value.dictionary() else { return };
+        let Some(mut dict) = value.dictionary() else { return fail(done, "bad parameters") };
         let id = self.0.devtools_id.get() + 1;
         self.0.devtools_id.set(id);
         if self.0.devtools_observer.borrow().is_none() {
             let mut observer = client::devtools_observer(self.0.key);
             *self.0.devtools_observer.borrow_mut() = h.add_dev_tools_message_observer(Some(&mut observer));
         }
-        self.0.devtools_calls.borrow_mut().insert(id, method.to_string());
+        let waits = done.is_some();
+        self.0.devtools_calls.borrow_mut().insert(id, (method.to_string(), done));
         if h.execute_dev_tools_method(id, Some(&CefString::from(method)), Some(&mut dict)) == 0 {
-            self.0.devtools_calls.borrow_mut().remove(&id);
+            let call = self.0.devtools_calls.borrow_mut().remove(&id);
             crate::log::warning!("DevTools method {method} could not be sent");
+            return fail(call.and_then(|c| c.1), "the engine refused the call");
+        }
+        if waits {
+            let key = self.0.key;
+            super::post_ui_delayed(DEVTOOLS_TIMEOUT_MS, move || {
+                let late = lookup(key).and_then(|v| v.devtools_calls.borrow_mut().remove(&id));
+                if let Some((method, Some(done))) = late {
+                    crate::log::warning!("DevTools method {method} timed out");
+                    done(Err("no answer from the engine".into()));
+                }
+            });
         }
     }
 
@@ -724,12 +793,27 @@ impl View {
 }
 
 impl ViewInner {
-    /// A DevTools protocol call finished; failures are logged.
+    /// A DevTools protocol call finished: failures are logged, a waiting
+    /// callback gets the result.
     pub(super) fn devtools_result(&self, id: i32, success: bool, result: &[u8]) {
-        let Some(method) = self.devtools_calls.borrow_mut().remove(&id) else { return };
+        let Some((method, done)) = self.devtools_calls.borrow_mut().remove(&id) else { return };
         if !success {
             let text = String::from_utf8_lossy(&result[..result.len().min(300)]).into_owned();
-            crate::log::warning!("DevTools method {method} failed: {text}");
+            // Callers that handle the error log it themselves if needed.
+            if done.is_none() {
+                crate::log::warning!("DevTools method {method} failed: {text}");
+            }
+            if let Some(d) = done {
+                let message = serde_json::from_slice::<serde_json::Value>(result)
+                    .ok()
+                    .and_then(|v| v.get("message").and_then(|m| m.as_str()).map(str::to_string))
+                    .unwrap_or(text);
+                d(Err(message));
+            }
+            return;
+        }
+        if let Some(d) = done {
+            d(serde_json::from_slice(result).map_err(|e| e.to_string()));
         }
     }
 

@@ -60,8 +60,8 @@ pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> Pop
     let (w, h) = match kind {
         PopupKind::SavePassword => (360.0, 150.0),
         PopupKind::Fill => (340.0, 110.0 + 42.0 * entries.clamp(1, 6) as f64),
-        PopupKind::Menu => (280.0, 482.0),
-        PopupKind::Shield => (300.0, 180.0),
+        PopupKind::Menu => (280.0, 512.0),
+        PopupKind::Shield => (300.0, 226.0),
         PopupKind::BookmarkFolder => (280.0, folder_height(entries)),
         PopupKind::Unlock => (360.0, 200.0),
     };

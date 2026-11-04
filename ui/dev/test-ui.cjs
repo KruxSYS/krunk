@@ -215,7 +215,7 @@ async function testShell(browser) {
   // Menu popup open/close.
   await page.click('#menu');
   const sp = await lastSent(page, 'showPopup');
-  check(sp && sp.popup === 'menu' && sp.rect.width === 280 && sp.rect.height === 482 && sp.rect.x >= 0 && sp.rect.y > 60, 'menu sends showPopup with a rect below the toolbar');
+  check(sp && sp.popup === 'menu' && sp.rect.width === 280 && sp.rect.height === 512 && sp.rect.x >= 0 && sp.rect.y > 60, 'menu sends showPopup with a rect below the toolbar');
   check(await page.locator('#menu.on').count() === 1, 'menu button highlighted while open');
   await page.click('#menu');
   check((await lastSent(page, 'hidePopup')) !== undefined, 'clicking menu again sends hidePopup');
@@ -320,6 +320,7 @@ async function testShellFrame(browser) {
   // New tab: the host focuses the address bar; the caret is there and typing goes in.
   await page.evaluate(() => { document.getElementById('address').value = 'https://t3.example/'; });
   await emit(page, { event: 'focusAddressBar' });
+  await page.waitForFunction(() => document.activeElement === document.getElementById('address'), null, { timeout: 2000 }).catch(() => {});
   const focus = await page.evaluate(() => { const a = document.getElementById('address'); return { active: document.activeElement === a, all: a.selectionStart === 0 && a.selectionEnd === a.value.length }; });
   check(focus.active && focus.all, 'focusAddressBar focuses the address bar with its text selected');
   await page.keyboard.type('kru');
@@ -350,7 +351,7 @@ async function testPopup(browser) {
   console.log('popup');
   const make = async (w, h) => openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: w, height: h }, 1);
 
-  let { page, errors } = await make(280, 482);
+  let { page, errors } = await make(280, 512);
   await page.evaluate(() => { window.__host.autoSimulate = false; });
   check((await lastSent(page, 'ready')) !== undefined, 'popup posts ready');
   await emit(page, { event: 'popup', content: { kind: 'menu', zoom: 1.25, canReopen: true } });
@@ -369,7 +370,7 @@ async function testPopup(browser) {
   check(op && op.page === 'settings', 'Settings opens settings page');
   check(errors.length === 0, 'menu: no console errors (' + errors.join(' | ') + ')');
 
-  ({ page, errors } = await make(300, 180));
+  ({ page, errors } = await make(300, 226));
   await emit(page, { event: 'popup', content: { kind: 'shield', host: 'news.example.com', blocked: 37, allowed: false, enabled: true } });
   await page.waitForSelector('.panel');
   await shot(page, 'popup-shield.png');
@@ -637,6 +638,123 @@ async function testDownloads(browser) {
   check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
 }
 
+async function testStorage(browser) {
+  console.log('storage page');
+  const long = 'x'.repeat(120);
+  const data = {
+    sites: [
+      { site: 'example.com', cookies: 2, origins: ['https://example.com', 'https://www.example.com'] },
+      { site: 'news.example', cookies: 1, origins: [] },
+      { site: 'tracker.example', cookies: 0, origins: ['https://tracker.example'] },
+    ],
+    cookies: {
+      'example.com': [
+        { name: 'session', value: long, domain: '.example.com', path: '/', expires: null, secure: true, httpOnly: true, sameSite: 'lax' },
+        { name: 'theme', value: 'dark', domain: 'www.example.com', path: '/', expires: Date.UTC(2027, 0, 1), secure: false, httpOnly: false, sameSite: 'unspecified' },
+      ],
+    },
+  };
+  const { page, errors, external } = await openPage(browser, 'https://krunk.invalid/storage.html', { width: 1000, height: 640 }, 1, (d) => {
+    const h = window.__host.handlers;
+    h.storageList = () => ({ sites: d.sites });
+    h.storageUsage = (m) => ({ usage: m.origins.map((o) => ({ origin: o, usage: o === 'https://example.com' ? 52000 : 0, breakdown: o === 'https://example.com' ? [['indexeddb', 50000], ['local_storage', 2000]] : [] })) });
+    h.storageCookies = (m) => ({ cookies: d.cookies[m.site] || [] });
+    h.storageDeleteCookie = () => ({ deleted: 1 });
+    h.storageDeleteSite = () => ({ deleted: 2 });
+    h.storageDeleteAllCookies = () => ({ deleted: 3 });
+    h.storageClearOrigin = () => null;
+  }, data);
+  await page.waitForSelector('.site');
+  check((await page.locator('.site').count()) === 3, 'lists 3 sites');
+  check((await page.locator('#summary').textContent()).includes('3 sites, 3 cookies'), 'summary counts sites and cookies');
+  await page.waitForFunction(() => document.querySelector('.site[data-site="example.com"] .count').textContent.includes('KB'));
+  check((await page.locator('.site[data-site="example.com"] .count').textContent()).includes('2 cookies · 50.8 KB'), 'site row shows cookies and storage size');
+  await page.locator('.site[data-site="example.com"] > .row').click();
+  await page.waitForSelector('.site.open tr[data-name="session"]');
+  const valueCell = page.locator('tr[data-name="session"] td.value');
+  check((await valueCell.textContent()).includes('…Show'), 'long value truncated with Show');
+  await valueCell.locator('button.show').click();
+  check((await valueCell.textContent()).startsWith(long), 'Show reveals the full value');
+  check((await page.locator('tr[data-name="session"] .flags').textContent()) === 'Secure · HttpOnly · SameSite Lax', 'flags column');
+  check((await page.locator('tr[data-name="theme"] td').nth(4).textContent()) !== 'Session', 'expiry date shown');
+  check((await page.locator('.site.open .origin').count()) === 2, 'site data rows for both origins');
+  check((await page.locator('.site.open .origin').first().textContent()).includes('IndexedDB'), 'usage breakdown shown');
+  await shot(page, 'storage.png');
+  await page.locator('tr[data-name="theme"] .icon-btn').click();
+  const del = await lastSent(page, 'storageDeleteCookie');
+  check(del && del.cookie.name === 'theme' && del.cookie.domain === 'www.example.com' && del.cookie.path === '/', 'delete one cookie sends its name, domain and path');
+  await page.locator('.site.open .origin button').first().click();
+  await acceptInPage(page);
+  check((await lastSent(page, 'storageClearOrigin')).origin === 'https://example.com', 'clear site data of an origin');
+  await page.locator('.site.open .site-actions button').click();
+  await acceptInPage(page);
+  check((await lastSent(page, 'storageDeleteSite')).site === 'example.com', 'delete all cookies of a site');
+  await page.click('#delete-all');
+  await acceptInPage(page);
+  check((await lastSent(page, 'storageDeleteAllCookies')) !== undefined, 'delete all cookies');
+  await page.fill('#search', 'tracker');
+  await page.waitForTimeout(200);
+  check((await page.locator('.site').count()) === 1, 'search filters sites');
+  check(external.length === 0, 'no network requests');
+  check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
+}
+
+async function testSiteData(browser) {
+  console.log('site data page');
+  const state = {
+    origin: 'https://www.example.com', private: true, live: true,
+    cookies: [{ name: 'sid', value: 'abc', domain: '.example.com', path: '/', expires: null, secure: true, httpOnly: false, sameSite: 'strict' }],
+    local: [['cart', '[1,2,3]'], ['theme', 'dark']],
+    session: [['step', '2']],
+  };
+  const { page, errors, external } = await openPage(browser, 'https://krunk.invalid/sitedata.html', { width: 1000, height: 700 }, 1, (d) => {
+    const h = window.__host.handlers;
+    h.siteDataGet = () => d;
+    h.siteDataSet = () => null;
+    h.siteDataRemove = () => null;
+    h.siteDataClear = () => null;
+    h.siteCookiesDelete = () => ({ deleted: 1 });
+  }, state);
+  await page.waitForSelector('.kv');
+  check((await page.locator('#origin').textContent()) === 'https://www.example.com', 'shows the bound origin');
+  check(await page.locator('#private').isVisible(), 'private tab marked');
+  check((await page.locator('#local .kv').count()) === 2 && (await page.locator('#session .kv').count()) === 1, 'local and session storage items');
+  check((await page.locator('#cookies tr').count()) === 1, 'site cookies');
+  await shot(page, 'sitedata.png');
+  // Edit an item.
+  await page.locator('#local .kv[data-key="theme"] .icon-btn').first().click();
+  await page.fill('#edit-value', 'light');
+  await page.click('#edit button[value="ok"]');
+  await page.waitForTimeout(50);
+  const set = await lastSent(page, 'siteDataSet');
+  check(set && set.area === 'local' && set.key === 'theme' && set.value === 'light' && Object.keys(set).length === 5, 'edit sends siteDataSet{area,key,value} only (got ' + JSON.stringify(set) + ')');
+  // Add an item.
+  await page.locator('h2 button.add[data-area="session"]').click();
+  await page.fill('#edit-key', 'newkey');
+  await page.fill('#edit-value', 'v');
+  await page.click('#edit button[value="ok"]');
+  await page.waitForTimeout(50);
+  const add = await lastSent(page, 'siteDataSet');
+  check(add.area === 'session' && add.key === 'newkey', 'add item to session storage');
+  // Delete an item and a cookie.
+  await page.locator('#local .kv[data-key="cart"] .icon-btn').nth(1).click();
+  const rm = await lastSent(page, 'siteDataRemove');
+  check(rm && rm.area === 'local' && rm.key === 'cart', 'delete sends siteDataRemove');
+  await page.locator('#cookies tr[data-name="sid"] .icon-btn').click();
+  check((await lastSent(page, 'siteCookiesDelete')).cookie.name === 'sid', 'delete cookie');
+  await page.locator('h2 button.clear[data-area="local"]').click();
+  await acceptInPage(page);
+  check((await lastSent(page, 'siteDataClear')).area === 'local', 'clear local storage');
+  check(!(await sent(page)).some((m) => 'origin' in m || 'tabId' in m), 'no request names an origin or tab');
+  // A page not opened from a site (no binding) shows the host's error.
+  await page.evaluate(() => { const get = window.__host.handlers.siteDataGet; window.__host.handlers.siteDataGet = () => Object.assign({}, get(), { live: false }); });
+  await page.click('#reload');
+  await page.waitForTimeout(50);
+  check(await page.locator('#gone').isVisible(), 'warns when the source tab left the site');
+  check(external.length === 0, 'no network requests');
+  check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
+}
+
 async function testShellM4(browser) {
   console.log('shell: bookmarks bar, find, zoom');
   const { page, errors, external } = await openPage(browser, 'https://shell.krunk.invalid/shell.html', { width: 1100, height: 104 }, 1);
@@ -729,7 +847,7 @@ async function testShieldAndHttpsOnly(browser) {
   check(errors.length === 0, 'no console errors');
 
   // Popup: shield popover with a count, then the allowed state.
-  ({ page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 300, height: 180 }, 1));
+  ({ page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 300, height: 226 }, 1));
   await emit(page, { event: 'popup', content: { kind: 'shield', host: 'news.example.com', blocked: 42, allowed: false, enabled: true } });
   await page.waitForSelector('.panel');
   check((await page.locator('.big').textContent()) === '42', 'popover shows 42 blocked');
@@ -1196,6 +1314,8 @@ async function testLoginScript(browser) {
     await testHistory(browser);
     await testBookmarks(browser);
     await testDownloads(browser);
+    await testStorage(browser);
+    await testSiteData(browser);
     await testShellM4(browser);
     await testFolderPopup(browser);
     await testShieldAndHttpsOnly(browser);

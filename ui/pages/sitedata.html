@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Site data</title>
+<link rel="stylesheet" href="shared/common.css">
+<link rel="stylesheet" href="shared/page.css">
+<link rel="stylesheet" href="storage.css">
+<link rel="stylesheet" href="sitedata.css">
+</head>
+<body>
+<div class="page">
+  <div class="page-header">
+    <h1>Cookies and site data</h1>
+    <button id="reload" class="btn">Refresh</button>
+  </div>
+  <p class="site-line"><span id="origin" class="origin-name"></span> <span id="private" class="private-tag" hidden>Private tab</span></p>
+  <p id="gone" class="warn" hidden>The tab this page was opened from has closed or left the site; changes are no longer possible.</p>
+
+  <h2>Cookies <button id="cookies-delete-all" class="link-btn danger">Delete all</button></h2>
+  <div class="card"><table class="cookies"><thead><tr><th>Name</th><th>Value</th><th>Domain</th><th>Path</th><th>Expires</th><th>Flags</th><th></th></tr></thead>
+    <tbody id="cookies"></tbody></table></div>
+
+  <h2>Local storage <button class="link-btn add" data-area="local">Add item</button> <button class="link-btn danger clear" data-area="local">Clear</button></h2>
+  <div class="card" id="local"></div>
+
+  <h2>Session storage <button class="link-btn add" data-area="session">Add item</button> <button class="link-btn danger clear" data-area="session">Clear</button></h2>
+  <div class="card" id="session"></div>
+  <p class="muted note">Session storage belongs to the tab this page was opened from. IndexedDB and Cache Storage of this
+    site can be cleared on the Cookies and site data page (main menu).</p>
+</div>
+
+<dialog id="edit">
+  <form method="dialog">
+    <h2 id="edit-title">Edit item</h2>
+    <label class="stack">Key <input id="edit-key" type="text" spellcheck="false" autocomplete="off"></label>
+    <label class="stack">Value <textarea id="edit-value" rows="8" spellcheck="false"></textarea></label>
+    <div class="buttons">
+      <button type="button" class="btn" value="cancel">Cancel</button>
+      <button class="btn primary" value="ok">Save</button>
+    </div>
+  </form>
+</dialog>
+<script src="shared/bridge.js"></script>
+<script src="shared/page.js"></script>
+<script src="sitedata.js"></script>
+</body>
+</html>

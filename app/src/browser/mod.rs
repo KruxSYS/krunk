@@ -44,6 +44,7 @@ mod jobs;
 mod library;
 mod power;
 mod settings_host;
+mod storage;
 
 pub use power::PowerOptions;
 use power::{MEMREPORT_TIMER, POWER_TIMER};
@@ -130,6 +131,8 @@ pub struct Browser {
     /// A new-tab page whose address bar must keep the keyboard focus until
     /// the user clicks into the page or navigates.
     address_focus: Cell<Option<TabId>>,
+    /// `krunk://sitedata` tabs and the site each was opened for.
+    site_data: RefCell<HashMap<TabId, storage::SiteDataBinding>>,
 }
 
 impl Browser {
@@ -175,6 +178,7 @@ impl Browser {
             hit_map: RefCell::new(None),
             window_active: Cell::new(true),
             address_focus: Cell::new(None),
+            site_data: RefCell::new(HashMap::new()),
         });
         window.set_events(browser.clone());
         let _ = browser.window.set(window);
@@ -804,6 +808,13 @@ impl Browser {
             Command::ZoomReset => self.zoom(ZoomAction::Reset),
             Command::Print => self.active_do(|c| c.print()),
             Command::DevTools => self.active_do(|c| c.open_devtools()),
+            // The element under the mouse, or DevTools as such when the
+            // mouse is not over the page.
+            Command::InspectElement => self.active_do(|c| {
+                let at = c.cursor_position();
+                info!("inspect element at {at:?}");
+                c.open_devtools_at(at)
+            }),
             Command::History => self.open_page(Page::History),
             Command::Bookmarks => self.open_page(Page::Bookmarks),
             Command::Downloads => self.open_page(Page::Downloads),
@@ -1038,6 +1049,19 @@ impl Browser {
             | Request::UpdateFilterLists
             | Request::GetFilterStatus
             | Request::HttpsOnlyProceed { .. }) => self.dispatch_blocking(tab, req_id, r),
+            r @ (Request::StorageList
+            | Request::StorageUsage { .. }
+            | Request::StorageCookies { .. }
+            | Request::StorageDeleteCookie { .. }
+            | Request::StorageDeleteSite { .. }
+            | Request::StorageDeleteAllCookies
+            | Request::StorageClearOrigin { .. }) => self.dispatch_storage(tab, req_id, r),
+            r @ (Request::SiteDataGet {}
+            | Request::SiteDataSet { .. }
+            | Request::SiteDataRemove { .. }
+            | Request::SiteDataClear { .. }
+            | Request::SiteCookiesDelete { .. }) => self.dispatch_site_data(tab, req_id, r),
+            Request::OpenSiteData => self.open_site_data(),
             other => self.dispatch_library(sender, tab, req_id, other),
         }
     }

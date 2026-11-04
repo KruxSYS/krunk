@@ -48,7 +48,8 @@ function Shot([string]$name) {
 function Keys([string]$k, [int]$wait = 300) { [System.Windows.Forms.SendKeys]::SendWait($k); Start-Sleep -Milliseconds $wait }
 # Real mouse-move input (absolute, normalized to 0..65535): the window
 # move/size loop ignores cursor jumps made with SetCursorPos.
-function Move([int]$x, [int]$y) {
+# (Not "Move": that is a built-in alias of Move-Item and would win.)
+function MoveTo([int]$x, [int]$y) {
   $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
   $nx = [int](($x - $b.Left) * 65535 / ($b.Width - 1)); $ny = [int](($y - $b.Top) * 65535 / ($b.Height - 1))
   [U]::SetCursorPos($x, $y) | Out-Null; [U]::mouse_event(0x8001, $nx, $ny, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 40

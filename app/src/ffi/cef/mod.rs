@@ -10,6 +10,7 @@
 
 mod app;
 mod client;
+mod cookies;
 mod data;
 pub mod entry;
 mod net;
@@ -17,6 +18,7 @@ mod renderer;
 mod scheme;
 mod view;
 
+pub use cookies::{delete_cookies, list_cookies, Profile};
 pub use data::clear_profile_data;
 pub use net::{NetRequest, NetVerdict, RequestPolicy};
 pub use scheme::InternalResponse;

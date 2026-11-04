@@ -52,6 +52,10 @@ changed in Settings. Built-in pages:
 - `krunk://passwords`
 - `krunk://downloads`
 - `krunk://about` (shows the CEF and Chromium versions of the running engine)
+- `krunk://storage`: cookies and site data (also in the main menu and Settings → Privacy)
+- `krunk://sitedata`: one site's cookies, local and session storage (shield → Cookies and site data)
+
+Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
 
 | Keys | Action |
 |------|--------|
@@ -67,9 +71,34 @@ changed in Settings. Built-in pages:
 | Ctrl+= / Ctrl+-, Ctrl+0 | Zoom in / out, reset |
 | Ctrl+P | Print |
 | F12, Ctrl+Shift+I | DevTools (in its own window) |
+| Ctrl+Shift+C, right-click → Inspect | DevTools with the element under the mouse selected |
+| Alt+Space | Window menu (move, size, minimize, maximize, close) |
 
+- **Window:** there is no title bar. Drag the window by empty space in the tab row, and
+  double-click there to maximize or restore. Hovering the maximize button shows the Windows 11
+  snap layouts. Right-click the tab row for the window menu.
+- **New tab** (Ctrl+T, "+", the menu) puts the cursor in the address bar, so you can type at once.
 - **Shield:** the shield in the toolbar shows how many ads and trackers were blocked on the
-  page. Click it to allow ads on that site.
+  page. Click it to allow ads on that site, or to open **Cookies and site data** for the site.
+- **Cookies and site data:**
+  - `krunk://storage` lists every site with cookies or stored data, grouped by site
+    (registrable domain), with a search box. Expand a site to see each cookie: name, value
+    (shortened, "Show" reveals it), domain, path, expiry, Secure, HttpOnly and SameSite.
+  - You can delete one cookie, all of a site's cookies, or all cookies. "Clear site data"
+    removes an origin's local storage, IndexedDB, Cache Storage, service workers and cookies.
+  - The shield's **Cookies and site data** opens `krunk://sitedata` for the current tab's site.
+    There you can view, edit, add and delete its local storage and session storage items, and
+    delete its cookies. In a private tab this page opens as a private tab and only ever touches
+    the private profile.
+  - Limits (the engine has no API to enumerate storage):
+    - The list shows origins you visited (history), origins open in tabs, and every site that
+      has cookies. Data of an origin with none of these is not listed (Clear browsing data
+      still removes it).
+    - Sizes come from the engine's storage quota (IndexedDB, Cache Storage, service workers and
+      similar). Local storage is not counted there, so a site with only local storage shows
+      0 B.
+    - Session storage is shown only for the tab the site-data page was opened from.
+    - IndexedDB is shown as a size, not per database.
 - **Passwords:**
   - When you sign in to a site, Krunk asks "Save password?". The first save asks you to
     create the vault with a master password.

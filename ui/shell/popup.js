@@ -31,6 +31,7 @@
       item('Bookmarks', 'Ctrl+Shift+O', () => command('bookmarks')),
       item('Downloads', 'Ctrl+J', () => command('downloads')),
       item('Passwords', '', () => openPage('passwords')),
+      item('Cookies and site data', '', () => openPage('storage')),
       sep(),
       el('div', { class: 'zoom' }, [
         el('span', { class: 'label', text: 'Zoom' }),
@@ -62,6 +63,9 @@
           class: 'btn', onclick: () => { LB.post('shieldAllowSite', { allow: !c.allowed }); close(); },
           text: c.allowed ? 'Block on this site again' : 'Allow ads on this site',
         }),
+      ]) : null,
+      c.host ? el('div', { class: 'row' }, [
+        el('button', { class: 'btn', id: 'site-data', onclick: () => { LB.post('openSiteData'); close(); }, text: 'Cookies and site data' }),
       ]) : null,
     ])];
   }

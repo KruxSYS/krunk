@@ -498,6 +498,54 @@ pub enum Request {
         action: DownloadAction,
     },
 
+    // ---- cookies and site data (krunk://storage) ----
+    /// Sites with cookies or known storage, and their cookie counts.
+    StorageList,
+    /// Storage usage of these origins (at most 200).
+    StorageUsage {
+        origins: Vec<String>,
+    },
+    /// The cookies of one site, with values.
+    StorageCookies {
+        site: String,
+    },
+    StorageDeleteCookie {
+        cookie: crate::sitedata::CookieKey,
+    },
+    /// Deletes every cookie of a site.
+    StorageDeleteSite {
+        site: String,
+    },
+    StorageDeleteAllCookies,
+    /// Clears the site data (local storage, IndexedDB, Cache Storage,
+    /// service workers, ...) of one origin.
+    StorageClearOrigin {
+        origin: String,
+    },
+
+    // ---- one site's data (krunk://sitedata, bound by the host to the tab
+    // it was opened from; requests name no tab or origin) ----
+    SiteDataGet {},
+    SiteDataSet {
+        area: crate::sitedata::StorageArea,
+        key: String,
+        value: String,
+    },
+    SiteDataRemove {
+        area: crate::sitedata::StorageArea,
+        key: String,
+    },
+    SiteDataClear {
+        area: crate::sitedata::StorageArea,
+    },
+    /// Deletes one of the site's cookies, or all of them (`None`).
+    SiteCookiesDelete {
+        #[serde(default)]
+        cookie: Option<crate::sitedata::CookieKey>,
+    },
+    /// From the shield panel: open the site-data page for the active tab.
+    OpenSiteData,
+
     // ---- about / https-only ----
     GetAbout,
     /// From the HTTPS-only interstitial: load this http:// URL once.
@@ -588,9 +636,13 @@ impl Sender {
     /// Least privilege: each built-in page can only use its own commands.
     pub fn permits(self, req: &Request) -> bool {
         use Request as R;
-        // Harmless navigation-ish commands every privileged sender may use.
-        if matches!(req, R::Ready | R::OpenUrl { .. } | R::OpenPage { .. }) {
+        // Harmless navigation-ish commands every privileged sender may use,
+        // except the site-data page, which has nothing but its own commands.
+        if matches!(req, R::Ready) {
             return true;
+        }
+        if matches!(req, R::OpenUrl { .. } | R::OpenPage { .. }) {
+            return self != Sender::Page(Page::SiteData);
         }
         match self {
             Sender::Shell => matches!(
@@ -636,6 +688,7 @@ impl Sender {
                     | R::ReopenClosedTab
                     | R::Zoom { .. }
                     | R::ShieldAllowSite { .. }
+                    | R::OpenSiteData
                     | R::SavePasswordReply { .. }
                     | R::FillReply { .. }
                     | R::VaultStatus
@@ -702,6 +755,24 @@ impl Sender {
                 matches!(req, R::GetDownloads | R::ClearDownloads | R::DownloadAction { .. })
             }
             Sender::Page(Page::About) => matches!(req, R::GetAbout),
+            Sender::Page(Page::Storage) => matches!(
+                req,
+                R::StorageList
+                    | R::StorageUsage { .. }
+                    | R::StorageCookies { .. }
+                    | R::StorageDeleteCookie { .. }
+                    | R::StorageDeleteSite { .. }
+                    | R::StorageDeleteAllCookies
+                    | R::StorageClearOrigin { .. }
+            ),
+            Sender::Page(Page::SiteData) => matches!(
+                req,
+                R::SiteDataGet {}
+                    | R::SiteDataSet { .. }
+                    | R::SiteDataRemove { .. }
+                    | R::SiteDataClear { .. }
+                    | R::SiteCookiesDelete { .. }
+            ),
             Sender::Page(Page::HttpsOnly) => matches!(req, R::HttpsOnlyProceed { .. }),
         }
     }
@@ -1116,6 +1187,63 @@ mod tests {
         assert_eq!(parse_request(Sender::Popup, r#"{"cmd":"closeTab","id":1}"#), Err(ProtocolError::Forbidden));
     }
 
+    /// The storage page's commands belong to it alone; the site-data page has
+    /// only its own (not even OpenUrl/OpenPage); web content has none.
+    #[test]
+    fn storage_and_site_data_commands_are_page_only() {
+        let storage = [
+            r#"{"cmd":"storageList"}"#,
+            r#"{"cmd":"storageUsage","origins":["https://a.example"]}"#,
+            r#"{"cmd":"storageCookies","site":"a.example"}"#,
+            r#"{"cmd":"storageDeleteCookie","cookie":{"name":"n","domain":".a.example","path":"/"}}"#,
+            r#"{"cmd":"storageDeleteSite","site":"a.example"}"#,
+            r#"{"cmd":"storageDeleteAllCookies"}"#,
+            r#"{"cmd":"storageClearOrigin","origin":"https://a.example"}"#,
+        ];
+        let site_data = [
+            r#"{"cmd":"siteDataGet"}"#,
+            r#"{"cmd":"siteDataSet","area":"local","key":"k","value":"v"}"#,
+            r#"{"cmd":"siteDataRemove","area":"session","key":"k"}"#,
+            r#"{"cmd":"siteDataClear","area":"local"}"#,
+            r#"{"cmd":"siteCookiesDelete"}"#,
+            r#"{"cmd":"siteCookiesDelete","cookie":{"name":"n","domain":"a.example","path":"/"}}"#,
+        ];
+        let senders = |except: Sender| {
+            let mut v = vec![Sender::Shell, Sender::Popup];
+            v.extend(Page::ALL.into_iter().map(Sender::Page));
+            v.into_iter().filter(move |s| *s != except)
+        };
+        for msg in storage {
+            assert!(parse_request(Sender::Page(Page::Storage), msg).is_ok(), "{msg}");
+            for s in senders(Sender::Page(Page::Storage)) {
+                assert_eq!(parse_request(s, msg), Err(ProtocolError::Forbidden), "{s:?} {msg}");
+            }
+            assert!(parse_content(msg).is_err());
+        }
+        for msg in site_data {
+            assert!(parse_request(Sender::Page(Page::SiteData), msg).is_ok(), "{msg}");
+            for s in senders(Sender::Page(Page::SiteData)) {
+                assert_eq!(parse_request(s, msg), Err(ProtocolError::Forbidden), "{s:?} {msg}");
+            }
+            assert!(parse_content(msg).is_err());
+        }
+        let sd = Sender::Page(Page::SiteData);
+        assert!(parse_request(sd, r#"{"cmd":"ready"}"#).is_ok());
+        assert_eq!(
+            parse_request(sd, r#"{"cmd":"openUrl","url":"https://evil.example/"}"#),
+            Err(ProtocolError::Forbidden)
+        );
+        assert_eq!(parse_request(sd, r#"{"cmd":"openPage","page":"settings"}"#), Err(ProtocolError::Forbidden));
+        // The site-data page names no tab or origin: extra fields are refused.
+        assert!(parse_request(sd, r#"{"cmd":"siteDataGet","origin":"https://bank.example"}"#).is_err());
+        assert!(parse_request(sd, r#"{"cmd":"siteDataSet","area":"local","key":"k","value":"v","tabId":3}"#).is_err());
+        assert!(parse_request(sd, r#"{"cmd":"siteDataSet","area":"indexedDb","key":"k","value":"v"}"#).is_err());
+        // Opening it is the popup's (shield panel) business only.
+        assert!(parse_request(Sender::Popup, r#"{"cmd":"openSiteData"}"#).is_ok());
+        assert_eq!(parse_request(Sender::Shell, r#"{"cmd":"openSiteData"}"#), Err(ProtocolError::Forbidden));
+        assert_eq!(parse_request(sd, r#"{"cmd":"openSiteData"}"#), Err(ProtocolError::Forbidden));
+    }
+
     /// Only the shell lays out the tab row and drives the window buttons.
     #[test]
     fn window_frame_commands_are_shell_only() {
@@ -1334,6 +1462,21 @@ mod tests {
                 },
             },
             Request::WindowControl { action: WindowAction::Maximize },
+            Request::StorageList,
+            Request::StorageUsage { origins: vec!["https://a.example".into()] },
+            Request::StorageCookies { site: "a.example".into() },
+            Request::StorageDeleteCookie {
+                cookie: crate::sitedata::CookieKey { name: "n".into(), domain: ".a.example".into(), path: "/".into() },
+            },
+            Request::StorageDeleteSite { site: "a.example".into() },
+            Request::StorageDeleteAllCookies,
+            Request::StorageClearOrigin { origin: "https://a.example".into() },
+            Request::SiteDataGet {},
+            Request::SiteDataSet { area: crate::sitedata::StorageArea::Local, key: "k".into(), value: "v".into() },
+            Request::SiteDataRemove { area: crate::sitedata::StorageArea::Session, key: "k".into() },
+            Request::SiteDataClear { area: crate::sitedata::StorageArea::Local },
+            Request::SiteCookiesDelete { cookie: None },
+            Request::OpenSiteData,
             Request::ShowPopup { popup: PopupKind::Shield, rect },
             Request::HidePopup,
             Request::Command { command: Command::ZoomIn },

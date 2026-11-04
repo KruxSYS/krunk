@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cookies and site data</title>
+<link rel="stylesheet" href="shared/common.css">
+<link rel="stylesheet" href="shared/page.css">
+<link rel="stylesheet" href="storage.css">
+</head>
+<body>
+<div class="page">
+  <div class="page-header">
+    <h1>Cookies and site data</h1>
+    <input id="search" class="search" type="search" placeholder="Search sites" aria-label="Search sites" spellcheck="false">
+    <button id="delete-all" class="btn danger">Delete all cookies</button>
+  </div>
+  <p id="summary" class="muted"></p>
+  <div id="list" class="card"></div>
+  <p class="muted note">Site data lists the sites you visited or have open, and every site with cookies. Sizes come
+    from the engine's storage quota; databases and caches of sites that left no cookie or history entry are not listed
+    (clear them with Settings → Privacy → Clear browsing data). Private tabs keep their data in memory and are not shown here.</p>
+</div>
+<script src="shared/bridge.js"></script>
+<script src="shared/page.js"></script>
+<script src="storage.js"></script>
+</body>
+</html>

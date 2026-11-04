@@ -31,10 +31,14 @@ pub enum Page {
     About,
     /// Shown when HTTPS-only mode could not upgrade a site.
     HttpsOnly,
+    /// Cookies and site data of all sites.
+    Storage,
+    /// Cookies and storage of one site, opened from that site's tab.
+    SiteData,
 }
 
 impl Page {
-    pub const ALL: [Page; 8] = [
+    pub const ALL: [Page; 10] = [
         Page::NewTab,
         Page::History,
         Page::Bookmarks,
@@ -43,6 +47,8 @@ impl Page {
         Page::Downloads,
         Page::About,
         Page::HttpsOnly,
+        Page::Storage,
+        Page::SiteData,
     ];
 
     /// Short name used in the display URL (`krunk://<name>`) and file name.
@@ -56,6 +62,8 @@ impl Page {
             Page::Downloads => "downloads",
             Page::About => "about",
             Page::HttpsOnly => "https-only",
+            Page::Storage => "storage",
+            Page::SiteData => "sitedata",
         }
     }
 

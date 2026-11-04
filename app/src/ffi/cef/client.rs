@@ -69,8 +69,9 @@ wrap_client! {
         }
 
         fn context_menu_handler(&self) -> Option<ContextMenuHandler> {
-            // The browser's own UI has no context menu.
-            (self.role != Role::Tab).then(NoMenu::new)
+            // The browser's own UI has no context menu; pages get the
+            // engine's menu plus "Inspect".
+            Some(if self.role == Role::Tab { TabMenu::new(self.key) } else { NoMenu::new() })
         }
 
         fn jsdialog_handler(&self) -> Option<JsdialogHandler> {
@@ -483,6 +484,49 @@ wrap_context_menu_handler! {
             if let Some(m) = model {
                 m.clear();
             }
+        }
+    }
+}
+
+/// "Inspect" in the page context menu (CEF's `MENU_ID_USER_FIRST` + 1).
+const MENU_INSPECT: c_int = 26501;
+
+wrap_context_menu_handler! {
+    struct TabMenu {
+        key: u64,
+    }
+    impl ContextMenuHandler {
+        fn on_before_context_menu(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            _params: Option<&mut ContextMenuParams>,
+            model: Option<&mut MenuModel>,
+        ) {
+            if let Some(m) = model {
+                if m.count() > 0 {
+                    m.add_separator();
+                }
+                m.add_item(MENU_INSPECT, Some(&CefString::from("Inspect")));
+            }
+        }
+
+        fn on_context_menu_command(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            params: Option<&mut ContextMenuParams>,
+            command_id: c_int,
+            _event_flags: EventFlags,
+        ) -> c_int {
+            if command_id != MENU_INSPECT {
+                return 0;
+            }
+            let at = params.map(|p| (p.xcoord(), p.ycoord()));
+            if let Some(view) = lookup(self.key) {
+                View(view).open_devtools_at(at);
+            }
+            1
         }
     }
 }

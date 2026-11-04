@@ -1,0 +1,17 @@
+.site-line { margin: -6px 0 6px; font-size: 15px; }
+.origin-name { font-weight: 600; }
+.private-tag { margin-left: 8px; padding: 1px 8px; border-radius: 10px; background: var(--private); color: #fff; font-size: 12px; }
+.private-tag[hidden] { display: none; }
+.warn { padding: 8px 12px; border-radius: 8px; background: var(--bg-hover); color: var(--danger); }
+.warn[hidden] { display: none; }
+h2 { display: flex; align-items: baseline; gap: 14px; margin: 24px 0 8px; font-size: 15px; font-weight: 600; }
+.kv { display: flex; align-items: flex-start; gap: 10px; padding: 7px 12px; border-top: 1px solid var(--border); font-size: 13px; }
+.kv:first-child { border-top: 0; }
+.kv .k { width: 30%; flex: none; font-weight: 600; overflow-wrap: anywhere; }
+.kv .v { flex: 1; min-width: 0; font-family: ui-monospace, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.kv .actions { display: flex; gap: 4px; flex: none; }
+label.stack { flex-direction: column; align-items: stretch; gap: 4px; }
+#edit { width: 560px; }
+#edit-key { width: 100%; }
+#edit-value { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px;
+              background: var(--bg); color: var(--fg); font: 12px ui-monospace, Consolas, monospace; resize: vertical; }
