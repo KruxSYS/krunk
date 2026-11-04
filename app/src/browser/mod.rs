@@ -759,11 +759,7 @@ impl Browser {
             Command::ZoomOut => self.zoom(ZoomAction::Out),
             Command::ZoomReset => self.zoom(ZoomAction::Reset),
             Command::Print => self.active_do(|c| c.print()),
-            Command::DevTools => {
-                if let Some(w) = self.window() {
-                    self.active_do(|c| c.open_devtools(w.hwnd()));
-                }
-            }
+            Command::DevTools => self.active_do(|c| c.open_devtools()),
             Command::History => self.open_page(Page::History),
             Command::Bookmarks => self.open_page(Page::Bookmarks),
             Command::Downloads => self.open_page(Page::Downloads),

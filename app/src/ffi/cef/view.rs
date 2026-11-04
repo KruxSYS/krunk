@@ -533,11 +533,13 @@ impl View {
         }
     }
 
-    /// Opens DevTools for this view in its own window owned by `owner`.
-    pub fn open_devtools(&self, owner: HWND) {
+    /// Opens DevTools for this view in its own top-level window.
+    pub fn open_devtools(&self) {
         let Some(h) = self.host() else { return };
+        // No parent: with one, CEF creates the DevTools window as a child
+        // inside the main window.
         let window_info = WindowInfo { runtime_style: RuntimeStyle::ALLOY, ..Default::default() }
-            .set_as_popup(sys::HWND(owner.0.cast()), "DevTools – LightBrowser");
+            .set_as_popup(sys::HWND(std::ptr::null_mut()), "DevTools – LightBrowser");
         let mut client = client::for_tool();
         h.show_dev_tools(Some(&window_info), Some(&mut client), Some(&BrowserSettings::default()), None);
     }
