@@ -30,9 +30,11 @@ pub(super) const APP_DEFERRED: usize = 2;
 /// Timer: push the shield counter (at most ~4 times a second).
 pub(super) const SHIELD_TIMER: usize = 2;
 const SHIELD_DEBOUNCE_MS: u32 = 250;
-/// Timer: first filter-list update check, a minute after start.
+/// Timer: filter-list update check, a minute after start and then hourly
+/// (a download happens only when the last check is a day old).
 pub(super) const UPDATE_TIMER: usize = 3;
 const FIRST_UPDATE_DELAY_MS: u32 = 60_000;
+pub(super) const UPDATE_CHECK_INTERVAL_MS: u32 = 60 * 60 * 1000;
 /// Rewrites of one navigation chain before giving up (defence in depth;
 /// `navigation_rewrite` already reaches a fixed point after one).
 const MAX_REWRITES: u8 = 3;
@@ -121,7 +123,7 @@ impl Browser {
         let t = std::time::Instant::now();
         let cached =
             std::fs::read(self.dirs.engine_cache()).ok().and_then(|data| Blocker::deserialize(&data, key).ok());
-        let due = state.update_due(now_ms());
+        info!("filter lists: {}", state.schedule_note(now_ms()));
         *f.update.borrow_mut() = state;
         match cached {
             Some(engine) => {
@@ -133,10 +135,22 @@ impl Browser {
                 self.spawn_filter_job(false);
             }
         }
-        if due {
-            if let Some(w) = self.window() {
-                w.set_timer(UPDATE_TIMER, FIRST_UPDATE_DELAY_MS);
-            }
+        if let Some(w) = self.window() {
+            w.set_timer(UPDATE_TIMER, FIRST_UPDATE_DELAY_MS);
+        }
+    }
+
+    /// UPDATE_TIMER: download the lists if the last check is a day old.
+    /// Runs hourly, so a browser left open for days still updates.
+    pub(super) fn scheduled_filter_check(&self) {
+        let now = now_ms();
+        let (due, note) = {
+            let u = self.filters.update.borrow();
+            (u.update_due(now), u.schedule_note(now))
+        };
+        if due && self.filters.enabled.get() && !self.filters.busy.get() {
+            info!("filter lists: {note}; updating");
+            self.update_filter_lists(None);
         }
     }
 
@@ -201,6 +215,8 @@ impl Browser {
         }
         if let Some(e) = &r.state.last_error {
             warning!("filter-list update: {e}");
+        } else {
+            info!("filter lists checked; {}", r.state.schedule_note(now_ms()));
         }
         *f.update.borrow_mut() = r.state;
         let replies: Vec<_> = f.pending_replies.borrow_mut().drain(..).collect();

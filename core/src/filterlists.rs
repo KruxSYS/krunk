@@ -53,6 +53,21 @@ impl UpdateState {
     pub fn update_due(&self, now_ms: i64) -> bool {
         self.last_check_ms == 0 || now_ms < self.last_check_ms || now_ms - self.last_check_ms >= UPDATE_INTERVAL_MS
     }
+
+    /// The schedule in words, for the log ("last checked 3.5 h ago; next check in 20.5 h").
+    pub fn schedule_note(&self, now_ms: i64) -> String {
+        const HOUR: f64 = 3_600_000.0;
+        if self.last_check_ms == 0 {
+            return "never checked; update due".into();
+        }
+        let ago = (now_ms - self.last_check_ms) as f64 / HOUR;
+        if self.update_due(now_ms) {
+            format!("last checked {ago:.1} h ago; update due")
+        } else {
+            let next = (UPDATE_INTERVAL_MS - (now_ms - self.last_check_ms)) as f64 / HOUR;
+            format!("last checked {ago:.1} h ago; next check in {next:.1} h")
+        }
+    }
 }
 
 /// Key identifying the compiled engine: engine version plus, for every
@@ -199,6 +214,12 @@ mod tests {
         assert!(!s.update_due(11 * UPDATE_INTERVAL_MS - 1));
         assert!(s.update_due(11 * UPDATE_INTERVAL_MS));
         assert!(s.update_due(5), "clock went backwards");
+        assert_eq!(
+            s.schedule_note(10 * UPDATE_INTERVAL_MS + 3_600_000),
+            "last checked 1.0 h ago; next check in 23.0 h"
+        );
+        assert_eq!(s.schedule_note(11 * UPDATE_INTERVAL_MS + 3_600_000), "last checked 25.0 h ago; update due");
+        assert_eq!(UpdateState::default().schedule_note(5), "never checked; update due");
         let back = UpdateState::from_json(&s.to_json());
         assert_eq!(back, s);
         assert_eq!(UpdateState::from_json("garbage"), UpdateState::default());

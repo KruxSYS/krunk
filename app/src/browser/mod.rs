@@ -1274,9 +1274,9 @@ impl WindowEvents for Browser {
             CLIPBOARD_TIMER => self.clipboard_timer(),
             UPDATE_TIMER => {
                 if let Some(w) = self.window() {
-                    w.kill_timer(UPDATE_TIMER);
+                    w.set_timer(UPDATE_TIMER, blocking::UPDATE_CHECK_INTERVAL_MS);
                 }
-                self.update_filter_lists(None);
+                self.scheduled_filter_check();
             }
             _ => {}
         }
