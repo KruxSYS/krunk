@@ -1328,12 +1328,84 @@ async function testScriptletInjection(browser) {
   await context.close();
 }
 
+// The pointer-lock shim (ui/inject/pointer-lock.js) with a fake browser on the other side.
+async function testPointerLockShim(browser) {
+  console.log('pointer lock shim');
+  const context = await browser.newContext();
+  const shim = fs.readFileSync(path.join(__dirname, '..', 'inject', 'pointer-lock.js'), 'utf8');
+  await context.addInitScript({ content: 'window.__sent = []; window.__plock = ' + shim + '(function (j) { window.__sent.push(JSON.parse(j)); });' });
+  await context.route('https://game.example/**', (r) => r.fulfill({ contentType: 'text/html', body: `<!doctype html>
+    <div id="stage" style="width:400px;height:300px;background:#333"></div>
+    <div id="hud" style="position:absolute;left:0;top:0;width:400px;height:300px"></div>
+    <script>
+      window.log = [];
+      document.addEventListener('pointerlockchange', () => log.push('change:' + (document.pointerLockElement ? document.pointerLockElement.id : 'null')));
+      document.onpointerlockerror = () => log.push('error');
+      document.addEventListener('mousemove', (e) => log.push('move:' + e.movementX + ',' + e.movementY + ':' + e.isTrusted + ':' + e.buttons));
+      window.addEventListener('pointermove', (e) => log.push('pmove:' + e.movementX + ',' + e.movementY));
+      // At load, without any user input: must be refused.
+      window.noGesture = document.getElementById('stage').requestPointerLock().then(() => 'resolved', (e) => e.name);
+    </script>` }));
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await page.goto('https://game.example/');
+  check(await page.evaluate(() => Element.prototype.requestPointerLock.toString()) === 'function requestPointerLock() { [native code] }', 'requestPointerLock looks native');
+  check(await page.evaluate(() => 'pointerLockElement' in Document.prototype && document.pointerLockElement === null), 'pointerLockElement is null when unlocked');
+  // Without a user gesture: refused, pointerlockerror, nothing sent.
+  const noGesture = await page.evaluate(() => window.noGesture);
+  check(noGesture === 'NotAllowedError', 'without user activation the promise rejects (NotAllowedError)');
+  check((await page.evaluate(() => window.__sent.length)) === 0 && (await page.evaluate(() => log.includes('error'))), 'nothing asked, pointerlockerror fired');
+  // With a click: the browser is asked.
+  await page.evaluate(() => { document.getElementById('hud').addEventListener('click', () => { window.p = document.getElementById('stage').requestPointerLock({ unadjustedMovement: true }).then(() => 'resolved', (e) => e.name); }); });
+  await page.click('#hud');
+  check(JSON.stringify(await page.evaluate(() => window.__sent)) === '[{"lb":"pointerLock","unadjusted":true}]', 'a click sends the request with unadjustedMovement');
+  await page.evaluate(() => window.__plock('{"t":"granted"}'));
+  check((await page.evaluate(() => window.p)) === 'resolved', 'granted: the promise resolves');
+  check(await page.evaluate(() => document.pointerLockElement && document.pointerLockElement.id === 'stage' && log.includes('change:stage')), 'pointerLockElement set and pointerlockchange fired');
+  // Real (trusted) moves carry the browser's movement and a frozen position.
+  await page.evaluate(() => { log.length = 0; window.xs = []; document.addEventListener('mousemove', (e) => xs.push(e.clientX)); });
+  await page.evaluate(() => window.__plock('{"t":"move","dx":7,"dy":-3,"b":1}'));
+  await page.mouse.move(200, 150);
+  await page.evaluate(() => window.__plock('{"t":"move","dx":-2,"dy":5,"b":0}'));
+  await page.mouse.move(210, 160);
+  await page.mouse.move(220, 170);
+  let moves = await page.evaluate(() => log.slice());
+  check(moves.includes('move:7,-3:true:0') && moves.includes('move:-2,5:true:0'), 'trusted mousemove events carry the raw movement (' + moves.join(' ') + ')');
+  check(moves.includes('move:0,0:true:0'), 'a real move with no new raw input has no movement (the re-centring never shows)');
+  check(moves.includes('pmove:7,-3'), 'pointermove of the same input gets the same movement');
+  await page.evaluate(() => { window.targets = []; document.getElementById('stage').addEventListener('mousemove', (e) => targets.push(e.target.id + ':' + e.isTrusted)); });
+  await page.mouse.move(230, 180);
+  check((await page.evaluate(() => window.targets)).includes('stage:true'), 'with an overlay on top, real moves go to the locked element (' + (await page.evaluate(() => window.targets)).join(',') + ')');
+  const xs = await page.evaluate(() => window.xs);
+  check(xs.length > 0 && xs.every((x) => x === xs[0]), 'clientX stays frozen while locked (' + xs.join(',') + ')');
+  // Movement no real event picked up goes out as a synthetic event.
+  await page.evaluate(() => { log.length = 0; window.__plock('{"t":"move","dx":4,"dy":1,"b":1}'); });
+  await page.waitForTimeout(120);
+  moves = await page.evaluate(() => log.slice());
+  check(moves.includes('move:4,1:false:1'), 'leftover movement arrives as a synthetic event (' + moves.join(' ') + ')');
+  check(await page.evaluate(() => Object.getOwnPropertyDescriptor(MouseEvent.prototype, 'movementX').get.toString()) === 'function get movementX() { [native code] }', 'the movementX getter looks native');
+  // exitPointerLock asks the browser; the release arrives as an event.
+  await page.evaluate(() => document.exitPointerLock());
+  check((await page.evaluate(() => window.__sent.pop())).lb === 'pointerUnlock', 'exitPointerLock sends pointerUnlock');
+  await page.evaluate(() => window.__plock('{"t":"released"}'));
+  check(await page.evaluate(() => document.pointerLockElement === null && log.includes('change:null')), 'released: unlocked and pointerlockchange');
+  check(await page.evaluate(() => getComputedStyle(document.getElementById('hud')).pointerEvents) === 'auto', 'released: the page is clickable again');
+  // Denied requests reject.
+  await page.click('#hud');
+  await page.evaluate(() => window.__plock('{"t":"denied"}'));
+  check((await page.evaluate(() => window.p)) === 'NotAllowedError', 'a denied request rejects');
+  check(errors.length === 0, 'no page errors (' + errors.join(' | ') + ')');
+  await context.close();
+}
+
 (async () => {
   if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
   const browser = await chromium.launch();
   try {
     await testShell(browser);
     await testScriptletInjection(browser);
+    await testPointerLockShim(browser);
     await testShellFrame(browser);
     await testShellHiDpi(browser);
     await testPopup(browser);

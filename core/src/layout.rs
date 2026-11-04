@@ -64,6 +64,7 @@ pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> Pop
         PopupKind::Shield => (300.0, 226.0),
         PopupKind::BookmarkFolder => (280.0, folder_height(entries)),
         PopupKind::Unlock => (360.0, 200.0),
+        PopupKind::Hint => (300.0, 44.0),
     };
     let x = (shell_width_css - w - 8.0).max(0.0);
     PopupRect { x, y: SHELL_HEIGHT_DIP - 4.0, width: w, height: h }

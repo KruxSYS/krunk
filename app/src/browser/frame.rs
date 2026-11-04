@@ -30,6 +30,9 @@ impl Browser {
     /// What is at a client point (physical pixels) of the main window.
     pub(super) fn frame_hit_at(&self, x: i32, y: i32) -> Hit {
         let Some(w) = self.window() else { return Hit::Client };
+        if self.is_fullscreen() {
+            return Hit::Client;
+        }
         let scale = w.scale();
         let (width, _) = w.client_size();
         let map = self.hit_map.borrow();
@@ -47,7 +50,7 @@ impl Browser {
         self.post_shell(&Event::WindowState {
             maximized: w.is_maximized(),
             active: self.window_active.get(),
-            fullscreen: false,
+            fullscreen: self.is_fullscreen(),
         });
     }
 

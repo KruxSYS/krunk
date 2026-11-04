@@ -4,7 +4,7 @@
 //! touches only the view's `Send + Sync` network policy.
 
 use super::net::{self, RequestPolicy};
-use super::renderer::{AUDIO_TO_BROWSER, TO_BROWSER};
+use super::renderer::{AUDIO_TO_BROWSER, POINTER_TO_BROWSER, TO_BROWSER};
 use super::view::{
     child_window_info, lookup, DownloadControl, DownloadStart, DownloadStatus, DownloadUpdate, KeyPress, LoadingState,
     MessageSource, NavigationStart, NewWindow, Role, View, ViewInner,
@@ -98,6 +98,14 @@ wrap_client! {
             if name == super::scriptlets::HELLO {
                 let have = message.argument_list().map(|a| CefString::from(&a.string(0)).to_string()).unwrap_or_default();
                 super::scriptlets::hello(frame, &have);
+                return 1;
+            }
+            if name == POINTER_TO_BROWSER {
+                let json = message.argument_list().map(|a| CefString::from(&a.string(0)).to_string()).unwrap_or_default();
+                let id = CefString::from(&frame.identifier()).to_string();
+                if let Some(view) = lookup(self.key) {
+                    view.ev.pointer.with(|f| f(id, json));
+                }
                 return 1;
             }
             if name == AUDIO_TO_BROWSER {
@@ -279,6 +287,12 @@ wrap_display_handler! {
         key: u64,
     }
     impl DisplayHandler {
+        fn on_fullscreen_mode_change(&self, _browser: Option<&mut Browser>, fullscreen: c_int) {
+            if let Some(view) = lookup(self.key) {
+                view.ev.fullscreen.with(|f| f(fullscreen == 1));
+            }
+        }
+
         fn on_address_change(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, url: Option<&CefString>) {
             if !is_main(&frame) {
                 return;

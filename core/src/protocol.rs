@@ -121,6 +121,9 @@ pub enum PopupKind {
     BookmarkFolder,
     /// Master-password prompt before saving or filling a login.
     Unlock,
+    /// A short notice that does not take focus ("Press Esc to show your
+    /// cursor" while the pointer is locked).
+    Hint,
 }
 
 impl PopupKind {
@@ -134,7 +137,8 @@ impl PopupKind {
     /// popup window (a no-activate window gets no such signal when the page
     /// it covers already had focus).
     pub fn takes_focus(self) -> bool {
-        true
+        // A hint must not take the keyboard from the page (a game).
+        self != PopupKind::Hint
     }
 }
 
@@ -220,6 +224,9 @@ pub enum PopupContent {
         title: String,
         items: Vec<BarItem>,
     },
+    Hint {
+        text: String,
+    },
 }
 
 /// Why the vault must be unlocked.
@@ -252,6 +259,7 @@ impl PopupContent {
             PopupContent::Fill { .. } => PopupKind::Fill,
             PopupContent::BookmarkFolder { .. } => PopupKind::BookmarkFolder,
             PopupContent::Unlock { .. } => PopupKind::Unlock,
+            PopupContent::Hint { .. } => PopupKind::Hint,
         }
     }
 }
@@ -1590,6 +1598,7 @@ mod tests {
                 },
             },
             Event::PopupClosed,
+            Event::Popup { content: PopupContent::Hint { text: "Press Esc to show your cursor".into() } },
             Event::CaptionState { hover: Some(CaptionButton::Maximize), pressed: false },
             Event::CaptionState { hover: None, pressed: false },
             Event::WindowState { maximized: true, active: false, fullscreen: false },

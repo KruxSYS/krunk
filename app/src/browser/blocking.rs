@@ -46,6 +46,10 @@ pub(super) const UPDATE_CHECK_INTERVAL_MS: u32 = 60 * 60 * 1000;
 const MAX_REWRITES: u8 = 3;
 const DOWNLOAD_TIMEOUT_MS: i32 = 30_000;
 
+/// `--log-blocked` (diagnostics): log every blocked request (without its
+/// query string) to find what breaks a site.
+pub(crate) static LOG_BLOCKED: AtomicBool = AtomicBool::new(false);
+
 /// Blocking state of the UI thread (lists, allowlist, updater).
 pub(super) struct FilterState {
     pub allowlist: RefCell<Allowlist>,
@@ -169,6 +173,11 @@ impl RequestPolicy for TabPolicy {
             Decision::Block => NetVerdict::Block,
             Decision::Redirect { content_type, body } => NetVerdict::Respond { content_type, body },
         };
+        if LOG_BLOCKED.load(Relaxed) {
+            let url = req.url.split(['?', '#']).next().unwrap_or("");
+            let how = if matches!(verdict, NetVerdict::Block) { "blocked" } else { "redirected" };
+            crate::log::info!("{how} {kind:?} {url} (page {})", urlclean::host_of(&top).unwrap_or_default());
+        }
         self.tab.blocked.fetch_add(1, Relaxed);
         self.net.blocked_one();
         verdict

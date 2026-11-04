@@ -40,6 +40,8 @@ pub enum Command {
     DevTools,
     /// DevTools with the element under the mouse selected (Ctrl+Shift+C).
     InspectElement,
+    /// Full screen without the tab strip and toolbar (F11).
+    Fullscreen,
 }
 
 /// Virtual-key codes (winuser.h).
@@ -60,6 +62,7 @@ pub mod vk {
     pub const F3: u32 = 0x72;
     pub const F5: u32 = 0x74;
     pub const F6: u32 = 0x75;
+    pub const F11: u32 = 0x7A;
     pub const F12: u32 = 0x7B;
     pub const BROWSER_BACK: u32 = 0xA6;
     pub const BROWSER_FORWARD: u32 = 0xA7;
@@ -120,6 +123,7 @@ pub fn command_for(vk: u32, ctrl: bool, shift: bool, alt: bool) -> Option<Comman
         (true, false, false, vk::KEY_0) | (true, false, false, vk::NUMPAD0) => ZoomReset,
         (true, false, false, k) if k == vk::letter('P') => Print,
         (false, false, false, vk::F12) => DevTools,
+        (false, false, false, vk::F11) => Fullscreen,
         (true, true, false, k) if k == vk::letter('I') => DevTools,
         (true, true, false, k) if k == vk::letter('C') => InspectElement,
         _ => return None,
@@ -174,6 +178,7 @@ mod tests {
         assert_eq!(ctrl(l('H')), Some(History));
         assert_eq!(ctrl(l('F')), Some(Find));
         assert_eq!(plain(vk::F12), Some(DevTools));
+        assert_eq!(plain(vk::F11), Some(Fullscreen));
         assert_eq!(ctrl_shift(l('I')), Some(DevTools));
         assert_eq!(ctrl_shift(l('C')), Some(InspectElement));
         assert_eq!(ctrl(l('C')), None, "Ctrl+C stays copy");

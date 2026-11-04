@@ -42,6 +42,7 @@ mod find;
 mod frame;
 mod jobs;
 mod library;
+mod pointer;
 mod power;
 mod settings_host;
 mod storage;
@@ -55,6 +56,7 @@ use settings_host::EXIT_TIMER;
 use jobs::{Jobs, APP_JOB};
 use vault::{VaultHost, CLIPBOARD_TIMER, VAULT_TIMER};
 
+pub(crate) use blocking::LOG_BLOCKED;
 use blocking::{
     Deferred, FilterState, NetShared, TabNet, APP_DEFERRED, APP_FILTERS_READY, APP_SHIELD, SHIELD_TIMER, UPDATE_TIMER,
 };
@@ -133,6 +135,8 @@ pub struct Browser {
     address_focus: Cell<Option<TabId>>,
     /// `krunk://sitedata` tabs and the site each was opened for.
     site_data: RefCell<HashMap<TabId, storage::SiteDataBinding>>,
+    /// Pointer lock and full screen.
+    pointer: pointer::PointerHost,
 }
 
 impl Browser {
@@ -179,6 +183,7 @@ impl Browser {
             window_active: Cell::new(true),
             address_focus: Cell::new(None),
             site_data: RefCell::new(HashMap::new()),
+            pointer: pointer::PointerHost::default(),
         });
         window.set_events(browser.clone());
         let _ = browser.window.set(window);
@@ -199,6 +204,10 @@ impl Browser {
         });
         engine::set_color_scheme(browser.color_scheme());
         browser.create_shell(window)?;
+        // The popup (menus, prompts, the pointer-lock hint) is created now,
+        // hidden: creating its browser later would take the keyboard focus
+        // from the page once (a game would see the window lose focus).
+        browser.create_popup(window);
         browser.restore_or_open_start();
         browser.start_power_timer();
         browser.mem_report_line("start");
@@ -324,7 +333,14 @@ impl Browser {
         let net = Rc::new(TabNet::new(self.net.clone()));
         let scripts = {
             let s = self.settings.borrow();
-            Scripts { gpc: s.send_gpc, dnt: s.send_dnt, page_tokens: s.adblock_enabled, login: true, audio: true }
+            Scripts {
+                gpc: s.send_gpc,
+                dnt: s.send_dnt,
+                page_tokens: s.adblock_enabled,
+                login: true,
+                audio: true,
+                pointer_lock: true,
+            }
         };
         let view =
             View::new(ViewOptions { role: Role::Tab, private, scripts, background: 0, policy: Some(net.policy()) });
@@ -404,6 +420,8 @@ impl Browser {
             }
             b.model.borrow_mut().set_loading(id, true);
             b.tab_changed(id);
+            // A new page: the old one's pointer lock ends.
+            b.release_pointer_of(id, lb_core::pointer_lock::Release::Navigated);
             true
         });
         let weak = self.me.clone();
@@ -489,10 +507,31 @@ impl Browser {
                 }
             }
         });
-        c.on_crashed(move |reason| warning!("tab {id}: renderer ended ({reason})"));
+        let weak = self.me.clone();
+        c.on_crashed(move |reason| {
+            warning!("tab {id}: renderer ended ({reason})");
+            if let Some(b) = weak.upgrade() {
+                b.release_pointer_of(id, lb_core::pointer_lock::Release::RendererGone);
+                b.fullscreen_tab_gone(id);
+            }
+        });
+        let weak = self.me.clone();
+        c.on_pointer_lock(move |frame, json| {
+            if let Some(b) = weak.upgrade() {
+                b.pointer_message(id, frame, &json);
+            }
+        });
+        let weak = self.me.clone();
+        c.on_fullscreen(move |on| {
+            if let Some(b) = weak.upgrade() {
+                b.page_fullscreen(id, on);
+            }
+        });
     }
 
     fn destroy_view(&self, id: TabId) {
+        self.release_pointer_of(id, lb_core::pointer_lock::Release::TabClosed);
+        self.fullscreen_tab_gone(id);
         if let Some((v, _)) = self.adopted.borrow_mut().remove(&id) {
             v.close();
         }
@@ -503,6 +542,10 @@ impl Browser {
     }
 
     fn activate_view(&self, from: Option<TabId>, to: TabId) {
+        self.pointer_tab_activated(to);
+        if let Some(f) = from.filter(|f| *f != to) {
+            self.fullscreen_tab_gone(f);
+        }
         if self.address_focus.get().is_some_and(|held| held != to) {
             self.address_focus.set(None);
         }
@@ -568,8 +611,11 @@ impl Browser {
         let Some(w) = self.window() else { return };
         let (width, height) = w.client_size();
         let bar = self.settings.borrow().show_bookmarks_bar;
-        let (shell, content) = layout::split(width, height, w.scale(), bar);
-        if let Some(s) = self.shell() {
+        let (shell, mut content) = layout::split(width, height, w.scale(), bar);
+        if self.is_fullscreen() {
+            // No tab strip or toolbar: the page fills the screen.
+            content = layout::Rect { x: 0, y: 0, width, height };
+        } else if let Some(s) = self.shell() {
             s.set_bounds(shell.x, shell.y, shell.width, shell.height);
         }
         if let Some(c) = self.active_view() {
@@ -744,6 +790,17 @@ impl Browser {
     // ------------------------------------------------------------ commands
 
     fn on_key(&self, key: KeyPress) -> bool {
+        // Esc ends the pointer lock (the page does not get it), else page
+        // full screen.
+        if key.vk == keys::vk::ESCAPE && !key.ctrl && !key.alt && !key.shift {
+            if self.pointer_locked() {
+                self.release_pointer(lb_core::pointer_lock::Release::Escape);
+                return true;
+            }
+            if !key.repeat && self.escape_page_fullscreen() {
+                return true;
+            }
+        }
         // Alt+Space: the window's system menu (there is no title bar to
         // receive it natively).
         if key.alt && !key.ctrl && !key.shift && key.vk == 0x20 {
@@ -808,6 +865,7 @@ impl Browser {
             Command::ZoomReset => self.zoom(ZoomAction::Reset),
             Command::Print => self.active_do(|c| c.print()),
             Command::DevTools => self.active_do(|c| c.open_devtools()),
+            Command::Fullscreen => self.toggle_fullscreen(),
             // The element under the mouse, or DevTools as such when the
             // mouse is not over the page.
             Command::InspectElement => self.active_do(|c| {
@@ -1081,6 +1139,11 @@ impl Browser {
 
     /// Shows `content` in the popup. `rect` is in shell CSS pixels; `None`
     /// keeps the current position (content refresh).
+    /// The kind of content the popup shows, if any.
+    fn popup_kind(&self) -> Option<PopupKind> {
+        self.popup.try_borrow().ok()?.as_ref().and_then(|p| p.content.as_ref().map(PopupContent::kind))
+    }
+
     fn show_popup(&self, content: PopupContent, rect: Option<PopupRect>) {
         let Some(main) = self.window() else { return };
         if self.popup.borrow().is_none() && !self.create_popup(main) {
@@ -1285,15 +1348,54 @@ impl WindowEvents for Browser {
 
     fn activated(&self, active: bool) {
         self.window_active.set(active);
+        if !active {
+            // Alt+Tab or a click into another window ends the lock.
+            self.release_pointer(lb_core::pointer_lock::Release::WindowDeactivated);
+        }
         self.send_window_state();
+    }
+
+    fn raw_mouse(&self, dx: i32, dy: i32) {
+        Browser::raw_mouse(self, dx, dy);
+    }
+
+    fn activation_to_popup(&self) {
+        // The popup took activation without showing something to answer
+        // (it is being created, or shows the pointer-lock hint): give the
+        // window and the page back the focus.
+        // While the popup is being shown (borrowed by show_popup, which
+        // activates it on purpose) this is not a stray activation.
+        let Ok(popup) = self.popup.try_borrow() else { return };
+        let showing = popup.as_ref().is_some_and(|p| p.window.is_visible());
+        let kind = popup.as_ref().and_then(|p| p.content.as_ref().map(PopupContent::kind));
+        drop(popup);
+        let passive = !showing || kind == Some(PopupKind::Hint);
+        if passive {
+            self.defer(|b| {
+                if let Some(w) = b.window() {
+                    w.bring_to_front();
+                }
+                if b.pointer_locked() {
+                    if let Some(v) = b.active_view() {
+                        v.focus();
+                    }
+                } else {
+                    b.focus_active();
+                }
+            });
+        }
     }
 
     fn resized(&self, _width: i32, _height: i32) {
         self.hide_popup();
         self.layout();
+        self.reapply_pointer();
     }
 
     fn minimized(&self, minimized: bool) {
+        if minimized {
+            self.release_pointer(lb_core::pointer_lock::Release::WindowDeactivated);
+        }
         self.hide_popup();
         // Hidden views use less CPU and memory.
         if let Some(c) = self.active_view() {
@@ -1306,6 +1408,7 @@ impl WindowEvents for Browser {
 
     fn moved(&self) {
         self.hide_popup();
+        self.reapply_pointer();
         if let Some(s) = self.shell() {
             s.notify_moved();
         }
@@ -1356,6 +1459,7 @@ impl WindowEvents for Browser {
             SHIELD_TIMER => self.shield_timer(),
             POWER_TIMER => self.power_tick(),
             MEMREPORT_TIMER => self.mem_report_line("tick"),
+            pointer::HINT_TIMER => self.hide_hint(),
             VAULT_TIMER => self.vault_timer(),
             EXIT_TIMER => self.finish_exit(),
             CLIPBOARD_TIMER => self.clipboard_timer(),

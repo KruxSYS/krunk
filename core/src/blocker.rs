@@ -431,13 +431,14 @@ impl Blocker {
             return Decision::Allow;
         };
         let r = self.engine.check_network_request(&req);
-        if let Some((content_type, body)) = r.redirect.as_deref().and_then(decode_data_url) {
-            return Decision::Redirect { content_type, body };
+        if !r.should_block() {
+            // A `redirect-rule` stand-in only replaces requests some other
+            // filter blocks; on its own it means nothing.
+            return Decision::Allow;
         }
-        if r.should_block() {
-            Decision::Block
-        } else {
-            Decision::Allow
+        match r.redirect.as_deref().and_then(decode_data_url) {
+            Some((content_type, body)) => Decision::Redirect { content_type, body },
+            None => Decision::Block,
         }
     }
 
@@ -869,6 +870,24 @@ mod tests {
             }
             d => panic!("expected a redirect, got {d:?}"),
         }
+        // redirect-rule: a stand-in only for requests something else blocks.
+        let b = Blocker::from_lists(&[("ublock-filters", "*$image,redirect-rule=1x1.gif\n||ads.example^$image\n")], 1);
+        assert_eq!(
+            b.check("https://site.example/logo.png", NEWS, ResourceKind::Image),
+            Decision::Allow,
+            "never replace normal images"
+        );
+        assert!(matches!(b.check("https://ads.example/ad.png", NEWS, ResourceKind::Image), Decision::Redirect { .. }));
+        // The full lists leave a site's own images alone (krunker.io lost its textures this way).
+        let full = full();
+        assert_eq!(
+            full.check("https://assets.krunker.io/textures/ammo_0.png", "https://krunker.io/", ResourceKind::Image),
+            Decision::Allow
+        );
+        assert_eq!(
+            full.check("https://krunker.io/img/favicon.png", "https://krunker.io/", ResourceKind::Image),
+            Decision::Allow
+        );
         assert_eq!(decode_data_url("data:text/plain;base64,aGk="), Some(("text/plain".into(), b"hi".to_vec())));
         assert_eq!(decode_data_url("https://x/"), None);
     }

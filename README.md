@@ -110,6 +110,12 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   have not zoomed.
 - **Memory:** background tabs go to sleep after 5 minutes. Optionally they can be unloaded
   completely after a longer time; turn this on in Settings → Performance.
+- **Games (pointer lock and full screen):** `requestPointerLock()` works as in Chrome. The cursor is
+  hidden and confined to the page, movement keeps coming at the screen edge, and
+  `{unadjustedMovement: true}` gives raw mouse input. Esc, Alt+Tab, switching tabs or leaving
+  the page release the lock; a "Press Esc to show your cursor" hint appears for 3 s. A page's
+  `requestFullscreen()` and **F11** fill the monitor without the tab strip and toolbar; Esc
+  leaves page full screen and F11 toggles.
 - **Starting Krunk again** while it runs opens a new tab in the running window.
 
 Command-line options (all optional):
@@ -119,6 +125,7 @@ Command-line options (all optional):
 | `--update-filters` | Update the filter lists and run a blocking self-test, without opening a window |
 | `--mem-report` | Log the memory of the browser's process tree to `memory-report.log` every 10 s |
 | `--sleep-test-seconds=N` | Testing only: run the tab sleep/discard timers in seconds instead of minutes |
+| `--log-blocked` | Diagnostics: log each blocked or replaced request (without its query string) to `krunk.log` |
 
 Chromium switches typed on the command line are ignored: only the browser itself, through its
 settings, configures the engine (so e.g. `--no-sandbox` cannot be passed this way).
@@ -538,6 +545,17 @@ Testing on Windows:
 - **YouTube** keeps changing its ad delivery. Krunk carries uBO's YouTube defences (scriptlets
   and Quick Fixes, updated daily) and was verified on 2026-11-04 (no ads, no anti-adblock wall
   on three videos). A YouTube change can still get through until the lists catch up.
+- **Pointer lock is provided by Krunk, not the engine.** CEF's Alloy runtime style never
+  implements `WebContentsDelegate::RequestPointerLock`; Chromium's default refuses every request
+  (`kUnknownError`). So a script in every frame implements the API, and the browser confines and
+  hides the cursor and reads raw mouse input (`WM_INPUT`). The page keeps getting the real
+  (trusted) mouse events. Their `movementX/Y` and positions come from patched `MouseEvent`
+  getters, and while locked a style sheet sends them to the locked element, as Chrome does.
+  - Code that inspects those getters can tell the difference.
+  - Movement reaches the page about 2–4 ms later than in Chrome.
+  - Movement that no real event carries (sub-pixel motion) arrives as a synthetic event
+    (`isTrusted` false).
+  - The long-term fix is CEF's Chrome runtime style for tabs, which has native pointer lock.
 - **The vault does not detect rollback.** Replacing `vault.json` with an older copy is not
   detected. See `docs/SECURITY.md` for the full threat model and what is out of scope.
 - **No tab pinning in the UI.** The memory policy supports pinned tabs, but the tab strip

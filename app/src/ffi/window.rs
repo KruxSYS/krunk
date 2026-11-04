@@ -57,6 +57,11 @@ pub trait WindowEvents {
     fn caption_state(&self, _hover: Option<CaptionButton>, _pressed: bool) {}
     /// Maximized or restored.
     fn maximized_changed(&self, _maximized: bool) {}
+    /// The main window lost activation to its own popup window.
+    fn activation_to_popup(&self) {}
+    /// Relative mouse movement from raw input (only while it is registered
+    /// with [`Window::capture_raw_mouse`]).
+    fn raw_mouse(&self, _dx: i32, _dy: i32) {}
 }
 
 thread_local! {
@@ -200,6 +205,83 @@ impl Window {
                 }
             }
         }
+    }
+
+    /// Delivers raw mouse movement to [`WindowEvents::raw_mouse`] (or stops).
+    pub fn capture_raw_mouse(self, on: bool) {
+        use windows::Win32::UI::Input::{RegisterRawInputDevices, RAWINPUTDEVICE, RAWINPUTDEVICE_FLAGS, RIDEV_REMOVE};
+        let device = RAWINPUTDEVICE {
+            usUsagePage: 0x01, // generic desktop
+            usUsage: 0x02,     // mouse
+            dwFlags: if on { RAWINPUTDEVICE_FLAGS(0) } else { RIDEV_REMOVE },
+            hwndTarget: if on { self.0 } else { HWND::default() },
+        };
+        // SAFETY: registering one device for our own window.
+        let _ = unsafe { RegisterRawInputDevices(&[device], std::mem::size_of::<RAWINPUTDEVICE>() as u32) };
+    }
+
+    /// Full screen: no frame, covering the monitor (on) or back to the
+    /// placement it had before (off).
+    pub fn set_fullscreen(self, on: bool) {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetWindowLongPtrW, GetWindowPlacement, SetWindowLongPtrW, SetWindowPlacement, GWL_STYLE, WINDOWPLACEMENT,
+            WS_CAPTION, WS_THICKFRAME,
+        };
+        thread_local! {
+            static SAVED: Cell<Option<WINDOWPLACEMENT>> = const { Cell::new(None) };
+        }
+        if is_fullscreen(self.0) == on {
+            return;
+        }
+        let frame = (WS_CAPTION | WS_THICKFRAME).0 as isize;
+        // SAFETY: our own window; the placement struct is properly sized.
+        unsafe {
+            let style = GetWindowLongPtrW(self.0, GWL_STYLE);
+            if on {
+                let mut wp =
+                    WINDOWPLACEMENT { length: std::mem::size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
+                if GetWindowPlacement(self.0, &mut wp).is_ok() {
+                    SAVED.with(|s| s.set(Some(wp)));
+                }
+                FULLSCREEN.with(|f| f.set(self.0 .0 as isize));
+                SetWindowLongPtrW(self.0, GWL_STYLE, style & !frame);
+                let mon = windows::Win32::Graphics::Gdi::MonitorFromWindow(self.0, MONITOR_DEFAULTTONEAREST);
+                let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+                let _ = GetMonitorInfoW(mon, &mut mi);
+                let r = mi.rcMonitor;
+                let _ = SetWindowPos(
+                    self.0,
+                    Some(HWND_TOP),
+                    r.left,
+                    r.top,
+                    r.right - r.left,
+                    r.bottom - r.top,
+                    SWP_FRAMECHANGED | windows::Win32::UI::WindowsAndMessaging::SWP_NOOWNERZORDER,
+                );
+            } else {
+                FULLSCREEN.with(|f| f.set(0));
+                SetWindowLongPtrW(self.0, GWL_STYLE, style | frame);
+                if let Some(wp) = SAVED.with(|s| s.take()) {
+                    let _ = SetWindowPlacement(self.0, &wp);
+                }
+                let _ = SetWindowPos(
+                    self.0,
+                    None,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                );
+            }
+        }
+    }
+
+    /// Is this window the active (foreground) one and not minimized?
+    pub fn is_active(self) -> bool {
+        use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, IsIconic};
+        // SAFETY: plain queries.
+        unsafe { GetForegroundWindow() == self.0 && !IsIconic(self.0).as_bool() }
     }
 
     /// Opens the window's system menu (Alt+Space) at its top-left corner.
@@ -630,6 +712,35 @@ extern "system" fn main_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
             }
             LRESULT(0)
         }
+        windows::Win32::UI::WindowsAndMessaging::WM_INPUT => {
+            use windows::Win32::UI::Input::{
+                GetRawInputData, HRAWINPUT, RAWINPUT, RAWINPUTHEADER, RID_INPUT, RIM_TYPEMOUSE,
+            };
+            let mut raw = RAWINPUT::default();
+            let mut size = std::mem::size_of::<RAWINPUT>() as u32;
+            // SAFETY: lParam is the HRAWINPUT of this message; the buffer is a RAWINPUT.
+            let n = unsafe {
+                GetRawInputData(
+                    HRAWINPUT(lparam.0 as *mut std::ffi::c_void),
+                    RID_INPUT,
+                    Some(&mut raw as *mut RAWINPUT as *mut std::ffi::c_void),
+                    &mut size,
+                    std::mem::size_of::<RAWINPUTHEADER>() as u32,
+                )
+            };
+            if n != u32::MAX && raw.header.dwType == RIM_TYPEMOUSE.0 {
+                // SAFETY: the header says this is mouse data.
+                let m = unsafe { raw.data.mouse };
+                // MOUSE_MOVE_ABSOLUTE (tablets, remote desktop) is not a delta.
+                if m.usFlags.0 & 0x01 == 0 && (m.lLastX != 0 || m.lLastY != 0) {
+                    if let Some(ev) = events(hwnd) {
+                        ev.raw_mouse(m.lLastX, m.lLastY);
+                    }
+                }
+            }
+            // SAFETY: default processing (cleans up the input).
+            unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+        }
         WM_SIZE => {
             let maximized = wparam.0 as u32 == windows::Win32::UI::WindowsAndMessaging::SIZE_MAXIMIZED;
             let was = MAXIMIZED.with(|m| m.replace(maximized));
@@ -719,7 +830,14 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
         }
         WM_ACTIVATE => {
             if let Some(ev) = ev {
-                ev.activated((wparam.0 & 0xffff) as u32 != WA_INACTIVE);
+                let active = (wparam.0 & 0xffff) as u32 != WA_INACTIVE;
+                // lParam: the window being activated. Our own popup taking
+                // activation (it is created lazily) is not the user leaving.
+                if !active && is_class(HWND(lparam.0 as *mut std::ffi::c_void), POPUP_CLASS) {
+                    ev.activation_to_popup();
+                } else {
+                    ev.activated(active);
+                }
             }
             // SAFETY: default processing.
             unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
@@ -811,6 +929,20 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
         // SAFETY: default processing for everything else.
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     }
+}
+
+/// Is `hwnd` a window of this class?
+fn is_class(hwnd: HWND, class: PCWSTR) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
+    if hwnd.is_invalid() {
+        return false;
+    }
+    let mut buf = [0u16; 64];
+    // SAFETY: a local buffer of the given size.
+    let n = unsafe { GetClassNameW(hwnd, &mut buf) } as usize;
+    // SAFETY: our class names are static NUL-terminated strings.
+    let want = unsafe { class.as_wide() };
+    n > 0 && buf[..n] == *want
 }
 
 /// Is there a top-level window of this class (in this session)?

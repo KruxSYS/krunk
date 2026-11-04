@@ -1,0 +1,76 @@
+<!doctype html>
+<!-- Pointer Lock test page (VM checks, docs/MANUAL_TEST.md): lock state, movement deltas, event
+     rate, isTrusted, unadjustedMovement, Esc/Alt+Tab release, full screen. Served on the VM by
+     scripts/vm-www (port 8090). Not embedded in Krunk. -->
+<html lang="en"><head><meta charset="utf-8"><title>Pointer lock test</title>
+<style>
+  body { margin: 0; font: 16px system-ui, sans-serif; background: #10141c; color: #e8eaf0; }
+  #stage { position: relative; height: 62vh; margin: 12px; border: 2px dashed #4a5568; border-radius: 10px;
+           display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  #stage.locked { border-color: #48bb78; background: #13261b; }
+  #dot { position: absolute; width: 18px; height: 18px; margin: -9px; border-radius: 50%; background: #f6ad55; }
+  #state { font-size: 28px; font-weight: 700; }
+  .row { display: flex; gap: 10px; margin: 0 12px; flex-wrap: wrap; }
+  button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 0; background: #3182ce; color: #fff; }
+  pre { margin: 8px 12px; padding: 8px; height: 17vh; overflow: auto; background: #0b0e14; font-size: 13px; }
+  #stats { font: 15px ui-monospace, monospace; margin: 6px 12px; }
+</style></head>
+<body>
+<div id="stage"><div id="dot"></div><div id="state">unlocked</div></div>
+<div class="row">
+  <button id="lock">Lock (click)</button>
+  <button id="lock-raw">Lock, unadjustedMovement</button>
+  <button id="full">Full screen + lock</button>
+  <button id="unlock">exitPointerLock()</button>
+</div>
+<div id="stats"></div>
+<pre id="log"></pre>
+<script>
+const $ = (id) => document.getElementById(id);
+const stage = $('stage'), dot = $('dot');
+const s = { events: 0, sumX: 0, sumY: 0, lastX: 0, lastY: 0, trusted: null, x: 0, y: 0, rate: 0, maxGapMs: 0, lastAt: 0 };
+let window1s = [];
+function log(t) { const l = $('log'); l.textContent = new Date().toISOString().slice(11, 23) + ' ' + t + '\n' + l.textContent; }
+function stats() {
+  const el = document.pointerLockElement;
+  $('state').textContent = el ? 'LOCKED (' + (el.id || el.tagName) + ')' : 'unlocked';
+  stage.classList.toggle('locked', !!el);
+  $('stats').textContent = `events ${s.events}  rate ${s.rate}/s  sum (${s.sumX}, ${s.sumY})  last (${s.lastX}, ${s.lastY})  ` +
+    `isTrusted ${s.trusted}  max gap ${s.maxGapMs} ms  pos (${Math.round(s.x)}, ${Math.round(s.y)})`;
+}
+function lock(opts) {
+  const p = stage.requestPointerLock(opts);
+  log('requestPointerLock(' + JSON.stringify(opts || {}) + ') returned ' + (p && typeof p.then === 'function' ? 'a Promise' : String(p)));
+  if (p && p.then) p.then(() => log('promise resolved'), (e) => log('promise rejected: ' + e.name + ' ' + e.message));
+}
+$('lock').onclick = () => lock();
+$('lock-raw').onclick = () => lock({ unadjustedMovement: true });
+$('full').onclick = async () => {
+  try { await document.documentElement.requestFullscreen(); log('fullscreen entered'); } catch (e) { log('fullscreen failed: ' + e.message); }
+  lock();
+};
+$('unlock').onclick = () => document.exitPointerLock();
+stage.addEventListener('click', () => { if (!document.pointerLockElement) lock(); });
+document.addEventListener('pointerlockchange', () => { log('pointerlockchange: ' + (document.pointerLockElement ? 'locked' : 'unlocked')); stats(); });
+document.addEventListener('pointerlockerror', () => log('pointerlockerror'));
+document.addEventListener('fullscreenchange', () => log('fullscreenchange: ' + (document.fullscreenElement ? 'on' : 'off')));
+document.addEventListener('keydown', (e) => log('keydown ' + e.key));
+document.addEventListener('mousemove', (e) => {
+  if (!document.pointerLockElement) return;
+  const now = performance.now();
+  if (s.lastAt) s.maxGapMs = Math.max(s.maxGapMs, Math.round(now - s.lastAt));
+  s.lastAt = now;
+  s.events++; s.sumX += e.movementX; s.sumY += e.movementY; s.lastX = e.movementX; s.lastY = e.movementY; s.trusted = e.isTrusted;
+  const r = stage.getBoundingClientRect();
+  s.x = (s.x + e.movementX + r.width) % r.width; s.y = (s.y + e.movementY + r.height) % r.height;
+  dot.style.left = s.x + 'px'; dot.style.top = s.y + 'px';
+  window1s.push(now); while (window1s[0] < now - 1000) window1s.shift(); s.rate = window1s.length;
+  stats();
+});
+window.addEventListener('blur', () => log('window blur'));
+log('native-looking: ' + Element.prototype.requestPointerLock.toString());
+log('pointerLockElement in Document.prototype: ' + ('pointerLockElement' in Document.prototype));
+stats();
+setInterval(() => { if (!document.pointerLockElement) s.maxGapMs = 0, s.lastAt = 0; stats(); }, 1000);
+</script>
+</body></html>

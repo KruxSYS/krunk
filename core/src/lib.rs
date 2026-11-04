@@ -20,6 +20,7 @@ pub mod migrate;
 pub mod netscape;
 pub mod pages;
 pub mod passgen;
+pub mod pointer_lock;
 pub mod preprocess;
 pub mod protocol;
 pub mod secret;

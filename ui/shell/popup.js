@@ -167,16 +167,21 @@
     });
   }
 
+  // A notice that takes no focus ("Press Esc to show your cursor").
+  function renderHint(c) {
+    return [el('div', { class: 'hint', role: 'status' }, [el('span', { text: c.text })])];
+  }
+
   let current = null;
   LB.on('popup', function (m) {
     current = m.content;
     const c = m.content;
-    const render = { menu: renderMenu, shield: renderShield, savePassword: renderSave, fill: renderFill, bookmarkFolder: renderFolder, unlock: renderUnlock }[c.kind];
+    const render = { menu: renderMenu, shield: renderShield, savePassword: renderSave, fill: renderFill, bookmarkFolder: renderFolder, unlock: renderUnlock, hint: renderHint }[c.kind];
     root.textContent = '';
     root.dataset.kind = c.kind;
     (render ? render(c) : []).forEach((n) => n && root.appendChild(n));
     const first = document.getElementById('master') || document.getElementById('default') || root.querySelector('button');
-    if (first) first.focus();
+    if (first && c.kind !== 'hint') first.focus();
   });
 
   document.addEventListener('keydown', function (e) {

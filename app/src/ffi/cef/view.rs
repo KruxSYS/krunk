@@ -49,6 +49,8 @@ pub struct Scripts {
     pub login: bool,
     /// Report whether the page plays audio (all frames).
     pub audio: bool,
+    /// The pointer-lock shim (all frames).
+    pub pointer_lock: bool,
 }
 
 impl Scripts {
@@ -60,6 +62,7 @@ impl Scripts {
             ("tokens", self.page_tokens),
             ("login", self.login),
             ("audio", self.audio),
+            ("plock", self.pointer_lock),
         ] {
             d.set_bool(Some(&CefString::from(k)), i32::from(v));
         }
@@ -74,6 +77,7 @@ impl Scripts {
             page_tokens: get("tokens"),
             login: get("login"),
             audio: get("audio"),
+            pointer_lock: get("plock"),
         }
     }
 }
@@ -249,6 +253,9 @@ pub(super) struct Events {
     pub created: Slot<dyn FnMut()>,
     pub crashed: Slot<dyn FnMut(String)>,
     pub audio: Slot<dyn FnMut(bool)>,
+    /// A frame's pointer-lock message: (frame identifier, JSON).
+    pub pointer: Slot<dyn FnMut(String, String)>,
+    pub fullscreen: Slot<dyn FnMut(bool)>,
 }
 
 /// Remembered until the browser exists.
@@ -551,6 +558,49 @@ impl View {
         frame.send_process_message(ProcessId::RENDERER, Some(&mut message));
     }
 
+    /// Sends a pointer-lock event (JSON) to one frame; `false` if the frame
+    /// is gone.
+    pub fn send_to_frame(&self, frame_id: &str, json: &str) -> bool {
+        let Some(frame) = self.browser().and_then(|b| b.frame_by_identifier(Some(&CefString::from(frame_id)))) else {
+            return false;
+        };
+        if frame.is_valid() != 1 {
+            return false;
+        }
+        let Some(mut message) = process_message_create(Some(&CefString::from(super::renderer::POINTER_TO_FRAME)))
+        else {
+            return false;
+        };
+        if let Some(args) = message.argument_list() {
+            args.set_string(0, Some(&CefString::from(json)));
+        }
+        frame.send_process_message(ProcessId::RENDERER, Some(&mut message));
+        true
+    }
+
+    /// Is this frame still part of the page?
+    pub fn frame_live(&self, frame_id: &str) -> bool {
+        self.browser()
+            .and_then(|b| b.frame_by_identifier(Some(&CefString::from(frame_id))))
+            .is_some_and(|f| f.is_valid() == 1)
+    }
+
+    /// Leaves page-requested full screen.
+    pub fn exit_fullscreen(&self) {
+        if let Some(h) = self.host() {
+            h.exit_fullscreen(1);
+        }
+    }
+
+    /// The view's window in screen coordinates (physical pixels).
+    pub fn screen_rect(&self) -> Option<(i32, i32, i32, i32)> {
+        let hwnd = self.hwnd()?;
+        let mut r = windows::Win32::Foundation::RECT::default();
+        // SAFETY: the browser's own window and a local out pointer.
+        unsafe { windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut r) }.ok()?;
+        Some((r.left, r.top, r.right - r.left, r.bottom - r.top))
+    }
+
     /// Runs `js` in the main frame's page context.
     pub fn execute_script(&self, js: &str) {
         if let Some(f) = self.browser().and_then(|b| b.main_frame()) {
@@ -787,6 +837,16 @@ impl View {
     /// The page started or stopped playing audio (any frame).
     pub fn on_audio(&self, f: impl FnMut(bool) + 'static) {
         self.0.ev.audio.set(Box::new(f));
+    }
+
+    /// A frame sent a pointer-lock message: `(frame identifier, JSON)`.
+    pub fn on_pointer_lock(&self, f: impl FnMut(String, String) + 'static) {
+        self.0.ev.pointer.set(Box::new(f));
+    }
+
+    /// The page entered or left full screen (`requestFullscreen`).
+    pub fn on_fullscreen(&self, f: impl FnMut(bool) + 'static) {
+        self.0.ev.fullscreen.set(Box::new(f));
     }
 
     /// The renderer process of this view ended unexpectedly.

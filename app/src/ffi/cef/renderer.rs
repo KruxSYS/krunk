@@ -22,6 +22,10 @@ pub(super) const TO_BROWSER: &str = "lb.msg";
 pub(super) const TO_PAGE: &str = "lb.evt";
 /// A frame started or stopped playing audio (`bool`).
 pub(super) const AUDIO_TO_BROWSER: &str = "lb.audio";
+/// Pointer lock, frame to browser (`LockMessage` JSON) and back (events).
+pub(super) const POINTER_TO_BROWSER: &str = "lb.plock";
+pub(super) const POINTER_TO_FRAME: &str = "lb.plock.evt";
+const MAX_POINTER_MESSAGE: usize = lb_core::pointer_lock::MAX_MESSAGE_BYTES;
 /// Bigger messages from a page are dropped (the largest legitimate ones are
 /// bookmark imports, capped by the UI at a few MB).
 const MAX_MESSAGE: usize = 8 * 1024 * 1024;
@@ -118,6 +122,8 @@ thread_local! {
     static SCRIPTS: RefCell<HashMap<i32, Scripts>> = RefCell::new(HashMap::new());
     /// The dispatch function of each main frame, by frame identifier.
     static DISPATCH: RefCell<HashMap<String, V8Value>> = RefCell::new(HashMap::new());
+    /// The pointer-lock shim of each frame, by frame identifier.
+    static POINTER: RefCell<HashMap<String, V8Value>> = RefCell::new(HashMap::new());
 }
 
 pub(super) fn handler() -> RenderProcessHandler {
@@ -163,6 +169,7 @@ wrap_render_process_handler! {
             if let Some(frame) = frame {
                 let id = CefString::from(&frame.identifier()).to_string();
                 DISPATCH.with(|d| d.borrow_mut().remove(&id));
+                POINTER.with(|d| d.borrow_mut().remove(&id));
             }
         }
 
@@ -179,6 +186,12 @@ wrap_render_process_handler! {
                 if let Some(args) = message.argument_list() {
                     let received = scriptlets::from_message(&args);
                     SCRIPTLETS.with(|s| s.borrow_mut().apply(received));
+                }
+                return 1;
+            }
+            if name == POINTER_TO_FRAME {
+                if let Some(args) = message.argument_list() {
+                    deliver_to(&POINTER, frame, &CefString::from(&args.string(0)));
                 }
                 return 1;
             }
@@ -204,6 +217,9 @@ fn context_created(scripts: Scripts, frame: &mut Frame, context: &mut V8Context)
     }
     if scripts.audio {
         install_audio_tracker(context);
+    }
+    if scripts.pointer_lock {
+        install_pointer_lock(frame, context);
     }
     if !main {
         return;
@@ -296,10 +312,30 @@ fn install_audio_tracker(context: &mut V8Context) {
     let _ = tracker.execute_function(None, Some(&[Some(report)]));
 }
 
+/// Pointer lock in every frame (see `ui/inject/pointer-lock.js`).
+fn install_pointer_lock(frame: &mut Frame, context: &mut V8Context) {
+    let Some(shim) = eval(context, assets::inject_script("pointer-lock.js")) else { return };
+    let mut handler = SendPointer::new();
+    let Some(send) = v8_value_create_function(Some(&CefString::from("send")), Some(&mut handler)) else { return };
+    let Some(dispatch) = shim.execute_function(None, Some(&[Some(send)])) else { return };
+    if dispatch.is_function() == 1 {
+        let id = CefString::from(&frame.identifier()).to_string();
+        POINTER.with(|d| d.borrow_mut().insert(id, dispatch));
+    }
+}
+
 /// Browser to page: calls the frame's dispatch function with the JSON text.
 fn deliver(frame: &mut Frame, json: &CefString) {
+    deliver_to(&DISPATCH, frame, json);
+}
+
+fn deliver_to(
+    table: &'static std::thread::LocalKey<RefCell<HashMap<String, V8Value>>>,
+    frame: &mut Frame,
+    json: &CefString,
+) {
     let id = CefString::from(&frame.identifier()).to_string();
-    let Some(dispatch) = DISPATCH.with(|d| d.borrow().get(&id).cloned()) else { return };
+    let Some(dispatch) = table.with(|d| d.borrow().get(&id).cloned()) else { return };
     let Some(context) = frame.v8_context() else { return };
     if context.enter() != 1 {
         return;
@@ -334,6 +370,38 @@ wrap_v8_handler! {
             }
             let Some(frame) = v8_context_get_current_context().and_then(|c| c.frame()) else { return 1 };
             let Some(mut message) = process_message_create(Some(&CefString::from(TO_BROWSER))) else { return 1 };
+            if let Some(args) = message.argument_list() {
+                args.set_string(0, Some(&text));
+            }
+            frame.send_process_message(ProcessId::BROWSER, Some(&mut message));
+            1
+        }
+    }
+}
+
+wrap_v8_handler! {
+    struct SendPointer;
+    impl V8Handler {
+        fn execute(
+            &self,
+            _name: Option<&CefString>,
+            _object: Option<&mut V8Value>,
+            arguments: Option<&[Option<V8Value>]>,
+            _retval: Option<&mut Option<V8Value>>,
+            _exception: Option<&mut CefString>,
+        ) -> ::std::os::raw::c_int {
+            let Some(arg) = arguments.and_then(|a| a.first()).and_then(|a| a.as_ref()) else { return 1 };
+            if arg.is_string() != 1 {
+                return 1;
+            }
+            let text = CefString::from(&arg.string_value());
+            if text.to_string().len() > MAX_POINTER_MESSAGE {
+                return 1;
+            }
+            let Some(frame) = v8_context_get_current_context().and_then(|c| c.frame()) else { return 1 };
+            let Some(mut message) = process_message_create(Some(&CefString::from(POINTER_TO_BROWSER))) else {
+                return 1;
+            };
             if let Some(args) = message.argument_list() {
                 args.set_string(0, Some(&text));
             }

@@ -70,6 +70,9 @@ fn run() -> Result<i32, String> {
 
     let args: Vec<String> = std::env::args().collect();
     let power = browser::PowerOptions::from_args(&args);
+    if args.iter().any(|a| a == "--log-blocked") {
+        browser::LOG_BLOCKED.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     let config = ffi::cef::EngineConfig {
         root_cache: dirs.profile(),
         cache: dirs.profile().join("default"),

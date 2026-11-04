@@ -64,6 +64,10 @@ function DoubleClick([int]$x, [int]$y) {
   for ($i = 0; $i -lt 2; $i++) { [SI]::Mouse(2, 0, 0) | Out-Null; Start-Sleep -Milliseconds 30; [SI]::Mouse(4, 0, 0) | Out-Null; Start-Sleep -Milliseconds 60 }
   Start-Sleep -Milliseconds 500
 }
+# Relative mouse movement (what games read): $steps reports of ($dx, $dy).
+function RelMove([int]$dx, [int]$dy, [int]$steps = 1, [int]$sleepMs = 8) {
+  for ($i = 0; $i -lt $steps; $i++) { [SI]::Mouse(1, $dx, $dy) | Out-Null; Start-Sleep -Milliseconds $sleepMs }
+}
 # Mouse wheel at a point: notches > 0 scroll down.
 function Wheel([int]$x, [int]$y, [int]$notches) {
   [U]::SetCursorPos($x, $y) | Out-Null; AbsMove $x $y; Start-Sleep -Milliseconds 100
