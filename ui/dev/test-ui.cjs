@@ -952,6 +952,24 @@ async function testSettings(browser) {
   await page.fill('#tabSleepMinutes', '10');
   await page.press('#tabSleepMinutes', 'Tab');
 
+  // A slow save reply for one field must not wipe what the user is typing in another.
+  await page.evaluate(() => {
+    const h = window.__host.handlers; const orig = h.saveSettings;
+    h.saveSettings = (m) => { h.saveSettings = orig; return new Promise((res) => setTimeout(() => res(orig(m)), 200)); };
+  });
+  await page.fill('#userAgent', 'Slow/1.0');
+  await page.press('#userAgent', 'Tab');
+  await page.fill('#tabSleepMinutes', '7');
+  await page.waitForTimeout(350);
+  check(await page.inputValue('#tabSleepMinutes') === '7', 'a save reply does not overwrite the field being edited');
+  await page.press('#tabSleepMinutes', 'Tab');
+  await page.waitForTimeout(60);
+  check((await lastSent(page, 'saveSettings')).settings.tabSleepMinutes === 7, 'the edited field is then saved');
+  await page.fill('#userAgent', '');
+  await page.press('#userAgent', 'Tab');
+  await page.fill('#tabSleepMinutes', '5');
+  await page.press('#tabSleepMinutes', 'Tab');
+  await page.waitForTimeout(60);
   // Third-party cookie blocking is restart-only too, and is saved.
   await page.uncheck('[data-key=blockThirdPartyCookies]');
   await page.waitForTimeout(60);

@@ -20,6 +20,9 @@
 
   function render() {
     document.querySelectorAll('[data-key]').forEach(function (input) {
+      // A save reply for another field must not overwrite what the user is
+      // typing here; this field is saved on its own change event.
+      if (input === document.activeElement) return;
       const v = getPath(settings, input.dataset.key);
       if (input.type === 'checkbox') input.checked = !!v;
       else if (input.tagName === 'SELECT' && input.dataset.type === 'number') {
