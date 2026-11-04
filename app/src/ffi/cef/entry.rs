@@ -1,6 +1,6 @@
-//! The DLL entry points called by `LightBrowser.exe`, CEF's sandbox
+//! The DLL entry points called by `Krunk.exe`, CEF's sandbox
 //! bootstrap (`bootstrap.exe` renamed): it creates the sandbox broker or
-//! target, loads `LightBrowser.dll` from its own folder and calls
+//! target, loads `Krunk.dll` from its own folder and calls
 //! `RunWinMain`. The same exe + DLL pair runs the browser process and every
 //! subprocess (renderer, GPU, utility).
 

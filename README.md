@@ -1,6 +1,6 @@
-# LightBrowser
+# Krunk
 
-LightBrowser is a lightweight, privacy-minded web browser for Windows 10/11 (x64), written in
+Krunk is a lightweight, privacy-minded web browser for Windows 10/11 (x64), written in
 Rust. It brings its own engine: **Chromium 156.0.8078.80** through the Chromium Embedded
 Framework (**CEF 156.0.15**), bundled in the download. Neither Microsoft Edge nor WebView2 is
 used, and nothing has to be installed. It includes:
@@ -14,37 +14,44 @@ used, and nothing has to be installed. It includes:
 - background-tab sleep, to save memory
 
 ## Download and requirements
-- **The download:** `LightBrowser-win-x64.zip` (about 183 MB; 420 MB unpacked). Extract it
-  anywhere and run `LightBrowser.exe`. There is no installer. Keep all files of the folder
-  together; if one is missing, LightBrowser says so at startup.
+- **The download:** `Krunk-win-x64.zip` (about 183 MB; 420 MB unpacked). Extract it
+  anywhere and run `Krunk.exe`. There is no installer. Keep all files of the folder
+  together; if one is missing, Krunk says so at startup.
 - **Verify:** check `SHA256SUMS` (the zip and the three main binaries):
-  - PowerShell: `Get-FileHash LightBrowser-win-x64.zip`
+  - PowerShell: `Get-FileHash Krunk-win-x64.zip`
   - Linux: `sha256sum -c SHA256SUMS`
 - **System:** Windows 10 or 11, 64-bit. No runtime is needed.
-- **Data location:** everything is stored in `%LOCALAPPDATA%\LightBrowser`:
+- **Data location:** everything is stored in `%LOCALAPPDATA%\Krunk`:
   - `browser.db` (history, bookmarks, settings, session)
   - `vault.json` (encrypted passwords)
   - `engine.dat` (the compiled filter engine)
   - `profile\` (the engine's profile: cookies, cache and site data in `profile\default`)
-  - `lightbrowser.log`, and `cef.log` (engine warnings and errors only)
+  - `krunk.log`, and `cef.log` (engine warnings and errors only)
 
   Delete that folder to reset the browser completely.
+- **Coming from LightBrowser (Krunk's former name):** on its first start Krunk moves
+  `%LOCALAPPDATA%\LightBrowser` to `%LOCALAPPDATA%\Krunk` with everything in it, including
+  the engine profile (cookies and logins), the vault and `engine.dat`. It renames the folder
+  when it can, and otherwise copies it and then deletes the old one. `krunk.log` records what
+  happened. If LightBrowser is still running, Krunk asks you to close it first. If a Krunk
+  folder already exists, the LightBrowser folder is left alone. Old `lb://` addresses open the
+  matching `krunk://` page, and saved tabs and bookmarks of built-in pages keep working.
 - **Coming from the WebView2 version:** settings, history, bookmarks, the session, the vault and
   `engine.dat` are used as they are. Cookies and site data are not migrated: the old
   `profile\EBWebView` folder (WebView2's profile) is left untouched and unused, and you can
   delete it. The same goes for the old `bin\` folder (the WebView2 loader).
 - **Unsigned binaries:** the files are not code-signed, so SmartScreen may warn the first time
-  `LightBrowser.exe` runs.
+  `Krunk.exe` runs.
 
 ## Usage
 Type a URL or search words in the address bar. Search uses DuckDuckGo by default; this can be
 changed in Settings. Built-in pages:
-- `lb://settings`
-- `lb://history`
-- `lb://bookmarks`
-- `lb://passwords`
-- `lb://downloads`
-- `lb://about` (shows the CEF and Chromium versions of the running engine)
+- `krunk://settings`
+- `krunk://history`
+- `krunk://bookmarks`
+- `krunk://passwords`
+- `krunk://downloads`
+- `krunk://about` (shows the CEF and Chromium versions of the running engine)
 
 | Keys | Action |
 |------|--------|
@@ -64,17 +71,17 @@ changed in Settings. Built-in pages:
 - **Shield:** the shield in the toolbar shows how many ads and trackers were blocked on the
   page. Click it to allow ads on that site.
 - **Passwords:**
-  - When you sign in to a site, LightBrowser asks "Save password?". The first save asks you to
+  - When you sign in to a site, Krunk asks "Save password?". The first save asks you to
     create the vault with a master password.
   - To fill a login, click the key icon in the address bar.
-  - Manage logins on `lb://passwords`. Showing a password asks for the master password again.
+  - Manage logins on `krunk://passwords`. Showing a password asks for the master password again.
 - **Private tabs:** they share an in-memory profile that is discarded when the last private tab
   closes. Nothing from them is written to disk, history, the session or the favicon cache.
 - **Zoom** is remembered per site, as in Chrome. "Default zoom" in Settings applies to sites you
   have not zoomed.
 - **Memory:** background tabs go to sleep after 5 minutes. Optionally they can be unloaded
   completely after a longer time; turn this on in Settings → Performance.
-- **Starting LightBrowser again** while it runs opens a new tab in the running window.
+- **Starting Krunk again** while it runs opens a new tab in the running window.
 
 Command-line options (all optional):
 
@@ -96,7 +103,7 @@ core/    platform-independent library (lb_core): storage, history, bookmarks, fr
          vault crypto, ad blocking, cookies, URL cleaning, settings and engine switches,
          zoom, tab model, shortcuts, message protocol, origin checks, layout math.
          Tested on Linux.
-app/     LightBrowser.dll: the browser on top of CEF. All unsafe code is in app/src/ffi
+app/     Krunk.dll: the browser on top of CEF. All unsafe code is in app/src/ffi
          (ffi/cef wraps the engine; the rest wraps Win32).
 ui/      the browser's own UI (HTML/CSS/JS), embedded into the DLL at build time.
          ui/dev holds test tooling only (mock host, Playwright tests) and is not embedded.
@@ -105,9 +112,9 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
 ```
 
 ### Engine and processes
-- **`LightBrowser.exe` is CEF's sandbox bootstrap** (`bootstrap.exe`, renamed, with
-  LightBrowser's version strings and manifest). It sets up the Chromium sandbox, loads
-  `LightBrowser.dll` from its own folder and calls the DLL's `RunWinMain`. The same exe + DLL
+- **`Krunk.exe` is CEF's sandbox bootstrap** (`bootstrap.exe`, renamed, with
+  Krunk's version strings and manifest). It sets up the Chromium sandbox, loads
+  `Krunk.dll` from its own folder and calls the DLL's `RunWinMain`. The same exe + DLL
   pair runs the browser process and every engine subprocess.
 - **Sandbox:** always on. Renderers run at Untrusted integrity with restricted tokens; the GPU
   process at Low. `scripts/vm-sandbox.ps1` prints the integrity level and token of every process.
@@ -145,8 +152,8 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
 ### Internal origins
 | Origin | Serves | Who can send privileged messages |
 |--------|--------|----------------------------------|
-| `https://shell.lightbrowser.invalid` | `ui/shell/*` (`shell.html`, `popup.html`) + `/shared/*` | the shell view (only `/shell.html`) and the popup view (only `/popup.html`) |
-| `https://lightbrowser.invalid` | `ui/pages/*` + `/shared/*` | a tab showing a known built-in page; each page has its own command allow-list |
+| `https://shell.krunk.invalid` | `ui/shell/*` (`shell.html`, `popup.html`) + `/shared/*` | the shell view (only `/shell.html`) and the popup view (only `/popup.html`) |
+| `https://krunk.invalid` | `ui/pages/*` + `/shared/*` | a tab showing a known built-in page; each page has its own command allow-list |
 
 - A CEF scheme-handler factory answers every request to these origins from embedded bytes. An
   unknown path gets a 404 from the handler, never a network request.
@@ -177,7 +184,7 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
 - **Engine:** Brave's `adblock` engine with five bundled lists (EasyList, EasyPrivacy, and
   uBlock filters, privacy and unbreak; see `assets/filters/ATTRIBUTION.md`). The lists are
   embedded deflated (1.4 MB).
-- **Cache:** at startup the compiled engine is loaded from `%LOCALAPPDATA%\LightBrowser\engine.dat`
+- **Cache:** at startup the compiled engine is loaded from `%LOCALAPPDATA%\Krunk\engine.dat`
   (about 4 ms on the Windows 11 VM). The cache key covers the engine version, which lists are
   enabled, and where each comes from (embedded copy or download) with its content hash. If
   anything differs, the engine is rebuilt on a worker thread.
@@ -196,7 +203,7 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
   at least 50 rules, at least 2 KB. A failed or suspicious download keeps the previous source.
   - The updater uses the browser's HTTP proxy setting; with a SOCKS proxy it skips the download
     rather than bypass the proxy.
-  - `LightBrowser.exe --update-filters` runs the update and a self-test without a window.
+  - `Krunk.exe --update-filters` runs the update and a self-test without a window.
 
 ### Privacy
 - **Third-party cookies:** blocked by default (Settings → Privacy):
@@ -217,7 +224,7 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
 ### Engine background traffic
 Chromium's own services contact Google in the background. A logging-proxy audit of an idle,
 fresh profile found secure-time queries, the component updater (and the downloads it triggers),
-an "AI mode" eligibility check and Safe Browsing list updates. LightBrowser switches all of
+an "AI mode" eligibility check and Safe Browsing list updates. Krunk switches all of
 them off by default, verified with the proxy: a fresh profile idle for five minutes plus
 page loads contacted **no `*.google.com`, `*.googleapis.com` or `*.gvt1.com` host**. The only
 traffic not caused by pages is the filter-list update.
@@ -251,7 +258,7 @@ VK  --XChaCha20-Poly1305 (fresh 24-byte nonce, AAD = entry id)--> each login; ma
   file atomically.
 - **Secrets in memory** are held in `Zeroizing` buffers and wiped when the vault locks. They are
   never logged and never stored in SQLite. Messages carrying a password (login submit, fill)
-  also pass through the engine's IPC strings, which LightBrowser cannot wipe.
+  also pass through the engine's IPC strings, which Krunk cannot wipe.
 - Threat model (assets, attackers, mitigations, out of scope): `docs/SECURITY.md` (in the
   release download: `SECURITY.md` next to this file).
 - **Unlocking:** off the UI thread; the host enforces an exponential retry delay (1 s → 60 s).
@@ -268,7 +275,7 @@ Built by `core::settings::Settings::browser_switches` and added in
 - `--disable-domain-reliability` disables Chromium's domain reliability telemetry.
 - `--disable-background-networking` stops Safe Browsing updates, variations and other
   background downloads.
-- `--host-resolver-rules=MAP lightbrowser.invalid ~NOTFOUND, MAP *.lightbrowser.invalid ~NOTFOUND`
+- `--host-resolver-rules=MAP krunk.invalid ~NOTFOUND, MAP *.krunk.invalid ~NOTFOUND`
   (see "Internal origins").
 - `--disable-features=AutofillServerCommunication,MediaRouter,OptimizationHints,InterestFeedContentSuggestions,NetworkTimeServiceQuerying,AimEnabled,AimServerEligibilityEnabled,AimServerRequestOnStartupEnabled`
   turns off autofill crowdsourcing, Cast discovery, optimization hints, feed suggestions,
@@ -291,7 +298,7 @@ cannot configure the engine) and log level WARNING. Profile preferences on every
 no password manager, no autofill, no network prediction (`net.network_prediction_options = 2`),
 and WebRTC on the default public interface only.
 
-LightBrowser runs no telemetry, update service or background process of its own. The only
+Krunk runs no telemetry, update service or background process of its own. The only
 network traffic it starts itself is the daily filter-list update (WinHTTP, see above).
 
 ### Memory
@@ -315,7 +322,7 @@ network traffic it starts itself is the daily filter-list update (WinHTTP, see a
   - `--sleep-test-seconds=N` scales the timers for testing: sleep after N s, the second stage
     N s later, discard after 4N s when discard is enabled.
   - `--mem-report` appends the summed working set and private bytes of the browser process
-    tree to `%LOCALAPPDATA%\LightBrowser\memory-report.log` every 10 s. It includes tab and
+    tree to `%LOCALAPPDATA%\Krunk\memory-report.log` every 10 s. It includes tab and
     sleep counts, and renderer counts taken from each process's `--type=` switch. The tree is our
     process plus every descendant (the engine's subprocesses).
 
@@ -353,20 +360,20 @@ Rust bindings (`cef` crate) build CEF's C++ wrapper library and support only the
 packages everything:
 
 ```sh
-scripts/build-dist.sh            # -> dist/LightBrowser-win-x64/, dist/LightBrowser-win-x64.zip, dist/SHA256SUMS
+scripts/build-dist.sh            # -> dist/Krunk-win-x64/, dist/Krunk-win-x64.zip, dist/SHA256SUMS
 scripts/build-dist.sh --debug    # same layout with a debug build (testing only)
 ```
 
 What it does:
 1. `scripts/fetch-cef.sh` downloads the CEF archive pinned in `cef.lock` (the "minimal"
    Windows x64 distribution, about 175 MB) into its own cache directory
-   (`~/.cache/lightbrowser-cef/downloads`). It checks the SHA-1 published in CEF's build index
+   (`~/.cache/krunk-cef/downloads`). It checks the SHA-1 published in CEF's build index
    (`cef-builds.spotifycdn.com/index.json`) **and** the SHA-256 pinned in `cef.lock`, and only
    then extracts it with `export-cef-dir`. Nothing from CEF is committed to the repository.
 2. `cargo xwin build --release --target x86_64-pc-windows-msvc -p app --lib` builds
-   `LightBrowser.dll` with the static CRT (`.cargo/config.toml`) and `libcef.dll` delay-loaded.
-3. It assembles `dist/LightBrowser-win-x64/`: `LightBrowser.exe` (the CEF bootstrap, branded by
-   `tools/pebrand`), `LightBrowser.dll`, the CEF DLLs, `.pak` files, `icudtl.dat`,
+   `Krunk.dll` with the static CRT (`.cargo/config.toml`) and `libcef.dll` delay-loaded.
+3. It assembles `dist/Krunk-win-x64/`: `Krunk.exe` (the CEF bootstrap, branded by
+   `tools/pebrand`), `Krunk.dll`, the CEF DLLs, `.pak` files, `icudtl.dat`,
    `v8_context_snapshot.bin`, all `locales/`, `licenses/`, the README, SECURITY and third-party
    notices. Then it writes the zip (fixed timestamps and order) and `SHA256SUMS`.
 
@@ -376,20 +383,20 @@ Requirements (versions used for the release):
 - `cargo install export-cef-dir --version 156.3.0` (must match the `cef` crate version)
 - LLVM **20.1.8** (`clang-cl`, `lld-link`, `llvm-lib`; the MSVC C++ headers need clang 19 or
   newer), unpacked from the official release tarball. The script expects it in
-  `~/.cache/lightbrowser-toolchain/llvm-20.1.8` or in `$LB_LLVM`.
+  `~/.cache/krunk-toolchain/llvm-20.1.8` or in `$LB_LLVM`.
 - `cmake`, `ninja`, `curl`, `python3`, `zip`
 
 **Microsoft's licence:** cargo-xwin downloads the MSVC CRT and the Windows SDK (headers and
 import libraries) from Microsoft. Building therefore means accepting Microsoft's licence terms
 for them; `build-dist.sh` sets `XWIN_ACCEPT_LICENSE=1` for this (and only there). The versions
 are pinned so that builds are reproducible: `XWIN_VERSION=17`, CRT `14.44.17.14` (MSVC 14.44.35220),
-SDK `10.0.26100`; the download is cached in `~/.cache/lightbrowser-xwin`.
+SDK `10.0.26100`; the download is cached in `~/.cache/krunk-xwin`.
 
 A clean build from a fresh clone took 1 min 27 s on the build machine (CEF's C++ wrapper and
 LTO), plus the one-time downloads of CEF (175 MB) and the MSVC CRT/SDK; it has no warnings. The
 release profile uses LTO, `opt-level = "s"`, strip and `panic = "abort"`. Two clean builds
-from the same checkout path give the same `LightBrowser.dll` except for 20 bytes: the PE time
-stamp and the debug-directory GUID. `LightBrowser.exe` and the CEF files are always identical.
+from the same checkout path give the same `Krunk.dll` except for 20 bytes: the PE time
+stamp and the debug-directory GUID. `Krunk.exe` and the CEF files are always identical.
 
 **Alternative: native build on Windows** (documented, not used for the release). With Visual
 Studio 2022 Build Tools ("Desktop development with C++", MSVC 14.44, Windows SDK 10.0.26100),
@@ -399,7 +406,7 @@ run `export-cef-dir` on the verified archive) and run
 as `build-dist.sh` does.
 
 ### Updating the engine
-Security fixes for the engine reach users only through new LightBrowser releases (see "Known
+Security fixes for the engine reach users only through new Krunk releases (see "Known
 limitations"). To move to a newer CEF:
 1. Set the new `cef` crate version (e.g. `=157.x.y`) in `app/Cargo.toml` and run
    `cargo update -p cef`. Install the matching `export-cef-dir` version.
@@ -422,18 +429,18 @@ The app's own unit tests (DPAPI, message escaping) run on Windows:
 `cargo xwin test --target x86_64-pc-windows-msvc -p app --no-run`, then run the test exe.
 
 Testing on Windows:
-- `scripts/vm.sh` deploys `dist/LightBrowser-win-x64` to a Windows test machine over SSH and
+- `scripts/vm.sh` deploys `dist/Krunk-win-x64` to a Windows test machine over SSH and
   drives it (start, stop, screenshots, keys, clicks).
-- `scripts/vm-sandbox.ps1` shows the integrity level and token of every LightBrowser process.
+- `scripts/vm-sandbox.ps1` shows the integrity level and token of every Krunk process.
 - `scripts/vm-engine-check.ps1` shows which engine DLLs each process loaded and whether any
-  `msedgewebview2.exe` was started by LightBrowser.
+  `msedgewebview2.exe` was started by Krunk.
 - `scripts/vm-mem.ps1` lists the process tree with memory figures.
 - `scripts/vm-leak-scan.ps1` searches the data folder for strings that must never be stored,
   such as a test password.
 - The Windows checklist is `docs/MANUAL_TEST.md`.
 
 ## Known limitations
-- **The engine is bundled.** Chromium security fixes reach users only when a new LightBrowser
+- **The engine is bundled.** Chromium security fixes reach users only when a new Krunk
   release with a newer CEF is published and installed; there is no auto-update. Releases should
   follow CEF security releases promptly.
 - **No certificate revocation or CT list updates by default.** With "Download engine security
@@ -480,7 +487,7 @@ Testing on Windows:
 - **Chromium Embedded Framework 156.0.15** and **Chromium 156.0.8078.80**: CEF is BSD-licensed
   (`licenses/CEF-LICENSE.txt` in the download). Chromium and the third-party code it contains are
   listed with their licences in `licenses/Chromium-CREDITS.html`. The binaries are redistributed
-  unmodified, except that `LightBrowser.exe` (CEF's `bootstrap.exe`) carries LightBrowser's
+  unmodified, except that `Krunk.exe` (CEF's `bootstrap.exe`) carries Krunk's
   version strings and manifest.
 - Filter lists:
   - EasyList and EasyPrivacy: GPL-3.0-or-later or CC BY-SA 3.0.

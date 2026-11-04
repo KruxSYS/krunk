@@ -1,6 +1,6 @@
 # Bundled filter lists
 
-These lists are embedded (deflate-compressed) into LightBrowser and refreshed
+These lists are embedded (deflate-compressed) into Krunk and refreshed
 at runtime at most once a day. They are third-party data, not covered by the
 project's MIT licence. Refresh the bundled copies with `scripts/update-filters.sh`;
 the date of the last fetch is in `FETCHED`.
@@ -16,5 +16,5 @@ the date of the last fetch is in `FETCHED`.
 EasyList licence statement: https://easylist.to/pages/licence.html
 
 The lists are used unmodified, as data. uBlock Origin scriptlet rules (`+js(...)`)
-are parsed but not executed, because LightBrowser does not ship uBO's scriptlet
+are parsed but not executed, because Krunk does not ship uBO's scriptlet
 resources; network and CSS (cosmetic) rules work.

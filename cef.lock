@@ -1,4 +1,4 @@
-# CEF binary distribution used by LightBrowser (read by scripts/fetch-cef.sh).
+# CEF binary distribution used by Krunk (read by scripts/fetch-cef.sh).
 # To move to a newer CEF: bump the `cef` crate pin in app/Cargo.toml, update these values from
 # https://cef-builds.spotifycdn.com/index.json (windows64, "minimal"), run `scripts/fetch-cef.sh --pin`
 # to record the SHA-256, then `scripts/build-dist.sh --release`.

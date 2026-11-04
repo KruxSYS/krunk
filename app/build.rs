@@ -1,4 +1,4 @@
-//! Windows link setup for LightBrowser.dll.
+//! Windows link setup for Krunk.dll.
 
 fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {

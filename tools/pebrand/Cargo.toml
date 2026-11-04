@@ -1,6 +1,6 @@
 [package]
 name = "pebrand"
-description = "Build tool: gives CEF's bootstrap.exe LightBrowser's version info and manifest"
+description = "Build tool: gives CEF's bootstrap.exe Krunk's version info and manifest"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"

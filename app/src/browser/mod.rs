@@ -28,8 +28,8 @@ use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
 
-const SHELL_URL: &str = "https://shell.lightbrowser.invalid/shell.html";
-const POPUP_URL: &str = "https://shell.lightbrowser.invalid/popup.html";
+const SHELL_URL: &str = "https://shell.krunk.invalid/shell.html";
+const POPUP_URL: &str = "https://shell.krunk.invalid/popup.html";
 const SESSION_KEY: &str = "session";
 const DOWNLOADS_KEY: &str = "downloads";
 /// Timer that saves the session shortly after the last tab change.
@@ -176,7 +176,7 @@ impl Browser {
         let weak = browser.me.clone();
         engine::on_relaunch(move |_args| {
             if let Some(b) = weak.upgrade() {
-                info!("LightBrowser was started again; opening a new tab");
+                info!("Krunk was started again; opening a new tab");
                 if let Some(w) = b.window() {
                     w.bring_to_front();
                 }
@@ -566,11 +566,7 @@ impl Browser {
     fn update_title(&self) {
         let title = self.model.borrow().active().map(|t| t.title.clone()).unwrap_or_default();
         if let Some(w) = self.window() {
-            w.set_title(&if title.is_empty() {
-                "LightBrowser".to_string()
-            } else {
-                format!("{title} – LightBrowser")
-            });
+            w.set_title(&if title.is_empty() { "Krunk".to_string() } else { format!("{title} – Krunk") });
         }
     }
 
@@ -685,6 +681,8 @@ impl Browser {
 
     /// Opens an http(s) or built-in URL, in the active tab or a new one.
     fn open_url(&self, url: &str, new_tab: bool, private: bool) {
+        // Bookmarks saved before the rename may name the old internal pages.
+        let url = &lb_core::pages::migrate_legacy_url(url);
         let ok = url.starts_with("https://") || url.starts_with("http://") || Page::from_url(url).is_some();
         if !ok {
             return;

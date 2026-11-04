@@ -1,4 +1,4 @@
-//! Platform-independent core of LightBrowser.
+//! Platform-independent core of Krunk.
 //!
 //! Everything here builds and is tested natively on Linux; the Windows host
 //! (`app`) only adds the CEF/Win32 glue on top.
@@ -15,6 +15,7 @@ pub mod history;
 pub mod keys;
 pub mod layout;
 pub mod memory;
+pub mod migrate;
 pub mod netscape;
 pub mod pages;
 pub mod passgen;

@@ -1,9 +1,9 @@
-# Lists LightBrowser's process tree (the browser process and its engine
+# Lists Krunk's process tree (the browser process and its engine
 # subprocesses) with type and working set (MB). Run on the Windows VM over ssh.
 #   powershell -NoProfile -ExecutionPolicy Bypass -File vm-mem.ps1
 $all = Get-CimInstance Win32_Process
-$root = $all | Where-Object { $_.Name -eq 'LightBrowser.exe' -and $_.CommandLine -notmatch '--type=' } | Select-Object -First 1
-if (-not $root) { 'LightBrowser is not running'; exit 1 }
+$root = $all | Where-Object { $_.Name -eq 'Krunk.exe' -and $_.CommandLine -notmatch '--type=' } | Select-Object -First 1
+if (-not $root) { 'Krunk is not running'; exit 1 }
 $tree = @($root); $frontier = @($root.ProcessId)
 while ($frontier.Count) {
   $kids = $all | Where-Object { $frontier -contains $_.ParentProcessId }

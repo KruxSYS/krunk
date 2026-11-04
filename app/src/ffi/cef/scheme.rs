@@ -1,5 +1,5 @@
-//! The internal origins (`https://shell.lightbrowser.invalid` and
-//! `https://lightbrowser.invalid`): every request to them is answered from
+//! The internal origins (`https://shell.krunk.invalid` and
+//! `https://krunk.invalid`): every request to them is answered from
 //! embedded bytes or the favicon cache, and never reaches the network
 //! (unknown paths get a 404 from here, not a DNS lookup).
 

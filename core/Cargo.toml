@@ -1,6 +1,6 @@
 [package]
 name = "core"
-description = "Platform-independent logic for LightBrowser (storage, vault crypto, adblock, settings, protocol)"
+description = "Platform-independent logic for Krunk (storage, vault crypto, adblock, settings, protocol)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

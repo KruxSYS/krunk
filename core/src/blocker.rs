@@ -134,7 +134,7 @@ impl ResourceKind {
 /// Our own origins are served by the host and never go through the engine.
 /// (Prefix check: this runs for every request.)
 pub fn is_internal(uri: &str) -> bool {
-    uri.starts_with("https://lightbrowser.invalid/") || uri.starts_with("https://shell.lightbrowser.invalid/")
+    uri.starts_with("https://krunk.invalid/") || uri.starts_with("https://shell.krunk.invalid/")
 }
 
 /// Only network schemes are filtered.
@@ -409,7 +409,7 @@ mod tests {
             ("https://www.wikipedia.org/", "https://www.wikipedia.org/", ResourceKind::Document),
             ("https://upload.wikimedia.org/a.png", "https://en.wikipedia.org/wiki/Rust", ResourceKind::Image),
             ("https://doc.rust-lang.org/std/", "https://doc.rust-lang.org/", ResourceKind::Document),
-            ("https://lightbrowser.invalid/newtab.html", "", ResourceKind::Document),
+            ("https://krunk.invalid/newtab.html", "", ResourceKind::Document),
             ("data:image/png;base64,AAAA", NEWS, ResourceKind::Image),
         ] {
             assert_eq!(b.check(url, src, kind), Decision::Allow, "{url} should be allowed");
@@ -515,10 +515,10 @@ mod tests {
 
     #[test]
     fn request_scope() {
-        assert!(is_internal("https://lightbrowser.invalid/newtab.html"));
-        assert!(is_internal("https://shell.lightbrowser.invalid/shell.js"));
-        assert!(!is_internal("https://lightbrowser.invalid.evil.com/x"));
-        assert!(!is_filterable("https://lightbrowser.invalid/newtab.html"));
+        assert!(is_internal("https://krunk.invalid/newtab.html"));
+        assert!(is_internal("https://shell.krunk.invalid/shell.js"));
+        assert!(!is_internal("https://krunk.invalid.evil.com/x"));
+        assert!(!is_filterable("https://krunk.invalid/newtab.html"));
         assert!(is_filterable("https://ads.example/x.js"));
         assert!(is_filterable("wss://live.example/socket"));
         assert!(!is_filterable("data:image/png;base64,AA"));

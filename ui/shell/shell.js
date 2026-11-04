@@ -1,4 +1,4 @@
-// LightBrowser shell: tab strip, toolbar and address bar.
+// Krunk shell: tab strip, toolbar and address bar.
 // All state comes from the host (`tabs`, `nav`, `shellConfig` events); the
 // shell only renders it and sends commands back.
 (function () {
@@ -129,8 +129,8 @@
     $('reload').title = n.loading ? 'Stop (Esc)' : 'Reload (Ctrl+R)';
     if (!state.editing) $('address').value = n.url;
     $('star').classList.toggle('bookmarked', !!n.bookmarked);
-    // Built-in pages (lb://) cannot be bookmarked.
-    $('star').hidden = !n.url || n.url.startsWith('lb://');
+    // Built-in pages (krunk://) cannot be bookmarked.
+    $('star').hidden = !n.url || n.url.startsWith('krunk://');
     const secure = n.secure;
     $('site-icon').classList.toggle('secure', secure);
     $('site-icon-use').setAttribute('href', secure ? '#i-lock' : '#i-info');

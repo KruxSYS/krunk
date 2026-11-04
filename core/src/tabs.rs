@@ -179,7 +179,7 @@ impl TabModel {
             Position::AfterOpener(o) if self.get(o).is_some() => Some(o),
             _ => None,
         };
-        let url = if url.is_empty() { Page::NewTab.url() } else { url.to_string() };
+        let url = if url.is_empty() { Page::NewTab.url() } else { crate::pages::migrate_legacy_url(url) };
         let state = if live || activate { LoadState::Live } else { LoadState::Unloaded };
         self.tabs.insert(
             index,
@@ -463,8 +463,13 @@ impl TabModel {
     /// Restores a session: all tabs unloaded except the active one.
     pub fn restore(&mut self, session: &Session, now: i64) -> Vec<Effect> {
         let mut ids = Vec::new();
-        for t in session.tabs.iter().filter(|t| restorable(&t.url)) {
-            let (id, _) = self.open(&t.url, false, Position::End, false, false, now);
+        for t in session.tabs.iter() {
+            // Sessions saved before the rename name the old internal origin.
+            let url = crate::pages::migrate_legacy_url(&t.url);
+            if !restorable(&url) {
+                continue;
+            }
+            let (id, _) = self.open(&url, false, Position::End, false, false, now);
             if let Some(tab) = self.get_mut(id) {
                 if !t.title.is_empty() {
                     tab.title = t.title.chars().take(512).collect();
@@ -491,7 +496,7 @@ fn page_title(p: Page) -> &'static str {
         Page::Passwords => "Passwords",
         Page::Settings => "Settings",
         Page::Downloads => "Downloads",
-        Page::About => "About LightBrowser",
+        Page::About => "About Krunk",
         Page::HttpsOnly => "Not secure",
     }
 }
@@ -691,6 +696,22 @@ mod tests {
     }
 
     #[test]
+    fn sessions_from_before_the_rename_restore() {
+        let mut m = TabModel::new();
+        let session = Session {
+            tabs: vec![
+                SessionTab { url: "https://lightbrowser.invalid/history.html".into(), title: "History".into() },
+                SessionTab { url: "https://a.example/".into(), title: "A".into() },
+            ],
+            active: 0,
+        };
+        m.restore(&session, 0);
+        assert_eq!(m.len(), 2);
+        assert_eq!(m.tabs()[0].url, Page::History.url());
+        assert_eq!(m.infos()[0].url, "krunk://history");
+    }
+
+    #[test]
     fn session_never_stores_credentials() {
         let mut m = TabModel::new();
         m.open("https://alice:secret@intranet.example/", false, Position::End, true, true, 0);
@@ -754,7 +775,7 @@ mod tests {
         m.set_loading(id, false);
         m.set_url(id, &Page::Settings.url());
         let info = &m.infos()[0];
-        assert_eq!(info.url, "lb://settings");
+        assert_eq!(info.url, "krunk://settings");
         assert_eq!(info.title, "Settings");
         assert_eq!(info.favicon.as_deref(), Some("data:image/png;base64,AA"));
         assert!(!info.loading);

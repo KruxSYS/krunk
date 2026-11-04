@@ -13,7 +13,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 lock="$root/cef.lock"
 # shellcheck source=/dev/null
 source "$lock"
-cache=${LB_CEF_CACHE:-$HOME/.cache/lightbrowser-cef}
+cache=${LB_CEF_CACHE:-$HOME/.cache/krunk-cef}
 downloads="$cache/downloads"
 out="$cache/$CEF_VERSION"
 cdn=${CEF_DOWNLOAD_URL:-https://cef-builds.spotifycdn.com}
@@ -50,11 +50,11 @@ elif [ "$sha256" != "$CEF_SHA256" ]; then
 fi
 
 # 3. Export once per version (export-cef-dir must match the cef crate version).
-if [ ! -f "$out/.lightbrowser-exported" ] || [ "$(cat "$out/.lightbrowser-exported")" != "$sha256" ]; then
+if [ ! -f "$out/.krunk-exported" ] || [ "$(cat "$out/.krunk-exported")" != "$sha256" ]; then
   export-cef-dir --force --target x86_64-pc-windows-msvc --version "$CEF_VERSION" \
     --archive "$archive" "$out" >&2
   # CEF's own licence file is not part of the exported layout.
   tar -xjf "$archive" -O "${CEF_ARCHIVE%.tar.bz2}/LICENSE.txt" > "$out/LICENSE.txt"
-  echo "$sha256" > "$out/.lightbrowser-exported"
+  echo "$sha256" > "$out/.krunk-exported"
 fi
 echo "$out"

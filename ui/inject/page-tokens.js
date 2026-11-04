@@ -5,8 +5,8 @@
   'use strict';
   if (window.top !== window || !window.__lbHost) return;
   if (location.protocol !== 'https:' && location.protocol !== 'http:') return;
-  // Never on LightBrowser's own pages (they are not web content).
-  if (/(^|\.)lightbrowser\.invalid$/.test(location.hostname)) return;
+  // Never on Krunk's own pages (they are not web content).
+  if (/(^|\.)krunk\.invalid$/.test(location.hostname)) return;
   var MAX = 2000;
   function collect() {
     var classes = new Set();

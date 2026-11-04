@@ -14,7 +14,8 @@ use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM
 use zeroize::Zeroizing;
 
 /// Extra entropy so other applications using DPAPI for the same user cannot
-/// trivially unwrap our blob by accident.
+/// trivially unwrap our blob by accident. It keeps the browser's name before
+/// the rename to Krunk: existing vaults were wrapped with it.
 const ENTROPY: &[u8] = b"LightBrowser vault key wrap v1";
 
 /// DPAPI with the CurrentUser scope: the wrapped vault key can only be
@@ -53,7 +54,7 @@ impl KeyWrapper for Dpapi {
         unsafe {
             CryptProtectData(
                 &input,
-                w!("LightBrowser vault key"),
+                w!("Krunk vault key"),
                 Some(&entropy),
                 None,
                 None,

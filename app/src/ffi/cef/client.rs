@@ -605,7 +605,7 @@ wrap_display_handler! {
         fn on_title_change(&self, browser: Option<&mut Browser>, title: Option<&CefString>) {
             // The DevTools window is CEF's own top-level window.
             let Some(hwnd) = browser.and_then(|b| b.host()).map(|h| h.window_handle()) else { return };
-            let text = windows::core::HSTRING::from(format!("DevTools – {} – LightBrowser", text(title)));
+            let text = windows::core::HSTRING::from(format!("DevTools – {} – Krunk", text(title)));
             // SAFETY: a top-level window of this thread; the string outlives the call.
             let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::SetWindowTextW(HWND(hwnd.0.cast()), &text) };
         }

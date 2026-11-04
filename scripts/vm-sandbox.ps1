@@ -1,8 +1,8 @@
-# Shows, for every LightBrowser process (browser + CEF subprocesses), its process type, the
+# Shows, for every Krunk process (browser + CEF subprocesses), its process type, the
 # integrity level of its token, whether it is an AppContainer / restricted token, and whether
 # its command line contains --no-sandbox. Renderers must be Untrusted or Low and sandboxed.
-#   powershell -NoProfile -ExecutionPolicy Bypass -File vm-sandbox.ps1 [-Name LightBrowser.exe]
-param([string]$Name = 'LightBrowser.exe')
+#   powershell -NoProfile -ExecutionPolicy Bypass -File vm-sandbox.ps1 [-Name Krunk.exe]
+param([string]$Name = 'Krunk.exe')
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;

@@ -1,4 +1,4 @@
-# LightBrowser security notes
+# Krunk security notes
 
 ## The engine: bundled Chromium (CEF)
 - **What runs:** Chromium 156.0.8078.80 through the Chromium Embedded Framework 156.0.15,
@@ -7,19 +7,19 @@
   downloads it into its own cache directory and checks it against two hashes before it is
   extracted: the SHA-1 from CEF's build index and the SHA-256 pinned in `cef.lock`. The exact
   `cef` crate version is pinned in `app/Cargo.toml` (`Cargo.lock` records the build).
-  `SHA256SUMS` in the download covers the zip, `LightBrowser.exe`, `LightBrowser.dll` and
+  `SHA256SUMS` in the download covers the zip, `Krunk.exe`, `Krunk.dll` and
   `libcef.dll`. The binaries are not code-signed.
 - **Sandbox:** always on.
-  - `LightBrowser.exe` is CEF's sandbox bootstrap. The browser process and every subprocess
-    run through it, with `LightBrowser.dll` in the same folder (the bootstrap requires DLL and
+  - `Krunk.exe` is CEF's sandbox bootstrap. The browser process and every subprocess
+    run through it, with `Krunk.dll` in the same folder (the bootstrap requires DLL and
     exe to be both unsigned or both signed with one certificate).
   - Renderers run at Untrusted integrity with restricted tokens; the GPU process and storage
     service are sandboxed too (`scripts/vm-sandbox.ps1` prints them).
   - `--no-sandbox` (and other weakening switches) are rejected in the "extra flags" setting.
     CEF is started with `command_line_args_disabled`, so switches typed on the exe's command
     line are ignored as well.
-- **Updates are LightBrowser's responsibility.** A bundled engine does not update itself. Chromium
-  security fixes reach users only through a new LightBrowser release built on a newer CEF
+- **Updates are Krunk's responsibility.** A bundled engine does not update itself. Chromium
+  security fixes reach users only through a new Krunk release built on a newer CEF
   (README, "Updating the engine"). Ship such releases promptly after CEF security releases.
 - **Background services are off.** Component updater, secure time, Safe Browsing updates and
   similar Chromium services are disabled by default (README, "Engine background traffic").
@@ -30,7 +30,7 @@
     option). Phishing and malware URL warnings are not provided; ad and tracker blocking is not a
     substitute.
 - **CEF's password manager and autofill** are turned off on every profile (preferences
-  `credentials_enable_service`, `autofill.*`), so credentials only go to LightBrowser's own vault.
+  `credentials_enable_service`, `autofill.*`), so credentials only go to Krunk's own vault.
 
 ## Trusted UI vs. web content
 
@@ -39,8 +39,8 @@ The browser's own UI is split across **two separate origins** under the reserved
 
 | Origin | Documents | Loaded in |
 |--------|-----------|-----------|
-| `https://shell.lightbrowser.invalid` | `/shell.html` (tab strip, toolbar, bookmarks bar, find bar) and `/popup.html` (menu, shield, bookmark folders, password prompts) | only the shell view and the popup view |
-| `https://lightbrowser.invalid` | built-in pages: new tab, history, bookmarks, downloads, settings, passwords, about | tabs |
+| `https://shell.krunk.invalid` | `/shell.html` (tab strip, toolbar, bookmarks bar, find bar) and `/popup.html` (menu, shield, bookmark folders, password prompts) | only the shell view and the popup view |
+| `https://krunk.invalid` | built-in pages: new tab, history, bookmarks, downloads, settings, passwords, about | tabs |
 
 Consequences:
 - **Tabs can't become the shell.** A tab can never load the shell origin; `allow_navigation`
@@ -87,7 +87,7 @@ Consequences:
 - **Browser to page:** replies and fills are sent to the main frame only and are delivered to
   that frame's listeners.
 - **Secrets in IPC:** a login submit or a fill carries a password as a string through the
-  engine's IPC. LightBrowser wipes its own copies (`Zeroizing`), but the engine's string copies
+  engine's IPC. Krunk wipes its own copies (`Zeroizing`), but the engine's string copies
   are not ours to wipe.
 
 ## Password prompts live outside the page
@@ -125,7 +125,7 @@ Consequences:
   `state.json`; otherwise the embedded list is used.
 - It respects the configured HTTP proxy. With a SOCKS proxy it does not download at all, to
   avoid revealing the user's IP outside the proxy.
-- No telemetry: the only background requests LightBrowser itself makes are these downloads, at
+- No telemetry: the only background requests Krunk itself makes are these downloads, at
   most once a day.
 
 ## Password vault: design and threat model
@@ -183,7 +183,7 @@ KEK --XChaCha20-Poly1305--> wrapped vault key VK (random 32 B)
 VK  --XChaCha20-Poly1305, fresh random 24-byte nonce, AAD = entry id--> each login
 VK  --XChaCha20-Poly1305--> manifest (ordered entry ids + generation)
 ```
-- **File:** `%LOCALAPPDATA%\LightBrowser\vault.json`, separate from `browser.db`. It stores
+- **File:** `%LOCALAPPDATA%\Krunk\vault.json`, separate from `browser.db`. It stores
   only the KDF parameters, the salt and ciphertexts; usernames, origins and notes are encrypted
   too.
 - **Integrity:** every record is authenticated.

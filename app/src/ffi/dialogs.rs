@@ -18,13 +18,13 @@ pub fn error(title: &str, text: &str) {
     unsafe { MessageBoxW(None, &HSTRING::from(text), &HSTRING::from(title), MB_OK | MB_ICONERROR) };
 }
 
-/// LightBrowser's own runtime files (next to the exe) are missing or damaged.
+/// Krunk's own runtime files (next to the exe) are missing or damaged.
 pub fn runtime_damaged(detail: &str) {
     error(
-        "LightBrowser",
+        "Krunk",
         &format!(
-            "LightBrowser cannot start because some of its files are missing or damaged.\n\n{detail}\n\n\
-             Extract the LightBrowser download again and keep all of its files together in one folder."
+            "Krunk cannot start because some of its files are missing or damaged.\n\n{detail}\n\n\
+             Extract the Krunk download again and keep all of its files together in one folder."
         ),
     );
 }

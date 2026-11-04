@@ -1,6 +1,6 @@
 // UI tests for the shell, popup and new-tab page, run in Chromium with the
 // mock host (ui/dev/mock-host.js). These test the web UI only; they do not
-// run LightBrowser.exe.
+// run Krunk.exe.
 //
 //   NODE_PATH=/usr/lib/node_modules/@playwright/mcp/node_modules \
 //     node ui/dev/test-ui.cjs [screenshot-dir]
@@ -76,8 +76,8 @@ async function route(context, external) {
       body: fs.readFileSync(file),
     });
   };
-  await context.route('https://shell.lightbrowser.invalid/**', handler('shell'));
-  await context.route('https://lightbrowser.invalid/**', handler('pages'));
+  await context.route('https://shell.krunk.invalid/**', handler('shell'));
+  await context.route('https://krunk.invalid/**', handler('pages'));
 }
 
 async function openPage(browser, url, viewport, scale, setup, setupArg) {
@@ -112,7 +112,7 @@ const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: pa
 
 async function testShell(browser) {
   console.log('shell');
-  const { page, errors } = await openPage(browser, 'https://shell.lightbrowser.invalid/shell.html', { width: 1100, height: 76 }, 1);
+  const { page, errors } = await openPage(browser, 'https://shell.krunk.invalid/shell.html', { width: 1100, height: 76 }, 1);
   check((await lastSent(page, 'ready')) !== undefined, 'shell posts ready');
   const favicon = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAPElEQVR4nGNgGNTgXorcfxgmWyM6pkgzQUOI0YzXEIoMIEUzVkMG3oCBD0RSDMGpmRhDCGrGZRBJGkkBADgsHvekgD78AAAAAElFTkSuQmCC';
   await page.evaluate((fav) => {
@@ -244,7 +244,7 @@ async function testShell(browser) {
 
 async function testShellHiDpi(browser) {
   console.log('shell @150%');
-  const { page } = await openPage(browser, 'https://shell.lightbrowser.invalid/shell.html', { width: 900, height: 76 }, 1.5);
+  const { page } = await openPage(browser, 'https://shell.krunk.invalid/shell.html', { width: 900, height: 76 }, 1.5);
   await page.evaluate(() => {
     const h = window.__host;
     h.state.tabs = [
@@ -262,7 +262,7 @@ async function testShellHiDpi(browser) {
 
 async function testPopup(browser) {
   console.log('popup');
-  const make = async (w, h) => openPage(browser, 'https://shell.lightbrowser.invalid/popup.html', { width: w, height: h }, 1);
+  const make = async (w, h) => openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: w, height: h }, 1);
 
   let { page, errors } = await make(280, 482);
   await page.evaluate(() => { window.__host.autoSimulate = false; });
@@ -332,7 +332,7 @@ async function testNewTab(browser) {
     ['https://www.theguardian.com/', 'The Guardian'],
     ['https://192.168.1.1/', 'Router admin'],
   ].map(([url, title, pinned], i) => ({ url, title, pinned: !!pinned, favicon: i === 9 ? null : '/favicon?host=' + new URL(url).hostname }));
-  const { page, errors, external } = await openPage(browser, 'https://lightbrowser.invalid/newtab.html', { width: 1100, height: 640 }, 1,
+  const { page, errors, external } = await openPage(browser, 'https://krunk.invalid/newtab.html', { width: 1100, height: 640 }, 1,
     (t) => { window.__host.handlers.getTopSites = () => t; }, tiles);
   await page.waitForSelector('.tile');
   check((await page.locator('.tile').count()) === 10, 'renders 10 tiles');
@@ -378,7 +378,7 @@ async function testHistory(browser) {
     ['https://github.com/rust-lang/rust', 'rust-lang/rust: Empowering everyone', 1.4],
     ['https://en.wikipedia.org/wiki/Rust_(programming_language)', 'Rust (programming language) - Wikipedia', 3.2],
   ].map(([url, title, days], i) => ({ id: i + 1, url, title, ts: now - days * DAY, visitCount: 1 + i }));
-  const { page, errors, external } = await openPage(browser, 'https://lightbrowser.invalid/history.html', { width: 1100, height: 700 }, 1,
+  const { page, errors, external } = await openPage(browser, 'https://krunk.invalid/history.html', { width: 1100, height: 700 }, 1,
     (rows) => {
       window.__host.handlers.queryHistory = (m) => rows.filter((r) => !m.text || (r.title + r.url).toLowerCase().includes(m.text.toLowerCase()));
     }, all);
@@ -441,7 +441,7 @@ function bookmarkTree() {
 
 async function testBookmarks(browser) {
   console.log('bookmarks manager');
-  const { page, errors, external } = await openPage(browser, 'https://lightbrowser.invalid/bookmarks.html', { width: 1100, height: 600 }, 1,
+  const { page, errors, external } = await openPage(browser, 'https://krunk.invalid/bookmarks.html', { width: 1100, height: 600 }, 1,
     (tree) => {
       const h = window.__host.handlers;
       h.getBookmarks = () => tree;
@@ -530,7 +530,7 @@ async function testDownloads(browser) {
     { id: 2, url: 'https://arxiv.org/pdf/1234.5678', fileName: 'paper.pdf', path: 'C:\\Users\\me\\Downloads\\paper.pdf', state: 'completed', received: 2400000, total: 2400000, started: now - 60000, reason: null },
     { id: 1, url: 'https://cdn.example.com/video.mp4', fileName: 'video.mp4', path: 'C:\\Users\\me\\Downloads\\video.mp4', state: 'interrupted', received: 1000, total: null, started: now - 120000, reason: 'Network error' },
   ];
-  const { page, errors, external } = await openPage(browser, 'https://lightbrowser.invalid/downloads.html', { width: 1000, height: 420 }, 1,
+  const { page, errors, external } = await openPage(browser, 'https://krunk.invalid/downloads.html', { width: 1000, height: 420 }, 1,
     (d) => { window.__host.handlers.getDownloads = () => d; }, items);
   await page.waitForSelector('.dl');
   check((await page.locator('.dl').count()) === 3, 'lists 3 downloads');
@@ -553,7 +553,7 @@ async function testDownloads(browser) {
 
 async function testShellM4(browser) {
   console.log('shell: bookmarks bar, find, zoom');
-  const { page, errors, external } = await openPage(browser, 'https://shell.lightbrowser.invalid/shell.html', { width: 1100, height: 104 }, 1);
+  const { page, errors, external } = await openPage(browser, 'https://shell.krunk.invalid/shell.html', { width: 1100, height: 104 }, 1);
   await page.evaluate(() => {
     const h = window.__host;
     h.state.tabs = [
@@ -625,7 +625,7 @@ async function testShellM4(browser) {
 async function testShieldAndHttpsOnly(browser) {
   console.log('shield popover and HTTPS-only interstitial');
   // Shell: the counter as the host pushes it while a news page loads.
-  let { page, errors } = await openPage(browser, 'https://shell.lightbrowser.invalid/shell.html', { width: 1100, height: 76 }, 1);
+  let { page, errors } = await openPage(browser, 'https://shell.krunk.invalid/shell.html', { width: 1100, height: 76 }, 1);
   await page.evaluate(() => {
     const h = window.__host;
     h.state.tabs = [{ id: 1, title: 'World news – The Daily Example', url: 'https://news.example.com/world', favicon: null, loading: false, private: false, sleeping: false }];
@@ -643,7 +643,7 @@ async function testShieldAndHttpsOnly(browser) {
   check(errors.length === 0, 'no console errors');
 
   // Popup: shield popover with a count, then the allowed state.
-  ({ page, errors } = await openPage(browser, 'https://shell.lightbrowser.invalid/popup.html', { width: 300, height: 180 }, 1));
+  ({ page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 300, height: 180 }, 1));
   await emit(page, { event: 'popup', content: { kind: 'shield', host: 'news.example.com', blocked: 42, allowed: false, enabled: true } });
   await page.waitForSelector('.panel');
   check((await page.locator('.big').textContent()) === '42', 'popover shows 42 blocked');
@@ -659,14 +659,14 @@ async function testShieldAndHttpsOnly(browser) {
 
   // HTTPS-only interstitial.
   const target = 'http://legacy.example.org/page?id=7';
-  ({ page, errors } = await openPage(browser, 'https://lightbrowser.invalid/https-only.html?url=' + encodeURIComponent(target), { width: 900, height: 520 }, 1));
+  ({ page, errors } = await openPage(browser, 'https://krunk.invalid/https-only.html?url=' + encodeURIComponent(target), { width: 900, height: 520 }, 1));
   await page.waitForSelector('#continue');
   check((await page.textContent('#host')) === 'legacy.example.org', 'interstitial names the host');
   await shot(page, 'https-only-interstitial.png');
   await page.click('#continue');
   const go = await lastSent(page, 'httpsOnlyProceed');
   check(go && go.url === target, 'continue sends httpsOnlyProceed{url}');
-  ({ page } = await openPage(browser, 'https://lightbrowser.invalid/https-only.html?url=' + encodeURIComponent('javascript:alert(1)'), { width: 900, height: 520 }, 1));
+  ({ page } = await openPage(browser, 'https://krunk.invalid/https-only.html?url=' + encodeURIComponent('javascript:alert(1)'), { width: 900, height: 520 }, 1));
   check(await page.locator('#continue').isDisabled(), 'continue disabled for a non-http URL');
   check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
 }
@@ -696,7 +696,7 @@ async function testPasswords(browser) {
   ];
 
   // Setup.
-  let { page, errors, external } = await openPage(browser, 'https://lightbrowser.invalid/passwords.html', { width: 1000, height: 560 }, 1, vaultMock, { exists: false, locked: true, waitMs: 0, entries });
+  let { page, errors, external } = await openPage(browser, 'https://krunk.invalid/passwords.html', { width: 1000, height: 560 }, 1, vaultMock, { exists: false, locked: true, waitMs: 0, entries });
   await page.waitForSelector('#setup:not([hidden])');
   await page.fill('#setup-pw', 'correct horse battery');
   await page.fill('#setup-pw2', 'correct horse battery!');
@@ -714,7 +714,7 @@ async function testPasswords(browser) {
   check(await page.inputValue('#setup-pw') === '', 'setup field cleared afterwards');
 
   // Unlock + rate limit.
-  ({ page, errors } = await openPage(browser, 'https://lightbrowser.invalid/passwords.html', { width: 1000, height: 420 }, 1, vaultMock, { exists: true, locked: true, waitMs: 0, entries }));
+  ({ page, errors } = await openPage(browser, 'https://krunk.invalid/passwords.html', { width: 1000, height: 420 }, 1, vaultMock, { exists: true, locked: true, waitMs: 0, entries }));
   await page.waitForSelector('#unlock:not([hidden])');
   await shot(page, 'vault-unlock.png');
   await page.fill('#unlock-pw', 'wrong');
@@ -814,7 +814,7 @@ async function testPasswords(browser) {
   check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
 
   // Popup unlock prompt + save prompt.
-  ({ page, errors } = await openPage(browser, 'https://shell.lightbrowser.invalid/popup.html', { width: 360, height: 200 }, 1));
+  ({ page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 360, height: 200 }, 1));
   await emit(page, { event: 'popup', content: { kind: 'unlock', tabId: 4, origin: 'https://bank.example', purpose: 'fill', error: null, waitMs: 0 } });
   await page.waitForSelector('#master');
   check(await page.evaluate(() => document.activeElement.id) === 'master', 'unlock prompt focuses the password field');
@@ -841,7 +841,7 @@ async function testPasswords(browser) {
   check(errors.length === 0, 'popup: no console errors (' + errors.join(' | ') + ')');
 
   // Shell key icon.
-  ({ page, errors } = await openPage(browser, 'https://shell.lightbrowser.invalid/shell.html', { width: 1000, height: 76 }, 1));
+  ({ page, errors } = await openPage(browser, 'https://shell.krunk.invalid/shell.html', { width: 1000, height: 76 }, 1));
   await page.evaluate(() => {
     const h = window.__host;
     h.state.tabs = [{ id: 4, title: 'Sign in – Example Bank', url: 'https://bank.example/login', favicon: null, loading: false, private: false, sleeping: false }];
@@ -868,7 +868,7 @@ function settingsMock(defaults) {
   const st = { settings: clone(defaults), allow: ['news.example.com'] };
   window.__settings = st;
   const restart = (s) => ['hardwareAcceleration', 'proxy', 'extraFlags', 'blockThirdPartyCookies', 'engineSecurityComponents'].some((k) => s[k] !== running[k]);
-  h.getSettings = () => ({ settings: st.settings, restartRequired: restart(st.settings), about: { version: '0.1.0', cef: '156.0.15', chromium: '156.0.8078.80', dataDir: 'C:\\Users\\me\\AppData\\Local\\LightBrowser' } });
+  h.getSettings = () => ({ settings: st.settings, restartRequired: restart(st.settings), about: { version: '0.1.0', cef: '156.0.15', chromium: '156.0.8078.80', dataDir: 'C:\\Users\\me\\AppData\\Local\\Krunk' } });
   h.saveSettings = (m) => {
     const s = m.settings;
     const errs = [];
@@ -898,7 +898,7 @@ function settingsMock(defaults) {
 async function testSettings(browser) {
   console.log('settings page');
   const defaults = JSON.parse(fs.readFileSync(path.join(__dirname, 'default-settings.json'), 'utf8'));
-  const { page, errors, external } = await openPage(browser, 'https://lightbrowser.invalid/settings.html', { width: 1000, height: 2900 }, 1, settingsMock, defaults);
+  const { page, errors, external } = await openPage(browser, 'https://krunk.invalid/settings.html', { width: 1000, height: 2900 }, 1, settingsMock, defaults);
   await page.waitForSelector('#lists .row');
   check(await page.inputValue('#searchEngine') === 'duckDuckGo', 'defaults: DuckDuckGo');
   check(await page.isChecked('input[name=startup][value=restoreSession]'), 'defaults: restore session');
@@ -1046,7 +1046,7 @@ async function testSettings(browser) {
 
 async function testFolderPopup(browser) {
   console.log('popup: bookmark folder');
-  const { page, errors } = await openPage(browser, 'https://shell.lightbrowser.invalid/popup.html', { width: 280, height: 110 }, 1);
+  const { page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 280, height: 110 }, 1);
   await emit(page, { event: 'popup', content: { kind: 'bookmarkFolder', id: 11, title: 'News', items: [
     { id: 12, title: 'BBC News', url: 'https://www.bbc.co.uk/news', isFolder: false, favicon: '/favicon?host=www.bbc.co.uk' },
     { id: 13, title: 'Hacker News', url: 'https://news.ycombinator.com/', isFolder: false, favicon: null },

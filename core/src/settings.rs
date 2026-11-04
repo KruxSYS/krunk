@@ -99,7 +99,7 @@ pub struct Settings {
     /// Let the engine download its security components from Google
     /// (certificate revocation list, Certificate Transparency list). Off:
     /// no contact with Google at all; these lists then only update with
-    /// LightBrowser releases. Needs a restart.
+    /// Krunk releases. Needs a restart.
     pub engine_security_components: bool,
     pub clear_on_exit: ClearOnExit,
 
@@ -229,7 +229,7 @@ pub const NO_COMPONENT_UPDATE_SWITCH: &str = "--disable-component-update";
 /// preconnects to them before our handler answers the request) and, unless
 /// the user opted in, the component updater's server (one component is
 /// installed "on demand" and ignores `--disable-component-update`).
-pub const INTERNAL_HOSTS: &[&str] = &["lightbrowser.invalid", "*.lightbrowser.invalid"];
+pub const INTERNAL_HOSTS: &[&str] = &["krunk.invalid", "*.krunk.invalid"];
 pub const UPDATER_HOSTS: &[&str] = &["update.googleapis.com"];
 
 /// Blocks third-party cookies for scripts (`document.cookie`). Chromium's
@@ -888,7 +888,7 @@ mod tests {
             "--disable-component-update",
             "--no-pings",
             "--disable-domain-reliability",
-            "--host-resolver-rules=MAP lightbrowser.invalid ~NOTFOUND, MAP *.lightbrowser.invalid ~NOTFOUND, \
+            "--host-resolver-rules=MAP krunk.invalid ~NOTFOUND, MAP *.krunk.invalid ~NOTFOUND, \
              MAP update.googleapis.com ~NOTFOUND",
         ] {
             assert!(a.iter().any(|s| s == want), "missing {want} in {a:?}");
@@ -907,10 +907,7 @@ mod tests {
         let a = on.browser_switches();
         assert!(!a.iter().any(|s| s == NO_COMPONENT_UPDATE_SWITCH), "the updater may run");
         assert!(
-            a.contains(
-                &"--host-resolver-rules=MAP lightbrowser.invalid ~NOTFOUND, MAP *.lightbrowser.invalid ~NOTFOUND"
-                    .to_string()
-            ),
+            a.contains(&"--host-resolver-rules=MAP krunk.invalid ~NOTFOUND, MAP *.krunk.invalid ~NOTFOUND".to_string()),
             "and reach its server"
         );
         assert!(a.iter().any(|s| s == "--disable-background-networking"), "everything else stays off");
@@ -924,15 +921,13 @@ mod tests {
     fn internal_origins_bypass_the_proxy() {
         let s = Settings { proxy: "127.0.0.1:8888".into(), ..Settings::default() };
         let a = s.browser_switches();
-        assert!(a.contains(
-            &"--proxy-bypass-list=lightbrowser.invalid;*.lightbrowser.invalid;update.googleapis.com".to_string()
-        ));
+        assert!(a.contains(&"--proxy-bypass-list=krunk.invalid;*.krunk.invalid;update.googleapis.com".to_string()));
         // A user's own host rules cannot replace ours (first one wins).
         let s = Settings { extra_flags: "--host-resolver-rules=MAP*~NOTFOUND".into(), ..Settings::default() };
         let rules: Vec<_> =
             s.browser_switches().into_iter().filter(|x| x.starts_with("--host-resolver-rules")).collect();
         assert_eq!(rules.len(), 1);
-        assert!(rules[0].starts_with("--host-resolver-rules=MAP lightbrowser.invalid"));
+        assert!(rules[0].starts_with("--host-resolver-rules=MAP krunk.invalid"));
     }
 
     #[test]

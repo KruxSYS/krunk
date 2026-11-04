@@ -1,10 +1,10 @@
-//! LightBrowser.dll: the browser.
+//! Krunk.dll: the browser.
 //!
-//! `LightBrowser.exe` is CEF's sandbox bootstrap (`bootstrap.exe`, renamed).
+//! `Krunk.exe` is CEF's sandbox bootstrap (`bootstrap.exe`, renamed).
 //! It loads this DLL and calls `RunWinMain` (`ffi::cef::entry`) in the
 //! browser process and in every engine subprocess. The browser only exists
 //! on Windows; elsewhere the crate is empty so the workspace still builds.
-// The cdylib must be called LightBrowser.dll (the bootstrap loads
+// The cdylib must be called Krunk.dll (the bootstrap loads
 // `<exe name>.dll`).
 #![allow(non_snake_case)]
 #![deny(unsafe_code)]
@@ -29,7 +29,7 @@ fn browser_main() -> i32 {
         Ok(code) => code,
         Err(e) => {
             log::write("ERROR", &e);
-            ffi::dialogs::error("LightBrowser", &e);
+            ffi::dialogs::error("Krunk", &e);
             1
         }
     }
@@ -46,9 +46,13 @@ fn run() -> Result<i32, String> {
         std::thread::sleep(std::time::Duration::from_millis(300));
     }
     ffi::process::init_ui_thread()?;
+    let migration = migrate_legacy_data()?;
     let dirs = paths::DataDirs::resolve()?;
     log::init(&dirs.log_file());
-    info!("LightBrowser {} starting, data dir {}", env!("CARGO_PKG_VERSION"), dirs.root().display());
+    info!("Krunk {} starting, data dir {}", env!("CARGO_PKG_VERSION"), dirs.root().display());
+    if let Some(m) = migration {
+        info!("{m}");
+    }
 
     let store =
         lb_core::storage::Store::open(&dirs.database()).map_err(|e| format!("Cannot open the database: {e}"))?;
@@ -74,20 +78,61 @@ fn run() -> Result<i32, String> {
         user_agent: settings.user_agent.clone(),
     };
     info!("browser arguments: {}", settings.browser_arguments());
-    let window = ffi::window::Window::create_main("LightBrowser")?;
+    let window = ffi::window::Window::create_main("Krunk")?;
     let start: ffi::cef::Start =
         Box::new(move || match browser::Browser::start(window, &dirs, store, settings, power) {
             Ok(b) => Some(Box::new(b) as Box<dyn std::any::Any>),
             Err(e) => {
                 log::write("ERROR", &e);
-                ffi::dialogs::error("LightBrowser", &e);
+                ffi::dialogs::error("Krunk", &e);
                 None
             }
         });
     ffi::cef::run_engine(config, start)
 }
 
-/// `LightBrowser.exe --update-filters`: downloads the filter lists, rebuilds
+/// Moves `%LOCALAPPDATA%\LightBrowser` (the browser's old name) to the
+/// Krunk folder once, before anything opens it. Returns the line to log.
+#[cfg(windows)]
+fn migrate_legacy_data() -> Result<Option<String>, String> {
+    use lb_core::migrate::{self, Moved, Plan};
+    let base = paths::local_app_data()?;
+    let (old, new) = (base.join(migrate::LEGACY_DIR), base.join(paths::APP_DIR));
+    // The old browser's main window class: it is still running on that folder.
+    let running = ffi::window::class_exists("LightBrowserWindow");
+    match migrate::plan(old.is_dir(), new.exists(), running) {
+        Plan::Nothing if old.is_dir() => Ok(Some(format!(
+            "data migration: both {} and {} exist; using the Krunk folder",
+            old.display(),
+            new.display()
+        ))),
+        Plan::Nothing => Ok(None),
+        Plan::WaitForLegacy => Err(format!(
+            "LightBrowser is still running.\n\nClose LightBrowser, then start Krunk again: Krunk moves your \
+             LightBrowser profile ({}) to {} the first time it starts.",
+            old.display(),
+            new.display()
+        )),
+        Plan::Move => match migrate::move_dir(&old, &new, |a, b| std::fs::rename(a, b)) {
+            Ok(Moved::Renamed) => Ok(Some(format!("data migration: renamed {} to {}", old.display(), new.display()))),
+            Ok(Moved::Copied { files }) => Ok(Some(format!(
+                "data migration: copied {files} files from {} to {} and removed the old folder",
+                old.display(),
+                new.display()
+            ))),
+            Ok(Moved::CopiedOldKept { files }) => Ok(Some(format!(
+                "data migration: copied {files} files from {} to {}; the old folder could not be removed completely",
+                old.display(),
+                new.display()
+            ))),
+            Err(e) => {
+                Err(format!("Cannot move your LightBrowser profile ({}) to {}: {e}", old.display(), new.display()))
+            }
+        },
+    }
+}
+
+/// `Krunk.exe --update-filters`: downloads the filter lists, rebuilds
 /// engine.dat and writes the result to the log. Exit code 0 on success.
 #[cfg(windows)]
 fn update_filters_headless(dirs: &paths::DataDirs, settings: &lb_core::settings::Settings) -> i32 {

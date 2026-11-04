@@ -6,7 +6,7 @@ cd "$(dirname "$0")/../assets/filters"
 
 fetch() { # name url
   echo "fetching $1"
-  curl -fsSL --retry 3 -A "LightBrowser-filter-update" -o "$1.tmp" "$2"
+  curl -fsSL --retry 3 -A "Krunk-filter-update" -o "$1.tmp" "$2"
   # Sanity check: a real list has many lines and no HTML error page.
   if [ "$(wc -l < "$1.tmp")" -lt 50 ] || head -c 200 "$1.tmp" | grep -qi '<html'; then
     echo "  $1 looks wrong, keeping the old copy" >&2; rm -f "$1.tmp"; return 1

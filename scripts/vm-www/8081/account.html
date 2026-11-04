@@ -1,0 +1,24 @@
+<!doctype html>
+<!-- VM test page: a "logged-in site". Signing in stores a persistent cookie (one year),
+     so a profile migration can be checked by whether the page still says "Signed in". -->
+<html><head><meta charset="utf-8"><title>Test account</title>
+<style>body{font:20px system-ui;margin:40px} #state{font-size:32px;font-weight:600}</style></head>
+<body>
+<p id="state"></p>
+<p><button id="in">Sign in as alice</button> <button id="out">Sign out</button></p>
+<p>localStorage note: <span id="note"></span></p>
+<script>
+function render() {
+  var m = document.cookie.match(/(?:^|; )session=([^;]*)/);
+  document.getElementById('state').textContent = m ? 'Signed in as ' + decodeURIComponent(m[1]) : 'Not signed in';
+  document.getElementById('note').textContent = localStorage.getItem('note') || '(none)';
+}
+document.getElementById('in').onclick = function () {
+  document.cookie = 'session=alice; max-age=31536000; path=/';
+  localStorage.setItem('note', 'saved ' + new Date().toISOString());
+  render();
+};
+document.getElementById('out').onclick = function () { document.cookie = 'session=; max-age=0; path=/'; render(); };
+render();
+</script>
+</body></html>

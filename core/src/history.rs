@@ -227,7 +227,7 @@ mod tests {
         );
         assert_eq!(visit_url("https://a.example/", true), None, "private tabs are never recorded");
         assert_eq!(visit_url(&crate::pages::Page::History.url(), false), None);
-        assert_eq!(visit_url("https://shell.lightbrowser.invalid/shell.html", false), None);
+        assert_eq!(visit_url("https://shell.krunk.invalid/shell.html", false), None);
         assert_eq!(visit_url("about:blank", false), None);
         assert_eq!(
             visit_url("https://u:pw@a.example/", false).as_deref(),

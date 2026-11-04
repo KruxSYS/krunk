@@ -62,8 +62,8 @@ const WTS_SESSION_LOCK: usize = 0x7;
 const WM_POWERBROADCAST: u32 = 0x0218;
 const PBT_APMSUSPEND: usize = 0x4;
 
-const MAIN_CLASS: PCWSTR = w!("LightBrowserWindow");
-const POPUP_CLASS: PCWSTR = w!("LightBrowserPopup");
+const MAIN_CLASS: PCWSTR = w!("KrunkWindow");
+const POPUP_CLASS: PCWSTR = w!("KrunkPopup");
 
 /// Screen rectangle in physical pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,7 +88,8 @@ fn register(class: PCWSTR, style: u32) -> Result<(), String> {
             style: windows::Win32::UI::WindowsAndMessaging::WNDCLASS_STYLES(style),
             lpfnWndProc: Some(wndproc),
             hInstance: instance.into(),
-            hIcon: LoadIconW(None, IDI_APPLICATION).unwrap_or_default(),
+            hIcon: app_icon(instance.into(), 32),
+            hIconSm: app_icon(instance.into(), 16),
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
             hbrBackground: HBRUSH(GetStockObject(WHITE_BRUSH).0),
             lpszClassName: class,
@@ -99,6 +100,25 @@ fn register(class: PCWSTR, style: u32) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Krunk's icon (`MAINICON` in Krunk.exe, set by tools/pebrand) at the
+/// system's size for `base` DIP, or the stock application icon.
+fn app_icon(
+    instance: windows::Win32::Foundation::HINSTANCE,
+    base: i32,
+) -> windows::Win32::UI::WindowsAndMessaging::HICON {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetSystemMetrics, LoadImageW, HICON, IMAGE_ICON, LR_DEFAULTCOLOR, SM_CXICON, SM_CXSMICON,
+    };
+    // SAFETY: loading an icon resource from our own exe module by name.
+    unsafe {
+        let size = GetSystemMetrics(if base <= 16 { SM_CXSMICON } else { SM_CXICON });
+        match LoadImageW(Some(instance), w!("MAINICON"), IMAGE_ICON, size, size, LR_DEFAULTCOLOR) {
+            Ok(h) => HICON(h.0),
+            Err(_) => LoadIconW(None, IDI_APPLICATION).unwrap_or_default(),
+        }
+    }
 }
 
 impl Window {
@@ -154,7 +174,7 @@ impl Window {
             CreateWindowExW(
                 ex,
                 POPUP_CLASS,
-                w!("LightBrowser popup"),
+                w!("Krunk popup"),
                 WS_POPUP | WS_CLIPCHILDREN,
                 0,
                 0,
@@ -434,6 +454,13 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
         // SAFETY: default processing for everything else.
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
     }
+}
+
+/// Is there a top-level window of this class (in this session)?
+pub fn class_exists(class: &str) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
+    // SAFETY: FindWindowW with a NUL-terminated class name and no title.
+    unsafe { FindWindowW(&HSTRING::from(class), PCWSTR::null()) }.is_ok_and(|h| !h.is_invalid())
 }
 
 /// Posts `WM_APP` messages to a window from any thread.

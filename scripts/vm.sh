@@ -1,37 +1,37 @@
 #!/usr/bin/env bash
-# Drive LightBrowser on the Windows test VM (ssh host alias "windows",
+# Drive Krunk on the Windows test VM (ssh host alias "windows",
 # PowerShell remote shell). GUI work runs in the interactive desktop
-# session through the scheduled task "LightBrowserTask", which executes
-# C:\pipeline\lightbrowser\task.ps1.
+# session through the scheduled task "KrunkTask", which executes
+# C:\pipeline\krunk\task.ps1.
 #
-#   scripts/vm.sh deploy                 install dist/LightBrowser-win-x64 as C:\pipeline\lightbrowser\app
+#   scripts/vm.sh deploy                 install dist/Krunk-win-x64 as C:\pipeline\krunk\app
 #                                        (full zip on a new CEF version, else just our DLL)
 #   scripts/vm.sh ps1 FILE.ps1           run a PowerShell script on the desktop (waits)
-#   scripts/vm.sh start [ARGS...]        launch LightBrowser.exe on the desktop
-#   scripts/vm.sh stop                   close LightBrowser (WM_CLOSE, then kill)
+#   scripts/vm.sh start [ARGS...]        launch Krunk.exe on the desktop
+#   scripts/vm.sh stop                   close Krunk (WM_CLOSE, then kill)
 #   scripts/vm.sh shot NAME [DIR]        screenshot the desktop to DIR/NAME.png
 #   scripts/vm.sh keys "SENDKEYS"        type with System.Windows.Forms.SendKeys
 #   scripts/vm.sh click X Y              left click at screen coordinates
 #   scripts/vm.sh drag X1 Y1 X2 Y2       left-button drag in small steps
 #   scripts/vm.sh sh 'POWERSHELL'        run a command over ssh (non-interactive)
-#   scripts/vm.sh put LOCAL REMOTE       copy a file to the VM (REMOTE like C:/pipeline/lightbrowser/x)
+#   scripts/vm.sh put LOCAL REMOTE       copy a file to the VM (REMOTE like C:/pipeline/krunk/x)
 #   scripts/vm.sh get REMOTE LOCAL       copy a file from the VM
 # Batch work into one ps1 per round where possible (each call is a session on the VM).
 set -euo pipefail
 VM=windows
 # One shared SSH connection for every call: the VM's sshd stops accepting
 # logins when many short sessions are opened in quick succession.
-SSHOPTS=(-o ControlMaster=auto -o "ControlPath=$HOME/.ssh/cm-lightbrowser-%r@%h-%p" -o ControlPersist=10m)
+SSHOPTS=(-o ControlMaster=auto -o "ControlPath=$HOME/.ssh/cm-krunk-%r@%h-%p" -o ControlPersist=10m)
 ssh() { command ssh "${SSHOPTS[@]}" "$@"; }
 scp() { command scp "${SSHOPTS[@]}" "$@"; }
-DIR='C:\pipeline\lightbrowser'
-FWD='C:/pipeline/lightbrowser'
+DIR='C:\pipeline\krunk'
+FWD='C:/pipeline/krunk'
 APP="$DIR\\app"
 
 run_ps1() { # local file
   scp -q "$1" "$VM:$FWD/task.ps1"
-  ssh "$VM" "Start-ScheduledTask -TaskName LightBrowserTask; Start-Sleep -Milliseconds 500;
-    \$t = 0; while ((Get-ScheduledTask -TaskName LightBrowserTask).State -eq 'Running' -and \$t -lt 120) { Start-Sleep -Milliseconds 250; \$t++ }" >/dev/null
+  ssh "$VM" "Start-ScheduledTask -TaskName KrunkTask; Start-Sleep -Milliseconds 500;
+    \$t = 0; while ((Get-ScheduledTask -TaskName KrunkTask).State -eq 'Running' -and \$t -lt 120) { Start-Sleep -Milliseconds 250; \$t++ }" >/dev/null
 }
 
 tmp=$(mktemp --suffix=.ps1)
@@ -41,19 +41,19 @@ case "${1:-}" in
     dist="$(dirname "$0")/../dist"
     # shellcheck source=/dev/null
     source "$(dirname "$0")/../cef.lock"
-    ssh "$VM" "Get-Process LightBrowser -ErrorAction SilentlyContinue | Stop-Process -Force" >/dev/null || true
+    ssh "$VM" "Get-Process Krunk -ErrorAction SilentlyContinue | Stop-Process -Force" >/dev/null || true
     have=$(ssh "$VM" "Get-Content -ErrorAction SilentlyContinue '$FWD/app/.cef-version'" | tr -d '\r' || true)
     if [ "$have" = "$CEF_VERSION" ]; then
-      for f in LightBrowser.dll LightBrowser.exe README.md SECURITY.md THIRD-PARTY-NOTICES.txt; do
-        scp -q "$dist/LightBrowser-win-x64/$f" "$VM:$FWD/app/$f"
+      for f in Krunk.dll Krunk.exe README.md SECURITY.md THIRD-PARTY-NOTICES.txt; do
+        scp -q "$dist/Krunk-win-x64/$f" "$VM:$FWD/app/$f"
       done
-      echo "deployed LightBrowser.dll (CEF $CEF_VERSION already installed)"
+      echo "deployed Krunk.dll (CEF $CEF_VERSION already installed)"
     else
-      scp -q "$dist/LightBrowser-win-x64.zip" "$VM:$FWD/LightBrowser-win-x64.zip"
+      scp -q "$dist/Krunk-win-x64.zip" "$VM:$FWD/Krunk-win-x64.zip"
       ssh "$VM" "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '$FWD/app';
-        Expand-Archive -Force '$FWD/LightBrowser-win-x64.zip' '$FWD/unpack';
-        Move-Item '$FWD/unpack/LightBrowser-win-x64' '$FWD/app'; Remove-Item -Recurse -Force '$FWD/unpack';
-        Remove-Item '$FWD/LightBrowser-win-x64.zip'; Set-Content '$FWD/app/.cef-version' '$CEF_VERSION'" >/dev/null
+        Expand-Archive -Force '$FWD/Krunk-win-x64.zip' '$FWD/unpack';
+        Move-Item '$FWD/unpack/Krunk-win-x64' '$FWD/app'; Remove-Item -Recurse -Force '$FWD/unpack';
+        Remove-Item '$FWD/Krunk-win-x64.zip'; Set-Content '$FWD/app/.cef-version' '$CEF_VERSION'" >/dev/null
       echo "deployed the full folder (CEF $CEF_VERSION)"
     fi ;;
   ps1) run_ps1 "$2" ;;
@@ -61,13 +61,13 @@ case "${1:-}" in
     shift
     args=""; for a in "$@"; do args+="'$a',"; done
     if [ -n "$args" ]; then argline="-ArgumentList @(${args%,})"; else argline=""; fi
-    printf 'Start-Process -FilePath "%s\\LightBrowser.exe" -WorkingDirectory "%s" %s\n' "$APP" "$APP" "$argline" > "$tmp"
+    printf 'Start-Process -FilePath "%s\\Krunk.exe" -WorkingDirectory "%s" %s\n' "$APP" "$APP" "$argline" > "$tmp"
     run_ps1 "$tmp" ;;
   stop)
     cat > "$tmp" <<'PS'
-Get-Process LightBrowser -ErrorAction SilentlyContinue | ForEach-Object { $_.CloseMainWindow() | Out-Null }
+Get-Process Krunk -ErrorAction SilentlyContinue | ForEach-Object { $_.CloseMainWindow() | Out-Null }
 Start-Sleep -Seconds 4
-Get-Process LightBrowser -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process Krunk -ErrorAction SilentlyContinue | Stop-Process -Force
 PS
     run_ps1 "$tmp" ;;
   shot)

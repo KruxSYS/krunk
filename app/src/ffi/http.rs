@@ -52,12 +52,12 @@ pub fn get(url: &str, max_bytes: usize, proxy: &ProxyMode, timeout_ms: i32) -> R
     unsafe {
         let session = match proxy {
             ProxyMode::System => check(
-                WinHttpOpen(w!("LightBrowser-FilterUpdate/1.0"), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, None, None, 0),
+                WinHttpOpen(w!("Krunk-FilterUpdate/1.0"), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, None, None, 0),
                 "WinHttpOpen",
             )?,
             ProxyMode::Named(p) => check(
                 WinHttpOpen(
-                    w!("LightBrowser-FilterUpdate/1.0"),
+                    w!("Krunk-FilterUpdate/1.0"),
                     WINHTTP_ACCESS_TYPE_NAMED_PROXY,
                     &HSTRING::from(p.as_str()),
                     w!("<local>"),

@@ -1,16 +1,16 @@
 [package]
 name = "app"
-description = "LightBrowser Windows host (CEF)"
+description = "Krunk Windows host (CEF)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 build = "build.rs"
 
-# LightBrowser.dll, loaded by LightBrowser.exe (CEF's renamed sandbox
+# Krunk.dll, loaded by Krunk.exe (CEF's renamed sandbox
 # bootstrap.exe) for the browser process and every subprocess.
 [lib]
-name = "LightBrowser"
+name = "Krunk"
 crate-type = ["cdylib"]
 path = "src/lib.rs"
 

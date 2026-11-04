@@ -1,4 +1,4 @@
-// LightBrowser popup: main menu, shield panel and password prompts.
+// Krunk popup: main menu, shield panel and password prompts.
 // The host decides what to show (`popup` event) and where; prompts echo the
 // tab id and origin they were raised for so the host can re-check them.
 (function () {
@@ -43,7 +43,7 @@
       item('Developer tools', 'F12', () => command('devTools')),
       sep(),
       item('Settings', '', () => openPage('settings')),
-      item('About LightBrowser', '', () => openPage('about')),
+      item('About Krunk', '', () => openPage('about')),
       item('Exit', '', () => { LB.post('quit'); }),
     ];
   }

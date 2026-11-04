@@ -562,7 +562,7 @@ impl View {
         // No parent: with one, CEF creates the DevTools window as a child
         // inside the main window.
         let window_info = WindowInfo { runtime_style: RuntimeStyle::ALLOY, ..Default::default() }
-            .set_as_popup(sys::HWND(std::ptr::null_mut()), "DevTools – LightBrowser");
+            .set_as_popup(sys::HWND(std::ptr::null_mut()), "DevTools – Krunk");
         let mut client = client::for_tool();
         h.show_dev_tools(Some(&window_info), Some(&mut client), Some(&BrowserSettings::default()), None);
     }

@@ -380,7 +380,7 @@ mod tests {
         assert_eq!(input_to_url("hello", DDG), "https://duckduckgo.com/?q=hello");
         assert_eq!(input_to_url("c++", DDG), "https://duckduckgo.com/?q=c%2B%2B");
         assert_eq!(input_to_url("version 1.2", DDG), "https://duckduckgo.com/?q=version+1.2");
-        assert_eq!(input_to_url("lb://settings", DDG), pages::Page::Settings.url());
+        assert_eq!(input_to_url("krunk://settings", DDG), pages::Page::Settings.url());
         assert_eq!(input_to_url("", DDG), pages::Page::NewTab.url());
     }
 
@@ -465,9 +465,7 @@ mod tests {
         let fail = |code| Some(LoadFailure::from_net_error(code));
         // ERR_CONNECTION_REFUSED: nothing listens on port 443.
         let page = https_only_fallback(http, fail(-102)).unwrap();
-        assert!(
-            page.starts_with("https://lightbrowser.invalid/https-only.html?url=http%3A%2F%2Fold.example%2Fa%3Fb%3D1")
-        );
+        assert!(page.starts_with("https://krunk.invalid/https-only.html?url=http%3A%2F%2Fold.example%2Fa%3Fb%3D1"));
         assert_eq!(pages::Page::from_url(&page), Some(pages::Page::HttpsOnly));
         // Certificate errors (name, date, authority), SSL protocol, timeouts, resets.
         for code in [-200, -201, -202, -107, -113, -118, -101, -324, -999] {

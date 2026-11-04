@@ -1,32 +1,32 @@
 # Manual test checklist (Windows 10/11 x64)
 
 Run these on a real Windows 10 or 11 x64 machine with the release folder
-`LightBrowser-win-x64` (from the zip). Sections 1–3 are the release smoke test. The remaining
+`Krunk-win-x64` (from the zip). Sections 1–3 are the release smoke test. The remaining
 sections cover each feature in detail. Last full pass: 2026-11-04 on a Windows 11 Pro VM (build
 26200), CEF 156.0.15 / Chromium 156.0.8078.80, driven with `scripts/vm.sh` (screenshots in the
 pipeline workspace under `screenshots/cef/`).
 
 ## 1. Install and first run
-1. Check the hash: `Get-FileHash LightBrowser-win-x64.zip` matches `SHA256SUMS`; extract it.
+1. Check the hash: `Get-FileHash Krunk-win-x64.zip` matches `SHA256SUMS`; extract it.
 2. **Missing engine files:** rename `libcef.dll` (or delete `locales\en-US.pak`) and start
-   `LightBrowser.exe`. Expected: a "LightBrowser cannot start because some of its files are
+   `Krunk.exe`. Expected: a "Krunk cannot start because some of its files are
    missing or damaged" message box that names the file. No crash and no window. Rename it
    back.
 3. **First start:**
    - The window opens with one new tab and the address bar focused.
-   - `%LOCALAPPDATA%\LightBrowser\` is created with `browser.db`, `engine.dat`, `profile\`
-     (with `default\`), `lightbrowser.log` and `cef.log`. No `debug.log` appears next to the exe.
-   - `lb://about` shows Chromium 156.0.8078.80 and CEF 156.0.15.
+   - `%LOCALAPPDATA%\Krunk\` is created with `browser.db`, `engine.dat`, `profile\`
+     (with `default\`), `krunk.log` and `cef.log`. No `debug.log` appears next to the exe.
+   - `krunk://about` shows Chromium 156.0.8078.80 and CEF 156.0.15.
    - The log shows "engine initialized: CEF …, Chromium …" and "filter engine loaded from
      cache" (on the second start).
-4. **Processes and engine:** all processes are `LightBrowser.exe` (the browser plus the
+4. **Processes and engine:** all processes are `Krunk.exe` (the browser plus the
    engine's subprocesses). There are no services and no scheduled tasks.
    - `scripts/vm-engine-check.ps1`: every process has `libcef.dll`; none has
      `WebView2Loader.dll` or `EmbeddedBrowserWebView.dll`;
-     `msedgewebview2_started_by_lightbrowser=0`.
+     `msedgewebview2_started_by_krunk=0`.
    - `scripts/vm-sandbox.ps1`: every renderer is Untrusted (or Low) with a restricted token,
      and no process has `--no-sandbox`.
-   - Task Manager → Details → Description shows "LightBrowser web browser".
+   - Task Manager → Details → Description shows "Krunk web browser".
 5. **Upgrade from the WebView2 version:** with an old data folder (with `profile\EBWebView`), the
    settings, history, bookmarks, session and vault are all there. `profile\EBWebView` is left as
    it was.
@@ -41,8 +41,8 @@ workspace under `screenshots/final/`.
 | `final-tabs` | 10+ tabs open, a bookmarked page (filled star), bookmarks bar |
 | `final-shield` | A news site (theguardian.com, about 13 blocked), then click the shield: popover with the count and "Allow ads on this site" |
 | `final-save-password` | `https://the-internet.herokuapp.com/login`, sign in as tomsmith / SuperSecretPassword!: "Save password?" popup |
-| `final-passwords` | After "Save" and creating the vault: the entry on lb://passwords, masked |
-| `final-settings` | lb://settings |
+| `final-passwords` | After "Save" and creating the vault: the entry on krunk://passwords, masked |
+| `final-settings` | krunk://settings |
 | `final-history` | Ctrl+H: today's visits with favicons |
 | `final-bookmarks` | Ctrl+Shift+O: the bookmarks bar folder with entries |
 
@@ -74,10 +74,10 @@ The 2026-11-04 figures are in the README under "Memory".
 8. **Address bar:**
    - `example.com` → `https://example.com/`.
    - `rust borrow checker` → a DuckDuckGo search.
-   - `lb://history` opens History.
+   - `krunk://history` opens History.
    - `javascript:alert(1)` typed there becomes a search; it is never run.
-9. A web page can't navigate to `https://lightbrowser.invalid/settings.html` or
-   `https://shell.lightbrowser.invalid/shell.html`. The navigation is blocked, and the log has
+9. A web page can't navigate to `https://krunk.invalid/settings.html` or
+   `https://shell.krunk.invalid/shell.html`. The navigation is blocked, and the log has
    "blocked navigation to an internal or unsupported URL".
 10. Every shortcut in the README's Usage table works with focus in the page, in the address
     bar, and after clicking the title bar.
@@ -86,7 +86,7 @@ The 2026-11-04 figures are in the README under "Memory".
 1. At 100 % display scaling, open the ⋮ menu. It appears directly under the button, right-aligned,
    fully on screen, with all items visible (down to "Exit").
 2. Set Windows display scaling to 150 % (Settings → System → Display → Scale) and restart
-   LightBrowser. Repeat step 1: the popup is still aligned under the button and is not cut off.
+   Krunk. Repeat step 1: the popup is still aligned under the button and is not cut off.
 3. Put the window near the right and bottom edges of the screen and open the menu. The popup
    stays inside the monitor work area. Repeat on a second monitor if you have one, including a
    monitor to the left of the primary one.
@@ -117,7 +117,7 @@ The 2026-11-04 figures are in the README under "Memory".
    (the tracking parameter is removed).
 3. Open a private tab (Ctrl+Shift+N) and visit `https://www.mozilla.org/`. It does **not**
    appear in History.
-4. Built-in pages (lb://settings, the new-tab page) never appear in History.
+4. Built-in pages (krunk://settings, the new-tab page) never appear in History.
 5. Type in the search box: results filter as you type. Hover a row, click ×, and the visit
    disappears.
 6. Choose "Last hour" and click Delete, then confirm. The visits from the last hour are gone.
@@ -150,7 +150,7 @@ The 2026-11-04 figures are in the README under "Memory".
    tile: it disappears and does not come back.
 3. Network check:
    - Open DevTools on the new-tab page (F12 on that tab → Network) and reload it.
-   - Every request goes to `lightbrowser.invalid` (HTML, CSS, JS, `/favicon?host=`). None goes
+   - Every request goes to `krunk.invalid` (HTML, CSS, JS, `/favicon?host=`). None goes
      to the internet.
 4. The search box uses the configured search engine (DuckDuckGo by default).
 
@@ -172,7 +172,7 @@ The 2026-11-04 figures are in the README under "Memory".
 4. **Print and DevTools:** Ctrl+P opens the browser print dialog, and F12 opens DevTools for the
    page.
 5. **Session restore:**
-   - Open 5 tabs, then close the window. Start LightBrowser again: the 5 tabs come back with
+   - Open 5 tabs, then close the window. Start Krunk again: the 5 tabs come back with
      their titles.
    - Only the active tab loads. The others are dimmed and load when clicked.
    - Private tabs are not restored.
@@ -181,8 +181,8 @@ The 2026-11-04 figures are in the README under "Memory".
 
 ## Ad and tracker blocking (M5)
 0. **Updater smoke test (no window):**
-   - Run `LightBrowser.exe --update-filters` in a terminal. The exit code is 0.
-   - `%LOCALAPPDATA%\LightBrowser\lightbrowser.log` ends with `filter update: downloaded [...]`
+   - Run `Krunk.exe --update-filters` in a terminal. The exit code is 0.
+   - `%LOCALAPPDATA%\Krunk\krunk.log` ends with `filter update: downloaded [...]`
      and `filter self-test: ... decisions OK`.
    - `engine.dat` and `filters\*.txt` exist.
 1. **News-site counter:**
@@ -202,7 +202,7 @@ The 2026-11-04 figures are in the README under "Memory".
    - Open DevTools (F12) → Network on the news site and filter for `doubleclick` or
      `googlesyndication`.
    - Those requests show as failed (cancelled).
-   - `lightbrowser.log` has "tab N: K requests blocked on this page".
+   - `krunk.log` has "tab N: K requests blocked on this page".
    - The page's own document request is never blocked, even when you open an ad link directly
      (for example a `https://ad.doubleclick.net/...` link in a new tab still loads).
 4. **Cosmetic filtering:**
@@ -246,7 +246,7 @@ The 2026-11-04 figures are in the README under "Memory".
 ## Password vault (M6)
 1. **Setup:**
    - Open ⋮ → Passwords. Create a vault; mismatched or short passwords are refused.
-   - `%LOCALAPPDATA%\LightBrowser\vault.json` appears. Open it in Notepad: no usernames,
+   - `%LOCALAPPDATA%\Krunk\vault.json` appears. Open it in Notepad: no usernames,
      sites or passwords are readable, only base64, and `"wrap": "dpapi"`.
 2. **Save prompt:**
    - Log in on `https://github.com/login` with a test account. "Save password?" appears under
@@ -296,15 +296,15 @@ The 2026-11-04 figures are in the README under "Memory".
       change it. An error is shown, the old password still works, and `vault.json` is
       unchanged. Delete the folder afterwards.
 12. **Copied vault on another account (DPAPI):**
-    - Copy `vault.json` into `%LOCALAPPDATA%\LightBrowser\` of a *different* Windows user
-      account (or another PC) that also has LightBrowser.
+    - Copy `vault.json` into `%LOCALAPPDATA%\Krunk\` of a *different* Windows user
+      account (or another PC) that also has Krunk.
     - Unlocking with the **correct** master password fails with "This vault can only be opened
       by the Windows account (and PC) that created it."
-13. **Leak check:** search `lightbrowser.log` and `browser.db` (DB Browser for SQLite, or
+13. **Leak check:** search `krunk.log` and `browser.db` (DB Browser for SQLite, or
     `findstr /s /i` over the data dir) for the test password: there are no hits.
 
 ## Settings (M7)
-Open ⋮ → Settings, or type `lb://settings` in the address bar.
+Open ⋮ → Settings, or type `krunk://settings` in the address bar.
 1. **Search engine:** choose Google: address-bar searches go to Google. Choose Custom with
    `https://search.example/?q=` (no `%s`): an inline error appears and the setting is not saved.
    Add `%s` and searches use the template.
@@ -313,7 +313,7 @@ Open ⋮ → Settings, or type `lb://settings` in the address bar.
    - A valid homepage opens on the next start.
    - "Continue where you left off" restores the tabs; only the active one loads.
 3. **Hardware acceleration:** untick it and the "Restart required" banner appears. Click
-   "Restart now": the browser closes and reopens with the same tabs. `lb://about` → "Browser
+   "Restart now": the browser closes and reopens with the same tabs. `krunk://about` → "Browser
    arguments" now contains `--disable-gpu`.
 4. **Sleep and discard:** sleep 0 is accepted (never). Discard enabled with a time ≤ the sleep time
    gives an inline error. Values above 1440 give an error.
@@ -365,18 +365,18 @@ Open ⋮ → Settings, or type `lb://settings` in the address bar.
     "Show" (after the master password) displays the note under the username for 20 s, together
     with the password.
 14. **Reset:** "Reset settings…" asks first, in an in-page dialog (no native
-    "lightbrowser.invalid says" box; the same applies to every delete prompt on the built-in
+    "krunk.invalid says" box; the same applies to every delete prompt on the built-in
     pages). After "Reset", every value is back to its default, and the
     restart banner appears if restart-only values were different.
-15. **Isolation:** only `lb://settings` can change settings. In DevTools on any website,
+15. **Isolation:** only `krunk://settings` can change settings. In DevTools on any website,
     `__lbHost.postMessage({cmd:"saveSettings",settings:{}})` has no effect.
 
 ## Memory (M8)
 Use `scripts/vm-mem.ps1` (PowerShell) to list the process tree with each process's type and
 working set.
-1. **Switches at runtime:** `lb://about` → "Browser arguments" contains `--no-pings`,
+1. **Switches at runtime:** `krunk://about` → "Browser arguments" contains `--no-pings`,
    `--disable-domain-reliability`, `--disable-background-networking`,
-   `--disable-component-update`, the `--host-resolver-rules` for `lightbrowser.invalid`, and
+   `--disable-component-update`, the `--host-resolver-rules` for `krunk.invalid`, and
    `--disable-features=AutofillServerCommunication,…,AimServerRequestOnStartupEnabled`.
 2. **Lazy restore:**
    - Set "Continue where you left off", open 5 sites, close and start again.
@@ -384,15 +384,15 @@ working set.
      shows 3 renderers (the shell, the active tab and one spare).
    - Click one restored tab: it loads, and there is one renderer more.
 3. **1-tab baseline:** start with `--mem-report` and one new tab. Wait 10 s and note the last
-   `tick:` line of `%LOCALAPPDATA%\LightBrowser\memory-report.log`
+   `tick:` line of `%LOCALAPPDATA%\Krunk\memory-report.log`
    (about 355 MB working set, 3 renderers).
 4. **Sleep** (test scale):
    - In Settings, turn on "Discard background tabs".
    - Start with `--sleep-test-seconds=90 --mem-report` (sleep 90 s, second stage 90 s later,
-     discard 360 s after the tab was last active). `lightbrowser.log` has "tab sleep test mode".
+     discard 360 s after the tab was last active). `krunk.log` has "tab sleep test mode".
    - Open 10 real sites, one per tab. Note the `tick:` line (about 3 GB working set,
      18 renderers).
-   - Do not touch the browser for about 3 minutes. Background tabs dim. `lightbrowser.log` has
+   - Do not touch the browser for about 3 minutes. Background tabs dim. `krunk.log` has
      "tab N: low memory", then "tab N: asleep (second stage)" for each background tab. The
      mem-report shows `asleep=10 suspended=10` and about 11 % less working set.
    - Never slept:
@@ -428,11 +428,11 @@ working set.
    pages.
 3. Expected in the proxy log: only the filter-list hosts (`easylist.to`,
    `ublockorigin.github.io`, on a fresh profile) and the pages you loaded. No `*.google.com`,
-   `*.googleapis.com` or `*.gvt1.com` host, and no `lightbrowser.invalid` host.
+   `*.googleapis.com` or `*.gvt1.com` host, and no `krunk.invalid` host.
 4. With "Download engine security components" on (restart), `update.googleapis.com` and
    `edgedl.me.gvt1.com` appear, and nothing else from Google.
 5. Open `https://stackoverflow.com/`: no Windows Firewall prompt appears, and
-   `Get-NetUDPEndpoint` shows no LightBrowser socket on port 5353.
+   `Get-NetUDPEndpoint` shows no Krunk socket on port 5353.
 
 ## Verification recipes (final pass)
 These are the methods used on the Windows 11 VM (`scripts/vm.sh`). The test server, test pages
@@ -442,7 +442,7 @@ HTTP/CONNECT proxy on 127.0.0.1:8888.
 1. **Cross-origin iframe never filled:**
    - Serve `login.html` on `http://127.0.0.1:8081`. It has a login form plus an iframe of
      `http://localhost:8082/frame.html`, which has a login form of its own.
-   - Save a login for each origin on `lb://passwords`.
+   - Save a login for each origin on `krunk://passwords`.
    - On the top page: nothing is filled on load. The key icon offers only the 127.0.0.1:8081
      login, and filling it leaves the iframe's fields empty.
    - Submitting a login inside the iframe gives no "Save password?".
@@ -452,7 +452,7 @@ HTTP/CONNECT proxy on 127.0.0.1:8888.
      "vault locked (Windows session locked)".
    - Unlock, then sleep the PC (Start → Power → Sleep) and wake it: "vault locked (system suspend)".
    - Without locking the session (VM): post `WM_WTSSESSION_CHANGE` (0x2B1, wParam 7) and
-     `WM_POWERBROADCAST` (0x218, wParam 4) to the `LightBrowserWindow` window from a helper in the
+     `WM_POWERBROADCAST` (0x218, wParam 4) to the `KrunkWindow` window from a helper in the
      same session. The log lines are the same.
 3. **Cosmetic filtering:**
    - On `https://edition.cnn.com/` (rules `cnn.com##.stack__ads`, `##.zone__ads`,
@@ -475,13 +475,13 @@ HTTP/CONNECT proxy on 127.0.0.1:8888.
    - The log at start says `filter lists: last checked X h ago; next check in Y h`. A relaunch
      within 24 h downloads nothing: `state.json` `lastCheckMs` and the list files are unchanged
      after more than 60 s.
-   - Subtract 25 h from `lastCheckMs` in `%LOCALAPPDATA%\LightBrowser\filters\state.json` and
+   - Subtract 25 h from `lastCheckMs` in `%LOCALAPPDATA%\Krunk\filters\state.json` and
      start: about 60 s later the log says `update due; updating`, then
      `filter lists checked; … next check in 24.0 h`.
 6. **New-tab page makes no network requests:** on the new-tab page, open DevTools → Network,
-   press Ctrl+R, and filter `-domain:lightbrowser.invalid`. Expected "0 / N requests".
+   press Ctrl+R, and filter `-domain:krunk.invalid`. Expected "0 / N requests".
 7. **WebRTC and the firewall:** open a Stack Overflow question. No "Windows Firewall has blocked
-   some features" prompt appears, and `Get-NetUDPEndpoint` shows no LightBrowser socket on
+   some features" prompt appears, and `Get-NetUDPEndpoint` shows no Krunk socket on
    UDP 5353 (no mDNS responder).
 8. **Download folder:** Settings → Downloads → "Change…" opens a native folder picker. After
    picking a folder, the next download is saved there.
@@ -493,6 +493,6 @@ HTTP/CONNECT proxy on 127.0.0.1:8888.
       browser arguments contain `--proxy-server=127.0.0.1:8888`.
     - The proxy log shows `CONNECT host:443` for every site visited.
     - With the proxy stopped, pages fail with a connection error.
-    - No `CONNECT shell.lightbrowser.invalid` or `lightbrowser.invalid` ever appears in the
+    - No `CONNECT shell.krunk.invalid` or `krunk.invalid` ever appears in the
       proxy log.
 

@@ -228,26 +228,26 @@ mod tests {
 
     #[test]
     fn resolves_per_origin() {
-        let a = resolve("https://shell.lightbrowser.invalid/shell.html").unwrap();
+        let a = resolve("https://shell.krunk.invalid/shell.html").unwrap();
         assert_eq!((a.host, a.key), (Host::Shell, "shell/shell.html"));
         assert!(a.mime.starts_with("text/html"));
-        let a = resolve("https://lightbrowser.invalid/newtab.html?x#y").unwrap();
+        let a = resolve("https://krunk.invalid/newtab.html?x#y").unwrap();
         assert_eq!(a.key, "pages/newtab.html");
-        assert_eq!(resolve("https://lightbrowser.invalid/shared/common.css").unwrap().key, "shared/common.css");
-        assert_eq!(resolve("https://shell.lightbrowser.invalid/shared/common.css").unwrap().key, "shared/common.css");
+        assert_eq!(resolve("https://krunk.invalid/shared/common.css").unwrap().key, "shared/common.css");
+        assert_eq!(resolve("https://shell.krunk.invalid/shared/common.css").unwrap().key, "shared/common.css");
         // Cross-origin access to the other host's files is impossible.
-        assert!(resolve("https://lightbrowser.invalid/shell.html").is_none());
-        assert!(resolve("https://shell.lightbrowser.invalid/newtab.html").is_none());
+        assert!(resolve("https://krunk.invalid/shell.html").is_none());
+        assert!(resolve("https://shell.krunk.invalid/newtab.html").is_none());
         for bad in [
-            "https://lightbrowser.invalid/../shell/shell.html",
-            "https://lightbrowser.invalid/%2e%2e/shell/shell.html",
-            "https://lightbrowser.invalid/shared/..%2fshell.html",
-            "https://lightbrowser.invalid/",
-            "https://lightbrowser.invalid/dev/mock-host.js",
-            "https://lightbrowser.invalid/inject/gpc.js",
-            "https://shell.lightbrowser.invalid/inject/page-tokens.js",
-            "https://lightbrowser.invalid:8443/newtab.html",
-            "http://lightbrowser.invalid/newtab.html",
+            "https://krunk.invalid/../shell/shell.html",
+            "https://krunk.invalid/%2e%2e/shell/shell.html",
+            "https://krunk.invalid/shared/..%2fshell.html",
+            "https://krunk.invalid/",
+            "https://krunk.invalid/dev/mock-host.js",
+            "https://krunk.invalid/inject/gpc.js",
+            "https://shell.krunk.invalid/inject/page-tokens.js",
+            "https://krunk.invalid:8443/newtab.html",
+            "http://krunk.invalid/newtab.html",
             "https://evil.example/newtab.html",
         ] {
             assert!(resolve(bad).is_none(), "{bad}");
@@ -256,23 +256,19 @@ mod tests {
 
     #[test]
     fn internal_origins_only_from_themselves() {
-        let page = "https://lightbrowser.invalid/history.html";
-        let fav = "https://lightbrowser.invalid/favicon?host=bank.example";
-        let shell = "https://shell.lightbrowser.invalid/shell.js";
+        let page = "https://krunk.invalid/history.html";
+        let fav = "https://krunk.invalid/favicon?host=bank.example";
+        let shell = "https://shell.krunk.invalid/shell.js";
         // Built-in pages load their own files and favicons.
-        assert!(internal_request_allowed(fav, "https://lightbrowser.invalid", false));
-        assert!(internal_request_allowed(
-            "https://lightbrowser.invalid/shared/page.css",
-            "https://lightbrowser.invalid/",
-            false
-        ));
+        assert!(internal_request_allowed(fav, "https://krunk.invalid", false));
+        assert!(internal_request_allowed("https://krunk.invalid/shared/page.css", "https://krunk.invalid/", false));
         // Web pages cannot probe or embed them, nor anything on the shell origin.
         assert!(!internal_request_allowed(fav, "https://evil.example", false));
         assert!(!internal_request_allowed(page, "https://evil.example", false), "iframe or fetch");
         assert!(!internal_request_allowed(fav, "", false));
         assert!(!internal_request_allowed(fav, "null", false));
-        assert!(!internal_request_allowed(shell, "https://lightbrowser.invalid", false));
-        assert!(!internal_request_allowed(shell, "https://shell.lightbrowser.invalid", false), "no shell in tabs");
+        assert!(!internal_request_allowed(shell, "https://krunk.invalid", false));
+        assert!(!internal_request_allowed(shell, "https://shell.krunk.invalid", false), "no shell in tabs");
         // Top-level navigations are the navigation policy's job.
         assert!(internal_request_allowed(page, "", true));
         // Everything else is untouched.
@@ -282,7 +278,7 @@ mod tests {
 
     #[test]
     fn headers_include_csp() {
-        let a = resolve("https://lightbrowser.invalid/newtab.html").unwrap();
+        let a = resolve("https://krunk.invalid/newtab.html").unwrap();
         let h = response_headers(&a);
         assert!(h.contains("Content-Security-Policy: default-src 'none'"));
         assert!(h.contains("frame-ancestors 'none'"));
@@ -305,16 +301,13 @@ mod tests {
     #[test]
     fn favicon_endpoint() {
         assert_eq!(favicon_url("a.example"), "/favicon?host=a.example");
-        assert_eq!(
-            favicon_request("https://lightbrowser.invalid/favicon?host=A.Example").as_deref(),
-            Some("a.example")
-        );
-        assert_eq!(favicon_request("https://shell.lightbrowser.invalid/favicon?host=x.org").as_deref(), Some("x.org"));
-        assert_eq!(favicon_request("https://lightbrowser.invalid/favicon?host=../../etc"), None);
-        assert_eq!(favicon_request("https://lightbrowser.invalid/favicon?host="), None);
-        assert_eq!(favicon_request("https://lightbrowser.invalid/favicon"), None);
+        assert_eq!(favicon_request("https://krunk.invalid/favicon?host=A.Example").as_deref(), Some("a.example"));
+        assert_eq!(favicon_request("https://shell.krunk.invalid/favicon?host=x.org").as_deref(), Some("x.org"));
+        assert_eq!(favicon_request("https://krunk.invalid/favicon?host=../../etc"), None);
+        assert_eq!(favicon_request("https://krunk.invalid/favicon?host="), None);
+        assert_eq!(favicon_request("https://krunk.invalid/favicon"), None);
         assert_eq!(favicon_request("https://evil.example/favicon?host=a.com"), None);
-        assert_eq!(favicon_request("https://lightbrowser.invalid/favicon.ico?host=a.com"), None);
+        assert_eq!(favicon_request("https://krunk.invalid/favicon.ico?host=a.com"), None);
     }
 
     #[test]
@@ -327,8 +320,8 @@ mod tests {
 
     #[test]
     fn navigation_policy() {
-        let shell = "https://shell.lightbrowser.invalid/shell.html";
-        let popup = "https://shell.lightbrowser.invalid/popup.html";
+        let shell = "https://shell.krunk.invalid/shell.html";
+        let popup = "https://shell.krunk.invalid/popup.html";
         let settings = Page::Settings.url();
         assert!(allow_navigation(Channel::Shell, "", shell, true));
         assert!(!allow_navigation(Channel::Shell, shell, "https://evil.example/", false));
@@ -341,7 +334,7 @@ mod tests {
         assert!(!allow_navigation(Channel::Tab, "https://a.example/", &settings, false), "page-initiated");
         assert!(allow_navigation(Channel::Tab, &Page::NewTab.url(), &settings, false), "built-in links");
         assert!(allow_navigation(Channel::Tab, "", &Page::NewTab.url(), false));
-        assert!(!allow_navigation(Channel::Tab, "", "https://lightbrowser.invalid/evil.html", true));
+        assert!(!allow_navigation(Channel::Tab, "", "https://krunk.invalid/evil.html", true));
         assert!(allow_navigation(Channel::Tab, &settings, "https://a.example/", false));
         assert!(!allow_navigation(Channel::Tab, "https://a.example/", "file:///C:/Windows/win.ini", false));
         assert!(allow_navigation(Channel::Tab, "", "file:///C:/x.html", true));

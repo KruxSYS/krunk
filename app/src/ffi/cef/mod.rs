@@ -68,7 +68,7 @@ thread_local! {
     static KEEP: RefCell<Option<Box<dyn Any>>> = RefCell::new(None);
     /// Answers requests to the internal origins (embedded UI, cached favicons).
     static INTERNAL: RefCell<Option<InternalServer>> = RefCell::new(None);
-    /// A second `LightBrowser.exe` was started: its command-line arguments.
+    /// A second `Krunk.exe` was started: its command-line arguments.
     static RELAUNCH: RefCell<Option<RelaunchHandler>> = RefCell::new(None);
 }
 
@@ -82,7 +82,7 @@ pub fn run_engine(config: EngineConfig, start: Start) -> Result<i32, String> {
         no_sandbox: 0,
         multi_threaded_message_loop: 0,
         // Only our own switches (App::on_before_command_line_processing)
-        // configure the engine; nothing typed on LightBrowser.exe's command
+        // configure the engine; nothing typed on Krunk.exe's command
         // line can (e.g. --no-sandbox or --remote-debugging-port).
         command_line_args_disabled: 1,
         root_cache_path: CefString::from(config.root_cache.to_string_lossy().as_ref()),
@@ -98,7 +98,7 @@ pub fn run_engine(config: EngineConfig, start: Start) -> Result<i32, String> {
     if initialize(Some(&main_args), Some(&settings), Some(&mut app), sandbox_info) != 1 {
         let code = get_exit_code();
         // 24 = CEF_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED: another
-        // LightBrowser is running with this profile and was told to open a
+        // Krunk is running with this profile and was told to open a
         // window; this process just exits.
         if code == 24 {
             info!("handed over to the running instance");
@@ -138,7 +138,7 @@ pub fn set_internal_server(f: impl Fn(&str) -> InternalResponse + 'static) {
     INTERNAL.with(|i| *i.borrow_mut() = Some(Rc::new(f)));
 }
 
-/// Called with the arguments of a second `LightBrowser.exe` started while
+/// Called with the arguments of a second `Krunk.exe` started while
 /// this one runs (it exits after handing over).
 pub fn on_relaunch(f: impl Fn(Vec<String>) + 'static) {
     RELAUNCH.with(|r| *r.borrow_mut() = Some(Rc::new(f)));

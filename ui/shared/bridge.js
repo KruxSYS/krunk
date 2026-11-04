@@ -1,4 +1,4 @@
-// Message bridge between LightBrowser's built-in UI and the Rust host.
+// Message bridge between Krunk's built-in UI and the Rust host.
 // Requests: LB.post(cmd, args) fire-and-forget, LB.request(cmd, args) -> Promise.
 // Events: LB.on(eventName, handler).
 (function () {

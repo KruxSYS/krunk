@@ -1,9 +1,9 @@
-# Searches every file under LightBrowser's data dir (engine profile included)
+# Searches every file under Krunk's data dir (engine profile included)
 # for the given strings, as ASCII and UTF-16LE. Use after saving a test login
 # to check that no password or master password is written in plaintext.
 #   powershell -NoProfile -ExecutionPolicy Bypass -File vm-leak-scan.ps1 -Needles 'pw1','master pw'
 param([Parameter(Mandatory)][string[]]$Needles)
-$root = "$env:LOCALAPPDATA\LightBrowser"
+$root = "$env:LOCALAPPDATA\Krunk"
 $latin1 = [Text.Encoding]::GetEncoding(28591)
 $hits = 0; $scanned = 0; $bytes = 0
 foreach ($f in Get-ChildItem $root -Recurse -File -ErrorAction SilentlyContinue) {

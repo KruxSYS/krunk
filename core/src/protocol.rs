@@ -760,7 +760,7 @@ pub fn parse_content(json: &str) -> Result<ContentMessage, ProtocolError> {
 pub struct TabInfo {
     pub id: u32,
     pub title: String,
-    /// Address-bar text (built-in pages shown as `lb://...`).
+    /// Address-bar text (built-in pages shown as `krunk://...`).
     pub url: String,
     /// `data:` URL of the favicon, if any.
     pub favicon: Option<String>,
@@ -891,8 +891,8 @@ impl Event {
 mod tests {
     use super::*;
 
-    const SHELL: &str = "https://shell.lightbrowser.invalid/shell.html";
-    const POPUP: &str = "https://shell.lightbrowser.invalid/popup.html";
+    const SHELL: &str = "https://shell.krunk.invalid/shell.html";
+    const POPUP: &str = "https://shell.krunk.invalid/popup.html";
 
     #[test]
     fn parses_shell_commands() {
@@ -957,12 +957,12 @@ mod tests {
         assert_eq!(privileged(Channel::Shell, POPUP), None);
         assert_eq!(privileged(Channel::Popup, SHELL), None);
         for bad in [
-            "https://shell.lightbrowser.invalid:8443/shell.html",     // port
-            "http://shell.lightbrowser.invalid/shell.html",           // scheme
-            "https://x.shell.lightbrowser.invalid/shell.html",        // subdomain
-            "https://shell.lightbrowser.invalid.evil.com/shell.html", // look-alike suffix
-            "https://shell-lightbrowser.invalid/shell.html",          // look-alike host
-            "https://lightbrowser.invalid/shell.html",                // pages origin
+            "https://shell.krunk.invalid:8443/shell.html",     // port
+            "http://shell.krunk.invalid/shell.html",           // scheme
+            "https://x.shell.krunk.invalid/shell.html",        // subdomain
+            "https://shell.krunk.invalid.evil.com/shell.html", // look-alike suffix
+            "https://shell-krunk.invalid/shell.html",          // look-alike host
+            "https://krunk.invalid/shell.html",                // pages origin
             "https://evil.example/shell.html",
             "data:text/html,<script>",
             "about:blank",
@@ -982,20 +982,17 @@ mod tests {
 
     #[test]
     fn origin_checks_tabs() {
+        assert_eq!(privileged(Channel::Tab, "https://krunk.invalid/settings.html"), Some(Sender::Page(Page::Settings)));
         assert_eq!(
-            privileged(Channel::Tab, "https://lightbrowser.invalid/settings.html"),
-            Some(Sender::Page(Page::Settings))
-        );
-        assert_eq!(
-            privileged(Channel::Tab, "https://lightbrowser.invalid/history.html?q=x#y"),
+            privileged(Channel::Tab, "https://krunk.invalid/history.html?q=x#y"),
             Some(Sender::Page(Page::History))
         );
         for bad in [
-            "https://lightbrowser.invalid:444/settings.html",
-            "http://lightbrowser.invalid/settings.html",
-            "https://www.lightbrowser.invalid/settings.html",
-            "https://lightbrowser.invalid.evil.com/settings.html",
-            "https://lightbrowser.invalid/unknown.html",
+            "https://krunk.invalid:444/settings.html",
+            "http://krunk.invalid/settings.html",
+            "https://www.krunk.invalid/settings.html",
+            "https://krunk.invalid.evil.com/settings.html",
+            "https://krunk.invalid/unknown.html",
             SHELL, // a tab can never act as the shell or popup
             POPUP,
         ] {
@@ -1007,11 +1004,11 @@ mod tests {
             Ok(Source::Web { origin: "https://bank.example:8443".into() })
         );
         assert!(matches!(
-            classify(Channel::Tab, "https://lightbrowser.invalid.evil.com/settings.html", true),
+            classify(Channel::Tab, "https://krunk.invalid.evil.com/settings.html", true),
             Ok(Source::Web { .. })
         ));
         // Our origins on unknown paths, opaque origins and sub-frames are rejected.
-        assert_eq!(classify(Channel::Tab, "https://lightbrowser.invalid/x.html", true), Err(ProtocolError::Forbidden));
+        assert_eq!(classify(Channel::Tab, "https://krunk.invalid/x.html", true), Err(ProtocolError::Forbidden));
         assert_eq!(classify(Channel::Tab, "data:text/html,x", true), Err(ProtocolError::Forbidden));
         assert_eq!(classify(Channel::Tab, "file:///C:/x.html", true), Err(ProtocolError::Forbidden));
         assert_eq!(classify(Channel::Tab, "https://bank.example/", false), Err(ProtocolError::Forbidden));
@@ -1032,8 +1029,8 @@ mod tests {
             forbidden(ch, "devtools://devtools/bundled/devtools_app.html", true);
             forbidden(ch, "data:text/html,<script>x</script>", true);
             // blob: URLs carry our origin but are not our documents.
-            forbidden(ch, "blob:https://shell.lightbrowser.invalid/0b1c-uuid", true);
-            forbidden(ch, "blob:https://lightbrowser.invalid/0b1c-uuid", true);
+            forbidden(ch, "blob:https://shell.krunk.invalid/0b1c-uuid", true);
+            forbidden(ch, "blob:https://krunk.invalid/0b1c-uuid", true);
         }
         // The shell document in a sub-frame (is_main false) is never privileged.
         forbidden(Channel::Shell, SHELL, false);
@@ -1334,7 +1331,7 @@ mod tests {
                 tabs: vec![TabInfo {
                     id: 1,
                     title: "T".into(),
-                    url: "lb://settings".into(),
+                    url: "krunk://settings".into(),
                     favicon: Some("data:image/png;base64,AA".into()),
                     loading: true,
                     private: true,

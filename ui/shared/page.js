@@ -60,7 +60,7 @@
   }
 
   // In-page replacements for confirm()/prompt(): the native dialogs show the
-  // internal origin ("lightbrowser.invalid says") and block the page.
+  // internal origin ("krunk.invalid says") and block the page.
   function dialog(message, opts) {
     return new Promise(function (resolve) {
       const input = opts.input ? el('input', { type: 'text', id: 'lb-dialog-input', 'aria-label': message }) : null;

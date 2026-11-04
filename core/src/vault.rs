@@ -29,6 +29,8 @@ const FORMAT: u32 = 1;
 const KEY_LEN: usize = 32;
 const NONCE_LEN: usize = 24;
 const SALT_LEN: usize = 16;
+// The browser's name before the rename to Krunk. Part of the vault format:
+// changing it would make every existing vault fail to unlock.
 const CHECK_PLAINTEXT: &[u8] = b"LightBrowser vault key check v1";
 const AAD_CHECK: &[u8] = b"lb-vault:check";
 const AAD_VAULT_KEY: &[u8] = b"lb-vault:vault-key";

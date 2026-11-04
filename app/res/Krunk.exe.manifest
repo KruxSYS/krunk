@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<!-- Embedded into LightBrowser.exe (CEF's bootstrap.exe) by tools/pebrand.
-     CEF's own manifest, plus LightBrowser's identity, per-monitor DPI awareness and long paths. -->
+<!-- Embedded into Krunk.exe (CEF's bootstrap.exe) by tools/pebrand.
+     CEF's own manifest, plus Krunk's identity, per-monitor DPI awareness and long paths. -->
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <assemblyIdentity type="win32" name="LightBrowser" version="0.1.0.0" processorArchitecture="amd64"/>
-  <description>LightBrowser</description>
+  <assemblyIdentity type="win32" name="Krunk" version="@VERSION@" processorArchitecture="amd64"/>
+  <description>Krunk</description>
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
     <security>
       <requestedPrivileges>

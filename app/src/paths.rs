@@ -1,22 +1,26 @@
-//! Locations of the browser's data under `%LOCALAPPDATA%\LightBrowser`.
+//! Locations of the browser's data under `%LOCALAPPDATA%\Krunk`.
 
 use std::path::{Path, PathBuf};
 
-pub const APP_DIR: &str = "LightBrowser";
+pub const APP_DIR: &str = "Krunk";
 
 #[derive(Debug, Clone)]
 pub struct DataDirs {
     root: PathBuf,
 }
 
+/// `%LOCALAPPDATA%` (or its usual place under the user profile).
+pub fn local_app_data() -> Result<PathBuf, String> {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("USERPROFILE").map(|p| PathBuf::from(p).join("AppData").join("Local")))
+        .ok_or_else(|| "Cannot find the local application data folder (LOCALAPPDATA is not set)".to_string())
+}
+
 impl DataDirs {
     /// Resolves (and creates) the data directory.
     pub fn resolve() -> Result<DataDirs, String> {
-        let base = std::env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("USERPROFILE").map(|p| PathBuf::from(p).join("AppData").join("Local")))
-            .ok_or("Cannot find the local application data folder (LOCALAPPDATA is not set)")?;
-        let dirs = DataDirs { root: base.join(APP_DIR) };
+        let dirs = DataDirs { root: local_app_data()?.join(APP_DIR) };
         for d in [dirs.root.clone(), dirs.profile()] {
             std::fs::create_dir_all(&d).map_err(|e| format!("Cannot create {}: {e}", d.display()))?;
         }
@@ -54,6 +58,6 @@ impl DataDirs {
     }
 
     pub fn log_file(&self) -> PathBuf {
-        self.root.join("lightbrowser.log")
+        self.root.join("krunk.log")
     }
 }

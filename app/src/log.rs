@@ -1,4 +1,4 @@
-//! Minimal file logger (`lightbrowser.log` in the data dir).
+//! Minimal file logger (`krunk.log` in the data dir).
 //!
 //! Never log URLs with credentials, form data, passwords or vault contents.
 //! The log is truncated at every start and capped in size.

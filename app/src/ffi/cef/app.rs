@@ -99,7 +99,7 @@ pub(super) fn context_handler() -> RequestContextHandler {
 }
 
 /// Profile preferences of every request context: no password manager or
-/// autofill (LightBrowser has its own vault), no network prediction and no
+/// autofill (Krunk has its own vault), no network prediction and no
 /// local IP addresses in WebRTC.
 fn apply_profile_prefs(ctx: &mut RequestContext) {
     let prefs: &[(&str, Pref)] = &[
