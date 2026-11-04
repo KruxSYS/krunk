@@ -1,0 +1,39 @@
+# Krunk website, downloads and update feed. No host ports here: ai-pipe (or a reverse proxy)
+# publishes the service; for standalone use add compose.ports.yaml (see README.md).
+services:
+  web:
+    build: .
+    image: krunk-site:local
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:8080}
+      CADDY_GLOBAL_OPTIONS: ${CADDY_GLOBAL_OPTIONS:-}
+    volumes:
+      - krunk-releases:/srv/releases:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  # Published releases (publish-release.sh --volume <project>_krunk-releases).
+  krunk-releases:
+  # Caddy's certificates and state (TLS mode).
+  caddy-data:
+  caddy-config:

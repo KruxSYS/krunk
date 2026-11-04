@@ -1,0 +1,3 @@
+# ai-pipe entry point: the Krunk website, downloads and update feed (dist/server/).
+include:
+  - dist/server/compose.yaml

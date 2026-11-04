@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Krunk: a lightweight, privacy-minded browser for Windows</title>
+<meta name="description" content="Krunk is a lightweight, privacy-minded web browser for Windows 10 and 11 with built-in ad blocking, an encrypted password vault and no telemetry.">
+<link rel="icon" type="image/png" href="krunk-64.png">
+<link rel="stylesheet" href="style.css">
+<script src="app.js" defer></script>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <img class="logo" src="krunk.svg" width="96" height="96" alt="">
+    <h1>Krunk</h1>
+    <p class="tagline">A lightweight, privacy-minded web browser for Windows 10 and 11.</p>
+
+    <section id="download" class="download" aria-live="polite">
+      <p class="loading">Looking for the latest release…</p>
+    </section>
+  </div>
+</header>
+
+<main class="wrap">
+  <section>
+    <h2>What you get</h2>
+    <ul class="features">
+      <li><strong>Ad and tracker blocking built in</strong>, with uBlock Origin's lists and scriptlets (YouTube included).</li>
+      <li><strong>No telemetry.</strong> Krunk talks to no server of its own except the daily filter-list and update checks.</li>
+      <li><strong>Encrypted password vault</strong> protected by your master password.</li>
+      <li><strong>Third-party cookies blocked</strong>, tracking parameters stripped, Do Not Track and Global Privacy Control sent.</li>
+      <li><strong>Cookie and site-data manager</strong>, and "Inspect" for developers.</li>
+      <li><strong>Games work:</strong> pointer lock and full screen (F11).</li>
+      <li><strong>Light on memory:</strong> background tabs go to sleep.</li>
+      <li>Chromium engine (through CEF), bundled: no Edge, no WebView2.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Install</h2>
+    <p><strong>Installer:</strong> installs for your user only, without administrator rights, to
+      <code>%LOCALAPPDATA%\Programs\Krunk</code>. It adds a Start Menu entry and an entry under
+      Settings → Apps for uninstalling. Your data stays when you uninstall, unless you choose otherwise.</p>
+    <p><strong>Portable:</strong> unzip anywhere and run <code>Krunk.exe</code>.</p>
+    <p class="note">The files are not code-signed yet, so Windows SmartScreen may warn the first time.
+      Check the SHA-256 shown above before running them:
+      <code>Get-FileHash Krunk-Setup-….exe</code> in PowerShell.</p>
+  </section>
+
+  <section>
+    <h2>Updates and privacy</h2>
+    <p>Krunk checks for a new version a minute after it starts and once a day. It fetches a small
+      file from this site, <code>/updates/win-x64/latest.json</code>, with its version in the request
+      and nothing else: no ID and nothing about your browsing. A new version is installed only when
+      you choose <em>Update now</em>. Before it runs, Krunk checks the release's Ed25519 signature and the
+      installer's SHA-256. You can turn the check off in Settings → About.</p>
+    <p>This site sets no cookies, loads nothing from other sites and keeps no access log.</p>
+  </section>
+</main>
+
+<footer class="wrap">
+  <p>Krunk is open source (MIT). It bundles Chromium through the Chromium Embedded Framework and
+    filter lists by EasyList and uBlock Origin; see the notices in the download.</p>
+</footer>
+</body>
+</html>
