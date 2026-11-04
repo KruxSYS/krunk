@@ -85,7 +85,9 @@
 		}
 	}
 
+	# Error responses start with fresh headers, so they need the security headers again.
 	handle_errors {
+		import security_headers
 		header Cache-Control "no-store"
 		respond "{err.status_code} {err.status_text}"
 	}
