@@ -88,9 +88,11 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', check, { once: true });
   else check();
   var timer = null;
+  // Observe `document`, not documentElement: this runs at document creation,
+  // when documentElement may not exist yet (observe(null) would throw).
   new MutationObserver(function () {
     if (announced) return;
     clearTimeout(timer);
     timer = setTimeout(check, 400);
-  }).observe(document.documentElement, { childList: true, subtree: true });
+  }).observe(document, { childList: true, subtree: true });
 })();

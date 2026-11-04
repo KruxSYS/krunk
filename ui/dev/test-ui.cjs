@@ -1020,6 +1020,41 @@ async function testFolderPopup(browser) {
   check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
 }
 
+// The injected login script on an ordinary web page. It runs at document
+// creation (like AddScriptToExecuteOnDocumentCreated), must not throw there,
+// and must notice a login form that a script adds after load.
+async function testLoginScript(browser) {
+  console.log('injected login script');
+  const context = await browser.newContext();
+  const external = [];
+  await context.route('**/*', (r) => { external.push(r.request().url()); return r.abort(); });
+  await context.route('https://login.example/**', (r) => r.fulfill({ status: 200, headers: { 'content-type': 'text/html' },
+    body: '<!doctype html><title>SPA</title><body><div id="app">loading</div></body>' }));
+  // Minimal chrome.webview stand-in that records what the script posts.
+  await context.addInitScript(() => {
+    window.__posted = [];
+    window.chrome = window.chrome || {};
+    window.chrome.webview = { postMessage: (m) => window.__posted.push(m), addEventListener: () => {} };
+  });
+  await context.addInitScript({ path: path.join(__dirname, '..', 'inject', 'login.js') });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await page.goto('https://login.example/');
+  await page.waitForTimeout(100);
+  check(!(await page.evaluate(() => window.__posted.some((m) => m.lb === 'loginForm'))), 'no login form announced before one exists');
+  await page.evaluate(() => {
+    const f = document.createElement('form');
+    f.innerHTML = '<input name="u" type="email"><input name="p" type="password"><button>Sign in</button>';
+    document.getElementById('app').replaceChildren(f);
+  });
+  await page.waitForTimeout(700);
+  check(await page.evaluate(() => window.__posted.some((m) => m.lb === 'loginForm')), 'a login form added after load is announced (loginForm)');
+  check(errors.length === 0, 'login script raises no page errors (' + errors.join(' | ') + ')');
+  check(external.length === 0, 'no network requests (' + external.join(', ') + ')');
+  await context.close();
+}
+
 (async () => {
   if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
   const browser = await chromium.launch();
@@ -1036,6 +1071,7 @@ async function testFolderPopup(browser) {
     await testShieldAndHttpsOnly(browser);
     await testPasswords(browser);
     await testSettings(browser);
+    await testLoginScript(browser);
   } finally {
     await browser.close();
   }
