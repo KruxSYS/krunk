@@ -216,13 +216,6 @@ pub const DISABLED_FEATURES: &[&str] = &[
     "AimEnabled",
     "AimServerEligibilityEnabled",
     "AimServerRequestOnStartupEnabled",
-    // Segmentation platform: its own URL-keyed database (ukm_db) of visits.
-    "SegmentationPlatformFeature",
-    "SegmentationPlatformUkmEngine",
-    // OptimizationGuide model and hint downloads (the models-manifest component).
-    "OptimizationGuideModelDownloading",
-    "OptimizationHintsFetching",
-    "OptimizationGuideOnDeviceModel",
 ];
 
 /// Switches we always pass (documented in the README).
@@ -232,11 +225,12 @@ pub const BASE_SWITCHES: &[&str] = &["--no-pings", "--disable-domain-reliability
 /// when the user opts in to the engine's security components.
 pub const NO_COMPONENT_UPDATE_SWITCH: &str = "--disable-component-update";
 
-/// Our internal origins never reach DNS or a proxy, even if the engine
-/// preconnects to them before our handler answers the request.
-pub const INTERNAL_HOST_RULES_SWITCH: &str =
-    "--host-resolver-rules=MAP lightbrowser.invalid ~NOTFOUND, MAP *.lightbrowser.invalid ~NOTFOUND";
-pub const INTERNAL_PROXY_BYPASS_SWITCH: &str = "--proxy-bypass-list=lightbrowser.invalid;*.lightbrowser.invalid";
+/// Hosts the engine must never reach: our internal origins (the engine
+/// preconnects to them before our handler answers the request) and, unless
+/// the user opted in, the component updater's server (one component is
+/// installed "on demand" and ignores `--disable-component-update`).
+pub const INTERNAL_HOSTS: &[&str] = &["lightbrowser.invalid", "*.lightbrowser.invalid"];
+pub const UPDATER_HOSTS: &[&str] = &["update.googleapis.com"];
 
 /// Blocks third-party cookies for scripts (`document.cookie`). Chromium's
 /// third-party-cookie phase-out switch; a future Chromium may rename it.
@@ -357,10 +351,14 @@ impl Settings {
     /// The Chromium switches for the engine (`--name` or `--name=value`).
     pub fn browser_switches(&self) -> Vec<String> {
         let mut args: Vec<String> = BASE_SWITCHES.iter().map(|s| s.to_string()).collect();
+        let mut unreachable: Vec<&str> = INTERNAL_HOSTS.to_vec();
         if !self.engine_security_components {
             args.push(NO_COMPONENT_UPDATE_SWITCH.into());
+            unreachable.extend(UPDATER_HOSTS);
         }
-        args.push(INTERNAL_HOST_RULES_SWITCH.into());
+        // DNS never answers for these hosts...
+        let rules: Vec<String> = unreachable.iter().map(|h| format!("MAP {h} ~NOTFOUND")).collect();
+        args.push(format!("--host-resolver-rules={}", rules.join(", ")));
         if !self.hardware_acceleration {
             args.push("--disable-gpu".into());
         }
@@ -369,7 +367,8 @@ impl Settings {
         }
         if !self.proxy.is_empty() {
             args.push(format!("--proxy-server={}", self.proxy));
-            args.push(INTERNAL_PROXY_BYPASS_SWITCH.into());
+            // ...and they never go to the proxy, which would resolve them.
+            args.push(format!("--proxy-bypass-list={}", unreachable.join(";")));
         }
         let mut disabled: Vec<String> = DISABLED_FEATURES.iter().map(|s| s.to_string()).collect();
         let mut enabled: Vec<String> = Vec::new();
@@ -876,7 +875,7 @@ mod tests {
         }
         assert_eq!(s.browser_arguments(), switches.join(" "));
         let disabled = switches.iter().find(|a| a.starts_with("--disable-features=")).unwrap();
-        assert!(disabled.ends_with(",OptimizationGuideOnDeviceModel,Foo"), "{disabled}");
+        assert!(disabled.ends_with(",AimServerRequestOnStartupEnabled,Foo"), "{disabled}");
     }
 
     #[test]
@@ -889,17 +888,13 @@ mod tests {
             "--disable-component-update",
             "--no-pings",
             "--disable-domain-reliability",
-            INTERNAL_HOST_RULES_SWITCH,
+            "--host-resolver-rules=MAP lightbrowser.invalid ~NOTFOUND, MAP *.lightbrowser.invalid ~NOTFOUND, \
+             MAP update.googleapis.com ~NOTFOUND",
         ] {
             assert!(a.iter().any(|s| s == want), "missing {want} in {a:?}");
         }
         let disabled = a.iter().find(|f| f.starts_with("--disable-features=")).unwrap();
-        for f in [
-            "NetworkTimeServiceQuerying",
-            "AimServerRequestOnStartupEnabled",
-            "SegmentationPlatformUkmEngine",
-            "OptimizationGuideModelDownloading",
-        ] {
+        for f in ["NetworkTimeServiceQuerying", "AimServerRequestOnStartupEnabled"] {
             assert!(disabled.split([',', '=']).any(|x| x == f), "missing {f}");
         }
         // No proxy: nothing to bypass.
@@ -911,6 +906,13 @@ mod tests {
         let on = Settings { engine_security_components: true, ..Settings::default() };
         let a = on.browser_switches();
         assert!(!a.iter().any(|s| s == NO_COMPONENT_UPDATE_SWITCH), "the updater may run");
+        assert!(
+            a.contains(
+                &"--host-resolver-rules=MAP lightbrowser.invalid ~NOTFOUND, MAP *.lightbrowser.invalid ~NOTFOUND"
+                    .to_string()
+            ),
+            "and reach its server"
+        );
         assert!(a.iter().any(|s| s == "--disable-background-networking"), "everything else stays off");
         assert!(a.iter().any(|f| f.starts_with("--disable-features=") && f.contains("NetworkTimeServiceQuerying")));
         assert!(on.restart_required(&Settings::default()), "needs a restart");
@@ -922,13 +924,15 @@ mod tests {
     fn internal_origins_bypass_the_proxy() {
         let s = Settings { proxy: "127.0.0.1:8888".into(), ..Settings::default() };
         let a = s.browser_switches();
-        assert!(a.iter().any(|x| x == INTERNAL_PROXY_BYPASS_SWITCH));
-        assert!(a.iter().any(|x| x == INTERNAL_HOST_RULES_SWITCH));
+        assert!(a.contains(
+            &"--proxy-bypass-list=lightbrowser.invalid;*.lightbrowser.invalid;update.googleapis.com".to_string()
+        ));
         // A user's own host rules cannot replace ours (first one wins).
         let s = Settings { extra_flags: "--host-resolver-rules=MAP*~NOTFOUND".into(), ..Settings::default() };
         let rules: Vec<_> =
             s.browser_switches().into_iter().filter(|x| x.starts_with("--host-resolver-rules")).collect();
-        assert_eq!(rules, [INTERNAL_HOST_RULES_SWITCH]);
+        assert_eq!(rules.len(), 1);
+        assert!(rules[0].starts_with("--host-resolver-rules=MAP lightbrowser.invalid"));
     }
 
     #[test]

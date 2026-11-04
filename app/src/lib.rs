@@ -59,6 +59,11 @@ fn run() -> Result<i32, String> {
         return Ok(update_filters_headless(&dirs, &settings));
     }
 
+    // The engine's segmentation platform keeps its own database of visited
+    // URLs (ukm_db), outside history and untouched by clearing it. Its
+    // switches crash this engine build, so it is removed at every start.
+    let _ = std::fs::remove_dir_all(dirs.profile().join("segmentation_platform"));
+
     let args: Vec<String> = std::env::args().collect();
     let power = browser::PowerOptions::from_args(&args);
     let config = ffi::cef::EngineConfig {
