@@ -99,7 +99,8 @@ pub(super) fn context_handler() -> RequestContextHandler {
 }
 
 /// Profile preferences of every request context: no password manager or
-/// autofill (LightBrowser has its own vault) and no network prediction.
+/// autofill (LightBrowser has its own vault), no network prediction and no
+/// local IP addresses in WebRTC.
 fn apply_profile_prefs(ctx: &mut RequestContext) {
     let prefs: &[(&str, Pref)] = &[
         ("credentials_enable_service", Pref::Bool(false)),
@@ -109,6 +110,10 @@ fn apply_profile_prefs(ctx: &mut RequestContext) {
         ("autofill.credit_card_enabled", Pref::Bool(false)),
         // 2 = never predict (no DNS prefetch or preconnect to link targets).
         ("net.network_prediction_options", Pref::Int(2)),
+        // WebRTC uses only the default public interface: no local IP
+        // addresses are gathered, so no mDNS responder listens on the LAN
+        // (which also triggered a Windows Firewall prompt).
+        ("webrtc.ip_handling_policy", Pref::Str("default_public_interface_only")),
     ];
     for (name, value) in prefs {
         set_pref(ctx, name, *value);
@@ -119,6 +124,7 @@ fn apply_profile_prefs(ctx: &mut RequestContext) {
 enum Pref {
     Bool(bool),
     Int(i32),
+    Str(&'static str),
 }
 
 fn set_pref(ctx: &mut RequestContext, name: &str, pref: Pref) {
@@ -126,6 +132,7 @@ fn set_pref(ctx: &mut RequestContext, name: &str, pref: Pref) {
     match pref {
         Pref::Bool(b) => value.set_bool(i32::from(b)),
         Pref::Int(i) => value.set_int(i),
+        Pref::Str(v) => value.set_string(Some(&CefString::from(v))),
     };
     let name = CefString::from(name);
     if ctx.can_set_preference(Some(&name)) == 0 {

@@ -332,7 +332,10 @@ impl Browser {
         let host_navigation = Rc::new(Cell::new(false));
         let audio = Rc::new(Cell::new(false));
         let audio2 = audio.clone();
-        view.on_audio(move |playing| audio2.set(playing));
+        view.on_audio(move |playing| {
+            info!("tab {id}: audio {}", if playing { "playing" } else { "stopped" });
+            audio2.set(playing);
+        });
         self.hook_tab(id, &view, host_navigation.clone(), net.clone());
         self.hook_blocking(&view, net.clone());
         self.hook_downloads(&view, Some(id));
