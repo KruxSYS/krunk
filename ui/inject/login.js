@@ -8,7 +8,7 @@
   if (location.protocol !== 'https:' && location.protocol !== 'http:') return;
   // Never on LightBrowser's own pages (they are not web content).
   if (/(^|\.)lightbrowser\.invalid$/.test(location.hostname)) return;
-  var webview = window.__lbHost;
+  var host = window.__lbHost;
   var announced = false;
   var lastSubmit = { value: null, time: 0 };
 
@@ -35,7 +35,7 @@
   function check() {
     if (!announced && passwordFields().length) {
       announced = true;
-      webview.postMessage({ lb: 'loginForm' });
+      host.postMessage({ lb: 'loginForm' });
     }
   }
 
@@ -46,7 +46,7 @@
     if (lastSubmit.value === pw.value && now - lastSubmit.time < 3000) return;
     lastSubmit = { value: pw.value, time: now };
     var user = usernameFor(pw);
-    webview.postMessage({
+    host.postMessage({
       lb: 'submit',
       username: user ? String(user.value).slice(0, 512) : '',
       password: String(pw.value).slice(0, 1024),
@@ -74,7 +74,7 @@
   }
 
   // Fill only on the browser's message (sent after the user confirmed).
-  webview.addEventListener('message', function (e) {
+  host.addEventListener('message', function (e) {
     var d = e.data;
     if (!d || !d.lbFill) return;
     var pw = passwordFields()[0];
