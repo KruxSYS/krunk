@@ -206,6 +206,8 @@ pub struct KeyPress {
 #[derive(Debug, Clone)]
 pub struct NavigationStart {
     pub uri: String,
+    /// The server redirected an earlier navigation to `uri`.
+    pub redirected: bool,
 }
 
 /// What to answer for a request to one of our internal origins.
@@ -751,7 +753,9 @@ impl Controller {
             if let Some(args) = args {
                 // SAFETY: live event args during the callback.
                 let uri = get_string(|p| unsafe { args.Uri(p) });
-                if !f(NavigationStart { uri }) {
+                // SAFETY: as above.
+                let redirected = get_bool(|b| unsafe { args.IsRedirected(b) });
+                if !f(NavigationStart { uri, redirected }) {
                     // SAFETY: as above.
                     let _ = unsafe { args.SetCancel(true) };
                 }

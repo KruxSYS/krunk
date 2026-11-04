@@ -416,7 +416,7 @@ impl Browser {
                 info!("tab {id}: blocked navigation to an internal or unsupported URL");
                 return false;
             }
-            if let Some(rewritten) = b.navigation_starting(&net_start, &nav.uri) {
+            if let Some(rewritten) = b.navigation_starting(&net_start, &nav.uri, nav.redirected) {
                 // Cancel and restart at the cleaned/upgraded URL.
                 b.defer(move |b| b.navigate_tab(id, &rewritten));
                 return false;

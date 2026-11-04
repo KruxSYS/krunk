@@ -286,8 +286,20 @@ pub fn https_only_fallback(upgraded_from: Option<&str>, success: bool, web_error
     if !http.starts_with("http://") {
         return None;
     }
+    Some(https_only_interstitial(http))
+}
+
+/// HTTPS-only: the server redirected an upgraded `https://` navigation back
+/// to `http://`. Upgrading that again would loop forever, so the interstitial
+/// for the `http://` target is shown instead. `upgrade_in_flight` is true
+/// while the tab's current navigation is one of our upgrades.
+pub fn https_only_downgrade(upgrade_in_flight: bool, redirected: bool, uri: &str) -> Option<String> {
+    (upgrade_in_flight && redirected && uri.starts_with("http://")).then(|| https_only_interstitial(uri))
+}
+
+fn https_only_interstitial(http: &str) -> String {
     let enc: String = url::form_urlencoded::byte_serialize(http.as_bytes()).collect();
-    Some(format!("{}?url={enc}", pages::Page::HttpsOnly.url()))
+    format!("{}?url={enc}", pages::Page::HttpsOnly.url())
 }
 
 #[cfg(test)]
@@ -435,6 +447,17 @@ mod tests {
         assert_eq!(https_only_fallback(http, false, 14), None, "cancelled");
         assert_eq!(https_only_fallback(http, false, 13), None, "host does not exist at all");
         assert_eq!(https_only_fallback(Some("https://x/"), false, 12), None);
+    }
+
+    #[test]
+    fn https_only_redirect_back_to_http_shows_interstitial() {
+        // http.badssl.com: https:// answers 301 -> http://. Upgrading again would loop.
+        let page = https_only_downgrade(true, true, "http://http.badssl.com/").unwrap();
+        assert!(page.starts_with(&pages::Page::HttpsOnly.url()));
+        assert!(page.ends_with("?url=http%3A%2F%2Fhttp.badssl.com%2F"), "{page}");
+        assert_eq!(https_only_downgrade(false, true, "http://a.example/"), None, "no upgrade in flight");
+        assert_eq!(https_only_downgrade(true, false, "http://a.example/"), None, "user navigation, not a redirect");
+        assert_eq!(https_only_downgrade(true, true, "https://a.example/"), None, "redirect stays on https");
     }
 
     #[test]

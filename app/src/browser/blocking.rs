@@ -328,7 +328,15 @@ impl Browser {
     /// `NavigationStarting` for a tab, after the internal-page policy
     /// allowed it. Returns `Some(url)` if the navigation must be cancelled
     /// and restarted at `url` (tracking parameters, HTTPS upgrade).
-    pub(super) fn navigation_starting(&self, net: &TabNet, uri: &str) -> Option<String> {
+    pub(super) fn navigation_starting(&self, net: &TabNet, uri: &str, redirected: bool) -> Option<String> {
+        // HTTPS-only: the site sent our upgrade back to http:// - show the
+        // interstitial rather than upgrading again in an endless loop.
+        let in_flight = net.upgraded_from.borrow().is_some();
+        if let Some(page) = urlclean::https_only_downgrade(in_flight, redirected, uri) {
+            *net.upgraded_from.borrow_mut() = None;
+            net.pending_upgrade.borrow_mut().take();
+            return Some(page);
+        }
         // Our own rewrite arriving: keep the chain count, else start over.
         if !net.rewriting.replace(false) {
             net.rewrites.set(0);
@@ -381,6 +389,10 @@ impl Browser {
     /// `NavigationCompleted`: if an HTTPS upgrade failed, show the interstitial.
     pub(super) fn navigation_completed(&self, id: TabId, net: &TabNet, ok: bool, status: i32) {
         let upgraded = net.upgraded_from.borrow().clone();
+        if ok {
+            // The upgrade is done; later http:// links upgrade afresh.
+            *net.upgraded_from.borrow_mut() = None;
+        }
         if let Some(page) = urlclean::https_only_fallback(upgraded.as_deref(), ok, status) {
             *net.upgraded_from.borrow_mut() = None;
             self.defer(move |b| b.navigate_tab(id, &page));
