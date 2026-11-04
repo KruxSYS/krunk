@@ -1,8 +1,9 @@
 # LightBrowser
 
-LightBrowser is a lightweight, privacy-minded web browser for Windows 10/11 (x64). It is a
-single small Rust executable (about 6 MB) around the Microsoft Edge **WebView2** runtime, which
-is Chromium and is kept up to date by Windows. It includes:
+LightBrowser is a lightweight, privacy-minded web browser for Windows 10/11 (x64), written in
+Rust. It brings its own engine: **Chromium 156.0.8078.80** through the Chromium Embedded
+Framework (**CEF 156.0.15**), bundled in the download. Neither Microsoft Edge nor WebView2 is
+used, and nothing has to be installed. It includes:
 - tabs and private tabs
 - history and bookmarks
 - a new-tab page with your most-visited sites
@@ -13,23 +14,27 @@ is Chromium and is kept up to date by Windows. It includes:
 - background-tab sleep, to save memory
 
 ## Download and requirements
-- **The file:** `LightBrowser.exe` is the whole program, with no installer. Verify it against
-  `SHA256SUMS`:
-  - PowerShell: `Get-FileHash LightBrowser.exe`
+- **The download:** `LightBrowser-win-x64.zip` (about 183 MB; 420 MB unpacked). Extract it
+  anywhere and run `LightBrowser.exe`. There is no installer. Keep all files of the folder
+  together; if one is missing, LightBrowser says so at startup.
+- **Verify:** check `SHA256SUMS` (the zip and the three main binaries):
+  - PowerShell: `Get-FileHash LightBrowser-win-x64.zip`
   - Linux: `sha256sum -c SHA256SUMS`
-- **System:** Windows 10 or 11, 64-bit.
-- **Runtime:** the Microsoft Edge WebView2 Runtime (Evergreen). It is preinstalled on Windows 11
-  and on current Windows 10. If it is missing, LightBrowser says so at startup and offers to
-  open the download page (https://developer.microsoft.com/microsoft-edge/webview2/).
+- **System:** Windows 10 or 11, 64-bit. No runtime is needed.
 - **Data location:** everything is stored in `%LOCALAPPDATA%\LightBrowser`:
   - `browser.db` (history, bookmarks, settings, session)
   - `vault.json` (encrypted passwords)
   - `engine.dat` (the compiled filter engine)
-  - `profile\` (WebView2 cookies, cache and site data)
-  - `lightbrowser.log`
+  - `profile\` (the engine's profile: cookies, cache and site data in `profile\default`)
+  - `lightbrowser.log`, and `cef.log` (engine warnings and errors only)
 
   Delete that folder to reset the browser completely.
-- **Unsigned binary:** the exe isn't code-signed, so SmartScreen may warn the first time it runs.
+- **Coming from the WebView2 version:** settings, history, bookmarks, the session, the vault and
+  `engine.dat` are used as they are. Cookies and site data are not migrated: the old
+  `profile\EBWebView` folder (WebView2's profile) is left untouched and unused, and you can
+  delete it. The same goes for the old `bin\` folder (the WebView2 loader).
+- **Unsigned binaries:** the files are not code-signed, so SmartScreen may warn the first time
+  `LightBrowser.exe` runs.
 
 ## Usage
 Type a URL or search words in the address bar. Search uses DuckDuckGo by default; this can be
@@ -39,7 +44,7 @@ changed in Settings. Built-in pages:
 - `lb://bookmarks`
 - `lb://passwords`
 - `lb://downloads`
-- `lb://about`
+- `lb://about` (shows the CEF and Chromium versions of the running engine)
 
 | Keys | Action |
 |------|--------|
@@ -54,7 +59,7 @@ changed in Settings. Built-in pages:
 | Ctrl+F, F3 / Shift+F3 (Ctrl+G / Ctrl+Shift+G) | Find, next / previous match |
 | Ctrl+= / Ctrl+-, Ctrl+0 | Zoom in / out, reset |
 | Ctrl+P | Print |
-| F12, Ctrl+Shift+I | DevTools |
+| F12, Ctrl+Shift+I | DevTools (in its own window) |
 
 - **Shield:** the shield in the toolbar shows how many ads and trackers were blocked on the
   page. Click it to allow ads on that site.
@@ -63,11 +68,13 @@ changed in Settings. Built-in pages:
     create the vault with a master password.
   - To fill a login, click the key icon in the address bar.
   - Manage logins on `lb://passwords`. Showing a password asks for the master password again.
-- **Private tabs:** they use a separate InPrivate profile. Nothing from them is written to
-  history, the session or the favicon cache. Their cookies and site data stay in memory and
-  are not written to disk (WebView2 InPrivate).
+- **Private tabs:** they share an in-memory profile that is discarded when the last private tab
+  closes. Nothing from them is written to disk, history, the session or the favicon cache.
+- **Zoom** is remembered per site, as in Chrome. "Default zoom" in Settings applies to sites you
+  have not zoomed.
 - **Memory:** background tabs go to sleep after 5 minutes. Optionally they can be unloaded
   completely after a longer time; turn this on in Settings → Performance.
+- **Starting LightBrowser again** while it runs opens a new tab in the running window.
 
 Command-line options (all optional):
 
@@ -75,93 +82,158 @@ Command-line options (all optional):
 |--------|--------|
 | `--update-filters` | Update the filter lists and run a blocking self-test, without opening a window |
 | `--mem-report` | Log the memory of the browser's process tree to `memory-report.log` every 10 s |
-| `--sleep-test-seconds=N` | Testing only: run the tab sleep/suspend/discard timers in seconds instead of minutes |
+| `--sleep-test-seconds=N` | Testing only: run the tab sleep/discard timers in seconds instead of minutes |
+
+Chromium switches typed on the command line are ignored: only the browser itself, through its
+settings, configures the engine (so e.g. `--no-sandbox` cannot be passed this way).
 
 ## How it works
 
 ### Architecture
 
 ```
-core/   platform-independent library (lb_core): storage, history, bookmarks, frecency,
-        vault crypto, ad blocking, URL cleaning, settings, tab model, shortcuts,
-        message protocol, origin checks, layout math. Tested on Linux.
-app/    Windows host (LightBrowser.exe). All unsafe code is in app/src/ffi.
-ui/     the browser's own UI (HTML/CSS/JS), embedded into the exe at build time.
-        ui/dev holds test tooling only (mock host, Playwright tests) and is not embedded.
+core/    platform-independent library (lb_core): storage, history, bookmarks, frecency,
+         vault crypto, ad blocking, cookies, URL cleaning, settings and engine switches,
+         zoom, tab model, shortcuts, message protocol, origin checks, layout math.
+         Tested on Linux.
+app/     LightBrowser.dll: the browser on top of CEF. All unsafe code is in app/src/ffi
+         (ffi/cef wraps the engine; the rest wraps Win32).
+ui/      the browser's own UI (HTML/CSS/JS), embedded into the DLL at build time.
+         ui/dev holds test tooling only (mock host, Playwright tests) and is not embedded.
+tools/   pebrand: build tool that brands the exe (version strings, manifest).
+scripts/ build, CEF download/verification and Windows VM test scripts.
 ```
 
-### Windows and WebViews
-- **Main window:** one top-level window with one shared `CoreWebView2Environment`.
-- **Shell:** a WebView strip at the top showing the tab strip and toolbar. Its height is fixed:
+### Engine and processes
+- **`LightBrowser.exe` is CEF's sandbox bootstrap** (`bootstrap.exe`, renamed, with
+  LightBrowser's version strings and manifest). It sets up the Chromium sandbox, loads
+  `LightBrowser.dll` from its own folder and calls the DLL's `RunWinMain`. The same exe + DLL
+  pair runs the browser process and every engine subprocess.
+- **Sandbox:** always on. Renderers run at Untrusted integrity with restricted tokens; the GPU
+  process at Low. `scripts/vm-sandbox.ps1` prints the integrity level and token of every process.
+- **Startup:** the DLL first checks that the runtime files exist (`libcef.dll` is delay-loaded,
+  so a missing engine gives a message box instead of a silent failure), lets subprocesses run,
+  opens the database and settings, and only then starts the engine.
+- **Engine profile:** `profile\` is CEF's root cache path and `profile\default` the persistent
+  profile. Private tabs use a separate in-memory request context. CEF's own password manager and
+  autofill are switched off on both (profile preferences), because the browser has its own vault.
+- **Engine version:** the exact CEF build is pinned by the `cef` crate version in `app/Cargo.toml`
+  and the archive hashes in `cef.lock`. The About page reads the versions from the loaded
+  `libcef.dll` at runtime.
+
+### Windows and views
+- **Main window:** one top-level Win32 window. Every view is a CEF browser (Alloy style) hosted
+  as a child window.
+- **Shell:** a view strip at the top showing the tab strip and toolbar. Its height is fixed:
   76 DIP, scaled by DPI.
-- **Tabs:** one content controller per *live* tab, laid out below the shell. Restored tabs stay
-  unloaded until they are activated. Private tabs use a separate InPrivate profile.
-- **Popup:** one extra WebView in an owned `WS_POPUP` tool window. It shows the main menu, the
+- **Tabs:** one browser per *live* tab, laid out below the shell. Restored tabs stay unloaded
+  until they are activated. Pages that open windows (`window.open`, `target=_blank`) get a new
+  tab next to them; `window.open` keeps its opener.
+- **Popup:** one extra view in an owned `WS_POPUP` tool window. It shows the main menu, the
   shield panel and the save-password and fill-login prompts.
   - It is created on first use and then hidden and reused, never more than one.
-  - It uses the shared environment and the default (shell) profile, never a private one.
+  - It uses the default profile, never a private one.
   - The shell sends the popup's rectangle in CSS pixels. The host converts it to screen pixels
     with the window's DPI (`GetDpiForWindow` + `ClientToScreen`) and clamps it to the monitor
     work area (`core::layout::popup_screen_rect`).
-  - Every popup kind has buttons, so the popup is always activated when shown. That keeps it
-    keyboard accessible and gives a reliable "click elsewhere" signal (`WM_ACTIVATE`). The window
-    is created `WS_EX_NOACTIVATE`, and that flag is cleared by `Window::set_activatable` only
-    for kinds that take focus.
-  - **Hide rules:** the popup hides on deactivate, Escape, a click elsewhere (another
-    controller gets focus), main-window move, resize or minimize, and tab switch or close. A
-    prompt hidden this way counts as dismissed, never confirmed.
-  - This replaces a transparent full-window overlay: Win32 does not composite sibling child
-    windows with transparency.
+  - **Hide rules:** the popup hides on deactivate, Escape, a click elsewhere (another view gets
+    focus), main-window move, resize or minimize, and tab switch or close. A prompt hidden this
+    way counts as dismissed, never confirmed.
+- **Keyboard shortcuts** are taken before the page sees them (`CefKeyboardHandler::OnPreKeyEvent`),
+  in every view.
 
 ### Internal origins
 | Origin | Serves | Who can send privileged messages |
 |--------|--------|----------------------------------|
-| `https://shell.lightbrowser.invalid` | `ui/shell/*` (`shell.html`, `popup.html`) + `/shared/*` | the shell WebView (only `/shell.html`) and the popup WebView (only `/popup.html`) |
+| `https://shell.lightbrowser.invalid` | `ui/shell/*` (`shell.html`, `popup.html`) + `/shared/*` | the shell view (only `/shell.html`) and the popup view (only `/popup.html`) |
 | `https://lightbrowser.invalid` | `ui/pages/*` + `/shared/*` | a tab showing a known built-in page; each page has its own command allow-list |
 
-- Requests to these origins are answered from embedded bytes through `WebResourceRequested`.
-  The `.invalid` TLD never resolves, so they can't leak to the network.
+- A CEF scheme-handler factory answers every request to these origins from embedded bytes. An
+  unknown path gets a 404 from the handler, never a network request.
+- `.invalid` never resolves. In addition, the engine's host rules map both hosts to "not found"
+  and keep them away from a configured proxy, because Chromium preconnects to a navigation's
+  host before the handler answers.
 - Every response carries a strict CSP (`default-src 'none'`, no inline code, no network,
-  `frame-ancestors 'none'`).
+  `frame-ancestors 'none'`), `X-Frame-Options: DENY` and `Cross-Origin-Resource-Policy: same-origin`.
+- Tabs may load internal files only from a built-in page of the same origin; web pages cannot
+  embed, frame or fetch them (`core::assets::internal_request_allowed`). The shell origin is
+  not reachable from tabs at all.
 - Both origins also serve `/favicon?host=<host>`: PNG favicons captured from pages, cached in
-  SQLite (never from private tabs). The new-tab page and bookmarks use them, so they show
-  favicons without any network request.
-- Message origins are checked by `core::protocol::classify`: exact origin, exact document,
-  top-level frame only. Web pages can only send the small `ContentMessage` type.
+  SQLite (never from private tabs).
+
+### Messages between pages and the browser
+- In every main frame, before any page script runs, the renderer installs `window.__lbHost`
+  (`postMessage`, `addEventListener('message', …)`): a small shim around a native function.
+  Messages travel as JSON in CEF process messages.
+- The browser decides who sent a message from the **sending frame's committed URL and
+  main-frame flag** (as reported by the engine), never from the message:
+  `core::protocol::classify` checks the exact origin, the exact document and the main frame.
+  Web pages can only send the small `ContentMessage` type (login form found, login submitted,
+  fill requested, page class names for cosmetic filtering).
+- Replies and vault fills go to the main frame only; a fill is sent only if the tab still shows
+  the origin the login belongs to.
 
 ### Ad and tracker blocking
 - **Engine:** Brave's `adblock` engine with five bundled lists (EasyList, EasyPrivacy, and
   uBlock filters, privacy and unbreak; see `assets/filters/ATTRIBUTION.md`). The lists are
   embedded deflated (1.4 MB).
 - **Cache:** at startup the compiled engine is loaded from `%LOCALAPPDATA%\LightBrowser\engine.dat`
-  (about 1 ms on Linux; 4–20 ms measured at startup on a Windows 11 VM). The cache key covers the engine
-  version, which lists are enabled, and where each comes from (embedded copy or download) with
-  its content hash. If anything differs, the engine is rebuilt on a worker thread (about 70 ms).
-- **Interception:** every content WebView, private tabs included, intercepts all requests
-  (`AddWebResourceRequestedFilterWithRequestSourceKinds`: all contexts, documents and workers).
-  - Blocked requests get an empty 403.
-  - The tab's own top-level navigation and the internal origins are never checked.
-  - The handler uses only in-memory state. The allowlist is a `HashSet`, and the per-site
-    decision is made once per navigation.
-- **Cosmetic filtering:** site-specific hiding rules are injected on `DOMContentLoaded` as a
-  constructed stylesheet, which page CSP doesn't block. Generic rules are applied for the
-  class names and ids the page reports, capped at 2000.
-- **Updates:** at most once every 24 h, a worker thread downloads the lists over WinHTTP
-  (HTTPS only, 16 MB cap, 30 s timeout). It validates each download: no HTML, a list header,
+  (about 4 ms on the Windows 11 VM). The cache key covers the engine version, which lists are
+  enabled, and where each comes from (embedded copy or download) with its content hash. If
+  anything differs, the engine is rebuilt on a worker thread.
+- **Interception:** every request of every tab, private tabs included (sub-resources, frames,
+  workers), passes `CefResourceRequestHandler::OnBeforeResourceLoad` on CEF's IO thread.
+  - Blocked requests are cancelled. The shield count is kept in atomics and pushed to the UI
+    thread at most about four times a second; the log gets one line per page with the count.
+  - The tab's own top-level navigation is never checked.
+  - The handler uses only in-memory state shared with the UI thread (`Arc`/atomics); the
+    allowlist decision is made once per navigation.
+- **Cosmetic filtering:** site-specific hiding rules are injected when a page commits, as a
+  constructed stylesheet, which page CSP doesn't block. Generic rules are applied for the class
+  names and ids the page reports, capped at 2000.
+- **Updates:** at most once every 24 h (checked hourly), a worker thread downloads the lists
+  over WinHTTP (HTTPS only, 16 MB cap, 30 s timeout) and validates them: no HTML, a list header,
   at least 50 rules, at least 2 KB. A failed or suspicious download keeps the previous source.
-  - The updater uses the browser's HTTP proxy setting.
-  - With a SOCKS proxy it skips the download rather than bypass the proxy.
+  - The updater uses the browser's HTTP proxy setting; with a SOCKS proxy it skips the download
+    rather than bypass the proxy.
   - `LightBrowser.exe --update-filters` runs the update and a self-test without a window.
-- **Privacy:**
-  - Tracking prevention: Strict by default. Strict blocks storage and requests of *known trackers*
-    only; it does not block third-party cookies in general.
-  - Third-party cookies: blocked by default (Settings → Privacy, restart required) with
-    Chromium's `--test-third-party-cookie-phaseout` switch, browser-wide.
-  - Tracking parameters (`utm_*`, `fbclid`, `gclid`, ...) are stripped before navigating.
-  - `DNT: 1` and `Sec-GPC: 1` headers, plus `navigator.doNotTrack` and
-    `navigator.globalPrivacyControl`.
-  - Optional HTTPS-only mode with a "Continue to HTTP site" interstitial; exceptions last only
-    for the session.
+
+### Privacy
+- **Third-party cookies:** blocked by default (Settings → Privacy):
+  - Network cookies: a `CefCookieAccessFilter` asks `core::cookies::is_third_party` for every
+    cookie a request would send or store. A cookie is third-party when the request's registrable
+    domain (Public Suffix List) differs from the tab's top-level site. This applies at once.
+  - Script access (`document.cookie`): Chromium's `--test-third-party-cookie-phaseout` switch
+    (needs a restart). The profile preference alone did not block it in CEF 156, so both are used.
+- **Tracking parameters** (`utm_*`, `fbclid`, `gclid`, ...) are stripped before navigating.
+- **`DNT: 1` and `Sec-GPC: 1`** headers on every request, plus `navigator.doNotTrack` and
+  `navigator.globalPrivacyControl` in every frame.
+- **HTTPS-only mode** (optional) with a "Continue to HTTP site" interstitial; exceptions last only
+  for the session.
+- **WebRTC** uses only the default public interface: local IP addresses are not exposed and no
+  mDNS responder listens on the network.
+- **No background contact with Google:** see "Engine background traffic" below.
+
+### Engine background traffic
+Chromium's own services contact Google in the background. A logging-proxy audit of an idle,
+fresh profile found secure-time queries, the component updater (and the downloads it triggers),
+an "AI mode" eligibility check and Safe Browsing list updates. LightBrowser switches all of
+them off by default, verified with the proxy: a fresh profile idle for five minutes plus
+page loads contacted **no `*.google.com`, `*.googleapis.com` or `*.gvt1.com` host**. The only
+traffic not caused by pages is the filter-list update.
+
+The setting **"Download engine security components from Google"** (off by default, restart
+required) lets the component updater run. It then fetches the certificate revocation list
+(CRLSet) and the Certificate Transparency list from `update.googleapis.com` and
+`edgedl.me.gvt1.com`. The updater installs Chrome's standard set of components, because CEF has
+no per-component switch. Everything else stays off.
+
+These services run in the browser process, not in a tab, so the ad blocker cannot see them;
+they are controlled with engine switches. The WebView2 build got the same lists from Edge's
+updater.
+
+Segmentation-platform data (`profile\segmentation_platform`, which records visited URLs outside
+history) is deleted at every start. Its switch crashes this engine build.
 
 ### Password vault
 ```
@@ -178,187 +250,241 @@ VK  --XChaCha20-Poly1305 (fresh 24-byte nonce, AAD = entry id)--> each login; ma
 - **Changing the master password** re-keys everything (new salt, KEK and VK) and replaces the
   file atomically.
 - **Secrets in memory** are held in `Zeroizing` buffers and wiped when the vault locks. They are
-  never logged and never stored in SQLite.
+  never logged and never stored in SQLite. Messages carrying a password (login submit, fill)
+  also pass through the engine's IPC strings, which LightBrowser cannot wipe.
 - Threat model (assets, attackers, mitigations, out of scope): `docs/SECURITY.md` (in the
   release download: `SECURITY.md` next to this file).
 - **Unlocking:** off the UI thread; the host enforces an exponential retry delay (1 s → 60 s).
 - **Auto-lock:** after inactivity, on Windows lock and on sleep.
-- **Login detection** (top frame only) offers "Save password?" in the browser's popup window.
+- **Login detection** (main frame only) offers "Save password?" in the browser's popup window.
 - **Fill:** a key icon in the address bar fills a login only after the user picks it, and only
   on an exact origin match.
 - **Copies:** excluded from clipboard history and cleared after 30 s.
 
-### Chromium switches (`AdditionalBrowserArguments`)
-Always passed (`core::settings::Settings::browser_arguments`):
+### Chromium switches
+Built by `core::settings::Settings::browser_switches` and added in
+`CefApp::OnBeforeCommandLineProcessing`. Always:
 - `--no-pings` disables hyperlink auditing (`<a ping>`).
 - `--disable-domain-reliability` disables Chromium's domain reliability telemetry.
-- `--disable-features=AutofillServerCommunication,MediaRouter,OptimizationHints,InterestFeedContentSuggestions,msEdgeShoppingAssistant`
-  turns off autofill crowdsourcing, Cast discovery, optimization-guide downloads, feed
-  suggestions and the Edge shopping assistant.
-- `msSmartScreenProtection` is added to `--disable-features` unless the user turns SmartScreen
-  on.
+- `--disable-background-networking` stops Safe Browsing updates, variations and other
+  background downloads.
+- `--host-resolver-rules=MAP lightbrowser.invalid ~NOTFOUND, MAP *.lightbrowser.invalid ~NOTFOUND`
+  (see "Internal origins").
+- `--disable-features=AutofillServerCommunication,MediaRouter,OptimizationHints,InterestFeedContentSuggestions,NetworkTimeServiceQuerying,AimEnabled,AimServerEligibilityEnabled,AimServerRequestOnStartupEnabled`
+  turns off autofill crowdsourcing, Cast discovery, optimization hints, feed suggestions,
+  secure-time queries and the "AI mode" eligibility request.
 
 Conditional:
+- `--disable-component-update`, and `MAP update.googleapis.com ~NOTFOUND` in the host rules,
+  unless "Download engine security components" is on.
 - `--test-third-party-cookie-phaseout` when "Block third-party cookies" is on (the default).
   Passed once even if also typed into the extra flags.
 - `--disable-gpu` when hardware acceleration is off.
-- `--proxy-server=<value>` when a proxy is set.
+- `--proxy-server=<value>` when a proxy is set, with `--proxy-bypass-list` for the internal hosts
+  (and the updater host).
 - The user's extra flags, validated. `--disable-features` and `--enable-features` lists are
-  merged; security-weakening switches such as `--no-sandbox` and
-  `--disable-web-security` are rejected.
+  merged, and our disabled features stay disabled. Security-weakening switches such as
+  `--no-sandbox` and `--disable-web-security` are rejected.
 
-The environment also sets extensions off, OS single sign-on off, and tracking prevention on.
-Each WebView disables WebView2's general autofill and password autosave, because the browser
-has its own vault.
+CEF is also started with the sandbox on, `command_line_args_disabled` (the exe's own command line
+cannot configure the engine) and log level WARNING. Profile preferences on every request context:
+no password manager, no autofill, no network prediction (`net.network_prediction_options = 2`),
+and WebRTC on the default public interface only.
 
-Checked at runtime on the Windows 11 VM (WebView2 156.0.4314.58) with
-`scripts/vm-mem.ps1 -CommandLine`, which reads the `msedgewebview2.exe` browser process command
-line from the process list. With default settings it contains:
-```
---user-data-dir="C:\Users\pipe\AppData\Local\LightBrowser\profile\EBWebView" ...
---disable-domain-reliability
---test-third-party-cookie-phaseout
---disable-features=AutofillServerCommunication,MediaRouter,OptimizationHints,InterestFeedContentSuggestions,msEdgeShoppingAssistant,msSmartScreenProtection
---no-pings
-```
 LightBrowser runs no telemetry, update service or background process of its own. The only
 network traffic it starts itself is the daily filter-list update (WinHTTP, see above).
 
 ### Memory
 - **Lazy restore:** restored tabs show their saved title and the cached favicon. They get no
-  controller (and so no renderer process) until they are first activated.
+  browser (and so no renderer process) until they are first activated.
 - **Background sleep:** after `tab_sleep_minutes` (default 5) without activation, a background
-  tab gets `MemoryUsageTargetLevel=Low`; 60 s later it is suspended with `TrySuspend`.
-  Activating it calls `Resume` and restores the normal memory level, with no reload.
-- **Discard** (optional, off by default): after `tab_discard_minutes` the tab's controller is
+  tab's JavaScript heap is garbage-collected (DevTools protocol `HeapProfiler.collectGarbage`).
+  The tab is already hidden, so Chromium throttles its timers. A second stage 60 s later
+  repeats the collection. Activating the tab shows it again, with no reload. Pages are not
+  frozen; see "Known limitations".
+- **Discard** (optional, off by default): after `tab_discard_minutes` the tab's browser is
   closed. URL, title and favicon are kept, and the tab reloads when activated. A discarded
-  private tab keeps only its URL. The last live private tab is never discarded, so the InPrivate
+  private tab keeps only its URL. The last live private tab is never discarded, so the private
   session (cookies, logins) survives.
 - **Never touched:** the active tab, tabs playing audio, tabs with a download in progress, and
-  the UI shell and popup.
+  the UI shell and popup. A small tracker in each frame reports playing unmuted media and
+  running Web Audio to the browser.
 - The rules are pure functions in `core::memory` (`decide`, `exempt`), with unit tests. The
   host evaluates them on a timer.
 - Hidden options, not shown in the UI:
-  - `--sleep-test-seconds=N` scales the timers for testing: sleep after N s, suspend N s later,
-    discard after 4N s when discard is enabled.
+  - `--sleep-test-seconds=N` scales the timers for testing: sleep after N s, the second stage
+    N s later, discard after 4N s when discard is enabled.
   - `--mem-report` appends the summed working set and private bytes of the browser process
-    tree, with tab, renderer and suspended counts, to `%LOCALAPPDATA%\LightBrowser\memory-report.log`
-    every 10 s. The tree is our process plus every descendant, which includes the
-    `msedgewebview2.exe` processes of our user data folder.
+    tree to `%LOCALAPPDATA%\LightBrowser\memory-report.log` every 10 s. It includes tab and
+    sleep counts, and renderer counts taken from each process's `--type=` switch. The tree is our
+    process plus every descendant (the engine's subprocesses).
 
-Measured on the Windows 11 VM (WebView2 156.0.4314.58), as the sum over the whole process tree.
-"10 sites" were Wikipedia, GitHub, Hacker News, MDN, BBC News, The Guardian, Stack Overflow,
-Reddit, NYTimes and CNN, plus the new-tab page:
+Measured on the Windows 11 VM (CEF 156.0.15 / Chromium 156.0.8078.80) as the sum over the whole
+process tree. "10 sites" were Wikipedia, GitHub, Hacker News, MDN, BBC News, The Guardian,
+Stack Overflow, Reddit, NYTimes and CNN, plus the new-tab page:
 
 | Scenario | Processes | Renderers | Working set | Private bytes |
 |----------|-----------|-----------|-------------|---------------|
-| 1 tab (new-tab page) | 8 | 2 | 379 MB | 140 MB |
-| 11-tab session restored (lazy) | 8 | 2 | 379 MB | 137 MB |
-| 10 sites open, awake | 23 | 15 | 2131–2173 MB | 1165–1291 MB |
-| 10 background tabs at low memory | 23 | 15 | 1179 MB | 1186 MB |
-| 10 background tabs suspended | 23 | 15 | 1084–1104 MB | 1179–1186 MB |
-| after discard (9 unloaded, CNN active) | 13 | 5 | 973–988 MB | 660 MB |
+| 1 tab (new-tab page) | 7 | 3 | 354 MB | 140 MB |
+| 11-tab session restored (lazy) | 7 | 3 | 354 MB | 135 MB |
+| 10 sites open, awake | 22 | 18 | 2955–3044 MB | 1731–1802 MB |
+| 10 background tabs asleep | 22 | 18 | 2629–2633 MB | 1369–1372 MB |
+| 10 background tabs after the second stage | 22 | 18 | 2630–2639 MB | 1368–1372 MB |
+| after discard (10 unloaded, CNN active) | 10 | 6 | 722–745 MB | 422–425 MB |
+
+The WebView2 build measured 379 MB idle, 2131–2173 MB / 1165–1291 MB with the 10 sites awake,
+1084–1179 MB after its low-memory and suspend stages, and 973–988 MB / 660 MB after discard.
 
 How to read these numbers:
 - The working-set sum counts shared DLL pages once per process, so it overstates physical RAM.
-- Low memory and suspend trim the working set by about half, but they do not free committed
-  memory.
-- Discard frees committed memory too (about −44 %) and ends the renderer processes.
+- With many sites awake the CEF build uses about 40 % more: Chromium isolates more sites,
+  including cross-site ad and video frames, into their own renderer processes (18 against 15).
+- Sleep saves about 11 % of the working set and about 21 % of private bytes. WebView2's
+  "low memory" target trimmed more (about 45 % of the working set); CEF has no equivalent.
+- Discard frees most memory and ends the renderer processes.
 
 To reproduce: enable discard in Settings, start with `--sleep-test-seconds=90 --mem-report`,
 open the sites and read `memory-report.log` (steps in `docs/MANUAL_TEST.md`).
 
 ## Building from source
-Requirements: Rust stable (1.85 or newer). The workspace has two crates:
-- `core`: platform-independent, `#![forbid(unsafe_code)]`
-- `app`: the Windows host; all `unsafe` is confined to `app/src/ffi/`
+The release is cross-compiled on Linux for `x86_64-pc-windows-msvc` with `cargo-xwin`. CEF's
+Rust bindings (`cef` crate) build CEF's C++ wrapper library and support only the MSVC target:
+`x86_64-pc-windows-gnu` fails with "Unsupported target triplet". One command builds and
+packages everything:
 
-The WebView2 loader DLL is embedded in the exe and checked against its SHA-256 at load time,
-so there is nothing to ship next to the exe.
-
-### Linux → Windows cross-compile (GNU toolchain; how the release is built)
 ```sh
-sudo apt install gcc-mingw-w64-x86-64            # linker + windres (for the manifest/version resource)
-rustup target add x86_64-pc-windows-gnu
-# ~/.cargo/config.toml:
-#   [target.x86_64-pc-windows-gnu]
-#   linker = "x86_64-w64-mingw32-gcc"
-cargo build --release --target x86_64-pc-windows-gnu
-# -> target/x86_64-pc-windows-gnu/release/LightBrowser.exe
+scripts/build-dist.sh            # -> dist/LightBrowser-win-x64/, dist/LightBrowser-win-x64.zip, dist/SHA256SUMS
+scripts/build-dist.sh --debug    # same layout with a debug build (testing only)
 ```
-The release profile uses LTO, `opt-level = "s"`, strip and `panic = "abort"`. A clean build
-takes about 1 minute on a fast machine. If the machine is short on RAM, use `-j 4`.
 
-### Linux → Windows with the MSVC ABI (optional, cargo-xwin)
-```sh
-cargo install cargo-xwin
-rustup target add x86_64-pc-windows-msvc
-cargo xwin build --release --target x86_64-pc-windows-msvc
-```
-`cargo-xwin` downloads the MSVC CRT and Windows SDK, which means accepting Microsoft's licence.
-*This path was not built in this project's pipeline; the GNU build above is the tested one.*
+What it does:
+1. `scripts/fetch-cef.sh` downloads the CEF archive pinned in `cef.lock` (the "minimal"
+   Windows x64 distribution, about 175 MB) into its own cache directory
+   (`~/.cache/lightbrowser-cef/downloads`). It checks the SHA-1 published in CEF's build index
+   (`cef-builds.spotifycdn.com/index.json`) **and** the SHA-256 pinned in `cef.lock`, and only
+   then extracts it with `export-cef-dir`. Nothing from CEF is committed to the repository.
+2. `cargo xwin build --release --target x86_64-pc-windows-msvc -p app --lib` builds
+   `LightBrowser.dll` with the static CRT (`.cargo/config.toml`) and `libcef.dll` delay-loaded.
+3. It assembles `dist/LightBrowser-win-x64/`: `LightBrowser.exe` (the CEF bootstrap, branded by
+   `tools/pebrand`), `LightBrowser.dll`, the CEF DLLs, `.pak` files, `icudtl.dat`,
+   `v8_context_snapshot.bin`, all `locales/`, `licenses/`, the README, SECURITY and third-party
+   notices. Then it writes the zip (fixed timestamps and order) and `SHA256SUMS`.
 
-### Native Windows
-- **MSVC** (Visual Studio Build Tools with the "Desktop development with C++" workload):
-  `cargo build --release`. `embed-resource` uses `rc.exe` from the Windows SDK.
-- **GNU:** install MSYS2 with `mingw-w64-x86_64-toolchain`, which provides `gcc` and `windres`,
-  run `rustup target add x86_64-pc-windows-gnu`, then
-  `cargo build --release --target x86_64-pc-windows-gnu`.
+Requirements (versions used for the release):
+- Rust stable (1.85 or newer; built with 1.99.1) with `rustup target add x86_64-pc-windows-msvc`
+- `cargo install cargo-xwin --version 0.23.1`
+- `cargo install export-cef-dir --version 156.3.0` (must match the `cef` crate version)
+- LLVM **20.1.8** (`clang-cl`, `lld-link`, `llvm-lib`; the MSVC C++ headers need clang 19 or
+  newer), unpacked from the official release tarball. The script expects it in
+  `~/.cache/lightbrowser-toolchain/llvm-20.1.8` or in `$LB_LLVM`.
+- `cmake`, `ninja`, `curl`, `python3`, `zip`
 
-*Neither native path was exercised in this pipeline. The code is not GNU-specific.*
+**Microsoft's licence:** cargo-xwin downloads the MSVC CRT and the Windows SDK (headers and
+import libraries) from Microsoft. Building therefore means accepting Microsoft's licence terms
+for them; `build-dist.sh` sets `XWIN_ACCEPT_LICENSE=1` for this (and only there). The versions
+are pinned so that builds are reproducible: `XWIN_VERSION=17`, CRT `14.44.17.14` (MSVC 14.44.35220),
+SDK `10.0.26100`; the download is cached in `~/.cache/lightbrowser-xwin`.
+
+A clean build takes a few minutes, most of it for CEF's C++ wrapper and LTO; rebuilds take about
+40 s. The release profile uses LTO, `opt-level = "s"`, strip and `panic = "abort"`.
+
+**Alternative: native build on Windows** (documented, not used for the release). With Visual
+Studio 2022 Build Tools ("Desktop development with C++", MSVC 14.44, Windows SDK 10.0.26100),
+Rust, CMake and Ninja: set `CEF_PATH` to the folder produced by `scripts/fetch-cef.sh` (or
+run `export-cef-dir` on the verified archive) and run
+`cargo build --release --target x86_64-pc-windows-msvc -p app --lib`. Then assemble the folder
+as `build-dist.sh` does.
+
+### Updating the engine
+Security fixes for the engine reach users only through new LightBrowser releases (see "Known
+limitations"). To move to a newer CEF:
+1. Set the new `cef` crate version (e.g. `=157.x.y`) in `app/Cargo.toml` and run
+   `cargo update -p cef`. Install the matching `export-cef-dir` version.
+2. In `cef.lock`, set `CEF_CRATE`, `CEF_VERSION`, `CHROMIUM_VERSION`, `CEF_ARCHIVE` and
+   `CEF_SHA1` from `https://cef-builds.spotifycdn.com/index.json` (windows64, "minimal"), and
+   run `scripts/fetch-cef.sh --pin` once to record the archive's SHA-256.
+3. `scripts/build-dist.sh`, then run the checks below and `docs/MANUAL_TEST.md`.
 
 ### Checks
 ```sh
-cargo test -p core                                                       # 167 unit tests
+cargo test --workspace                                                   # core: 182 unit tests
 cargo clippy --workspace --all-targets -- -D warnings                    # Linux
-cargo clippy --workspace --all-targets --target x86_64-pc-windows-gnu -- -D warnings
+cargo xwin clippy --target x86_64-pc-windows-msvc --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 cargo audit
 NODE_PATH=/usr/lib/node_modules/@playwright/mcp/node_modules node ui/dev/test-ui.cjs [shots-dir]   # UI pages with a mock host
 ```
-- Testing on Windows: `scripts/vm.sh` deploys `dist/LightBrowser.exe` to a Windows test machine
-  over SSH and drives it (start, stop, screenshots, keys, clicks).
-- `scripts/vm-mem.ps1` lists the process tree with memory figures and the WebView2 command line.
+For `cargo xwin clippy`, export the same `CEF_PATH` and `XWIN_*` variables as `build-dist.sh`.
+The app's own unit tests (DPAPI, message escaping) run on Windows:
+`cargo xwin test --target x86_64-pc-windows-msvc -p app --no-run`, then run the test exe.
+
+Testing on Windows:
+- `scripts/vm.sh` deploys `dist/LightBrowser-win-x64` to a Windows test machine over SSH and
+  drives it (start, stop, screenshots, keys, clicks).
+- `scripts/vm-sandbox.ps1` shows the integrity level and token of every LightBrowser process.
+- `scripts/vm-engine-check.ps1` shows which engine DLLs each process loaded and whether any
+  `msedgewebview2.exe` was started by LightBrowser.
+- `scripts/vm-mem.ps1` lists the process tree with memory figures.
 - `scripts/vm-leak-scan.ps1` searches the data folder for strings that must never be stored,
   such as a test password.
 - The Windows checklist is `docs/MANUAL_TEST.md`.
 
 ## Known limitations
-- **No tab pinning in the UI.** The memory policy supports pinned tabs, but the tab strip
-  cannot pin yet.
+- **The engine is bundled.** Chromium security fixes reach users only when a new LightBrowser
+  release with a newer CEF is published and installed; there is no auto-update. Releases should
+  follow CEF security releases promptly.
+- **No certificate revocation or CT list updates by default.** With "Download engine security
+  components" off, the CRLSet and Certificate Transparency list are those built into the
+  release. Chromium relaxes CT enforcement about 10 weeks after its build date. Turning the
+  setting on restores the updates, at the cost of contact with Google's update servers.
+- **No Safe Browsing / SmartScreen.** CEF has no working Safe Browsing, and the WebView2
+  build's optional SmartScreen setting is gone. Ad and tracker blocking and third-party cookie
+  blocking replace Edge's tracking prevention.
+- **No DRM (Widevine) playback.** Netflix, Spotify Web and similar sites that need DRM do not
+  play.
+- **No page freezing in the background.** `Page.setWebLifecycleState frozen` is not used: in
+  CEF 156 a windowed (Alloy-style child window) browser never repaints after it is unfrozen.
+  Background tabs rely on Chromium's hidden-page throttling plus garbage collection; discard
+  frees the memory.
+- **Third-party cookie blocking for scripts uses a Chromium test switch**
+  (`--test-third-party-cookie-phaseout`). A future Chromium could rename or drop it. There are no
+  per-site exceptions; if an embedded sign-in or widget breaks, turn the setting off (and
+  restart). Network cookies are filtered by the browser itself and apply at once.
+- **Some settings need a restart:** hardware acceleration, third-party cookie blocking (script
+  access), engine security components, proxy and extra flags. The settings page says when.
+- **Zoom is per site**, as in Chrome, not per tab as in the WebView2 build.
+- **WebSocket connections are not filtered** by the ad blocker: CEF does not pass them to the
+  request handler. Theme changes reach pages through DevTools emulation, so a page that has
+  DevTools open shows the system theme.
+- **HTTP authentication and site permission prompts** (camera, microphone, location,
+  notifications) are not shown: CEF's Alloy runtime denies them by default.
+- **Size:** about 420 MB unpacked (183 MB zipped), against about 6 MB for the WebView2 build. All
+  CEF locales and SwiftShader (software rendering for machines without a usable GPU) are kept.
 - **Discarding loses back/forward history.** A discarded tab reloads its last URL; its history
   and any unsaved form input are lost. Discard is off by default.
 - **uBlock Origin scriptlets (`+js(...)`) are not executed.** Network and cosmetic (CSS) rules
   work; scriptlet-based anti-adblock and annoyance fixes do not.
   - Cosmetic filtering of generic rules is limited to the first 2000 class names and ids a
     page reports.
-- **Some settings need a restart:** hardware acceleration, third-party cookie blocking, proxy,
-  extra flags and SmartScreen.
-  This is because all tabs share one WebView2 environment. The settings page says when.
-- **The WebView2 runtime determines the engine version.** LightBrowser cannot pin or patch
-  Chromium; security updates come from Windows/Edge updates.
-- **Memory figures:**
-  - Sleep and suspend trim the working set but do not release committed memory; only discard
-    does.
-  - WebView2 shares renderer processes between same-site tabs, so discarding one of two tabs of
-    the same site frees less.
-- **Third-party cookie blocking uses a Chromium test switch.**
-  `--test-third-party-cookie-phaseout` comes from Chromium's third-party-cookie phase-out testing;
-  a future WebView2 runtime could rename or drop it. It is global: there are no per-site
-  exceptions, so if an embedded sign-in, comment or video widget breaks, the only fix is to turn
-  the setting off (and restart).
 - **The vault does not detect rollback.** Replacing `vault.json` with an older copy is not
   detected. See `docs/SECURITY.md` for the full threat model and what is out of scope.
+- **No tab pinning in the UI.** The memory policy supports pinned tabs, but the tab strip
+  cannot pin yet.
 - **Platform support:** no Windows on ARM build, no installer, no auto-update and no extensions.
-- **Unsigned:** the exe is not code-signed.
+- **Unsigned:** the binaries are not code-signed (SmartScreen may warn on first start).
 
 ## Third-party components
-- Microsoft WebView2 loader (`assets/webview2/`, `LICENSE.txt` and `NOTICE.txt`): BSD-style
-  licence, redistributable.
+- **Chromium Embedded Framework 156.0.15** and **Chromium 156.0.8078.80**: CEF is BSD-licensed
+  (`licenses/CEF-LICENSE.txt` in the download). Chromium and the third-party code it contains are
+  listed with their licences in `licenses/Chromium-CREDITS.html`. The binaries are redistributed
+  unmodified, except that `LightBrowser.exe` (CEF's `bootstrap.exe`) carries LightBrowser's
+  version strings and manifest.
 - Filter lists:
   - EasyList and EasyPrivacy: GPL-3.0-or-later or CC BY-SA 3.0.
   - uBlock Origin uAssets: GPL-3.0.
-  - Attribution and licences are in `assets/filters/`. The lists are used unmodified, as data.
-- Rust crates: see `Cargo.lock`. The main ones are `webview2-com`/`windows` (MIT/Apache-2.0),
-  `adblock` (MPL-2.0), `rusqlite` with bundled SQLite (MIT, public domain), and RustCrypto
-  `argon2`/`chacha20poly1305` (MIT/Apache-2.0).
+  - Attribution and licences are in `assets/filters/` and `THIRD-PARTY-NOTICES.txt`. The lists
+    are used unmodified, as data.
+- Rust crates: see `Cargo.lock`. The main ones are `cef` / `cef-dll-sys` (Apache-2.0 OR MIT),
+  `windows` (MIT/Apache-2.0), `adblock` (MPL-2.0), `psl` (MIT/Apache-2.0), `rusqlite` with
+  bundled SQLite (MIT, public domain), and RustCrypto `argon2`/`chacha20poly1305`
+  (MIT/Apache-2.0). The build tool `tools/pebrand` uses `editpe` (MIT).

@@ -1,5 +1,37 @@
 # LightBrowser security notes
 
+## The engine: bundled Chromium (CEF)
+- **What runs:** Chromium 156.0.8078.80 through the Chromium Embedded Framework 156.0.15,
+  shipped in the download. No Microsoft Edge or WebView2 component is used.
+- **Supply chain:** the CEF binary distribution is not in the repository. `scripts/fetch-cef.sh`
+  downloads it into its own cache directory and checks it against two hashes before it is
+  extracted: the SHA-1 from CEF's build index and the SHA-256 pinned in `cef.lock`. The exact
+  `cef` crate version is pinned in `app/Cargo.toml` (`Cargo.lock` records the build).
+  `SHA256SUMS` in the download covers the zip, `LightBrowser.exe`, `LightBrowser.dll` and
+  `libcef.dll`. The binaries are not code-signed.
+- **Sandbox:** always on.
+  - `LightBrowser.exe` is CEF's sandbox bootstrap. The browser process and every subprocess
+    run through it, with `LightBrowser.dll` in the same folder (the bootstrap requires DLL and
+    exe to be both unsigned or both signed with one certificate).
+  - Renderers run at Untrusted integrity with restricted tokens; the GPU process and storage
+    service are sandboxed too (`scripts/vm-sandbox.ps1` prints them).
+  - `--no-sandbox` (and other weakening switches) are rejected in the "extra flags" setting.
+    CEF is started with `command_line_args_disabled`, so switches typed on the exe's command
+    line are ignored as well.
+- **Updates are LightBrowser's responsibility.** A bundled engine does not update itself. Chromium
+  security fixes reach users only through a new LightBrowser release built on a newer CEF
+  (README, "Updating the engine"). Ship such releases promptly after CEF security releases.
+- **Background services are off.** Component updater, secure time, Safe Browsing updates and
+  similar Chromium services are disabled by default (README, "Engine background traffic").
+  Consequences:
+  - The certificate revocation list (CRLSet) and the Certificate Transparency list are only those
+    in the release, unless the user turns on "Download engine security components".
+  - There is no Safe Browsing (CEF has none) and no SmartScreen (the WebView2 build had it as an
+    option). Phishing and malware URL warnings are not provided; ad and tracker blocking is not a
+    substitute.
+- **CEF's password manager and autofill** are turned off on every profile (preferences
+  `credentials_enable_service`, `autofill.*`), so credentials only go to LightBrowser's own vault.
+
 ## Trusted UI vs. web content
 
 ### Origin split
@@ -7,7 +39,7 @@ The browser's own UI is split across **two separate origins** under the reserved
 
 | Origin | Documents | Loaded in |
 |--------|-----------|-----------|
-| `https://shell.lightbrowser.invalid` | `/shell.html` (tab strip, toolbar, bookmarks bar, find bar) and `/popup.html` (menu, shield, bookmark folders, password prompts) | only the shell WebView and the popup WebView |
+| `https://shell.lightbrowser.invalid` | `/shell.html` (tab strip, toolbar, bookmarks bar, find bar) and `/popup.html` (menu, shield, bookmark folders, password prompts) | only the shell view and the popup view |
 | `https://lightbrowser.invalid` | built-in pages: new tab, history, bookmarks, downloads, settings, passwords, about | tabs |
 
 Consequences:
@@ -22,17 +54,41 @@ Consequences:
   look-alike host, is rejected (`core::protocol::classify` tests).
 - **Cached favicons.** `/favicon?host=` serves cached favicon bytes on both origins. Only valid
   host names are accepted, and the response is a PNG with `nosniff`.
-- The browser chrome (shell), the popup and the built-in pages run on two internal origins under
-  the reserved `.invalid` TLD. They are served from bytes embedded in the exe, with a strict CSP.
+- **No network.** The browser chrome (shell), the popup and the built-in pages are served by a
+  CEF scheme handler from bytes embedded in the DLL, with a strict CSP; unknown paths get a 404
+  from the handler. The engine's host rules make both hosts unresolvable and keep them away
+  from a proxy, so even a preconnect cannot leave the machine.
+- **Tabs can't reach them from web content.** Every request a tab makes to an internal origin
+  must come from a built-in page of the same origin (`assets::internal_request_allowed`, checked
+  in the IO-thread request handler); the shell origin is never reachable from a tab. Responses
+  carry `Cross-Origin-Resource-Policy: same-origin` and `X-Frame-Options: DENY`.
 - The host accepts privileged messages only after `core::protocol::classify` has checked:
-  - the channel (which WebView the message arrived on);
+  - the channel (which view the message arrived on);
   - the exact origin and document;
-  - that it came from the top-level frame.
+  - that it came from the main frame.
 - Each sender has a command allow-list (`Sender::permits`). For example, the new-tab page can't
   reach the vault, and the shell can't list passwords.
 - Web pages can only send `ContentMessage`, which is strictly parsed and size-capped.
 - Tabs can never load the shell origin. A web page can't navigate a tab to a built-in page on its
   own; only the host can (`core::assets::allow_navigation`).
+
+## Messages between pages and the browser
+- **The bridge:** in every main frame, before page scripts run, the renderer defines
+  `window.__lbHost` (frozen, non-writable, non-configurable). Its `postMessage` sends the JSON
+  text to the browser process in a CEF process message; the native function behind it is kept
+  in a closure, not on `window`.
+- **Who sent it is decided by the browser process,** from the frame the engine reports for the
+  process message: its committed URL, its main-frame flag, and whether it is still the
+  browser's current main frame. The message text is never trusted for this. A page cannot
+  pretend to be a built-in page or the shell.
+- **Same-origin frames** can reach their parent's `__lbHost` (they are the same origin, so they
+  have the same rights); cross-origin frames cannot.
+- **Size cap:** messages over 8 MB are refused in the renderer.
+- **Browser to page:** replies and fills are sent to the main frame only and are delivered to
+  that frame's listeners.
+- **Secrets in IPC:** a login submit or a fill carries a password as a string through the
+  engine's IPC. LightBrowser wipes its own copies (`Zeroizing`), but the engine's string copies
+  are not ours to wipe.
 
 ## Password prompts live outside the page
 - The "Save password?" and "Fill saved login?" prompts are drawn in the **popup window**. It is a
@@ -46,11 +102,15 @@ Consequences:
   as a dismissal, never a confirmation.
 
 ## Scripts injected into web pages
-- **Which scripts:** three small scripts from `ui/inject/`, embedded and never served over any
-  origin.
-  - `gpc.js` and `dnt.js` only define read-only navigator properties.
-  - `page-tokens.js` (top frame only) reports the page's class names and ids for generic
+- **Which scripts:** small scripts from `ui/inject/` and the renderer, embedded in the DLL and
+  run by the renderer when a frame's script context is created (before page scripts). They are
+  never served over any origin.
+  - `gpc.js` and `dnt.js` (every frame) only define read-only navigator properties.
+  - `page-tokens.js` (main frame only) reports the page's class names and ids for generic
     cosmetic filtering.
+  - `login.js` (main frame only) detects login forms and fills a login the user picked.
+  - An audio tracker (every frame) reports whether the frame plays audio, so the tab is not put
+    to sleep. A page can only make its own tab stay awake.
 - **What a page can do with the token message:** it can forge or flood it, but the message is
   strictly parsed (at most 2000 tokens of up to 100 characters each). Its only effect is extra
   hiding CSS on that same page, and the host applies it only if the sender's origin equals the
@@ -110,7 +170,7 @@ How each one is handled:
   - Iframes are never heard: messages are top-level only, and the script runs only where
     `window.top === window`.
   - Fill needs a user click in the trusted popup window, plus an exact origin match taken from
-    WebView2's own view of the sender.
+    the engine's own view of the sending frame.
   - Built-in pages are on a separate `.invalid` origin that pages can't navigate to or frame.
   - Details are in the table below.
 
@@ -142,13 +202,13 @@ VK  --XChaCha20-Poly1305--> manifest (ordered entry ids + generation)
 | Someone copies `vault.json` (backup, cloud sync, stolen disk image) | They also need the master password (Argon2id makes guessing slow) **and** the user's DPAPI keys. On another account or PC the wrapped vault key cannot be unwrapped, even with the right password. |
 | Someone with the file and the user's DPAPI keys (same account) | Still needs the master password; there is no offline shortcut. |
 | A malicious web page | Can't read the vault: web content can only send `ContentMessage` (`loginForm`, `submit`, `requestFill`), and none of these returns secrets. A page gets a password only after the user picked that login in the trusted prompt, and only for its own exact origin (see below). |
-| Phishing look-alike domains | Fill needs an exact origin match (scheme, host and port after IDNA normalization; `vault::fill_allowed`). `https://аpple.com` (Cyrillic) never matches `https://apple.com`, nor do `http://`, subdomains or other ports. The origin compared is the one WebView2 reports for the message, never a URL the page claims. |
-| Cross-origin iframes (ads, embedded widgets) | The login script runs only in the top-level document (`window.top === window`). The host only listens to top-level `WebMessageReceived` (no frame events). `PostWebMessage` reaches only the top-level document. |
+| Phishing look-alike domains | Fill needs an exact origin match (scheme, host and port after IDNA normalization; `vault::fill_allowed`). `https://аpple.com` (Cyrillic) never matches `https://apple.com`, nor do `http://`, subdomains or other ports. The origin compared is the one the engine reports for the sending frame, never a URL the page claims. |
+| Cross-origin iframes (ads, embedded widgets) | The login script and the message bridge run only in the main frame. The host treats messages from any other frame as unprivileged and drops content messages that do not come from the current main frame. Fills are sent to the main frame only. |
 | Click-jacking or spoofed prompts | "Save password?", "Fill saved login?" and "Unlock" are drawn in the browser's own popup window, outside the page. The page can't draw over them or click them. Each prompt carries its tab id and origin, and the host re-checks that the tab is still active and on that origin before saving or filling. Hiding the prompt for any reason is a dismissal. |
 | Online guessing through the UI | The host (not the UI) enforces an exponential delay after failures: 1 s, 2 s, 4 s … 60 s. The failure count is persisted, so restarting doesn't reset it. Wrong master passwords on "Show password" count too. |
 | Unattended unlocked vault | Auto-lock after N minutes without vault use (setting, default 15), on Windows session lock (`WTS_SESSION_LOCK`), on sleep or hibernate (`PBT_APMSUSPEND`) and on exit. Locking drops and wipes the keys and decrypted entries. |
 | Passwords left on the clipboard | Copies are flagged `ExcludeClipboardContentFromMonitorProcessing`, `CanIncludeInClipboardHistory=0` and `CanUploadToCloudClipboard=0`. The clipboard is emptied after 30 s, but only if its sequence number is unchanged, so a newer copy by the user is never wiped. |
-| Leaks via logs, database, session, errors | No password or master-password material is ever logged, stored in SQLite, or put into error strings (checked at every release: greps of all log/format calls, a schema review, the `no_plaintext_in_file` tests, and a scan of the whole data dir, WebView2 profile included, on Windows after saving a login). Parse errors never echo input. Session and history URLs lose any `user:pass@`. |
+| Leaks via logs, database, session, errors | No password or master-password material is ever logged, stored in SQLite, or put into error strings (checked at every release: greps of all log/format calls, a schema review, the `no_plaintext_in_file` tests, and a scan of the whole data dir, engine profile included, on Windows after saving a login). Parse errors never echo input. Session and history URLs lose any `user:pass@`. |
 
 ### Out of scope (what it does not protect against)
 - **Malware running as the same user while the vault is unlocked.** It can read process memory
@@ -159,8 +219,8 @@ VK  --XChaCha20-Poly1305--> manifest (ordered entry ids + generation)
 - **Weak master passwords.** Argon2id only slows guessing. The setup page shows a strength hint
   and requires at least 8 characters.
 - **Memory hygiene is best effort.** Secrets live in `Zeroizing` buffers and are wiped on drop,
-  including the master password parsed from JSON (`protocol::Secret`) and WebView2's message
-  buffer. serde_json's internal scratch buffer for escaped strings, the page's DOM, and
-  clipboard memory (owned by Windows) are outside our control.
+  including the master password parsed from JSON (`protocol::Secret`) and our copy of each page
+  message. The engine's IPC strings, serde_json's internal scratch buffer for escaped strings,
+  the page's DOM, and clipboard memory (owned by Windows) are outside our control.
 - **Rolling the whole vault file back to an older copy.** This is not detected; it would
   restore older (still encrypted) logins.

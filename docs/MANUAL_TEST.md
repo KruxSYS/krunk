@@ -1,32 +1,38 @@
 # Manual test checklist (Windows 10/11 x64)
 
-Run these on a real Windows 10 or 11 x64 machine with the release `LightBrowser.exe`.
-Sections 1–3 are the release smoke test. The remaining sections cover each feature in detail.
-Last full pass: 2026-11-03 on a Windows 11 Pro VM (build 26200, WebView2 156.0.4314.58),
-driven with `scripts/vm.sh`.
+Run these on a real Windows 10 or 11 x64 machine with the release folder
+`LightBrowser-win-x64` (from the zip). Sections 1–3 are the release smoke test. The remaining
+sections cover each feature in detail. Last full pass: 2026-11-04 on a Windows 11 Pro VM (build
+26200), CEF 156.0.15 / Chromium 156.0.8078.80, driven with `scripts/vm.sh` (screenshots in the
+pipeline workspace under `screenshots/cef/`).
 
 ## 1. Install and first run
-1. Check the hash: `Get-FileHash LightBrowser.exe` matches `SHA256SUMS`.
-2. **Without the WebView2 runtime:** the runtime cannot be removed from Windows 11, so point
-   LightBrowser at an empty runtime folder instead:
-   - Non-elevated: start it with `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER=C:\empty`.
-   - Elevated (WebView2 ignores `WEBVIEW2_*` variables there), as administrator:
-     `reg add HKLM\Software\Policies\Microsoft\Edge\WebView2\BrowserExecutableFolder /v LightBrowser.exe /d C:\empty`
-   - Expected: the "LightBrowser – WebView2 Runtime required" dialog with the download link.
-     "No" exits with no crash; the log says "WebView2 runtime not found".
-   - **Remove the registry value afterwards**
-     (`reg delete … /v LightBrowser.exe /f`) and check that the browser starts normally again.
-3. **With the runtime:**
+1. Check the hash: `Get-FileHash LightBrowser-win-x64.zip` matches `SHA256SUMS`; extract it.
+2. **Missing engine files:** rename `libcef.dll` (or delete `locales\en-US.pak`) and start
+   `LightBrowser.exe`. Expected: a "LightBrowser cannot start because some of its files are
+   missing or damaged" message box that names the file. No crash and no window. Rename it
+   back.
+3. **First start:**
    - The window opens with one new tab and the address bar focused.
-   - `%LOCALAPPDATA%\LightBrowser\` is created with `browser.db`, `engine.dat`, `profile\`,
-     `bin\WebView2Loader.dll` and `lightbrowser.log`.
-   - The log shows the runtime version and "filter engine loaded from cache" (on the second
-     start).
-4. Only one `LightBrowser.exe` process runs. All other processes are `msedgewebview2.exe`
-   children (`scripts/vm-mem.ps1`). There are no services and no scheduled tasks.
+   - `%LOCALAPPDATA%\LightBrowser\` is created with `browser.db`, `engine.dat`, `profile\`
+     (with `default\`), `lightbrowser.log` and `cef.log`. No `debug.log` appears next to the exe.
+   - `lb://about` shows Chromium 156.0.8078.80 and CEF 156.0.15.
+   - The log shows "engine initialized: CEF …, Chromium …" and "filter engine loaded from
+     cache" (on the second start).
+4. **Processes and engine:** all processes are `LightBrowser.exe` (the browser plus the
+   engine's subprocesses). There are no services and no scheduled tasks.
+   - `scripts/vm-engine-check.ps1`: every process has `libcef.dll`; none has
+     `WebView2Loader.dll` or `EmbeddedBrowserWebView.dll`;
+     `msedgewebview2_started_by_lightbrowser=0`.
+   - `scripts/vm-sandbox.ps1`: every renderer is Untrusted (or Low) with a restricted token,
+     and no process has `--no-sandbox`.
+   - Task Manager → Details → Description shows "LightBrowser web browser".
+5. **Upgrade from the WebView2 version:** with an old data folder (with `profile\EBWebView`), the
+   settings, history, bookmarks, session and vault are all there. `profile\EBWebView` is left as
+   it was.
 
 ## 2. Release screenshot set (AC4)
-Take these with the final exe. The reference set from the 2026-11-03 pass is in the pipeline
+Take these with the final build. The reference set from the 2026-11-03 pass is in the pipeline
 workspace under `screenshots/final/`.
 
 | Shot | How |
@@ -48,10 +54,10 @@ Expected: `hits=0`.
 Follow "Memory (M8)" below and record:
 - 1 tab
 - 10 sites awake
-- 10 sites after sleep/suspend
+- 10 sites after sleep (and after the second stage)
 - after discard
 
-The 2026-11-03 figures are in the README under "Memory".
+The 2026-11-04 figures are in the README under "Memory".
 
 ## Tabs and shell (M3)
 1. Ctrl+T opens a tab. Ctrl+W closes it. Closing the last tab leaves a fresh new-tab page.
@@ -195,7 +201,8 @@ The 2026-11-03 figures are in the README under "Memory".
 3. **Network check:**
    - Open DevTools (F12) → Network on the news site and filter for `doubleclick` or
      `googlesyndication`.
-   - Those requests show status 403 with an empty response.
+   - Those requests show as failed (cancelled).
+   - `lightbrowser.log` has "tab N: K requests blocked on this page".
    - The page's own document request is never blocked, even when you open an ad link directly
      (for example a `https://ad.doubleclick.net/...` link in a new tab still loads).
 4. **Cosmetic filtering:**
@@ -212,11 +219,13 @@ The 2026-11-03 figures are in the README under "Memory".
    - Open `https://globalprivacycontrol.org/`. It reports "GPC signal detected".
    - In DevTools, `navigator.globalPrivacyControl === true` and `navigator.doNotTrack === "1"`.
    - Network → any request → Request Headers include `DNT: 1` and `Sec-GPC: 1`.
-8. **Tracking prevention:**
-   - `edge://settings` is not available in WebView2. Instead, open a site that embeds
-     third-party trackers (such as a news site) and check DevTools → Application → Cookies:
-     third-party tracker cookies are absent.
-   - Strict tracking prevention is the default.
+8. **Third-party cookies** (on by default):
+   - A page on one site embedding a frame of another site (e.g. `http://127.0.0.1:8081` with a
+     `http://localhost:8082` frame that sets a cookie by header and by script): the frame sees
+     `document.cookie = []`, and the next request of the frame carries no `Cookie`.
+   - The same frame URL opened as the top-level page keeps its cookies.
+   - The test pages are in the pipeline workspace (`screenshots/verify2/test-pages`, served by
+     `serve.ps1`).
 9. **HTTPS-only** (Settings → Privacy and security → HTTPS-only mode):
    - `http://neverssl.com/` is upgraded and fails over HTTPS, so the "This site doesn't support
      a secure connection" page appears.
@@ -288,7 +297,7 @@ The 2026-11-03 figures are in the README under "Memory".
       unchanged. Delete the folder afterwards.
 12. **Copied vault on another account (DPAPI):**
     - Copy `vault.json` into `%LOCALAPPDATA%\LightBrowser\` of a *different* Windows user
-      account (or another PC), with LightBrowser.exe alongside.
+      account (or another PC) that also has LightBrowser.
     - Unlocking with the **correct** master password fails with "This vault can only be opened
       by the Windows account (and PC) that created it."
 13. **Leak check:** search `lightbrowser.log` and `browser.db` (DB Browser for SQLite, or
@@ -314,11 +323,13 @@ Open ⋮ → Settings, or type `lb://settings` in the address bar.
    - "Update now" shows the last check time.
    - Add `bad host` to the allowlist: inline error. Add `example.com`, then remove it.
 6. **Privacy:**
-   - Tracking prevention levels apply live.
+   - There is no "Tracking prevention" or "SmartScreen" setting any more.
    - HTTPS-only: `http://example.com` opens as https.
    - DNT/GPC unticked: `https://httpbin.org/headers` no longer shows `Dnt` / `Sec-Gpc` (headers
      change immediately; `navigator.*` on new tabs).
-   - SmartScreen shows the restart banner.
+   - "Download engine security components from Google" shows the restart banner. With the
+     default (off), an idle browser behind a logging proxy contacts no Google host (see
+     "Background traffic" below).
 7. **Clear on exit:**
    - Tick "Cookies and site data" and "Browsing history".
    - Visit `https://httpbin.org/cookies/set?lbtest=42`, then close the window. It disappears
@@ -334,13 +345,14 @@ Open ⋮ → Settings, or type `lb://settings` in the address bar.
    - "Ask where to save" shows a Save dialog for each download; cancelling it cancels the
      download.
 10. **Advanced:**
-    - User agent `Test/1.0`: `https://httpbin.org/headers` in an existing tab shows it after a
-      reload; clearing the field restores the default.
+    - User agent `Test/1.0`: `https://httpbin.org/user-agent` shows it in a new tab and in an
+      existing tab after a reload; clearing the field restores the default.
     - Proxy `not a proxy` gives an inline error; `127.0.0.1:8888` shows the restart banner.
     - Extra flags: `--no-sandbox`, `"--x"` and `--a=` are refused inline; `--force-dark-mode`
       shows the banner.
 11. **Zoom and theme:**
-    - Default zoom 125 %: new tabs open at 125 %.
+    - Default zoom 125 %: a site you have not zoomed opens at 125 %; a site you zoomed keeps its
+      own zoom (zoom is remembered per site).
     - Theme Dark: the shell, built-in pages, web pages that support `prefers-color-scheme`, and
       the window title bar all turn dark.
     - System follows Windows (Settings → Personalization → Colors).
@@ -357,41 +369,45 @@ Open ⋮ → Settings, or type `lb://settings` in the address bar.
     pages). After "Reset", every value is back to its default, and the
     restart banner appears if restart-only values were different.
 15. **Isolation:** only `lb://settings` can change settings. In DevTools on any website,
-    `chrome.webview.postMessage({cmd:"saveSettings",settings:{}})` has no effect.
+    `__lbHost.postMessage({cmd:"saveSettings",settings:{}})` has no effect.
 
 ## Memory (M8)
 Use `scripts/vm-mem.ps1` (PowerShell) to list the process tree with each process's type and
-working set. With `-CommandLine` it also prints the WebView2 browser process command line.
-1. **Flags at runtime:** start normally and run `vm-mem.ps1 -CommandLine`. The browser command
-   line contains:
-   - `--no-pings`
-   - `--disable-domain-reliability`
-   - `--disable-features=AutofillServerCommunication,…,msSmartScreenProtection`
-
-   After turning SmartScreen on and restarting, `msSmartScreenProtection` is gone.
+working set.
+1. **Switches at runtime:** `lb://about` → "Browser arguments" contains `--no-pings`,
+   `--disable-domain-reliability`, `--disable-background-networking`,
+   `--disable-component-update`, the `--host-resolver-rules` for `lightbrowser.invalid`, and
+   `--disable-features=AutofillServerCommunication,…,AimServerRequestOnStartupEnabled`.
 2. **Lazy restore:**
    - Set "Continue where you left off", open 5 sites, close and start again.
    - Every tab shows its title and favicon, but the background tabs are dimmed. `vm-mem.ps1`
-     shows 2 renderers: the shell and the active tab.
-   - Click one restored tab: it loads, and there are 3 renderers.
+     shows 3 renderers (the shell, the active tab and one spare).
+   - Click one restored tab: it loads, and there is one renderer more.
 3. **1-tab baseline:** start with `--mem-report` and one new tab. Wait 10 s and note the last
    `tick:` line of `%LOCALAPPDATA%\LightBrowser\memory-report.log`
-   (about 380 MB working set, 2 renderers).
-4. **Sleep and suspend** (test scale):
+   (about 355 MB working set, 3 renderers).
+4. **Sleep** (test scale):
    - In Settings, turn on "Discard background tabs".
-   - Start with `--sleep-test-seconds=90 --mem-report` (sleep 90 s, suspend 90 s later,
+   - Start with `--sleep-test-seconds=90 --mem-report` (sleep 90 s, second stage 90 s later,
      discard 360 s after the tab was last active). `lightbrowser.log` has "tab sleep test mode".
-   - Open 10 real sites, one per tab. Note the `tick:` line (about 2.1 GB working set,
-     15 renderers).
+   - Open 10 real sites, one per tab. Note the `tick:` line (about 3 GB working set,
+     18 renderers).
    - Do not touch the browser for about 3 minutes. Background tabs dim. `lightbrowser.log` has
-     "tab N: low memory", then "tab N: suspended" for each background tab. The mem-report shows
-     `suspended=10` and roughly half the working set.
+     "tab N: low memory", then "tab N: asleep (second stage)" for each background tab. The
+     mem-report shows `asleep=10 suspended=10` and about 11 % less working set.
    - Never slept:
      - the active tab
-     - a tab playing audio (start a YouTube video in a background tab)
+     - a tab playing audio (start a video, or a Web Audio tone, in a background tab; the log
+       says "tab N: audio playing")
      - a tab with a download in progress
-5. **Wake:** click a dimmed tab. It shows at once with no reload, and the log has
-   "tab N: woken (Suspended)".
+5. **Wake (must paint):** with `--sleep-test-seconds=10`, open a page that updates itself every
+   second (a clock). Switch to another tab and back:
+   - after about 15 s (low memory),
+   - after about 30 s (second stage),
+   - after more than 40 s with discard on (reloaded).
+   Each time the page is shown at once and keeps updating; it is never left white. The log has
+   "tab N: woken (LowMemory)" or "(Suspended)". (Pages are not frozen: see README, "Known
+   limitations".)
 6. **Discard:**
    - About 6 minutes after a tab was last active, the log has "tab N: discarded". The
      mem-report shows `unloaded=` rising and fewer processes and renderers.
@@ -400,10 +416,23 @@ working set. With `-CommandLine` it also prints the WebView2 browser process com
    - Open two private tabs and log in to a site in one of them. Let the other one be
      discarded.
    - The discarded private tab shows only its host as the title, with no favicon. Activating it
-     reloads it in the same InPrivate session, so you are still logged in.
+     reloads it in the same private session, so you are still logged in.
    - The last live private tab is never discarded.
 8. The test options are not in the Settings UI. Without `--sleep-test-seconds`, the timers are
    the settings values in minutes.
+
+## Background traffic
+1. Run a logging HTTP proxy (`screenshots/verify2/proxy.ps1` in the pipeline workspace listens on
+   `127.0.0.1:8888`) and set Settings → Advanced → Proxy to `127.0.0.1:8888` (restart).
+2. Start with a fresh data folder and leave the new-tab page idle for 5 minutes, then load a few
+   pages.
+3. Expected in the proxy log: only the filter-list hosts (`easylist.to`,
+   `ublockorigin.github.io`, on a fresh profile) and the pages you loaded. No `*.google.com`,
+   `*.googleapis.com` or `*.gvt1.com` host, and no `lightbrowser.invalid` host.
+4. With "Download engine security components" on (restart), `update.googleapis.com` and
+   `edgedl.me.gvt1.com` appear, and nothing else from Google.
+5. Open `https://stackoverflow.com/`: no Windows Firewall prompt appears, and
+   `Get-NetUDPEndpoint` shows no LightBrowser socket on port 5353.
 
 ## Verification recipes (final pass)
 These are the methods used on the Windows 11 VM (`scripts/vm.sh`). The test server, test pages
@@ -451,10 +480,9 @@ HTTP/CONNECT proxy on 127.0.0.1:8888.
      `filter lists checked; … next check in 24.0 h`.
 6. **New-tab page makes no network requests:** on the new-tab page, open DevTools → Network,
    press Ctrl+R, and filter `-domain:lightbrowser.invalid`. Expected "0 / N requests".
-7. **Tracking-prevention level:**
-   - On a tracker-heavy page (for example a Stack Overflow question), filter the DevTools console
-     on "Tracking Prevention". At Strict there are many "blocked" messages.
-   - Set the level to Off (applies without a restart) and reload: none.
+7. **WebRTC and the firewall:** open a Stack Overflow question. No "Windows Firewall has blocked
+   some features" prompt appears, and `Get-NetUDPEndpoint` shows no LightBrowser socket on
+   UDP 5353 (no mDNS responder).
 8. **Download folder:** Settings → Downloads → "Change…" opens a native folder picker. After
    picking a folder, the next download is saved there.
 9. **Startup with the homepage:** set the homepage and choose "Open the homepage", then restart.
@@ -464,5 +492,7 @@ HTTP/CONNECT proxy on 127.0.0.1:8888.
     - Run a local proxy, set "Proxy server" to `127.0.0.1:8888`, and click "Restart now". The
       browser arguments contain `--proxy-server=127.0.0.1:8888`.
     - The proxy log shows `CONNECT host:443` for every site visited.
-    - With the proxy stopped, pages show "You're not connected".
+    - With the proxy stopped, pages fail with a connection error.
+    - No `CONNECT shell.lightbrowser.invalid` or `lightbrowser.invalid` ever appears in the
+      proxy log.
 
