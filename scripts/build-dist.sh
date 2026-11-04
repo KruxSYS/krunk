@@ -41,7 +41,11 @@ out="$root/dist/LightBrowser-win-x64"
 rm -rf "$root/dist"
 mkdir -p "$out/locales"
 # LightBrowser.exe is CEF's sandbox bootstrap; it loads LightBrowser.dll from its folder.
-cp "$CEF_PATH/bootstrap.exe" "$out/LightBrowser.exe"
+# tools/pebrand gives it LightBrowser's version strings and manifest (the code is unchanged).
+cargo build -q --release --manifest-path tools/pebrand/Cargo.toml
+version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+tools/pebrand/target/release/pebrand brand "$CEF_PATH/bootstrap.exe" "$out/LightBrowser.exe" \
+  app/res/LightBrowser.exe.manifest "$version"
 cp "target/$target/$profile/LightBrowser.dll" "$out/"
 for f in libcef.dll chrome_elf.dll d3dcompiler_47.dll dxcompiler.dll vk_swiftshader.dll \
          vk_swiftshader_icd.json vulkan-1.dll icudtl.dat v8_context_snapshot.bin resources.pak \

@@ -1,0 +1,13 @@
+[package]
+name = "pebrand"
+description = "Build tool: gives CEF's bootstrap.exe LightBrowser's version info and manifest"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+# A build tool for scripts/build-dist.sh, not part of the browser workspace.
+[workspace]
+
+[dependencies]
+editpe = { version = "=0.2.4", default-features = false, features = ["std"] }

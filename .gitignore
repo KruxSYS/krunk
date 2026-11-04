@@ -20,3 +20,4 @@ __pycache__/
 
 # CEF spike / cross builds
 spikes/*/target/
+tools/*/target/
