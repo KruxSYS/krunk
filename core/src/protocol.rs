@@ -124,6 +124,8 @@ pub enum PopupKind {
     /// A short notice that does not take focus ("Press Esc to show your
     /// cursor" while the pointer is locked).
     Hint,
+    /// "Krunk X.Y.Z is available" (opened by the host after an update check).
+    Update,
 }
 
 impl PopupKind {
@@ -227,6 +229,42 @@ pub enum PopupContent {
     Hint {
         text: String,
     },
+    /// A newer Krunk: Update now (or Download) / Later / Release notes.
+    Update {
+        version: String,
+        current: String,
+        /// The installer can update this copy silently; otherwise the
+        /// prompt offers the download page (portable copy, or too old).
+        install: bool,
+        has_notes: bool,
+        state: UpdateProgress,
+    },
+}
+
+/// Where an accepted update is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "step", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum UpdateProgress {
+    Offered,
+    Downloading {
+        percent: u8,
+    },
+    /// The installer is starting; Krunk closes and restarts.
+    Installing,
+    Failed {
+        error: String,
+    },
+}
+
+/// Answers to the update prompt (and the settings page's "Update now").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UpdateChoice {
+    /// Download, check and install (installed copies), or open the
+    /// download page (portable copies).
+    Install,
+    Later,
+    Notes,
 }
 
 /// Why the vault must be unlocked.
@@ -260,6 +298,7 @@ impl PopupContent {
             PopupContent::BookmarkFolder { .. } => PopupKind::BookmarkFolder,
             PopupContent::Unlock { .. } => PopupKind::Unlock,
             PopupContent::Hint { .. } => PopupKind::Hint,
+            PopupContent::Update { .. } => PopupKind::Update,
         }
     }
 }
@@ -455,6 +494,14 @@ pub enum Request {
         host: String,
     },
     Restart,
+    /// Version, last update check and its result, an offered update.
+    GetUpdateStatus,
+    /// "Check for updates" (works with automatic checks off).
+    CheckForUpdates,
+    /// The user's answer about the offered update (the host knows which).
+    UpdateReply {
+        choice: UpdateChoice,
+    },
 
     // ---- vault ----
     VaultStatus,
@@ -701,6 +748,7 @@ impl Sender {
                     | R::FillReply { .. }
                     | R::VaultStatus
                     | R::VaultUnlock { .. }
+                    | R::UpdateReply { .. }
                     | R::Quit
             ),
             Sender::Page(Page::NewTab) => matches!(
@@ -758,6 +806,9 @@ impl Sender {
                     | R::VaultStatus
                     | R::VaultChangePassword { .. }
                     | R::GetAbout
+                    | R::GetUpdateStatus
+                    | R::CheckForUpdates
+                    | R::UpdateReply { .. }
             ),
             Sender::Page(Page::Downloads) => {
                 matches!(req, R::GetDownloads | R::ClearDownloads | R::DownloadAction { .. })
@@ -1360,6 +1411,48 @@ mod tests {
         // still classified by its real origin.
         assert!(matches!(classify(Channel::Tab, "https://evil.example/settings.html", true), Ok(Source::Web { .. })));
         assert_eq!(classify(Channel::Tab, &Page::Settings.url(), false), Err(ProtocolError::Forbidden), "sub-frame");
+    }
+
+    #[test]
+    fn update_commands() {
+        for json in [r#"{"cmd":"getUpdateStatus"}"#, r#"{"cmd":"checkForUpdates"}"#] {
+            assert!(parse_request(Sender::Page(Page::Settings), json).is_ok(), "{json}");
+            assert!(parse_content(json).is_err(), "web content: {json}");
+            for other in [Sender::Shell, Sender::Popup, Sender::Page(Page::NewTab), Sender::Page(Page::SiteData)] {
+                assert_eq!(parse_request(other, json), Err(ProtocolError::Forbidden), "{other:?} {json}");
+            }
+        }
+        // The prompt answers; it names no version or URL (the host has those).
+        let reply = r#"{"cmd":"updateReply","choice":"install"}"#;
+        assert_eq!(
+            parse_request(Sender::Popup, reply).map(|e| e.request),
+            Ok(Request::UpdateReply { choice: UpdateChoice::Install })
+        );
+        assert!(parse_request(Sender::Page(Page::Settings), reply).is_ok());
+        assert!(parse_content(reply).is_err());
+        assert_eq!(parse_request(Sender::Shell, reply), Err(ProtocolError::Forbidden));
+        assert_eq!(parse_request(Sender::Page(Page::About), reply), Err(ProtocolError::Forbidden));
+        assert!(parse_request(
+            Sender::Popup,
+            r#"{"cmd":"updateReply","choice":"install","url":"https://evil.example/x.exe"}"#
+        )
+        .is_err());
+        assert!(parse_request(Sender::Popup, r#"{"cmd":"updateReply","choice":"run"}"#).is_err());
+        // The shell cannot open the update prompt itself.
+        assert!(!PopupKind::Update.shell_may_open());
+        assert!(PopupKind::Update.takes_focus());
+        let content = PopupContent::Update {
+            version: "0.2.1".into(),
+            current: "0.2.0".into(),
+            install: true,
+            has_notes: true,
+            state: UpdateProgress::Downloading { percent: 40 },
+        };
+        let v: serde_json::Value = serde_json::to_value(&content).unwrap();
+        assert_eq!(v["kind"], "update");
+        assert_eq!(v["hasNotes"], true);
+        assert_eq!(v["state"]["step"], "downloading");
+        assert_eq!(v["state"]["percent"], 40);
     }
 
     #[test]

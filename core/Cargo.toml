@@ -24,6 +24,13 @@ chacha20poly1305 = { version = "0.11", default-features = false, features = ["al
 zeroize = { version = "1.8", features = ["std"] }
 getrandom = "0.4"
 base64ct = { version = "1.8", features = ["alloc"] }
+# Update check: verify-only Ed25519, download hash, version order.
+ed25519-dalek = { version = "3", default-features = false }
+sha2 = "0.11"
+semver = "1"
+
+[dev-dependencies]
+ed25519-dalek = { version = "3", default-features = false, features = ["fast"] }
 
 [build-dependencies]
 miniz_oxide = "0.9"

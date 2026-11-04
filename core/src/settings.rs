@@ -140,6 +140,11 @@ pub struct Settings {
     // Appearance
     pub default_zoom: f64,
     pub theme: Theme,
+
+    // Updates
+    /// Check `<update server>/updates/win-x64/latest.json` a minute after
+    /// start and once a day (see `core::update`).
+    pub check_updates_automatically: bool,
 }
 
 impl Default for Settings {
@@ -174,6 +179,7 @@ impl Default for Settings {
             extra_flags: String::new(),
             default_zoom: 1.0,
             theme: Theme::System,
+            check_updates_automatically: true,
         }
     }
 }

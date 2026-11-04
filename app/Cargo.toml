@@ -14,6 +14,11 @@ name = "Krunk"
 crate-type = ["cdylib"]
 path = "src/lib.rs"
 
+[features]
+# The update check also accepts http:// servers (local update-flow tests only;
+# scripts/build-dist.sh --dev, output in target/dev-dist/, never dist/).
+dev-updates = []
+
 [dependencies]
 lb_core = { path = "../core", package = "core" }
 serde = "1"

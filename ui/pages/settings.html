@@ -173,12 +173,22 @@
     </div>
   </section>
 
-  <section class="card" data-section="reset about">
+  <section class="card" data-section="reset about updates version">
     <h2>Reset</h2>
     <p>Restore every setting to its default. Your history, bookmarks and passwords are not affected.</p>
     <button id="reset" class="btn danger">Reset settings…</button>
     <h2>About</h2>
     <p id="about" class="help"></p>
+    <div class="field inline">
+      <button id="check-updates" class="btn">Check for updates</button>
+      <button id="install-update" class="btn primary" hidden>Update now</button>
+      <span id="update-status" class="help" role="status"></span>
+    </div>
+    <label class="toggle"><input type="checkbox" data-key="checkUpdatesAutomatically"> Check for updates automatically</label>
+    <p class="help">A minute after start and then once a day, Krunk downloads a small signed file from
+      <span id="update-server">its update server</span> to see whether a newer version exists. The request carries
+      Krunk's version and nothing about you or your browsing. Updates are only installed when you choose
+      <em>Update now</em>.</p>
   </section>
 </div>
 <script src="shared/bridge.js"></script>

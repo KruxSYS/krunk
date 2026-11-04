@@ -4,7 +4,10 @@ build/
 out/
 bin/
 obj/
-dist/
+dist/*
+# ...except the update/download server's sources (Docker/Caddy, see dist/server/README.md)
+!dist/server/
+dist/server/releases/
 node_modules/
 .gradle/
 .vs/
@@ -21,3 +24,8 @@ __pycache__/
 # CEF spike / cross builds
 spikes/*/target/
 tools/*/target/
+
+# Secrets (see .env.example)
+.env
+*.key
+!core/tests/fixtures/update/test-signing.key

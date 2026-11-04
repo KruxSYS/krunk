@@ -1,30 +1,45 @@
 #!/usr/bin/env bash
 # Builds the Windows release of Krunk on Linux and packages it:
 #
-#   scripts/build-dist.sh            release build -> dist/Krunk-win-x64/ + .zip + SHA256SUMS
+#   scripts/build-dist.sh            release build -> dist/Krunk-win-x64/ + .zip +
+#                                    Krunk-Setup-<version>.exe + SHA256SUMS
 #   scripts/build-dist.sh --debug    debug build, same layout (for testing; not for release)
+#   scripts/build-dist.sh --dev      release build with the dev-updates feature (the update
+#                                    check also accepts http://) -> target/dev-dist/, never dist/
+#
+# UPDATE_BASE_URL (default https://krunk.example) is where the update check looks, and
+# KRUNK_UPDATE_PUBKEY_FILE the public key it trusts (default assets/keys/update-signing.pub):
+#   UPDATE_BASE_URL=https://downloads.example.org scripts/build-dist.sh
 #
 # Requirements (see README, "Building"): Rust with the x86_64-pc-windows-msvc target,
 # cargo-xwin, export-cef-dir (same version as the cef crate), LLVM 20 (clang-cl, lld-link,
-# llvm-lib) in $LB_LLVM or on PATH, cmake, ninja, curl, python3, zip.
+# llvm-lib) in $LB_LLVM or on PATH, cmake, ninja, curl, python3, zip, dpkg-deb (NSIS is
+# fetched by scripts/fetch-nsis.sh).
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 profile=release
-[ "${1:-}" = "--debug" ] && profile=debug
+dist="$root/dist"
+features=()
+case "${1:-}" in
+  --debug) profile=debug ;;
+  --dev) dist="$root/target/dev-dist"; features=(--features dev-updates) ;;
+  "") ;;
+  *) echo "usage: $0 [--debug | --dev]" >&2; exit 2 ;;
+esac
 
 # shellcheck source=scripts/xwin-env.sh
 source "$root/scripts/xwin-env.sh"
 
 target=x86_64-pc-windows-msvc
-args=(--target "$target" -p app --lib)
+args=(--target "$target" -p app --lib "${features[@]}")
 [ "$profile" = release ] && args+=(--release)
 cargo xwin build "${args[@]}"
 
-out="$root/dist/Krunk-win-x64"
+out="$dist/Krunk-win-x64"
 # dist/ holds exactly the latest build (dist/server/ is source, tracked in git).
-rm -rf "$out" "$root"/dist/LightBrowser-win-x64
-rm -f "$root"/dist/*.zip "$root"/dist/*.exe "$root"/dist/SHA256SUMS
+rm -rf "$out" "$dist"/LightBrowser-win-x64
+rm -f "$dist"/*.zip "$dist"/*.exe "$dist"/SHA256SUMS
 mkdir -p "$out/locales"
 # Krunk.exe is CEF's sandbox bootstrap; it loads Krunk.dll from its folder.
 # tools/pebrand gives it Krunk's version strings and manifest (the code is unchanged).
@@ -74,12 +89,20 @@ cp README.md docs/SECURITY.md "$out/"
   cat assets/filters/LICENSE-CC-BY-SA-3.0.txt
 } > "$out/THIRD-PARTY-NOTICES.txt"
 
-cd "$root/dist"
+# Per-user installer (NSIS, see installer/krunk.nsi).
+makensis=$("$root/scripts/fetch-nsis.sh")
+setup="Krunk-Setup-$version.exe"
+NSISDIR="$(dirname "$(dirname "$makensis")")/share/nsis" "$makensis" -V2 -NOCD \
+  -DVERSION="$version" -DSRC="$out" -DOUT="$dist/$setup" -DICON="$root/assets/brand/krunk.ico" \
+  -DSIDE_IMAGE="$root/assets/brand/installer-side.bmp" \
+  "$root/installer/krunk.nsi"
+
+cd "$dist"
 rm -f Krunk-win-x64.zip SHA256SUMS
 # Fixed timestamps and order so the archive only changes when its contents do.
 find Krunk-win-x64 -exec touch -h -d "@${SOURCE_DATE_EPOCH:-$(git -C "$root" log -1 --format=%ct)}" {} +
 find Krunk-win-x64 -type f | LC_ALL=C sort | zip -X -q -9 Krunk-win-x64.zip -@
-sha256sum Krunk-win-x64.zip Krunk-win-x64/Krunk.exe Krunk-win-x64/Krunk.dll \
+sha256sum "$setup" Krunk-win-x64.zip Krunk-win-x64/Krunk.exe Krunk-win-x64/Krunk.dll \
   Krunk-win-x64/libcef.dll > SHA256SUMS
-du -sh Krunk-win-x64 Krunk-win-x64.zip
+du -sh Krunk-win-x64 Krunk-win-x64.zip "$setup"
 echo "CEF $CEF_VERSION (Chromium $CHROMIUM_VERSION), $profile build: $out"

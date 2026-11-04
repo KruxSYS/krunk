@@ -46,3 +46,27 @@ pub fn relaunch(args: &[String]) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     std::process::Command::new(exe).args(args).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
+
+/// Creates the `Krunk.Running` mutex and keeps it until the process exits.
+/// The installer waits while it exists (a running Krunk holds its files).
+pub fn hold_running_mutex() {
+    use windows::Win32::System::Threading::CreateMutexW;
+    // SAFETY: an unnamed-security, non-owned mutex; the handle is deliberately
+    // never closed, so the mutex lives exactly as long as this process.
+    let _ = unsafe { CreateMutexW(None, false, w!("Krunk.Running")) };
+}
+
+/// Starts a downloaded installer with `args` (no shell, no elevation: the
+/// installer is per user).
+pub fn start_installer(path: &std::path::Path, args: &[&str]) -> Result<(), String> {
+    std::process::Command::new(path).args(args).spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Is this copy installed (by the installer, which leaves its uninstaller
+/// next to Krunk.exe), rather than a portable copy from the zip?
+pub fn is_installed() -> bool {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|d| d.join("uninstall.exe").is_file()))
+        .unwrap_or(false)
+}

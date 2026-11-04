@@ -125,8 +125,52 @@ Consequences:
   `state.json`; otherwise the embedded list is used.
 - It respects the configured HTTP proxy. With a SOCKS proxy it does not download at all, to
   avoid revealing the user's IP outside the proxy.
-- No telemetry: the only background requests Krunk itself makes are these downloads, at
-  most once a day.
+- No telemetry: the only background requests Krunk itself makes are these downloads (at
+  most once a day) and the update check (below).
+
+## Update check
+How it works: README, "Updates". The rules are in `core::update` (unit-tested); the app only
+fetches files and runs the installer.
+
+**Signature, not HTTPS, is what is trusted.** `latest.json` is accepted only if its exact bytes
+carry a valid Ed25519 signature (`verify_strict`) by the release key built into Krunk. HTTPS
+(required unless the build has the `dev-updates` feature, which release builds never have:
+`build.rs` refuses an `http://` server without it) protects privacy and availability. A
+compromised server, CDN or TLS certificate can therefore withhold updates, but cannot make
+Krunk run its own program.
+
+Checks, in order:
+1. The manifest is at most 16 KB and the signature 256 bytes.
+2. The signature (base64 of 64 bytes) verifies over the exact manifest bytes.
+3. The manifest is well-formed: semver `version`; `sha256` of 64 hex digits; `size` between 1 byte
+   and 1 GiB.
+4. The installer `url` resolves to the update server's own origin (same scheme, host and
+   port) over HTTPS.
+5. The version must be newer than the running one (no downgrades). A copy older than
+   `min_supported` is only pointed at the website.
+6. The download goes to a fresh folder in `%TEMP%`, capped at the manifest's `size`. Its size
+   and SHA-256 must match before it is run; otherwise it is deleted.
+7. It runs as the current user (the installer is per user and asks for no elevation).
+
+**What it does not protect against:**
+- **Freeze:** a server (or network attacker) can keep serving an old signed manifest, so users
+  are not told about a newer release. Manifests are not time-limited. The `released` date is
+  shown, and the README and website announce releases independently.
+- **A stolen release key:** whoever has `update-signing.key` can push any program to every
+  install that checks. The key is generated on the publishing machine
+  (`dist/server/gen-signing-key.sh`: mode 600, refuses to overwrite). It is never in git, the
+  image or a container: `publish-release.sh` signs on the host before copying files in. Keep an
+  offline backup. Rotation means a release, signed with the old key, whose build trusts the new
+  key; there is no revocation list. If the key is lost, existing installs can't be updated and
+  must be reinstalled by hand.
+- **Unsigned installer:** the installer and binaries carry no Authenticode signature, so Windows
+  cannot vouch for them (SmartScreen warns on first manual run). The manifest signature
+  replaces that only for updates installed by Krunk.
+- **No Mark of the Web:** WinHTTP downloads get no `Zone.Identifier`, so SmartScreen does not
+  check the downloaded installer. The signature and hash checks above are the gate instead.
+- **Local attackers:** someone who can write `%TEMP%` as the same user between the hash check
+  and the start of the installer can swap the file. Such an attacker can already change Krunk's
+  own files in `%LOCALAPPDATA%\Programs\Krunk`, so this adds no new access.
 
 ## Password vault: design and threat model
 

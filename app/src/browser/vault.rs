@@ -507,7 +507,7 @@ impl Browser {
     }
 
     /// Shows a host-initiated prompt under the right end of the toolbar.
-    fn show_prompt(&self, content: PopupContent, entries: usize) {
+    pub(super) fn show_prompt(&self, content: PopupContent, entries: usize) {
         let Some(w) = self.window() else { return };
         let width_css = f64::from(w.client_size().0) / w.scale();
         let rect = layout::prompt_rect(content.kind(), entries, width_css);

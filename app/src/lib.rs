@@ -46,6 +46,7 @@ fn run() -> Result<i32, String> {
         std::thread::sleep(std::time::Duration::from_millis(300));
     }
     ffi::process::init_ui_thread()?;
+    ffi::process::hold_running_mutex();
     let migration = migrate_legacy_data()?;
     let dirs = paths::DataDirs::resolve()?;
     log::init(&dirs.log_file());

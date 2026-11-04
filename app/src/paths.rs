@@ -62,6 +62,11 @@ impl DataDirs {
         self.root.join("vault.json")
     }
 
+    /// The last update check (`core::update::Status`).
+    pub fn update_status(&self) -> PathBuf {
+        self.root.join("update.json")
+    }
+
     pub fn log_file(&self) -> PathBuf {
         self.root.join("krunk.log")
     }

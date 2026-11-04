@@ -401,6 +401,34 @@ async function testPopup(browser) {
   const f = await lastSent(page, 'fillReply');
   check(f && f.entryId === 'e2' && f.tabId === 9 && f.origin === 'https://mail.example', 'choosing an entry sends fillReply{entryId,tabId,origin}');
   check(errors.length === 0, 'prompts: no console errors (' + errors.join(' | ') + ')');
+
+  // The update prompt.
+  ({ page, errors } = await make(360, 150));
+  const upd = { kind: 'update', version: '0.2.1', current: '0.2.0', install: true, hasNotes: true, state: { step: 'offered' } };
+  await emit(page, { event: 'popup', content: upd });
+  await page.waitForSelector('.panel');
+  await shot(page, 'popup-update.png');
+  check((await page.textContent('h2')) === 'Krunk 0.2.1 is available', 'update prompt names the version');
+  check(await page.evaluate(() => document.activeElement && document.activeElement.textContent) === 'Update now', 'Update now focused');
+  await page.locator('button', { hasText: 'Release notes' }).click();
+  check((await lastSent(page, 'updateReply')).choice === 'notes', 'Release notes sends updateReply{notes}');
+  await page.locator('button', { hasText: 'Later' }).click();
+  check((await lastSent(page, 'updateReply')).choice === 'later', 'Later sends updateReply{later}');
+  await page.locator('button', { hasText: 'Update now' }).click();
+  const ui = await lastSent(page, 'updateReply');
+  check(ui.choice === 'install' && !('url' in ui) && !('version' in ui), 'Update now sends only the choice');
+  await emit(page, { event: 'popup', content: Object.assign({}, upd, { state: { step: 'downloading', percent: 42 } }) });
+  await page.waitForSelector('progress');
+  check(await page.evaluate(() => document.querySelector('progress').value) === 42, 'download progress shown');
+  await shot(page, 'popup-update-downloading.png');
+  await emit(page, { event: 'popup', content: Object.assign({}, upd, { state: { step: 'failed', error: 'the download\'s SHA-256 does not match the manifest' } }) });
+  await page.waitForSelector('.error');
+  check((await page.textContent('.error')).includes('SHA-256'), 'a failed update says why');
+  check(await page.locator('button', { hasText: 'Try again' }).count() === 1, 'failed: Try again');
+  await emit(page, { event: 'popup', content: Object.assign({}, upd, { install: false, hasNotes: false }) });
+  await page.waitForTimeout(20);
+  check(await page.locator('button', { hasText: 'Download' }).count() === 1 && await page.locator('button', { hasText: 'Release notes' }).count() === 0, 'portable copy: Download, no notes button without notes');
+  check(errors.length === 0, 'update prompt: no console errors (' + errors.join(' | ') + ')');
 }
 
 const DAY = 86400000;
@@ -1097,6 +1125,15 @@ function settingsMock(defaults) {
   h.allowlistAdd = (m) => { if (!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(m.host)) throw new Error('Not a valid host name'); st.allow.push(m.host.toLowerCase()); return m.host; };
   h.allowlistRemove = (m) => { st.allow = st.allow.filter((x) => x !== m.host); return true; };
   h.pickDownloadFolder = () => 'D:\\Downloads\\Browser';
+  const upd = { version: '0.2.0', server: 'https://krunk.example/', configError: null, installed: true, lastCheck: 0,
+    lastResult: '', lastOk: true, checking: false, available: null, downloading: null, failed: null };
+  window.__updates = upd;
+  h.getUpdateStatus = () => upd;
+  h.checkForUpdates = () => {
+    upd.lastCheck = Date.now(); upd.lastResult = 'Krunk 0.2.1 is available';
+    upd.available = { version: '0.2.1', released: '2026-11-05', install: true, notes: true };
+    return upd;
+  };
 }
 
 async function testSettings(browser) {
@@ -1214,6 +1251,23 @@ async function testSettings(browser) {
   check((await page.textContent('#download-dir')) === 'D:\\Downloads\\Browser', 'download folder from the native picker');
   await page.click('#update-lists');
   check((await lastSent(page, 'updateFilterLists')) !== undefined, 'Update now sends updateFilterLists');
+
+  // Settings → About: version, update check, the toggle (on by default).
+  check(await page.isChecked('[data-key=checkUpdatesAutomatically]'), 'defaults: automatic update checks on');
+  check((await page.textContent('#update-status')) === 'Not checked yet', 'update status before the first check');
+  check((await page.textContent('#update-server')) === 'https://krunk.example/', 'the update server is named');
+  check(await page.locator('#install-update').isHidden(), 'no Update now without an update');
+  await page.click('#check-updates');
+  await page.waitForTimeout(60);
+  check((await lastSent(page, 'checkForUpdates')) !== undefined, 'Check for updates sends checkForUpdates');
+  check((await page.textContent('#update-status')).includes('Krunk 0.2.1 is available'), 'an available update is shown');
+  check(await page.locator('#install-update').isVisible() && (await page.textContent('#install-update')) === 'Update now', 'Update now appears');
+  await page.click('#install-update');
+  const ur = await lastSent(page, 'updateReply');
+  check(ur && ur.choice === 'install' && Object.keys(ur).filter((k) => k !== 'cmd' && k !== 'reqId').length === 1, 'Update now sends only updateReply{choice:install}');
+  await page.uncheck('[data-key=checkUpdatesAutomatically]');
+  await page.waitForTimeout(60);
+  check(await page.evaluate(() => window.__settings.settings.checkUpdatesAutomatically) === false, 'the automatic-check toggle is saved');
 
   // Theme switch (live) and a dark screenshot.
   await page.check('input[name=theme][value=dark]');

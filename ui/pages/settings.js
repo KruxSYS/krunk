@@ -198,6 +198,47 @@
     });
   });
 
+  // ---------- updates (Settings → About) ----------
+  let updateStatus = null;
+  function renderUpdates() {
+    const u = updateStatus;
+    if (!u) return;
+    if (u.server) $('update-server').textContent = u.server;
+    let text;
+    if (u.configError) text = 'Update checks are not available in this build: ' + u.configError;
+    else if (u.checking) text = 'Checking…';
+    else if (u.downloading !== null && u.downloading !== undefined) text = 'Downloading Krunk ' + u.available.version + '… ' + u.downloading + '%';
+    else if (u.failed) text = 'The update failed: ' + u.failed;
+    else if (u.available) text = 'Krunk ' + u.available.version + ' is available' + (u.available.install ? '' : ' (download it from the website)');
+    else if (u.lastCheck) text = u.lastResult + ' · last checked ' + new Date(u.lastCheck).toLocaleString();
+    else text = 'Not checked yet';
+    $('update-status').textContent = text;
+    $('check-updates').disabled = !!u.checking || !!u.configError;
+    const install = $('install-update');
+    install.hidden = !u.available || (u.downloading !== null && u.downloading !== undefined);
+    if (u.available) install.textContent = u.available.install ? (u.failed ? 'Try again' : 'Update now') : 'Download';
+  }
+  function loadUpdates() {
+    return LB.request('getUpdateStatus').then(function (u) { updateStatus = u; renderUpdates(); });
+  }
+  $('check-updates').addEventListener('click', function () {
+    if (updateStatus) { updateStatus.checking = true; renderUpdates(); }
+    LB.request('checkForUpdates').then(function (u) { updateStatus = u; renderUpdates(); },
+      function (err) { $('update-status').textContent = err.message; loadUpdates(); });
+  });
+  $('install-update').addEventListener('click', function () {
+    LB.post('updateReply', { choice: 'install' });
+    setTimeout(loadUpdates, 300);
+  });
+  // A check or download in progress (also one started from the prompt): keep the line current.
+  let updatePoll = 0;
+  setInterval(function () {
+    const u = updateStatus;
+    if (!u) return;
+    const busy = u.checking || (u.downloading !== null && u.downloading !== undefined);
+    if (busy || (u.available && ++updatePoll % 3 === 0)) loadUpdates();
+  }, 1000);
+
   LB.post('ready');
   LB.request('getSettings').then(function (r) {
     settings = r.settings;
@@ -206,5 +247,6 @@
     render();
     loadFilterStatus();
     loadAllowlist();
+    loadUpdates();
   });
 })();

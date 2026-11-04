@@ -31,6 +31,7 @@ body { background: var(--bg-raised); border: 1px solid var(--border); border-rad
                               border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; }
 .panel input[type=password]:focus { outline: none; border-color: var(--accent); }
 .error { margin: 8px 0 0; color: var(--danger); min-height: 1em; }
+.panel progress { display: block; width: 100%; height: 8px; margin: 0 0 10px; accent-color: var(--accent); }
 
 /* "Press Esc to show your cursor" */
 [data-kind="hint"] { background: rgba(32, 33, 36, .92); }

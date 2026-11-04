@@ -28,6 +28,7 @@ pub mod settings;
 pub mod sitedata;
 pub mod storage;
 pub mod tabs;
+pub mod update;
 pub mod urlclean;
 pub mod vault;
 pub mod zoom;

@@ -40,5 +40,6 @@
   "proxy": "",
   "extraFlags": "",
   "defaultZoom": 1.0,
-  "theme": "system"
+  "theme": "system",
+  "checkUpdatesAutomatically": true
 }

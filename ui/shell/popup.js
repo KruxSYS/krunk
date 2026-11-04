@@ -167,6 +167,32 @@
     });
   }
 
+  // "Krunk X is available" and the download that follows "Update now".
+  function renderUpdate(c) {
+    const reply = (choice) => LB.post('updateReply', { choice: choice });
+    const s = c.state || { step: 'offered' };
+    const body = [el('h2', { text: 'Krunk ' + c.version + ' is available' })];
+    if (s.step === 'downloading') {
+      body.push(el('p', { text: 'Downloading… ' + s.percent + '%' }));
+      body.push(el('progress', { max: '100', value: String(s.percent) }));
+      body.push(el('div', { class: 'row' }, [el('button', { class: 'btn', id: 'default', onclick: close, text: 'Hide' })]));
+    } else if (s.step === 'installing') {
+      body.push(el('p', { text: 'Installing. Krunk closes now and starts again when the update is done.' }));
+    } else {
+      body.push(s.step === 'failed'
+        ? el('p', { class: 'error', text: 'The update failed: ' + s.error })
+        : el('p', { text: c.install ? 'You have ' + c.current + '. Krunk restarts to finish the update; your tabs are restored.'
+          : 'You have ' + c.current + '. Download the new version from the Krunk website.' }));
+      body.push(el('div', { class: 'row' }, [
+        c.hasNotes ? el('button', { class: 'btn', onclick: () => { reply('notes'); }, text: 'Release notes' }) : null,
+        el('button', { class: 'btn', onclick: () => { reply('later'); }, text: 'Later' }),
+        el('button', { class: 'btn primary', id: 'default', onclick: () => reply('install'),
+          text: !c.install ? 'Download' : s.step === 'failed' ? 'Try again' : 'Update now' }),
+      ]));
+    }
+    return [el('div', { class: 'panel' }, body)];
+  }
+
   // A notice that takes no focus ("Press Esc to show your cursor").
   function renderHint(c) {
     return [el('div', { class: 'hint', role: 'status' }, [el('span', { text: c.text })])];
@@ -176,7 +202,7 @@
   LB.on('popup', function (m) {
     current = m.content;
     const c = m.content;
-    const render = { menu: renderMenu, shield: renderShield, savePassword: renderSave, fill: renderFill, bookmarkFolder: renderFolder, unlock: renderUnlock, hint: renderHint }[c.kind];
+    const render = { menu: renderMenu, shield: renderShield, savePassword: renderSave, fill: renderFill, bookmarkFolder: renderFolder, unlock: renderUnlock, hint: renderHint, update: renderUpdate }[c.kind];
     root.textContent = '';
     root.dataset.kind = c.kind;
     (render ? render(c) : []).forEach((n) => n && root.appendChild(n));

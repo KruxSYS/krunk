@@ -46,6 +46,7 @@ mod pointer;
 mod power;
 mod settings_host;
 mod storage;
+mod updater;
 
 pub use power::PowerOptions;
 use power::{MEMREPORT_TIMER, POWER_TIMER};
@@ -137,6 +138,8 @@ pub struct Browser {
     site_data: RefCell<HashMap<TabId, storage::SiteDataBinding>>,
     /// Pointer lock and full screen.
     pointer: pointer::PointerHost,
+    /// Krunk's own update check.
+    updates: updater::UpdateHost,
 }
 
 impl Browser {
@@ -184,6 +187,7 @@ impl Browser {
             address_focus: Cell::new(None),
             site_data: RefCell::new(HashMap::new()),
             pointer: pointer::PointerHost::default(),
+            updates: updater::UpdateHost::new(dirs.update_status()),
         });
         window.set_events(browser.clone());
         let _ = browser.window.set(window);
@@ -209,6 +213,7 @@ impl Browser {
         // from the page once (a game would see the window lose focus).
         browser.create_popup(window);
         browser.restore_or_open_start();
+        browser.init_updates();
         browser.start_power_timer();
         browser.mem_report_line("start");
         Ok(browser)
@@ -1075,6 +1080,9 @@ impl Browser {
             | Request::PickDownloadFolder
             | Request::Restart
             | Request::GetAbout) => self.dispatch_settings(tab, req_id, r),
+            Request::GetUpdateStatus => self.reply(tab, Event::ok(req_id, self.update_status())),
+            Request::CheckForUpdates => self.check_for_updates(Some((tab, req_id))),
+            Request::UpdateReply { choice } => self.update_reply(choice),
             // Prompts and the remaining features arrive in later milestones;
             // the popup still treats a reply as "dismissed" by hiding.
             Request::SavePasswordReply { tab_id, origin, accept, never } => {
@@ -1460,6 +1468,8 @@ impl WindowEvents for Browser {
             POWER_TIMER => self.power_tick(),
             MEMREPORT_TIMER => self.mem_report_line("tick"),
             pointer::HINT_TIMER => self.hide_hint(),
+            updater::APP_UPDATE_TIMER => self.update_timer(),
+            updater::UPDATE_PROGRESS_TIMER => self.update_progress_timer(),
             VAULT_TIMER => self.vault_timer(),
             EXIT_TIMER => self.finish_exit(),
             CLIPBOARD_TIMER => self.clipboard_timer(),

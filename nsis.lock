@@ -1,0 +1,8 @@
+# NSIS used to build Krunk's installer (read by scripts/fetch-nsis.sh): the Ubuntu 24.04
+# (noble) packages, extracted without installing; makensis runs with NSISDIR set.
+NSIS_VERSION=3.09-4ubuntu1
+NSIS_BASE=https://archive.ubuntu.com/ubuntu/pool/universe/n/nsis
+NSIS_DEB=nsis_3.09-4ubuntu1_amd64.deb
+NSIS_DEB_SHA256=9e061bef1a8b611aeb2ea76d9a3bd7722b960ca1a9dff8e38d2ab51e5a8f5e5b
+NSIS_COMMON_DEB=nsis-common_3.09-4ubuntu1_all.deb
+NSIS_COMMON_DEB_SHA256=49471b9debdee4751ebb4caf6b705cc4c678eebfaecefbe56362258893f85859

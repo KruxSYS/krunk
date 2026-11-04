@@ -1,5 +1,6 @@
-//! Minimal HTTPS GET over WinHTTP, used by the filter-list updater on a
-//! worker thread. HTTPS only, size-capped, with timeouts.
+//! Minimal HTTPS GET over WinHTTP, used on worker threads by the filter-list
+//! updater and the update check. HTTPS only (the update check of a
+//! `dev-updates` build may use http://), size-capped, with timeouts.
 
 use std::ffi::c_void;
 use windows::core::{w, HSTRING, PCWSTR};
@@ -34,15 +35,48 @@ fn check(h: *mut c_void, what: &str) -> Result<Handle, String> {
     }
 }
 
+/// How a request is made.
+pub struct Options<'a> {
+    pub proxy: &'a ProxyMode,
+    pub timeout_ms: i32,
+    pub user_agent: &'a str,
+    /// Also fetch http:// URLs (dev-updates builds only).
+    pub allow_http: bool,
+}
+
 /// Downloads `url` (must be https) into memory, refusing bodies larger
 /// than `max_bytes`. Returns the body of a 200 response.
 pub fn get(url: &str, max_bytes: usize, proxy: &ProxyMode, timeout_ms: i32) -> Result<Vec<u8>, String> {
+    let opts = Options { proxy, timeout_ms, user_agent: "Krunk-FilterUpdate/1.0", allow_http: false };
+    get_with(url, max_bytes, &opts)
+}
+
+/// [`get`] with explicit options.
+pub fn get_with(url: &str, max_bytes: usize, opts: &Options) -> Result<Vec<u8>, String> {
+    let mut body = Vec::new();
+    fetch(url, max_bytes as u64, opts, &mut |chunk| {
+        body.extend_from_slice(chunk);
+        Ok(())
+    })?;
+    Ok(body)
+}
+
+/// Streams the body of a 200 response to `sink`, refusing more than
+/// `max_bytes`. Returns the number of bytes received.
+pub fn fetch(
+    url: &str,
+    max_bytes: u64,
+    opts: &Options,
+    sink: &mut dyn FnMut(&[u8]) -> Result<(), String>,
+) -> Result<u64, String> {
     let u = url::Url::parse(url).map_err(|e| e.to_string())?;
-    if u.scheme() != "https" {
-        return Err("only https:// URLs are fetched".into());
-    }
+    let secure = match u.scheme() {
+        "https" => true,
+        "http" if opts.allow_http => false,
+        _ => return Err("only https:// URLs are fetched".into()),
+    };
     let host = u.host_str().ok_or("no host")?.to_string();
-    let port = u.port_or_known_default().unwrap_or(443);
+    let port = u.port_or_known_default().unwrap_or(if secure { 443 } else { 80 });
     let path = match u.query() {
         Some(q) => format!("{}?{q}", u.path()),
         None => u.path().to_string(),
@@ -50,23 +84,18 @@ pub fn get(url: &str, max_bytes: usize, proxy: &ProxyMode, timeout_ms: i32) -> R
     // SAFETY: straightforward WinHTTP calls; every handle is owned by a
     // `Handle` and closed on all paths; buffers are sized correctly.
     unsafe {
-        let session = match proxy {
-            ProxyMode::System => check(
-                WinHttpOpen(w!("Krunk-FilterUpdate/1.0"), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, None, None, 0),
-                "WinHttpOpen",
-            )?,
+        let agent = HSTRING::from(opts.user_agent);
+        let session = match opts.proxy {
+            ProxyMode::System => {
+                check(WinHttpOpen(&agent, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, None, None, 0), "WinHttpOpen")?
+            }
             ProxyMode::Named(p) => check(
-                WinHttpOpen(
-                    w!("Krunk-FilterUpdate/1.0"),
-                    WINHTTP_ACCESS_TYPE_NAMED_PROXY,
-                    &HSTRING::from(p.as_str()),
-                    w!("<local>"),
-                    0,
-                ),
+                WinHttpOpen(&agent, WINHTTP_ACCESS_TYPE_NAMED_PROXY, &HSTRING::from(p.as_str()), w!("<local>"), 0),
                 "WinHttpOpen",
             )?,
         };
-        WinHttpSetTimeouts(session.0, timeout_ms, timeout_ms, timeout_ms, timeout_ms).map_err(|e| e.to_string())?;
+        let t = opts.timeout_ms;
+        WinHttpSetTimeouts(session.0, t, t, t, t).map_err(|e| e.to_string())?;
         let tls12 = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2 | 0x2000; // | TLS 1.3
         let _ = WinHttpSetOption(Some(session.0), WINHTTP_OPTION_SECURE_PROTOCOLS, Some(&tls12.to_le_bytes()));
         let connect = check(WinHttpConnect(session.0, &HSTRING::from(host.as_str()), port, 0), "WinHttpConnect")?;
@@ -78,7 +107,7 @@ pub fn get(url: &str, max_bytes: usize, proxy: &ProxyMode, timeout_ms: i32) -> R
                 PCWSTR::null(),
                 PCWSTR::null(),
                 std::ptr::null(),
-                WINHTTP_FLAG_SECURE,
+                if secure { WINHTTP_FLAG_SECURE } else { WINHTTP_OPEN_REQUEST_FLAGS(0) },
             ),
             "WinHttpOpenRequest",
         )?;
@@ -99,7 +128,7 @@ pub fn get(url: &str, max_bytes: usize, proxy: &ProxyMode, timeout_ms: i32) -> R
         if status != 200 {
             return Err(format!("HTTP {status}"));
         }
-        let mut body = Vec::new();
+        let mut total: u64 = 0;
         let mut buf = vec![0u8; 64 * 1024];
         loop {
             let mut avail = 0u32;
@@ -114,11 +143,12 @@ pub fn get(url: &str, max_bytes: usize, proxy: &ProxyMode, timeout_ms: i32) -> R
             if read == 0 {
                 break;
             }
-            body.extend_from_slice(&buf[..read as usize]);
-            if body.len() > max_bytes {
+            total += u64::from(read);
+            if total > max_bytes {
                 return Err(format!("response larger than {max_bytes} bytes"));
             }
+            sink(&buf[..read as usize])?;
         }
-        Ok(body)
+        Ok(total)
     }
 }

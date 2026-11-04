@@ -3,7 +3,7 @@
 Krunk is a lightweight, privacy-minded web browser for Windows 10/11 (x64), written in
 Rust. It brings its own engine: **Chromium 156.0.8078.80** through the Chromium Embedded
 Framework (**CEF 156.0.15**), bundled in the download. Neither Microsoft Edge nor WebView2 is
-used, and nothing has to be installed. It includes:
+used. It installs per user without administrator rights, or runs portable from a zip. It includes:
 - tabs and private tabs
 - history and bookmarks
 - a new-tab page with your most-visited sites
@@ -14,11 +14,20 @@ used, and nothing has to be installed. It includes:
 - background-tab sleep, to save memory
 
 ## Download and requirements
-- **The download:** `Krunk-win-x64.zip` (about 183 MB; 420 MB unpacked). Extract it
-  anywhere and run `Krunk.exe`. There is no installer. Keep all files of the folder
-  together; if one is missing, Krunk says so at startup.
-- **Verify:** check `SHA256SUMS` (the zip and the three main binaries):
-  - PowerShell: `Get-FileHash Krunk-win-x64.zip`
+- **Installer:** `Krunk-Setup-0.2.0.exe` (about 137 MB). It installs for the current user
+  only, without administrator rights:
+  - to `%LOCALAPPDATA%\Programs\Krunk`, with a Start Menu shortcut and, if you tick it, one on
+    the desktop;
+  - with an entry in Settings → Apps → Installed apps (per user, `HKCU`).
+  If Krunk is running, the installer asks you to close it. `Krunk-Setup-0.2.0.exe /S` installs
+  silently; it then closes a running Krunk itself and waits up to 30 s for it.
+  **Uninstalling** removes the program and the shortcuts. Your data (`%LOCALAPPDATA%\Krunk`) is
+  kept unless you tick "Also delete my Krunk data"; a silent uninstall (`/S`) always keeps it.
+- **Portable:** `Krunk-win-x64.zip` (about 183 MB; 420 MB unpacked). Extract it anywhere and
+  run `Krunk.exe`. Keep all files of the folder together; if one is missing, Krunk says so at
+  startup. The portable copy uses the same data folder as the installed one.
+- **Verify:** check `SHA256SUMS` (the installer, the zip and the three main binaries):
+  - PowerShell: `Get-FileHash Krunk-Setup-0.2.0.exe`
   - Linux: `sha256sum -c SHA256SUMS`
 - **System:** Windows 10 or 11, 64-bit. No runtime is needed.
 - **Data location:** everything is stored in `%LOCALAPPDATA%\Krunk`:
@@ -26,7 +35,9 @@ used, and nothing has to be installed. It includes:
   - `vault.json` (encrypted passwords)
   - `engine.dat` (the compiled filter engine)
   - `profile\` (the engine's profile: cookies, cache and site data in `profile\default`)
-  - `krunk.log`, and `cef.log` (engine warnings and errors only)
+  - `krunk.log` (this session; the previous one is `krunk.old.log`), and `cef.log` (engine
+    warnings and errors only)
+  - `update.json` (when the last update check ran and what it found)
 
   Delete that folder to reset the browser completely.
 - **Coming from LightBrowser (Krunk's former name):** on its first start Krunk moves
@@ -40,8 +51,9 @@ used, and nothing has to be installed. It includes:
   `engine.dat` are used as they are. Cookies and site data are not migrated: the old
   `profile\EBWebView` folder (WebView2's profile) is left untouched and unused, and you can
   delete it. The same goes for the old `bin\` folder (the WebView2 loader).
-- **Unsigned binaries:** the files are not code-signed, so SmartScreen may warn the first time
-  `Krunk.exe` runs.
+- **Unsigned binaries:** the files (including the installer) are not code-signed, so
+  SmartScreen may warn the first time they run. Updates are protected by their own signature
+  instead (see "Updates" below).
 
 ## Usage
 Type a URL or search words in the address bar. Search uses DuckDuckGo by default; this can be
@@ -292,7 +304,7 @@ fresh profile found secure-time queries, the component updater (and the download
 an "AI mode" eligibility check and Safe Browsing list updates. Krunk switches all of
 them off by default, verified with the proxy: a fresh profile idle for five minutes plus
 page loads contacted **no `*.google.com`, `*.googleapis.com` or `*.gvt1.com` host**. The only
-traffic not caused by pages is the filter-list update.
+traffic not caused by pages is the filter-list update and Krunk's update check (below).
 
 The setting **"Download engine security components from Google"** (off by default, restart
 required) lets the component updater run. It then fetches the certificate revocation list
@@ -364,7 +376,32 @@ no password manager, no autofill, no network prediction (`net.network_prediction
 and WebRTC on the default public interface only.
 
 Krunk runs no telemetry, update service or background process of its own. The only
-network traffic it starts itself is the daily filter-list update (WinHTTP, see above).
+network traffic it starts itself is the daily filter-list update and the daily update check
+(both WinHTTP, see above and "Updates").
+
+### Updates
+- **What is sent:** a minute after start and then once a day, Krunk fetches two small files
+  from its update server: `<server>/updates/win-x64/latest.json` and `latest.json.sig`.
+  The request carries the user agent `Krunk-Update/<version> (win-x64)` and nothing else: no
+  ID, no settings and nothing about your browsing. The server sees your IP address, as with any
+  download. Turn it off with Settings → About → "Check for updates automatically"; "Check for
+  updates" there still works on demand. The check uses the configured HTTP proxy and is
+  skipped with a SOCKS proxy, as the filter update is.
+- **What is trusted:** `latest.json` must carry a valid Ed25519 signature made with Krunk's
+  release key; the public key is built into Krunk (`assets/keys/update-signing.pub`). The
+  installer it names must be on the update server itself, over HTTPS. After downloading,
+  its size and SHA-256 must match the signed manifest before it runs. Older or equal versions
+  are never offered, so there are no downgrades. Every rejection is written to `krunk.log`
+  with its reason.
+- **Installing:** a newer version opens a prompt with **Update now**, **Later** and **Release
+  notes**. Update now downloads the installer to `%TEMP%\Krunk-update`, checks it, starts it
+  silently (`/S /RELAUNCH`) and closes Krunk. The installer waits for Krunk to exit, installs,
+  and starts Krunk again, with your tabs restored. A portable copy gets **Download**, which
+  opens the website, instead.
+- **The server** is set when Krunk is built (`UPDATE_BASE_URL`). This build uses
+  `https://krunk.example`, a placeholder until the project has its domain, so its update check
+  fails harmlessly ("The update check failed: ... could not be resolved"). The server itself
+  (Docker, Caddy) is in `dist/server/`; see its README.
 
 ### Memory
 - **Lazy restore:** restored tabs show their saved title and the cached favicon. They get no
@@ -425,9 +462,13 @@ Rust bindings (`cef` crate) build CEF's C++ wrapper library and support only the
 packages everything:
 
 ```sh
-scripts/build-dist.sh            # -> dist/Krunk-win-x64/, dist/Krunk-win-x64.zip, dist/SHA256SUMS
+scripts/build-dist.sh            # -> dist/Krunk-win-x64/, the zip, Krunk-Setup-<version>.exe, SHA256SUMS
 scripts/build-dist.sh --debug    # same layout with a debug build (testing only)
+scripts/build-dist.sh --dev      # dev-updates build (update check accepts http://) -> target/dev-dist/
+UPDATE_BASE_URL=https://downloads.example.org scripts/build-dist.sh   # another update server
 ```
+`UPDATE_BASE_URL` must be `https://` (the build fails otherwise, except with `--dev`).
+`KRUNK_UPDATE_PUBKEY_FILE` replaces the trusted public key (test keys for dev builds only).
 
 What it does:
 1. `scripts/fetch-cef.sh` downloads the CEF archive pinned in `cef.lock` (the "minimal"
@@ -441,6 +482,9 @@ What it does:
    `tools/pebrand`), `Krunk.dll`, the CEF DLLs, `.pak` files, `icudtl.dat`,
    `v8_context_snapshot.bin`, all `locales/`, `licenses/`, the README, SECURITY and third-party
    notices. Then it writes the zip (fixed timestamps and order) and `SHA256SUMS`.
+4. `scripts/fetch-nsis.sh` fetches NSIS 3.09 (Ubuntu's `nsis` and `nsis-common` packages,
+   SHA-256 pinned in `nsis.lock`, unpacked with `dpkg-deb` into `~/.cache/krunk-toolchain`),
+   and `makensis` builds `Krunk-Setup-<version>.exe` from `installer/krunk.nsi`.
 
 Requirements (versions used for the release):
 - Rust stable (1.85 or newer; built with 1.99.1) with `rustup target add x86_64-pc-windows-msvc`
@@ -449,7 +493,7 @@ Requirements (versions used for the release):
 - LLVM **20.1.8** (`clang-cl`, `lld-link`, `llvm-lib`; the MSVC C++ headers need clang 19 or
   newer), unpacked from the official release tarball. The script expects it in
   `~/.cache/krunk-toolchain/llvm-20.1.8` or in `$LB_LLVM`.
-- `cmake`, `ninja`, `curl`, `python3`, `zip`
+- `cmake`, `ninja`, `curl`, `python3`, `zip`, `dpkg-deb` (for NSIS)
 
 **Microsoft's licence:** cargo-xwin downloads the MSVC CRT and the Windows SDK (headers and
 import libraries) from Microsoft. Building therefore means accepting Microsoft's licence terms
@@ -505,9 +549,11 @@ Testing on Windows:
 - The Windows checklist is `docs/MANUAL_TEST.md`.
 
 ## Known limitations
-- **The engine is bundled.** Chromium security fixes reach users only when a new Krunk
-  release with a newer CEF is published and installed; there is no auto-update. Releases should
-  follow CEF security releases promptly.
+- **The engine is bundled.** Chromium security fixes reach users only with a new Krunk
+  release with a newer CEF. Krunk checks for one daily and offers it, but installs only when you
+  choose Update now. Releases should follow CEF security releases promptly.
+- **The update server is a placeholder** (`https://krunk.example`) until the project has a
+  domain; rebuild with `UPDATE_BASE_URL=https://<domain>` to make the update check work.
 - **No certificate revocation or CT list updates by default.** With "Download engine security
   components" off, the CRLSet and Certificate Transparency list are those built into the
   release. Chromium relaxes CT enforcement about 10 weeks after its build date. Turning the

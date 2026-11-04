@@ -1,7 +1,8 @@
 //! Minimal file logger (`krunk.log` in the data dir).
 //!
 //! Never log URLs with credentials, form data, passwords or vault contents.
-//! The log is truncated at every start and capped in size.
+//! Each start begins a new log; the previous one is kept as `krunk.old.log`
+//! (so the lines before an update's restart survive it). Capped in size.
 
 use std::io::Write;
 use std::sync::Mutex;
@@ -10,6 +11,7 @@ static LOG: Mutex<Option<std::fs::File>> = Mutex::new(None);
 const MAX_BYTES: u64 = 1024 * 1024;
 
 pub fn init(path: &std::path::Path) {
+    let _ = std::fs::rename(path, path.with_extension("old.log"));
     if let Ok(f) = std::fs::File::create(path) {
         if let Ok(mut g) = LOG.lock() {
             *g = Some(f);
