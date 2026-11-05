@@ -20,9 +20,9 @@ use lb_core::protocol::{
 };
 use lb_core::settings::{Settings, Startup};
 use lb_core::storage::{now_ms, Store};
-use lb_core::tabs::{Effect, Position, Session, Tab, TabId, TabModel};
+use lb_core::tabs::{Effect, Position, Tab, TabId, TabModel};
 use lb_core::urlclean::{self, LoadFailure};
-use lb_core::windows::{Bounds, Op, WindowId, Workspace};
+use lb_core::windows::{Bounds, Op, SessionV2, WindowId, Workspace};
 use std::borrow::Cow;
 use std::cell::{Cell, OnceCell, Ref, RefCell};
 use std::collections::HashMap;
@@ -158,6 +158,9 @@ pub struct Browser {
     updates: updater::UpdateHost,
     /// A tab being dragged between windows.
     drag: Cell<Option<drag::TabDrag>>,
+    /// The session was saved for the last time (exit): frames are going away, so later saves
+    /// would lose their places.
+    session_final: Cell<bool>,
 }
 
 impl Browser {
@@ -206,6 +209,7 @@ impl Browser {
             pointer: pointer::PointerHost::default(),
             updates: updater::UpdateHost::new(dirs.update_status()),
             drag: Cell::new(None),
+            session_final: Cell::new(false),
         });
         let app = Window::create_app(Rc::new(AppEvents(browser.me.clone())))?;
         let _ = browser.app.set(app);
@@ -314,7 +318,16 @@ impl Browser {
     /// A frame for window `win` (op `CreateWindow`), with its shell.
     fn create_frame(&self, win: WindowId, bounds: Option<Bounds>, maximized: bool) {
         let window = match self.first_window.take() {
-            Some(w) => w,
+            // The frame shown at start-up: put it where the session had it.
+            Some(w) => {
+                if let Some(b) = bounds {
+                    w.move_to(ScreenRect { x: b.x, y: b.y, width: b.width, height: b.height });
+                }
+                if maximized {
+                    w.show(true);
+                }
+                w
+            }
             None => {
                 let rect = bounds.map(|b| ScreenRect { x: b.x, y: b.y, width: b.width, height: b.height });
                 match Window::create_frame("Krunk", rect, false) {
@@ -431,17 +444,31 @@ impl Browser {
             let s = self.settings.borrow();
             (s.startup, s.homepage.clone())
         };
-        let saved: Option<Session> =
+        // Version 2 (every window); a 0.2.x session reads as one window.
+        let saved: Option<SessionV2> =
             self.store.borrow().kv_get(SESSION_KEY).ok().flatten().and_then(|j| serde_json::from_str(&j).ok());
         let now = now_ms();
+        let areas: Vec<layout::Rect> = crate::ffi::window::monitor_work_areas()
+            .into_iter()
+            .map(|a| layout::Rect { x: a.x, y: a.y, width: a.width, height: a.height })
+            .collect();
+        let fit = |b: Bounds| {
+            let r = layout::fit_to_monitors(layout::Rect { x: b.x, y: b.y, width: b.width, height: b.height }, &areas);
+            Bounds { x: r.x, y: r.y, width: r.width, height: r.height }
+        };
         let ops = {
             let mut ws = self.ws.borrow_mut();
-            match (startup, saved) {
-                (Startup::RestoreSession, Some(session)) if !session.tabs.is_empty() => {
-                    ws.restore_window(&session, None, false, now).1
-                }
-                (Startup::Homepage, _) if !homepage.is_empty() => ws.open_window(&homepage, false, None, false, now).2,
-                _ => ws.open_window("", false, None, false, now).2,
+            let restored = match (startup, &saved) {
+                (Startup::RestoreSession, Some(session)) => ws.restore(session, now, fit),
+                _ => Vec::new(),
+            };
+            if !restored.is_empty() {
+                info!("session restored: {} window(s)", ws.len());
+                restored
+            } else if startup == Startup::Homepage && !homepage.is_empty() {
+                ws.open_window(&homepage, false, None, false, now).2
+            } else {
+                ws.open_window("", false, None, false, now).2
             }
         };
         // Restored tabs show their favicons from the local cache (no network).
@@ -457,6 +484,10 @@ impl Browser {
             }
         }
         self.apply(ops);
+        // The window used last was restored last; make sure it is in front.
+        if let Some(f) = self.cur() {
+            f.window.bring_to_front();
+        }
     }
 
     // ------------------------------------------------------------ effects
@@ -943,9 +974,24 @@ impl Browser {
         }
     }
 
+    /// Saves every window's tabs and place (session v2).
     fn save_session(&self) {
-        // Until the multi-window session format: the current window's tabs.
-        let Some(session) = self.model().map(|m| m.session()) else { return };
+        if self.session_final.get() {
+            return;
+        }
+        let frames = self.all_frames();
+        let Ok(ws) = self.ws.try_borrow() else { return };
+        if ws.is_empty() {
+            return;
+        }
+        let session = ws.session(|win| match frames.iter().find(|f| f.id == win) {
+            Some(f) => {
+                let (r, maximized) = f.window.placement();
+                (Some(Bounds { x: r.x, y: r.y, width: r.width, height: r.height }), maximized)
+            }
+            None => (None, false),
+        });
+        drop(ws);
         if let Ok(json) = serde_json::to_string(&session) {
             if let Ok(store) = self.store.try_borrow() {
                 let _ = store.kv_set(SESSION_KEY, &json);
@@ -1623,6 +1669,8 @@ impl Browser {
     /// Ends the browser (exit, or the last window closed): every frame goes, and the last
     /// one's destruction shuts the browser down.
     fn destroy_frames(&self) {
+        self.save_session();
+        self.session_final.set(true);
         for f in self.all_frames() {
             f.window.destroy();
         }
@@ -1848,6 +1896,15 @@ impl WindowEvents for FrameEvents {
     fn destroyed(&self) {
         let Some(b) = self.b.upgrade() else { return };
         info!("window {} destroyed", self.win);
+        // The last window: save the session while it still has its place.
+        let only_this = {
+            let frames = b.frames.borrow();
+            frames.len() == 1 && frames[0].id == self.win
+        };
+        if only_this {
+            b.save_session();
+            b.session_final.set(true);
+        }
         let last = {
             let mut frames = b.frames.borrow_mut();
             frames.retain(|f| f.id != self.win);

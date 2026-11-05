@@ -56,6 +56,41 @@ pub fn popup_screen_rect(css: PopupRect, scale: f64, origin: (i32, i32), work: R
 
 /// Where host-initiated prompts (save/fill password) appear: under the
 /// right end of the toolbar, in CSS pixels of the shell viewport.
+/// Keeps a restored window reachable: if not even the top 40 px of `rect` overlap any
+/// monitor's work area by 100 px (a monitor was unplugged, or the resolution got smaller), it
+/// moves onto the monitor it overlaps most (else the first one, the primary), shrunk to fit.
+pub fn fit_to_monitors(rect: Rect, work_areas: &[Rect]) -> Rect {
+    let overlap = |a: &Rect, b: &Rect| {
+        let w = (a.x + a.width).min(b.x + b.width) - a.x.max(b.x);
+        let h = (a.y + a.height).min(b.y + b.height) - a.y.max(b.y);
+        (w.max(0), h.max(0))
+    };
+    let title = Rect { x: rect.x, y: rect.y, width: rect.width, height: 40.min(rect.height) };
+    let reachable = work_areas.iter().any(|a| {
+        let (w, h) = overlap(&title, a);
+        w >= 100.min(rect.width) && h >= 20.min(title.height)
+    });
+    if reachable || work_areas.is_empty() {
+        return rect;
+    }
+    let target = work_areas
+        .iter()
+        .max_by_key(|a| {
+            let (w, h) = overlap(&rect, a);
+            i64::from(w) * i64::from(h)
+        })
+        .filter(|a| {
+            let (w, h) = overlap(&rect, a);
+            w > 0 && h > 0
+        })
+        .unwrap_or(&work_areas[0]);
+    let width = rect.width.min(target.width).max(1);
+    let height = rect.height.min(target.height).max(1);
+    let x = rect.x.clamp(target.x, target.x + target.width - width);
+    let y = rect.y.clamp(target.y, target.y + target.height - height);
+    Rect { x, y, width, height }
+}
+
 /// The tab context menu (CSS px): five items and a separator.
 pub const TAB_MENU_SIZE: (f64, f64) = (240.0, 196.0);
 
@@ -166,5 +201,31 @@ mod tests {
         assert_eq!(next_zoom(1.05, false), 1.0);
         assert_eq!(next_zoom(5.0, true), 5.0);
         assert_eq!(next_zoom(0.25, false), 0.25);
+    }
+
+    #[test]
+    fn restored_windows_stay_reachable() {
+        let primary = Rect { x: 0, y: 0, width: 1920, height: 1040 };
+        let right = Rect { x: 1920, y: 0, width: 2560, height: 1400 };
+        let w = Rect { x: 100, y: 80, width: 1200, height: 800 };
+        assert_eq!(fit_to_monitors(w, &[primary]), w, "on screen: unchanged");
+        // Partly off screen but the title band is reachable: unchanged.
+        let partly = Rect { x: 1600, y: 80, width: 1200, height: 800 };
+        assert_eq!(fit_to_monitors(partly, &[primary]), partly);
+        // On a monitor that is gone: moved onto the primary, same size.
+        let gone = Rect { x: 2200, y: 100, width: 1200, height: 800 };
+        assert_eq!(fit_to_monitors(gone, &[primary, right]), gone, "that monitor is still there");
+        assert_eq!(fit_to_monitors(gone, &[primary]), Rect { x: 720, y: 100, width: 1200, height: 800 });
+        // Larger than the monitor now (smaller resolution): shrunk.
+        let big = Rect { x: -3000, y: -50, width: 2560, height: 1400 };
+        assert_eq!(fit_to_monitors(big, &[primary]), Rect { x: 0, y: 0, width: 1920, height: 1040 });
+        // Title bar above the screen: moved down.
+        let above = Rect { x: 200, y: -600, width: 800, height: 600 };
+        assert_eq!(fit_to_monitors(above, &[primary]).y, 0);
+        // A monitor left of the primary (negative coordinates) counts too.
+        let left = Rect { x: -1280, y: 0, width: 1280, height: 1000 };
+        let on_left = Rect { x: -1100, y: 50, width: 800, height: 600 };
+        assert_eq!(fit_to_monitors(on_left, &[primary, left]), on_left);
+        assert_eq!(fit_to_monitors(w, &[]), w);
     }
 }

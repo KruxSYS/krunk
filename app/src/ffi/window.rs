@@ -1065,6 +1065,32 @@ fn is_class(hwnd: HWND, class: PCWSTR) -> bool {
     n > 0 && buf[..n] == *want
 }
 
+/// The work area of every monitor (screen pixels), the primary one first.
+pub fn monitor_work_areas() -> Vec<ScreenRect> {
+    use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR};
+    extern "system" fn each(mon: HMONITOR, _: HDC, _: *mut RECT, data: LPARAM) -> windows::core::BOOL {
+        // SAFETY: `data` is the Vec below, alive for the whole call; the struct is sized.
+        unsafe {
+            let out = &mut *(data.0 as *mut Vec<(bool, ScreenRect)>);
+            let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+            if GetMonitorInfoW(mon, &mut mi).as_bool() {
+                let r = mi.rcWork;
+                let primary = mi.dwFlags & 1 != 0; // MONITORINFOF_PRIMARY
+                out.push((
+                    primary,
+                    ScreenRect { x: r.left, y: r.top, width: r.right - r.left, height: r.bottom - r.top },
+                ));
+            }
+        }
+        true.into()
+    }
+    let mut found: Vec<(bool, ScreenRect)> = Vec::new();
+    // SAFETY: the callback only appends to `found`.
+    let _ = unsafe { EnumDisplayMonitors(None, None, Some(each), LPARAM(&mut found as *mut _ as isize)) };
+    found.sort_by_key(|(primary, _)| !primary);
+    found.into_iter().map(|(_, r)| r).collect()
+}
+
 /// `windows` sorted by z-order, topmost first (hidden ones left out).
 pub fn in_z_order(windows: &[Window]) -> Vec<Window> {
     use windows::Win32::UI::WindowsAndMessaging::EnumWindows;

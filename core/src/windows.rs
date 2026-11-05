@@ -12,7 +12,7 @@
 //!   ([`Op::MoveView`]). A window emptied by a move closes.
 //! - "Reopen closed tab" reopens into the current (most recently used) window.
 
-use crate::tabs::{ClosedTab, Effect, Position, Session, Tab, TabId, TabModel, CLOSED_STACK_CAP};
+use crate::tabs::{ClosedTab, Effect, Position, Session, SessionTab, Tab, TabId, TabModel, CLOSED_STACK_CAP};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
@@ -25,6 +25,62 @@ pub struct Bounds {
     pub y: i32,
     pub width: i32,
     pub height: i32,
+}
+
+/// One window in the session: its tabs (as in the 0.2.x single-window session), where it
+/// was and whether it was maximized.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowSession {
+    pub tabs: Vec<SessionTab>,
+    pub active: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bounds: Option<Bounds>,
+    #[serde(default)]
+    pub maximized: bool,
+}
+
+/// The saved session (kv `"session"` in browser.db), version 2: every window.
+///
+/// `tabs` and `active` at the top level are the 0.2.x format; 0.3.0 still writes them, as a
+/// copy of the window used last, so going back to 0.2.x restores that window. A session
+/// without `windows` (written by 0.2.x) becomes one window.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionV2 {
+    #[serde(default)]
+    pub tabs: Vec<SessionTab>,
+    #[serde(default)]
+    pub active: usize,
+    #[serde(default)]
+    pub version: u32,
+    #[serde(default)]
+    pub windows: Vec<WindowSession>,
+    /// Index into `windows` of the window used last.
+    #[serde(default)]
+    pub focused: usize,
+}
+
+pub const SESSION_VERSION: u32 = 2;
+
+impl SessionV2 {
+    /// The windows to restore: v2 windows, or the 0.2.x single window.
+    pub fn windows(&self) -> Vec<WindowSession> {
+        if !self.windows.is_empty() {
+            return self.windows.clone();
+        }
+        if self.tabs.is_empty() {
+            return Vec::new();
+        }
+        vec![WindowSession { tabs: self.tabs.clone(), active: self.active, bounds: None, maximized: false }]
+    }
+
+    /// Which of [`SessionV2::windows`] was used last.
+    pub fn focused_index(&self) -> usize {
+        if self.windows.is_empty() {
+            0
+        } else {
+            self.focused.min(self.windows.len() - 1)
+        }
+    }
 }
 
 /// What the host must do after a workspace change, in order.
@@ -351,6 +407,47 @@ impl Workspace {
         Some((tab, ops(win, effects).collect()))
     }
 
+    /// The session: every window with saved tabs (windows with only private tabs are left
+    /// out), its place from `placement`, and the window used last.
+    pub fn session(&self, placement: impl Fn(WindowId) -> (Option<Bounds>, bool)) -> SessionV2 {
+        let mut windows = Vec::new();
+        let mut focused = None;
+        let current = self.current();
+        for e in &self.windows {
+            let s = e.model.session();
+            if s.tabs.is_empty() {
+                continue;
+            }
+            if Some(e.id) == current {
+                focused = Some(windows.len());
+            }
+            let (bounds, maximized) = placement(e.id);
+            windows.push(WindowSession { tabs: s.tabs, active: s.active, bounds, maximized });
+        }
+        let focused = focused.unwrap_or(windows.len().saturating_sub(1));
+        let (tabs, active) = windows.get(focused).map(|w| (w.tabs.clone(), w.active)).unwrap_or_default();
+        SessionV2 { tabs, active, version: SESSION_VERSION, windows, focused }
+    }
+
+    /// Restores every window of a session (`fit` keeps each one on a visible monitor). The
+    /// window used last is restored last, so it is in front and current. Nothing to restore:
+    /// no ops.
+    pub fn restore(&mut self, session: &SessionV2, now: i64, fit: impl Fn(Bounds) -> Bounds) -> Vec<Op> {
+        let windows = session.windows();
+        let focused = session.focused_index();
+        let mut order: Vec<usize> = (0..windows.len()).filter(|i| *i != focused).collect();
+        if focused < windows.len() {
+            order.push(focused);
+        }
+        let mut out = Vec::new();
+        for i in order {
+            let w = &windows[i];
+            let s = Session { tabs: w.tabs.clone(), active: w.active };
+            out.extend(self.restore_window(&s, w.bounds.map(&fit), w.maximized, now).1);
+        }
+        out
+    }
+
     /// A single-window session (the 0.2.x format) restored into a new window.
     pub fn restore_window(
         &mut self,
@@ -545,6 +642,80 @@ mod tests {
         assert_eq!(ws.tab(d).unwrap().title, "Dee");
         let (_, out) = ws.update(w, |m| ((), m.activate(ids[0], 1))).unwrap();
         assert_eq!(out, vec![Op::Activate { win: w, from: Some(ids[2]), to: ids[0] }]);
+    }
+
+    fn tab(url: &str) -> SessionTab {
+        SessionTab { url: url.into(), title: url.trim_start_matches("https://").trim_end_matches('/').into() }
+    }
+
+    #[test]
+    fn a_0_2_1_session_becomes_one_window() {
+        // Exactly what Krunk 0.2.1 wrote (built-in pages by their internal URL).
+        let json = r#"{"tabs":[{"url":"https://a.example/","title":"A"},{"url":"https://krunk.invalid/settings.html","title":"Settings"},{"url":"https://b.example/","title":"B"}],"active":2}"#;
+        let s: SessionV2 = serde_json::from_str(json).unwrap();
+        let windows = s.windows();
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].tabs.len(), 3);
+        assert_eq!((windows[0].active, windows[0].bounds, windows[0].maximized), (2, None, false));
+        let mut ws = Workspace::new();
+        let out = ws.restore(&s, 0, |b| b);
+        assert_eq!(ws.len(), 1);
+        let w = ws.current().unwrap();
+        assert_eq!(out[0], Op::CreateWindow { win: w, bounds: None, maximized: false });
+        assert_eq!(
+            urls(&ws, w),
+            vec!["https://a.example/", "https://krunk.invalid/settings.html", "https://b.example/"]
+        );
+        assert_eq!(ws.model(w).unwrap().active().unwrap().url, "https://b.example/");
+        // Nothing at all (or garbage): nothing to restore.
+        assert!(SessionV2::default().windows().is_empty());
+        assert!(Workspace::new().restore(&SessionV2::default(), 0, |b| b).is_empty());
+    }
+
+    #[test]
+    fn multi_window_sessions_round_trip() {
+        let (mut ws, w1, _) = ws3();
+        let (w2, _, _) = ws.open_window("https://d.example/", false, None, false, 0);
+        // A window with only a private tab is not saved.
+        let (w3, _, _) = ws.open_window("https://p.example/", true, None, false, 0);
+        ws.focus(w1);
+        let place = |w: WindowId| match w {
+            1 => (Some(Bounds { x: 10, y: 20, width: 900, height: 700 }), false),
+            _ => (Some(Bounds { x: 1930, y: 40, width: 800, height: 600 }), true),
+        };
+        let s = ws.session(place);
+        assert_eq!(s.version, SESSION_VERSION);
+        assert_eq!(s.windows.len(), 2, "the private-only window {w3} is left out");
+        assert_eq!(s.focused, 0, "window 1 was used last");
+        assert_eq!(s.tabs, s.windows[0].tabs, "the 0.2.x copy is the window used last");
+        assert_eq!(s.active, s.windows[0].active);
+        assert!(s.windows[1].maximized);
+        let json = serde_json::to_string(&s).unwrap();
+        // 0.2.x reads only tabs/active: that still parses as its Session.
+        let old: Session = serde_json::from_str(&json).unwrap();
+        assert_eq!(old.tabs.len(), 3);
+
+        let back: SessionV2 = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, s);
+        let mut fresh = Workspace::new();
+        // The second monitor is gone: fit moves that window.
+        let out = fresh.restore(&back, 0, |b| if b.x > 1900 { Bounds { x: 0, ..b } } else { b });
+        let created: Vec<&Op> = out.iter().filter(|o| matches!(o, Op::CreateWindow { .. })).collect();
+        assert_eq!(created.len(), 2);
+        // The window used last comes last (in front) and is current.
+        assert!(matches!(
+            created[0],
+            Op::CreateWindow { bounds: Some(Bounds { x: 0, y: 40, .. }), maximized: true, .. }
+        ));
+        assert!(matches!(
+            created[1],
+            Op::CreateWindow { bounds: Some(Bounds { x: 10, y: 20, .. }), maximized: false, .. }
+        ));
+        let cur = fresh.current().unwrap();
+        assert_eq!(fresh.model(cur).unwrap().len(), 3);
+        let other = *fresh.mru().last().unwrap();
+        assert_eq!(urls(&fresh, other), vec!["https://d.example/"]);
+        let _ = (w2, tab("https://x/"));
     }
 
     #[test]
