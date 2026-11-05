@@ -674,8 +674,9 @@ Playwright, hadolint, yamllint and `docker compose config -q`.
 - **S2:** implemented (accounts, Turnstile, mail outbox, account pages, `/privacy`; migration
   0002 only, since the planned 0002–0004 fit in one). Verified with 44 database integration
   tests, a release-mode timing check, and Playwright through every page on staging (Turnstile
-  test keys, Mailpit). Live with accounts **closed** (`503 accounts_disabled`) until the operator
-  provisions Turnstile, SMTP and mail DNS (OPEN_QUESTIONS, "Operator provisioning").
+  test keys, Mailpit). Live since 2026-11-05 (`b0ae786`) with accounts **closed**
+  (`503 accounts_disabled`) until the operator provisions Turnstile, SMTP and mail DNS
+  (OPEN_QUESTIONS, "Operator provisioning"). Evidence: `.pipeline/krunk-sync-decisions-s2.md`.
 - **S4:** implemented. `core::sync` (crypto, codes, directories with the §4.4 acceptance rules,
   envelopes, SAS, HLC, URL normalisation), frozen vectors, the RFC 9180 A.2 interop test and the
   mutation tests. See `core/src/sync/README.md`. It isn't wired into the app until S6.
