@@ -1,0 +1,21 @@
+.muted { color: var(--fg-muted); }
+.note { margin-top: 18px; font-size: 12px; line-height: 1.5; }
+.tabs { display: flex; gap: 4px; margin: 0 0 16px; border-bottom: 1px solid var(--border); }
+.tab-btn { padding: 8px 14px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--fg-muted);
+           font: inherit; cursor: pointer; }
+.tab-btn[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); }
+.toolbar { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; }
+.toolbar #summary { flex: 1; margin: 0; font-size: 13px; }
+.host { border-top: 1px solid var(--border); }
+.host:first-child { border-top: 0; }
+.host > h3 { display: flex; gap: 8px; align-items: baseline; margin: 0; padding: 10px 14px 4px; font-size: 13px; }
+.host > h3 .n { color: var(--fg-muted); font-weight: 400; font-size: 12px; }
+.req { display: grid; grid-template-columns: 70px minmax(0, 1fr) auto; gap: 2px 10px; padding: 6px 14px 8px 14px; }
+.req:hover { background: var(--bg-hover); }
+.req .kind { grid-row: span 2; align-self: start; padding: 2px 4px; border-radius: 4px; background: var(--bg-hover);
+             color: var(--fg-muted); font-size: 10px; text-align: center; text-transform: uppercase; }
+.req .addr { font-size: 13px; overflow-wrap: anywhere; user-select: text; }
+.req .count { color: var(--fg-muted); font-size: 12px; white-space: nowrap; }
+.req .why { grid-column: 2 / span 2; font-size: 12px; color: var(--fg-muted); }
+.req .rule { font-family: ui-monospace, Consolas, monospace; color: var(--fg); user-select: text; overflow-wrap: anywhere; }
+.req .tag { margin-left: 6px; padding: 0 5px; border-radius: 4px; background: var(--bg-hover); font-size: 11px; }

@@ -67,6 +67,10 @@
     ];
   }
 
+  // Short names for request types (the blocked list's badges).
+  const KIND_LABELS = { xmlhttprequest: 'xhr', sub_frame: 'frame', main_frame: 'page', stylesheet: 'css', websocket: 'socket', image: 'image', script: 'script', ping: 'ping', media: 'media', font: 'font', object: 'object', other: 'other', document: 'page' };
+  const kindLabel = (k) => KIND_LABELS[k] || k;
+
   // Right-click on the bookmarks bar: on a bookmark, a folder, or the bar itself.
   function renderBookmarkMenu(c) {
     const act = (action) => LB.post('bookmarkMenuAction', { id: c.id, action: action });
@@ -153,6 +157,15 @@
       c.host ? el('div', { class: 'row' }, [
         el('button', { class: 'btn', id: 'site-data', onclick: () => { LB.post('openSiteData'); close(); }, text: 'Cookies and site data' }),
       ]) : null,
+      (c.recent && c.recent.length) ? el('div', { class: 'blocked-list' }, c.recent.map(function (b) {
+        const path = b.url.replace(/^https?:\/\/[^/]+/, '') || '/';
+        return el('div', { class: 'blocked', title: b.url }, [
+          el('span', { class: 'kind', text: kindLabel(b.kind) }),
+          el('span', { class: 'addr' }, [el('strong', { text: b.host }), el('span', { text: path })]),
+          b.count > 1 ? el('span', { class: 'count', text: '×' + b.count }) : null,
+        ]);
+      }).concat([el('button', { class: 'link', id: 'show-blocked', onclick: () => { LB.post('openBlockedPage'); close(); },
+        text: 'Show all ' + c.distinct + ' blocked addresses' })])) : null,
     ])];
   }
 

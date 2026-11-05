@@ -134,6 +134,9 @@ impl NetShared {
     }
 }
 
+/// Blocked addresses the shield panel lists (the rest are on krunk://adblock).
+const SHIELD_RECENT: usize = 6;
+
 /// The part of a tab's network state the IO thread reads.
 #[derive(Default)]
 struct TabShared {
@@ -142,6 +145,8 @@ struct TabShared {
     /// The last top-level requests and the `Referer` the engine sent with each (a download
     /// fetched in parts sends the same one).
     navigations: Mutex<std::collections::VecDeque<(String, String)>>,
+    /// What was blocked on the page (see `lb_core::blocklog`; memory only).
+    blocked_log: Mutex<std::collections::VecDeque<lb_core::blocklog::Entry>>,
     /// Ad blocking is off for this page (allowlisted site).
     allowed: AtomicBool,
     blocked: AtomicU32,
@@ -188,6 +193,17 @@ impl RequestPolicy for TabPolicy {
             let url = req.url.split(['?', '#']).next().unwrap_or("");
             let how = if matches!(verdict, NetVerdict::Block) { "blocked" } else { "redirected" };
             crate::log::info!("{how} {kind:?} {url} (page {})", urlclean::host_of(&top).unwrap_or_default());
+        }
+        if let Ok(mut log) = self.tab.blocked_log.lock() {
+            if log.len() >= lb_core::blocklog::MAX_ENTRIES {
+                log.pop_front();
+            }
+            log.push_back(lb_core::blocklog::Entry {
+                url: req.url.to_string(),
+                page: top.clone(),
+                kind,
+                redirected: matches!(verdict, NetVerdict::Respond { .. }),
+            });
         }
         self.tab.blocked.fetch_add(1, Relaxed);
         self.net.blocked_one();
@@ -252,6 +268,11 @@ impl TabNet {
 
     pub fn blocked(&self) -> u32 {
         self.io.blocked.load(Relaxed)
+    }
+
+    /// What was blocked on the page so far (oldest first).
+    pub fn blocked_entries(&self) -> Vec<lb_core::blocklog::Entry> {
+        self.io.blocked_log.lock().map(|l| l.iter().cloned().collect()).unwrap_or_default()
     }
 
     /// The `Referer` the engine sent with its last top-level request for `url`: `Some("")`
@@ -538,6 +559,9 @@ impl Browser {
             *top = uri.to_string();
         }
         net.io.blocked.store(0, Relaxed);
+        if let Ok(mut log) = net.io.blocked_log.lock() {
+            log.clear();
+        }
         net.logged_blocked.set(0);
         net.visit_pending.set(true);
         net.login_form.set(false);
@@ -617,7 +641,7 @@ impl Browser {
         let shield_open =
             self.popup.borrow().as_ref().is_some_and(|p| matches!(p.content, Some(PopupContent::Shield { .. })));
         if shield_open {
-            self.show_popup(self.shield_content(), None);
+            self.show_shield();
         }
     }
 
@@ -634,7 +658,93 @@ impl Browser {
     pub(super) fn shield_content(&self) -> PopupContent {
         let host = self.active_tab().and_then(|t| urlclean::host_of(&t.url)).unwrap_or_default();
         let (blocked, allowed) = self.shield_state();
-        PopupContent::Shield { host, blocked, allowed, enabled: self.net.enabled() }
+        let entries = self
+            .active_id()
+            .and_then(|id| self.views.borrow().get(&id).map(|v| v.net.blocked_entries()))
+            .unwrap_or_default();
+        let all = lb_core::blocklog::summarize(&entries);
+        let recent = all.iter().take(SHIELD_RECENT).map(|(i, _)| i.clone()).collect();
+        PopupContent::Shield { host, blocked, allowed, enabled: self.net.enabled(), recent, distinct: all.len() as u32 }
+    }
+
+    /// The shield panel, sized for its list of blocked addresses.
+    pub(super) fn show_shield(&self) {
+        let content = self.shield_content();
+        let rows = match &content {
+            PopupContent::Shield { recent, .. } => recent.len(),
+            _ => 0,
+        };
+        let rect = self.shield_anchor.get().map(|a| lb_core::layout::shield_rect(a, rows));
+        self.show_popup(content, rect);
+    }
+
+    /// Shield panel "Show all": krunk://adblock for the active tab.
+    pub(super) fn open_blocked_page(&self) {
+        self.hide_popup();
+        let Some(source) = self.active_id() else { return };
+        self.adblock_source.set(Some(source));
+        // Open already (another tab's list, or the lists): it shows this tab's now.
+        let open = self.ws.borrow().find_page(Page::Adblock);
+        if let Some((_, tab)) = open {
+            if let Some(v) = self.tab_view(tab) {
+                v.reload();
+            }
+        }
+        self.open_page(Page::Adblock);
+    }
+
+    /// krunk://adblock asks what was blocked on its source tab: grouped, with the filter that
+    /// matched each address (looked up on a worker thread, see `Blocker::explain`).
+    pub(super) fn get_blocked(&self, tab: Option<TabId>, req_id: Option<u32>) {
+        let source = self.adblock_source.get().filter(|s| self.tab(*s).is_some());
+        let (host, entries) = match source {
+            Some(s) => (
+                self.tab(s).and_then(|t| urlclean::host_of(&t.url)).unwrap_or_default(),
+                self.views.borrow().get(&s).map(|v| v.net.blocked_entries()).unwrap_or_default(),
+            ),
+            None => (String::new(), Vec::new()),
+        };
+        let summary = lb_core::blocklog::summarize(&entries);
+        let requests: Vec<(String, String, ResourceKind)> = summary
+            .iter()
+            .map(|(_, i)| (entries[*i].url.clone(), entries[*i].page.clone(), entries[*i].kind))
+            .collect();
+        let items: Vec<lb_core::blocklog::Item> = summary.into_iter().map(|(i, _)| i).collect();
+        let lists = {
+            let enabled = self.settings.borrow().filter_lists.clone();
+            lb_core::filterlists::current_texts(&self.dirs.filters(), &enabled, &self.filters.update.borrow())
+        };
+        let enabled = self.net.enabled();
+        let alive = source.is_some();
+        self.spawn_job(
+            "explain-blocked",
+            move || {
+                let lists: Vec<(&str, &str)> = lists.iter().map(|(i, t)| (i.as_str(), t.as_str())).collect();
+                let reqs: Vec<(&str, &str, ResourceKind)> =
+                    requests.iter().map(|(u, p, k)| (u.as_str(), p.as_str(), *k)).collect();
+                Blocker::explain(&lists, &reqs)
+            },
+            move |b, explained| {
+                let items: Vec<_> = items
+                    .into_iter()
+                    .zip(explained)
+                    .map(|(mut i, e)| {
+                        if let Some(e) = e {
+                            i.list = (!e.list.is_empty()).then(|| blocker::list_title(&e.list).to_string());
+                            i.rule = Some(e.rule);
+                        }
+                        i
+                    })
+                    .collect();
+                b.reply(
+                    tab,
+                    Event::ok(
+                        req_id,
+                        serde_json::json!({ "host": host, "source": alive, "enabled": enabled, "items": items }),
+                    ),
+                );
+            },
+        );
     }
 
     /// Shield toggle: allow (or block again) ads on the active tab's site,

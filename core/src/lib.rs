@@ -6,6 +6,7 @@
 
 pub mod assets;
 pub mod blocker;
+pub mod blocklog;
 pub mod bookmarks;
 pub mod cookies;
 pub mod downloads;

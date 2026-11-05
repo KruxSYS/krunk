@@ -177,6 +177,17 @@ pub fn tab_menu_rect(x: f64, y: f64) -> PopupRect {
     PopupRect { x, y, width: TAB_MENU_SIZE.0, height: TAB_MENU_SIZE.1 }
 }
 
+/// The shield panel at `anchor` (the rect the shell asked for, under the shield button):
+/// with `rows` blocked addresses listed it is wider and taller, its right edge staying put.
+pub fn shield_rect(anchor: PopupRect, rows: usize) -> PopupRect {
+    if rows == 0 {
+        return anchor;
+    }
+    let width = 360.0_f64.max(anchor.width);
+    let height = anchor.height + 12.0 + 24.0 * rows.min(6) as f64 + 32.0;
+    PopupRect { x: (anchor.x + anchor.width - width).max(0.0), y: anchor.y, width, height }
+}
+
 /// The bookmarks bar's context menu (CSS px), at the click: on a bookmark ten items and
 /// three separators, on a folder eight and three, on the bar six and two (30 and 11 px,
 /// plus padding and border).
@@ -298,6 +309,17 @@ mod tests {
         assert_eq!(next_zoom(1.05, false), 1.0);
         assert_eq!(next_zoom(5.0, true), 5.0);
         assert_eq!(next_zoom(0.25, false), 0.25);
+    }
+
+    #[test]
+    fn shield_grows_with_its_list() {
+        let a = PopupRect { x: 900.0, y: 72.0, width: 300.0, height: 226.0 };
+        assert_eq!(shield_rect(a, 0), a);
+        let r = shield_rect(a, 3);
+        assert_eq!((r.x + r.width, r.y, r.width), (1200.0, 72.0, 360.0), "right edge kept");
+        assert_eq!(r.height, 226.0 + 12.0 + 72.0 + 32.0);
+        assert_eq!(shield_rect(a, 20).height, shield_rect(a, 6).height, "six rows at most");
+        assert_eq!(shield_rect(PopupRect { x: 10.0, ..a }, 2).x, 0.0);
     }
 
     #[test]

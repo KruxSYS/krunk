@@ -140,6 +140,10 @@ pub struct Browser {
     download_ops: RefCell<HashMap<u32, (u32, Option<DownloadControl>)>>,
     /// Button rect of the open bookmarks-bar folder dropdown.
     folder_anchor: Cell<Option<PopupRect>>,
+    /// Where the shell asked for the shield panel (it grows with its list from there).
+    shield_anchor: Cell<Option<PopupRect>>,
+    /// The tab krunk://adblock shows the blocked requests of (opened from its shield).
+    adblock_source: Cell<Option<TabId>>,
     /// Where the bookmarks bar's menu opened (its editor opens there too).
     bookmark_menu_at: Cell<Option<PopupRect>>,
     dirs: DataDirs,
@@ -204,6 +208,8 @@ impl Browser {
             download_ops: RefCell::new(HashMap::new()),
             folder_anchor: Cell::new(None),
             bookmark_menu_at: Cell::new(None),
+            adblock_source: Cell::new(None),
+            shield_anchor: Cell::new(None),
             dirs: dirs.clone(),
             filters: Rc::new(FilterState::new()),
             net: Arc::new(NetShared::default()),
@@ -1430,11 +1436,13 @@ impl Browser {
             Request::DevToolsClose => self.close_active_devtools(),
             Request::ShowPopup { popup, rect } => {
                 if popup.shell_may_open() && rect.is_valid() {
-                    let content = match popup {
-                        PopupKind::Menu => self.menu_content(),
-                        _ => self.shield_content(),
-                    };
-                    self.show_popup(content, Some(rect));
+                    match popup {
+                        PopupKind::Menu => self.show_popup(self.menu_content(), Some(rect)),
+                        _ => {
+                            self.shield_anchor.set(Some(rect));
+                            self.show_shield();
+                        }
+                    }
                 }
             }
             Request::HidePopup => self.hide_popup(),
@@ -1443,6 +1451,8 @@ impl Browser {
                     self.start_tab_drag(win, id, offset_x, offset_y);
                 }
             }
+            Request::OpenBlockedPage {} => self.open_blocked_page(),
+            Request::GetBlocked {} => self.get_blocked(tab, req_id),
             Request::ShowBookmarkMenu { id, rect } => self.show_bookmark_menu(id, rect),
             Request::BookmarkMenuAction { id, action } => self.bookmark_menu_action(id, action),
             Request::SaveBookmark { id, parent, title, url } => self.save_bookmark(id, parent, &title, url.as_deref()),

@@ -161,7 +161,7 @@ pub enum ResourceKind {
 }
 
 impl ResourceKind {
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             ResourceKind::Document => "document",
             ResourceKind::SubFrame => "sub_frame",
@@ -353,7 +353,43 @@ pub fn engine_version() -> &'static str {
     ENGINE_VERSION
 }
 
+/// The filter that blocks a request and the list it is in (see [`Blocker::explain`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Explained {
+    pub rule: String,
+    pub list: String,
+}
+
 impl Blocker {
+    /// Which filter blocks each of `requests` (url, page url, kind), and from which of
+    /// `lists`. The engine in use keeps no filter text (it would take about twice the memory),
+    /// so this compiles a throwaway one that does, checks the requests and drops it. Requests
+    /// these lists do not block get `None`.
+    pub fn explain(lists: &[(&str, &str)], requests: &[(&str, &str, ResourceKind)]) -> Vec<Option<Explained>> {
+        let mut set = FilterSet::new(true);
+        for (id, text) in lists {
+            set.add_filter_list(crate::preprocess::preprocess(text).into_owned(), parse_options(id));
+        }
+        let engine = Engine::new_with_filter_set(set);
+        requests
+            .iter()
+            .map(|(url, page, kind)| {
+                let req = Request::new(url, page, kind.as_str(), "get").ok()?;
+                let r = engine.check_network_request(&req);
+                if r.exception.is_some() && !r.important {
+                    return None;
+                }
+                let f = r.filter?;
+                let list = f
+                    .source_location
+                    .and_then(|l| lists.get(l.source_index as usize))
+                    .map(|(id, _)| id.to_string())
+                    .unwrap_or_default();
+                Some(Explained { rule: f.raw_line.unwrap_or_default(), list })
+            })
+            .collect()
+    }
+
     /// Compiles an engine from `(list id, text)` pairs; `key` identifies the
     /// sources. uBO's `!#if` blocks are resolved first; the uBO lists may
     /// use trusted scriptlets.
@@ -569,6 +605,30 @@ pub fn hide_css<'a>(selectors: impl Iterator<Item = &'a String>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explain_names_the_rule_and_its_list() {
+        let lists = [
+            ("easylist", "! Title: A\n||ads.example^\n@@||ads.example/ok.js\n"),
+            ("easyprivacy", "! Title: B\n||px.example/pixel.gif\n/tracker.js$script\n"),
+        ];
+        let page = "https://news.example/";
+        let got = Blocker::explain(
+            &lists,
+            &[
+                ("https://ads.example/banner.js", page, ResourceKind::Script),
+                ("https://px.example/pixel.gif?u=1", page, ResourceKind::Image),
+                ("https://cdn.example/js/tracker.js", page, ResourceKind::Script),
+                ("https://ads.example/ok.js", page, ResourceKind::Script),
+                ("https://fine.example/app.js", page, ResourceKind::Script),
+            ],
+        );
+        assert_eq!(got[0], Some(Explained { rule: "||ads.example^".into(), list: "easylist".into() }));
+        assert_eq!(got[1], Some(Explained { rule: "||px.example/pixel.gif".into(), list: "easyprivacy".into() }));
+        assert_eq!(got[2], Some(Explained { rule: "/tracker.js$script".into(), list: "easyprivacy".into() }));
+        assert_eq!(got[3], None, "an exception lets it through");
+        assert_eq!(got[4], None);
+    }
     use std::sync::OnceLock;
 
     /// The full bundled engine, compiled once for all tests.

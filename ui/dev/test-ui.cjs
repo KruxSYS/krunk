@@ -1128,6 +1128,62 @@ async function testShellM4(browser) {
   check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
 }
 
+// 0.4.0: what the ad blocker blocked: the shield panel's list and krunk://adblock.
+async function testBlockedList(browser) {
+  console.log('blocked list: shield panel and krunk://adblock');
+  let { page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 360, height: 418 }, 1);
+  const recent = [
+    { url: 'https://securepubads.g.doubleclick.net/tag/js/gpt.js', host: 'securepubads.g.doubleclick.net', kind: 'script', count: 1, redirected: true },
+    { url: 'https://www.google-analytics.com/g/collect', host: 'www.google-analytics.com', kind: 'ping', count: 7, redirected: false },
+    { url: 'https://ads.example/very/long/path/to/an/advert/banner-728x90-with-a-long-name.png', host: 'ads.example', kind: 'image', count: 2, redirected: false },
+  ];
+  await emit(page, { event: 'popup', content: { kind: 'shield', host: 'news.example.com', blocked: 10, allowed: false, enabled: true, recent: recent, distinct: 14 } });
+  await page.waitForSelector('.blocked');
+  check(await page.locator('.blocked').count() === 3, 'the shield lists the newest blocked addresses');
+  check((await page.locator('.blocked').nth(1).textContent()).includes('www.google-analytics.com') && (await page.locator('.blocked').nth(1).textContent()).includes('×7'), 'host, path and count');
+  check(await page.evaluate(() => document.getElementById('root').getBoundingClientRect().bottom) <= 226 + 12 + 72 + 32, 'the panel fits the size the host gives it (3 rows)');
+  check(await page.evaluate(() => Array.from(document.querySelectorAll('.blocked .addr')).every((n) => n.scrollWidth <= n.clientWidth + 1 || getComputedStyle(n).textOverflow === 'ellipsis')), 'long addresses are cut with an ellipsis');
+  await shot(page, 'popup-shield-blocked.png');
+  await page.click('#show-blocked');
+  check((await lastSent(page, 'openBlockedPage')) !== undefined && (await page.textContent('#show-blocked')).includes('14'), '"Show all 14 blocked addresses" sends openBlockedPage');
+  await emit(page, { event: 'popup', content: { kind: 'shield', host: 'news.example.com', blocked: 0, allowed: false, enabled: true, recent: [], distinct: 0 } });
+  await page.waitForTimeout(20);
+  check(await page.locator('.blocked-list').count() === 0, 'nothing blocked: no list');
+  check(errors.length === 0, 'shield: no console errors (' + errors.join(' | ') + ')');
+  await page.close();
+
+  const items = [
+    { url: 'https://securepubads.g.doubleclick.net/tag/js/gpt.js', host: 'securepubads.g.doubleclick.net', kind: 'script', count: 1, redirected: true, rule: '||securepubads.g.doubleclick.net/tag/js/gpt.js$script,redirect=googletagservices_gpt.js', list: 'uBlock filters' },
+    { url: 'https://www.google-analytics.com/g/collect', host: 'www.google-analytics.com', kind: 'ping', count: 7, redirected: false, rule: '||google-analytics.com^', list: 'EasyPrivacy (trackers)' },
+    { url: 'https://securepubads.g.doubleclick.net/pagead/ppub_config', host: 'securepubads.g.doubleclick.net', kind: 'xmlhttprequest', count: 2, redirected: false, rule: '||doubleclick.net^', list: 'EasyList (ads)' },
+  ];
+  let ext;
+  ({ page, errors, external: ext } = await openPage(browser, 'https://krunk.invalid/adblock.html', { width: 1000, height: 700 }, 1,
+    (d) => { window.__host.handlers.getBlocked = () => d; }, { host: 'news.example.com', source: true, enabled: true, items: items }));
+  await page.waitForSelector('.req');
+  check(await page.locator('.host').count() === 2 && await page.locator('.req').count() === 3, 'grouped by host (2 hosts, 3 addresses)');
+  check((await page.locator('.host').first().locator('h3').textContent()).includes('3 requests'), 'a host shows its total');
+  check((await page.textContent('#summary')) === '10 requests to 3 addresses blocked on news.example.com', 'summary (' + await page.textContent('#summary') + ')');
+  check((await page.locator('.req').first().textContent()).includes('redirect=googletagservices_gpt.js') && (await page.locator('.req').first().textContent()).includes('stand-in'), 'the filter, its list and a stand-in note');
+  check(await page.locator('.req .kind', { hasText: 'xhr' }).count() === 1, 'short type names (xhr)');
+  await shot(page, 'adblock-blocked.png');
+  await page.fill('#search', 'easyprivacy');
+  check(await page.locator('.req').count() === 1, 'search finds the list name');
+  await page.fill('#search', 'nothing-like-this');
+  check((await page.textContent('#list')).includes('Nothing matches'), 'search with no hit');
+  await page.fill('#search', '');
+  await page.click('#refresh');
+  check((await sent(page)).filter((m) => m.cmd === 'getBlocked').length >= 2, 'Refresh asks again');
+  check(ext.length === 0, 'adblock page: no network requests');
+  check(errors.length === 0, 'adblock page: no console errors (' + errors.join(' | ') + ')');
+  await page.close();
+  ({ page, errors } = await openPage(browser, 'https://krunk.invalid/adblock.html', { width: 1000, height: 400 }, 1,
+    () => { window.__host.handlers.getBlocked = () => ({ host: '', source: false, enabled: true, items: [] }); }));
+  await page.waitForSelector('.empty');
+  check((await page.textContent('#summary')).includes('Open this page from the shield'), 'opened on its own: how to get a list');
+  check(errors.length === 0, 'no console errors');
+}
+
 async function testShieldAndHttpsOnly(browser) {
   console.log('shield popover and HTTPS-only interstitial');
   // Shell: the counter as the host pushes it while a news page loads.
@@ -1939,6 +1995,7 @@ async function testTabWindows(browser) {
     await testBookmarksBar(browser);
     await testFolderPopup(browser);
     await testShieldAndHttpsOnly(browser);
+    await testBlockedList(browser);
     await testPasswords(browser);
     await testSettings(browser);
     await testLoginScript(browser);

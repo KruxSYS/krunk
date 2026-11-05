@@ -49,3 +49,13 @@ body { background: var(--bg-raised); border: 1px solid var(--border); border-rad
   background: var(--bg-raised); color: var(--fg); font: inherit; }
 .bookmark-edit input:focus { outline: none; border-color: var(--accent); }
 .bookmark-edit .error { margin: 0 0 6px; min-height: 0; }
+/* Shield panel: what was blocked. */
+.blocked-list { margin: 10px 0 0; border-top: 1px solid var(--border); padding-top: 6px; }
+.blocked { display: flex; align-items: center; gap: 6px; height: 24px; font-size: 12px; }
+.blocked .kind { flex: none; min-width: 52px; padding: 1px 4px; border-radius: 4px; background: var(--bg-hover);
+                 color: var(--fg-muted); font-size: 10px; text-align: center; text-transform: uppercase; }
+.blocked .addr { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--fg-muted); }
+.blocked .addr strong { color: var(--fg); font-weight: 600; }
+.blocked .count { flex: none; color: var(--fg-muted); }
+.link { margin-top: 6px; padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; }
+.link:hover { text-decoration: underline; }

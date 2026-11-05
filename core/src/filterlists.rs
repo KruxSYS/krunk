@@ -144,6 +144,23 @@ fn list_path(dir: &std::path::Path, id: &str) -> std::path::PathBuf {
     dir.join(format!("{id}.txt"))
 }
 
+/// The texts of the enabled lists as the engine in use was built from them: a stored
+/// download that still matches its hash, else the bundled copy.
+pub fn current_texts(dir: &std::path::Path, enabled: &[String], state: &UpdateState) -> Vec<(String, String)> {
+    FILTER_LISTS
+        .iter()
+        .copied()
+        .filter(|id| enabled.iter().any(|e| e == id))
+        .filter_map(|id| {
+            let downloaded = state.downloaded.get(id).and_then(|d| {
+                let text = std::fs::read(list_path(dir, id)).ok()?;
+                (fnv64(&text) == d.hash).then(|| validate_download(&text).ok()).flatten()
+            });
+            downloaded.or_else(|| crate::blocker::bundled_list(id)).map(|t| (id.to_string(), t))
+        })
+        .collect()
+}
+
 /// Refreshes the filter lists and builds the engine. Runs on a worker
 /// thread (it does file and network I/O and takes ~0.1–1 s).
 ///

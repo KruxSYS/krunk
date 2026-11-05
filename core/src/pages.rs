@@ -35,10 +35,12 @@ pub enum Page {
     Storage,
     /// Cookies and storage of one site, opened from that site's tab.
     SiteData,
+    /// The ad blocker: what it blocked on a tab's page, its filter lists.
+    Adblock,
 }
 
 impl Page {
-    pub const ALL: [Page; 10] = [
+    pub const ALL: [Page; 11] = [
         Page::NewTab,
         Page::History,
         Page::Bookmarks,
@@ -49,6 +51,7 @@ impl Page {
         Page::HttpsOnly,
         Page::Storage,
         Page::SiteData,
+        Page::Adblock,
     ];
 
     /// Short name used in the display URL (`krunk://<name>`) and file name.
@@ -64,6 +67,7 @@ impl Page {
             Page::HttpsOnly => "https-only",
             Page::Storage => "storage",
             Page::SiteData => "sitedata",
+            Page::Adblock => "adblock",
         }
     }
 

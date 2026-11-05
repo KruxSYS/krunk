@@ -243,6 +243,12 @@ pub enum PopupContent {
         blocked: u32,
         allowed: bool,
         enabled: bool,
+        /// The newest blocked addresses (grouped; the full list is on krunk://adblock).
+        #[serde(default)]
+        recent: Vec<crate::blocklog::Item>,
+        /// How many different addresses were blocked.
+        #[serde(default)]
+        distinct: u32,
     },
     /// "Save password for `username` on `origin`?" (no password is sent to the UI).
     SavePassword {
@@ -486,6 +492,10 @@ pub enum Request {
         id: Option<i64>,
         action: BookmarkAction,
     },
+    /// Shield panel "Show all": krunk://adblock for what was blocked on the active tab.
+    OpenBlockedPage {},
+    /// krunk://adblock: what was blocked on the tab it was opened from, with the filters.
+    GetBlocked {},
     /// The bookmark editor's Save (popup): rename or edit `id`, or create folder in `parent`.
     SaveBookmark {
         #[serde(default)]
@@ -881,6 +891,7 @@ impl Sender {
                     | R::VaultStatus
                     | R::VaultUnlock { .. }
                     | R::UpdateReply { .. }
+                    | R::OpenBlockedPage {}
                     | R::Quit
             ),
             Sender::Page(Page::NewTab) => matches!(
@@ -965,6 +976,7 @@ impl Sender {
                     | R::SiteCookiesDelete { .. }
             ),
             Sender::Page(Page::HttpsOnly) => matches!(req, R::HttpsOnlyProceed { .. }),
+            Sender::Page(Page::Adblock) => matches!(req, R::GetBlocked {}),
         }
     }
 }
@@ -1727,6 +1739,8 @@ mod tests {
             Request::ShowPopup { popup: PopupKind::Shield, rect },
             Request::TabDragOut { id: 3, offset_x: 40.5, offset_y: 18.0 },
             Request::ShowTabMenu { id: 3, rect },
+            Request::OpenBlockedPage {},
+            Request::GetBlocked {},
             Request::DownloadAction { id: 4, action: DownloadAction::CopyLink },
             Request::DownloadAction { id: 4, action: DownloadAction::CopyPageAddress },
             Request::DownloadAction { id: 4, action: DownloadAction::Retry },
@@ -1791,6 +1805,20 @@ mod tests {
             let back: Request = serde_json::from_str(&json).unwrap_or_else(|e| panic!("{json}: {e}"));
             assert_eq!(back, r, "{json}");
         }
+    }
+
+    #[test]
+    fn blocked_list_requests() {
+        let open = Request::OpenBlockedPage {};
+        let get = Request::GetBlocked {};
+        assert!(Sender::Popup.permits(&open) && !Sender::Shell.permits(&open));
+        assert!(Sender::Page(Page::Adblock).permits(&get));
+        for s in [Sender::Shell, Sender::Popup, Sender::Page(Page::NewTab), Sender::Page(Page::Settings)] {
+            assert!(!s.permits(&get), "{s:?}");
+        }
+        assert!(!Sender::Page(Page::Adblock).permits(&Request::SiteDataGet {}));
+        assert_eq!(Page::from_name("adblock"), Some(Page::Adblock));
+        assert!(Page::Adblock.single_instance());
     }
 
     #[test]
@@ -1925,7 +1953,22 @@ mod tests {
             Event::ShellConfig { show_home_button: true, theme: Theme::Dark },
             Event::Popup { content: PopupContent::Menu { zoom: 1.0, can_reopen: true } },
             Event::Popup {
-                content: PopupContent::Shield { host: "a.example".into(), blocked: 3, allowed: false, enabled: true },
+                content: PopupContent::Shield {
+                    host: "a.example".into(),
+                    blocked: 3,
+                    allowed: false,
+                    enabled: true,
+                    recent: vec![crate::blocklog::Item {
+                        url: "https://ads.example/a.js".into(),
+                        host: "ads.example".into(),
+                        kind: "script".into(),
+                        count: 2,
+                        redirected: false,
+                        rule: None,
+                        list: None,
+                    }],
+                    distinct: 1,
+                },
             },
             Event::Popup {
                 content: PopupContent::SavePassword {
