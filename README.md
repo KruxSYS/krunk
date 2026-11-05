@@ -699,10 +699,11 @@ Testing on Windows:
 - **Not tested for 0.3.0** (the Windows 11 test VM can't do them):
   - **two monitors:** the VM has one;
   - **display scaling above 125 %:** the VM allows at most 125 %;
-  - **a standard (non-admin) user with UAC on:** the VM has UAC off and an admin user;
-  - **the in-app update from 0.2.1 to 0.3.0** (Update now): the silent installer it runs was
-    tested on its own, and 0.2.1's updater is unchanged since its own update test.
-  The first real check of the update comes when 0.3.0 is published and a 0.2.1 copy offers it.
+  - **a standard (non-admin) user with UAC on:** the VM has UAC off and an admin user.
+
+  The in-app update from 0.2.1 to 0.3.0 was tested against the live server after publishing
+  (2026-11-05): 0.2.1 offered 0.3.0, Update now installed it, and Krunk restarted as 0.3.0 with
+  the session in one window.
 - **DevTools can't be undocked** into its own window; it docks right or at the bottom of its
   tab's window. Theme changes don't reach a page while its DevTools is open (see above).
 - **Unsigned:** the binaries are not code-signed (SmartScreen may warn on first start).
