@@ -85,6 +85,15 @@ const CF_UNICODETEXT: u32 = 13;
 /// Windows clipboard history / cloud clipboard skip it. Returns the
 /// clipboard sequence number after the copy, for [`clear_clipboard_if`].
 pub fn copy_private(owner: HWND, text: &str) -> Option<u32> {
+    put_text(owner, text, true)
+}
+
+/// Puts ordinary text (a download's address) on the clipboard; `false` if that failed.
+pub fn copy_text(owner: HWND, text: &str) -> bool {
+    put_text(owner, text, false).is_some()
+}
+
+fn put_text(owner: HWND, text: &str, private: bool) -> Option<u32> {
     let wide: Zeroizing<Vec<u16>> = Zeroizing::new(text.encode_utf16().chain(std::iter::once(0)).collect());
     // SAFETY: standard clipboard sequence on the UI thread; the global
     // memory handed to SetClipboardData is owned by the system afterwards.
@@ -105,10 +114,12 @@ pub fn copy_private(owner: HWND, text: &str) -> Option<u32> {
                 let _ = GlobalFree(Some(mem));
                 return None;
             }
-            // Ask monitors and clipboard history not to keep it.
-            set_dword(w!("ExcludeClipboardContentFromMonitorProcessing"), 0);
-            set_dword(w!("CanIncludeInClipboardHistory"), 0);
-            set_dword(w!("CanUploadToCloudClipboard"), 0);
+            if private {
+                // Ask monitors and clipboard history not to keep it.
+                set_dword(w!("ExcludeClipboardContentFromMonitorProcessing"), 0);
+                set_dword(w!("CanIncludeInClipboardHistory"), 0);
+                set_dword(w!("CanUploadToCloudClipboard"), 0);
+            }
             Some(())
         })();
         let _ = CloseClipboard();

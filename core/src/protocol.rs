@@ -75,6 +75,14 @@ pub enum DownloadAction {
     Pause,
     Resume,
     Remove,
+    /// The download's address to the clipboard.
+    CopyLink,
+    /// The address of the page it came from to the clipboard.
+    CopyPageAddress,
+    /// Download the same address again (a failed, cancelled or finished one).
+    Retry,
+    /// Delete the downloaded file (a completed one) and remove it from the list.
+    DeleteFile,
 }
 
 /// Data kinds for "Clear browsing data".
@@ -1719,6 +1727,10 @@ mod tests {
             Request::ShowPopup { popup: PopupKind::Shield, rect },
             Request::TabDragOut { id: 3, offset_x: 40.5, offset_y: 18.0 },
             Request::ShowTabMenu { id: 3, rect },
+            Request::DownloadAction { id: 4, action: DownloadAction::CopyLink },
+            Request::DownloadAction { id: 4, action: DownloadAction::CopyPageAddress },
+            Request::DownloadAction { id: 4, action: DownloadAction::Retry },
+            Request::DownloadAction { id: 4, action: DownloadAction::DeleteFile },
             Request::ShowBookmarkMenu { id: Some(3), rect },
             Request::ShowBookmarkMenu { id: None, rect },
             Request::BookmarkMenuAction { id: None, action: BookmarkAction::NewFolder },
@@ -1975,6 +1987,8 @@ mod tests {
                     started: 5,
                     reason: None,
                     private: false,
+                    finished: Some(9),
+                    page_url: Some("https://e.com/".into()),
                 }],
             },
             Event::VaultState { exists: true, locked: false },

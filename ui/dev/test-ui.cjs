@@ -747,7 +747,7 @@ async function testDownloads(browser) {
   const now = Date.now();
   const items = [
     { id: 3, url: 'https://releases.example.org/tool-2.4.1-x64.msi', fileName: 'tool-2.4.1-x64.msi', path: 'C:\\Users\\me\\Downloads\\tool-2.4.1-x64.msi', state: 'inProgress', received: 23500000, total: 61200000, started: now, reason: null },
-    { id: 2, url: 'https://arxiv.org/pdf/1234.5678', fileName: 'paper.pdf', path: 'C:\\Users\\me\\Downloads\\paper.pdf', state: 'completed', received: 2400000, total: 2400000, started: now - 60000, reason: null },
+    { id: 2, url: 'https://arxiv.org/pdf/1234.5678?download=1&token=abc', fileName: 'paper.pdf', path: 'C:\\Users\\me\\Downloads\\paper.pdf', state: 'completed', received: 2400000, total: 2400000, started: Date.UTC(2026, 10, 5, 9, 15), finished: Date.UTC(2026, 10, 5, 9, 16), pageUrl: 'https://arxiv.org/abs/1234.5678', reason: null },
     { id: 1, url: 'https://cdn.example.com/video.mp4', fileName: 'video.mp4', path: 'C:\\Users\\me\\Downloads\\video.mp4', state: 'interrupted', received: 1000, total: null, started: now - 120000, reason: 'Network error' },
   ];
   const { page, errors, external } = await openPage(browser, 'https://krunk.invalid/downloads.html', { width: 1000, height: 420 }, 1,
@@ -755,7 +755,43 @@ async function testDownloads(browser) {
   await page.waitForSelector('.dl');
   check((await page.locator('.dl').count()) === 3, 'lists 3 downloads');
   check((await page.locator('progress').count()) === 1, 'progress bar for the running download');
+  check(await page.locator('.dl[data-id="2"] .url').textContent() === 'https://arxiv.org/pdf/1234.5678?download=1&token=abc', 'the full download address is shown');
+  const when2 = await page.locator('.dl[data-id="2"] .when').textContent();
+  check(/2026/.test(when2) && /finished/.test(when2), 'date and time it started and finished (' + when2 + ')');
+  check(!/finished/.test(await page.locator('.dl[data-id="1"] .when').textContent()), 'an old entry without a finish time shows the start only');
+  check(await page.locator('.dl[data-id="1"] button', { hasText: 'Retry' }).count() === 1, 'a failed download offers Retry');
   await shot(page, 'downloads.png');
+  // Right-click: the row's menu.
+  await page.locator('.dl[data-id="2"] .name').click({ button: 'right' });
+  await page.waitForSelector('.ctx-menu');
+  const mlabels = await page.$$eval('.ctx-menu .menu-item', (ns) => ns.map((n) => n.textContent + (n.disabled ? '(off)' : '')));
+  check(JSON.stringify(mlabels) === JSON.stringify(['Open file', 'Show in folder', 'Copy download link', 'Copy page address', 'Download again', 'Remove from list', 'Delete file…']), 'context menu of a finished download (' + mlabels.join(', ') + ')');
+  await shot(page, 'downloads-context-menu.png');
+  await page.locator('.ctx-menu .menu-item', { hasText: 'Copy download link' }).click();
+  check((await lastSent(page, 'downloadAction')).action === 'copyLink' && await page.locator('.ctx-menu').count() === 0, 'Copy download link sends downloadAction{copyLink} and closes the menu');
+  await page.locator('.dl[data-id="2"] .name').click({ button: 'right' });
+  await page.locator('.ctx-menu .menu-item', { hasText: 'Delete file' }).click();
+  await page.waitForSelector('#lb-dialog-ok');
+  check((await page.textContent('.lb-dialog-text')).includes('paper.pdf'), 'Delete file asks first');
+  await page.click('#lb-dialog-ok');
+  await page.waitForTimeout(50);
+  check((await lastSent(page, 'downloadAction')).action === 'deleteFile', 'confirmed: downloadAction{deleteFile}');
+  // A failed one: no file actions, no page address known; keyboard opens the menu too.
+  await page.locator('.dl[data-id="1"]').focus();
+  await page.waitForTimeout(100); // focusing scrolls the row into view (a scroll closes menus)
+  await page.keyboard.press('Shift+F10');
+  await page.waitForSelector('.ctx-menu');
+  const flabels = await page.$$eval('.ctx-menu .menu-item', (ns) => ns.map((n) => n.textContent + (n.disabled ? '(off)' : '')));
+  check(JSON.stringify(flabels) === JSON.stringify(['Open file(off)', 'Show in folder(off)', 'Copy download link', 'Copy page address(off)', 'Retry', 'Remove from list', 'Delete file…(off)']), 'context menu of a failed download (' + flabels.join(', ') + ')');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Escape');
+  check(await page.locator('.ctx-menu').count() === 0, 'Esc closes the menu');
+  // A running one: Retry and Remove are off.
+  await page.locator('.dl[data-id="3"] .name').click({ button: 'right' });
+  const rlabels = await page.$$eval('.ctx-menu .menu-item', (ns) => ns.map((n) => n.textContent + (n.disabled ? '(off)' : '')));
+  check(rlabels.includes('Retry(off)') && rlabels.includes('Remove from list(off)'), 'a running download cannot be retried or removed');
+  await page.mouse.click(5, 5);
+  check(await page.locator('.ctx-menu').count() === 0, 'a click elsewhere closes the menu');
   await page.locator('.dl[data-id="2"] button', { hasText: 'Show in folder' }).click();
   const a = await lastSent(page, 'downloadAction');
   check(a && a.id === 2 && a.action === 'showInFolder', 'show in folder sends downloadAction');

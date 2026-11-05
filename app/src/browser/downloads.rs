@@ -67,7 +67,15 @@ impl Browser {
         if let Some(v) = tab.and_then(|t| self.views.borrow().get(&t).map(|v| v.downloads.clone())) {
             v.set(v.get() + 1);
         }
-        let id = self.downloads.borrow_mut().start(&start.url, &path, start.total, now_ms(), private);
+        let page = tab.and_then(|t| self.tab(t).map(|t| t.url.clone()));
+        let id = {
+            let mut d = self.downloads.borrow_mut();
+            let id = d.start(&start.url, &path, start.total, now_ms(), private);
+            if let Some(page) = page {
+                d.set_page(id, &page);
+            }
+            id
+        };
         info!("download {id} started");
         self.download_ops.borrow_mut().insert(start.id, (id, None));
         start.accept(&path);
@@ -97,7 +105,7 @@ impl Browser {
             if !update.path.as_os_str().is_empty() {
                 d.set_path(id, &update.path);
             }
-            d.set_state(id, state, reason);
+            d.set_state(id, state, reason, now_ms());
             before != Some(state)
         };
         if state.is_finished() {
@@ -115,6 +123,16 @@ impl Browser {
             last_push.set(now);
             self.push_downloads();
         }
+    }
+
+    /// A live tab to start a download in: the current window's active tab, else any tab, of the
+    /// same kind (private or not).
+    fn download_view(&self, private: bool) -> Option<View> {
+        let active = self.active_tab().filter(|t| t.private == private).map(|t| t.id);
+        let others: Vec<TabId> =
+            self.ws.borrow().tabs().filter(|(_, t)| t.private == private).map(|(_, t)| t.id).collect();
+        let views = self.views.borrow();
+        active.into_iter().chain(others).find_map(|id| views.get(&id).map(|v| v.view.clone()))
     }
 
     /// The engine's controls for our download `id`, if it is running.
@@ -162,16 +180,58 @@ impl Browser {
                     DownloadAction::Pause => {
                         if let Some(op) = op {
                             op.pause();
-                            self.downloads.borrow_mut().set_state(id, DownloadState::Paused, None);
+                            self.downloads.borrow_mut().set_state(id, DownloadState::Paused, None, now_ms());
                         }
                     }
                     DownloadAction::Resume => {
                         if let Some(op) = op {
                             op.resume();
-                            self.downloads.borrow_mut().set_state(id, DownloadState::InProgress, None);
+                            self.downloads.borrow_mut().set_state(id, DownloadState::InProgress, None, now_ms());
                         }
                     }
                     DownloadAction::Remove => {
+                        self.downloads.borrow_mut().remove(id);
+                        self.save_downloads();
+                    }
+                    DownloadAction::CopyLink | DownloadAction::CopyPageAddress => {
+                        let text = if action == DownloadAction::CopyLink {
+                            Some(item.url.clone())
+                        } else {
+                            item.page_url.clone()
+                        };
+                        let copied = match (text, self.window()) {
+                            (Some(t), Some(w)) => crate::ffi::secure::copy_text(w.hwnd(), &t),
+                            _ => false,
+                        };
+                        if !copied {
+                            self.reply(tab, Event::err(req_id, "Could not copy the address"));
+                            return;
+                        }
+                    }
+                    DownloadAction::Retry => {
+                        if !item.state.is_finished() {
+                            self.reply(tab, Event::err(req_id, "The download is still running"));
+                            return;
+                        }
+                        // Through a tab of the same kind: a private download stays private.
+                        let Some(view) = self.download_view(item.private) else {
+                            self.reply(tab, Event::err(req_id, "Open a private tab to download this again"));
+                            return;
+                        };
+                        info!("download {id}: downloading again");
+                        view.start_download(&item.url);
+                    }
+                    DownloadAction::DeleteFile => {
+                        if item.state != DownloadState::Completed || !path.is_absolute() || !path.is_file() {
+                            self.reply(tab, Event::err(req_id, "The file no longer exists"));
+                            return;
+                        }
+                        if let Err(e) = std::fs::remove_file(&path) {
+                            warning!("download {id}: deleting the file: {e}");
+                            self.reply(tab, Event::err(req_id, "Could not delete the file"));
+                            return;
+                        }
+                        info!("download {id}: file deleted");
                         self.downloads.borrow_mut().remove(id);
                         self.save_downloads();
                     }

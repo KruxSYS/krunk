@@ -665,6 +665,14 @@ impl View {
         }
     }
 
+    /// Downloads `url` through this browser (its profile and cookies), like a link the page
+    /// was told to download.
+    pub fn start_download(&self, url: &str) {
+        if let Some(h) = self.host() {
+            h.start_download(Some(&CefString::from(url)));
+        }
+    }
+
     // ------------------------------------------------------------ docked DevTools
 
     /// Opens DevTools as a child window of the frame `parent`, next to this view (place it
