@@ -174,6 +174,31 @@ pub fn is_site(site: &str) -> bool {
         && site.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | ':' | '[' | ']'))
 }
 
+/// Unix ms to CEF base time (µs since 1601).
+pub fn unix_ms_to_windows_us(ms: i64) -> i64 {
+    ms.saturating_mul(1000).saturating_add(WINDOWS_TO_UNIX_US)
+}
+
+/// A cookie's name and value together are at most this long (as in Chromium).
+pub const MAX_COOKIE_BYTES: usize = 4096;
+
+/// Why `value` cannot be a cookie's value (the engine would refuse or change it), if so.
+pub fn cookie_value_problem(name: &str, value: &str) -> Option<&'static str> {
+    if name.len() + value.len() > MAX_COOKIE_BYTES {
+        return Some("A cookie's name and value can be at most 4096 bytes together");
+    }
+    if value.chars().any(|c| c.is_control()) {
+        return Some("A cookie cannot hold control characters (bytes below 0x20, or 0x7F)");
+    }
+    if value.contains(';') {
+        return Some("A cookie cannot hold a semicolon");
+    }
+    if value.trim() != value {
+        return Some("A cookie's value cannot start or end with a space");
+    }
+    None
+}
+
 /// CEF base time (µs since 1601) to Unix ms.
 pub fn windows_us_to_unix_ms(us: i64) -> i64 {
     us.saturating_sub(WINDOWS_TO_UNIX_US) / 1000
@@ -329,8 +354,22 @@ mod tests {
     }
 
     #[test]
+    fn cookie_values() {
+        assert_eq!(cookie_value_problem("a", "abc%00=+/xyz"), None);
+        assert_eq!(cookie_value_problem("a", "naïve \"quoted\""), None);
+        assert!(cookie_value_problem("a", "a\u{0}b").is_some());
+        assert!(cookie_value_problem("a", "a\u{7f}").is_some());
+        assert!(cookie_value_problem("a", "a\tb").is_some());
+        assert!(cookie_value_problem("a", "a;b").is_some());
+        assert!(cookie_value_problem("a", " a").is_some());
+        assert!(cookie_value_problem("abc", &"x".repeat(4094)).is_some());
+        assert_eq!(cookie_value_problem("abc", &"x".repeat(4093)), None);
+    }
+
+    #[test]
     fn times() {
         assert_eq!(windows_us_to_unix_ms(WINDOWS_TO_UNIX_US + 1_500_000), 1_500);
+        assert_eq!(windows_us_to_unix_ms(unix_ms_to_windows_us(1_793_916_000_123)), 1_793_916_000_123);
     }
 
     #[test]

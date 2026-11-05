@@ -749,6 +749,11 @@ pub enum Request {
     SiteDataClear {
         area: crate::sitedata::StorageArea,
     },
+    /// A new value for one of the site's cookies (its other attributes stay).
+    SiteCookieSet {
+        cookie: crate::sitedata::CookieKey,
+        value: String,
+    },
     /// Deletes one of the site's cookies, or all of them (`None`).
     SiteCookiesDelete {
         #[serde(default)]
@@ -994,6 +999,7 @@ impl Sender {
                 req,
                 R::SiteDataGet {}
                     | R::SiteDataSet { .. }
+                    | R::SiteCookieSet { .. }
                     | R::SiteDataRemove { .. }
                     | R::SiteDataClear { .. }
                     | R::SiteCookiesDelete { .. }
@@ -1457,6 +1463,7 @@ mod tests {
             r#"{"cmd":"siteDataClear","area":"local"}"#,
             r#"{"cmd":"siteCookiesDelete"}"#,
             r#"{"cmd":"siteCookiesDelete","cookie":{"name":"n","domain":"a.example","path":"/"}}"#,
+            r#"{"cmd":"siteCookieSet","cookie":{"name":"n","domain":"a.example","path":"/"},"value":"x"}"#,
         ];
         let senders = |except: Sender| {
             let mut v = vec![Sender::Shell, Sender::Popup];
@@ -1769,6 +1776,10 @@ mod tests {
             Request::SiteDataRemove { area: crate::sitedata::StorageArea::Session, key: "k".into() },
             Request::SiteDataClear { area: crate::sitedata::StorageArea::Local },
             Request::SiteCookiesDelete { cookie: None },
+            Request::SiteCookieSet {
+                cookie: crate::sitedata::CookieKey { name: "n".into(), domain: ".a.example".into(), path: "/".into() },
+                value: "%00%FF".into(),
+            },
             Request::OpenSiteData,
             Request::ShowPopup { popup: PopupKind::Shield, rect },
             Request::TabDragOut { id: 3, offset_x: 40.5, offset_y: 18.0 },

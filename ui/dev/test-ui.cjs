@@ -877,8 +877,9 @@ async function testSiteData(browser) {
   console.log('site data page');
   const state = {
     origin: 'https://www.example.com', private: true, live: true,
-    cookies: [{ name: 'sid', value: 'abc', domain: '.example.com', path: '/', expires: null, secure: true, httpOnly: false, sameSite: 'strict' }],
-    local: [['cart', '[1,2,3]'], ['theme', 'dark']],
+    cookies: [{ name: 'sid', value: 'abc', domain: '.example.com', path: '/', expires: null, secure: true, httpOnly: false, sameSite: 'strict' },
+      { name: 'blob', value: 'v1%00%01%FF', domain: 'www.example.com', path: '/', expires: null, secure: true, httpOnly: true, sameSite: 'lax' }],
+    local: [['cart', '[1,2,3]'], ['theme', 'dark'], ['bin', '\u0000\u0001\u00ffabc']],
     session: [['step', '2']],
   };
   const { page, errors, external } = await openPage(browser, 'https://krunk.invalid/sitedata.html', { width: 1000, height: 700 }, 1, (d) => {
@@ -888,12 +889,13 @@ async function testSiteData(browser) {
     h.siteDataRemove = () => null;
     h.siteDataClear = () => null;
     h.siteCookiesDelete = () => ({ deleted: 1 });
+    h.siteCookieSet = () => null;
   }, state);
   await page.waitForSelector('.kv');
   check((await page.locator('#origin').textContent()) === 'https://www.example.com', 'shows the bound origin');
   check(await page.locator('#private').isVisible(), 'private tab marked');
-  check((await page.locator('#local .kv').count()) === 2 && (await page.locator('#session .kv').count()) === 1, 'local and session storage items');
-  check((await page.locator('#cookies tr').count()) === 1, 'site cookies');
+  check((await page.locator('#local .kv').count()) === 3 && (await page.locator('#session .kv').count()) === 1, 'local and session storage items');
+  check((await page.locator('#cookies tr').count()) === 2, 'site cookies');
   await shot(page, 'sitedata.png');
   // Edit an item.
   await page.locator('#local .kv[data-key="theme"] .icon-btn').first().click();
@@ -902,6 +904,118 @@ async function testSiteData(browser) {
   await page.waitForTimeout(50);
   const set = await lastSent(page, 'siteDataSet');
   check(set && set.area === 'local' && set.key === 'theme' && set.value === 'light' && Object.keys(set).length === 5, 'edit sends siteDataSet{area,key,value} only (got ' + JSON.stringify(set) + ')');
+  await page.locator('#local .kv[data-key="cart"] .icon-btn').first().click();
+  check(await page.locator('#edit-value').isVisible() && await page.locator('#mode-text').getAttribute('aria-selected') === 'true', 'text values open on the Text tab');
+  await page.keyboard.press('Escape');
+
+  // The codec: round trips and the encoding a value most likely uses.
+  const codec = await page.evaluate(() => {
+    const C = window.HexCodec;
+    const rt = (t, e) => { const b = C.encode(t, e).bytes; return C.decode(b, e, C.base64Style(t)).text === t; };
+    const all = Array.from({ length: 256 }, (_, i) => String.fromCharCode(i)).join('');
+    return {
+      utf8: rt('héllo 🦀', 'utf8') && C.toHex(C.encode('é', 'utf8').bytes) === 'C3 A9',
+      latin1: rt(all, 'latin1') && C.encode(all, 'latin1').bytes.length === 256,
+      utf16: rt('a\ud800b', 'utf16') && C.encode('a\ud800', 'utf8').error !== undefined,
+      base64: rt('AAEC_-8', 'base64') && rt('AAECAw==', 'base64') && C.toHex(C.encode('AAEC_-8', 'base64').bytes) === '00 01 02 FF EF',
+      badBase64: C.encode('abc$', 'base64').error !== undefined,
+      percent: C.toHex(C.encode('a%00%FFé', 'percent').bytes) === '61 00 FF C3 A9' && C.decode(Uint8Array.of(0x61, 0, 0x3b, 0x20), 'percent').text === 'a%00%3B%20',
+      invalidUtf8: C.decode(Uint8Array.of(0xff, 0x61), 'utf8').error === 'These bytes are not valid UTF-8',
+      oddUtf16: C.decode(Uint8Array.of(1), 'utf16').error !== undefined,
+      bom: C.decode(Uint8Array.of(0xef, 0xbb, 0xbf, 0x61), 'utf8').text === '\ufeffa',
+      detect: [C.detect('hello', false), C.detect('\u0000\u0001ÿ', false), C.detect('\u0000\u4e00', false), C.detect('a\ud800', false),
+        C.detect('AAECAwQFBgcICQoLDA0ODw==', false), C.detect('v1%00%01', true), C.detect('aGVsbG8gd29ybGQgaGVsbG8=', false), C.detect('ÿØÿà', false), C.detect('café', false)].join(','),
+      binary: [C.looksBinary('hello', false), C.looksBinary('{"a":1}', false), C.looksBinary('\u0000x', false), C.looksBinary('AAECAwQFBgcICQoLDA0ODw==', false),
+        C.looksBinary('a%20b', true), C.looksBinary('v1%00%01', true), C.looksBinary('dGhpcyBpcyBwbGFpbiB0ZXh0', false)].join(','),
+      parseHex: C.toHex(C.parseHex('de ad,0xBE-ef')) === 'DE AD BE EF' && C.parseHex('abc') === null && C.parseHex('zz') === null,
+    };
+  });
+  for (const [k, v] of Object.entries(codec)) {
+    if (k === 'detect') check(v === 'utf8,latin1,utf16,utf16,base64,percent,utf8,latin1,utf8', 'codec: detected encodings (' + v + ')');
+    else if (k === 'binary') check(v === 'false,false,true,true,false,true,false', 'codec: binary values open on Hex (' + v + ')');
+    else check(v === true, 'codec: ' + k);
+  }
+
+  // A binary localStorage value opens on the Hex tab, as a binary string.
+  await page.locator('#local .kv[data-key="bin"] .icon-btn').first().click();
+  await page.waitForSelector('#edit-hex:not([hidden]) .hx-row');
+  const hexText = () => page.evaluate(() => Array.from(document.querySelectorAll('#edit-hex .hx-row')[0].querySelectorAll('.b')).map((b) => b.textContent).filter(Boolean).join(' '));
+  check(await page.locator('#mode-hex').getAttribute('aria-selected') === 'true' && await page.inputValue('#edit-enc') === 'latin1', 'binary value: Hex tab, binary-string encoding');
+  check(await hexText() === '00 01 FF 61 62 63', 'the bytes (' + await hexText() + ')');
+  check((await page.textContent('#edit-hex .hx-row .tx')).startsWith('...abc'), 'the text column');
+  await shot(page, 'sitedata-hex.png');
+  // Type over the first byte, then insert, delete, paste hex, undo.
+  await page.locator('#edit-hex .b[data-i="0"]').click();
+  await page.keyboard.type('41');
+  check(await hexText() === '41 01 FF 61 62 63', 'typing two hex digits overwrites a byte');
+  await page.keyboard.press('Insert');
+  await page.keyboard.type('4');
+  await page.keyboard.type('2');
+  check(await hexText() === '41 42 01 FF 61 62 63' && (await page.textContent('#edit-hex .hx-status')).includes('Insert'), 'Insert mode inserts');
+  await page.keyboard.press('Delete');
+  check(await hexText() === '41 42 FF 61 62 63', 'Delete removes the byte at the caret');
+  await page.keyboard.press('Backspace');
+  check(await hexText() === '41 FF 61 62 63', 'Backspace removes the byte before');
+  await page.evaluate(() => {
+    const dt = new DataTransfer(); dt.setData('text/plain', 'de ad');
+    document.querySelector('#edit-hex .hx-view').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+  });
+  check(await hexText() === '41 DE AD FF 61 62 63', 'pasting hex inserts the bytes');
+  await page.keyboard.press('Control+z');
+  check(await hexText() === '41 FF 61 62 63', 'Ctrl+Z undoes');
+  // Select two bytes with Shift+arrows and copy them as hex.
+  await page.keyboard.press('Shift+ArrowRight');
+  await page.keyboard.press('Shift+ArrowRight');
+  const copied = await page.evaluate(() => {
+    const dt = new DataTransfer();
+    document.querySelector('#edit-hex .hx-view').dispatchEvent(new ClipboardEvent('copy', { clipboardData: dt, bubbles: true, cancelable: true }));
+    return dt.getData('text/plain');
+  });
+  check(copied === 'FF 61' && (await page.textContent('#edit-hex .hx-status')).includes('2 selected'), 'copy the selection as hex (' + copied + ')');
+  // UTF-8 cannot read 0xFF: switching to Text says so; the binary string can be saved.
+  await page.selectOption('#edit-enc', 'utf16');
+  check(await hexText() === '41 00 FF 00 61 00 62 00 63 00', 'another encoding shows the same value\'s bytes in it');
+  await page.selectOption('#edit-enc', 'latin1');
+  await page.click('#edit button[value="ok"]');
+  await page.waitForTimeout(50);
+  const binSet = await lastSent(page, 'siteDataSet');
+  check(binSet.key === 'bin' && binSet.value === 'A\u00ffabc', 'Save stores the edited binary string (' + JSON.stringify(binSet.value) + ')');
+  // Bytes that are not UTF-8 cannot be saved as UTF-8.
+  await page.locator('#local .kv[data-key="theme"] .icon-btn').first().click();
+  await page.click('#mode-hex');
+  check(await hexText() === '64 61 72 6B', 'Text -> Hex: the UTF-8 bytes of "dark"');
+  await page.locator('#edit-hex .b[data-i="0"]').click();
+  await page.keyboard.type('FF');
+  check((await page.textContent('#edit-error')).includes('not valid UTF-8'), 'invalid UTF-8 is reported');
+  await page.click('#mode-text');
+  check(await page.locator('#edit-hex').isVisible(), 'and keeps the Hex tab');
+  const before = (await sent(page)).length;
+  await page.click('#edit button[value="ok"]');
+  await page.waitForTimeout(50);
+  check((await sent(page)).length === before && await page.locator('#edit').isVisible(), 'and is not saved');
+  await page.keyboard.press('Escape');
+
+  // A percent-encoded binary cookie: Hex tab, edits go back percent-encoded.
+  await page.locator('#cookies tr[data-name="blob"] .icon-btn').first().click();
+  await page.waitForSelector('#edit-hex:not([hidden]) .hx-row');
+  check(await page.inputValue('#edit-enc') === 'percent' && await hexText() === '76 31 00 01 FF', 'cookie: percent-encoded bytes');
+  check((await page.locator('#edit-enc option').count()) === 3, 'cookies offer UTF-8, percent and Base64 only');
+  check(await page.inputValue('#edit-key') === 'blob' && await page.locator('#edit-key').evaluate((n) => n.readOnly), 'the cookie name is fixed');
+  await page.locator('#edit-hex .b[data-i="2"]').click();
+  await page.keyboard.type('3B');
+  await page.click('#edit button[value="ok"]');
+  await page.waitForTimeout(50);
+  const ck = await lastSent(page, 'siteCookieSet');
+  check(ck && ck.value === 'v1%3B%01%FF' && ck.cookie.name === 'blob' && ck.cookie.domain === 'www.example.com' && ck.cookie.path === '/' && Object.keys(ck).length === 4,
+    'siteCookieSet {cookie, value} percent-encoded (' + JSON.stringify(ck) + ')');
+  // Bytes a cookie cannot hold as UTF-8 text are refused with advice.
+  await page.locator('#cookies tr[data-name="sid"] .icon-btn').first().click();
+  check(await page.locator('#edit-value').isVisible(), 'a text cookie opens on Text');
+  await page.fill('#edit-value', 'a;b');
+  await page.click('#edit button[value="ok"]');
+  check((await page.textContent('#edit-error')).includes('semicolon') && await page.locator('#edit').isVisible(), 'a semicolon is refused');
+  await page.keyboard.press('Escape');
+
   // Add an item.
   await page.locator('h2 button.add[data-area="session"]').click();
   await page.fill('#edit-key', 'newkey');
@@ -914,7 +1028,7 @@ async function testSiteData(browser) {
   await page.locator('#local .kv[data-key="cart"] .icon-btn').nth(1).click();
   const rm = await lastSent(page, 'siteDataRemove');
   check(rm && rm.area === 'local' && rm.key === 'cart', 'delete sends siteDataRemove');
-  await page.locator('#cookies tr[data-name="sid"] .icon-btn').click();
+  await page.locator('#cookies tr[data-name="sid"] .icon-btn').nth(1).click();
   check((await lastSent(page, 'siteCookiesDelete')).cookie.name === 'sid', 'delete cookie');
   await page.locator('h2 button.clear[data-area="local"]').click();
   await acceptInPage(page);

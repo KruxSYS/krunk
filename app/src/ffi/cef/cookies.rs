@@ -5,7 +5,7 @@
 
 use super::{post_ui_delayed, request_context_get_global_context, PRIVATE_CONTEXT};
 use cef::*;
-use lb_core::sitedata::{windows_us_to_unix_ms, CookieInfo, SameSite};
+use lb_core::sitedata::{unix_ms_to_windows_us, windows_us_to_unix_ms, CookieInfo, SameSite};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::os::raw::c_int;
@@ -81,6 +81,62 @@ pub fn cookie_header(profile: Profile, url: &str, done: impl FnOnce(String) + 's
     }
     // No cookies for the URL: the visitor is never called.
     post_ui_delayed(300, move || finish(id, None));
+}
+
+/// Stores `info` again with a new value, every other attribute as it was (krunk://sitedata's
+/// editor). `done` gets whether the engine took it.
+pub fn set_cookie_value(profile: Profile, info: &CookieInfo, value: &str, done: impl FnOnce(bool) + 'static) {
+    let Some(manager) = manager(profile) else {
+        done(false);
+        return;
+    };
+    let host = info.domain.trim_start_matches('.');
+    let url = format!("{}://{host}{}", if info.secure { "https" } else { "http" }, info.path);
+    let same_site = match info.same_site {
+        SameSite::None => CookieSameSite::NO_RESTRICTION,
+        SameSite::Lax => CookieSameSite::LAX_MODE,
+        SameSite::Strict => CookieSameSite::STRICT_MODE,
+        SameSite::Unspecified => CookieSameSite::UNSPECIFIED,
+    };
+    let cookie = Cookie {
+        name: CefString::from(info.name.as_str()),
+        value: CefString::from(value),
+        // Empty: a host-only cookie (the stored domain has no leading dot).
+        domain: CefString::from(if info.domain.starts_with('.') { info.domain.as_str() } else { "" }),
+        path: CefString::from(info.path.as_str()),
+        secure: info.secure.into(),
+        httponly: info.http_only.into(),
+        has_expires: info.expires.is_some().into(),
+        expires: Basetime { val: info.expires.map_or(0, unix_ms_to_windows_us) },
+        same_site,
+        priority: CookiePriority::MEDIUM,
+        ..Cookie::default()
+    };
+    let pending: SetDone = std::rc::Rc::new(RefCell::new(Some(Box::new(done))));
+    let mut cb = CookieSet::new(pending.clone());
+    // 0: refused at once (a bad URL or cookie); the callback never runs.
+    if manager.set_cookie(Some(&CefString::from(url.as_str())), Some(&cookie), Some(&mut cb)) == 0 {
+        let done = pending.borrow_mut().take();
+        if let Some(done) = done {
+            done(false);
+        }
+    }
+}
+
+type SetDone = std::rc::Rc<RefCell<Option<Box<dyn FnOnce(bool)>>>>;
+
+wrap_set_cookie_callback! {
+    struct CookieSet {
+        done: SetDone,
+    }
+    impl SetCookieCallback {
+        fn on_complete(&self, success: c_int) {
+            let done = self.done.borrow_mut().take();
+            if let Some(done) = done {
+                done(success != 0);
+            }
+        }
+    }
 }
 
 fn visit(profile: Profile, delete: Option<Predicate>, done: Done) {

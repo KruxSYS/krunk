@@ -7,7 +7,7 @@
 //! opens as a private tab and only ever touches the private profile.
 
 use super::Browser;
-use crate::ffi::cef::{delete_cookies, list_cookies, Profile, View};
+use crate::ffi::cef::{delete_cookies, list_cookies, set_cookie_value, Profile, View};
 use crate::log::{info, warning};
 use lb_core::pages::Page;
 use lb_core::protocol::{Event, Request};
@@ -229,6 +229,29 @@ impl Browser {
                 let Some(v) = view else { return reply(Event::err(req_id, "The site is no longer open")) };
                 let params = serde_json::json!({ "storageId": dom_storage_id(&origin, area) });
                 dom_storage_call(&v, "DOMStorage.clear", params, move |r| reply(result_event(req_id, r)));
+            }
+            Request::SiteCookieSet { cookie, value } => {
+                if !cookie.is_valid() {
+                    return reply(Event::err(req_id, "Not a cookie"));
+                }
+                if let Some(problem) = sitedata::cookie_value_problem(&cookie.name, &value) {
+                    return reply(Event::err(req_id, problem));
+                }
+                let profile = binding.profile();
+                list_cookies(profile, move |all| {
+                    // Only a cookie this site can see, whatever the page asks for.
+                    let one = CookieSelection::One(cookie);
+                    let Some(c) = cookies_for_origin(&all, &origin).into_iter().find(|c| one.matches(c)) else {
+                        return reply(Event::err(req_id, "The cookie is no longer there"));
+                    };
+                    set_cookie_value(profile, &c, &value, move |ok| {
+                        reply(if ok {
+                            Event::ok(req_id, ())
+                        } else {
+                            Event::err(req_id, "The engine did not accept this value")
+                        })
+                    });
+                });
             }
             Request::SiteCookiesDelete { cookie } => {
                 if cookie.as_ref().is_some_and(|c| !c.is_valid()) {

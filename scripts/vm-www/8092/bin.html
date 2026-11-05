@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Binary test</title></head>
+<body style="font: 22px system-ui, sans-serif; margin: 20px">
+<!-- Krunk 0.4.0: a binary localStorage value (a "binary string") and a percent-encoded binary
+     cookie, edited in krunk://sitedata's hex editor (vm-040-hex.ps1). The page shows (and puts
+     in its title) the exact bytes it reads back. ?reset=1 starts again. -->
+<h1 style="font-size: 26px">Binary test</h1>
+<p id="out" style="font-family: monospace"></p>
+<script>
+if (location.search.includes('reset') || localStorage.getItem('bin') === null) {
+  localStorage.setItem('bin', String.fromCharCode(0, 1, 2, 255, 254, 65));
+  document.cookie = 'blob=v1%00%01%FF; path=/';
+}
+const hex = (s) => Array.from(s, (c) => c.charCodeAt(0).toString(16).padStart(2, '0')).join(' ');
+const ck = (document.cookie.match(/(?:^|; )blob=([^;]*)/) || [])[1] || '';
+const line = 'bin=[' + hex(localStorage.getItem('bin') || '') + '] cookie=[' + ck + ']';
+document.getElementById('out').textContent = line;
+document.title = line;
+</script>
+</body></html>

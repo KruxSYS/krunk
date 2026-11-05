@@ -1566,6 +1566,7 @@ impl Browser {
             | Request::SiteDataSet { .. }
             | Request::SiteDataRemove { .. }
             | Request::SiteDataClear { .. }
+            | Request::SiteCookieSet { .. }
             | Request::SiteCookiesDelete { .. }) => self.dispatch_site_data(tab, req_id, r),
             Request::OpenSiteData => self.open_site_data(),
             other => self.dispatch_library(sender, tab, req_id, other),
