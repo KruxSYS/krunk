@@ -641,6 +641,9 @@ Playwright, hadolint, yamllint and `docker compose config -q`.
 | S11 | Security review and hardening: an independent review of PROTOCOL plus the code, semgrep, fuzzing, a dependency review, a pen-test checklist (OWASP ASVS L2 for the web parts); an Android interop plan (Kotlin vector runner); optional OPRF hardening of escrow (RFC 9497) and WebAuthn | Reports | Every finding fixed or accepted in writing; the vector runner passes on an Android emulator (when the Android project exists) | Staged; live only after operator approval | as needed |
 
 **Status (2026-11-05):**
+- **Open questions:** all decided by delegation (`OPEN_QUESTIONS.md`). Only the provisioning of the
+  Turnstile keys, SMTP credentials, mail DNS records and the `privacy@` alias remains with the
+  operator; accounts stay disabled until then.
 - **S1:** implemented and verified on a throwaway stack and on ai-pipe staging; not live.
   Going live needs Q4/Q8, the secrets in the live `.env`, and `COMPOSE_PROFILES=sync`.
 - **S4:** implemented. `core::sync` (crypto, codes, directories with the §4.4 acceptance rules,

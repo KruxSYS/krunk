@@ -1,26 +1,36 @@
-# Krunk sync: open questions for the operator
+# Krunk sync: open questions, now decided
 
-These need a decision or an input that only the operator can give. Each one has a proposed
-default, so implementation can start on S1 (server skeleton) without blocking. Items marked
-**blocking for Sx** must be answered before that milestone goes live.
+On 2026-11-05 the operator delegated every open question ("You can decide all the questions"). Each one
+below has a decision and a reason. Three of them name resources that exist only in an account holder's
+dashboard (a Turnstile widget, SMTP credentials, mail DNS records); they are listed under **Operator
+provisioning**. Until those exist, accounts stay **disabled (fail closed)** on the live site: the
+account endpoints answer `503 accounts_disabled` and the pages say "Accounts are coming soon". Nothing
+else waits on them.
 
-| # | Question | Proposed default | Blocking for |
-|---|---|---|---|
-| Q1 | **Turnstile keys.** Please create a Turnstile widget for `krunk.209.wf` (managed mode) and provide the **site key** and **secret key**. Should the final domain be added to the same widget? | Managed widget, hostname `krunk.209.wf`, plus the final domain later. Staging uses Cloudflare's public test keys. | S2 live |
-| Q2 | **SMTP provider and credentials.** Which provider (for example Postmark, Mailgun, Amazon SES, Fastmail or your own server) and which host, port, user and password? | External provider, STARTTLS on 587. Staging uses a local mail sink. | S2 live |
-| Q3 | **"From" address and DNS.** Which sender address (e.g. `Krunk <no-reply@krunk.209.wf>`)? Can SPF, DKIM and DMARC records be set for that domain? | `no-reply@` the site domain, DMARC `p=quarantine`. | S2 live |
-| Q4 | **Database storage and backups.** May the machine running the ai-pipe stack hold the Postgres volume (`krunk-db`)? Where should the encrypted daily backups go (path or off-site target), who holds the `age` key, and how long are they kept? | The DB volume on the stack's host. Daily `pg_dump`, `age`-encrypted to the operator's key, kept 14 days at a location the operator names (off-site preferred). | S1 live |
-| Q5 | **Quotas per account.** | 50 MiB of ciphertext, 100,000 records, 20,000 history URLs (server hard cap 25,000), 64 KiB per record, 500 tabs per device, 10 active devices. | S7 live |
-| Q6 | **IP retention.** | 90 days, then IPs are nulled. The country (from `CF-IPCountry`) is kept while the session or device exists. | S3 live |
-| Q7 | **Offer a "no passphrase" mode** (device approval only, plus a mandatory recovery key)? Without a passphrase, restoring onto a fresh install needs the recovery key or another device. | **Not in v1.** A passphrase (generated) plus a recovery key is required. It can be added later without a format change (RR is then wrapped under the recovery key only). | S6 |
-| Q8 | **How traffic reaches Caddy:** directly from Cloudflare to the host port, through a Cloudflare Tunnel, or through ai-pipe's own proxy? This decides which addresses Caddy trusts to supply `CF-Connecting-IP`. | Trust only Cloudflare's published ranges, plus the single ai-pipe proxy address if there is one (that proxy must forward `CF-Connecting-IP` unchanged). | S1 live (rate limits depend on it) |
-| Q9 | **Inactivity policy.** Delete accounts unused for N days? | Off. If wanted: 730 days, with warnings at 30 and 7 days. | S10 |
-| Q10 | **Deletion and backups.** Deletion is immediate in the live database, but data stays in encrypted backups until they expire (14 days), and a restore re-applies deletions. Is that acceptable for the privacy notice? | Yes, stated in the privacy notice. | S10 |
-| Q11 | **Email wording and language.** English only? Who reviews the templates (new device, password change, reuse alert, escrow fetch, revocation, deletion receipt)? | English, short plain-text templates in the repo, reviewed by the operator. | S2 |
-| Q12 | **Breached-password check** on registration and password change via HIBP k-anonymity (`api.pwnedpasswords.com`, sending only the first 5 SHA-1 hex characters)? | No by default. Only the bundled top-100k list is checked, so no third-party call is made. | S2 |
-| Q13 | **Escrow hardening with an OPRF (RFC 9497),** so a DB thief can't even attempt offline passphrase guesses without the server's key. | Later phase (S11+). The generated passphrase makes it optional. | – |
-| Q14 | **Final domain.** When `krunk.209.wf` is replaced, the API base moves too. | One release from the old domain switches clients to the new one, with the old domain redirecting for 6 months. | – |
-| Q15 | **Privacy policy and legal.** Who is the data controller and what is the contact? Is a privacy page needed on the website (GDPR: email, IPs, account data)? | A privacy page in S10, using the operator's contact details. | S2 live |
-| Q16 | **Cloudflare rules.** Should a WAF or rate-limiting rule be added for `/api/*` at Cloudflare as a second layer? Bot Fight Mode would break the native client's API calls, so it should be off for `/api/*`. | Cloudflare rate limit on `/api/v1/web/*` (60/min/IP); `/api/v1/*` excluded from bot challenges. | S2 live |
-| Q17 | **Device limit and approval rate.** | 10 devices per account, 5 approvals per day, 10 link grants per hour per IP. | S3 |
-| Q18 | **Android timeline.** Should the protocol's Android-specific details (Keystore wrapping, WorkManager) be validated by an early spike before S6 freezes the format? | A spike in parallel with S4 (crypto vectors on an emulator). | S4 |
+| # | Question | Decision | Why | Provisioning? |
+|---|---|---|---|---|
+| Q1 | **Turnstile keys** | A **managed** Turnstile widget for hostname `krunk.209.wf` (add the final domain later). `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` go into the live `.env`. Staging uses Cloudflare's public test keys. | Managed mode needs no interaction for most users, and it is what the brief asks for. | **Yes:** create the widget in the Cloudflare dashboard |
+| Q2 | **SMTP provider and credentials** | SMTP submission (587 with STARTTLS, or 465 TLS) through the mailbox provider that hosts mail for 209.wf, configured with `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` and `SMTP_TLS` in the live `.env`. Without SMTP, accounts stay disabled, because nobody could verify an email address. | We run no MTA of our own (deliverability, port 25). Using the domain's existing mail host keeps SPF and DKIM simple. | **Yes:** credentials |
+| Q3 | **"From" address and DNS** | `Krunk <no-reply@krunk.209.wf>`, with SPF (the provider's `include:`), DKIM (the provider's key) and DMARC `v=DMARC1; p=quarantine` for `krunk.209.wf`. | A dedicated subdomain keeps the reputation separate from personal mail. | **Yes:** DNS records |
+| Q4 | **Database storage and backups** | Postgres in the named volume `krunk-db` on the stack's host. A `backup` service writes a daily `pg_dump -Fc` into a separate named volume, `krunk-backups`, and keeps 14 days. Those dumps are **not** encrypted at rest: they sit on the same host and within the same trust boundary as the live database, so encrypting them there protects nothing. **Any off-site copy must be `age`-encrypted** (`backup-db.sh --age-recipient`). | A self-contained, automatic stack; restore is tested by a drill. | No |
+| Q5 | **Quotas per account** | 50 MiB of ciphertext, 100,000 records, 20,000 history URLs (client) with a server cap of 25,000, 64 KiB per record, 500 tabs per device, 10 active devices. | Comfortably above typical use, small enough to bound storage on one host. | No |
+| Q6 | **IP retention** | **90 days**, then IPs are nulled. Countries (from `CF-IPCountry`) are kept while the session or device exists. | Long enough for abuse investigation, short enough for privacy. | No |
+| Q7 | **"No passphrase" mode** (device approval only) | **Not in v1.** A passphrase (generated by default) and a recovery key are both required. It can be added later without a format change. | A restore path that doesn't depend on still owning a device. | No |
+| Q8 | **How traffic reaches Caddy** | **Measured:** live requests arrive from `ai-pipe-controller-1` (10.250.137.4), ai-pipe's public proxy. Cloudflare doesn't connect directly. Caddy trusts `CF-Connecting-IP` only from Cloudflare's ranges and from `TRUSTED_PROXIES_EXTRA`, which defaults to **`10.250.137.4/32`** (the controller alone, not its /24, which also holds the build sandbox). Whether the controller passes the header through is verified on live. | Trusting the exact hop gives real client IPs for rate limits without allowing spoofing. | No |
+| Q9 | **Inactivity policy** | **Off.** There is no automatic deletion of unused accounts. | Users keep control; storage is bounded by the quotas. | No |
+| Q10 | **Deletion and backups** | Account deletion is immediate in the live database. Backups expire after 14 days, and a restore re-applies `deletions.log`. The privacy page says so. | Honest and practical. | No |
+| Q11 | **Email wording and language** | English, short plain-text templates in `server/templates/`, no tracking or images. | Simple, readable, nothing to leak. | No |
+| Q12 | **Breached-password check** | **No HIBP call.** Passwords are checked against a bundled common-password list. | It avoids a third-party request per registration. | No |
+| Q13 | **OPRF escrow hardening (RFC 9497)** | Later (S11+). The generated 6-word passphrase already makes offline guessing impractical. | It adds complexity better spent after launch. | No |
+| Q14 | **Final domain** | When it exists, one release from `krunk.209.wf` switches clients over, and the old domain redirects for 6 months. | Installed copies follow automatically. | Later |
+| Q15 | **Privacy policy and legal** | A `/privacy` page in S2 states the data held, the retention periods, Cloudflare's role, deletion and backups. Contact: `privacy@209.wf`. The user's personal address is never published. | A role address can be redirected without changing the site. | **Yes:** create the `privacy@209.wf` alias |
+| Q16 | **Cloudflare rules** | **No WAF or rate-limit rules** at Cloudflare. The application limits are enough. If bot challenges are ever turned on, `/api/*` must be excluded, because the native client can't solve them. | Fewer moving parts outside the repository. | No |
+| Q17 | **Device limit and approval rate** | 10 active devices, 5 approvals per day, 10 link grants per hour per IP. | They match the quotas and the threat model. | No |
+| Q18 | **Android timeline** | No spike until an Android project exists. The frozen vectors (`core/tests/fixtures/sync/`) are ready for a Kotlin runner. | Nothing to validate against yet. | No |
+
+## Operator provisioning (the only remaining steps; accounts switch on without a code change)
+1. **Turnstile:** in the Cloudflare dashboard, go to Turnstile → Add widget. Hostname `krunk.209.wf`, mode Managed. Put the keys into the live `.env` as `TURNSTILE_SITE_KEY=…` and `TURNSTILE_SECRET_KEY=…`.
+2. **SMTP:** put `SMTP_HOST`, `SMTP_PORT=587`, `SMTP_USER`, `SMTP_PASSWORD` and `SMTP_TLS=starttls` for the 209.wf mail provider into the live `.env`. The sender is `no-reply@krunk.209.wf`.
+3. **DNS for `krunk.209.wf` mail:** SPF `v=spf1 include:<provider> -all`, DKIM as given by the provider, and DMARC `_dmarc.krunk.209.wf TXT "v=DMARC1; p=quarantine"`.
+4. **Alias:** `privacy@209.wf` → the operator's mailbox.
+5. Restart the live service. `web/config` then reports `accounts_enabled: true`.
