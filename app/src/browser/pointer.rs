@@ -333,6 +333,12 @@ impl Browser {
         self.is_fullscreen() && self.pointer.fullscreen_window.get() == Some(win)
     }
 
+    /// Is frame `win` showing a page full screen (not F11)?
+    pub(super) fn is_page_fullscreen_frame(&self, win: lb_core::windows::WindowId) -> bool {
+        matches!(self.pointer.fullscreen.get(), FullscreenMode::Page(_))
+            && self.pointer.fullscreen_window.get() == Some(win)
+    }
+
     /// The tab shown full screen by its page is no longer shown or exists.
     pub(super) fn fullscreen_tab_gone(&self, tab: TabId) {
         if self.pointer.fullscreen.get() == FullscreenMode::Page(tab) {

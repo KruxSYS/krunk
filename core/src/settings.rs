@@ -38,6 +38,15 @@ pub enum Startup {
     Homepage,
 }
 
+/// Where DevTools is docked next to its tab's page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DevToolsDock {
+    #[default]
+    Right,
+    Bottom,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Theme {
@@ -145,7 +154,18 @@ pub struct Settings {
     /// Check `<update server>/updates/win-x64/latest.json` a minute after
     /// start and once a day (see `core::update`).
     pub check_updates_automatically: bool,
+
+    // DevTools (set by dragging its splitter and its dock control, not on the settings page;
+    // the host keeps its own values when the page saves)
+    pub devtools_dock: DevToolsDock,
+    /// Width of DevTools docked right, DIP.
+    pub devtools_size_right: f64,
+    /// Height of DevTools docked at the bottom, DIP.
+    pub devtools_size_bottom: f64,
 }
+
+/// DevTools sizes kept in settings are within this range (DIP).
+pub const DEVTOOLS_SIZE_RANGE: std::ops::RangeInclusive<f64> = 100.0..=4000.0;
 
 impl Default for Settings {
     fn default() -> Self {
@@ -180,6 +200,9 @@ impl Default for Settings {
             default_zoom: 1.0,
             theme: Theme::System,
             check_updates_automatically: true,
+            devtools_dock: DevToolsDock::Right,
+            devtools_size_right: 480.0,
+            devtools_size_bottom: 320.0,
         }
     }
 }
@@ -311,6 +334,13 @@ impl Settings {
         }
         if !self.proxy.is_empty() && !is_proxy(&self.proxy) {
             err("proxy", "Use host:port, scheme://host:port (http, https, socks4, socks5) or direct://");
+        }
+        for (field, v) in
+            [("devtoolsSizeRight", self.devtools_size_right), ("devtoolsSizeBottom", self.devtools_size_bottom)]
+        {
+            if !v.is_finite() || !DEVTOOLS_SIZE_RANGE.contains(&v) {
+                err(field, "Must be between 100 and 4000");
+            }
         }
         if let Err(m) = validate_flags(&self.extra_flags) {
             err("extraFlags", &m);
@@ -563,6 +593,24 @@ mod tests {
 
     fn fields(s: &Settings) -> Vec<&'static str> {
         s.validate().err().unwrap_or_default().into_iter().map(|e| e.field).collect()
+    }
+
+    #[test]
+    fn devtools_layout_settings() {
+        let d = Settings::default();
+        assert_eq!(
+            (d.devtools_dock, d.devtools_size_right, d.devtools_size_bottom),
+            (DevToolsDock::Right, 480.0, 320.0)
+        );
+        // Settings saved by 0.2.x have none of these: defaults.
+        let old: Settings = serde_json::from_str(r#"{"theme":"dark","homepage":"https://duckduckgo.com/"}"#).unwrap();
+        assert_eq!(old.devtools_dock, DevToolsDock::Right);
+        let s: Settings = serde_json::from_str(r#"{"devtoolsDock":"bottom","devtoolsSizeBottom":250}"#).unwrap();
+        assert_eq!((s.devtools_dock, s.devtools_size_bottom), (DevToolsDock::Bottom, 250.0));
+        let bad = Settings { devtools_size_right: 5.0, ..Settings::default() };
+        assert!(bad.validate().unwrap_err().iter().any(|e| e.field == "devtoolsSizeRight"));
+        let nan = Settings { devtools_size_bottom: f64::NAN, ..Settings::default() };
+        assert!(nan.validate().is_err());
     }
 
     #[test]

@@ -41,5 +41,8 @@
   "extraFlags": "",
   "defaultZoom": 1.0,
   "theme": "system",
-  "checkUpdatesAutomatically": true
+  "checkUpdatesAutomatically": true,
+  "devtoolsDock": "right",
+  "devtoolsSizeRight": 480.0,
+  "devtoolsSizeBottom": 320.0
 }

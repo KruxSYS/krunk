@@ -243,6 +243,23 @@
   $('tabs').addEventListener('pointercancel', function (e) { finishDrag(e, false); });
   $('tabs').addEventListener('lostpointercapture', function (e) { finishDrag(e, false); });
 
+  // ---------- docked DevTools ----------
+  // Shown while the active tab has DevTools docked: move it to the other side, or close it.
+  let devtoolsDock = 'right';
+  LB.on('devTools', function (m) {
+    $('devtools-ctl').hidden = !m.open;
+    devtoolsDock = m.dock;
+    const to = m.dock === 'right' ? 'bottom' : 'right';
+    $('dt-dock-use').setAttribute('href', '#i-dock-' + to);
+    const label = 'Dock DevTools ' + (to === 'bottom' ? 'at the bottom' : 'on the right');
+    $('dt-dock').title = label;
+    $('dt-dock').setAttribute('aria-label', label);
+  });
+  $('dt-dock').addEventListener('click', function () {
+    LB.post('devToolsDock', { dock: devtoolsDock === 'right' ? 'bottom' : 'right' });
+  });
+  $('dt-close').addEventListener('click', function () { LB.post('devToolsClose'); });
+
   // A tab dragged from another window is over this strip: where it would land.
   LB.on('tabDropHint', function (m) {
     clearDropMarks();

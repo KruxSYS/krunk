@@ -27,5 +27,7 @@
       ' | history ' + history.length;
   }
   setInterval(tick, 250); tick();
+  // Double-click the video: page full screen (Esc leaves it).
+  document.getElementById('v').addEventListener('dblclick', e => e.target.requestFullscreen());
 </script>
 </body></html>

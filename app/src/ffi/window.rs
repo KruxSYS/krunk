@@ -62,6 +62,13 @@ pub trait WindowEvents {
     /// Relative mouse movement from raw input (only while it is registered
     /// with [`Window::capture_raw_mouse`]).
     fn raw_mouse(&self, _dx: i32, _dy: i32) {}
+    /// Is the client point (physical pixels) on the splitter of a docked DevTools? `Some(true)`
+    /// for a vertical one (DevTools on the right), `Some(false)` for a horizontal one.
+    fn splitter_at(&self, _x: i32, _y: i32) -> Option<bool> {
+        None
+    }
+    /// The splitter is being dragged to the client point; `done` when the button is released.
+    fn splitter_drag(&self, _x: i32, _y: i32, _done: bool) {}
 }
 
 thread_local! {
@@ -727,10 +734,14 @@ fn frame_thickness(hwnd: HWND) -> i32 {
 /// is what gives the Windows 11 Snap Layouts flyout.
 extern "system" fn main_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     use windows::Win32::UI::WindowsAndMessaging::{
-        HTCLIENT, NCCALCSIZE_PARAMS, WM_NCCALCSIZE, WM_NCHITTEST, WM_NCLBUTTONDBLCLK, WM_NCLBUTTONDOWN, WM_NCLBUTTONUP,
-        WM_NCMOUSELEAVE, WM_NCMOUSEMOVE,
+        HTCLIENT, NCCALCSIZE_PARAMS, SC_KEYMENU, WM_NCCALCSIZE, WM_NCHITTEST, WM_NCLBUTTONDBLCLK, WM_NCLBUTTONDOWN,
+        WM_NCLBUTTONUP, WM_NCMOUSELEAVE, WM_NCMOUSEMOVE, WM_SYSCOMMAND,
     };
     match msg {
+        // Alt pressed and released alone: there is no menu bar, so the menu mode Windows
+        // enters would be invisible and swallow the next key (Alt+Space still opens the
+        // system menu: it comes with ' ').
+        WM_SYSCOMMAND if (wparam.0 & 0xFFF0) == SC_KEYMENU as usize && lparam.0 == 0 => LRESULT(0),
         WM_NCCALCSIZE if wparam.0 != 0 => {
             // SAFETY: with wParam TRUE, lParam points to NCCALCSIZE_PARAMS.
             unsafe {
@@ -842,6 +853,76 @@ extern "system" fn main_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
             // SAFETY: default processing (cleans up the input).
             unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
         }
+        // The splitter between a page and its docked DevTools is the frame's own client area
+        // (the gap between the two child windows): resize cursor, and dragging with capture.
+        windows::Win32::UI::WindowsAndMessaging::WM_SETCURSOR
+            if (lparam.0 & 0xffff) as u32 == HTCLIENT && HWND(wparam.0 as *mut std::ffi::c_void) == hwnd =>
+        {
+            use windows::Win32::UI::WindowsAndMessaging::{
+                GetCursorPos, LoadCursorW, SetCursor, IDC_SIZENS, IDC_SIZEWE,
+            };
+            let mut p = POINT::default();
+            // SAFETY: plain queries on our own window.
+            unsafe {
+                let _ = GetCursorPos(&mut p);
+                let _ = windows::Win32::Graphics::Gdi::ScreenToClient(hwnd, &mut p);
+            }
+            match events(hwnd).and_then(|e| e.splitter_at(p.x, p.y)) {
+                Some(vertical) => {
+                    // SAFETY: a stock cursor.
+                    unsafe {
+                        let _ = SetCursor(LoadCursorW(None, if vertical { IDC_SIZEWE } else { IDC_SIZENS }).ok());
+                    }
+                    LRESULT(1)
+                }
+                // SAFETY: default processing.
+                None => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
+            }
+        }
+        windows::Win32::UI::WindowsAndMessaging::WM_LBUTTONDOWN => {
+            let (x, y) = ((lparam.0 & 0xffff) as i16 as i32, ((lparam.0 >> 16) & 0xffff) as i16 as i32);
+            if let Some(ev) = events(hwnd).filter(|e| e.splitter_at(x, y).is_some()) {
+                SPLITTING.with(|s| s.borrow_mut().insert(hwnd.0 as isize));
+                // SAFETY: capturing the mouse for our own window during the drag.
+                unsafe { windows::Win32::UI::Input::KeyboardAndMouse::SetCapture(hwnd) };
+                ev.splitter_drag(x, y, false);
+            }
+            LRESULT(0)
+        }
+        windows::Win32::UI::WindowsAndMessaging::WM_MOUSEMOVE
+            if SPLITTING.with(|s| s.borrow().contains(&(hwnd.0 as isize))) =>
+        {
+            let (x, y) = ((lparam.0 & 0xffff) as i16 as i32, ((lparam.0 >> 16) & 0xffff) as i16 as i32);
+            if let Some(ev) = events(hwnd) {
+                ev.splitter_drag(x, y, false);
+            }
+            LRESULT(0)
+        }
+        windows::Win32::UI::WindowsAndMessaging::WM_LBUTTONUP
+        | windows::Win32::UI::WindowsAndMessaging::WM_CAPTURECHANGED
+            if SPLITTING.with(|s| s.borrow().contains(&(hwnd.0 as isize))) =>
+        {
+            SPLITTING.with(|s| s.borrow_mut().remove(&(hwnd.0 as isize)));
+            let (x, y) = if msg == windows::Win32::UI::WindowsAndMessaging::WM_LBUTTONUP {
+                ((lparam.0 & 0xffff) as i16 as i32, ((lparam.0 >> 16) & 0xffff) as i16 as i32)
+            } else {
+                let mut p = POINT::default();
+                // SAFETY: plain queries on our own window.
+                unsafe {
+                    let _ = windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut p);
+                    let _ = windows::Win32::Graphics::Gdi::ScreenToClient(hwnd, &mut p);
+                }
+                (p.x, p.y)
+            };
+            if msg == windows::Win32::UI::WindowsAndMessaging::WM_LBUTTONUP {
+                // SAFETY: releasing our own capture.
+                let _ = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture() };
+            }
+            if let Some(ev) = events(hwnd) {
+                ev.splitter_drag(x, y, true);
+            }
+            LRESULT(0)
+        }
         WM_SIZE => {
             let maximized = wparam.0 as u32 == windows::Win32::UI::WindowsAndMessaging::SIZE_MAXIMIZED;
             let key = hwnd.0 as isize;
@@ -874,6 +955,8 @@ thread_local! {
     static FULLSCREEN: RefCell<std::collections::HashSet<isize>> = RefCell::new(std::collections::HashSet::new());
     static SAVED: RefCell<HashMap<isize, windows::Win32::UI::WindowsAndMessaging::WINDOWPLACEMENT>> =
         RefCell::new(HashMap::new());
+    /// Frames whose DevTools splitter is being dragged.
+    static SPLITTING: RefCell<std::collections::HashSet<isize>> = RefCell::new(std::collections::HashSet::new());
 }
 
 /// Is `hwnd` shown full screen?

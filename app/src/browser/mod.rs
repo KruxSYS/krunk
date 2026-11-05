@@ -38,6 +38,7 @@ const SESSION_TIMER: usize = 1;
 const SESSION_DEBOUNCE_MS: u32 = 2000;
 
 mod blocking;
+mod devtools;
 mod downloads;
 mod drag;
 mod find;
@@ -85,6 +86,8 @@ struct TabView {
     audio: Rc<Cell<bool>>,
     /// Downloads in progress started by this tab (never put to sleep).
     downloads: Rc<Cell<u32>>,
+    /// DevTools is docked next to the page (open or opening).
+    devtools: Cell<bool>,
 }
 
 /// The popup view in its popup window, shared by all frames: it is owned by the frame it
@@ -611,6 +614,7 @@ impl Browser {
                 stage_since: Cell::new(now_ms()),
                 audio,
                 downloads: Rc::new(Cell::new(0)),
+                devtools: Cell::new(false),
             },
         );
         if active {
@@ -747,6 +751,18 @@ impl Browser {
             }
         });
         let weak = self.me.clone();
+        c.on_inspect(move |at| {
+            if let Some(b) = weak.upgrade() {
+                b.open_devtools(id, at);
+            }
+        });
+        let weak = self.me.clone();
+        c.on_devtools(move |open| {
+            if let Some(b) = weak.upgrade() {
+                b.devtools_changed(id, open);
+            }
+        });
+        let weak = self.me.clone();
         c.on_fullscreen(move |on| {
             if let Some(b) = weak.upgrade() {
                 b.page_fullscreen(id, on);
@@ -781,6 +797,10 @@ impl Browser {
         // `from` may have moved to another window meanwhile; only hide it if it is still here.
         if let Some(f) = from.filter(|f| self.window_of(*f) == Some(win)).and_then(|f| self.tab_view(f)) {
             f.set_visible(false);
+            // Its DevTools waits, hidden, until the tab is shown again.
+            if f.devtools_open() {
+                f.set_devtools_visible(false);
+            }
         }
         if let Some(t) = self.tab_view(to) {
             t.set_visible(!self.frame(win).is_some_and(|f| f.window.is_minimized()));
@@ -792,6 +812,7 @@ impl Browser {
             self.focus_active();
         }
         self.update_title();
+        self.send_devtools_state(win);
     }
 
     fn tab_view(&self, id: TabId) -> Option<View> {
@@ -851,19 +872,39 @@ impl Browser {
         }
     }
 
-    fn layout_frame(&self, f: &Frame) {
+    /// A frame's shell and content areas; in full screen there is no shell and the content
+    /// is the whole client area.
+    fn frame_areas(&self, f: &Frame) -> (Option<layout::Rect>, layout::Rect) {
         let w = f.window;
         let (width, height) = w.client_size();
-        let bar = self.settings.borrow().show_bookmarks_bar;
-        let (shell, mut content) = layout::split(width, height, w.scale(), bar);
         if self.is_fullscreen_frame(f.id) {
-            // No tab strip or toolbar: the page fills the screen.
-            content = layout::Rect { x: 0, y: 0, width, height };
-        } else if let Some(s) = f.shell.borrow().as_ref() {
+            return (None, layout::Rect { x: 0, y: 0, width, height });
+        }
+        let bar = self.settings.borrow().show_bookmarks_bar;
+        let (shell, content) = layout::split(width, height, w.scale(), bar);
+        (Some(shell), content)
+    }
+
+    fn layout_frame(&self, f: &Frame) {
+        let (shell, content) = self.frame_areas(f);
+        if let (Some(shell), Some(s)) = (shell, f.shell.borrow().as_ref()) {
             s.set_bounds(shell.x, shell.y, shell.width, shell.height);
         }
-        if let Some(c) = self.active_view_of(f.id) {
-            c.set_bounds(content.x, content.y, content.width, content.height);
+        let Some(c) = self.active_view_of(f.id) else { return };
+        match self.devtools_split_of(f) {
+            Some(split) => {
+                let (p, d) = (split.page, split.devtools);
+                c.set_bounds(p.x, p.y, p.width, p.height);
+                c.set_devtools_bounds(d.x, d.y, d.width, d.height);
+                c.set_devtools_visible(!f.window.is_minimized());
+            }
+            None => {
+                c.set_bounds(content.x, content.y, content.width, content.height);
+                // Page full screen: the page only.
+                if c.devtools_open() {
+                    c.set_devtools_visible(false);
+                }
+            }
         }
     }
 
@@ -952,6 +993,7 @@ impl Browser {
         if let Some(state) = self.nav_state(win) {
             self.post_shell_to(win, &Event::Nav { state });
         }
+        self.send_devtools_state(win);
     }
 
     fn send_shell_config(&self) {
@@ -1156,15 +1198,18 @@ impl Browser {
             Command::ZoomOut => self.zoom(ZoomAction::Out),
             Command::ZoomReset => self.zoom(ZoomAction::Reset),
             Command::Print => self.active_do(|c| c.print()),
-            Command::DevTools => self.active_do(|c| c.open_devtools()),
+            Command::DevTools => self.toggle_devtools(),
             Command::Fullscreen => self.toggle_fullscreen(),
             // The element under the mouse, or DevTools as such when the
             // mouse is not over the page.
-            Command::InspectElement => self.active_do(|c| {
-                let at = c.cursor_position();
-                info!("inspect element at {at:?}");
-                c.open_devtools_at(at)
-            }),
+            Command::InspectElement => {
+                let target = self.active_id().zip(self.active_view());
+                if let Some((tab, c)) = target {
+                    let at = c.cursor_position();
+                    info!("inspect element at {at:?}");
+                    self.open_devtools(tab, at);
+                }
+            }
             Command::History => self.open_page(Page::History),
             Command::Bookmarks => self.open_page(Page::Bookmarks),
             Command::Downloads => self.open_page(Page::Downloads),
@@ -1336,6 +1381,8 @@ impl Browser {
             Request::Zoom { action } => self.zoom(action),
             Request::Print => self.run_command(Command::Print),
             Request::DevTools => self.run_command(Command::DevTools),
+            Request::DevToolsDock { dock } => self.set_devtools_dock(dock),
+            Request::DevToolsClose => self.close_active_devtools(),
             Request::ShowPopup { popup, rect } => {
                 if popup.shell_may_open() && rect.is_valid() {
                     let content = match popup {
@@ -1799,6 +1846,16 @@ impl WindowEvents for FrameEvents {
         }
     }
 
+    fn splitter_at(&self, x: i32, y: i32) -> Option<bool> {
+        self.b.upgrade()?.splitter_at(self.win, x, y)
+    }
+
+    fn splitter_drag(&self, x: i32, y: i32, done: bool) {
+        if let Some(b) = self.b.upgrade() {
+            b.splitter_drag(self.win, x, y, done);
+        }
+    }
+
     fn activation_to_popup(&self) {
         let Some(b) = self.b.upgrade() else { return };
         // The popup took activation without showing something to answer
@@ -1847,6 +1904,9 @@ impl WindowEvents for FrameEvents {
         // Hidden views use less CPU and memory.
         if let Some(c) = b.active_view_of(self.win) {
             c.set_visible(!minimized);
+            if c.devtools_open() {
+                c.set_devtools_visible(!minimized);
+            }
         }
         if let Some(s) = b.frame(self.win).and_then(|f| f.shell.borrow().clone()) {
             s.set_visible(!minimized);

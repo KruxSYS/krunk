@@ -23,9 +23,11 @@ pub(super) fn for_view(inner: &ViewInner) -> Client {
     ViewClient::new(inner.key, inner.role, inner.private, inner.policy.clone())
 }
 
-/// Client for a DevTools window.
-pub(super) fn for_tool() -> Client {
-    ToolClient::new()
+/// Client for the DevTools docked next to view `owner` (a child window of its frame). It has
+/// no message handler, so DevTools gets no privileged channel; keys reach Krunk through the
+/// owner, except those DevTools uses itself (`lb_core::keys::devtools_keeps`).
+pub(super) fn for_tool(owner: u64) -> Client {
+    ToolClient::new(owner)
 }
 
 fn text(s: Option<&CefString>) -> String {
@@ -545,8 +547,9 @@ wrap_context_menu_handler! {
                 return 0;
             }
             let at = params.map(|p| (p.xcoord(), p.ycoord()));
+            // The host docks DevTools next to the tab.
             if let Some(view) = lookup(self.key) {
-                View(view).open_devtools_at(at);
+                view.ev.inspect.with(|f| f(at));
             }
             1
         }
@@ -659,43 +662,89 @@ wrap_find_handler! {
 }
 
 wrap_client! {
-    struct ToolClient;
+    struct ToolClient {
+        owner: u64,
+    }
     impl Client {
         fn life_span_handler(&self) -> Option<LifeSpanHandler> {
-            Some(ToolLife::new())
+            Some(ToolLife::new(self.owner))
         }
 
-        fn display_handler(&self) -> Option<DisplayHandler> {
-            Some(ToolTitle::new())
+        fn keyboard_handler(&self) -> Option<KeyboardHandler> {
+            Some(ToolKeys::new(self.owner))
         }
     }
 }
 
-wrap_display_handler! {
-    struct ToolTitle;
-    impl DisplayHandler {
-        fn on_title_change(&self, browser: Option<&mut Browser>, title: Option<&CefString>) {
-            // The DevTools window is CEF's own top-level window.
-            let Some(hwnd) = browser.and_then(|b| b.host()).map(|h| h.window_handle()) else { return };
-            let text = windows::core::HSTRING::from(format!("DevTools – {} – Krunk", text(title)));
-            // SAFETY: a top-level window of this thread; the string outlives the call.
-            let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::SetWindowTextW(HWND(hwnd.0.cast()), &text) };
+wrap_keyboard_handler! {
+    struct ToolKeys {
+        owner: u64,
+    }
+    impl KeyboardHandler {
+        fn on_pre_key_event(
+            &self,
+            _browser: Option<&mut Browser>,
+            event: Option<&KeyEvent>,
+            os_event: Option<&mut sys::MSG>,
+            _is_keyboard_shortcut: Option<&mut c_int>,
+        ) -> c_int {
+            let Some(e) = event else { return 0 };
+            if e.type_ != KeyEventType::RAWKEYDOWN {
+                return 0;
+            }
+            let press = KeyPress {
+                vk: e.windows_key_code as u32,
+                ctrl: e.modifiers & 4 != 0,
+                shift: e.modifiers & 2 != 0,
+                alt: e.modifiers & 8 != 0,
+                repeat: os_event.is_some_and(|m| (m.lParam & (1 << 30)) != 0),
+            };
+            if lb_core::keys::devtools_keeps(press.vk, press.ctrl, press.shift, press.alt) {
+                return 0;
+            }
+            let handled = lookup(self.owner).and_then(|v| v.ev.key.with(|f| f(press))).unwrap_or(false);
+            c_int::from(handled)
         }
     }
 }
 
 wrap_life_span_handler! {
-    struct ToolLife;
+    struct ToolLife {
+        owner: u64,
+    }
     impl LifeSpanHandler {
         fn on_after_created(&self, browser: Option<&mut Browser>) {
-            if let Some(b) = browser {
-                browser_created(b, false);
+            let Some(b) = browser else { return };
+            browser_created(b, false);
+            match lookup(self.owner) {
+                Some(view) => View::devtools_attach(&view, b),
+                // The tab went away meanwhile.
+                None => {
+                    if let Some(h) = b.host() {
+                        h.close_browser(1);
+                    }
+                }
             }
+        }
+
+        fn do_close(&self, browser: Option<&mut Browser>) -> c_int {
+            // As for tabs: returning 0 would send WM_CLOSE to the frame (the docked DevTools'
+            // top-level parent) and close the whole window. Only its own child window goes.
+            let Some(hwnd) = browser.and_then(|b| b.host()).map(|h| h.window_handle()) else { return 1 };
+            let hwnd = HWND(hwnd.0.cast());
+            post_ui(move || {
+                // SAFETY: a stale handle only makes DestroyWindow fail.
+                let _ = unsafe { DestroyWindow(hwnd) };
+            });
+            1
         }
 
         fn on_before_close(&self, browser: Option<&mut Browser>) {
             if let Some(b) = browser {
                 browser_closed(b, false);
+                if let Some(view) = lookup(self.owner) {
+                    View::devtools_detach(&view, b);
+                }
             }
         }
     }

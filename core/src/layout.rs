@@ -1,6 +1,7 @@
 //! Window layout math (pure, so it is testable without Windows).
 
 use crate::protocol::{PopupKind, PopupRect};
+use crate::settings::DevToolsDock;
 
 /// Height of the shell strip (tab row 36 + toolbar 40) in DIPs.
 pub const SHELL_HEIGHT_DIP: f64 = 76.0;
@@ -56,6 +57,82 @@ pub fn popup_screen_rect(css: PopupRect, scale: f64, origin: (i32, i32), work: R
 
 /// Where host-initiated prompts (save/fill password) appear: under the
 /// right end of the toolbar, in CSS pixels of the shell viewport.
+/// The bar between a page and its docked DevTools (DIP).
+pub const DEVTOOLS_SPLITTER_DIP: f64 = 5.0;
+/// Neither side gets smaller than this while there is room for both (DIP).
+pub const PAGE_MIN_DIP: f64 = 240.0;
+pub const DEVTOOLS_MIN_RIGHT_DIP: f64 = 280.0;
+pub const DEVTOOLS_MIN_BOTTOM_DIP: f64 = 160.0;
+
+/// A tab's content area split between its page and its docked DevTools (physical pixels).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DevToolsSplit {
+    pub page: Rect,
+    pub splitter: Rect,
+    pub devtools: Rect,
+}
+
+/// The DevTools size (DIP) that fits `content`: at least its minimum and leaving the page
+/// at least [`PAGE_MIN_DIP`]; when both minimums don't fit, they share the space in proportion.
+pub fn clamp_devtools_size(content: Rect, dock: DevToolsDock, size_dip: f64, scale: f64) -> f64 {
+    let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+    let total = match dock {
+        DevToolsDock::Right => f64::from(content.width),
+        DevToolsDock::Bottom => f64::from(content.height),
+    } / scale
+        - DEVTOOLS_SPLITTER_DIP;
+    let min_dt = match dock {
+        DevToolsDock::Right => DEVTOOLS_MIN_RIGHT_DIP,
+        DevToolsDock::Bottom => DEVTOOLS_MIN_BOTTOM_DIP,
+    };
+    let total = total.max(0.0);
+    if total < min_dt + PAGE_MIN_DIP {
+        return total * min_dt / (min_dt + PAGE_MIN_DIP);
+    }
+    let size = if size_dip.is_finite() { size_dip } else { min_dt };
+    size.clamp(min_dt, total - PAGE_MIN_DIP)
+}
+
+/// Splits `content` into page, splitter and DevTools, DevTools on the `dock` side.
+pub fn devtools_split(content: Rect, dock: DevToolsDock, size_dip: f64, scale: f64) -> DevToolsSplit {
+    let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+    let dt = (clamp_devtools_size(content, dock, size_dip, scale) * scale).round() as i32;
+    let bar = (DEVTOOLS_SPLITTER_DIP * scale).round() as i32;
+    match dock {
+        DevToolsDock::Right => {
+            let bar = bar.min(content.width);
+            let dt = dt.min(content.width - bar).max(0);
+            let page_w = (content.width - bar - dt).max(0);
+            DevToolsSplit {
+                page: Rect { x: content.x, y: content.y, width: page_w, height: content.height },
+                splitter: Rect { x: content.x + page_w, y: content.y, width: bar, height: content.height },
+                devtools: Rect { x: content.x + page_w + bar, y: content.y, width: dt, height: content.height },
+            }
+        }
+        DevToolsDock::Bottom => {
+            let bar = bar.min(content.height);
+            let dt = dt.min(content.height - bar).max(0);
+            let page_h = (content.height - bar - dt).max(0);
+            DevToolsSplit {
+                page: Rect { x: content.x, y: content.y, width: content.width, height: page_h },
+                splitter: Rect { x: content.x, y: content.y + page_h, width: content.width, height: bar },
+                devtools: Rect { x: content.x, y: content.y + page_h + bar, width: content.width, height: dt },
+            }
+        }
+    }
+}
+
+/// The DevTools size (DIP) for a splitter dragged to `(x, y)` (physical client pixels).
+pub fn devtools_size_at(content: Rect, dock: DevToolsDock, x: i32, y: i32, scale: f64) -> f64 {
+    let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+    let px = match dock {
+        DevToolsDock::Right => content.x + content.width - x,
+        DevToolsDock::Bottom => content.y + content.height - y,
+    };
+    let dip = f64::from(px) / scale - DEVTOOLS_SPLITTER_DIP / 2.0;
+    clamp_devtools_size(content, dock, dip, scale)
+}
+
 /// Keeps a restored window reachable: if not even the top 40 px of `rect` overlap any
 /// monitor's work area by 100 px (a monitor was unplugged, or the resolution got smaller), it
 /// moves onto the monitor it overlaps most (else the first one, the primary), shrunk to fit.
@@ -227,5 +304,40 @@ mod tests {
         let on_left = Rect { x: -1100, y: 50, width: 800, height: 600 };
         assert_eq!(fit_to_monitors(on_left, &[primary, left]), on_left);
         assert_eq!(fit_to_monitors(w, &[]), w);
+    }
+
+    #[test]
+    fn devtools_split_and_clamping() {
+        let content = Rect { x: 0, y: 76, width: 1200, height: 700 };
+        let s = devtools_split(content, DevToolsDock::Right, 480.0, 1.0);
+        assert_eq!(s.devtools, Rect { x: 720, y: 76, width: 480, height: 700 });
+        assert_eq!(s.splitter, Rect { x: 715, y: 76, width: 5, height: 700 });
+        assert_eq!(s.page, Rect { x: 0, y: 76, width: 715, height: 700 });
+        // The three parts tile the content exactly.
+        assert_eq!(s.page.width + s.splitter.width + s.devtools.width, content.width);
+        // Too small or too large a size is clamped: DevTools >= 280, page >= 240.
+        assert_eq!(devtools_split(content, DevToolsDock::Right, 50.0, 1.0).devtools.width, 280);
+        assert_eq!(devtools_split(content, DevToolsDock::Right, 5000.0, 1.0).page.width, 240);
+        // Bottom.
+        let b = devtools_split(content, DevToolsDock::Bottom, 320.0, 1.0);
+        assert_eq!(b.devtools, Rect { x: 0, y: 456, width: 1200, height: 320 });
+        assert_eq!(b.page.height + b.splitter.height + b.devtools.height, 700);
+        assert_eq!(devtools_split(content, DevToolsDock::Bottom, 10.0, 1.0).devtools.height, 160);
+        assert_eq!(devtools_split(content, DevToolsDock::Bottom, 900.0, 1.0).page.height, 240);
+        // 150 %: sizes are DIP.
+        let hi = devtools_split(Rect { x: 0, y: 114, width: 1800, height: 1050 }, DevToolsDock::Right, 480.0, 1.5);
+        assert_eq!((hi.devtools.width, hi.splitter.width), (720, 8));
+        // A window too small for both minimums: proportional, nothing negative.
+        let tiny = devtools_split(Rect { x: 0, y: 0, width: 400, height: 300 }, DevToolsDock::Right, 480.0, 1.0);
+        assert!(tiny.page.width > 0 && tiny.devtools.width > 0);
+        assert_eq!(tiny.page.width + tiny.splitter.width + tiny.devtools.width, 400);
+        assert!(tiny.devtools.width > tiny.page.width, "DevTools' minimum is the larger one");
+        let zero = devtools_split(Rect { x: 0, y: 0, width: 0, height: 0 }, DevToolsDock::Bottom, 480.0, 1.0);
+        assert_eq!((zero.page.height, zero.devtools.height), (0, 0));
+        // Dragging the splitter.
+        assert_eq!(devtools_size_at(content, DevToolsDock::Right, 700, 300, 1.0), 497.5);
+        assert_eq!(devtools_size_at(content, DevToolsDock::Right, 1190, 300, 1.0), 280.0, "clamped");
+        assert_eq!(devtools_size_at(content, DevToolsDock::Bottom, 10, 500, 1.0), 273.5);
+        assert_eq!(clamp_devtools_size(content, DevToolsDock::Right, f64::NAN, 1.0), 280.0);
     }
 }

@@ -28,7 +28,18 @@ impl Browser {
                 });
                 self.reply(tab, Event::ok(req_id, data));
             }
-            Request::SaveSettings { settings } => self.save_settings(tab, req_id, *settings),
+            Request::SaveSettings { settings } => {
+                // The DevTools layout is set by its splitter and dock control, not on the
+                // settings page: keep the live values (the page may have loaded older ones).
+                let mut s = *settings;
+                {
+                    let cur = self.settings.borrow();
+                    s.devtools_dock = cur.devtools_dock;
+                    s.devtools_size_right = cur.devtools_size_right;
+                    s.devtools_size_bottom = cur.devtools_size_bottom;
+                }
+                self.save_settings(tab, req_id, s)
+            }
             Request::ResetSettings => self.save_settings(tab, req_id, Settings::default()),
             Request::PickDownloadFolder => {
                 let Some(w) = self.window() else { return };

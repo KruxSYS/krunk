@@ -385,6 +385,12 @@ pub enum Request {
         offset_x: f64,
         offset_y: f64,
     },
+    /// Dock DevTools right or at the bottom (all tabs).
+    DevToolsDock {
+        dock: crate::settings::DevToolsDock,
+    },
+    /// Closes the active tab's DevTools.
+    DevToolsClose,
     /// Right-click on a tab: its context menu at `rect` (shell CSS px).
     ShowTabMenu {
         id: u32,
@@ -746,6 +752,8 @@ impl Sender {
                     | R::DuplicateTab { .. }
                     | R::TabDragOut { .. }
                     | R::ShowTabMenu { .. }
+                    | R::DevToolsDock { .. }
+                    | R::DevToolsClose
                     | R::ReopenClosedTab
                     | R::Navigate { .. }
                     | R::Back
@@ -1022,6 +1030,11 @@ pub enum Event {
     },
     /// To the shell: the popup was hidden (un-highlight its button).
     PopupClosed,
+    /// The active tab's docked DevTools (the shell shows its dock and close control).
+    DevTools {
+        open: bool,
+        dock: crate::settings::DevToolsDock,
+    },
     /// A tab dragged from another window is over this strip: show where it would land
     /// (`None` = no longer over it).
     TabDropHint {
@@ -1628,6 +1641,8 @@ mod tests {
             Request::TabDragOut { id: 3, offset_x: 40.5, offset_y: 18.0 },
             Request::ShowTabMenu { id: 3, rect },
             Request::TabMenuAction { id: 3, action: TabAction::MoveToNewWindow },
+            Request::DevToolsDock { dock: crate::settings::DevToolsDock::Bottom },
+            Request::DevToolsClose,
             Request::Command { command: Command::NewWindow },
             Request::HidePopup,
             Request::Command { command: Command::ZoomIn },
@@ -1767,6 +1782,7 @@ mod tests {
             Event::PopupClosed,
             Event::TabDropHint { index: Some(2) },
             Event::TabDropHint { index: None },
+            Event::DevTools { open: true, dock: crate::settings::DevToolsDock::Right },
             Event::Popup { content: PopupContent::Hint { text: "Press Esc to show your cursor".into() } },
             Event::CaptionState { hover: Some(CaptionButton::Maximize), pressed: false },
             Event::CaptionState { hover: None, pressed: false },

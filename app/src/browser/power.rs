@@ -79,7 +79,7 @@ impl Browser {
                         pinned: false,
                         playing_audio: v.audio.get(),
                         downloading: v.downloads.get() > 0,
-                        inspecting: false,
+                        inspecting: v.devtools.get(),
                         private: t.private,
                         last_live_private: t.private && live_private == 1,
                         stage: v.stage.get(),

@@ -228,6 +228,10 @@ type NewWindowFn = dyn FnMut(&NewWindow) -> Option<(View, HWND)>;
 /// Result of a DevTools protocol call: the result object, or the error.
 pub type DevToolsResult = Result<serde_json::Value, String>;
 type DevToolsDone = Box<dyn FnOnce(DevToolsResult)>;
+/// Where "Inspect" was chosen (view coordinates, DIP), if at an element.
+pub type InspectAt = Option<(i32, i32)>;
+/// The docked DevTools' place (x, y, width, height) and visibility, kept until it exists.
+type DevToolsPlace = (Option<(i32, i32, i32, i32)>, Option<bool>);
 /// A DevTools call that gets no answer in this time fails.
 const DEVTOOLS_TIMEOUT_MS: i64 = 10_000;
 type MessageFn = dyn FnMut(&MessageSource, &str);
@@ -256,6 +260,10 @@ pub(super) struct Events {
     /// A frame's pointer-lock message: (frame identifier, JSON).
     pub pointer: Slot<dyn FnMut(String, String)>,
     pub fullscreen: Slot<dyn FnMut(bool)>,
+    /// "Inspect" in the page's context menu, at this point of the page (DIP).
+    pub inspect: Slot<dyn FnMut(InspectAt)>,
+    /// The docked DevTools opened (true) or closed.
+    pub devtools: Slot<dyn FnMut(bool)>,
 }
 
 /// Remembered until the browser exists.
@@ -288,6 +296,9 @@ pub(super) struct ViewInner {
     /// callback waiting for the result, if any.
     devtools_calls: RefCell<HashMap<i32, (String, Option<DevToolsDone>)>>,
     devtools_observer: RefCell<Option<Registration>>,
+    /// The docked DevTools browser, once it exists, and its place until then.
+    devtools: RefCell<Option<Browser>>,
+    devtools_pending: Cell<DevToolsPlace>,
     pub ev: Events,
 }
 
@@ -348,6 +359,8 @@ impl View {
             devtools_id: Cell::new(0),
             devtools_calls: RefCell::new(HashMap::new()),
             devtools_observer: RefCell::new(None),
+            devtools: RefCell::new(None),
+            devtools_pending: Cell::new((None, None)),
             ev: Events::default(),
         });
         VIEWS.with(|v| v.borrow_mut().insert(key, Rc::downgrade(&inner)));
@@ -465,6 +478,15 @@ impl View {
         // SAFETY: both windows belong to this (UI) thread.
         if unsafe { windows::Win32::UI::WindowsAndMessaging::SetParent(h, Some(parent)) }.is_err() {
             return false;
+        }
+        // Docked DevTools goes along.
+        if let Some(d) = self.devtools_hwnd() {
+            // SAFETY: as above.
+            let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::SetParent(d, Some(parent)) };
+            if let Some(dh) = self.0.devtools.borrow().as_ref().and_then(|b| b.host()) {
+                dh.notify_move_or_resize_started();
+                dh.was_resized();
+            }
         }
         if let Some(host) = self.host() {
             host.notify_move_or_resize_started();
@@ -643,22 +665,80 @@ impl View {
         }
     }
 
-    /// Opens DevTools for this view in its own top-level window.
-    pub fn open_devtools(&self) {
-        self.open_devtools_at(None);
-    }
+    // ------------------------------------------------------------ docked DevTools
 
-    /// Opens DevTools with the element at `(x, y)` (view coordinates, DIP)
-    /// selected; an open DevTools window is focused and inspects it too.
-    pub fn open_devtools_at(&self, at: Option<(i32, i32)>) {
+    /// Opens DevTools as a child window of the frame `parent`, next to this view (place it
+    /// with [`View::set_devtools_bounds`]); with `at` (view coordinates, DIP) the element
+    /// there is selected. An open DevTools is focused and inspects that element instead.
+    pub fn show_devtools_docked(&self, parent: HWND, at: Option<(i32, i32)>) {
         let Some(h) = self.host() else { return };
-        // No parent: with one, CEF creates the DevTools window as a child
-        // inside the main window.
+        let (x, y, w, hh) = self.0.devtools_pending.get().0.unwrap_or((0, 0, 0, 0));
+        // CEF takes the size from the rect but not the position; the host places it.
         let window_info = WindowInfo { runtime_style: RuntimeStyle::ALLOY, ..Default::default() }
-            .set_as_popup(sys::HWND(std::ptr::null_mut()), "DevTools – Krunk");
-        let mut client = client::for_tool();
+            .set_as_child(sys::HWND(parent.0.cast()), &Rect { x, y, width: w, height: hh });
+        let mut client = client::for_tool(self.0.key);
         let point = at.map(|(x, y)| Point { x, y });
         h.show_dev_tools(Some(&window_info), Some(&mut client), Some(&BrowserSettings::default()), point.as_ref());
+    }
+
+    /// Is the docked DevTools open (its browser exists)?
+    pub fn devtools_open(&self) -> bool {
+        self.0.devtools.borrow().is_some()
+    }
+
+    fn devtools_hwnd(&self) -> Option<HWND> {
+        let h = self.0.devtools.borrow().as_ref()?.host()?.window_handle();
+        (!h.0.is_null()).then(|| HWND(h.0.cast()))
+    }
+
+    pub fn set_devtools_bounds(&self, x: i32, y: i32, width: i32, height: i32) {
+        let (width, height) = (width.max(0), height.max(0));
+        let (_, visible) = self.0.devtools_pending.get();
+        self.0.devtools_pending.set((Some((x, y, width, height)), visible));
+        if let Some(h) = self.devtools_hwnd() {
+            // SAFETY: the DevTools browser's own child window; no z-order change.
+            unsafe {
+                let _ = SetWindowPos(h, None, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+            }
+        }
+    }
+
+    pub fn set_devtools_visible(&self, visible: bool) {
+        let (bounds, _) = self.0.devtools_pending.get();
+        self.0.devtools_pending.set((bounds, Some(visible)));
+        let host = self.0.devtools.borrow().as_ref().and_then(|b| b.host());
+        if let (Some(h), Some(host)) = (self.devtools_hwnd(), host) {
+            // SAFETY: the DevTools browser's own child window.
+            let _ = unsafe { ShowWindow(h, if visible { SW_SHOW } else { SW_HIDE }) };
+            host.was_hidden(i32::from(!visible));
+        }
+    }
+
+    pub fn close_devtools(&self) {
+        if let Some(h) = self.host() {
+            h.close_dev_tools();
+        }
+    }
+
+    /// The docked DevTools exists: put it where the host wants it.
+    pub(super) fn devtools_attach(inner: &Rc<ViewInner>, browser: &Browser) {
+        *inner.devtools.borrow_mut() = Some(browser.clone());
+        let view = View(inner.clone());
+        let (bounds, visible) = inner.devtools_pending.get();
+        if let Some((x, y, w, h)) = bounds {
+            view.set_devtools_bounds(x, y, w, h);
+        }
+        view.set_devtools_visible(visible.unwrap_or(true));
+        inner.ev.devtools.with(|f| f(true));
+    }
+
+    pub(super) fn devtools_detach(inner: &ViewInner, browser: &Browser) {
+        let mine = inner.devtools.borrow().as_ref().is_some_and(|b| b.identifier() == browser.identifier());
+        if mine {
+            inner.devtools.borrow_mut().take();
+            inner.devtools_pending.set((None, None));
+            inner.ev.devtools.with(|f| f(false));
+        }
     }
 
     /// The mouse position in this view (DIP), if it is over the view.
@@ -866,6 +946,14 @@ impl View {
     }
 
     /// The renderer process of this view ended unexpectedly.
+    pub fn on_inspect(&self, f: impl FnMut(Option<(i32, i32)>) + 'static) {
+        self.0.ev.inspect.set(Box::new(f));
+    }
+
+    pub fn on_devtools(&self, f: impl FnMut(bool) + 'static) {
+        self.0.ev.devtools.set(Box::new(f));
+    }
+
     pub fn on_crashed(&self, f: impl FnMut(String) + 'static) {
         self.0.ev.crashed.set(Box::new(f));
     }

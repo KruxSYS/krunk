@@ -134,6 +134,27 @@ pub fn command_for(vk: u32, ctrl: bool, shift: bool, alt: bool) -> Option<Comman
     Some(cmd)
 }
 
+/// Keys DevTools uses itself, so they are not Krunk shortcuts while DevTools has the focus:
+/// find in panel (Ctrl+F, Ctrl+G), search all sources (Ctrl+Shift+F), quick open (Ctrl+P,
+/// Ctrl+O), the command menu (Ctrl+Shift+P), the element picker (Ctrl+Shift+C), panel
+/// switching (Ctrl+[ and Ctrl+]) and the console drawer (Esc). Every other Krunk shortcut
+/// works in DevTools as anywhere else, including F12 and Ctrl+Shift+I, which close it.
+pub fn devtools_keeps(vk: u32, ctrl: bool, shift: bool, alt: bool) -> bool {
+    const OEM_4: u32 = 0xDB; // [
+    const OEM_6: u32 = 0xDD; // ]
+    if alt {
+        return false;
+    }
+    match (ctrl, shift) {
+        (false, false) => vk == vk::ESCAPE,
+        (true, false) => {
+            [vk::letter('F'), vk::letter('G'), vk::letter('P'), vk::letter('O'), OEM_4, OEM_6].contains(&vk)
+        }
+        (true, true) => [vk::letter('F'), vk::letter('P'), vk::letter('C')].contains(&vk),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Command::*;
@@ -195,6 +216,16 @@ mod tests {
         assert_eq!(ctrl(l('P')), Some(Print));
         assert_eq!(ctrl_shift(l('N')), Some(NewPrivateTab));
         assert_eq!(command_for(l('N'), true, false, false), Some(NewWindow));
+        // In DevTools: its own keys stay with it; Krunk's toggles still reach Krunk.
+        assert!(devtools_keeps(l('F'), true, false, false));
+        assert!(devtools_keeps(l('C'), true, true, false));
+        assert!(devtools_keeps(vk::ESCAPE, false, false, false));
+        assert!(devtools_keeps(0xDB, true, false, false));
+        assert!(!devtools_keeps(vk::F12, false, false, false));
+        assert!(!devtools_keeps(l('I'), true, true, false));
+        assert!(!devtools_keeps(l('T'), true, false, false));
+        assert!(!devtools_keeps(l('W'), true, false, false));
+        assert!(!devtools_keeps(vk::ESCAPE, false, false, true));
         assert_eq!(ctrl(vk::F5), Some(HardReload));
         assert_eq!(ctrl_shift(l('R')), Some(HardReload));
         assert_eq!(alt(l('D')), Some(FocusAddressBar));

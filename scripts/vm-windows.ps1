@@ -55,6 +55,8 @@ function TabPoint([IntPtr]$h, [int]$i, [int]$n = 1) {
 
 # Brings a window to the front (an Alt press lets SetForegroundWindow succeed from the task).
 function Focus([IntPtr]$h) {
+  # Already in front: no Alt tap (alone it would enter the window's menu mode).
+  if ([U]::GetForegroundWindow() -eq $h) { return $true }
   [U]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero); [U]::SetForegroundWindow($h) | Out-Null
   [U]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero); Start-Sleep -Milliseconds 400
   [U]::GetForegroundWindow() -eq $h

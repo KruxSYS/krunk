@@ -1506,6 +1506,26 @@ async function testTabWindows(browser) {
   const mv = await lastSent(page, 'moveTab');
   check(mv && mv.id === ids[0] && mv.index === ids.length - 1, 'horizontal drag reorders (got ' + JSON.stringify(mv) + ')');
 
+  // The docked DevTools control appears with DevTools and switches its side.
+  check(await page.locator('#devtools-ctl').isHidden(), 'no DevTools control while the tab has no DevTools');
+  await emit(page, { event: 'devTools', open: true, dock: 'right' });
+  await page.waitForTimeout(20);
+  check(await page.locator('#devtools-ctl').isVisible(), 'DevTools control shown when DevTools is docked');
+  check((await page.getAttribute('#dt-dock', 'title')) === 'Dock DevTools at the bottom', 'docked right: offers the bottom');
+  await shot(page, 'shell-devtools-control.png');
+  await page.click('#dt-dock');
+  check((await lastSent(page, 'devToolsDock')).dock === 'bottom', 'dock button sends devToolsDock{bottom}');
+  await emit(page, { event: 'devTools', open: true, dock: 'bottom' });
+  await page.waitForTimeout(20);
+  check((await page.getAttribute('#dt-dock', 'title')) === 'Dock DevTools on the right', 'docked at the bottom: offers the right');
+  await page.click('#dt-dock');
+  check((await lastSent(page, 'devToolsDock')).dock === 'right', 'and sends devToolsDock{right}');
+  await page.click('#dt-close');
+  check((await lastSent(page, 'devToolsClose')) !== undefined, 'close button sends devToolsClose');
+  await emit(page, { event: 'devTools', open: false, dock: 'right' });
+  await page.waitForTimeout(20);
+  check(await page.locator('#devtools-ctl').isHidden(), 'hidden again when DevTools closes');
+
   // A tab from another window hovering this strip: the host says where it would land.
   await emit(page, { event: 'tabDropHint', index: 1 });
   await page.waitForTimeout(20);
