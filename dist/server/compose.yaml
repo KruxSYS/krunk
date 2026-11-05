@@ -7,7 +7,9 @@ services:
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:-:8080}
       CADDY_GLOBAL_OPTIONS: ${CADDY_GLOBAL_OPTIONS:-}
-      TRUSTED_PROXIES_EXTRA: ${TRUSTED_PROXIES_EXTRA:-}
+      # The hop in front of Caddy whose CF-Connecting-IP is trusted (OPEN_QUESTIONS Q8): on
+      # krunk.209.wf that is ai-pipe's proxy. Standalone deployments set their own, or "" for none.
+      TRUSTED_PROXIES_EXTRA: ${TRUSTED_PROXIES_EXTRA-10.250.137.4/32}
     volumes:
       - krunk-releases:/srv/releases:ro
       - caddy-data:/data
@@ -32,20 +34,19 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # The account and sync API (docs/sync/PLAN.md §4.1). Both services are in the "sync"
-  # profile: they start only with COMPOSE_PROFILES=sync in .env (staging now; live after the
-  # operator has answered OPEN_QUESTIONS Q4/Q8 and run gen-server-secrets.sh). web does not
-  # depend on api: the site, downloads and updates work without it (/api/* then answers 502).
+  # The account and sync API (docs/sync/PLAN.md §4.1). web does not depend on api: the site,
+  # downloads and updates work without it (/api/* then answers 502).
   api:
-    profiles: ["sync"]
     build: ../../server
     image: krunk-sync:local
     environment:
-      DATABASE_URL: "postgres://krunk:${POSTGRES_PASSWORD:-}@db:5432/krunk"
+      POSTGRES_PASSWORD_FILE: /run/krunk-secrets/postgres_password
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://krunk.209.wf}
       TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
       TRUSTED_PEER_HOST: web
       RUST_LOG: ${API_LOG:-info,sqlx=warn}
+    volumes:
+      - krunk-secrets:/run/krunk-secrets:ro
     depends_on:
       db:
         condition: service_healthy
@@ -75,18 +76,54 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Creates the server's own secrets (database password, token and pepper keys) on first start
+  # in the krunk-secrets volume, keeps them afterwards, then idles (OPEN_QUESTIONS Q4). Nothing
+  # secret lives in .env, git or the images.
+  secrets:
+    build: ../../server
+    image: krunk-sync:local
+    command: ["init-secrets", "--dir", "/secrets", "--hold"]
+    init: true
+    volumes:
+      - krunk-secrets:/secrets
+    network_mode: none
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 16M
+    healthcheck:
+      test: ["CMD", "/krunk-sync", "secrets-check", "--dir", "/secrets"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+      start_interval: 1s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "2"
+
   db:
-    profiles: ["sync"]
     # yamllint disable-line rule:line-length
     image: postgres:18.6-alpine3.24@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5
     environment:
       POSTGRES_USER: krunk
       POSTGRES_DB: krunk
-      # Empty means the container refuses to initialise: run gen-server-secrets.sh first.
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      POSTGRES_PASSWORD_FILE: /run/krunk-secrets/postgres_password
     volumes:
       # PostgreSQL 18 images keep their data under /var/lib/postgresql/<major>/docker.
       - krunk-db:/var/lib/postgresql
+      - krunk-secrets:/run/krunk-secrets:ro
+    depends_on:
+      secrets:
+        condition: service_healthy
     networks:
       - backend
     shm_size: 128m
@@ -103,14 +140,81 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # A daily pg_dump into krunk-backups, keeping 14 days (OPEN_QUESTIONS Q4/Q10). The volume is
+  # mounted where the image's postgres user (uid 70) owns the directory, so the service runs
+  # unprivileged. Restore: restore-db.sh --project NAME --latest. Copies that leave this host
+  # must be age-encrypted (backup-db.sh --age-recipient).
+  backup:
+    # yamllint disable-line rule:line-length
+    image: postgres:18.6-alpine3.24@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5
+    user: "70:70"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        dir=/var/lib/postgresql
+        umask 077
+        PGPASSWORD=$$(cat /run/krunk-secrets/postgres_password)
+        export PGPASSWORD
+        while :; do
+          f=$$dir/krunk-$$(date -u +%Y%m%dT%H%M%SZ).dump
+          if pg_dump -h db -U krunk -d krunk -Fc -f "$$f.part"; then
+            mv "$$f.part" "$$f"
+            echo "backup: wrote $${f##*/} ($$(stat -c %s "$$f") bytes)"
+            find "$$dir" -maxdepth 1 -name 'krunk-*.dump' -mtime +13 -print -delete
+            sleep 86400
+          else
+            rm -f "$$f.part"
+            echo "backup: pg_dump failed, retrying in 5 minutes" >&2
+            sleep 300
+          fi
+        done
+    volumes:
+      - krunk-backups:/var/lib/postgresql
+      - krunk-secrets:/run/krunk-secrets:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - backend
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    healthcheck:
+      # Healthy while a dump younger than 26 hours exists.
+      # yamllint disable-line rule:line-length
+      test: ["CMD-SHELL", "find /var/lib/postgresql -maxdepth 1 -name 'krunk-*.dump' -mmin -1560 | grep -q ."]
+      interval: 5m
+      timeout: 10s
+      retries: 2
+      start_period: 2m
+      start_interval: 5s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "2"
+
 networks:
-  # The database is reachable only from api.
+  # The database is reachable only from api and backup.
   backend:
     internal: true
 
 volumes:
-  # Accounts, devices, keysets and ciphertext records (sync profile).
+  # Accounts, devices, keysets and ciphertext records.
   krunk-db:
+  # Daily dumps of krunk-db (14 days).
+  krunk-backups:
+  # Server secrets written by the secrets service; mounted read-only everywhere else.
+  krunk-secrets:
   # Published releases (publish-release.sh --volume <project>_krunk-releases).
   krunk-releases:
   # Caddy's certificates and state (TLS mode).

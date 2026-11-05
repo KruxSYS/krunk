@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Dumps the sync database (docs/sync/PLAN.md §4.9) of a compose project:
+# Dumps the sync database (docs/sync/PLAN.md §4.9) of a compose project to this machine:
 #   dist/server/backup-db.sh --project NAME --out DIR [--age-recipient AGE_PUBLIC_KEY]
 # Writes DIR/krunk-<project>-<UTC timestamp>.dump (pg_dump custom format), encrypted to the
-# age recipient as .dump.age when one is given (needs `age` on PATH). Keep 14 days of backups;
-# where they go is OPEN_QUESTIONS Q4. Backups hold only ciphertext, hashes and metadata,
-# but metadata includes emails and IPs: encrypt them.
+# age recipient as .dump.age when one is given (needs `age` on PATH). The stack's backup service
+# already keeps 14 daily dumps in its krunk-backups volume (OPEN_QUESTIONS Q4); this is for
+# copies that leave the host, and those must be encrypted: dumps hold emails and IPs.
 set -euo pipefail
 project="" out="" recipient=""
 while [ $# -gt 0 ]; do
@@ -12,10 +12,10 @@ while [ $# -gt 0 ]; do
     --project) project=$2; shift 2 ;;
     --out) out=$2; shift 2 ;;
     --age-recipient) recipient=$2; shift 2 ;;
-    *) sed -n '2,8p' "$0" >&2; exit 2 ;;
+    *) sed -n '2,7p' "$0" >&2; exit 2 ;;
   esac
 done
-[ -n "$project" ] && [ -n "$out" ] || { sed -n '2,8p' "$0" >&2; exit 2; }
+[ -n "$project" ] && [ -n "$out" ] || { sed -n '2,7p' "$0" >&2; exit 2; }
 db=$(docker ps -q --filter "label=com.docker.compose.project=$project" --filter "label=com.docker.compose.service=db")
 [ -n "$db" ] || { echo "no running db container in project $project" >&2; exit 1; }
 mkdir -p "$out"

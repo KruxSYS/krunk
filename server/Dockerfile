@@ -9,10 +9,13 @@ RUN mkdir src && echo 'fn main() {}' > src/main.rs \
 COPY src ./src
 COPY migrations ./migrations
 RUN cargo build --release --locked --offline \
-    && cp target/release/krunk-sync /krunk-sync
+    && cp target/release/krunk-sync /krunk-sync \
+    && mkdir -p /out/secrets
 
 FROM gcr.io/distroless/cc-debian13:nonroot@sha256:08476c244888bfb425bae1ae4dd7c17f093e972aab8426883d97f3c6f280f7c1
 COPY --from=build /krunk-sync /krunk-sync
+# Mount point of the krunk-secrets volume; a new volume inherits this owner (init-secrets).
+COPY --from=build --chown=65532:65532 /out/secrets /secrets
 USER 65532:65532
 EXPOSE 8081
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD ["/krunk-sync", "healthcheck"]

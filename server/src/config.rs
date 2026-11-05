@@ -35,12 +35,34 @@ pub fn bind_from(get: &dyn Fn(&str) -> Option<String>) -> Result<SocketAddr, Str
 
 impl Config {
     pub fn from_env() -> Result<Config, String> {
-        Config::from_lookup(&|k| std::env::var(k).ok())
+        Config::from_sources(&|k| std::env::var(k).ok(), &crate::secrets::read)
     }
 
+    #[cfg(test)]
     pub fn from_lookup(get: &dyn Fn(&str) -> Option<String>) -> Result<Config, String> {
+        Config::from_sources(get, &|_| None)
+    }
+
+    pub fn from_sources(
+        get: &dyn Fn(&str) -> Option<String>,
+        read_file: &dyn Fn(&std::path::Path) -> Option<String>,
+    ) -> Result<Config, String> {
         let required = |k: &str| get(k).filter(|v| !v.trim().is_empty()).ok_or_else(|| format!("{k} is required"));
-        let database_url = required("DATABASE_URL")?;
+        // DATABASE_URL (tests, standalone use) or, in the compose stack, the self-provisioned
+        // password file plus DB_HOST (default "db").
+        let database_url = match get("DATABASE_URL").filter(|v| !v.trim().is_empty()) {
+            Some(url) => url,
+            None => {
+                let file = required("POSTGRES_PASSWORD_FILE")
+                    .map_err(|_| "DATABASE_URL or POSTGRES_PASSWORD_FILE is required".to_string())?;
+                let password = read_file(std::path::Path::new(&file)).ok_or_else(|| format!("cannot read {file}"))?;
+                if !password.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+                    return Err("the database password must be base64url (init-secrets)".into());
+                }
+                let host = get("DB_HOST").unwrap_or_else(|| "db".into());
+                format!("postgres://krunk:{password}@{host}:5432/krunk")
+            }
+        };
         if !database_url.starts_with("postgres://") && !database_url.starts_with("postgresql://") {
             return Err("DATABASE_URL must be a postgres:// URL".into());
         }
@@ -72,6 +94,26 @@ mod tests {
     #[test]
     fn required_values() {
         assert!(cfg(&[]).unwrap_err().contains("DATABASE_URL"));
+        // From the password file instead.
+        let c = Config::from_sources(
+            &|k| match k {
+                "POSTGRES_PASSWORD_FILE" => Some("/run/krunk-secrets/postgres_password".into()),
+                "PUBLIC_BASE_URL" => Some("https://krunk.209.wf".into()),
+                _ => None,
+            },
+            &|p| (p == std::path::Path::new("/run/krunk-secrets/postgres_password")).then(|| "abc_DEF-123".to_string()),
+        )
+        .unwrap();
+        assert_eq!(c.database_url, "postgres://krunk:abc_DEF-123@db:5432/krunk");
+        let bad = Config::from_sources(
+            &|k| match k {
+                "POSTGRES_PASSWORD_FILE" => Some("/x".into()),
+                "PUBLIC_BASE_URL" => Some("https://x".into()),
+                _ => None,
+            },
+            &|_| Some("p@ss/word".into()),
+        );
+        assert!(bad.is_err(), "a password that would need URL escaping is refused");
         assert!(cfg(&[("DATABASE_URL", "postgres://u:p@db/k")]).unwrap_err().contains("PUBLIC_BASE_URL"));
         let c = cfg(&[("DATABASE_URL", "postgres://u:p@db/k"), ("PUBLIC_BASE_URL", "https://krunk.209.wf/")]).unwrap();
         assert_eq!(c.public_base_url, "https://krunk.209.wf");

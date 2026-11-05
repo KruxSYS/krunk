@@ -4,11 +4,16 @@
 //! `krunk-sync migrate`      run migrations and exit
 //! `krunk-sync healthcheck`  exit 0 if GET http://127.0.0.1:<BIND port>/healthz answers 200
 //!                           (the container health check; the runtime image has no curl)
+//! `krunk-sync init-secrets --dir DIR [--hold]`  create missing secret files (see secrets.rs);
+//!                           with --hold, stay running afterwards (the compose `secrets` service,
+//!                           so no restart policy can turn a one-shot into a restart loop)
+//! `krunk-sync secrets-check --dir DIR`  exit 0 if every secret file exists (its health check)
 
 mod client_ip;
 mod config;
 mod db;
 mod http;
+mod secrets;
 
 use std::net::SocketAddr;
 use std::process::ExitCode;
@@ -17,6 +22,12 @@ fn main() -> ExitCode {
     let cmd = std::env::args().nth(1).unwrap_or_else(|| "serve".into());
     match cmd.as_str() {
         "healthcheck" => healthcheck(),
+        "init-secrets" => init_secrets(),
+        "secrets-check" => match dir_arg() {
+            Some(dir) if secrets::NAMES.iter().all(|n| secrets::read(&dir.join(n)).is_some()) => ExitCode::SUCCESS,
+            Some(_) => ExitCode::FAILURE,
+            None => ExitCode::from(2),
+        },
         "serve" | "migrate" => {
             init_logging();
             let rt = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
@@ -35,7 +46,9 @@ fn main() -> ExitCode {
             }
         }
         _ => {
-            eprintln!("usage: krunk-sync [serve|migrate|healthcheck]");
+            eprintln!(
+                "usage: krunk-sync [serve|migrate|healthcheck|init-secrets --dir DIR [--hold]|secrets-check --dir DIR]"
+            );
             ExitCode::from(2)
         }
     }
@@ -105,5 +118,36 @@ fn healthcheck() -> ExitCode {
     match probe() {
         Ok(true) => ExitCode::SUCCESS,
         _ => ExitCode::FAILURE,
+    }
+}
+
+fn dir_arg() -> Option<std::path::PathBuf> {
+    let args: Vec<String> = std::env::args().collect();
+    args.iter().position(|a| a == "--dir").and_then(|i| args.get(i + 1)).map(std::path::PathBuf::from)
+}
+
+fn init_secrets() -> ExitCode {
+    let Some(dir) = dir_arg() else {
+        eprintln!("usage: krunk-sync init-secrets --dir DIR [--hold]");
+        return ExitCode::from(2);
+    };
+    match secrets::init(&dir) {
+        Ok(actions) => {
+            // Names only, never values.
+            for (name, action) in actions {
+                println!("{name}: {}", if action == secrets::Action::Created { "created" } else { "kept" });
+            }
+            if std::env::args().any(|a| a == "--hold") {
+                // Compose runs this with `init: true`, which forwards SIGTERM.
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(3600));
+                }
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("init-secrets: {e}");
+            ExitCode::FAILURE
+        }
     }
 }

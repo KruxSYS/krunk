@@ -98,33 +98,40 @@ never used.
 |---|---|---|---|---|---|---|
 | `web` (entry) | `caddy:2.11.8-alpine@sha256:3db3a09e418f86a8fce8de4bc0026fccd2b4cd925aef00cc7d843d9fdc75e442` (built image `krunk-site`) | The site, downloads, update feed and `/account/*` static pages. Reverse-proxies `/api/*` to `api:8081`. Public `/healthz`. | **none**, on purpose: if `api` is down, the website, downloads and updates keep working and `/api/*` answers 502 | `wget -qO /dev/null http://127.0.0.1:8080/healthz` | `krunk-releases` (ro), `caddy-data`, `caddy-config` | uid 10001, read-only root, `cap_drop: ALL` |
 | `api` | built from `server/Dockerfile`: builder `rust:1.99.1-slim-trixie@sha256:ea0999ff67355d958b8799b6751c879a6d770076d26047dca66f6e51e77930d3`, runtime `gcr.io/distroless/cc-debian13:nonroot@sha256:08476c244888bfb425bae1ae4dd7c17f093e972aab8426883d97f3c6f280f7c1` | The `krunk-sync` axum API on :8081: accounts, links, keys, records, the mail outbox worker, migrations at start | `db: condition: service_healthy` | `["/krunk-sync","healthcheck"]` (GET `http://127.0.0.1:8081/healthz`, which also checks the DB) | none (stateless) | uid 65532 (nonroot), read-only root, `cap_drop: ALL`, `no-new-privileges` |
-| `db` | `postgres:18.6-alpine3.24@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5` | Accounts, devices, sessions, keysets, ciphertext records | none | `pg_isready -U krunk -d krunk` | `krunk-db` → `/var/lib/postgresql` (the PG 18 image layout) | the image's `postgres` user |
+| `db` | `postgres:18.6-alpine3.24@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5` | Accounts, devices, sessions, keysets, ciphertext records | `secrets: condition: service_healthy` | `pg_isready -U krunk -d krunk` | `krunk-db` → `/var/lib/postgresql` (the PG 18 image layout); `krunk-secrets` read-only | the image's `postgres` user |
+| `secrets` | the `api` image | `krunk-sync init-secrets --hold`: creates missing server secrets in `krunk-secrets`, then idles (a one-shot would loop under ai-pipe's `restart: unless-stopped`) | none | `krunk-sync secrets-check` | `krunk-secrets` | uid 65532, `network_mode: none`, read-only root |
+| `backup` | the `db` image | `pg_dump -Fc` at start and every 24 h into `krunk-backups`, 14 days kept | `db: condition: service_healthy` | a dump younger than 26 h exists | `krunk-backups` → `/var/lib/postgresql` (owned by uid 70 in the image) | uid 70, `backend` only, read-only root |
 | SMTP | **external** provider (OPEN_QUESTIONS Q2), reached by `api` over 587 STARTTLS or 465 TLS | Verification, reset and notification email | – | – | – | – |
 
 Notes:
 - **Postgres 19 is only at rc1** (19rc1), so 18.6 is the current stable release. The API
   builder uses Rust 1.99.1, the same toolchain as the client.
 - **No published host ports** in any compose file, as today. ai-pipe publishes `web`.
-- **Profile gate (added in S1):** `api` and `db` are in the compose profile `sync` and start
-  only with `COMPOSE_PROFILES=sync` in `.env`. The live stack keeps running `web` alone until
-  the operator enables the profile (after Q4 and Q8), so later website updates can't start a
-  database on the live host by accident.
+- **Self-provisioned secrets (decided with Q4):** the live deploy is a copy of one commit with
+  no `.env`, so the stack makes its own secrets (`secrets` service) instead of reading them
+  from `.env`. The S1 profile gate (`COMPOSE_PROFILES=sync`) was removed once Q4 and Q8 were
+  decided.
 - **Memory limit:** `api` uses `deploy.resources.limits.memory: 768M`, not `mem_limit`, because
   ai-pipe's override sets the same key.
-- **`depends_on`:** `api → db: condition: service_healthy`. `web` deliberately has no
-  dependency on `api`.
+- **`depends_on`:** `db → secrets`, `api → db` and `backup → db`, each
+  `condition: service_healthy`. `web` deliberately has no dependency on `api`.
 - **Restarts and logs:** every service has `restart: unless-stopped` and json-file logs capped
   at 10 MiB × 3.
-- **Networks**, explicit per service:
-  - `web`: `frontend`;
-  - `api`: `frontend` and `backend`;
-  - `db`: `backend` only. `backend` is `internal: true`, so `db` is reachable only from `api`.
+- **Networks**, explicit per service (as built in S1; the sketch below called the first one
+  `frontend`):
+  - `web`: `default`;
+  - `api`: `default` and `backend`;
+  - `db` and `backup`: `backend` only. `backend` is `internal: true`, so `db` is reachable only
+    from `api` and `backup`;
+  - `secrets`: no network at all.
 - **`service.json`** keeps `{"entry":"web","port":8080,"health":"/healthz","persist":[]}`. The
-  data lives in named volumes (`krunk-db`, `krunk-releases`), which survive deploys, so nothing
+  data lives in named volumes (`krunk-db`, `krunk-backups`, `krunk-secrets`, `krunk-releases`),
+  which survive deploys, so nothing
   is added to `persist`. The `/healthz` health path stays Caddy's own; API health is checked by
   compose.
 
-Compose sketch, to be added in S1 (not now):
+Compose sketch from the planning milestone (the implementation is `dist/server/compose.yaml`;
+it reads the password from the `secrets` volume instead of `.env`):
 ```yaml
 services:
   api:
@@ -395,14 +402,17 @@ deletes everything in one statement (§7).
     contract), so a rolled-back `api` still runs against the migrated schema.
   - A migration failure makes the `api` health check fail, and ai-pipe rolls the deploy back.
 - **Backups:**
-  - `dist/server/backup-db.sh` (added in S1) runs `docker compose exec -T db pg_dump -U krunk -Fc krunk`.
-  - The dump is encrypted to the operator's `age` public key and written to the backup location
-    (OPEN_QUESTIONS Q4), daily, keeping 14 days.
+  - The `backup` service writes a daily `pg_dump -Fc` into the volume `krunk-backups` on the
+    same host and keeps 14 days (OPEN_QUESTIONS Q4). These dumps are not encrypted: they share
+    the database's host and trust boundary.
+  - `dist/server/backup-db.sh` makes copies that leave the host; they must be encrypted to
+    the operator's `age` public key.
   - Backups contain only ciphertext, hashes and metadata, never keys. They still hold emails
-    and IPs, hence the encryption and the retention limit.
+    and IPs, hence the encryption off-host and the retention limit.
 - **Restore:**
   1. `docker compose stop api`.
-  2. `pg_restore --clean --if-exists -d krunk` from a decrypted dump.
+  2. `pg_restore --clean --if-exists -d krunk` from a decrypted dump
+     (`dist/server/restore-db.sh --latest` does steps 1, 2 and 4 from the `backup` volume).
   3. Re-apply account deletions newer than the dump from the `deletions.log` export (a daily
      list of deleted account ids, kept with the backups).
   4. Start `api`.
@@ -413,10 +423,11 @@ deletes everything in one statement (§7).
 ### 4.10 Secrets and configuration (`dist/server/.env.example`, extended in S1–S2; never in git or images)
 | Key | Purpose |
 |---|---|
-| `POSTGRES_PASSWORD` | DB password (`api` and `db`) |
-| `PASSWORD_PEPPER` (+ `PASSWORD_PEPPER_ID`) | HMAC key applied before Argon2id; rotation keeps old ids readable |
-| `TOKEN_HMAC_KEY` | HMAC key for hashing tokens and codes |
-| `TOTP_ENC_KEY` | XChaCha20-Poly1305 key for TOTP secrets at rest |
+| `postgres_password` (file) | DB password (`api`, `db`, `backup`) |
+| `password_pepper` (file) | HMAC key applied before Argon2id; a later rotation adds a new file and keeps an id per hash |
+| `token_hmac_key` (file) | HMAC key for hashing tokens and codes |
+| `totp_enc_key` (file) | XChaCha20-Poly1305 key for TOTP secrets at rest |
+| `TRUSTED_PROXIES_EXTRA` | The hop in front of Caddy (default `10.250.137.4/32`, OPEN_QUESTIONS Q8) |
 | `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`, `TURNSTILE_EXPECTED_HOSTNAME` | Turnstile |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_TLS` (`starttls`/`tls`), `MAIL_FROM` | Email |
 | `PUBLIC_BASE_URL` | `https://krunk.209.wf` (links in emails) |
@@ -424,8 +435,9 @@ deletes everything in one statement (§7).
 | `QUOTA_MAX_BYTES`, `QUOTA_MAX_RECORDS`, `QUOTA_MAX_HISTORY`, `QUOTA_MAX_DEVICES` | Defaults: 50 MiB, 100000, 25000 (server hard cap; the client keeps 20000), 10 |
 | `INACTIVITY_DELETE_DAYS` | Default off (OPEN_QUESTIONS Q9) |
 
-Keys are 32 random bytes in base64url, generated with `openssl rand -base64 32` by a
-`gen-server-secrets.sh` helper (S1) that refuses to overwrite existing values.
+The four files are 32 random bytes in base64url, created by the `secrets` service in the volume
+`krunk-secrets` (never overwritten, mounted read-only elsewhere). Only the Turnstile, SMTP and
+URL settings come from `.env`, which the operator provides.
 
 ## 5. Client (requirement 11)
 
