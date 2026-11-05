@@ -107,7 +107,8 @@ if ($Phase -eq 'main') {
   SafeKeys '{F11}' 2500
   Shot "$P-1-f11-keeps-devtools"
   SafeKeys '{F11}' 2500
-  DoubleClick 250 ($page + 300); Start-Sleep 3
+  # The video (page y 163..433) is still under page + 200 with DevTools docked at the bottom.
+  DoubleClick 250 ($page + 200); Start-Sleep 3
   Shot "$P-2-page-fullscreen-hides"
   Keys '{ESC}' 2500
   Shot "$P-3-back-docked"
@@ -123,4 +124,4 @@ if ($Phase -eq 'main') {
 }
 Log "[$P] processes after closing: $(@(Get-Process Krunk -ErrorAction SilentlyContinue).Count)"
 Copy-Item "$profile\Krunk\browser.db" "C:\pipeline\krunk\p030d-$Phase.db" -Force
-Get-Content "$profile\Krunk\krunk.log" | Select-String 'DevTools|inspect|tab |window|WARN|ERROR' | ForEach-Object { Log "[$P] log: $_" }
+Get-Content "$profile\Krunk\krunk.log" | Select-String 'DevTools|inspect|tab |window|full screen|WARN|ERROR' | ForEach-Object { Log "[$P] log: $_" }

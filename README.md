@@ -4,30 +4,30 @@ Krunk is a lightweight, privacy-minded web browser for Windows 10/11 (x64), writ
 Rust. It brings its own engine: **Chromium 156.0.8078.80** through the Chromium Embedded
 Framework (**CEF 156.0.15**), bundled in the download. Neither Microsoft Edge nor WebView2 is
 used. It installs per user without administrator rights, or runs portable from a zip. It includes:
-- tabs and private tabs
+- tabs and private tabs, in as many windows as you like (drag tabs between them)
 - history and bookmarks
 - a new-tab page with your most-visited sites
 - built-in ad and tracker blocking
 - an encrypted password vault
-- downloads, find, zoom, print and DevTools
+- downloads, find, zoom, print and DevTools docked next to the page
 - session restore
 - background-tab sleep, to save memory
 
 ## Download and requirements
-- **Installer:** `Krunk-Setup-0.2.1.exe` (about 137 MB), from `https://krunk.209.wf`. It installs for the current user
+- **Installer:** `Krunk-Setup-0.3.0.exe` (about 137 MB), from `https://krunk.209.wf`. It installs for the current user
   only, without administrator rights:
   - to `%LOCALAPPDATA%\Programs\Krunk`, with a Start Menu shortcut and, if you tick it, one on
     the desktop;
   - with an entry in Settings → Apps → Installed apps (per user, `HKCU`).
-  If Krunk is running, the installer asks you to close it. `Krunk-Setup-0.2.1.exe /S` installs
+  If Krunk is running, the installer asks you to close it. `Krunk-Setup-0.3.0.exe /S` installs
   silently; it then closes a running Krunk itself and waits up to 30 s for it.
   **Uninstalling** removes the program and the shortcuts. Your data (`%LOCALAPPDATA%\Krunk`) is
   kept unless you tick "Also delete my Krunk data"; a silent uninstall (`/S`) always keeps it.
-- **Portable:** `Krunk-win-x64.zip` (about 183 MB; 420 MB unpacked). Extract it anywhere and
+- **Portable:** `Krunk-win-x64.zip` (about 184 MB; 423 MB unpacked). Extract it anywhere and
   run `Krunk.exe`. Keep all files of the folder together; if one is missing, Krunk says so at
   startup. The portable copy uses the same data folder as the installed one.
 - **Verify:** check `SHA256SUMS` (the installer, the zip and the three main binaries):
-  - PowerShell: `Get-FileHash Krunk-Setup-0.2.1.exe`
+  - PowerShell: `Get-FileHash Krunk-Setup-0.3.0.exe`
   - Linux: `sha256sum -c SHA256SUMS`
 - **System:** Windows 10 or 11, 64-bit. No runtime is needed.
 - **Data location:** everything is stored in `%LOCALAPPDATA%\Krunk`:
@@ -56,6 +56,13 @@ used. It installs per user without administrator rights, or runs portable from a
   - the `lb://` and `https://lightbrowser.invalid/` redirect for old saved tabs and bookmarks;
   - internal identifiers no user sees: the crate name `lb_core` and message names (`lb.*`,
     `__lbHost`).
+- **Coming from Krunk 0.2.x:** installing 0.3.0 over it keeps all your data. The saved
+  session (one window's tabs) opens as one window; from then on Krunk saves every window with its
+  tabs, position, size and maximized state. The old session fields are still written (for the
+  most recently used window), so going back to 0.2.1 opens that window's tabs. The installer
+  removes the `README.md` and `SECURITY.md` that 0.2.x put into the program folder: the package
+  ships no Markdown files any more (this README and `docs/SECURITY.md` are in the source and
+  on the website).
 - **Coming from the WebView2 version:** settings, history, bookmarks, the session, the vault and
   `engine.dat` are used as they are. Cookies and site data are not migrated: the old
   `profile\EBWebView` folder (WebView2's profile) is left untouched and unused, and you can
@@ -81,7 +88,8 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
 | Keys | Action |
 |------|--------|
 | Ctrl+T / Ctrl+Shift+N | New tab / new private tab |
-| Ctrl+W, Ctrl+Shift+T | Close tab, reopen closed tab |
+| Ctrl+N | New window |
+| Ctrl+W, Ctrl+Shift+T | Close tab (the window closes with its last tab), reopen closed tab (in the current window) |
 | Ctrl+Tab / Ctrl+Shift+Tab, Ctrl+1…8, Ctrl+9 | Next / previous tab, tab by position, last tab |
 | Ctrl+L, Alt+D, F6 | Address bar |
 | F5 / Ctrl+R, Ctrl+F5 / Ctrl+Shift+R | Reload, reload bypassing the cache |
@@ -91,7 +99,7 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
 | Ctrl+F, F3 / Shift+F3 (Ctrl+G / Ctrl+Shift+G) | Find, next / previous match |
 | Ctrl+= / Ctrl+-, Ctrl+0 | Zoom in / out, reset |
 | Ctrl+P | Print |
-| F12, Ctrl+Shift+I | DevTools (in its own window) |
+| F12, Ctrl+Shift+I | DevTools, docked in the tab's window (press again to close) |
 | Ctrl+Shift+C, right-click → Inspect | DevTools with the element under the mouse selected |
 | Alt+Space | Window menu (move, size, minimize, maximize, close) |
 
@@ -99,6 +107,31 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   double-click there to maximize or restore. Hovering the maximize button shows the Windows 11
   snap layouts. Right-click the tab row for the window menu.
 - **New tab** (Ctrl+T, "+", the menu) puts the cursor in the address bar, so you can type at once.
+- **Windows and tabs:**
+  - **Dragging:** drag a tab sideways to reorder it. Drag it down out of the tab row and it
+    becomes a new window that follows the mouse; drop it on another window's tab row (a marker
+    shows where it will land) to move it there. Esc while dragging puts it back.
+  - **A window's only tab** drags the whole window; dropping it on another window's tab row
+    merges it into that window and closes the empty one.
+  - **No reload:** a moved tab keeps its page as it is: scroll position, typed text, history,
+    playing media, DevTools and private mode.
+  - **Right-click a tab** for Reload, Duplicate, **Move to new window** (not for a window's only
+    tab), **New window** and Close tab. **Ctrl+N** and the main menu also open a new window.
+  - **Closing:** closing a window's last tab closes the window, and closing the last window
+    quits Krunk.
+  - **Restoring:** every window is restored with its tabs, position, size and maximized state.
+    A window that would be off screen (a monitor was removed) is moved onto a monitor.
+- **DevTools** (F12) opens inside the tab's window, docked right by default:
+  - **Resizing and docking:** drag the splitter between page and DevTools to resize it. The
+    control in the toolbar (shown while the tab has DevTools) docks it right or at the bottom, or
+    closes it. Side and sizes are remembered.
+  - **One per tab:** each tab has its own DevTools. It hides when you switch tabs, comes back
+    with the tab, moves with it to another window and closes with it. Page full screen hides it;
+    F11 keeps it.
+  - **Keys:** while DevTools has the focus, Krunk's shortcuts still work (including F12 and
+    Ctrl+Shift+I to close it). The exceptions are the keys DevTools uses itself: Ctrl+F, Ctrl+G,
+    Ctrl+P, Ctrl+O, Ctrl+[ / Ctrl+], Ctrl+Shift+F, Ctrl+Shift+P, Ctrl+Shift+C and Esc.
+  - **Memory:** a tab with DevTools open is never put to sleep or unloaded.
 - **Shield:** the shield in the toolbar shows how many ads and trackers were blocked on the
   page. Click it to allow ads on that site, or to open **Cookies and site data** for the site.
 - **Cookies and site data:**
@@ -137,7 +170,7 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   the page release the lock; a "Press Esc to show your cursor" hint appears for 3 s. A page's
   `requestFullscreen()` and **F11** fill the monitor without the tab strip and toolbar; Esc
   leaves page full screen and F11 toggles.
-- **Starting Krunk again** while it runs opens a new tab in the running window.
+- **Starting Krunk again** while it runs opens a new tab in the most recently used window.
 
 Command-line options (all optional):
 
@@ -186,22 +219,51 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
   `libcef.dll` at runtime.
 
 ### Windows and views
-- **Main window:** one top-level Win32 window. Every view is a CEF browser (Alloy style) hosted
-  as a child window.
-- **Shell:** a view strip at the top showing the tab strip and toolbar. Its height is fixed:
-  76 DIP, scaled by DPI.
+- **Windows:** any number of top-level Win32 frames. Every view is a CEF browser (Alloy style)
+  hosted as a child window of a frame. A hidden app window takes the timers, cross-thread
+  messages and system broadcasts (session lock, power), so they don't depend on a frame.
+- **Model:** `core::windows::Workspace` holds one tab model per window, unique tab ids across
+  windows, one closed-tab stack and the most-recently-used order of the windows. It turns every
+  change into operations for the host (create/close a window, create/destroy/move a view,
+  quit). "The current window" is the most recently used one: keys and menu commands act on the
+  window they were typed in, `window.open` opens in the opener's window, and a second start of
+  Krunk or the update prompt use the current window.
+- **Shell:** a view strip at the top of each window showing its tab strip and toolbar. Its
+  height is fixed: 76 DIP, scaled by that window's DPI.
 - **Tabs:** one browser per *live* tab, laid out below the shell. Restored tabs stay unloaded
   until they are activated. Pages that open windows (`window.open`, `target=_blank`) get a new
   tab next to them; `window.open` keeps its opener.
-- **Popup:** one extra view in an owned `WS_POPUP` tool window. It shows the main menu, the
-  shield panel and the save-password and fill-login prompts.
+- **Moving a tab between windows** re-parents its browser's child window (`SetParent`, then
+  CEF's move/resize notifications). The browser, its renderer, its request context (so a
+  private tab stays private) and its history are untouched, so nothing reloads.
+- **Dragging tabs:** the shell reorders tabs within its strip with pointer events. When the
+  pointer leaves the strip, the shell hands the drag to the host (`tabDragOut`), because a view
+  can't see other windows. The host then polls the cursor and the mouse button on a 15 ms
+  timer, moves the dragged window, finds the topmost other Krunk window under the cursor
+  (z-order) and, over its tab strip, tells its shell where the tab would land
+  (`frame::drop_index` over the tab centres the shell reports in its hit map).
+- **Session:** the kv entry `session`, version 2: every window's tabs, active tab, restored
+  bounds (physical pixels, `rcNormalPosition`) and maximized state, plus which window was in
+  front. It also keeps 0.2.x's `tabs`/`active` fields for the most recently used window, and a
+  0.2.x session (no `windows`) restores as one window. On restore,
+  `core::layout::fit_to_monitors` moves a window whose title band isn't on any monitor.
+- **DevTools:** `ShowDevTools` with `set_as_child(frame)`: a child window of the tab's frame,
+  placed by the host beside the page (`core::layout::devtools_split`: a 5 DIP splitter, at least
+  240 DIP of page and 280/160 DIP of DevTools). The splitter is the frame's own client area
+  between the two (cursor, capture and drag in the window procedure). The DevTools browser has
+  a keyboard handler (shortcuts reach Krunk except `keys::devtools_keeps`) and no message
+  handler, so it has no privileged channel. Only tab views can be inspected: the shell and
+  popup have no context menu and DevTools commands act on the active tab.
+- **Popup:** one extra view in an owned `WS_POPUP` tool window, re-owned by the window it opens
+  for. It shows the main menu, the tab menu, the shield panel and the save-password and
+  fill-login prompts.
   - It is created on first use and then hidden and reused, never more than one.
   - It uses the default profile, never a private one.
   - The shell sends the popup's rectangle in CSS pixels. The host converts it to screen pixels
     with the window's DPI (`GetDpiForWindow` + `ClientToScreen`) and clamps it to the monitor
     work area (`core::layout::popup_screen_rect`).
   - **Hide rules:** the popup hides on deactivate, Escape, a click elsewhere (another view gets
-    focus), main-window move, resize or minimize, and tab switch or close. A prompt hidden this
+    focus), its window's move, resize or minimize, and tab switch or close. A prompt hidden this
     way counts as dismissed, never confirmed.
 - **Keyboard shortcuts** are taken before the page sees them (`CefKeyboardHandler::OnPreKeyEvent`),
   in every view.
@@ -345,8 +407,8 @@ VK  --XChaCha20-Poly1305 (fresh 24-byte nonce, AAD = entry id)--> each login; ma
 - **Secrets in memory** are held in `Zeroizing` buffers and wiped when the vault locks. They are
   never logged and never stored in SQLite. Messages carrying a password (login submit, fill)
   also pass through the engine's IPC strings, which Krunk cannot wipe.
-- Threat model (assets, attackers, mitigations, out of scope): `docs/SECURITY.md` (in the
-  release download: `SECURITY.md` next to this file).
+- Threat model (assets, attackers, mitigations, out of scope): `docs/SECURITY.md` in the
+  source (not part of the download, which ships no Markdown files).
 - **Unlocking:** off the UI thread; the host enforces an exponential retry delay (1 s → 60 s).
 - **Auto-lock:** after inactivity, on Windows lock and on sleep.
 - **Login detection** (main frame only) offers "Save password?" in the browser's popup window.
@@ -426,8 +488,8 @@ network traffic it starts itself is the daily filter-list update and the daily u
   closed. URL, title and favicon are kept, and the tab reloads when activated. A discarded
   private tab keeps only its URL. The last live private tab is never discarded, so the private
   session (cookies, logins) survives.
-- **Never touched:** the active tab, tabs playing audio, tabs with a download in progress, and
-  the UI shell and popup. A small tracker in each frame reports playing unmuted media and
+- **Never touched:** the active tab of every visible window, tabs playing audio, tabs with a
+  download in progress, tabs with DevTools open, and the UI shell and popup. A small tracker in each frame reports playing unmuted media and
   running Web Audio to the browser.
 - The rules are pure functions in `core::memory` (`decide`, `exempt`), with unit tests. The
   host evaluates them on a timer.
@@ -491,11 +553,15 @@ What it does:
    `Krunk.dll` with the static CRT (`.cargo/config.toml`) and `libcef.dll` delay-loaded.
 3. It assembles `dist/Krunk-win-x64/`: `Krunk.exe` (the CEF bootstrap, branded by
    `tools/pebrand`), `Krunk.dll`, the CEF DLLs, `.pak` files, `icudtl.dat`,
-   `v8_context_snapshot.bin`, all `locales/`, `licenses/`, the README, SECURITY and third-party
-   notices. Then it writes the zip (fixed timestamps and order) and `SHA256SUMS`.
+   `v8_context_snapshot.bin`, all `locales/`, `licenses/` and `THIRD-PARTY-NOTICES.txt`. No
+   Markdown: the build fails if any `*.md` file ends up in the folder (README and SECURITY are
+   in the source and on the website). Then it writes the zip (fixed timestamps and order) and
+   `SHA256SUMS`.
 4. `scripts/fetch-nsis.sh` fetches NSIS 3.09 (Ubuntu's `nsis` and `nsis-common` packages,
    SHA-256 pinned in `nsis.lock`, unpacked with `dpkg-deb` into `~/.cache/krunk-toolchain`),
-   and `makensis` builds `Krunk-Setup-<version>.exe` from `installer/krunk.nsi`.
+   and `makensis` builds `Krunk-Setup-<version>.exe` from `installer/krunk.nsi`. The installer
+   deletes `*.md` from the program folder before copying (0.2.x shipped README.md and
+   SECURITY.md); it never touches the data folder.
 
 Requirements (versions used for the release):
 - Rust stable (1.87 or newer; built with 1.99.1) with `rustup target add x86_64-pc-windows-msvc`
@@ -537,7 +603,7 @@ limitations"). To move to a newer CEF:
 
 ### Checks
 ```sh
-cargo test --workspace                                                   # core: 238 unit tests
+cargo test --workspace                                                   # core: 300 unit tests
 cargo clippy --workspace --all-targets -- -D warnings                    # Linux
 cargo xwin clippy --target x86_64-pc-windows-msvc --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
@@ -592,7 +658,7 @@ Testing on Windows:
   DevTools open shows the system theme.
 - **HTTP authentication and site permission prompts** (camera, microphone, location,
   notifications) are not shown: CEF's Alloy runtime denies them by default.
-- **Size:** about 420 MB unpacked (183 MB zipped), against about 6 MB for the WebView2 build. All
+- **Size:** about 423 MB unpacked (184 MB zipped), against about 6 MB for the WebView2 build. All
   CEF locales and SwiftShader (software rendering for machines without a usable GPU) are kept.
 - **Discarding loses back/forward history.** A discarded tab reloads its last URL; its history
   and any unsaved form input are lost. Discard is off by default.
@@ -619,7 +685,15 @@ Testing on Windows:
   detected. See `docs/SECURITY.md` for the full threat model and what is out of scope.
 - **No tab pinning in the UI.** The memory policy supports pinned tabs, but the tab strip
   cannot pin yet.
-- **Platform support:** no Windows on ARM build, no installer, no auto-update and no extensions.
+- **Platform support:** no Windows on ARM build and no extensions.
+- **Tab dragging is Krunk's own, not Chrome's.** Under the Alloy runtime the engine has no tab
+  strip, so the drag is done by the host: the torn-off window itself is the drag image (there
+  is no translucent preview), and a tab can't be dropped into another program.
+- **Several monitors:** windows remember their position on any monitor and are moved back on
+  screen if that monitor is gone. Dragging across monitors with different scaling was not
+  tested (the test machine has one monitor, at up to 125 %).
+- **DevTools can't be undocked** into its own window; it docks right or at the bottom of its
+  tab's window. Theme changes don't reach a page while its DevTools is open (see above).
 - **Unsigned:** the binaries are not code-signed (SmartScreen may warn on first start).
 
 ## Third-party components

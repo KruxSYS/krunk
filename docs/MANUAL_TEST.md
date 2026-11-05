@@ -2,7 +2,8 @@
 
 Run these on a real Windows 10 or 11 x64 machine with `Krunk-Setup-<version>.exe` or the release
 folder `Krunk-win-x64` (from the zip). Sections 1–3 are the release smoke test; "Krunk 0.2"
-covers the round-2 features (installer, updates, window, storage, YouTube, games). The remaining
+covers the round-2 features (installer, updates, window, storage, YouTube, games) and
+"Krunk 0.3" the windows, tab dragging and docked DevTools. The remaining
 sections cover each feature in detail. Last full pass: 2026-11-04 on a Windows 11 Pro VM (build
 26200), CEF 156.0.15 / Chromium 156.0.8078.80, driven with `scripts/vm.sh` (screenshots in the
 pipeline workspace under `screenshots/cef/`).
@@ -522,6 +523,66 @@ See `dist/server/README.md` → "Checks". After publishing:
   succeeds;
 - the landing page shows the version, both downloads and their hashes.
 
+## Krunk 0.3 (windows, tab dragging, docked DevTools)
+Last pass: 2026-11-05 on the Windows 11 VM; evidence in the pipeline workspace under
+`evidence-0.3.0/`. VM helpers: `scripts/vm-windows.ps1` (window lookup, tab positions, safe
+focus and keys), `vm-030-smoke.ps1`, `vm-030-windows.ps1`, `vm-030-session.ps1`,
+`vm-030-dpi.ps1`, `vm-030-devtools.ps1` (phases `main`, `restart`, `fullscreen`). Test page:
+`scripts/vm-www/8092/move.html` (a field, a `<select>`, a looping video, history entries and a
+status line with the load time; double-click the video for page full screen).
+
+### Package (release build)
+1. `unzip -l Krunk-win-x64.zip` and `7z l Krunk-Setup-<version>.exe` list no `*.md`.
+2. Put any `x.md` into `dist/Krunk-win-x64/licenses/` during a build (or into `$out` in
+   `build-dist.sh`): the build stops with "Markdown files in the package".
+3. Installing over 0.2.1 (silently with `/S`, and with the wizard) leaves no `README.md` or
+   `SECURITY.md` in `%LOCALAPPDATA%\Programs\Krunk`; the data folder is untouched.
+
+### Upgrade from 0.2.1
+1. In 0.2.1, open several tabs, add a bookmark, visit a few pages and save a password. Close it.
+2. Install 0.3.0 and start it: one window with the same tabs and the same active tab. History,
+   bookmarks and the vault entry are there.
+
+### Windows and tabs
+1. **Drag out:** on `move.html`, type into the field, scroll down a little, wait for the video to
+   play, then drag the tab down out of the strip. A new window follows the mouse with the tab in
+   it; release it anywhere. The status line shows the same load time (no reload), the same
+   scroll position, the field text, the same `history` count, and the video still playing;
+   the `<select>` opens in the right place. The server log has no new request.
+2. **Drag in:** drag a tab from one window over another's tab strip: a marker shows the drop
+   position, and the tab lands there. Esc during the drag puts the tab back.
+3. **Merge:** drag a window's only tab onto another window's strip: the tab moves and its empty
+   window closes. Dragging that only tab elsewhere moves the window.
+4. **Menu:** right-click a tab → Move to new window (greyed out for a window's only tab), New
+   window; Ctrl+N; main menu → New window.
+5. **Closing:** Ctrl+W on a window's last tab closes the window; closing the last window quits
+   Krunk. `scripts/vm-mem.ps1` then shows no Krunk process.
+6. **Per window:** in a second window, the main menu, the shield, find (Ctrl+F), zoom, F11 and
+   pointer lock act on that window only; Ctrl+Shift+T reopens into the current window.
+7. **Private:** move a private tab to a new window. It stays private (the private badge,
+   its private login), and `krunk://history` doesn't list it.
+8. **Restore:** with three windows (one maximized, two at known places), quit and start again:
+   all three come back with their tabs, places and the maximized state. A window saved off
+   screen (edit its bounds to 5000,3000 in the `session` kv entry) comes back on the monitor.
+9. **Scaling:** repeat 1, 2 and 8 at 125 % or 150 %; the strip, the drop marker and the popups
+   line up. *VM: one monitor, at most 125 %; two monitors were not tested.*
+
+### DevTools
+1. F12: DevTools opens docked on the right inside the window. A window enumeration (`KrunkWindows`
+   in `scripts/vm-windows.ps1`) shows no other top-level Krunk window. F12 again (also typed
+   inside DevTools) closes it.
+2. Right-click → Inspect selects the clicked element.
+3. Tab 2 has no DevTools; F12 there opens its own. Switching back shows tab 1's again.
+4. Drag the splitter; dock at the bottom with the toolbar control and drag that splitter. Restart:
+   F12 opens it at the bottom with that size.
+5. Move the tab with DevTools to a new window: DevTools is still docked there. Close the tab: its
+   DevTools closes.
+6. In DevTools, Ctrl+F searches DevTools; Ctrl+T opens a tab in Krunk.
+7. F11 keeps DevTools; a page's full screen hides it; Esc shows it again.
+8. A tab with DevTools open is never put to sleep or discarded (`--sleep-test-seconds=30`, leave
+   it in the background; the log has no "tab N: low memory" line for it, while other background
+   tabs get one).
+
 ## Background traffic
 1. Run a logging HTTP proxy (`screenshots/verify2/proxy.ps1` in the pipeline workspace listens on
    `127.0.0.1:8888`) and set Settings → Advanced → Proxy to `127.0.0.1:8888` (restart).
@@ -555,8 +616,8 @@ HTTP/CONNECT proxy on 127.0.0.1:8888.
      "vault locked (Windows session locked)".
    - Unlock, then sleep the PC (Start → Power → Sleep) and wake it: "vault locked (system suspend)".
    - Without locking the session (VM): post `WM_WTSSESSION_CHANGE` (0x2B1, wParam 7) and
-     `WM_POWERBROADCAST` (0x218, wParam 4) to the `KrunkWindow` window from a helper in the
-     same session. The log lines are the same.
+     `WM_POWERBROADCAST` (0x218, wParam 4) to the hidden `KrunkApp` window (since 0.3.0; it
+     was `KrunkWindow` before) from a helper in the same session. The log lines are the same.
 3. **Cosmetic filtering:**
    - On `https://edition.cnn.com/` (rules `cnn.com##.stack__ads`, `##.zone__ads`,
      `##.ad-slot-header__wrapper`), run this in the DevTools console:
