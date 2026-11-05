@@ -101,22 +101,13 @@
   // ---------- filter lists and allowlist ----------
   let filterStatus = null;
   function renderLists() {
-    const box = $('lists');
-    box.textContent = '';
     if (!filterStatus) return;
-    filterStatus.lists.forEach(function (l) {
-      const cb = el('input', { type: 'checkbox', 'data-list': l.id });
-      cb.checked = settings.filterLists.includes(l.id);
-      cb.disabled = !settings.adblockEnabled;
-      cb.addEventListener('change', function () {
-        const lists = Array.from(box.querySelectorAll('input[data-list]')).filter((c) => c.checked).map((c) => c.dataset.list);
-        const s = collect();
-        s.filterLists = lists;
-        save(s);
-      });
-      const meta = l.source === 'downloaded' && l.fetched ? 'updated ' + new Date(l.fetched).toLocaleString() : 'built-in copy';
-      box.appendChild(el('label', { class: 'row toggle' }, [cb, el('span', { text: l.title }), el('span', { class: 'list-meta', text: meta })]));
-    });
+    const on = filterStatus.lists.filter(function (l) { return l.enabled; });
+    const added = on.filter(function (l) { return !l.builtin; }).length;
+    let text = on.length + ' of ' + filterStatus.lists.length + ' filter lists on';
+    if (added) text += ' (' + added + ' added by you)';
+    if (filterStatus.userRules) text += ' · ' + filterStatus.userRules + (filterStatus.userRules === 1 ? ' filter of your own' : ' filters of your own');
+    $('lists-summary').textContent = text;
     let status = filterStatus.lastCheck ? 'Last checked ' + new Date(filterStatus.lastCheck).toLocaleString() : 'Not updated yet (using the built-in lists)';
     if (filterStatus.lastError) status += ' · last problem: ' + filterStatus.lastError;
     if (filterStatus.busy) status = 'Updating…';

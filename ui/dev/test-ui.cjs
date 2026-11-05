@@ -1184,6 +1184,127 @@ async function testBlockedList(browser) {
   check(errors.length === 0, 'no console errors');
 }
 
+// 0.4.0: krunk://adblock's filter lists (on/off, add, remove, restore, update) and My filters.
+function filterListsMock(opts) {
+  const h = window.__host.handlers;
+  const now = Date.now();
+  const st = {
+    enabled: !(opts && opts.off), lastCheck: now - 3600e3, lastError: null, busy: false, user: '! mine\n||ads.example^\n',
+    lists: [
+      { id: 'easylist', title: 'EasyList (ads)', url: 'https://easylist.to/easylist/easylist.txt', builtin: true, enabled: true, source: 'downloaded', fetched: now - 3600e3, rules: 71234, error: null },
+      { id: 'easyprivacy', title: 'EasyPrivacy (trackers)', url: 'https://easylist.to/easylist/easyprivacy.txt', builtin: true, enabled: true, source: 'embedded', fetched: null, rules: 52011, error: null },
+      { id: 'ublock-badware', title: 'uBlock filters – Badware risks', url: 'https://ublockorigin.github.io/uAssets/filters/badware.txt', builtin: true, enabled: false, source: 'embedded', fetched: null, rules: 3100, error: 'HTTP 503' },
+    ],
+  };
+  window.__fl = st;
+  const status = () => ({ enabled: st.enabled, lastCheck: st.lastCheck, lastError: st.lastError, busy: st.busy, lists: JSON.parse(JSON.stringify(st.lists)), userRules: 1 });
+  // Slow, like a rebuild.
+  const later = (f) => new Promise((res, rej) => setTimeout(() => { try { res(f()); } catch (e) { rej(e); } }, 150));
+  h.getBlocked = () => ({ host: '', source: false, enabled: true, items: [] });
+  h.getFilterLists = status;
+  h.setFilterList = (m) => later(() => { st.lists.find((l) => l.id === m.id).enabled = m.enabled; return status(); });
+  h.addFilterList = (m) => later(() => {
+    if (m.url.includes('missing')) throw new Error('Could not add the list: HTTP 404');
+    st.lists.push({ id: 'custom-9', title: 'Annoyances', url: m.url, builtin: false, enabled: true, source: 'downloaded', fetched: Date.now(), rules: 812, error: null });
+    return {};
+  });
+  h.removeFilterList = (m) => later(() => { st.lists = st.lists.filter((l) => l.id !== m.id); return status(); });
+  h.restoreDefaultLists = () => later(() => { st.lists.forEach((l) => { if (l.builtin) l.enabled = l.id !== 'ublock-badware'; }); return status(); });
+  h.updateFilterLists = () => later(() => { st.lastCheck = Date.now(); return status(); });
+  h.getUserFilters = () => ({ text: st.user, report: { network: 1, cosmetic: 0, errors: [] } });
+  h.saveUserFilters = (m) => later(() => {
+    st.user = m.text;
+    const errors = [];
+    m.text.split('\n').forEach((l, i) => { if (l.includes('$nope')) errors.push({ line: i + 1, text: l, message: 'unknown option' }); });
+    return { network: m.text.split('\n').filter((l) => l.startsWith('||')).length - errors.length, cosmetic: m.text.split('\n').filter((l) => l.includes('##')).length, errors: errors };
+  });
+}
+
+async function testFilterLists(browser) {
+  console.log('krunk://adblock: filter lists and My filters');
+  let { page, errors, external } = await openPage(browser, 'https://krunk.invalid/adblock.html#lists', { width: 1000, height: 900 }, 1, filterListsMock);
+  await page.waitForSelector('.list-row');
+  check(await page.locator('#lists').isVisible() && await page.locator('#blocked').isHidden(), '#lists opens the Filter lists tab');
+  check(await page.locator('.list-row').count() === 3, 'every list, on or off');
+  const first = await page.locator('.list-row').first().textContent();
+  check(first.includes('https://easylist.to/easylist/easylist.txt') && first.includes('71,234 filters') && first.includes('built-in'), 'a list shows its address, rule count and kind (' + first + ')');
+  check((await page.locator('.list-row').nth(2).textContent()).includes('Last download failed: HTTP 503'), 'a failed download is shown');
+  check(await page.locator('.list-row').first().locator('.icon-btn').count() === 0, 'built-in lists cannot be removed');
+  check((await page.textContent('#tab-lists')) === 'Filter lists (2)', 'the tab counts the lists that are on');
+  await shot(page, 'adblock-lists.png');
+  // Turn one off: the controls wait for the new engine.
+  await page.locator('.list-row').nth(1).locator('input[type=checkbox]').uncheck();
+  await page.waitForTimeout(30);
+  check(await page.locator('#update-lists').isDisabled() && (await page.textContent('#lists-status')).includes('Turning off EasyPrivacy'), 'while the engine is rebuilt the page waits');
+  await page.waitForFunction(() => !document.getElementById('update-lists').disabled);
+  check((await lastSent(page, 'setFilterList')).id === 'easyprivacy' && (await lastSent(page, 'setFilterList')).enabled === false, 'setFilterList {id, enabled:false}');
+  check(await page.locator('.list-row.off').count() === 2 && (await page.textContent('#tab-lists')) === 'Filter lists (1)', 'the list is off after the rebuild');
+  // Add by address: validation, a failed download, a good one.
+  await page.fill('#add-url', 'http://lists.example/a.txt');
+  await page.click('#add-btn');
+  check((await page.textContent('#add-error')) === 'Enter an https:// address' && (await lastSent(page, 'addFilterList')) === undefined, 'only https:// addresses');
+  await page.fill('#add-url', 'https://lists.example/missing.txt');
+  await page.click('#add-btn');
+  await page.waitForFunction(() => document.getElementById('add-error').textContent !== '');
+  check((await page.textContent('#add-error')) === 'Could not add the list: HTTP 404' && await page.locator('.list-row').count() === 3, 'a list that cannot be downloaded is not added');
+  await page.fill('#add-url', 'https://lists.example/annoyances.txt');
+  await page.press('#add-url', 'Enter');
+  await page.waitForFunction(() => document.querySelectorAll('.list-row').length === 4);
+  const added = page.locator('.list-row').nth(3);
+  check((await added.textContent()).includes('Annoyances') && (await added.textContent()).includes('https://lists.example/annoyances.txt') && (await added.textContent()).includes('added'), 'the added list with its title and address');
+  check((await page.inputValue('#add-url')) === '' && (await page.textContent('#add-error')) === '', 'the form is cleared');
+  // Remove it (confirmed).
+  await added.locator('.icon-btn').click();
+  await page.waitForSelector('#lb-dialog-ok');
+  await page.click('#lb-dialog-ok');
+  await page.waitForFunction(() => document.querySelectorAll('.list-row').length === 3);
+  check((await lastSent(page, 'removeFilterList')).id === 'custom-9', 'removeFilterList {id}');
+  await page.click('#restore-lists');
+  await page.waitForFunction(() => document.querySelectorAll('.list-row.off').length === 1);
+  check((await lastSent(page, 'restoreDefaultLists')) !== undefined, 'Restore default lists');
+  await page.click('#update-lists');
+  check((await lastSent(page, 'updateFilterLists')) !== undefined, 'Update now');
+  await page.waitForFunction(() => !document.getElementById('update-lists').disabled);
+  // The host rebuilds for another reason (the daily update): wait, look again, carry on.
+  await page.evaluate(() => { window.__fl.busy = true; });
+  await page.click('#tab-blocked');
+  await page.click('#tab-lists');
+  await page.waitForFunction(() => document.getElementById('update-lists').disabled);
+  check((await page.textContent('#lists-status')) === 'Updating…', 'a rebuild elsewhere: Updating…, controls wait');
+  await page.evaluate(() => { window.__fl.busy = false; });
+  await page.waitForFunction(() => !document.getElementById('update-lists').disabled && !document.getElementById('add-url').disabled, null, { timeout: 3000 });
+  check((await page.textContent('#lists-status')).startsWith('Last checked'), 'the page looks again until it is done');
+
+  // My filters.
+  await page.click('#tab-filters');
+  await page.waitForFunction(() => document.getElementById('user-text').value !== '');
+  check((await page.evaluate(() => location.hash)) === '#filters', 'the tab is in the address (#filters)');
+  check(await page.inputValue('#user-text') === '! mine\n||ads.example^\n' && await page.locator('#user-save').isDisabled(), 'the saved filters, nothing to save yet');
+  check((await page.textContent('#user-status')).includes('1 blocking filter'), 'counts');
+  await page.fill('#user-text', '! mine\n||ads.example^\n||bad.example^$nope\nexample.com##.promo\n');
+  check(!(await page.locator('#user-save').isDisabled()), 'an edit enables Save');
+  await page.press('#user-text', 'Control+s');
+  await page.waitForFunction(() => document.getElementById('user-status').textContent.startsWith('Saved'));
+  check((await lastSent(page, 'saveUserFilters')).text.includes('example.com##.promo'), 'Ctrl+S saves the text');
+  check((await page.textContent('#user-status')) === 'Saved and in use · 1 blocking filter · 1 element filter · 1 line not understood', 'the report (' + await page.textContent('#user-status') + ')');
+  check((await page.textContent('#user-errors')).includes('Line 3: unknown option') && (await page.textContent('#user-errors')).includes('||bad.example^$nope'), 'errors per line');
+  await shot(page, 'adblock-my-filters.png');
+  await page.fill('#user-text', 'x');
+  await page.click('#user-revert');
+  await page.waitForFunction(() => document.getElementById('user-text').value !== 'x');
+  check(await page.inputValue('#user-text') === '! mine\n||ads.example^\n||bad.example^$nope\nexample.com##.promo\n', 'Revert restores the saved text');
+  check(external.length === 0, 'no network requests');
+  check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
+  await page.close();
+  // Ad blocking off: a note, editing still works.
+  ({ page, errors } = await openPage(browser, 'https://krunk.invalid/adblock.html#lists', { width: 1000, height: 600 }, 1,
+    filterListsMock, { off: true }));
+  await page.waitForSelector('.list-row');
+  check(await page.locator('#lists-off').isVisible(), 'ad blocking off: a note');
+  check(errors.length === 0, 'no console errors');
+  await page.close();
+}
+
 async function testShieldAndHttpsOnly(browser) {
   console.log('shield popover and HTTPS-only interstitial');
   // Shell: the counter as the host pushes it while a news page loads.
@@ -1443,12 +1564,12 @@ function settingsMock(defaults) {
     return { settings: s, restartRequired: restart(s) };
   };
   h.resetSettings = () => { st.settings = clone(defaults); return { settings: st.settings, restartRequired: false }; };
-  h.getFilterStatus = () => ({ enabled: true, lastCheck: Date.now() - 3 * 3600e3, lastError: null, busy: false, lists: [
-    { id: 'easylist', title: 'EasyList (ads)', enabled: true, source: 'downloaded', fetched: Date.now() - 3 * 3600e3 },
-    { id: 'easyprivacy', title: 'EasyPrivacy (trackers)', enabled: true, source: 'downloaded', fetched: Date.now() - 3 * 3600e3 },
-    { id: 'ublock-filters', title: 'uBlock filters', enabled: true, source: 'embedded', fetched: null },
-    { id: 'ublock-privacy', title: 'uBlock filters – Privacy', enabled: true, source: 'embedded', fetched: null },
-    { id: 'ublock-unbreak', title: 'uBlock filters – Unbreak', enabled: true, source: 'embedded', fetched: null },
+  h.getFilterStatus = () => ({ enabled: true, lastCheck: Date.now() - 3 * 3600e3, lastError: null, busy: false, userRules: 3, lists: [
+    { id: 'easylist', title: 'EasyList (ads)', builtin: true, enabled: true, source: 'downloaded', fetched: Date.now() - 3 * 3600e3 },
+    { id: 'easyprivacy', title: 'EasyPrivacy (trackers)', builtin: true, enabled: true, source: 'downloaded', fetched: Date.now() - 3 * 3600e3 },
+    { id: 'ublock-filters', title: 'uBlock filters', builtin: true, enabled: true, source: 'embedded', fetched: null },
+    { id: 'ublock-privacy', title: 'uBlock filters – Privacy', builtin: true, enabled: false, source: 'embedded', fetched: null },
+    { id: 'custom-1', title: 'My list', builtin: false, enabled: true, source: 'downloaded', fetched: Date.now() },
   ] });
   h.updateFilterLists = () => h.getFilterStatus();
   h.getAllowlist = () => st.allow;
@@ -1470,7 +1591,7 @@ async function testSettings(browser) {
   console.log('settings page');
   const defaults = JSON.parse(fs.readFileSync(path.join(__dirname, 'default-settings.json'), 'utf8'));
   const { page, errors, external } = await openPage(browser, 'https://krunk.invalid/settings.html', { width: 1000, height: 2900 }, 1, settingsMock, defaults);
-  await page.waitForSelector('#lists .row');
+  await page.waitForFunction(() => document.getElementById('lists-summary').textContent !== '');
   check(await page.inputValue('#searchEngine') === 'duckDuckGo', 'defaults: DuckDuckGo');
   check(await page.isChecked('input[name=startup][value=restoreSession]'), 'defaults: restore session');
   check((await page.locator('#trackingPrevention, [data-key=smartscreen]').count()) === 0, 'no Edge-only settings');
@@ -1479,7 +1600,8 @@ async function testSettings(browser) {
   check(await page.isChecked('[data-key=hardwareAcceleration]'), 'defaults: GPU on');
   check(await page.isChecked('[data-key=blockThirdPartyCookies]'), 'defaults: third-party cookies blocked');
   check(await page.locator('#restart-banner').isHidden(), 'no restart banner at first');
-  check((await page.locator('#lists .row').count()) === 5, '5 filter lists with checkboxes');
+  check((await page.textContent('#lists-summary')) === '4 of 5 filter lists on (1 added by you) · 3 filters of your own', 'filter lists summarized (' + await page.textContent('#lists-summary') + ')');
+  check((await page.getAttribute('#manage-lists', 'href')) === 'adblock.html#lists' && (await page.getAttribute('#manage-filters', 'href')) === 'adblock.html#filters', 'links to the lists and My filters on krunk://adblock');
   check(await page.inputValue('#bookmarks-bar') === 'always', 'defaults: bookmarks bar always shown');
   check(await page.inputValue('#downloadConnections') === '4', 'defaults: 4 connections per download');
   await page.selectOption('#downloadConnections', '1');
@@ -1996,6 +2118,7 @@ async function testTabWindows(browser) {
     await testFolderPopup(browser);
     await testShieldAndHttpsOnly(browser);
     await testBlockedList(browser);
+    await testFilterLists(browser);
     await testPasswords(browser);
     await testSettings(browser);
     await testLoginScript(browser);

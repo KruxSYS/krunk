@@ -3,6 +3,22 @@
 
 use serde::{Deserialize, Serialize};
 
+/// A filter list the user added by its address (krunk://adblock).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomList {
+    pub url: String,
+    #[serde(default = "enabled_by_default")]
+    pub enabled: bool,
+}
+
+fn enabled_by_default() -> bool {
+    true
+}
+
+/// How many lists the user may add.
+pub const MAX_CUSTOM_LISTS: usize = 20;
+
 /// Where the bookmarks bar shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -125,6 +141,8 @@ pub struct Settings {
     pub filter_lists: Vec<String>,
     /// Which lists of `FILTER_LISTS` existed when these settings were saved
     /// (newer ones are enabled once on load).
+    /// Lists the user added by address (in addition to the built-in ones).
+    pub custom_lists: Vec<CustomList>,
     pub filter_lists_rev: u32,
     /// Block all third-party cookies: network cookies through the engine's
     /// cookie filter (`core::cookies`, applies at once), script access
@@ -197,6 +215,7 @@ impl Default for Settings {
             tab_discard_minutes: 30,
             adblock_enabled: true,
             filter_lists: FILTER_LISTS.iter().map(|s| s.to_string()).collect(),
+            custom_lists: Vec::new(),
             filter_lists_rev: FILTER_LISTS_REV,
             block_third_party_cookies: true,
             https_only: false,
@@ -345,6 +364,16 @@ impl Settings {
         if self.download_dir.len() > 1024 || self.download_dir.chars().any(char::is_control) {
             err("downloadDir", "Invalid folder path");
         }
+        if self.custom_lists.len() > MAX_CUSTOM_LISTS {
+            err("customLists", "At most 20 lists of your own");
+        } else if self.custom_lists.iter().enumerate().any(|(i, l)| {
+            !is_web_url(&l.url, true)
+                || l.url.len() > 2048
+                || crate::blocker::is_builtin_list_url(&l.url)
+                || self.custom_lists[..i].iter().any(|o| o.url == l.url)
+        }) {
+            err("customLists", "Each list needs its own https:// address");
+        }
         if !(1..=crate::segdl::MAX_CONNECTIONS).contains(&self.download_connections) {
             err("downloadConnections", "Must be between 1 and 16");
         }
@@ -417,6 +446,7 @@ impl Settings {
                     "vaultAutolockMinutes" => s.vault_autolock_minutes = d.vault_autolock_minutes,
                     "downloadDir" => s.download_dir.clear(),
                     "downloadConnections" => s.download_connections = d.download_connections,
+                    "customLists" => s.custom_lists.clear(),
                     "userAgent" => s.user_agent.clear(),
                     "proxy" => s.proxy.clear(),
                     "extraFlags" => s.extra_flags.clear(),
@@ -766,6 +796,22 @@ mod tests {
         assert_eq!(bad(Settings { user_agent: "x".repeat(513), ..Settings::default() }), ["userAgent"]);
         assert_eq!(bad(Settings { download_dir: "C:\\dl\n".into(), ..Settings::default() }), ["downloadDir"]);
         assert_eq!(bad(Settings { download_connections: 0, ..Settings::default() }), ["downloadConnections"]);
+        let list = |u: &str| CustomList { url: u.into(), enabled: true };
+        assert!(Settings { custom_lists: vec![list("https://l.example/a.txt")], ..Settings::default() }
+            .validate()
+            .is_ok());
+        for lists in [
+            vec![list("http://l.example/a.txt")],
+            vec![list("https://l.example/a.txt"), list("https://l.example/a.txt")],
+            vec![list("https://easylist.to/easylist/easylist.txt")],
+            (0..21).map(|i| list(&format!("https://l.example/{i}.txt"))).collect(),
+        ] {
+            assert_eq!(bad(Settings { custom_lists: lists, ..Settings::default() }), ["customLists"]);
+        }
+        let back = Settings::from_json_lenient(r#"{"customLists":[{"url":"javascript:x"}]}"#);
+        assert!(back.custom_lists.is_empty());
+        let kept = Settings::from_json_lenient(r#"{"customLists":[{"url":"https://l.example/a.txt"}]}"#);
+        assert_eq!(kept.custom_lists, vec![list("https://l.example/a.txt")], "enabled when not said");
         assert_eq!(bad(Settings { download_connections: 17, ..Settings::default() }), ["downloadConnections"]);
         assert!(Settings { download_connections: 1, ..Settings::default() }.validate().is_ok());
         assert_eq!(Settings::from_json_lenient(r#"{"downloadConnections":99}"#).download_connections, 4);

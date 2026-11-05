@@ -19,6 +19,7 @@
     "ublock-quick-fixes",
     "ublock-badware"
   ],
+  "customLists": [],
   "filterListsRev": 1,
   "blockThirdPartyCookies": true,
   "httpsOnly": false,

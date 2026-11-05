@@ -112,6 +112,11 @@ pub fn list_url(id: &str) -> Option<&'static str> {
     })
 }
 
+/// Is `url` the address of one of the built-in lists?
+pub fn is_builtin_list_url(url: &str) -> bool {
+    FILTER_LISTS.iter().any(|id| list_url(id) == Some(url))
+}
+
 /// Human-readable list titles for the settings page.
 pub fn list_title(id: &str) -> &'static str {
     match id {

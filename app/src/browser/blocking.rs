@@ -14,10 +14,10 @@ use crate::log::{info, warning};
 use lb_core::assets;
 use lb_core::blocker::{self, Allowlist, Blocker, Decision, ResourceKind, ScriptletEngine};
 use lb_core::cookies;
-use lb_core::filterlists::{self, Rebuilt, UpdateState, MAX_LIST_BYTES};
+use lb_core::filterlists::{self, Rebuilt, SourceSet, UpdateState, MAX_LIST_BYTES};
 use lb_core::pages::Page;
 use lb_core::protocol::{ContentMessage, Event, PopupContent, Request};
-use lb_core::settings::{updater_proxy, UpdaterProxy, FILTER_LISTS};
+use lb_core::settings::{updater_proxy, UpdaterProxy};
 use lb_core::storage::now_ms;
 use lb_core::tabs::TabId;
 use lb_core::urlclean::{self, LoadFailure, RewriteOptions};
@@ -50,14 +50,41 @@ const DOWNLOAD_TIMEOUT_MS: i32 = 30_000;
 /// query string) to find what breaks a site.
 pub(crate) static LOG_BLOCKED: AtomicBool = AtomicBool::new(false);
 
+/// What a filter rebuild downloads first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum Fetching {
+    Nothing,
+    /// Lists the user added that have no download yet.
+    Added,
+    /// Every list that is on (the daily update, "Update now").
+    All,
+}
+
+/// What a reply owed after a rebuild carries.
+pub(super) enum Owed {
+    /// The settings page's filter status.
+    Status,
+    /// `{}`, or an error if the list `id` (just added) could not be downloaded.
+    Added(String),
+    /// The check of the user's filters.
+    Report(filterlists::UserFiltersReport),
+}
+
+/// A reply owed to a page's request: (its tab, its request id, what it carries).
+pub(super) type OwedReply = (Option<TabId>, Option<u32>, Owed);
+
 /// Blocking state of the UI thread (lists, allowlist, updater).
 pub(super) struct FilterState {
     pub allowlist: RefCell<Allowlist>,
     pub update: RefCell<UpdateState>,
-    busy: Cell<bool>,
+    pub(super) busy: Cell<bool>,
     rx: RefCell<Option<mpsc::Receiver<Rebuilt>>>,
-    /// Replies owed to "Update now" requests.
-    pending_replies: RefCell<Vec<(Option<TabId>, Option<u32>)>>,
+    /// Replies owed once the engine is rebuilt ("Update now", changes on krunk://adblock).
+    pub(super) pending_replies: RefCell<Vec<OwedReply>>,
+    /// A rebuild asked for while one runs: started when it finishes.
+    queued: Cell<Option<Fetching>>,
+    /// "My filters" (kept in the store under `USER_FILTERS_KEY`).
+    pub user: RefCell<String>,
     /// Hosts the user allowed over plain HTTP this session (HTTPS-only).
     pub http_exceptions: RefCell<HashSet<String>>,
 }
@@ -70,6 +97,8 @@ impl FilterState {
             busy: Cell::new(false),
             rx: RefCell::new(None),
             pending_replies: RefCell::new(Vec::new()),
+            queued: Cell::new(None),
+            user: RefCell::new(String::new()),
             http_exceptions: RefCell::new(HashSet::new()),
         }
     }
@@ -306,6 +335,8 @@ impl Browser {
         self.net.set_privacy_headers(dnt, gpc);
         self.net.set_block_third_party_cookies(block_3pc);
         *f.allowlist.borrow_mut() = Allowlist::new(self.store.borrow().allowlist().unwrap_or_default());
+        *f.user.borrow_mut() =
+            self.store.borrow().kv_get(filterlists::USER_FILTERS_KEY).ok().flatten().unwrap_or_default();
         if !enabled {
             info!("ad blocking is off");
             return;
@@ -313,8 +344,7 @@ impl Browser {
         let state = std::fs::read_to_string(self.dirs.filters().join("state.json"))
             .map(|j| UpdateState::from_json(&j))
             .unwrap_or_default();
-        let lists = self.settings.borrow().filter_lists.clone();
-        let key = filterlists::cache_key(&lists, &state);
+        let key = filterlists::cache_key_for(&self.filter_sources().sources(), &state);
         let t = std::time::Instant::now();
         let cached =
             std::fs::read(self.dirs.engine_cache()).ok().and_then(|data| Blocker::deserialize(&data, key).ok());
@@ -339,7 +369,7 @@ impl Browser {
                     // Block with it meanwhile; the scriptlets come with the rebuild.
                     self.net.set_engine(engine);
                 }
-                self.spawn_filter_job_forced(false, true);
+                self.spawn_filter_job_forced(Fetching::Added, true);
             }
         }
         if let Some(w) = self.app() {
@@ -361,16 +391,28 @@ impl Browser {
         }
     }
 
+    /// Everything the engine is built from, as the settings and "My filters" say now.
+    pub(super) fn filter_sources(&self) -> SourceSet {
+        let s = self.settings.borrow();
+        SourceSet {
+            builtin: s.filter_lists.clone(),
+            custom: s.custom_lists.clone(),
+            user: self.filters.user.borrow().clone(),
+        }
+    }
+
     /// Starts the worker that (optionally downloads and) rebuilds the engine.
-    pub(super) fn spawn_filter_job(&self, download: bool) {
-        self.spawn_filter_job_forced(download, false);
+    pub(super) fn spawn_filter_job(&self, fetching: Fetching) {
+        self.spawn_filter_job_forced(fetching, false);
     }
 
     /// Like [`Browser::spawn_filter_job`]; `force` compiles even if the
-    /// lists did not change (the scriptlet engine cache is missing).
-    fn spawn_filter_job_forced(&self, download: bool, force: bool) {
+    /// lists did not change (the scriptlet engine cache is missing). While a rebuild runs,
+    /// another one is queued (it reads the sources when it starts).
+    fn spawn_filter_job_forced(&self, fetching: Fetching, force: bool) {
         let f = &self.filters;
         if f.busy.replace(true) {
+            f.queued.set(Some(f.queued.get().map_or(fetching, |q| q.max(fetching))));
             return;
         }
         let Some(window) = self.app() else {
@@ -381,20 +423,19 @@ impl Browser {
         let dir = self.dirs.filters();
         let cache_path = self.dirs.engine_cache();
         let scriptlet_path = self.dirs.scriptlet_cache();
-        let (lists, proxy) = {
-            let s = self.settings.borrow();
-            (s.filter_lists.clone(), updater_proxy(&s.proxy))
-        };
+        let sources = self.filter_sources();
+        let proxy = updater_proxy(&self.settings.borrow().proxy);
         let mut state = f.update.borrow().clone();
         let current_key = if force { None } else { self.net.engine().map(|e| e.key()) };
         let (tx, rx) = mpsc::channel();
         *f.rx.borrow_mut() = Some(rx);
-        let skip_reason = (download && proxy == UpdaterProxy::Skip)
+        let skip_reason = (fetching != Fetching::Nothing && proxy == UpdaterProxy::Skip)
             .then_some("Updates are skipped while a SOCKS proxy is configured (it would bypass the proxy)");
         if let Some(reason) = skip_reason {
             state.last_error = Some(reason.into());
         }
-        let download = download && skip_reason.is_none();
+        let download = fetching != Fetching::Nothing && skip_reason.is_none();
+        let only_added = fetching == Fetching::Added;
         let spawned = std::thread::Builder::new().name("filter-lists".into()).spawn(move || {
             let _ = std::fs::create_dir_all(&dir);
             let mode = match proxy {
@@ -403,7 +444,15 @@ impl Browser {
             };
             let fetch = move |url: &str| http::get(url, MAX_LIST_BYTES, &mode, DOWNLOAD_TIMEOUT_MS);
             let fetch_ref: &dyn Fn(&str) -> Result<Vec<u8>, String> = &fetch;
-            let r = filterlists::rebuild(&dir, &lists, state, download.then_some(fetch_ref), current_key, now_ms());
+            let r = filterlists::rebuild_sources(
+                &dir,
+                &sources.sources(),
+                state,
+                download.then_some(fetch_ref),
+                only_added,
+                current_key,
+                now_ms(),
+            );
             if let Some(cache) = &r.cache {
                 let _ = lb_core::vault::write_atomic(&cache_path, cache);
             }
@@ -438,10 +487,41 @@ impl Browser {
             info!("filter lists checked; {}", r.state.schedule_note(now_ms()));
         }
         *f.update.borrow_mut() = r.state;
-        let replies: Vec<_> = f.pending_replies.borrow_mut().drain(..).collect();
-        let status = self.filter_status();
-        for (tab, req_id) in replies {
-            self.reply(tab, Event::ok(req_id, &status));
+        if let Some(next) = f.queued.take() {
+            // The sources changed meanwhile: the replies wait for the engine that has them.
+            self.spawn_filter_job(next);
+            return;
+        }
+        self.answer_filter_replies();
+    }
+
+    /// Answers the replies owed after a rebuild (also when no rebuild could start).
+    pub(super) fn answer_filter_replies(&self) {
+        let replies: Vec<_> = self.filters.pending_replies.borrow_mut().drain(..).collect();
+        let mut failed = Vec::new();
+        for (tab, req_id, owed) in replies {
+            let event = match owed {
+                Owed::Status => Event::ok(req_id, self.filter_status()),
+                Owed::Report(r) => Event::ok(req_id, r),
+                Owed::Added(id) => {
+                    let state = self.filters.update.borrow();
+                    if state.downloaded.contains_key(&id) {
+                        Event::ok(req_id, serde_json::json!({}))
+                    } else {
+                        let why = state.errors.get(&id).cloned().or_else(|| state.last_error.clone());
+                        failed.push(id);
+                        Event::err(
+                            req_id,
+                            format!("Could not add the list: {}", why.as_deref().unwrap_or("no download")),
+                        )
+                    }
+                }
+            };
+            self.reply(tab, event);
+        }
+        // A list that could not be downloaded is not kept.
+        if !failed.is_empty() {
+            self.change_settings(|s| s.custom_lists.retain(|l| !failed.contains(&filterlists::custom_id(&l.url))));
         }
     }
 
@@ -455,41 +535,34 @@ impl Browser {
 
     /// "Update now" (settings page) or the scheduled daily check.
     pub(super) fn update_filter_lists(&self, reply_to: Option<(Option<TabId>, Option<u32>)>) {
-        if let Some(r) = reply_to {
-            self.filters.pending_replies.borrow_mut().push(r);
-        }
         if !self.net.enabled() {
-            let replies: Vec<_> = self.filters.pending_replies.borrow_mut().drain(..).collect();
-            for (tab, req_id) in replies {
+            if let Some((tab, req_id)) = reply_to {
                 self.reply(tab, Event::err(req_id, "Ad blocking is turned off"));
             }
             return;
         }
-        self.spawn_filter_job(true);
+        if let Some((tab, req_id)) = reply_to {
+            self.filters.pending_replies.borrow_mut().push((tab, req_id, Owed::Status));
+        }
+        self.spawn_filter_job(Fetching::All);
     }
 
     fn filter_status(&self) -> serde_json::Value {
+        self.filter_status_with(&Default::default())
+    }
+
+    /// The lists (with their rule counts from `rules`, by id), the last update and "My
+    /// filters" (settings page and krunk://adblock).
+    pub(super) fn filter_status_with(&self, rules: &std::collections::BTreeMap<String, usize>) -> serde_json::Value {
         let state = self.filters.update.borrow();
-        let enabled = self.settings.borrow().filter_lists.clone();
-        let lists: Vec<serde_json::Value> = FILTER_LISTS
-            .iter()
-            .map(|id| {
-                let dl = state.downloaded.get(*id);
-                serde_json::json!({
-                    "id": id,
-                    "title": blocker::list_title(id),
-                    "enabled": enabled.iter().any(|e| e == id),
-                    "source": if dl.is_some() { "downloaded" } else { "embedded" },
-                    "fetched": dl.map(|d| d.fetched_ms),
-                })
-            })
-            .collect();
+        let set = self.filter_sources();
         serde_json::json!({
             "enabled": self.net.enabled(),
             "lastCheck": (state.last_check_ms > 0).then_some(state.last_check_ms),
             "lastError": state.last_error,
             "busy": self.filters.busy.get(),
-            "lists": lists,
+            "lists": filterlists::list_infos(&set, &state, rules),
+            "userRules": filterlists::rule_count(&set.user),
         })
     }
 
@@ -710,10 +783,11 @@ impl Browser {
             .map(|(_, i)| (entries[*i].url.clone(), entries[*i].page.clone(), entries[*i].kind))
             .collect();
         let items: Vec<lb_core::blocklog::Item> = summary.into_iter().map(|(i, _)| i).collect();
-        let lists = {
-            let enabled = self.settings.borrow().filter_lists.clone();
-            lb_core::filterlists::current_texts(&self.dirs.filters(), &enabled, &self.filters.update.borrow())
-        };
+        let lists = filterlists::current_texts(
+            &self.dirs.filters(),
+            &self.filter_sources().sources(),
+            &self.filters.update.borrow(),
+        );
         let enabled = self.net.enabled();
         let alive = source.is_some();
         self.spawn_job(
@@ -730,7 +804,7 @@ impl Browser {
                     .zip(explained)
                     .map(|(mut i, e)| {
                         if let Some(e) = e {
-                            i.list = (!e.list.is_empty()).then(|| blocker::list_title(&e.list).to_string());
+                            i.list = (!e.list.is_empty()).then(|| b.list_name(&e.list));
                             i.rule = Some(e.rule);
                         }
                         i

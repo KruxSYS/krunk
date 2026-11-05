@@ -61,7 +61,8 @@ fn run() -> Result<i32, String> {
 
     // Diagnostics: refresh the filter lists without opening a window.
     if std::env::args().any(|a| a == "--update-filters") {
-        return Ok(update_filters_headless(&dirs, &settings));
+        let user = store.kv_get(lb_core::filterlists::USER_FILTERS_KEY).ok().flatten().unwrap_or_default();
+        return Ok(update_filters_headless(&dirs, &settings, &user));
     }
 
     // The engine's segmentation platform keeps its own database of visited
@@ -139,8 +140,9 @@ fn migrate_legacy_data() -> Result<Option<String>, String> {
 /// `Krunk.exe --update-filters`: downloads the filter lists, rebuilds
 /// engine.dat and writes the result to the log. Exit code 0 on success.
 #[cfg(windows)]
-fn update_filters_headless(dirs: &paths::DataDirs, settings: &lb_core::settings::Settings) -> i32 {
-    use lb_core::filterlists::{self, UpdateState, MAX_LIST_BYTES};
+fn update_filters_headless(dirs: &paths::DataDirs, settings: &lb_core::settings::Settings, user: &str) -> i32 {
+    use lb_core::filterlists::{self, Sources, UpdateState, MAX_LIST_BYTES};
+    let sources = Sources { builtin: &settings.filter_lists, custom: &settings.custom_lists, user };
     use lb_core::settings::{updater_proxy, UpdaterProxy};
     let dir = dirs.filters();
     let _ = std::fs::create_dir_all(&dir);
@@ -155,7 +157,7 @@ fn update_filters_headless(dirs: &paths::DataDirs, settings: &lb_core::settings:
     };
     let fetch = |url: &str| ffi::http::get(url, MAX_LIST_BYTES, &mode, 30_000);
     let t = std::time::Instant::now();
-    let r = filterlists::rebuild(&dir, &settings.filter_lists, state, Some(&fetch), None, lb_core::storage::now_ms());
+    let r = filterlists::rebuild_sources(&dir, &sources, state, Some(&fetch), false, None, lb_core::storage::now_ms());
     if let Some(cache) = &r.cache {
         let _ = lb_core::vault::write_atomic(&dirs.engine_cache(), cache);
     }
@@ -176,7 +178,7 @@ fn update_filters_headless(dirs: &paths::DataDirs, settings: &lb_core::settings:
     );
     // Reload the caches exactly as startup does and check a few decisions.
     use lb_core::blocker::{Blocker, ResourceKind, ScriptletEngine};
-    let key = filterlists::cache_key(&settings.filter_lists, &r.state);
+    let key = filterlists::cache_key_for(&sources, &r.state);
     let t = std::time::Instant::now();
     let loaded = std::fs::read(dirs.engine_cache()).ok().and_then(|d| Blocker::deserialize(&d, key).ok());
     let Some(engine) = loaded else {

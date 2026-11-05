@@ -42,6 +42,7 @@ mod bookmarks_bar;
 mod devtools;
 mod downloads;
 mod drag;
+mod filter_lists;
 mod find;
 mod frame;
 mod jobs;
@@ -1453,6 +1454,13 @@ impl Browser {
             }
             Request::OpenBlockedPage {} => self.open_blocked_page(),
             Request::GetBlocked {} => self.get_blocked(tab, req_id),
+            r @ (Request::GetFilterLists {}
+            | Request::SetFilterList { .. }
+            | Request::AddFilterList { .. }
+            | Request::RemoveFilterList { .. }
+            | Request::RestoreDefaultLists {}
+            | Request::GetUserFilters {}
+            | Request::SaveUserFilters { .. }) => self.dispatch_filter_lists(tab, req_id, r),
             Request::ShowBookmarkMenu { id, rect } => self.show_bookmark_menu(id, rect),
             Request::BookmarkMenuAction { id, action } => self.bookmark_menu_action(id, action),
             Request::SaveBookmark { id, parent, title, url } => self.save_bookmark(id, parent, &title, url.as_deref()),

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Filters test</title></head>
+<body style="font: 28px system-ui, sans-serif; margin: 20px">
+<!-- Krunk 0.4.0: is each request blocked? probe.png (blocked by a filter of one's own),
+     buttons.github.io (only in Fanboy's Social list, added by address), an EasyList-only ad
+     host. The result is in the page and its title (the window title). -->
+<h1 style="font-size: 30px">Filters test</h1>
+<p id="out"></p>
+<script>
+const probes = {
+  own: 'probe.png?t=' + Date.now(),
+  social: 'https://buttons.github.io/buttons.js',
+  easylist: 'https://0019x.com/probe.gif',
+};
+const res = {};
+function done(name, how) {
+  res[name] = how;
+  const line = Object.keys(probes).map((n) => n + '=' + (res[n] || '…')).join(' ');
+  document.getElementById('out').textContent = line;
+  document.title = 'Filters ' + line;
+}
+Object.keys(probes).forEach((n) => {
+  const tag = probes[n].endsWith('.js') ? 'script' : 'img';
+  const e = document.createElement(tag);
+  e.onload = () => done(n, 'loaded');
+  e.onerror = () => done(n, 'failed');
+  e.src = probes[n];
+  document.body.appendChild(e);
+});
+</script>
+</body></html>

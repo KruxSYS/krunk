@@ -14,6 +14,8 @@
   </div>
   <div class="tabs" role="tablist">
     <button class="tab-btn" role="tab" id="tab-blocked" data-panel="blocked" aria-selected="true">Blocked on this page</button>
+    <button class="tab-btn" role="tab" id="tab-lists" data-panel="lists" aria-selected="false">Filter lists</button>
+    <button class="tab-btn" role="tab" id="tab-filters" data-panel="filters" aria-selected="false">My filters</button>
   </div>
 
   <section id="blocked" class="panel" role="tabpanel">
@@ -26,6 +28,40 @@
     <p class="muted note">Requests the ad blocker stopped on the page, newest first, with the filter that matched and
       the list it comes from. Addresses are shown without their query. This list lives only in memory and starts again
       when the page navigates. Elements hidden by cosmetic filters are not listed.</p>
+  </section>
+
+  <section id="lists" class="panel" role="tabpanel" hidden>
+    <div class="toolbar">
+      <p id="lists-status" class="muted"></p>
+      <button id="restore-lists" class="btn">Restore default lists</button>
+      <button id="update-lists" class="btn">Update now</button>
+    </div>
+    <p id="lists-off" class="warn" hidden>Ad blocking is turned off (Settings → Privacy). Changes here apply when it is on.</p>
+    <form id="add-form" class="add" autocomplete="off">
+      <input id="add-url" type="url" placeholder="https://example.com/filters.txt" aria-label="Address of a filter list" spellcheck="false">
+      <button class="btn primary" type="submit" id="add-btn">Add list</button>
+    </form>
+    <p id="add-error" class="field-error" role="alert"></p>
+    <div id="list-rows" class="card"></div>
+    <p class="muted note">Lists are checked for updates once a day. A list you add must be an https:// address of a
+      text file in Adblock Plus or uBlock Origin syntax (at most 16 MB); if it cannot be downloaded it is not added.
+      “Restore default lists” turns the built-in lists back to their usual choice; lists you added and My filters stay.</p>
+  </section>
+
+  <section id="filters" class="panel" role="tabpanel" hidden>
+    <textarea id="user-text" spellcheck="false" aria-label="My filters" placeholder="! One filter per line, for example:
+||ads.example.com^
+example.com##.sponsored-banner
+@@||cdn.example.org/player.js^"></textarea>
+    <div class="toolbar">
+      <p id="user-status" class="muted"></p>
+      <button id="user-revert" class="btn" type="button">Revert</button>
+      <button id="user-save" class="btn primary" type="button">Save</button>
+    </div>
+    <div id="user-errors"></div>
+    <p class="muted note">Your own filters, in Adblock Plus or uBlock Origin syntax: <code>||host^</code> blocks a
+      host, <code>site##.selector</code> hides elements on a site, <code>@@</code> makes an exception. Lines starting
+      with <code>!</code> are comments. They take effect as soon as they are saved, without a restart.</p>
   </section>
 </div>
 <script src="shared/bridge.js"></script>

@@ -7,7 +7,7 @@
 //! cache is rebuilt whenever an embedded list (new exe) or a download changes.
 
 use crate::blocker::{embedded_hash, engine_version, fnv64};
-use crate::settings::FILTER_LISTS;
+use crate::settings::{CustomList, FILTER_LISTS};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -27,6 +27,203 @@ pub struct Downloaded {
     pub hash: u64,
     pub fetched_ms: i64,
     pub bytes: usize,
+    /// The list's own `! Title:` (lists the user added).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+}
+
+/// The id of the user's own filters ("My filters" on krunk://adblock).
+pub const USER_LIST: &str = "user";
+/// The user's own filters are at most this long.
+pub const MAX_USER_FILTERS_BYTES: usize = 200 * 1024;
+
+/// Where "My filters" are kept (the store's key-value table).
+pub const USER_FILTERS_KEY: &str = "user_filters";
+
+/// [`Sources`] owned, to hand to a worker thread.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SourceSet {
+    pub builtin: Vec<String>,
+    pub custom: Vec<CustomList>,
+    pub user: String,
+}
+
+impl SourceSet {
+    pub fn sources(&self) -> Sources<'_> {
+        Sources { builtin: &self.builtin, custom: &self.custom, user: &self.user }
+    }
+
+    /// Every list, on or off (to count their rules), without the user's filters.
+    pub fn every_list(&self) -> SourceSet {
+        SourceSet {
+            builtin: FILTER_LISTS.iter().map(|s| s.to_string()).collect(),
+            custom: self.custom.iter().map(|l| CustomList { enabled: true, ..l.clone() }).collect(),
+            user: String::new(),
+        }
+    }
+}
+
+/// Filters in a list's text: lines that are not empty, a comment (`!`, `# `) or the header.
+pub fn rule_count(text: &str) -> usize {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('!') && !l.starts_with('[') && !l.starts_with("# "))
+        .count()
+}
+
+/// One list as krunk://adblock shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListInfo {
+    pub id: String,
+    pub title: String,
+    pub url: String,
+    /// Shipped with Krunk (can be turned off, not removed).
+    pub builtin: bool,
+    pub enabled: bool,
+    /// "downloaded", "embedded" (the copy in the exe) or "missing" (an added list not
+    /// downloaded yet).
+    pub source: &'static str,
+    pub fetched: Option<i64>,
+    pub rules: Option<usize>,
+    /// Why the last download of this list failed.
+    pub error: Option<String>,
+}
+
+/// Every built-in and added list with its state; `rules` from [`rule_count`] by id.
+pub fn list_infos(set: &SourceSet, state: &UpdateState, rules: &BTreeMap<String, usize>) -> Vec<ListInfo> {
+    let builtin = FILTER_LISTS.iter().map(|id| {
+        let dl = state.downloaded.get(*id);
+        ListInfo {
+            id: id.to_string(),
+            title: crate::blocker::list_title(id).to_string(),
+            url: crate::blocker::list_url(id).unwrap_or_default().to_string(),
+            builtin: true,
+            enabled: set.builtin.iter().any(|e| e == id),
+            source: if dl.is_some() { "downloaded" } else { "embedded" },
+            fetched: dl.map(|d| d.fetched_ms),
+            rules: rules.get(*id).copied(),
+            error: state.errors.get(*id).cloned(),
+        }
+    });
+    let custom = set.custom.iter().map(|l| {
+        let id = custom_id(&l.url);
+        let dl = state.downloaded.get(&id);
+        ListInfo {
+            title: dl.and_then(|d| d.title.clone()).unwrap_or_else(|| l.url.clone()),
+            url: l.url.clone(),
+            builtin: false,
+            enabled: l.enabled,
+            source: if dl.is_some() { "downloaded" } else { "missing" },
+            fetched: dl.map(|d| d.fetched_ms),
+            rules: rules.get(&id).copied(),
+            error: state.errors.get(&id).cloned(),
+            id,
+        }
+    });
+    builtin.chain(custom).collect()
+}
+
+/// The id under which a list the user added by `url` is stored.
+pub fn custom_id(url: &str) -> String {
+    format!("custom-{:016x}", fnv64(url.as_bytes()))
+}
+
+/// Everything the engine is built from: the built-in lists that are on, the lists the user
+/// added that are on, and the user's own filters.
+#[derive(Debug, Clone, Copy)]
+pub struct Sources<'a> {
+    pub builtin: &'a [String],
+    pub custom: &'a [CustomList],
+    pub user: &'a str,
+}
+
+impl<'a> Sources<'a> {
+    /// Only built-in lists (the old way, and the tests).
+    pub fn builtin(enabled: &'a [String]) -> Sources<'a> {
+        Sources { builtin: enabled, custom: &[], user: "" }
+    }
+
+    fn builtin_ids(&self) -> impl Iterator<Item = &'static str> + '_ {
+        FILTER_LISTS.iter().copied().filter(|id| self.builtin.iter().any(|e| e == id))
+    }
+
+    /// The added lists that are on: (id, url).
+    pub fn custom_ids(&self) -> impl Iterator<Item = (String, &'a str)> + '_ {
+        self.custom.iter().filter(|l| l.enabled).map(|l| (custom_id(&l.url), l.url.as_str()))
+    }
+}
+
+/// Checks a list the user added: any size up to the limit, text, at least one filter (no
+/// header needed: it may be a short list of their own).
+pub fn validate_custom(bytes: &[u8]) -> Result<String, String> {
+    if bytes.len() > MAX_LIST_BYTES {
+        return Err(format!("too large ({} bytes)", bytes.len()));
+    }
+    if bytes.contains(&0) {
+        return Err("not a text file".into());
+    }
+    let text = String::from_utf8(bytes.to_vec()).map_err(|_| "not a UTF-8 text file".to_string())?;
+    let head = text.trim_start();
+    if head.starts_with('<') {
+        return Err("a web page, not a filter list".into());
+    }
+    let rules =
+        text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('!') && !l.starts_with('[')).count();
+    if rules == 0 {
+        return Err("no filters in it".into());
+    }
+    Ok(text)
+}
+
+/// The `! Title:` a list gives itself (in its first lines).
+pub fn list_title_of(text: &str) -> Option<String> {
+    text.lines().take(50).find_map(|l| {
+        let t = l.trim().strip_prefix('!')?.trim();
+        let title = t.strip_prefix("Title:")?.trim();
+        (!title.is_empty()).then(|| title.chars().take(100).collect())
+    })
+}
+
+/// A line of the user's own filters that could not be read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilterError {
+    /// 1-based.
+    pub line: usize,
+    pub text: String,
+    pub message: String,
+}
+
+/// What the user's own filters contain.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserFiltersReport {
+    pub network: usize,
+    pub cosmetic: usize,
+    pub errors: Vec<FilterError>,
+}
+
+/// Reads the user's own filters line by line (comments `!` and empty lines skipped); at most
+/// 100 errors are listed.
+pub fn check_user_filters(text: &str) -> UserFiltersReport {
+    use adblock::lists::{parse_filter, ParseOptions, ParsedLine};
+    let mut r = UserFiltersReport::default();
+    for (i, line) in text.lines().enumerate() {
+        let l = line.trim();
+        if l.is_empty() || l.starts_with('!') || l.starts_with('[') {
+            continue;
+        }
+        match parse_filter(l, false, ParseOptions::default()) {
+            Ok(ParsedLine::Network(_)) => r.network += 1,
+            Ok(ParsedLine::Cosmetic(_)) => r.cosmetic += 1,
+            Err(e) if r.errors.len() < 100 => {
+                r.errors.push(FilterError { line: i + 1, text: l.chars().take(200).collect(), message: e.to_string() })
+            }
+            Err(_) => {}
+        }
+    }
+    r
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,6 +235,9 @@ pub struct UpdateState {
     pub downloaded: BTreeMap<String, Downloaded>,
     /// Short description of the last failure, for the settings page.
     pub last_error: Option<String>,
+    /// Why the last download of a list failed, by id (cleared by a good download).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub errors: BTreeMap<String, String>,
 }
 
 impl UpdateState {
@@ -73,12 +273,27 @@ impl UpdateState {
 /// Key identifying the compiled engine: engine version plus, for every
 /// enabled list in canonical order, where it comes from and its hash.
 pub fn cache_key(enabled: &[String], state: &UpdateState) -> u64 {
+    cache_key_for(&Sources::builtin(enabled), state)
+}
+
+/// [`cache_key`] for all [`Sources`]. Without added lists or own filters it is the same key
+/// as before them (so an existing engine cache stays valid).
+pub fn cache_key_for(sources: &Sources<'_>, state: &UpdateState) -> u64 {
     let mut desc = String::from(engine_version());
-    for id in FILTER_LISTS.iter().filter(|id| enabled.iter().any(|e| e == *id)) {
-        match state.downloaded.get(*id) {
+    for id in sources.builtin_ids() {
+        match state.downloaded.get(id) {
             Some(d) => desc.push_str(&format!("|{id}:dl:{:016x}", d.hash)),
             None => desc.push_str(&format!("|{id}:embedded:{:016x}", embedded_hash(id).unwrap_or(0))),
         }
+    }
+    // An added list without a download adds nothing to the engine.
+    for (id, _) in sources.custom_ids() {
+        if let Some(d) = state.downloaded.get(&id) {
+            desc.push_str(&format!("|{id}:dl:{:016x}", d.hash));
+        }
+    }
+    if !sources.user.trim().is_empty() {
+        desc.push_str(&format!("|{USER_LIST}:{:016x}", fnv64(sources.user.as_bytes())));
     }
     fnv64(desc.as_bytes())
 }
@@ -145,20 +360,29 @@ fn list_path(dir: &std::path::Path, id: &str) -> std::path::PathBuf {
 }
 
 /// The texts of the enabled lists as the engine in use was built from them: a stored
-/// download that still matches its hash, else the bundled copy.
-pub fn current_texts(dir: &std::path::Path, enabled: &[String], state: &UpdateState) -> Vec<(String, String)> {
-    FILTER_LISTS
-        .iter()
-        .copied()
-        .filter(|id| enabled.iter().any(|e| e == id))
+/// download that still matches its hash, else the bundled copy; then the added lists that
+/// were downloaded, and the user's own filters.
+pub fn current_texts(dir: &std::path::Path, sources: &Sources<'_>, state: &UpdateState) -> Vec<(String, String)> {
+    let stored = |id: &str, check: fn(&[u8]) -> Result<String, String>| {
+        let d = state.downloaded.get(id)?;
+        let text = std::fs::read(list_path(dir, id)).ok()?;
+        (fnv64(&text) == d.hash).then(|| check(&text).ok()).flatten()
+    };
+    let mut out: Vec<(String, String)> = sources
+        .builtin_ids()
         .filter_map(|id| {
-            let downloaded = state.downloaded.get(id).and_then(|d| {
-                let text = std::fs::read(list_path(dir, id)).ok()?;
-                (fnv64(&text) == d.hash).then(|| validate_download(&text).ok()).flatten()
-            });
-            downloaded.or_else(|| crate::blocker::bundled_list(id)).map(|t| (id.to_string(), t))
+            stored(id, validate_download).or_else(|| crate::blocker::bundled_list(id)).map(|t| (id.to_string(), t))
         })
-        .collect()
+        .collect();
+    for (id, _) in sources.custom_ids() {
+        if let Some(t) = stored(&id, validate_custom) {
+            out.push((id, t));
+        }
+    }
+    if !sources.user.trim().is_empty() {
+        out.push((USER_LIST.to_string(), sources.user.to_string()));
+    }
+    out
 }
 
 /// Refreshes the filter lists and builds the engine. Runs on a worker
@@ -173,57 +397,100 @@ pub fn current_texts(dir: &std::path::Path, enabled: &[String], state: &UpdateSt
 pub fn rebuild(
     dir: &std::path::Path,
     enabled: &[String],
-    mut state: UpdateState,
+    state: UpdateState,
     fetch: Option<Fetch<'_>>,
     current_key: Option<u64>,
     now_ms: i64,
 ) -> Rebuilt {
-    let ids: Vec<&str> = FILTER_LISTS.iter().copied().filter(|id| enabled.iter().any(|e| e == id)).collect();
+    rebuild_sources(dir, &Sources::builtin(enabled), state, fetch, false, current_key, now_ms)
+}
+
+/// [`rebuild`] for all [`Sources`]. With `only_missing`, `fetch` is used for lists that have
+/// no download yet (a list the user just added), and the daily check is left alone.
+pub fn rebuild_sources(
+    dir: &std::path::Path,
+    sources: &Sources<'_>,
+    mut state: UpdateState,
+    fetch: Option<Fetch<'_>>,
+    only_missing: bool,
+    current_key: Option<u64>,
+    now_ms: i64,
+) -> Rebuilt {
     if let Some(fetch) = fetch {
         let mut errors = Vec::new();
-        for id in &ids {
-            let Some(url) = crate::blocker::list_url(id) else { continue };
-            match fetch_list(url, fetch) {
+        let builtin =
+            sources.builtin_ids().filter_map(|id| crate::blocker::list_url(id).map(|u| (id.to_string(), u, false)));
+        let custom = sources.custom_ids().map(|(id, u)| (id, u, true));
+        for (id, url, added) in builtin.chain(custom).collect::<Vec<_>>() {
+            // `only_missing`: a list was just added; the built-in ones have their bundled copy.
+            if only_missing && (!added || state.downloaded.contains_key(&id)) {
+                continue;
+            }
+            // Built-in lists may `!#include` parts next to them (inlined); added ones are read
+            // as they are.
+            let got = if added { fetch(url).and_then(|b| validate_custom(&b)) } else { fetch_list(url, fetch) };
+            match got {
                 Ok(text) => {
                     let hash = fnv64(text.as_bytes());
-                    let path = list_path(dir, id);
-                    match crate::vault::write_atomic(&path, text.as_bytes()) {
+                    let title = added.then(|| list_title_of(&text)).flatten();
+                    match crate::vault::write_atomic(&list_path(dir, &id), text.as_bytes()) {
                         Ok(()) => {
+                            state.errors.remove(&id);
                             state
                                 .downloaded
-                                .insert(id.to_string(), Downloaded { hash, fetched_ms: now_ms, bytes: text.len() });
+                                .insert(id, Downloaded { hash, fetched_ms: now_ms, bytes: text.len(), title });
                         }
-                        Err(e) => errors.push(format!("{id}: {e}")),
+                        Err(e) => {
+                            errors.push(format!("{id}: {e}"));
+                            state.errors.insert(id, e.to_string());
+                        }
                     }
                 }
-                Err(e) => errors.push(format!("{id}: {e}")),
-            }
-        }
-        state.last_check_ms = now_ms;
-        state.last_error = (!errors.is_empty()).then(|| errors.join("; "));
-    }
-    // Load the texts, verifying stored downloads against their hashes.
-    let mut texts = Vec::with_capacity(ids.len());
-    for id in &ids {
-        let downloaded = state.downloaded.get(*id).and_then(|d| {
-            let text = std::fs::read(list_path(dir, id)).ok()?;
-            (fnv64(&text) == d.hash).then(|| validate_download(&text).ok()).flatten()
-        });
-        match downloaded {
-            Some(t) => texts.push((*id, t)),
-            None => {
-                state.downloaded.remove(*id);
-                if let Some(t) = crate::blocker::bundled_list(id) {
-                    texts.push((*id, t));
+                Err(e) => {
+                    errors.push(format!("{}: {e}", if added { url } else { id.as_str() }));
+                    state.errors.insert(id, e);
                 }
             }
         }
+        if !only_missing {
+            state.last_check_ms = now_ms;
+        }
+        state.last_error = (!errors.is_empty()).then(|| errors.join("; "));
     }
-    let key = cache_key(enabled, &state);
+    // Forget lists the user removed, with their files.
+    let removed: Vec<String> = state
+        .downloaded
+        .keys()
+        .chain(state.errors.keys())
+        .filter(|id| id.starts_with("custom-") && !sources.custom.iter().any(|l| custom_id(&l.url) == **id))
+        .cloned()
+        .collect();
+    for id in removed {
+        state.downloaded.remove(&id);
+        state.errors.remove(&id);
+        let _ = std::fs::remove_file(list_path(dir, &id));
+    }
+    // Drop records of built-in downloads that no longer validate (the bundled copy is used).
+    let invalid: Vec<String> = sources
+        .builtin_ids()
+        .filter(|id| {
+            state.downloaded.get(*id).is_some_and(|d| {
+                !std::fs::read(list_path(dir, id))
+                    .ok()
+                    .is_some_and(|t| fnv64(&t) == d.hash && validate_download(&t).is_ok())
+            })
+        })
+        .map(str::to_string)
+        .collect();
+    for id in invalid {
+        state.downloaded.remove(&id);
+    }
+    let texts = current_texts(dir, sources, &state);
+    let key = cache_key_for(sources, &state);
     if current_key == Some(key) {
         return Rebuilt { state, engine: None, cache: None, scriptlets: None, key };
     }
-    let refs: Vec<(&str, &str)> = texts.iter().map(|(i, t)| (*i, t.as_str())).collect();
+    let refs: Vec<(&str, &str)> = texts.iter().map(|(i, t)| (i.as_str(), t.as_str())).collect();
     let engine = crate::blocker::Blocker::from_lists(&refs, key);
     let cache = engine.serialize();
     let scriptlets = crate::blocker::ScriptletEngine::from_lists(&refs, key).serialize();
@@ -272,7 +539,7 @@ mod tests {
         assert_eq!(cache_key(&reversed, &base), k);
         // A downloaded list (or a different download) changes the key.
         let mut dl = base.clone();
-        dl.downloaded.insert("easylist".into(), Downloaded { hash: 1, fetched_ms: 5, bytes: 10 });
+        dl.downloaded.insert("easylist".into(), Downloaded { hash: 1, fetched_ms: 5, bytes: 10, title: None });
         let k1 = cache_key(&all(), &dl);
         assert_ne!(k1, k);
         dl.downloaded.get_mut("easylist").unwrap().hash = 2;
@@ -287,7 +554,7 @@ mod tests {
         off.retain(|l| l != "easylist");
         let mut dl2 = base.clone();
         assert_eq!(cache_key(&off, &dl2), cache_key(&off, &base));
-        dl2.downloaded.insert("easylist".into(), Downloaded { hash: 7, fetched_ms: 1, bytes: 1 });
+        dl2.downloaded.insert("easylist".into(), Downloaded { hash: 7, fetched_ms: 1, bytes: 1, title: None });
         assert_eq!(cache_key(&off, &dl2), cache_key(&off, &base));
     }
 
@@ -367,6 +634,132 @@ mod tests {
         assert_ne!(r3.key, r.key);
         let e3 = r3.engine.unwrap();
         assert_eq!(e3.check("https://brand-new-ads.example/a.js", src, ResourceKind::Script), Decision::Allow);
+    }
+
+    #[test]
+    fn added_lists_and_own_filters() {
+        use crate::blocker::{Decision, ResourceKind};
+        let tmp = Tmp::new("custom");
+        let builtin = vec!["easylist".to_string()];
+        let none: Vec<CustomList> = Vec::new();
+        // Without added lists or own filters: the same key as before them.
+        let plain = Sources { builtin: &builtin, custom: &none, user: "  \n" };
+        assert_eq!(cache_key_for(&plain, &UpdateState::default()), cache_key(&builtin, &UpdateState::default()));
+        let custom = vec![
+            CustomList { url: "https://lists.example/mine.txt".into(), enabled: true },
+            CustomList { url: "https://lists.example/off.txt".into(), enabled: false },
+        ];
+        let user = "! mine\n||own-filter.example^\nexample.com##.promo\n";
+        let sources = Sources { builtin: &builtin, custom: &custom, user };
+        let fetched = std::cell::RefCell::new(Vec::new());
+        let fetch = |url: &str| -> Result<Vec<u8>, String> {
+            fetched.borrow_mut().push(url.to_string());
+            if url.contains("mine.txt") {
+                Ok(b"! Title: My list\n||added-list.example^\n".to_vec())
+            } else {
+                Err("offline".into())
+            }
+        };
+        // A list was just added: only it is fetched, and the daily check stays as it was.
+        let state = UpdateState { last_check_ms: 77, ..UpdateState::default() };
+        let r = rebuild_sources(&tmp.0, &sources, state, Some(&fetch), true, None, 1000);
+        assert_eq!(*fetched.borrow(), vec!["https://lists.example/mine.txt".to_string()], "only the missing one");
+        assert_eq!(r.state.last_check_ms, 77);
+        let id = custom_id("https://lists.example/mine.txt");
+        assert_eq!(r.state.downloaded[&id].title.as_deref(), Some("My list"));
+        let engine = r.engine.unwrap();
+        let page = "https://news.example/";
+        assert_eq!(engine.check("https://added-list.example/a.js", page, ResourceKind::Script), Decision::Block);
+        assert_eq!(engine.check("https://own-filter.example/a.js", page, ResourceKind::Script), Decision::Block);
+        assert_eq!(engine.check("https://fine.example/a.js", page, ResourceKind::Script), Decision::Allow);
+        // The key follows the own filters and the added list's download.
+        let k = cache_key_for(&sources, &r.state);
+        assert_eq!(r.key, k);
+        assert_ne!(cache_key_for(&Sources { user: "||other.example^", ..sources }, &r.state), k);
+        assert_ne!(cache_key_for(&Sources { custom: &none, ..sources }, &r.state), k);
+        // Nothing changed: nothing compiled.
+        assert!(rebuild_sources(&tmp.0, &sources, r.state.clone(), None, false, Some(k), 2000).engine.is_none());
+        assert_eq!(r.state.errors.get(&custom_id("https://lists.example/off.txt")), None, "off: not fetched");
+        // What krunk://adblock shows.
+        let set = SourceSet { builtin: builtin.clone(), custom: custom.clone(), user: user.into() };
+        assert_eq!(set.sources().custom.len(), 2);
+        let counts: BTreeMap<String, usize> = current_texts(&tmp.0, &set.every_list().sources(), &r.state)
+            .into_iter()
+            .map(|(i, t)| (i, rule_count(&t)))
+            .collect();
+        assert_eq!(counts[&id], 1);
+        assert!(counts["easyprivacy"] > 1000, "every built-in list, on or off");
+        let infos = list_infos(&set, &r.state, &counts);
+        assert_eq!(infos.len(), FILTER_LISTS.len() + 2);
+        let mine = infos.iter().find(|i| i.id == id).unwrap();
+        assert_eq!(
+            (mine.title.as_str(), mine.source, mine.enabled, mine.rules),
+            ("My list", "downloaded", true, Some(1))
+        );
+        let off = infos.last().unwrap();
+        assert_eq!((off.title.as_str(), off.source, off.enabled), ("https://lists.example/off.txt", "missing", false));
+        let el = &infos[0];
+        assert_eq!((el.id.as_str(), el.builtin, el.enabled, el.source), ("easylist", true, true, "embedded"));
+        assert_eq!(el.url, "https://easylist.to/easylist/easylist.txt");
+        assert!(!infos[1].enabled);
+        // A failed download is remembered per list, and cleared by a good one.
+        let failing = vec![CustomList { url: "https://lists.example/gone.txt".into(), enabled: true }];
+        let r2 = rebuild_sources(
+            &tmp.0,
+            &Sources { custom: &failing, ..sources },
+            r.state.clone(),
+            Some(&fetch),
+            true,
+            None,
+            3000,
+        );
+        assert_eq!(
+            r2.state.errors.get(&custom_id("https://lists.example/gone.txt")).map(String::as_str),
+            Some("offline")
+        );
+        assert_eq!(
+            r2.key,
+            cache_key_for(&Sources { custom: &none, ..sources }, &r2.state),
+            "a list that could not be downloaded changes nothing"
+        );
+        // A removed list is forgotten, with its file.
+        let gone = rebuild_sources(&tmp.0, &Sources { custom: &none, ..sources }, r2.state, None, false, None, 4000);
+        assert!(!gone.state.downloaded.keys().chain(gone.state.errors.keys()).any(|k| k.starts_with("custom-")));
+        assert!(!list_path(&tmp.0, &id).exists());
+        let r = rebuild_sources(&tmp.0, &sources, gone.state, Some(&fetch), true, None, 5000);
+        // The texts the lookup uses include both.
+        let ids: Vec<_> = current_texts(&tmp.0, &sources, &r.state).into_iter().map(|(i, _)| i).collect();
+        assert_eq!(ids, vec!["easylist".to_string(), id, USER_LIST.to_string()]);
+        // Added lists and own filters never get the trusted permissions of the uBO lists.
+        assert!(!custom_id("https://ublock-x.example/").starts_with("ublock-") && !USER_LIST.starts_with("ublock-"));
+    }
+
+    #[test]
+    fn counts_rules() {
+        assert_eq!(rule_count("[Adblock Plus 2.0]\n! Title: x\n\n||a^\n  ##.ad \n# comment\n#@#.x\n"), 3);
+    }
+
+    #[test]
+    fn custom_validation_and_titles() {
+        assert!(validate_custom(b"||a.example^\n").is_ok(), "a short list of one's own");
+        assert!(validate_custom(b"! only a comment\n\n").is_err());
+        assert!(validate_custom(b"<!doctype html><title>404</title>").is_err());
+        assert!(validate_custom(b"||a.example^\0").is_err());
+        assert!(validate_custom(&vec![b'a'; MAX_LIST_BYTES + 1]).is_err());
+        assert_eq!(list_title_of("[Adblock Plus 2.0]\n! Title: Nice list \n||x^"), Some("Nice list".into()));
+        assert_eq!(list_title_of("||x^"), None);
+        assert_ne!(custom_id("https://a.example/l.txt"), custom_id("https://b.example/l.txt"));
+    }
+
+    #[test]
+    fn own_filters_are_checked_line_by_line() {
+        let r =
+            check_user_filters("! comment\n\n||ads.example^\nexample.com##.banner\n||bad.example^$unknownoption\n##\n");
+        assert_eq!((r.network, r.cosmetic), (1, 1));
+        assert_eq!(r.errors.iter().map(|e| e.line).collect::<Vec<_>>(), vec![5, 6]);
+        assert!(!r.errors[0].message.is_empty());
+        let many: String = (0..150).map(|i| format!("||x{i}.example^$nope\n")).collect();
+        assert_eq!(check_user_filters(&many).errors.len(), 100);
     }
 
     #[test]

@@ -496,6 +496,29 @@ pub enum Request {
     OpenBlockedPage {},
     /// krunk://adblock: what was blocked on the tab it was opened from, with the filters.
     GetBlocked {},
+    /// krunk://adblock: every filter list (built-in and added) with its address, state and
+    /// rule count.
+    GetFilterLists {},
+    /// Turns a list (a built-in id or an added list's `custom-…` id) on or off.
+    SetFilterList {
+        id: String,
+        enabled: bool,
+    },
+    /// Adds a list by its https address (downloaded at once).
+    AddFilterList {
+        url: String,
+    },
+    /// Removes an added list (built-in ones can only be turned off).
+    RemoveFilterList {
+        id: String,
+    },
+    /// The built-in lists back to the default selection (added lists and My filters stay).
+    RestoreDefaultLists {},
+    /// "My filters": the text and its check.
+    GetUserFilters {},
+    SaveUserFilters {
+        text: String,
+    },
     /// The bookmark editor's Save (popup): rename or edit `id`, or create folder in `parent`.
     SaveBookmark {
         #[serde(default)]
@@ -976,7 +999,18 @@ impl Sender {
                     | R::SiteCookiesDelete { .. }
             ),
             Sender::Page(Page::HttpsOnly) => matches!(req, R::HttpsOnlyProceed { .. }),
-            Sender::Page(Page::Adblock) => matches!(req, R::GetBlocked {}),
+            Sender::Page(Page::Adblock) => matches!(
+                req,
+                R::GetBlocked {}
+                    | R::GetFilterLists {}
+                    | R::SetFilterList { .. }
+                    | R::AddFilterList { .. }
+                    | R::RemoveFilterList { .. }
+                    | R::RestoreDefaultLists {}
+                    | R::GetUserFilters {}
+                    | R::SaveUserFilters { .. }
+                    | R::UpdateFilterLists
+            ),
         }
     }
 }
@@ -1741,6 +1775,13 @@ mod tests {
             Request::ShowTabMenu { id: 3, rect },
             Request::OpenBlockedPage {},
             Request::GetBlocked {},
+            Request::GetFilterLists {},
+            Request::SetFilterList { id: "custom-00".into(), enabled: false },
+            Request::AddFilterList { url: "https://l.example/a.txt".into() },
+            Request::RemoveFilterList { id: "custom-00".into() },
+            Request::RestoreDefaultLists {},
+            Request::GetUserFilters {},
+            Request::SaveUserFilters { text: "||a.example^".into() },
             Request::DownloadAction { id: 4, action: DownloadAction::CopyLink },
             Request::DownloadAction { id: 4, action: DownloadAction::CopyPageAddress },
             Request::DownloadAction { id: 4, action: DownloadAction::Retry },
@@ -1817,6 +1858,23 @@ mod tests {
             assert!(!s.permits(&get), "{s:?}");
         }
         assert!(!Sender::Page(Page::Adblock).permits(&Request::SiteDataGet {}));
+        let edits = [
+            Request::GetFilterLists {},
+            Request::SetFilterList { id: "easylist".into(), enabled: false },
+            Request::AddFilterList { url: "https://l.example/a.txt".into() },
+            Request::RemoveFilterList { id: "custom-00".into() },
+            Request::RestoreDefaultLists {},
+            Request::GetUserFilters {},
+            Request::SaveUserFilters { text: String::new() },
+        ];
+        for r in &edits {
+            assert!(Sender::Page(Page::Adblock).permits(r), "{r:?}");
+            for s in [Sender::Shell, Sender::Popup, Sender::Page(Page::Settings), Sender::Page(Page::NewTab)] {
+                assert!(!s.permits(r), "{s:?} {r:?}");
+            }
+        }
+        assert!(Sender::Page(Page::Adblock).permits(&Request::UpdateFilterLists));
+        assert!(!Sender::Page(Page::Adblock).permits(&Request::SaveSettings { settings: Box::default() }));
         assert_eq!(Page::from_name("adblock"), Some(Page::Adblock));
         assert!(Page::Adblock.single_instance());
     }

@@ -1,6 +1,7 @@
 //! Settings: get/save/reset with validation, live application of every
 //! setting that does not need a restart, restart, and clear-on-exit.
 
+use super::blocking::Fetching;
 use super::Browser;
 use crate::ffi::cef::{self as engine, ClearKinds};
 use crate::ffi::dialogs;
@@ -34,6 +35,9 @@ impl Browser {
                 let mut s = *settings;
                 {
                     let cur = self.settings.borrow();
+                    // The filter lists are edited on krunk://adblock.
+                    s.filter_lists = cur.filter_lists.clone();
+                    s.custom_lists = cur.custom_lists.clone();
                     s.devtools_dock = cur.devtools_dock;
                     s.devtools_size_right = cur.devtools_size_right;
                     s.devtools_size_bottom = cur.devtools_size_bottom;
@@ -86,17 +90,23 @@ impl Browser {
     /// A change of the settings from elsewhere than the settings page (the bookmarks bar's
     /// menu): validated, saved and applied the same way.
     pub(super) fn change_settings(&self, f: impl FnOnce(&mut Settings)) {
+        let _ = self.try_change_settings(f);
+    }
+
+    /// [`Browser::change_settings`] with the reason it was refused.
+    pub(super) fn try_change_settings(&self, f: impl FnOnce(&mut Settings)) -> Result<(), String> {
         let mut new = self.settings.borrow().clone();
         f(&mut new);
-        if new.validate().is_err() {
-            return;
+        if let Err(errors) = new.validate() {
+            return Err(errors.into_iter().map(|e| e.message).collect::<Vec<_>>().join("; "));
         }
         if let Err(e) = self.store.borrow().save_settings(&new) {
             warning!("saving settings: {e}");
-            return;
+            return Err("Could not save settings".into());
         }
         let old = std::mem::replace(&mut *self.settings.borrow_mut(), new.clone());
         self.apply_settings(&old, &new);
+        Ok(())
     }
 
     /// Applies everything that works without a restart.
@@ -124,13 +134,15 @@ impl Browser {
         // Privacy headers and ad blocking switch immediately (the navigator
         // properties for DNT/GPC follow on newly opened tabs).
         self.net.set_privacy_headers(new.send_dnt, new.send_gpc);
-        if old.adblock_enabled != new.adblock_enabled || old.filter_lists != new.filter_lists {
+        let lists_changed = old.filter_lists != new.filter_lists || old.custom_lists != new.custom_lists;
+        if old.adblock_enabled != new.adblock_enabled || lists_changed {
             self.net.set_enabled(new.adblock_enabled);
             if new.adblock_enabled {
                 if !self.net.has_engine() {
                     self.init_filters();
-                } else if old.filter_lists != new.filter_lists {
-                    self.spawn_filter_job(false);
+                } else if lists_changed {
+                    // A list just added is downloaded first.
+                    self.spawn_filter_job(Fetching::Added);
                 }
             }
             self.set_scriptlet_engine(None);
