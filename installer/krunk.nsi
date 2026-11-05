@@ -153,6 +153,9 @@ Section "Krunk" SecMain
   SectionIn RO
   Call WaitForKrunk
   SetOutPath "$INSTDIR"
+  ; 0.2.x shipped README.md and SECURITY.md; the package has no Markdown any more. Only the
+  ; install folder itself (non-recursive), never the user data in $LOCALAPPDATA\Krunk.
+  Delete "$INSTDIR\*.md"
   SetOverwrite on
   File /r "${SRC}\*.*"
   WriteUninstaller "$INSTDIR\uninstall.exe"

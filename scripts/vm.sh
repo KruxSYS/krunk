@@ -44,7 +44,7 @@ case "${1:-}" in
     ssh "$VM" "Get-Process Krunk -ErrorAction SilentlyContinue | Stop-Process -Force" >/dev/null || true
     have=$(ssh "$VM" "Get-Content -ErrorAction SilentlyContinue '$FWD/app/.cef-version'" | tr -d '\r' || true)
     if [ "$have" = "$CEF_VERSION" ]; then
-      for f in Krunk.dll Krunk.exe README.md SECURITY.md THIRD-PARTY-NOTICES.txt; do
+      for f in Krunk.dll Krunk.exe THIRD-PARTY-NOTICES.txt; do
         scp -q "$dist/Krunk-win-x64/$f" "$VM:$FWD/app/$f"
       done
       echo "deployed Krunk.dll (CEF $CEF_VERSION already installed)"

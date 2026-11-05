@@ -63,7 +63,6 @@ cp "$CEF_PATH"/locales/*.pak "$out/locales/"
 mkdir -p "$out/licenses"
 cp "$CEF_PATH/LICENSE.txt" "$out/licenses/CEF-LICENSE.txt"
 cp "$CEF_PATH/CREDITS.html" "$out/licenses/Chromium-CREDITS.html"
-cp README.md docs/SECURITY.md "$out/"
 {
   echo "Krunk third-party notices"
   echo "========================="
@@ -92,6 +91,15 @@ cp README.md docs/SECURITY.md "$out/"
   echo "----------------------------------------------"
   cat assets/filters/LICENSE-CC-BY-SA-3.0.txt
 } > "$out/THIRD-PARTY-NOTICES.txt"
+
+# The package ships no Markdown: README and SECURITY are read on the website and in the
+# repository. Fail rather than ship one that slipped in (checked before the installer and zip).
+stray_md=$(find "$out" -type f -iname '*.md')
+if [ -n "$stray_md" ]; then
+  echo "error: Markdown files in the package (remove them or stop copying them):" >&2
+  echo "$stray_md" >&2
+  exit 1
+fi
 
 # Per-user installer (NSIS, see installer/krunk.nsi).
 makensis=$("$root/scripts/fetch-nsis.sh")
