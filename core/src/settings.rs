@@ -149,6 +149,9 @@ pub struct Settings {
     /// Empty = the user's Downloads folder.
     pub download_dir: String,
     pub ask_where_to_save: bool,
+    /// Connections a large download may use when its server sends parts (1 = the engine's
+    /// own single download; see `segdl`).
+    pub download_connections: u32,
 
     // Advanced
     /// Empty = the engine's default user agent.
@@ -206,6 +209,7 @@ impl Default for Settings {
             offer_save_passwords: true,
             download_dir: String::new(),
             ask_where_to_save: false,
+            download_connections: 4,
             user_agent: String::new(),
             proxy: String::new(),
             extra_flags: String::new(),
@@ -341,6 +345,9 @@ impl Settings {
         if self.download_dir.len() > 1024 || self.download_dir.chars().any(char::is_control) {
             err("downloadDir", "Invalid folder path");
         }
+        if !(1..=crate::segdl::MAX_CONNECTIONS).contains(&self.download_connections) {
+            err("downloadConnections", "Must be between 1 and 16");
+        }
         if self.user_agent.len() > 512 || self.user_agent.chars().any(|c| c.is_control() || !c.is_ascii()) {
             err("userAgent", "Must be printable ASCII, at most 512 characters");
         }
@@ -409,6 +416,7 @@ impl Settings {
                     "filterLists" => s.filter_lists.retain(|l| FILTER_LISTS.contains(&l.as_str())),
                     "vaultAutolockMinutes" => s.vault_autolock_minutes = d.vault_autolock_minutes,
                     "downloadDir" => s.download_dir.clear(),
+                    "downloadConnections" => s.download_connections = d.download_connections,
                     "userAgent" => s.user_agent.clear(),
                     "proxy" => s.proxy.clear(),
                     "extraFlags" => s.extra_flags.clear(),
@@ -757,6 +765,10 @@ mod tests {
         assert_eq!(bad(Settings { user_agent: "Mozilla/5.0 \u{e9}".into(), ..Settings::default() }), ["userAgent"]);
         assert_eq!(bad(Settings { user_agent: "x".repeat(513), ..Settings::default() }), ["userAgent"]);
         assert_eq!(bad(Settings { download_dir: "C:\\dl\n".into(), ..Settings::default() }), ["downloadDir"]);
+        assert_eq!(bad(Settings { download_connections: 0, ..Settings::default() }), ["downloadConnections"]);
+        assert_eq!(bad(Settings { download_connections: 17, ..Settings::default() }), ["downloadConnections"]);
+        assert!(Settings { download_connections: 1, ..Settings::default() }.validate().is_ok());
+        assert_eq!(Settings::from_json_lenient(r#"{"downloadConnections":99}"#).download_connections, 4);
         assert!(Settings { user_agent: "Mozilla/5.0 (Windows NT 10.0) Custom/1".into(), ..Settings::default() }
             .validate()
             .is_ok());

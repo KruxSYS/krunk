@@ -48,6 +48,7 @@ mod jobs;
 mod library;
 mod pointer;
 mod power;
+mod segmented;
 mod settings_host;
 mod storage;
 mod updater;
@@ -132,6 +133,8 @@ pub struct Browser {
     /// their tab's CreateView effect.
     adopted: RefCell<HashMap<TabId, (View, Rc<TabNet>)>>,
     downloads: RefCell<Downloads>,
+    /// Downloads fetched in parts (segmented.rs).
+    parts_jobs: segmented::PartsJobs,
     /// Running downloads by engine download id: our id and the controls
     /// (known after the first progress update).
     download_ops: RefCell<HashMap<u32, (u32, Option<DownloadControl>)>>,
@@ -197,6 +200,7 @@ impl Browser {
             popup: RefCell::new(None),
             adopted: RefCell::new(HashMap::new()),
             downloads: RefCell::new(Downloads::new()),
+            parts_jobs: segmented::PartsJobs::default(),
             download_ops: RefCell::new(HashMap::new()),
             folder_anchor: Cell::new(None),
             bookmark_menu_at: Cell::new(None),
@@ -449,6 +453,7 @@ impl Browser {
     fn restore_or_open_start(&self) {
         if let Ok(Some(json)) = self.store.borrow().kv_get(DOWNLOADS_KEY) {
             *self.downloads.borrow_mut() = Downloads::from_json(&json);
+            self.remove_leftover_parts();
         }
         let (startup, homepage) = {
             let s = self.settings.borrow();
@@ -1831,6 +1836,7 @@ impl WindowEvents for AppEvents {
             EXIT_TIMER => b.finish_exit(),
             CLIPBOARD_TIMER => b.clipboard_timer(),
             drag::DRAG_TIMER => b.drag_tick(),
+            segmented::PARTS_TIMER => b.parts_tick(),
             UPDATE_TIMER => {
                 if let Some(w) = b.app() {
                     w.set_timer(UPDATE_TIMER, blocking::UPDATE_CHECK_INTERVAL_MS);

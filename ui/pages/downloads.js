@@ -46,7 +46,8 @@
       if (d.state === 'completed') status = size(d.total || d.received);
       else if (d.state === 'cancelled') status = 'Cancelled';
       else if (d.state === 'interrupted') status = 'Failed' + (d.reason ? ' – ' + d.reason : '');
-      else status = size(d.received) + (d.total ? ' of ' + size(d.total) : '') + (d.state === 'paused' ? ' – paused' : '');
+      else status = size(d.received) + (d.total ? ' of ' + size(d.total) : '') + (d.state === 'paused' ? ' – paused' : '') +
+        (d.connections && d.state === 'inProgress' ? ' · ' + d.connections + ' connections' : '');
       const links = [];
       if (d.state === 'completed') {
         links.push(el('button', { text: 'Open file', onclick: function () { act(d.id, 'open'); } }));
@@ -98,7 +99,13 @@
         },
       });
     };
-    const items_ = [
+    const items_ = running ? [
+      d.state === 'paused' ? entry('Resume', 'resume', true) : entry('Pause', 'pause', true),
+      entry('Cancel', 'cancel', true),
+      el('div', { class: 'menu-sep' }),
+      entry('Copy download link', 'copyLink', true),
+      entry('Copy page address', 'copyPageAddress', !!d.pageUrl),
+    ] : [
       entry('Open file', 'open', done),
       entry('Show in folder', 'showInFolder', done),
       el('div', { class: 'menu-sep' }),

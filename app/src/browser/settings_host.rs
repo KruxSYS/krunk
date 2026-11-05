@@ -221,6 +221,7 @@ impl Browser {
     /// profile data is cleared first; the window is destroyed when that
     /// completes (or after a timeout).
     pub(super) fn begin_exit(&self) {
+        self.stop_parts();
         let clear = self.settings.borrow().clear_on_exit.clone();
         if !clear.any() || self.exit_cleared.get() {
             self.destroy_frames();

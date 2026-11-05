@@ -173,3 +173,124 @@ pub fn fetch(
         Ok(total)
     }
 }
+
+/// One ranged GET of a download that is fetched in parts (`lb_core::segdl`): bytes
+/// `range.0..=range.1` of `url` (http or https), with the extra request `headers` (Cookie,
+/// Referer, If-Range). Redirects, WinHTTP's own cookie store and automatic Windows logon are
+/// off: the request carries exactly what the browser decided. `head` sees the raw response
+/// head first and may refuse it; `sink` then gets the body (an error from either ends the
+/// request, which is also how a download is paused or cancelled). Returns the body's size.
+pub fn get_range(
+    url: &str,
+    range: (u64, u64),
+    headers: &[(String, String)],
+    opts: &Options,
+    head: &mut dyn FnMut(&str) -> Result<(), String>,
+    sink: &mut dyn FnMut(&[u8]) -> Result<(), String>,
+) -> Result<u64, String> {
+    let u = url::Url::parse(url).map_err(|e| e.to_string())?;
+    let secure = match u.scheme() {
+        "https" => true,
+        "http" => false,
+        _ => return Err("only http(s) URLs are fetched".into()),
+    };
+    let host = u.host_str().ok_or("no host")?.to_string();
+    let port = u.port_or_known_default().unwrap_or(if secure { 443 } else { 80 });
+    let path = match u.query() {
+        Some(q) => format!("{}?{q}", u.path()),
+        None => u.path().to_string(),
+    };
+    let mut extra = format!("Range: bytes={}-{}\r\nAccept-Encoding: identity\r\n", range.0, range.1);
+    for (name, value) in headers {
+        // Header names and values from the browser; a CR or LF would start another header.
+        if name.contains(['\r', '\n', ':']) || value.contains(['\r', '\n']) {
+            return Err("invalid header".into());
+        }
+        extra.push_str(&format!("{name}: {value}\r\n"));
+    }
+    let extra: Vec<u16> = extra.encode_utf16().collect();
+    let want = range.1.saturating_sub(range.0) + 1;
+    // SAFETY: as in `fetch`: every handle is owned by a `Handle` and closed on all paths, and
+    // buffers are sized correctly.
+    unsafe {
+        let agent = HSTRING::from(opts.user_agent);
+        let session = match opts.proxy {
+            ProxyMode::System => {
+                check(WinHttpOpen(&agent, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, None, None, 0), "WinHttpOpen")?
+            }
+            ProxyMode::Named(p) => check(
+                WinHttpOpen(&agent, WINHTTP_ACCESS_TYPE_NAMED_PROXY, &HSTRING::from(p.as_str()), w!("<local>"), 0),
+                "WinHttpOpen",
+            )?,
+        };
+        let t = opts.timeout_ms;
+        WinHttpSetTimeouts(session.0, t, t, t, t).map_err(|e| e.to_string())?;
+        let tls12 = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2 | 0x2000; // | TLS 1.3
+        let _ = WinHttpSetOption(Some(session.0), WINHTTP_OPTION_SECURE_PROTOCOLS, Some(&tls12.to_le_bytes()));
+        let connect = check(WinHttpConnect(session.0, &HSTRING::from(host.as_str()), port, 0), "WinHttpConnect")?;
+        let request = check(
+            WinHttpOpenRequest(
+                connect.0,
+                w!("GET"),
+                &HSTRING::from(path.as_str()),
+                PCWSTR::null(),
+                PCWSTR::null(),
+                std::ptr::null(),
+                if secure { WINHTTP_FLAG_SECURE } else { WINHTTP_OPEN_REQUEST_FLAGS(0) },
+            ),
+            "WinHttpOpenRequest",
+        )?;
+        let off = WINHTTP_DISABLE_COOKIES | WINHTTP_DISABLE_REDIRECTS | WINHTTP_DISABLE_AUTHENTICATION;
+        WinHttpSetOption(Some(request.0), WINHTTP_OPTION_DISABLE_FEATURE, Some(&off.to_le_bytes()))
+            .map_err(|e| failure("options", &e))?;
+        let logon = WINHTTP_AUTOLOGON_SECURITY_LEVEL_HIGH;
+        let _ = WinHttpSetOption(Some(request.0), WINHTTP_OPTION_AUTOLOGON_POLICY, Some(&logon.to_le_bytes()));
+        WinHttpAddRequestHeaders(request.0, &extra, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE)
+            .map_err(|e| failure("headers", &e))?;
+        WinHttpSendRequest(request.0, None, None, 0, 0, 0).map_err(|e| failure("send", &e))?;
+        WinHttpReceiveResponse(request.0, std::ptr::null_mut()).map_err(|e| failure("receive", &e))?;
+        // The raw head: first its size, then the text.
+        let mut len = 0u32;
+        let mut index = 0u32;
+        let _ =
+            WinHttpQueryHeaders(request.0, WINHTTP_QUERY_RAW_HEADERS_CRLF, PCWSTR::null(), None, &mut len, &mut index);
+        if len == 0 || len > 256 * 1024 {
+            return Err("no response head".into());
+        }
+        let mut raw = vec![0u16; (len as usize).div_ceil(2) + 1];
+        let mut index = 0u32;
+        WinHttpQueryHeaders(
+            request.0,
+            WINHTTP_QUERY_RAW_HEADERS_CRLF,
+            PCWSTR::null(),
+            Some(raw.as_mut_ptr() as *mut c_void),
+            &mut len,
+            &mut index,
+        )
+        .map_err(|e| failure("head", &e))?;
+        let text = String::from_utf16_lossy(&raw[..(len as usize / 2).min(raw.len())]);
+        head(&text)?;
+        let mut total: u64 = 0;
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            let mut avail = 0u32;
+            WinHttpQueryDataAvailable(request.0, &mut avail).map_err(|e| failure("read", &e))?;
+            if avail == 0 {
+                break;
+            }
+            let n = (avail as usize).min(buf.len());
+            let mut read = 0u32;
+            WinHttpReadData(request.0, buf.as_mut_ptr() as *mut c_void, n as u32, &mut read)
+                .map_err(|e| failure("read", &e))?;
+            if read == 0 {
+                break;
+            }
+            total += u64::from(read);
+            if total > want {
+                return Err("the server sent more than the part".into());
+            }
+            sink(&buf[..read as usize])?;
+        }
+        Ok(total)
+    }
+}

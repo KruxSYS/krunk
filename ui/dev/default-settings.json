@@ -36,6 +36,7 @@
   "offerSavePasswords": true,
   "downloadDir": "",
   "askWhereToSave": false,
+  "downloadConnections": 4,
   "userAgent": "",
   "proxy": "",
   "extraFlags": "",

@@ -48,6 +48,14 @@ pub struct DownloadItem {
     /// The page it was downloaded from, if known.
     #[serde(default)]
     pub page_url: Option<String>,
+    /// Fetched in parts over this many connections (see `segdl`); none for the engine's
+    /// own single download.
+    #[serde(default)]
+    pub connections: Option<u32>,
+    /// The part files of a download fetched in parts, while it runs: left over after a crash
+    /// or quit, they are deleted at the next start.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<String>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,6 +119,8 @@ impl Downloads {
             private,
             finished: None,
             page_url: None,
+            connections: None,
+            parts: Vec::new(),
         });
         // Drop the oldest finished entries beyond the cap.
         while self.items.len() > MAX_ITEMS {
@@ -142,11 +152,28 @@ impl Downloads {
         }
     }
 
+    /// Fetched in parts: over `connections`, with these part files (cleared when it ends).
+    pub fn set_parts(&mut self, id: u32, connections: u32, parts: Vec<String>) {
+        if let Some(i) = self.items.iter_mut().find(|i| i.id == id) {
+            i.connections = Some(connections);
+            i.parts = parts;
+        }
+    }
+
+    /// Part files of downloads that were running when the browser last exited (for cleanup);
+    /// they are forgotten here.
+    pub fn take_leftover_parts(&mut self) -> Vec<String> {
+        self.items.iter_mut().filter(|i| i.state.is_finished()).flat_map(|i| std::mem::take(&mut i.parts)).collect()
+    }
+
     pub fn set_state(&mut self, id: u32, state: DownloadState, reason: Option<String>, now: i64) {
         if let Some(i) = self.items.iter_mut().find(|i| i.id == id) {
             i.state = state;
             i.reason = reason;
             i.finished = if state.is_finished() { i.finished.or(Some(now)) } else { None };
+            if state.is_finished() {
+                i.parts.clear();
+            }
             if state == DownloadState::Completed {
                 if let Some(t) = i.total {
                     i.received = t;
@@ -289,6 +316,23 @@ mod tests {
         assert_eq!((x.finished, x.page_url.as_deref(), x.url.as_str()), (None, None, "https://e.com/x.iso"));
         let json = serde_json::to_string(x).unwrap();
         assert!(json.contains(r#""finished":null"#) && json.contains(r#""pageUrl":null"#), "{json}");
+    }
+
+    #[test]
+    fn parts_are_cleaned_up() {
+        let mut d = Downloads::new();
+        let a = d.start("https://e.com/big.iso", Path::new("C:/dl/big.iso"), Some(1 << 26), 1, false);
+        d.set_parts(a, 4, vec!["C:/dl/big.iso.part0".into(), "C:/dl/big.iso.part1".into()]);
+        assert_eq!(d.get(a).unwrap().connections, Some(4));
+        // The browser quit while it ran: at the next start it is interrupted, its parts go.
+        let mut back = Downloads::from_json(&d.to_json());
+        assert_eq!(back.get(a).unwrap().state, DownloadState::Interrupted);
+        assert_eq!(back.take_leftover_parts(), vec!["C:/dl/big.iso.part0".to_string(), "C:/dl/big.iso.part1".into()]);
+        assert!(back.take_leftover_parts().is_empty());
+        assert!(back.get(a).unwrap().parts.is_empty());
+        // Finishing clears them too (the host removed or merged the files).
+        d.set_state(a, DownloadState::Completed, None, 2);
+        assert!(d.get(a).unwrap().parts.is_empty() && !d.to_json().contains("parts"));
     }
 
     #[test]

@@ -64,6 +64,14 @@ impl Browser {
                 None => return,
             }
         }
+        // Large files from servers that send parts: several connections (see segmented.rs).
+        if let Some((start, path)) = self.try_parts(start, path, private, tab) {
+            self.accept_download(start, path, private, tab);
+        }
+    }
+
+    /// The engine downloads it (one connection).
+    pub(super) fn accept_download(&self, start: DownloadStart, path: PathBuf, private: bool, tab: Option<TabId>) {
         if let Some(v) = tab.and_then(|t| self.views.borrow().get(&t).map(|v| v.downloads.clone())) {
             v.set(v.get() + 1);
         }
@@ -158,6 +166,13 @@ impl Browser {
                     self.reply(tab, Event::err(req_id, "Download not found"));
                     return;
                 };
+                if matches!(action, DownloadAction::Pause | DownloadAction::Resume | DownloadAction::Cancel)
+                    && self.parts_control(id, action)
+                {
+                    self.reply(tab, Event::ok(req_id, ()));
+                    self.push_downloads();
+                    return;
+                }
                 let op = self.download_control(id);
                 let path = PathBuf::from(&item.path);
                 match action {

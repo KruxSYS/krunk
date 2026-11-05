@@ -786,10 +786,15 @@ async function testDownloads(browser) {
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('Escape');
   check(await page.locator('.ctx-menu').count() === 0, 'Esc closes the menu');
-  // A running one: Retry and Remove are off.
+  // A running one: pause (or resume) and cancel first; no file actions.
+  await emit(page, { event: 'downloads', items: [Object.assign({}, items[0], { state: 'inProgress', received: 100, connections: 4 })].concat(items.slice(1)) });
+  await page.waitForTimeout(50);
+  check((await page.locator('.dl[data-id="3"] .sub').textContent()).includes('4 connections'), 'a download in parts shows its connections');
   await page.locator('.dl[data-id="3"] .name').click({ button: 'right' });
   const rlabels = await page.$$eval('.ctx-menu .menu-item', (ns) => ns.map((n) => n.textContent + (n.disabled ? '(off)' : '')));
-  check(rlabels.includes('Retry(off)') && rlabels.includes('Remove from list(off)'), 'a running download cannot be retried or removed');
+  check(JSON.stringify(rlabels) === JSON.stringify(['Pause', 'Cancel', 'Copy download link', 'Copy page address(off)']), 'context menu of a running download (' + rlabels.join(', ') + ')');
+  await page.locator('.ctx-menu .menu-item', { hasText: 'Pause' }).click();
+  check((await lastSent(page, 'downloadAction')).action === 'pause', 'Pause from the menu');
   await page.mouse.click(5, 5);
   check(await page.locator('.ctx-menu').count() === 0, 'a click elsewhere closes the menu');
   await page.locator('.dl[data-id="2"] button', { hasText: 'Show in folder' }).click();
@@ -1043,7 +1048,7 @@ async function testBookmarksBar(browser) {
   let sv = await lastSent(page, 'saveBookmark');
   check(sv && sv.id === 10 && sv.parent === 1 && sv.title === 'Rust lang' && sv.url === 'https://www.rust-lang.org/learn', 'Save sends saveBookmark{id, parent, title, url}');
   await emit(page, { event: 'popup', content: { kind: 'bookmarkEdit', id: null, parent: 11, isFolder: true, title: 'New folder', url: null } });
-  await page.waitForSelector('#bm-name');
+  await page.waitForFunction(() => document.querySelector('h2') && document.querySelector('h2').textContent === 'New folder');
   check(await page.locator('#bm-url').count() === 0 && (await page.textContent('h2')) === 'New folder', 'a new folder has a name only');
   await page.fill('#bm-name', 'Tools');
   await page.press('#bm-name', 'Enter');
@@ -1420,6 +1425,12 @@ async function testSettings(browser) {
   check(await page.locator('#restart-banner').isHidden(), 'no restart banner at first');
   check((await page.locator('#lists .row').count()) === 5, '5 filter lists with checkboxes');
   check(await page.inputValue('#bookmarks-bar') === 'always', 'defaults: bookmarks bar always shown');
+  check(await page.inputValue('#downloadConnections') === '4', 'defaults: 4 connections per download');
+  await page.selectOption('#downloadConnections', '1');
+  await page.waitForTimeout(80);
+  check(await page.evaluate(() => window.__settings.settings.downloadConnections) === 1, 'connections per download: 1 (off) saved as a number');
+  await page.selectOption('#downloadConnections', '4');
+  await page.waitForTimeout(80);
   await page.selectOption('#bookmarks-bar', 'newTab');
   await page.waitForTimeout(80);
   check(await page.evaluate(() => window.__settings.settings.bookmarksBar) === 'newTab', 'bookmarks bar: "only on new tabs" saved');

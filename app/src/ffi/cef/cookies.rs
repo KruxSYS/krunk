@@ -56,6 +56,33 @@ pub fn delete_cookies(
     visit(profile, Some(Box::new(which)), Box::new(done));
 }
 
+/// The cookies `profile` would send to `url` (HttpOnly ones too), for a request the browser
+/// makes itself (a download fetched in parts). `done` gets them as one `Cookie` header value,
+/// empty when there are none.
+pub fn cookie_header(profile: Profile, url: &str, done: impl FnOnce(String) + 'static) {
+    let Some(manager) = manager(profile) else {
+        done(String::new());
+        return;
+    };
+    let id = NEXT.with(|n| {
+        let id = n.get();
+        n.set(id + 1);
+        id
+    });
+    let done: Done = Box::new(move |found: Vec<CookieInfo>| {
+        let header = found.iter().map(|c| format!("{}={}", c.name, c.value)).collect::<Vec<_>>().join("; ");
+        done(header);
+    });
+    JOBS.with(|j| j.borrow_mut().insert(id, Job { found: Vec::new(), delete: None, done: Some(done) }));
+    let mut visitor = Visitor::new(id, manager.clone());
+    if manager.visit_url_cookies(Some(&CefString::from(url)), 1, Some(&mut visitor)) == 0 {
+        finish(id, None);
+        return;
+    }
+    // No cookies for the URL: the visitor is never called.
+    post_ui_delayed(300, move || finish(id, None));
+}
+
 fn visit(profile: Profile, delete: Option<Predicate>, done: Done) {
     let Some(manager) = manager(profile) else {
         done(Vec::new());

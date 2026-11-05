@@ -19,7 +19,7 @@ mod scheme;
 mod scriptlets;
 mod view;
 
-pub use cookies::{delete_cookies, list_cookies, Profile};
+pub use cookies::{cookie_header, delete_cookies, list_cookies, Profile};
 pub use data::clear_profile_data;
 pub use net::{NetRequest, NetVerdict, RequestPolicy};
 pub use scheme::InternalResponse;

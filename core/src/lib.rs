@@ -24,6 +24,7 @@ pub mod pointer_lock;
 pub mod preprocess;
 pub mod protocol;
 pub mod secret;
+pub mod segdl;
 pub mod settings;
 pub mod sitedata;
 pub mod storage;

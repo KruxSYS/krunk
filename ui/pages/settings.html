@@ -157,6 +157,16 @@
       <p class="field-error" data-error-for="downloadDir"></p>
     </div>
     <label class="toggle"><input type="checkbox" data-key="askWhereToSave"> Ask where to save each file</label>
+    <div class="field">
+      <label for="downloadConnections">Connections per download</label>
+      <select id="downloadConnections" data-key="downloadConnections" data-type="number">
+        <option value="1">1 (off)</option><option value="2">2</option><option value="4">4</option>
+        <option value="6">6</option><option value="8">8</option><option value="12">12</option><option value="16">16</option>
+      </select>
+      <p class="help">Large files (8 MB or more) from servers that send files in parts are downloaded over
+        several connections at once, which is often faster. Everything else downloads as usual.</p>
+      <p class="field-error" data-error-for="downloadConnections"></p>
+    </div>
   </section>
 
   <section class="card" data-section="advanced proxy flags user agent">

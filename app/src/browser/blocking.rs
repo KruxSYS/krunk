@@ -139,6 +139,9 @@ impl NetShared {
 struct TabShared {
     /// URL of the top-level navigation in progress or loaded.
     top_url: Mutex<String>,
+    /// The last top-level requests and the `Referer` the engine sent with each (a download
+    /// fetched in parts sends the same one).
+    navigations: Mutex<std::collections::VecDeque<(String, String)>>,
     /// Ad blocking is off for this page (allowlisted site).
     allowed: AtomicBool,
     blocked: AtomicU32,
@@ -152,6 +155,14 @@ struct TabPolicy {
 
 impl RequestPolicy for TabPolicy {
     fn check(&self, req: &NetRequest<'_>) -> NetVerdict {
+        if req.resource_type == 0 {
+            if let Ok(mut n) = self.tab.navigations.lock() {
+                if n.len() >= 8 {
+                    n.pop_front();
+                }
+                n.push_back((req.url.to_string(), req.referrer.to_string()));
+            }
+        }
         if blocker::is_internal(req.url) {
             // Only built-in pages may load from the internal origins.
             let top_level = req.resource_type == 0;
@@ -241,6 +252,13 @@ impl TabNet {
 
     pub fn blocked(&self) -> u32 {
         self.io.blocked.load(Relaxed)
+    }
+
+    /// The `Referer` the engine sent with its last top-level request for `url`: `Some("")`
+    /// for none, `None` if the request was not seen.
+    pub fn engine_referrer(&self, url: &str) -> Option<String> {
+        let n = self.io.navigations.lock().ok()?;
+        n.iter().rev().find(|(u, _)| u == url).map(|(_, r)| r.clone())
     }
 
     pub fn allowed(&self) -> bool {

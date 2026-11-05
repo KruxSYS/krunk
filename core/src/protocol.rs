@@ -1989,6 +1989,8 @@ mod tests {
                     private: false,
                     finished: Some(9),
                     page_url: Some("https://e.com/".into()),
+                    connections: Some(4),
+                    parts: Vec::new(),
                 }],
             },
             Event::VaultState { exists: true, locked: false },

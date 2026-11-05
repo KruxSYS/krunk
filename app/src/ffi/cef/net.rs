@@ -14,6 +14,8 @@ pub struct NetRequest<'a> {
     /// Origin of the document that made the request (empty for the
     /// browser's own navigations).
     pub initiator: &'a str,
+    /// The `Referer` the engine is sending (empty for none).
+    pub referrer: &'a str,
 }
 
 /// What to do with a request.
@@ -94,7 +96,13 @@ wrap_resource_request_handler! {
             let Some(request) = request else { return ReturnValue::CONTINUE };
             let url = CefString::from(&request.url()).to_string();
             let resource_type = sys::cef_resource_type_t::from(request.resource_type()) as i32;
-            let verdict = self.policy.check(&NetRequest { url: &url, resource_type, initiator: &self.initiator });
+            let referrer = CefString::from(&request.referrer_url()).to_string();
+            let verdict = self.policy.check(&NetRequest {
+                url: &url,
+                resource_type,
+                initiator: &self.initiator,
+                referrer: &referrer,
+            });
             match verdict {
                 NetVerdict::Block => ReturnValue::CANCEL,
                 NetVerdict::Respond { content_type, body } => {
