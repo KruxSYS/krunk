@@ -8,6 +8,8 @@ RUN mkdir src && echo 'fn main() {}' > src/main.rs \
     && rm -rf src
 COPY src ./src
 COPY migrations ./migrations
+COPY templates ./templates
+COPY data ./data
 RUN cargo build --release --locked --offline \
     && cp target/release/krunk-sync /krunk-sync \
     && mkdir -p /out/secrets

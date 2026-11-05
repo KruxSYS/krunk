@@ -1,0 +1,10 @@
+Subject: Two-step verification is on for your Krunk account
+
+Hello,
+
+Two-step verification (an authenticator app) was just turned on for your
+Krunk account. Keep your backup codes somewhere safe.
+
+If you didn't do this, reset your password now:
+
+{{site}}/account/reset

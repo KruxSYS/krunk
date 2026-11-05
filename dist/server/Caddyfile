@@ -25,7 +25,9 @@
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "no-referrer"
 		X-Frame-Options "DENY"
-		Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+		# "?" = only where no route set its own (the Turnstile pages do). This block is deferred
+		# (it deletes Server), so it runs after the routes' own headers.
+		?Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"
 		Cross-Origin-Resource-Policy "same-origin"
 		Cross-Origin-Opener-Policy "same-origin"
@@ -46,7 +48,7 @@
 	}
 
 	# The account and sync API (krunk-sync, service "api", docs/sync/PLAN.md §8). Never cached or
-	# transformed. Without the "sync" profile (or while api is down) this answers 502.
+	# transformed. While api is down this answers a JSON 502.
 	handle /api/* {
 		request_body {
 			max_size 2MiB
@@ -98,6 +100,27 @@
 		file_server {
 			hide .*
 		}
+	}
+
+	# The account pages (docs/sync/PLAN.md §4.6): static, never cached. Only the four form pages
+	# may load Cloudflare Turnstile, so only they allow its script and frame (PLAN §4.5).
+	redir /account /account/ 308
+	handle /account/* {
+		root * /srv/site
+		header Cache-Control "no-store, no-transform"
+		@turnstile path /account/login /account/register /account/reset /account/resend /account/login.html /account/register.html /account/reset.html /account/resend.html
+		header @turnstile Content-Security-Policy "default-src 'none'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+		try_files {path} {path}.html
+		file_server {
+			hide .*
+		}
+	}
+
+	handle /privacy {
+		root * /srv/site
+		header Cache-Control "no-cache, no-transform"
+		rewrite * /privacy.html
+		file_server
 	}
 
 	# The site itself (baked into the image).

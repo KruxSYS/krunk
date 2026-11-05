@@ -9,11 +9,23 @@
 //!                           so no restart policy can turn a one-shot into a restart loop)
 //! `krunk-sync secrets-check --dir DIR`  exit 0 if every secret file exists (its health check)
 
+mod accounts;
+mod api;
 mod client_ip;
 mod config;
+mod crypto;
 mod db;
 mod http;
+#[cfg(test)]
+mod it;
+mod jobs;
+mod mail;
+mod password;
+mod ratelimit;
 mod secrets;
+mod sessions;
+mod totp;
+mod turnstile;
 
 use std::net::SocketAddr;
 use std::process::ExitCode;
@@ -74,10 +86,31 @@ async fn run(serve: bool) -> Result<(), String> {
     }
     let trusted = client_ip::TrustedPeers::default();
     trusted.spawn_refresh(config.trusted_peer_host.clone());
+    let passwords = password::Passwords::new(config.keys.password_pepper)?;
+    let turnstile = turnstile::Turnstile::new(
+        &config.turnstile_secret_key,
+        &config.turnstile_hostname,
+        config.turnstile_test_mode(),
+    )?;
+    if config.accounts_enabled() {
+        if config.turnstile_test_mode() {
+            tracing::warn!("Turnstile uses a Cloudflare TEST secret: there is no bot protection (staging only)");
+        }
+        let smtp = config.smtp.as_ref().expect("accounts_enabled implies SMTP");
+        if smtp.tls == config::SmtpTls::None {
+            tracing::warn!("SMTP without TLS (a local test sink only)");
+        }
+        mail::spawn_worker(pool.clone(), mail::Mailer::new(smtp)?, config.public_base_url.clone());
+        tracing::info!("accounts enabled");
+    } else {
+        tracing::warn!("accounts disabled: TURNSTILE_SITE_KEY, TURNSTILE_SECRET_KEY and SMTP_HOST are all needed");
+    }
+    jobs::spawn(pool.clone(), config.ip_retention_days);
     let listener =
         tokio::net::TcpListener::bind(config.bind).await.map_err(|e| format!("bind {}: {e}", config.bind))?;
     tracing::info!(bind = %config.bind, "listening");
-    let app = http::router(http::AppState { config, db: pool, trusted });
+    let app =
+        http::router(http::AppState { config: std::sync::Arc::new(config), db: pool, trusted, passwords, turnstile });
     axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(shutdown())
         .await

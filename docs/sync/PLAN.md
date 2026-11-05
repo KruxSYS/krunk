@@ -159,9 +159,9 @@ volumes: { krunk-db: {} }
 - **Email and password.**
   - Email: case-insensitive, unique, at most 254 characters, syntax-checked. It must be verified
     before linking: a link approval is refused until it is.
-  - Password policy: 10 to 256 characters (Unicode NFKC), not equal to the email, and not in a
-    bundled top-100k common-password list. An HIBP k-anonymity check is optional
-    (OPEN_QUESTIONS).
+  - Password policy: 10 to 256 characters (Unicode NFKC), not equal to the email (or its local
+    part), and not in a bundled common-password list (`server/data/`: the NCSC top 100k, the
+    entries of 10+ characters). No HIBP check (OPEN_QUESTIONS Q12).
 - **Hashing:**
   `Argon2id(input = HMAC-SHA256(PASSWORD_PEPPER, nfkc(password)), salt = 16 random bytes, m = 65536 KiB, t = 3, p = 1, out = 32 bytes)`,
   stored as a PHC string together with a `pepper_id` so the pepper can rotate. Crates: `argon2`
@@ -172,7 +172,9 @@ volumes: { krunk-db: {} }
     whether an account exists.
 - **Email verification:** a random 32-byte token in a link (`/account/verify?token=…`), valid
   24 h and single-use. Only its HMAC hash is stored. `resend-verification` needs Turnstile and is
-  rate-limited.
+  rate-limited. **Confirming needs the password too**, re-registering an unverified address
+  replaces its password and voids older links, and sign-in needs a verified address
+  (pre-registration hijacking, PROTOCOL §11.2). Unverified accounts are deleted after 7 days.
 - **Password reset:**
   - It works like verification, but the token lasts 1 h.
   - It sets the new password, revokes **all web sessions** and sends an email.
@@ -180,17 +182,25 @@ volumes: { krunk-db: {} }
     survives a reset (THREAT_MODEL G6). Linked devices keep syncing.
 - **2FA:**
   - **TOTP** (RFC 6238, SHA-1, 6 digits, 30 s, ±1 step, `totp-rs` 6), optional. The secret is
-    encrypted at rest with XChaCha20-Poly1305 under `TOTP_ENC_KEY` from `.env`. There are 10
-    single-use backup codes, Argon2id-hashed with the same parameters as passwords.
+    encrypted at rest with XChaCha20-Poly1305 under the `totp_enc_key` secret (AAD = the account
+    id). Each time step is accepted once. There are 10 single-use backup codes of 60 random bits
+    (`XXXX-XXXX-XXXX`), stored as HMACs under `token_hmac_key`: as built in S2, instead of Argon2id,
+    because random 60-bit codes can't be guessed offline the way passwords can, and a login would
+    otherwise cost up to ten Argon2id runs. TOTP is implemented directly over `hmac`/`sha1`
+    (checked against the RFC 6238 vectors) rather than with `totp-rs`.
   - **WebAuthn / passkeys** come later (S11+, `webauthn-rs` 0.6) as a second factor or a
     passwordless web login. They are never used for sync keys.
 - **Generic errors:** login, register, reset and resend give the same response whether or not
   the account exists. Register always answers "check your email". For an existing address, that
   email says "someone tried to register with your address".
-- **Rate limits:**
-  - **Per IP:** in memory, `governor` 0.10, keyed by the *trusted* client IP (§4.4).
-  - **Per account:** stored in `accounts.failed_logins` and `locked_until`, with exponential
-    back-off after 5 failures (1, 2, 4 … 60 min).
+- **Rate limits** (as built in S2):
+  - **Per IP, per address, per account:** fixed windows in Postgres (`rate_limits`), keyed by an
+    HMAC of the *trusted* client IP (§4.4), of the address or of the account id. Unlike the
+    in-memory `governor` first planned, they survive restarts and cover the per-day limits, and
+    the table holds no addresses.
+  - **Login lockout:** `login_throttle`, keyed by the HMAC of the address **whether or not an
+    account exists** (so a lockout reveals nothing): after 5 failures within 15 minutes, a lock of
+    1, 2, 4 … 60 minutes.
 
   The numbers are in PROTOCOL §11.
 
@@ -369,13 +379,14 @@ All tables carry `account_id` with `ON DELETE CASCADE` from `accounts`, so delet
 deletes everything in one statement (§7).
 
 **Accounts and authentication:**
-- `accounts(id uuid pk, email citext unique, email_verified_at, pw_phc text, pepper_id smallint, pw_changed_at, totp_secret_enc bytea, totp_enabled bool, failed_logins int, locked_until, created_at, last_active_at)`
-- `backup_codes(account_id, code_phc, used_at)`
+- `accounts(id uuid pk, email citext unique, email_verified_at, pw_phc text, pepper_id smallint, pw_changed_at, totp_secret_enc bytea, totp_pending_enc bytea, totp_enabled bool, totp_last_step bigint, created_at, last_active_at)` (S2: migration 0002)
+- `backup_codes(account_id, code_hash, used_at)`
+- `login_throttle(email_hash pk, failures, locked_until, updated_at)` and `rate_limits(bucket, key, window_start, count)` (S2)
 - `email_tokens(hash bytea pk, account_id, kind, expires_at, used_at)`
 - `email_outbox(id, account_id null, to_addr, template, params jsonb, attempts, next_attempt_at, sent_at)`; rows are purged 7 days after sending.
 
 **Sessions, devices and tokens:**
-- `web_sessions(id uuid pk, account_id, token_hash, csrf_hash, created_at, last_used_at, reauth_at, ip inet, country, user_agent, revoked_at)`
+- `web_sessions(id uuid pk, account_id, token_hash, created_at, last_used_at, reauth_at, ip inet, country, user_agent, revoked_at)` (the CSRF token is HMAC(token key, cookie token), so it isn't stored)
 - `devices(id uuid pk, account_id, short int, platform, label, client_version, created_at, last_sync_at, last_ip inet, last_country, user_agent, revoked_at)`
 - `refresh_families(id uuid pk, device_id, current_hash, created_at, rotated_at, revoked_at)`
 - `refresh_used(hash pk, family_id, used_at)`
@@ -660,6 +671,11 @@ Playwright, hadolint, yamllint and `docker compose config -q`.
   daily `backup` run beside `web`. On live, a request through Cloudflare is logged with its
   real /24 and country, and a forged `CF-Connecting-IP` sent straight to the hop is ignored
   (Q8 verified).
+- **S2:** implemented (accounts, Turnstile, mail outbox, account pages, `/privacy`; migration
+  0002 only, since the planned 0002–0004 fit in one). Verified with 44 database integration
+  tests, a release-mode timing check, and Playwright through every page on staging (Turnstile
+  test keys, Mailpit). Live with accounts **closed** (`503 accounts_disabled`) until the operator
+  provisions Turnstile, SMTP and mail DNS (OPEN_QUESTIONS, "Operator provisioning").
 - **S4:** implemented. `core::sync` (crypto, codes, directories with the §4.4 acceptance rules,
   envelopes, SAS, HLC, URL normalisation), frozen vectors, the RFC 9180 A.2 interop test and the
   mutation tests. See `core/src/sync/README.md`. It isn't wired into the app until S6.

@@ -1,0 +1,11 @@
+Subject: Someone tried to create a Krunk account with your address
+
+Hello,
+
+Someone tried to create a Krunk account with this email address, but you
+already have one. If that was you, sign in instead:
+
+{{site}}/account/login
+
+If you forgot your password, you can reset it there. If it wasn't you,
+ignore this email: your account is unchanged.

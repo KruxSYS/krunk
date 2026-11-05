@@ -92,7 +92,27 @@ database are defined here too. Design: `docs/sync/PLAN.md`; decisions:
 - `web` doesn't depend on `api`: if the API is down, `/api/*` answers a JSON 502, and the
   site, downloads and updates are unaffected.
 - The only operator settings are in `.env` (see `.env.example`): the Turnstile keys and SMTP.
-  Without them, accounts stay disabled (from S2).
+  Without them, accounts stay **closed**: `/api/v1/web/config` reports
+  `accounts_enabled: false`, the account endpoints answer `503 accounts_disabled`, and the pages
+  at `/account/` say "Accounts are coming soon". Setting both and restarting opens them; no code
+  change is needed (docs/sync/OPEN_QUESTIONS.md, "Operator provisioning").
+
+**Accounts (milestone S2).** Register, confirm by email, sign in, sign out, reset or change the
+password, two-step verification (TOTP plus backup codes). The pages are static
+(`site/account/`, `site/privacy.html`, one `account.js`); only the four form pages may load
+Cloudflare Turnstile, and only when accounts are open. Mail goes through an outbox in Postgres,
+sent by a worker in `api`; templates are in `server/templates/`.
+
+**Testing accounts** (staging or a local stack): put Cloudflare's test keys and the Mailpit sink
+in `.env` (the commented block at the end of `.env.example`; `COMPOSE_PROFILES=dev-mail`). Then:
+```sh
+# Rust unit + database integration tests (a throwaway Postgres):
+docker run -d --name krunk-pgtest -e POSTGRES_PASSWORD=itpass -p 55432:5432 postgres:18.6-alpine3.24
+KRUNK_TEST_DATABASE_URL=postgres://postgres:itpass@localhost:55432/postgres cargo test   # in server/
+cargo test --release it::timing -- --ignored --nocapture                                  # timing, alone
+# Every page in a browser (PUBLIC_BASE_URL=https://krunk.test in .env; see the script's header):
+NODE_PATH=/usr/lib/node_modules/@playwright/mcp/node_modules node server/e2e/accounts.cjs http://<host:port> <project> <shots dir>
+```
 
 **Client IP.**
 - Caddy trusts `CF-Connecting-IP` only from Cloudflare's ranges (`cloudflare-trusted.caddy`,

@@ -1,0 +1,12 @@
+Subject: Reset your Krunk password
+
+Hello,
+
+Someone (hopefully you) asked to reset the password of your Krunk account.
+Choose a new password here:
+
+{{link}}
+
+The link works once and expires in 1 hour. Resetting the password signs out
+the website everywhere. Your linked devices and your synced data are not
+affected. If you didn't ask for this, ignore this email.

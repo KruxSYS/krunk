@@ -1,16 +1,23 @@
 //! The HTTP surface: routes, JSON errors, response headers, limits and request logs.
 
+use crate::accounts;
+use crate::api::{ApiResult, Client};
 use crate::client_ip::{self, TrustedPeers};
 use crate::config::Config;
+use crate::password::Passwords;
+use crate::ratelimit;
+use crate::sessions;
+use crate::turnstile::Turnstile;
 use axum::extract::{ConnectInfo, DefaultBodyLimit, MatchedPath, Request, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Serialize;
 use sqlx::PgPool;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
@@ -22,9 +29,11 @@ pub const HEALTH_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone)]
 pub struct AppState {
-    pub config: Config,
+    pub config: Arc<Config>,
     pub db: PgPool,
     pub trusted: TrustedPeers,
+    pub passwords: Passwords,
+    pub turnstile: Turnstile,
 }
 
 /// `{"error":"<code>","message":"<generic text>"}` (PROTOCOL §11.1).
@@ -39,7 +48,25 @@ pub fn error(status: StatusCode, code: &'static str, message: &'static str) -> R
 }
 
 pub fn router(state: AppState) -> Router {
-    let api = Router::new().route("/api/v1/web/config", get(web_config)).fallback(not_found);
+    // The account endpoints: closed until Turnstile and SMTP are configured, and state-changing
+    // requests only from the site's own origin.
+    let web = Router::new()
+        .route("/api/v1/web/register", post(accounts::register))
+        .route("/api/v1/web/verify-email", post(accounts::verify_email))
+        .route("/api/v1/web/resend-verification", post(accounts::resend))
+        .route("/api/v1/web/login", post(accounts::login))
+        .route("/api/v1/web/logout", post(accounts::logout))
+        .route("/api/v1/web/password-reset/request", post(accounts::reset_request))
+        .route("/api/v1/web/password-reset/confirm", post(accounts::reset_confirm))
+        .route("/api/v1/web/password/change", post(accounts::password_change))
+        .route("/api/v1/web/reauth", post(accounts::reauth))
+        .route("/api/v1/web/me", get(accounts::me))
+        .route("/api/v1/web/totp/setup", post(accounts::totp_setup))
+        .route("/api/v1/web/totp/enable", post(accounts::totp_enable))
+        .route("/api/v1/web/totp/disable", post(accounts::totp_disable))
+        .route_layer(middleware::from_fn_with_state(state.clone(), sessions::same_origin))
+        .route_layer(middleware::from_fn_with_state(state.clone(), sessions::accounts_gate));
+    let api = Router::new().route("/api/v1/web/config", get(web_config)).merge(web).fallback(not_found);
     Router::new()
         .route("/healthz", get(healthz))
         .merge(api)
@@ -105,57 +132,195 @@ async fn healthz(State(state): State<AppState>) -> Response {
 
 #[derive(Serialize)]
 struct WebConfig<'a> {
+    accounts_enabled: bool,
     turnstile_site_key: &'a str,
     public_base_url: &'a str,
 }
 
 /// `GET /api/v1/web/config` (PROTOCOL §11.2): public configuration for the static pages.
-async fn web_config(State(state): State<AppState>) -> Response {
-    Json(WebConfig {
-        turnstile_site_key: &state.config.turnstile_site_key,
+async fn web_config(State(state): State<AppState>, client: Client) -> ApiResult {
+    // Fails open on a database error: this is public, static information.
+    let key = ratelimit::ip_key(&state.config.keys, client.ip());
+    if let Err(e) = ratelimit::hit(&state.db, ratelimit::CONFIG_IP, &key).await {
+        if e.code == "rate_limited" {
+            return Err(e);
+        }
+    }
+    let enabled = state.config.accounts_enabled();
+    Ok(Json(WebConfig {
+        accounts_enabled: enabled,
+        // No widget key while accounts are closed, so the pages don't load Turnstile.
+        turnstile_site_key: if enabled { &state.config.turnstile_site_key } else { "" },
         public_base_url: &state.config.public_base_url,
     })
-    .into_response()
+    .into_response())
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use axum::body::Body;
+    use std::sync::OnceLock;
     use tower::ServiceExt;
 
-    fn state() -> AppState {
-        // A lazy pool never connects unless a handler queries it.
-        let db = sqlx::postgres::PgPoolOptions::new().connect_lazy("postgres://x:y@127.0.0.1:1/none").unwrap();
-        AppState {
-            config: Config {
-                database_url: "postgres://x:y@127.0.0.1:1/none".into(),
-                bind: "127.0.0.1:0".parse().unwrap(),
-                public_base_url: "https://krunk.209.wf".into(),
-                turnstile_site_key: "1x00000000000000000000AA".into(),
-                trusted_peer_host: "web".into(),
-            },
-            db,
-            trusted: TrustedPeers::default(),
-        }
+    /// The Argon2 dummy hash takes a moment; share one hasher between tests.
+    pub fn passwords() -> Passwords {
+        static P: OnceLock<Passwords> = OnceLock::new();
+        P.get_or_init(|| Passwords::new([5u8; 32]).unwrap()).clone()
     }
 
-    async fn call(req: axum::http::Request<Body>) -> (StatusCode, axum::http::HeaderMap, String) {
-        let res = router(state()).oneshot(req).await.unwrap();
+    pub fn state_with(extra: &[(&str, &str)]) -> AppState {
+        let mut env: Vec<(String, String)> = vec![
+            ("DATABASE_URL".into(), "postgres://x:y@127.0.0.1:1/none".into()),
+            ("PUBLIC_BASE_URL".into(), "https://krunk.209.wf".into()),
+        ];
+        env.extend(extra.iter().map(|(k, v)| (k.to_string(), v.to_string())));
+        let config = Config::from_lookup(&|k| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone())).unwrap();
+        // A lazy pool never connects unless a handler queries it; then it fails fast.
+        let db = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(Duration::from_millis(500))
+            .connect_lazy(&config.database_url)
+            .unwrap();
+        let turnstile = Turnstile::with_url("http://127.0.0.1:9/siteverify", "s", "krunk.209.wf", false).unwrap();
+        AppState { config: Arc::new(config), db, trusted: TrustedPeers::default(), passwords: passwords(), turnstile }
+    }
+
+    pub const ENABLED: [(&str, &str); 3] = [
+        ("TURNSTILE_SITE_KEY", "0x4AAAsite"),
+        ("TURNSTILE_SECRET_KEY", "0x4AAAsecret"),
+        ("SMTP_HOST", "smtp.example.org"),
+    ];
+
+    async fn call_with(state: AppState, req: axum::http::Request<Body>) -> (StatusCode, axum::http::HeaderMap, String) {
+        let res = router(state).oneshot(req).await.unwrap();
         let (parts, body) = res.into_parts();
         let bytes = axum::body::to_bytes(body, 1 << 20).await.unwrap();
         (parts.status, parts.headers, String::from_utf8_lossy(&bytes).into_owned())
     }
 
+    async fn call(req: axum::http::Request<Body>) -> (StatusCode, axum::http::HeaderMap, String) {
+        call_with(state_with(&[]), req).await
+    }
+
+    fn json(body: &str) -> serde_json::Value {
+        serde_json::from_str(body).unwrap()
+    }
+
     #[tokio::test]
     async fn web_config_is_public_and_never_cached() {
+        // Closed (no Turnstile/SMTP): no site key is handed out. The rate limit fails open when
+        // the database is unreachable, so the config still answers.
         let (status, h, body) = call(axum::http::Request::get("/api/v1/web/config").body(Body::empty()).unwrap()).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(h[header::CACHE_CONTROL], "no-store");
         assert_eq!(h[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
-        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(v["turnstile_site_key"], "1x00000000000000000000AA");
+        let v = json(&body);
+        assert_eq!(v["accounts_enabled"], false);
+        assert_eq!(v["turnstile_site_key"], "");
         assert_eq!(v["public_base_url"], "https://krunk.209.wf");
+        let (_, _, body) = call_with(
+            state_with(&ENABLED),
+            axum::http::Request::get("/api/v1/web/config").body(Body::empty()).unwrap(),
+        )
+        .await;
+        let v = json(&body);
+        assert_eq!(v["accounts_enabled"], true);
+        assert_eq!(v["turnstile_site_key"], "0x4AAAsite");
+    }
+
+    #[tokio::test]
+    async fn accounts_fail_closed() {
+        for path in ["/api/v1/web/register", "/api/v1/web/login", "/api/v1/web/password-reset/request"] {
+            let req = axum::http::Request::post(path)
+                .header(header::ORIGIN, "https://krunk.209.wf")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{}"))
+                .unwrap();
+            let (status, h, body) = call(req).await;
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{path}");
+            assert_eq!(json(&body)["error"], "accounts_disabled");
+            assert_eq!(h[header::CACHE_CONTROL], "no-store");
+        }
+        let (status, _, body) = call(axum::http::Request::get("/api/v1/web/me").body(Body::empty()).unwrap()).await;
+        assert_eq!(
+            (status, json(&body)["error"].as_str()),
+            (StatusCode::SERVICE_UNAVAILABLE, Some("accounts_disabled"))
+        );
+    }
+
+    #[tokio::test]
+    async fn cross_origin_posts_are_refused() {
+        let post = |origin: Option<&str>, fetch_site: Option<&str>| {
+            let mut b = axum::http::Request::post("/api/v1/web/login").header(header::CONTENT_TYPE, "application/json");
+            if let Some(o) = origin {
+                b = b.header(header::ORIGIN, o);
+            }
+            if let Some(f) = fetch_site {
+                b = b.header("sec-fetch-site", f);
+            }
+            b.body(Body::from("{}")).unwrap()
+        };
+        for (origin, site) in [
+            (None, None),
+            (Some("https://evil.example"), None),
+            (Some("https://krunk.209.wf.evil.example"), Some("same-origin")),
+            (Some("null"), None),
+            (Some("http://krunk.209.wf"), None),
+            (None, Some("cross-site")),
+            (None, Some("same-site")),
+        ] {
+            let (status, _, body) = call_with(state_with(&ENABLED), post(origin, site)).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{origin:?} {site:?}");
+            assert_eq!(json(&body)["error"], "forbidden");
+        }
+        // Same origin passes the check (and then fails on the empty body, before any database use).
+        for (origin, site) in [(Some("https://krunk.209.wf"), None), (None, Some("same-origin"))] {
+            let (status, _, _) = call_with(state_with(&ENABLED), post(origin, site)).await;
+            assert_ne!(status, StatusCode::FORBIDDEN, "{origin:?} {site:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn signed_in_endpoints_need_the_cookie_and_csrf() {
+        let s = state_with(&ENABLED);
+        let (status, _, body) =
+            call_with(s.clone(), axum::http::Request::get("/api/v1/web/me").body(Body::empty()).unwrap()).await;
+        assert_eq!((status, json(&body)["error"].as_str()), (StatusCode::UNAUTHORIZED, Some("unauthorized")));
+        // A cookie but no CSRF header on a POST: refused before the database is asked.
+        let token = crate::crypto::new_token();
+        let req = axum::http::Request::post("/api/v1/web/logout")
+            .header(header::ORIGIN, "https://krunk.209.wf")
+            .header(header::COOKIE, format!("{}={token}", sessions::COOKIE))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+        let (status, _, body) = call_with(s.clone(), req).await;
+        assert_eq!((status, json(&body)["error"].as_str()), (StatusCode::FORBIDDEN, Some("forbidden")));
+        let req = axum::http::Request::post("/api/v1/web/logout")
+            .header(header::ORIGIN, "https://krunk.209.wf")
+            .header(header::COOKIE, format!("{}={token}", sessions::COOKIE))
+            .header(sessions::CSRF_HEADER, sessions::csrf_for(&s.config.keys, &crate::crypto::new_token()))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+        let (status, _, _) = call_with(s, req).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "a CSRF token of another session");
+    }
+
+    #[tokio::test]
+    async fn bad_json_is_a_json_400() {
+        for body in ["not json", "{\"email\":1}", "{\"email\":\"a@b.cd\",\"turnstile\":\"t\",\"extra\":1}"] {
+            let req = axum::http::Request::post("/api/v1/web/password-reset/request")
+                .header(header::ORIGIN, "https://krunk.209.wf")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body))
+                .unwrap();
+            let (status, h, resp) = call_with(state_with(&ENABLED), req).await;
+            // The per-IP limit is checked first and needs the database; without one this is a 500.
+            // What matters here: never axum's plain-text rejection.
+            assert!(h[header::CONTENT_TYPE].to_str().unwrap().starts_with("application/json"), "{body}: {status}");
+            assert!(json(&resp)["error"].is_string());
+        }
     }
 
     #[tokio::test]
@@ -164,7 +329,7 @@ mod tests {
             let (status, h, body) = call(axum::http::Request::get(path).body(Body::empty()).unwrap()).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
             assert_eq!(h[header::CACHE_CONTROL], "no-store");
-            assert_eq!(serde_json::from_str::<serde_json::Value>(&body).unwrap()["error"], "not_found");
+            assert_eq!(json(&body)["error"], "not_found");
         }
     }
 
@@ -178,7 +343,7 @@ mod tests {
         let (status, h, body) = call(req).await;
         assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
         assert_eq!(h[header::CACHE_CONTROL], "no-store");
-        assert_eq!(serde_json::from_str::<serde_json::Value>(&body).unwrap()["error"], "payload_too_large");
+        assert_eq!(json(&body)["error"], "payload_too_large");
     }
 
     #[tokio::test]

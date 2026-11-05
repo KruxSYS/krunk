@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Create an account · Krunk</title>
+<link rel="icon" type="image/png" href="/krunk-64.png">
+<link rel="stylesheet" href="/style.css">
+<script src="/account/account.js" defer></script>
+</head>
+<body class="account" data-page="register">
+<header class="bar">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="/krunk.svg" width="28" height="28" alt=""> Krunk</a>
+    <nav><a href="/account/">Account</a> <a href="/privacy">Privacy</a></nav>
+  </div>
+</header>
+<main class="wrap narrow">
+  <h1>Create an account</h1>
+  <p id="closed" class="closed" hidden>Accounts are coming soon. Krunk works fully without one; an account will only be needed for sync.</p>
+  <p id="status" class="status" role="status" aria-live="polite"></p>
+  <form id="form" class="card" hidden novalidate>
+    <label>Email <input name="email" type="email" autocomplete="email" required maxlength="254"></label>
+    <label>Password <input name="password" type="password" autocomplete="new-password" required minlength="10"></label>
+    <label>Password again <input name="password2" type="password" autocomplete="new-password" required minlength="10"></label>
+    <p class="hint">At least 10 characters. A few random words make a good password. This password is for the
+      website account only; your synced data has its own passphrase, set in Krunk.</p>
+    <div class="turnstile" data-turnstile></div>
+    <button type="submit" class="primary">Create account</button>
+  </form>
+  <div id="done" class="card" hidden>
+    <p><strong>Check your email.</strong> We sent a link to confirm the address. It works for 24 hours.</p>
+    <p class="hint">Nothing arrived? Look in the spam folder, or <a href="/account/resend">send it again</a>.</p>
+  </div>
+  <p class="links">Already have an account? <a href="/account/login">Sign in</a></p>
+  <p class="never">The Krunk website never asks for your sync passphrase or recovery key.</p>
+</main>
+<footer class="wrap narrow"><p><a href="/">Krunk</a> · <a href="/privacy">Privacy</a></p></footer>
+</body>
+</html>

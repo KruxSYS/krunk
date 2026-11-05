@@ -42,7 +42,18 @@ services:
     environment:
       POSTGRES_PASSWORD_FILE: /run/krunk-secrets/postgres_password
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://krunk.209.wf}
+      # Accounts stay closed (503 accounts_disabled) until both Turnstile keys and SMTP_HOST are
+      # set in .env (OPEN_QUESTIONS Q1/Q2).
       TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+      TURNSTILE_EXPECTED_HOSTNAME: ${TURNSTILE_EXPECTED_HOSTNAME:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_TLS: ${SMTP_TLS:-starttls}
+      MAIL_FROM: ${MAIL_FROM:-Krunk <no-reply@krunk.209.wf>}
+      IP_RETENTION_DAYS: ${IP_RETENTION_DAYS:-90}
       TRUSTED_PEER_HOST: web
       RUST_LOG: ${API_LOG:-info,sqlx=warn}
     volumes:
@@ -202,6 +213,29 @@ services:
       options:
         max-size: "1m"
         max-file: "2"
+
+  # A mail sink for staging and local tests only (profile dev-mail: COMPOSE_PROFILES=dev-mail
+  # with SMTP_HOST=mailpit, SMTP_PORT=1025, SMTP_TLS=none). Never enabled on live.
+  mailpit:
+    profiles: ["dev-mail"]
+    # yamllint disable-line rule:line-length
+    image: axllent/mailpit:v1.33.0@sha256:9b3a463be15354c0f0eba91697d80e3e0d8a5623ef0e627cacc836bc17fd5231
+    environment:
+      MP_MAX_MESSAGES: "500"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
 
 networks:
   # The database is reachable only from api and backup.

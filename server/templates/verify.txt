@@ -1,0 +1,10 @@
+Subject: Confirm your Krunk account
+
+Hello,
+
+Please confirm your email address for your Krunk account:
+
+{{link}}
+
+The link works once and expires in 24 hours. If you didn't create a Krunk
+account, ignore this email: nothing happens without the confirmation.

@@ -649,7 +649,10 @@ The test vectors include 30 tricky URLs, and both desktop and Android must produ
 - **Errors:** `{"error":"<code>","message":"<generic text>"}`. Codes: `bad_request`,
   `unauthorized`, `forbidden`, `not_found`, `conflict`, `gone`, `payload_too_large`,
   `rate_limited` (with `Retry-After`), `rotation_pending` (423), `quota_exceeded`,
-  `turnstile_failed`, `server_error`.
+  `turnstile_failed`, `server_error`. The account endpoints (S2) add `accounts_disabled` (503, while
+  Turnstile or SMTP isn't configured), `invalid_link`, `email_unverified`, `totp_required`,
+  `totp_invalid`, `invalid_email` and `password_too_short` / `password_too_long` /
+  `password_is_email` / `password_common`.
 - **Auth:**
   - **web**: a `__Host-krunk_session` cookie plus the `X-Krunk-CSRF` header (a per-session
     token) plus a same-origin `Origin` check;
@@ -661,18 +664,18 @@ The test vectors include 30 tricky URLs, and both desktop and Android must produ
 ### 11.2 Website account endpoints (auth: web; Turnstile `T` = required token for the named action)
 | Method | Path | Auth | Request | Response | Rate limit | Errors |
 |---|---|---|---|---|---|---|
-| GET | `web/config` | none | – | `{turnstile_site_key, public_base_url}` (public config, so the static pages need no inline script) | 60/min/IP | – |
+| GET | `web/config` | none | – | `{accounts_enabled, turnstile_site_key, public_base_url}` (public config, so the static pages need no inline script; the site key is empty while accounts are disabled) | 60/min/IP | – |
 | POST | `web/register` | none + T `register` | `{email, password, turnstile}` | 202 `{status:"check_email"}` (identical whether or not the email exists) | 5/h/IP | `turnstile_failed`, `bad_request` (password policy) |
-| POST | `web/verify-email` | none | `{token}` | 200 | 20/h/IP | `gone` (expired, 24 h), `bad_request` |
+| POST | `web/verify-email` | none | `{token, password}` | 200 | 20/h/IP | `gone` (expired, 24 h), `invalid_link`, `unauthorized` (wrong password) |
 | POST | `web/resend-verification` | none + T `resend` | `{email, turnstile}` | 202 | 3/h/IP, 3/day/account | `turnstile_failed` |
-| POST | `web/login` | none + T `login` | `{email, password, turnstile, totp?}` | 200 + Set-Cookie, `{csrf}` · 401 `{error:"unauthorized"}` (generic) · 401 `{error:"totp_required"}` | 10/15 min/IP, 5/15 min/account then exponential delay | `turnstile_failed`, `unauthorized`, `rate_limited` |
+| POST | `web/login` | none + T `login` | `{email, password, turnstile, totp?}` (`totp`: a 6-digit code or a backup code) | 200 + Set-Cookie, `{csrf}` · 401 `{error:"unauthorized"}` (generic) · 401 `totp_required` / `totp_invalid` · 403 `email_unverified` (only after the right password) | 10/15 min/IP; per email (account or not): 5 failures in 15 min, then a 1, 2, 4 … 60 min lock | `turnstile_failed`, `unauthorized`, `rate_limited` |
 | POST | `web/logout` | web | `{}` | 204 | – | – |
 | POST | `web/password-reset/request` | none + T `reset` | `{email, turnstile}` | 202 (always) | 3/h/IP, 3/day/account | `turnstile_failed` |
 | POST | `web/password-reset/confirm` | none | `{token, new_password, totp?}` | 200. Revokes all web sessions; devices stay linked; **synced data and keys untouched**; email | 10/h/IP | `gone` (1 h), `bad_request` |
 | POST | `web/password/change` | web | `{current, new, totp?}` | 200. Other web sessions revoked; email | 5/h/account | `unauthorized` |
 | POST | `web/reauth` | web | `{password, totp?}` | 204; sets `reauth_at = now` (valid 10 min) | 10/15 min/account | `unauthorized` |
-| GET | `web/me` | web | – | `{email, created, totp:bool, devices:n, sync:{has_keyset, records, bytes}}` | 60/min | – |
-| POST | `web/totp/setup` | web | `{password}` | `{secret_b32, otpauth_uri}` (pending) | 5/h | `unauthorized` |
+| GET | `web/me` | web | – | `{email, email_verified, created, totp:bool, backup_codes_left, devices:n, sync:{has_keyset, records, bytes}, reauth_valid, csrf}` | 60/min | – |
+| POST | `web/totp/setup` | web | `{password}` | `{secret_b32, otpauth_uri, qr_svg}` (pending until enabled) | 5/h | `unauthorized`, `conflict` (already on) |
 | POST | `web/totp/enable` | web | `{code}` | 200 `{backup_codes:[10]}` | 10/h | `bad_request` |
 | POST | `web/totp/disable` | web | `{password, code}` | 200; email | 5/h | `unauthorized` |
 | GET | `web/link/{user_code}` | web | – | `{label, platform, country, age_s}` | 5 lookups/10 min/session, 20/h/IP | `not_found` (generic) |
@@ -686,6 +689,12 @@ The test vectors include 30 tricky URLs, and both desktop and Android must produ
 | GET | `web/export` | web (+ re-auth) | – | `application/json` download: account metadata, devices, sessions and all record envelopes (ciphertext only). **No** directories, seals or `rr_wrap`s: those are served only to authenticated devices (§11.5) | 3/day/account | – |
 | POST | `web/sync/reset` | web (+ re-auth + TOTP if enabled) | `{confirm:"DELETE SYNC DATA"}` | 200: deletes keysets, escrow, records and approvals; devices stay linked without keys | 3/day | – |
 | POST | `web/account/delete` | web + T `delete` + re-auth | `{password, totp?, confirm:"DELETE"}` | 200: everything deleted immediately (PLAN §7); cookie cleared; email receipt | 3/day | `unauthorized`, `turnstile_failed` |
+
+**Verification needs the password (S2).** `web/verify-email` takes the account's password
+with the token, registering an address that is still unverified replaces its password and voids
+the earlier links, and signing in needs a verified address. Together they close
+pre-registration hijacking: someone who registers your address first can't end up holding an
+account you confirmed.
 
 **Re-auth** means a successful `web/reauth` (password + TOTP if enabled) within the last 10
 minutes (`web_sessions.reauth_at`). Otherwise the endpoint answers 401 `reauth_required`, and the

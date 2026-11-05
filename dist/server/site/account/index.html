@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Your account · Krunk</title>
+<link rel="icon" type="image/png" href="/krunk-64.png">
+<link rel="stylesheet" href="/style.css">
+<script src="/account/account.js" defer></script>
+</head>
+<body class="account" data-page="index">
+<header class="bar">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="/krunk.svg" width="28" height="28" alt=""> Krunk</a>
+    <nav><a href="/account/">Account</a> <a href="/privacy">Privacy</a></nav>
+  </div>
+</header>
+<main class="wrap narrow">
+  <h1>Your account</h1>
+  <p id="closed" class="closed" hidden>Accounts are coming soon. Krunk works fully without one; an account will only be needed for sync.</p>
+  <p id="status" class="status" role="status" aria-live="polite"></p>
+  <div id="overview" hidden>
+    <section class="card">
+      <h2>Account</h2>
+      <dl class="facts">
+        <dt>Email</dt><dd id="me-email"></dd>
+        <dt>Created</dt><dd id="me-created"></dd>
+      </dl>
+      <button id="logout" type="button">Sign out</button>
+    </section>
+
+    <section class="card">
+      <h2>Devices and sync</h2>
+      <p>No devices are linked yet. Linking Krunk to your account arrives with sync, in a later release.
+        Your bookmarks, history and passwords will then be encrypted on your devices before they are uploaded.</p>
+    </section>
+
+    <section class="card">
+      <h2>Two-step verification</h2>
+      <p id="totp-state"></p>
+      <form id="totp-start" hidden novalidate>
+        <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+        <button type="submit">Turn on</button>
+      </form>
+      <form id="totp-confirm" hidden novalidate>
+        <p>Scan this code with an authenticator app, or enter the key by hand.</p>
+        <div id="totp-qr" class="qr"></div>
+        <p>Key: <code id="totp-secret"></code></p>
+        <label>The 6-digit code the app shows <input name="code" autocomplete="one-time-code" inputmode="numeric" maxlength="6" required></label>
+        <button type="submit" class="primary">Confirm</button>
+      </form>
+      <div id="totp-codes" hidden>
+        <p><strong>Your backup codes.</strong> Each works once if you lose your phone. Store them somewhere safe:
+          they are shown only now.</p>
+        <ul id="totp-code-list" class="codes"></ul>
+      </div>
+      <form id="totp-off" hidden novalidate>
+        <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+        <label>Code (or a backup code) <input name="code" autocomplete="one-time-code" maxlength="20" required></label>
+        <button type="submit">Turn off</button>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Change password</h2>
+      <form id="password" novalidate>
+        <label>Current password <input name="current" type="password" autocomplete="current-password" required></label>
+        <label>New password <input name="new" type="password" autocomplete="new-password" required minlength="10"></label>
+        <label>New password again <input name="new2" type="password" autocomplete="new-password" required minlength="10"></label>
+        <label class="needs-totp" hidden>Code (or a backup code) <input name="totp" autocomplete="one-time-code" maxlength="20"></label>
+        <p class="hint">Other places where you are signed in to this website are signed out.</p>
+        <button type="submit">Change password</button>
+      </form>
+    </section>
+  </div>
+  <p class="never">The Krunk website never asks for your sync passphrase or recovery key.</p>
+</main>
+<footer class="wrap narrow"><p><a href="/">Krunk</a> · <a href="/privacy">Privacy</a></p></footer>
+</body>
+</html>
