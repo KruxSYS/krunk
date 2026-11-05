@@ -31,6 +31,8 @@ pub enum Command {
     Bookmark,
     History,
     Bookmarks,
+    /// Ctrl+Shift+B: show or hide the bookmarks bar ("new tabs only" counts as shown).
+    ToggleBookmarksBar,
     Downloads,
     Find,
     FindNext,
@@ -115,6 +117,7 @@ pub fn command_for(vk: u32, ctrl: bool, shift: bool, alt: bool) -> Option<Comman
         (true, false, false, k) if k == vk::letter('D') => Bookmark,
         (true, false, false, k) if k == vk::letter('H') => History,
         (true, true, false, k) if k == vk::letter('O') => Bookmarks,
+        (true, true, false, k) if k == vk::letter('B') => ToggleBookmarksBar,
         (true, false, false, k) if k == vk::letter('J') => Downloads,
         (false, false, false, vk::F3) => FindNext,
         (true, false, false, k) if k == vk::letter('G') => FindNext,
@@ -216,6 +219,7 @@ mod tests {
         assert_eq!(ctrl(l('P')), Some(Print));
         assert_eq!(ctrl_shift(l('N')), Some(NewPrivateTab));
         assert_eq!(command_for(l('N'), true, false, false), Some(NewWindow));
+        assert_eq!(ctrl_shift(l('B')), Some(ToggleBookmarksBar));
         // In DevTools: its own keys stay with it; Krunk's toggles still reach Krunk.
         assert!(devtools_keeps(l('F'), true, false, false));
         assert!(devtools_keeps(l('C'), true, true, false));

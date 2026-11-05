@@ -128,6 +128,10 @@ pub enum PopupKind {
     Update,
     /// A tab's context menu (right-click on the tab).
     TabMenu,
+    /// The bookmarks bar's context menu (right-click on an item, a folder or the bar).
+    BookmarkMenu,
+    /// Name (and address) of a bookmark or folder: edit, rename, new folder.
+    BookmarkEdit,
 }
 
 impl PopupKind {
@@ -158,6 +162,25 @@ pub enum TabAction {
     CloseOthers,
     /// Close the tabs to the right of this one.
     CloseRight,
+}
+
+/// What the bookmarks bar's context menu can do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BookmarkAction {
+    OpenNewTab,
+    OpenNewWindow,
+    OpenPrivate,
+    /// A folder: every bookmark in it, as new tabs.
+    OpenAll,
+    Edit,
+    Delete,
+    /// Bookmark the current page on the bar (or in the folder).
+    AddPage,
+    NewFolder,
+    ShowAlways,
+    ShowOnNewTab,
+    ShowNever,
 }
 
 /// Caption-button actions.
@@ -262,6 +285,26 @@ pub enum PopupContent {
         can_move: bool,
         can_close_right: bool,
     },
+    /// The bookmarks bar's context menu: on bookmark or folder `id`, or on the bar itself
+    /// (`id` none). `children`: a folder's bookmarks (for "Open all"); `can_add`: the page
+    /// can be bookmarked here ("Add this page").
+    BookmarkMenu {
+        id: Option<i64>,
+        is_folder: bool,
+        title: String,
+        url: Option<String>,
+        children: u32,
+        mode: crate::settings::BookmarksBar,
+        can_add: bool,
+    },
+    /// Edit bookmark or folder `id`, or name a new folder in `parent` (`id` none).
+    BookmarkEdit {
+        id: Option<i64>,
+        parent: i64,
+        is_folder: bool,
+        title: String,
+        url: Option<String>,
+    },
 }
 
 /// Where an accepted update is.
@@ -323,6 +366,8 @@ impl PopupContent {
             PopupContent::Hint { .. } => PopupKind::Hint,
             PopupContent::Update { .. } => PopupKind::Update,
             PopupContent::TabMenu { .. } => PopupKind::TabMenu,
+            PopupContent::BookmarkMenu { .. } => PopupKind::BookmarkMenu,
+            PopupContent::BookmarkEdit { .. } => PopupKind::BookmarkEdit,
         }
     }
 }
@@ -419,6 +464,28 @@ pub enum Request {
         id: i64,
         #[serde(default)]
         rect: Option<PopupRect>,
+    },
+    /// Right-click on the bookmarks bar: its menu for bookmark or folder `id`, or for the bar
+    /// itself (`id` none), at `rect` (shell CSS px).
+    ShowBookmarkMenu {
+        #[serde(default)]
+        id: Option<i64>,
+        rect: PopupRect,
+    },
+    /// A choice in the bookmarks bar's menu (popup).
+    BookmarkMenuAction {
+        #[serde(default)]
+        id: Option<i64>,
+        action: BookmarkAction,
+    },
+    /// The bookmark editor's Save (popup): rename or edit `id`, or create folder in `parent`.
+    SaveBookmark {
+        #[serde(default)]
+        id: Option<i64>,
+        parent: i64,
+        title: String,
+        #[serde(default)]
+        url: Option<String>,
     },
     /// A browser command from a menu item or button.
     Command {
@@ -772,6 +839,8 @@ impl Sender {
                     | R::ShowPopup { .. }
                     | R::HidePopup
                     | R::ShowBookmarkFolder { .. }
+                    | R::ShowBookmarkMenu { .. }
+                    | R::MoveBookmark { .. }
                     | R::Command { .. }
                     | R::Find { .. }
                     | R::FindClose
@@ -790,6 +859,8 @@ impl Sender {
                 req,
                 R::Command { .. }
                     | R::TabMenuAction { .. }
+                    | R::BookmarkMenuAction { .. }
+                    | R::SaveBookmark { .. }
                     | R::HidePopup
                     | R::ShowBookmarkFolder { rect: None, .. }
                     | R::NewTab { .. }
@@ -1001,6 +1072,10 @@ pub struct NavState {
     /// The page has a login form (shows the key icon).
     #[serde(default)]
     pub login_form: bool,
+    /// The bookmarks bar shows in this window now (setting, and in "new tab only" mode
+    /// whether the active tab is the new-tab page).
+    #[serde(default)]
+    pub bookmarks_bar: bool,
 }
 
 /// Messages to the shell or a built-in page.
@@ -1026,7 +1101,6 @@ pub enum Event {
     /// Shell layout options.
     ShellConfig {
         show_home_button: bool,
-        show_bookmarks_bar: bool,
         theme: Theme,
     },
     /// To the popup view: render this content.
@@ -1645,6 +1719,11 @@ mod tests {
             Request::ShowPopup { popup: PopupKind::Shield, rect },
             Request::TabDragOut { id: 3, offset_x: 40.5, offset_y: 18.0 },
             Request::ShowTabMenu { id: 3, rect },
+            Request::ShowBookmarkMenu { id: Some(3), rect },
+            Request::ShowBookmarkMenu { id: None, rect },
+            Request::BookmarkMenuAction { id: None, action: BookmarkAction::NewFolder },
+            Request::SaveBookmark { id: Some(2), parent: 1, title: "B".into(), url: Some("https://b.example/".into()) },
+            Request::SaveBookmark { id: None, parent: 1, title: "F".into(), url: None },
             Request::TabMenuAction { id: 3, action: TabAction::MoveToNewWindow },
             Request::DevToolsDock { dock: crate::settings::DevToolsDock::Bottom },
             Request::DevToolsClose,
@@ -1700,6 +1779,61 @@ mod tests {
             let back: Request = serde_json::from_str(&json).unwrap_or_else(|e| panic!("{json}: {e}"));
             assert_eq!(back, r, "{json}");
         }
+    }
+
+    #[test]
+    fn bookmarks_bar_requests_are_shell_and_popup_only() {
+        let rect = PopupRect { x: 10.0, y: 80.0, width: 240.0, height: 300.0 };
+        let menu = Request::ShowBookmarkMenu { id: Some(10), rect };
+        let mv = Request::MoveBookmark { id: 10, parent: 11, index: 0 };
+        let action = Request::BookmarkMenuAction { id: Some(10), action: BookmarkAction::Delete };
+        let save = Request::SaveBookmark { id: None, parent: 1, title: "Tools".into(), url: None };
+        assert!(Sender::Shell.permits(&menu) && Sender::Shell.permits(&mv));
+        assert!(!Sender::Shell.permits(&action) && !Sender::Shell.permits(&save), "choices come from the popup");
+        assert!(Sender::Popup.permits(&action) && Sender::Popup.permits(&save));
+        assert!(!Sender::Popup.permits(&mv) && !Sender::Popup.permits(&menu));
+        for page in [Page::NewTab, Page::Settings, Page::History, Page::SiteData] {
+            let p = Sender::Page(page);
+            assert!(!p.permits(&menu) && !p.permits(&action) && !p.permits(&save) && !p.permits(&mv), "{page:?}");
+        }
+        assert!(Sender::Page(Page::Bookmarks).permits(&mv), "the bookmarks page still moves bookmarks");
+        let parsed = parse_request(
+            Sender::Shell,
+            r#"{"cmd":"showBookmarkMenu","id":null,"rect":{"x":1,"y":2,"width":240,"height":300}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            parsed.request,
+            Request::ShowBookmarkMenu { id: None, rect: PopupRect { x: 1.0, y: 2.0, width: 240.0, height: 300.0 } }
+        );
+        let parsed =
+            parse_request(Sender::Popup, r#"{"cmd":"bookmarkMenuAction","id":7,"action":"showOnNewTab"}"#).unwrap();
+        assert_eq!(parsed.request, Request::BookmarkMenuAction { id: Some(7), action: BookmarkAction::ShowOnNewTab });
+        let parsed = parse_request(
+            Sender::Popup,
+            r#"{"cmd":"saveBookmark","id":3,"parent":1,"title":"A","url":"https://a.example/"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            parsed.request,
+            Request::SaveBookmark { id: Some(3), parent: 1, title: "A".into(), url: Some("https://a.example/".into()) }
+        );
+        let content = PopupContent::BookmarkMenu {
+            id: None,
+            is_folder: false,
+            title: String::new(),
+            url: None,
+            children: 0,
+            mode: crate::settings::BookmarksBar::NewTab,
+            can_add: true,
+        };
+        assert_eq!(content.kind(), PopupKind::BookmarkMenu);
+        assert!(serde_json::to_string(&content).unwrap().contains(r#""mode":"newTab""#));
+        assert!(!PopupKind::BookmarkMenu.shell_may_open() && !PopupKind::BookmarkEdit.shell_may_open());
+        let m = crate::layout::bookmark_menu_rect(5.0, 6.0, true, false);
+        assert_eq!((m.x, m.y, m.width, m.height), (5.0, 6.0, 240.0, 353.0));
+        assert_eq!(crate::layout::bookmark_menu_rect(0.0, 0.0, true, true).height, 293.0);
+        assert_eq!(crate::layout::bookmark_menu_rect(0.0, 0.0, false, false).height, 222.0);
     }
 
     #[test]
@@ -1773,9 +1907,10 @@ mod tests {
                     zoom: 1.25,
                     private: false,
                     login_form: true,
+                    bookmarks_bar: true,
                 },
             },
-            Event::ShellConfig { show_home_button: true, show_bookmarks_bar: false, theme: Theme::Dark },
+            Event::ShellConfig { show_home_button: true, theme: Theme::Dark },
             Event::Popup { content: PopupContent::Menu { zoom: 1.0, can_reopen: true } },
             Event::Popup {
                 content: PopupContent::Shield { host: "a.example".into(), blocked: 3, allowed: false, enabled: true },

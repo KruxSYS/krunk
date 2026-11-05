@@ -3,6 +3,17 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Where the bookmarks bar shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BookmarksBar {
+    #[default]
+    Always,
+    /// Only on the new-tab page.
+    NewTab,
+    Never,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SearchEngine {
@@ -98,7 +109,8 @@ pub struct Settings {
     pub startup: Startup,
     pub homepage: String,
     pub show_home_button: bool,
-    pub show_bookmarks_bar: bool,
+    /// Replaces 0.3's `showBookmarksBar` (false became `never`; see `from_json_lenient`).
+    pub bookmarks_bar: BookmarksBar,
 
     // Performance
     pub hardware_acceleration: bool,
@@ -175,7 +187,7 @@ impl Default for Settings {
             startup: Startup::RestoreSession,
             homepage: "https://duckduckgo.com/".into(),
             show_home_button: true,
-            show_bookmarks_bar: true,
+            bookmarks_bar: BookmarksBar::Always,
             hardware_acceleration: true,
             tab_sleep_minutes: 5,
             tab_discard_enabled: false,
@@ -359,6 +371,12 @@ impl Settings {
     /// instead of failing (a corrupt settings file must not brick startup).
     pub fn from_json_lenient(json: &str) -> Settings {
         let mut s: Settings = serde_json::from_str(json).unwrap_or_default();
+        // 0.3 and earlier: `showBookmarksBar: false` hid the bar.
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(json) {
+            if v.get("bookmarksBar").is_none() && v.get("showBookmarksBar") == Some(&serde_json::Value::Bool(false)) {
+                s.bookmarks_bar = BookmarksBar::Never;
+            }
+        }
         // Filter lists added since these settings were saved start enabled.
         let saved_rev = serde_json::from_str::<serde_json::Value>(json)
             .ok()
@@ -593,6 +611,21 @@ mod tests {
 
     fn fields(s: &Settings) -> Vec<&'static str> {
         s.validate().err().unwrap_or_default().into_iter().map(|e| e.field).collect()
+    }
+
+    #[test]
+    fn bookmarks_bar_mode_and_migration() {
+        assert_eq!(Settings::default().bookmarks_bar, BookmarksBar::Always);
+        // 0.3: the bar hidden with a bool.
+        let hidden = Settings::from_json_lenient(r#"{"showBookmarksBar":false,"theme":"dark"}"#);
+        assert_eq!(hidden.bookmarks_bar, BookmarksBar::Never);
+        let shown = Settings::from_json_lenient(r#"{"showBookmarksBar":true}"#);
+        assert_eq!(shown.bookmarks_bar, BookmarksBar::Always);
+        // The new field wins over a stale old one.
+        let both = Settings::from_json_lenient(r#"{"showBookmarksBar":false,"bookmarksBar":"newTab"}"#);
+        assert_eq!(both.bookmarks_bar, BookmarksBar::NewTab);
+        let json = serde_json::to_string(&both).unwrap();
+        assert!(json.contains(r#""bookmarksBar":"newTab""#) && !json.contains("showBookmarksBar"), "{json}");
     }
 
     #[test]

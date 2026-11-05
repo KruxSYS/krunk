@@ -243,7 +243,7 @@ impl Browser {
         let (width, _) = w.client_size();
         let (hw, hh) = (300.0, 44.0);
         let top = if !self.cur_id().is_some_and(|w| self.is_fullscreen_frame(w)) {
-            layout::shell_height(scale, self.settings.borrow().show_bookmarks_bar) as f64 / scale
+            layout::shell_height(scale, self.cur_id().is_some_and(|w| self.bar_shown(w))) as f64 / scale
         } else {
             0.0
         };

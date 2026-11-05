@@ -29,7 +29,8 @@ pub struct BookmarkNode {
 
 pub const MAX_TITLE_CHARS: usize = 1024;
 
-fn is_root(id: i64) -> bool {
+/// The two fixed folders (bookmarks bar, other bookmarks) cannot be edited, moved or deleted.
+pub fn is_root(id: i64) -> bool {
     id == BOOKMARKS_BAR || id == OTHER_BOOKMARKS
 }
 

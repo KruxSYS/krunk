@@ -54,7 +54,7 @@ fn contains(r: ScreenRect, x: i32, y: i32) -> bool {
 
 impl Browser {
     /// The restored rectangle of the current window, moved down-right: where a new window opens.
-    fn cascade_bounds(&self) -> Option<Bounds> {
+    pub(super) fn cascade_bounds(&self) -> Option<Bounds> {
         let (r, _) = self.window()?.placement();
         Some(Bounds { x: r.x + CASCADE_PX, y: r.y + CASCADE_PX, width: r.width, height: r.height })
     }

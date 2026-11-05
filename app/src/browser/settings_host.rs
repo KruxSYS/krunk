@@ -83,6 +83,22 @@ impl Browser {
         self.reply(tab, Event::ok(req_id, serde_json::json!({ "settings": new, "restartRequired": restart })));
     }
 
+    /// A change of the settings from elsewhere than the settings page (the bookmarks bar's
+    /// menu): validated, saved and applied the same way.
+    pub(super) fn change_settings(&self, f: impl FnOnce(&mut Settings)) {
+        let mut new = self.settings.borrow().clone();
+        f(&mut new);
+        if new.validate().is_err() {
+            return;
+        }
+        if let Err(e) = self.store.borrow().save_settings(&new) {
+            warning!("saving settings: {e}");
+            return;
+        }
+        let old = std::mem::replace(&mut *self.settings.borrow_mut(), new.clone());
+        self.apply_settings(&old, &new);
+    }
+
     /// Applies everything that works without a restart.
     fn apply_settings(&self, old: &Settings, new: &Settings) {
         if old.tab_sleep_minutes != new.tab_sleep_minutes
@@ -94,8 +110,9 @@ impl Browser {
         if old.theme != new.theme {
             self.apply_theme();
         }
-        if old.show_bookmarks_bar != new.show_bookmarks_bar || old.show_home_button != new.show_home_button {
+        if old.bookmarks_bar != new.bookmarks_bar || old.show_home_button != new.show_home_button {
             self.send_shell_config();
+            self.send_nav();
             self.layout();
         }
         if old.user_agent != new.user_agent {

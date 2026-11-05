@@ -38,6 +38,7 @@ const SESSION_TIMER: usize = 1;
 const SESSION_DEBOUNCE_MS: u32 = 2000;
 
 mod blocking;
+mod bookmarks_bar;
 mod devtools;
 mod downloads;
 mod drag;
@@ -110,6 +111,8 @@ pub(super) struct Frame {
     shell: RefCell<Option<View>>,
     hit_map: RefCell<Option<lb_core::frame::HitMap>>,
     active: Cell<bool>,
+    /// The bookmarks bar shows in this window (laid out with it).
+    bar: Cell<bool>,
 }
 
 pub struct Browser {
@@ -134,6 +137,8 @@ pub struct Browser {
     download_ops: RefCell<HashMap<u32, (u32, Option<DownloadControl>)>>,
     /// Button rect of the open bookmarks-bar folder dropdown.
     folder_anchor: Cell<Option<PopupRect>>,
+    /// Where the bookmarks bar's menu opened (its editor opens there too).
+    bookmark_menu_at: Cell<Option<PopupRect>>,
     dirs: DataDirs,
     filters: Rc<FilterState>,
     /// Blocking state shared with the engine's IO thread.
@@ -194,6 +199,7 @@ impl Browser {
             downloads: RefCell::new(Downloads::new()),
             download_ops: RefCell::new(HashMap::new()),
             folder_anchor: Cell::new(None),
+            bookmark_menu_at: Cell::new(None),
             dirs: dirs.clone(),
             filters: Rc::new(FilterState::new()),
             net: Arc::new(NetShared::default()),
@@ -351,6 +357,7 @@ impl Browser {
             shell: RefCell::new(None),
             hit_map: RefCell::new(None),
             active: Cell::new(true),
+            bar: Cell::new(false),
         });
         window.set_events(Rc::new(FrameEvents { b: self.me.clone(), win }));
         self.frames.borrow_mut().push(frame.clone());
@@ -880,7 +887,8 @@ impl Browser {
         if self.is_fullscreen_frame(f.id) {
             return (None, layout::Rect { x: 0, y: 0, width, height });
         }
-        let bar = self.settings.borrow().show_bookmarks_bar;
+        let bar = self.bar_shown(f.id);
+        f.bar.set(bar);
         let (shell, content) = layout::split(width, height, w.scale(), bar);
         (Some(shell), content)
     }
@@ -979,6 +987,7 @@ impl Browser {
             zoom: view.map(|v| v.view.zoom()).unwrap_or(1.0),
             private: tab.private,
             login_form: view.is_some_and(|v| v.net.login_form.get()),
+            bookmarks_bar: self.bar_shown(win),
         })
     }
 
@@ -991,7 +1000,12 @@ impl Browser {
 
     fn send_nav_to(&self, win: WindowId) {
         if let Some(state) = self.nav_state(win) {
+            // "Only on the new-tab page": the bar comes or goes with the active tab.
+            let relayout = self.frame(win).filter(|f| f.bar.get() != state.bookmarks_bar);
             self.post_shell_to(win, &Event::Nav { state });
+            if let Some(f) = relayout {
+                self.layout_frame(&f);
+            }
         }
         self.send_devtools_state(win);
     }
@@ -999,11 +1013,7 @@ impl Browser {
     fn send_shell_config(&self) {
         let e = {
             let s = self.settings.borrow();
-            Event::ShellConfig {
-                show_home_button: s.show_home_button,
-                show_bookmarks_bar: s.show_bookmarks_bar,
-                theme: s.theme,
-            }
+            Event::ShellConfig { show_home_button: s.show_home_button, theme: s.theme }
         };
         self.post_shell(&e);
     }
@@ -1241,6 +1251,7 @@ impl Browser {
             }
             Command::History => self.open_page(Page::History),
             Command::Bookmarks => self.open_page(Page::Bookmarks),
+            Command::ToggleBookmarksBar => self.toggle_bookmarks_bar(),
             Command::Downloads => self.open_page(Page::Downloads),
             // Wired up in milestone 4 (bookmarks, find in page).
             Command::Bookmark => self.toggle_bookmark(),
@@ -1426,6 +1437,12 @@ impl Browser {
                 if let Some(win) = self.cur_id() {
                     self.start_tab_drag(win, id, offset_x, offset_y);
                 }
+            }
+            Request::ShowBookmarkMenu { id, rect } => self.show_bookmark_menu(id, rect),
+            Request::BookmarkMenuAction { id, action } => self.bookmark_menu_action(id, action),
+            Request::SaveBookmark { id, parent, title, url } => self.save_bookmark(id, parent, &title, url.as_deref()),
+            Request::MoveBookmark { id, parent, index } if sender == Sender::Shell => {
+                self.move_bookmark_from_bar(id, parent, index)
             }
             Request::ShowTabMenu { id, rect } => {
                 let state = self.window_of(id).and_then(|w| {

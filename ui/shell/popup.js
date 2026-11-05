@@ -67,6 +67,74 @@
     ];
   }
 
+  // Right-click on the bookmarks bar: on a bookmark, a folder, or the bar itself.
+  function renderBookmarkMenu(c) {
+    const act = (action) => LB.post('bookmarkMenuAction', { id: c.id, action: action });
+    const mode = (label, value, action) => {
+      const b = item(label, '', () => act(action));
+      b.setAttribute('role', 'menuitemradio');
+      b.setAttribute('aria-checked', c.mode === value ? 'true' : 'false');
+      b.classList.add('radio');
+      if (c.mode === value) b.classList.add('checked');
+      return b;
+    };
+    const modes = [
+      mode('Always show the bar', 'always', 'showAlways'),
+      mode('Show it on new tabs only', 'newTab', 'showOnNewTab'),
+      mode('Hide the bar', 'never', 'showNever'),
+    ];
+    const add = [
+      item('Add this page', '', () => act('addPage'), !c.canAdd),
+      item('New folder…', '', () => act('newFolder')),
+    ];
+    if (c.id === null || c.id === undefined) {
+      return add.concat([sep()], modes, [sep(), item('Bookmark manager', 'Ctrl+Shift+O', () => command('bookmarks'))]);
+    }
+    if (c.isFolder) {
+      return [
+        item(c.children ? 'Open all (' + c.children + ')' : 'Open all', '', () => act('openAll'), !c.children),
+        sep(),
+        item('Rename…', '', () => act('edit')),
+        item(c.children ? 'Delete folder and its ' + c.children + ' bookmarks' : 'Delete folder', '', () => act('delete')),
+        sep(),
+      ].concat(add, [sep()], modes);
+    }
+    return [
+      item('Open in new tab', '', () => act('openNewTab')),
+      item('Open in new window', '', () => act('openNewWindow')),
+      item('Open in private tab', '', () => act('openPrivate')),
+      sep(),
+      item('Edit…', '', () => act('edit')),
+      item('Delete', '', () => act('delete')),
+      sep(),
+    ].concat(add, [sep()], modes);
+  }
+
+  // Edit a bookmark or folder, or name a new folder.
+  function renderBookmarkEdit(c) {
+    const name = el('input', { type: 'text', id: 'bm-name', value: c.title || '', 'aria-label': 'Name', maxlength: '300', autocomplete: 'off' });
+    const url = c.isFolder ? null : el('input', { type: 'url', id: 'bm-url', value: c.url || '', 'aria-label': 'Address', autocomplete: 'off', spellcheck: 'false' });
+    const err = el('p', { class: 'error', role: 'alert' });
+    const save = el('button', { class: 'btn primary', type: 'submit', text: 'Save' });
+    const form = el('form', {
+      onsubmit: (e) => {
+        e.preventDefault();
+        const title = name.value.trim();
+        const address = url ? url.value.trim() : null;
+        if (url && !/^(https?|file):\/\/\S+$/i.test(address)) { err.textContent = 'Enter a web address (https://…).'; url.focus(); return; }
+        LB.post('saveBookmark', { id: c.id === undefined ? null : c.id, parent: c.parent, title: title, url: address });
+      },
+    }, [
+      el('label', { class: 'field' }, [el('span', { text: 'Name' }), name]),
+      url ? el('label', { class: 'field' }, [el('span', { text: 'Address' }), url]) : null,
+      err,
+      el('div', { class: 'row' }, [el('button', { class: 'btn', type: 'button', onclick: close, text: 'Cancel' }), save]),
+    ]);
+    setTimeout(() => { name.focus(); name.select(); }, 0);
+    const heading = c.id === null || c.id === undefined ? 'New folder' : c.isFolder ? 'Rename folder' : 'Edit bookmark';
+    return [el('div', { class: 'panel bookmark-edit' }, [el('h2', { text: heading }), form])];
+  }
+
   function zoom(action) {
     LB.post('zoom', { action: action });
   }
@@ -220,11 +288,11 @@
   LB.on('popup', function (m) {
     current = m.content;
     const c = m.content;
-    const render = { menu: renderMenu, shield: renderShield, savePassword: renderSave, fill: renderFill, bookmarkFolder: renderFolder, unlock: renderUnlock, hint: renderHint, update: renderUpdate, tabMenu: renderTabMenu }[c.kind];
+    const render = { menu: renderMenu, shield: renderShield, savePassword: renderSave, fill: renderFill, bookmarkFolder: renderFolder, unlock: renderUnlock, hint: renderHint, update: renderUpdate, tabMenu: renderTabMenu, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
     root.textContent = '';
     root.dataset.kind = c.kind;
     (render ? render(c) : []).forEach((n) => n && root.appendChild(n));
-    const first = document.getElementById('master') || document.getElementById('default') || root.querySelector('button:not([disabled])');
+    const first = document.getElementById('master') || document.getElementById('bm-name') || document.getElementById('default') || root.querySelector('button:not([disabled])');
     if (first && c.kind !== 'hint') first.focus();
   });
 

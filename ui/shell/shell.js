@@ -466,6 +466,7 @@
   }
 
   // ---------- bookmarks bar ----------
+  const BAR_ROOT = 1; // the "Bookmarks bar" folder
   function renderBar(items) {
     const bar = $('bookmarks-bar');
     bar.textContent = '';
@@ -475,10 +476,11 @@
     }
     items.forEach(function (b) {
       if (b.isFolder) {
-        const btn = el('button', { class: 'bm', title: b.title, 'data-folder': b.id }, [
+        const btn = el('button', { class: 'bm folder', title: b.title, 'data-folder': b.id, 'data-id': b.id }, [
           svgIcon('i-folder', 'folder-icon'), el('span', { text: b.title }),
         ]);
         btn.addEventListener('click', function () {
+          if (barDrag.suppressClick) return;
           const key = 'folder:' + b.id;
           if (state.popup === key) { LB.post('hidePopup'); setPopup(null); return; }
           const r = btn.getBoundingClientRect();
@@ -487,16 +489,92 @@
         });
         bar.appendChild(btn);
       } else {
-        const btn = el('button', { class: 'bm', title: b.title + '\n' + b.url }, [
-          b.favicon ? el('img', { src: b.favicon, alt: '' }) : svgIcon('i-globe'),
+        const btn = el('button', { class: 'bm', title: b.title + '\n' + b.url, 'data-id': b.id }, [
+          b.favicon ? el('img', { src: b.favicon, alt: '', draggable: 'false' }) : svgIcon('i-globe'),
           el('span', { text: b.title }),
         ]);
-        btn.addEventListener('click', function (e) { LB.post('openUrl', { url: b.url, newTab: e.ctrlKey }); });
+        btn.addEventListener('click', function (e) {
+          if (barDrag.suppressClick) return;
+          LB.post('openUrl', { url: b.url, newTab: e.ctrlKey });
+        });
         btn.addEventListener('auxclick', function (e) { if (e.button === 1) LB.post('openUrl', { url: b.url, newTab: true }); });
         bar.appendChild(btn);
       }
     });
   }
+
+  // Right-click: the bar's menu for the item (bookmark or folder) or for the bar itself.
+  $('bookmarks-bar').addEventListener('contextmenu', function (e) {
+    e.preventDefault();
+    const item = e.target.closest('.bm');
+    LB.post('showBookmarkMenu', { id: item ? Number(item.dataset.id) : null, rect: { x: e.clientX, y: e.clientY, width: 240, height: 320 } });
+    setPopup('bookmarkMenu');
+  });
+
+  // Dragging an item: along the bar it moves there (a mark shows where); over the middle of a
+  // folder it goes into that folder (the folder lights up). Pointer events, as for tabs.
+  const barDrag = { item: null, startX: 0, pointerId: null, moved: false, target: null, suppressClick: false };
+  function barItems() { return Array.prototype.slice.call($('bookmarks-bar').querySelectorAll('.bm')); }
+  function clearBarMarks() {
+    barItems().forEach(function (n) { n.classList.remove('drop-before', 'drop-after', 'drop-into', 'dragging'); });
+  }
+  // Where a drop at x goes: { into: folderId } or { index } among the other items.
+  function barTarget(x) {
+    const others = barItems().filter(function (n) { return n !== barDrag.item; });
+    let index = 0;
+    for (let i = 0; i < others.length; i++) {
+      const n = others[i];
+      const r = n.getBoundingClientRect();
+      if (n.classList.contains('folder') && x >= r.left + r.width / 4 && x <= r.right - r.width / 4) {
+        return { into: Number(n.dataset.id), node: n };
+      }
+      if (x > r.left + r.width / 2) index = i + 1;
+    }
+    return { index: index, others: others };
+  }
+  $('bookmarks-bar').addEventListener('pointerdown', function (e) {
+    const item = e.target.closest('.bm');
+    if (!item || e.button !== 0) return;
+    barDrag.item = item; barDrag.startX = e.clientX; barDrag.pointerId = e.pointerId;
+    barDrag.moved = false; barDrag.target = null;
+  });
+  $('bookmarks-bar').addEventListener('pointermove', function (e) {
+    if (!barDrag.item || e.pointerId !== barDrag.pointerId) return;
+    if (!barDrag.moved) {
+      if (Math.abs(e.clientX - barDrag.startX) < DRAG_THRESHOLD) return;
+      barDrag.moved = true;
+      $('bookmarks-bar').setPointerCapture(e.pointerId);
+      LB.post('hidePopup'); setPopup(null);
+    }
+    clearBarMarks();
+    barDrag.item.classList.add('dragging');
+    const t = barTarget(e.clientX);
+    barDrag.target = t;
+    if (t.into !== undefined) t.node.classList.add('drop-into');
+    else if (t.others.length) {
+      if (t.index < t.others.length) t.others[t.index].classList.add('drop-before');
+      else t.others[t.others.length - 1].classList.add('drop-after');
+    }
+  });
+  function endBarDrag(e, commit) {
+    if (!barDrag.item || e.pointerId !== barDrag.pointerId) return;
+    const item = barDrag.item, t = barDrag.target, moved = barDrag.moved;
+    barDrag.item = null;
+    clearBarMarks();
+    if (!moved) return;
+    // The click that ends a drag does not open the bookmark.
+    barDrag.suppressClick = true;
+    setTimeout(function () { barDrag.suppressClick = false; }, 0);
+    if (!commit || !t) return;
+    const id = Number(item.dataset.id);
+    if (t.into !== undefined) {
+      if (t.into !== id) LB.post('moveBookmark', { id: id, parent: t.into, index: 1000000 });
+    } else {
+      LB.post('moveBookmark', { id: id, parent: BAR_ROOT, index: t.index });
+    }
+  }
+  $('bookmarks-bar').addEventListener('pointerup', function (e) { endBarDrag(e, true); });
+  $('bookmarks-bar').addEventListener('pointercancel', function (e) { endBarDrag(e, false); });
 
   // ---------- find in page ----------
   const find = $('find');
@@ -534,10 +612,14 @@
     state.active = m.active;
     renderTabs();
   });
-  LB.on('nav', function (m) { state.nav = m.state; renderNav(); });
+  LB.on('nav', function (m) {
+    state.nav = m.state;
+    // Shown always, never, or only on the new-tab page: the host decides per window.
+    $('bookmarks-bar').hidden = !m.state.bookmarksBar;
+    renderNav();
+  });
   LB.on('shellConfig', function (m) {
     $('home').hidden = !m.showHomeButton;
-    $('bookmarks-bar').hidden = !m.showBookmarksBar;
     document.documentElement.classList.toggle('dark', m.theme === 'dark');
     document.documentElement.classList.toggle('light', m.theme === 'light');
   });

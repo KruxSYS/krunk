@@ -888,6 +888,134 @@ async function testSiteData(browser) {
   check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
 }
 
+// 0.4.0: the bookmarks bar's visibility, context menu, editor and drag.
+async function testBookmarksBar(browser) {
+  console.log('bookmarks bar: menu, editor, drag');
+  let { page, errors } = await openPage(browser, 'https://shell.krunk.invalid/shell.html', { width: 1100, height: 104 }, 1);
+  await page.evaluate(() => {
+    const h = window.__host;
+    h.state.tabs = [{ id: 1, title: 'Rust', url: 'https://www.rust-lang.org/', favicon: null, loading: false, private: false, sleeping: false }];
+    h.state.active = 1;
+    h.tabsEvent();
+    h.navEvent({ bookmarksBar: false });
+    h.emit({ event: 'bookmarksBar', items: [
+      { id: 10, title: 'Rust', url: 'https://www.rust-lang.org/', isFolder: false, favicon: null },
+      { id: 11, title: 'News', url: null, isFolder: true, favicon: null },
+      { id: 19, title: 'Wikipedia', url: 'https://en.wikipedia.org/', isFolder: false, favicon: null },
+    ] });
+  });
+  await page.waitForTimeout(30);
+  check(await page.locator('#bookmarks-bar').isHidden(), 'nav says no bar: hidden (never, or not a new tab)');
+  await page.evaluate(() => window.__host.navEvent({ bookmarksBar: true }));
+  await page.waitForSelector('#bookmarks-bar .bm');
+  check(await page.locator('#bookmarks-bar').isVisible(), 'nav says bar: shown');
+
+  // Right-click on a bookmark, on a folder, on the bar.
+  await page.locator('.bm[data-id="10"]').click({ button: 'right' });
+  let m = await lastSent(page, 'showBookmarkMenu');
+  check(m && m.id === 10 && m.rect.x > 0, 'right-click on a bookmark: showBookmarkMenu{id:10}');
+  await page.locator('.bm[data-id="11"]').click({ button: 'right' });
+  m = await lastSent(page, 'showBookmarkMenu');
+  check(m && m.id === 11, 'right-click on a folder: showBookmarkMenu{id:11}');
+  const barBox = await page.locator('#bookmarks-bar').boundingBox();
+  await page.mouse.click(barBox.x + barBox.width - 20, barBox.y + barBox.height / 2, { button: 'right' });
+  m = await lastSent(page, 'showBookmarkMenu');
+  check(m && m.id === null, 'right-click on empty bar space: showBookmarkMenu{id:null}');
+
+  // A click opens the bookmark.
+  await page.locator('.bm[data-id="10"]').click();
+  let o = await lastSent(page, 'openUrl');
+  check(o && o.url === 'https://www.rust-lang.org/', 'a click opens the bookmark');
+  const opened = (await sent(page)).filter((x) => x.cmd === 'openUrl').length;
+
+  // Drag Wikipedia to the front: moveBookmark{parent: bar, index: 0}; the drop opens nothing.
+  const box = async (id) => page.locator('.bm[data-id="' + id + '"]').boundingBox();
+  let from = await box(19), to = await box(10);
+  await page.mouse.move(from.x + 10, from.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(from.x - 30, from.y + 10, { steps: 4 });
+  await page.mouse.move(to.x + 3, to.y + 10, { steps: 6 });
+  check(await page.locator('.bm[data-id="10"].drop-before').count() === 1, 'a mark shows where the item goes');
+  await shot(page, 'shell-bar-drag-reorder.png');
+  await page.mouse.up();
+  let mv = await lastSent(page, 'moveBookmark');
+  check(mv && mv.id === 19 && mv.parent === 1 && mv.index === 0, 'dropped first: moveBookmark{id:19, parent:1, index:0} (' + JSON.stringify(mv) + ')');
+  await page.waitForTimeout(30);
+  check((await sent(page)).filter((x) => x.cmd === 'openUrl').length === opened, 'the drop does not open the bookmark');
+  check(await page.locator('.bm.dragging, .bm.drop-before, .bm.drop-after').count() === 0, 'no marks left');
+
+  // Drag Rust onto the middle of the News folder: into the folder.
+  from = await box(10); to = await box(11);
+  await page.mouse.move(from.x + 10, from.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(from.x + 30, from.y + 10, { steps: 4 });
+  await page.mouse.move(to.x + to.width / 2, to.y + 10, { steps: 6 });
+  check(await page.locator('.bm[data-id="11"].drop-into').count() === 1, 'over the folder\'s middle: the folder lights up');
+  await shot(page, 'shell-bar-drag-into-folder.png');
+  await page.mouse.up();
+  mv = await lastSent(page, 'moveBookmark');
+  check(mv && mv.id === 10 && mv.parent === 11, 'dropped on the folder: moveBookmark{id:10, parent:11} (' + JSON.stringify(mv) + ')');
+  check((await lastSent(page, 'showBookmarkFolder')) === undefined, 'the drop does not open the folder');
+  check(errors.length === 0, 'shell: no console errors (' + errors.join(' | ') + ')');
+  await page.close();
+
+  // The popup: the three menus.
+  ({ page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 240, height: 352 }, 1));
+  await page.evaluate(() => { window.__host.autoSimulate = false; });
+  const labels = () => page.$$eval('.item .label', (ns) => ns.map((n) => n.textContent));
+  await emit(page, { event: 'popup', content: { kind: 'bookmarkMenu', id: 10, isFolder: false, title: 'Rust', url: 'https://www.rust-lang.org/', children: 0, mode: 'newTab', canAdd: true } });
+  await page.waitForSelector('.item');
+  check(JSON.stringify(await labels()) === JSON.stringify(['Open in new tab', 'Open in new window', 'Open in private tab', 'Edit…', 'Delete', 'Add this page', 'New folder…', 'Always show the bar', 'Show it on new tabs only', 'Hide the bar']), 'bookmark menu items (' + (await labels()).join(', ') + ')');
+  check(await page.locator('.item.radio.checked').textContent() === 'Show it on new tabs only', 'the current mode is checked');
+  check(await page.evaluate(() => document.getElementById('root').getBoundingClientRect().bottom <= 352), 'the bookmark menu fits 240x352 (' + await page.evaluate(() => document.getElementById('root').getBoundingClientRect().bottom) + ')');
+  await shot(page, 'popup-bookmark-menu.png');
+  await page.locator('.item', { hasText: 'Open in new window' }).click();
+  let a = await lastSent(page, 'bookmarkMenuAction');
+  check(a && a.id === 10 && a.action === 'openNewWindow', 'Open in new window sends bookmarkMenuAction{openNewWindow}');
+  await page.locator('.item', { hasText: 'Hide the bar' }).click();
+  a = await lastSent(page, 'bookmarkMenuAction');
+  check(a && a.action === 'showNever', 'Hide sends bookmarkMenuAction{showNever}');
+  await emit(page, { event: 'popup', content: { kind: 'bookmarkMenu', id: 11, isFolder: true, title: 'News', url: null, children: 3, mode: 'always', canAdd: false } });
+  await page.waitForTimeout(20);
+  check((await labels())[0] === 'Open all (3)' && (await labels()).includes('Delete folder and its 3 bookmarks') && (await labels()).includes('Rename…'), 'folder menu: Open all (3), Rename, Delete folder and its 3 bookmarks');
+  check(await page.locator('.item', { hasText: 'Add this page' }).isDisabled(), 'Add this page disabled when the page cannot be bookmarked');
+  check(await page.evaluate(() => document.getElementById('root').getBoundingClientRect().bottom <= 292), 'the folder menu fits 240x292 (' + await page.evaluate(() => document.getElementById('root').getBoundingClientRect().bottom) + ')');
+  await emit(page, { event: 'popup', content: { kind: 'bookmarkMenu', id: 12, isFolder: true, title: 'Empty', url: null, children: 0, mode: 'always', canAdd: true } });
+  await page.waitForTimeout(20);
+  check(await page.locator('.item', { hasText: 'Open all' }).isDisabled(), 'Open all disabled for an empty folder');
+  await emit(page, { event: 'popup', content: { kind: 'bookmarkMenu', id: null, isFolder: false, title: '', url: null, children: 0, mode: 'never', canAdd: true } });
+  await page.waitForTimeout(20);
+  check(JSON.stringify(await labels()) === JSON.stringify(['Add this page', 'New folder…', 'Always show the bar', 'Show it on new tabs only', 'Hide the bar', 'Bookmark manager']), 'bar menu items (' + (await labels()).join(', ') + ')');
+  check(await page.evaluate(() => document.getElementById('root').getBoundingClientRect().bottom <= 222), 'the bar menu fits 240x222 (' + await page.evaluate(() => document.getElementById('root').getBoundingClientRect().bottom) + ')');
+  await page.locator('.item', { hasText: 'New folder' }).click();
+  a = await lastSent(page, 'bookmarkMenuAction');
+  check(a && a.id === null && a.action === 'newFolder', 'New folder sends bookmarkMenuAction{id:null, newFolder}');
+
+  // The editor.
+  await page.setViewportSize({ width: 340, height: 214 });
+  await emit(page, { event: 'popup', content: { kind: 'bookmarkEdit', id: 10, parent: 1, isFolder: false, title: 'Rust', url: 'https://www.rust-lang.org/' } });
+  await page.waitForSelector('#bm-url');
+  check(await page.evaluate(() => document.activeElement.id) === 'bm-name', 'the name field has the focus');
+  check(await page.evaluate(() => document.getElementById('root').getBoundingClientRect().bottom <= 214), 'the editor fits 340x214');
+  await shot(page, 'popup-bookmark-edit.png');
+  await page.fill('#bm-url', 'javascript:alert(1)');
+  await page.click('button[type=submit]');
+  check((await lastSent(page, 'saveBookmark')) === undefined && (await page.textContent('.error')).includes('web address'), 'a non-web address is refused in the editor');
+  await page.fill('#bm-name', 'Rust lang');
+  await page.fill('#bm-url', 'https://www.rust-lang.org/learn');
+  await page.click('button[type=submit]');
+  let sv = await lastSent(page, 'saveBookmark');
+  check(sv && sv.id === 10 && sv.parent === 1 && sv.title === 'Rust lang' && sv.url === 'https://www.rust-lang.org/learn', 'Save sends saveBookmark{id, parent, title, url}');
+  await emit(page, { event: 'popup', content: { kind: 'bookmarkEdit', id: null, parent: 11, isFolder: true, title: 'New folder', url: null } });
+  await page.waitForSelector('#bm-name');
+  check(await page.locator('#bm-url').count() === 0 && (await page.textContent('h2')) === 'New folder', 'a new folder has a name only');
+  await page.fill('#bm-name', 'Tools');
+  await page.press('#bm-name', 'Enter');
+  sv = await lastSent(page, 'saveBookmark');
+  check(sv && sv.id === null && sv.parent === 11 && sv.title === 'Tools' && sv.url === null, 'Enter saves the new folder: saveBookmark{id:null, parent:11, title}');
+  check(errors.length === 0, 'popup: no console errors (' + errors.join(' | ') + ')');
+}
+
 async function testShellM4(browser) {
   console.log('shell: bookmarks bar, find, zoom');
   const { page, errors, external } = await openPage(browser, 'https://shell.krunk.invalid/shell.html', { width: 1100, height: 104 }, 1);
@@ -899,8 +1027,8 @@ async function testShellM4(browser) {
     ];
     h.state.active = 1;
     h.tabsEvent();
-    h.navEvent({ zoom: 1.25, bookmarked: true });
-    h.emit({ event: 'shellConfig', showHomeButton: true, showBookmarksBar: true, theme: 'system' });
+    h.navEvent({ zoom: 1.25, bookmarked: true, bookmarksBar: true });
+    h.emit({ event: 'shellConfig', showHomeButton: true, theme: 'system' });
     h.emit({ event: 'bookmarksBar', items: [
       { id: 10, title: 'Rust', url: 'https://www.rust-lang.org/', isFolder: false, favicon: '/favicon?host=www.rust-lang.org' },
       { id: 11, title: 'News', url: null, isFolder: true, favicon: null },
@@ -1255,6 +1383,12 @@ async function testSettings(browser) {
   check(await page.isChecked('[data-key=blockThirdPartyCookies]'), 'defaults: third-party cookies blocked');
   check(await page.locator('#restart-banner').isHidden(), 'no restart banner at first');
   check((await page.locator('#lists .row').count()) === 5, '5 filter lists with checkboxes');
+  check(await page.inputValue('#bookmarks-bar') === 'always', 'defaults: bookmarks bar always shown');
+  await page.selectOption('#bookmarks-bar', 'newTab');
+  await page.waitForTimeout(80);
+  check(await page.evaluate(() => window.__settings.settings.bookmarksBar) === 'newTab', 'bookmarks bar: "only on new tabs" saved');
+  await page.selectOption('#bookmarks-bar', 'always');
+  await page.waitForTimeout(80);
   await page.waitForTimeout(100);
   await shot(page, 'settings-light.png');
 
@@ -1755,6 +1889,7 @@ async function testTabWindows(browser) {
     await testStorage(browser);
     await testSiteData(browser);
     await testShellM4(browser);
+    await testBookmarksBar(browser);
     await testFolderPopup(browser);
     await testShieldAndHttpsOnly(browser);
     await testPasswords(browser);

@@ -4,7 +4,7 @@
   "startup": "restoreSession",
   "homepage": "https://duckduckgo.com/",
   "showHomeButton": true,
-  "showBookmarksBar": true,
+  "bookmarksBar": "always",
   "hardwareAcceleration": true,
   "tabSleepMinutes": 5,
   "tabDiscardEnabled": false,

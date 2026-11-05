@@ -177,6 +177,23 @@ pub fn tab_menu_rect(x: f64, y: f64) -> PopupRect {
     PopupRect { x, y, width: TAB_MENU_SIZE.0, height: TAB_MENU_SIZE.1 }
 }
 
+/// The bookmarks bar's context menu (CSS px), at the click: on a bookmark ten items and
+/// three separators, on a folder eight and three, on the bar six and two (30 and 11 px,
+/// plus padding and border).
+pub fn bookmark_menu_rect(x: f64, y: f64, on_item: bool, is_folder: bool) -> PopupRect {
+    let (items, seps) = match (on_item, is_folder) {
+        (true, false) => (10.0, 3.0),
+        (true, true) => (8.0, 3.0),
+        (false, _) => (6.0, 2.0),
+    };
+    PopupRect { x, y, width: 240.0, height: items * 30.0 + seps * 11.0 + 20.0 }
+}
+
+/// The bookmark editor (CSS px): a name, and an address for bookmarks.
+pub fn bookmark_edit_rect(x: f64, y: f64, is_folder: bool) -> PopupRect {
+    PopupRect { x, y, width: 340.0, height: if is_folder { 150.0 } else { 214.0 } }
+}
+
 pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> PopupRect {
     let (w, h) = match kind {
         PopupKind::SavePassword => (360.0, 150.0),
@@ -188,6 +205,8 @@ pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> Pop
         PopupKind::Hint => (300.0, 44.0),
         PopupKind::Update => (360.0, 150.0),
         PopupKind::TabMenu => TAB_MENU_SIZE,
+        PopupKind::BookmarkMenu => (240.0, 352.0),
+        PopupKind::BookmarkEdit => (340.0, 214.0),
     };
     let x = (shell_width_css - w - 8.0).max(0.0);
     PopupRect { x, y: SHELL_HEIGHT_DIP - 4.0, width: w, height: h }

@@ -55,7 +55,14 @@
       <p class="field-error" data-error-for="homepage"></p>
     </div>
     <label class="toggle"><input type="checkbox" data-key="showHomeButton"> Show the home button</label>
-    <label class="toggle"><input type="checkbox" data-key="showBookmarksBar"> Show the bookmarks bar</label>
+    <div class="field">
+      <label for="bookmarks-bar">Bookmarks bar</label>
+      <select id="bookmarks-bar" data-key="bookmarksBar">
+        <option value="always">Always show</option>
+        <option value="newTab">Show only on new tabs</option>
+        <option value="never">Hide</option>
+      </select>
+    </div>
 
     <h2>Appearance</h2>
     <div class="field radios" role="radiogroup" aria-label="Theme">
