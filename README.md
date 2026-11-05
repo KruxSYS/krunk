@@ -82,6 +82,7 @@ changed in Settings. Built-in pages:
 - `krunk://about` (shows the CEF and Chromium versions of the running engine)
 - `krunk://storage`: cookies and site data (also in the main menu and Settings → Privacy)
 - `krunk://sitedata`: one site's cookies, local and session storage (shield → Cookies and site data)
+- `krunk://adblock`: what the ad blocker blocked on a page, the filter lists, and your own filters
 
 Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
 
@@ -95,7 +96,8 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
 | F5 / Ctrl+R, Ctrl+F5 / Ctrl+Shift+R | Reload, reload bypassing the cache |
 | Alt+Left / Alt+Right, Alt+Home | Back / forward, home page |
 | Ctrl+D | Bookmark this page |
-| Ctrl+H, Ctrl+Shift+O, Ctrl+J | History, bookmarks, downloads |
+| Ctrl+H, Ctrl+Shift+O, Ctrl+J | History, bookmarks, downloads (switches to the page if it is already open) |
+| Ctrl+Shift+B | Show or hide the bookmarks bar |
 | Ctrl+F, F3 / Shift+F3 (Ctrl+G / Ctrl+Shift+G) | Find, next / previous match |
 | Ctrl+= / Ctrl+-, Ctrl+0 | Zoom in / out, reset |
 | Ctrl+P | Print |
@@ -116,7 +118,14 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   - **No reload:** a moved tab keeps its page as it is: scroll position, typed text, history,
     playing media, DevTools and private mode.
   - **Right-click a tab** for Reload, Duplicate, **Move to new window** (not for a window's only
-    tab), **New window** and Close tab. **Ctrl+N** and the main menu also open a new window.
+    tab), **New window**, Close tab, **Close other tabs** and **Close tabs to the right**.
+    **Ctrl+N** and the main menu also open a new window. Each closed tab can be reopened with
+    Ctrl+Shift+T.
+  - **Closing animation:** a closed tab shrinks away. While the mouse stays on the tab row the
+    other tabs keep their width, so the next close button is under the mouse; they spread out
+    when the mouse leaves. With "reduce motion" set in Windows there is no animation.
+  - **Merging:** a tab dropped on another window's tab row lands in that window, which comes to
+    the front.
   - **Closing:** closing a window's last tab closes the window, and closing the last window
     quits Krunk.
   - **Restoring:** every window is restored with its tabs, position, size and maximized state.
@@ -132,8 +141,40 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
     Ctrl+Shift+I to close it). The exceptions are the keys DevTools uses itself: Ctrl+F, Ctrl+G,
     Ctrl+P, Ctrl+O, Ctrl+[ / Ctrl+], Ctrl+Shift+F, Ctrl+Shift+P, Ctrl+Shift+C and Esc.
   - **Memory:** a tab with DevTools open is never put to sleep or unloaded.
+- **Bookmarks bar:**
+  - **Showing it:** right-click the bar to show it always, only on the new-tab page, or never
+    (Ctrl+Shift+B toggles; also in Settings → Appearance).
+  - **Context menu:** right-click a bookmark to open it (here, in a new tab or a new window),
+    edit its name and address, or delete it. Right-click a folder to open all, rename or delete
+    it, and empty space to add the page or make a folder.
+  - **Dragging:** drag bookmarks to reorder them, or onto a folder to put them in it.
 - **Shield:** the shield in the toolbar shows how many ads and trackers were blocked on the
-  page. Click it to allow ads on that site, or to open **Cookies and site data** for the site.
+  page, and lists the latest blocked addresses. Click it to allow ads on that site, or to open
+  **Cookies and site data** for the site.
+- **Ad blocking page** (`krunk://adblock`, the shield's "Show all", Settings → Privacy):
+  - **Blocked on this page:** every blocked request of the tab it was opened from, grouped by
+    host, with its type, the filter that matched and the list it comes from. The list is kept in
+    memory only (at most 500 entries per tab) and starts again when the tab navigates.
+  - **Filter lists:** every list with its address, number of filters and last update. Built-in
+    lists can be turned off and on, and the default choice restored. Add a list by its https
+    address: it is downloaded and checked at once, and not added if that fails. Lists you added
+    can be removed. "Update now" downloads them all.
+  - **My filters:** your own rules in Adblock Plus / uBlock Origin syntax, with a report of lines
+    it cannot read. Ctrl+S saves.
+  - Every change takes effect without a restart, once the engine is rebuilt (a few seconds).
+- **Downloads:**
+  - **History:** `krunk://downloads` shows each download's full address, the page it came from,
+    and when it started and finished. Right-click a row (or press Shift+F10 or the Menu key) for Open, Show in folder,
+    Copy download link, Copy page address, Retry, Pause / Resume, Cancel, Remove from list and
+    Delete file.
+  - **Several connections:** large files (8 MB or more) from servers that support it are
+    downloaded in parts over several connections at once (Settings → Downloads → Connections per
+    download, 4 by default, 1 to turn it off). Krunk first asks the server for the first byte
+    only; it splits the download only if the answer names the file's size and a validator
+    (ETag or Last-Modified), and every part must come from the same version of the file. The
+    parts carry the same cookies and referrer as the browser's own request. Anything else
+    (and private tabs) uses the engine's normal download. A file that changes on the server
+    during the download fails rather than be stitched together.
 - **Cookies and site data:**
   - `krunk://storage` lists every site with cookies or stored data, grouped by site
     (registrable domain), with a search box. Expand a site to see each cookie: name, value
@@ -142,7 +183,14 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
     removes an origin's local storage, IndexedDB, Cache Storage, service workers and cookies.
   - The shield's **Cookies and site data** opens `krunk://sitedata` for the current tab's site.
     There you can view, edit, add and delete its local storage and session storage items, and
-    delete its cookies. In a private tab this page opens as a private tab and only ever touches
+    edit and delete its cookies.
+  - **Hex editor:** the edit dialog has Text and Hex tabs. Hex shows the value's bytes (offset,
+    hex and text columns) in an encoding you choose: UTF-8, a binary string (one byte per
+    character, common for binary data in local storage), UTF-16LE, Base64 or percent-encoding.
+    Values that look binary open on Hex. Type over bytes, press Insert to insert, select with
+    Shift or the mouse, copy and paste as hex, Ctrl+Z to undo. Bytes that do not form a valid
+    value in the chosen encoding are not saved. A cookie cannot hold control characters or a
+    semicolon; use percent-encoding or Base64 for those. In a private tab this page opens as a private tab and only ever touches
     the private profile.
   - Limits (the engine has no API to enumerate storage):
     - The list shows origins you visited (history), origins open in tabs, and every site that
@@ -165,7 +213,8 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
 - **Memory:** background tabs go to sleep after 5 minutes. Optionally they can be unloaded
   completely after a longer time; turn this on in Settings → Performance.
 - **Games (pointer lock and full screen):** `requestPointerLock()` works as in Chrome. The cursor is
-  hidden and confined to the page, movement keeps coming at the screen edge, and
+  hidden and confined to the page, movement keeps coming at the screen edge (smoothly, also
+  while mouse buttons and keys are held), and
   `{unadjustedMovement: true}` gives raw mouse input. Esc, Alt+Tab, switching tabs or leaving
   the page release the lock; a "Press Esc to show your cursor" hint appears for 3 s. A page's
   `requestFullscreen()` and **F11** fill the monitor without the tab strip and toolbar; Esc
@@ -338,6 +387,16 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
 - **Cosmetic filtering:** site-specific hiding rules are injected when a page commits, as a
   constructed stylesheet, which page CSP doesn't block. Generic rules are applied for the class
   names and ids the page reports, capped at 2000.
+- **Lists you add and your own filters** (`krunk://adblock`): an added list must be an https
+  address, at most 16 MB of text with at least one filter (no header needed); it gets no trusted
+  scriptlets. The addresses are in the settings, the downloads in `filters\custom-<hash>.txt`,
+  and your own filters (at most 200 KB) in the database. Both are part of the cache key. Each
+  change rebuilds the engine on the filter worker; a change made while a rebuild runs waits for
+  it.
+- **What was blocked:** each tab keeps its last 500 blocked requests in memory (address without
+  the query, type, page). The filter that matched is looked up only when `krunk://adblock` asks,
+  by a throwaway engine built with the filter text on a worker thread; the engine in use keeps
+  none.
 - **Updates:** at most once every 24 h (checked hourly), a worker thread downloads the lists and
   their sub-lists over WinHTTP (HTTPS only, 16 MB cap, 30 s timeout) and validates them: no HTML,
   a list header, at least 50 rules, at least 2 KB. A failed or suspicious download, including a
@@ -607,7 +666,7 @@ limitations"). To move to a newer CEF:
 
 ### Checks
 ```sh
-cargo test --workspace                                                   # core: 300 unit tests
+cargo test --workspace                                                   # core: 323 unit tests
 cargo clippy --workspace --all-targets -- -D warnings                    # Linux
 cargo xwin clippy --target x86_64-pc-windows-msvc --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
@@ -693,10 +752,20 @@ Testing on Windows:
 - **Tab dragging is Krunk's own, not Chrome's.** Under the Alloy runtime the engine has no tab
   strip, so the drag is done by the host: the torn-off window itself is the drag image (there
   is no translucent preview), and a tab can't be dropped into another program.
+- **Downloads in parts go around the engine's network stack.** They use WinHTTP with the
+  engine's cookies, user agent and referrer, the HTTP proxy setting, and WinHTTP's certificate
+  checks. Sites that need HTTP authentication or a client certificate, SOCKS proxies and private
+  tabs always get the engine's own single-connection download. A part download paused and
+  resumed continues where each part stopped; one interrupted by quitting starts again (its part
+  files are removed at the next start).
+- **Filters with a port** (`||example.com:8080/…`) never match: Brave's `adblock` engine ignores
+  the port. Write `||example.com^*/path` instead.
+- **What was blocked** lists requests, not elements hidden by cosmetic filters. When the
+  filter text can't be recovered (a list changed since the request), only the list is named.
 - **Several monitors:** windows remember their position on any monitor and are moved back on
   screen if that monitor is gone. Dragging across monitors with different scaling was not
   tested (the test machine has one monitor, at up to 125 %).
-- **Not tested for 0.3.0** (the Windows 11 test VM can't do them):
+- **Not tested for 0.3.0 and 0.4.0** (the Windows 11 test VM can't do them):
   - **two monitors:** the VM has one;
   - **display scaling above 125 %:** the VM allows at most 125 %;
   - **a standard (non-admin) user with UAC on:** the VM has UAC off and an admin user.

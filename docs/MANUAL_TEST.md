@@ -592,6 +592,79 @@ in about 20 s, with the session restored as one window and no `*.md` left.
    it in the background; the log has no "tab N: low memory" line for it, while other background
    tabs get one).
 
+## Krunk 0.4 (round after 0.3.0)
+Last pass: 2026-11-05 on the Windows 11 VM; evidence in the pipeline workspace under
+`evidence-0.4.0/`. VM scripts (each runs on a fresh profile): `vm-040-merge.ps1`,
+`vm-040-tabs.ps1`, `vm-040-tabanim.ps1`, `vm-040-plock.ps1`, `vm-040-bookmarks.ps1`,
+`vm-040-downloads.ps1`, `vm-040-parts.ps1` (with `scripts/vm-www/rangeserve.py`),
+`vm-040-blocked.ps1`, `vm-040-filters.ps1`, `vm-040-hex.ps1`. Test pages are in
+`scripts/vm-www/` (`8090/plock-measure.html`, `8092/dl.html`, `ads.html`, `own.html`,
+`bin.html`).
+
+### Tabs and windows
+1. **Merge:** drag a window's only tab onto another window's tab row: the tab lands there and
+   that window is in front, not behind the other one.
+2. **Tab menu:** right-click a tab → Close other tabs / Close tabs to the right (greyed out on
+   the last tab). Ctrl+Shift+T brings the closed tabs back one by one.
+3. **Downloads tab:** with `krunk://downloads` open (in any window), the download icon or Ctrl+J
+   switches to it instead of opening another; the same for history, bookmarks, settings and
+   `krunk://adblock`.
+4. **Closing animation:** close several tabs with the mouse: each shrinks away smoothly; the
+   next close button stays under the mouse until it leaves the tab row. With Windows' "Animation
+   effects" off there is no animation.
+
+### Pointer lock while buttons and keys are held
+On a game (or `8090/plock-measure.html`): lock the pointer, hold both mouse buttons and A, and
+turn with the mouse. The view turns smoothly; `plock-measure.html` reports no synthetic events
+and an even movement per frame. Esc still releases the lock.
+
+### Bookmarks bar
+1. Right-click empty space on the bar: Add page, New folder, and Show bookmarks bar Always /
+   Only on new tab / Never. "Only on new tab" shows it on the new-tab page only; Ctrl+Shift+B
+   toggles. The choice survives a restart; Settings → Appearance shows the same choice.
+2. Right-click a bookmark: Open, Open in new tab, Open in new window, Edit (name and address),
+   Delete. Right-click a folder: Open all, Rename, Delete.
+3. Drag a bookmark along the bar (a marker shows where it goes) and onto a folder (the folder
+   is highlighted): it moves into the folder.
+
+### Downloads
+1. `krunk://downloads` shows each download's full address, the page it came from, start and
+   finish date and time. Right-click a row (or Shift+F10 or the Menu key): Open, Show in
+   folder, Copy download link, Copy page address, Retry, Remove from list, Delete file (asks
+   first); a running download has Pause/Resume and Cancel.
+2. **Parts:** Settings → Downloads → Connections per download (default 4). A 64 MB file from a
+   server that allows ranges (`rangeserve.py`, 2 MB/s per connection) finishes about 3–4 times
+   faster with 4 than with 1; the server log shows 4 range requests plus the probe, each with
+   the same cookie and referrer as the engine's request. The SHA-256 matches.
+3. A file that changes on the server during the download fails ("the file changed on the
+   server") and leaves no part files; pause/resume and cancel work from the row menu; quitting
+   during a download leaves part files that the next start removes.
+4. A server without ranges, without an ETag/Last-Modified, a small file, a private tab and a
+   setting of 1 use the engine's single download.
+
+### Ad blocking
+1. On `8092/ads.html` the shield lists the latest blocked addresses; "Show all" opens
+   `krunk://adblock` with every blocked request grouped by host, its filter and its list. The
+   same requests appear in `krunk.log` with `--log-blocked`.
+2. **Filter lists** tab: each list with address, filter count and last update. Turn EasyList
+   off: its rules stop applying without a restart. Add
+   `https://easylist.to/easylist/fanboy-social.txt`: it is downloaded, named by its title, and
+   blocks (`own.html`: `buttons.github.io` is blocked). An address that answers 404 is refused
+   and not added. Remove the added list; Restore default lists; Update now.
+3. **My filters** tab: add `||localhost^*/probe.png` and press Ctrl+S: `own.html` no longer loads
+   it, without a restart; a line it can't read is reported with its number.
+4. Restart: the lists, the added list and My filters are as they were.
+
+### Site data hex editor
+1. `8092/bin.html` stores a binary string in local storage and a percent-encoded binary cookie.
+   Open the shield → Cookies and site data.
+2. Edit `bin`: the dialog opens on Hex, "Binary string". Type over a byte, press Insert and type
+   a byte, Delete one, Save. Reload `bin.html`: it shows exactly those bytes.
+3. Edit the cookie `blob`: it opens on Hex, "Percent-encoded". Change a byte and save: the page
+   reads the new value, percent-encoded; its other attributes are unchanged.
+4. In the Text tab, a cookie value with `;` is refused; in Hex, bytes that are not valid UTF-8
+   are not saved as UTF-8.
+
 ## Background traffic
 1. Run a logging HTTP proxy (`screenshots/verify2/proxy.ps1` in the pipeline workspace listens on
    `127.0.0.1:8888`) and set Settings → Advanced → Proxy to `127.0.0.1:8888` (restart).
