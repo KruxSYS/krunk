@@ -75,7 +75,7 @@ The UI says so plainly.
 | D1 | Rust (axum 0.8) API with PostgreSQL 18 | Go or Node services; SQLite on a volume | It shares the Rust types and crypto test code with the client, is memory-safe and uses the toolchain we already have. Postgres gives transactional CAS, concurrent writers and standard `pg_dump` backups. SQLite would be simpler, but the brief asks for Postgres and we may run several API workers. |
 | D2 | Account pages are static HTML/JS served by Caddy, calling a JSON API | Server-rendered templates (askama) | Both work under `script-src 'self'`. Static pages keep one API surface (used by the website and, partly, by clients), carry no template-injection risk, and reuse Caddy's caching and headers. The cost is that JS is required; Turnstile requires it anyway. |
 | D3 | The **account password** and the **sync passphrase** are separate secrets | One password split into an auth half and a key half on the client (as Firefox Accounts "onepw" does) | The account password is typed into the *website*. Unifying the two would put key material into website JS, which a compromised site could steal (THREAT_MODEL 4). Keeping them separate keeps the website out of the key path. The UX cost is a second secret, which is generated and saveable. |
-| D4 | Asymmetric wrapping (HPKE seals to device and escrow keys), plus a symmetric **recovery root RR** under the passphrase and recovery key | Baseline: AK wrapped symmetrically under the passphrase and recovery key | With asymmetric wrapping a remaining device can rotate keys after a revocation without anyone re-entering a secret. The RR escrow and the authenticated directories stop a malicious server from planting keys, which a naive "seal to the passphrase public key" design would allow (review findings 1, 2, 7). |
+| D4 | Asymmetric wrapping (HPKE, RFC 9180, via the `hpke` 0.15.1 crate: seals to device and escrow keys), plus a symmetric **recovery root RR** under the passphrase and recovery key; the escrow keypair is derived from RR | Baseline: AK wrapped symmetrically under the passphrase and recovery key | With asymmetric wrapping a remaining device can rotate keys after a revocation without anyone re-entering a secret. The RR escrow and the authenticated directories stop a malicious server from planting keys, which a naive "seal to the passphrase public key" design would allow (review findings 1, 2, 7). |
 | D5 | A separate **PAK** for passwords, held only inside the vault | Passwords under AK | AK sits on disk under DPAPI. If passwords used it, synced passwords would be weaker than the local vault (THREAT_MODEL G4). |
 | D6 | JSON envelopes, XChaCha20-Poly1305 with random 24-byte nonces, padding buckets | CBOR or protobuf; AES-256-GCM | JSON is trivial in Kotlin and in serde. XChaCha's 192-bit nonces make random nonces safe at any volume, and we already use the crate. AES-GCM's 96-bit nonces would need counters. |
 | D7 | Server `seq` per account, plus HLC versions and a merge rule per collection | Vector clocks; CRDT libraries (automerge) | The small set of collections has well-understood merges: union for history, LWW for the rest, and a tree repair for bookmarks. A CRDT would add a large dependency and on-disk format that Android would also have to carry. |
@@ -216,8 +216,9 @@ volumes: { krunk-db: {} }
     - sets `devices.last_ip = NULL` where `last_sync_at` is more than 90 days ago;
     - deletes `ip_events` older than 90 days.
 
-    Link grants, which also carry an IP, are deleted within about an hour anyway. The country is kept while the
-    session or device exists. Configurable as `IP_RETENTION_DAYS` (OPEN_QUESTIONS Q6).
+    Link grants, which also carry an IP, are deleted within about an hour anyway. The country
+    is kept while the session or device exists. Configurable as `IP_RETENTION_DAYS`
+    (OPEN_QUESTIONS Q6).
 - **Devices (requirement 6):**
   - **What the server holds:** `id` (UUIDv4, minted at link approval); `short` (u16); `platform`;
     `label` (a non-secret string from the client, such as "Krunk 0.3 on Windows 11");
@@ -225,6 +226,10 @@ volumes: { krunk-db: {} }
   - **Public keys** live in `ak_dir`/`pak_dir`, written by clients.
   - **Device name:** user-chosen and **encrypted**, as a `device_meta` record. Only Krunk shows
     and edits it; the website shows "Device 3 · Windows · last sync 2 h ago".
+  - **Rename versus revoke:** the account page lists and **revokes** devices. **Renaming** is done in
+    Krunk (`krunk://sync`), because names are end-to-end encrypted and the website must never
+    hold the key to write them. This deliberately narrows the brief's "rename on the account
+    page".
   - **Revoking** from the website or from a device kills its tokens at once and starts
     rotation, carried out by a remaining device (PROTOCOL §7).
 - **Email notifications** (via the outbox; templates in S2):
@@ -624,7 +629,7 @@ Playwright, hadolint, yamllint and `docker compose config -q`.
 | S5 | Client storage: `browser.db` v5, vault format 2, `sync.json`, the extended `ffi::http` | Krunk build | Migration tests from a v4 database and a format-1 vault fixture; guid backfill, with the roots fixed; vault v2 round-trip; DPAPI state round-trip (Windows test exe); HTTP POST/409/410/423/429 handling against a local mock | VM: upgrade 0.2.1 → this build on a real profile, then browse, bookmarks and vault, as in MANUAL_TEST | Client: DB v4 → v5, vault 1 → 2 (lazy) |
 | S6 | Keys end to end: setup, escrow, restore, device approval (SAS), directory verification; `krunk://sync` and Settings card; server `keys/*` and `approvals/*` | Krunk + staging | First device setup; restore with the passphrase and with the recovery key (all devices lost); approval with a typed SAS (a wrong SAS aborts and the grant is single-use); a server-tampered directory is rejected (a staging fault-injection flag, compiled only into test builds); `esc_pk` swap rejected; KDF floor enforced; **no sync request before linking** (proxy log, 10 min idle) | Staged; VM ↔ `krunk-sync-cli` (as the second device) for approval and restore; screenshots | 0007 (keys tables) |
 | S7 | Sync engine and collections: bookmarks, history, settings, pins, allowlist, tabs; quotas; scheduler | Krunk + staging | Two-client convergence property tests (random operations, then identical stores); bookmark tree repair fixtures; history union and eviction; settings allowlist (device-local keys never leave); quota errors; offline queue and back-off; 410 → full reconcile; first-sync merge without duplicates | VM: real browsing, changes visible on the CLI client and back; screenshots of the Sync card and the devices list | 0008 (records) |
-| S8 | Passwords (PAK) and never-save; vault merge | Krunk + staging | The passwords collection syncs only while the vault is unlocked; restore of passwords onto a fresh profile (passphrase → vault); **G4 test**: with `sync.json` plus DPAPI but no vault password, no password plaintext can be derived (unit test plus a review); the vault-key add needs a PAK MAC (rejected otherwise); LWW keeps the previous version | VM: two profiles (a second data directory via a test-only flag), passwords appear after the vault unlocks | none |
+| S8 | Passwords (PAK) and never-save; vault merge | Krunk + staging | The PAK collections (passwords, never-save) sync only while the vault is unlocked; restore of passwords onto a fresh profile (passphrase → vault); **G4 test**: with `sync.json` plus DPAPI but no vault password, no password plaintext can be derived (unit test plus a review); the vault-key add needs a PAK MAC (rejected otherwise); LWW keeps the previous version | VM: two profiles (a second data directory via a test-only flag), passwords appear after the vault unlocks | none |
 | S9 | Revocation, rotation, rekey, fork alarms; devices and sessions UI in Krunk | Krunk + staging | PROTOCOL §12 item 13 scenarios: revoked device can't read e+1; writes frozen with no device online, then rotation by a restorer; CAS race between two rotators; `min_record_epoch` enforced; phantom device not sealed to; *Finish securing* re-anchors | Staged; VM + CLI (3 devices) | 0009 |
 | S10 | Account lifecycle and notifications: delete, export, sync reset, inactivity job (off by default), email templates; privacy docs (README, SECURITY.md, site privacy page) | Website + Krunk | Deletion: rows zero, every token 401, receipt email, `deletions.log` entry; the export schema is validated; sync reset; every notification fires once (mail sink) | Staged | 0010 |
 | S11 | Security review and hardening: an independent review of PROTOCOL plus the code, semgrep, fuzzing, a dependency review, a pen-test checklist (OWASP ASVS L2 for the web parts); an Android interop plan (Kotlin vector runner); optional OPRF hardening of escrow (RFC 9497) and WebAuthn | Reports | Every finding fixed or accepted in writing; the vector runner passes on an Android emulator (when the Android project exists) | Staged; live only after operator approval | as needed |
@@ -660,6 +665,9 @@ from S6 on, behind *Settings → Sync (beta)*.
   - `debian:trixie-20261027-slim` (fallback runtime).
 - **Crates** (latest at the time; pin exact versions with `=` at S1/S4):
   - server: axum 0.8.9, tokio 1.54.1, sqlx 0.9.0, tower-http 0.7.1, lettre 0.11.23, reqwest 0.13.5 (rustls), governor 0.10.4, totp-rs 6.0.0, uuid 1.29, time 0.3.55, webauthn-rs 0.6.2 (later);
-  - crypto: hkdf 0.13.0, hmac 0.13.0, x25519-dalek 3.0.0, hpke 0.15.1, zxcvbn 3.1.1, data-encoding 2.11.1;
+  - crypto: hkdf 0.13.0, hmac 0.13.0, x25519-dalek 3.0.0, zxcvbn 3.1.1, data-encoding 2.11.1;
+  - hpke 0.15.1 with `default-features = false` and features alloc, getrandom, x25519, chacha. Its
+    dependencies (chacha20poly1305 0.11, x25519-dalek 3, curve25519-dalek 5, hkdf 0.13, sha2 0.11)
+    match the crates already in use;
   - already in the repo: argon2 0.6.0, chacha20poly1305 0.11.0, sha2 0.11.1, curve25519-dalek 5.0.0;
   - FFI: uniffi 0.32.2.

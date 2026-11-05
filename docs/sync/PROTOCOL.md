@@ -25,7 +25,7 @@ Conventions: "MUST" etc. as in RFC 2119. `‖` is concatenation. `lp(x)` = 2-byt
 | Use | Primitive | Parameters | Crate (Rust) / Android |
 |---|---|---|---|
 | Record and wrap AEAD | XChaCha20-Poly1305 | 32-byte key, 24-byte random nonce (OS CSPRNG), 16-byte tag | `chacha20poly1305` 0.11 (already used by the vault) |
-| Seal to a public key | HPKE base mode, RFC 9180: KEM 0x0020 DHKEM(X25519, HKDF-SHA256), KDF 0x0001 HKDF-SHA256, AEAD 0x0003 ChaCha20Poly1305 | `info` per §3.3, empty `aad` | `hpke` 0.15 (features `x25519`, `chacha`); shared core on Android |
+| Seal to a public key | HPKE base mode, RFC 9180: KEM 0x0020 DHKEM(X25519, HKDF-SHA256), KDF 0x0001 HKDF-SHA256, AEAD 0x0003 ChaCha20Poly1305 (HPKE derives its own 12-byte nonces; this is separate from the record AEAD) | `info` per §3.3, empty `aad` | `hpke = "=0.15.1"`, `default-features = false`, features `alloc`, `getrandom`, `x25519`, `chacha`. No ML-KEM, AES or NIST curves. Its dependencies are the crates already used here: `chacha20poly1305` ^0.11, `x25519-dalek` ^3, `curve25519-dalek` ^5, `hkdf` ^0.13, `sha2` ^0.11, `getrandom` ^0.4 (checked on crates.io, 2026-11-05). Android uses the same Rust core via UniFFI |
 | Key derivation | HKDF-SHA256 (RFC 5869) | `salt` = account_id (16 raw bytes) unless stated; `info` = label; 32-byte output | `hkdf` 0.13 + `sha2` 0.11 |
 | MAC | HMAC-SHA256 | 32-byte key, full 32-byte tag, constant-time compare | `hmac` 0.13 |
 | Key agreement (device approval) | X25519 (RFC 7748), ephemeral on both sides | All-zero shared secret rejected | `x25519-dalek` 3 |
@@ -355,7 +355,8 @@ sequenceDiagram
 3. PAK is held in memory only.
 4. The vault is created or unlocked, then PAK and the pins are sealed into `vault.json` under VK.
 5. A new vault keypair is registered in `pak_dir`.
-6. The passwords collection is pulled with `CK_pw` and merged with `Vault::upsert`.
+6. The PAK collections (`passwords` with `CK_pw`, `never_save` with `CK_ns`) are pulled and
+   merged into the vault, as in "Vault entries ↔ password records" (§9.5).
 
 If Krunk exits before step 4, PAK is dropped. The user enters the passphrase again later (or uses §6.2 from a device with an unlocked vault).
 
@@ -387,7 +388,7 @@ sequenceDiagram
     R-->>R: list "These devices keep access: …" (needs confirmation only if one was added_by D)
     R->>R: AK_{e+1} · ak_dir: devices−D, revoked+D, min_record_epoch=e (until rekey), hist=AEAD(K_akhist,e+1, AK_e), seals→remaining ∩ server-active + escrow · mac(AK_{e+1}) · chain(AK_e)
     R->>S: POST /api/v1/keys/commit {ak_dir, if_ak_prev_hash}   (CAS)
-    S-->>R: 200 (current_epoch=e+1 · writes unfrozen for non-password collections, only e+1 accepted)
+    S-->>R: 200 (current_epoch=e+1 · writes unfrozen for the AK collections, only e+1 accepted)
     loop eager rekey, 500 per batch
         R->>S: GET /api/v1/records?epoch_lt=e+1 → re-encrypt with CK_c,e+1, new ids via IK_c,e+1
         R->>S: POST /api/v1/rekey/batch {epoch:e+1, replaces:[{old_id, c, envelope}]}
@@ -395,13 +396,13 @@ sequenceDiagram
     R->>S: POST /api/v1/keys/commit {ak_dir seq+1: hist removed, min_record_epoch=e+1}
     P->>S: (vault unlocked, or user enters passphrase) POST /keys/rotation/claim {kind:pak}
     P->>P: PAK_{p+1} · pak_dir: vault_keys−D, seals→remaining vault keys + escrow, hist, mac/chain
-    P->>S: POST /keys/commit {pak_dir}  · rekey passwords · passwords unfrozen
+    P->>S: POST /keys/commit {pak_dir}  · rekey PAK collections · PAK collections unfrozen
 ```
 **Normative procedure:**
 1. **Revoke** (from the website or from a device). The server, in one transaction:
    - deletes all of D's access tokens and refresh-token families, and marks D revoked
      (`revoked_at`);
-   - sets `rotation.ak = pending` and `rotation.pak = pending`;
+   - sets `sync_state.rotation_ak = pending` and `sync_state.rotation_pak = pending`;
    - returns `423 rotation_pending` for record writes from every device, and D has no tokens
      anyway. Reads stay available.
    - It also emails the user.
@@ -422,7 +423,7 @@ sequenceDiagram
    - `mac` under `AK_{e+1}` and `chain` under `AK_e`.
 4. **Commit:** `POST /api/v1/keys/commit {ak_dir, if_ak_prev_hash}`. The server applies it only
    if `if_ak_prev_hash` equals SHA-256 of its current head (CAS). It then sets
-   `current_epoch = e+1` and lifts the freeze for the non-password collections, accepting only
+   `current_epoch = e+1` and lifts the freeze for the AK collections, accepting only
    `e = e+1` from then on.
    - A rotator that loses the CAS discards its key, re-reads the head and accepts the winner
      under §4.4.
@@ -440,8 +441,8 @@ sequenceDiagram
 7. **PAK rotation:** done by the first remaining device whose vault is unlocked, after a fresh
    master-password prompt (or by an RR holder via the passphrase).
    - It generates `PAK_{p+1}`, removes D's vault key, seals to the remaining vault keys and to
-     `esc_pk`, adds `hist`, `mac` and `chain`, commits by CAS and rekeys the passwords
-     collection.
+     `esc_pk`, adds `hist`, `mac` and `chain`, commits by CAS and rekeys the PAK collections
+     (`passwords`, `never_save`).
    - The **PAK collections** (`passwords`, `never_save`) stay frozen (423) until this commit.
      The other collections unfreeze at step 4.
 8. **No other device online:**
@@ -479,8 +480,9 @@ sequenceDiagram
 ```json
 {"v":1,"c":"bookmarks","id":"<b64 16 B>","e":4,"k":"ak","n":"<b64 24 B>","ct":"<b64>"}
 ```
-- `id = HMAC(IK_c,e, natural_key_bytes)[0..16]`. For passwords, `IK_pw,p` and `k = "pak"`, with
-  `e` meaning `pak_epoch`.
+- `id = HMAC(IK_c,e, natural_key_bytes)[0..16]`. For the PAK collections, `k = "pak"` and `e`
+  means `pak_epoch`. Passwords use `CK_pw,p`/`IK_pw,p`, and the never-save list uses
+  `CK_ns,p`/`IK_ns,p` (§4.1).
 - `aad = lp("krunk-sync/v1/rec") ‖ u8(v) ‖ account_id ‖ lp(c) ‖ id(16 raw) ‖ lp(k) ‖ u32be(e)`.
 - `ct = XChaCha20-Poly1305(CK, n, pad(plaintext_json), aad)`.
 - The plaintext carries `{"ver": <u64>, "dev": <short>, "deleted": bool, "data": {…}}`. The
@@ -489,6 +491,15 @@ sequenceDiagram
 AAD binding catches cross-collection and cross-record swaps and moves between accounts and
 epochs. A replay of an older ciphertext of the same record (rollback) is caught by `ver` against
 the per-record high-water mark kept in `sync_items`.
+
+**Change from the brief's baseline (version in the AAD), with justification [R16]:**
+- **What changed:** the baseline binds collection + record id + version in the AAD. Here the
+  version is in the *plaintext*.
+- **Integrity is the same:** the AEAD authenticates the plaintext, so `ver` can't be altered,
+  and rollback is still detected by the per-record high-water mark.
+- **What it gains:** the server no longer learns exact per-URL visit and edit times.
+- **What stays in the AAD:** collection, id, epoch, key kind and account, so swaps are still
+  detected.
 
 ### 9.2 Padding
 - **Scheme:** ISO/IEC 7816-4: append `0x80`, then `0x00` up to the bucket size.
@@ -527,6 +538,30 @@ the per-record high-water mark kept in `sync_items`.
 | `never_save` | PAK | origin | `{origin, added}` | Add/remove LWW (in the passwords domain, because origins reveal accounts) |
 | `pins` | AK | URL | `{url, title, state:"pinned"\|"hidden", sort}` | LWW per URL |
 | `device_meta` | AK | device id | `{name}` | Written by the owner or a renaming device. LWW. The server shows "Device #short" instead |
+
+**Vault entries ↔ password records (sync re-encryption and merge-back):**
+- **Outgoing:** while the vault is unlocked, every vault change (`Vault::save_login`, `upsert`,
+  `delete`) also queues the entry id inside the vault's sealed `sync` field (§8).
+  - The sync job reads the decrypted `Entry` from the open vault and builds
+    `{origin, username, password, note, created, updated}`.
+  - It encrypts that under `CK_pw,p` (PAK) with id `HMAC(IK_pw,p, entry_id)`.
+  - It zeroizes the plaintext buffer.
+
+  The vault's own encryption (VK, AAD `lb-vault:entry:<id>`) is untouched; the record is a
+  second, independent encryption under PAK.
+- **Incoming:** each record is decrypted with `CK_pw,p` in memory, then:
+  1. If an entry with the same id exists, per-entry LWW by `ver` applies. The loser is kept 30
+     days as "previous version" inside the vault.
+  2. Otherwise, if an entry with the same (origin, username) exists under another id, the remote
+     id is adopted and the two are merged as in step 1.
+  3. Otherwise `Vault::upsert` creates the entry with the remote id.
+
+  The vault then re-seals and writes atomically as it does today (`write_atomic`, new nonces, new
+  manifest generation). A tombstone calls `Vault::delete`.
+- **Vault locked:** nothing is decrypted, and incoming password records wait on the server
+  (`sync_items` keeps the cursor). Local plaintext never exists outside the unlocked vault.
+- **Never weaker than the vault:** PAK is stored only inside `vault.json` under VK, so reading
+  synced passwords needs the master password, the passphrase or the recovery key (THREAT_MODEL G4).
 
 **Bookmark tree repair (deterministic on every device):**
 - An unknown or deleted `parent_guid` sends the item to "Other bookmarks".
@@ -752,7 +787,7 @@ Each case lists its inputs (hex) and outputs (hex or bytes):
 6. Rejection of low-order X25519 points (all-zero shared secret).
 7. `ak_dir` and `pak_dir`: `mac`, `chain` and `escrow_mac` over fixed bytes. Acceptance-rule
    cases: same epoch; epoch+1; a skipped epoch (reject); a fork (reject and alert); `esc_pk`
-   swapped under `mac_ak` only (reject); a lowered `pp_kdf` (reject); a phantom device not in the
+   swapped in `ak_dir`, i.e. covered only by AK's `mac` (reject); a lowered `pp_kdf` (reject); a phantom device not in the
    server's active list (no seal).
 8. Record id HMAC, padding to each bucket boundary (255, 256, 257 …), the exact AAD bytes, and a
    full envelope. Rejections for swapped `c`, `id`, epoch and account.

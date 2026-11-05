@@ -44,7 +44,7 @@ in `PROTOCOL.md` (§ references below); architecture is in `PLAN.md`.
 ## 3. Mitigations, attacker by attacker
 | # | Attack | Mitigation | Spec |
 |---|---|---|---|
-| 1 | Read synced data | Everything is encrypted on the client with keys the server never has. Seals use HPKE to device keys or the escrow key, and RR is wrapped under KEKs derived from secrets only the user has. | PROTOCOL §2, §4, §5 |
+| 1 | Read synced data | Everything is encrypted on the client with keys the server never has. Seals use HPKE (RFC 9180, the `hpke` 0.15.1 crate) to device keys or to the escrow key derived from RR, and RR is wrapped under KEKs derived from secrets only the user has (PROTOCOL §5.3). | PROTOCOL §2, §4, §5 |
 | 1 | Substitute keys: give a device an attacker-known AK/PAK, or add the attacker's public key | Directories are authenticated by `mac`/`chain` under the epoch keys, or by `escrow_mac` under RR. The server alone holds none of these. `esc_pk` and `pp_kdf` are PAK-authenticated and pinned. A restorer re-derives `esc_pk` from RR and compares it. Device approval uses a committed SAS that the user types into the new device. | §4.4, §5.3, §6.2, §6.3 |
 | 1 | Weaken the passphrase KDF | Hard-coded floors (m ≥ 128 MiB, t ≥ 3); re-wraps always use the constants. | §5.1 |
 | 1 | Modify, swap or move records | AEAD with AAD binding the version, account, collection, id, key kind and epoch. Per-record `ver` high-water marks. `min_record_epoch`. Fork alarm on an AEAD failure at a known epoch. | §9.1, §10.1, §7.6 |
