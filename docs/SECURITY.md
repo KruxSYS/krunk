@@ -137,7 +137,8 @@ carry a valid Ed25519 signature (`verify_strict`) by the release key built into 
 (required unless the build has the `dev-updates` feature, which release builds never have:
 `build.rs` refuses an `http://` server without it) protects privacy and availability. A
 compromised server, CDN or TLS certificate can therefore withhold updates, but cannot make
-Krunk run its own program.
+Krunk run its own program. (The live server, `https://krunk.209.wf`, is behind Cloudflare, which
+terminates TLS: it is such a CDN.)
 
 Checks, in order:
 1. The manifest is at most 16 KB and the signature 256 bytes.

@@ -7,7 +7,8 @@
 #   scripts/build-dist.sh --dev      release build with the dev-updates feature (the update
 #                                    check also accepts http://) -> target/dev-dist/, never dist/
 #
-# UPDATE_BASE_URL (default https://krunk.example) is where the update check looks, and
+# UPDATE_BASE_URL (default https://krunk.209.wf, the live server) is where the update check looks
+# and what the installer names as the homepage, and
 # KRUNK_UPDATE_PUBKEY_FILE the public key it trusts (default assets/keys/update-signing.pub):
 #   UPDATE_BASE_URL=https://downloads.example.org scripts/build-dist.sh
 #
@@ -27,6 +28,9 @@ case "${1:-}" in
   "") ;;
   *) echo "usage: $0 [--debug | --dev]" >&2; exit 2 ;;
 esac
+
+# The update server, also passed to build.rs (app/build.rs has the same default).
+export UPDATE_BASE_URL="${UPDATE_BASE_URL:-https://krunk.209.wf}"
 
 # shellcheck source=scripts/xwin-env.sh
 source "$root/scripts/xwin-env.sh"
@@ -94,7 +98,7 @@ makensis=$("$root/scripts/fetch-nsis.sh")
 setup="Krunk-Setup-$version.exe"
 NSISDIR="$(dirname "$(dirname "$makensis")")/share/nsis" "$makensis" -V2 -NOCD \
   -DVERSION="$version" -DSRC="$out" -DOUT="$dist/$setup" -DICON="$root/assets/brand/krunk.ico" \
-  -DSIDE_IMAGE="$root/assets/brand/installer-side.bmp" \
+  -DSIDE_IMAGE="$root/assets/brand/installer-side.bmp" -DHOMEPAGE="$UPDATE_BASE_URL" \
   "$root/installer/krunk.nsi"
 
 cd "$dist"

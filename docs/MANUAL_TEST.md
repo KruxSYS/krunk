@@ -510,8 +510,9 @@ Use a dev build that points at a test server:
    and Krunk keeps running.
 5. Turn off "Check for updates automatically" and restart: no request reaches the server
    within 2 minutes. "Check for updates" still works.
-6. A release build (`https://krunk.example`) reports "The update check failed: …" in About,
-   because the placeholder domain doesn't resolve. Nothing else happens.
+6. A release build checks `https://krunk.209.wf` (live). It reports "Krunk is up to date" in
+   About, or offers the published version when it is newer. With no network it says "The update
+   check failed: … the server name could not be resolved", and nothing else happens.
 
 ### Download server (`dist/server`)
 See `dist/server/README.md` → "Checks". After publishing:

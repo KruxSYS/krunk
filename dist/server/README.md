@@ -59,7 +59,20 @@ With a domain (automatic HTTPS from Let's Encrypt):
 
 Caddy keeps its certificates in the `caddy-data` volume. Inside the container it listens on 8080 and 8443, so it needs no privileges.
 
-Then build Krunk for that server: `UPDATE_BASE_URL=https://downloads.example.org scripts/build-dist.sh`. The default build points at the placeholder `https://krunk.example`.
+Then build Krunk for that server: `UPDATE_BASE_URL=https://downloads.example.org scripts/build-dist.sh`. The default build points at the live server `https://krunk.209.wf`.
+
+### The live deployment
+`https://krunk.209.wf` (a temporary domain) is the ai-pipe service of this repository behind
+**Cloudflare**:
+- Cloudflare terminates TLS and redirects HTTP to HTTPS, and proxies to Caddy's plain port
+  8080, so `SITE_ADDRESS` stays `:8080`.
+- Releases are published into the volume `live-browser_krunk-releases`.
+- Cloudflare caches the `.exe` and `.zip` downloads. That is safe because their paths are
+  per-version and `immutable`.
+- It does not cache `.json`, so `latest.json`, sent with `no-cache`, reaches clients at once.
+  Check it with `curl -sI https://krunk.209.wf/updates/win-x64/latest.json` (`cf-cache-status`).
+- Cloudflare sees the requests, and so the client IPs. It cannot forge an update: Krunk
+  checks the signature and the installer's hash.
 
 ## The release key
 ```sh
@@ -77,8 +90,8 @@ See `docs/SECURITY.md`, "Update check".
 ## Publish a release
 ```sh
 scripts/build-dist.sh
-dist/server/publish-release.sh dist/Krunk-Setup-0.2.0.exe dist/Krunk-win-x64.zip 0.2.0 \
-    --volume krunk_krunk-releases --notes NOTES-0.2.0.md
+dist/server/publish-release.sh dist/Krunk-Setup-0.2.1.exe dist/Krunk-win-x64.zip 0.2.1 \
+    --volume krunk_krunk-releases --notes NOTES-0.2.1.md
 ```
 1. The script computes sizes and SHA-256s and writes `release.json` and `latest.json`.
 2. It signs `latest.json` **on this machine** (`openssl pkeyutl -sign -rawin`, Ed25519) and checks the signature again with the public key.

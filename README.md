@@ -14,12 +14,12 @@ used. It installs per user without administrator rights, or runs portable from a
 - background-tab sleep, to save memory
 
 ## Download and requirements
-- **Installer:** `Krunk-Setup-0.2.0.exe` (about 137 MB). It installs for the current user
+- **Installer:** `Krunk-Setup-0.2.1.exe` (about 137 MB), from `https://krunk.209.wf`. It installs for the current user
   only, without administrator rights:
   - to `%LOCALAPPDATA%\Programs\Krunk`, with a Start Menu shortcut and, if you tick it, one on
     the desktop;
   - with an entry in Settings → Apps → Installed apps (per user, `HKCU`).
-  If Krunk is running, the installer asks you to close it. `Krunk-Setup-0.2.0.exe /S` installs
+  If Krunk is running, the installer asks you to close it. `Krunk-Setup-0.2.1.exe /S` installs
   silently; it then closes a running Krunk itself and waits up to 30 s for it.
   **Uninstalling** removes the program and the shortcuts. Your data (`%LOCALAPPDATA%\Krunk`) is
   kept unless you tick "Also delete my Krunk data"; a silent uninstall (`/S`) always keeps it.
@@ -27,7 +27,7 @@ used. It installs per user without administrator rights, or runs portable from a
   run `Krunk.exe`. Keep all files of the folder together; if one is missing, Krunk says so at
   startup. The portable copy uses the same data folder as the installed one.
 - **Verify:** check `SHA256SUMS` (the installer, the zip and the three main binaries):
-  - PowerShell: `Get-FileHash Krunk-Setup-0.2.0.exe`
+  - PowerShell: `Get-FileHash Krunk-Setup-0.2.1.exe`
   - Linux: `sha256sum -c SHA256SUMS`
 - **System:** Windows 10 or 11, 64-bit. No runtime is needed.
 - **Data location:** everything is stored in `%LOCALAPPDATA%\Krunk`:
@@ -393,7 +393,7 @@ network traffic it starts itself is the daily filter-list update and the daily u
   from its update server: `<server>/updates/win-x64/latest.json` and `latest.json.sig`.
   The request carries the user agent `Krunk-Update/<version> (win-x64)` and nothing else: no
   ID, no settings and nothing about your browsing. The server sees your IP address, as with any
-  download. Turn it off with Settings → About → "Check for updates automatically"; "Check for
+  download; the current server is served through Cloudflare, which sees it too. Turn it off with Settings → About → "Check for updates automatically"; "Check for
   updates" there still works on demand. The check uses the configured HTTP proxy and is
   skipped with a SOCKS proxy, as the filter update is.
 - **What is trusted:** `latest.json` must carry a valid Ed25519 signature made with Krunk's
@@ -407,10 +407,12 @@ network traffic it starts itself is the daily filter-list update and the daily u
   silently (`/S /RELAUNCH`) and closes Krunk. The installer waits for Krunk to exit, installs,
   and starts Krunk again, with your tabs restored. A portable copy gets **Download**, which
   opens the website, instead.
-- **The server** is set when Krunk is built (`UPDATE_BASE_URL`). This build uses
-  `https://krunk.example`, a placeholder until the project has its domain, so its update check
-  fails harmlessly ("The update check failed: ... could not be resolved"). The server itself
-  (Docker, Caddy) is in `dist/server/`; see its README.
+- **The server** is set when Krunk is built (`UPDATE_BASE_URL`). Builds use
+  **`https://krunk.209.wf`**, the project's website and update server for now (a temporary
+  domain while Krunk is tested). Moving to the final domain takes one release from this server
+  whose build points at the new one. Krunk 0.2.0 builds pointed at the placeholder
+  `https://krunk.example` and can't update themselves; reinstall them from the website. The
+  server itself (Docker, Caddy, behind Cloudflare) is in `dist/server/`; see its README.
 
 ### Memory
 - **Lazy restore:** restored tabs show their saved title and the cached favicon. They get no
@@ -561,8 +563,10 @@ Testing on Windows:
 - **The engine is bundled.** Chromium security fixes reach users only with a new Krunk
   release with a newer CEF. Krunk checks for one daily and offers it, but installs only when you
   choose Update now. Releases should follow CEF security releases promptly.
-- **The update server is a placeholder** (`https://krunk.example`) until the project has a
-  domain; rebuild with `UPDATE_BASE_URL=https://<domain>` to make the update check work.
+- **The update server is on a temporary domain** (`https://krunk.209.wf`). When the final
+  domain exists, one release from it must point Krunk at the new domain
+  (`UPDATE_BASE_URL=https://<domain> scripts/build-dist.sh`). 0.2.0 copies (placeholder server)
+  must be reinstalled by hand.
 - **No certificate revocation or CT list updates by default.** With "Download engine security
   components" off, the CRLSet and Certificate Transparency list are those built into the
   release. Chromium relaxes CT enforcement about 10 weeks after its build date. Turning the
