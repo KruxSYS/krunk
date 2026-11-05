@@ -656,8 +656,10 @@ Playwright, hadolint, yamllint and `docker compose config -q`.
 - **Open questions:** all decided by delegation (`OPEN_QUESTIONS.md`). Only the provisioning of the
   Turnstile keys, SMTP credentials, mail DNS records and the `privacy@` alias remains with the
   operator; accounts stay disabled until then.
-- **S1:** implemented and verified on a throwaway stack and on ai-pipe staging; not live.
-  Going live needs Q4/Q8, the secrets in the live `.env`, and `COMPOSE_PROFILES=sync`.
+- **S1:** live since 2026-11-05 (commit 41af939): `api`, `db`, self-provisioned `secrets` and a
+  daily `backup` run beside `web`. On live, a request through Cloudflare is logged with its
+  real /24 and country, and a forged `CF-Connecting-IP` sent straight to the hop is ignored
+  (Q8 verified).
 - **S4:** implemented. `core::sync` (crypto, codes, directories with the §4.4 acceptance rules,
   envelopes, SAS, HLC, URL normalisation), frozen vectors, the RFC 9180 A.2 interop test and the
   mutation tests. See `core/src/sync/README.md`. It isn't wired into the app until S6.
