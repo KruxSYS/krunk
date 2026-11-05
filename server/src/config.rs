@@ -2,7 +2,10 @@
 //! missing or invalid value stops the server at start-up. Secret values are never printed.
 //!
 //! Accounts are **fail closed** (OPEN_QUESTIONS Q1/Q2): unless both Turnstile keys and SMTP are
-//! configured, every account endpoint answers `503 accounts_disabled`.
+//! configured, every account endpoint answers `503 accounts_disabled`. Cloudflare's Turnstile
+//! test secrets and SMTP without TLS (staging: always-pass keys, the Mailpit sink) count only
+//! with `ACCOUNTS_TEST_MODE=1`, so a staging configuration that reaches a live deploy by mistake
+//! keeps accounts closed instead of opening them without bot protection.
 
 use std::net::SocketAddr;
 use std::path::Path;
@@ -51,6 +54,8 @@ pub struct Config {
     pub smtp: Option<Smtp>,
     pub keys: Keys,
     pub ip_retention_days: i32,
+    /// `ACCOUNTS_TEST_MODE=1`: allow the Turnstile test secrets and SMTP without TLS (staging).
+    pub test_mode: bool,
     /// Host name of the reverse proxy (Caddy `web`) whose client-IP headers are trusted.
     pub trusted_peer_host: String,
 }
@@ -67,6 +72,7 @@ impl std::fmt::Debug for Config {
             .field("smtp", &self.smtp.as_ref().map(|s| (&s.host, s.port, s.tls)))
             .field("keys", &"<redacted>")
             .field("ip_retention_days", &self.ip_retention_days)
+            .field("test_mode", &self.test_mode)
             .field("trusted_peer_host", &self.trusted_peer_host)
             .finish()
     }
@@ -102,7 +108,22 @@ fn decode_key(name: &str, value: Option<String>) -> Result<[u8; 32], String> {
 impl Config {
     /// True when accounts can work: Turnstile (both keys) and SMTP are configured.
     pub fn accounts_enabled(&self) -> bool {
-        !self.turnstile_site_key.is_empty() && !self.turnstile_secret_key.is_empty() && self.smtp.is_some()
+        self.accounts_blocker().is_none()
+    }
+
+    /// Why accounts are closed, for the start-up log; `None` when they are open.
+    pub fn accounts_blocker(&self) -> Option<&'static str> {
+        if self.turnstile_site_key.is_empty() || self.turnstile_secret_key.is_empty() {
+            return Some("TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY are needed");
+        }
+        let Some(smtp) = &self.smtp else { return Some("SMTP_HOST is needed") };
+        if self.turnstile_test_mode() && !self.test_mode {
+            return Some("a Cloudflare Turnstile TEST secret is set without ACCOUNTS_TEST_MODE=1");
+        }
+        if smtp.tls == SmtpTls::None && !self.test_mode {
+            return Some("SMTP_TLS=none is set without ACCOUNTS_TEST_MODE=1");
+        }
+        None
     }
 
     pub fn turnstile_test_mode(&self) -> bool {
@@ -221,6 +242,11 @@ impl Config {
             totp_enc: decode_key("totp_enc_key", secret("totp_enc_key"))?,
         };
         let trusted_peer_host = get("TRUSTED_PEER_HOST").unwrap_or_else(|| "web".into());
+        let test_mode = match get("ACCOUNTS_TEST_MODE").as_deref() {
+            None | Some("0") => false,
+            Some("1") => true,
+            Some(_) => return Err("ACCOUNTS_TEST_MODE must be 0 or 1".into()),
+        };
         Ok(Config {
             database_url,
             bind: bind_from(&get)?,
@@ -231,6 +257,7 @@ impl Config {
             smtp,
             keys,
             ip_retention_days,
+            test_mode,
             trusted_peer_host,
         })
     }
@@ -315,6 +342,24 @@ mod tests {
         assert!(!dbg.contains("0x4AAAsecret") && !dbg.contains("pw\""), "{dbg}");
         let test = with(&[("TURNSTILE_SECRET_KEY", "1x0000000000000000000000000000000AA")]).unwrap();
         assert!(test.turnstile_test_mode());
+        // Staging values (test keys, plain SMTP to a sink) open accounts only in test mode.
+        let staging = [
+            ("TURNSTILE_SITE_KEY", "1x00000000000000000000AA"),
+            ("TURNSTILE_SECRET_KEY", "1x0000000000000000000000000000000AA"),
+            ("SMTP_HOST", "mailpit"),
+            ("SMTP_PORT", "1025"),
+            ("SMTP_TLS", "none"),
+        ];
+        let c = with(&staging).unwrap();
+        assert!(!c.accounts_enabled());
+        assert!(c.accounts_blocker().unwrap().contains("TEST secret"));
+        let mut on = staging.to_vec();
+        on.push(("ACCOUNTS_TEST_MODE", "1"));
+        assert!(with(&on).unwrap().accounts_enabled());
+        // Real keys but plain SMTP: closed too.
+        let plain = with(&[t[0], t[1], ("SMTP_HOST", "mailpit"), ("SMTP_TLS", "none")]).unwrap();
+        assert!(plain.accounts_blocker().unwrap().contains("SMTP_TLS=none"));
+        assert!(with(&[("ACCOUNTS_TEST_MODE", "yes")]).is_err());
     }
 
     #[test]

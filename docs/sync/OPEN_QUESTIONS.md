@@ -35,7 +35,9 @@ else waits on them.
 4. **Alias:** `privacy@209.wf` → the operator's mailbox.
 5. Restart the live service. `web/config` then reports `accounts_enabled: true`.
 
-**Where the live `.env` comes from:** ai-pipe deploys the project's working-tree `.env`
-(`src/.env`, gitignored) together with each commit (observed 2026-11-05). So the keys in steps 1
-and 2 go into that file, and a staging configuration must never be left there when a deploy is
-proposed (staging values live in `.pipeline/staging-env/stage.env`).
+**Where the live `.env` comes from:** when the live deploy has no `.env`, ai-pipe copies the
+working tree's (`src/.env`, gitignored); after that it keeps the live one across deploys
+(observed 2026-11-05). The keys in steps 1 and 2 therefore go into the **live** `.env` (operator
+access). Staging values live in `.pipeline/staging-env/stage.env`, and even if they reach live
+they can't open accounts: Cloudflare's test secrets and `SMTP_TLS=none` count only with
+`ACCOUNTS_TEST_MODE=1`.

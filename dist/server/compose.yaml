@@ -54,6 +54,8 @@ services:
       SMTP_TLS: ${SMTP_TLS:-starttls}
       MAIL_FROM: ${MAIL_FROM:-Krunk <no-reply@krunk.209.wf>}
       IP_RETENTION_DAYS: ${IP_RETENTION_DAYS:-90}
+      # Staging only: lets Cloudflare's Turnstile test secrets and SMTP_TLS=none open accounts.
+      ACCOUNTS_TEST_MODE: ${ACCOUNTS_TEST_MODE:-0}
       TRUSTED_PEER_HOST: web
       RUST_LOG: ${API_LOG:-info,sqlx=warn}
     volumes:

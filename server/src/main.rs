@@ -103,7 +103,7 @@ async fn run(serve: bool) -> Result<(), String> {
         mail::spawn_worker(pool.clone(), mail::Mailer::new(smtp)?, config.public_base_url.clone());
         tracing::info!("accounts enabled");
     } else {
-        tracing::warn!("accounts disabled: TURNSTILE_SITE_KEY, TURNSTILE_SECRET_KEY and SMTP_HOST are all needed");
+        tracing::warn!(reason = config.accounts_blocker().unwrap_or(""), "accounts disabled");
     }
     jobs::spawn(pool.clone(), config.ip_retention_days);
     let listener =

@@ -96,8 +96,9 @@ database are defined here too. Design: `docs/sync/PLAN.md`; decisions:
   `accounts_enabled: false`, the account endpoints answer `503 accounts_disabled`, and the pages
   at `/account/` say "Accounts are coming soon". Setting both and restarting opens them; no code
   change is needed (docs/sync/OPEN_QUESTIONS.md, "Operator provisioning"). On ai-pipe the
-  deployed `.env` is the working tree's, copied with each commit: never leave staging values
-  (test keys, `dev-mail`) in it when proposing a deploy.
+  live `.env` is copied from the working tree only while live has none, then kept. Staging
+  values (test keys, `SMTP_TLS=none`) open accounts only with `ACCOUNTS_TEST_MODE=1`, so they
+  can't open them on live by mistake.
 
 **Accounts (milestone S2).** Register, confirm by email, sign in, sign out, reset or change the
 password, two-step verification (TOTP plus backup codes). The pages are static
