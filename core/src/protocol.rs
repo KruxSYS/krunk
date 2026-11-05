@@ -1560,6 +1560,7 @@ mod tests {
                     minimize: rect,
                     maximize: rect,
                     close: rect,
+                    tab_centers: vec![10.0, 90.0],
                 },
             },
             Request::WindowControl { action: WindowAction::Maximize },

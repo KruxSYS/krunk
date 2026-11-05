@@ -32,4 +32,5 @@ pub mod tabs;
 pub mod update;
 pub mod urlclean;
 pub mod vault;
+pub mod windows;
 pub mod zoom;

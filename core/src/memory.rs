@@ -83,6 +83,8 @@ pub struct TabState {
     pub pinned: bool,
     pub playing_audio: bool,
     pub downloading: bool,
+    /// DevTools is open for the tab (docked next to it): never sleep or discard it.
+    pub inspecting: bool,
     pub private: bool,
     /// The only live private tab: discarding it would end the InPrivate
     /// session (its cookies and storage), so it is never discarded.
@@ -96,7 +98,7 @@ pub struct TabState {
 
 /// Is the tab exempt from every memory action?
 pub fn exempt(t: &TabState) -> bool {
-    !t.live || t.active || t.pinned || t.playing_audio || t.downloading
+    !t.live || t.active || t.pinned || t.playing_audio || t.downloading || t.inspecting
 }
 
 /// The next action for a tab at `now`, if any.
@@ -195,6 +197,7 @@ mod tests {
             pinned: false,
             playing_audio: false,
             downloading: false,
+            inspecting: false,
             private: false,
             last_live_private: false,
             stage,
@@ -226,6 +229,7 @@ mod tests {
             ("pinned", TabState { pinned: true, ..bg(Stage::Awake, 0, 0) }),
             ("audio", TabState { playing_audio: true, ..bg(Stage::LowMemory, 0, 0) }),
             ("download", TabState { downloading: true, ..bg(Stage::Awake, 0, 0) }),
+            ("devtools open", TabState { inspecting: true, ..bg(Stage::Awake, 0, 0) }),
             ("not live", TabState { live: false, ..bg(Stage::Awake, 0, 0) }),
         ] {
             assert_eq!(decide(&p, &t, late), None, "{name}");

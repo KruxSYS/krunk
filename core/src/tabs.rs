@@ -328,6 +328,63 @@ impl TabModel {
         Some((new_id, effects))
     }
 
+    /// Removes a tab without closing it (it moves to another window): no
+    /// closed-stack entry, its view stays. If it was active, the next tab is
+    /// chosen as for [`TabModel::close`]; an emptied model stays empty.
+    pub fn take(&mut self, id: TabId, now: i64) -> Option<(Tab, Vec<Effect>)> {
+        let idx = self.index_of(id)?;
+        let tab = self.tabs.remove(idx);
+        for t in &mut self.tabs {
+            if t.opener == Some(id) {
+                t.opener = None;
+            }
+        }
+        let mut effects = Vec::new();
+        if self.active == Some(id) {
+            self.active = None;
+            if !self.tabs.is_empty() {
+                let next = tab
+                    .opener
+                    .filter(|o| self.get(*o).is_some())
+                    .unwrap_or_else(|| self.tabs[idx.min(self.tabs.len() - 1)].id);
+                effects.extend(self.set_active(next, now, false));
+            }
+        }
+        Some((tab, effects))
+    }
+
+    /// Inserts a tab taken from another model at `index` (clamped). Its id
+    /// stays (ids are unique across a workspace).
+    pub fn insert(&mut self, mut tab: Tab, index: usize, activate: bool, now: i64) -> Vec<Effect> {
+        let id = tab.id;
+        tab.opener = None;
+        let to = index.min(self.tabs.len());
+        self.tabs.insert(to, tab);
+        if activate || self.active.is_none() {
+            self.set_active(id, now, true)
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// The next id this model would hand out (the workspace shares one counter).
+    pub(crate) fn next_id(&self) -> TabId {
+        self.next_id
+    }
+
+    pub(crate) fn set_next_id(&mut self, next: TabId) {
+        self.next_id = next.max(1);
+    }
+
+    /// Takes the entries closing tabs added to this model's closed stack.
+    pub(crate) fn drain_closed(&mut self) -> Vec<ClosedTab> {
+        self.closed.drain(..).collect()
+    }
+
+    pub(crate) fn push_closed(&mut self, c: ClosedTab) {
+        self.closed.push_back(c);
+    }
+
     /// Moves a tab to `index` (clamped). The active tab stays active.
     pub fn move_tab(&mut self, id: TabId, index: usize) -> bool {
         let Some(from) = self.index_of(id) else { return false };

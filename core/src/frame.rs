@@ -18,6 +18,8 @@ pub const TOP_RESIZE_DIP: f64 = 5.0;
 pub const CORNER_DIP: f64 = 16.0;
 /// Interactive rectangles the shell may report.
 pub const MAX_RECTS: usize = 16;
+/// Tab centres the shell may report (more tabs than this are not dropped between).
+pub const MAX_TABS: usize = 512;
 
 /// What the shell reports, in CSS pixels (= DIP) of its viewport, whose
 /// top-left corner is the client area's.
@@ -31,6 +33,11 @@ pub struct HitMap {
     pub minimize: PopupRect,
     pub maximize: PopupRect,
     pub close: PopupRect,
+    /// The horizontal centre of each tab, left to right (CSS px of the viewport; tabs
+    /// scrolled out of view may lie outside it): where a tab dragged from another window
+    /// would be dropped.
+    #[serde(default)]
+    pub tab_centers: Vec<f64>,
 }
 
 impl HitMap {
@@ -44,7 +51,15 @@ impl HitMap {
             && self.interactive.len() <= MAX_RECTS
             && self.interactive.iter().all(ok)
             && [&self.minimize, &self.maximize, &self.close].into_iter().all(ok)
+            && self.tab_centers.len() <= MAX_TABS
+            && self.tab_centers.iter().all(|c| c.is_finite() && (-1_000_000.0..=1_000_000.0).contains(c))
     }
+}
+
+/// The insert position for a tab dropped at `x` (CSS px) on a strip whose tabs have these
+/// centres: the number of tabs whose centre lies left of `x`.
+pub fn drop_index(tab_centers: &[f64], x: f64) -> usize {
+    tab_centers.iter().filter(|c| **c < x).count()
 }
 
 /// Where a point is.
@@ -122,7 +137,31 @@ mod tests {
             minimize: r(862.0, 0.0, 46.0, 36.0),
             maximize: r(908.0, 0.0, 46.0, 36.0),
             close: r(954.0, 0.0, 46.0, 36.0),
+            tab_centers: vec![50.0, 150.0, 250.0],
         }
+    }
+
+    #[test]
+    fn drop_positions() {
+        let m = map();
+        assert_eq!(drop_index(&m.tab_centers, 10.0), 0);
+        assert_eq!(drop_index(&m.tab_centers, 50.0), 0, "on a centre: before that tab");
+        assert_eq!(drop_index(&m.tab_centers, 120.0), 1);
+        assert_eq!(drop_index(&m.tab_centers, 260.0), 3, "after the last tab");
+        assert_eq!(drop_index(&[], 260.0), 0);
+        assert!(m.is_valid());
+        let mut bad = m.clone();
+        bad.tab_centers = vec![f64::NAN];
+        assert!(!bad.is_valid());
+        bad.tab_centers = vec![0.0; MAX_TABS + 1];
+        assert!(!bad.is_valid());
+        // Older shells (and the 0.2.x protocol) send no tab centres.
+        let json = r#"{"stripHeight":36,"interactive":[],"minimize":{"x":0,"y":0,"width":1,"height":1},"maximize":{"x":0,"y":0,"width":1,"height":1},"close":{"x":0,"y":0,"width":1,"height":1}}"#;
+        let parsed: HitMap = serde_json::from_str(json).unwrap();
+        assert!(parsed.tab_centers.is_empty());
+        let with: HitMap =
+            serde_json::from_str(&json.replace("\"interactive\"", "\"tabCenters\":[1.5,9],\"interactive\"")).unwrap();
+        assert_eq!(with.tab_centers, vec![1.5, 9.0]);
     }
 
     #[test]
