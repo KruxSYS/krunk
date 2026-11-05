@@ -532,13 +532,30 @@ impl Window {
             if IsIconic(self.0).as_bool() {
                 let _ = ShowWindow(self.0, SW_RESTORE);
             }
+            // On top of our other windows even if Windows refuses the activation below.
+            let _ = SetWindowPos(self.0, Some(HWND_TOP), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
             let _ = SetForegroundWindow(self.0);
         }
+    }
+
+    /// Keeps the window above every non-topmost window (while it follows a tab drag), or
+    /// ends that.
+    pub fn set_topmost(self, on: bool) {
+        use windows::Win32::UI::WindowsAndMessaging::{HWND_NOTOPMOST, HWND_TOPMOST};
+        let after = if on { HWND_TOPMOST } else { HWND_NOTOPMOST };
+        // SAFETY: valid window handle; only the z-order changes.
+        let _ = unsafe { SetWindowPos(self.0, Some(after), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) };
     }
 
     pub fn hide(self) {
         // SAFETY: valid window handle.
         let _ = unsafe { ShowWindow(self.0, SW_HIDE) };
+    }
+
+    /// Is this the foreground window (the one the keyboard goes to)?
+    pub fn is_foreground(self) -> bool {
+        // SAFETY: no arguments.
+        unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() == self.0 }
     }
 
     pub fn is_minimized(self) -> bool {

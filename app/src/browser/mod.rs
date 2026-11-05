@@ -1830,6 +1830,11 @@ impl WindowEvents for FrameEvents {
         if let Some(f) = b.frame(self.win) {
             f.active.set(active);
         }
+        // While a tab is dragged, Windows passes activation back and forth between the source
+        // and the dragged window: keep that out of the tab strips (the drop settles it).
+        if b.drag.get().is_some() {
+            return;
+        }
         if active {
             b.make_current(self.win);
             b.send_nav_to(self.win);
@@ -1927,12 +1932,22 @@ impl WindowEvents for FrameEvents {
     }
 
     fn got_focus(&self) {
-        // Keyboard shortcuts arrive through the views, so the frame
-        // must never keep the focus itself.
-        if let Some(b) = self.b.upgrade() {
-            b.make_current(self.win);
-            b.focus_active();
+        // Keyboard shortcuts arrive through the views, so the frame must never keep the focus
+        // itself. CEF moves the focus later, though, and focusing a view also activates its
+        // window: a request for a window that has lost activation meanwhile would take it back
+        // (two windows then took turns, endlessly). So: next turn, and only if this window is
+        // still the active one; not during a tab drag (the drop focuses the right window).
+        let Some(b) = self.b.upgrade() else { return };
+        if b.drag.get().is_some() {
+            return;
         }
+        let win = self.win;
+        b.defer(move |b| {
+            if b.frame(win).is_some_and(|f| f.window.is_foreground()) {
+                b.make_current(win);
+                b.focus_active();
+            }
+        });
     }
 
     fn close_requested(&self) -> bool {

@@ -153,6 +153,11 @@ impl Browser {
                 hint: None,
             }
         };
+        // The dragged window stays above the others (it is the drag image): Windows may hand
+        // activation to the window under it while the button is held.
+        if let Some(f) = self.frame(drag.dragged) {
+            f.window.set_topmost(true);
+        }
         self.drag.set(Some(drag));
         app.set_timer(DRAG_TIMER, DRAG_TICK_MS);
     }
@@ -221,6 +226,9 @@ impl Browser {
             app.kill_timer(DRAG_TIMER);
         }
         let Some(d) = self.drag.take() else { return };
+        if let Some(f) = self.frame(d.dragged) {
+            f.window.set_topmost(false);
+        }
         if let Some((w, _)) = d.hint {
             self.post_shell_to(w, &Event::TabDropHint { index: None });
         }
@@ -228,6 +236,9 @@ impl Browser {
         if cancel {
             info!("tab {}: drag cancelled", d.tab);
             if d.torn {
+                if let Some(f) = self.frame(d.source) {
+                    f.window.bring_to_front();
+                }
                 let ops = self.ws.borrow_mut().move_tab(d.tab, d.source, d.source_index, now);
                 self.apply(ops);
             } else if let Some(f) = self.frame(d.dragged) {
@@ -239,6 +250,12 @@ impl Browser {
         match d.hint {
             Some((target, index)) => {
                 info!("tab {}: dropped on window {target} at {index}", d.tab);
+                // Raise and activate the target while the dragged window is still ours and in
+                // front: once that window is destroyed, Windows may activate another program
+                // and refuse the target the foreground.
+                if let Some(f) = self.frame(target) {
+                    f.window.bring_to_front();
+                }
                 let ops = self.ws.borrow_mut().move_tab(d.tab, target, index, now);
                 self.apply(ops);
                 self.focus_window(target);
@@ -258,5 +275,7 @@ impl Browser {
             self.layout_frame(&f);
             self.focus_active();
         }
+        // Activation changes during the drag were not passed on.
+        self.send_window_state();
     }
 }
