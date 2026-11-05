@@ -38,6 +38,7 @@ else waits on them.
 **Where the live `.env` comes from:** when the live deploy has no `.env`, ai-pipe copies the
 working tree's (`src/.env`, gitignored); after that it keeps the live one across deploys
 (observed 2026-11-05). The keys in steps 1 and 2 therefore go into the **live** `.env` (operator
-access). Staging values live in `.pipeline/staging-env/stage.env`, and even if they reach live
-they can't open accounts: Cloudflare's test secrets and `SMTP_TLS=none` count only with
-`ACCOUNTS_TEST_MODE=1`.
+access). The working tree's `.env` holds comments only. Staging values live in the gitignored
+`staging.env`, which a commit never contains; even if test values reached live they couldn't
+open accounts: Cloudflare's test secrets, `SMTP_TLS=none` and a staging PUBLIC_BASE_URL count
+only with `ACCOUNTS_TEST_MODE=1`.

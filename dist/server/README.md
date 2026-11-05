@@ -95,10 +95,12 @@ database are defined here too. Design: `docs/sync/PLAN.md`; decisions:
   Without them, accounts stay **closed**: `/api/v1/web/config` reports
   `accounts_enabled: false`, the account endpoints answer `503 accounts_disabled`, and the pages
   at `/account/` say "Accounts are coming soon". Setting both and restarting opens them; no code
-  change is needed (docs/sync/OPEN_QUESTIONS.md, "Operator provisioning"). On ai-pipe the
-  live `.env` is copied from the working tree only while live has none, then kept. Staging
-  values (test keys, `SMTP_TLS=none`) open accounts only with `ACCOUNTS_TEST_MODE=1`, so they
-  can't open them on live by mistake.
+  change is needed (docs/sync/OPEN_QUESTIONS.md, "Operator provisioning"). `api` reads them
+  through `env_file`: `.env` (this folder's, then the repository root's; on ai-pipe the live
+  `.env`), then `staging.env` (below). On ai-pipe the live `.env` is copied from the working
+  tree only while live has none, then kept; so the working tree's `.env` holds comments only.
+  Test values (Cloudflare's test secrets, `SMTP_TLS=none`, an `http://`/`.test`/`.localhost`/
+  `.invalid` PUBLIC_BASE_URL) keep accounts closed unless `ACCOUNTS_TEST_MODE=1`.
 
 **Accounts (milestone S2).** Register, confirm by email, sign in, sign out, reset or change the
 password, two-step verification (TOTP plus backup codes). The pages are static
@@ -106,14 +108,27 @@ password, two-step verification (TOTP plus backup codes). The pages are static
 Cloudflare Turnstile, and only when accounts are open. Mail goes through an outbox in Postgres,
 sent by a worker in `api`; templates are in `server/templates/`.
 
-**Testing accounts** (staging or a local stack): put Cloudflare's test keys and the Mailpit sink
-in `.env` (the commented block at the end of `.env.example`; `COMPOSE_PROFILES=dev-mail`). Then:
+**Testing accounts** (staging or a local stack). The test values go into `staging.env` at the
+repository root: gitignored, so never in a commit and never in a live deploy, which is a copy of a
+commit plus its `.env`. The mail sink isn't in compose at all; a script attaches it to the
+project's network:
 ```sh
+cat > staging.env <<'END'
+ACCOUNTS_TEST_MODE=1
+PUBLIC_BASE_URL=https://krunk.test
+TURNSTILE_SITE_KEY=1x00000000000000000000AA
+TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
+SMTP_HOST=mailpit
+SMTP_PORT=1025
+SMTP_TLS=none
+END
+# (stage or start the stack, then)
+server/e2e/mailsink.sh up stage-browser      # "down" afterwards
 # Rust unit + database integration tests (a throwaway Postgres):
 docker run -d --name krunk-pgtest -e POSTGRES_PASSWORD=itpass -p 55432:5432 postgres:18.6-alpine3.24
 KRUNK_TEST_DATABASE_URL=postgres://postgres:itpass@localhost:55432/postgres cargo test   # in server/
 cargo test --release it::timing -- --ignored --nocapture                                  # timing, alone
-# Every page in a browser (PUBLIC_BASE_URL=https://krunk.test in .env; see the script's header):
+# Every page in a browser (see the script's header):
 NODE_PATH=/usr/lib/node_modules/@playwright/mcp/node_modules node server/e2e/accounts.cjs http://<host:port> <project> <shots dir>
 ```
 

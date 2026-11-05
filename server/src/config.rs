@@ -54,8 +54,11 @@ pub struct Config {
     pub smtp: Option<Smtp>,
     pub keys: Keys,
     pub ip_retention_days: i32,
-    /// `ACCOUNTS_TEST_MODE=1`: allow the Turnstile test secrets and SMTP without TLS (staging).
+    /// `ACCOUNTS_TEST_MODE=1`: allow the Turnstile test secrets, SMTP without TLS and a staging
+    /// PUBLIC_BASE_URL.
     pub test_mode: bool,
+    /// PUBLIC_BASE_URL was a staging address outside test mode (replaced by the default).
+    pub base_url_rejected: bool,
     /// Host name of the reverse proxy (Caddy `web`) whose client-IP headers are trusted.
     pub trusted_peer_host: String,
 }
@@ -80,6 +83,8 @@ impl std::fmt::Debug for Config {
 
 pub const DEFAULT_BIND: &str = "0.0.0.0:8081";
 pub const DEFAULT_SECRETS_DIR: &str = "/run/krunk-secrets";
+pub const DEFAULT_PUBLIC_BASE_URL: &str = "https://krunk.209.wf";
+const DEFAULT_PUBLIC_HOST: &str = "krunk.209.wf";
 pub const DEFAULT_MAIL_FROM: &str = "Krunk <no-reply@krunk.209.wf>";
 
 /// Cloudflare's documented Turnstile test secrets (always pass, always fail, already spent).
@@ -113,6 +118,11 @@ impl Config {
 
     /// Why accounts are closed, for the start-up log; `None` when they are open.
     pub fn accounts_blocker(&self) -> Option<&'static str> {
+        if self.base_url_rejected {
+            return Some(
+                "PUBLIC_BASE_URL is a staging address (http, .test, .localhost, .invalid) without ACCOUNTS_TEST_MODE=1",
+            );
+        }
         if self.turnstile_site_key.is_empty() || self.turnstile_secret_key.is_empty() {
             return Some("TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY are needed");
         }
@@ -179,7 +189,13 @@ impl Config {
         if !database_url.starts_with("postgres://") && !database_url.starts_with("postgresql://") {
             return Err("DATABASE_URL must be a postgres:// URL".into());
         }
-        let public_base_url = required("PUBLIC_BASE_URL")?.trim_end_matches('/').to_string();
+        let test_mode = match get("ACCOUNTS_TEST_MODE").as_deref() {
+            None | Some("0") => false,
+            Some("1") => true,
+            Some(_) => return Err("ACCOUNTS_TEST_MODE must be 0 or 1".into()),
+        };
+        let public_base_url =
+            get("PUBLIC_BASE_URL").unwrap_or_else(|| DEFAULT_PUBLIC_BASE_URL.into()).trim_end_matches('/').to_string();
         let Some((scheme, rest)) = public_base_url.split_once("://") else {
             return Err("PUBLIC_BASE_URL must start with https:// (or http:// for local tests)".into());
         };
@@ -191,6 +207,17 @@ impl Config {
         if base_host.is_empty() || !is_key_chars(&base_host) {
             return Err("PUBLIC_BASE_URL has no valid host".into());
         }
+        // A staging address (plain http, *.test, *.localhost, *.invalid) outside test mode means a
+        // staging configuration reached a real deploy: use the real address and keep accounts closed.
+        let staging_url = scheme != "https"
+            || base_host == "localhost"
+            || [".test", ".localhost", ".invalid"].iter().any(|s| base_host.ends_with(s));
+        let base_url_rejected = staging_url && !test_mode;
+        let (public_base_url, base_host) = if base_url_rejected {
+            (DEFAULT_PUBLIC_BASE_URL.to_string(), DEFAULT_PUBLIC_HOST.to_string())
+        } else {
+            (public_base_url, base_host)
+        };
 
         let turnstile_site_key = get("TURNSTILE_SITE_KEY").unwrap_or_default();
         let turnstile_secret_key = get("TURNSTILE_SECRET_KEY").unwrap_or_default();
@@ -242,11 +269,6 @@ impl Config {
             totp_enc: decode_key("totp_enc_key", secret("totp_enc_key"))?,
         };
         let trusted_peer_host = get("TRUSTED_PEER_HOST").unwrap_or_else(|| "web".into());
-        let test_mode = match get("ACCOUNTS_TEST_MODE").as_deref() {
-            None | Some("0") => false,
-            Some("1") => true,
-            Some(_) => return Err("ACCOUNTS_TEST_MODE must be 0 or 1".into()),
-        };
         Ok(Config {
             database_url,
             bind: bind_from(&get)?,
@@ -258,6 +280,7 @@ impl Config {
             keys,
             ip_retention_days,
             test_mode,
+            base_url_rejected,
             trusted_peer_host,
         })
     }
@@ -314,7 +337,7 @@ mod tests {
         let no_keys =
             Config::from_sources(&|k| BASE.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string()), &|_| None);
         assert!(no_keys.unwrap_err().contains("token_hmac_key"));
-        assert!(cfg(&[BASE[0]]).unwrap_err().contains("PUBLIC_BASE_URL"));
+        assert_eq!(cfg(&[BASE[0]]).unwrap().public_base_url, "https://krunk.209.wf", "the default address");
         let c = cfg(&[BASE[0], ("PUBLIC_BASE_URL", "https://krunk.209.wf/")]).unwrap();
         assert_eq!(c.public_base_url, "https://krunk.209.wf");
         assert_eq!(c.public_origin(), "https://krunk.209.wf");
@@ -363,6 +386,41 @@ mod tests {
     }
 
     #[test]
+    fn staging_addresses_need_test_mode() {
+        let real = [
+            ("TURNSTILE_SITE_KEY", "0x4AAAsite"),
+            ("TURNSTILE_SECRET_KEY", "0x4AAAsecret"),
+            ("SMTP_HOST", "smtp.example.org"),
+        ];
+        for url in [
+            "https://krunk.test",
+            "http://krunk.209.wf",
+            "http://dind:10017",
+            "https://x.localhost",
+            "https://localhost:8080",
+            "https://a.invalid",
+        ] {
+            let mut v = vec![BASE[0], ("PUBLIC_BASE_URL", url)];
+            v.extend_from_slice(&real);
+            let c = cfg(&v).unwrap();
+            assert!(c.base_url_rejected, "{url}");
+            assert!(!c.accounts_enabled(), "{url}");
+            assert!(c.accounts_blocker().unwrap().contains("PUBLIC_BASE_URL"));
+            assert_eq!(c.public_base_url, "https://krunk.209.wf", "{url}: the real address is reported");
+            assert_eq!(c.public_origin(), "https://krunk.209.wf");
+            assert_eq!(c.turnstile_hostname, "krunk.209.wf");
+            v.push(("ACCOUNTS_TEST_MODE", "1"));
+            let t = cfg(&v).unwrap();
+            assert!(!t.base_url_rejected && t.accounts_enabled(), "{url} in test mode");
+            assert_eq!(t.public_base_url, url);
+        }
+        let mut v = vec![BASE[0], ("PUBLIC_BASE_URL", "https://krunk.example.org")];
+        v.extend_from_slice(&real);
+        let c = cfg(&v).unwrap();
+        assert!(!c.base_url_rejected && c.accounts_enabled());
+    }
+
+    #[test]
     fn invalid_values() {
         assert!(cfg(&[("DATABASE_URL", "mysql://x"), BASE[1]]).is_err());
         assert!(cfg(&[BASE[0], ("PUBLIC_BASE_URL", "ftp://x")]).is_err());
@@ -374,7 +432,7 @@ mod tests {
         let sink = with(&[("SMTP_HOST", "mailpit"), ("SMTP_TLS", "none"), ("SMTP_PORT", "1025")]).unwrap();
         assert_eq!(sink.smtp.unwrap().port, 1025);
         assert!(with(&[("IP_RETENTION_DAYS", "0")]).is_err());
-        let staging = cfg(&[BASE[0], ("PUBLIC_BASE_URL", "http://dind:10017")]).unwrap();
+        let staging = cfg(&[BASE[0], ("PUBLIC_BASE_URL", "http://dind:10017"), ("ACCOUNTS_TEST_MODE", "1")]).unwrap();
         assert_eq!(staging.public_origin(), "http://dind:10017");
         assert_eq!(staging.turnstile_hostname, "dind");
     }

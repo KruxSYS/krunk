@@ -29,3 +29,7 @@ tools/*/target/
 .env
 *.key
 !core/tests/fixtures/update/test-signing.key
+
+# Staging-only api settings (test keys, mail sink): read by api via an optional env_file, never
+# committed, so never part of a live deploy (dist/server/README.md, "Testing accounts").
+/staging.env

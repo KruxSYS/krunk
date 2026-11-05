@@ -2,6 +2,8 @@
 // real CSP, Cloudflare's always-pass Turnstile test widget, mail read from Mailpit.
 //   NODE_PATH=/usr/lib/node_modules/@playwright/mcp/node_modules \
 //     node server/e2e/accounts.cjs http://dind:10017 stage-browser <screenshot dir>
+// Staging: test values in the gitignored staging.env (ACCOUNTS_TEST_MODE=1, PUBLIC_BASE_URL=
+// https://krunk.test, Turnstile test keys, SMTP_HOST=mailpit) and server/e2e/mailsink.sh up.
 // The session cookie is __Host- and Secure, which a browser keeps only on a secure origin. So the
 // browser sees the site as https://krunk.test, and every request to it is passed to the staging
 // stack (PUBLIC_BASE_URL=https://krunk.test there, so the Origin check and mail links match).
