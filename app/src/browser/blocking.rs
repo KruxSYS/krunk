@@ -303,7 +303,7 @@ impl Browser {
                 self.spawn_filter_job_forced(false, true);
             }
         }
-        if let Some(w) = self.window() {
+        if let Some(w) = self.app() {
             w.set_timer(UPDATE_TIMER, FIRST_UPDATE_DELAY_MS);
         }
     }
@@ -334,7 +334,7 @@ impl Browser {
         if f.busy.replace(true) {
             return;
         }
-        let Some(window) = self.window() else {
+        let Some(window) = self.app() else {
             f.busy.set(false);
             return;
         };
@@ -584,14 +584,14 @@ impl Browser {
     pub(super) fn shield_changed(&self) {
         self.net.shield_posted.store(false, Relaxed);
         if !self.shield_pending.replace(true) {
-            if let Some(w) = self.window() {
+            if let Some(w) = self.app() {
                 w.set_timer(SHIELD_TIMER, SHIELD_DEBOUNCE_MS);
             }
         }
     }
 
     pub(super) fn shield_timer(&self) {
-        if let Some(w) = self.window() {
+        if let Some(w) = self.app() {
             w.kill_timer(SHIELD_TIMER);
         }
         self.shield_pending.set(false);
@@ -605,7 +605,7 @@ impl Browser {
 
     /// `(blocked, site allowed)` for the active tab.
     pub(super) fn shield_state(&self) -> (u32, bool) {
-        let Some(id) = self.model.try_borrow().ok().and_then(|m| m.active_id()) else { return (0, false) };
+        let Some(id) = self.active_id() else { return (0, false) };
         self.views
             .try_borrow()
             .ok()
@@ -614,7 +614,7 @@ impl Browser {
     }
 
     pub(super) fn shield_content(&self) -> PopupContent {
-        let host = self.model.borrow().active().and_then(|t| urlclean::host_of(&t.url)).unwrap_or_default();
+        let host = self.active_tab().and_then(|t| urlclean::host_of(&t.url)).unwrap_or_default();
         let (blocked, allowed) = self.shield_state();
         PopupContent::Shield { host, blocked, allowed, enabled: self.net.enabled() }
     }
@@ -622,7 +622,7 @@ impl Browser {
     /// Shield toggle: allow (or block again) ads on the active tab's site,
     /// then reload it.
     pub(super) fn shield_allow_site(&self, allow: bool) {
-        let Some(host) = self.model.borrow().active().and_then(|t| urlclean::host_of(&t.url)) else { return };
+        let Some(host) = self.active_tab().and_then(|t| urlclean::host_of(&t.url)) else { return };
         if allow {
             match self.store.borrow().allowlist_add(&host, now_ms()) {
                 Ok(h) => {
@@ -673,8 +673,7 @@ impl Browser {
     fn https_only_proceed(&self, tab: Option<TabId>, url: &str) {
         let Some(tab) = tab else { return };
         let valid = url.starts_with("http://") && urlclean::host_of(url).is_some();
-        let on_interstitial =
-            self.model.borrow().get(tab).is_some_and(|t| Page::from_url(&t.url) == Some(Page::HttpsOnly));
+        let on_interstitial = self.tab(tab).is_some_and(|t| Page::from_url(&t.url) == Some(Page::HttpsOnly));
         if !valid || !on_interstitial {
             return;
         }
@@ -703,7 +702,7 @@ pub(super) type Deferred = Box<dyn FnOnce(&Browser)>;
 impl Browser {
     pub(super) fn defer(&self, f: impl FnOnce(&Browser) + 'static) {
         self.deferred.borrow_mut().push(Box::new(f));
-        if let Some(w) = self.window() {
+        if let Some(w) = self.app() {
             w.notifier().notify(APP_DEFERRED);
         }
     }

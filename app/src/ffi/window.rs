@@ -3,7 +3,7 @@
 
 pub use lb_core::frame::Hit;
 pub use lb_core::protocol::CaptionButton;
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use windows::core::{w, HSTRING, PCWSTR};
@@ -79,6 +79,7 @@ const PBT_APMSUSPEND: usize = 0x4;
 
 const MAIN_CLASS: PCWSTR = w!("KrunkWindow");
 const POPUP_CLASS: PCWSTR = w!("KrunkPopup");
+const APP_CLASS: PCWSTR = w!("KrunkApp");
 
 /// Screen rectangle in physical pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,7 +145,19 @@ impl Window {
     /// otherwise use up the process's right to activate a window); the
     /// browser attaches its events with [`Window::set_events`].
     pub fn create_main(title: &str) -> Result<Window, String> {
-        register(MAIN_CLASS, (CS_HREDRAW | CS_VREDRAW).0, main_wndproc)?;
+        Window::create_frame(title, None, true)
+    }
+
+    /// A browser window (frame) at `rect` (screen pixels; `None` = the default placement),
+    /// shown (and activated) or left hidden. The class is registered once, so any number of
+    /// frames can exist.
+    pub fn create_frame(title: &str, rect: Option<ScreenRect>, show: bool) -> Result<Window, String> {
+        static REGISTERED: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
+        REGISTERED.get_or_init(|| register(MAIN_CLASS, (CS_HREDRAW | CS_VREDRAW).0, main_wndproc)).clone()?;
+        let (x, y, width, height) = match rect {
+            Some(r) => (r.x, r.y, r.width, r.height),
+            None => (CW_USEDEFAULT, CW_USEDEFAULT, 1280, 860),
+        };
         // SAFETY: standard window creation on the UI thread.
         let hwnd = unsafe {
             let instance = GetModuleHandleW(None).map_err(|e| e.to_string())?;
@@ -153,10 +166,10 @@ impl Window {
                 MAIN_CLASS,
                 &HSTRING::from(title),
                 WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
-                1280,
-                860,
+                x,
+                y,
+                width,
+                height,
                 None,
                 None,
                 Some(instance.into()),
@@ -176,9 +189,84 @@ impl Window {
                 0,
                 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
             );
-            let _ = ShowWindow(hwnd, SW_SHOW);
+            if show {
+                let _ = ShowWindow(hwnd, SW_SHOW);
+            }
         }
         Ok(Window(hwnd))
+    }
+
+    /// The hidden application window: timers, `WM_APP` from worker threads, session-lock and
+    /// power notifications and theme changes, which belong to the browser rather than to one
+    /// of its frames. A never-shown top-level tool window (a message-only window would miss
+    /// the broadcasts).
+    pub fn create_app(events: Rc<dyn WindowEvents>) -> Result<Window, String> {
+        static REGISTERED: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
+        REGISTERED.get_or_init(|| register(APP_CLASS, 0, wndproc)).clone()?;
+        // SAFETY: creating a hidden window on the UI thread.
+        let hwnd = unsafe {
+            let instance = GetModuleHandleW(None).map_err(|e| e.to_string())?;
+            CreateWindowExW(
+                WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                APP_CLASS,
+                w!("Krunk"),
+                WS_POPUP,
+                0,
+                0,
+                0,
+                0,
+                None,
+                None,
+                Some(instance.into()),
+                None,
+            )
+            .map_err(|e| format!("CreateWindowExW (app) failed: {e}"))?
+        };
+        EVENTS.with(|e| e.borrow_mut().insert(hwnd.0 as isize, events));
+        Ok(Window(hwnd))
+    }
+
+    /// The restored (not maximized) rectangle and whether the window is maximized.
+    #[allow(dead_code)] // used from 0.3.0 milestone 5
+    pub fn placement(self) -> (ScreenRect, bool) {
+        use windows::Win32::UI::WindowsAndMessaging::{GetWindowPlacement, WINDOWPLACEMENT};
+        let mut wp = WINDOWPLACEMENT { length: std::mem::size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
+        // SAFETY: our own window; the struct is properly sized.
+        let _ = unsafe { GetWindowPlacement(self.0, &mut wp) };
+        // In full screen the frame's own placement is the saved one.
+        let saved = SAVED.with(|s| s.borrow().get(&(self.0 .0 as isize)).copied());
+        let wp = saved.unwrap_or(wp);
+        let r = wp.rcNormalPosition;
+        let maximized = wp.showCmd == windows::Win32::UI::WindowsAndMessaging::SW_SHOWMAXIMIZED.0 as u32;
+        (ScreenRect { x: r.left, y: r.top, width: r.right - r.left, height: r.bottom - r.top }, maximized)
+    }
+
+    /// Shows a frame created hidden, maximized or not, and activates it.
+    pub fn show(self, maximized: bool) {
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWMAXIMIZED;
+        // SAFETY: our own window.
+        unsafe {
+            let _ = ShowWindow(self.0, if maximized { SW_SHOWMAXIMIZED } else { SW_SHOW });
+            let _ = windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow(self.0);
+        }
+    }
+
+    /// Moves (and sizes) a top-level window, without activating it.
+    #[allow(dead_code)] // used from 0.3.0 milestone 5
+    pub fn move_to(self, rect: ScreenRect) {
+        // SAFETY: our own window.
+        let _ = unsafe {
+            SetWindowPos(self.0, None, rect.x, rect.y, rect.width, rect.height, SWP_NOZORDER | SWP_NOACTIVATE)
+        };
+    }
+
+    /// The window rectangle in screen pixels.
+    #[allow(dead_code)] // used from 0.3.0 milestone 5
+    pub fn rect(self) -> ScreenRect {
+        let mut r = RECT::default();
+        // SAFETY: valid window handle and out pointer.
+        let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::GetWindowRect(self.0, &mut r) };
+        ScreenRect { x: r.left, y: r.top, width: r.right - r.left, height: r.bottom - r.top }
     }
 
     /// Is the window maximized?
@@ -227,9 +315,6 @@ impl Window {
             GetWindowLongPtrW, GetWindowPlacement, SetWindowLongPtrW, SetWindowPlacement, GWL_STYLE, WINDOWPLACEMENT,
             WS_CAPTION, WS_THICKFRAME,
         };
-        thread_local! {
-            static SAVED: Cell<Option<WINDOWPLACEMENT>> = const { Cell::new(None) };
-        }
         if is_fullscreen(self.0) == on {
             return;
         }
@@ -241,9 +326,9 @@ impl Window {
                 let mut wp =
                     WINDOWPLACEMENT { length: std::mem::size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
                 if GetWindowPlacement(self.0, &mut wp).is_ok() {
-                    SAVED.with(|s| s.set(Some(wp)));
+                    SAVED.with(|s| s.borrow_mut().insert(self.0 .0 as isize, wp));
                 }
-                FULLSCREEN.with(|f| f.set(self.0 .0 as isize));
+                FULLSCREEN.with(|f| f.borrow_mut().insert(self.0 .0 as isize));
                 SetWindowLongPtrW(self.0, GWL_STYLE, style & !frame);
                 let mon = windows::Win32::Graphics::Gdi::MonitorFromWindow(self.0, MONITOR_DEFAULTTONEAREST);
                 let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
@@ -259,9 +344,9 @@ impl Window {
                     SWP_FRAMECHANGED | windows::Win32::UI::WindowsAndMessaging::SWP_NOOWNERZORDER,
                 );
             } else {
-                FULLSCREEN.with(|f| f.set(0));
+                FULLSCREEN.with(|f| f.borrow_mut().remove(&(self.0 .0 as isize)));
                 SetWindowLongPtrW(self.0, GWL_STYLE, style | frame);
-                if let Some(wp) = SAVED.with(|s| s.take()) {
+                if let Some(wp) = SAVED.with(|s| s.borrow_mut().remove(&(self.0 .0 as isize))) {
                     let _ = SetWindowPlacement(self.0, &wp);
                 }
                 let _ = SetWindowPos(
@@ -410,6 +495,16 @@ impl Window {
         }
     }
 
+    /// Makes `owner` the owner of this (popup) window: it stays above that frame and is
+    /// hidden with it.
+    pub fn set_owner(self, owner: Window) {
+        use windows::Win32::UI::WindowsAndMessaging::{SetWindowLongPtrW, GWLP_HWNDPARENT};
+        // SAFETY: re-owning our own popup to our own frame.
+        unsafe {
+            SetWindowLongPtrW(self.0, GWLP_HWNDPARENT, owner.0 .0 as isize);
+        }
+    }
+
     /// Toggles `WS_EX_NOACTIVATE` (popups that need no keyboard input never
     /// take activation from the main window).
     pub fn set_activatable(self, activatable: bool) {
@@ -440,6 +535,11 @@ impl Window {
     pub fn hide(self) {
         // SAFETY: valid window handle.
         let _ = unsafe { ShowWindow(self.0, SW_HIDE) };
+    }
+
+    pub fn is_minimized(self) -> bool {
+        // SAFETY: valid window handle.
+        unsafe { windows::Win32::UI::WindowsAndMessaging::IsIconic(self.0) }.as_bool()
     }
 
     pub fn is_visible(self) -> bool {
@@ -501,8 +601,12 @@ const SUBCLASS_ID: usize = 0x4b52_4e4b; // "KRNK"
 const CAPTION_TIMER: usize = 0x4b52;
 
 thread_local! {
-    /// The caption button under the mouse, and whether it is pressed.
-    static CAPTION: Cell<(Option<CaptionButton>, bool)> = const { Cell::new((None, false)) };
+    /// Per frame: the caption button under the mouse, and whether it is pressed.
+    static CAPTION: RefCell<HashMap<isize, (Option<CaptionButton>, bool)>> = RefCell::new(HashMap::new());
+}
+
+fn caption_of(hwnd: HWND) -> (Option<CaptionButton>, bool) {
+    CAPTION.with(|c| c.borrow().get(&(hwnd.0 as isize)).copied().unwrap_or((None, false)))
 }
 
 fn hit_code(hit: Hit) -> u32 {
@@ -532,7 +636,7 @@ fn caption_button(ht: usize) -> Option<CaptionButton> {
 }
 
 fn set_caption(hwnd: HWND, ev: &Option<Rc<dyn WindowEvents>>, hover: Option<CaptionButton>, pressed: bool) {
-    let before = CAPTION.with(|c| c.replace((hover, pressed)));
+    let before = CAPTION.with(|c| c.borrow_mut().insert(hwnd.0 as isize, (hover, pressed))).unwrap_or((None, false));
     if before == (hover, pressed) {
         return;
     }
@@ -662,7 +766,7 @@ extern "system" fn main_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
         WM_NCMOUSEMOVE => {
             let ev = events(hwnd);
             let hover = caption_button(wparam.0);
-            let pressed = CAPTION.with(|c| c.get().1) && hover.is_some();
+            let pressed = caption_of(hwnd).1 && hover.is_some();
             set_caption(hwnd, &ev, hover, pressed);
             // SAFETY: default processing.
             unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
@@ -676,7 +780,7 @@ extern "system" fn main_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
         }
         windows::Win32::UI::WindowsAndMessaging::WM_TIMER if wparam.0 == CAPTION_TIMER => {
             let now = caption_under_cursor(hwnd);
-            let (hover, pressed) = CAPTION.with(|c| c.get());
+            let (hover, pressed) = caption_of(hwnd);
             if now != hover {
                 set_caption(hwnd, &events(hwnd), now, pressed && now.is_some());
             }
@@ -695,7 +799,7 @@ extern "system" fn main_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
         }
         WM_NCLBUTTONUP if caption_button(wparam.0).is_some() => {
             let button = caption_button(wparam.0);
-            let (_, pressed) = CAPTION.with(|c| c.get());
+            let (_, pressed) = caption_of(hwnd);
             set_caption(hwnd, &events(hwnd), button, false);
             if pressed {
                 use lb_core::protocol::WindowAction;
@@ -743,7 +847,17 @@ extern "system" fn main_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
         }
         WM_SIZE => {
             let maximized = wparam.0 as u32 == windows::Win32::UI::WindowsAndMessaging::SIZE_MAXIMIZED;
-            let was = MAXIMIZED.with(|m| m.replace(maximized));
+            let key = hwnd.0 as isize;
+            let was = MAXIMIZED.with(|m| {
+                let mut m = m.borrow_mut();
+                let was = m.contains(&key);
+                if maximized {
+                    m.insert(key);
+                } else {
+                    m.remove(&key);
+                }
+                was
+            });
             let r = wndproc(hwnd, msg, wparam, lparam);
             if was != maximized && wparam.0 as u32 != SIZE_MINIMIZED {
                 if let Some(ev) = events(hwnd) {
@@ -757,13 +871,17 @@ extern "system" fn main_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
 }
 
 thread_local! {
-    static MAXIMIZED: Cell<bool> = const { Cell::new(false) };
-    static FULLSCREEN: Cell<isize> = const { Cell::new(0) };
+    /// Frames (by handle) that are maximized now.
+    static MAXIMIZED: RefCell<std::collections::HashSet<isize>> = RefCell::new(std::collections::HashSet::new());
+    /// Frames shown full screen, and the placement each had before.
+    static FULLSCREEN: RefCell<std::collections::HashSet<isize>> = RefCell::new(std::collections::HashSet::new());
+    static SAVED: RefCell<HashMap<isize, windows::Win32::UI::WindowsAndMessaging::WINDOWPLACEMENT>> =
+        RefCell::new(HashMap::new());
 }
 
-/// Is `hwnd` the window currently shown fullscreen?
+/// Is `hwnd` shown full screen?
 fn is_fullscreen(hwnd: HWND) -> bool {
-    FULLSCREEN.with(|f| f.get() == hwnd.0 as isize)
+    FULLSCREEN.with(|f| f.borrow().contains(&(hwnd.0 as isize)))
 }
 
 /// Subclass of the shell browser's windows: points that are not client area
@@ -923,7 +1041,12 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
             if let Some(ev) = ev {
                 ev.destroyed();
             }
-            EVENTS.with(|e| e.borrow_mut().remove(&(hwnd.0 as isize)));
+            let key = hwnd.0 as isize;
+            EVENTS.with(|e| e.borrow_mut().remove(&key));
+            MAXIMIZED.with(|m| m.borrow_mut().remove(&key));
+            FULLSCREEN.with(|f| f.borrow_mut().remove(&key));
+            SAVED.with(|s| s.borrow_mut().remove(&key));
+            CAPTION.with(|c| c.borrow_mut().remove(&key));
             LRESULT(0)
         }
         // SAFETY: default processing for everything else.

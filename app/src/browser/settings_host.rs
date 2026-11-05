@@ -154,7 +154,7 @@ impl Browser {
             c.post_json(&e);
         }
         let internal: Vec<TabId> =
-            self.model.borrow().tabs().iter().filter(|t| Page::from_url(&t.url).is_some()).map(|t| t.id).collect();
+            self.ws.borrow().tabs().filter(|(_, t)| Page::from_url(&t.url).is_some()).map(|(_, t)| t.id).collect();
         for id in internal {
             if let Some(c) = self.tab_view(id) {
                 c.post_json(&e);
@@ -169,8 +169,8 @@ impl Browser {
             Theme::Light => false,
             Theme::System => crate::ffi::window::system_prefers_dark(),
         };
-        if let Some(w) = self.window() {
-            w.set_dark_frame(dark);
+        for f in self.all_frames() {
+            f.window.set_dark_frame(dark);
         }
     }
 
@@ -193,10 +193,9 @@ impl Browser {
     /// profile data is cleared first; the window is destroyed when that
     /// completes (or after a timeout).
     pub(super) fn begin_exit(&self) {
-        let Some(w) = self.window() else { return };
         let clear = self.settings.borrow().clear_on_exit.clone();
         if !clear.any() || self.exit_cleared.get() {
-            w.destroy();
+            self.destroy_frames();
             return;
         }
         if self.exit_clearing.replace(true) {
@@ -204,7 +203,10 @@ impl Browser {
         }
         info!("clearing data on exit");
         self.hide_popup();
-        w.hide();
+        for f in self.all_frames() {
+            f.window.hide();
+        }
+        let Some(w) = self.app() else { return };
         // Sites whose storage to clear, before their history goes.
         let origins = self.origins_to_clear(clear.cookies, None);
         if clear.history {
@@ -231,10 +233,10 @@ impl Browser {
             info!("data cleared, closing");
         }
         self.exit_cleared.set(true);
-        if let Some(w) = self.window() {
+        if let Some(w) = self.app() {
             w.kill_timer(EXIT_TIMER);
-            w.destroy();
         }
+        self.destroy_frames();
     }
 
     /// Called from `shutdown`: start the new instance for a restart.

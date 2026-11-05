@@ -457,6 +457,22 @@ impl View {
 
     // ------------------------------------------------------------ window
 
+    /// Moves the browser's child window into another frame. The browser, its page, history
+    /// and request context stay as they are: nothing reloads (verified on Windows 11 with
+    /// CEF 156, see .pipeline/evidence-0.3.0/spike).
+    pub fn reparent(&self, parent: HWND) -> bool {
+        let Some(h) = self.hwnd() else { return false };
+        // SAFETY: both windows belong to this (UI) thread.
+        if unsafe { windows::Win32::UI::WindowsAndMessaging::SetParent(h, Some(parent)) }.is_err() {
+            return false;
+        }
+        if let Some(host) = self.host() {
+            host.notify_move_or_resize_started();
+            host.was_resized();
+        }
+        true
+    }
+
     pub fn set_bounds(&self, x: i32, y: i32, width: i32, height: i32) {
         let (width, height) = (width.max(0), height.max(0));
         match self.hwnd() {

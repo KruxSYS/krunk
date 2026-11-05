@@ -52,7 +52,7 @@ impl Browser {
         match request {
             Request::StorageList => {
                 let mut origins = self.store.borrow().visited_origins(None).unwrap_or_default();
-                for t in self.model.borrow().tabs() {
+                for (_, t) in self.ws.borrow().tabs() {
                     if let Some(o) = web_origin(&t.url).filter(|_| !t.private) {
                         origins.push(o);
                     }
@@ -147,22 +147,21 @@ impl Browser {
     /// to the active tab, in the same profile, bound to that tab's site.
     pub(super) fn open_site_data(&self) {
         self.hide_popup();
-        let Some((source, url, private)) = self.model.borrow().active().map(|t| (t.id, t.url.clone(), t.private))
-        else {
+        let Some((source, url, private)) = self.active_tab().map(|t| (t.id, t.url.clone(), t.private)) else {
             return;
         };
         // The shield panel offers this only on web pages.
         let Some(origin) = web_origin(&url) else { return };
-        let (id, effects) = self.with_model(|m| {
-            m.open(
-                &Page::SiteData.url(),
-                private,
-                Position::AfterOpener(source),
-                true,
-                true,
-                lb_core::storage::now_ms(),
-            )
-        });
+        let Some(win) = self.window_of(source) else { return };
+        let opened = self.ws.borrow_mut().open(
+            win,
+            &Page::SiteData.url(),
+            private,
+            Position::AfterOpener(source),
+            true,
+            lb_core::storage::now_ms(),
+        );
+        let Some((id, effects)) = opened else { return };
         self.site_data.borrow_mut().insert(id, SiteDataBinding { source, origin, private });
         self.apply(effects);
     }
@@ -171,7 +170,7 @@ impl Browser {
     /// shows that site (in the same profile).
     fn site_data_binding(&self, tab: Option<TabId>) -> Option<(SiteDataBinding, Option<View>)> {
         let binding = self.site_data.borrow().get(&tab?).cloned()?;
-        let live = self.model.borrow().get(binding.source).is_some_and(|t| {
+        let live = self.tab(binding.source).is_some_and(|t| {
             t.private == binding.private && web_origin(&t.url).as_deref() == Some(binding.origin.as_str())
         });
         let view = if live { self.tab_view(binding.source) } else { None };

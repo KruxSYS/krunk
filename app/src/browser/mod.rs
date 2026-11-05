@@ -20,10 +20,11 @@ use lb_core::protocol::{
 };
 use lb_core::settings::{Settings, Startup};
 use lb_core::storage::{now_ms, Store};
-use lb_core::tabs::{Effect, Position, Session, TabId, TabModel};
+use lb_core::tabs::{Effect, Position, Session, Tab, TabId, TabModel};
 use lb_core::urlclean::{self, LoadFailure};
+use lb_core::windows::{Bounds, Op, WindowId, Workspace};
 use std::borrow::Cow;
-use std::cell::{Cell, OnceCell, RefCell};
+use std::cell::{Cell, OnceCell, Ref, RefCell};
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
@@ -85,23 +86,40 @@ struct TabView {
     downloads: Rc<Cell<u32>>,
 }
 
-/// The popup view in its owned popup window (created on first use).
+/// The popup view in its popup window, shared by all frames: it is owned by the frame it
+/// is shown for (created hidden at start).
 struct Popup {
     window: Window,
     view: Option<View>,
     ready: bool,
     /// Content shown now, or waiting for the popup document to be ready.
     content: Option<PopupContent>,
+    /// The frame the popup belongs to now.
+    owner: Option<WindowId>,
+}
+
+/// One browser window (frame): its native window, its shell view (tab strip and toolbar)
+/// and the shell's tab-row layout for hit testing. Its tabs are in the workspace.
+pub(super) struct Frame {
+    id: WindowId,
+    window: Window,
+    shell: RefCell<Option<View>>,
+    hit_map: RefCell<Option<lb_core::frame::HitMap>>,
+    active: Cell<bool>,
 }
 
 pub struct Browser {
     me: Weak<Browser>,
-    window: OnceCell<Window>,
+    /// The hidden application window (timers, worker-thread wake-ups, broadcasts).
+    app: OnceCell<Window>,
+    /// A frame created before the engine started (it gets the foreground), used for the
+    /// first window.
+    first_window: Cell<Option<Window>>,
     store: RefCell<Store>,
     settings: RefCell<Settings>,
-    model: RefCell<TabModel>,
+    ws: RefCell<Workspace>,
+    frames: RefCell<Vec<Rc<Frame>>>,
     views: RefCell<HashMap<TabId, TabView>>,
-    shell: RefCell<Option<View>>,
     popup: RefCell<Option<Popup>>,
     /// Views the engine is creating for a page's `window.open`, waiting for
     /// their tab's CreateView effect.
@@ -128,9 +146,6 @@ pub struct Browser {
     exit_clearing: Cell<bool>,
     exit_cleared: Cell<bool>,
     closing: Cell<bool>,
-    /// The shell's tab-row layout, for hit testing the frameless window.
-    hit_map: RefCell<Option<lb_core::frame::HitMap>>,
-    window_active: Cell<bool>,
     /// A new-tab page whose address bar must keep the keyboard focus until
     /// the user clicks into the page or navigates.
     address_focus: Cell<Option<TabId>>,
@@ -158,12 +173,13 @@ impl Browser {
         let running_settings = settings.clone();
         let browser = Rc::new_cyclic(|me| Browser {
             me: me.clone(),
-            window: OnceCell::new(),
+            app: OnceCell::new(),
+            first_window: Cell::new(Some(window)),
             store: RefCell::new(store),
             settings: RefCell::new(settings),
-            model: RefCell::new(TabModel::new()),
+            ws: RefCell::new(Workspace::new()),
+            frames: RefCell::new(Vec::new()),
             views: RefCell::new(HashMap::new()),
-            shell: RefCell::new(None),
             popup: RefCell::new(None),
             adopted: RefCell::new(HashMap::new()),
             downloads: RefCell::new(Downloads::new()),
@@ -182,17 +198,14 @@ impl Browser {
             exit_clearing: Cell::new(false),
             exit_cleared: Cell::new(false),
             closing: Cell::new(false),
-            hit_map: RefCell::new(None),
-            window_active: Cell::new(true),
             address_focus: Cell::new(None),
             site_data: RefCell::new(HashMap::new()),
             pointer: pointer::PointerHost::default(),
             updates: updater::UpdateHost::new(dirs.update_status()),
         });
-        window.set_events(browser.clone());
-        let _ = browser.window.set(window);
-        browser.net.set_notifier(window.notifier());
-        browser.apply_frame_theme();
+        let app = Window::create_app(Rc::new(AppEvents(browser.me.clone())))?;
+        let _ = browser.app.set(app);
+        browser.net.set_notifier(app.notifier());
         browser.init_filters();
         browser.init_vault();
         engine::set_internal_server(browser.server());
@@ -207,25 +220,129 @@ impl Browser {
             }
         });
         engine::set_color_scheme(browser.color_scheme());
-        browser.create_shell(window)?;
         // The popup (menus, prompts, the pointer-lock hint) is created now,
         // hidden: creating its browser later would take the keyboard focus
         // from the page once (a game would see the window lose focus).
         browser.create_popup(window);
         browser.restore_or_open_start();
+        if browser.frames.borrow().is_empty() {
+            return Err("Cannot create the browser window".into());
+        }
         browser.init_updates();
         browser.start_power_timer();
         browser.mem_report_line("start");
         Ok(browser)
     }
 
+    /// The current (most recently used) frame's window.
     fn window(&self) -> Option<Window> {
-        self.window.get().copied()
+        self.cur().map(|f| f.window)
+    }
+
+    /// The hidden application window: timers and worker-thread notifications.
+    fn app(&self) -> Option<Window> {
+        self.app.get().copied()
+    }
+
+    fn frame(&self, win: WindowId) -> Option<Rc<Frame>> {
+        self.frames.try_borrow().ok()?.iter().find(|f| f.id == win).cloned()
+    }
+
+    /// The current (most recently used) frame: where new tabs, menus and prompts go.
+    fn cur(&self) -> Option<Rc<Frame>> {
+        let win = self.ws.try_borrow().ok()?.current()?;
+        self.frame(win)
+    }
+
+    fn cur_id(&self) -> Option<WindowId> {
+        self.ws.try_borrow().ok()?.current()
+    }
+
+    fn all_frames(&self) -> Vec<Rc<Frame>> {
+        self.frames.try_borrow().map(|f| f.clone()).unwrap_or_default()
+    }
+
+    /// The window a tab is in.
+    fn window_of(&self, tab: TabId) -> Option<WindowId> {
+        self.ws.try_borrow().ok()?.window_of(tab)
+    }
+
+    /// Input arrived from `win` (a key, a click into its shell): it is the current window.
+    fn make_current(&self, win: WindowId) {
+        if let Ok(mut ws) = self.ws.try_borrow_mut() {
+            if ws.current() != Some(win) {
+                ws.focus(win);
+            }
+        }
+    }
+
+    /// The current window's tab model.
+    fn model(&self) -> Option<Ref<'_, TabModel>> {
+        let ws = self.ws.try_borrow().ok()?;
+        let win = ws.current()?;
+        Ref::filter_map(ws, |ws| ws.model(win)).ok()
+    }
+
+    /// The active tab id of the current window.
+    fn active_id(&self) -> Option<TabId> {
+        self.model()?.active_id()
+    }
+
+    /// The active tab of the current window.
+    fn active_tab(&self) -> Option<Ref<'_, Tab>> {
+        Ref::filter_map(self.model()?, |m| m.active()).ok()
+    }
+
+    /// A tab in any window.
+    fn tab(&self, id: TabId) -> Option<Ref<'_, Tab>> {
+        Ref::filter_map(self.ws.try_borrow().ok()?, |ws| ws.tab(id)).ok()
+    }
+
+    /// Updates a tab's fields wherever it is.
+    fn with_tab(&self, id: TabId, f: impl FnOnce(&mut TabModel, TabId)) {
+        if let Ok(mut ws) = self.ws.try_borrow_mut() {
+            ws.with_tab(id, f);
+        }
     }
 
     // ------------------------------------------------------------ startup
 
-    fn create_shell(&self, window: Window) -> Result<(), String> {
+    /// A frame for window `win` (op `CreateWindow`), with its shell.
+    fn create_frame(&self, win: WindowId, bounds: Option<Bounds>, maximized: bool) {
+        let window = match self.first_window.take() {
+            Some(w) => w,
+            None => {
+                let rect = bounds.map(|b| ScreenRect { x: b.x, y: b.y, width: b.width, height: b.height });
+                match Window::create_frame("Krunk", rect, false) {
+                    Ok(w) => {
+                        w.show(maximized);
+                        w
+                    }
+                    Err(e) => {
+                        warning!("window {win}: {e}");
+                        return;
+                    }
+                }
+            }
+        };
+        let frame = Rc::new(Frame {
+            id: win,
+            window,
+            shell: RefCell::new(None),
+            hit_map: RefCell::new(None),
+            active: Cell::new(true),
+        });
+        window.set_events(Rc::new(FrameEvents { b: self.me.clone(), win }));
+        self.frames.borrow_mut().push(frame.clone());
+        self.apply_frame_theme();
+        if let Err(e) = self.create_shell(&frame) {
+            warning!("window {win}: {e}");
+        }
+    }
+
+    fn create_shell(&self, frame: &Frame) -> Result<(), String> {
+        let window = frame.window;
+        let win = frame.id;
         let shell = View::new(ViewOptions {
             role: Role::Shell,
             private: false,
@@ -238,39 +355,58 @@ impl Browser {
         shell.on_open_tab(move |url, _| {
             // Links in the shell never open windows; open them as tabs instead.
             if let Some(b) = weak.upgrade() {
+                b.make_current(win);
                 b.open_url(&url, true, false);
             }
         });
         let weak = self.me.clone();
         shell.on_message(move |source, json| {
             if let Some(b) = weak.upgrade() {
-                b.on_ui_message(Channel::Shell, source, json);
+                b.on_ui_message(Channel::Shell, Some(win), source, json);
             }
         });
         let weak = self.me.clone();
         shell.on_crashed(move |reason| {
-            warning!("the shell's renderer ended ({reason}); reloading it");
-            if let Some(s) = weak.upgrade().and_then(|b| b.shell()) {
+            warning!("window {win}: the shell's renderer ended ({reason}); reloading it");
+            if let Some(s) = weak.upgrade().and_then(|b| b.frame(win)).and_then(|f| f.shell.borrow().clone()) {
                 s.navigate(SHELL_URL);
             }
         });
-        self.hook_common(&shell);
+        let weak = self.me.clone();
+        shell.on_key(move |key| {
+            weak.upgrade().is_some_and(|b| {
+                b.make_current(win);
+                b.on_key(key)
+            })
+        });
+        self.hook_focus(&shell);
         shell.start(window.hwnd(), SHELL_URL).map_err(|e| format!("Cannot create the browser window: {e}"))?;
         shell.set_visible(true);
-        *self.shell.borrow_mut() = Some(shell);
+        *frame.shell.borrow_mut() = Some(shell);
         self.layout();
         Ok(())
     }
 
-    /// Accelerators and focus handling shared by every view.
-    fn hook_common(&self, c: &View) {
-        let weak = self.me.clone();
-        c.on_key(move |key| weak.upgrade().is_some_and(|b| b.on_key(key)));
+    /// A view getting the focus closes the popup.
+    fn hook_focus(&self, c: &View) {
         let weak = self.me.clone();
         c.on_got_focus(move || {
             if let Some(b) = weak.upgrade() {
                 b.hide_popup();
             }
+        });
+    }
+
+    /// Keys typed into tab `id` (in whichever window it is now).
+    fn hook_tab_keys(&self, id: TabId, c: &View) {
+        let weak = self.me.clone();
+        c.on_key(move |key| {
+            weak.upgrade().is_some_and(|b| {
+                if let Some(win) = b.window_of(id) {
+                    b.make_current(win);
+                }
+                b.on_key(key)
+            })
         });
     }
 
@@ -293,44 +429,88 @@ impl Browser {
         };
         let saved: Option<Session> =
             self.store.borrow().kv_get(SESSION_KEY).ok().flatten().and_then(|j| serde_json::from_str(&j).ok());
-        let effects = {
-            let mut m = self.model.borrow_mut();
+        let now = now_ms();
+        let ops = {
+            let mut ws = self.ws.borrow_mut();
             match (startup, saved) {
-                (Startup::RestoreSession, Some(session)) if !session.tabs.is_empty() => m.restore(&session, now_ms()),
-                (Startup::Homepage, _) if !homepage.is_empty() => {
-                    m.open(&homepage, false, Position::End, true, true, now_ms()).1
+                (Startup::RestoreSession, Some(session)) if !session.tabs.is_empty() => {
+                    ws.restore_window(&session, None, false, now).1
                 }
-                _ => m.open("", false, Position::End, true, true, now_ms()).1,
+                (Startup::Homepage, _) if !homepage.is_empty() => ws.open_window(&homepage, false, None, false, now).2,
+                _ => ws.open_window("", false, None, false, now).2,
             }
         };
         // Restored tabs show their favicons from the local cache (no network).
         {
             let store = self.store.borrow();
-            let mut m = self.model.borrow_mut();
+            let mut ws = self.ws.borrow_mut();
             let hosts: Vec<(TabId, String)> =
-                m.tabs().iter().filter_map(|t| urlclean::host_of(&t.url).map(|h| (t.id, h))).collect();
+                ws.tabs().filter_map(|(_, t)| urlclean::host_of(&t.url).map(|h| (t.id, h))).collect();
             for (id, host) in hosts {
                 if let Ok(Some(png)) = store.favicon(&host) {
-                    m.set_favicon(id, assets::png_data_url(&png));
+                    ws.with_tab(id, |m, t| m.set_favicon(t, assets::png_data_url(&png)));
                 }
             }
         }
-        self.apply(effects);
+        self.apply(ops);
     }
 
     // ------------------------------------------------------------ effects
 
-    fn apply(&self, effects: Vec<Effect>) {
-        for e in effects {
-            match e {
-                Effect::CreateView(id) => self.create_view(id),
-                Effect::DestroyView(id) => self.destroy_view(id),
-                Effect::Activate { from, to } => self.activate_view(from, to),
+    fn apply(&self, ops: Vec<Op>) {
+        let mut exit = false;
+        for op in ops {
+            match op {
+                Op::CreateWindow { win, bounds, maximized } => self.create_frame(win, bounds, maximized),
+                Op::CreateView { win, tab } => self.create_view(win, tab),
+                Op::DestroyView { tab, .. } => self.destroy_view(tab),
+                Op::Activate { win, from, to } => self.activate_view(win, from, to),
+                Op::MoveView { tab, from, to } => self.move_view(tab, from, to),
+                Op::CloseWindow(win) => self.close_frame(win),
+                Op::Exit => exit = true,
             }
         }
         self.send_tabs();
         self.send_nav();
         self.save_session();
+        if exit {
+            self.begin_exit();
+        }
+    }
+
+    /// Runs a change of the current window's tab model and applies its effects.
+    fn update_current(&self, f: impl FnOnce(&mut TabModel) -> Vec<Effect>) {
+        let Some(win) = self.cur_id() else { return };
+        let ops = self.ws.borrow_mut().update(win, |m| ((), f(m))).map(|(_, ops)| ops).unwrap_or_default();
+        self.apply(ops);
+    }
+
+    /// Moves a live tab's view (and anything docked to it) into another frame.
+    fn move_view(&self, tab: TabId, from: WindowId, to: WindowId) {
+        let (Some(view), Some(target)) = (self.tab_view(tab), self.frame(to)) else { return };
+        if view.reparent(target.window.hwnd()) {
+            info!("tab {tab}: moved from window {from} to window {to}");
+        } else {
+            warning!("tab {tab}: could not move its view to window {to}");
+        }
+    }
+
+    /// Closes a frame whose tabs are gone (closed or moved away).
+    fn close_frame(&self, win: WindowId) {
+        let frame = {
+            let mut frames = self.frames.borrow_mut();
+            let i = frames.iter().position(|f| f.id == win);
+            i.map(|i| frames.remove(i))
+        };
+        let Some(frame) = frame else { return };
+        if self.popup.borrow().as_ref().is_some_and(|p| p.owner == Some(win)) {
+            self.hide_popup();
+        }
+        if let Some(s) = frame.shell.borrow_mut().take() {
+            s.close();
+        }
+        frame.window.destroy();
+        info!("window {win} closed");
     }
 
     /// A new (not started) tab view, with its network state.
@@ -352,10 +532,11 @@ impl Browser {
         (view, net)
     }
 
-    fn create_view(&self, id: TabId) {
-        let Some(window) = self.window() else { return };
+    fn create_view(&self, win: WindowId, id: TabId) {
+        let Some(window) = self.frame(win).map(|f| f.window) else { return };
         let (url, private, active) = {
-            let m = self.model.borrow();
+            let ws = self.ws.borrow();
+            let Some(m) = ws.model(win) else { return };
             match m.get(id) {
                 Some(t) if t.is_live() => (t.url.clone(), t.private, m.active_id() == Some(id)),
                 _ => return,
@@ -381,7 +562,7 @@ impl Browser {
                 warning!("tab {id}: {e}");
             }
         }
-        view.set_visible(active);
+        view.set_visible(active && !window.is_minimized());
         self.views.borrow_mut().insert(
             id,
             TabView {
@@ -399,20 +580,23 @@ impl Browser {
         );
         if active {
             self.layout();
-            self.focus_active();
+            if self.cur_id() == Some(win) {
+                self.focus_active();
+            }
         }
         self.send_nav();
     }
 
     fn hook_tab(&self, id: TabId, c: &View, host_navigation: Rc<Cell<bool>>, net: Rc<TabNet>) {
-        self.hook_common(c);
+        self.hook_focus(c);
+        self.hook_tab_keys(id, c);
 
         let weak = self.me.clone();
         let net_start = net.clone();
         c.on_before_browse(move |nav| {
             let Some(b) = weak.upgrade() else { return false };
             let host = host_navigation.replace(false);
-            let current = b.model.borrow().get(id).map(|t| t.url.clone()).unwrap_or_default();
+            let current = b.tab(id).map(|t| t.url.clone()).unwrap_or_default();
             let allow = assets::allow_navigation(Channel::Tab, &current, &nav.url, host);
             if !allow {
                 info!("tab {id}: blocked navigation to an internal or unsupported URL");
@@ -423,7 +607,7 @@ impl Browser {
                 b.defer(move |b| b.navigate_tab(id, &rewritten));
                 return false;
             }
-            b.model.borrow_mut().set_loading(id, true);
+            b.with_tab(id, |m, t| m.set_loading(t, true));
             b.tab_changed(id);
             // A new page: the old one's pointer lock ends.
             b.release_pointer_of(id, lb_core::pointer_lock::Release::Navigated);
@@ -436,7 +620,7 @@ impl Browser {
                     v.can_go_back = state.can_go_back;
                     v.can_go_forward = state.can_go_forward;
                 }
-                b.model.borrow_mut().set_loading(id, state.loading);
+                b.with_tab(id, |m, t| m.set_loading(t, state.loading));
                 b.tab_changed(id);
                 if !state.loading {
                     b.address_focus_loaded(id);
@@ -461,14 +645,14 @@ impl Browser {
         c.on_address(move |url| {
             if let Some(b) = weak.upgrade() {
                 b.release_address_focus_unless(id, &url);
-                b.model.borrow_mut().set_url(id, &url);
+                b.with_tab(id, |m, t| m.set_url(t, &url));
                 b.tab_changed(id);
             }
         });
         let weak = self.me.clone();
         c.on_title(move |title| {
             if let Some(b) = weak.upgrade() {
-                b.model.borrow_mut().set_title(id, &title);
+                b.with_tab(id, |m, t| m.set_title(t, &title));
                 b.record_title(id);
                 b.tab_changed(id);
             }
@@ -476,7 +660,7 @@ impl Browser {
         let weak = self.me.clone();
         c.on_favicon(move |png| {
             if let Some(b) = weak.upgrade() {
-                b.model.borrow_mut().set_favicon(id, assets::png_data_url(&png));
+                b.with_tab(id, |m, t| m.set_favicon(t, assets::png_data_url(&png)));
                 b.cache_favicon(id, &png);
                 b.send_tabs();
             }
@@ -492,8 +676,9 @@ impl Browser {
         let weak = self.me.clone();
         c.on_find_result(move |active, total| {
             if let Some(b) = weak.upgrade() {
-                if b.model.borrow().active_id() == Some(id) {
-                    b.post_shell(&Event::FindResult { active, total });
+                let win = b.window_of(id);
+                if let Some(win) = win.filter(|w| b.ws.borrow().model(*w).is_some_and(|m| m.active_id() == Some(id))) {
+                    b.post_shell_to(win, &Event::FindResult { active, total });
                 }
             }
         });
@@ -546,7 +731,7 @@ impl Browser {
         }
     }
 
-    fn activate_view(&self, from: Option<TabId>, to: TabId) {
+    fn activate_view(&self, win: WindowId, from: Option<TabId>, to: TabId) {
         self.pointer_tab_activated(to);
         if let Some(f) = from.filter(|f| *f != to) {
             self.fullscreen_tab_gone(f);
@@ -558,16 +743,19 @@ impl Browser {
         if let Some(f) = from {
             self.stop_find(f);
         }
-        if let Some(f) = from.and_then(|f| self.tab_view(f)) {
+        // `from` may have moved to another window meanwhile; only hide it if it is still here.
+        if let Some(f) = from.filter(|f| self.window_of(*f) == Some(win)).and_then(|f| self.tab_view(f)) {
             f.set_visible(false);
         }
         if let Some(t) = self.tab_view(to) {
-            t.set_visible(true);
+            t.set_visible(!self.frame(win).is_some_and(|f| f.window.is_minimized()));
         }
         // Wake after showing: a frozen page resumes as a visible one.
         self.wake_tab(to);
         self.layout();
-        self.focus_active();
+        if self.cur_id() == Some(win) {
+            self.focus_active();
+        }
         self.update_title();
     }
 
@@ -575,18 +763,26 @@ impl Browser {
         self.views.try_borrow().ok()?.get(&id).map(|v| v.view.clone())
     }
 
+    /// The current window's active tab view.
     fn active_view(&self) -> Option<View> {
-        let id = self.model.try_borrow().ok()?.active_id()?;
+        let id = self.active_id()?;
         self.tab_view(id)
     }
 
+    /// The active tab view of window `win`.
+    fn active_view_of(&self, win: WindowId) -> Option<View> {
+        let id = self.ws.try_borrow().ok()?.model(win)?.active_id()?;
+        self.tab_view(id)
+    }
+
+    /// The current window's shell.
     fn shell(&self) -> Option<View> {
-        self.shell.try_borrow().ok()?.clone()
+        self.cur()?.shell.try_borrow().ok()?.clone()
     }
 
     /// New tab pages put the caret in the address bar; other pages get focus.
     fn focus_active(&self) {
-        let is_new_tab = self.model.borrow().active().is_some_and(|t| Page::from_url(&t.url) == Some(Page::NewTab));
+        let is_new_tab = self.active_tab().is_some_and(|t| Page::from_url(&t.url) == Some(Page::NewTab));
         if is_new_tab {
             self.focus_address_bar();
         } else if let Some(c) = self.active_view() {
@@ -612,54 +808,83 @@ impl Browser {
 
     // ------------------------------------------------------------ layout & state
 
+    /// Lays out every frame: its shell on top and its active tab below (the whole client
+    /// area in full screen).
     fn layout(&self) {
-        let Some(w) = self.window() else { return };
+        for f in self.all_frames() {
+            self.layout_frame(&f);
+        }
+    }
+
+    fn layout_frame(&self, f: &Frame) {
+        let w = f.window;
         let (width, height) = w.client_size();
         let bar = self.settings.borrow().show_bookmarks_bar;
         let (shell, mut content) = layout::split(width, height, w.scale(), bar);
-        if self.is_fullscreen() {
+        if self.is_fullscreen_frame(f.id) {
             // No tab strip or toolbar: the page fills the screen.
             content = layout::Rect { x: 0, y: 0, width, height };
-        } else if let Some(s) = self.shell() {
+        } else if let Some(s) = f.shell.borrow().as_ref() {
             s.set_bounds(shell.x, shell.y, shell.width, shell.height);
         }
-        if let Some(c) = self.active_view() {
+        if let Some(c) = self.active_view_of(f.id) {
             c.set_bounds(content.x, content.y, content.width, content.height);
         }
     }
 
     fn tab_changed(&self, id: TabId) {
         self.schedule_session_save();
-        self.send_tabs();
-        if self.model.borrow().active_id() == Some(id) {
-            self.send_nav();
+        let Some(win) = self.window_of(id) else { return };
+        self.send_tabs_to(win);
+        if self.ws.borrow().model(win).is_some_and(|m| m.active_id() == Some(id)) {
+            self.send_nav_to(win);
             self.update_title();
         }
     }
 
+    /// Each frame's title is its active tab's.
     fn update_title(&self) {
-        let title = self.model.borrow().active().map(|t| t.title.clone()).unwrap_or_default();
-        if let Some(w) = self.window() {
-            w.set_title(&if title.is_empty() { "Krunk".to_string() } else { format!("{title} – Krunk") });
+        for f in self.all_frames() {
+            let title =
+                self.ws.borrow().model(f.id).and_then(|m| m.active().map(|t| t.title.clone())).unwrap_or_default();
+            f.window.set_title(&if title.is_empty() { "Krunk".to_string() } else { format!("{title} – Krunk") });
         }
     }
 
+    /// Sends an event to every frame's shell (settings, bookmarks bar, downloads …).
     fn post_shell(&self, e: &Event) {
-        if let Some(s) = self.shell() {
+        let json = e.to_json();
+        for f in self.all_frames() {
+            if let Some(s) = f.shell.borrow().as_ref() {
+                s.post_json(&json);
+            }
+        }
+    }
+
+    /// Sends an event to one frame's shell.
+    fn post_shell_to(&self, win: WindowId, e: &Event) {
+        if let Some(s) = self.frame(win).and_then(|f| f.shell.borrow().clone()) {
             s.post_json(&e.to_json());
         }
     }
 
+    /// Every frame's tab strip.
     fn send_tabs(&self) {
-        let (tabs, active) = {
-            let m = self.model.borrow();
-            (m.infos(), m.active_id())
-        };
-        self.post_shell(&Event::Tabs { tabs, active });
+        for f in self.all_frames() {
+            self.send_tabs_to(f.id);
+        }
     }
 
-    fn nav_state(&self) -> Option<NavState> {
-        let m = self.model.try_borrow().ok()?;
+    fn send_tabs_to(&self, win: WindowId) {
+        let state = self.ws.try_borrow().ok().and_then(|ws| ws.model(win).map(|m| (m.infos(), m.active_id())));
+        if let Some((tabs, active)) = state {
+            self.post_shell_to(win, &Event::Tabs { tabs, active });
+        }
+    }
+
+    fn nav_state(&self, win: WindowId) -> Option<NavState> {
+        let ws = self.ws.try_borrow().ok()?;
+        let m = ws.model(win)?;
         let tab = m.active()?;
         let views = self.views.try_borrow().ok()?;
         let view = views.get(&tab.id);
@@ -681,9 +906,16 @@ impl Browser {
         })
     }
 
+    /// Every frame's toolbar (address, buttons, shield) for its active tab.
     fn send_nav(&self) {
-        if let Some(state) = self.nav_state() {
-            self.post_shell(&Event::Nav { state });
+        for f in self.all_frames() {
+            self.send_nav_to(f.id);
+        }
+    }
+
+    fn send_nav_to(&self, win: WindowId) {
+        if let Some(state) = self.nav_state(win) {
+            self.post_shell_to(win, &Event::Nav { state });
         }
     }
 
@@ -702,13 +934,14 @@ impl Browser {
     /// Saves the session shortly after the last change (titles and URLs
     /// change often while pages load).
     fn schedule_session_save(&self) {
-        if let Some(w) = self.window() {
+        if let Some(w) = self.app() {
             w.set_timer(SESSION_TIMER, SESSION_DEBOUNCE_MS);
         }
     }
 
     fn save_session(&self) {
-        let session = self.model.borrow().session();
+        // Until the multi-window session format: the current window's tabs.
+        let Some(session) = self.model().map(|m| m.session()) else { return };
         if let Ok(json) = serde_json::to_string(&session) {
             if let Ok(store) = self.store.try_borrow() {
                 let _ = store.kv_set(SESSION_KEY, &json);
@@ -718,13 +951,13 @@ impl Browser {
 
     // ------------------------------------------------------------ tab operations
 
-    fn with_model<T>(&self, f: impl FnOnce(&mut TabModel) -> T) -> T {
-        f(&mut self.model.borrow_mut())
-    }
-
     fn new_tab(&self, url: Option<&str>, private: bool) {
-        let (id, effects) =
-            self.with_model(|m| m.open(url.unwrap_or(""), private, Position::End, true, true, now_ms()));
+        let Some(win) = self.cur_id() else { return };
+        let Some((id, effects)) =
+            self.ws.borrow_mut().open(win, url.unwrap_or(""), private, Position::End, true, now_ms())
+        else {
+            return;
+        };
         // A new-tab page: typing goes to the address bar at once, and the
         // page loading must not take the focus away.
         if url.is_none() {
@@ -736,13 +969,23 @@ impl Browser {
         }
     }
 
+    /// Closes a tab (the close button, Ctrl+W, middle click).
+    fn close_tab(&self, id: TabId) {
+        let Some(win) = self.window_of(id) else { return };
+        let now = now_ms();
+        let ops = self.ws.borrow_mut().update(win, |m| ((), m.close(id, now))).map(|(_, o)| o).unwrap_or_default();
+        self.apply(ops);
+    }
+
     /// A page in tab `opener` opened a window: it becomes a tab next to the
     /// opener, and the engine creates its browser for the returned view.
     fn open_new_window(&self, opener: TabId, nw: &NewWindow) -> Option<(View, windows::Win32::Foundation::HWND)> {
-        let window = self.window()?;
-        let private = self.model.borrow().get(opener).is_some_and(|t| t.private);
+        // The new tab goes into the opener's window.
+        let win = self.window_of(opener)?;
+        let window = self.frame(win)?.window;
+        let private = self.tab(opener).is_some_and(|t| t.private);
         let (id, effects) =
-            self.with_model(|m| m.open(&nw.url, private, Position::AfterOpener(opener), nw.foreground, true, now_ms()));
+            self.ws.borrow_mut().open(win, &nw.url, private, Position::AfterOpener(opener), nw.foreground, now_ms())?;
         let (view, net) = self.new_tab_view(private);
         // The CreateView effect picks this view up and hooks it.
         self.adopted.borrow_mut().insert(id, (view.clone(), net));
@@ -756,9 +999,13 @@ impl Browser {
         if !ok {
             return;
         }
-        let private = self.model.borrow().get(opener).is_some_and(|t| t.private);
-        let (_, effects) =
-            self.with_model(|m| m.open(url, private, Position::AfterOpener(opener), foreground, true, now_ms()));
+        let Some(win) = self.window_of(opener) else { return };
+        let private = self.tab(opener).is_some_and(|t| t.private);
+        let Some((_, effects)) =
+            self.ws.borrow_mut().open(win, url, private, Position::AfterOpener(opener), foreground, now_ms())
+        else {
+            return;
+        };
         self.apply(effects);
     }
 
@@ -778,13 +1025,13 @@ impl Browser {
     }
 
     fn navigate_active(&self, url: &str) {
-        let Some(id) = self.model.borrow().active_id() else { return };
+        let Some(id) = self.active_id() else { return };
         self.navigate_tab(id, url);
     }
 
     /// Built-in pages replace a new-tab page, otherwise open in a new tab.
     fn open_page(&self, page: Page) {
-        let on_new_tab = self.model.borrow().active().is_some_and(|t| Page::from_url(&t.url) == Some(Page::NewTab));
+        let on_new_tab = self.active_tab().is_some_and(|t| Page::from_url(&t.url) == Some(Page::NewTab));
         if on_new_tab {
             self.navigate_active(&page.url());
         } else {
@@ -829,31 +1076,21 @@ impl Browser {
             Command::NewTab => self.new_tab(None, false),
             Command::NewPrivateTab => self.new_tab(None, true),
             Command::CloseTab => {
-                // Bind first: an `if let` scrutinee's `Ref` lives for the whole
-                // block, and `with_model` needs the model mutably.
-                let active = self.model.borrow().active_id();
+                // Bind first: an `if let` scrutinee's `Ref` lives for the whole block.
+                let active = self.active_id();
                 if let Some(id) = active {
-                    let effects = self.with_model(|m| m.close(id, now));
-                    self.apply(effects);
+                    self.close_tab(id);
                 }
             }
             Command::ReopenClosedTab => {
-                if let Some((_, effects)) = self.with_model(|m| m.reopen_closed(now)) {
-                    self.apply(effects);
+                let reopened = self.ws.borrow_mut().reopen_closed(now);
+                if let Some((_, ops)) = reopened {
+                    self.apply(ops);
                 }
             }
-            Command::NextTab | Command::PrevTab => {
-                let effects = self.with_model(|m| m.cycle(cmd == Command::NextTab, now));
-                self.apply(effects);
-            }
-            Command::SelectTab(i) => {
-                let effects = self.with_model(|m| m.activate_index(usize::from(i), now));
-                self.apply(effects);
-            }
-            Command::LastTab => {
-                let effects = self.with_model(|m| m.activate_last(now));
-                self.apply(effects);
-            }
+            Command::NextTab | Command::PrevTab => self.update_current(|m| m.cycle(cmd == Command::NextTab, now)),
+            Command::SelectTab(i) => self.update_current(|m| m.activate_index(usize::from(i), now)),
+            Command::LastTab => self.update_current(|m| m.activate_last(now)),
             Command::FocusAddressBar => self.focus_address_bar(),
             Command::Reload => self.active_do(|c| c.reload()),
             Command::HardReload => self.active_do(|c| c.hard_reload()),
@@ -916,7 +1153,11 @@ impl Browser {
 
     // ------------------------------------------------------------ messages
 
-    fn on_ui_message(&self, channel: Channel, source: &MessageSource, json: &str) {
+    /// A message from a shell (of window `win`) or the popup (`win` = its owner).
+    fn on_ui_message(&self, channel: Channel, win: Option<WindowId>, source: &MessageSource, json: &str) {
+        if let Some(win) = win {
+            self.make_current(win);
+        }
         let sender = match protocol::classify(channel, &source.url, source.main_frame) {
             Ok(Source::Privileged(s)) => s,
             _ => {
@@ -971,22 +1212,19 @@ impl Browser {
         match request {
             Request::Ready => match sender {
                 Sender::Shell => {
+                    // The shell that just loaded is the current window's (its message made it so).
+                    let Some(win) = self.cur_id() else { return };
                     self.send_shell_config();
-                    self.send_tabs();
-                    self.send_nav();
+                    self.send_tabs_to(win);
+                    self.send_nav_to(win);
                     self.send_bookmarks_bar();
                     self.post_shell(&Event::DownloadsChanged { active: self.downloads.borrow().active_count() });
                     self.send_window_state();
-                    self.pass_shell_hit_tests();
+                    self.pass_shell_hit_tests(win);
                     // A new-tab page activated before the shell finished
-                    // loading (the first window at start-up) could not focus
-                    // the address bar yet.
-                    let start_tab = self
-                        .model
-                        .borrow()
-                        .active()
-                        .filter(|t| Page::from_url(&t.url) == Some(Page::NewTab))
-                        .map(|t| t.id);
+                    // loading (a new window) could not focus the address bar yet.
+                    let start_tab =
+                        self.active_tab().filter(|t| Page::from_url(&t.url) == Some(Page::NewTab)).map(|t| t.id);
                     match start_tab {
                         Some(id) => self.hold_address_focus(id),
                         None => self.focus_active(),
@@ -1012,24 +1250,15 @@ impl Browser {
                     self.hide_popup();
                 }
             }
-            Request::CloseTab { id } => {
-                let effects = self.with_model(|m| m.close(id, now));
-                self.apply(effects);
-            }
-            Request::ActivateTab { id } => {
-                let effects = self.with_model(|m| m.activate(id, now));
-                self.apply(effects);
-            }
+            Request::CloseTab { id } => self.close_tab(id),
+            Request::ActivateTab { id } => self.update_current(|m| m.activate(id, now)),
             Request::MoveTab { id, index } => {
-                if self.with_model(|m| m.move_tab(id, index as usize)) {
-                    self.send_tabs();
-                    self.save_session();
-                }
+                let Some(win) = self.cur_id() else { return };
+                let ops = self.ws.borrow_mut().move_tab(id, win, index as usize, now);
+                self.apply(ops);
             }
             Request::DuplicateTab { id } => {
-                if let Some((_, effects)) = self.with_model(|m| m.duplicate(id, now)) {
-                    self.apply(effects);
-                }
+                self.update_current(|m| m.duplicate(id, now).map(|(_, e)| e).unwrap_or_default())
             }
             Request::ReopenClosedTab => self.run_command(Command::ReopenClosedTab),
             Request::Navigate { input } => {
@@ -1067,7 +1296,11 @@ impl Browser {
                 }
             }
             Request::HidePopup => self.hide_popup(),
-            Request::HitMap { map } => self.set_hit_map(map),
+            Request::HitMap { map } => {
+                if let Some(win) = self.cur_id() {
+                    self.set_hit_map(win, map);
+                }
+            }
             Request::WindowControl { action } => {
                 if let Some(w) = self.window() {
                     w.control(action);
@@ -1090,7 +1323,7 @@ impl Browser {
             }
             Request::FillReply { tab_id, origin, entry_id } => self.fill_reply(tab_id, &origin, entry_id),
             Request::RequestFill => {
-                let active = self.model.borrow().active_id();
+                let active = self.active_id();
                 if let Some(id) = active {
                     self.request_fill(id, None);
                 }
@@ -1142,7 +1375,7 @@ impl Browser {
 
     fn menu_content(&self) -> PopupContent {
         let zoom = self.active_view().map(|c| c.zoom()).unwrap_or(1.0);
-        PopupContent::Menu { zoom, can_reopen: self.model.borrow().closed_count() > 0 }
+        PopupContent::Menu { zoom, can_reopen: self.ws.borrow().closed_count() > 0 }
     }
 
     /// Shows `content` in the popup. `rect` is in shell CSS pixels; `None`
@@ -1162,6 +1395,12 @@ impl Browser {
         let kind = content.kind();
         popup.content = Some(content.clone());
         if let Some(rect) = rect {
+            // Shown for the current window: it belongs to that frame now.
+            let owner = self.cur_id();
+            if popup.owner != owner {
+                popup.window.set_owner(main);
+                popup.owner = owner;
+            }
             let scale = main.scale();
             let origin = main.client_to_screen(0, 0);
             let work = Window::work_area_at(origin.0 + (rect.x * scale) as i32, origin.1);
@@ -1209,11 +1448,20 @@ impl Browser {
         let weak = self.me.clone();
         c.on_message(move |source, json| {
             if let Some(b) = weak.upgrade() {
-                b.on_ui_message(Channel::Popup, source, json);
+                let owner = b.popup.try_borrow().ok().and_then(|p| p.as_ref().and_then(|p| p.owner));
+                b.on_ui_message(Channel::Popup, owner, source, json);
             }
         });
         let weak = self.me.clone();
-        c.on_key(move |key| weak.upgrade().is_some_and(|b| b.on_key(key)));
+        c.on_key(move |key| {
+            weak.upgrade().is_some_and(|b| {
+                let owner = b.popup.try_borrow().ok().and_then(|p| p.as_ref().and_then(|p| p.owner));
+                if let Some(win) = owner {
+                    b.make_current(win);
+                }
+                b.on_key(key)
+            })
+        });
         if let Err(e) = c.start(window.hwnd(), POPUP_URL) {
             warning!("popup: {e}");
             window.destroy();
@@ -1222,7 +1470,7 @@ impl Browser {
         let (w, h) = window.client_size();
         c.set_bounds(0, 0, w, h);
         c.set_visible(window.is_visible());
-        *self.popup.borrow_mut() = Some(Popup { window, view: Some(c), ready: false, content: None });
+        *self.popup.borrow_mut() = Some(Popup { window, view: Some(c), ready: false, content: None, owner: None });
         true
     }
 
@@ -1245,20 +1493,23 @@ impl Browser {
 
     /// Hides the popup. A hidden prompt counts as dismissed, never confirmed.
     fn hide_popup(&self) {
-        let (was_visible, content) = {
+        let (was_visible, content, owner) = {
             let Ok(mut guard) = self.popup.try_borrow_mut() else { return };
             let Some(p) = guard.as_mut() else { return };
             let visible = p.window.is_visible();
             if visible {
                 p.window.hide();
             }
-            (visible, p.content.take())
+            (visible, p.content.take(), p.owner)
         };
         if let Some(c) = &content {
             self.prompt_dismissed(c);
         }
         if was_visible {
-            self.post_shell(&Event::PopupClosed);
+            match owner {
+                Some(win) => self.post_shell_to(win, &Event::PopupClosed),
+                None => self.post_shell(&Event::PopupClosed),
+            }
         }
     }
 
@@ -1299,7 +1550,8 @@ impl Browser {
         if self.closing.replace(true) {
             return;
         }
-        if let Some(w) = self.window() {
+        info!("shutting down");
+        if let Some(w) = self.app() {
             w.kill_timer(SESSION_TIMER);
         }
         self.save_session();
@@ -1320,11 +1572,21 @@ impl Browser {
             }
             p.window.destroy();
         }
-        if let Some(s) = self.shell.borrow_mut().take() {
-            s.close();
+        for f in self.all_frames() {
+            if let Some(s) = f.shell.borrow_mut().take() {
+                s.close();
+            }
         }
         // The message loop ends when the engine has closed every browser.
         engine::quit_when_closed();
+    }
+
+    /// Ends the browser (exit, or the last window closed): every frame goes, and the last
+    /// one's destruction shuts the browser down.
+    fn destroy_frames(&self) {
+        for f in self.all_frames() {
+            f.window.destroy();
+        }
     }
 }
 
@@ -1341,50 +1603,134 @@ impl WindowEvents for PopupEvents {
     }
 }
 
-impl WindowEvents for Browser {
+/// Events of the hidden application window: timers, worker-thread wake-ups and
+/// system broadcasts.
+struct AppEvents(Weak<Browser>);
+
+impl WindowEvents for AppEvents {
+    fn system_theme_changed(&self) {
+        if let Some(b) = self.0.upgrade() {
+            b.apply_frame_theme();
+        }
+    }
+
+    fn session_locked(&self) {
+        if let Some(b) = self.0.upgrade() {
+            b.lock_vault("Windows session locked");
+        }
+    }
+
+    fn suspending(&self) {
+        if let Some(b) = self.0.upgrade() {
+            b.lock_vault("system suspend");
+        }
+    }
+
+    fn timer(&self, id: usize) {
+        let Some(b) = self.0.upgrade() else { return };
+        match id {
+            SESSION_TIMER => {
+                if let Some(w) = b.app() {
+                    w.kill_timer(SESSION_TIMER);
+                }
+                b.save_session();
+            }
+            SHIELD_TIMER => b.shield_timer(),
+            POWER_TIMER => b.power_tick(),
+            MEMREPORT_TIMER => b.mem_report_line("tick"),
+            pointer::HINT_TIMER => b.hide_hint(),
+            updater::APP_UPDATE_TIMER => b.update_timer(),
+            updater::UPDATE_PROGRESS_TIMER => b.update_progress_timer(),
+            VAULT_TIMER => b.vault_timer(),
+            EXIT_TIMER => b.finish_exit(),
+            CLIPBOARD_TIMER => b.clipboard_timer(),
+            UPDATE_TIMER => {
+                if let Some(w) = b.app() {
+                    w.set_timer(UPDATE_TIMER, blocking::UPDATE_CHECK_INTERVAL_MS);
+                }
+                b.scheduled_filter_check();
+            }
+            _ => {}
+        }
+    }
+
+    fn app_message(&self, code: usize) {
+        let Some(b) = self.0.upgrade() else { return };
+        match code {
+            APP_FILTERS_READY => b.filters_ready(),
+            APP_DEFERRED => b.run_deferred(),
+            APP_JOB => b.jobs_ready(),
+            APP_SHIELD => b.shield_changed(),
+            _ => {}
+        }
+    }
+}
+
+/// Events of one browser window (frame).
+struct FrameEvents {
+    b: Weak<Browser>,
+    win: WindowId,
+}
+
+impl WindowEvents for FrameEvents {
     fn frame_hit(&self, x: i32, y: i32) -> lb_core::frame::Hit {
-        self.frame_hit_at(x, y)
+        self.b.upgrade().map(|b| b.frame_hit_at(self.win, x, y)).unwrap_or(lb_core::frame::Hit::Client)
     }
 
     fn caption_state(&self, hover: Option<lb_core::protocol::CaptionButton>, pressed: bool) {
-        self.post_shell(&Event::CaptionState { hover, pressed });
+        if let Some(b) = self.b.upgrade() {
+            b.post_shell_to(self.win, &Event::CaptionState { hover, pressed });
+        }
     }
 
     fn maximized_changed(&self, _maximized: bool) {
-        self.send_window_state();
+        if let Some(b) = self.b.upgrade() {
+            b.send_window_state();
+            b.schedule_session_save();
+        }
     }
 
     fn activated(&self, active: bool) {
-        self.window_active.set(active);
-        if !active {
-            // Alt+Tab or a click into another window ends the lock.
-            self.release_pointer(lb_core::pointer_lock::Release::WindowDeactivated);
+        let Some(b) = self.b.upgrade() else { return };
+        if let Some(f) = b.frame(self.win) {
+            f.active.set(active);
         }
-        self.send_window_state();
+        if active {
+            b.make_current(self.win);
+            b.send_nav_to(self.win);
+        } else {
+            // Alt+Tab or a click into another window ends the lock.
+            b.release_pointer(lb_core::pointer_lock::Release::WindowDeactivated);
+        }
+        b.send_window_state();
     }
 
     fn raw_mouse(&self, dx: i32, dy: i32) {
-        Browser::raw_mouse(self, dx, dy);
+        if let Some(b) = self.b.upgrade() {
+            b.raw_mouse(dx, dy);
+        }
     }
 
     fn activation_to_popup(&self) {
+        let Some(b) = self.b.upgrade() else { return };
         // The popup took activation without showing something to answer
         // (it is being created, or shows the pointer-lock hint): give the
         // window and the page back the focus.
         // While the popup is being shown (borrowed by show_popup, which
         // activates it on purpose) this is not a stray activation.
-        let Ok(popup) = self.popup.try_borrow() else { return };
+        let Ok(popup) = b.popup.try_borrow() else { return };
         let showing = popup.as_ref().is_some_and(|p| p.window.is_visible());
         let kind = popup.as_ref().and_then(|p| p.content.as_ref().map(PopupContent::kind));
         drop(popup);
         let passive = !showing || kind == Some(PopupKind::Hint);
         if passive {
-            self.defer(|b| {
-                if let Some(w) = b.window() {
-                    w.bring_to_front();
+            let win = self.win;
+            b.defer(move |b| {
+                if let Some(f) = b.frame(win) {
+                    f.window.bring_to_front();
                 }
                 if b.pointer_locked() {
-                    if let Some(v) = b.active_view() {
+                    if let Some(v) = b.active_view_of(win) {
                         v.focus();
                     }
                 } else {
@@ -1395,101 +1741,80 @@ impl WindowEvents for Browser {
     }
 
     fn resized(&self, _width: i32, _height: i32) {
-        self.hide_popup();
-        self.layout();
-        self.reapply_pointer();
+        let Some(b) = self.b.upgrade() else { return };
+        b.hide_popup();
+        if let Some(f) = b.frame(self.win) {
+            b.layout_frame(&f);
+        }
+        b.reapply_pointer();
+        b.schedule_session_save();
     }
 
     fn minimized(&self, minimized: bool) {
+        let Some(b) = self.b.upgrade() else { return };
         if minimized {
-            self.release_pointer(lb_core::pointer_lock::Release::WindowDeactivated);
+            b.release_pointer(lb_core::pointer_lock::Release::WindowDeactivated);
         }
-        self.hide_popup();
+        b.hide_popup();
         // Hidden views use less CPU and memory.
-        if let Some(c) = self.active_view() {
+        if let Some(c) = b.active_view_of(self.win) {
             c.set_visible(!minimized);
         }
-        if let Some(s) = self.shell() {
+        if let Some(s) = b.frame(self.win).and_then(|f| f.shell.borrow().clone()) {
             s.set_visible(!minimized);
         }
     }
 
     fn moved(&self) {
-        self.hide_popup();
-        self.reapply_pointer();
-        if let Some(s) = self.shell() {
+        let Some(b) = self.b.upgrade() else { return };
+        b.hide_popup();
+        b.reapply_pointer();
+        if let Some(s) = b.frame(self.win).and_then(|f| f.shell.borrow().clone()) {
             s.notify_moved();
         }
-        if let Some(c) = self.active_view() {
+        if let Some(c) = b.active_view_of(self.win) {
             c.notify_moved();
         }
-    }
-
-    fn system_theme_changed(&self) {
-        self.apply_frame_theme();
+        b.schedule_session_save();
     }
 
     fn got_focus(&self) {
         // Keyboard shortcuts arrive through the views, so the frame
         // must never keep the focus itself.
-        self.focus_active();
+        if let Some(b) = self.b.upgrade() {
+            b.make_current(self.win);
+            b.focus_active();
+        }
     }
 
     fn close_requested(&self) -> bool {
-        // With clear-on-exit, close only after the data has been cleared.
-        if self.settings.borrow().clear_on_exit.any() && !self.exit_cleared.get() {
-            self.begin_exit();
+        let Some(b) = self.b.upgrade() else { return true };
+        info!("window {}: close requested ({} open)", self.win, b.frames.borrow().len());
+        if b.frames.borrow().len() > 1 {
+            // Another window stays open: this one goes with its tabs.
+            let ops = b.ws.borrow_mut().close_window(self.win);
+            b.apply(ops);
+            return false;
+        }
+        // The last window: Krunk exits. With clear-on-exit, close only after the data has
+        // been cleared.
+        if b.settings.borrow().clear_on_exit.any() && !b.exit_cleared.get() {
+            b.begin_exit();
             return false;
         }
         true
     }
 
     fn destroyed(&self) {
-        self.shutdown();
-    }
-
-    fn session_locked(&self) {
-        self.lock_vault("Windows session locked");
-    }
-
-    fn suspending(&self) {
-        self.lock_vault("system suspend");
-    }
-
-    fn timer(&self, id: usize) {
-        match id {
-            SESSION_TIMER => {
-                if let Some(w) = self.window() {
-                    w.kill_timer(SESSION_TIMER);
-                }
-                self.save_session();
-            }
-            SHIELD_TIMER => self.shield_timer(),
-            POWER_TIMER => self.power_tick(),
-            MEMREPORT_TIMER => self.mem_report_line("tick"),
-            pointer::HINT_TIMER => self.hide_hint(),
-            updater::APP_UPDATE_TIMER => self.update_timer(),
-            updater::UPDATE_PROGRESS_TIMER => self.update_progress_timer(),
-            VAULT_TIMER => self.vault_timer(),
-            EXIT_TIMER => self.finish_exit(),
-            CLIPBOARD_TIMER => self.clipboard_timer(),
-            UPDATE_TIMER => {
-                if let Some(w) = self.window() {
-                    w.set_timer(UPDATE_TIMER, blocking::UPDATE_CHECK_INTERVAL_MS);
-                }
-                self.scheduled_filter_check();
-            }
-            _ => {}
-        }
-    }
-
-    fn app_message(&self, code: usize) {
-        match code {
-            APP_FILTERS_READY => self.filters_ready(),
-            APP_DEFERRED => self.run_deferred(),
-            APP_JOB => self.jobs_ready(),
-            APP_SHIELD => self.shield_changed(),
-            _ => {}
+        let Some(b) = self.b.upgrade() else { return };
+        info!("window {} destroyed", self.win);
+        let last = {
+            let mut frames = b.frames.borrow_mut();
+            frames.retain(|f| f.id != self.win);
+            frames.is_empty()
+        };
+        if last {
+            b.shutdown();
         }
     }
 }

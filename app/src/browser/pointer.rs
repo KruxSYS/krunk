@@ -42,6 +42,8 @@ pub(super) struct PointerHost {
     /// Where the cursor is kept (screen pixels).
     center: Cell<(i32, i32)>,
     pub fullscreen: Cell<FullscreenMode>,
+    /// The frame that is full screen.
+    pub fullscreen_window: Cell<Option<lb_core::windows::WindowId>>,
 }
 
 impl Browser {
@@ -54,8 +56,11 @@ impl Browser {
         match msg {
             LockMessage::PointerLock { unadjusted } => {
                 let ctx = RequestContext {
-                    tab_active: self.model.borrow().active_id() == Some(tab),
-                    window_active: self.window().is_some_and(|w| w.is_active()),
+                    tab_active: self.active_id() == Some(tab),
+                    window_active: self
+                        .window_of(tab)
+                        .and_then(|w| self.frame(w))
+                        .is_some_and(|f| f.window.is_active()),
                     frame_live: view.frame_live(&frame),
                 };
                 let lock = Lock { tab, frame: frame.clone(), unadjusted };
@@ -214,7 +219,7 @@ impl Browser {
         let scale = w.scale();
         let (width, _) = w.client_size();
         let (hw, hh) = (300.0, 44.0);
-        let top = if self.pointer.fullscreen.get() == FullscreenMode::Off {
+        let top = if !self.cur_id().is_some_and(|w| self.is_fullscreen_frame(w)) {
             layout::shell_height(scale, self.settings.borrow().show_bookmarks_bar) as f64 / scale
         } else {
             0.0
@@ -222,11 +227,13 @@ impl Browser {
         let rect =
             PopupRect { x: ((f64::from(width) / scale - hw) / 2.0).max(0.0), y: top + 24.0, width: hw, height: hh };
         self.show_popup(PopupContent::Hint { text: text.to_string() }, Some(rect));
-        w.set_timer(HINT_TIMER, HINT_MS);
+        if let Some(app) = self.app() {
+            app.set_timer(HINT_TIMER, HINT_MS);
+        }
     }
 
     pub(super) fn hide_hint(&self) {
-        if let Some(w) = self.window() {
+        if let Some(w) = self.app() {
             w.kill_timer(HINT_TIMER);
         }
         if self.popup_kind() == Some(PopupKind::Hint) {
@@ -272,11 +279,26 @@ impl Browser {
     }
 
     fn enter_fullscreen(&self, mode: FullscreenMode) {
-        let Some(w) = self.window() else { return };
+        // A page's own window, or (F11) the current one.
+        let win = match mode {
+            FullscreenMode::Page(tab) => self.window_of(tab),
+            _ => self.cur_id(),
+        };
+        let Some(frame) = win.and_then(|w| self.frame(w)) else { return };
+        if let Some(other) = self.pointer.fullscreen_window.get().filter(|w| *w != frame.id) {
+            // Only one window is full screen at a time.
+            if let Some(f) = self.frame(other) {
+                f.window.set_fullscreen(false);
+                if let Some(s) = f.shell.borrow().as_ref() {
+                    s.set_visible(true);
+                }
+            }
+        }
         self.hide_popup();
         self.pointer.fullscreen.set(mode);
-        w.set_fullscreen(true);
-        if let Some(s) = self.shell() {
+        self.pointer.fullscreen_window.set(Some(frame.id));
+        frame.window.set_fullscreen(true);
+        if let Some(s) = frame.shell.borrow().as_ref() {
             s.set_visible(false);
         }
         self.layout();
@@ -289,11 +311,11 @@ impl Browser {
         if self.pointer.fullscreen.replace(FullscreenMode::Off) == FullscreenMode::Off {
             return;
         }
-        if let Some(w) = self.window() {
-            w.set_fullscreen(false);
-        }
-        if let Some(s) = self.shell() {
-            s.set_visible(true);
+        if let Some(f) = self.pointer.fullscreen_window.take().and_then(|w| self.frame(w)) {
+            f.window.set_fullscreen(false);
+            if let Some(s) = f.shell.borrow().as_ref() {
+                s.set_visible(true);
+            }
         }
         self.hide_hint();
         self.layout();
@@ -304,6 +326,11 @@ impl Browser {
 
     pub(super) fn is_fullscreen(&self) -> bool {
         self.pointer.fullscreen.get() != FullscreenMode::Off
+    }
+
+    /// Is frame `win` the one shown full screen?
+    pub(super) fn is_fullscreen_frame(&self, win: lb_core::windows::WindowId) -> bool {
+        self.is_fullscreen() && self.pointer.fullscreen_window.get() == Some(win)
     }
 
     /// The tab shown full screen by its page is no longer shown or exists.

@@ -102,14 +102,14 @@ impl Browser {
             ),
             Err(e) => warning!("update check disabled: {e}"),
         }
-        if let Some(w) = self.window() {
+        if let Some(w) = self.app() {
             w.set_timer(APP_UPDATE_TIMER, update::FIRST_CHECK_DELAY_MS);
         }
     }
 
     /// `APP_UPDATE_TIMER`: the first tick checks, later ones when a day passed.
     pub(super) fn update_timer(&self) {
-        if let Some(w) = self.window() {
+        if let Some(w) = self.app() {
             w.set_timer(APP_UPDATE_TIMER, TICK_MS);
         }
         if !self.settings.borrow().check_updates_automatically {
@@ -308,7 +308,7 @@ impl Browser {
         *self.updates.download.borrow_mut() = Some(Download { bytes: bytes.clone(), size: m.size });
         *self.updates.failed.borrow_mut() = None;
         self.show_update_prompt(UpdateProgress::Downloading { percent: 0 });
-        if let Some(w) = self.window() {
+        if let Some(w) = self.app() {
             w.set_timer(UPDATE_PROGRESS_TIMER, PROGRESS_MS);
         }
         info!("update: downloading {} ({} bytes)", m.url, m.size);
@@ -326,7 +326,7 @@ impl Browser {
     /// `UPDATE_PROGRESS_TIMER`.
     pub(super) fn update_progress_timer(&self) {
         if self.updates.download.borrow().is_none() {
-            if let Some(w) = self.window() {
+            if let Some(w) = self.app() {
                 w.kill_timer(UPDATE_PROGRESS_TIMER);
             }
             return;
@@ -343,7 +343,7 @@ impl Browser {
 
     fn update_downloaded(&self, r: Result<PathBuf, String>) {
         self.updates.download.borrow_mut().take();
-        if let Some(w) = self.window() {
+        if let Some(w) = self.app() {
             w.kill_timer(UPDATE_PROGRESS_TIMER);
         }
         let path = match r {

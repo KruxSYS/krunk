@@ -201,12 +201,11 @@ impl Browser {
         };
         let event = Event::Downloads { items }.to_json();
         let tabs: Vec<TabId> = self
-            .model
+            .ws
             .borrow()
             .tabs()
-            .iter()
-            .filter(|t| Page::from_url(&t.url) == Some(Page::Downloads))
-            .map(|t| t.id)
+            .filter(|(_, t)| Page::from_url(&t.url) == Some(Page::Downloads))
+            .map(|(_, t)| t.id)
             .collect();
         for id in tabs {
             if let Some(c) = self.tab_view(id) {

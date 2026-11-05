@@ -109,7 +109,7 @@ fn push_json_string(out: &mut String, s: &str) {
 impl Browser {
     pub(super) fn init_vault(&self) {
         *self.vaults.rate.borrow_mut() = self.store.borrow().load_rate_limiter().unwrap_or_default();
-        if let Some(w) = self.window() {
+        if let Some(w) = self.app() {
             w.watch_session_lock();
         }
     }
@@ -139,12 +139,11 @@ impl Browser {
     fn push_vault_state(&self) {
         let e = Event::VaultState { exists: self.vault_exists(), locked: !self.vault_unlocked() }.to_json();
         let tabs: Vec<TabId> = self
-            .model
+            .ws
             .borrow()
             .tabs()
-            .iter()
-            .filter(|t| Page::from_url(&t.url) == Some(Page::Passwords))
-            .map(|t| t.id)
+            .filter(|(_, t)| Page::from_url(&t.url) == Some(Page::Passwords))
+            .map(|(_, t)| t.id)
             .collect();
         for id in tabs {
             if let Some(c) = self.tab_view(id) {
@@ -159,7 +158,7 @@ impl Browser {
     fn vault_opened(&self, v: Vault) {
         *self.vaults.vault.borrow_mut() = Some(v);
         self.touch_vault();
-        if let Some(w) = self.window() {
+        if let Some(w) = self.app() {
             w.set_timer(VAULT_TIMER, VAULT_CHECK_MS);
         }
         self.push_vault_state();
@@ -171,7 +170,7 @@ impl Browser {
         let had = self.vaults.vault.borrow_mut().take().is_some();
         self.vaults.pending_save.borrow_mut().take();
         self.vaults.unlock_for.borrow_mut().take();
-        if let Some(w) = self.window() {
+        if let Some(w) = self.app() {
             w.kill_timer(VAULT_TIMER);
         }
         if had {
@@ -195,7 +194,7 @@ impl Browser {
     }
 
     pub(super) fn clipboard_timer(&self) {
-        if let Some(w) = self.window() {
+        if let Some(w) = self.app() {
             w.kill_timer(CLIPBOARD_TIMER);
             if let Some(seq) = self.vaults.clipboard_seq.take() {
                 if secure::clear_clipboard_if(w.hwnd(), seq) {
@@ -401,7 +400,7 @@ impl Browser {
     }
 
     fn vault_copy(&self, tab: Option<TabId>, req_id: Option<u32>, id: &str, field: CopyField) {
-        let Some(w) = self.window() else { return };
+        let Some(w) = self.app() else { return };
         let value: Option<Zeroizing<String>> = self.vaults.vault.borrow().as_ref().and_then(|v| {
             v.entry(id).map(|e| match field {
                 CopyField::Username => Zeroizing::new(e.username.clone()),
@@ -478,8 +477,8 @@ impl Browser {
     /// of the top-level document of tab `tab_id`).
     pub(super) fn login_submitted(&self, tab_id: TabId, origin: &str, username: String, password: Secret) {
         if !self.settings.borrow().offer_save_passwords
-            || self.model.borrow().active_id() != Some(tab_id)
-            || self.model.borrow().get(tab_id).is_some_and(|t| t.private)
+            || self.active_id() != Some(tab_id)
+            || self.tab(tab_id).is_some_and(|t| t.private)
             || self.store.borrow().never_save(origin).unwrap_or(false)
         {
             return;
@@ -524,8 +523,8 @@ impl Browser {
         if p.tab_id != tab_id || p.origin != origin || now_ms() - p.created > PENDING_SAVE_MS {
             return;
         }
-        let active = self.model.borrow().active_id();
-        let active_url = self.model.borrow().active().map(|t| t.url.clone()).unwrap_or_default();
+        let active = self.active_id();
+        let active_url = self.active_tab().map(|t| t.url.clone()).unwrap_or_default();
         if !prompt_still_valid(tab_id, origin, active, &active_url) {
             info!("save prompt dropped: tab or origin changed");
             return;
@@ -571,10 +570,7 @@ impl Browser {
     /// `claimed_origin` is the sender's browser-reported origin for page
     /// requests; it must match the tab's current top-level origin.
     pub(super) fn request_fill(&self, tab_id: TabId, claimed_origin: Option<&str>) {
-        let (active, url) = {
-            let m = self.model.borrow();
-            (m.active_id(), m.get(tab_id).map(|t| t.url.clone()).unwrap_or_default())
-        };
+        let (active, url) = { (self.active_id(), self.tab(tab_id).map(|t| t.url.clone()).unwrap_or_default()) };
         if active != Some(tab_id) {
             return;
         }
@@ -621,8 +617,8 @@ impl Browser {
     pub(super) fn fill_reply(&self, tab_id: TabId, origin: &str, entry_id: Option<String>) {
         self.hide_popup();
         let Some(entry_id) = entry_id else { return };
-        let active = self.model.borrow().active_id();
-        let url = self.model.borrow().get(tab_id).map(|t| t.url.clone()).unwrap_or_default();
+        let active = self.active_id();
+        let url = self.tab(tab_id).map(|t| t.url.clone()).unwrap_or_default();
         if !prompt_still_valid(tab_id, origin, active, &url) {
             info!("fill dropped: tab or origin changed");
             return;
@@ -686,8 +682,8 @@ impl Browser {
     /// Continues a save or fill that was waiting for the vault.
     fn after_unlock(&self) {
         let Some((tab_id, origin, purpose)) = self.vaults.unlock_for.borrow_mut().take() else { return };
-        let active = self.model.borrow().active_id();
-        let url = self.model.borrow().get(tab_id).map(|t| t.url.clone()).unwrap_or_default();
+        let active = self.active_id();
+        let url = self.tab(tab_id).map(|t| t.url.clone()).unwrap_or_default();
         match purpose {
             UnlockPurpose::Save => {
                 let pending = self.vaults.pending_save.borrow_mut().take();

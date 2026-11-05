@@ -34,7 +34,7 @@ impl Browser {
         work: impl FnOnce() -> R + Send + 'static,
         done: impl FnOnce(&Browser, R) + 'static,
     ) {
-        let Some(window) = self.window() else { return };
+        let Some(window) = self.app() else { return };
         let id = self.jobs.next.get();
         self.jobs.next.set(id + 1);
         self.jobs.pending.borrow_mut().insert(

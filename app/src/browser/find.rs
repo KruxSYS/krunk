@@ -8,11 +8,13 @@ impl Browser {
     /// Searches the active tab for `query`. Repeating the same query moves
     /// to the next (or previous) match.
     pub(super) fn find(&self, query: &str, backwards: bool) {
-        let Some(id) = self.model.borrow().active_id() else { return };
+        let Some(id) = self.active_id() else { return };
         let Some(view) = self.tab_view(id) else { return };
         if query.is_empty() {
             self.stop_find(id);
-            self.post_shell(&lb_core::protocol::Event::FindResult { active: 0, total: 0 });
+            if let Some(win) = self.cur_id() {
+                self.post_shell_to(win, &lb_core::protocol::Event::FindResult { active: 0, total: 0 });
+            }
             return;
         }
         let same = self.views.borrow().get(&id).is_some_and(|v| v.find_query == query);
@@ -27,8 +29,6 @@ impl Browser {
     /// F3 / Shift+F3: continue the current search, or open the find bar.
     pub(super) fn find_step(&self, backwards: bool) {
         let has_query = self
-            .model
-            .borrow()
             .active_id()
             .and_then(|id| self.views.borrow().get(&id).map(|v| v.find_query.clone()))
             .filter(|q| !q.is_empty());

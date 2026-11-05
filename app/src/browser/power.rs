@@ -43,7 +43,7 @@ impl Browser {
     /// (Re)starts the tab-power timer; called at startup and when the
     /// sleep/discard settings change.
     pub(super) fn start_power_timer(&self) {
-        let Some(w) = self.window() else { return };
+        let Some(w) = self.app() else { return };
         let p = self.power_policy();
         if p.sleep_after.is_none() && p.discard_after.is_none() {
             w.kill_timer(super::power::POWER_TIMER);
@@ -62,18 +62,20 @@ impl Browser {
     pub(super) fn power_tick(&self) {
         let now = now_ms();
         let policy = self.power_policy();
+        // Shown tabs are exempt: the active tab of every visible (not minimized) window.
+        let frames = self.all_frames();
+        let shown = |w| frames.iter().any(|f| f.id == w && f.window.is_visible() && !f.window.is_minimized());
         let actions: Vec<(TabId, Action)> = {
-            let m = self.model.borrow();
+            let ws = self.ws.borrow();
             let views = self.views.borrow();
-            let active = m.active_id();
+            let active = ws.visible_active_tabs(shown);
             let live_private = views.values().filter(|v| v.view.is_private()).count();
-            m.tabs()
-                .iter()
-                .filter_map(|t| {
+            ws.tabs()
+                .filter_map(|(_, t)| {
                     let v = views.get(&t.id)?;
                     let state = TabState {
                         live: true,
-                        active: Some(t.id) == active,
+                        active: active.contains(&t.id),
                         pinned: false,
                         playing_audio: v.audio.get(),
                         downloading: v.downloads.get() > 0,
@@ -99,7 +101,7 @@ impl Browser {
             Action::SetLowMemory => {
                 c.set_memory_low(true);
                 self.set_stage(id, Stage::LowMemory, now);
-                self.model.borrow_mut().set_asleep(id, true);
+                self.with_tab(id, |m, t| m.set_asleep(t, true));
                 self.send_tabs();
                 info!("tab {id}: low memory");
             }
@@ -115,8 +117,13 @@ impl Browser {
             }
             Action::Discard => {
                 info!("tab {id}: discarded");
-                let effects = self.model.borrow_mut().unload(id);
-                self.apply(effects);
+                let ops = match self.window_of(id) {
+                    Some(win) => {
+                        self.ws.borrow_mut().update(win, |m| ((), m.unload(id))).map(|(_, o)| o).unwrap_or_default()
+                    }
+                    None => Vec::new(),
+                };
+                self.apply(ops);
                 self.mem_report_line("discard");
             }
         }
@@ -146,15 +153,15 @@ impl Browser {
     fn memory_sample(&self) -> MemorySample {
         let procs = procmem::browser_tree();
         let renderers = procs.iter().filter(|p| p.kind == procmem::Kind::Renderer).count();
-        let m = self.model.borrow();
+        let tabs = self.ws.borrow().tabs().count();
         let views = self.views.borrow();
         let stages: Vec<Stage> = views.values().map(|v| v.stage.get()).collect();
         MemorySample {
-            tabs: m.len(),
+            tabs,
             live: views.len(),
             asleep: stages.iter().filter(|s| **s != Stage::Awake).count(),
             suspended: stages.iter().filter(|s| **s == Stage::Suspended).count(),
-            unloaded: m.len().saturating_sub(views.len()),
+            unloaded: tabs.saturating_sub(views.len()),
             processes: procs.len(),
             renderers,
             working_set: procs.iter().map(|p| p.working_set).sum(),

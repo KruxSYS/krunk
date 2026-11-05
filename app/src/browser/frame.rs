@@ -8,34 +8,39 @@ use lb_core::frame::{self, HitMap};
 use lb_core::pages::Page;
 use lb_core::protocol::Event;
 use lb_core::tabs::TabId;
+use lb_core::windows::WindowId;
 
 impl Browser {
-    pub(super) fn set_hit_map(&self, map: HitMap) {
+    pub(super) fn set_hit_map(&self, win: WindowId, map: HitMap) {
         if !map.is_valid() {
             return;
         }
-        *self.hit_map.borrow_mut() = Some(map);
-        self.pass_shell_hit_tests();
+        let Some(f) = self.frame(win) else { return };
+        *f.hit_map.borrow_mut() = Some(map);
+        self.pass_shell_hit_tests(win);
     }
 
     /// The shell browser's windows let non-client points through to the
     /// frame. Chromium may add child windows later (after the first paint),
     /// so this runs whenever the shell reports its layout.
-    pub(super) fn pass_shell_hit_tests(&self) {
-        if let (Some(w), Some(h)) = (self.window(), self.shell().and_then(|s| s.window_handle())) {
-            w.pass_hit_tests_through(h);
+    pub(super) fn pass_shell_hit_tests(&self, win: WindowId) {
+        let Some(f) = self.frame(win) else { return };
+        let shell = f.shell.borrow().as_ref().and_then(|s| s.window_handle());
+        if let Some(h) = shell {
+            f.window.pass_hit_tests_through(h);
         }
     }
 
-    /// What is at a client point (physical pixels) of the main window.
-    pub(super) fn frame_hit_at(&self, x: i32, y: i32) -> Hit {
-        let Some(w) = self.window() else { return Hit::Client };
-        if self.is_fullscreen() {
+    /// What is at a client point (physical pixels) of frame `win`.
+    pub(super) fn frame_hit_at(&self, win: WindowId, x: i32, y: i32) -> Hit {
+        let Some(f) = self.frame(win) else { return Hit::Client };
+        if self.is_fullscreen_frame(win) {
             return Hit::Client;
         }
+        let w = f.window;
         let scale = w.scale();
         let (width, _) = w.client_size();
-        let map = self.hit_map.borrow();
+        let map = f.hit_map.borrow();
         frame::hit_test(
             map.as_ref(),
             f64::from(x) / scale,
@@ -45,13 +50,16 @@ impl Browser {
         )
     }
 
+    /// Each frame's shell shows its own maximized, active and full-screen state.
     pub(super) fn send_window_state(&self) {
-        let Some(w) = self.window() else { return };
-        self.post_shell(&Event::WindowState {
-            maximized: w.is_maximized(),
-            active: self.window_active.get(),
-            fullscreen: self.is_fullscreen(),
-        });
+        for f in self.all_frames() {
+            let e = Event::WindowState {
+                maximized: f.window.is_maximized(),
+                active: f.active.get(),
+                fullscreen: self.is_fullscreen_frame(f.id),
+            };
+            self.post_shell_to(f.id, &e);
+        }
     }
 
     // ------------------------------------------------------------ new-tab focus
@@ -82,7 +90,7 @@ impl Browser {
     /// The held tab finished loading: put the caret back in case something
     /// moved the focus anyway.
     pub(super) fn address_focus_loaded(&self, id: TabId) {
-        if self.address_focus.get() == Some(id) && self.model.borrow().active_id() == Some(id) {
+        if self.address_focus.get() == Some(id) && self.active_id() == Some(id) {
             self.focus_address_bar();
         }
     }

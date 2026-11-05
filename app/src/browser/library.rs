@@ -26,7 +26,7 @@ impl Browser {
             Request::ShowBookmarkFolder { id, rect } => self.show_bookmark_folder(id, rect),
             Request::Find { query, backwards } => self.find(&query, backwards),
             Request::FindClose => {
-                let active = self.model.borrow().active_id();
+                let active = self.active_id();
                 if let Some(id) = active {
                     self.stop_find(id);
                 }
@@ -107,8 +107,7 @@ impl Browser {
     /// A top-level navigation finished: record it (unless private/internal).
     pub(super) fn record_visit(&self, id: TabId) {
         let (url, title, private) = {
-            let m = self.model.borrow();
-            let Some(t) = m.get(id) else { return };
+            let Some(t) = self.tab(id) else { return };
             (t.url.clone(), t.title.clone(), t.private)
         };
         if let Some(clean) = history::visit_url(&url, private) {
@@ -123,8 +122,7 @@ impl Browser {
     /// The page title changed: update the stored history title.
     pub(super) fn record_title(&self, id: TabId) {
         let (url, title, private) = {
-            let m = self.model.borrow();
-            let Some(t) = m.get(id) else { return };
+            let Some(t) = self.tab(id) else { return };
             (t.url.clone(), t.title.clone(), t.private)
         };
         if let Some(clean) = history::visit_url(&url, private) {
@@ -137,8 +135,7 @@ impl Browser {
     /// Keeps the favicon for the new-tab page and bookmarks (not for private tabs).
     pub(super) fn cache_favicon(&self, id: TabId, png: &[u8]) {
         let (url, private) = {
-            let m = self.model.borrow();
-            let Some(t) = m.get(id) else { return };
+            let Some(t) = self.tab(id) else { return };
             (t.url.clone(), t.private)
         };
         if private || png.is_empty() || history::visit_url(&url, false).is_none() {
@@ -209,7 +206,7 @@ impl Browser {
 
     /// Star button / Ctrl+D: bookmark the active page in the bar, or remove it.
     pub(super) fn toggle_bookmark(&self) {
-        let (url, title) = match self.model.borrow().active() {
+        let (url, title) = match self.active_tab() {
             Some(t) => (t.url.clone(), t.title.clone()),
             None => return,
         };
