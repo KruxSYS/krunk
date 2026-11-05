@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Move test</title>
+<style>
+ body { font: 16px system-ui, sans-serif; margin: 20px; }
+ .band { height: 400px; border-bottom: 1px solid #ccc; padding: 8px; }
+ #status { position: fixed; right: 12px; top: 12px; background: #fffbe6; border: 1px solid #c90; padding: 6px 10px; font: 14px monospace; }
+</style></head>
+<body>
+<!-- Krunk 0.3.0 move/re-parent test: a typed field, a scroll offset, a playing video, a <select>
+     and history entries must survive moving the tab to another window. -->
+<h1 id="top">Move test</h1>
+<p><label>Type here: <input id="field" size="40"></label></p>
+<p><label>Pick: <select id="pick"><option>one</option><option>two</option><option>three</option><option>four</option></select></label></p>
+<p><video id="v" src="clip.webm" width="480" height="270" loop muted autoplay playsinline></video></p>
+<div class="band" id="a">Band A</div><div class="band" id="b">Band B</div>
+<div class="band">Band C</div><div class="band">Band D</div><div class="band">Band E</div>
+<div id="status">…</div>
+<script>
+  const started = performance.timeOrigin;
+  function tick() {
+    const v = document.getElementById('v');
+    document.getElementById('status').textContent =
+      'loaded ' + new Date(started).toISOString().slice(11, 19) +
+      ' | scrollY ' + Math.round(scrollY) +
+      ' | video ' + v.currentTime.toFixed(1) + 's ' + (v.paused ? 'paused' : 'playing') +
+      ' | field "' + document.getElementById('field').value + '"' +
+      ' | history ' + history.length;
+  }
+  setInterval(tick, 250); tick();
+</script>
+</body></html>
