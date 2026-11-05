@@ -27,6 +27,7 @@ pub mod secret;
 pub mod settings;
 pub mod sitedata;
 pub mod storage;
+pub mod sync;
 pub mod tabs;
 pub mod update;
 pub mod urlclean;

@@ -498,7 +498,7 @@ What it does:
    and `makensis` builds `Krunk-Setup-<version>.exe` from `installer/krunk.nsi`.
 
 Requirements (versions used for the release):
-- Rust stable (1.85 or newer; built with 1.99.1) with `rustup target add x86_64-pc-windows-msvc`
+- Rust stable (1.87 or newer; built with 1.99.1) with `rustup target add x86_64-pc-windows-msvc`
 - `cargo install cargo-xwin --version 0.23.1`
 - `cargo install export-cef-dir --version 156.3.0` (must match the `cef` crate version)
 - LLVM **20.1.8** (`clang-cl`, `lld-link`, `llvm-lib`; the MSVC C++ headers need clang 19 or

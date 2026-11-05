@@ -8,7 +8,7 @@ exclude = ["server"]
 version = "0.2.1"
 edition = "2021"
 license = "MIT"
-rust-version = "1.85"
+rust-version = "1.87"
 
 [profile.release]
 lto = true

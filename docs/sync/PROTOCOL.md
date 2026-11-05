@@ -134,6 +134,8 @@ protect *local* files (§8).
   - `mac = HMAC(K_pakmac,pak_epoch, bytes)`;
   - `chain = HMAC(K_pakmac,pak_epoch-1, bytes)` on a PAK epoch change;
   - `escrow_mac` with label `.../escrow-mac/pak`.
+- **`hist`** is `AEAD(K_pakhist,pak_epoch, PAK_{pak_epoch-1}, aad = "krunk-sync/v1/pak-hist" ‖ account_id ‖ u32be(pak_epoch))`,
+  the same shape as `ak_dir`'s.
 - Devices **without PAK** store `pak_dir` as opaque bytes and send it back byte-identical. They
   never seal anything to keys listed in it.
 
@@ -291,7 +293,8 @@ sequenceDiagram
     N->>N: decrypt · verify pins vs fetched directories · store AK (and PAK into vault) · then sync
 ```
 - **Transcript** (every field length-prefixed with `lp`):
-  `T = "krunk-sync/v1/approve" ‖ account_id ‖ approval_id ‖ dev_id_A ‖ dev_id_N ‖ SHA-256(N label ‖ platform) ‖ commit_N ‖ epk_A ‖ nonce_A ‖ epk_N ‖ nonce_N`
+  `T = "krunk-sync/v1/approve" ‖ account_id ‖ approval_id ‖ dev_id_A ‖ dev_id_N ‖ SHA-256(lp(N label) ‖ lp(platform)) ‖ commit_N ‖ epk_A ‖ nonce_A ‖ epk_N ‖ nonce_N`
+  (pinned by `core::sync::sas` and the test vectors).
 - **Keys:**
   - `prk = HKDF-Extract(salt = SHA-256(T), ikm = dh)`;
   - `SAS = u64be(HKDF-Expand(prk, "krunk-sync/v1/sas", 8)) mod 10^6`, shown as `NNN NNN`;
@@ -767,7 +770,9 @@ Renaming a device is an encrypted `device_meta` record (§9.5), so it goes throu
 `GET /healthz` on `api:8081`, internal only. Caddy does not proxy it publicly. The public
 `/healthz` stays Caddy's own.
 
-## 12. Test vectors (plan)
+## 12. Test vectors
+Implemented in S4: `core/src/sync/vectors.rs`, `core/tests/fixtures/sync/vectors-v1.json` and
+`rfc9180-a2.json` (see `core/src/sync/README.md`). Item 12 (tree repair) comes with S7.
 - **File:** `core/tests/fixtures/sync/vectors-v1.json`. It is generated once by the Rust
   reference with fixed inputs (fixed RNG seeds and HPKE `DeriveKeyPair` with fixed IKM), then
   frozen.

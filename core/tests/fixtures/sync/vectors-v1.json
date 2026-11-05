@@ -1,0 +1,421 @@
+{
+  "account_id": "4b52554e4b2d4143434f554e542d3031",
+  "approval": {
+    "box_a_to_n": "0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c318cc2bc703e3a88e15551a14beca11ed2c148ee5799a764bd1e467c",
+    "commit_n": "19b36c7c712eedee2487fff524fd9d82fc67695709a9f51a9ff1c2865b39cb94",
+    "confirm": "e184c5c6654f7c59b17476147124105015588166b6176df70aa9adf82e71c029",
+    "dh": "9b7d6146ef5e7411a3be6457eb7472ecac538d393fb3ca42e1f35fad85653b53",
+    "epk_a": "9c9a9f640519f975533cd62b1128ce7065db3368e6ded1c5a168627c38b1b162",
+    "epk_n": "6c9d41164aa9ddda103074f50c8aa364b16c8822f77b91bbf20a96575d187724",
+    "esk_a": "38d9eff7675b783af7cab427f4a9c7f8be1f612ae2ae260eb672d59f3c916f76",
+    "esk_n": "68f0d095bc79bb7de87a6af8b575d50d3aa38ed7fa184df17d3ddd0e306cb55e",
+    "k_an": "8cde925210490fd3ca5c4ffd1a340f9d816a6bcd4d8347c17e5e939e2e9aab78",
+    "k_na": "bd70fc269f9e10732c5da93584294626bd32b251818122f8eafa9548e9be9c89",
+    "nonce_a": "1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+    "nonce_n": "1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b",
+    "sas": 551254,
+    "sas_display": "551 254",
+    "transcript": "00156b72756e6b2d73796e632f76312f617070726f766500104b52554e4b2d4143434f554e542d30310006617070722d3100056465762d3100056465762d320020e926f200c308ab9082f24e4c1fb2d95048aad9b323bc6ac12924f3640c5146aa002019b36c7c712eedee2487fff524fd9d82fc67695709a9f51a9ff1c2865b39cb9400209c9a9f640519f975533cd62b1128ce7065db3368e6ded1c5a168627c38b1b16200201a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a00206c9d41164aa9ddda103074f50c8aa364b16c8822f77b91bbf20a96575d18772400201b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b"
+  },
+  "argon2id": [
+    {
+      "kek": "b6a821be4127962eff7360ce4e7168db10995dd986880830724a49944f33d0bb",
+      "m_kib": 131072,
+      "p": 1,
+      "passphrase": "correct-horse-battery-staple-pine-hill",
+      "salt": "01010101010101010101010101010101",
+      "t": 3
+    },
+    {
+      "kek": "231c6a7fe7ab79ecd0729801c09bce80a24b0e96832fbf2dabc8d8d3eb9913a0",
+      "m_kib": 131072,
+      "p": 1,
+      "passphrase": "kite-velvet-orbit-mango-trellis-ash",
+      "salt": "02020202020202020202020202020202",
+      "t": 3
+    }
+  ],
+  "device_key": {
+    "ikm": "6666666666666666666666666666666666666666666666666666666666666666",
+    "pk": "840e0eae611c970a92cea2e745c9f3f6ae69b67d75bac5eba11add350cd58f68",
+    "sk": "f0a87d4d6742d9d01f7216ff0b9b55d9c5682fdca0b901d5ad6865e18739ad56"
+  },
+  "directories": {
+    "ak": "1111111111111111111111111111111111111111111111111111111111111111",
+    "ak_dir_bytes": "{\"v\":1,\"account_id\":\"S1JVTkstQUNDT1VOVC0wMQ\",\"epoch\":2,\"seq\":7,\"prev_hash\":\"qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo\",\"devices\":[{\"id\":\"dev-1\",\"short\":1,\"pk\":\"hA4OrmEclwqSzqLnRcnz9q5ptn11usXroRrdNQzVj2g\",\"added_by\":\"dev-1\",\"added_seq\":1}],\"revoked\":[\"dev-9\"],\"min_record_epoch\":2,\"seals\":[],\"created_ms\":1793840000000,\"created_by\":\"dev-1\"}",
+    "chain": "4fa62edf099b9f80aae10b41c07800ff1d7525971f02b20176f0283b58979245",
+    "escrow_mac": "4fc6d959ecc6c3587612ceb21f13bd83c1be118e12a5a3a0deb92de133dbd123",
+    "hash": "5d7313dcd24dc3a14cd07adabec6db88a4e95473a49b5ff5074c8469906621ad",
+    "mac": "68edd9634b017cf407d5198678af38aeaef99db320ba3cd5fefceaa90ea81de5",
+    "prev_ak": "1010101010101010101010101010101010101010101010101010101010101010",
+    "rr": "3333333333333333333333333333333333333333333333333333333333333333"
+  },
+  "escrow": {
+    "esc_pk": "e581ba0ee2924d76d65a294994561ed6c67de839a63c3386f60e01d8b72d8b6e",
+    "esc_sk": "0840569250f86ef98603af3381f896041b7511b5a6b2b6ada6dd79425fd644cc",
+    "rr": "3333333333333333333333333333333333333333333333333333333333333333"
+  },
+  "hkdf_sha256": [
+    {
+      "ikm": "1111111111111111111111111111111111111111111111111111111111111111",
+      "info": "krunk-sync/v1/enc/history/1",
+      "okm": "81a2dab188b35377d98ea14f168bf95fbc1440d86a53d03120218605519b997a",
+      "salt": "4b52554e4b2d4143434f554e542d3031"
+    },
+    {
+      "ikm": "1111111111111111111111111111111111111111111111111111111111111111",
+      "info": "krunk-sync/v1/id/history/1",
+      "okm": "47dc552f231739b3706ea32662c50fe814c9e3a721313849729d97b254cccb8c",
+      "salt": "4b52554e4b2d4143434f554e542d3031"
+    },
+    {
+      "ikm": "1111111111111111111111111111111111111111111111111111111111111111",
+      "info": "krunk-sync/v1/enc/passwords/1",
+      "okm": "06e19a3d54f861cdcce708960f04c7d462ec62b3e70cd82c40763229d8945c4f",
+      "salt": "4b52554e4b2d4143434f554e542d3031"
+    },
+    {
+      "ikm": "1111111111111111111111111111111111111111111111111111111111111111",
+      "info": "krunk-sync/v1/enc/never_save/1",
+      "okm": "c3d74e4d00bef692c238603dd41b96cbd8ce2d554796720b84a00e158f4358dc",
+      "salt": "4b52554e4b2d4143434f554e542d3031"
+    },
+    {
+      "ikm": "1111111111111111111111111111111111111111111111111111111111111111",
+      "info": "krunk-sync/v1/ak-dir-mac/1",
+      "okm": "1df5395e45b89f048b1a083bfd0c2debd652fcf7ef0e6917761b552298e42236",
+      "salt": "4b52554e4b2d4143434f554e542d3031"
+    },
+    {
+      "ikm": "1111111111111111111111111111111111111111111111111111111111111111",
+      "info": "krunk-sync/v1/pak-dir-mac/1",
+      "okm": "6804f101234136f04c8fcc70cce821b6395cf1dfe3db43bc8f543bc3fe4697a1",
+      "salt": "4b52554e4b2d4143434f554e542d3031"
+    },
+    {
+      "ikm": "1111111111111111111111111111111111111111111111111111111111111111",
+      "info": "krunk-sync/v1/ak-hist/2",
+      "okm": "60b80c4035dc8b19559998f815a5b6cdaed2c7470ce54658ed757d72f7b989e6",
+      "salt": "4b52554e4b2d4143434f554e542d3031"
+    },
+    {
+      "ikm": "1111111111111111111111111111111111111111111111111111111111111111",
+      "info": "krunk-sync/v1/pak-hist/2",
+      "okm": "2eadd44b8b87316934f21df2901accb0da9bc5387249a6a2cd673a615350c87c",
+      "salt": "4b52554e4b2d4143434f554e542d3031"
+    },
+    {
+      "ikm": "1111111111111111111111111111111111111111111111111111111111111111",
+      "info": "krunk-sync/v1/device-name/1",
+      "okm": "f0760aefb9532299f05564ff2703078ec8832f6748673f5247e7a2f8c899054c",
+      "salt": "4b52554e4b2d4143434f554e542d3031"
+    },
+    {
+      "ikm": "1111111111111111111111111111111111111111111111111111111111111111",
+      "info": "krunk-sync/v1/rk-kek",
+      "okm": "f3375d9b788d1125f46b49ea178a777b56c2ece12b18ff217e38f69c368f4be4",
+      "salt": "4b52554e4b2d4143434f554e542d3031"
+    },
+    {
+      "ikm": "1111111111111111111111111111111111111111111111111111111111111111",
+      "info": "krunk-sync/v1/escrow-x25519",
+      "okm": "8b6f09e2aa1902b56cc9bb6bcb6a078d0aeb5fd43d94d386a42ba5a99f098f87",
+      "salt": "4b52554e4b2d4143434f554e542d3031"
+    },
+    {
+      "ikm": "1111111111111111111111111111111111111111111111111111111111111111",
+      "info": "krunk-sync/v1/escrow-mac/ak",
+      "okm": "ede36ec10a0402580094e73cf89005214012d72baf13d8cd48232e985ba01277",
+      "salt": "4b52554e4b2d4143434f554e542d3031"
+    },
+    {
+      "ikm": "1111111111111111111111111111111111111111111111111111111111111111",
+      "info": "krunk-sync/v1/escrow-mac/pak",
+      "okm": "a620fa65ac957544db1e8f4c811539018c8a0746d2269a8f6b21365ecc2740b4",
+      "salt": "4b52554e4b2d4143434f554e542d3031"
+    },
+    {
+      "ikm": "1111111111111111111111111111111111111111111111111111111111111111",
+      "info": "krunk-sync/v1/rr-commit/pp",
+      "okm": "f9606f5bafdb4b46a0108c1ae4818f7b94b2710b2284bd4272e8071b845a3329",
+      "salt": "4b52554e4b2d4143434f554e542d3031"
+    },
+    {
+      "ikm": "1111111111111111111111111111111111111111111111111111111111111111",
+      "info": "krunk-sync/v1/rr-commit/rk",
+      "okm": "7d188c4dcf53e34ba282bf49146cc2f191a559175e9258bdc6b52d9a09497820",
+      "salt": "4b52554e4b2d4143434f554e542d3031"
+    }
+  ],
+  "hlc": {
+    "clamp_now_1793840000000": 117566760550465535,
+    "encode_1793840000000_3": 117561098240000003,
+    "ticks_at_1000_1000_999_2000": [
+      65536000,
+      65536001,
+      65536002,
+      131072000
+    ]
+  },
+  "hpke_seals": [
+    {
+      "ct": "732f7174e74ef93cd0d242667e14fdcf2e12acdc3795e9067958f832d4e03ef51eceab781fa02d6e6ea0ae13daa0af21",
+      "enc": "dae3201046c1dd0f64475a7cefe2c8745e7737c9971332389bd17a906e50ef6a",
+      "epoch": 1,
+      "info": "6b72756e6b2d73796e632f76312f7365616c0002616b4b52554e4b2d4143434f554e542d30310000000100056465762d31",
+      "kind": "ak",
+      "pt": "1111111111111111111111111111111111111111111111111111111111111111",
+      "recipient_pk": "840e0eae611c970a92cea2e745c9f3f6ae69b67d75bac5eba11add350cd58f68",
+      "to": "dev-1"
+    },
+    {
+      "ct": "f704d4c9c562df3f5da85211179b6099372b8ae7944e02de7cd1af6b535af4e66ea724fabf8801f0fb416dee552cbec4",
+      "enc": "bf85ad57365d700219eb8df470788fdb2420de8ebf2d019db15d5eb515150658",
+      "epoch": 1,
+      "info": "6b72756e6b2d73796e632f76312f7365616c000370616b4b52554e4b2d4143434f554e542d3031000000010006657363726f77",
+      "kind": "pak",
+      "pt": "2222222222222222222222222222222222222222222222222222222222222222",
+      "recipient_pk": "e581ba0ee2924d76d65a294994561ed6c67de839a63c3386f60e01d8b72d8b6e",
+      "to": "escrow"
+    }
+  ],
+  "notes": "Krunk sync v1 test vectors (docs/sync/PROTOCOL.md §12). Byte strings are hex; JSON bodies are exact bytes.",
+  "records": {
+    "aad": "00116b72756e6b2d73796e632f76312f726563014b52554e4b2d4143434f554e542d30310007686973746f727928378d4748d196a925b26b2b7139ef0b0002616b00000001",
+    "ck": "81a2dab188b35377d98ea14f168bf95fbc1440d86a53d03120218605519b997a",
+    "collection": "history",
+    "envelope": {
+      "c": "history",
+      "ct": "NK3xHNPTGoghVb7hXGnNPSroJYRAfnwgvnQNQOoGspia3VexMm5NnfI2KBoXO0yUNGQ5MZj6IxyL57S0eCZp3FrsMkMkrwVzAn_dsNFwxYE9ZsokAX6L0SFIIB-NSGIC7hZjR8L_sGgTGbOZ6aywIjI9IS119IwLgOUKi512bIV8iLBCadra10Or068NT_uuRJnvsbZAGQQua1iC9JjM3kUipjYuVK80v2MCmUR4adyT1yBKfd8VeB0cKjlrgsIoXqepX-Pm_SlTBCtdLMS2B7O5ULeF90pjROKvZFDnG_yEtX-aMq8O8XJvapxhYQ6G_MAsG1b13ojI0abpCTj47g2WKjpn2LuDYDQfjH8lJR8",
+      "e": 1,
+      "id": "KDeNR0jRlqklsmsrcTnvCw",
+      "k": "ak",
+      "n": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcH",
+      "v": 1
+    },
+    "epoch": 1,
+    "id": "28378d4748d196a925b26b2b7139ef0b",
+    "ik": "47dc552f231739b3706ea32662c50fe814c9e3a721313849729d97b254cccb8c",
+    "natural_key": "https://example.com/a?b=1",
+    "padding": [
+      {
+        "bucket": 256,
+        "len": 0
+      },
+      {
+        "bucket": 256,
+        "len": 1
+      },
+      {
+        "bucket": 256,
+        "len": 254
+      },
+      {
+        "bucket": 256,
+        "len": 255
+      },
+      {
+        "bucket": 512,
+        "len": 256
+      },
+      {
+        "bucket": 512,
+        "len": 257
+      },
+      {
+        "bucket": 512,
+        "len": 511
+      },
+      {
+        "bucket": 1024,
+        "len": 512
+      },
+      {
+        "bucket": 65536,
+        "len": 65534
+      },
+      {
+        "bucket": 65536,
+        "len": 65535
+      }
+    ],
+    "plain": {
+      "data": {
+        "count": 1,
+        "title": "Example",
+        "url": "https://example.com/a?b=1",
+        "visits": [
+          1793840000000
+        ]
+      },
+      "deleted": false,
+      "dev": 1,
+      "ver": 117561098240000003
+    },
+    "root": "1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "recovery_keys": [
+    {
+      "bytes": "0000000000000000000000000000000000000000",
+      "formatted": "KRNK-0000-0000-0000-0000-0000-0000-0000-0000-0",
+      "kek_rk": "b1590b6c8e880622151233c126a747fd4657bd510c19ee1e9fbaeeab44133ef8"
+    },
+    {
+      "bytes": "ffffffffffffffffffffffffffffffffffffffff",
+      "formatted": "KRNK-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-ZZZZ-8",
+      "kek_rk": "78c6a989ecee44c7bdd1854c1ffa50bc42463c2f852e84a32fe6bc88b3ee0522"
+    },
+    {
+      "bytes": "0102030405060708090a0b0c0d0e0f1011121314",
+      "formatted": "KRNK-0410-6105-0R3G-G28A-1C60-T3GF-208H-44RM-P",
+      "kek_rk": "d7a93331f2c34f38ea9bfa1abfc251232a12e1ffb44bc27fd9caf123fb9497a5"
+    }
+  ],
+  "rr_wraps": [
+    {
+      "commit": "8d5eb5154bb9d1d27439e2ef04ee614ae444e33230ecf7b04dbc564060cb3142",
+      "ct": "770dae538e293ddd3c3fcc25e93adcdec8d431afa9562f3461f7b1f853626cfa6a58012e9f4e6a7345ffae7100a3af06",
+      "kek": "4444444444444444444444444444444444444444444444444444444444444444",
+      "kind": "pp",
+      "n": "050505050505050505050505050505050505050505050505",
+      "rr": "3333333333333333333333333333333333333333333333333333333333333333",
+      "rr_gen": 1
+    },
+    {
+      "commit": "cfc7aebd929f8693fb151f4ce0c7642fa25e6784cc377b94cf23ca1147cdee93",
+      "ct": "12581ec3d67e3389fdd477092537d1c14837c90ee23249474aa4fa7d7e48bc77ac6b844c048753316acb481a882e4704",
+      "kek": "5555555555555555555555555555555555555555555555555555555555555555",
+      "kind": "rk",
+      "n": "060606060606060606060606060606060606060606060606",
+      "rr": "3333333333333333333333333333333333333333333333333333333333333333",
+      "rr_gen": 1
+    }
+  ],
+  "urls": [
+    {
+      "input": "https://example.com",
+      "key": "https://example.com/"
+    },
+    {
+      "input": "https://example.com/",
+      "key": "https://example.com/"
+    },
+    {
+      "input": "HTTPS://EXAMPLE.COM/Path",
+      "key": "https://example.com/Path"
+    },
+    {
+      "input": "https://example.com:443/a",
+      "key": "https://example.com/a"
+    },
+    {
+      "input": "http://example.com:80/a",
+      "key": "http://example.com/a"
+    },
+    {
+      "input": "http://example.com:8080/a",
+      "key": "http://example.com:8080/a"
+    },
+    {
+      "input": "https://user:pass@example.com/x",
+      "key": "https://example.com/x"
+    },
+    {
+      "input": "https://example.com/a#section",
+      "key": "https://example.com/a"
+    },
+    {
+      "input": "https://example.com/a?b=1&c=2",
+      "key": "https://example.com/a?b=1&c=2"
+    },
+    {
+      "input": "https://example.com/a?c=2&b=1",
+      "key": "https://example.com/a?c=2&b=1"
+    },
+    {
+      "input": "https://example.com/?utm_source=news&utm_medium=email",
+      "key": "https://example.com/"
+    },
+    {
+      "input": "https://example.com/?id=7&utm_campaign=x&fbclid=abc",
+      "key": "https://example.com/?id=7"
+    },
+    {
+      "input": "https://example.com/?gclid=1",
+      "key": "https://example.com/"
+    },
+    {
+      "input": "https://www.youtube.com/watch?v=dQw4w9WgXcQ&si=abc",
+      "key": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    },
+    {
+      "input": "https://example.com/?si=keep",
+      "key": "https://example.com/?si=keep"
+    },
+    {
+      "input": "https://bücher.example/",
+      "key": "https://xn--bcher-kva.example/"
+    },
+    {
+      "input": "https://xn--bcher-kva.example/",
+      "key": "https://xn--bcher-kva.example/"
+    },
+    {
+      "input": "https://EXAMPLE.com./trailing-dot",
+      "key": "https://example.com./trailing-dot"
+    },
+    {
+      "input": "https://example.com/a b",
+      "key": "https://example.com/a%20b"
+    },
+    {
+      "input": "https://example.com/%7Euser",
+      "key": "https://example.com/%7Euser"
+    },
+    {
+      "input": "https://example.com/caf%C3%A9",
+      "key": "https://example.com/caf%C3%A9"
+    },
+    {
+      "input": "https://example.com/café",
+      "key": "https://example.com/caf%C3%A9"
+    },
+    {
+      "input": "https://[2001:db8::1]/v6",
+      "key": "https://[2001:db8::1]/v6"
+    },
+    {
+      "input": "http://192.168.0.1/",
+      "key": "http://192.168.0.1/"
+    },
+    {
+      "input": "https://example.com/?",
+      "key": "https://example.com/"
+    },
+    {
+      "input": "https://example.com/?q=a%20b",
+      "key": "https://example.com/?q=a%20b"
+    },
+    {
+      "input": "ftp://example.com/",
+      "key": null
+    },
+    {
+      "input": "file:///C:/x.html",
+      "key": null
+    },
+    {
+      "input": "about:blank",
+      "key": null
+    },
+    {
+      "input": "javascript:alert(1)",
+      "key": null
+    }
+  ],
+  "user_code": {
+    "bytes": "123456789a",
+    "formatted": "28T5-CY4T"
+  },
+  "version": 1
+}

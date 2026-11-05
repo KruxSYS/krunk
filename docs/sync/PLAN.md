@@ -643,7 +643,9 @@ Playwright, hadolint, yamllint and `docker compose config -q`.
 **Status (2026-11-05):**
 - **S1:** implemented and verified on a throwaway stack and on ai-pipe staging; not live.
   Going live needs Q4/Q8, the secrets in the live `.env`, and `COMPOSE_PROFILES=sync`.
-- **S4:** see `core/src/sync/README.md`.
+- **S4:** implemented. `core::sync` (crypto, codes, directories with the §4.4 acceptance rules,
+  envelopes, SAS, HLC, URL normalisation), frozen vectors, the RFC 9180 A.2 interop test and the
+  mutation tests. See `core/src/sync/README.md`. It isn't wired into the app until S6.
 - Evidence: `.pipeline/krunk-sync-s1-s4.md`.
 
 The live rollout is S1–S3 server-only first (accounts with no sync yet). The client sync ships

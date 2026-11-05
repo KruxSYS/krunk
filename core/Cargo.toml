@@ -28,6 +28,12 @@ base64ct = { version = "1.8", features = ["alloc"] }
 ed25519-dalek = { version = "3", default-features = false }
 sha2 = "0.11"
 semver = "1"
+# Sync crypto (docs/sync/PROTOCOL.md §2): exact pins; hpke's dependencies are the same
+# RustCrypto generation as chacha20poly1305 0.11 / sha2 0.11 / curve25519-dalek 5.
+hkdf = "=0.13.0"
+hmac = "=0.13.0"
+x25519-dalek = { version = "=3.0.0", features = ["static_secrets", "zeroize"] }
+hpke = { version = "=0.15.1", default-features = false, features = ["alloc", "getrandom", "x25519", "chacha"] }
 
 [dev-dependencies]
 ed25519-dalek = { version = "3", default-features = false, features = ["fast"] }
