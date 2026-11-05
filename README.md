@@ -581,8 +581,12 @@ SDK `10.0.26100`; the download is cached in `~/.cache/krunk-xwin`.
 A clean build from a fresh clone took 1 min 27 s on the build machine (CEF's C++ wrapper and
 LTO), plus the one-time downloads of CEF (175 MB) and the MSVC CRT/SDK; it has no warnings. The
 release profile uses LTO, `opt-level = "s"`, strip and `panic = "abort"`. Two clean builds
-from the same checkout path give the same `Krunk.dll` except for 20 bytes: the PE time
-stamp and the debug-directory GUID. `Krunk.exe` and the CEF files are always identical.
+from the same checkout path give the same `Krunk.dll` except for a few bytes (12 to 20
+measured): the PE time stamp and the debug-directory record (GUID). `Krunk.exe` and the CEF
+files are always identical. The zip is byte-identical for the same `Krunk.dll` and
+`SOURCE_DATE_EPOCH` (default: the HEAD commit time, which stamps every file). The installer is
+not byte-reproducible: NSIS's compressed data differs between runs, while the files it
+installs are identical.
 
 **Alternative: native build on Windows** (documented, not used for the release). With Visual
 Studio 2022 Build Tools ("Desktop development with C++", MSVC 14.44, Windows SDK 10.0.26100),
@@ -692,6 +696,13 @@ Testing on Windows:
 - **Several monitors:** windows remember their position on any monitor and are moved back on
   screen if that monitor is gone. Dragging across monitors with different scaling was not
   tested (the test machine has one monitor, at up to 125 %).
+- **Not tested for 0.3.0** (the Windows 11 test VM can't do them):
+  - **two monitors:** the VM has one;
+  - **display scaling above 125 %:** the VM allows at most 125 %;
+  - **a standard (non-admin) user with UAC on:** the VM has UAC off and an admin user;
+  - **the in-app update from 0.2.1 to 0.3.0** (Update now): the silent installer it runs was
+    tested on its own, and 0.2.1's updater is unchanged since its own update test.
+  The first real check of the update comes when 0.3.0 is published and a 0.2.1 copy offers it.
 - **DevTools can't be undocked** into its own window; it docks right or at the bottom of its
   tab's window. Theme changes don't reach a page while its DevTools is open (see above).
 - **Unsigned:** the binaries are not code-signed (SmartScreen may warn on first start).

@@ -531,6 +531,13 @@ focus and keys), `vm-030-smoke.ps1`, `vm-030-windows.ps1`, `vm-030-session.ps1`,
 `scripts/vm-www/8092/move.html` (a field, a `<select>`, a looping video, history entries and a
 status line with the load time; double-click the video for page full screen).
 
+**Not run for 0.3.0** (the VM can't, or it needs a published release):
+- two monitors (the VM has one) and display scaling above 125 % (the VM's maximum);
+- installing as a standard user with UAC on (the VM has UAC off and an admin user; see
+  "Installer" step 5);
+- the in-app update from 0.2.1 to 0.3.0 ("Update check" above, with 0.2.1 → 0.3.0). The
+  0.3.0 installer was tested on its own (silently and with the wizard, over the live 0.2.1).
+
 ### Package (release build)
 1. `unzip -l Krunk-win-x64.zip` and `7z l Krunk-Setup-<version>.exe` list no `*.md`.
 2. Put any `x.md` into `dist/Krunk-win-x64/licenses/` during a build (or into `$out` in
