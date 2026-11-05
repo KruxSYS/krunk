@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = ["core", "app"]
+# The account and sync API is its own workspace (server/Cargo.toml).
+exclude = ["server"]
 
 [workspace.package]
 version = "0.2.1"

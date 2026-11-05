@@ -10,7 +10,7 @@ RUN addgroup -S -g 10001 krunk \
     && chown -R 10001:10001 /data /config /srv/releases \
     && setcap -r /usr/bin/caddy
 
-COPY --chown=root:root Caddyfile /etc/caddy/Caddyfile
+COPY --chown=root:root Caddyfile cloudflare-trusted.caddy cloudflare-untrusted.caddy /etc/caddy/
 COPY --chown=root:root site/ /srv/site/
 
 USER 10001:10001

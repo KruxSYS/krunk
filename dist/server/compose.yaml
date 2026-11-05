@@ -7,6 +7,7 @@ services:
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:-:8080}
       CADDY_GLOBAL_OPTIONS: ${CADDY_GLOBAL_OPTIONS:-}
+      TRUSTED_PROXIES_EXTRA: ${TRUSTED_PROXIES_EXTRA:-}
     volumes:
       - krunk-releases:/srv/releases:ro
       - caddy-data:/data
@@ -31,7 +32,85 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # The account and sync API (docs/sync/PLAN.md §4.1). Both services are in the "sync"
+  # profile: they start only with COMPOSE_PROFILES=sync in .env (staging now; live after the
+  # operator has answered OPEN_QUESTIONS Q4/Q8 and run gen-server-secrets.sh). web does not
+  # depend on api: the site, downloads and updates work without it (/api/* then answers 502).
+  api:
+    profiles: ["sync"]
+    build: ../../server
+    image: krunk-sync:local
+    environment:
+      DATABASE_URL: "postgres://krunk:${POSTGRES_PASSWORD:-}@db:5432/krunk"
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://krunk.209.wf}
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+      TRUSTED_PEER_HOST: web
+      RUST_LOG: ${API_LOG:-info,sqlx=warn}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - default
+      - backend
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          # Argon2id hashes (64 MiB, at most 4 at a time) fit with room to spare.
+          memory: 768M
+    healthcheck:
+      test: ["CMD", "/krunk-sync", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  db:
+    profiles: ["sync"]
+    # yamllint disable-line rule:line-length
+    image: postgres:18.6-alpine3.24@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5
+    environment:
+      POSTGRES_USER: krunk
+      POSTGRES_DB: krunk
+      # Empty means the container refuses to initialise: run gen-server-secrets.sh first.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+    volumes:
+      # PostgreSQL 18 images keep their data under /var/lib/postgresql/<major>/docker.
+      - krunk-db:/var/lib/postgresql
+    networks:
+      - backend
+    shm_size: 128m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U krunk -d krunk"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  # The database is reachable only from api.
+  backend:
+    internal: true
+
 volumes:
+  # Accounts, devices, keysets and ciphertext records (sync profile).
+  krunk-db:
   # Published releases (publish-release.sh --volume <project>_krunk-releases).
   krunk-releases:
   # Caddy's certificates and state (TLS mode).

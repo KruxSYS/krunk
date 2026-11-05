@@ -105,6 +105,12 @@ Notes:
 - **Postgres 19 is only at rc1** (19rc1), so 18.6 is the current stable release. The API
   builder uses Rust 1.99.1, the same toolchain as the client.
 - **No published host ports** in any compose file, as today. ai-pipe publishes `web`.
+- **Profile gate (added in S1):** `api` and `db` are in the compose profile `sync` and start
+  only with `COMPOSE_PROFILES=sync` in `.env`. The live stack keeps running `web` alone until
+  the operator enables the profile (after Q4 and Q8), so later website updates can't start a
+  database on the live host by accident.
+- **Memory limit:** `api` uses `deploy.resources.limits.memory: 768M`, not `mem_limit`, because
+  ai-pipe's override sets the same key.
 - **`depends_on`:** `api → db: condition: service_healthy`. `web` deliberately has no
   dependency on `api`.
 - **Restarts and logs:** every service has `restart: unless-stopped` and json-file logs capped
@@ -633,6 +639,12 @@ Playwright, hadolint, yamllint and `docker compose config -q`.
 | S9 | Revocation, rotation, rekey, fork alarms; devices and sessions UI in Krunk | Krunk + staging | PROTOCOL §12 item 13 scenarios: revoked device can't read e+1; writes frozen with no device online, then rotation by a restorer; CAS race between two rotators; `min_record_epoch` enforced; phantom device not sealed to; *Finish securing* re-anchors | Staged; VM + CLI (3 devices) | 0009 |
 | S10 | Account lifecycle and notifications: delete, export, sync reset, inactivity job (off by default), email templates; privacy docs (README, SECURITY.md, site privacy page) | Website + Krunk | Deletion: rows zero, every token 401, receipt email, `deletions.log` entry; the export schema is validated; sync reset; every notification fires once (mail sink) | Staged | 0010 |
 | S11 | Security review and hardening: an independent review of PROTOCOL plus the code, semgrep, fuzzing, a dependency review, a pen-test checklist (OWASP ASVS L2 for the web parts); an Android interop plan (Kotlin vector runner); optional OPRF hardening of escrow (RFC 9497) and WebAuthn | Reports | Every finding fixed or accepted in writing; the vector runner passes on an Android emulator (when the Android project exists) | Staged; live only after operator approval | as needed |
+
+**Status (2026-11-05):**
+- **S1:** implemented and verified on a throwaway stack and on ai-pipe staging; not live.
+  Going live needs Q4/Q8, the secrets in the live `.env`, and `COMPOSE_PROFILES=sync`.
+- **S4:** see `core/src/sync/README.md`.
+- Evidence: `.pipeline/krunk-sync-s1-s4.md`.
 
 The live rollout is S1–S3 server-only first (accounts with no sync yet). The client sync ships
 from S6 on, behind *Settings → Sync (beta)*.

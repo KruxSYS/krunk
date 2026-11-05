@@ -4,10 +4,18 @@
 #               "krunk.example.org": automatic HTTPS (Let's Encrypt) on 8443, HTTP->HTTPS on
 #               8080; publish them as 443 and 80 (compose.ports.yaml).
 # CADDY_GLOBAL_OPTIONS  extra global options, e.g. "email ops@example.org" for ACME notices.
+# TRUSTED_PROXIES_EXTRA  the hop between Cloudflare and Caddy, if any (OPEN_QUESTIONS Q8); its
+#               client-IP header is trusted like Cloudflare's own ranges.
 {
 	admin off
 	http_port 8080
 	https_port 8443
+	# The client IP is CF-Connecting-IP only when the TCP peer is Cloudflare (or the configured
+	# hop); otherwise the peer address itself. Ranges: update-cloudflare-ips.sh.
+	servers {
+		import cloudflare-trusted.caddy
+		client_ip_headers CF-Connecting-IP
+	}
 	{$CADDY_GLOBAL_OPTIONS}
 }
 
@@ -35,6 +43,20 @@
 	handle /healthz {
 		header Cache-Control "no-store"
 		respond "ok" 200
+	}
+
+	# The account and sync API (krunk-sync, service "api", docs/sync/PLAN.md §8). Never cached or
+	# transformed. Without the "sync" profile (or while api is down) this answers 502.
+	handle /api/* {
+		request_body {
+			max_size 2MiB
+		}
+		import cloudflare-untrusted.caddy
+		request_header @untrusted_peer -CF-IPCountry
+		header >Cache-Control "no-store, no-transform"
+		reverse_proxy api:8081 {
+			header_up X-Krunk-Client-IP {client_ip}
+		}
 	}
 
 	# Krunk's update check: always revalidated, so a new release is seen at once.
@@ -91,6 +113,19 @@
 	handle_errors {
 		import security_headers
 		header Cache-Control "no-store"
+		@api_too_large {
+			path /api/*
+			expression {err.status_code} == 413
+		}
+		handle @api_too_large {
+			header Content-Type "application/json"
+			respond `{"error":"payload_too_large","message":"The request is too large."}` 413
+		}
+		@api path /api/*
+		handle @api {
+			header Content-Type "application/json"
+			respond `{"error":"server_error","message":"The service is unavailable."}` {err.status_code}
+		}
 		respond "{err.status_code} {err.status_text}"
 	}
 }

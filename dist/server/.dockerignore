@@ -1,3 +1,5 @@
 *
 !Caddyfile
+!cloudflare-trusted.caddy
+!cloudflare-untrusted.caddy
 !site/
