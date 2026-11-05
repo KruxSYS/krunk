@@ -215,7 +215,7 @@ async function testShell(browser) {
   // Menu popup open/close.
   await page.click('#menu');
   const sp = await lastSent(page, 'showPopup');
-  check(sp && sp.popup === 'menu' && sp.rect.width === 280 && sp.rect.height === 512 && sp.rect.x >= 0 && sp.rect.y > 60, 'menu sends showPopup with a rect below the toolbar');
+  check(sp && sp.popup === 'menu' && sp.rect.width === 280 && sp.rect.height === 542 && sp.rect.x >= 0 && sp.rect.y > 60, 'menu sends showPopup with a rect below the toolbar');
   check(await page.locator('#menu.on').count() === 1, 'menu button highlighted while open');
   await page.click('#menu');
   check((await lastSent(page, 'hidePopup')) !== undefined, 'clicking menu again sends hidePopup');
@@ -1453,6 +1453,120 @@ async function testPointerLockShim(browser) {
   await context.close();
 }
 
+// Krunk 0.3.0: moving tabs between windows (shell side; the host part runs on the VM).
+async function testTabWindows(browser) {
+  console.log('tabs and windows');
+  let { page, errors } = await openPage(browser, 'https://shell.krunk.invalid/shell.html', { width: 1000, height: 120 }, 1);
+  await page.evaluate(() => {
+    const h = window.__host;
+    h.state.tabs = [1, 2, 3, 4].map((id) => ({ id: id, title: 'Tab ' + id, url: 'https://t' + id + '.example/', favicon: null, loading: false, private: false, sleeping: false }));
+    h.state.active = 1;
+    h.tabsEvent();
+  });
+  await page.waitForSelector('.tab');
+  await page.waitForTimeout(100);
+  const ids = await page.$$eval('.tab', (ns) => ns.map((n) => +n.dataset.id));
+
+  // The hit map reports each tab's centre, left to right (where drops from other windows land).
+  const map = (await sent(page)).filter((m) => m.cmd === 'hitMap').pop().map;
+  const c = map.tabCenters || [];
+  check(c.length === ids.length && c.every((x, i) => i === 0 || x > c[i - 1]), 'hitMap.tabCenters: one increasing centre per tab (' + JSON.stringify(c) + ')');
+
+  // Dragging a tab down out of the strip hands the drag over to the host, with the grab point.
+  const t2 = page.locator('.tab[data-id="' + ids[1] + '"]');
+  const b = await t2.boundingBox();
+  const before = (await sent(page)).filter((m) => m.cmd === 'moveTab').length;
+  await page.mouse.move(b.x + 30, b.y + 12);
+  await page.mouse.down();
+  await page.mouse.move(b.x + 40, b.y + 14, { steps: 2 });
+  await page.mouse.move(b.x + 60, b.y + 90, { steps: 4 });
+  await page.mouse.up();
+  const out = await lastSent(page, 'tabDragOut');
+  check(out && out.id === ids[1] && Math.abs(out.offsetX - 30) < 2 && Math.abs(out.offsetY - (b.y + 12)) < 2,
+    'dragging out of the strip sends tabDragOut{id, offsetX, offsetY} (got ' + JSON.stringify(out) + ')');
+  check((await sent(page)).filter((m) => m.cmd === 'moveTab').length === before, 'a drag-out is not also a reorder');
+  check(await page.locator('.tab.dragging, .tab.drop-before, .tab.drop-after').count() === 0, 'no drag marks left after the hand-over');
+
+  // A small wiggle is a click, not a drag; a horizontal drag still reorders.
+  const t1 = page.locator('.tab[data-id="' + ids[0] + '"]');
+  const b1 = await t1.boundingBox();
+  const outs = (await sent(page)).filter((m) => m.cmd === 'tabDragOut').length;
+  await page.mouse.move(b1.x + 20, b1.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(b1.x + 22, b1.y + 11);
+  await page.mouse.up();
+  check((await sent(page)).filter((m) => m.cmd === 'moveTab').length === before &&
+    (await sent(page)).filter((m) => m.cmd === 'tabDragOut').length === outs, 'a 2-px wiggle neither reorders nor drags out');
+  const last = await page.locator('.tab').last().boundingBox();
+  await page.mouse.move(b1.x + 20, b1.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(last.x + last.width - 4, last.y + 10, { steps: 6 });
+  check(await page.locator('.tab.drop-after, .tab.drop-before').count() === 1, 'one drop mark while reordering');
+  await page.mouse.up();
+  const mv = await lastSent(page, 'moveTab');
+  check(mv && mv.id === ids[0] && mv.index === ids.length - 1, 'horizontal drag reorders (got ' + JSON.stringify(mv) + ')');
+
+  // A tab from another window hovering this strip: the host says where it would land.
+  await emit(page, { event: 'tabDropHint', index: 1 });
+  await page.waitForTimeout(20);
+  const marks = await page.$$eval('.tab', (ns) => ns.map((n) => (n.classList.contains('drop-before') ? 'B' : '') + (n.classList.contains('drop-after') ? 'A' : '')));
+  check(marks[1] === 'B' && marks.filter((m) => m).length === 1, 'tabDropHint{index:1} marks before the second tab (' + marks.join(',') + ')');
+  await shot(page, 'shell-drop-hint.png');
+  await emit(page, { event: 'tabDropHint', index: 99 });
+  await page.waitForTimeout(20);
+  check(await page.locator('.tab').last().evaluate((n) => n.classList.contains('drop-after')), 'an index past the end marks after the last tab');
+  await emit(page, { event: 'tabDropHint', index: null });
+  await page.waitForTimeout(20);
+  check(await page.locator('.tab.drop-before, .tab.drop-after').count() === 0, 'tabDropHint{index:null} clears the mark');
+
+  // Right-click on a tab asks for its context menu at the click.
+  const t3 = page.locator('.tab[data-id="' + ids[2] + '"] .title');
+  await t3.click({ button: 'right' });
+  const tm = await lastSent(page, 'showTabMenu');
+  check(tm && tm.id === ids[2] && tm.rect.width === 240 && tm.rect.height === 196 && tm.rect.y > 0, 'right-click sends showTabMenu{id, rect} (got ' + JSON.stringify(tm) + ')');
+  check(!(await sent(page)).some((m) => m.cmd === 'showPopup' && m.popup === 'tabMenu'), 'not through showPopup');
+  check(errors.length === 0, 'shell: no console errors (' + errors.join(' | ') + ')');
+
+  // The popup's tab menu.
+  ({ page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 240, height: 196 }, 1));
+  await page.evaluate(() => { window.__host.autoSimulate = false; });
+  await emit(page, { event: 'popup', content: { kind: 'tabMenu', tabId: 7, canMove: false } });
+  await page.waitForSelector('.item');
+  const labels = await page.$$eval('.item .label', (ns) => ns.map((n) => n.textContent));
+  check(JSON.stringify(labels) === JSON.stringify(['Reload', 'Duplicate', 'Move to new window', 'New window', 'Close tab']), 'tab menu items (' + labels.join(', ') + ')');
+  check(await page.locator('.item', { hasText: 'Move to new window' }).isDisabled(), '"Move to new window" is disabled for a window\'s only tab');
+  await shot(page, 'popup-tab-menu-single.png');
+  await page.locator('.item', { hasText: 'Duplicate' }).click();
+  let a = await lastSent(page, 'tabMenuAction');
+  check(a && a.id === 7 && a.action === 'duplicate' && (await lastSent(page, 'hidePopup')) !== undefined, 'Duplicate sends tabMenuAction{duplicate} and closes');
+  await emit(page, { event: 'popup', content: { kind: 'tabMenu', tabId: 8, canMove: true } });
+  await page.waitForTimeout(20);
+  check(!(await page.locator('.item', { hasText: 'Move to new window' }).isDisabled()), 'enabled when the window has other tabs');
+  await shot(page, 'popup-tab-menu.png');
+  await page.locator('.item', { hasText: 'Move to new window' }).click();
+  a = await lastSent(page, 'tabMenuAction');
+  check(a && a.id === 8 && a.action === 'moveToNewWindow', 'Move to new window sends tabMenuAction{moveToNewWindow}');
+  await emit(page, { event: 'popup', content: { kind: 'tabMenu', tabId: 8, canMove: true } });
+  await page.waitForTimeout(20);
+  await page.locator('.item', { hasText: 'New window' }).last().click();
+  const nw = await lastSent(page, 'command');
+  check(nw && nw.command.command === 'newWindow', 'New window sends command{newWindow}');
+  await emit(page, { event: 'popup', content: { kind: 'tabMenu', tabId: 9, canMove: true } });
+  await page.waitForTimeout(20);
+  await page.locator('.item', { hasText: 'Close tab' }).click();
+  a = await lastSent(page, 'tabMenuAction');
+  check(a && a.id === 9 && a.action === 'close', 'Close tab sends tabMenuAction{close}');
+
+  // The main menu has "New window" (Ctrl+N).
+  await emit(page, { event: 'popup', content: { kind: 'menu', zoom: 1, canReopen: false } });
+  await page.waitForTimeout(20);
+  const nwItem = page.locator('.item', { hasText: 'New window' });
+  check(await nwItem.count() === 1 && (await nwItem.locator('.kbd').textContent()) === 'Ctrl+N', 'main menu: New window, Ctrl+N');
+  await nwItem.click();
+  check((await lastSent(page, 'command')).command.command === 'newWindow', 'main menu New window sends command{newWindow}');
+  check(errors.length === 0, 'popup: no console errors (' + errors.join(' | ') + ')');
+}
+
 (async () => {
   if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
   const browser = await chromium.launch();
@@ -1461,6 +1575,7 @@ async function testPointerLockShim(browser) {
     await testScriptletInjection(browser);
     await testPointerLockShim(browser);
     await testShellFrame(browser);
+    await testTabWindows(browser);
     await testShellHiDpi(browser);
     await testPopup(browser);
     await testNewTab(browser);

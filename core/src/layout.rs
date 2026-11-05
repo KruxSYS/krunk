@@ -56,16 +56,25 @@ pub fn popup_screen_rect(css: PopupRect, scale: f64, origin: (i32, i32), work: R
 
 /// Where host-initiated prompts (save/fill password) appear: under the
 /// right end of the toolbar, in CSS pixels of the shell viewport.
+/// The tab context menu (CSS px): five items and a separator.
+pub const TAB_MENU_SIZE: (f64, f64) = (240.0, 196.0);
+
+/// Where the tab context menu opens: at the click (CSS px of the shell).
+pub fn tab_menu_rect(x: f64, y: f64) -> PopupRect {
+    PopupRect { x, y, width: TAB_MENU_SIZE.0, height: TAB_MENU_SIZE.1 }
+}
+
 pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> PopupRect {
     let (w, h) = match kind {
         PopupKind::SavePassword => (360.0, 150.0),
         PopupKind::Fill => (340.0, 110.0 + 42.0 * entries.clamp(1, 6) as f64),
-        PopupKind::Menu => (280.0, 512.0),
+        PopupKind::Menu => (280.0, 542.0),
         PopupKind::Shield => (300.0, 226.0),
         PopupKind::BookmarkFolder => (280.0, folder_height(entries)),
         PopupKind::Unlock => (360.0, 200.0),
         PopupKind::Hint => (300.0, 44.0),
         PopupKind::Update => (360.0, 150.0),
+        PopupKind::TabMenu => TAB_MENU_SIZE,
     };
     let x = (shell_width_css - w - 8.0).max(0.0);
     PopupRect { x, y: SHELL_HEIGHT_DIP - 4.0, width: w, height: h }

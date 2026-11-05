@@ -24,7 +24,6 @@
         role: 'tab',
         'aria-selected': t.id === state.active ? 'true' : 'false',
         title: (t.private ? '[Private] ' : '') + t.title + (t.url ? '\n' + t.url : ''),
-        draggable: 'true',
         'data-id': t.id,
         'data-index': index,
         onmousedown: function (e) {
@@ -41,6 +40,11 @@
           LB.post('activateTab', { id: t.id });
         },
         onauxclick: function (e) { if (e.button === 1) { e.preventDefault(); LB.post('closeTab', { id: t.id }); } },
+        oncontextmenu: function (e) {
+          e.preventDefault();
+          LB.post('showTabMenu', { id: t.id, rect: { x: e.clientX, y: e.clientY, width: 240, height: 196 } });
+          setPopup('tabMenu');
+        },
       }, [
         t.private ? el('span', { class: 'private-mark', title: 'Private tab' }, [svgIcon('i-mask')]) : null,
         icon,
@@ -91,9 +95,15 @@
       const right = Math.min(row.right, last.right);
       interactive.push({ x: Math.max(0, row.left), y: Math.max(0, last.top), width: Math.max(0, right - row.left), height: last.height });
     }
+    // Tab centres: where a tab dragged from another window lands (frame::drop_index).
+    const centers = Array.prototype.map.call(tabs, function (n) {
+      const r = n.getBoundingClientRect();
+      return Math.round((r.left + r.width / 2) * 10) / 10;
+    }).slice(0, 512);
     const map = {
       stripHeight: $('tabstrip').getBoundingClientRect().height,
       interactive: interactive,
+      tabCenters: centers,
       minimize: rectOf($('win-min')),
       maximize: rectOf($('win-max')),
       close: rectOf($('win-close')),
@@ -149,50 +159,99 @@
   let lastPress = { id: null, at: 0 };
   const DOUBLE_PRESS_MS = 500;
 
-  // ---------- drag to reorder ----------
-  let dragId = null;
-  // Right half of the tab? Measured on the tab itself: offsetX would be
-  // relative to whichever child (title, icon, close button) is under the cursor.
-  function inRightHalf(e, node) {
-    const r = node.getBoundingClientRect();
-    return e.clientX - r.left > r.width / 2;
+  // ---------- dragging tabs ----------
+  // Pointer events, not HTML5 drag and drop (whose OLE loop the host could not take over).
+  // Within the strip the tab reorders; once the pointer leaves the strip the host takes
+  // the drag over (tabDragOut) and moves the tab into a new window or onto another one's strip.
+  const DRAG_THRESHOLD = 5;   // px before a press becomes a drag
+  const DETACH_DISTANCE = 24; // px above or below the strip before the tab leaves it
+  let drag = null;            // { id, node, pointerId, startX, startY, offsetX, moved, to }
+  function clearDropMarks() {
+    document.querySelectorAll('.tab').forEach(function (n) {
+      n.classList.remove('dragging', 'drop-before', 'drop-after');
+    });
   }
+  // Insert position for x among the other tabs (the index after removing the dragged one).
+  function dropIndex(x, exceptId) {
+    let index = 0;
+    document.querySelectorAll('#tabs .tab').forEach(function (n) {
+      if (Number(n.dataset.id) === exceptId) return;
+      const r = n.getBoundingClientRect();
+      if (r.left + r.width / 2 < x) index++;
+    });
+    return index;
+  }
+  // Marks where index `to` (among the tabs other than `exceptId`) is.
+  function markDrop(to, exceptId) {
+    const others = Array.prototype.filter.call(document.querySelectorAll('#tabs .tab'), function (n) {
+      return Number(n.dataset.id) !== exceptId;
+    });
+    others.forEach(function (n) { n.classList.remove('drop-before', 'drop-after'); });
+    if (!others.length) return;
+    if (to < others.length) others[to].classList.add('drop-before');
+    else others[others.length - 1].classList.add('drop-after');
+  }
+  // The press is on a tab; the capture and the move/up handling are on the strip itself,
+  // because activating the pressed tab re-renders the tabs (the node goes away).
   function attachDrag(node, id) {
-    node.addEventListener('dragstart', function (e) {
-      dragId = id;
-      node.classList.add('dragging');
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', String(id));
-    });
-    node.addEventListener('dragend', function () {
-      dragId = null;
-      document.querySelectorAll('.tab').forEach(function (n) {
-        n.classList.remove('dragging', 'drop-before', 'drop-after');
-      });
-    });
-    node.addEventListener('dragover', function (e) {
-      if (dragId === null || dragId === id) return;
-      e.preventDefault();
-      const after = inRightHalf(e, node);
-      node.classList.toggle('drop-after', after);
-      node.classList.toggle('drop-before', !after);
-    });
-    node.addEventListener('dragleave', function () { node.classList.remove('drop-before', 'drop-after'); });
-    node.addEventListener('drop', function (e) {
-      e.preventDefault();
-      if (dragId === null || dragId === id) return;
-      const after = inRightHalf(e, node);
-      const from = state.tabs.findIndex(function (t) { return t.id === dragId; });
-      let to = state.tabs.findIndex(function (t) { return t.id === id; }) + (after ? 1 : 0);
-      if (from < to) to -= 1; // index after removing the dragged tab
-      if (from !== to) {
-        const moved = state.tabs.splice(from, 1)[0];
-        state.tabs.splice(to, 0, moved);
-        renderTabs();
-        LB.post('moveTab', { id: dragId, index: to });
-      }
+    node.addEventListener('pointerdown', function (e) {
+      if (e.button !== 0 || e.target.closest('.close')) return;
+      const r = node.getBoundingClientRect();
+      drag = { id: id, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY,
+        offsetX: e.clientX - r.left, moved: false, to: null };
+      $('tabs').setPointerCapture(e.pointerId);
     });
   }
+  function dragNode() {
+    return drag ? document.querySelector('#tabs .tab[data-id="' + drag.id + '"]') : null;
+  }
+  $('tabs').addEventListener('pointermove', function (e) {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    if (!drag.moved) {
+      if (Math.abs(e.clientX - drag.startX) < DRAG_THRESHOLD && Math.abs(e.clientY - drag.startY) < DRAG_THRESHOLD) return;
+      drag.moved = true;
+    }
+    const node = dragNode();
+    if (node) node.classList.add('dragging');
+    const strip = $('tabstrip').getBoundingClientRect();
+    if (e.clientY < strip.top - DETACH_DISTANCE || e.clientY > strip.bottom + DETACH_DISTANCE) {
+      // Out of the strip: the host follows the mouse from here.
+      const d = drag;
+      drag = null;
+      clearDropMarks();
+      try { $('tabs').releasePointerCapture(d.pointerId); } catch (err) { /* already released */ }
+      LB.post('tabDragOut', { id: d.id, offsetX: d.offsetX, offsetY: d.startY });
+      return;
+    }
+    drag.to = dropIndex(e.clientX, drag.id);
+    markDrop(drag.to, drag.id);
+  });
+  function finishDrag(e, commit) {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    const d = drag;
+    drag = null;
+    clearDropMarks();
+    if (!commit || !d.moved || d.to === null) return;
+    const from = state.tabs.findIndex(function (t) { return t.id === d.id; });
+    if (from < 0 || from === d.to) return;
+    const moved = state.tabs.splice(from, 1)[0];
+    state.tabs.splice(d.to, 0, moved);
+    renderTabs();
+    LB.post('moveTab', { id: d.id, index: d.to });
+  }
+  $('tabs').addEventListener('pointerup', function (e) { finishDrag(e, true); });
+  $('tabs').addEventListener('pointercancel', function (e) { finishDrag(e, false); });
+  $('tabs').addEventListener('lostpointercapture', function (e) { finishDrag(e, false); });
+
+  // A tab dragged from another window is over this strip: where it would land.
+  LB.on('tabDropHint', function (m) {
+    clearDropMarks();
+    if (m.index === null || m.index === undefined) return;
+    const tabs = document.querySelectorAll('#tabs .tab');
+    if (!tabs.length) return;
+    if (m.index < tabs.length) tabs[m.index].classList.add('drop-before');
+    else tabs[tabs.length - 1].classList.add('drop-after');
+  });
 
   // ---------- toolbar ----------
   function renderNav() {
@@ -255,7 +314,7 @@
   });
 
   // ---------- popups (menu, shield) ----------
-  const POPUP_SIZES = { menu: [280, 512], shield: [300, 226] };
+  const POPUP_SIZES = { menu: [280, 542], shield: [300, 226] };
   function togglePopup(kind, button) {
     if (state.popup === kind) {
       LB.post('hidePopup');
@@ -272,6 +331,7 @@
     state.popup = kind;
     $('menu').classList.toggle('on', kind === 'menu');
     $('shield').classList.toggle('on', kind === 'shield');
+    document.documentElement.classList.toggle('tab-menu', kind === 'tabMenu');
     document.querySelectorAll('.bm[data-folder]').forEach(function (b) {
       b.classList.toggle('on', kind === 'folder:' + b.dataset.folder);
     });

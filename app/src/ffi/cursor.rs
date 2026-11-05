@@ -48,6 +48,20 @@ pub fn move_to(x: i32, y: i32) {
     let _ = unsafe { SetCursorPos(x, y) };
 }
 
+/// Is Esc held down right now (cancels a tab drag)?
+pub fn escape_down() -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE;
+    // SAFETY: plain call.
+    (unsafe { GetAsyncKeyState(i32::from(VK_ESCAPE.0)) } as u16 & 0x8000) != 0
+}
+
+/// Ends any mouse capture of this thread (a view that captured the mouse on a press lets go
+/// when the host takes over a drag).
+pub fn release_capture() {
+    // SAFETY: plain call.
+    let _ = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture() };
+}
+
 /// The mouse buttons held down, as DOM `MouseEvent.buttons`.
 pub fn buttons() -> i32 {
     let down = |vk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY| {

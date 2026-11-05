@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase", tag = "command", content = "arg")]
 pub enum Command {
     NewTab,
+    /// Ctrl+N: a new window with a new-tab page.
+    NewWindow,
     NewPrivateTab,
     CloseTab,
     ReopenClosedTab,
@@ -93,6 +95,7 @@ pub fn command_for(vk: u32, ctrl: bool, shift: bool, alt: bool) -> Option<Comman
     }
     let cmd = match (ctrl, shift, alt, vk) {
         (true, false, false, k) if k == vk::letter('T') => NewTab,
+        (true, false, false, k) if k == vk::letter('N') => NewWindow,
         (true, true, false, k) if k == vk::letter('N') => NewPrivateTab,
         (true, false, false, k) if k == vk::letter('W') => CloseTab,
         (true, false, false, k) if k == vk::letter('F') => Find,
@@ -191,6 +194,7 @@ mod tests {
         assert_eq!(ctrl(vk::NUMPAD0), Some(ZoomReset));
         assert_eq!(ctrl(l('P')), Some(Print));
         assert_eq!(ctrl_shift(l('N')), Some(NewPrivateTab));
+        assert_eq!(command_for(l('N'), true, false, false), Some(NewWindow));
         assert_eq!(ctrl(vk::F5), Some(HardReload));
         assert_eq!(ctrl_shift(l('R')), Some(HardReload));
         assert_eq!(alt(l('D')), Some(FocusAddressBar));

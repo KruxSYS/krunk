@@ -227,7 +227,6 @@ impl Window {
     }
 
     /// The restored (not maximized) rectangle and whether the window is maximized.
-    #[allow(dead_code)] // used from 0.3.0 milestone 5
     pub fn placement(self) -> (ScreenRect, bool) {
         use windows::Win32::UI::WindowsAndMessaging::{GetWindowPlacement, WINDOWPLACEMENT};
         let mut wp = WINDOWPLACEMENT { length: std::mem::size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
@@ -252,7 +251,6 @@ impl Window {
     }
 
     /// Moves (and sizes) a top-level window, without activating it.
-    #[allow(dead_code)] // used from 0.3.0 milestone 5
     pub fn move_to(self, rect: ScreenRect) {
         // SAFETY: our own window.
         let _ = unsafe {
@@ -261,7 +259,6 @@ impl Window {
     }
 
     /// The window rectangle in screen pixels.
-    #[allow(dead_code)] // used from 0.3.0 milestone 5
     pub fn rect(self) -> ScreenRect {
         let mut r = RECT::default();
         // SAFETY: valid window handle and out pointer.
@@ -1066,6 +1063,25 @@ fn is_class(hwnd: HWND, class: PCWSTR) -> bool {
     // SAFETY: our class names are static NUL-terminated strings.
     let want = unsafe { class.as_wide() };
     n > 0 && buf[..n] == *want
+}
+
+/// `windows` sorted by z-order, topmost first (hidden ones left out).
+pub fn in_z_order(windows: &[Window]) -> Vec<Window> {
+    use windows::Win32::UI::WindowsAndMessaging::EnumWindows;
+    extern "system" fn each(h: HWND, data: LPARAM) -> windows::core::BOOL {
+        // SAFETY: `data` is the Vec below, alive for the whole EnumWindows call.
+        let order = unsafe { &mut *(data.0 as *mut Vec<isize>) };
+        order.push(h.0 as isize);
+        true.into()
+    }
+    let mut order: Vec<isize> = Vec::new();
+    // SAFETY: the callback only appends to `order`.
+    let _ = unsafe { EnumWindows(Some(each), LPARAM(&mut order as *mut Vec<isize> as isize)) };
+    order
+        .into_iter()
+        .filter_map(|h| windows.iter().copied().find(|w| w.0 .0 as isize == h))
+        .filter(|w| w.is_visible())
+        .collect()
 }
 
 /// Is there a top-level window of this class (in this session)?

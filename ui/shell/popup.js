@@ -12,8 +12,8 @@
     LB.post('command', { command: c });
     close();
   }
-  function item(label, kbd, onclick) {
-    return el('button', { class: 'item', onclick: onclick }, [
+  function item(label, kbd, onclick, disabled) {
+    return el('button', { class: 'item', onclick: onclick, disabled: disabled ? '' : null }, [
       el('span', { class: 'label', text: label }),
       kbd ? el('span', { class: 'kbd', text: kbd }) : null,
     ]);
@@ -24,6 +24,7 @@
   function renderMenu(c) {
     return [
       item('New tab', 'Ctrl+T', () => command('newTab')),
+      item('New window', 'Ctrl+N', () => command('newWindow')),
       item('New private tab', 'Ctrl+Shift+N', () => command('newPrivateTab')),
       item('Reopen closed tab', 'Ctrl+Shift+T', () => command('reopenClosedTab')),
       sep(),
@@ -46,6 +47,20 @@
       item('Settings', '', () => openPage('settings')),
       item('About Krunk', '', () => openPage('about')),
       item('Exit', '', () => { LB.post('quit'); }),
+    ];
+  }
+
+  // Right-click on a tab.
+  function renderTabMenu(c) {
+    const act = (action) => { LB.post('tabMenuAction', { id: c.tabId, action: action }); close(); };
+    return [
+      item('Reload', 'Ctrl+R', () => act('reload')),
+      item('Duplicate', '', () => act('duplicate')),
+      item('Move to new window', '', () => act('moveToNewWindow'), !c.canMove),
+      sep(),
+      item('New window', 'Ctrl+N', () => command('newWindow')),
+      sep(),
+      item('Close tab', 'Ctrl+W', () => act('close')),
     ];
   }
 
@@ -202,11 +217,11 @@
   LB.on('popup', function (m) {
     current = m.content;
     const c = m.content;
-    const render = { menu: renderMenu, shield: renderShield, savePassword: renderSave, fill: renderFill, bookmarkFolder: renderFolder, unlock: renderUnlock, hint: renderHint, update: renderUpdate }[c.kind];
+    const render = { menu: renderMenu, shield: renderShield, savePassword: renderSave, fill: renderFill, bookmarkFolder: renderFolder, unlock: renderUnlock, hint: renderHint, update: renderUpdate, tabMenu: renderTabMenu }[c.kind];
     root.textContent = '';
     root.dataset.kind = c.kind;
     (render ? render(c) : []).forEach((n) => n && root.appendChild(n));
-    const first = document.getElementById('master') || document.getElementById('default') || root.querySelector('button');
+    const first = document.getElementById('master') || document.getElementById('default') || root.querySelector('button:not([disabled])');
     if (first && c.kind !== 'hint') first.focus();
   });
 

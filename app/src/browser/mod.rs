@@ -16,7 +16,7 @@ use lb_core::layout;
 use lb_core::pages::{self, Page};
 use lb_core::protocol::{
     self, Channel, ContentMessage, Envelope, Event, NavState, PopupContent, PopupKind, PopupRect, Request, Sender,
-    Source, ZoomAction,
+    Source, TabAction, ZoomAction,
 };
 use lb_core::settings::{Settings, Startup};
 use lb_core::storage::{now_ms, Store};
@@ -39,6 +39,7 @@ const SESSION_DEBOUNCE_MS: u32 = 2000;
 
 mod blocking;
 mod downloads;
+mod drag;
 mod find;
 mod frame;
 mod jobs;
@@ -155,6 +156,8 @@ pub struct Browser {
     pointer: pointer::PointerHost,
     /// Krunk's own update check.
     updates: updater::UpdateHost,
+    /// A tab being dragged between windows.
+    drag: Cell<Option<drag::TabDrag>>,
 }
 
 impl Browser {
@@ -202,6 +205,7 @@ impl Browser {
             site_data: RefCell::new(HashMap::new()),
             pointer: pointer::PointerHost::default(),
             updates: updater::UpdateHost::new(dirs.update_status()),
+            drag: Cell::new(None),
         });
         let app = Window::create_app(Rc::new(AppEvents(browser.me.clone())))?;
         let _ = browser.app.set(app);
@@ -969,11 +973,10 @@ impl Browser {
         }
     }
 
-    /// Closes a tab (the close button, Ctrl+W, middle click).
+    /// Closes a tab (the close button, Ctrl+W, middle click). A window's last tab closes the
+    /// window; the last window's ends Krunk.
     fn close_tab(&self, id: TabId) {
-        let Some(win) = self.window_of(id) else { return };
-        let now = now_ms();
-        let ops = self.ws.borrow_mut().update(win, |m| ((), m.close(id, now))).map(|(_, o)| o).unwrap_or_default();
+        let ops = self.ws.borrow_mut().close_tab(id, now_ms());
         self.apply(ops);
     }
 
@@ -1074,6 +1077,7 @@ impl Browser {
         let now = now_ms();
         match cmd {
             Command::NewTab => self.new_tab(None, false),
+            Command::NewWindow => self.new_window(),
             Command::NewPrivateTab => self.new_tab(None, true),
             Command::CloseTab => {
                 // Bind first: an `if let` scrutinee's `Ref` lives for the whole block.
@@ -1296,6 +1300,41 @@ impl Browser {
                 }
             }
             Request::HidePopup => self.hide_popup(),
+            Request::TabDragOut { id, offset_x, offset_y } => {
+                if let Some(win) = self.cur_id() {
+                    self.start_tab_drag(win, id, offset_x, offset_y);
+                }
+            }
+            Request::ShowTabMenu { id, rect } => {
+                let can_move = self.window_of(id).and_then(|w| self.ws.borrow().model(w).map(|m| m.len() > 1));
+                if let (Some(can_move), true) = (can_move, rect.is_valid()) {
+                    let rect = layout::tab_menu_rect(rect.x, rect.y);
+                    self.show_popup(PopupContent::TabMenu { tab_id: id, can_move }, Some(rect));
+                }
+            }
+            Request::TabMenuAction { id, action } => {
+                self.hide_popup();
+                match action {
+                    TabAction::Reload => {
+                        if let Some(v) = self.tab_view(id) {
+                            v.reload();
+                        }
+                    }
+                    TabAction::Duplicate => {
+                        if let Some(win) = self.window_of(id) {
+                            let ops = self
+                                .ws
+                                .borrow_mut()
+                                .update(win, |m| ((), m.duplicate(id, now).map(|(_, e)| e).unwrap_or_default()))
+                                .map(|(_, o)| o)
+                                .unwrap_or_default();
+                            self.apply(ops);
+                        }
+                    }
+                    TabAction::MoveToNewWindow => self.move_tab_to_new_window(id),
+                    TabAction::Close => self.close_tab(id),
+                }
+            }
             Request::HitMap { map } => {
                 if let Some(win) = self.cur_id() {
                     self.set_hit_map(win, map);
@@ -1644,6 +1683,7 @@ impl WindowEvents for AppEvents {
             VAULT_TIMER => b.vault_timer(),
             EXIT_TIMER => b.finish_exit(),
             CLIPBOARD_TIMER => b.clipboard_timer(),
+            drag::DRAG_TIMER => b.drag_tick(),
             UPDATE_TIMER => {
                 if let Some(w) = b.app() {
                     w.set_timer(UPDATE_TIMER, blocking::UPDATE_CHECK_INTERVAL_MS);

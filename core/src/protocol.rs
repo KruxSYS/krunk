@@ -126,6 +126,8 @@ pub enum PopupKind {
     Hint,
     /// "Krunk X.Y.Z is available" (opened by the host after an update check).
     Update,
+    /// A tab's context menu (right-click on the tab).
+    TabMenu,
 }
 
 impl PopupKind {
@@ -142,6 +144,16 @@ impl PopupKind {
         // A hint must not take the keyboard from the page (a game).
         self != PopupKind::Hint
     }
+}
+
+/// What a tab's context menu can do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TabAction {
+    Reload,
+    Duplicate,
+    MoveToNewWindow,
+    Close,
 }
 
 /// Caption-button actions.
@@ -239,6 +251,12 @@ pub enum PopupContent {
         has_notes: bool,
         state: UpdateProgress,
     },
+    /// The context menu of tab `tab_id`. `can_move`: the window has other tabs, so the tab
+    /// can move to a new window of its own.
+    TabMenu {
+        tab_id: u32,
+        can_move: bool,
+    },
 }
 
 /// Where an accepted update is.
@@ -299,6 +317,7 @@ impl PopupContent {
             PopupContent::Unlock { .. } => PopupKind::Unlock,
             PopupContent::Hint { .. } => PopupKind::Hint,
             PopupContent::Update { .. } => PopupKind::Update,
+            PopupContent::TabMenu { .. } => PopupKind::TabMenu,
         }
     }
 }
@@ -357,6 +376,24 @@ pub enum Request {
     /// caption buttons; mouse clicks on them are handled natively).
     WindowControl {
         action: WindowAction,
+    },
+    /// A tab was dragged out of its strip (the pointer left the tab row): the host follows
+    /// the mouse from here, in a new window. `offset_x`/`offset_y`: where the tab was grabbed
+    /// (CSS px from the tab's left edge, and from the top of the shell).
+    TabDragOut {
+        id: u32,
+        offset_x: f64,
+        offset_y: f64,
+    },
+    /// Right-click on a tab: its context menu at `rect` (shell CSS px).
+    ShowTabMenu {
+        id: u32,
+        rect: PopupRect,
+    },
+    /// A choice in a tab's context menu (popup).
+    TabMenuAction {
+        id: u32,
+        action: TabAction,
     },
     /// Opens the popup view at `rect` (shell: menu and shield only).
     ShowPopup {
@@ -707,6 +744,8 @@ impl Sender {
                     | R::ActivateTab { .. }
                     | R::MoveTab { .. }
                     | R::DuplicateTab { .. }
+                    | R::TabDragOut { .. }
+                    | R::ShowTabMenu { .. }
                     | R::ReopenClosedTab
                     | R::Navigate { .. }
                     | R::Back
@@ -737,6 +776,7 @@ impl Sender {
             Sender::Popup => matches!(
                 req,
                 R::Command { .. }
+                    | R::TabMenuAction { .. }
                     | R::HidePopup
                     | R::ShowBookmarkFolder { rect: None, .. }
                     | R::NewTab { .. }
@@ -982,6 +1022,11 @@ pub enum Event {
     },
     /// To the shell: the popup was hidden (un-highlight its button).
     PopupClosed,
+    /// A tab dragged from another window is over this strip: show where it would land
+    /// (`None` = no longer over it).
+    TabDropHint {
+        index: Option<u32>,
+    },
     /// To the shell: the bookmarks bar contents.
     BookmarksBar {
         items: Vec<BarItem>,
@@ -1580,6 +1625,10 @@ mod tests {
             Request::SiteCookiesDelete { cookie: None },
             Request::OpenSiteData,
             Request::ShowPopup { popup: PopupKind::Shield, rect },
+            Request::TabDragOut { id: 3, offset_x: 40.5, offset_y: 18.0 },
+            Request::ShowTabMenu { id: 3, rect },
+            Request::TabMenuAction { id: 3, action: TabAction::MoveToNewWindow },
+            Request::Command { command: Command::NewWindow },
             Request::HidePopup,
             Request::Command { command: Command::ZoomIn },
             Request::Find { query: "x".into(), backwards: true },
@@ -1631,6 +1680,30 @@ mod tests {
             let back: Request = serde_json::from_str(&json).unwrap_or_else(|e| panic!("{json}: {e}"));
             assert_eq!(back, r, "{json}");
         }
+    }
+
+    #[test]
+    fn tab_moves_are_shell_and_popup_only() {
+        let drag = Request::TabDragOut { id: 1, offset_x: 1.0, offset_y: 1.0 };
+        let menu = Request::ShowTabMenu { id: 1, rect: PopupRect { x: 1.0, y: 1.0, width: 240.0, height: 196.0 } };
+        let action = Request::TabMenuAction { id: 1, action: TabAction::Close };
+        assert!(Sender::Shell.permits(&drag) && Sender::Shell.permits(&menu));
+        assert!(!Sender::Shell.permits(&action), "menu choices come from the popup");
+        assert!(Sender::Popup.permits(&action));
+        assert!(!Sender::Popup.permits(&drag));
+        for page in [Page::NewTab, Page::Settings, Page::History] {
+            assert!(!Sender::Page(page).permits(&drag) && !Sender::Page(page).permits(&action), "{page:?}");
+        }
+        let parsed = parse_request(Sender::Shell, r#"{"cmd":"tabDragOut","id":4,"offsetX":12,"offsetY":20}"#).unwrap();
+        assert_eq!(parsed.request, Request::TabDragOut { id: 4, offset_x: 12.0, offset_y: 20.0 });
+        let parsed =
+            parse_request(Sender::Popup, r#"{"cmd":"tabMenuAction","id":4,"action":"moveToNewWindow"}"#).unwrap();
+        assert_eq!(parsed.request, Request::TabMenuAction { id: 4, action: TabAction::MoveToNewWindow });
+        let parsed = parse_request(Sender::Popup, r#"{"cmd":"command","command":{"command":"newWindow"}}"#).unwrap();
+        assert_eq!(parsed.request, Request::Command { command: Command::NewWindow });
+        assert_eq!(Event::TabDropHint { index: Some(1) }.to_json(), r#"{"event":"tabDropHint","index":1}"#);
+        assert_eq!(PopupContent::TabMenu { tab_id: 2, can_move: false }.kind(), PopupKind::TabMenu);
+        assert!(!PopupKind::TabMenu.shell_may_open(), "the shell asks with showTabMenu, not showPopup");
     }
 
     #[test]
@@ -1692,6 +1765,8 @@ mod tests {
                 },
             },
             Event::PopupClosed,
+            Event::TabDropHint { index: Some(2) },
+            Event::TabDropHint { index: None },
             Event::Popup { content: PopupContent::Hint { text: "Press Esc to show your cursor".into() } },
             Event::CaptionState { hover: Some(CaptionButton::Maximize), pressed: false },
             Event::CaptionState { hover: None, pressed: false },
