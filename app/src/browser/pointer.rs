@@ -1,19 +1,22 @@
 //! Pointer lock for pages (see `lb_core::pointer_lock` for why Krunk does it
 //! itself) and full screen (page `requestFullscreen()` and F11).
 //!
-//! While a frame holds the lock the cursor is confined to the page, hidden
-//! and kept at the page's centre; raw input (`WM_INPUT`) drives the
-//! movement, which goes to the frame in small batches as `lb.plock.evt`
-//! messages. Unadjusted movement sends the raw device deltas; otherwise the
-//! cursor's own (accelerated) movement away from the centre is measured, as
-//! Chrome does.
+//! While a frame holds the lock the cursor is confined to the page and hidden; raw input
+//! (`WM_INPUT`) drives the movement, which goes to the frame in small batches as `lb.plock.evt`
+//! messages. Unadjusted movement sends the raw device deltas; otherwise the cursor's own
+//! (accelerated) movement since the last batch is measured, as Chrome does. The hidden cursor
+//! goes back to the page's centre only when it nears the edge: Windows makes a mouse-move
+//! message only when the cursor really moved, and those carry the movement to the page as
+//! trusted events.
 
 use super::Browser;
 use crate::ffi::cursor;
 use crate::ffi::window::ScreenRect;
 use crate::log::info;
 use lb_core::layout;
-use lb_core::pointer_lock::{Batcher, Lock, LockMessage, LockState, Movement, Release, RequestContext};
+use lb_core::pointer_lock::{
+    needs_recentre, AccelFilter, Batcher, Lock, LockMessage, LockState, Movement, Release, RequestContext,
+};
 use lb_core::protocol::{PopupContent, PopupKind, PopupRect};
 use lb_core::storage::now_ms;
 use lb_core::tabs::TabId;
@@ -39,8 +42,12 @@ pub(super) struct PointerHost {
     state: RefCell<LockState>,
     batch: Cell<Batcher>,
     flush_scheduled: Cell<bool>,
-    /// Where the cursor is kept (screen pixels).
+    /// The lock area and its centre (screen pixels), and where the hidden cursor was at the
+    /// last delivery.
+    area: Cell<(i32, i32, i32, i32)>,
     center: Cell<(i32, i32)>,
+    last: Cell<(i32, i32)>,
+    accel: Cell<AccelFilter>,
     pub fullscreen: Cell<FullscreenMode>,
     /// The frame that is full screen.
     pub fullscreen_window: Cell<Option<lb_core::windows::WindowId>>,
@@ -130,7 +137,9 @@ impl Browser {
         let Some(w) = self.window() else { return };
         let Some(area) = self.lock_area() else { return };
         let center = (area.x + area.width / 2, area.y + area.height / 2);
+        self.pointer.area.set((area.x, area.y, area.width, area.height));
         self.pointer.center.set(center);
+        self.pointer.last.set(center);
         cursor::confine(Some(area));
         cursor::set_hidden(true);
         cursor::move_to(center.0, center.1);
@@ -196,12 +205,26 @@ impl Browser {
 
     fn deliver_movement(&self, m: Movement) {
         let Some(lock) = self.pointer.state.borrow().held().cloned() else { return };
-        let (cx, cy) = self.pointer.center.get();
-        // Accelerated movement: how far the (hidden) cursor moved from the
-        // centre; it goes back there for the next batch.
+        // Accelerated movement: how far the (hidden) cursor moved since the last batch. It
+        // stays there (see the module docs) unless it came near the edge of the page.
         let (x, y) = cursor::position();
-        cursor::move_to(cx, cy);
-        let (dx, dy) = if lock.unadjusted { (m.dx, m.dy) } else { (x - cx, y - cy) };
+        let (lx, ly) = self.pointer.last.get();
+        if needs_recentre((x, y), self.pointer.area.get()) {
+            let (cx, cy) = self.pointer.center.get();
+            cursor::move_to(cx, cy);
+            self.pointer.last.set((cx, cy));
+        } else {
+            self.pointer.last.set((x, y));
+        }
+        let (dx, dy) = if lock.unadjusted {
+            (m.dx, m.dy)
+        } else {
+            // Checked against the raw movement (see AccelFilter).
+            let mut f = self.pointer.accel.get();
+            let d = f.filter((x - lx, y - ly), (m.dx, m.dy));
+            self.pointer.accel.set(f);
+            d
+        };
         if dx == 0 && dy == 0 {
             return;
         }

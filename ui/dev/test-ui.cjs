@@ -1538,6 +1538,34 @@ async function testPointerLockShim(browser) {
   check((await page.evaluate(() => window.targets)).includes('stage:true'), 'with an overlay on top, real moves go to the locked element (' + (await page.evaluate(() => window.targets)).join(',') + ')');
   const xs = await page.evaluate(() => window.xs);
   check(xs.length > 0 && xs.every((x) => x === xs[0]), 'clientX stays frozen while locked (' + xs.join(',') + ')');
+  // A page listening to pointerrawupdate too (its own timing) still sees all the movement
+  // in mousemove: every stream gets the full movement since its own previous event.
+  await page.evaluate(() => {
+    window.sums = { mousemove: 0, pointerrawupdate: 0 };
+    const stage = document.getElementById('stage');
+    stage.addEventListener('pointerrawupdate', (e) => { if (e.isTrusted) sums.pointerrawupdate += e.movementX; });
+    stage.addEventListener('mousemove', (e) => { sums.mousemove += e.movementX; }); // trusted or the fallback
+  });
+  for (let i = 0; i < 5; i++) {
+    await page.evaluate(() => window.__plock('{"t":"move","dx":3,"dy":0,"b":0}'));
+    await page.mouse.move(240 + i * 3, 190);
+  }
+  await page.waitForTimeout(120); // the last move's events, or the fallback
+  const sums = await page.evaluate(() => window.sums);
+  check(sums.mousemove === 15, 'with a pointerrawupdate listener too, mousemove still gets all the movement (' + JSON.stringify(sums) + ')');
+  check(sums.pointerrawupdate === 0 || sums.pointerrawupdate === 15, 'pointerrawupdate gets all of it as well, when it fires (' + sums.pointerrawupdate + ')');
+  // Continuous movement with real events coming: no synthetic events in between (they only
+  // carry what no real event picked up).
+  await page.waitForTimeout(120);
+  await page.evaluate(() => { window.synth = 0; window.realSum = 0; document.getElementById('stage').addEventListener('mousemove', (e) => { if (e.isTrusted) realSum += e.movementX; else synth++; }); });
+  for (let i = 0; i < 20; i++) {
+    await page.evaluate(() => window.__plock('{"t":"move","dx":2,"dy":0,"b":0}'));
+    await page.mouse.move(100 + (i % 2) * 5, 100);
+    await page.waitForTimeout(15);
+  }
+  const cont = await page.evaluate(() => ({ synth: window.synth, real: window.realSum }));
+  check(cont.synth === 0 && cont.real >= 36, 'while real events keep coming, no synthetic ones (' + JSON.stringify(cont) + ')');
+  await page.waitForTimeout(120); // let any leftover synthetic events pass
   // Movement no real event picked up goes out as a synthetic event.
   await page.evaluate(() => { log.length = 0; window.__plock('{"t":"move","dx":4,"dy":1,"b":1}'); });
   await page.waitForTimeout(120);

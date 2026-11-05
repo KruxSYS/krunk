@@ -78,23 +78,34 @@
 
   // While locked, the real (trusted) move events keep going to the page, but
   // their movementX/Y come from the browser's raw mouse input and their
-  // positions stay where the lock started, as in Chrome. All events of one
-  // input (pointerrawupdate, pointermove, mousemove) share a timestamp and
-  // get the same movement; the browser's cursor re-centring then never shows.
-  var MOVES = { mousemove: 1, pointermove: 1, pointerrawupdate: 1 };
-  var acc = { x: 0, y: 0 };      // movement from the browser not given out yet
-  var byStamp = new Map();       // event timestamp -> movement given to it
+  // positions stay where the lock started, as in Chrome. As in Chrome, each
+  // event stream reports all the movement since its own previous event:
+  // pointermove and mousemove (dispatched in pairs, with one timestamp) share
+  // an account, pointerrawupdate (its own timing) has another, and every
+  // movement from the browser goes into both. A page listening to several
+  // streams then sees the full movement in each.
+  var MOVES = { mousemove: 'move', pointermove: 'move', pointerrawupdate: 'raw' };
+  function account() { return { x: 0, y: 0, byStamp: new Map() }; }
+  var acc = { move: account(), raw: account() };  // movement not given out yet, per stream
+  var lastReal = 0;  // when a real event last took movement (performance.now())
+  var lastRaw = 0;   // … a real pointerrawupdate
+  var now = performance.now.bind(performance);
   function movementOf(e) {
-    var m = byStamp.get(e.timeStamp);
+    if (e.isTrusted) {
+      lastReal = now();
+      if (MOVES[e.type] === 'raw') lastRaw = lastReal;
+    }
+    var a = acc[MOVES[e.type]] || acc.move;
+    var m = a.byStamp.get(e.timeStamp);
     if (!m) {
-      m = { x: acc.x, y: acc.y };
-      acc.x = 0; acc.y = 0;
-      byStamp.set(e.timeStamp, m);
-      if (byStamp.size > 32) byStamp.delete(byStamp.keys().next().value);
+      m = { x: a.x, y: a.y };
+      a.x = 0; a.y = 0;
+      a.byStamp.set(e.timeStamp, m);
+      if (a.byStamp.size > 32) a.byStamp.delete(a.byStamp.keys().next().value);
     }
     return m;
   }
-  function inLock(e) { return locked !== null && e.isTrusted && MOVES[e.type] === 1; }
+  function inLock(e) { return locked !== null && e.isTrusted && MOVES[e.type] !== undefined; }
   function override(proto, prop, value) {
     var desc = Object.getOwnPropertyDescriptor(proto, prop);
     if (!desc || !desc.get) return;
@@ -155,28 +166,49 @@
   }, true);
 
   // Movement that no real event picked up (the mouse moved less than a pixel
-  // on screen) goes out as a synthetic event after a moment.
+  // on screen) goes out as a synthetic event after a moment. While real events
+  // keep coming, they carry it: the check just waits again.
+  var FALLBACK_MS = 40;
   var flushTimer = 0;
   function moved(dx, dy, buttons) {
     if (!locked) return;
-    acc.x += dx; acc.y += dy;
+    acc.move.x += dx; acc.move.y += dy;
+    // pointerrawupdate events come only while a page listens for them: until they do, the
+    // raw account holds just the latest movement (no stale pile-up for a late listener).
+    if (now() - lastRaw > 100) { acc.raw.x = 0; acc.raw.y = 0; }
+    acc.raw.x += dx; acc.raw.y += dy;
     if (flushTimer) return;
-    flushTimer = setTimeout(function () {
+    var check = function () {
       flushTimer = 0;
       var el = locked;
-      if (!el || (acc.x === 0 && acc.y === 0)) return;
-      var init = {
-        bubbles: true, cancelable: true, composed: true, view: window,
-        clientX: frozen.cx, clientY: frozen.cy, screenX: frozen.sx, screenY: frozen.sy,
-        movementX: acc.x, movementY: acc.y, buttons: buttons, button: -1,
-      };
-      acc.x = 0; acc.y = 0;
-      if (PointerEv) {
-        el.dispatchEvent(new PointerEv('pointermove', Object.assign({ pointerId: 1, pointerType: 'mouse', isPrimary: true }, init)));
+      if (!el) return;
+      var since = now() - lastReal;
+      if (since < FALLBACK_MS && (acc.move.x !== 0 || acc.move.y !== 0 || acc.raw.x !== 0 || acc.raw.y !== 0)) {
+        flushTimer = setTimeout(check, FALLBACK_MS - since);
+        return;
       }
-      init.button = 0;
-      el.dispatchEvent(new MouseEv('mousemove', init));
-    }, 40);
+      var init = function (a, button) {
+        var i = {
+          bubbles: true, cancelable: true, composed: true, view: window,
+          clientX: frozen.cx, clientY: frozen.cy, screenX: frozen.sx, screenY: frozen.sy,
+          movementX: a.x, movementY: a.y, buttons: buttons, button: button,
+        };
+        a.x = 0; a.y = 0;
+        return i;
+      };
+      var pointer = function (i) { return Object.assign({ pointerId: 1, pointerType: 'mouse', isPrimary: true }, i); };
+      if (acc.raw.x !== 0 || acc.raw.y !== 0) {
+        var r = init(acc.raw, -1);
+        if (PointerEv) el.dispatchEvent(new PointerEv('pointerrawupdate', pointer(r)));
+      }
+      if (acc.move.x !== 0 || acc.move.y !== 0) {
+        var m = init(acc.move, -1);
+        if (PointerEv) el.dispatchEvent(new PointerEv('pointermove', pointer(m)));
+        m.button = 0;
+        el.dispatchEvent(new MouseEv('mousemove', m));
+      }
+    };
+    flushTimer = setTimeout(check, FALLBACK_MS);
   }
 
   // Messages from the browser.
@@ -204,7 +236,7 @@
       var was = locked;
       if (was) { was.removeAttribute(markAttr); captureTargets(false); }
       locked = null;
-      acc.x = 0; acc.y = 0;
+      acc = { move: account(), raw: account() };
       if (was) fire(was.ownerDocument, 'pointerlockchange');
     }
   };

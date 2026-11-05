@@ -161,6 +161,58 @@ pub struct Batcher {
     pub interval_ms: i64,
 }
 
+/// Should the hidden cursor go back to the centre of the lock area? Only once it has moved
+/// into the outer quarter of the area on some side. Between those warps it stays where the
+/// movement put it, so Windows keeps making real mouse-move messages (it makes one only when
+/// the cursor actually moved), which the page receives as trusted events. `area` is
+/// (x, y, width, height) in screen pixels.
+pub fn needs_recentre(pos: (i32, i32), area: (i32, i32, i32, i32)) -> bool {
+    let (x, y, w, h) = area;
+    let (mx, my) = (w / 4, h / 4);
+    pos.0 < x + mx || pos.0 >= x + w - mx || pos.1 < y + my || pos.1 >= y + h - my
+}
+
+/// Accelerated movement is measured from the (hidden) cursor's position, which Windows reports
+/// a moment late after the browser moves it back to the centre: a batch then reads as a jump
+/// of a quarter of the page, forwards or backwards. Each batch also has the raw device
+/// movement, so a measured movement that goes against it or is bigger than any pointer
+/// acceleration makes it is replaced by the raw movement times the acceleration seen lately.
+#[derive(Debug, Clone, Copy)]
+pub struct AccelFilter {
+    /// Recent ratio of measured (accelerated) to raw movement.
+    ratio: f64,
+}
+
+/// Windows' pointer speed and "enhance pointer precision" together stay well below this.
+const MAX_ACCEL: i32 = 10;
+
+impl Default for AccelFilter {
+    fn default() -> Self {
+        AccelFilter { ratio: 1.0 }
+    }
+}
+
+impl AccelFilter {
+    /// The movement to report for a batch: `measured` from the cursor, `raw` from the device.
+    pub fn filter(&mut self, measured: (i32, i32), raw: (i32, i32)) -> (i32, i32) {
+        let plausible = |m: i32, r: i32| {
+            let against = m != 0 && r != 0 && m.signum() != r.signum() && m.abs() > 2;
+            let too_far = m.abs() > r.abs().saturating_mul(MAX_ACCEL) + 4;
+            !against && !too_far
+        };
+        if plausible(measured.0, raw.0) && plausible(measured.1, raw.1) {
+            let (m, r) = (measured.0.abs() + measured.1.abs(), raw.0.abs() + raw.1.abs());
+            if r >= 4 && m > 0 {
+                let seen = (f64::from(m) / f64::from(r)).clamp(0.1, f64::from(MAX_ACCEL));
+                self.ratio = self.ratio * 0.9 + seen * 0.1;
+            }
+            return measured;
+        }
+        let scale = |r: i32| (f64::from(r) * self.ratio).round() as i32;
+        (scale(raw.0), scale(raw.1))
+    }
+}
+
 /// Deliveries happen about every 2 ms (within the 1–4 ms budget).
 pub const FLUSH_INTERVAL_MS: i64 = 2;
 
@@ -200,6 +252,40 @@ impl Batcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accel_filter_keeps_plausible_movement_and_replaces_warp_glitches() {
+        let mut f = AccelFilter::default();
+        // Steady movement with 2x acceleration: passed through, and the ratio is learnt.
+        for _ in 0..60 {
+            assert_eq!(f.filter((20, 0), (10, 0)), (20, 0));
+        }
+        assert_eq!(f.filter((0, 0), (0, 0)), (0, 0));
+        assert_eq!(f.filter((3, -1), (1, 0)), (3, -1), "small jitter across an axis is fine");
+        // The cursor read a moment late after re-centring: a backward jump of 266 px …
+        let (x, y) = f.filter((-266, 0), (10, 0));
+        assert!((18..=22).contains(&x) && y == 0, "replaced by raw x ratio: {x},{y}");
+        // … or a forward one far beyond any acceleration.
+        let (x, _) = f.filter((379, 0), (10, 0));
+        assert!((18..=22).contains(&x), "{x}");
+        // Raw movement with no measured movement (the cursor sat at the clip edge) is fine too.
+        assert_eq!(f.filter((0, 0), (10, 0)), (0, 0));
+    }
+
+    #[test]
+    fn recentre_only_near_the_edge() {
+        let area = (100, 50, 800, 400); // centre (500, 250); inner box x 300..700, y 150..350
+        assert!(!needs_recentre((500, 250), area));
+        assert!(!needs_recentre((300, 150), area));
+        assert!(!needs_recentre((699, 349), area));
+        assert!(needs_recentre((299, 250), area));
+        assert!(needs_recentre((700, 250), area));
+        assert!(needs_recentre((500, 149), area));
+        assert!(needs_recentre((500, 350), area));
+        // A tiny area: always back to the centre once off it.
+        assert!(!needs_recentre((2, 2), (0, 0, 4, 4)));
+        assert!(needs_recentre((0, 0), (0, 0, 4, 4)));
+    }
 
     fn ok() -> RequestContext {
         RequestContext { tab_active: true, window_active: true, frame_live: true }
