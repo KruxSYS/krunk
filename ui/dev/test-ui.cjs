@@ -25,6 +25,12 @@ function check(cond, name) {
   if (cond) { passes++; console.log('  ok   ' + name); } else { failures++; console.log('  FAIL ' + name); }
 }
 
+// Tab strip animations (open/close, ~160 ms) finished: no growing or shrinking tab left.
+async function settleTabs(page) {
+  await page.waitForFunction(() => !document.querySelector('.tab.opening, .tab.closing'));
+  await page.waitForTimeout(250);
+}
+
 // A 16x16 PNG circle in a colour derived from the host (stands in for
 // cached favicons served by the host at /favicon?host=).
 function faviconPng(host) {
@@ -243,6 +249,105 @@ async function testShell(browser) {
 }
 
 // Frameless window: caption buttons, hit-test map, tab widths, new-tab focus.
+// 0.4.0: closing and opening tabs animate; closing with the mouse keeps the other widths
+// while the pointer stays on the strip.
+async function testTabAnimations(browser) {
+  console.log('tab close/open animation');
+  let { page, errors } = await openPage(browser, 'https://shell.krunk.invalid/shell.html', { width: 1280, height: 76 }, 1);
+  const setTabs = (n, active) => page.evaluate(([n, active]) => {
+    const h = window.__host;
+    h.state.tabs = [];
+    for (let i = 1; i <= n; i++) h.state.tabs.push({ id: i, title: 'Tab number ' + i, url: 'https://t' + i + '.example/', favicon: null, loading: false, private: false, sleeping: false });
+    h.state.nextId = n + 1;
+    h.state.active = active;
+    h.tabsEvent();
+    h.navEvent();
+  }, [n, active]);
+  const widths = () => page.$$eval('.tab:not(.closing)', (ns) => ns.map((n) => Math.round(n.getBoundingClientRect().width * 10) / 10));
+  await setTabs(8, 1);
+  await page.waitForFunction(() => document.querySelectorAll('.tab').length === 8);
+  await settleTabs(page);
+  const before = await widths();
+  check(before[0] < 256 && before[0] > 72, '8 tabs share the row (' + before[0] + ')');
+
+  // Close tab 3 with its close button: the host is told at once, the tab shrinks away.
+  const close3 = await page.locator('.tab[data-id="3"] .close').boundingBox();
+  const cx = close3.x + close3.width / 2, cy = close3.y + close3.height / 2;
+  await page.mouse.move(cx, cy);
+  await page.mouse.click(cx, cy);
+  const sentClose = await lastSent(page, 'closeTab');
+  check(sentClose && sentClose.id === 3, 'the close button sends closeTab at once');
+  await page.waitForSelector('.tab.closing', { timeout: 500 });
+  check(await page.locator('.tab.closing').count() === 1, 'the closed tab shrinks (one closing tab in the strip)');
+  check(await page.locator('.tab.closing').evaluate((n) => getComputedStyle(n).pointerEvents === 'none'), 'a closing tab takes no clicks');
+  await page.waitForFunction(() => !document.querySelector('.tab.closing'), null, { timeout: 2000 });
+  check(true, 'and is gone after the animation');
+  await page.waitForTimeout(200);
+  const frozen = await widths();
+  check(frozen.length === 7 && frozen.every((w) => Math.abs(w - before[0]) < 0.6),
+    'with the pointer on the strip the others keep their width (' + frozen[0] + ' = ' + before[0] + ')');
+  const under = await page.evaluate(([x, y]) => {
+    const n = document.elementFromPoint(x, y);
+    const tab = n && n.closest('.tab');
+    return { close: !!(n && n.closest('.close')), id: tab ? Number(tab.dataset.id) : null };
+  }, [cx, cy]);
+  check(under.close && under.id === 4, 'the next tab\'s close button is now under the pointer (' + JSON.stringify(under) + ')');
+
+  // Quick closes at the same spot (a click every 200 ms) close the following tabs, one each.
+  await page.mouse.click(cx, cy);
+  await page.waitForTimeout(200);
+  await page.mouse.click(cx, cy);
+  await page.waitForTimeout(200);
+  const closes = (await sent(page)).filter((m) => m.cmd === 'closeTab').map((m) => m.id);
+  check(JSON.stringify(closes.slice(-3)) === JSON.stringify([3, 4, 5]), 'three quick clicks close tabs 3, 4, 5 (' + closes.join(',') + ')');
+  await settleTabs(page);
+  const lastTab = await page.locator('.tab:not(.closing)').last().boundingBox();
+  const plusBox = await page.locator('#newtab').boundingBox();
+  check(plusBox.x - (lastTab.x + lastTab.width) < 12, '"+" follows the last tab while widths are frozen (gap ' + Math.round(plusBox.x - lastTab.x - lastTab.width) + ')');
+  await shot(page, 'shell-tabs-closed-frozen.png');
+
+  // Pointer leaves the strip: the tabs take their new (wider) widths, and the hit map follows.
+  await page.mouse.move(640, 70);
+  await page.evaluate(() => document.getElementById('tabstrip').dispatchEvent(new PointerEvent('pointerleave')));
+  await settleTabs(page);
+  const thawed = await widths();
+  check(thawed.length === 5 && thawed[0] > before[0] + 1 && Math.max(...thawed) - Math.min(...thawed) < 0.6,
+    'after the pointer leaves, 5 tabs share the row again (' + thawed[0] + ' > ' + before[0] + ')');
+  await page.waitForTimeout(60);
+  const hm = (await lastSent(page, 'hitMap')).map;
+  check(hm.tabCenters.length === 5, 'hit map: 5 tab centres once the strip settled (' + hm.tabCenters.length + ')');
+  await shot(page, 'shell-tabs-thawed.png');
+
+  // A new tab grows in.
+  await page.evaluate(() => window.__host.emit({ event: 'tabs', tabs: window.__host.state.tabs.concat([{ id: 99, title: 'New tab', url: '', favicon: null, loading: false, private: false, sleeping: false }]), active: 99 }));
+  check(await page.locator('.tab[data-id="99"].opening').count() === 1 || await page.locator('.tab[data-id="99"]').evaluate((n) => n.getBoundingClientRect().width < 200),
+    'a new tab starts small');
+  await settleTabs(page);
+  check(await page.locator('.tab[data-id="99"]').evaluate((n) => !n.classList.contains('opening') && n.getBoundingClientRect().width > 72), 'and grows to its width');
+
+  // Ctrl+W-style close (no pointer): no frozen widths.
+  await page.evaluate(() => { const h = window.__host; h.state.tabs = h.state.tabs.filter((t) => t.id !== 6); h.tabsEvent(); });
+  await settleTabs(page);
+  const after = await widths();
+  check(Math.max(...after) - Math.min(...after) < 0.6, 'a close from the keyboard re-lays the strip out at once');
+  check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
+  await page.close();
+
+  // Reduced motion: no animation, the closed tab goes at once.
+  ({ page, errors } = await openPage(browser, 'https://shell.krunk.invalid/shell.html', { width: 1280, height: 76 }, 1));
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.evaluate(() => {
+    const h = window.__host;
+    h.state.tabs = [1, 2, 3].map((i) => ({ id: i, title: 'T' + i, url: 'https://t' + i + '.example/', favicon: null, loading: false, private: false, sleeping: false }));
+    h.state.active = 1; h.tabsEvent();
+  });
+  await page.waitForFunction(() => document.querySelectorAll('.tab').length === 3);
+  await page.locator('.tab[data-id="2"] .close').click();
+  await page.waitForTimeout(20);
+  check(await page.locator('.tab').count() === 2 && await page.locator('.tab.closing').count() === 0, 'reduced motion: the tab goes at once');
+  check(errors.length === 0, 'reduced motion: no console errors (' + errors.join(' | ') + ')');
+}
+
 async function testShellFrame(browser) {
   console.log('shell frame + tab widths');
   const { page, errors } = await openPage(browser, 'https://shell.krunk.invalid/shell.html', { width: 1280, height: 76 }, 1);
@@ -274,7 +379,7 @@ async function testShellFrame(browser) {
   // 20 tabs: they shrink evenly, keep 72 DIP and the active close button.
   await setTabs(20, 20);
   await page.waitForFunction(() => document.querySelectorAll('.tab').length === 20);
-  await page.waitForTimeout(50);
+  await settleTabs(page);
   const widths20 = await page.$$eval('.tab', (ns) => ns.map((n) => n.getBoundingClientRect().width));
   const minW = Math.min(...widths20), maxW = Math.max(...widths20);
   check(maxW - minW < 0.5, 'with 20 tabs all have the same width (' + minW.toFixed(1) + '–' + maxW.toFixed(1) + ')');
@@ -289,7 +394,7 @@ async function testShellFrame(browser) {
   check(activeBox.x >= rowBox.x - 0.5 && activeBox.x + activeBox.width <= rowBox.x + rowBox.width + 0.5, 'active tab fully visible');
   await shot(page, 'shell-frame-20-tabs.png');
   await setTabs(12, 3);
-  await page.waitForTimeout(50);
+  await settleTabs(page);
   const widths12 = await page.$$eval('.tab', (ns) => ns.map((n) => n.getBoundingClientRect().width));
   check(Math.max(...widths12) - Math.min(...widths12) < 0.5 && widths12[0] < 256 && widths12[0] > 72, '12 tabs shrink evenly between 72 and 256 (' + widths12[0].toFixed(1) + ')');
   await shot(page, 'shell-frame-12-tabs.png');
@@ -1611,6 +1716,7 @@ async function testTabWindows(browser) {
     await testScriptletInjection(browser);
     await testPointerLockShim(browser);
     await testShellFrame(browser);
+    await testTabAnimations(browser);
     await testTabWindows(browser);
     await testShellHiDpi(browser);
     await testPopup(browser);

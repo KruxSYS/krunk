@@ -9,54 +9,159 @@
   const state = { tabs: [], active: null, nav: null, editing: false, popup: null };
 
   // ---------- tabs ----------
+  // One node per tab, kept across updates, so the strip animates: a closed tab shrinks away
+  // (the host closed it at once; only the strip animates), a new one grows in, and the others
+  // slide along (their widths transition). Closing with the mouse keeps the other tabs' widths
+  // while the pointer stays on the strip, as in Chrome: the next tab's close button comes to
+  // rest under the pointer. They take their new widths when it leaves.
+  const tabNodes = new Map();    // tab id -> node
+  let renderedOnce = false;
+  let widthsFrozen = false;
+  const CLOSE_MS = 160;
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const liveTabs = () => document.querySelectorAll('#tabs .tab:not(.closing)');
+  function tabById(id) { return state.tabs.find(function (t) { return t.id === id; }); }
+
+  function newTabNode(id) {
+    const node = el('div', {
+      class: 'tab', role: 'tab', 'data-id': id,
+      onmousedown: function (e) {
+        if (e.button !== 0 || e.target.closest('.close')) return;
+        // Double-click duplicates. Detected here rather than with dblclick: the first press
+        // activates the tab and re-renders it, which can swallow a dblclick.
+        if (lastPress.id === id && e.timeStamp - lastPress.at < DOUBLE_PRESS_MS) {
+          lastPress = { id: null, at: 0 };
+          LB.post('duplicateTab', { id: id });
+          return;
+        }
+        lastPress = { id: id, at: e.timeStamp };
+        LB.post('activateTab', { id: id });
+      },
+      onauxclick: function (e) {
+        if (e.button === 1) { e.preventDefault(); closeWithMouse(id); }
+      },
+      oncontextmenu: function (e) {
+        e.preventDefault();
+        LB.post('showTabMenu', { id: id, rect: { x: e.clientX, y: e.clientY, width: 240, height: 256 } });
+        setPopup('tabMenu');
+      },
+    });
+    attachDrag(node, id);
+    return node;
+  }
+
+  function fillTabNode(node, t, index) {
+    const active = t.id === state.active;
+    node.className = 'tab' + (active ? ' active' : '') + (t.private ? ' private' : '') +
+      (t.sleeping ? ' sleeping' : '') + (node.classList.contains('opening') ? ' opening' : '') +
+      (node.classList.contains('dragging') ? ' dragging' : '');
+    node.setAttribute('aria-selected', active ? 'true' : 'false');
+    node.setAttribute('title', (t.private ? '[Private] ' : '') + t.title + (t.url ? '\n' + t.url : ''));
+    node.dataset.index = index;
+    const icon = t.loading
+      ? el('span', { class: 'spinner', 'aria-label': 'Loading' })
+      : t.favicon
+        ? el('img', { class: 'favicon', src: t.favicon, alt: '' })
+        : svgIcon('i-globe', 'favicon');
+    node.replaceChildren.apply(node, [
+      t.private ? el('span', { class: 'private-mark', title: 'Private tab' }, [svgIcon('i-mask')]) : null,
+      icon,
+      el('span', { class: 'title', text: t.title || 'New tab' }),
+      el('button', {
+        class: 'close', title: 'Close tab (Ctrl+W)', 'aria-label': 'Close tab',
+        onclick: function (e) { e.stopPropagation(); closeWithMouse(t.id); },
+      }, [svgIcon('i-close')]),
+    ].filter(Boolean));
+  }
+
+  // Close button or middle click: the other tabs keep their widths for now.
+  function closeWithMouse(id) {
+    if (!reduceMotion.matches) freezeWidths();
+    LB.post('closeTab', { id: id });
+  }
+  // Style changes that must not animate themselves (pinning a width the tab already has).
+  function instantly(fn) {
+    const box = $('tabs');
+    box.classList.add('no-anim');
+    fn();
+    void box.offsetWidth;
+    box.classList.remove('no-anim');
+  }
+  function freezeWidths() {
+    const tabs = Array.prototype.slice.call(liveTabs());
+    const w = tabs.map(function (n) { return n.getBoundingClientRect().width; }); // all before any change
+    instantly(function () {
+      tabs.forEach(function (n, i) { n.style.flex = '0 0 ' + w[i] + 'px'; });
+      widthsFrozen = true;
+      layoutTabs();
+    });
+  }
+  function thawWidths() {
+    if (!widthsFrozen) return;
+    widthsFrozen = false;
+    liveTabs().forEach(function (n) { n.style.flex = ''; });
+    layoutTabs();
+  }
+  $('tabstrip').addEventListener('pointerleave', thawWidths);
+
+  // A closed tab's node shrinks to nothing, then goes.
+  function closeOut(node) {
+    node.classList.remove('active', 'opening', 'dragging', 'drop-before', 'drop-after');
+    const w = node.getBoundingClientRect().width;
+    instantly(function () { node.style.flex = '0 0 ' + w + 'px'; });
+    node.classList.add('closing');
+    node.style.flexBasis = '0px';
+    let done = false;
+    const finish = function () {
+      if (done) return;
+      done = true;
+      node.remove();
+      layoutTabs();
+    };
+    node.addEventListener('transitionend', function (e) { if (e.propertyName === 'flex-basis') finish(); });
+    setTimeout(finish, CLOSE_MS + 120);
+  }
+
   function renderTabs() {
     const box = $('tabs');
-    box.textContent = '';
-    state.tabs.forEach(function (t, index) {
-      const icon = t.loading
-        ? el('span', { class: 'spinner', 'aria-label': 'Loading' })
-        : t.favicon
-          ? el('img', { class: 'favicon', src: t.favicon, alt: '' })
-          : svgIcon('i-globe', 'favicon');
-      const tab = el('div', {
-        class: 'tab' + (t.id === state.active ? ' active' : '') + (t.private ? ' private' : '') +
-          (t.sleeping ? ' sleeping' : ''),
-        role: 'tab',
-        'aria-selected': t.id === state.active ? 'true' : 'false',
-        title: (t.private ? '[Private] ' : '') + t.title + (t.url ? '\n' + t.url : ''),
-        'data-id': t.id,
-        'data-index': index,
-        onmousedown: function (e) {
-          if (e.button !== 0 || e.target.closest('.close')) return;
-          // Double-click duplicates. Detected here rather than with dblclick:
-          // the first press activates the tab, which re-renders the strip, so
-          // a dblclick on an inactive tab would never fire.
-          if (lastPress.id === t.id && e.timeStamp - lastPress.at < DOUBLE_PRESS_MS) {
-            lastPress = { id: null, at: 0 };
-            LB.post('duplicateTab', { id: t.id });
-            return;
-          }
-          lastPress = { id: t.id, at: e.timeStamp };
-          LB.post('activateTab', { id: t.id });
-        },
-        onauxclick: function (e) { if (e.button === 1) { e.preventDefault(); LB.post('closeTab', { id: t.id }); } },
-        oncontextmenu: function (e) {
-          e.preventDefault();
-          LB.post('showTabMenu', { id: t.id, rect: { x: e.clientX, y: e.clientY, width: 240, height: 256 } });
-          setPopup('tabMenu');
-        },
-      }, [
-        t.private ? el('span', { class: 'private-mark', title: 'Private tab' }, [svgIcon('i-mask')]) : null,
-        icon,
-        el('span', { class: 'title', text: t.title || 'New tab' }),
-        el('button', {
-          class: 'close', title: 'Close tab (Ctrl+W)', 'aria-label': 'Close tab',
-          onclick: function (e) { e.stopPropagation(); LB.post('closeTab', { id: t.id }); },
-        }, [svgIcon('i-close')]),
-      ]);
-      attachDrag(tab, t.id);
-      box.appendChild(tab);
+    const animate = renderedOnce && !reduceMotion.matches;
+    const ids = new Set(state.tabs.map(function (t) { return t.id; }));
+    tabNodes.forEach(function (node, id) {
+      if (ids.has(id)) return;
+      tabNodes.delete(id);
+      if (animate && node.isConnected) closeOut(node);
+      else node.remove();
     });
+    let added = false;
+    let after = null;
+    state.tabs.forEach(function (t, index) {
+      let node = tabNodes.get(t.id);
+      if (!node) {
+        node = newTabNode(t.id);
+        tabNodes.set(t.id, node);
+        if (animate) node.classList.add('opening');
+        added = true;
+      }
+      fillTabNode(node, t, index);
+      // In state order; closing tabs stay where they were meanwhile.
+      const slot = after ? after.nextSibling : box.firstChild;
+      let next = slot;
+      while (next && next.classList.contains('closing')) next = next.nextSibling;
+      if (next !== node) box.insertBefore(node, slot);
+      after = node;
+    });
+    if (added) {
+      // A new tab: the others take their new widths now.
+      thawWidths();
+      if (animate) {
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () {
+            box.querySelectorAll('.tab.opening').forEach(function (n) { n.classList.remove('opening'); });
+          });
+        });
+      }
+    }
+    renderedOnce = true;
     layoutTabs();
   }
 
@@ -67,9 +172,10 @@
     const box = $('tabs');
     // The row asks for every tab at full width and shrinks (evenly, through
     // the tabs' own flex-shrink) when the window is narrower.
-    const n = box.children.length;
-    box.style.flexBasis = n ? (n * TAB_WIDTH + (n - 1) * TAB_GAP) + 'px' : '0px';
-    const first = box.querySelector('.tab');
+    const n = box.children.length; // closing tabs too: the row shrinks as they do
+    // With frozen widths the row is as wide as its tabs, so "+" follows the last one.
+    box.style.flexBasis = widthsFrozen ? 'auto' : n ? (n * TAB_WIDTH + (n - 1) * TAB_GAP) + 'px' : '0px';
+    const first = box.querySelector('.tab:not(.closing)');
     box.classList.toggle('narrow', !!first && first.getBoundingClientRect().width < 100);
     const active = box.querySelector('.tab.active');
     if (active) active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
@@ -86,7 +192,7 @@
   let lastMap = '';
   function reportHitMap() {
     const box = $('tabs');
-    const tabs = box.querySelectorAll('.tab');
+    const tabs = liveTabs();
     const interactive = [rectOf($('newtab'))];
     if (tabs.length) {
       // The tabs as one band: the visible part of the scrolling row.
@@ -115,6 +221,11 @@
   }
   new ResizeObserver(function () { layoutTabs(); }).observe($('tabstrip'));
   $('tabs').addEventListener('scroll', reportHitMap);
+  // Tabs slide while they animate: the layout (narrow mode, scrolling) and the host's hit map
+  // follow when they settle.
+  $('tabs').addEventListener('transitionend', function (e) {
+    if (e.propertyName === 'flex-basis' && !e.target.classList.contains('closing')) layoutTabs();
+  });
   $('tabs').addEventListener('wheel', function (e) {
     const box = $('tabs');
     if (box.scrollWidth <= box.clientWidth) return;
@@ -174,7 +285,7 @@
   // Insert position for x among the other tabs (the index after removing the dragged one).
   function dropIndex(x, exceptId) {
     let index = 0;
-    document.querySelectorAll('#tabs .tab').forEach(function (n) {
+    liveTabs().forEach(function (n) {
       if (Number(n.dataset.id) === exceptId) return;
       const r = n.getBoundingClientRect();
       if (r.left + r.width / 2 < x) index++;
@@ -183,7 +294,7 @@
   }
   // Marks where index `to` (among the tabs other than `exceptId`) is.
   function markDrop(to, exceptId) {
-    const others = Array.prototype.filter.call(document.querySelectorAll('#tabs .tab'), function (n) {
+    const others = Array.prototype.filter.call(liveTabs(), function (n) {
       return Number(n.dataset.id) !== exceptId;
     });
     others.forEach(function (n) { n.classList.remove('drop-before', 'drop-after'); });
@@ -203,7 +314,7 @@
     });
   }
   function dragNode() {
-    return drag ? document.querySelector('#tabs .tab[data-id="' + drag.id + '"]') : null;
+    return drag ? document.querySelector('#tabs .tab:not(.closing)[data-id="' + drag.id + '"]') : null;
   }
   $('tabs').addEventListener('pointermove', function (e) {
     if (!drag || e.pointerId !== drag.pointerId) return;
@@ -264,7 +375,7 @@
   LB.on('tabDropHint', function (m) {
     clearDropMarks();
     if (m.index === null || m.index === undefined) return;
-    const tabs = document.querySelectorAll('#tabs .tab');
+    const tabs = liveTabs();
     if (!tabs.length) return;
     if (m.index < tabs.length) tabs[m.index].classList.add('drop-before');
     else tabs[tabs.length - 1].classList.add('drop-after');
