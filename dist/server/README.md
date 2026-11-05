@@ -95,7 +95,9 @@ database are defined here too. Design: `docs/sync/PLAN.md`; decisions:
   Without them, accounts stay **closed**: `/api/v1/web/config` reports
   `accounts_enabled: false`, the account endpoints answer `503 accounts_disabled`, and the pages
   at `/account/` say "Accounts are coming soon". Setting both and restarting opens them; no code
-  change is needed (docs/sync/OPEN_QUESTIONS.md, "Operator provisioning").
+  change is needed (docs/sync/OPEN_QUESTIONS.md, "Operator provisioning"). On ai-pipe the
+  deployed `.env` is the working tree's, copied with each commit: never leave staging values
+  (test keys, `dev-mail`) in it when proposing a deploy.
 
 **Accounts (milestone S2).** Register, confirm by email, sign in, sign out, reset or change the
 password, two-step verification (TOTP plus backup codes). The pages are static

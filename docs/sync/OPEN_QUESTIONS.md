@@ -34,3 +34,8 @@ else waits on them.
 3. **DNS for `krunk.209.wf` mail:** SPF `v=spf1 include:<provider> -all`, DKIM as given by the provider, and DMARC `_dmarc.krunk.209.wf TXT "v=DMARC1; p=quarantine"`.
 4. **Alias:** `privacy@209.wf` → the operator's mailbox.
 5. Restart the live service. `web/config` then reports `accounts_enabled: true`.
+
+**Where the live `.env` comes from:** ai-pipe deploys the project's working-tree `.env`
+(`src/.env`, gitignored) together with each commit (observed 2026-11-05). So the keys in steps 1
+and 2 go into that file, and a staging configuration must never be left there when a deploy is
+proposed (staging values live in `.pipeline/staging-env/stage.env`).
