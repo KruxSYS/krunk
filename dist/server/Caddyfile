@@ -26,6 +26,8 @@
 	}
 }
 
+# Every Cache-Control also says no-transform: a CDN in front (Cloudflare on the live site) must
+# not rewrite responses, e.g. inject its analytics script into the HTML.
 (krunk) {
 	import security_headers
 	encode zstd gzip
@@ -38,7 +40,7 @@
 	# Krunk's update check: always revalidated, so a new release is seen at once.
 	handle /updates/* {
 		root * /srv/releases
-		header Cache-Control "no-cache"
+		header Cache-Control "no-cache, no-transform"
 		@json path *.json
 		header @json Content-Type "application/json"
 		@sig path *.sig
@@ -51,7 +53,7 @@
 	# The website's download box.
 	handle /download/release.json {
 		root * /srv/releases
-		header Cache-Control "no-cache"
+		header Cache-Control "no-cache, no-transform"
 		header Content-Type "application/json"
 		file_server {
 			hide .*
@@ -61,7 +63,7 @@
 	# Release files never change once published (a new version gets a new folder).
 	handle /download/* {
 		root * /srv/releases
-		header Cache-Control "public, max-age=31536000, immutable"
+		header Cache-Control "public, max-age=31536000, immutable, no-transform"
 		# (Path wildcards only work at the start or the end.)
 		@exe path *.exe
 		header @exe Content-Type "application/octet-stream"
@@ -79,7 +81,7 @@
 	# The site itself (baked into the image).
 	handle {
 		root * /srv/site
-		header Cache-Control "no-cache"
+		header Cache-Control "no-cache, no-transform"
 		file_server {
 			hide .*
 		}
