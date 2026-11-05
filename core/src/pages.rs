@@ -94,6 +94,12 @@ impl Page {
 
     /// Identifies a built-in page from the URL a tab reports. Only the exact
     /// pages origin counts; query strings and fragments are allowed.
+    /// Pages that are only ever needed once: opening one again switches to the open tab
+    /// (Chrome does the same for its settings, downloads and history pages).
+    pub fn single_instance(self) -> bool {
+        !matches!(self, Page::NewTab | Page::HttpsOnly | Page::SiteData)
+    }
+
     pub fn from_url(url: &str) -> Option<Page> {
         let u = Url::parse(url).ok()?;
         if u.origin().ascii_serialization() != PAGES_ORIGIN {

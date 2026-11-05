@@ -20,7 +20,7 @@ use lb_core::protocol::{
 };
 use lb_core::settings::{Settings, Startup};
 use lb_core::storage::{now_ms, Store};
-use lb_core::tabs::{Effect, Position, Tab, TabId, TabModel};
+use lb_core::tabs::{CloseMany, Effect, Position, Tab, TabId, TabModel};
 use lb_core::urlclean::{self, LoadFailure};
 use lb_core::windows::{Bounds, Op, SessionV2, WindowId, Workspace};
 use std::borrow::Cow;
@@ -1068,6 +1068,19 @@ impl Browser {
         self.apply(ops);
     }
 
+    /// "Close other tabs" / "Close tabs to the right" of tab `id`, in one change of its window.
+    fn close_many(&self, id: TabId, which: CloseMany) {
+        let Some(win) = self.window_of(id) else { return };
+        let ops = self.ws.borrow_mut().update(win, |m| ((), m.close_many(id, which, now_ms()))).map(|(_, o)| o);
+        if let Some(ops) = ops {
+            info!(
+                "tab {id}: closing {which:?} ({} views)",
+                ops.iter().filter(|o| matches!(o, Op::DestroyView { .. })).count()
+            );
+            self.apply(ops);
+        }
+    }
+
     /// A page in tab `opener` opened a window: it becomes a tab next to the
     /// opener, and the engine creates its browser for the returned view.
     fn open_new_window(&self, opener: TabId, nw: &NewWindow) -> Option<(View, windows::Win32::Foundation::HWND)> {
@@ -1120,8 +1133,24 @@ impl Browser {
         self.navigate_tab(id, url);
     }
 
-    /// Built-in pages replace a new-tab page, otherwise open in a new tab.
+    /// Built-in pages replace a new-tab page, otherwise open in a new tab. A page needed only
+    /// once (downloads, history, settings …) that is already open is switched to instead, in
+    /// whichever window it is.
     fn open_page(&self, page: Page) {
+        if page.single_instance() {
+            let found = self.ws.borrow().find_page(page);
+            if let Some((win, tab)) = found {
+                let ops = self
+                    .ws
+                    .borrow_mut()
+                    .update(win, |m| ((), m.activate(tab, now_ms())))
+                    .map(|(_, o)| o)
+                    .unwrap_or_default();
+                self.apply(ops);
+                self.focus_window(win);
+                return;
+            }
+        }
         let on_new_tab = self.active_tab().is_some_and(|t| Page::from_url(&t.url) == Some(Page::NewTab));
         if on_new_tab {
             self.navigate_active(&page.url());
@@ -1399,10 +1428,14 @@ impl Browser {
                 }
             }
             Request::ShowTabMenu { id, rect } => {
-                let can_move = self.window_of(id).and_then(|w| self.ws.borrow().model(w).map(|m| m.len() > 1));
-                if let (Some(can_move), true) = (can_move, rect.is_valid()) {
+                let state = self.window_of(id).and_then(|w| {
+                    let ws = self.ws.borrow();
+                    let m = ws.model(w)?;
+                    Some((m.len() > 1, !m.close_many_ids(id, CloseMany::Right).is_empty()))
+                });
+                if let (Some((can_move, can_close_right)), true) = (state, rect.is_valid()) {
                     let rect = layout::tab_menu_rect(rect.x, rect.y);
-                    self.show_popup(PopupContent::TabMenu { tab_id: id, can_move }, Some(rect));
+                    self.show_popup(PopupContent::TabMenu { tab_id: id, can_move, can_close_right }, Some(rect));
                 }
             }
             Request::TabMenuAction { id, action } => {
@@ -1426,6 +1459,8 @@ impl Browser {
                     }
                     TabAction::MoveToNewWindow => self.move_tab_to_new_window(id),
                     TabAction::Close => self.close_tab(id),
+                    TabAction::CloseOthers => self.close_many(id, CloseMany::Others),
+                    TabAction::CloseRight => self.close_many(id, CloseMany::Right),
                 }
             }
             Request::HitMap { map } => {

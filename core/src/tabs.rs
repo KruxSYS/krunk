@@ -64,6 +64,14 @@ pub enum Position {
     AfterOpener(TabId),
 }
 
+/// Which tabs "Close other tabs" / "Close tabs to the right" close, around the tab the menu
+/// was opened on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseMany {
+    Others,
+    Right,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClosedTab {
     pub url: String,
@@ -273,6 +281,36 @@ impl TabModel {
                     .unwrap_or_else(|| self.tabs[idx.min(self.tabs.len() - 1)].id);
                 effects.extend(self.set_active(next, now, false));
             }
+        }
+        effects
+    }
+
+    /// The tabs [`TabModel::close_many`] would close.
+    pub fn close_many_ids(&self, id: TabId, which: CloseMany) -> Vec<TabId> {
+        let Some(idx) = self.index_of(id) else { return Vec::new() };
+        self.tabs
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| match which {
+                CloseMany::Others => *i != idx,
+                CloseMany::Right => *i > idx,
+            })
+            .map(|(_, t)| t.id)
+            .collect()
+    }
+
+    /// "Close other tabs" / "Close tabs to the right" of tab `id`. If the active tab is among
+    /// them, `id` becomes active first (so no tab about to close gets loaded for a moment).
+    /// They close right to left: each closed entry keeps its real index, and Ctrl+Shift+T
+    /// brings them back in their old order.
+    pub fn close_many(&mut self, id: TabId, which: CloseMany, now: i64) -> Vec<Effect> {
+        let doomed = self.close_many_ids(id, which);
+        let mut effects = Vec::new();
+        if self.active.is_some_and(|a| doomed.contains(&a)) {
+            effects.extend(self.set_active(id, now, true));
+        }
+        for t in doomed.into_iter().rev() {
+            effects.extend(self.close(t, now));
         }
         effects
     }
@@ -606,6 +644,90 @@ mod tests {
         assert_eq!(e, vec![Effect::DestroyView(2), Effect::Activate { from: None, to: 3 }]);
         let e = m.close(3, 6);
         assert_eq!(e, vec![Effect::DestroyView(3), Effect::Activate { from: None, to: 1 }]);
+    }
+
+    /// a, b, c, d, e (ids 1–5); `active` selects the active one.
+    fn five(active: usize) -> TabModel {
+        let mut m = TabModel::new();
+        for u in [
+            "https://a.example/",
+            "https://b.example/",
+            "https://c.example/",
+            "https://d.example/",
+            "https://e.example/",
+        ] {
+            m.open(u, false, Position::End, false, true, 0);
+        }
+        m.activate_index(active, 1);
+        m
+    }
+
+    #[test]
+    fn close_others_keeps_one_and_reopens_in_order() {
+        let mut m = five(4);
+        assert_eq!(m.close_many_ids(3, CloseMany::Others), vec![1, 2, 4, 5]);
+        let e = m.close_many(3, CloseMany::Others, 5);
+        // The kept tab becomes active first, then the others go from the right.
+        assert_eq!(
+            e,
+            vec![
+                Effect::Activate { from: Some(5), to: 3 },
+                Effect::DestroyView(5),
+                Effect::DestroyView(4),
+                Effect::DestroyView(2),
+                Effect::DestroyView(1),
+            ]
+        );
+        assert_eq!(ids(&m), vec![3]);
+        assert_eq!(m.active_id(), Some(3));
+        // Ctrl+Shift+T four times: a, b, d, e come back where they were.
+        for _ in 0..4 {
+            m.reopen_closed(6).unwrap();
+        }
+        let urls: Vec<_> = m.tabs().iter().map(|t| t.url.as_str()).collect();
+        assert_eq!(
+            urls,
+            [
+                "https://a.example/",
+                "https://b.example/",
+                "https://c.example/",
+                "https://d.example/",
+                "https://e.example/"
+            ]
+        );
+    }
+
+    #[test]
+    fn close_right_keeps_an_active_tab_on_the_left() {
+        let mut m = five(0);
+        assert_eq!(m.close_many_ids(3, CloseMany::Right), vec![4, 5]);
+        assert_eq!(m.close_many(3, CloseMany::Right, 5), vec![Effect::DestroyView(5), Effect::DestroyView(4)]);
+        assert_eq!(ids(&m), vec![1, 2, 3]);
+        assert_eq!(m.active_id(), Some(1));
+        // An active tab to the right goes too: the menu's tab takes over.
+        let mut m = five(4);
+        let e = m.close_many(2, CloseMany::Right, 5);
+        assert_eq!(e[0], Effect::Activate { from: Some(5), to: 2 });
+        assert_eq!(ids(&m), vec![1, 2]);
+        // Nothing to the right of the last tab; nothing else beside a single tab.
+        assert!(m.close_many_ids(2, CloseMany::Right).is_empty());
+        assert!(m.close_many(2, CloseMany::Right, 6).is_empty());
+        let mut one = TabModel::new();
+        let (only, _) = one.open("https://a.example/", false, Position::End, true, true, 0);
+        assert!(one.close_many_ids(only, CloseMany::Others).is_empty());
+    }
+
+    #[test]
+    fn close_many_skips_private_tabs_in_the_closed_stack() {
+        let mut m = TabModel::new();
+        m.open("https://a.example/", false, Position::End, true, true, 0);
+        let (p, _) = m.open("https://secret.example/", true, Position::End, false, true, 0);
+        let (keep, _) = m.open("https://c.example/", false, Position::End, false, true, 0);
+        m.close_many(keep, CloseMany::Others, 1);
+        assert!(m.get(p).is_none());
+        m.reopen_closed(2).unwrap();
+        assert!(m.reopen_closed(3).is_none(), "the private tab is not reopenable");
+        assert!(m.tabs().iter().all(|t| t.url != "https://secret.example/"));
     }
 
     #[test]

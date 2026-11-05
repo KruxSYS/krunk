@@ -61,6 +61,9 @@
       item('New window', 'Ctrl+N', () => command('newWindow')),
       sep(),
       item('Close tab', 'Ctrl+W', () => act('close')),
+      // "Other tabs" exist exactly when the tab could move to a window of its own.
+      item('Close other tabs', '', () => act('closeOthers'), !c.canMove),
+      item('Close tabs to the right', '', () => act('closeRight'), !c.canCloseRight),
     ];
   }
 

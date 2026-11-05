@@ -168,8 +168,9 @@ pub fn fit_to_monitors(rect: Rect, work_areas: &[Rect]) -> Rect {
     Rect { x, y, width, height }
 }
 
-/// The tab context menu (CSS px): five items and a separator.
-pub const TAB_MENU_SIZE: (f64, f64) = (240.0, 196.0);
+/// The tab context menu (CSS px): seven items (30 px each) and two separators (11 px), plus
+/// padding and border.
+pub const TAB_MENU_SIZE: (f64, f64) = (240.0, 256.0);
 
 /// Where the tab context menu opens: at the click (CSS px of the shell).
 pub fn tab_menu_rect(x: f64, y: f64) -> PopupRect {

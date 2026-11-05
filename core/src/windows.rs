@@ -198,6 +198,18 @@ impl Workspace {
         &self.mru
     }
 
+    /// An open (not private) tab showing built-in page `page`: in the current window first,
+    /// then in the other windows from the most recently used.
+    pub fn find_page(&self, page: crate::pages::Page) -> Option<(WindowId, TabId)> {
+        self.mru.iter().find_map(|&win| {
+            let m = self.model(win)?;
+            m.tabs()
+                .iter()
+                .find(|t| !t.private && crate::pages::Page::from_url(&t.url) == Some(page))
+                .map(|t| (win, t.id))
+        })
+    }
+
     pub fn closed_count(&self) -> usize {
         self.closed.len()
     }
@@ -479,6 +491,26 @@ mod tests {
         let (b, _) = ws.open(w, "https://b.example/", false, Position::End, true, 0).unwrap();
         let (c, _) = ws.open(w, "https://c.example/", false, Position::End, true, 0).unwrap();
         (ws, w, vec![a, b, c])
+    }
+
+    #[test]
+    fn find_page_prefers_the_current_window_and_skips_private_tabs() {
+        use crate::pages::Page;
+        let (mut ws, w1, _) = ws3();
+        assert_eq!(ws.find_page(Page::Downloads), None);
+        let (d1, _) = ws.open(w1, &Page::Downloads.url(), false, Position::End, false, 0).unwrap();
+        let (w2, _, _) = ws.open_window("https://x.example/", false, None, false, 0);
+        // A private tab on the page does not count.
+        ws.open(w2, &Page::Downloads.url(), true, Position::End, false, 0).unwrap();
+        assert_eq!(ws.current(), Some(w2));
+        assert_eq!(ws.find_page(Page::Downloads), Some((w1, d1)), "the other window's tab");
+        let (d2, _) = ws.open(w2, &Page::Downloads.url(), false, Position::End, false, 0).unwrap();
+        assert_eq!(ws.find_page(Page::Downloads), Some((w2, d2)), "the current window first");
+        ws.focus(w1);
+        assert_eq!(ws.find_page(Page::Downloads), Some((w1, d1)));
+        assert_eq!(ws.find_page(Page::History), None);
+        assert!(Page::Downloads.single_instance() && Page::Settings.single_instance());
+        assert!(!Page::NewTab.single_instance() && !Page::SiteData.single_instance());
     }
 
     #[test]

@@ -154,6 +154,10 @@ pub enum TabAction {
     Duplicate,
     MoveToNewWindow,
     Close,
+    /// Close every other tab of the window.
+    CloseOthers,
+    /// Close the tabs to the right of this one.
+    CloseRight,
 }
 
 /// Caption-button actions.
@@ -252,10 +256,11 @@ pub enum PopupContent {
         state: UpdateProgress,
     },
     /// The context menu of tab `tab_id`. `can_move`: the window has other tabs, so the tab
-    /// can move to a new window of its own.
+    /// can move to a new window of its own; `can_close_right`: there are tabs to its right.
     TabMenu {
         tab_id: u32,
         can_move: bool,
+        can_close_right: bool,
     },
 }
 
@@ -1717,7 +1722,18 @@ mod tests {
         let parsed = parse_request(Sender::Popup, r#"{"cmd":"command","command":{"command":"newWindow"}}"#).unwrap();
         assert_eq!(parsed.request, Request::Command { command: Command::NewWindow });
         assert_eq!(Event::TabDropHint { index: Some(1) }.to_json(), r#"{"event":"tabDropHint","index":1}"#);
-        assert_eq!(PopupContent::TabMenu { tab_id: 2, can_move: false }.kind(), PopupKind::TabMenu);
+        let menu = PopupContent::TabMenu { tab_id: 2, can_move: false, can_close_right: true };
+        assert_eq!(menu.kind(), PopupKind::TabMenu);
+        let json = serde_json::to_string(&menu).unwrap();
+        assert!(json.contains(r#""canCloseRight":true"#), "{json}");
+        for (name, action) in [("closeOthers", TabAction::CloseOthers), ("closeRight", TabAction::CloseRight)] {
+            let parsed =
+                parse_request(Sender::Popup, &format!(r#"{{"cmd":"tabMenuAction","id":4,"action":"{name}"}}"#))
+                    .unwrap();
+            assert_eq!(parsed.request, Request::TabMenuAction { id: 4, action });
+            assert!(parse_request(Sender::Shell, &format!(r#"{{"cmd":"tabMenuAction","id":4,"action":"{name}"}}"#))
+                .is_err());
+        }
         assert!(!PopupKind::TabMenu.shell_may_open(), "the shell asks with showTabMenu, not showPopup");
     }
 

@@ -1543,18 +1543,22 @@ async function testTabWindows(browser) {
   const t3 = page.locator('.tab[data-id="' + ids[2] + '"] .title');
   await t3.click({ button: 'right' });
   const tm = await lastSent(page, 'showTabMenu');
-  check(tm && tm.id === ids[2] && tm.rect.width === 240 && tm.rect.height === 196 && tm.rect.y > 0, 'right-click sends showTabMenu{id, rect} (got ' + JSON.stringify(tm) + ')');
+  check(tm && tm.id === ids[2] && tm.rect.width === 240 && tm.rect.height === 256 && tm.rect.y > 0, 'right-click sends showTabMenu{id, rect} (got ' + JSON.stringify(tm) + ')');
   check(!(await sent(page)).some((m) => m.cmd === 'showPopup' && m.popup === 'tabMenu'), 'not through showPopup');
   check(errors.length === 0, 'shell: no console errors (' + errors.join(' | ') + ')');
 
   // The popup's tab menu.
-  ({ page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 240, height: 196 }, 1));
+  ({ page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 240, height: 256 }, 1));
   await page.evaluate(() => { window.__host.autoSimulate = false; });
-  await emit(page, { event: 'popup', content: { kind: 'tabMenu', tabId: 7, canMove: false } });
+  await emit(page, { event: 'popup', content: { kind: 'tabMenu', tabId: 7, canMove: false, canCloseRight: false } });
   await page.waitForSelector('.item');
   const labels = await page.$$eval('.item .label', (ns) => ns.map((n) => n.textContent));
-  check(JSON.stringify(labels) === JSON.stringify(['Reload', 'Duplicate', 'Move to new window', 'New window', 'Close tab']), 'tab menu items (' + labels.join(', ') + ')');
+  check(JSON.stringify(labels) === JSON.stringify(['Reload', 'Duplicate', 'Move to new window', 'New window', 'Close tab', 'Close other tabs', 'Close tabs to the right']), 'tab menu items (' + labels.join(', ') + ')');
   check(await page.locator('.item', { hasText: 'Move to new window' }).isDisabled(), '"Move to new window" is disabled for a window\'s only tab');
+  check(await page.locator('.item', { hasText: 'Close other tabs' }).isDisabled(), '"Close other tabs" is disabled for a window\'s only tab');
+  check(await page.locator('.item', { hasText: 'Close tabs to the right' }).isDisabled(), '"Close tabs to the right" is disabled with nothing to the right');
+  const fits = await page.evaluate(() => document.documentElement.scrollHeight <= 256 && document.documentElement.scrollWidth <= 240);
+  check(fits, 'the tab menu fits 240x256 (no scrolling)');
   await shot(page, 'popup-tab-menu-single.png');
   await page.locator('.item', { hasText: 'Duplicate' }).click();
   let a = await lastSent(page, 'tabMenuAction');
@@ -1573,9 +1577,21 @@ async function testTabWindows(browser) {
   check(nw && nw.command.command === 'newWindow', 'New window sends command{newWindow}');
   await emit(page, { event: 'popup', content: { kind: 'tabMenu', tabId: 9, canMove: true } });
   await page.waitForTimeout(20);
-  await page.locator('.item', { hasText: 'Close tab' }).click();
+  await page.locator('.item', { hasText: 'Close tab' }).first().click();
   a = await lastSent(page, 'tabMenuAction');
   check(a && a.id === 9 && a.action === 'close', 'Close tab sends tabMenuAction{close}');
+  await emit(page, { event: 'popup', content: { kind: 'tabMenu', tabId: 10, canMove: true, canCloseRight: true } });
+  await page.waitForTimeout(20);
+  check(!(await page.locator('.item', { hasText: 'Close tabs to the right' }).isDisabled()), '"Close tabs to the right" is enabled with tabs to the right');
+  await shot(page, 'popup-tab-menu-close-many.png');
+  await page.locator('.item', { hasText: 'Close other tabs' }).click();
+  a = await lastSent(page, 'tabMenuAction');
+  check(a && a.id === 10 && a.action === 'closeOthers', 'Close other tabs sends tabMenuAction{closeOthers}');
+  await emit(page, { event: 'popup', content: { kind: 'tabMenu', tabId: 11, canMove: true, canCloseRight: true } });
+  await page.waitForTimeout(20);
+  await page.locator('.item', { hasText: 'Close tabs to the right' }).click();
+  a = await lastSent(page, 'tabMenuAction');
+  check(a && a.id === 11 && a.action === 'closeRight', 'Close tabs to the right sends tabMenuAction{closeRight}');
 
   // The main menu has "New window" (Ctrl+N).
   await emit(page, { event: 'popup', content: { kind: 'menu', zoom: 1, canReopen: false } });

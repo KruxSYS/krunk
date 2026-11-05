@@ -42,7 +42,7 @@
         onauxclick: function (e) { if (e.button === 1) { e.preventDefault(); LB.post('closeTab', { id: t.id }); } },
         oncontextmenu: function (e) {
           e.preventDefault();
-          LB.post('showTabMenu', { id: t.id, rect: { x: e.clientX, y: e.clientY, width: 240, height: 196 } });
+          LB.post('showTabMenu', { id: t.id, rect: { x: e.clientX, y: e.clientY, width: 240, height: 256 } });
           setPopup('tabMenu');
         },
       }, [
