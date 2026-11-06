@@ -449,6 +449,18 @@ updater.
 Segmentation-platform data (`profile\segmentation_platform`, which records visited URLs outside
 history) is deleted at every start. Its switch crashes this engine build.
 
+### Local network access
+
+Chromium 156 enforces Local Network Access: before a public page may fetch from a private
+address (a NAS, a Plex server on the LAN, `*.plex.direct`) or from this computer (localhost),
+it asks the embedder for a permission. Without an answer the request waits forever, which is
+what happened in 0.4.0. Krunk now answers: a prompt under the toolbar ("Connect to devices on
+your local network?" or "Connect to this computer?") with Block and Allow, remembered for the
+site when "Remember for this site" is left on. Stored answers are listed and can be removed on
+the site's Cookies and site data page (shield panel → Cookies and site data → Permissions).
+Private tabs ask every time and remember nothing. Dismissing the prompt blocks once. Every
+other permission type is unchanged (denied by the engine's default).
+
 ### Password vault
 ```
 master password --Argon2id (random 16-byte salt, 64 MiB, t=3, p=1)--> KEK      (never stored)
@@ -719,8 +731,15 @@ Testing on Windows:
 - **WebSocket connections are not filtered** by the ad blocker: CEF does not pass them to the
   request handler. Theme changes reach pages through DevTools emulation, so a page that has
   DevTools open shows the system theme.
-- **HTTP authentication and site permission prompts** (camera, microphone, location,
-  notifications) are not shown: CEF's Alloy runtime denies them by default.
+- **HTTP authentication and most site permission prompts** (camera, microphone, location,
+  notifications) are not shown: CEF's Alloy runtime denies them by default. The one exception
+  is local network access (see below), which Krunk asks about itself.
+- **Media codecs: no H.264, HEVC, AAC or AC-3.** The bundled engine is a build without
+  proprietary codecs, so MP4/H.264 video and AAC audio do not play (`canPlayType` says so, HLS
+  and DASH players report "no supported streams", Plex reports its s4032 "manifest" error).
+  VP8, VP9, AV1, Opus, Vorbis, FLAC and MP3 play. A codec-enabled engine needs a CEF build of
+  Krunk's own (`.pipeline/cef-codecs-build.md` has the recipe) or a trusted third-party build;
+  neither ships with 0.5.0.
 - **Size:** about 423 MB unpacked (184 MB zipped), against about 6 MB for the WebView2 build. All
   CEF locales and SwiftShader (software rendering for machines without a usable GPU) are kept.
 - **Discarding loses back/forward history.** A discarded tab reloads its last URL; its history

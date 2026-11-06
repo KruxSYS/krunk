@@ -24,6 +24,7 @@ pub mod netscape;
 pub mod overlay;
 pub mod pages;
 pub mod passgen;
+pub mod permissions;
 pub mod pointer_lock;
 pub mod preprocess;
 pub mod protocol;

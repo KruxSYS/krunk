@@ -48,6 +48,7 @@ mod frame;
 mod import;
 mod jobs;
 mod library;
+mod permissions;
 mod pointer;
 mod power;
 mod segmented;
@@ -152,6 +153,7 @@ pub struct Browser {
     /// Login suggestions under a focused field.
     suggest: suggest::SuggestHost,
     imports: import::ImportHost,
+    permissions: permissions::PermissionHost,
     /// Some tab was given a user agent other than the one the engine started with.
     ua_overridden: Cell<bool>,
     /// Where the shell asked for the shield panel (it grows with its list from there).
@@ -229,6 +231,7 @@ impl Browser {
             status: status::StatusHost::default(),
             suggest: suggest::SuggestHost::default(),
             imports: import::ImportHost::default(),
+            permissions: permissions::PermissionHost::default(),
             ua_overridden: Cell::new(false),
             bookmark_menu_at: Cell::new(None),
             adblock_source: Cell::new(None),
@@ -677,6 +680,7 @@ impl Browser {
     fn hook_tab(&self, id: TabId, c: &View, host_navigation: Rc<Cell<bool>>, net: Rc<TabNet>) {
         self.hook_focus(c, Some(id));
         self.hook_tab_keys(id, c);
+        self.hook_permissions(id, c);
 
         let weak = self.me.clone();
         let net_start = net.clone();
@@ -1049,6 +1053,8 @@ impl Browser {
 
     /// Every frame's toolbar (address, buttons, shield) for its active tab.
     fn send_nav(&self) {
+        // A permission prompt waiting for its tab to be active.
+        self.show_next_permission_prompt();
         for f in self.all_frames() {
             self.send_nav_to(f.id);
         }
@@ -1669,7 +1675,11 @@ impl Browser {
             | Request::StorageDeleteSite { .. }
             | Request::StorageDeleteAllCookies
             | Request::StorageClearOrigin { .. }) => self.dispatch_storage(tab, req_id, r),
+            Request::PermissionReply { prompt_id, allow, remember } => {
+                self.permission_reply(prompt_id, allow, remember)
+            }
             r @ (Request::SiteDataGet {}
+            | Request::SitePermissionRemove { .. }
             | Request::SiteDataSet { .. }
             | Request::SiteDataRemove { .. }
             | Request::SiteDataClear { .. }

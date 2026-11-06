@@ -268,6 +268,11 @@ pub(super) struct Events {
     pub inspect: Slot<dyn FnMut(InspectAt)>,
     /// The docked DevTools opened (true) or closed.
     pub devtools: Slot<dyn FnMut(bool)>,
+    /// The engine asks whether a page may reach the local network (Krunk 0.5.0): the prompt
+    /// id, the requesting origin and whether only this computer (loopback) is asked for.
+    pub permission: Slot<dyn FnMut(u64, String, bool)>,
+    /// The engine withdrew a permission prompt (the page navigated away).
+    pub permission_gone: Slot<dyn FnMut(u64)>,
 }
 
 /// Remembered until the browser exists.
@@ -298,6 +303,8 @@ pub(super) struct ViewInner {
     pub cert_error: RefCell<Option<lb_core::certinfo::SslReport>>,
     /// Frames (by identifier) that report playing audio.
     audible_frames: RefCell<std::collections::HashSet<String>>,
+    /// Open permission prompts the host still has to answer, by prompt id.
+    pub(super) permission_prompts: RefCell<std::collections::HashMap<u64, PermissionPromptCallback>>,
     devtools_id: Cell<i32>,
     /// DevTools protocol calls in flight: method (for error logs) and the
     /// callback waiting for the result, if any.
@@ -363,6 +370,7 @@ impl View {
             closed: Cell::new(false),
             load_error: Cell::new(None),
             cert_error: RefCell::new(None),
+            permission_prompts: RefCell::new(std::collections::HashMap::new()),
             audible_frames: RefCell::new(std::collections::HashSet::new()),
             devtools_id: Cell::new(0),
             devtools_calls: RefCell::new(HashMap::new()),
@@ -970,6 +978,24 @@ impl View {
 
     pub fn on_got_focus(&self, f: impl FnMut() + 'static) {
         self.0.ev.got_focus.set(Box::new(f));
+    }
+
+    /// The engine asks whether the page may reach the local network: (prompt id, requesting
+    /// origin, loopback only). Answer with `answer_permission`.
+    pub fn on_permission(&self, f: impl FnMut(u64, String, bool) + 'static) {
+        self.0.ev.permission.set(Box::new(f));
+    }
+
+    /// The engine withdrew the prompt (navigation): the host's prompt should go too.
+    pub fn on_permission_gone(&self, f: impl FnMut(u64) + 'static) {
+        self.0.ev.permission_gone.set(Box::new(f));
+    }
+
+    /// Answers an open permission prompt; false when the engine no longer waits for it.
+    pub fn answer_permission(&self, prompt_id: u64, allow: bool) -> bool {
+        let Some(cb) = self.0.permission_prompts.borrow_mut().remove(&prompt_id) else { return false };
+        cb.cont(if allow { PermissionRequestResult::ACCEPT } else { PermissionRequestResult::DENY });
+        true
     }
 
     /// The engine is about to focus this browser (`true`: because a page is

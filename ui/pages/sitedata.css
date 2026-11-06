@@ -45,3 +45,10 @@ dialog label.enc { margin: 0; font-size: 13px; color: var(--fg-muted); }
 td.row-actions .icon-btn { display: inline-flex; }
 td.row-actions { width: 68px; white-space: nowrap; }
 table.cookies th:nth-child(7) { width: 76px; }
+
+/* Permissions (0.5.0) */
+.perm-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; }
+.perm-name { flex: 1; }
+.perm-state { font-weight: 600; }
+.perm-state.allowed { color: var(--ok, #1a7f37); }
+.perm-state.blocked { color: var(--danger, #b42318); }

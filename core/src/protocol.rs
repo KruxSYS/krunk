@@ -134,6 +134,9 @@ pub enum PopupKind {
     BookmarkFolder,
     /// Master-password prompt before saving or filling a login.
     Unlock,
+    /// "Connect to devices on your local network?" (Krunk 0.5.0; opened by the host when the
+    /// engine asks for local network access).
+    Permission,
     /// "Krunk X.Y.Z is available" (opened by the host after an update check).
     Update,
     /// A tab's context menu (right-click on the tab).
@@ -271,6 +274,15 @@ pub enum PopupContent {
         origin: String,
         username: String,
         update: bool,
+    },
+    /// A public page on `origin` wants to reach the local network (`loopback`: this
+    /// computer). In a private tab the answer is never remembered.
+    Permission {
+        tab_id: u32,
+        prompt_id: u64,
+        origin: String,
+        loopback: bool,
+        private: bool,
     },
     /// "Fill the login for `origin`?" with the matching entries.
     Fill {
@@ -430,6 +442,7 @@ impl PopupContent {
             PopupContent::Suggest { .. } => PopupKind::Suggest,
             PopupContent::SavePassword { .. } => PopupKind::SavePassword,
             PopupContent::Fill { .. } => PopupKind::Fill,
+            PopupContent::Permission { .. } => PopupKind::Permission,
             PopupContent::BookmarkFolder { .. } => PopupKind::BookmarkFolder,
             PopupContent::Unlock { .. } => PopupKind::Unlock,
             PopupContent::Update { .. } => PopupKind::Update,
@@ -669,6 +682,16 @@ pub enum Request {
     },
     /// Reply to the "Save password?" prompt. `tab_id` and `origin` echo the
     /// prompt; the host re-checks both before saving.
+    /// The answer to a local-network permission prompt (`remember`: keep it for the site).
+    PermissionReply {
+        prompt_id: u64,
+        allow: bool,
+        remember: bool,
+    },
+    /// krunk://sitedata: forget a stored permission of the page's site.
+    SitePermissionRemove {
+        kind: String,
+    },
     SavePasswordReply {
         tab_id: u32,
         origin: String,
@@ -1059,6 +1082,7 @@ impl Sender {
                     | R::ShieldAllowSite { .. }
                     | R::OpenSiteData
                     | R::SavePasswordReply { .. }
+                    | R::PermissionReply { .. }
                     | R::FillReply { .. }
                     | R::SuggestPick { .. }
                     | R::SuggestUnlock { .. }
@@ -1148,6 +1172,7 @@ impl Sender {
             Sender::Page(Page::SiteData) => matches!(
                 req,
                 R::SiteDataGet {}
+                    | R::SitePermissionRemove { .. }
                     | R::SiteDataSet { .. }
                     | R::SiteCookieSet { .. }
                     | R::SiteDataRemove { .. }
@@ -2011,6 +2036,8 @@ mod tests {
             Request::DevTools,
             Request::ShieldAllowSite { allow: true },
             Request::SavePasswordReply { tab_id: 1, origin: "https://a.example".into(), accept: true, never: false },
+            Request::PermissionReply { prompt_id: 7, allow: true, remember: true },
+            Request::SitePermissionRemove { kind: "localNetwork".into() },
             Request::FillReply { tab_id: 1, origin: "https://a.example".into(), entry_id: None },
             Request::Quit,
             Request::GetTopSites,
@@ -2244,6 +2271,33 @@ mod tests {
         };
         assert_eq!(content.kind(), PopupKind::Suggest);
         assert!(serde_json::to_string(&content).unwrap().contains(r#""locked":true"#));
+    }
+
+    #[test]
+    fn permission_prompt_is_host_opened_and_answered_by_the_popup() {
+        let reply = Request::PermissionReply { prompt_id: 7, allow: false, remember: true };
+        assert!(Sender::Popup.permits(&reply));
+        assert!(!Sender::Shell.permits(&reply));
+        assert!(Page::ALL.iter().all(|p| !Sender::Page(*p).permits(&reply)));
+        let remove = Request::SitePermissionRemove { kind: "localNetwork".into() };
+        assert!(Sender::Page(Page::SiteData).permits(&remove));
+        assert!(!Sender::Popup.permits(&remove) && !Sender::Shell.permits(&remove));
+        assert!(Page::ALL.iter().filter(|p| **p != Page::SiteData).all(|p| !Sender::Page(*p).permits(&remove)));
+        assert!(!PopupKind::Permission.shell_may_open() && PopupKind::Permission.takes_focus());
+        let content = PopupContent::Permission {
+            tab_id: 1,
+            prompt_id: 7,
+            origin: "https://app.plex.tv".into(),
+            loopback: false,
+            private: true,
+        };
+        assert_eq!(content.kind(), PopupKind::Permission);
+        let j = serde_json::to_string(&content).unwrap();
+        assert!(j.contains(r#""promptId":7"#) && j.contains(r#""private":true"#), "{j}");
+        let parsed =
+            parse_request(Sender::Popup, r#"{"cmd":"permissionReply","promptId":7,"allow":true,"remember":false}"#)
+                .unwrap();
+        assert!(matches!(parsed.request, Request::PermissionReply { prompt_id: 7, allow: true, remember: false }));
     }
 
     #[test]

@@ -280,6 +280,31 @@
     ])];
   }
 
+  // "Connect to devices on your local network?" (Krunk 0.5.0): the engine's local network
+  // access check, answered by the user; remembered for the site unless the tab is private.
+  function renderPermission(c) {
+    const remember = el('input', { type: 'checkbox', id: 'remember', checked: !c.private });
+    const reply = (allow) => {
+      LB.post('permissionReply', { promptId: c.promptId, allow: allow, remember: !c.private && remember.checked });
+      close();
+    };
+    let host = c.origin;
+    try { host = new URL(c.origin).host; } catch (e) { /* keep the origin */ }
+    return [el('div', { class: 'panel' }, [
+      el('h2', { text: c.loopback ? 'Connect to this computer?' : 'Connect to devices on your local network?' }),
+      el('p', {}, [el('span', { class: 'origin', text: host }), c.loopback
+        ? ' wants to connect to a program on this computer.'
+        : ' wants to connect to a device on your local network (a NAS, a media server, a printer…).']),
+      c.private
+        ? el('p', { class: 'muted', text: 'Private tab: this answer is not remembered.' })
+        : el('label', { class: 'check' }, [remember, ' Remember for this site']),
+      el('div', { class: 'row' }, [
+        el('button', { class: 'btn', onclick: () => reply(false), text: 'Block' }),
+        el('button', { class: 'btn primary', id: 'default', onclick: () => reply(true), text: 'Allow' }),
+      ]),
+    ])];
+  }
+
   function renderFill(c) {
     const reply = (id) => {
       LB.post('fillReply', { tabId: c.tabId, origin: c.origin, entryId: id });
@@ -472,7 +497,7 @@
   LB.on('popup', function (m) {
     current = m.content;
     const c = m.content;
-    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, fill: renderFill, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
+    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, fill: renderFill, permission: renderPermission, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
     root.textContent = '';
     root.dataset.kind = c.kind;
     (render ? render(c) : []).forEach((n) => n && root.appendChild(n));

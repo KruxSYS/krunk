@@ -621,6 +621,30 @@ async function testPopup(browser) {
   r = await lastSent(page, 'savePasswordReply');
   check(r && r.accept === true && r.tabId === 7 && r.origin === 'https://bank.example' && !('password' in r), 'Save sends accept with tab id/origin and no password');
 
+  // 0.5: the local network access prompt (host-opened; Allow/Block, remembered unless private).
+  ({ page, errors } = await make(380, 196));
+  const perm = { kind: 'permission', tabId: 3, promptId: 41, origin: 'https://app.plex.tv', loopback: false, private: false };
+  await emit(page, { event: 'popup', content: perm });
+  await page.waitForSelector('.panel');
+  await shot(page, 'popup-permission.png');
+  check((await page.textContent('.panel h2')) === 'Connect to devices on your local network?' && (await page.textContent('.panel p')).startsWith('app.plex.tv wants'), 'local network prompt names the host');
+  check(await page.isChecked('#remember') && await page.evaluate(() => document.activeElement && document.activeElement.textContent) === 'Allow', 'Remember is on and Allow has the focus');
+  await page.locator('button', { hasText: /^Allow$/ }).click();
+  let pr = await lastSent(page, 'permissionReply');
+  check(pr && pr.promptId === 41 && pr.allow === true && pr.remember === true, 'Allow sends permissionReply{promptId, allow, remember}');
+  await emit(page, { event: 'popup', content: perm });
+  await page.waitForTimeout(20);
+  await page.uncheck('#remember');
+  await page.locator('button', { hasText: /^Block$/ }).click();
+  pr = await lastSent(page, 'permissionReply');
+  check(pr && pr.allow === false && pr.remember === false, 'Block without Remember');
+  await emit(page, { event: 'popup', content: Object.assign({}, perm, { loopback: true, private: true }) });
+  await page.waitForTimeout(20);
+  check((await page.textContent('.panel h2')) === 'Connect to this computer?' && await page.locator('#remember').count() === 0 && (await page.textContent('.panel p.muted')).includes('not remembered'), 'loopback wording; a private tab has no Remember');
+  await page.locator('button', { hasText: /^Allow$/ }).click();
+  pr = await lastSent(page, 'permissionReply');
+  check(pr && pr.allow === true && pr.remember === false, 'private: never remembered');
+
   ({ page, errors } = await make(340, 236));
   await emit(page, { event: 'popup', content: { kind: 'fill', tabId: 9, origin: 'https://mail.example', entries: [{ id: 'e1', username: 'alice@mail.example' }, { id: 'e2', username: 'bob' }] } });
   await page.waitForSelector('.choice');
@@ -1025,6 +1049,7 @@ async function testSiteData(browser) {
       { name: 'blob', value: 'v1%00%01%FF', domain: 'www.example.com', path: '/', expires: null, secure: true, httpOnly: true, sameSite: 'lax' }],
     local: [['cart', '[1,2,3]'], ['theme', 'dark'], ['bin', '\u0000\u0001\u00ffabc']],
     session: [['step', '2']],
+    permissions: { localNetwork: null },
   };
   const { page, errors, external } = await openPage(browser, 'https://krunk.invalid/sitedata.html', { width: 1000, height: 700 }, 1, (d) => {
     const h = window.__host.handlers;
@@ -1034,10 +1059,31 @@ async function testSiteData(browser) {
     h.siteDataClear = () => null;
     h.siteCookiesDelete = () => ({ deleted: 1 });
     h.siteCookieSet = () => null;
+    h.sitePermissionRemove = () => true;
   }, state);
   await page.waitForSelector('.kv');
   check((await page.locator('#origin').textContent()) === 'https://www.example.com', 'shows the bound origin');
   check(await page.locator('#private').isVisible(), 'private tab marked');
+  // 0.5: permissions (local network access) – none in a private tab; allowed/blocked with Remove otherwise.
+  check((await page.textContent('#permissions')).includes('not remembered in private tabs'), 'private tab: permissions are not remembered');
+  await page.evaluate(() => { const get = window.__host.handlers.siteDataGet; window.__host.handlers.siteDataGet = () => Object.assign({}, get(), { private: false, permissions: { localNetwork: true } }); });
+  await page.click('#reload');
+  await page.waitForTimeout(50);
+  check((await page.textContent('.perm-name')) === 'Local network access' && (await page.textContent('.perm-state')) === 'Allowed', 'a stored local-network permission is listed');
+  await page.click('#perm-remove');
+  await page.waitForTimeout(50);
+  check((await lastSent(page, 'sitePermissionRemove')).kind === 'localNetwork', 'Remove asks the host to forget it');
+  await page.evaluate(() => { const get = window.__host.handlers.siteDataGet; window.__host.handlers.siteDataGet = () => Object.assign({}, get(), { permissions: { localNetwork: false } }); });
+  await page.click('#reload');
+  await page.waitForTimeout(50);
+  check((await page.textContent('.perm-state')) === 'Blocked', 'a blocked permission is shown as such');
+  await page.evaluate(() => { const get = window.__host.handlers.siteDataGet; window.__host.handlers.siteDataGet = () => Object.assign({}, get(), { permissions: { localNetwork: null } }); });
+  await page.click('#reload');
+  await page.waitForTimeout(50);
+  check((await page.textContent('#permissions')).includes('No permissions saved'), 'no stored permission: an empty state');
+  await page.evaluate(() => { const get = window.__host.handlers.siteDataGet; window.__host.handlers.siteDataGet = () => Object.assign({}, get(), { private: true }); });
+  await page.click('#reload');
+  await page.waitForTimeout(50);
   check((await page.locator('#local .kv').count()) === 3 && (await page.locator('#session .kv').count()) === 1, 'local and session storage items');
   check((await page.locator('#cookies tr').count()) === 2, 'site cookies');
   await shot(page, 'sitedata.png');

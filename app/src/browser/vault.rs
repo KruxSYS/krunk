@@ -656,6 +656,7 @@ impl Browser {
                 self.vaults.pending_save.borrow_mut().take();
             }
             PopupContent::Suggest { .. } => self.suggest_dismissed(),
+            PopupContent::Permission { prompt_id, .. } => self.permission_dismissed(*prompt_id),
             PopupContent::Unlock { purpose, .. } => {
                 self.vaults.unlock_for.borrow_mut().take();
                 match purpose {

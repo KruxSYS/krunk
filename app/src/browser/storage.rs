@@ -193,12 +193,18 @@ impl Browser {
                 let live = view.is_some();
                 let profile = binding.profile();
                 let private = binding.private;
+                // Permissions are never stored for private tabs.
+                let permissions = if private {
+                    serde_json::json!({ "localNetwork": null })
+                } else {
+                    self.site_permissions_json(&origin)
+                };
                 let view2 = view.clone();
                 list_cookies(profile, move |cookies| {
                     let cookies = cookies_for_origin(&cookies, &origin);
                     let base = serde_json::json!({
                         "origin": origin, "private": private, "live": live, "cookies": cookies,
-                        "local": [], "session": [],
+                        "local": [], "session": [], "permissions": permissions,
                     });
                     let Some(v) = view2 else { return reply(Event::ok(req_id, base)) };
                     dom_storage_both(&v, &origin, move |local, session| {
@@ -252,6 +258,13 @@ impl Browser {
                         })
                     });
                 });
+            }
+            Request::SitePermissionRemove { kind } => {
+                let removed = self.store.borrow().permission_remove(&origin, &kind).unwrap_or(false);
+                if removed {
+                    info!("site data: {kind} permission of {origin} removed");
+                }
+                reply(Event::ok(req_id, removed));
             }
             Request::SiteCookiesDelete { cookie } => {
                 if cookie.as_ref().is_some_and(|c| !c.is_valid()) {

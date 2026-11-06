@@ -70,6 +70,10 @@ wrap_client! {
             Some(Requests::new(self.key, self.policy.clone()))
         }
 
+        fn permission_handler(&self) -> Option<PermissionHandler> {
+            Some(Permissions::new(self.key))
+        }
+
         fn context_menu_handler(&self) -> Option<ContextMenuHandler> {
             // The browser's own UI has no context menu; pages get the
             // engine's menu plus "Inspect".
@@ -455,6 +459,40 @@ wrap_focus_handler! {
             let navigation = source.get_raw() == FocusSource::NAVIGATION.get_raw();
             let allow = lookup(self.key).and_then(|v| v.ev.set_focus.with(|f| f(navigation))).unwrap_or(true);
             c_int::from(!allow)
+        }
+    }
+}
+
+// Local network access (Krunk 0.5.0): Chromium asks before a public page may reach a
+// private address or this computer. Those prompts go to the host (which asks the user or
+// answers from its store); every other permission type stays with the engine's default.
+wrap_permission_handler! {
+    struct Permissions {
+        key: u64,
+    }
+    impl PermissionHandler {
+        fn on_show_permission_prompt(
+            &self,
+            _browser: Option<&mut Browser>,
+            prompt_id: u64,
+            requesting_origin: Option<&CefString>,
+            requested_permissions: u32,
+            callback: Option<&mut PermissionPromptCallback>,
+        ) -> c_int {
+            let Some(request) = lb_core::permissions::network_request(requested_permissions) else { return 0 };
+            let (Some(view), Some(callback)) = (lookup(self.key), callback) else { return 0 };
+            view.permission_prompts.borrow_mut().insert(prompt_id, callback.clone());
+            let origin = text(requesting_origin);
+            view.ev.permission.with(|f| f(prompt_id, origin.clone(), request.loopback));
+            1
+        }
+
+        fn on_dismiss_permission_prompt(&self, _browser: Option<&mut Browser>, prompt_id: u64, _result: PermissionRequestResult) {
+            if let Some(view) = lookup(self.key) {
+                if view.permission_prompts.borrow_mut().remove(&prompt_id).is_some() {
+                    view.ev.permission_gone.with(|f| f(prompt_id));
+                }
+            }
         }
     }
 }

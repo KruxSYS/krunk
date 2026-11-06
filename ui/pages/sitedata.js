@@ -18,10 +18,32 @@
       document.title = 'Site data – ' + r.origin;
       document.getElementById('private').hidden = !r.private;
       document.getElementById('gone').hidden = !!r.live;
+      renderPermissions(r.permissions || {}, r.private);
       renderCookies(r.cookies);
       renderArea('local', r.local);
       renderArea('session', r.session);
     }).catch(fail);
+  }
+
+  // The site's stored permission answers (Krunk 0.5.0: local network access).
+  function renderPermissions(p, isPrivate) {
+    const box = document.getElementById('permissions');
+    box.textContent = '';
+    if (isPrivate) {
+      box.appendChild(el('div', { class: 'empty', text: 'Permissions are not remembered in private tabs.' }));
+      return;
+    }
+    if (p.localNetwork === null || p.localNetwork === undefined) {
+      box.appendChild(el('div', { class: 'empty', text: 'No permissions saved for this site. Krunk asks when the site wants to reach your local network.' }));
+      return;
+    }
+    box.appendChild(el('div', { class: 'perm-row' }, [
+      el('span', { class: 'perm-name', text: 'Local network access' }),
+      el('span', { class: 'perm-state ' + (p.localNetwork ? 'allowed' : 'blocked'), text: p.localNetwork ? 'Allowed' : 'Blocked' }),
+      el('button', { class: 'link-btn', id: 'perm-remove', text: 'Remove', onclick: function () {
+        LB.request('sitePermissionRemove', { kind: 'localNetwork' }).then(load).catch(fail);
+      } }),
+    ]));
   }
 
   function renderCookies(cookies) {

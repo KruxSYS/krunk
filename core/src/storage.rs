@@ -16,7 +16,7 @@ pub const BOOKMARKS_BAR: i64 = 1;
 /// Id of the "Other bookmarks" root folder.
 pub const OTHER_BOOKMARKS: i64 = 2;
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 const SCHEMA_V1: &str = "
 CREATE TABLE urls (
@@ -96,6 +96,17 @@ CREATE TABLE vault_never (
 );
 ";
 
+// Krunk 0.5.0: the user's answers to site permission prompts (local network access).
+const SCHEMA_V5: &str = "
+CREATE TABLE site_permissions (
+    origin TEXT NOT NULL,
+    kind   TEXT NOT NULL,
+    allow  INTEGER NOT NULL,
+    added  INTEGER NOT NULL,
+    PRIMARY KEY (origin, kind)
+);
+";
+
 /// Largest favicon we keep.
 pub const MAX_FAVICON_BYTES: usize = 48 * 1024;
 
@@ -160,6 +171,12 @@ impl Store {
         if version < 4 {
             let tx = self.conn.transaction()?;
             tx.execute_batch(SCHEMA_V4)?;
+            tx.pragma_update(None, "user_version", 4)?;
+            tx.commit()?;
+        }
+        if version < 5 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(SCHEMA_V5)?;
             tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             tx.commit()?;
         }

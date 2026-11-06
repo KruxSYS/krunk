@@ -289,6 +289,7 @@ pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> Pop
         PopupKind::Suggest => (300.0, 160.0),
         PopupKind::BookmarkFolder => (280.0, folder_height(entries)),
         PopupKind::Unlock => (360.0, 200.0),
+        PopupKind::Permission => (380.0, 196.0),
         PopupKind::Update => (360.0, 150.0),
         PopupKind::TabMenu => TAB_MENU_SIZE,
         PopupKind::BookmarkMenu => (240.0, 352.0),
