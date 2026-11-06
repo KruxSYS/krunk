@@ -1,0 +1,3 @@
+"url","username","password","httpRealm","formActionOrigin","guid","timeCreated","timeLastUsed","timePasswordChanged"
+"https://login.example","csv-alice","Csv-pass-alice-1","","https://login.example","{1}","1700000000000","1700000000000","1700000000000"
+"http://intranet.example","csv-carol","Csv-pass-carol-3","Intranet","","{3}","1700000000000","1700000000000","1700000000000"

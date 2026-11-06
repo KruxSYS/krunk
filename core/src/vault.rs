@@ -78,7 +78,7 @@ impl std::fmt::Display for VaultError {
 
 impl std::error::Error for VaultError {}
 
-type VResult<T> = Result<T, VaultError>;
+pub type VResult<T> = Result<T, VaultError>;
 
 /// Defence-in-depth wrapping of the (already encrypted) vault key. On
 /// Windows this is DPAPI with the CurrentUser scope, which makes a copied
@@ -241,7 +241,7 @@ fn random<const N: usize>() -> VResult<[u8; N]> {
     Ok(b)
 }
 
-fn random_id() -> VResult<String> {
+pub(crate) fn random_id() -> VResult<String> {
     Ok(random::<16>()?.iter().map(|b| format!("{b:02x}")).collect())
 }
 
@@ -480,7 +480,7 @@ pub struct Vault {
     kek: Zeroizing<[u8; KEY_LEN]>,
     vk: Zeroizing<[u8; KEY_LEN]>,
     generation: u64,
-    entries: Vec<Entry>,
+    pub(crate) entries: Vec<Entry>,
 }
 
 impl std::fmt::Debug for Vault {
@@ -753,7 +753,7 @@ impl Vault {
     }
 
     /// Encrypts everything with fresh nonces and atomically replaces the file.
-    fn save(&mut self, wrapper: &dyn KeyWrapper) -> VResult<()> {
+    pub(crate) fn save(&mut self, wrapper: &dyn KeyWrapper) -> VResult<()> {
         let generation = self.generation + 1;
         let check = seal(&self.kek, CHECK_PLAINTEXT, AAD_CHECK)?;
         let sealed_vk = seal(&self.kek, self.vk.as_ref(), AAD_VAULT_KEY)?;

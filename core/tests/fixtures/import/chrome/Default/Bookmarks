@@ -1,0 +1,77 @@
+{
+ "checksum": "0",
+ "roots": {
+  "bookmark_bar": {
+   "date_added": "13344473600000000",
+   "guid": "00000001-0000-4000-8000-000000000000",
+   "id": "1",
+   "name": "Bookmarks bar",
+   "type": "folder",
+   "children": [
+    {
+     "date_added": "13344473600010000",
+     "guid": "00000005-0000-4000-8000-000000000000",
+     "id": "5",
+     "name": "News",
+     "type": "url",
+     "url": "https://news.example/"
+    },
+    {
+     "date_added": "13344473600020000",
+     "guid": "00000006-0000-4000-8000-000000000000",
+     "id": "6",
+     "name": "Work",
+     "type": "folder",
+     "children": [
+      {
+       "date_added": "13344473600030000",
+       "guid": "00000007-0000-4000-8000-000000000000",
+       "id": "7",
+       "name": "The guide",
+       "type": "url",
+       "url": "https://docs.example/guide"
+      }
+     ],
+     "date_modified": "13344473600020000"
+    }
+   ],
+   "date_modified": "13344473600000000"
+  },
+  "other": {
+   "date_added": "13344473600000000",
+   "guid": "00000002-0000-4000-8000-000000000000",
+   "id": "2",
+   "name": "Other bookmarks",
+   "type": "folder",
+   "children": [
+    {
+     "date_added": "13344473600040000",
+     "guid": "00000008-0000-4000-8000-000000000000",
+     "id": "8",
+     "name": "Login",
+     "type": "url",
+     "url": "https://login.example/"
+    },
+    {
+     "date_added": "13344473600050000",
+     "guid": "00000009-0000-4000-8000-000000000000",
+     "id": "9",
+     "name": "Script",
+     "type": "url",
+     "url": "javascript:void(0)"
+    }
+   ],
+   "date_modified": "13344473600000000"
+  },
+  "synced": {
+   "date_added": "13344473600000000",
+   "guid": "00000003-0000-4000-8000-000000000000",
+   "id": "3",
+   "name": "Mobile bookmarks",
+   "type": "folder",
+   "children": [],
+   "date_modified": "13344473600000000"
+  }
+ },
+ "version": 1
+}

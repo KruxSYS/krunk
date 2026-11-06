@@ -1,0 +1,56 @@
+{
+ "nextId": 4,
+ "logins": [
+  {
+   "id": 1,
+   "hostname": "https://login.example",
+   "httpRealm": null,
+   "formSubmitURL": "https://login.example",
+   "usernameField": "user",
+   "passwordField": "pass",
+   "encryptedUsername": "MDoEEPgAAAAAAAAAAAAAAAAAAAAwFAYIKoZIhvcNAwcECA0HoP1xh3grBBASgI7XwCtZFLJ+grMSIs3e",
+   "encryptedPassword": "MDoEEPgAAAAAAAAAAAAAAAAAAAAwFAYIKoZIhvcNAwcECEpxweZdYWcUBBBE1LIUZahdInqkCqVwjDa/",
+   "guid": "{00000001-0000-4000-8000-000000000000}",
+   "encType": 1,
+   "timeCreated": 1700000001000,
+   "timeLastUsed": 1700000002000,
+   "timePasswordChanged": 1700000001000,
+   "timesUsed": 1
+  },
+  {
+   "id": 2,
+   "hostname": "https://shop.example",
+   "httpRealm": null,
+   "formSubmitURL": "https://shop.example/signin",
+   "usernameField": "user",
+   "passwordField": "pass",
+   "encryptedUsername": "MDIEEPgAAAAAAAAAAAAAAAAAAAAwFAYIKoZIhvcNAwcECMrRZfKuQB5jBAiCbR77Q2kw7A==",
+   "encryptedPassword": "MDoEEPgAAAAAAAAAAAAAAAAAAAAwFAYIKoZIhvcNAwcECA6jf/o4WBJRBBA5jPdahk09XM3gJUp4hnEw",
+   "guid": "{00000002-0000-4000-8000-000000000000}",
+   "encType": 1,
+   "timeCreated": 1700000002000,
+   "timeLastUsed": 1700000004000,
+   "timePasswordChanged": 1700000002000,
+   "timesUsed": 2
+  },
+  {
+   "id": 3,
+   "hostname": "http://intranet.example",
+   "httpRealm": "Intranet",
+   "formSubmitURL": null,
+   "usernameField": "",
+   "passwordField": "",
+   "encryptedUsername": "MDoEEPgAAAAAAAAAAAAAAAAAAAAwFAYIKoZIhvcNAwcECEi4tsb4sgi3BBAx2RIkyTPJW+W43qMqo312",
+   "encryptedPassword": "MDoEEPgAAAAAAAAAAAAAAAAAAAAwFAYIKoZIhvcNAwcECHlNUOgji9JtBBDVaDspUjxRqEI4w3+SPUT2",
+   "guid": "{00000003-0000-4000-8000-000000000000}",
+   "encType": 1,
+   "timeCreated": 1700000003000,
+   "timeLastUsed": 1700000006000,
+   "timePasswordChanged": 1700000003000,
+   "timesUsed": 3
+  }
+ ],
+ "potentiallyVulnerablePasswords": [],
+ "dismissedBreachAlertsByLoginGUID": {},
+ "version": 3
+}

@@ -15,6 +15,7 @@ pub mod filterlists;
 pub mod frame;
 pub mod frecency;
 pub mod history;
+pub mod import;
 pub mod keys;
 pub mod layout;
 pub mod memory;

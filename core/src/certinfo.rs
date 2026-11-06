@@ -150,13 +150,13 @@ pub fn cert_status_names(bits: u32) -> Vec<String> {
 // ------------------------------------------------------------------ DER
 
 #[derive(Debug, Clone, Copy)]
-struct Tlv<'a> {
-    tag: u8,
-    body: &'a [u8],
+pub(crate) struct Tlv<'a> {
+    pub(crate) tag: u8,
+    pub(crate) body: &'a [u8],
 }
 
 /// Reads one TLV at the start of `d`; returns it and the rest.
-fn tlv(d: &[u8]) -> Result<(Tlv<'_>, &[u8]), String> {
+pub(crate) fn tlv(d: &[u8]) -> Result<(Tlv<'_>, &[u8]), String> {
     let (&tag, rest) = d.split_first().ok_or("truncated")?;
     let (&first, rest) = rest.split_first().ok_or("truncated length")?;
     let (len, rest) = if first & 0x80 == 0 {
@@ -176,7 +176,7 @@ fn tlv(d: &[u8]) -> Result<(Tlv<'_>, &[u8]), String> {
 }
 
 /// The TLVs inside a SEQUENCE/SET body, in order (at most 64).
-fn children(body: &[u8]) -> Result<Vec<Tlv<'_>>, String> {
+pub(crate) fn children(body: &[u8]) -> Result<Vec<Tlv<'_>>, String> {
     let mut out = Vec::new();
     let mut rest = body;
     while !rest.is_empty() {
@@ -190,7 +190,7 @@ fn children(body: &[u8]) -> Result<Vec<Tlv<'_>>, String> {
     Ok(out)
 }
 
-fn oid_string(body: &[u8]) -> String {
+pub(crate) fn oid_string(body: &[u8]) -> String {
     let mut parts = Vec::new();
     let mut acc: u64 = 0;
     for (i, &b) in body.iter().enumerate() {

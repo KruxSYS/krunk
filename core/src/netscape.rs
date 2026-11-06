@@ -303,9 +303,16 @@ impl Store {
     /// URL) and non-bookmarkable URLs (`javascript:`, `place:`) are skipped.
     pub fn import_bookmarks(&self, html: &str) -> Result<ImportStats, String> {
         let nodes = parse(html)?;
+        self.import_bookmark_nodes(&nodes)
+    }
+
+    /// Imports a parsed bookmark tree (from a Netscape file or another browser's profile):
+    /// the toolbar folder's children go to the bookmarks bar, everything else under
+    /// "Other bookmarks", with the same duplicate rules as `import_bookmarks`.
+    pub fn import_bookmark_nodes(&self, nodes: &[ImportNode]) -> Result<ImportStats, String> {
         let mut stats = ImportStats::default();
         let tx = self.conn.unchecked_transaction().map_err(|e| e.to_string())?;
-        for node in &nodes {
+        for node in nodes {
             match node {
                 ImportNode::Folder { toolbar: true, children, .. } => {
                     self.import_into(BOOKMARKS_BAR, children, &mut stats).map_err(|e| e.to_string())?

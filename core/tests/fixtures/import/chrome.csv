@@ -1,0 +1,5 @@
+name,url,username,password,note
+login.example,https://login.example/,csv-alice,Csv-pass-alice-1,
+shop.example,https://shop.example/signin,csv-bob,"Csv,pass ""bob"" 2","two lines
+of note"
+nowhere,not a url,csv-nobody,x,

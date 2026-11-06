@@ -1,0 +1,13 @@
+{
+ "os_crypt": {
+  "encrypted_key": "RFBBUElGQUtFRFBBUEkt9o/9b4R6+JkTkdtzZjV0X+XY58CDPRniO6CcFXfSkw==",
+  "app_bound_encrypted_key": "QVBQQj+Qt2hDAVosvsZB7Y/QqN8aaPn2YBDfxCIVuHJs50sif6jkkIHhJ03ZLDlHZ3d0w4g3kIlfyoGdZv/P37Bfw0c="
+ },
+ "profile": {
+  "info_cache": {
+   "Default": {
+    "name": "Person 1"
+   }
+  }
+ }
+}
