@@ -1,0 +1,39 @@
+<!doctype html>
+<!-- Login form that prints its own origin, its fields' contents and every input/change event
+     (Krunk 0.5.0, scripts/vm-050-autofill.ps1). Served on https://login.krunk-test.test:8443,
+     https://www.krunk-test.test:8443 (same registrable domain) and http://login.krunk-test.test:8094
+     (same host, plain http) to show which saved logins each origin is offered. -->
+<html lang="en"><head><meta charset="utf-8"><title>Origin login</title>
+<style>
+  body { font: 16px system-ui, sans-serif; margin: 24px; }
+  input { font: inherit; padding: 6px 8px; width: 260px; display: block; margin: 6px 0 14px; }
+  #state, #events { font-family: ui-monospace, monospace; color: #555; }
+</style></head><body>
+<h1 id="title">Login</h1>
+<form id="f" action="/log" method="get">
+  <label>Username <input id="user" name="username" type="text" autocomplete="username"></label>
+  <label>Password <input id="pw" name="password" type="password" autocomplete="current-password"></label>
+  <button type="submit">Sign in</button>
+</form>
+<p id="state"></p>
+<p id="events">events: none</p>
+<script>
+  document.getElementById('title').textContent = 'Login at ' + location.origin;
+  var events = [];
+  function show() {
+    var inputs = Array.prototype.map.call(document.querySelectorAll('input'), function (i) {
+      return i.id + '="' + (i.type === 'password' ? '*'.repeat(i.value.length) : i.value) + '"';
+    });
+    document.getElementById('state').textContent = 'fields: ' + inputs.join(' ') + ' (password-length=' + document.getElementById('pw').value.length + ')';
+  }
+  ['input', 'change'].forEach(function (ev) {
+    document.addEventListener(ev, function (e) {
+      events.push(ev + '#' + e.target.id + '(' + e.target.value.length + ')');
+      document.getElementById('events').textContent = 'events: ' + events.join(' ');
+      show();
+    }, true);
+  });
+  setInterval(show, 500);
+  show();
+</script>
+</body></html>

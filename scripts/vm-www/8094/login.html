@@ -16,6 +16,7 @@
   <button type="submit">Sign in</button>
 </form>
 <p id="state"></p>
+<p id="events">events: none</p>
 <h2>Cross-origin iframe (127.0.0.1:8095)</h2>
 <iframe src="http://127.0.0.1:8095/frame-login.html"></iframe>
 <script>
@@ -23,6 +24,12 @@
     document.getElementById('state').textContent = 'top: user="' + document.getElementById('user').value + '" password-length=' + document.getElementById('pw').value.length;
   }
   ['input', 'change', 'focus', 'blur'].forEach((ev) => document.addEventListener(ev, show, true));
+  // Every input/change event with the field and its value length: a fill must fire both.
+  var events = [];
+  ['input', 'change'].forEach((ev) => document.addEventListener(ev, (e) => {
+    events.push(ev + '#' + e.target.id + '(' + e.target.value.length + ')');
+    document.getElementById('events').textContent = 'events: ' + events.join(' ');
+  }, true));
   setInterval(show, 500);
   show();
 </script>
