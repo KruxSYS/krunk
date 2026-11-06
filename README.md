@@ -773,6 +773,10 @@ Testing on Windows:
   The in-app update from 0.2.1 to 0.3.0 was tested against the live server after publishing
   (2026-11-05): 0.2.1 offered 0.3.0, Update now installed it, and Krunk restarted as 0.3.0 with
   the session in one window.
+  The in-app update from 0.3.0 to 0.4.0 was tested the same way (2026-11-06): 0.3.0 offered 0.4.0
+  a minute after starting, and Update now brought Krunk back as 0.4.0 in 48 s with the session
+  restored. If the installer is still exiting when Krunk restarts, its download stays in
+  `%TEMP%\Krunk-update` until the next start, which removes it.
 - **DevTools can't be undocked** into its own window; it docks right or at the bottom of its
   tab's window. Theme changes don't reach a page while its DevTools is open (see above).
 - **Unsigned:** the binaries are not code-signed (SmartScreen may warn on first start).

@@ -601,6 +601,12 @@ Last pass: 2026-11-05 on the Windows 11 VM; evidence in the pipeline workspace u
 `scripts/vm-www/` (`8090/plock-measure.html`, `8092/dl.html`, `ads.html`, `own.html`,
 `bin.html`).
 
+
+The in-app update from 0.3.0 to 0.4.0 was run after publishing (2026-11-06), against the live
+server: the live 0.3.0 offered 0.4.0 after 56 s; Update now brought Krunk back as 0.4.0 in 48 s
+with the session restored, the vault unchanged and no `*.md`. The downloaded installer was still
+in `%TEMP%\Krunk-update` right after the restart (the installer was still exiting) and was gone
+after the next start.
 ### Tabs and windows
 1. **Merge:** drag a window's only tab onto another window's tab row: the tab lands there and
    that window is in front, not behind the other one.
