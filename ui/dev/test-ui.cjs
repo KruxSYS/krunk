@@ -1889,7 +1889,15 @@ function settingsMock(defaults) {
   ];
   window.__uas = UAS;
   h.getSettings = () => ({ settings: st.settings, restartRequired: restart(st.settings), about: { version: '0.1.0', cef: '156.0.15', chromium: '156.0.8078.80', dataDir: 'C:\\Users\\me\\AppData\\Local\\Krunk' }, userAgents: UAS, defaultUserAgent: UA_DEFAULT });
-  h.importDetect = () => [];
+  h.importDetect = () => [
+    { id: 'firefox:abcd.default-release', browser: 'firefox', label: 'Firefox – default-release', path: 'C:\\Users\\me\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\abcd.default-release', isDefault: true, hasHistory: true, hasBookmarks: true, hasPasswords: true },
+    { id: 'chrome:Default', browser: 'chrome', label: 'Google Chrome – Person 1 (Default)', path: 'C:\\Users\\me\\AppData\\Local\\Google\\Chrome\\User Data\\Default', isDefault: true, hasHistory: true, hasBookmarks: false, hasPasswords: true },
+  ];
+  h.importRun = (m) => {
+    if (m.profile === 'chrome:Default') return { history: { imported: 120, merged: 3 }, passwords: { imported: 0, merged: 0, skipped: 0, appBound: 2 } };
+    return { history: { imported: 9, merged: 0 }, bookmarks: { imported: 1, folders: 0, merged: 0 }, passwords: { imported: 1, updated: 1, merged: 2, skipped: 0, appBound: 0 } };
+  };
+  h.importCsv = () => ({ passwords: { imported: 2, merged: 0, skipped: 1, appBound: 0 } });
   h.saveSettings = (m) => {
     const s = m.settings;
     const errs = [];
@@ -2163,6 +2171,29 @@ async function testSettings(browser) {
   await page.evaluate(() => { location.hash = '#nonsense'; });
   await page.waitForTimeout(40);
   check(await page.locator('.panel.active[data-tab=general]').count() === 1, 'an unknown section falls back to General');
+  // 0.5: import from other browsers (Passwords & import).
+  await page.evaluate(() => { location.hash = '#passwords'; });
+  await page.waitForTimeout(40);
+  await page.waitForFunction(() => document.querySelectorAll('#import-profiles .row').length === 2);
+  check((await page.textContent('#import-profiles .row:nth-child(1) .name')) === 'Firefox – default-release (default)', 'the Firefox profile is listed with its name');
+  check(await page.locator('#import-profiles .row:nth-child(1) input[type=password]').count() === 1 && await page.locator('#import-profiles .row:nth-child(2) input[type=password]').count() === 0, 'only Firefox rows ask for a primary password');
+  check(!(await page.isChecked('#import-profiles .row:nth-child(2) input[data-type=bookmarks]')) && await page.locator('#import-profiles .row:nth-child(2) label.off').count() === 1, 'a type the profile has no file for is unchecked and greyed');
+  await page.fill('#import-profiles .row:nth-child(1) input[type=password]', 'fx-secret');
+  await page.click('#import-profiles .row:nth-child(1) button');
+  await page.waitForTimeout(60);
+  const run = await lastSent(page, 'importRun');
+  check(run && run.profile === 'firefox:abcd.default-release' && run.types.join(',') === 'history,bookmarks,passwords' && run.primaryPassword === 'fx-secret', 'Import asks the host for the chosen profile, types and primary password');
+  check((await page.textContent('#import-result')) === 'history: 9 imported · bookmarks: 1 imported · passwords: 1 imported, 1 updated, 2 already there', 'the counts are shown (' + await page.textContent('#import-result') + ')');
+  check((await page.inputValue('#import-profiles .row:nth-child(1) input[type=password]')) === '', 'the primary password field is cleared afterwards');
+  await page.click('#import-profiles .row:nth-child(2) button');
+  await page.waitForTimeout(60);
+  const run2 = await lastSent(page, 'importRun');
+  check(run2 && run2.profile === 'chrome:Default' && run2.types.join(',') === 'history,passwords' && run2.primaryPassword === null, 'Chrome: no bookmarks (unchecked), no primary password');
+  check((await page.textContent('#import-result')).includes('passwords: 0 imported (2 protected by Chrome, export a CSV for those)'), 'app-bound Chrome passwords are explained (' + await page.textContent('#import-result') + ')');
+  await page.click('#import-csv');
+  await page.waitForTimeout(60);
+  check((await lastSent(page, 'importCsv')) !== undefined && (await page.textContent('#import-result')) === 'passwords: 2 imported, 1 skipped', 'the CSV import asks the host (native file dialog) and shows its counts');
+  await shot(page, 'settings-import.png');
   const deep = await openPage(browser, 'https://krunk.invalid/settings.html#privacy', { width: 1000, height: 1200 }, 1, settingsMock, defaults);
   await deep.page.waitForFunction(() => document.getElementById('lists-summary').textContent !== '');
   check(await deep.page.locator('.panel.active[data-tab=privacy]').count() === 1, 'opened at #privacy: the Privacy tab shows');

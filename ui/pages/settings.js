@@ -325,13 +325,15 @@
       return;
     }
     profiles.forEach(function (p) {
-      const types = el('span', { class: 'types' }, ['history', 'bookmarks', 'passwords'].map((t) => el('label', {}, [
-        el('input', { type: 'checkbox', checked: true, 'data-type': t }), t,
+      // A type the profile has no file for is offered unchecked and greyed.
+      const has = { history: p.hasHistory !== false, bookmarks: p.hasBookmarks !== false, passwords: p.hasPasswords !== false };
+      const types = el('span', { class: 'types' }, ['history', 'bookmarks', 'passwords'].map((t) => el('label', { class: has[t] ? '' : 'off' }, [
+        el('input', { type: 'checkbox', checked: has[t], 'data-type': t }), t,
       ])));
       const pw = p.browser === 'firefox' ? el('input', { type: 'password', placeholder: 'Primary password (if set)', 'aria-label': 'Firefox primary password' }) : null;
       const btn = el('button', { class: 'btn', text: 'Import' });
-      const row = el('div', { class: 'row' }, [
-        el('span', { class: 'main' }, [el('span', { class: 'name', text: p.label }), el('span', { class: 'sub', text: p.path })]),
+      const row = el('div', { class: 'row', 'data-profile': p.id }, [
+        el('span', { class: 'main' }, [el('span', { class: 'name', text: p.label + (p.isDefault ? ' (default)' : '') }), el('span', { class: 'sub', text: p.path, title: p.path })]),
         types, pw, btn,
       ]);
       btn.addEventListener('click', function () {

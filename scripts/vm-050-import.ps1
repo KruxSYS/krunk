@@ -33,12 +33,13 @@ if ($Phase -eq 'browsers') {
   # ---- Firefox: first run makes the default profile under %APPDATA%\Mozilla\Firefox.
   Get-Process firefox -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 1
   Start-Process 'C:\Program Files\Mozilla Firefox\firefox.exe' -ArgumentList 'http://localhost:8094/origin-login.html'
-  $F = WaitWindow 'MozillaWindowClass'; Start-Sleep 8; Place $F
+  $F = WaitWindow 'MozillaWindowClass'; Start-Sleep 8; Place $F; Start-Sleep 2; Place $F
   Shot "$P-b1-firefox-first-run"
+  Click 640 326 1500   # "Continue" of the terms dialog, if the policy did not skip it
   Keys '^l' 300; Keys 'http://localhost:8094/origin-login.html' 100; Keys '{ENTER}' 3000
   Click 600 450 300; Keys '{TAB}' 200; Keys 'ff-user' 200; Keys '{TAB}' 200; Keys 'Fx-real-pass-1' 200; Keys '{ENTER}' 3000
   Shot "$P-b2-firefox-save-prompt"
-  Keys '%s' 1500   # the doorhanger's Save button (Alt+S) ...
+  Click 508 260 1500   # the doorhanger's Save button
   Shot "$P-b3-firefox-saved"
   Keys '^l' 300; Keys 'http://localhost:8094/links.html' 100; Keys '{ENTER}' 3000
   Keys '^d' 1500; Keys '{ENTER}' 1500
@@ -49,12 +50,13 @@ if ($Phase -eq 'browsers') {
   # ---- Chrome: the default profile under %LOCALAPPDATA%\Google\Chrome\User Data.
   Get-Process chrome -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 1
   Start-Process 'C:\Program Files\Google\Chrome\Application\chrome.exe' -ArgumentList '--no-first-run','--no-default-browser-check','--disable-sync','http://localhost:8094/origin-login.html'
-  $C = WaitWindow 'Chrome_WidgetWin_1'; Start-Sleep 8; Place $C
+  # Chrome has several windows of that class; its own placement (18,10 1033x725) is kept.
+  $C = WaitWindow 'Chrome_WidgetWin_1'; Start-Sleep 8
   Shot "$P-b5-chrome-first-run"
   Keys '^l' 300; Keys 'http://localhost:8094/origin-login.html' 100; Keys '{ENTER}' 3000
   Click 600 450 300; Keys '{TAB}' 200; Keys 'cr-user' 200; Keys '{TAB}' 200; Keys 'Cr-real-pass-1' 200; Keys '{ENTER}' 3000
   Shot "$P-b6-chrome-save-prompt"
-  Keys '{ENTER}' 1500   # the bubble's Save button has the focus
+  Click 798 382 1500   # the bubble's Save button
   Shot "$P-b7-chrome-saved"
   Keys '^l' 300; Keys 'http://localhost:8094/links.html' 100; Keys '{ENTER}' 3000
   Keys '^d' 1500; Keys '{ENTER}' 1500

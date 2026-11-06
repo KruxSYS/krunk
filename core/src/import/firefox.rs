@@ -180,6 +180,25 @@ mod tests {
     use super::*;
     use crate::import::testing::fixture;
 
+    /// A real profile (LB_FIREFOX_PROFILE=<dir>, LB_FIREFOX_PASSWORD optional): run with
+    /// `cargo test -p core --lib real_firefox_profile -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn real_firefox_profile_from_env() {
+        let dir = std::env::var("LB_FIREFOX_PROFILE").expect("LB_FIREFOX_PROFILE");
+        let pw = std::env::var("LB_FIREFOX_PASSWORD").unwrap_or_default();
+        let got = read_logins(Path::new(&dir), &pw).unwrap();
+        println!("logins: {} read, {} skipped", got.logins.len(), got.skipped);
+        for l in &got.logins {
+            println!("  {} {} (password {} chars)", l.url, l.username, l.password.chars().count());
+        }
+        let history = read_history(&Path::new(&dir).join("places.sqlite")).unwrap();
+        println!("history visits: {} (first: {:?})", history.len(), history.first());
+        let bookmarks = read_bookmarks(&Path::new(&dir).join("places.sqlite")).unwrap();
+        println!("bookmark nodes: {bookmarks:?}");
+        assert!(!got.logins.is_empty());
+    }
+
     #[test]
     fn logins_without_primary_password() {
         let got = read_logins(&fixture("firefox-nomaster"), "").unwrap();

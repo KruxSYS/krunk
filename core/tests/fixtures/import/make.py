@@ -149,6 +149,9 @@ def pbe_3des_blob(global_salt, master_password, plaintext, tag):
 
 
 KEY_ID = b"\xf8" + b"\x00" * 15
+# Firefox 159 writes the SDR key id as f8 00..01 and encrypts login fields with AES-256-CBC
+# (a 32-byte SDR key); older profiles use DES-EDE3-CBC with a 24-byte key.
+KEY_ID_AES = b"\xf8" + b"\x00" * 14 + b"\x01"
 FIREFOX_LOGINS = [
     ("https://login.example", "https://login.example", "fx-alice", "Fx-pass-alice-1"),
     ("https://shop.example", "https://shop.example/signin", "fx-bob", "Fx-pass-bob-2"),
@@ -156,17 +159,22 @@ FIREFOX_LOGINS = [
 ]
 
 
-def sdr_encrypt(sdr_key, text, tag):
+def sdr_encrypt(sdr_key, text, tag, aes):
+    if aes:
+        iv = det(16, tag + "-iv")
+        ciphertext = aes_cbc_encrypt(sdr_key, iv, text.encode())
+        return base64.b64encode(seq(octets(KEY_ID_AES), seq(oid(OID_AES256_CBC), octets(iv)), octets(ciphertext))).decode()
     iv = det(8, tag + "-iv")
     ciphertext = des3_cbc_encrypt(sdr_key, iv, text.encode())
     return base64.b64encode(seq(octets(KEY_ID), seq(oid(OID_DES_EDE3_CBC), octets(iv)), octets(ciphertext))).decode()
 
 
-def make_firefox(name, master_password, legacy):
+def make_firefox(name, master_password, legacy, aes=False):
     d = os.path.join(OUT, name)
     os.makedirs(d, exist_ok=True)
     global_salt = det(20, name + "-global")
-    sdr_key = det(24, name + "-sdr")
+    sdr_key = det(32 if aes else 24, name + "-sdr")
+    key_id = KEY_ID_AES if aes else KEY_ID
     blob = pbe_3des_blob if legacy else pbes2_blob
     path = os.path.join(d, "key4.db")
     if os.path.exists(path):
@@ -178,7 +186,7 @@ def make_firefox(name, master_password, legacy):
         "CREATE TABLE nssPrivate (id PRIMARY KEY UNIQUE ON CONFLICT ABORT, a0, a1, a2, a3, a11, a102);"
     )
     c.execute("INSERT INTO metaData VALUES ('password', ?, ?)", (global_salt, blob(global_salt, master_password, b"password-check", name + "-check")))
-    c.execute("INSERT INTO nssPrivate (id, a11, a102) VALUES (1, ?, ?)", (blob(global_salt, master_password, sdr_key, name + "-a11"), KEY_ID))
+    c.execute("INSERT INTO nssPrivate (id, a11, a102) VALUES (1, ?, ?)", (blob(global_salt, master_password, sdr_key, name + "-a11"), key_id))
     c.commit()
     c.close()
     logins = []
@@ -190,8 +198,8 @@ def make_firefox(name, master_password, legacy):
             "formSubmitURL": action,
             "usernameField": "user" if action else "",
             "passwordField": "pass" if action else "",
-            "encryptedUsername": sdr_encrypt(sdr_key, user, f"{name}-u{i}"),
-            "encryptedPassword": sdr_encrypt(sdr_key, pw, f"{name}-p{i}"),
+            "encryptedUsername": sdr_encrypt(sdr_key, user, f"{name}-u{i}", aes),
+            "encryptedPassword": sdr_encrypt(sdr_key, pw, f"{name}-p{i}", aes),
             "guid": "{%08x-0000-4000-8000-000000000000}" % i,
             "encType": 1,
             "timeCreated": MS_2024 + i * 1000,
@@ -384,7 +392,7 @@ def make_csv():
 
 
 def main():
-    make_firefox("firefox-nomaster", "", legacy=False)
+    make_firefox("firefox-nomaster", "", legacy=False, aes=True)
     make_firefox("firefox-master", "fx-master-pw", legacy=False)
     make_firefox("firefox-legacy", "fx-master-pw", legacy=True)
     make_chromium("chrome")

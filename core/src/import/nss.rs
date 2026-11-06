@@ -232,9 +232,10 @@ mod tests {
 
     #[test]
     fn pbes2_without_primary_password() {
+        // The AES-256-CBC SDR variant of current Firefox: a 32-byte key.
         let k = Key4::read(&fixture("firefox-nomaster/key4.db")).unwrap();
         let sdr = k.unlock("").unwrap();
-        assert_eq!(sdr.key.len(), 24);
+        assert_eq!(sdr.key.len(), 32);
         assert!(matches!(k.unlock("anything"), Err(ImportError::WrongPassword)));
     }
 
