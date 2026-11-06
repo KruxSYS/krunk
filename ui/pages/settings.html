@@ -8,7 +8,7 @@
 <link rel="stylesheet" href="settings.css">
 </head>
 <body>
-<div class="page">
+<div class="page settings">
   <div class="page-header">
     <h1>Settings</h1>
     <input id="filter" class="search" type="search" placeholder="Search settings" aria-label="Search settings">
@@ -20,192 +20,337 @@
   </div>
   <p id="save-error" class="error banner-error" role="alert" hidden></p>
 
-  <section class="card" data-section="search">
-    <h2>Search</h2>
-    <div class="field">
-      <label for="searchEngine">Search engine</label>
-      <select id="searchEngine" data-key="searchEngine">
-        <option value="duckDuckGo">DuckDuckGo</option>
-        <option value="google">Google</option>
-        <option value="bing">Bing</option>
-        <option value="brave">Brave Search</option>
-        <option value="startpage">Startpage</option>
-        <option value="ecosia">Ecosia</option>
-        <option value="custom">Custom…</option>
-      </select>
+  <div class="layout">
+  <nav id="tabs" class="tabs" aria-label="Settings sections">
+    <a href="#general" data-tab="general">General</a>
+    <a href="#privacy" data-tab="privacy">Privacy &amp; security</a>
+    <a href="#passwords" data-tab="passwords">Passwords &amp; import</a>
+    <a href="#downloads" data-tab="downloads">Downloads</a>
+    <a href="#appearance" data-tab="appearance">Appearance</a>
+    <a href="#advanced" data-tab="advanced">Advanced</a>
+  </nav>
+  <div class="panels">
+  <p id="no-matches" class="empty" hidden>No settings match.</p>
+
+  <!-- ================================================================ General -->
+  <section class="panel" data-tab="general" data-section="general search startup home page bookmarks bar tabs memory performance sleep">
+    <h2 class="panel-title">General</h2>
+    <div class="card group">
+      <h3>Search</h3>
+      <div class="row setting" data-keywords="search engine duckduckgo google bing">
+        <div class="text"><label for="searchEngine">Search engine</label><p class="desc">Used for words typed in the address bar and the new-tab page.</p></div>
+        <div class="control">
+          <select id="searchEngine" data-key="searchEngine">
+            <option value="duckDuckGo">DuckDuckGo</option>
+            <option value="google">Google</option>
+            <option value="bing">Bing</option>
+            <option value="brave">Brave Search</option>
+            <option value="startpage">Startpage</option>
+            <option value="ecosia">Ecosia</option>
+            <option value="custom">Custom…</option>
+          </select>
+        </div>
+      </div>
+      <div class="row setting" id="custom-row" data-keywords="custom search url">
+        <div class="text"><label for="customSearchUrl">Custom search URL</label><p class="desc">Use <code>%s</code> where the search terms go.</p>
+          <p class="field-error" data-error-for="customSearchUrl"></p></div>
+        <div class="control wide"><input type="text" id="customSearchUrl" data-key="customSearchUrl" placeholder="https://search.example/?q=%s" spellcheck="false"></div>
+      </div>
     </div>
-    <div class="field" id="custom-row">
-      <label for="customSearchUrl">Custom search URL</label>
-      <input type="text" id="customSearchUrl" data-key="customSearchUrl" placeholder="https://search.example/?q=%s" spellcheck="false">
-      <p class="help">Use <code>%s</code> where the search terms go.</p>
-      <p class="field-error" data-error-for="customSearchUrl"></p>
+
+    <div class="card group">
+      <h3>On startup</h3>
+      <div class="row setting" data-keywords="startup restore session continue">
+        <div class="text"><span class="label">When Krunk starts</span><p class="desc">What the first window shows.</p></div>
+        <div class="control radios" role="radiogroup" aria-label="On startup">
+          <label><input type="radio" name="startup" value="newTab"> Open a new tab</label>
+          <label><input type="radio" name="startup" value="restoreSession"> Continue where you left off</label>
+          <label><input type="radio" name="startup" value="homepage"> Open the homepage</label>
+        </div>
+      </div>
+      <div class="row setting" data-keywords="homepage home page alt+home">
+        <div class="text"><label for="homepage">Homepage</label><p class="desc">Opened at startup in that mode, and by Alt+Home.</p>
+          <p class="field-error" data-error-for="homepage"></p></div>
+        <div class="control wide"><input type="text" id="homepage" data-key="homepage" placeholder="https://…" spellcheck="false"></div>
+      </div>
+    </div>
+
+    <div class="card group">
+      <h3>Bookmarks bar</h3>
+      <div class="row setting" data-keywords="bookmarks bar show hide new tab ctrl+shift+b">
+        <div class="text"><label for="bookmarks-bar">Show the bookmarks bar</label><p class="desc">Ctrl+Shift+B toggles it; the bar's right-click menu has the same choice.</p></div>
+        <div class="control">
+          <select id="bookmarks-bar" data-key="bookmarksBar">
+            <option value="always">Always</option>
+            <option value="newTab">Only on new tabs</option>
+            <option value="never">Never</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="card group">
+      <h3>Tabs and memory</h3>
+      <div class="row setting" data-keywords="sleep background tabs minutes memory">
+        <div class="text"><label for="tabSleepMinutes">Put background tabs to sleep after</label><p class="desc">Minutes without use; 0 = never. A sleeping tab keeps its page but stops its scripts.</p>
+          <p class="field-error" data-error-for="tabSleepMinutes"></p></div>
+        <div class="control"><input type="number" id="tabSleepMinutes" data-key="tabSleepMinutes" data-type="number" min="0" max="1440"> <span class="unit">min</span></div>
+      </div>
+      <div class="row setting" data-keywords="unload discard background tabs free memory">
+        <div class="text"><label for="tabDiscardEnabled">Unload background tabs to free memory</label><p class="desc">An unloaded tab reloads when you return to it.</p></div>
+        <div class="control"><input type="checkbox" id="tabDiscardEnabled" data-key="tabDiscardEnabled"></div>
+      </div>
+      <div class="row setting" id="discard-row" data-keywords="unload after minutes">
+        <div class="text"><label for="tabDiscardMinutes">Unload after</label><p class="field-error" data-error-for="tabDiscardMinutes"></p></div>
+        <div class="control"><input type="number" id="tabDiscardMinutes" data-key="tabDiscardMinutes" data-type="number" min="1" max="1440"> <span class="unit">min</span></div>
+      </div>
     </div>
   </section>
 
-  <section class="card" data-section="startup appearance">
-    <h2>On startup</h2>
-    <div class="field radios" role="radiogroup" aria-label="On startup">
-      <label><input type="radio" name="startup" value="newTab"> Open a new tab</label>
-      <label><input type="radio" name="startup" value="restoreSession"> Continue where you left off</label>
-      <label><input type="radio" name="startup" value="homepage"> Open the homepage</label>
-    </div>
-    <div class="field">
-      <label for="homepage">Homepage</label>
-      <input type="text" id="homepage" data-key="homepage" placeholder="https://…" spellcheck="false">
-      <p class="field-error" data-error-for="homepage"></p>
-    </div>
-    <div class="field">
-      <label for="bookmarks-bar">Bookmarks bar</label>
-      <select id="bookmarks-bar" data-key="bookmarksBar">
-        <option value="always">Always show</option>
-        <option value="newTab">Show only on new tabs</option>
-        <option value="never">Hide</option>
-      </select>
+  <!-- ================================================================ Privacy & security -->
+  <section class="panel" data-tab="privacy" data-section="privacy security tracking https cookies ads ad blocking filters allowlist trackers site data clear vault">
+    <h2 class="panel-title">Privacy &amp; security</h2>
+    <div class="card group">
+      <h3>Ad and tracker blocking</h3>
+      <div class="row setting" data-keywords="block ads trackers adblock shield">
+        <div class="text"><label for="adblockEnabled">Block ads and trackers</label><p class="desc" id="lists-summary"></p>
+          <p class="desc"><a href="adblock.html#lists" id="manage-lists">Filter lists…</a> · <a href="adblock.html#filters" id="manage-filters">My filters…</a></p></div>
+        <div class="control"><input type="checkbox" id="adblockEnabled" data-key="adblockEnabled"></div>
+      </div>
+      <div class="row setting" data-keywords="update filter lists now">
+        <div class="text"><span class="label">Filter list updates</span><p class="desc" id="lists-status"></p></div>
+        <div class="control"><button id="update-lists" class="btn">Update now</button></div>
+      </div>
+      <div class="row setting column" data-keywords="allowlist sites where ads are allowed">
+        <div class="text"><span class="label">Sites where ads are allowed</span><p class="desc">The shield in the toolbar adds the current site here too.</p></div>
+        <div id="allowlist" class="sublist"></div>
+        <form id="allow-form" class="inline-form" autocomplete="off">
+          <input type="text" id="allow-host" placeholder="example.com" spellcheck="false" aria-label="Host to allow">
+          <button class="btn" type="submit">Add</button>
+          <p class="field-error" id="allow-error"></p>
+        </form>
+      </div>
     </div>
 
-    <h2>Appearance</h2>
-    <div class="field radios" role="radiogroup" aria-label="Theme">
-      <label><input type="radio" name="theme" value="system"> System</label>
-      <label><input type="radio" name="theme" value="light"> Light</label>
-      <label><input type="radio" name="theme" value="dark"> Dark</label>
+    <div class="card group">
+      <h3>Cookies and tracking</h3>
+      <div class="row setting" data-keywords="third-party cookies block">
+        <div class="text"><label for="blockThirdPartyCookies">Block third-party cookies <span class="tag">restart</span></label>
+          <p class="desc">Blocks every site's cookies inside other sites. It may break embedded sign-ins, comments and video widgets; turn it off if a site misbehaves. No per-site exceptions.</p></div>
+        <div class="control"><input type="checkbox" id="blockThirdPartyCookies" data-key="blockThirdPartyCookies"></div>
+      </div>
+      <div class="row setting" data-keywords="https only mode upgrade warn http">
+        <div class="text"><label for="httpsOnly">HTTPS-only mode</label><p class="desc">Upgrade every site to HTTPS and warn before plain HTTP.</p></div>
+        <div class="control"><input type="checkbox" id="httpsOnly" data-key="httpsOnly"></div>
+      </div>
+      <div class="row setting" data-keywords="tracking parameters utm fbclid links strip">
+        <div class="text"><label for="stripTrackingParams">Remove tracking parameters from links</label><p class="desc">utm_*, fbclid and the like are cut from addresses before they load.</p></div>
+        <div class="control"><input type="checkbox" id="stripTrackingParams" data-key="stripTrackingParams"></div>
+      </div>
+      <div class="row setting" data-keywords="do not track dnt header">
+        <div class="text"><label for="sendDnt">Send “Do Not Track”</label><p class="desc">A request header; sites may ignore it.</p></div>
+        <div class="control"><input type="checkbox" id="sendDnt" data-key="sendDnt"></div>
+      </div>
+      <div class="row setting" data-keywords="global privacy control gpc header">
+        <div class="text"><label for="sendGpc">Send “Global Privacy Control”</label><p class="desc">Tells sites not to sell or share your data where the law backs it.</p></div>
+        <div class="control"><input type="checkbox" id="sendGpc" data-key="sendGpc"></div>
+      </div>
+      <div class="row setting" data-keywords="engine security components google certificate revocation transparency">
+        <div class="text"><label for="engineSecurityComponents">Download engine security components from Google <span class="tag">restart</span></label>
+          <p class="desc">Certificate revocation and Certificate Transparency lists. Off: the engine never contacts Google in the background and the lists only change with new Krunk releases.</p></div>
+        <div class="control"><input type="checkbox" id="engineSecurityComponents" data-key="engineSecurityComponents"></div>
+      </div>
     </div>
-    <div class="field">
-      <label for="defaultZoom">Default zoom</label>
-      <select id="defaultZoom" data-key="defaultZoom" data-type="number">
-        <option value="0.5">50%</option><option value="0.67">67%</option><option value="0.75">75%</option>
-        <option value="0.8">80%</option><option value="0.9">90%</option><option value="1">100%</option>
-        <option value="1.1">110%</option><option value="1.25">125%</option><option value="1.5">150%</option>
-        <option value="1.75">175%</option><option value="2">200%</option><option value="3">300%</option>
-      </select>
-      <p class="help">For sites you have not zoomed yourself; the zoom you choose for a site is remembered.</p>
-      <p class="field-error" data-error-for="defaultZoom"></p>
+
+    <div class="card group">
+      <h3>Site data</h3>
+      <div class="row setting column" data-keywords="clear on exit close cookies cache history download list">
+        <div class="text"><span class="label">When Krunk closes, clear</span></div>
+        <div class="checks">
+          <label><input type="checkbox" data-key="clearOnExit.cookies"> Cookies and site data</label>
+          <label><input type="checkbox" data-key="clearOnExit.cache"> Cached images and files</label>
+          <label><input type="checkbox" data-key="clearOnExit.history"> Browsing history</label>
+          <label><input type="checkbox" data-key="clearOnExit.downloads"> Download list</label>
+        </div>
+      </div>
+      <div class="row setting" data-keywords="clear browsing data now cookies site data storage">
+        <div class="text"><span class="label">Browsing data</span><p class="desc"><a href="history.html">Clear browsing data now…</a> · <a href="storage.html" id="manage-storage">Cookies and site data…</a></p></div>
+      </div>
     </div>
   </section>
 
-  <section class="card" data-section="performance memory tabs gpu">
-    <h2>Performance</h2>
-    <label class="toggle"><input type="checkbox" data-key="hardwareAcceleration"> Use hardware acceleration (GPU) <span class="tag">restart</span></label>
-    <div class="field inline">
-      <label for="tabSleepMinutes">Put background tabs to sleep after</label>
-      <input type="number" id="tabSleepMinutes" data-key="tabSleepMinutes" data-type="number" min="0" max="1440"> minutes
-      <span class="help">(0 = never)</span>
-      <p class="field-error" data-error-for="tabSleepMinutes"></p>
+  <!-- ================================================================ Passwords & import -->
+  <section class="panel" data-tab="passwords" data-section="passwords vault master password autolock import firefox chrome edge brave csv">
+    <h2 class="panel-title">Passwords &amp; import</h2>
+    <div class="card group">
+      <h3>Passwords</h3>
+      <div class="row setting" data-keywords="offer save passwords login">
+        <div class="text"><label for="offerSavePasswords">Offer to save passwords</label><p class="desc">After a sign-in, Krunk asks whether to keep the login in its vault.</p></div>
+        <div class="control"><input type="checkbox" id="offerSavePasswords" data-key="offerSavePasswords"></div>
+      </div>
+      <div class="row setting" data-keywords="lock vault after minutes autolock">
+        <div class="text"><label for="vaultAutolockMinutes">Lock the vault after</label><p class="desc">Minutes without use. Locking the session (Win+L) locks it too.</p>
+          <p class="field-error" data-error-for="vaultAutolockMinutes"></p></div>
+        <div class="control"><input type="number" id="vaultAutolockMinutes" data-key="vaultAutolockMinutes" data-type="number" min="1" max="1440"> <span class="unit">min</span></div>
+      </div>
+      <div class="row setting" data-keywords="manage passwords change master password">
+        <div class="text"><span class="label">Vault</span><p class="desc"><a href="passwords.html">Manage passwords</a> · <a href="passwords.html#change">Change master password…</a></p></div>
+      </div>
     </div>
-    <label class="toggle"><input type="checkbox" data-key="tabDiscardEnabled"> Unload background tabs to free memory</label>
-    <div class="field inline" id="discard-row">
-      <label for="tabDiscardMinutes">Unload after</label>
-      <input type="number" id="tabDiscardMinutes" data-key="tabDiscardMinutes" data-type="number" min="1" max="1440"> minutes
-      <p class="field-error" data-error-for="tabDiscardMinutes"></p>
+
+    <div class="card group" id="import-group">
+      <h3>Import from another browser</h3>
+      <div class="row setting column" data-keywords="import history bookmarks passwords firefox chrome edge brave profile">
+        <div class="text"><span class="label">Browser profiles on this computer</span>
+          <p class="desc">History and bookmarks are merged (nothing is doubled); passwords go into the vault, which must be unlocked.
+            Chrome and Edge passwords saved by Chrome 127 or newer are protected so that only Chrome can read them: for those, export a CSV from the browser and import it below.</p></div>
+        <div id="import-profiles" class="sublist"><p class="desc">Looking for browsers…</p></div>
+      </div>
+      <div class="row setting" data-keywords="import csv passwords file">
+        <div class="text"><span class="label">Import passwords from a CSV file</span><p class="desc">Chrome and Edge (name, url, username, password, note) or Firefox (url, username, password, …) exports.</p></div>
+        <div class="control"><button id="import-csv" class="btn">Choose file…</button></div>
+      </div>
+      <p id="import-result" class="desc import-result" hidden></p>
     </div>
   </section>
 
-  <section class="card" data-section="privacy security tracking https cookies">
-    <h2>Privacy and security</h2>
-    <label class="toggle"><input type="checkbox" data-key="blockThirdPartyCookies"> Block third-party cookies <span class="tag">restart</span></label>
-    <p class="help">Ad and tracker blocking (above) stops known trackers; this blocks every site's cookies inside other sites. It may break embedded sign-ins, comments and video widgets on some sites; turn it off if a site misbehaves. It applies to all sites (no per-site exceptions).</p>
-    <label class="toggle"><input type="checkbox" data-key="httpsOnly"> HTTPS-only mode (upgrade every site; warn before plain HTTP)</label>
-    <label class="toggle"><input type="checkbox" data-key="stripTrackingParams"> Remove tracking parameters from links (utm_*, fbclid, …)</label>
-    <label class="toggle"><input type="checkbox" data-key="sendDnt"> Send “Do Not Track”</label>
-    <label class="toggle"><input type="checkbox" data-key="sendGpc"> Send “Global Privacy Control”</label>
-    <label class="toggle"><input type="checkbox" data-key="engineSecurityComponents"> Download engine security components from Google (certificate revocation list, Certificate Transparency list) <span class="tag">restart</span></label>
-    <p class="help">Off: Krunk's engine never contacts Google in the background, and these lists are only updated with new Krunk releases. On: the engine fetches them from Google's update servers.</p>
-    <h3>When Krunk closes, clear</h3>
-    <label class="toggle"><input type="checkbox" data-key="clearOnExit.cookies"> Cookies and site data</label>
-    <label class="toggle"><input type="checkbox" data-key="clearOnExit.cache"> Cached images and files</label>
-    <label class="toggle"><input type="checkbox" data-key="clearOnExit.history"> Browsing history</label>
-    <label class="toggle"><input type="checkbox" data-key="clearOnExit.downloads"> Download list</label>
-    <p><a href="history.html">Clear browsing data now…</a> · <a href="storage.html" id="manage-storage">Cookies and site data…</a></p>
-  </section>
-
-  <section class="card" data-section="ads ad blocking filters allowlist trackers">
-    <h2>Ad and tracker blocking</h2>
-    <label class="toggle"><input type="checkbox" data-key="adblockEnabled"> Block ads and trackers</label>
-    <p id="lists-summary" class="help"></p>
-    <p><a href="adblock.html#lists" id="manage-lists">Filter lists…</a> · <a href="adblock.html#filters" id="manage-filters">My filters…</a></p>
-    <div class="field inline">
-      <button id="update-lists" class="btn">Update now</button>
-      <span id="lists-status" class="help"></span>
+  <!-- ================================================================ Downloads -->
+  <section class="panel" data-tab="downloads" data-section="downloads folder save connections">
+    <h2 class="panel-title">Downloads</h2>
+    <div class="card group">
+      <h3>Where files go</h3>
+      <div class="row setting" data-keywords="save files to folder download location">
+        <div class="text"><span class="label">Save files to</span><p class="desc"><span id="download-dir" class="path"></span></p>
+          <p class="field-error" data-error-for="downloadDir"></p></div>
+        <div class="control"><button id="pick-dir" class="btn">Change…</button> <button id="default-dir" class="btn">Use default</button></div>
+      </div>
+      <div class="row setting" data-keywords="ask where to save each file">
+        <div class="text"><label for="askWhereToSave">Ask where to save each file</label></div>
+        <div class="control"><input type="checkbox" id="askWhereToSave" data-key="askWhereToSave"></div>
+      </div>
     </div>
-    <h3>Sites where ads are allowed</h3>
-    <div id="allowlist" class="sublist"></div>
-    <form id="allow-form" class="field inline" autocomplete="off">
-      <input type="text" id="allow-host" placeholder="example.com" spellcheck="false" aria-label="Host to allow">
-      <button class="btn" type="submit">Add</button>
-      <p class="field-error" id="allow-error"></p>
-    </form>
-  </section>
-
-  <section class="card" data-section="passwords vault">
-    <h2>Passwords</h2>
-    <label class="toggle"><input type="checkbox" data-key="offerSavePasswords"> Offer to save passwords</label>
-    <div class="field inline">
-      <label for="vaultAutolockMinutes">Lock the vault after</label>
-      <input type="number" id="vaultAutolockMinutes" data-key="vaultAutolockMinutes" data-type="number" min="1" max="1440"> minutes without use
-      <p class="field-error" data-error-for="vaultAutolockMinutes"></p>
-    </div>
-    <p><a href="passwords.html#change">Change master password…</a> · <a href="passwords.html">Manage passwords</a></p>
-  </section>
-
-  <section class="card" data-section="downloads folder">
-    <h2>Downloads</h2>
-    <div class="field inline">
-      <label>Save files to</label>
-      <span id="download-dir" class="path"></span>
-      <button id="pick-dir" class="btn">Change…</button>
-      <button id="default-dir" class="btn">Use default</button>
-      <p class="field-error" data-error-for="downloadDir"></p>
-    </div>
-    <label class="toggle"><input type="checkbox" data-key="askWhereToSave"> Ask where to save each file</label>
-    <div class="field">
-      <label for="downloadConnections">Connections per download</label>
-      <select id="downloadConnections" data-key="downloadConnections" data-type="number">
-        <option value="1">1 (off)</option><option value="2">2</option><option value="4">4</option>
-        <option value="6">6</option><option value="8">8</option><option value="12">12</option><option value="16">16</option>
-      </select>
-      <p class="help">Large files (8 MB or more) from servers that send files in parts are downloaded over
-        several connections at once, which is often faster. Everything else downloads as usual.</p>
-      <p class="field-error" data-error-for="downloadConnections"></p>
+    <div class="card group">
+      <h3>Speed</h3>
+      <div class="row setting" data-keywords="connections per download parts parallel">
+        <div class="text"><label for="downloadConnections">Connections per download</label>
+          <p class="desc">Large files (8 MB or more) from servers that send files in parts are downloaded over several connections at once. Everything else downloads as usual.</p>
+          <p class="field-error" data-error-for="downloadConnections"></p></div>
+        <div class="control">
+          <select id="downloadConnections" data-key="downloadConnections" data-type="number">
+            <option value="1">1 (off)</option><option value="2">2</option><option value="4">4</option>
+            <option value="6">6</option><option value="8">8</option><option value="12">12</option><option value="16">16</option>
+          </select>
+        </div>
+      </div>
     </div>
   </section>
 
-  <section class="card" data-section="advanced proxy flags user agent">
-    <h2>Advanced</h2>
-    <div class="field">
-      <label for="userAgent">Custom user agent</label>
-      <input type="text" id="userAgent" data-key="userAgent" placeholder="(default)" spellcheck="false">
-      <p class="help">Applies immediately to all tabs. Leave empty for the default.</p>
-      <p class="field-error" data-error-for="userAgent"></p>
+  <!-- ================================================================ Appearance -->
+  <section class="panel" data-tab="appearance" data-section="appearance theme dark light zoom">
+    <h2 class="panel-title">Appearance</h2>
+    <div class="card group">
+      <h3>Theme</h3>
+      <div class="row setting" data-keywords="theme system light dark">
+        <div class="text"><span class="label">Colours</span><p class="desc">System follows Windows' app mode.</p></div>
+        <div class="control radios" role="radiogroup" aria-label="Theme">
+          <label><input type="radio" name="theme" value="system"> System</label>
+          <label><input type="radio" name="theme" value="light"> Light</label>
+          <label><input type="radio" name="theme" value="dark"> Dark</label>
+        </div>
+      </div>
     </div>
-    <div class="field">
-      <label for="proxy">Proxy server <span class="tag">restart</span></label>
-      <input type="text" id="proxy" data-key="proxy" placeholder="host:port or socks5://host:port (empty = system proxy)" spellcheck="false">
-      <p class="field-error" data-error-for="proxy"></p>
-    </div>
-    <div class="field">
-      <label for="extraFlags">Extra Chromium flags <span class="tag">restart</span></label>
-      <textarea id="extraFlags" data-key="extraFlags" rows="2" spellcheck="false" placeholder="--flag --other-flag=value"></textarea>
-      <p class="help">For experts. Only <code>--flag</code> and <code>--flag=value</code>; flags that weaken security are refused.</p>
-      <p class="field-error" data-error-for="extraFlags"></p>
+    <div class="card group">
+      <h3>Pages</h3>
+      <div class="row setting" data-keywords="default zoom page size percent">
+        <div class="text"><label for="defaultZoom">Default zoom</label><p class="desc">For sites you have not zoomed yourself; the zoom you choose for a site is remembered.</p>
+          <p class="field-error" data-error-for="defaultZoom"></p></div>
+        <div class="control">
+          <select id="defaultZoom" data-key="defaultZoom" data-type="number">
+            <option value="0.5">50%</option><option value="0.67">67%</option><option value="0.75">75%</option>
+            <option value="0.8">80%</option><option value="0.9">90%</option><option value="1">100%</option>
+            <option value="1.1">110%</option><option value="1.25">125%</option><option value="1.5">150%</option>
+            <option value="1.75">175%</option><option value="2">200%</option><option value="3">300%</option>
+          </select>
+        </div>
+      </div>
     </div>
   </section>
 
-  <section class="card" data-section="reset about updates version">
-    <h2>Reset</h2>
-    <p>Restore every setting to its default. Your history, bookmarks and passwords are not affected.</p>
-    <button id="reset" class="btn danger">Reset settings…</button>
-    <h2>About</h2>
-    <p id="about" class="help"></p>
-    <div class="field inline">
-      <button id="check-updates" class="btn">Check for updates</button>
-      <button id="install-update" class="btn primary" hidden>Update now</button>
-      <span id="update-status" class="help" role="status"></span>
+  <!-- ================================================================ Advanced -->
+  <section class="panel" data-tab="advanced" data-section="advanced proxy flags user agent gpu hardware acceleration devtools about updates version reset">
+    <h2 class="panel-title">Advanced</h2>
+    <div class="card group">
+      <h3>User agent</h3>
+      <div class="row setting" data-keywords="default user agent krunk">
+        <div class="text"><span class="label">Krunk's user agent</span><p class="desc">What sites see unless you choose another below.</p>
+          <p id="default-ua" class="mono desc"></p></div>
+        <div class="control"><button id="copy-ua" class="btn">Copy</button></div>
+      </div>
+      <div class="row setting" data-keywords="user agent picker chrome firefox safari edge custom">
+        <div class="text"><label for="userAgentPreset">Identify as</label><p class="desc">Applies immediately to every tab; no restart needed. Some sites serve other pages to other browsers.</p></div>
+        <div class="control">
+          <select id="userAgentPreset">
+            <option value="">Krunk (default)</option>
+            <option value="custom">Custom…</option>
+          </select>
+        </div>
+      </div>
+      <div class="row setting" id="custom-ua-row" data-keywords="custom user agent string">
+        <div class="text"><label for="userAgent">Custom user agent</label><p class="desc">Printable ASCII, 512 characters at most. Empty means the default.</p>
+          <p class="field-error" data-error-for="userAgent"></p></div>
+        <div class="control wide"><input type="text" id="userAgent" data-key="userAgent" placeholder="(default)" spellcheck="false"></div>
+      </div>
     </div>
-    <label class="toggle"><input type="checkbox" data-key="checkUpdatesAutomatically"> Check for updates automatically</label>
-    <p class="help">A minute after start and then once a day, Krunk downloads a small signed file from
-      <span id="update-server">its update server</span> to see whether a newer version exists. The request carries
-      Krunk's version and nothing about you or your browsing. Updates are only installed when you choose
-      <em>Update now</em>.</p>
+
+    <div class="card group">
+      <h3>Graphics and engine</h3>
+      <div class="row setting" data-keywords="hardware acceleration gpu">
+        <div class="text"><label for="hardwareAcceleration">Use hardware acceleration (GPU) <span class="tag">restart</span></label>
+          <p class="desc">Off starts the engine with <code>--disable-gpu</code>. <a href="gpu.html">Check what the engine uses (krunk://gpu)</a>.</p></div>
+        <div class="control"><input type="checkbox" id="hardwareAcceleration" data-key="hardwareAcceleration"></div>
+      </div>
+      <div class="row setting" data-keywords="proxy server socks">
+        <div class="text"><label for="proxy">Proxy server <span class="tag">restart</span></label><p class="desc">host:port or socks5://host:port; empty uses the system proxy.</p>
+          <p class="field-error" data-error-for="proxy"></p></div>
+        <div class="control wide"><input type="text" id="proxy" data-key="proxy" placeholder="host:port or socks5://host:port" spellcheck="false"></div>
+      </div>
+      <div class="row setting" data-keywords="extra chromium flags switches command line">
+        <div class="text"><label for="extraFlags">Extra Chromium flags <span class="tag">restart</span></label>
+          <p class="desc">For experts. Only <code>--flag</code> and <code>--flag=value</code>; flags that weaken security are refused.</p>
+          <p class="field-error" data-error-for="extraFlags"></p></div>
+        <div class="control wide"><textarea id="extraFlags" data-key="extraFlags" rows="2" spellcheck="false" placeholder="--flag --other-flag=value"></textarea></div>
+      </div>
+      <div class="row setting" data-keywords="devtools dock side developer tools f12">
+        <div class="text"><span class="label">Developer tools</span><p class="desc">F12 docks DevTools in the window; its strip has the dock-side and close buttons. The dock side and sizes are remembered.</p></div>
+      </div>
+    </div>
+
+    <div class="card group">
+      <h3>Updates</h3>
+      <div class="row setting" data-keywords="check for updates version update now">
+        <div class="text"><span class="label">Krunk updates</span><p class="desc" id="update-status" role="status"></p>
+          <p class="desc">A minute after start and then once a day, Krunk downloads a small signed file from <span id="update-server">its update server</span> to see whether a newer version exists. The request carries Krunk's version and nothing about you. Updates are only installed when you choose <em>Update now</em>.</p></div>
+        <div class="control"><button id="check-updates" class="btn">Check for updates</button> <button id="install-update" class="btn primary" hidden>Update now</button></div>
+      </div>
+      <div class="row setting" data-keywords="check updates automatically">
+        <div class="text"><label for="checkUpdatesAutomatically">Check for updates automatically</label></div>
+        <div class="control"><input type="checkbox" id="checkUpdatesAutomatically" data-key="checkUpdatesAutomatically"></div>
+      </div>
+    </div>
+
+    <div class="card group">
+      <h3>About</h3>
+      <div class="row setting" data-keywords="about version chromium cef data folder">
+        <div class="text"><span class="label">This Krunk</span><p id="about" class="desc"></p><p class="desc"><a href="about.html">About Krunk</a> · <a href="gpu.html">Graphics (krunk://gpu)</a></p></div>
+      </div>
+      <div class="row setting" data-keywords="reset settings defaults">
+        <div class="text"><span class="label">Reset</span><p class="desc">Restore every setting to its default. Your history, bookmarks and passwords are not affected.</p></div>
+        <div class="control"><button id="reset" class="btn danger">Reset settings…</button></div>
+      </div>
+    </div>
   </section>
+  </div>
+  </div>
 </div>
 <script src="shared/bridge.js"></script>
 <script src="shared/page.js"></script>

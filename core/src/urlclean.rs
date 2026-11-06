@@ -104,8 +104,8 @@ pub fn input_to_url(input: &str, search_template: &str) -> String {
     if input.is_empty() {
         return pages::Page::NewTab.url();
     }
-    if let Some(page) = pages::Page::from_display(input) {
-        return page.url();
+    if let Some((page, section)) = pages::Page::from_display_with_section(input) {
+        return page.url_with_section(section.as_deref());
     }
     if !input.contains(char::is_whitespace) {
         if let Some(url) = as_url(input) {

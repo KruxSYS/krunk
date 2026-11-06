@@ -198,6 +198,11 @@ pub fn allow_navigation(channel: Channel, current: &str, target: &str, host_init
                         || current.is_empty()
                         || current == "about:blank");
             }
+            // Chromium's own chrome://gpu (from krunk://gpu's button) is the only chrome:// page,
+            // and only when the host navigates there.
+            if target_url.scheme() == "chrome" {
+                return host_initiated && target_url.host_str() == Some("gpu") && target_url.path() == "/";
+            }
             matches!(target_url.scheme(), "http" | "https" | "about" | "data" | "blob" | "file")
                 && !(target_url.scheme() == "file" && !host_initiated)
         }
@@ -340,5 +345,11 @@ mod tests {
         assert!(allow_navigation(Channel::Tab, "", "file:///C:/x.html", true));
         assert!(!allow_navigation(Channel::Tab, "", "javascript:alert(1)", true));
         assert!(!allow_navigation(Channel::Tab, "", "ms-settings:privacy", false));
+        // chrome://gpu only, only from the host.
+        assert!(allow_navigation(Channel::Tab, &Page::Gpu.url(), "chrome://gpu/", true));
+        assert!(!allow_navigation(Channel::Tab, &Page::Gpu.url(), "chrome://gpu/", false));
+        assert!(!allow_navigation(Channel::Tab, "", "chrome://settings/", true));
+        assert!(!allow_navigation(Channel::Tab, "", "chrome://gpu/../settings", true));
+        assert!(!allow_navigation(Channel::Shell, "", "chrome://gpu/", true));
     }
 }

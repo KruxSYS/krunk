@@ -19,6 +19,11 @@ pub const DISPLAY_SCHEME: &str = "krunk://";
 pub const LEGACY_DISPLAY_SCHEME: &str = "lb://";
 const LEGACY_PAGES_ORIGIN: &str = "https://lightbrowser.invalid";
 
+/// A deep-link section name: a short lower-case word.
+pub fn valid_section(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 32 && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
 /// A built-in page shown inside a tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Page {
@@ -37,10 +42,12 @@ pub enum Page {
     SiteData,
     /// The ad blocker: what it blocked on a tab's page, its filter lists.
     Adblock,
+    /// Graphics: the renderer, whether it is hardware accelerated, the GPU switches.
+    Gpu,
 }
 
 impl Page {
-    pub const ALL: [Page; 11] = [
+    pub const ALL: [Page; 12] = [
         Page::NewTab,
         Page::History,
         Page::Bookmarks,
@@ -52,6 +59,7 @@ impl Page {
         Page::Storage,
         Page::SiteData,
         Page::Adblock,
+        Page::Gpu,
     ];
 
     /// Short name used in the display URL (`krunk://<name>`) and file name.
@@ -68,6 +76,7 @@ impl Page {
             Page::Storage => "storage",
             Page::SiteData => "sitedata",
             Page::Adblock => "adblock",
+            Page::Gpu => "gpu",
         }
     }
 
@@ -91,9 +100,28 @@ impl Page {
     /// Parses `krunk://settings` (case-insensitive, optional trailing slash).
     /// The old `lb://settings` form is accepted too, so it redirects.
     pub fn from_display(input: &str) -> Option<Page> {
+        Page::from_display_with_section(input).map(|(p, _)| p)
+    }
+
+    /// `krunk://settings#privacy`: the page and the section (a deep link to a settings tab).
+    /// The section is kept only when it is a plain lower-case word (`[a-z0-9-]`, 32 at most).
+    pub fn from_display_with_section(input: &str) -> Option<(Page, Option<String>)> {
         let lower = input.trim().to_ascii_lowercase();
         let rest = lower.strip_prefix(DISPLAY_SCHEME).or_else(|| lower.strip_prefix(LEGACY_DISPLAY_SCHEME))?;
-        Page::from_name(rest.trim_end_matches('/'))
+        let (name, section) = match rest.split_once('#') {
+            Some((n, s)) => (n, Some(s)),
+            None => (rest, None),
+        };
+        let page = Page::from_name(name.trim_end_matches('/'))?;
+        Some((page, section.filter(|s| valid_section(s)).map(str::to_string)))
+    }
+
+    /// The real URL of a page with a section (`…/settings.html#privacy`).
+    pub fn url_with_section(self, section: Option<&str>) -> String {
+        match section.filter(|s| valid_section(s)) {
+            Some(s) => format!("{}#{s}", self.url()),
+            None => self.url(),
+        }
     }
 
     /// Identifies a built-in page from the URL a tab reports. Only the exact
@@ -160,6 +188,30 @@ fn origin_is(uri: &str, origin: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn display_urls_with_sections() {
+        assert_eq!(
+            Page::from_display_with_section("krunk://settings#privacy"),
+            Some((Page::Settings, Some("privacy".into())))
+        );
+        assert_eq!(
+            Page::from_display_with_section("KRUNK://Settings/#Advanced"),
+            Some((Page::Settings, Some("advanced".into())))
+        );
+        assert_eq!(Page::from_display_with_section("krunk://settings"), Some((Page::Settings, None)));
+        assert_eq!(
+            Page::from_display_with_section("krunk://settings#<script>"),
+            Some((Page::Settings, None)),
+            "odd sections are dropped"
+        );
+        assert_eq!(Page::from_display_with_section("krunk://nope#x"), None);
+        assert_eq!(Page::Settings.url_with_section(Some("privacy")), "https://krunk.invalid/settings.html#privacy");
+        assert_eq!(Page::Settings.url_with_section(Some("Bad Section")), Page::Settings.url());
+        assert_eq!(Page::Gpu.name(), "gpu");
+        assert!(Page::Gpu.single_instance());
+        assert_eq!(Page::from_display("krunk://gpu"), Some(Page::Gpu));
+    }
 
     #[test]
     fn round_trips() {

@@ -596,6 +596,7 @@ fn page_title(p: Page) -> &'static str {
         Page::SiteData => "Site data",
         Page::Adblock => "Ad blocking",
         Page::HttpsOnly => "Not secure",
+        Page::Gpu => "Graphics",
     }
 }
 

@@ -441,7 +441,26 @@ pub enum Request {
     },
     OpenPage {
         page: String,
+        /// A section of the page (`settings#privacy`); only short lower-case words count.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        section: Option<String>,
     },
+    /// Settings → Passwords & import: the browser profiles found on this computer.
+    ImportDetect,
+    /// Import `types` ("history", "bookmarks", "passwords") from the profile `profile`
+    /// (an id from `ImportDetect`), with the Firefox primary password if one is needed.
+    ImportRun {
+        profile: String,
+        types: Vec<String>,
+        #[serde(default)]
+        primary_password: Option<Secret>,
+    },
+    /// Import passwords from a CSV file chosen in a native dialog.
+    ImportCsv,
+    /// krunk://gpu: the switches, the GPU process, the acceleration setting.
+    GetGpuInfo,
+    /// krunk://gpu: open Chromium's own chrome://gpu page in this tab (a host navigation).
+    OpenGpuInternals,
     ToggleBookmark,
     /// The shell's tab-row layout for hit testing the frameless window.
     HitMap {
@@ -1032,11 +1051,15 @@ impl Sender {
                     | R::GetUpdateStatus
                     | R::CheckForUpdates
                     | R::UpdateReply { .. }
+                    | R::ImportDetect
+                    | R::ImportRun { .. }
+                    | R::ImportCsv
             ),
             Sender::Page(Page::Downloads) => {
                 matches!(req, R::GetDownloads | R::ClearDownloads | R::DownloadAction { .. })
             }
             Sender::Page(Page::About) => matches!(req, R::GetAbout),
+            Sender::Page(Page::Gpu) => matches!(req, R::GetGpuInfo | R::OpenGpuInternals),
             Sender::Page(Page::Storage) => matches!(
                 req,
                 R::StorageList
@@ -1817,7 +1840,17 @@ mod tests {
             Request::Reload,
             Request::Stop,
             Request::OpenUrl { url: "https://b.example/".into(), new_tab: true },
-            Request::OpenPage { page: "settings".into() },
+            Request::OpenPage { page: "settings".into(), section: None },
+            Request::OpenPage { page: "settings".into(), section: Some("privacy".into()) },
+            Request::GetGpuInfo,
+            Request::OpenGpuInternals,
+            Request::ImportDetect,
+            Request::ImportRun {
+                profile: "firefox:default".into(),
+                types: vec!["history".into()],
+                primary_password: Some(Secret::from("pw")),
+            },
+            Request::ImportCsv,
             Request::ToggleBookmark,
             Request::HitMap {
                 map: crate::frame::HitMap {
@@ -2052,6 +2085,46 @@ mod tests {
         assert_eq!((m.x, m.y, m.width, m.height), (5.0, 6.0, 240.0, 353.0));
         assert_eq!(crate::layout::bookmark_menu_rect(0.0, 0.0, true, true).height, 293.0);
         assert_eq!(crate::layout::bookmark_menu_rect(0.0, 0.0, false, false).height, 222.0);
+    }
+
+    #[test]
+    fn import_requests_are_settings_page_only() {
+        let run = Request::ImportRun {
+            profile: "chrome:Default".into(),
+            types: vec!["passwords".into()],
+            primary_password: None,
+        };
+        for r in [Request::ImportDetect, run, Request::ImportCsv] {
+            assert!(Sender::Page(Page::Settings).permits(&r));
+            assert!(!Sender::Shell.permits(&r) && !Sender::Popup.permits(&r));
+            for p in Page::ALL.iter().filter(|p| **p != Page::Settings) {
+                assert!(!Sender::Page(*p).permits(&r), "{p:?} {r:?}");
+            }
+        }
+        // The primary password never appears in Debug output.
+        let parsed = parse_request(
+            Sender::Page(Page::Settings),
+            r#"{"cmd":"importRun","profile":"firefox:x","types":["passwords"],"primaryPassword":"hunter2"}"#,
+        )
+        .unwrap();
+        assert!(!format!("{:?}", parsed.request).contains("hunter2"));
+    }
+
+    #[test]
+    fn gpu_page_requests_are_gpu_page_only() {
+        for r in [Request::GetGpuInfo, Request::OpenGpuInternals] {
+            assert!(Sender::Page(Page::Gpu).permits(&r));
+            assert!(!Sender::Shell.permits(&r) && !Sender::Popup.permits(&r));
+            for p in Page::ALL.iter().filter(|p| **p != Page::Gpu) {
+                assert!(!Sender::Page(*p).permits(&r), "{p:?} {r:?}");
+            }
+        }
+        // Any page may open settings at a section; the section is optional on the wire.
+        let open =
+            parse_request(Sender::Page(Page::About), r#"{"cmd":"openPage","page":"settings","section":"privacy"}"#)
+                .unwrap();
+        assert_eq!(open.request, Request::OpenPage { page: "settings".into(), section: Some("privacy".into()) });
+        assert!(parse_request(Sender::Page(Page::About), r#"{"cmd":"openPage","page":"gpu"}"#).is_ok());
     }
 
     #[test]

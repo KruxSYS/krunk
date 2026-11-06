@@ -1860,7 +1860,15 @@ function settingsMock(defaults) {
   const st = { settings: clone(defaults), allow: ['news.example.com'] };
   window.__settings = st;
   const restart = (s) => ['hardwareAcceleration', 'proxy', 'extraFlags', 'blockThirdPartyCookies', 'engineSecurityComponents'].some((k) => s[k] !== running[k]);
-  h.getSettings = () => ({ settings: st.settings, restartRequired: restart(st.settings), about: { version: '0.1.0', cef: '156.0.15', chromium: '156.0.8078.80', dataDir: 'C:\\Users\\me\\AppData\\Local\\Krunk' } });
+  const UA_DEFAULT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36';
+  const UAS = [
+    { id: 'chrome-windows', label: 'Chrome 157 on Windows', userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36' },
+    { id: 'firefox-windows', label: 'Firefox 159 on Windows', userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:159.0) Gecko/20100101 Firefox/159.0' },
+    { id: 'safari-iphone', label: 'Safari 27 on iPhone', userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0 Mobile/15E148 Safari/604.1' },
+  ];
+  window.__uas = UAS;
+  h.getSettings = () => ({ settings: st.settings, restartRequired: restart(st.settings), about: { version: '0.1.0', cef: '156.0.15', chromium: '156.0.8078.80', dataDir: 'C:\\Users\\me\\AppData\\Local\\Krunk' }, userAgents: UAS, defaultUserAgent: UA_DEFAULT });
+  h.importDetect = () => [];
   h.saveSettings = (m) => {
     const s = m.settings;
     const errs = [];
@@ -1899,8 +1907,12 @@ function settingsMock(defaults) {
 async function testSettings(browser) {
   console.log('settings page');
   const defaults = JSON.parse(fs.readFileSync(path.join(__dirname, 'default-settings.json'), 'utf8'));
-  const { page, errors, external } = await openPage(browser, 'https://krunk.invalid/settings.html', { width: 1000, height: 2900 }, 1, settingsMock, defaults);
+  const { page, errors, external } = await openPage(browser, 'https://krunk.invalid/settings.html', { width: 1000, height: 1600 }, 1, settingsMock, defaults);
   await page.waitForFunction(() => document.getElementById('lists-summary').textContent !== '');
+  // 0.5: the page is tabbed; a control must be on the shown tab before it is used.
+  const tab = async (name) => { await page.click('#tabs a[data-tab="' + name + '"]'); await page.waitForTimeout(20); };
+  check(await page.locator('.panel.active[data-tab=general]').count() === 1 && await page.locator('#tabs a.active[data-tab=general]').count() === 1, 'the General tab is shown first');
+  check(await page.locator('.panel').count() === 6 && await page.locator('.panel.active').count() === 1, 'six tabs, one shown');
   check(await page.inputValue('#searchEngine') === 'duckDuckGo', 'defaults: DuckDuckGo');
   check(await page.isChecked('input[name=startup][value=restoreSession]'), 'defaults: restore session');
   check((await page.locator('#trackingPrevention, [data-key=smartscreen]').count()) === 0, 'no Edge-only settings');
@@ -1913,11 +1925,13 @@ async function testSettings(browser) {
   check((await page.getAttribute('#manage-lists', 'href')) === 'adblock.html#lists' && (await page.getAttribute('#manage-filters', 'href')) === 'adblock.html#filters', 'links to the lists and My filters on krunk://adblock');
   check(await page.inputValue('#bookmarks-bar') === 'always', 'defaults: bookmarks bar always shown');
   check(await page.inputValue('#downloadConnections') === '4', 'defaults: 4 connections per download');
+  await tab('downloads');
   await page.selectOption('#downloadConnections', '1');
   await page.waitForTimeout(80);
   check(await page.evaluate(() => window.__settings.settings.downloadConnections) === 1, 'connections per download: 1 (off) saved as a number');
   await page.selectOption('#downloadConnections', '4');
   await page.waitForTimeout(80);
+  await tab('general');
   await page.selectOption('#bookmarks-bar', 'newTab');
   await page.waitForTimeout(80);
   check(await page.evaluate(() => window.__settings.settings.bookmarksBar) === 'newTab', 'bookmarks bar: "only on new tabs" saved');
@@ -1927,6 +1941,7 @@ async function testSettings(browser) {
   await shot(page, 'settings-light.png');
 
   // Inline validation: invalid proxy is rejected and shown, nothing stored.
+  await tab('advanced');
   await page.fill('#proxy', 'not a proxy');
   await page.press('#proxy', 'Tab');
   await page.waitForTimeout(80);
@@ -1944,6 +1959,7 @@ async function testSettings(browser) {
   check(await page.locator('#restart-banner').isVisible(), 'restart banner after changing the proxy');
 
   // Custom search without %s; extra flags.
+  await tab('general');
   await page.selectOption('#searchEngine', 'custom');
   await page.waitForTimeout(60);
   check(await page.locator('#custom-row').isVisible(), 'custom search URL field shown');
@@ -1955,12 +1971,14 @@ async function testSettings(browser) {
   await page.press('#customSearchUrl', 'Tab');
   await page.waitForTimeout(60);
   check(await page.evaluate(() => window.__settings.settings.customSearchUrl) === 'https://search.example/?q=%s', 'custom search saved');
+  await tab('advanced');
   await page.fill('#extraFlags', '--force-dark-mode "--x"');
   await page.press('#extraFlags', 'Tab');
   await page.waitForTimeout(60);
   check((await page.textContent('[data-error-for=extraFlags]')).length > 0, 'malformed extra flag rejected inline');
   await page.fill('#extraFlags', '');
   await page.press('#extraFlags', 'Tab');
+  await tab('general');
   await page.fill('#tabSleepMinutes', '');
   await page.press('#tabSleepMinutes', 'Tab');
   await page.waitForTimeout(60);
@@ -1973,20 +1991,21 @@ async function testSettings(browser) {
     const h = window.__host.handlers; const orig = h.saveSettings;
     h.saveSettings = (m) => { h.saveSettings = orig; return new Promise((res) => setTimeout(() => res(orig(m)), 200)); };
   });
-  await page.fill('#userAgent', 'Slow/1.0');
-  await page.press('#userAgent', 'Tab');
+  await page.fill('#homepage', 'https://slow.example/');
+  await page.press('#homepage', 'Tab');
   await page.fill('#tabSleepMinutes', '7');
   await page.waitForTimeout(350);
   check(await page.inputValue('#tabSleepMinutes') === '7', 'a save reply does not overwrite the field being edited');
   await page.press('#tabSleepMinutes', 'Tab');
   await page.waitForTimeout(60);
   check((await lastSent(page, 'saveSettings')).settings.tabSleepMinutes === 7, 'the edited field is then saved');
-  await page.fill('#userAgent', '');
-  await page.press('#userAgent', 'Tab');
+  await page.fill('#homepage', 'https://duckduckgo.com/');
+  await page.press('#homepage', 'Tab');
   await page.fill('#tabSleepMinutes', '5');
   await page.press('#tabSleepMinutes', 'Tab');
   await page.waitForTimeout(60);
   // Third-party cookie blocking is restart-only too, and is saved.
+  await tab('privacy');
   await page.uncheck('[data-key=blockThirdPartyCookies]');
   await page.waitForTimeout(60);
   const tp = await lastSent(page, 'saveSettings');
@@ -2001,6 +2020,7 @@ async function testSettings(browser) {
   await page.uncheck('[data-key=engineSecurityComponents]');
   await page.waitForTimeout(60);
   // Restart badge for the GPU toggle (restart-only) and restart button.
+  await tab('advanced');
   await page.uncheck('[data-key=hardwareAcceleration]');
   await page.waitForTimeout(60);
   check(await page.locator('#restart-banner').isVisible(), 'GPU toggle shows the restart banner');
@@ -2011,6 +2031,7 @@ async function testSettings(browser) {
   check((await lastSent(page, 'restart')) !== undefined, 'Restart now sends restart');
 
   // Allowlist, folder picker, update now.
+  await tab('privacy');
   await page.fill('#allow-host', 'bad host');
   await page.click('#allow-form button');
   await page.waitForTimeout(50);
@@ -2019,11 +2040,14 @@ async function testSettings(browser) {
   await page.click('#allow-form button');
   await page.waitForTimeout(50);
   check((await page.locator('#allowlist .row').count()) === 2, 'allowlist entry added');
+  await tab('downloads');
   await page.click('#pick-dir');
   await page.waitForTimeout(80);
   check((await page.textContent('#download-dir')) === 'D:\\Downloads\\Browser', 'download folder from the native picker');
+  await tab('privacy');
   await page.click('#update-lists');
   check((await lastSent(page, 'updateFilterLists')) !== undefined, 'Update now sends updateFilterLists');
+  await tab('advanced');
 
   // Settings → About: version, update check, the toggle (on by default).
   check(await page.isChecked('[data-key=checkUpdatesAutomatically]'), 'defaults: automatic update checks on');
@@ -2043,6 +2067,7 @@ async function testSettings(browser) {
   check(await page.evaluate(() => window.__settings.settings.checkUpdatesAutomatically) === false, 'the automatic-check toggle is saved');
 
   // Theme switch (live) and a dark screenshot.
+  await tab('appearance');
   await page.check('input[name=theme][value=dark]');
   await page.waitForTimeout(80);
   check(await page.evaluate(() => document.documentElement.classList.contains('dark')), 'dark theme applied live');
@@ -2056,6 +2081,7 @@ async function testSettings(browser) {
 
   // Reset (confirm is accepted by the harness).
   // Cancel first: nothing happens.
+  await tab('advanced');
   await page.click('#reset');
   await page.waitForSelector('#lb-dialog-cancel');
   check((await page.textContent('.lb-dialog-text')).includes('Reset all settings'), 'in-page reset confirmation');
@@ -2071,6 +2097,56 @@ async function testSettings(browser) {
   check((await lastSent(page, 'resetSettings')) !== undefined, 'reset sends resetSettings after confirm');
   check(await page.isChecked('[data-key=hardwareAcceleration]') && await page.inputValue('#proxy') === '', 'reset restores defaults');
   check(await page.locator('#restart-banner').isHidden(), 'banner gone after reset');
+
+  // 0.5: the user-agent picker. The default is shown read-only; a preset stores its string;
+  // Custom… keeps the free-text field with the old validation.
+  await tab('advanced');
+  check((await page.textContent('#default-ua')).includes('Chrome/156.0.0.0') && await page.inputValue('#userAgentPreset') === '', 'the default user agent is shown, and the picker says Krunk (default)');
+  check(await page.locator('#custom-ua-row').isHidden(), 'the custom field is hidden while a preset is chosen');
+  check((await page.textContent('#custom-ua-row, .row[data-keywords*="picker"]')).includes('no restart'), 'the picker says no restart is needed');
+  await page.selectOption('#userAgentPreset', 'firefox-windows');
+  await page.waitForTimeout(80);
+  check(await page.evaluate(() => window.__settings.settings.userAgent) === (await page.evaluate(() => window.__uas[1].userAgent)), 'choosing Firefox stores its user-agent string');
+  check(await page.locator('#restart-banner').isHidden(), 'no restart banner for the user agent');
+  await page.selectOption('#userAgentPreset', 'custom');
+  await page.waitForTimeout(40);
+  check(await page.locator('#custom-ua-row').isVisible() && await page.inputValue('#userAgent') === (await page.evaluate(() => window.__uas[1].userAgent)), 'Custom… shows the field with the current string');
+  await page.fill('#userAgent', 'Mine/1.0 \u00e9');
+  await page.press('#userAgent', 'Tab');
+  await page.waitForTimeout(80);
+  check((await page.textContent('[data-error-for=userAgent]')).length > 0 || await page.evaluate(() => window.__settings.settings.userAgent) === 'Mine/1.0 \u00e9', 'the custom field keeps the host validation path');
+  await page.fill('#userAgent', 'Mine/1.0');
+  await page.press('#userAgent', 'Tab');
+  await page.waitForTimeout(80);
+  check(await page.evaluate(() => window.__settings.settings.userAgent) === 'Mine/1.0' && await page.inputValue('#userAgentPreset') === 'custom', 'a custom string is saved and the picker says Custom');
+  await page.selectOption('#userAgentPreset', '');
+  await page.waitForTimeout(80);
+  check(await page.evaluate(() => window.__settings.settings.userAgent) === '' && await page.locator('#custom-ua-row').isHidden(), 'Krunk (default) clears the string');
+  check((await page.textContent('#about')).includes('Krunk 0.1.0') && await page.locator('a[href="gpu.html"]').count() >= 1, 'About line and a link to krunk://gpu in Advanced');
+
+  // Search across every tab, and deep links.
+  await page.fill('#filter', 'cookies');
+  await page.waitForTimeout(40);
+  const shownPanels = await page.$$eval('.panel', (ps) => ps.filter((p) => getComputedStyle(p).display !== 'none').map((p) => p.dataset.tab));
+  check(shownPanels.includes('privacy') && !shownPanels.includes('appearance'), 'searching "cookies" shows the Privacy tab\'s matches and hides tabs without any (' + shownPanels.join(',') + ')');
+  check(await page.locator('.row.setting:visible').count() >= 2 && await page.locator('#defaultZoom:visible').count() === 0, 'only matching rows stay (' + await page.locator('.row.setting:visible').count() + ')');
+  await page.fill('#filter', 'zzzzqqq');
+  await page.waitForTimeout(40);
+  check(await page.locator('#no-matches').isVisible(), 'no matches: an empty state');
+  await page.fill('#filter', '');
+  await page.waitForTimeout(40);
+  check(await page.locator('#no-matches').isHidden() && await page.locator('.panel.active').count() === 1, 'clearing the search restores the tab');
+  await page.evaluate(() => { location.hash = '#downloads'; });
+  await page.waitForTimeout(40);
+  check(await page.locator('.panel.active[data-tab=downloads]').count() === 1 && await page.locator('#tabs a.active[data-tab=downloads]').count() === 1, 'the #downloads deep link shows the Downloads tab');
+  await page.evaluate(() => { location.hash = '#nonsense'; });
+  await page.waitForTimeout(40);
+  check(await page.locator('.panel.active[data-tab=general]').count() === 1, 'an unknown section falls back to General');
+  const deep = await openPage(browser, 'https://krunk.invalid/settings.html#privacy', { width: 1000, height: 1200 }, 1, settingsMock, defaults);
+  await deep.page.waitForFunction(() => document.getElementById('lists-summary').textContent !== '');
+  check(await deep.page.locator('.panel.active[data-tab=privacy]').count() === 1, 'opened at #privacy: the Privacy tab shows');
+  await shot(deep.page, 'settings-privacy-tab.png');
+  await deep.page.close();
   check(external.length === 0, 'no network requests (' + external.join(', ') + ')');
   check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
 }

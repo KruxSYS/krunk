@@ -1,0 +1,14 @@
+.page { max-width: 820px; }
+section.card { padding: 6px 22px 18px; margin-bottom: 18px; }
+section.card h2 { font-size: 16px; margin: 18px 0 10px; }
+.verdict-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.verdict { margin: 16px 0 6px; font-size: 22px; font-weight: 600; }
+.verdict.on { color: #15803d; }
+.verdict.off { color: #b45309; }
+.kv { border-collapse: collapse; width: 100%; }
+.kv th { width: 180px; text-align: left; font-weight: 600; color: var(--fg-muted); padding: 5px 10px 5px 0; vertical-align: top; }
+.kv td { padding: 5px 0; word-break: break-all; }
+.kv td.yes { color: #15803d; } .kv td.no { color: #b45309; }
+.mono { font-family: Consolas, monospace; font-size: 12px; }
+.help { color: var(--fg-muted); font-size: 12px; }
+code { font-family: Consolas, monospace; background: var(--bg); padding: 0 4px; border-radius: 4px; }

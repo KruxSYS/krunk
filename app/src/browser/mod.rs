@@ -147,6 +147,8 @@ pub struct Browser {
     toggle: RefCell<lb_core::toggle::ToggleGuard>,
     /// The link-status label (the address of the link under the mouse).
     status: status::StatusHost,
+    /// Some tab was given a user agent other than the one the engine started with.
+    ua_overridden: Cell<bool>,
     /// Where the shell asked for the shield panel (it grows with its list from there).
     shield_anchor: Cell<Option<PopupRect>>,
     /// The tab krunk://adblock shows the blocked requests of (opened from its shield).
@@ -220,6 +222,7 @@ impl Browser {
             folder_anchor: Cell::new(None),
             toggle: RefCell::new(lb_core::toggle::ToggleGuard::default()),
             status: status::StatusHost::default(),
+            ua_overridden: Cell::new(false),
             bookmark_menu_at: Cell::new(None),
             adblock_source: Cell::new(None),
             shield_anchor: Cell::new(None),
@@ -1204,6 +1207,13 @@ impl Browser {
     /// once (downloads, history, settings …) that is already open is switched to instead, in
     /// whichever window it is.
     fn open_page(&self, page: Page) {
+        self.open_page_at(page, None);
+    }
+
+    /// Opens a page at a section (`settings#privacy`); an open single-instance page is
+    /// switched to and sent to that section (a same-document navigation).
+    fn open_page_at(&self, page: Page, section: Option<&str>) {
+        let url = page.url_with_section(section);
         if page.single_instance() {
             let found = self.ws.borrow().find_page(page);
             if let Some((win, tab)) = found {
@@ -1215,14 +1225,17 @@ impl Browser {
                     .unwrap_or_default();
                 self.apply(ops);
                 self.focus_window(win);
+                if section.is_some() {
+                    self.navigate_tab(tab, &url);
+                }
                 return;
             }
         }
         let on_new_tab = self.active_tab().is_some_and(|t| Page::from_url(&t.url) == Some(Page::NewTab));
         if on_new_tab {
-            self.navigate_active(&page.url());
+            self.navigate_active(&url);
         } else {
-            self.new_tab(Some(&page.url()), false);
+            self.new_tab(Some(&url), false);
         }
     }
 
@@ -1466,9 +1479,9 @@ impl Browser {
             Request::Reload => self.run_command(Command::Reload),
             Request::Stop => self.run_command(Command::Stop),
             Request::OpenUrl { url, new_tab } => self.open_url(&url, new_tab, false),
-            Request::OpenPage { page } => {
+            Request::OpenPage { page, section } => {
                 if let Some(p) = Page::from_name(&page) {
-                    self.open_page(p);
+                    self.open_page_at(p, section.as_deref());
                 }
             }
             Request::Command { command } => self.run_command(command),
@@ -1582,7 +1595,12 @@ impl Browser {
             | Request::ResetSettings
             | Request::PickDownloadFolder
             | Request::Restart
-            | Request::GetAbout) => self.dispatch_settings(tab, req_id, r),
+            | Request::GetAbout
+            | Request::GetGpuInfo
+            | Request::OpenGpuInternals
+            | Request::ImportDetect
+            | Request::ImportRun { .. }
+            | Request::ImportCsv) => self.dispatch_settings(tab, req_id, r),
             Request::GetUpdateStatus => self.reply(tab, Event::ok(req_id, self.update_status())),
             Request::CheckForUpdates => self.check_for_updates(Some((tab, req_id))),
             Request::UpdateReply { choice } => self.update_reply(choice),

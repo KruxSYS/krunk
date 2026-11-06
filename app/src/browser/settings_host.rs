@@ -26,6 +26,8 @@ impl Browser {
                     "settings": s,
                     "restartRequired": s.restart_required(&self.running_settings),
                     "about": self.about(),
+                    "userAgents": lb_core::useragents::PRESETS,
+                    "defaultUserAgent": engine::default_user_agent(),
                 });
                 self.reply(tab, Event::ok(req_id, data));
             }
@@ -54,8 +56,32 @@ impl Browser {
             }
             Request::Restart => self.restart(),
             Request::GetAbout => self.reply(tab, Event::ok(req_id, self.about())),
+            Request::GetGpuInfo => self.reply(tab, Event::ok(req_id, self.gpu_info())),
+            Request::ImportDetect => self.reply(tab, Event::ok(req_id, serde_json::json!([]))),
+            Request::ImportRun { .. } | Request::ImportCsv => {
+                self.reply(tab, Event::err(req_id, "Import is not available yet"))
+            }
+            Request::OpenGpuInternals => {
+                if let Some(t) = tab {
+                    self.navigate_tab(t, "chrome://gpu/");
+                }
+            }
             _ => {}
         }
+    }
+
+    /// krunk://gpu: what the host knows (the page probes WebGL and WebGPU itself).
+    fn gpu_info(&self) -> serde_json::Value {
+        let args = self.running_settings.browser_arguments();
+        let (cef, chromium) = engine::versions();
+        serde_json::json!({
+            "hardwareAcceleration": self.settings.borrow().hardware_acceleration,
+            "runningWithGpu": !args.split_whitespace().any(|a| a == "--disable-gpu"),
+            "arguments": args,
+            "gpuProcess": crate::ffi::procmem::browser_tree().iter().any(|p| p.kind == crate::ffi::procmem::Kind::Gpu),
+            "cef": cef,
+            "chromium": chromium,
+        })
     }
 
     pub(super) fn about(&self) -> serde_json::Value {
@@ -159,11 +185,19 @@ impl Browser {
     pub(super) fn apply_user_agent_to(&self, id: TabId) {
         let (now, at_start) = (self.settings.borrow().user_agent.clone(), self.running_settings.user_agent.clone());
         if now == at_start {
+            // Back to the value the engine started with: tabs that were given another
+            // user agent meanwhile drop their override (new tabs never had one).
+            if self.ua_overridden.get() {
+                if let Some(c) = self.tab_view(id) {
+                    c.set_user_agent(None);
+                }
+            }
             return;
         }
         let ua = if now.is_empty() { engine::default_user_agent() } else { now };
         if let Some(c) = self.tab_view(id) {
             c.set_user_agent(Some(&ua));
+            self.ua_overridden.set(true);
         }
     }
 

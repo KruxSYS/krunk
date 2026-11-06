@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Graphics</title>
+<link rel="stylesheet" href="shared/common.css">
+<link rel="stylesheet" href="shared/page.css">
+<link rel="stylesheet" href="gpu.css">
+</head>
+<body>
+<div class="page">
+  <div class="page-header"><h1>Graphics</h1></div>
+
+  <section class="card" id="verdict-card">
+    <div class="verdict-row"><div id="verdict" class="verdict"><span id="verdict-text">Checking…</span></div>
+      <button id="open-internals" class="btn">Open Chromium's chrome://gpu</button></div>
+    <p id="verdict-why" class="help"></p>
+  </section>
+
+  <section class="card">
+    <h2>Rendering</h2>
+    <table class="kv">
+      <tr><th>WebGL renderer</th><td id="webgl"></td></tr>
+      <tr><th>WebGL vendor</th><td id="webgl-vendor"></td></tr>
+      <tr><th>WebGL 2</th><td id="webgl2"></td></tr>
+      <tr><th>Graphics backend</th><td id="backend"></td></tr>
+      <tr><th>WebGPU adapter</th><td id="webgpu"></td></tr>
+      <tr><th>GPU process</th><td id="gpu-process"></td></tr>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>Settings and switches</h2>
+    <table class="kv">
+      <tr><th>Hardware acceleration</th><td id="setting"></td></tr>
+      <tr><th>Engine started with</th><td id="running"></td></tr>
+      <tr><th>Browser arguments</th><td id="arguments" class="mono"></td></tr>
+      <tr><th>Engine</th><td id="engine"></td></tr>
+    </table>
+    <p class="help">The setting is in <a href="settings.html#advanced">Settings → Advanced</a>; it needs a restart.
+      Krunk never adds <code>--disable-gpu-sandbox</code>.</p>
+    <p class="help">Chromium's own chrome://gpu page (the button above) has the full feature status, driver bug workarounds and problems.</p>
+  </section>
+
+  <section class="card">
+    <h2>Media codecs</h2>
+    <p>This engine build decodes VP8, VP9, AV1, Opus, Vorbis, FLAC and MP3. It has no H.264, HEVC, AAC, AC-3 or E-AC-3
+      decoders, so Plex direct play and transcodes, and other H.264/AAC-only streams, do not play. A codec-enabled engine
+      needs a separate build (see the README).</p>
+    <table class="kv" id="codecs"></table>
+  </section>
+</div>
+<script src="shared/bridge.js"></script>
+<script src="gpu.js"></script>
+</body>
+</html>
