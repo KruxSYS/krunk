@@ -83,6 +83,8 @@ changed in Settings. Built-in pages:
 - `krunk://storage`: cookies and site data (also in the main menu and Settings → Privacy)
 - `krunk://sitedata`: one site's cookies, local and session storage (shield → Cookies and site data)
 - `krunk://adblock`: what the ad blocker blocked on a page, the filter lists, and your own filters
+- `krunk://gpu`: whether pages are hardware accelerated (WebGL/WebGPU adapter, the engine's
+  switches, the GPU process), with a link to Chromium's `chrome://gpu`
 
 Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
 
@@ -94,7 +96,7 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
 | Ctrl+Tab / Ctrl+Shift+Tab, Ctrl+1…8, Ctrl+9 | Next / previous tab, tab by position, last tab |
 | Ctrl+L, Alt+D, F6 | Address bar |
 | F5 / Ctrl+R, Ctrl+F5 / Ctrl+Shift+R | Reload, reload bypassing the cache |
-| Alt+Left / Alt+Right, Alt+Home | Back / forward, home page |
+| Alt+Left / Alt+Right, Alt+Home | Back / forward, home page (there is no Home button) |
 | Ctrl+D | Bookmark this page |
 | Ctrl+H, Ctrl+Shift+O, Ctrl+J | History, bookmarks, downloads (switches to the page if it is already open) |
 | Ctrl+Shift+B | Show or hide the bookmarks bar |
@@ -105,12 +107,30 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
 | Ctrl+Shift+C, right-click → Inspect | DevTools with the element under the mouse selected |
 | Alt+Space | Window menu (move, size, minimize, maximize, close) |
 
+- **Settings** (`krunk://settings`) has tabs: General, Privacy & security, Passwords & import,
+  Downloads, Appearance, Advanced. The search box finds a setting on any tab;
+  `krunk://settings#privacy` (and the other tab names) opens that tab. Advanced → User agent
+  shows the browser's own string with Copy, and a list of presets (Chrome, Edge, Firefox,
+  Safari on Windows, macOS, iPhone, Android; versions as of November 2026) or a custom string;
+  the choice applies at once to new navigations.
+- **Address bar:**
+  - The lock (or the "i" on http) opens the site-information popup: whether the connection is
+    secure, the protocol, the certificate chain with validity, names, algorithms and SHA-256
+    fingerprints, and what is wrong with a bad certificate (the engine reports no cipher).
+  - After a navigation the bar shows the new address even if it had the focus; text you typed
+    is kept only until you navigate.
+  - Drag the site icon or the (unfocused) address onto the bookmarks bar or into a folder to
+    bookmark the page there; selected text dropped on the bar is bookmarked if it is a URL.
+  - The ⋮ menu, the shield and the lock toggle: a click on the button closes an open popup.
+  - The address of the link under the mouse shows at the bottom left of the page (bottom right
+    when the mouse is there), as in Chrome.
 - **Window:** there is no title bar. Drag the window by empty space in the tab row, and
   double-click there to maximize or restore. Hovering the maximize button shows the Windows 11
   snap layouts. Right-click the tab row for the window menu.
 - **New tab** (Ctrl+T, "+", the menu) puts the cursor in the address bar, so you can type at once.
 - **Windows and tabs:**
-  - **Dragging:** drag a tab sideways to reorder it. Drag it down out of the tab row and it
+  - **Dragging:** drag a tab sideways to reorder it: the tab follows the mouse and the other
+    tabs slide aside (with "reduce motion" they jump). Drag it down out of the tab row and it
     becomes a new window that follows the mouse; drop it on another window's tab row (a marker
     shows where it will land) to move it there. Esc while dragging puts it back.
   - **A window's only tab** drags the whole window; dropping it on another window's tab row
@@ -132,7 +152,7 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
     A window that would be off screen (a monitor was removed) is moved onto a monitor.
 - **DevTools** (F12) opens inside the tab's window, docked right by default:
   - **Resizing and docking:** drag the splitter between page and DevTools to resize it. The
-    control in the toolbar (shown while the tab has DevTools) docks it right or at the bottom, or
+    strip above DevTools (and the control in the toolbar) docks it right or at the bottom, or
     closes it. Side and sizes are remembered.
   - **One per tab:** each tab has its own DevTools. It hides when you switch tabs, comes back
     with the tab, moves with it to another window and closes with it. Page full screen hides it;
@@ -147,7 +167,9 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   - **Context menu:** right-click a bookmark to open it (here, in a new tab or a new window),
     edit its name and address, or delete it. Right-click a folder to open all, rename or delete
     it, and empty space to add the page or make a folder.
-  - **Dragging:** drag bookmarks to reorder them, or onto a folder to put them in it.
+  - **Dragging:** drag bookmarks to reorder them, or onto a folder to put them in it. In a
+    folder's dropdown, drag an item to reorder it, onto a subfolder to move it there, or out
+    of the dropdown onto the bar. Right-click an item there for its menu.
 - **Shield:** the shield in the toolbar shows how many ads and trackers were blocked on the
   page, and lists the latest blocked addresses. Click it to allow ads on that site, or to open
   **Cookies and site data** for the site.
@@ -204,7 +226,25 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
 - **Passwords:**
   - When you sign in to a site, Krunk asks "Save password?". The first save asks you to
     create the vault with a master password.
-  - To fill a login, click the key icon in the address bar.
+  - **Filling:** click into a username or password field and Krunk's dropdown offers the
+    matching logins: the site's exact origin first, then logins saved for the same domain
+    (https pages only; an http page gets only its own http logins). Choosing one fills the
+    form. A login form inside a cross-origin iframe gets only that origin's logins. With the
+    vault locked the dropdown offers **Unlock Krunk passwords**, which opens Krunk's own
+    master-password prompt (never page content) and fills afterwards; the next time in the
+    session there is no prompt until the vault locks again. The key icon in the address bar
+    still works. While the vault is locked, Krunk knows which sites have logins from a keyed
+    index (HMAC tags with a DPAPI-protected key in `browser.db`); the origins themselves are not
+    stored outside the encrypted vault.
+  - **Import** (Settings → Passwords & import): Krunk lists the Firefox, Google Chrome,
+    Microsoft Edge and Brave profiles of this Windows user and imports their history,
+    bookmarks and passwords (Firefox: with the primary password if one is set). Nothing is
+    imported twice: visits by address and time, bookmarks by folder and address, logins by site
+    and user name (a different password updates the login). Chrome and Edge passwords saved by
+    Chrome 127 or newer are "app-bound" (only Chrome can decrypt them): Krunk reports how many
+    and offers the CSV route — export them from the browser and import the CSV file (Chrome/Edge
+    or Firefox layout). The browser's files are copied to a temporary folder for reading and
+    the copies are removed. Passwords need the vault set up and unlocked.
   - Manage logins on `krunk://passwords`. Showing a password asks for the master password again.
 - **Private tabs:** they share an in-memory profile that is discarded when the last private tab
   closes. Nothing from them is written to disk, history, the session or the favicon cache.
@@ -216,7 +256,8 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   hidden and confined to the page, movement keeps coming at the screen edge (smoothly, also
   while mouse buttons and keys are held), and
   `{unadjustedMovement: true}` gives raw mouse input. Esc, Alt+Tab, switching tabs or leaving
-  the page release the lock; a "Press Esc to show your cursor" hint appears for 3 s. A page's
+  the page release the lock; a small "Press Esc to show your cursor" pill appears for 3 s, at
+  most three times per tab. A page's
   `requestFullscreen()` and **F11** fill the monitor without the tab strip and toolbar; Esc
   leaves page full screen and F11 toggles.
 - **Starting Krunk again** while it runs opens a new tab in the most recently used window.

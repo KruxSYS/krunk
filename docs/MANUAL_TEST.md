@@ -671,6 +671,89 @@ and an even movement per frame. Esc still releases the lock.
 4. In the Text tab, a cookie value with `;` is refused; in Hex, bytes that are not valid UTF-8
    are not saved as UTF-8.
 
+## Krunk 0.5 (round after 0.4.0)
+Last pass: 2026-11-06 on the Windows 11 VM (release build); evidence in the pipeline workspace
+under `evidence-0.5.0/`. VM scripts (each on a fresh profile): `vm-050-shell.ps1`,
+`vm-050-bar.ps1`, `vm-050-reorder.ps1`, `vm-050-overlays.ps1`, `vm-050-siteinfo.ps1`,
+`vm-050-settings.ps1`, `vm-050-autofill.ps1` (with `vm-050-https-setup.ps1` once),
+`vm-050-import.ps1` (real Firefox/Chrome/Edge profiles), `vm-050-lna.ps1`, `vm-050-media.ps1`.
+Test pages are in `scripts/vm-www/` (`8094/login.html`, `links.html`, `media.html`, `ua.html`,
+`8095/frame-login.html`, `8443/origin-login.html`).
+
+### Toolbar and bookmarks bar
+1. No Home button; Alt+Home still opens the home page. Click ⋮, the shield and the lock three
+   times each: open, closed, open.
+2. Navigate while the address bar has the focus (click into it, then click a bookmark): the bar
+   shows the new address. Type something, then navigate from a bookmark: the typed text is
+   replaced.
+3. Drag the site icon onto the bookmarks bar and into a folder: the page is bookmarked there.
+   Right-click an item in a folder dropdown: its menu. Drag an item within the dropdown, onto a
+   subfolder, and out onto the bar. Restart: the order is kept.
+4. Drag a tab slowly along the row: it follows the mouse and the others slide. With Windows'
+   "Animation effects" off, no slide.
+
+### Overlays and DevTools
+1. Hover a link: its address shows bottom left of the page, and moves to the bottom right when
+   the mouse goes there; nothing in full screen.
+2. Lock the pointer (`8094/plock…` or a game) four times in one tab: the Esc pill shows three
+   times, not the fourth; a new tab counts again. No fade with "reduce motion".
+3. F12: the strip above DevTools has Close and dock buttons; both docks work.
+
+### Lock popup and shield
+1. On example.com (https), neverssl.com (http), expired.badssl.com and self-signed.badssl.com,
+   click the lock: connection state, certificate chain with fingerprints, and the warning text.
+   Light and dark themes.
+2. The shield popup: host with the on/off switch, the count, the latest blocked requests with
+   type badges, "Show all".
+
+### Settings, user agent, krunk://gpu
+1. Settings has six tabs; the search box finds settings on other tabs and shows an empty state
+   for nonsense; `krunk://settings#privacy` opens the Privacy tab.
+2. Advanced → User agent: the default is shown read-only with Copy and equals
+   `navigator.userAgent`. Pick "Firefox 159 on Windows": `8094/ua.html` (or any echo site) shows
+   it on the next load. "Custom…" accepts a string; Default restores the engine's.
+3. `krunk://gpu`: on real hardware the verdict is **Hardware accelerated** and WebGL names the
+   real GPU; on the VM it says software rendering (SwiftShader). "Open chrome://gpu" works.
+
+### Passwords
+1. With logins saved for a site, click into its password field: the dropdown with the usernames;
+   the username field shows it too. The site's exact origin first, then same-domain https logins
+   (with their host); an http page is never offered https logins and vice versa.
+2. Choose one: both fields fill, the page gets input and change events; before the choice the
+   page's own script sees empty fields.
+3. Restart (vault locked): the dropdown says "Unlock Krunk passwords"; the click opens Krunk's
+   prompt (top right, outside the page); a wrong master password says so; the right one fills,
+   and the next field in the session asks nothing until autolock.
+4. `8094/login.html` has a cross-origin iframe (`127.0.0.1:8095`): its fields get only the
+   iframe origin's login. A private tab gets suggestions and fills, but a new login submitted
+   there is never offered for saving.
+
+### Import
+1. Settings → Passwords & import lists Firefox, Chrome, Edge and Brave profiles with their paths.
+   Without a vault, importing passwords says to set one up first; with the vault locked, Krunk's
+   unlock prompt appears and the import runs after it.
+2. Import from Firefox (primary password if set): the counts (history, bookmarks, passwords);
+   krunk://history, the bookmarks bar and krunk://passwords show them. A second import reports
+   everything as "already there".
+3. Import from Chrome/Edge: history and bookmarks; passwords report "N protected by Chrome".
+   Export a CSV from Chrome and import it: the logins arrive.
+4. `%TEMP%` has no `Krunk-import-*` folder left afterwards.
+
+### Local network access
+1. From a public https page, fetch `http://localhost:…` (DevTools console) or open a page that
+   embeds a LAN device: Krunk's prompt "Connect to this computer?" / "…devices on your local
+   network?". Allow: the request completes; a reload asks nothing. The site's Cookies and site
+   data page lists "Local network access: Allowed" with Remove; after Remove the prompt is back.
+   Block: the request fails. In a private tab the prompt comes every time and remembers nothing.
+2. Plex: with the LAN server reachable, app.plex.tv can now list the server; playback of
+   H.264/AAC streams still fails (codecs, see the README).
+
+### Real hardware (not possible on the VM)
+- `krunk://gpu` says **Hardware accelerated** and WebGL shows the real GPU; the toggle in
+  Settings → Advanced turns it off after a restart (verdict: software rendering).
+- Two monitors with different scaling; scaling at 150 % and 200 % (overlays, prompt and
+  dropdown positions).
+
 ## Background traffic
 1. Run a logging HTTP proxy (`screenshots/verify2/proxy.ps1` in the pipeline workspace listens on
    `127.0.0.1:8888`) and set Settings → Advanced → Proxy to `127.0.0.1:8888` (restart).
