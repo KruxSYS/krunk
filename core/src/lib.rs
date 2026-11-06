@@ -21,6 +21,7 @@ pub mod layout;
 pub mod memory;
 pub mod migrate;
 pub mod netscape;
+pub mod omnibox;
 pub mod overlay;
 pub mod pages;
 pub mod passgen;

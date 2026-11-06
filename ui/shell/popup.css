@@ -118,3 +118,10 @@ body { background: var(--bg-raised); border: 1px solid var(--border); border-rad
 .blocked .count { flex: none; color: var(--fg-muted); }
 .link { margin-top: 6px; padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; }
 .link:hover { text-decoration: underline; }
+
+/* Address-bar suggestions (0.5.1) */
+.suggest.addr { gap: 8px; }
+.suggest.addr.selected { background: var(--bg-hover); box-shadow: 0 0 0 1px var(--accent) inset; }
+.suggest.addr .glyph { width: 18px; text-align: center; flex: none; font-size: 13px; }
+.suggest.addr .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
+.suggest.addr .url { color: var(--fg-muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1 1 auto; min-width: 0; }

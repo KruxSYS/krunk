@@ -680,6 +680,13 @@ under `evidence-0.5.0/`. VM scripts (each on a fresh profile): `vm-050-shell.ps1
 Test pages are in `scripts/vm-www/` (`8094/login.html`, `links.html`, `media.html`, `ua.html`,
 `8095/frame-login.html`, `8443/origin-login.html`).
 
+### Address-bar suggestions (0.5.1)
+Type `exa` into the address bar after visiting and bookmarking example.com: a dropdown shows
+"Search exa", the bookmark and the history pages. Down selects a row and the bar shows its
+address while typing still goes to the bar; Enter opens the selected row; Esc closes the list
+and keeps the typed text, a second Esc leaves the bar. A click on a row opens it. With nothing
+selected, Enter searches or opens the typed address as before (`vm-051-omnibox.ps1`).
+
 ### Toolbar and bookmarks bar
 1. No Home button; Alt+Home still opens the home page. Click ⋮, the shield and the lock three
    times each: open, closed, open.

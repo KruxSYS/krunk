@@ -48,6 +48,7 @@ mod frame;
 mod import;
 mod jobs;
 mod library;
+mod omnibox;
 mod permissions;
 mod pointer;
 mod power;
@@ -154,6 +155,7 @@ pub struct Browser {
     suggest: suggest::SuggestHost,
     imports: import::ImportHost,
     permissions: permissions::PermissionHost,
+    omnibox: omnibox::OmniboxHost,
     /// Some tab was given a user agent other than the one the engine started with.
     ua_overridden: Cell<bool>,
     /// Where the shell asked for the shield panel (it grows with its list from there).
@@ -232,6 +234,7 @@ impl Browser {
             suggest: suggest::SuggestHost::default(),
             imports: import::ImportHost::default(),
             permissions: permissions::PermissionHost::default(),
+            omnibox: omnibox::OmniboxHost::default(),
             ua_overridden: Cell::new(false),
             bookmark_menu_at: Cell::new(None),
             adblock_source: Cell::new(None),
@@ -1497,6 +1500,7 @@ impl Browser {
             }
             Request::ReopenClosedTab => self.run_command(Command::ReopenClosedTab),
             Request::Navigate { input } => {
+                self.address_suggest_close();
                 let template = self.settings.borrow().search_template().to_string();
                 let url = urlclean::input_to_url(&input, &template);
                 self.navigate_active(&url);
@@ -1678,6 +1682,9 @@ impl Browser {
             Request::PermissionReply { prompt_id, allow, remember } => {
                 self.permission_reply(prompt_id, allow, remember)
             }
+            Request::AddressSuggest { text, rect } => self.address_suggest(text, rect),
+            Request::AddressSuggestSelect { selected } => self.address_suggest_select(selected),
+            Request::AddressSuggestPick { url } => self.address_suggest_pick(&url),
             r @ (Request::SiteDataGet {}
             | Request::SitePermissionRemove { .. }
             | Request::SiteDataSet { .. }

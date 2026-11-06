@@ -526,11 +526,56 @@
 
   // ---------- address bar ----------
   const address = $('address');
+  // Suggestions while typing (0.5.1): the host shows them in a popup under the bar that
+  // never takes the focus; the shell keeps the rows and the keyboard selection.
+  const suggest = { text: '', entries: [], selected: null, timer: null, open: false };
+  function suggestRect() {
+    const r = address.getBoundingClientRect();
+    return { x: r.left, y: r.bottom + 4, width: r.width, height: 0 };
+  }
+  function askSuggestions() {
+    clearTimeout(suggest.timer);
+    suggest.timer = setTimeout(function () {
+      const text = address.value.trim();
+      suggest.text = text;
+      suggest.selected = null;
+      if (!text) { closeSuggestions(); return; }
+      LB.post('addressSuggest', { text: text, rect: suggestRect() });
+    }, 60);
+  }
+  function closeSuggestions() {
+    clearTimeout(suggest.timer);
+    suggest.entries = [];
+    suggest.selected = null;
+    if (suggest.open) { suggest.open = false; LB.post('hidePopup'); }
+  }
+  function selectSuggestion(delta) {
+    const n = suggest.entries.length;
+    if (!n) return false;
+    let i = suggest.selected === null ? (delta > 0 ? 0 : n - 1) : suggest.selected + delta;
+    if (i < 0 || i >= n) i = null;
+    suggest.selected = i;
+    address.value = i === null ? suggest.text : suggest.entries[i].fill;
+    address.setSelectionRange(address.value.length, address.value.length);
+    LB.post('addressSuggestSelect', { selected: i });
+    return true;
+  }
+  LB.on('addressSuggestions', function (e) {
+    if (document.activeElement !== address || e.text !== address.value.trim()) return;
+    suggest.entries = e.entries || [];
+    suggest.selected = null;
+    suggest.open = suggest.entries.length > 0;
+  });
   address.addEventListener('focus', function () { state.editing = true; state.dirty = false; address.select(); });
-  address.addEventListener('blur', function () { state.editing = false; state.dirty = false; renderNav(); });
-  address.addEventListener('input', function () { state.dirty = true; });
+  address.addEventListener('blur', function () { state.editing = false; state.dirty = false; closeSuggestions(); renderNav(); });
+  address.addEventListener('input', function () { state.dirty = true; askSuggestions(); });
   address.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (selectSuggestion(e.key === 'ArrowDown' ? 1 : -1)) e.preventDefault();
+      return;
+    }
     if (e.key === 'Escape') {
+      if (suggest.open) { e.preventDefault(); address.value = suggest.text; closeSuggestions(); return; }
       address.value = state.nav ? state.nav.url : '';
       state.dirty = false;
       address.blur();
@@ -538,9 +583,12 @@
   });
   $('omnibox').addEventListener('submit', function (e) {
     e.preventDefault();
+    const chosen = suggest.selected !== null ? suggest.entries[suggest.selected] : null;
     const input = address.value.trim();
-    if (!input) return;
-    LB.post('navigate', { input: input });
+    if (!chosen && !input) return;
+    closeSuggestions();
+    if (chosen) LB.post('addressSuggestPick', { url: chosen.url });
+    else LB.post('navigate', { input: input });
     state.editing = false;
     state.dirty = false;
     address.blur();
@@ -846,7 +894,7 @@
     $('find-count').textContent = find.value ? (m.total > 0 ? m.active + '/' + m.total : '0/0') : '';
     $('findbar').classList.toggle('nomatch', !!find.value && m.total === 0);
   });
-  LB.on('popupClosed', function () { setPopup(null); });
+  LB.on('popupClosed', function () { setPopup(null); suggest.open = false; suggest.entries = []; suggest.selected = null; });
 
   // Keep keyboard shortcuts working while the shell has focus: the host sees
   // them through AcceleratorKeyPressed, so the shell does nothing extra here.

@@ -137,6 +137,9 @@ pub enum PopupKind {
     /// "Connect to devices on your local network?" (Krunk 0.5.0; opened by the host when the
     /// engine asks for local network access).
     Permission,
+    /// Suggestions under the address bar while the user types (Krunk 0.5.1): history,
+    /// bookmarks, a search or the typed address. The address bar keeps the focus.
+    AddressSuggest,
     /// "Krunk X.Y.Z is available" (opened by the host after an update check).
     Update,
     /// A tab's context menu (right-click on the tab).
@@ -159,7 +162,7 @@ impl PopupKind {
     /// it covers already had focus). (The "Press Esc" hint is not a popup:
     /// it is a native overlay, see `overlay`.)
     pub fn takes_focus(self) -> bool {
-        self != PopupKind::Suggest
+        !matches!(self, PopupKind::Suggest | PopupKind::AddressSuggest)
     }
 }
 
@@ -275,6 +278,12 @@ pub enum PopupContent {
         username: String,
         update: bool,
     },
+    /// The address-bar suggestions for what the user typed; `selected` is the row the
+    /// keyboard picked (the shell owns the selection).
+    AddressSuggest {
+        entries: Vec<AddressSuggestion>,
+        selected: Option<usize>,
+    },
     /// A public page on `origin` wants to reach the local network (`loopback`: this
     /// computer). In a private tab the answer is never remembered.
     Permission {
@@ -371,6 +380,30 @@ pub enum UpdateChoice {
     Notes,
 }
 
+/// One row of the address-bar suggestions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddressSuggestion {
+    /// Where the row goes (a search URL for `Search`).
+    pub url: String,
+    /// The page title, or the typed text for `Search`/`Url`.
+    pub title: String,
+    pub kind: AddressSuggestionKind,
+    /// What the address bar shows while the row is selected with the keyboard.
+    pub fill: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AddressSuggestionKind {
+    /// Search the typed words.
+    Search,
+    /// Go to the typed address.
+    Url,
+    History,
+    Bookmark,
+}
+
 /// Why the vault must be unlocked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -443,6 +476,7 @@ impl PopupContent {
             PopupContent::SavePassword { .. } => PopupKind::SavePassword,
             PopupContent::Fill { .. } => PopupKind::Fill,
             PopupContent::Permission { .. } => PopupKind::Permission,
+            PopupContent::AddressSuggest { .. } => PopupKind::AddressSuggest,
             PopupContent::BookmarkFolder { .. } => PopupKind::BookmarkFolder,
             PopupContent::Unlock { .. } => PopupKind::Unlock,
             PopupContent::Update { .. } => PopupKind::Update,
@@ -682,6 +716,20 @@ pub enum Request {
     },
     /// Reply to the "Save password?" prompt. `tab_id` and `origin` echo the
     /// prompt; the host re-checks both before saving.
+    /// The shell: suggestions for `text` typed into the address bar, shown at `rect` (the
+    /// popup's place and width in shell CSS px; the host sets the height).
+    AddressSuggest {
+        text: String,
+        rect: PopupRect,
+    },
+    /// The shell moved the keyboard selection in the suggestions.
+    AddressSuggestSelect {
+        selected: Option<usize>,
+    },
+    /// A suggestion was chosen (a click in the popup, Enter in the shell): go there.
+    AddressSuggestPick {
+        url: String,
+    },
     /// The answer to a local-network permission prompt (`remember`: keep it for the site).
     PermissionReply {
         prompt_id: u64,
@@ -1044,6 +1092,9 @@ impl Sender {
                     | R::HitMap { .. }
                     | R::WindowControl { .. }
                     | R::ShowPopup { .. }
+                    | R::AddressSuggest { .. }
+                    | R::AddressSuggestSelect { .. }
+                    | R::AddressSuggestPick { .. }
                     | R::HidePopup
                     | R::ShowBookmarkFolder { .. }
                     | R::ShowBookmarkMenu { .. }
@@ -1083,6 +1134,7 @@ impl Sender {
                     | R::OpenSiteData
                     | R::SavePasswordReply { .. }
                     | R::PermissionReply { .. }
+                    | R::AddressSuggestPick { .. }
                     | R::FillReply { .. }
                     | R::SuggestPick { .. }
                     | R::SuggestUnlock { .. }
@@ -1403,6 +1455,12 @@ pub enum Event {
     /// the OS through `prefers-color-scheme`).
     Theme {
         theme: Theme,
+    },
+    /// To the shell: the suggestions for `text` (the popup shows them; the shell keeps them
+    /// for the keyboard).
+    AddressSuggestions {
+        text: String,
+        entries: Vec<AddressSuggestion>,
     },
     FocusAddressBar,
     /// The host moved the focus to the page (a bookmark or link was opened):
@@ -2037,6 +2095,9 @@ mod tests {
             Request::ShieldAllowSite { allow: true },
             Request::SavePasswordReply { tab_id: 1, origin: "https://a.example".into(), accept: true, never: false },
             Request::PermissionReply { prompt_id: 7, allow: true, remember: true },
+            Request::AddressSuggest { text: "ru".into(), rect },
+            Request::AddressSuggestSelect { selected: Some(1) },
+            Request::AddressSuggestPick { url: "https://rust-lang.org/".into() },
             Request::SitePermissionRemove { kind: "localNetwork".into() },
             Request::FillReply { tab_id: 1, origin: "https://a.example".into(), entry_id: None },
             Request::Quit,
@@ -2271,6 +2332,48 @@ mod tests {
         };
         assert_eq!(content.kind(), PopupKind::Suggest);
         assert!(serde_json::to_string(&content).unwrap().contains(r#""locked":true"#));
+    }
+
+    #[test]
+    fn address_suggestions_are_shell_and_popup_only() {
+        let rect = PopupRect { x: 100.0, y: 60.0, width: 500.0, height: 0.0 };
+        let ask = Request::AddressSuggest { text: "ru".into(), rect };
+        let select = Request::AddressSuggestSelect { selected: None };
+        let pick = Request::AddressSuggestPick { url: "https://rust-lang.org/".into() };
+        assert!(Sender::Shell.permits(&ask) && Sender::Shell.permits(&select) && Sender::Shell.permits(&pick));
+        assert!(Sender::Popup.permits(&pick) && !Sender::Popup.permits(&ask) && !Sender::Popup.permits(&select));
+        for p in Page::ALL {
+            assert!(
+                !Sender::Page(p).permits(&ask) && !Sender::Page(p).permits(&select) && !Sender::Page(p).permits(&pick),
+                "{p:?}"
+            );
+        }
+        assert!(!PopupKind::AddressSuggest.takes_focus() && !PopupKind::AddressSuggest.shell_may_open());
+        let content = PopupContent::AddressSuggest {
+            entries: vec![AddressSuggestion {
+                url: "https://duckduckgo.com/?q=ru".into(),
+                title: "ru".into(),
+                kind: AddressSuggestionKind::Search,
+                fill: "ru".into(),
+            }],
+            selected: Some(0),
+        };
+        assert_eq!(content.kind(), PopupKind::AddressSuggest);
+        let j = serde_json::to_string(&content).unwrap();
+        assert!(
+            j.contains(r#""kind":"addressSuggest""#)
+                && j.contains(r#""kind":"search""#)
+                && j.contains(r#""selected":0"#),
+            "{j}"
+        );
+        let parsed = parse_request(
+            Sender::Shell,
+            r#"{"cmd":"addressSuggest","text":"ru","rect":{"x":1,"y":2,"width":300,"height":0}}"#,
+        )
+        .unwrap();
+        assert!(matches!(parsed.request, Request::AddressSuggest { ref text, .. } if text == "ru"));
+        let ev = Event::AddressSuggestions { text: "ru".into(), entries: vec![] }.to_json();
+        assert!(ev.contains(r#""event":"addressSuggestions""#), "{ev}");
     }
 
     #[test]

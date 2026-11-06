@@ -292,6 +292,54 @@ async function testShell(browser) {
   check(!afterBlur.active && afterBlur.value === 'https://moved2.example/', 'blurAddressBar leaves the field and shows the page URL');
   void h2;
 
+  // 0.5.1: suggestions while typing. The host answers addressSuggestions; Down/Up select
+  // (the bar shows the row's fill), Enter picks, Esc closes without leaving the field.
+  await page.click('#address');
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('ru');
+  await page.waitForTimeout(120);
+  const asked = await lastSent(page, 'addressSuggest');
+  check(asked && asked.text === 'ru' && asked.rect && asked.rect.width > 100 && asked.rect.y > 0, 'typing asks the host for suggestions with the bar\'s rect (' + JSON.stringify(asked) + ')');
+  const rows = [
+    { url: 'https://duckduckgo.com/?q=ru', title: 'ru', kind: 'search', fill: 'ru' },
+    { url: 'https://www.rust-lang.org/', title: 'Rust', kind: 'bookmark', fill: 'https://www.rust-lang.org/' },
+    { url: 'https://docs.rs/', title: 'Docs.rs', kind: 'history', fill: 'https://docs.rs/' },
+  ];
+  await emit(page, { event: 'addressSuggestions', text: 'ru', entries: rows });
+  await page.waitForTimeout(20);
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
+  await page.waitForTimeout(20);
+  let sel = await lastSent(page, 'addressSuggestSelect');
+  check(sel && sel.selected === 1 && await page.locator('#address').inputValue() === 'https://www.rust-lang.org/', 'Down twice selects the second row and shows its address');
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('ArrowUp');
+  await page.waitForTimeout(20);
+  sel = await lastSent(page, 'addressSuggestSelect');
+  check(sel && sel.selected === null && await page.locator('#address').inputValue() === 'ru', 'Up past the first row restores the typed text');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(30);
+  const picked = await lastSent(page, 'addressSuggestPick');
+  check(picked && picked.url === 'https://duckduckgo.com/?q=ru' && (await lastSent(page, 'hidePopup')) !== undefined, 'Enter on a selected row picks it and closes the suggestions');
+  await page.click('#address');
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('rus');
+  await page.waitForTimeout(120);
+  await emit(page, { event: 'addressSuggestions', text: 'rus', entries: rows });
+  await page.waitForTimeout(20);
+  const before = (await sent(page)).length;
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(20);
+  check(await page.evaluate(() => document.activeElement === document.getElementById('address')) && await page.locator('#address').inputValue() === 'rus' && (await sent(page)).slice(before).some((m) => m.cmd === 'hidePopup'), 'Esc with suggestions open closes them and keeps the field');
+  await emit(page, { event: 'addressSuggestions', text: 'zzz', entries: rows });
+  await page.waitForTimeout(20);
+  await page.keyboard.press('ArrowDown');
+  await page.waitForTimeout(20);
+  check(await page.locator('#address').inputValue() === 'rus', 'a stale answer (other text) is ignored');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(20);
+
   // Toolbar buttons.
   await page.click('#back');
   check((await lastSent(page, 'back')) !== undefined, 'back button sends back');
@@ -644,6 +692,22 @@ async function testPopup(browser) {
   await page.locator('button', { hasText: /^Allow$/ }).click();
   pr = await lastSent(page, 'permissionReply');
   check(pr && pr.allow === true && pr.remember === false, 'private: never remembered');
+
+  // 0.5.1: address-bar suggestions (never focused; a click picks).
+  ({ page, errors } = await make(560, 122));
+  const addr = { kind: 'addressSuggest', selected: 1, entries: [
+    { url: 'https://duckduckgo.com/?q=ru', title: 'ru', kind: 'search', fill: 'ru' },
+    { url: 'https://www.rust-lang.org/', title: 'Rust', kind: 'bookmark', fill: 'https://www.rust-lang.org/' },
+    { url: 'https://docs.rs/', title: 'Docs.rs', kind: 'history', fill: 'https://docs.rs/' },
+  ] };
+  await emit(page, { event: 'popup', content: addr });
+  await page.waitForSelector('.suggest.addr');
+  await shot(page, 'popup-address-suggest.png');
+  check(await page.locator('.suggest.addr').count() === 3 && (await page.textContent('.suggest.addr:nth-child(1) .title')) === 'Search ru' && (await page.textContent('.suggest.addr:nth-child(3) .url')) === 'https://docs.rs/', 'three rows: search first, then the pages with their addresses');
+  check(await page.locator('.suggest.addr.selected').count() === 1 && (await page.getAttribute('.suggest.addr.selected', 'data-index')) === '1', 'the shell\'s selection is highlighted');
+  await page.locator('.suggest.addr').nth(2).click();
+  const ap = await lastSent(page, 'addressSuggestPick');
+  check(ap && ap.url === 'https://docs.rs/', 'a click picks the row');
 
   ({ page, errors } = await make(340, 236));
   await emit(page, { event: 'popup', content: { kind: 'fill', tabId: 9, origin: 'https://mail.example', entries: [{ id: 'e1', username: 'alice@mail.example' }, { id: 'e2', username: 'bob' }] } });

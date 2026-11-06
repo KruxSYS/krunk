@@ -280,6 +280,23 @@
     ])];
   }
 
+  // Address-bar suggestions (0.5.1): the popup never has the focus (the address bar keeps
+  // it); the shell's keyboard selection arrives as `selected`. A click goes to the row.
+  function renderAddressSuggest(c) {
+    const glyph = { search: '🔍', url: '🌐', history: '🕘', bookmark: '★' };
+    const label = { search: 'Search', url: 'Go to', history: '', bookmark: '' };
+    const rows = c.entries.map(function (s, i) {
+      const btn = el('button', { class: 'suggest addr' + (c.selected === i ? ' selected' : ''), 'data-index': String(i), title: s.url }, [
+        el('span', { class: 'glyph', text: glyph[s.kind] || '' }),
+        el('span', { class: 'title', text: (label[s.kind] ? label[s.kind] + ' ' : '') + s.title }),
+        el('span', { class: 'url', text: s.kind === 'search' || s.kind === 'url' ? '' : s.url }),
+      ]);
+      btn.addEventListener('click', function () { LB.post('addressSuggestPick', { url: s.url }); });
+      return btn;
+    });
+    return [el('div', { class: 'suggest-list addr-list' }, rows)];
+  }
+
   // "Connect to devices on your local network?" (Krunk 0.5.0): the engine's local network
   // access check, answered by the user; remembered for the site unless the tab is private.
   function renderPermission(c) {
@@ -497,7 +514,7 @@
   LB.on('popup', function (m) {
     current = m.content;
     const c = m.content;
-    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, fill: renderFill, permission: renderPermission, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
+    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
     root.textContent = '';
     root.dataset.kind = c.kind;
     (render ? render(c) : []).forEach((n) => n && root.appendChild(n));

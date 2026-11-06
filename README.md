@@ -114,6 +114,10 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   Safari on Windows, macOS, iPhone, Android; versions as of November 2026) or a custom string;
   the choice applies at once to new navigations.
 - **Address bar:**
+  - **Suggestions while you type** (0.5.1): a dropdown under the bar offers the search (or the
+    typed address) first, then matching bookmarks and history pages, most visited first. Down
+    and Up move through them (the bar shows the row's address), Enter or a click goes there,
+    Esc closes the list and keeps what you typed; the bar keeps the focus throughout.
   - The lock (or the "i" on http) opens the site-information popup: whether the connection is
     secure, the protocol, the certificate chain with validity, names, algorithms and SHA-256
     fingerprints, and what is wrong with a bad certificate (the engine reports no cipher).
