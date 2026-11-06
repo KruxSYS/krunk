@@ -12,6 +12,34 @@
 //! pointer lock, is the long-term fix.)
 
 use serde::Deserialize;
+use std::collections::HashMap;
+
+/// How often a tab shows "Press Esc to show your cursor" (per tab, per run of the app).
+pub const HINT_SHOW_LIMIT: u8 = 3;
+
+/// Counts the pointer-lock hints shown per tab. In memory only: closing the tab or
+/// restarting the app forgets the count.
+#[derive(Debug, Default)]
+pub struct HintCounter {
+    shown: HashMap<crate::tabs::TabId, u8>,
+}
+
+impl HintCounter {
+    /// Should the hint show for this lock? Counts it when it does.
+    pub fn should_show(&mut self, tab: crate::tabs::TabId) -> bool {
+        let n = self.shown.entry(tab).or_insert(0);
+        if *n >= HINT_SHOW_LIMIT {
+            return false;
+        }
+        *n += 1;
+        true
+    }
+
+    /// The tab was closed: a tab with the same id later starts afresh.
+    pub fn forget(&mut self, tab: crate::tabs::TabId) {
+        self.shown.remove(&tab);
+    }
+}
 
 /// Largest pointer-lock message a frame may send.
 pub const MAX_MESSAGE_BYTES: usize = 256;
@@ -252,6 +280,17 @@ impl Batcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hint_shows_three_times_per_tab() {
+        let mut c = HintCounter::default();
+        assert!(c.should_show(1) && c.should_show(1) && c.should_show(1), "locks 1-3 show the hint");
+        assert!(!c.should_show(1), "the 4th lock in the same tab does not");
+        assert!(!c.should_show(1));
+        assert!(c.should_show(2), "another tab has its own count");
+        c.forget(1);
+        assert!(c.should_show(1), "a closed tab's count is gone");
+    }
 
     #[test]
     fn accel_filter_keeps_plausible_movement_and_replaces_warp_glitches() {

@@ -76,12 +76,67 @@ pub const PAGE_MIN_DIP: f64 = 240.0;
 pub const DEVTOOLS_MIN_RIGHT_DIP: f64 = 280.0;
 pub const DEVTOOLS_MIN_BOTTOM_DIP: f64 = 160.0;
 
+/// The strip above docked DevTools with its dock-side and close buttons (DIP).
+pub const DEVTOOLS_STRIP_DIP: f64 = 24.0;
+/// The strip's buttons: square, this big, this far from the strip's right end and each other.
+const STRIP_BUTTON_DIP: f64 = 20.0;
+const STRIP_GAP_DIP: f64 = 4.0;
+
 /// A tab's content area split between its page and its docked DevTools (physical pixels).
+/// The strip sits at the top of the DevTools side, above the DevTools view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DevToolsSplit {
     pub page: Rect,
     pub splitter: Rect,
+    pub strip: Rect,
     pub devtools: Rect,
+}
+
+/// A button of the DevTools strip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StripButton {
+    /// Dock DevTools on the other side.
+    Dock,
+    /// Close DevTools.
+    Close,
+}
+
+/// The strip's button rects (physical pixels), right-aligned: [dock, close].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StripLayout {
+    pub strip: Rect,
+    pub dock: Rect,
+    pub close: Rect,
+}
+
+/// Where the strip's buttons are, for painting and hit-testing.
+pub fn devtools_strip(split: &DevToolsSplit, scale: f64) -> StripLayout {
+    let s = sane_scale(scale);
+    let size = (STRIP_BUTTON_DIP * s).round() as i32;
+    let gap = (STRIP_GAP_DIP * s).round() as i32;
+    let strip = split.strip;
+    let y = strip.y + (strip.height - size) / 2;
+    let close = Rect { x: strip.x + strip.width - gap - size, y, width: size, height: size };
+    let dock = Rect { x: close.x - gap - size, y, width: size, height: size };
+    StripLayout { strip, dock, close }
+}
+
+/// Which strip button is at the client point, if any.
+pub fn strip_hit(layout: &StripLayout, x: i32, y: i32) -> Option<StripButton> {
+    let inside = |r: &Rect| x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
+    if inside(&layout.close) {
+        Some(StripButton::Close)
+    } else if inside(&layout.dock) {
+        Some(StripButton::Dock)
+    } else {
+        None
+    }
+}
+
+/// Is the client point on the strip (buttons included)?
+pub fn on_strip(split: &DevToolsSplit, x: i32, y: i32) -> bool {
+    let r = split.strip;
+    x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height
 }
 
 /// The DevTools size (DIP) that fits `content`: at least its minimum and leaving the page
@@ -110,25 +165,32 @@ pub fn devtools_split(content: Rect, dock: DevToolsDock, size_dip: f64, scale: f
     let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
     let dt = (clamp_devtools_size(content, dock, size_dip, scale) * scale).round() as i32;
     let bar = (DEVTOOLS_SPLITTER_DIP * scale).round() as i32;
+    let strip_h = (DEVTOOLS_STRIP_DIP * scale).round() as i32;
     match dock {
         DevToolsDock::Right => {
             let bar = bar.min(content.width);
             let dt = dt.min(content.width - bar).max(0);
             let page_w = (content.width - bar - dt).max(0);
+            let strip_h = strip_h.min(content.height);
+            let x = content.x + page_w + bar;
             DevToolsSplit {
                 page: Rect { x: content.x, y: content.y, width: page_w, height: content.height },
                 splitter: Rect { x: content.x + page_w, y: content.y, width: bar, height: content.height },
-                devtools: Rect { x: content.x + page_w + bar, y: content.y, width: dt, height: content.height },
+                strip: Rect { x, y: content.y, width: dt, height: strip_h },
+                devtools: Rect { x, y: content.y + strip_h, width: dt, height: content.height - strip_h },
             }
         }
         DevToolsDock::Bottom => {
             let bar = bar.min(content.height);
             let dt = dt.min(content.height - bar).max(0);
             let page_h = (content.height - bar - dt).max(0);
+            let strip_h = strip_h.min(dt);
+            let y = content.y + page_h + bar;
             DevToolsSplit {
                 page: Rect { x: content.x, y: content.y, width: content.width, height: page_h },
                 splitter: Rect { x: content.x, y: content.y + page_h, width: content.width, height: bar },
-                devtools: Rect { x: content.x, y: content.y + page_h + bar, width: content.width, height: dt },
+                strip: Rect { x: content.x, y, width: content.width, height: strip_h },
+                devtools: Rect { x: content.x, y: y + strip_h, width: content.width, height: dt - strip_h },
             }
         }
     }
@@ -225,7 +287,6 @@ pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> Pop
         PopupKind::Shield => (300.0, 226.0),
         PopupKind::BookmarkFolder => (280.0, folder_height(entries)),
         PopupKind::Unlock => (360.0, 200.0),
-        PopupKind::Hint => (300.0, 44.0),
         PopupKind::Update => (360.0, 150.0),
         PopupKind::TabMenu => TAB_MENU_SIZE,
         PopupKind::BookmarkMenu => (240.0, 352.0),
@@ -372,10 +433,37 @@ mod tests {
     }
 
     #[test]
+    fn devtools_strip_buttons_at_every_scale() {
+        let content = Rect { x: 0, y: 76, width: 1200, height: 700 };
+        for (scale, size, gap, strip_h) in [(1.0, 20, 4, 24), (1.25, 25, 5, 30), (1.5, 30, 6, 36)] {
+            let s = devtools_split(content, DevToolsDock::Right, 480.0, scale);
+            let l = devtools_strip(&s, scale);
+            assert_eq!(l.strip.height, strip_h, "{scale}");
+            assert_eq!(l.close.width, size);
+            assert_eq!(l.close.x + l.close.width + gap, l.strip.x + l.strip.width, "close at the right end ({scale})");
+            assert_eq!(l.dock.x + l.dock.width + gap, l.close.x, "dock left of close ({scale})");
+            assert_eq!(l.close.y - l.strip.y, (strip_h - size) / 2, "centred ({scale})");
+            // Hit testing: the buttons, the strip in between, nothing above.
+            assert_eq!(strip_hit(&l, l.close.x + 1, l.close.y + 1), Some(StripButton::Close));
+            assert_eq!(strip_hit(&l, l.dock.x + size - 1, l.dock.y + size - 1), Some(StripButton::Dock));
+            assert_eq!(strip_hit(&l, l.strip.x + 5, l.strip.y + 5), None);
+            assert!(on_strip(&s, l.strip.x + 5, l.strip.y + 5));
+            assert!(!on_strip(&s, l.strip.x + 5, l.strip.y + l.strip.height));
+            assert!(!on_strip(&s, l.strip.x - 1, l.strip.y + 5), "the splitter is not the strip");
+        }
+        // Bottom dock: the strip spans the window width under the splitter.
+        let b = devtools_split(content, DevToolsDock::Bottom, 320.0, 1.25);
+        let l = devtools_strip(&b, 1.25);
+        assert_eq!((l.strip.x, l.strip.width, l.strip.y), (0, 1200, b.splitter.y + b.splitter.height));
+        assert_eq!(l.close.x + l.close.width + 5, 1200);
+    }
+
+    #[test]
     fn devtools_split_and_clamping() {
         let content = Rect { x: 0, y: 76, width: 1200, height: 700 };
         let s = devtools_split(content, DevToolsDock::Right, 480.0, 1.0);
-        assert_eq!(s.devtools, Rect { x: 720, y: 76, width: 480, height: 700 });
+        assert_eq!(s.strip, Rect { x: 720, y: 76, width: 480, height: 24 });
+        assert_eq!(s.devtools, Rect { x: 720, y: 100, width: 480, height: 676 });
         assert_eq!(s.splitter, Rect { x: 715, y: 76, width: 5, height: 700 });
         assert_eq!(s.page, Rect { x: 0, y: 76, width: 715, height: 700 });
         // The three parts tile the content exactly.
@@ -385,13 +473,15 @@ mod tests {
         assert_eq!(devtools_split(content, DevToolsDock::Right, 5000.0, 1.0).page.width, 240);
         // Bottom.
         let b = devtools_split(content, DevToolsDock::Bottom, 320.0, 1.0);
-        assert_eq!(b.devtools, Rect { x: 0, y: 456, width: 1200, height: 320 });
-        assert_eq!(b.page.height + b.splitter.height + b.devtools.height, 700);
-        assert_eq!(devtools_split(content, DevToolsDock::Bottom, 10.0, 1.0).devtools.height, 160);
+        assert_eq!(b.strip, Rect { x: 0, y: 456, width: 1200, height: 24 });
+        assert_eq!(b.devtools, Rect { x: 0, y: 480, width: 1200, height: 296 });
+        assert_eq!(b.page.height + b.splitter.height + b.strip.height + b.devtools.height, 700);
+        let min_b = devtools_split(content, DevToolsDock::Bottom, 10.0, 1.0);
+        assert_eq!(min_b.strip.height + min_b.devtools.height, 160, "the minimum includes the strip");
         assert_eq!(devtools_split(content, DevToolsDock::Bottom, 900.0, 1.0).page.height, 240);
         // 150 %: sizes are DIP.
         let hi = devtools_split(Rect { x: 0, y: 114, width: 1800, height: 1050 }, DevToolsDock::Right, 480.0, 1.5);
-        assert_eq!((hi.devtools.width, hi.splitter.width), (720, 8));
+        assert_eq!((hi.devtools.width, hi.splitter.width, hi.strip.height), (720, 8, 36));
         // A window too small for both minimums: proportional, nothing negative.
         let tiny = devtools_split(Rect { x: 0, y: 0, width: 400, height: 300 }, DevToolsDock::Right, 480.0, 1.0);
         assert!(tiny.page.width > 0 && tiny.devtools.width > 0);

@@ -11,20 +11,22 @@
 
 use super::Browser;
 use crate::ffi::cursor;
+use crate::ffi::overlay::{Overlay, OverlaySpec};
 use crate::ffi::window::ScreenRect;
 use crate::log::info;
 use lb_core::layout;
 use lb_core::pointer_lock::{
-    needs_recentre, AccelFilter, Batcher, Lock, LockMessage, LockState, Movement, Release, RequestContext,
+    needs_recentre, AccelFilter, Batcher, HintCounter, Lock, LockMessage, LockState, Movement, Release, RequestContext,
 };
-use lb_core::protocol::{PopupContent, PopupKind, PopupRect};
 use lb_core::storage::now_ms;
 use lb_core::tabs::TabId;
 use std::cell::{Cell, RefCell};
 
-/// Timer: hide the "Press Esc" hint.
+/// Timer: the "Press Esc" hint's fade in, life and fade out.
 pub(super) const HINT_TIMER: usize = 9;
 const HINT_MS: u32 = 3000;
+const HINT_FADE_MS: u32 = 150;
+const HINT_TICK_MS: u32 = 30;
 
 /// What is shown full screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -51,6 +53,11 @@ pub(super) struct PointerHost {
     pub fullscreen: Cell<FullscreenMode>,
     /// The frame that is full screen.
     pub fullscreen_window: Cell<Option<lb_core::windows::WindowId>>,
+    /// How often each tab showed the pointer-lock hint (at most three times per tab).
+    pub hints: RefCell<HintCounter>,
+    /// The hint overlay (owned by the frame it shows in) and when it appeared.
+    hint: RefCell<Option<(lb_core::windows::WindowId, Overlay)>>,
+    hint_shown_at: Cell<i64>,
 }
 
 impl Browser {
@@ -80,7 +87,12 @@ impl Browser {
                         self.engage_pointer();
                         view.send_to_frame(&frame, r#"{"t":"granted"}"#);
                         info!("tab {tab}: pointer locked{}", if unadjusted { " (unadjusted movement)" } else { "" });
-                        self.show_hint("Press Esc to show your cursor");
+                        // At most three times per tab and run of the app.
+                        if self.pointer.hints.borrow_mut().should_show(tab) {
+                            self.show_hint("Press [Esc] to show your cursor");
+                        } else {
+                            info!("tab {tab}: pointer-lock hint not shown again");
+                        }
                     }
                     Err(why) => {
                         info!("tab {tab}: pointer lock refused ({why:?})");
@@ -134,6 +146,7 @@ impl Browser {
     /// Confines, hides and centres the cursor and starts raw input. Called
     /// again when the window moves or changes size.
     fn engage_pointer(&self) {
+        self.hide_status();
         let Some(w) = self.window() else { return };
         let Some(area) = self.lock_area() else { return };
         let center = (area.x + area.width / 2, area.y + area.height / 2);
@@ -237,21 +250,57 @@ impl Browser {
 
     // ------------------------------------------------------------ hint
 
+    /// A centred, rounded, semi-transparent pill with a key cap for the bracketed key,
+    /// 24 DIP below the toolbar (or the top of the screen in full screen). A native overlay:
+    /// it takes no focus and no clicks, and fades in and out (not under reduced motion).
     fn show_hint(&self, text: &str) {
-        let Some(w) = self.window() else { return };
+        let Some(win) = self.cur_id() else { return };
+        let Some(f) = self.frame(win) else { return };
+        let w = f.window;
         let scale = w.scale();
-        let (width, _) = w.client_size();
-        let (hw, hh) = (300.0, 44.0);
-        let top = if !self.cur_id().is_some_and(|w| self.is_fullscreen_frame(w)) {
-            layout::shell_height(scale, self.cur_id().is_some_and(|w| self.bar_shown(w))) as f64 / scale
-        } else {
-            0.0
+        let (width, height) = w.client_size();
+        let top = if self.is_fullscreen_frame(win) { 0 } else { layout::shell_height(scale, self.bar_shown(win)) };
+        let (ox, oy) = w.client_to_screen(0, top);
+        let area = lb_core::layout::Rect { x: ox, y: oy, width, height: height - top };
+        let mut slot = self.pointer.hint.borrow_mut();
+        if slot.as_ref().is_none_or(|(o, _)| *o != win) {
+            match Overlay::create(w) {
+                Ok(o) => *slot = Some((win, o)),
+                Err(e) => return crate::log::warning!("hint overlay: {e}"),
+            }
+        }
+        let Some((_, o)) = slot.as_ref() else { return };
+        let spec = OverlaySpec {
+            palette: lb_core::overlay::hint_palette(),
+            runs: lb_core::overlay::hint_runs(text),
+            font_px: (14.0 * scale).round() as i32,
+            pad_x: (16.0 * scale).round() as i32,
+            pad_y: (10.0 * scale).round() as i32,
+            radius: 20.0 * scale,
+            border: 0,
         };
-        let rect =
-            PopupRect { x: ((f64::from(width) / scale - hw) / 2.0).max(0.0), y: top + 24.0, width: hw, height: hh };
-        self.show_popup(PopupContent::Hint { text: text.to_string() }, Some(rect));
+        let (hw, hh) = o.size_of(&spec);
+        let r = lb_core::overlay::hint_rect(area, hw, hh, (24.0 * scale).round() as i32);
+        let fade = if crate::ffi::window::client_area_animation() { HINT_FADE_MS } else { 0 };
+        let alpha = lb_core::overlay::fade_alpha(0, HINT_MS, fade).unwrap_or(255);
+        o.show(&spec, r.x, r.y, alpha);
+        self.pointer.hint_shown_at.set(now_ms());
         if let Some(app) = self.app() {
-            app.set_timer(HINT_TIMER, HINT_MS);
+            app.set_timer(HINT_TIMER, HINT_TICK_MS);
+        }
+    }
+
+    /// `HINT_TIMER`: the fade in, the life and the fade out of the hint.
+    pub(super) fn hint_tick(&self) {
+        let elapsed = (now_ms() - self.pointer.hint_shown_at.get()).clamp(0, i64::from(u32::MAX)) as u32;
+        let fade = if crate::ffi::window::client_area_animation() { HINT_FADE_MS } else { 0 };
+        match lb_core::overlay::fade_alpha(elapsed, HINT_MS, fade) {
+            Some(alpha) => {
+                if let Some((_, o)) = self.pointer.hint.borrow().as_ref() {
+                    o.set_alpha(alpha);
+                }
+            }
+            None => self.hide_hint(),
         }
     }
 
@@ -259,8 +308,8 @@ impl Browser {
         if let Some(w) = self.app() {
             w.kill_timer(HINT_TIMER);
         }
-        if self.popup_kind() == Some(PopupKind::Hint) {
-            self.hide_popup();
+        if let Some((_, o)) = self.pointer.hint.borrow().as_ref() {
+            o.hide();
         }
     }
 
@@ -270,7 +319,7 @@ impl Browser {
     pub(super) fn page_fullscreen(&self, tab: TabId, on: bool) {
         if on {
             self.enter_fullscreen(FullscreenMode::Page(tab));
-            self.show_hint("Press Esc to exit full screen");
+            self.show_hint("Press [Esc] to exit full screen");
         } else if self.pointer.fullscreen.get() == FullscreenMode::Page(tab) {
             self.leave_fullscreen();
         }
@@ -302,6 +351,7 @@ impl Browser {
     }
 
     fn enter_fullscreen(&self, mode: FullscreenMode) {
+        self.hide_status();
         // A page's own window, or (F11) the current one.
         let win = match mode {
             FullscreenMode::Page(tab) => self.window_of(tab),

@@ -244,6 +244,8 @@ pub(super) struct Events {
     pub load_start: Slot<dyn FnMut()>,
     pub address: Slot<dyn FnMut(String)>,
     pub title: Slot<dyn FnMut(String)>,
+    /// The page's status text (the address of the link under the mouse, or empty).
+    pub status: Slot<dyn FnMut(String)>,
     pub favicon: Slot<dyn FnMut(Vec<u8>)>,
     pub new_window: Slot<NewWindowFn>,
     pub open_tab: Slot<dyn FnMut(String, bool)>,
@@ -878,6 +880,11 @@ impl View {
 
     pub fn on_title(&self, f: impl FnMut(String) + 'static) {
         self.0.ev.title.set(Box::new(f));
+    }
+
+    /// The link under the mouse (`CefDisplayHandler::OnStatusMessage`), empty when none.
+    pub fn on_status(&self, f: impl FnMut(String) + 'static) {
+        self.0.ev.status.set(Box::new(f));
     }
 
     /// The page's favicon as PNG bytes (empty when it has none).

@@ -2,6 +2,7 @@
 //! (`ffi::cef`), which dispatches to these window procedures as usual.
 
 pub use lb_core::frame::Hit;
+use lb_core::layout::{strip_hit, Rect, StripButton, StripLayout};
 pub use lb_core::protocol::CaptionButton;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -69,6 +70,55 @@ pub trait WindowEvents {
     }
     /// The splitter is being dragged to the client point; `done` when the button is released.
     fn splitter_drag(&self, _x: i32, _y: i32, _done: bool) {}
+    /// The docked DevTools' splitter and strip (with its buttons) to paint and hit-test, if
+    /// DevTools is docked in this window.
+    fn devtools_chrome(&self) -> Option<DevToolsChrome> {
+        None
+    }
+    /// A strip button was clicked.
+    fn strip_clicked(&self, _button: StripButton) {}
+}
+
+/// What the frame paints itself between its child views: the DevTools splitter and the
+/// strip above DevTools with its dock-side and close buttons (physical client pixels).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DevToolsChrome {
+    pub splitter: Rect,
+    pub strip: StripLayout,
+    /// DevTools is docked on the right (the dock button then offers the bottom).
+    pub dock_right: bool,
+    pub dark: bool,
+}
+
+/// Registers a window class that only does default processing (overlays drawn with
+/// `UpdateLayeredWindow` need no window procedure of their own).
+pub fn register_plain_class(class: PCWSTR) -> Result<(), String> {
+    register(class, 0, plain_wndproc)
+}
+
+unsafe extern "system" fn plain_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    // SAFETY: default processing only.
+    unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+}
+
+/// `WM_MOUSELEAVE` (from `TrackMouseEvent`).
+const WM_MOUSELEAVE: u32 = 0x02A3;
+
+/// Windows' "Animation effects" setting (the system's reduced-motion switch, which Chromium
+/// maps to `prefers-reduced-motion`): true when animations are wanted.
+pub fn client_area_animation() -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{SystemParametersInfoW, SPI_GETCLIENTAREAANIMATION};
+    let mut on = windows::core::BOOL(1);
+    // SAFETY: a BOOL out-parameter of the documented size for this SPI.
+    let ok = unsafe {
+        SystemParametersInfoW(
+            SPI_GETCLIENTAREAANIMATION,
+            0,
+            Some(&mut on as *mut _ as *mut std::ffi::c_void),
+            windows::Win32::UI::WindowsAndMessaging::SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+    };
+    ok.is_err() || on.as_bool()
 }
 
 thread_local! {
@@ -487,6 +537,14 @@ impl Window {
         ScreenRect { x: 0, y: 0, width: 1920, height: 1080 }
     }
 
+    /// Repaints the window's own client area (the DevTools splitter and strip).
+    pub fn invalidate(self) {
+        // SAFETY: valid window handle.
+        unsafe {
+            let _ = windows::Win32::Graphics::Gdi::InvalidateRect(Some(self.0), None, true);
+        }
+    }
+
     /// Shows the window at `rect` (screen coordinates), on top.
     pub fn show_at(self, rect: ScreenRect, activate: bool) {
         let flags = if activate { SWP_SHOWWINDOW } else { SWP_SHOWWINDOW | SWP_NOACTIVATE };
@@ -896,6 +954,65 @@ extern "system" fn main_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
                 None => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
             }
         }
+        // The frame's own client area is the DevTools splitter and strip; it paints them
+        // (no background erase: the children cover the rest, and erasing would flash).
+        windows::Win32::UI::WindowsAndMessaging::WM_ERASEBKGND => LRESULT(1),
+        windows::Win32::UI::WindowsAndMessaging::WM_PAINT => {
+            paint_chrome(hwnd);
+            LRESULT(0)
+        }
+        windows::Win32::UI::WindowsAndMessaging::WM_MOUSEMOVE
+            if !SPLITTING.with(|s| s.borrow().contains(&(hwnd.0 as isize))) =>
+        {
+            let (x, y) = ((lparam.0 & 0xffff) as i16 as i32, ((lparam.0 >> 16) & 0xffff) as i16 as i32);
+            let hover = events(hwnd).and_then(|e| e.devtools_chrome()).and_then(|c| strip_hit(&c.strip, x, y));
+            let key = hwnd.0 as isize;
+            let (was, pressed) = STRIP.with(|s| s.borrow().get(&key).copied()).unwrap_or((None, false));
+            if !pressed && was != hover {
+                STRIP.with(|s| s.borrow_mut().insert(key, (hover, false)));
+                invalidate_strip(hwnd);
+                if hover.is_some() {
+                    track_leave(hwnd);
+                }
+            }
+            // SAFETY: default processing.
+            unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+        }
+        WM_MOUSELEAVE => {
+            let key = hwnd.0 as isize;
+            if STRIP.with(|s| s.borrow().get(&key).is_some_and(|(h, p)| h.is_some() && !p)) {
+                STRIP.with(|s| s.borrow_mut().insert(key, (None, false)));
+                invalidate_strip(hwnd);
+            }
+            LRESULT(0)
+        }
+        windows::Win32::UI::WindowsAndMessaging::WM_LBUTTONDOWN if strip_button_at(hwnd, lparam).is_some() => {
+            let b = strip_button_at(hwnd, lparam);
+            STRIP.with(|s| s.borrow_mut().insert(hwnd.0 as isize, (b, true)));
+            // SAFETY: capturing the mouse for our own window until the release.
+            unsafe { windows::Win32::UI::Input::KeyboardAndMouse::SetCapture(hwnd) };
+            invalidate_strip(hwnd);
+            LRESULT(0)
+        }
+        windows::Win32::UI::WindowsAndMessaging::WM_LBUTTONUP
+        | windows::Win32::UI::WindowsAndMessaging::WM_CAPTURECHANGED
+            if STRIP.with(|s| s.borrow().get(&(hwnd.0 as isize)).is_some_and(|(_, p)| *p)) =>
+        {
+            let key = hwnd.0 as isize;
+            let (pressed_on, _) = STRIP.with(|s| s.borrow_mut().remove(&key)).unwrap_or((None, false));
+            if msg == windows::Win32::UI::WindowsAndMessaging::WM_LBUTTONUP {
+                // SAFETY: releasing our own capture.
+                let _ = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture() };
+                let under = strip_button_at(hwnd, lparam);
+                if let (Some(b), true) = (pressed_on, under == pressed_on) {
+                    if let Some(ev) = events(hwnd) {
+                        ev.strip_clicked(b);
+                    }
+                }
+            }
+            invalidate_strip(hwnd);
+            LRESULT(0)
+        }
         windows::Win32::UI::WindowsAndMessaging::WM_LBUTTONDOWN => {
             let (x, y) = ((lparam.0 & 0xffff) as i16 as i32, ((lparam.0 >> 16) & 0xffff) as i16 as i32);
             if let Some(ev) = events(hwnd).filter(|e| e.splitter_at(x, y).is_some()) {
@@ -974,6 +1091,109 @@ thread_local! {
         RefCell::new(HashMap::new());
     /// Frames whose DevTools splitter is being dragged.
     static SPLITTING: RefCell<std::collections::HashSet<isize>> = RefCell::new(std::collections::HashSet::new());
+    /// Per frame: the DevTools strip button under the mouse, and whether it is pressed.
+    static STRIP: RefCell<HashMap<isize, (Option<StripButton>, bool)>> = RefCell::new(HashMap::new());
+}
+
+/// The strip button at the mouse position of a mouse message's lParam.
+fn strip_button_at(hwnd: HWND, lparam: LPARAM) -> Option<StripButton> {
+    let (x, y) = ((lparam.0 & 0xffff) as i16 as i32, ((lparam.0 >> 16) & 0xffff) as i16 as i32);
+    events(hwnd).and_then(|e| e.devtools_chrome()).and_then(|c| strip_hit(&c.strip, x, y))
+}
+
+fn invalidate_strip(hwnd: HWND) {
+    if let Some(c) = events(hwnd).and_then(|e| e.devtools_chrome()) {
+        let r = c.strip.strip;
+        let rect = RECT { left: r.x, top: r.y, right: r.x + r.width, bottom: r.y + r.height };
+        // SAFETY: valid window handle and rect.
+        unsafe {
+            let _ = windows::Win32::Graphics::Gdi::InvalidateRect(Some(hwnd), Some(&rect), false);
+        }
+    }
+}
+
+fn track_leave(hwnd: HWND) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT};
+    let mut t = TRACKMOUSEEVENT {
+        cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+        dwFlags: TME_LEAVE,
+        hwndTrack: hwnd,
+        dwHoverTime: 0,
+    };
+    // SAFETY: a filled TRACKMOUSEEVENT for our own window.
+    let _ = unsafe { TrackMouseEvent(&mut t) };
+}
+
+/// Paints the DevTools splitter and strip (`WM_PAINT` of a frame). Everything else in the
+/// client area is covered by child windows.
+fn paint_chrome(hwnd: HWND) {
+    use windows::Win32::Graphics::Gdi::{
+        BeginPaint, CreatePen, CreateSolidBrush, DeleteObject, EndPaint, FillRect, LineTo, MoveToEx, Rectangle,
+        RoundRect, SelectObject, HGDIOBJ, PAINTSTRUCT, PS_SOLID,
+    };
+    let mut ps = PAINTSTRUCT::default();
+    // SAFETY: BeginPaint/EndPaint pair on our own window; GDI objects are released.
+    unsafe {
+        let dc = BeginPaint(hwnd, &mut ps);
+        let chrome = events(hwnd).and_then(|e| e.devtools_chrome());
+        let dark = chrome.is_some_and(|c| c.dark);
+        let rgb = |r: u32, g: u32, b: u32| windows::Win32::Foundation::COLORREF(r | (g << 8) | (b << 16));
+        let bg = if dark { rgb(32, 33, 36) } else { rgb(241, 243, 244) };
+        let bg_brush = CreateSolidBrush(bg);
+        let _ = FillRect(dc, &ps.rcPaint, bg_brush);
+        let _ = DeleteObject(HGDIOBJ(bg_brush.0));
+        if let Some(c) = chrome {
+            let (hover, pressed) = STRIP.with(|s| s.borrow().get(&(hwnd.0 as isize)).copied()).unwrap_or((None, false));
+            let fg = if dark { rgb(232, 234, 237) } else { rgb(60, 64, 67) };
+            let hover_bg = if dark { rgb(60, 60, 64) } else { rgb(218, 220, 224) };
+            let pressed_bg = if dark { rgb(80, 80, 86) } else { rgb(200, 202, 206) };
+            for (button, r) in [(StripButton::Dock, c.strip.dock), (StripButton::Close, c.strip.close)] {
+                if hover == Some(button) {
+                    let brush = CreateSolidBrush(if pressed { pressed_bg } else { hover_bg });
+                    let pen = CreatePen(PS_SOLID, 1, if pressed { pressed_bg } else { hover_bg });
+                    let ob = SelectObject(dc, HGDIOBJ(brush.0));
+                    let op = SelectObject(dc, HGDIOBJ(pen.0));
+                    let _ = RoundRect(dc, r.x, r.y, r.x + r.width, r.y + r.height, r.width / 4, r.width / 4);
+                    SelectObject(dc, ob);
+                    SelectObject(dc, op);
+                    let _ = DeleteObject(HGDIOBJ(brush.0));
+                    let _ = DeleteObject(HGDIOBJ(pen.0));
+                }
+                // Glyphs on a 20-unit grid scaled to the button.
+                let u = |v: i32| v * r.width / 20;
+                let pen = CreatePen(PS_SOLID, (r.width / 14).max(1), fg);
+                let op = SelectObject(dc, HGDIOBJ(pen.0));
+                match button {
+                    StripButton::Close => {
+                        let _ = MoveToEx(dc, r.x + u(6), r.y + u(6), None);
+                        let _ = LineTo(dc, r.x + u(14) + 1, r.y + u(14) + 1);
+                        let _ = MoveToEx(dc, r.x + u(14), r.y + u(6), None);
+                        let _ = LineTo(dc, r.x + u(6) - 1, r.y + u(14) + 1);
+                    }
+                    StripButton::Dock => {
+                        // An outlined window with the target side filled.
+                        let hollow =
+                            windows::Win32::Graphics::Gdi::GetStockObject(windows::Win32::Graphics::Gdi::NULL_BRUSH);
+                        let ob = SelectObject(dc, hollow);
+                        let _ = Rectangle(dc, r.x + u(4), r.y + u(5), r.x + u(16) + 1, r.y + u(15) + 1);
+                        SelectObject(dc, ob);
+                        let fill = CreateSolidBrush(fg);
+                        let side = if c.dock_right {
+                            // Docked right: the button offers the bottom.
+                            RECT { left: r.x + u(4), top: r.y + u(12), right: r.x + u(16) + 1, bottom: r.y + u(15) + 1 }
+                        } else {
+                            RECT { left: r.x + u(12), top: r.y + u(5), right: r.x + u(16) + 1, bottom: r.y + u(15) + 1 }
+                        };
+                        let _ = FillRect(dc, &side, fill);
+                        let _ = DeleteObject(HGDIOBJ(fill.0));
+                    }
+                }
+                SelectObject(dc, op);
+                let _ = DeleteObject(HGDIOBJ(pen.0));
+            }
+        }
+        let _ = EndPaint(hwnd, &ps);
+    }
 }
 
 /// Is `hwnd` shown full screen?

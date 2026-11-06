@@ -295,6 +295,12 @@ wrap_display_handler! {
             }
         }
 
+        fn on_status_message(&self, _browser: Option<&mut Browser>, value: Option<&CefString>) {
+            if let Some(view) = lookup(self.key) {
+                view.ev.status.with(|f| f(text(value)));
+            }
+        }
+
         fn on_address_change(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, url: Option<&CefString>) {
             if !is_main(&frame) {
                 return;

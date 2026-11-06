@@ -1,0 +1,17 @@
+<!doctype html>
+<!-- Link-hover status label test (Krunk 0.5.0, scripts/vm-050-overlays.ps1): links at known
+     positions. "top" is a long link at (40, 40) CSS px; "corner" sits at the bottom-left corner,
+     where the status label appears, so hovering it must move the label to the right. -->
+<html lang="en"><head><meta charset="utf-8"><title>Link hover test</title>
+<style>
+  body { margin: 0; font: 16px system-ui, sans-serif; background: #ffffff; color: #202124; }
+  a { color: #1a73e8; }
+  #top { position: absolute; left: 40px; top: 40px; display: block; width: 300px; height: 30px; line-height: 30px; }
+  #corner { position: fixed; left: 8px; bottom: 8px; display: block; width: 200px; height: 30px; line-height: 30px; }
+  #plain { position: absolute; left: 40px; top: 120px; }
+</style></head>
+<body>
+<a id="top" href="https://www.example.com/a/very/long/path/with/many/segments/that/goes/on/and/on/to/make/the/label/elide/in/the/middle/index.html?query=1&amp;another=2#fragment">A long link at the top</a>
+<p id="plain">Plain text (no link): hovering here clears the label.</p>
+<a id="corner" href="https://corner.example/">A link in the corner</a>
+</body></html>

@@ -129,9 +129,6 @@ pub enum PopupKind {
     BookmarkFolder,
     /// Master-password prompt before saving or filling a login.
     Unlock,
-    /// A short notice that does not take focus ("Press Esc to show your
-    /// cursor" while the pointer is locked).
-    Hint,
     /// "Krunk X.Y.Z is available" (opened by the host after an update check).
     Update,
     /// A tab's context menu (right-click on the tab).
@@ -151,10 +148,10 @@ impl PopupKind {
     /// Every popup has buttons, so every popup takes keyboard focus. This
     /// also makes dismissal reliable: clicking anywhere else deactivates the
     /// popup window (a no-activate window gets no such signal when the page
-    /// it covers already had focus).
+    /// it covers already had focus). (The "Press Esc" hint is not a popup:
+    /// it is a native overlay, see `overlay`.)
     pub fn takes_focus(self) -> bool {
-        // A hint must not take the keyboard from the page (a game).
-        self != PopupKind::Hint
+        true
     }
 }
 
@@ -279,9 +276,6 @@ pub enum PopupContent {
         title: String,
         items: Vec<BarItem>,
     },
-    Hint {
-        text: String,
-    },
     /// A newer Krunk: Update now (or Download) / Later / Release notes.
     Update {
         version: String,
@@ -377,7 +371,6 @@ impl PopupContent {
             PopupContent::Fill { .. } => PopupKind::Fill,
             PopupContent::BookmarkFolder { .. } => PopupKind::BookmarkFolder,
             PopupContent::Unlock { .. } => PopupKind::Unlock,
-            PopupContent::Hint { .. } => PopupKind::Hint,
             PopupContent::Update { .. } => PopupKind::Update,
             PopupContent::TabMenu { .. } => PopupKind::TabMenu,
             PopupContent::BookmarkMenu { .. } => PopupKind::BookmarkMenu,
@@ -2151,7 +2144,6 @@ mod tests {
             Event::BarDragEnd,
             Event::TabDropHint { index: None },
             Event::DevTools { open: true, dock: crate::settings::DevToolsDock::Right },
-            Event::Popup { content: PopupContent::Hint { text: "Press Esc to show your cursor".into() } },
             Event::CaptionState { hover: Some(CaptionButton::Maximize), pressed: false },
             Event::CaptionState { hover: None, pressed: false },
             Event::WindowState { maximized: true, active: false, fullscreen: false },

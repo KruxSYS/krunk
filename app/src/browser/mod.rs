@@ -51,6 +51,7 @@ mod pointer;
 mod power;
 mod segmented;
 mod settings_host;
+mod status;
 mod storage;
 mod updater;
 
@@ -143,6 +144,8 @@ pub struct Browser {
     folder_anchor: Cell<Option<PopupRect>>,
     /// Swallows the click that closed a toolbar popup (see `lb_core::toggle`).
     toggle: RefCell<lb_core::toggle::ToggleGuard>,
+    /// The link-status label (the address of the link under the mouse).
+    status: status::StatusHost,
     /// Where the shell asked for the shield panel (it grows with its list from there).
     shield_anchor: Cell<Option<PopupRect>>,
     /// The tab krunk://adblock shows the blocked requests of (opened from its shield).
@@ -215,6 +218,7 @@ impl Browser {
             download_ops: RefCell::new(HashMap::new()),
             folder_anchor: Cell::new(None),
             toggle: RefCell::new(lb_core::toggle::ToggleGuard::default()),
+            status: status::StatusHost::default(),
             bookmark_menu_at: Cell::new(None),
             adblock_source: Cell::new(None),
             shield_anchor: Cell::new(None),
@@ -725,6 +729,12 @@ impl Browser {
             }
         });
         let weak = self.me.clone();
+        c.on_status(move |text| {
+            if let Some(b) = weak.upgrade() {
+                b.status_message(id, text);
+            }
+        });
+        let weak = self.me.clone();
         c.on_favicon(move |png| {
             if let Some(b) = weak.upgrade() {
                 b.with_tab(id, |m, t| m.set_favicon(t, assets::png_data_url(&png)));
@@ -799,6 +809,10 @@ impl Browser {
     }
 
     fn destroy_view(&self, id: TabId) {
+        self.pointer.hints.borrow_mut().forget(id);
+        if self.status.tab.get() == Some(id) {
+            self.hide_status();
+        }
         self.release_pointer_of(id, lb_core::pointer_lock::Release::TabClosed);
         self.fullscreen_tab_gone(id);
         if let Some((v, _)) = self.adopted.borrow_mut().remove(&id) {
@@ -812,6 +826,7 @@ impl Browser {
 
     fn activate_view(&self, win: WindowId, from: Option<TabId>, to: TabId) {
         self.pointer_tab_activated(to);
+        self.hide_status();
         if let Some(f) = from.filter(|f| *f != to) {
             self.fullscreen_tab_gone(f);
         }
@@ -897,6 +912,8 @@ impl Browser {
     fn layout(&self) {
         for f in self.all_frames() {
             self.layout_frame(&f);
+            // The DevTools strip and splitter are painted by the frame itself.
+            f.window.invalidate();
         }
     }
 
@@ -1912,7 +1929,8 @@ impl WindowEvents for AppEvents {
             SHIELD_TIMER => b.shield_timer(),
             POWER_TIMER => b.power_tick(),
             MEMREPORT_TIMER => b.mem_report_line("tick"),
-            pointer::HINT_TIMER => b.hide_hint(),
+            pointer::HINT_TIMER => b.hint_tick(),
+            status::STATUS_TIMER => b.status_tick(),
             updater::APP_UPDATE_TIMER => b.update_timer(),
             updater::UPDATE_PROGRESS_TIMER => b.update_progress_timer(),
             VAULT_TIMER => b.vault_timer(),
@@ -1949,6 +1967,16 @@ struct FrameEvents {
 }
 
 impl WindowEvents for FrameEvents {
+    fn devtools_chrome(&self) -> Option<crate::ffi::window::DevToolsChrome> {
+        self.b.upgrade().and_then(|b| b.devtools_chrome(self.win))
+    }
+
+    fn strip_clicked(&self, button: lb_core::layout::StripButton) {
+        if let Some(b) = self.b.upgrade() {
+            b.strip_clicked(self.win, button);
+        }
+    }
+
     fn frame_hit(&self, x: i32, y: i32) -> lb_core::frame::Hit {
         self.b.upgrade().map(|b| b.frame_hit_at(self.win, x, y)).unwrap_or(lb_core::frame::Hit::Client)
     }
@@ -2011,9 +2039,8 @@ impl WindowEvents for FrameEvents {
         // activates it on purpose) this is not a stray activation.
         let Ok(popup) = b.popup.try_borrow() else { return };
         let showing = popup.as_ref().is_some_and(|p| p.window.is_visible());
-        let kind = popup.as_ref().and_then(|p| p.content.as_ref().map(PopupContent::kind));
         drop(popup);
-        let passive = !showing || kind == Some(PopupKind::Hint);
+        let passive = !showing;
         if passive {
             let win = self.win;
             b.defer(move |b| {
@@ -2034,6 +2061,8 @@ impl WindowEvents for FrameEvents {
     fn resized(&self, _width: i32, _height: i32) {
         let Some(b) = self.b.upgrade() else { return };
         b.hide_popup();
+        b.hide_status();
+        b.hide_hint();
         if let Some(f) = b.frame(self.win) {
             b.layout_frame(&f);
         }
@@ -2043,6 +2072,7 @@ impl WindowEvents for FrameEvents {
 
     fn minimized(&self, minimized: bool) {
         let Some(b) = self.b.upgrade() else { return };
+        b.hide_status();
         if minimized {
             b.release_pointer(lb_core::pointer_lock::Release::WindowDeactivated);
         }
@@ -2062,6 +2092,8 @@ impl WindowEvents for FrameEvents {
     fn moved(&self) {
         let Some(b) = self.b.upgrade() else { return };
         b.hide_popup();
+        b.hide_status();
+        b.hide_hint();
         b.reapply_pointer();
         if let Some(s) = b.frame(self.win).and_then(|f| f.shell.borrow().clone()) {
             s.notify_moved();

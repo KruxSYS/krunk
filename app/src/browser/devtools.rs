@@ -5,8 +5,9 @@
 //! keeps it, as in Chrome). The dock side and the sizes are in the settings.
 
 use super::{Browser, Frame};
+use crate::ffi::window::DevToolsChrome;
 use crate::log::{info, warning};
-use lb_core::layout::{self, DevToolsSplit};
+use lb_core::layout::{self, DevToolsSplit, StripButton};
 use lb_core::protocol::Event;
 use lb_core::settings::DevToolsDock;
 use lb_core::tabs::TabId;
@@ -134,14 +135,59 @@ impl Browser {
     // ------------------------------------------------------------ splitter
 
     /// Is the client point on frame `win`'s DevTools splitter? `Some(true)` = vertical.
+    /// With DevTools at the bottom, the strip (outside its buttons) drags the splitter too.
     pub(super) fn splitter_at(&self, win: WindowId, x: i32, y: i32) -> Option<bool> {
         let f = self.frame(win)?;
-        let s = self.devtools_split_of(&f)?.splitter;
+        let split = self.devtools_split_of(&f)?;
+        let s = split.splitter;
         let inside = x >= s.x - SPLITTER_SLACK
             && x < s.x + s.width + SPLITTER_SLACK
             && y >= s.y - SPLITTER_SLACK
             && y < s.y + s.height + SPLITTER_SLACK;
-        inside.then(|| self.settings.borrow().devtools_dock == DevToolsDock::Right)
+        let dock = self.settings.borrow().devtools_dock;
+        if inside {
+            return Some(dock == DevToolsDock::Right);
+        }
+        let on_bar = dock == DevToolsDock::Bottom
+            && layout::on_strip(&split, x, y)
+            && layout::strip_hit(&layout::devtools_strip(&split, f.window.scale()), x, y).is_none();
+        on_bar.then_some(false)
+    }
+
+    /// The splitter and strip the frame paints and hit-tests, if DevTools is docked in it.
+    pub(super) fn devtools_chrome(&self, win: WindowId) -> Option<DevToolsChrome> {
+        let f = self.frame(win)?;
+        let split = self.devtools_split_of(&f)?;
+        Some(DevToolsChrome {
+            splitter: split.splitter,
+            strip: layout::devtools_strip(&split, f.window.scale()),
+            dock_right: self.settings.borrow().devtools_dock == DevToolsDock::Right,
+            dark: self.frame_dark(),
+        })
+    }
+
+    /// A click on the strip's dock-side or close button of frame `win`.
+    pub(super) fn strip_clicked(&self, win: WindowId, button: StripButton) {
+        match button {
+            StripButton::Dock => {
+                let other = match self.settings.borrow().devtools_dock {
+                    DevToolsDock::Right => DevToolsDock::Bottom,
+                    DevToolsDock::Bottom => DevToolsDock::Right,
+                };
+                info!("DevTools strip: dock {other:?}");
+                self.set_devtools_dock(other);
+            }
+            StripButton::Close => {
+                let tab = self.ws.try_borrow().ok().and_then(|ws| ws.model(win).and_then(|m| m.active_id()));
+                if let Some(tab) = tab {
+                    info!("DevTools strip: close (tab {tab})");
+                    self.close_devtools(tab);
+                }
+            }
+        }
+        if let Some(f) = self.frame(win) {
+            f.window.invalidate();
+        }
     }
 
     /// Dragging the splitter: the new size applies at once (every window, as it is one
