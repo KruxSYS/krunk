@@ -680,6 +680,20 @@ under `evidence-0.5.0/`. VM scripts (each on a fresh profile): `vm-050-shell.ps1
 Test pages are in `scripts/vm-www/` (`8094/login.html`, `links.html`, `media.html`, `ua.html`,
 `8095/frame-login.html`, `8443/origin-login.html`).
 
+### Self-built engine and codecs (0.5.2)
+The engine is Krunk's own CEF build with proprietary codecs (`scripts/cef-build/README.md`);
+the package has `snapshot_blob.bin` instead of `v8_context_snapshot.bin`. On a fresh profile
+(`vm-052-engine.ps1`): Krunk starts without the "runtime damaged" dialog; the probe page
+`http://localhost:8094/media.html` lists H.264 baseline/high, H.264 + AAC and AAC-LC as
+`true` / `probably` and its H.264/AAC MP4 clip, the public DASH and HLS streams play
+(`play-…=playing` in the test server's log); example.com, DevTools (F12), krunk://gpu,
+krunk://settings and krunk://history work; `krunk.log` has no WARN/ERROR. HEVC shows
+`probably` only on a PC with a hardware HEVC decoder (never on the VM); AC-3/E-AC-3 only where
+Windows still has its Dolby decoder (not on 24H2 or later). On the operator's PC: krunk://gpu
+still says "Hardware accelerated", and a HEVC clip plays if the GPU decodes HEVC. Then the
+whole 0.5 list below again on this engine (`evidence-0.5.2/vm/`), and the in-app update
+0.5.1 → 0.5.2 (`vm-update.ps1`).
+
 ### Address-bar suggestions (0.5.1)
 Type `exa` into the address bar after visiting and bookmarking example.com: a dropdown shows
 "Search exa", the bookmark and the history pages. Down selects a row and the bar shows its

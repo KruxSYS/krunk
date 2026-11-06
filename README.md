@@ -311,6 +311,14 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
 - **Engine version:** the exact CEF build is pinned by the `cef` crate version in `app/Cargo.toml`
   and the archive hashes in `cef.lock`. The About page reads the versions from the loaded
   `libcef.dll` at runtime.
+- **Engine build:** since 0.5.2 `libcef.dll` is Krunk's own build of CEF 156.0.15 (the same
+  CEF commit and Chromium 156.0.8078.80 as the stock binary distribution) with proprietary
+  codecs, built as an official (ThinLTO + PGO) Windows build on a Linux host:
+  `scripts/cef-build/README.md`. One consequence of the cross build: Chromium cannot generate
+  the Blink V8 *context* snapshot off Windows, so the engine loads V8's plain
+  `snapshot_blob.bin` instead of `v8_context_snapshot.bin` (the startup check accepts either);
+  the only cost is a few milliseconds slower page-context creation. The engine is about
+  2 MB bigger than the stock build; package and update sizes are unchanged.
 
 ### Windows and views
 - **Windows:** any number of top-level Win32 frames. Every view is a CEF browser (Alloy style)
@@ -716,10 +724,15 @@ Security fixes for the engine reach users only through new Krunk releases (see "
 limitations"). To move to a newer CEF:
 1. Set the new `cef` crate version (e.g. `=157.x.y`) in `app/Cargo.toml` and run
    `cargo update -p cef`. Install the matching `export-cef-dir` version.
-2. In `cef.lock`, set `CEF_CRATE`, `CEF_VERSION`, `CHROMIUM_VERSION`, `CEF_ARCHIVE` and
-   `CEF_SHA1` from `https://cef-builds.spotifycdn.com/index.json` (windows64, "minimal"), and
-   run `scripts/fetch-cef.sh --pin` once to record the archive's SHA-256.
-3. `scripts/build-dist.sh`, then run the checks below and `docs/MANUAL_TEST.md`.
+2. Build the engine with the codecs: `scripts/cef-build/cross-build.sh` with the new CEF
+   commit and Chromium tag (`scripts/cef-build/README.md`; about 2 h on 32 cores once the
+   checkout is there). Copy the archive into `~/.cache/krunk-cef/downloads/` and the artifact
+   store, set `CEF_VERSION`, `CHROMIUM_VERSION`, `CEF_ARCHIVE` and `CEF_ARTIFACT` in
+   `cef.lock` (`CEF_SOURCE=self-built`) and run `scripts/fetch-cef.sh --pin` once to record
+   the archive's SHA-256. (A stock Spotify "minimal" build, without H.264/AAC, works too:
+   `CEF_SOURCE=spotify` plus `CEF_SHA1` from `https://cef-builds.spotifycdn.com/index.json`.)
+3. `scripts/build-dist.sh`, then run the checks below and `docs/MANUAL_TEST.md` (including
+   the media matrix: `scripts/vm-050-media.ps1`, `scripts/vm-052-engine.ps1`).
 
 ### Checks
 ```sh
@@ -779,12 +792,20 @@ Testing on Windows:
 - **HTTP authentication and most site permission prompts** (camera, microphone, location,
   notifications) are not shown: CEF's Alloy runtime denies them by default. The one exception
   is local network access (see below), which Krunk asks about itself.
-- **Media codecs: no H.264, HEVC, AAC or AC-3.** The bundled engine is a build without
-  proprietary codecs, so MP4/H.264 video and AAC audio do not play (`canPlayType` says so, HLS
-  and DASH players report "no supported streams", Plex reports its s4032 "manifest" error).
-  VP8, VP9, AV1, Opus, Vorbis, FLAC and MP3 play. A codec-enabled engine needs a CEF build of
-  Krunk's own (`.pipeline/cef-codecs-build.md` has the recipe) or a trusted third-party build;
-  neither ships with 0.5.0.
+- **Media codecs.** Since 0.5.2 the engine is Krunk's own build of CEF 156.0.15 with
+  proprietary codecs (`scripts/cef-build/`): H.264 (AVC) video and AAC audio play in MP4, HLS
+  and DASH streams, next to VP8, VP9, AV1, Opus, Vorbis, FLAC and MP3. Still missing or
+  conditional:
+  - **HEVC (H.265)** is decoded by the graphics hardware only (Chromium's platform HEVC on
+    Windows, built in): `canPlayType` says `probably` on a PC with a hardware HEVC decoder and
+    `""` without one (software rendering, the test VM). There is no software HEVC decoder.
+  - **AC-3 / E-AC-3 (Dolby Digital)** is compiled in but needs Windows' own Dolby decoder,
+    which Windows 11 24H2 and later no longer ship; it reports unsupported there.
+  - **Dolby Vision** profiles are mapped to HEVC and follow the same rule. **MPEG-H** and
+    **DTS** audio are not built.
+  - **Widevine** (DRM for Netflix, Spotify, ...) is not included.
+  Patent licensing for the H.264/HEVC/AAC decoders (MPEG LA / Via LA pools) is the
+  distributor's responsibility; see the 0.5.2 release notes.
 - **Size:** about 423 MB unpacked (184 MB zipped), against about 6 MB for the WebView2 build. All
   CEF locales and SwiftShader (software rendering for machines without a usable GPU) are kept.
 - **Discarding loses back/forward history.** A discarded tab reloads its last URL; its history
@@ -848,9 +869,12 @@ Testing on Windows:
 ## Third-party components
 - **Chromium Embedded Framework 156.0.15** and **Chromium 156.0.8078.80**: CEF is BSD-licensed
   (`licenses/CEF-LICENSE.txt` in the download). Chromium and the third-party code it contains are
-  listed with their licences in `licenses/Chromium-CREDITS.html`. The binaries are redistributed
-  unmodified, except that `Krunk.exe` (CEF's `bootstrap.exe`) carries Krunk's
-  version strings and manifest.
+  listed with their licences in `licenses/Chromium-CREDITS.html`. Since 0.5.2 the binaries are
+  Krunk's own build of the unmodified CEF and Chromium sources (`scripts/cef-build/`), with
+  FFmpeg's proprietary codec set (H.264, AAC, HEVC, AC-3/E-AC-3 parsing) compiled in;
+  `Krunk.exe` (CEF's `bootstrap.exe`) carries Krunk's version strings and manifest. Decoders
+  for H.264, HEVC and AAC are covered by patent pools (MPEG LA / Via LA); licensing for
+  distribution is the distributor's responsibility.
 - Filter lists:
   - EasyList and EasyPrivacy: GPL-3.0-or-later or CC BY-SA 3.0.
   - uBlock Origin uAssets: GPL-3.0.
