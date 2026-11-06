@@ -45,6 +45,7 @@ mod drag;
 mod filter_lists;
 mod find;
 mod frame;
+mod import;
 mod jobs;
 mod library;
 mod pointer;
@@ -150,6 +151,7 @@ pub struct Browser {
     status: status::StatusHost,
     /// Login suggestions under a focused field.
     suggest: suggest::SuggestHost,
+    imports: import::ImportHost,
     /// Some tab was given a user agent other than the one the engine started with.
     ua_overridden: Cell<bool>,
     /// Where the shell asked for the shield panel (it grows with its list from there).
@@ -226,6 +228,7 @@ impl Browser {
             toggle: RefCell::new(lb_core::toggle::ToggleGuard::default()),
             status: status::StatusHost::default(),
             suggest: suggest::SuggestHost::default(),
+            imports: import::ImportHost::default(),
             ua_overridden: Cell::new(false),
             bookmark_menu_at: Cell::new(None),
             adblock_source: Cell::new(None),

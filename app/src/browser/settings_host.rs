@@ -57,10 +57,11 @@ impl Browser {
             Request::Restart => self.restart(),
             Request::GetAbout => self.reply(tab, Event::ok(req_id, self.about())),
             Request::GetGpuInfo => self.reply(tab, Event::ok(req_id, self.gpu_info())),
-            Request::ImportDetect => self.reply(tab, Event::ok(req_id, serde_json::json!([]))),
-            Request::ImportRun { .. } | Request::ImportCsv => {
-                self.reply(tab, Event::err(req_id, "Import is not available yet"))
+            Request::ImportDetect => self.import_detect(tab, req_id),
+            Request::ImportRun { profile, types, primary_password } => {
+                self.import_run(tab, req_id, profile, types, primary_password)
             }
+            Request::ImportCsv => self.import_csv(tab, req_id),
             Request::OpenGpuInternals => {
                 if let Some(t) = tab {
                     self.navigate_tab(t, "chrome://gpu/");

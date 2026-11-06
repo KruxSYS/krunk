@@ -658,8 +658,12 @@ impl Browser {
             PopupContent::Suggest { .. } => self.suggest_dismissed(),
             PopupContent::Unlock { purpose, .. } => {
                 self.vaults.unlock_for.borrow_mut().take();
-                if *purpose == UnlockPurpose::Save {
-                    self.vaults.pending_save.borrow_mut().take();
+                match purpose {
+                    UnlockPurpose::Save => {
+                        self.vaults.pending_save.borrow_mut().take();
+                    }
+                    UnlockPurpose::Import => self.import_unlock_dismissed(),
+                    _ => {}
                 }
             }
             _ => {}
@@ -705,6 +709,7 @@ impl Browser {
                 }
             }
             UnlockPurpose::Suggest => self.after_unlock_suggest(tab_id, &origin),
+            UnlockPurpose::Import => self.after_unlock_import(),
         }
     }
 }

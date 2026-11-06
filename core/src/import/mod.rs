@@ -76,15 +76,21 @@ impl fmt::Display for ImportError {
 
 impl std::error::Error for ImportError {}
 
-/// Opens a copied SQLite database read-only, without touching the journal: the copies are
-/// taken while the other browser may still run, and nothing is ever written back.
+/// Opens a copied SQLite database. Without a write-ahead log next to it the file is opened
+/// read-only and immutable (nothing touches the journal); with one (the browser was running
+/// when the copy was taken) the copy is opened normally so SQLite applies the log to it. The
+/// originals are never opened.
 pub fn open_readonly(path: &Path) -> Result<Connection, ImportError> {
     if !path.is_file() {
         return Err(ImportError::NotFound(path.display().to_string()));
     }
+    let wal = path.with_file_name(format!("{}-wal", path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default()));
+    let read = |e: rusqlite::Error| ImportError::Read(format!("{}: {e}", path.display()));
+    if wal.is_file() {
+        return Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE).map_err(read);
+    }
     let uri = format!("file:{}?immutable=1", path.to_string_lossy().replace('?', "%3F").replace('#', "%23"));
-    Connection::open_with_flags(uri, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI)
-        .map_err(|e| ImportError::Read(format!("{}: {e}", path.display())))
+    Connection::open_with_flags(uri, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI).map_err(read)
 }
 
 /// WebKit time (microseconds since 1601-01-01) to milliseconds since the Unix epoch; 0 and

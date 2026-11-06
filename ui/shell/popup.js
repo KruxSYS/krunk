@@ -335,7 +335,7 @@
     }
     setTimeout(() => input.focus(), 0);
     return [el('div', { class: 'panel' }, [
-      el('h2', { text: c.purpose === 'save' ? 'Unlock to save this password' : 'Unlock to fill this login' }),
+      el('h2', { text: c.purpose === 'save' ? 'Unlock to save this password' : c.purpose === 'import' ? 'Unlock to import passwords' : 'Unlock to fill this login' }),
       el('p', { class: 'origin', text: c.origin }),
       form,
       err,

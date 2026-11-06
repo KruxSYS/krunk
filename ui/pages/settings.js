@@ -355,7 +355,9 @@
     ['history', 'bookmarks', 'passwords'].forEach(function (t) {
       const c = r[t];
       if (!c) return;
+      if (c.error) { parts.push(t + ': failed (' + c.error + ')'); return; }
       let s = t + ': ' + c.imported + ' imported';
+      if (c.updated) s += ', ' + c.updated + ' updated';
       if (c.merged) s += ', ' + c.merged + ' already there';
       if (c.skipped) s += ', ' + c.skipped + ' skipped';
       if (c.appBound) s += ' (' + c.appBound + ' protected by Chrome, export a CSV for those)';

@@ -79,6 +79,20 @@ impl KeyWrapper for Dpapi {
     }
 }
 
+/// Decrypts a DPAPI blob made without extra entropy by another program of this user
+/// (Chromium's `os_crypt` key and its legacy password blobs).
+pub fn unprotect_plain(data: &[u8]) -> Result<Zeroizing<Vec<u8>>, String> {
+    let input = blob(data);
+    let mut out = CRYPT_INTEGER_BLOB::default();
+    // SAFETY: `input` points to a live slice for the call; DPAPI allocates `out`, which
+    // `take_blob` frees.
+    unsafe {
+        CryptUnprotectData(&input, None, None, None, None, CRYPTPROTECT_UI_FORBIDDEN, &mut out)
+            .map_err(|e| format!("CryptUnprotectData: {e}"))?;
+    }
+    Ok(take_blob(&out))
+}
+
 const CF_UNICODETEXT: u32 = 13;
 
 /// Copies `text` to the clipboard, marked so clipboard managers and the

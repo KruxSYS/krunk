@@ -17,6 +17,14 @@ pub fn local_app_data() -> Result<PathBuf, String> {
         .ok_or_else(|| "Cannot find the local application data folder (LOCALAPPDATA is not set)".to_string())
 }
 
+/// `%APPDATA%` (roaming; Firefox keeps its profiles there).
+pub fn roaming_app_data() -> Result<PathBuf, String> {
+    std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("USERPROFILE").map(|p| PathBuf::from(p).join("AppData").join("Roaming")))
+        .ok_or_else(|| "Cannot find the roaming application data folder (APPDATA is not set)".to_string())
+}
+
 impl DataDirs {
     /// Resolves (and creates) the data directory.
     pub fn resolve() -> Result<DataDirs, String> {

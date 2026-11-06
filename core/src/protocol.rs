@@ -367,6 +367,8 @@ pub enum UnlockPurpose {
     Fill,
     /// Unlock chosen from the suggestion dropdown under a login field (Krunk 0.5.0).
     Suggest,
+    /// Settings → import passwords from another browser or a CSV file (Krunk 0.5.0).
+    Import,
 }
 
 /// Which login field has the focus (the suggestion dropdown).
