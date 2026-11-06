@@ -177,25 +177,39 @@ async function testShell(browser) {
   const lastId = order[order.length - 1];
   const target = page.locator('.tab[data-id="' + lastId + '"]');
   const box = await target.boundingBox();
-  await page.locator('.tab[data-id="1"]').dragTo(target, { targetPosition: { x: box.width - 5, y: box.height / 2 } });
+  // A real drag: press, a few moves, release (dragTo would skip the moves in between).
+  const dragTab = async (id, x, y) => {
+    const b = await page.locator('.tab[data-id="' + id + '"]').boundingBox();
+    await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(x, y, { steps: 5 });
+    await page.mouse.up();
+  };
+  await dragTab(1, box.x + box.width - 5, box.y + box.height / 2);
   const mv = await lastSent(page, 'moveTab');
   check(mv && mv.id === 1 && mv.index === 2, 'drag-reorder sends moveTab{id:1,index:2} (got ' + JSON.stringify(mv) + ')');
-  await page.waitForTimeout(50);
+  // The dropped tab slides into its slot (about 170 ms), then the strip shows the new order.
+  check(await page.locator('.tab[data-id="1"].settling').count() === 1, 'the dropped tab settles into its slot');
+  await page.waitForFunction(() => !document.querySelector('.tab.settling'), null, { timeout: 2000 });
   const after = await page.$$eval('.tab', (ns) => ns.map((n) => +n.dataset.id));
   check(after[2] === 1, 'tab 1 is now last');
+  check(await page.$$eval('.tab', (ns) => ns.every((n) => !n.style.transform)), 'no transforms left after the settle');
 
   // Drag onto the left half of the first tab: index 0.
-  const first = page.locator('.tab').first();
-  await page.locator('.tab[data-id="1"]').dragTo(first, { targetPosition: { x: 5, y: 10 } });
+  const first = await page.locator('.tab').first().boundingBox();
+  await dragTab(1, first.x + 5, first.y + 10);
   const mv2 = await lastSent(page, 'moveTab');
   check(mv2 && mv2.id === 1 && mv2.index === 0, 'drag to the front sends index 0');
+  await page.waitForFunction(() => !document.querySelector('.tab.settling'), null, { timeout: 2000 });
 
   // Dropping on the last tab's close button (right half) still means "after".
   await page.waitForTimeout(50);
   const count = await page.locator('.tab').count();
-  await page.locator('.tab[data-id="1"]').dragTo(page.locator('.tab').last().locator('.close'), { force: true });
+  const lastClose = await page.locator('.tab').last().locator('.close').boundingBox();
+  await dragTab(1, lastClose.x + lastClose.width / 2, lastClose.y + lastClose.height / 2);
   const mv3 = await lastSent(page, 'moveTab');
   check(mv3 && mv3.id === 1 && mv3.index === count - 1, 'drop over a child of the right half moves after it (got ' + JSON.stringify(mv3) + ')');
+  await page.waitForFunction(() => !document.querySelector('.tab.settling'), null, { timeout: 2000 });
 
   // Double-click on an inactive tab duplicates it, although the first press
   // activates the tab and re-renders the strip.
@@ -383,6 +397,19 @@ async function testTabAnimations(browser) {
   await page.locator('.tab[data-id="2"] .close').click();
   await page.waitForTimeout(20);
   check(await page.locator('.tab').count() === 2 && await page.locator('.tab.closing').count() === 0, 'reduced motion: the tab goes at once');
+  // A reorder under reduced motion: the tab still follows the cursor, the others do not slide,
+  // and the drop re-lays the strip out at once.
+  const r1 = await page.locator('.tab[data-id="1"]').boundingBox();
+  const r3 = await page.locator('.tab[data-id="3"]').boundingBox();
+  await page.mouse.move(r1.x + 20, r1.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(r3.x + r3.width - 4, r3.y + 10, { steps: 6 });
+  const rm = await page.$$eval('.tab', (ns) => ns.map((n) => ({ id: +n.dataset.id, t: n.style.transform, dragging: n.classList.contains('dragging') })));
+  check(rm.find((t) => t.id === 1).dragging && rm.find((t) => t.id === 1).t !== '', 'reduced motion: the dragged tab still follows the cursor');
+  await page.mouse.up();
+  await page.waitForTimeout(20);
+  const rmOrder = await page.$$eval('.tab', (ns) => ns.map((n) => +n.dataset.id));
+  check(rmOrder[1] === 1 && await page.locator('.tab.settling').count() === 0, 'reduced motion: the drop re-lays the strip out at once (' + rmOrder.join(',') + ')');
   check(errors.length === 0, 'reduced motion: no console errors (' + errors.join(' | ') + ')');
 }
 
@@ -2258,10 +2285,20 @@ async function testTabWindows(browser) {
   await page.mouse.move(b1.x + 20, b1.y + 10);
   await page.mouse.down();
   await page.mouse.move(last.x + last.width - 4, last.y + 10, { steps: 6 });
-  check(await page.locator('.tab.drop-after, .tab.drop-before').count() === 1, 'one drop mark while reordering');
+  // The dragged tab follows the cursor; the others slide left by its width (no drop marks).
+  const live = await page.$$eval('.tab', (ns) => ns.map((n) => ({ id: +n.dataset.id, t: n.style.transform, dragging: n.classList.contains('dragging') })));
+  const dragged = live.find((t) => t.dragging);
+  const slid = live.filter((t) => !t.dragging && /translateX\(-/.test(t.t));
+  check(dragged && /translateX\((\d+)/.test(dragged.t) && parseFloat(dragged.t.match(/\(([-\d.]+)/)[1]) > 100, 'the dragged tab follows the cursor (transform ' + (dragged && dragged.t) + ')');
+  check(slid.length === ids.length - 1 && await page.locator('.tab.drop-after, .tab.drop-before').count() === 0, 'the other tabs slide left to make room (' + slid.length + ' of ' + (ids.length - 1) + '), no drop marks');
+  await shot(page, 'shell-tab-reorder-live.png');
   await page.mouse.up();
   const mv = await lastSent(page, 'moveTab');
   check(mv && mv.id === ids[0] && mv.index === ids.length - 1, 'horizontal drag reorders (got ' + JSON.stringify(mv) + ')');
+  await page.waitForFunction(() => !document.querySelector('.tab.settling'), null, { timeout: 2000 });
+  await page.waitForTimeout(60);
+  const hmAfter = (await lastSent(page, 'hitMap')).map;
+  check(hmAfter.tabCenters.length === ids.length && hmAfter.tabCenters.every((c, i) => i === 0 || c > hmAfter.tabCenters[i - 1]), 'the hit map is reported after the drop settles');
 
   // The docked DevTools control appears with DevTools and switches its side.
   check(await page.locator('#devtools-ctl').isHidden(), 'no DevTools control while the tab has no DevTools');

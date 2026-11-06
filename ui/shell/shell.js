@@ -122,7 +122,9 @@
     setTimeout(finish, CLOSE_MS + 120);
   }
 
+  let settling = false, renderPending = false; // a dropped tab is sliding into its slot
   function renderTabs() {
+    if (settling) { renderPending = true; return; }
     const box = $('tabs');
     const animate = renderedOnce && !reduceMotion.matches;
     const ids = new Set(state.tabs.map(function (t) { return t.id; }));
@@ -276,11 +278,52 @@
   // the drag over (tabDragOut) and moves the tab into a new window or onto another one's strip.
   const DRAG_THRESHOLD = 5;   // px before a press becomes a drag
   const DETACH_DISTANCE = 24; // px above or below the strip before the tab leaves it
-  let drag = null;            // { id, node, pointerId, startX, startY, offsetX, moved, to }
+  const SLIDE_MS = 170;       // the other tabs slide aside, and the dropped tab settles, in this
+  let drag = null;            // { id, node, pointerId, startX, startY, offsetX, moved, to, rects, from }
   function clearDropMarks() {
     document.querySelectorAll('.tab').forEach(function (n) {
       n.classList.remove('dragging', 'drop-before', 'drop-after');
     });
+  }
+  // Transforms of the live reorder (the dragged tab under the cursor, the others aside).
+  function clearSlides() {
+    instantly(function () {
+      document.querySelectorAll('.tab').forEach(function (n) { n.style.transform = ''; n.classList.remove('settling'); });
+    });
+  }
+  // The tabs' rects before the drag moved anything (transforms change getBoundingClientRect).
+  function snapshotRects() {
+    const rects = new Map();
+    liveTabs().forEach(function (n) {
+      const r = n.getBoundingClientRect();
+      rects.set(Number(n.dataset.id), { left: r.left, width: r.width });
+    });
+    return rects;
+  }
+  // While the tab is dragged inside the strip: it follows the cursor, and every other tab
+  // slides by the dragged tab's width to make room where it would land. `to` is the index
+  // among the other tabs: a tab is passed once the dragged tab's leading edge (its right
+  // edge for tabs that were to its right, its left edge for those to its left) crosses
+  // that tab's original centre. Tabs can differ in width (frozen widths, a new tab).
+  function slideTabs(node, dx) {
+    const d = drag;
+    const me = d.rects.get(d.id);
+    const others = Array.prototype.filter.call(liveTabs(), function (n) { return Number(n.dataset.id) !== d.id; });
+    let to = 0;
+    const left = me.left + dx, right = left + me.width;
+    others.forEach(function (n, j) {
+      const r = d.rects.get(Number(n.dataset.id));
+      if (!r) return;
+      const c = r.left + r.width / 2;
+      if (c < (j < d.from ? left : right)) to++;
+    });
+    const step = me.width + TAB_GAP;
+    others.forEach(function (n, j) {
+      const shift = (j >= d.from && j < to) ? -step : (j < d.from && j >= to) ? step : 0;
+      n.style.transform = shift ? 'translateX(' + shift + 'px)' : '';
+    });
+    node.style.transform = 'translateX(' + dx + 'px)';
+    d.to = to;
   }
   // Insert position for x among the other tabs (the index after removing the dragged one).
   function dropIndex(x, exceptId) {
@@ -307,9 +350,10 @@
   function attachDrag(node, id) {
     node.addEventListener('pointerdown', function (e) {
       if (e.button !== 0 || e.target.closest('.close')) return;
+      if (settling) return;
       const r = node.getBoundingClientRect();
       drag = { id: id, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY,
-        offsetX: e.clientX - r.left, moved: false, to: null };
+        offsetX: e.clientX - r.left, moved: false, to: null, rects: null, from: 0 };
       $('tabs').setPointerCapture(e.pointerId);
     });
   }
@@ -321,6 +365,8 @@
     if (!drag.moved) {
       if (Math.abs(e.clientX - drag.startX) < DRAG_THRESHOLD && Math.abs(e.clientY - drag.startY) < DRAG_THRESHOLD) return;
       drag.moved = true;
+      drag.rects = snapshotRects();
+      drag.from = state.tabs.findIndex(function (t) { return t.id === drag.id; });
     }
     const node = dragNode();
     if (node) node.classList.add('dragging');
@@ -329,26 +375,58 @@
       // Out of the strip: the host follows the mouse from here.
       const d = drag;
       drag = null;
+      clearSlides();
       clearDropMarks();
       try { $('tabs').releasePointerCapture(d.pointerId); } catch (err) { /* already released */ }
       LB.post('tabDragOut', { id: d.id, offsetX: d.offsetX, offsetY: d.startY });
       return;
     }
-    drag.to = dropIndex(e.clientX, drag.id);
-    markDrop(drag.to, drag.id);
+    if (!node) return;
+    // The tab follows the cursor, kept within the tabs' own extent (the row box can be
+    // narrower than its scrolled content).
+    const me = drag.rects.get(drag.id);
+    let first = Infinity, last = -Infinity;
+    drag.rects.forEach(function (r) { first = Math.min(first, r.left); last = Math.max(last, r.left + r.width); });
+    const dx = Math.max(first - me.left, Math.min(last - me.left - me.width, e.clientX - drag.startX));
+    slideTabs(node, dx);
   });
   function finishDrag(e, commit) {
     if (!drag || e.pointerId !== drag.pointerId) return;
     const d = drag;
     drag = null;
     clearDropMarks();
-    if (!commit || !d.moved || d.to === null) return;
-    const from = state.tabs.findIndex(function (t) { return t.id === d.id; });
-    if (from < 0 || from === d.to) return;
+    const node = tabNodes.get(d.id);
+    if (!commit || !d.moved || d.to === null || !node) { clearSlides(); return; }
+    const from = d.from;
+    if (from < 0 || from === d.to) { clearSlides(); return; }
+    // The host and the state get the new order now; the strip shows it once the dropped
+    // tab has slid into its slot (its final place in the original geometry).
     const moved = state.tabs.splice(from, 1)[0];
     state.tabs.splice(d.to, 0, moved);
-    renderTabs();
     LB.post('moveTab', { id: d.id, index: d.to });
+    const ids = Array.from(d.rects.keys());
+    const others = ids.filter(function (id) { return id !== d.id; });
+    let target = 0;
+    if (d.to > from) {
+      target = others.slice(from, d.to).reduce(function (a, id) { return a + d.rects.get(id).width + TAB_GAP; }, 0);
+    } else {
+      target = -others.slice(d.to, from).reduce(function (a, id) { return a + d.rects.get(id).width + TAB_GAP; }, 0);
+    }
+    const finish = function () {
+      settling = false;
+      clearSlides();
+      renderPending = false;
+      renderTabs();
+    };
+    if (reduceMotion.matches) { finish(); return; }
+    settling = true;
+    node.classList.remove('dragging');
+    node.classList.add('settling');
+    let done = false;
+    const once = function () { if (!done) { done = true; finish(); } };
+    node.addEventListener('transitionend', function (ev) { if (ev.propertyName === 'transform') once(); }, { once: true });
+    requestAnimationFrame(function () { node.style.transform = 'translateX(' + target + 'px)'; });
+    setTimeout(once, SLIDE_MS + 120);
   }
   $('tabs').addEventListener('pointerup', function (e) { finishDrag(e, true); });
   $('tabs').addEventListener('pointercancel', function (e) { finishDrag(e, false); });

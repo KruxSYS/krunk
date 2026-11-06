@@ -15,8 +15,9 @@ body { display: flex; flex-direction: column; background: var(--bg); }
   flex: 0 1 256px; min-width: 72px; height: 30px; padding: 0 6px 0 10px;
   border-radius: 8px 8px 0 0; cursor: default; color: var(--fg-muted);
 }
-/* Width changes slide (a tab closing or opening, frozen widths released). */
-.tab { transition: flex-basis .16s ease, min-width .16s ease, padding .16s ease, opacity .16s ease; }
+/* Width changes slide (a tab closing or opening, frozen widths released); during a drag the
+   other tabs slide aside, and the dropped tab slides into its slot. */
+.tab { transition: flex-basis .16s ease, min-width .16s ease, padding .16s ease, opacity .16s ease, transform .17s ease; }
 .tab.closing, .tab.opening { min-width: 0; padding-left: 0; padding-right: 0; opacity: 0; overflow: hidden; }
 .tab.closing { pointer-events: none; }
 .tab.opening { flex-basis: 0; }
@@ -27,7 +28,9 @@ body { display: flex; flex-direction: column; background: var(--bg); }
 .tab.private { color: var(--private); }
 .tab.private.active { background: var(--private-bg); }
 .tab.sleeping .title, .tab.sleeping .favicon { opacity: .55; }
-.tab.dragging { opacity: .4; }
+/* The dragged tab follows the cursor at once (no transform transition), raised above the others. */
+.tab.dragging { z-index: 2; transition: flex-basis .16s ease, min-width .16s ease, padding .16s ease, opacity .16s ease, transform 0s; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+.tab.settling { z-index: 2; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
 .tab.drop-before::before, .tab.drop-after::after {
   content: ""; position: absolute; top: 4px; bottom: 4px; width: 2px; background: var(--accent);
 }
