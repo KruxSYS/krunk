@@ -233,7 +233,7 @@ impl Browser {
 
     /// Opens a bar folder in the popup: under its button (`rect` from the
     /// shell) or in place of the current folder (`None`, from the popup).
-    fn show_bookmark_folder(&self, id: i64, rect: Option<PopupRect>) {
+    pub(super) fn show_bookmark_folder(&self, id: i64, rect: Option<PopupRect>) {
         let Ok(Some(folder)) = self.store.borrow().bookmark(id) else { return };
         if !folder.is_folder {
             return;

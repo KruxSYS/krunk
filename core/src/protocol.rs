@@ -496,6 +496,37 @@ pub enum Request {
         id: Option<i64>,
         rect: PopupRect,
     },
+    /// Right-click on an item of an open folder dropdown (popup): the same menu as on
+    /// the bar, at `(x, y)` in CSS px of the popup's viewport.
+    ShowFolderItemMenu {
+        id: i64,
+        x: f64,
+        y: f64,
+    },
+    /// Dragging inside an open folder dropdown (popup): item `id` of that folder goes to
+    /// `index` of `parent` (the folder itself or one of its subfolders).
+    MoveBookmarkInFolder {
+        id: i64,
+        parent: i64,
+        index: u32,
+    },
+    /// An item was dragged out of the open folder dropdown (popup): the host follows the
+    /// mouse and lets the bar take the drop.
+    FolderItemDragOut {
+        id: i64,
+    },
+    /// The active page, dragged from the address bar onto the bar (shell): bookmarked
+    /// at `index` of `parent` with the tab's own title and address.
+    BookmarkActivePage {
+        parent: i64,
+        index: u32,
+    },
+    /// An address dropped onto the bar (shell), e.g. selected text of the address bar.
+    AddBookmarkAt {
+        url: String,
+        parent: i64,
+        index: u32,
+    },
     /// A choice in the bookmarks bar's menu (popup).
     BookmarkMenuAction {
         #[serde(default)]
@@ -896,6 +927,8 @@ impl Sender {
                     | R::ShowBookmarkFolder { .. }
                     | R::ShowBookmarkMenu { .. }
                     | R::MoveBookmark { .. }
+                    | R::BookmarkActivePage { .. }
+                    | R::AddBookmarkAt { .. }
                     | R::Command { .. }
                     | R::Find { .. }
                     | R::FindClose
@@ -918,6 +951,9 @@ impl Sender {
                     | R::SaveBookmark { .. }
                     | R::HidePopup
                     | R::ShowBookmarkFolder { rect: None, .. }
+                    | R::ShowFolderItemMenu { .. }
+                    | R::MoveBookmarkInFolder { .. }
+                    | R::FolderItemDragOut { .. }
                     | R::NewTab { .. }
                     | R::ReopenClosedTab
                     | R::Zoom { .. }
@@ -1184,6 +1220,21 @@ pub enum Event {
     },
     /// A tab dragged from another window is over this strip: show where it would land
     /// (`None` = no longer over it).
+    /// To a shell while an item dragged out of a folder dropdown is over its bookmarks
+    /// bar: the cursor in CSS px of the shell viewport (the shell shows the drop mark).
+    BarDragAt {
+        x: f64,
+        y: f64,
+    },
+    /// The item was released over the bar at `(x, y)`: the shell works out the target and
+    /// sends `moveBookmark`.
+    BarDragDrop {
+        id: i64,
+        x: f64,
+        y: f64,
+    },
+    /// The drag left the bar or ended elsewhere: the shell clears its marks.
+    BarDragEnd,
     TabDropHint {
         index: Option<u32>,
     },
@@ -1833,6 +1884,11 @@ mod tests {
             Request::DeleteHistoryRange { from: 1, to: 2 },
             Request::ClearBrowsingData { data: ClearData { history: true, ..ClearData::default() } },
             Request::MoveBookmark { id: 1, parent: 2, index: 0 },
+            Request::ShowFolderItemMenu { id: 4, x: 10.0, y: 20.0 },
+            Request::MoveBookmarkInFolder { id: 4, parent: 2, index: 1 },
+            Request::FolderItemDragOut { id: 4 },
+            Request::BookmarkActivePage { parent: 1, index: 0 },
+            Request::AddBookmarkAt { url: "https://a.example/".into(), parent: 1, index: 2 },
             Request::SaveSettings { settings: Box::new(Settings::default()) },
             Request::VaultSave {
                 entry: EntryInput {
@@ -1916,6 +1972,30 @@ mod tests {
             assert!(!p.permits(&menu) && !p.permits(&action) && !p.permits(&save) && !p.permits(&mv), "{page:?}");
         }
         assert!(Sender::Page(Page::Bookmarks).permits(&mv), "the bookmarks page still moves bookmarks");
+        // 0.5: the folder dropdown's own menu and drags (popup), the address-bar drag (shell).
+        let folder_menu = Request::ShowFolderItemMenu { id: 12, x: 20.0, y: 40.0 };
+        let in_folder = Request::MoveBookmarkInFolder { id: 12, parent: 11, index: 0 };
+        let out = Request::FolderItemDragOut { id: 12 };
+        let page_drop = Request::BookmarkActivePage { parent: 1, index: 0 };
+        let url_drop = Request::AddBookmarkAt { url: "https://a.example/".into(), parent: 1, index: 0 };
+        assert!(
+            Sender::Popup.permits(&folder_menu) && Sender::Popup.permits(&in_folder) && Sender::Popup.permits(&out)
+        );
+        assert!(
+            !Sender::Shell.permits(&folder_menu) && !Sender::Shell.permits(&in_folder) && !Sender::Shell.permits(&out)
+        );
+        assert!(Sender::Shell.permits(&page_drop) && Sender::Shell.permits(&url_drop));
+        assert!(!Sender::Popup.permits(&page_drop) && !Sender::Popup.permits(&url_drop));
+        for page in Page::ALL {
+            let p = Sender::Page(page);
+            for r in [&folder_menu, &in_folder, &out, &page_drop, &url_drop] {
+                assert!(!p.permits(r), "{page:?} {r:?}");
+            }
+        }
+        assert_eq!(
+            parse_request(Sender::Popup, r#"{"cmd":"showFolderItemMenu","id":12,"x":20,"y":40}"#).unwrap().request,
+            folder_menu
+        );
         let parsed = parse_request(
             Sender::Shell,
             r#"{"cmd":"showBookmarkMenu","id":null,"rect":{"x":1,"y":2,"width":240,"height":300}}"#,
@@ -2066,6 +2146,9 @@ mod tests {
             },
             Event::PopupClosed,
             Event::TabDropHint { index: Some(2) },
+            Event::BarDragAt { x: 1.0, y: 2.0 },
+            Event::BarDragDrop { id: 4, x: 1.0, y: 2.0 },
+            Event::BarDragEnd,
             Event::TabDropHint { index: None },
             Event::DevTools { open: true, dock: crate::settings::DevToolsDock::Right },
             Event::Popup { content: PopupContent::Hint { text: "Press Esc to show your cursor".into() } },

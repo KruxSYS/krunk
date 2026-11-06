@@ -94,6 +94,14 @@ impl Store {
         self.add_bookmark_at(parent, title, url, now_ms())
     }
 
+    /// A bookmark dropped at `index` of `parent` (the bookmarks bar or a folder): added
+    /// at the end, then moved into place.
+    pub fn add_bookmark_at_index(&mut self, parent: i64, title: &str, url: &str, index: u32) -> DbResult<i64> {
+        let id = self.add_bookmark(parent, title, url)?;
+        self.move_bookmark(id, parent, index)?;
+        Ok(id)
+    }
+
     pub(crate) fn add_bookmark_at(&self, parent: i64, title: &str, url: &str, added: i64) -> DbResult<i64> {
         if !bookmarkable(url) {
             return Err(invalid("url cannot be bookmarked"));
@@ -347,6 +355,24 @@ mod tests {
         assert_eq!(bar[0].favicon.as_deref(), Some("/favicon?host=www.rust-lang.org"));
         assert!(bar[1].is_folder && bar[1].url.is_none());
         assert_eq!(s.bar_items(f).unwrap()[0].title, "BBC");
+    }
+
+    #[test]
+    fn add_at_index_places_the_bookmark() {
+        let mut s = Store::open_in_memory().unwrap();
+        let a = s.add_bookmark(BOOKMARKS_BAR, "A", "https://a.example/").unwrap();
+        let c = s.add_bookmark(BOOKMARKS_BAR, "C", "https://c.example/").unwrap();
+        let b = s.add_bookmark_at_index(BOOKMARKS_BAR, "B", "https://b.example/", 1).unwrap();
+        let order: Vec<i64> = s.children(BOOKMARKS_BAR).unwrap().iter().map(|x| x.id).collect();
+        assert_eq!(order, vec![a, b, c]);
+        // Past the end lands at the end; into a folder works the same.
+        let d = s.add_bookmark_at_index(BOOKMARKS_BAR, "D", "https://d.example/", 99).unwrap();
+        let f = s.add_folder(BOOKMARKS_BAR, "F").unwrap();
+        let e = s.add_bookmark_at_index(f, "E", "https://e.example/", 0).unwrap();
+        let order: Vec<i64> = s.children(BOOKMARKS_BAR).unwrap().iter().map(|x| x.id).collect();
+        assert_eq!(order, vec![a, b, c, d, f]);
+        assert_eq!(s.children(f).unwrap()[0].id, e);
+        assert!(s.add_bookmark_at_index(BOOKMARKS_BAR, "X", "krunk://settings", 0).is_err());
     }
 
     #[test]

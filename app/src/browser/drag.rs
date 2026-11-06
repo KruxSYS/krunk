@@ -48,6 +48,15 @@ pub(super) struct TabDrag {
     hint: Option<(WindowId, usize)>,
 }
 
+/// A bookmark (or folder) dragged out of an open folder dropdown: the host follows the
+/// mouse and tells the shell under it where it is over the bookmarks bar.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct BarDrag {
+    id: i64,
+    /// The window whose bar the cursor is over (its shell shows the mark).
+    over: Option<WindowId>,
+}
+
 fn contains(r: ScreenRect, x: i32, y: i32) -> bool {
     x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height
 }
@@ -162,8 +171,71 @@ impl Browser {
         app.set_timer(DRAG_TIMER, DRAG_TICK_MS);
     }
 
+    /// An item of the open folder dropdown was dragged out of it: the dropdown closes and
+    /// the host follows the mouse until the button is released over a bookmarks bar.
+    pub(super) fn start_bar_drag(&self, id: i64) {
+        if self.drag.get().is_some() || self.bar_drag.get().is_some() {
+            return;
+        }
+        let Some(app) = self.app() else { return };
+        cursor::release_capture();
+        self.hide_popup();
+        info!("bookmark {id}: dragged out of its folder");
+        self.bar_drag.set(Some(BarDrag { id, over: None }));
+        app.set_timer(DRAG_TIMER, DRAG_TICK_MS);
+    }
+
+    /// The topmost window under `(x, y)` whose bookmarks bar is there, with the point in
+    /// CSS px of its shell.
+    fn bar_under(&self, x: i32, y: i32) -> Option<(WindowId, f64, f64)> {
+        let frames = self.all_frames();
+        let windows: Vec<_> = frames.iter().map(|f| f.window).collect();
+        let top = window::in_z_order(&windows).into_iter().find(|w| contains(w.rect(), x, y))?;
+        let f = frames.iter().find(|f| f.window == top)?;
+        if f.window.is_minimized() || self.is_fullscreen_frame(f.id) {
+            return None;
+        }
+        let scale = f.window.scale();
+        let (ox, oy) = f.window.client_to_screen(0, 0);
+        let (css_x, css_y) = (f64::from(x - ox) / scale, f64::from(y - oy) / scale);
+        let width = f64::from(f.window.client_size().0) / scale;
+        lb_core::layout::over_bookmarks_bar(f.bar.get(), css_x, css_y, width).then_some((f.id, css_x, css_y))
+    }
+
+    fn bar_drag_tick(&self, mut d: BarDrag) {
+        let cancel = cursor::escape_down();
+        let released = cursor::buttons() & 1 == 0;
+        let (cx, cy) = cursor::position();
+        let target = if cancel { None } else { self.bar_under(cx, cy) };
+        if let Some(old) = d.over.filter(|w| target.map(|t| t.0) != Some(*w)) {
+            self.post_shell_to(old, &Event::BarDragEnd);
+        }
+        if cancel || released {
+            if let Some(app) = self.app() {
+                app.kill_timer(DRAG_TIMER);
+            }
+            self.bar_drag.set(None);
+            match target {
+                Some((win, x, y)) if !cancel => {
+                    info!("bookmark {}: dropped on window {win}'s bar", d.id);
+                    self.post_shell_to(win, &Event::BarDragDrop { id: d.id, x, y });
+                }
+                _ => info!("bookmark {}: drag ended off the bar", d.id),
+            }
+            return;
+        }
+        if let Some((win, x, y)) = target {
+            self.post_shell_to(win, &Event::BarDragAt { x, y });
+        }
+        d.over = target.map(|t| t.0);
+        self.bar_drag.set(Some(d));
+    }
+
     /// `DRAG_TIMER`: follow the mouse.
     pub(super) fn drag_tick(&self) {
+        if let Some(bd) = self.bar_drag.get() {
+            return self.bar_drag_tick(bd);
+        }
         let Some(mut d) = self.drag.get() else {
             if let Some(app) = self.app() {
                 app.kill_timer(DRAG_TIMER);

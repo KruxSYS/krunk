@@ -176,6 +176,10 @@ pub struct Browser {
     updates: updater::UpdateHost,
     /// A tab being dragged between windows.
     drag: Cell<Option<drag::TabDrag>>,
+    /// A bookmark dragged out of a folder dropdown (host-driven, like a torn-off tab).
+    bar_drag: Cell<Option<drag::BarDrag>>,
+    /// The folder dropdown a bookmark menu was opened from (Esc goes back to it).
+    menu_from_folder: Cell<Option<i64>>,
     /// The session was saved for the last time (exit): frames are going away, so later saves
     /// would lose their places.
     session_final: Cell<bool>,
@@ -232,6 +236,8 @@ impl Browser {
             pointer: pointer::PointerHost::default(),
             updates: updater::UpdateHost::new(dirs.update_status()),
             drag: Cell::new(None),
+            bar_drag: Cell::new(None),
+            menu_from_folder: Cell::new(None),
             session_final: Cell::new(false),
         });
         let app = Window::create_app(Rc::new(AppEvents(browser.me.clone())))?;
@@ -1468,7 +1474,19 @@ impl Browser {
                     }
                 }
             }
-            Request::HidePopup => self.hide_popup(),
+            Request::HidePopup => match self.menu_from_folder.take() {
+                Some(folder) if sender == Sender::Popup => self.show_bookmark_folder(folder, None),
+                _ => self.hide_popup(),
+            },
+            Request::ShowFolderItemMenu { id, x, y } => self.show_folder_item_menu(id, x, y),
+            Request::MoveBookmarkInFolder { id, parent, index } => self.move_bookmark_in_folder(id, parent, index),
+            Request::FolderItemDragOut { id } => {
+                if self.folder_dropdown_has(id, true) {
+                    self.start_bar_drag(id);
+                }
+            }
+            Request::BookmarkActivePage { parent, index } => self.bookmark_active_page(parent, index),
+            Request::AddBookmarkAt { url, parent, index } => self.add_bookmark_at(&url, parent, index),
             Request::TabDragOut { id, offset_x, offset_y } => {
                 if let Some(win) = self.cur_id() {
                     self.start_tab_drag(win, id, offset_x, offset_y);
@@ -1746,6 +1764,7 @@ impl Browser {
 
     /// Hides the popup. A hidden prompt counts as dismissed, never confirmed.
     fn hide_popup(&self) {
+        self.menu_from_folder.set(None);
         let (was_visible, content, owner) = {
             let Ok(mut guard) = self.popup.try_borrow_mut() else { return };
             let Some(p) = guard.as_mut() else { return };

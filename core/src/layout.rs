@@ -31,6 +31,18 @@ fn sane_scale(scale: f64) -> f64 {
     }
 }
 
+/// A point this far above or below the bookmarks bar still counts as over it (a drag
+/// from a folder dropdown lands on the bar without pixel precision).
+pub const BAR_SLACK_DIP: f64 = 6.0;
+
+/// Is `(x, y)` (CSS px of the shell viewport, `width` CSS px wide) over the bookmarks
+/// bar? Only when the bar is shown in that window.
+pub fn over_bookmarks_bar(bar_shown: bool, x: f64, y: f64, width: f64) -> bool {
+    bar_shown
+        && (0.0..=width).contains(&x)
+        && (SHELL_HEIGHT_DIP - BAR_SLACK_DIP..=SHELL_HEIGHT_DIP + BOOKMARKS_BAR_DIP + BAR_SLACK_DIP).contains(&y)
+}
+
 /// Shell and content bounds for a client area of `width` x `height`.
 pub fn split(width: i32, height: i32, scale: f64, bookmarks_bar: bool) -> (Rect, Rect) {
     let width = width.max(0);
@@ -250,6 +262,17 @@ pub fn next_zoom(current: f64, zoom_in: bool) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bar_band_follows_the_toolbar() {
+        assert!(over_bookmarks_bar(true, 100.0, 80.0, 1200.0));
+        assert!(over_bookmarks_bar(true, 0.0, SHELL_HEIGHT_DIP - BAR_SLACK_DIP, 1200.0));
+        assert!(over_bookmarks_bar(true, 1200.0, SHELL_HEIGHT_DIP + BOOKMARKS_BAR_DIP + BAR_SLACK_DIP, 1200.0));
+        assert!(!over_bookmarks_bar(true, 100.0, 60.0, 1200.0), "the toolbar is not the bar");
+        assert!(!over_bookmarks_bar(true, 100.0, 120.0, 1200.0), "the page is not the bar");
+        assert!(!over_bookmarks_bar(true, -1.0, 80.0, 1200.0) && !over_bookmarks_bar(true, 1201.0, 80.0, 1200.0));
+        assert!(!over_bookmarks_bar(false, 100.0, 80.0, 1200.0), "no bar, no band");
+    }
 
     #[test]
     fn shell_scales_with_dpi() {

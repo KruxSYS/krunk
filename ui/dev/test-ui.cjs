@@ -1148,6 +1148,78 @@ async function testBookmarksBar(browser) {
   await page.mouse.up();
   mv = await lastSent(page, 'moveBookmark');
   check(mv && mv.id === 10 && mv.parent === 11, 'dropped on the folder: moveBookmark{id:10, parent:11} (' + JSON.stringify(mv) + ')');
+
+  // 0.5: an item dragged out of a folder dropdown is driven by the host: barDragAt marks the
+  // target, barDragEnd clears it, barDragDrop moves the bookmark there.
+  to = await box(10);
+  await emit(page, { event: 'barDragAt', x: to.x + 3, y: 90 });
+  await page.waitForTimeout(20);
+  check(await page.locator('.bm[data-id="10"].drop-before').count() === 1, 'barDragAt before Rust: mark on Rust');
+  to = await box(11);
+  await emit(page, { event: 'barDragAt', x: to.x + to.width / 2, y: 90 });
+  await page.waitForTimeout(20);
+  check(await page.locator('.bm[data-id="11"].drop-into').count() === 1, 'barDragAt over the folder: it lights up');
+  await emit(page, { event: 'barDragEnd' });
+  await page.waitForTimeout(20);
+  check(await page.locator('.bm.drop-before, .bm.drop-after, .bm.drop-into').count() === 0, 'barDragEnd clears the marks');
+  to = await box(19);
+  await emit(page, { event: 'barDragDrop', id: 12, x: to.x + to.width - 2, y: 90 });
+  await page.waitForTimeout(20);
+  mv = await lastSent(page, 'moveBookmark');
+  check(mv && mv.id === 12 && mv.parent === 1 && mv.index === 3, 'barDragDrop after Wikipedia: moveBookmark{id:12, parent:1, index:3} (' + JSON.stringify(mv) + ')');
+  to = await box(11);
+  await emit(page, { event: 'barDragDrop', id: 12, x: to.x + to.width / 2, y: 90 });
+  await page.waitForTimeout(20);
+  mv = await lastSent(page, 'moveBookmark');
+  check(mv && mv.id === 12 && mv.parent === 11, 'barDragDrop on the folder: moveBookmark{id:12, parent:11}');
+
+  // The page dragged from the site icon onto the bar: a chip follows, the mark shows, and the
+  // drop sends bookmarkActivePage (the host takes the title and address from the tab).
+  const icon = await page.locator('#site-icon').boundingBox();
+  to = await box(19);
+  await page.mouse.move(icon.x + icon.width / 2, icon.y + icon.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(icon.x + 20, icon.y + 10, { steps: 3 });
+  await page.mouse.move(to.x + 3, to.y + 10, { steps: 6 });
+  check(await page.locator('#url-chip').count() === 1 && (await page.textContent('#url-chip')) === 'Rust', 'a chip with the page title follows the drag');
+  check(await page.locator('.bm[data-id="19"].drop-before').count() === 1, 'over the bar: the mark shows before Wikipedia');
+  await shot(page, 'shell-url-drag.png');
+  await page.mouse.up();
+  let bp = await lastSent(page, 'bookmarkActivePage');
+  check(bp && bp.parent === 1 && bp.index === 2, 'dropped before Wikipedia: bookmarkActivePage{parent:1, index:2} (' + JSON.stringify(bp) + ')');
+  check(await page.locator('#url-chip').count() === 0, 'the chip is gone');
+  // From the (unfocused) address field into the folder.
+  const ab = await page.locator('#address').boundingBox();
+  to = await box(11);
+  await page.mouse.move(ab.x + 40, ab.y + ab.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(ab.x + 60, ab.y + 10, { steps: 3 });
+  await page.mouse.move(to.x + to.width / 2, to.y + 10, { steps: 6 });
+  check(await page.locator('.bm[data-id="11"].drop-into').count() === 1, 'the address dragged over the folder lights it up');
+  await page.mouse.up();
+  bp = await lastSent(page, 'bookmarkActivePage');
+  check(bp && bp.parent === 11, 'dropped on the folder: bookmarkActivePage{parent:11}');
+  check(await page.evaluate(() => document.activeElement !== document.getElementById('address')), 'a drag from the field does not focus it');
+  // A plain click on the field still focuses it with the text selected.
+  await page.mouse.click(ab.x + 40, ab.y + ab.height / 2);
+  await page.waitForTimeout(20);
+  check(await page.evaluate(() => { const a = document.getElementById('address'); return document.activeElement === a && a.selectionEnd - a.selectionStart === a.value.length; }), 'a click on the field focuses it and selects the address');
+  await page.keyboard.press('Escape');
+  // Text dropped on the bar (HTML5 drag and drop): an http(s) address becomes a bookmark.
+  to = await box(10);
+  await page.evaluate(([x, y]) => {
+    const bar = document.getElementById('bookmarks-bar');
+    const dt = new DataTransfer();
+    dt.setData('text/plain', 'https://dropped.example/path');
+    bar.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, clientX: x, clientY: y, dataTransfer: dt }));
+    bar.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, clientX: x, clientY: y, dataTransfer: dt }));
+    const dt2 = new DataTransfer();
+    dt2.setData('text/plain', 'not an address');
+    bar.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, clientX: x, clientY: y, dataTransfer: dt2 }));
+  }, [to.x + 3, to.y + 10]);
+  await page.waitForTimeout(20);
+  const adds = (await sent(page)).filter((x) => x.cmd === 'addBookmarkAt');
+  check(adds.length === 1 && adds[0].url === 'https://dropped.example/path' && adds[0].parent === 1 && adds[0].index === 0, 'dropped text: addBookmarkAt{url, parent:1, index:0} once; plain text is ignored (' + JSON.stringify(adds) + ')');
   check((await lastSent(page, 'showBookmarkFolder')) === undefined, 'the drop does not open the folder');
   check(errors.length === 0, 'shell: no console errors (' + errors.join(' | ') + ')');
   await page.close();
@@ -1935,6 +2007,47 @@ async function testFolderPopup(browser) {
   await page.locator('.item', { hasText: 'BBC News' }).click();
   const ou = await lastSent(page, 'openUrl');
   check(ou && ou.url === 'https://www.bbc.co.uk/news', 'bookmark opens url');
+
+  // 0.5: right-click on an item asks the host for the bar's menu at the click.
+  await page.locator('.item', { hasText: 'Hacker News' }).click({ button: 'right' });
+  const fm = await lastSent(page, 'showFolderItemMenu');
+  check(fm && fm.id === 13 && fm.x > 0 && fm.y > 0, 'right-click on a folder item sends showFolderItemMenu{id:13, x, y}');
+  // Drag Hacker News above BBC: a mark, then moveBookmarkInFolder{parent: the folder, index 0}.
+  const fbox = async (text) => page.locator('.item', { hasText: text }).boundingBox();
+  let hn = await fbox('Hacker News'), bbc = await fbox('BBC News');
+  await page.mouse.move(hn.x + 20, hn.y + hn.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(hn.x + 20, hn.y + hn.height / 2 - 8, { steps: 3 });
+  await page.mouse.move(bbc.x + 20, bbc.y + 3, { steps: 4 });
+  check(await page.locator('.item.drop-before', { hasText: 'BBC News' }).count() === 1, 'a mark shows where the item goes in the dropdown');
+  await shot(page, 'popup-folder-drag.png');
+  await page.mouse.up();
+  let mf = await lastSent(page, 'moveBookmarkInFolder');
+  check(mf && mf.id === 13 && mf.parent === 11 && mf.index === 0, 'dropped above BBC: moveBookmarkInFolder{id:13, parent:11, index:0} (' + JSON.stringify(mf) + ')');
+  const openedBefore = (await sent(page)).filter((x) => x.cmd === 'openUrl').length;
+  await page.waitForTimeout(20);
+  check((await sent(page)).filter((x) => x.cmd === 'openUrl').length === openedBefore, 'the drop opens nothing');
+  // Onto the middle of the Tech folder: into it.
+  hn = await fbox('Hacker News');
+  const tech = await fbox('Tech');
+  await page.mouse.move(hn.x + 20, hn.y + hn.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(hn.x + 20, hn.y + hn.height / 2 + 8, { steps: 3 });
+  await page.mouse.move(tech.x + 20, tech.y + tech.height / 2, { steps: 4 });
+  check(await page.locator('.item.drop-into', { hasText: 'Tech' }).count() === 1, 'over the subfolder: it lights up');
+  await page.mouse.up();
+  mf = await lastSent(page, 'moveBookmarkInFolder');
+  check(mf && mf.id === 13 && mf.parent === 14, 'dropped on the subfolder: moveBookmarkInFolder{id:13, parent:14}');
+  // Out of the popup (below its bottom edge): the host takes over.
+  hn = await fbox('Hacker News');
+  await page.mouse.move(hn.x + 20, hn.y + hn.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(hn.x + 20, hn.y + hn.height / 2 + 8, { steps: 3 });
+  await page.mouse.move(hn.x + 20, 130, { steps: 4 });
+  const out = await lastSent(page, 'folderItemDragOut');
+  check(out && out.id === 13, 'dragged out of the dropdown: folderItemDragOut{id:13}');
+  check(await page.locator('.item.dragging, .item.drop-before, .item.drop-after, .item.drop-into').count() === 0, 'no marks left after the hand-over');
+  await page.mouse.up();
   check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
 }
 

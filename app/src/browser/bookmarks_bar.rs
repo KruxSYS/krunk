@@ -173,6 +173,87 @@ impl Browser {
         self.bar_changed("edit", r);
     }
 
+    /// The open folder dropdown's items: is `id` one of them (`folders_too`: or a subfolder)?
+    pub(super) fn folder_dropdown_has(&self, id: i64, folders_too: bool) -> bool {
+        let Ok(popup) = self.popup.try_borrow() else { return false };
+        let Some(PopupContent::BookmarkFolder { items, .. }) =
+            popup.as_ref().filter(|p| p.window.is_visible()).and_then(|p| p.content.as_ref())
+        else {
+            return false;
+        };
+        items.iter().any(|i| i.id == id && (folders_too || !i.is_folder))
+    }
+
+    /// The open folder dropdown's folder id.
+    fn open_folder(&self) -> Option<i64> {
+        let popup = self.popup.try_borrow().ok()?;
+        match popup.as_ref().filter(|p| p.window.is_visible())?.content.as_ref()? {
+            PopupContent::BookmarkFolder { id, .. } => Some(*id),
+            _ => None,
+        }
+    }
+
+    /// Right-click on an item of the open folder dropdown: the bar's menu for it, where
+    /// the click was. The popup's coordinates are turned into the shell's (both are CSS
+    /// px, the popup sits on screen next to the shell), and Esc returns to the dropdown.
+    pub(super) fn show_folder_item_menu(&self, id: i64, x: f64, y: f64) {
+        let Some(folder) = self.open_folder() else { return };
+        if !self.folder_dropdown_has(id, true) || !x.is_finite() || !y.is_finite() {
+            return;
+        }
+        let Some(main) = self.window() else { return };
+        let popup_rect = match self.popup.try_borrow() {
+            Ok(p) => p.as_ref().map(|p| p.window.rect()),
+            Err(_) => None,
+        };
+        let Some(pr) = popup_rect else { return };
+        let scale = main.scale();
+        let (ox, oy) = main.client_to_screen(0, 0);
+        let at = PopupRect {
+            x: (f64::from(pr.x - ox) / scale + x.clamp(0.0, 4096.0)).max(0.0),
+            y: (f64::from(pr.y - oy) / scale + y.clamp(0.0, 4096.0)).max(0.0),
+            width: 240.0,
+            height: 320.0,
+        };
+        self.show_bookmark_menu(Some(id), at);
+        self.menu_from_folder.set(Some(folder));
+    }
+
+    /// Dragging inside the open folder dropdown: `id` (one of its items) to `index` of
+    /// `parent`, the folder itself or one of its subfolders. The dropdown shows the result.
+    pub(super) fn move_bookmark_in_folder(&self, id: i64, parent: i64, index: u32) {
+        let Some(folder) = self.open_folder() else { return };
+        let ok = self.folder_dropdown_has(id, true) && (parent == folder || self.folder_dropdown_has(parent, true));
+        if !ok || parent == id {
+            return;
+        }
+        let r = self.store.borrow_mut().move_bookmark(id, parent, index);
+        self.bar_changed("move in folder", r);
+        self.show_bookmark_folder(folder, None);
+    }
+
+    /// The active page dragged from the address bar onto the bar: the host takes the
+    /// address and title from the tab, never from the shell.
+    pub(super) fn bookmark_active_page(&self, parent: i64, index: u32) {
+        let Some(tab) = self.active_tab() else { return };
+        if !bookmarkable(&tab.url) {
+            return;
+        }
+        let title = if tab.title.trim().is_empty() { tab.url.clone() } else { tab.title.clone() };
+        let r = self.store.borrow_mut().add_bookmark_at_index(parent, &title, &tab.url, index);
+        self.bar_changed("bookmark page", r);
+    }
+
+    /// An address dropped onto the bar (the address bar's selected text).
+    pub(super) fn add_bookmark_at(&self, url: &str, parent: i64, index: u32) {
+        let url = url.trim();
+        if !bookmarkable(url) {
+            return;
+        }
+        let r = self.store.borrow_mut().add_bookmark_at_index(parent, url, url, index);
+        self.bar_changed("drop address", r);
+    }
+
     /// Dragging on the bar: bookmark `id` into folder `parent` at `index`.
     pub(super) fn move_bookmark_from_bar(&self, id: i64, parent: i64, index: u32) {
         let r = self.store.borrow_mut().move_bookmark(id, parent, index);

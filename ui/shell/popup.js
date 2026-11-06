@@ -248,13 +248,21 @@
     ])];
   }
 
+  // A folder dropdown: its items open, subfolders open in place, a right-click shows the
+  // bar's menu for the item, and an item can be dragged: within the list to reorder it or
+  // into a subfolder (the same marks as on the bar), or out of the popup, where the host
+  // follows the mouse and the bar takes the drop.
+  const DRAG_THRESHOLD = 5;
+  const folderDrag = { item: null, id: 0, pointerId: null, startX: 0, startY: 0, moved: false, target: null, suppressClick: false };
   function renderFolder(c) {
     if (!c.items.length) return [el('div', { class: 'panel muted', text: '(empty)' })];
-    return c.items.map(function (b) {
+    const rows = c.items.map(function (b) {
       const icon = b.isFolder ? el('span', { class: 'folder-glyph', text: '▸' })
         : b.favicon ? el('img', { class: 'fav', src: b.favicon, alt: '' }) : el('span', { class: 'fav dot' });
-      const btn = el('button', { class: 'item', title: b.url || b.title }, [icon, el('span', { class: 'label', text: b.title })]);
+      const btn = el('button', { class: 'item', title: b.url || b.title, 'data-id': b.id }, [icon, el('span', { class: 'label', text: b.title })]);
+      if (b.isFolder) btn.classList.add('folder');
       btn.addEventListener('click', function (e) {
+        if (folderDrag.suppressClick) return;
         if (b.isFolder) { LB.post('showBookmarkFolder', { id: b.id }); return; }
         LB.post('openUrl', { url: b.url, newTab: e.ctrlKey });
         close();
@@ -262,9 +270,80 @@
       btn.addEventListener('auxclick', function (e) {
         if (e.button === 1 && b.url) { LB.post('openUrl', { url: b.url, newTab: true }); close(); }
       });
+      btn.addEventListener('contextmenu', function (e) {
+        e.preventDefault();
+        LB.post('showFolderItemMenu', { id: b.id, x: e.clientX, y: e.clientY });
+      });
+      btn.addEventListener('pointerdown', function (e) {
+        if (e.button !== 0) return;
+        folderDrag.item = btn; folderDrag.id = b.id; folderDrag.pointerId = e.pointerId;
+        folderDrag.startX = e.clientX; folderDrag.startY = e.clientY; folderDrag.moved = false; folderDrag.target = null;
+      });
       return btn;
     });
+    return rows;
   }
+  function folderRows() { return Array.prototype.slice.call(root.querySelectorAll('.item[data-id]')); }
+  function clearFolderMarks() {
+    folderRows().forEach(function (n) { n.classList.remove('drop-before', 'drop-after', 'drop-into', 'dragging'); });
+  }
+  // Where a drop at y goes: { into: folderId } (the middle half of a folder row) or { index }
+  // among the other rows.
+  function folderTarget(y) {
+    const others = folderRows().filter(function (n) { return n !== folderDrag.item; });
+    let index = 0;
+    for (let i = 0; i < others.length; i++) {
+      const r = others[i].getBoundingClientRect();
+      if (others[i].classList.contains('folder') && y >= r.top + r.height / 4 && y <= r.bottom - r.height / 4) {
+        return { into: Number(others[i].dataset.id), node: others[i] };
+      }
+      if (y > r.top + r.height / 2) index = i + 1;
+    }
+    return { index: index, others: others };
+  }
+  root.addEventListener('pointermove', function (e) {
+    if (!folderDrag.item || e.pointerId !== folderDrag.pointerId) return;
+    if (!folderDrag.moved) {
+      if (Math.abs(e.clientX - folderDrag.startX) < DRAG_THRESHOLD && Math.abs(e.clientY - folderDrag.startY) < DRAG_THRESHOLD) return;
+      folderDrag.moved = true;
+      root.setPointerCapture(e.pointerId);
+    }
+    if (e.clientX < 0 || e.clientY < 0 || e.clientX > window.innerWidth || e.clientY > window.innerHeight) {
+      // Out of the dropdown: the host follows the mouse from here.
+      const id = folderDrag.id;
+      clearFolderMarks();
+      folderDrag.item = null;
+      try { root.releasePointerCapture(e.pointerId); } catch (err) { /* already released */ }
+      LB.post('folderItemDragOut', { id: id });
+      return;
+    }
+    clearFolderMarks();
+    folderDrag.item.classList.add('dragging');
+    const t = folderTarget(e.clientY);
+    folderDrag.target = t;
+    if (t.into !== undefined) t.node.classList.add('drop-into');
+    else if (t.others.length) {
+      if (t.index < t.others.length) t.others[t.index].classList.add('drop-before');
+      else t.others[t.others.length - 1].classList.add('drop-after');
+    }
+  });
+  function endFolderDrag(e, commit) {
+    if (!folderDrag.item || e.pointerId !== folderDrag.pointerId) return;
+    const id = folderDrag.id, t = folderDrag.target, moved = folderDrag.moved;
+    folderDrag.item = null;
+    clearFolderMarks();
+    if (!moved) return;
+    folderDrag.suppressClick = true;
+    setTimeout(function () { folderDrag.suppressClick = false; }, 0);
+    if (!commit || !t || !current || current.kind !== 'bookmarkFolder') return;
+    if (t.into !== undefined) {
+      if (t.into !== id) LB.post('moveBookmarkInFolder', { id: id, parent: t.into, index: 1000000 });
+    } else {
+      LB.post('moveBookmarkInFolder', { id: id, parent: current.id, index: t.index });
+    }
+  }
+  root.addEventListener('pointerup', function (e) { endFolderDrag(e, true); });
+  root.addEventListener('pointercancel', function (e) { endFolderDrag(e, false); });
 
   // "Krunk X is available" and the download that follows "Update now".
   function renderUpdate(c) {

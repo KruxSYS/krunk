@@ -371,6 +371,29 @@
   });
   $('dt-close').addEventListener('click', function () { LB.post('devToolsClose'); });
 
+  // A bookmark dragged out of a folder dropdown (the host follows the mouse): the marks
+  // follow the cursor over the bar, and the release moves the bookmark there.
+  function markBarTarget(t) {
+    clearBarMarks();
+    if (!t) return;
+    if (t.into !== undefined) t.node.classList.add('drop-into');
+    else if (t.others.length) {
+      if (t.index < t.others.length) t.others[t.index].classList.add('drop-before');
+      else t.others[t.others.length - 1].classList.add('drop-after');
+    }
+  }
+  LB.on('barDragAt', function (m) { markBarTarget(barTarget(m.x)); });
+  LB.on('barDragEnd', function () { clearBarMarks(); });
+  LB.on('barDragDrop', function (m) {
+    clearBarMarks();
+    const t = barTarget(m.x);
+    if (t.into !== undefined) {
+      if (t.into !== m.id) LB.post('moveBookmark', { id: m.id, parent: t.into, index: 1000000 });
+    } else {
+      LB.post('moveBookmark', { id: m.id, parent: BAR_ROOT, index: t.index });
+    }
+  });
+
   // A tab dragged from another window is over this strip: where it would land.
   LB.on('tabDropHint', function (m) {
     clearDropMarks();
@@ -587,6 +610,78 @@
   }
   $('bookmarks-bar').addEventListener('pointerup', function (e) { endBarDrag(e, true); });
   $('bookmarks-bar').addEventListener('pointercancel', function (e) { endBarDrag(e, false); });
+
+  // Dragging the page from the address bar (the site icon, or the field while it is not
+  // being edited) onto the bar bookmarks it where it is dropped; a chip follows the
+  // cursor. A plain click still focuses the field. The host takes the title and address
+  // from the tab itself.
+  const urlDrag = { pointerId: null, startX: 0, startY: 0, moved: false, chip: null, target: null, fromField: false };
+  function urlDragStart(e, fromField) {
+    if (e.button !== 0 || !state.nav || !state.nav.url || state.nav.url.startsWith('krunk://')) return;
+    if (fromField && state.editing) return;
+    // The field must not take the caret (and select its text, which would start a text drag)
+    // on the press; a click without movement focuses it on release instead.
+    if (fromField) e.preventDefault();
+    urlDrag.pointerId = e.pointerId; urlDrag.startX = e.clientX; urlDrag.startY = e.clientY;
+    urlDrag.moved = false; urlDrag.target = null; urlDrag.fromField = fromField;
+  }
+  $('site-icon').addEventListener('pointerdown', function (e) { urlDragStart(e, false); });
+  address.addEventListener('pointerdown', function (e) { urlDragStart(e, true); });
+  $('omnibox').addEventListener('pointermove', function (e) {
+    if (urlDrag.pointerId !== e.pointerId) return;
+    if (!urlDrag.moved) {
+      if (Math.abs(e.clientX - urlDrag.startX) < DRAG_THRESHOLD && Math.abs(e.clientY - urlDrag.startY) < DRAG_THRESHOLD) return;
+      urlDrag.moved = true;
+      $('omnibox').setPointerCapture(e.pointerId);
+      const tab = (state.tabs || []).find(function (x) { return x.id === state.nav.tabId; });
+      const t = (tab && tab.title) || state.nav.url;
+      urlDrag.chip = el('div', { id: 'url-chip', text: t });
+      document.body.appendChild(urlDrag.chip);
+    }
+    urlDrag.chip.style.left = (e.clientX + 12) + 'px';
+    urlDrag.chip.style.top = (e.clientY + 12) + 'px';
+    const bar = $('bookmarks-bar');
+    const br = bar.getBoundingClientRect();
+    const overBar = !bar.hidden && e.clientY >= br.top && e.clientY <= br.bottom;
+    urlDrag.target = overBar ? barTarget(e.clientX) : null;
+    markBarTarget(urlDrag.target);
+  });
+  function endUrlDrag(e, commit) {
+    if (urlDrag.pointerId !== e.pointerId) return;
+    const moved = urlDrag.moved, t = urlDrag.target, fromField = urlDrag.fromField;
+    urlDrag.pointerId = null;
+    if (urlDrag.chip) { urlDrag.chip.remove(); urlDrag.chip = null; }
+    clearBarMarks();
+    if (!moved) {
+      // A click: the field gets the caret as usual.
+      if (fromField && commit) { address.focus(); address.select(); }
+      return;
+    }
+    if (!commit || !t) return;
+    if (t.into !== undefined) LB.post('bookmarkActivePage', { parent: t.into, index: 1000000 });
+    else LB.post('bookmarkActivePage', { parent: BAR_ROOT, index: t.index });
+  }
+  $('omnibox').addEventListener('pointerup', function (e) { endUrlDrag(e, true); });
+  $('omnibox').addEventListener('pointercancel', function (e) { endUrlDrag(e, false); });
+  // Text dragged with the mouse (the selected address while editing, or from a page):
+  // an http(s) address dropped on the bar becomes a bookmark there.
+  $('bookmarks-bar').addEventListener('dragover', function (e) {
+    if (!e.dataTransfer.types.includes('text/plain') && !e.dataTransfer.types.includes('text/uri-list')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    const t = barTarget(e.clientX);
+    markBarTarget(t);
+  });
+  $('bookmarks-bar').addEventListener('dragleave', function () { clearBarMarks(); });
+  $('bookmarks-bar').addEventListener('drop', function (e) {
+    e.preventDefault();
+    clearBarMarks();
+    const text = (e.dataTransfer.getData('text/uri-list') || e.dataTransfer.getData('text/plain') || '').trim().split('\n')[0];
+    if (!/^https?:\/\/\S+$/i.test(text)) return;
+    const t = barTarget(e.clientX);
+    if (t.into !== undefined) LB.post('addBookmarkAt', { url: text, parent: t.into, index: 1000000 });
+    else LB.post('addBookmarkAt', { url: text, parent: BAR_ROOT, index: t.index });
+  });
 
   // ---------- find in page ----------
   const find = $('find');

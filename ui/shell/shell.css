@@ -105,6 +105,10 @@ html.fullscreen #caption, html.fullscreen #drag-space { display: none; }
 #findbar.nomatch #find-count { color: var(--danger); }
 
 /* ---- bookmarks bar ---- */
+/* The page dragged from the address bar: a chip follows the cursor. */
+#url-chip { position: fixed; z-index: 20; max-width: 240px; padding: 3px 10px; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--bg-raised); color: var(--fg); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
 #bookmarks-bar { display: flex; align-items: center; gap: 2px; height: 28px; padding: 0 8px; overflow: hidden;
                  background: var(--bg-raised); border-bottom: 1px solid var(--border); }
 #bookmarks-bar[hidden] { display: none; }
