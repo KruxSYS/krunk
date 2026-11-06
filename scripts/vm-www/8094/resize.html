@@ -1,0 +1,13 @@
+<!doctype html><html><head><meta charset="utf-8"><title>resize probe</title>
+<style>
+html,body{margin:0;height:100%;background:
+ repeating-linear-gradient(90deg,#cde 0 49px,#36c 49px 50px),
+ repeating-linear-gradient(0deg,transparent 0 49px,#36c 49px 50px);background-blend-mode:multiply}
+#corner{position:fixed;right:0;bottom:0;background:#e33;color:#fff;font:bold 24px sans-serif;padding:8px}
+#size{position:fixed;left:8px;top:8px;background:#000c;color:#fff;font:20px monospace;padding:6px}
+</style></head><body>
+<div id="size"></div><div id="corner">BOTTOM-RIGHT</div>
+<script>
+function u(){document.getElementById('size').textContent=innerWidth+'x'+innerHeight+' #'+(++n)}
+var n=0;u();addEventListener('resize',u);
+</script></body></html>

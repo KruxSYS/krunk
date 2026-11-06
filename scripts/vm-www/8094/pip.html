@@ -1,0 +1,11 @@
+<!doctype html><html><head><meta charset="utf-8"><title>pip probe</title></head><body style="background:#223;color:#fff;font:16px sans-serif">
+<h2>Two videos</h2>
+<video id="a" src="test-h264-aac.mp4" width="400" muted autoplay loop playsinline></video>
+<video id="b" src="test-vp9-opus.webm" width="300" muted autoplay loop playsinline></video>
+<pre id="o"></pre>
+<script>
+const o=document.getElementById('o');
+for(const v of document.querySelectorAll('video')){v.addEventListener('enterpictureinpicture',e=>{o.textContent+='enter pip '+v.id+' '+e.pictureInPictureWindow.width+'x'+e.pictureInPictureWindow.height+'\n';document.title='PIP '+v.id;fetch('/log?pip=enter-'+v.id)});
+ v.addEventListener('leavepictureinpicture',()=>{o.textContent+='leave pip '+v.id+'\n';document.title='PIP left';fetch('/log?pip=leave-'+v.id)});}
+o.textContent='pictureInPictureEnabled='+document.pictureInPictureEnabled+'\n';
+</script></body></html>

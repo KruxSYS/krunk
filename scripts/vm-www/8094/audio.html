@@ -1,0 +1,9 @@
+<!doctype html><html><head><meta charset="utf-8"><title>audio probe</title></head><body style="font:16px sans-serif">
+<p>Press p to play with sound, s to stop, m to mute.</p>
+<video id="v" src="test-h264-aac.mp4" width="400" loop></video>
+<pre id="o"></pre>
+<script>
+const v=document.getElementById('v'),o=document.getElementById('o');
+addEventListener('keydown',e=>{if(e.key==='p'){v.muted=false;v.volume=1;v.play().then(()=>o.textContent+='playing\n',er=>o.textContent+='play error '+er+'\n');}
+ if(e.key==='s'){v.pause();o.textContent+='paused\n'} if(e.key==='m'){v.muted=!v.muted;o.textContent+='muted='+v.muted+'\n'}});
+</script></body></html>

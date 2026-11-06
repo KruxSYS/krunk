@@ -1,0 +1,18 @@
+<!doctype html><html><head><meta charset="utf-8"><title>drm probe</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.11.2/shaka-player.compiled.js"></script></head>
+<body style="font:16px sans-serif"><video id="v" width="640" controls autoplay muted></video><pre id="o"></pre>
+<script>
+const o=document.getElementById('o');function say(s){o.textContent+=s+'\n';document.title='DRM '+s;fetch('/log?drm='+encodeURIComponent(s))}
+(async()=>{
+ try{const a=await navigator.requestMediaKeySystemAccess('com.widevine.alpha',[{initDataTypes:['cenc'],videoCapabilities:[{contentType:'video/mp4;codecs="avc1.42E01E"',robustness:'SW_SECURE_CRYPTO'}],audioCapabilities:[{contentType:'audio/mp4;codecs="mp4a.40.2"'}]}]);say('widevine EME ok '+a.keySystem);}
+ catch(e){say('widevine EME fail '+e.name+' '+e.message)}
+ if(!window.shaka){say('shaka missing');return}
+ shaka.polyfill.installAll();const p=new shaka.Player();await p.attach(document.getElementById('v'));
+ p.configure({drm:{servers:{'com.widevine.alpha':'https://cwip-shaka-proxy.appspot.com/no_auth'}}});
+ p.addEventListener('error',e=>say('shaka error '+e.detail.code+' '+(e.detail.data||[]).join(',')));
+ const v=document.getElementById('v');v.addEventListener('playing',()=>say('playing t='+v.currentTime.toFixed(1)));
+ setInterval(()=>{if(!v.paused)say('time '+v.currentTime.toFixed(1)+' drm='+p.drmInfo()?.keySystem)},5000);
+ try{await p.load('https://storage.googleapis.com/shaka-demo-assets/angel-one-widevine/dash.mpd');say('loaded drm='+(p.drmInfo()&&p.drmInfo().keySystem));v.play().catch(e=>say('play '+e))}
+ catch(e){say('load error '+e.code+' '+(e.data||[]).join(','))}
+})();
+</script></body></html>

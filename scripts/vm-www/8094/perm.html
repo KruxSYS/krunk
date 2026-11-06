@@ -1,0 +1,17 @@
+<!doctype html><html><head><meta charset="utf-8"><title>perm probe</title></head><body style="font:16px sans-serif">
+<p>Keys: 1 camera, 2 mic, 3 geolocation, 4 notifications, 5 clipboard read, 6 MIDI, 7 screen share</p>
+<pre id="o"></pre>
+<script>
+const o=document.getElementById('o');function say(k,r){o.textContent+=k+': '+r+'\n';document.title='PERM '+k+' '+r;fetch('/log?perm='+encodeURIComponent(k+'='+r))}
+const acts={
+ '1':()=>navigator.mediaDevices.getUserMedia({video:true}).then(s=>{say('camera','ok '+s.getTracks().length);setTimeout(()=>s.getTracks().forEach(t=>t.stop()),4000)},e=>say('camera',e.name+' '+e.message)),
+ '2':()=>navigator.mediaDevices.getUserMedia({audio:true}).then(s=>{say('mic','ok '+s.getTracks().length);setTimeout(()=>s.getTracks().forEach(t=>t.stop()),4000)},e=>say('mic',e.name+' '+e.message)),
+ '3':()=>navigator.geolocation.getCurrentPosition(p=>say('geo','ok '+p.coords.latitude),e=>say('geo','err '+e.code+' '+e.message),{timeout:8000}),
+ '4':()=>Notification.requestPermission().then(r=>{say('notif',r);if(r==='granted'){new Notification('Krunk spike',{body:'hello'})}}),
+ '5':()=>navigator.clipboard.readText().then(t=>say('clip','ok '+t.length),e=>say('clip',e.name+' '+e.message)),
+ '6':()=>navigator.requestMIDIAccess({sysex:true}).then(m=>say('midi','ok '+m.inputs.size),e=>say('midi',e.name+' '+e.message)),
+ '7':()=>navigator.mediaDevices.getDisplayMedia({video:true}).then(s=>{say('screen','ok');s.getTracks().forEach(t=>t.stop())},e=>say('screen',e.name+' '+e.message)),
+};
+addEventListener('keydown',e=>{const f=acts[e.key];if(f){o.textContent+='> '+e.key+'\n';f()}});
+navigator.permissions&&['camera','microphone','geolocation','notifications','clipboard-read','midi'].forEach(n=>navigator.permissions.query({name:n}).then(s=>o.textContent+='query '+n+'='+s.state+'\n',()=>{}));
+</script></body></html>

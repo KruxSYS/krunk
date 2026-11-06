@@ -22,6 +22,10 @@ while ($l.IsListening) {
     $res.StatusCode = 204; $bytes = [byte[]]::new(0)
   } elseif ($path -eq 'log') {
     $res.AddHeader('Cache-Control', 'no-store'); $res.ContentType = 'text/plain'; $bytes = [Text.Encoding]::UTF8.GetBytes('ok')
+  } elseif ($path -eq 'headers') {
+    $h = @{}; foreach ($k in $req.Headers.AllKeys) { $h[$k] = $req.Headers[$k] }
+    $res.AddHeader('Cache-Control', 'no-store'); $res.ContentType = 'application/json'
+    $bytes = [Text.Encoding]::UTF8.GetBytes(($h | ConvertTo-Json -Compress))
   } elseif ($path -eq 'set-cookie') {
     $res.AddHeader('Set-Cookie', 'tp_header=1; Path=/; SameSite=None; Secure')
     $res.AddHeader('Cache-Control', 'no-store')

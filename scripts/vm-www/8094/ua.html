@@ -1,14 +1,19 @@
-<!doctype html>
-<!-- User-agent echo page (Krunk 0.5.0, scripts/vm-050-settings.ps1): shows navigator.userAgent
-     and the client-hint brands in large text, and reports them to the test server's log. -->
-<html lang="en"><head><meta charset="utf-8"><title>User agent echo</title>
-<style>body { font: 18px system-ui, sans-serif; margin: 24px; } code { display: block; font-size: 20px; word-break: break-all; margin: 8px 0 20px; }</style>
-</head><body>
-<p>navigator.userAgent</p><code id="ua"></code>
-<p>navigator.userAgentData.brands</p><code id="brands"></code>
+<!doctype html><html><head><meta charset="utf-8"><title>ua probe</title></head><body>
+<pre id="o" style="font:14px monospace;white-space:pre-wrap"></pre>
 <script>
-  document.getElementById('ua').textContent = navigator.userAgent;
-  document.getElementById('brands').textContent = navigator.userAgentData ? JSON.stringify(navigator.userAgentData.brands) : '(none)';
-  fetch('/log?ua=' + encodeURIComponent(navigator.userAgent), { cache: 'no-store' }).catch(() => {});
-</script>
-</body></html>
+(async()=>{
+ const o=[];o.push('navigator.userAgent = '+navigator.userAgent);
+ o.push('navigator.platform = '+navigator.platform);
+ o.push('navigator.language = '+navigator.language);
+ const d=navigator.userAgentData;
+ if(d){o.push('userAgentData.platform = '+d.platform);o.push('brands = '+JSON.stringify(d.brands));
+  try{const h=await d.getHighEntropyValues(['architecture','bitness','model','platformVersion','uaFullVersion','fullVersionList','wow64']);o.push('highEntropy = '+JSON.stringify(h));}catch(e){o.push('highEntropy error '+e)}}
+ else o.push('userAgentData missing');
+ let hdr={};try{hdr=await (await fetch('/headers',{cache:'no-store'})).json();}catch(e){o.push('headers fetch error '+e)}
+ o.push('--- request headers seen by the server (fetch) ---');
+ for(const k of Object.keys(hdr).sort())o.push(k+': '+hdr[k]);
+ document.getElementById('o').textContent=o.join('\n');
+ document.title='UA '+(d?d.platform:'?')+' | hdr '+(hdr['Sec-CH-UA-Platform']||hdr['sec-ch-ua-platform']||'none');
+ fetch('/log?ua='+encodeURIComponent(JSON.stringify({js:d&&d.platform,hdr:hdr['Sec-CH-UA-Platform'],ua:hdr['User-Agent'],al:hdr['Accept-Language']})));
+})();
+</script></body></html>
