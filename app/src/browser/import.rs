@@ -177,8 +177,10 @@ impl Browser {
 
     /// The vault was unlocked for an import: run it now.
     pub(super) fn after_unlock_import(&self) {
+        // Take the request before the prompt goes: hiding it counts as a dismissal otherwise.
+        let pending = self.imports.pending.borrow_mut().take();
         self.hide_popup();
-        let Some(PendingImport { tab, req_id, request }) = self.imports.pending.borrow_mut().take() else { return };
+        let Some(PendingImport { tab, req_id, request }) = pending else { return };
         match request {
             Request::ImportRun { profile, types, primary_password } => {
                 self.import_run(tab, req_id, profile, types, primary_password)

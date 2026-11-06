@@ -78,17 +78,56 @@ if (Test-Path $aside) { Remove-Item -Recurse -Force $real -ErrorAction SilentlyC
 try {
   Start-Process -FilePath C:\pipeline\krunk\app\Krunk.exe -WorkingDirectory C:\pipeline\krunk\app
   $A = WaitWindow 'KrunkWindow'; Start-Sleep 6; Place $A
+  # The import section sits at the end of the Passwords & import tab: End scrolls to it. The
+  # Import buttons are then at y=364/469/573 (Firefox, Chrome, Edge) and "Choose file…" at 637;
+  # once a result line is shown everything sits 36 px higher.
+  function ToImports { Click 700 150 300; Keys '{END}' 1200 }
+  # (1) No vault yet: the import says to set one up first.
+  SafeGo 'krunk://settings#passwords' 4000
+  ToImports
+  Shot "$P-1-profiles-detected"
+  Click 1071 364 3000
+  Shot "$P-2-no-vault-yet"
+  # (2) The vault, then the imports.
   SafeGo 'krunk://passwords' 3500
   Click 640 371 300; Keys $master 200
   Click 640 438 300; Keys $master 200
   Click 456 551 4000
   SafeGo 'krunk://settings#passwords' 4000
-  Shot "$P-1-profiles-detected"
-  Log "[krunk] profiles shot taken; the import clicks follow the layout seen there"
+  ToImports
+  Click 1071 364 7000   # Firefox
+  Shot "$P-3-firefox-imported"
+  ToImports; Click 1071 433 9000   # Chrome (passwords are app-bound)
+  Shot "$P-4-chrome-imported"
+  ToImports; Click 1071 537 9000   # Edge
+  Shot "$P-5-edge-imported"
+  ToImports; Click 1061 601 3000   # CSV: the native dialog, the path typed into it
+  Keys 'C:\pipeline\krunk\import-chrome.csv' 300; Keys '{ENTER}' 4000
+  Shot "$P-6-csv-imported"
+  ToImports; Click 1071 328 7000   # Firefox again: nothing new
+  Shot "$P-7-second-import-nothing-new"
+  SafeGo 'krunk://passwords' 3500
+  Shot "$P-8-passwords-after-import"
+  SafeGo 'krunk://history' 3500
+  Shot "$P-9-history-after-import"
+  SafeGo 'http://localhost:8094/links.html' 3000
+  Shot "$P-10-bookmarks-bar-after-import"
+  # (3) Locked vault: the import opens Krunk's unlock prompt and goes on after the unlock.
+  SafeGo 'krunk://passwords' 3500
+  Click 1070 145 2000
+  Shot "$P-11-vault-locked"
+  SafeGo 'krunk://settings#passwords' 4000
+  ToImports
+  Click 1071 364 2500
+  Shot "$P-12-unlock-prompt-for-import"
+  Keys $master 200; Keys '{ENTER}' 7000
+  Shot "$P-13-imported-after-unlock"
   KrunkWindows $P
   foreach ($f in Frames) { if (Focus $f) { SafeKeys '%{F4}' 1500 } }
   Start-Sleep 3
   Copy-Item "$real\krunk.log" "C:\pipeline\krunk\shots\im-krunk.log" -Force -ErrorAction SilentlyContinue
+  Get-ChildItem "$env:TEMP\Krunk-import-*" -ErrorAction SilentlyContinue | ForEach-Object { Log "[temp] left behind: $($_.FullName)" }
+  Log "[temp] Krunk-import folders left: $(@(Get-ChildItem "$env:TEMP\Krunk-import-*" -ErrorAction SilentlyContinue).Count)"
 } finally {
   Get-Process Krunk -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 1
   Remove-Item -Recurse -Force $real -ErrorAction SilentlyContinue

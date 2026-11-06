@@ -121,15 +121,18 @@ pub fn firefox_profiles(roaming: &Path) -> Vec<Profile> {
         }
     }
     flush(&mut cur, &mut out);
+    // The [Install…] section's Default wins over the profiles' own Default=1 (an old
+    // "default" profile keeps that flag after the dedicated-profiles migration).
     if let Some(d) = install_default {
-        for p in &mut out {
-            if p.id.ends_with(&format!(":{}", d.rsplit('/').next().unwrap_or(&d)))
-                || p.path.ends_with(d.replace('/', std::path::MAIN_SEPARATOR_STR))
-            {
-                p.is_default = true;
+        let tail = d.rsplit('/').next().unwrap_or(&d).to_string();
+        if out.iter().any(|p| p.id.ends_with(&format!(":{tail}"))) {
+            for p in &mut out {
+                p.is_default = p.id.ends_with(&format!(":{tail}"));
             }
         }
     }
+    // A profile without any of the three files has nothing to import.
+    out.retain(|p| p.has_history || p.has_bookmarks || p.has_passwords);
     out
 }
 
@@ -224,15 +227,19 @@ mod tests {
         );
         t.file("roaming/Mozilla/Firefox/Profiles/abcd.default-release/logins.json", "{}");
         t.file("roaming/Mozilla/Firefox/Profiles/abcd.default-release/places.sqlite", "");
-        t.file("roaming/Mozilla/Firefox/Profiles/wxyz.default/times.json", "{}");
+        t.file("roaming/Mozilla/Firefox/Profiles/wxyz.default/places.sqlite", "");
         let got = firefox_profiles(&t.0.join("roaming"));
         assert_eq!(got.len(), 2, "{got:?}");
         let rel = got.iter().find(|p| p.name == "default-release").unwrap();
         assert!(rel.is_default && rel.has_passwords && rel.has_history && rel.has_bookmarks);
         assert_eq!(rel.id, "firefox:abcd.default-release");
         let old = got.iter().find(|p| p.name == "default").unwrap();
-        assert!(!old.has_passwords && !old.has_history);
+        assert!(!old.is_default, "the Install section's default wins over Default=1");
+        assert!(!old.has_passwords && old.has_history);
         assert!(detect(&t.0.join("roaming"), &t.0.join("local")).len() == 2);
+        // A profile folder with none of the files is not listed.
+        std::fs::remove_file(t.0.join("roaming/Mozilla/Firefox/Profiles/wxyz.default/places.sqlite")).unwrap();
+        assert_eq!(firefox_profiles(&t.0.join("roaming")).len(), 1);
     }
 
     #[test]
