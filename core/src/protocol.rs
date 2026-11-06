@@ -140,6 +140,9 @@ pub enum PopupKind {
     /// Suggestions under the address bar while the user types (Krunk 0.5.1): history,
     /// bookmarks, a search or the typed address. The address bar keeps the focus.
     AddressSuggest,
+    /// The address bar's context menu (Krunk 0.6.0): Undo, Cut, Copy, Paste, Paste and go,
+    /// Delete, Select all. The address bar keeps the focus (and its selection).
+    AddressMenu,
     /// "Krunk X.Y.Z is available" (opened by the host after an update check).
     Update,
     /// A tab's context menu (right-click on the tab).
@@ -162,7 +165,7 @@ impl PopupKind {
     /// it covers already had focus). (The "Press Esc" hint is not a popup:
     /// it is a native overlay, see `overlay`.)
     pub fn takes_focus(self) -> bool {
-        !matches!(self, PopupKind::Suggest | PopupKind::AddressSuggest)
+        !matches!(self, PopupKind::Suggest | PopupKind::AddressSuggest | PopupKind::AddressMenu)
     }
 }
 
@@ -284,6 +287,17 @@ pub enum PopupContent {
         entries: Vec<AddressSuggestion>,
         selected: Option<usize>,
     },
+    /// The address bar's context menu: which items are enabled, and whether the clipboard
+    /// holds an address ("Paste and go") or words ("Paste and search").
+    AddressMenu {
+        can_undo: bool,
+        can_cut: bool,
+        can_copy: bool,
+        can_paste: bool,
+        paste_is_url: bool,
+        can_delete: bool,
+        can_select_all: bool,
+    },
     /// A public page on `origin` wants to reach the local network (`loopback`: this
     /// computer). In a private tab the answer is never remembered.
     Permission {
@@ -378,6 +392,44 @@ pub enum UpdateChoice {
     Install,
     Later,
     Notes,
+}
+
+/// Inline autocomplete for the address bar (Krunk 0.6.0): `text` replaces the typed text
+/// with its tail selected, `url` is where Enter goes, `index` the row it came from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InlineCompletion {
+    pub text: String,
+    pub url: String,
+    pub index: usize,
+}
+
+/// What the address bar's context menu can do (Krunk 0.6.0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AddressMenuAction {
+    Undo,
+    Cut,
+    Copy,
+    Paste,
+    /// "Paste and go" (an address) or "Paste and search" (words).
+    PasteAndGo,
+    Delete,
+    SelectAll,
+}
+
+/// An edit the host asks the shell's address bar to make (the context menu's choice).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AddressEdit {
+    Undo,
+    /// Remove the selection (Cut after the host copied it, or Delete).
+    DeleteSelection,
+    /// Insert the clipboard's text at the selection.
+    Insert {
+        text: String,
+    },
+    SelectAll,
 }
 
 /// One row of the address-bar suggestions.
@@ -477,6 +529,7 @@ impl PopupContent {
             PopupContent::Fill { .. } => PopupKind::Fill,
             PopupContent::Permission { .. } => PopupKind::Permission,
             PopupContent::AddressSuggest { .. } => PopupKind::AddressSuggest,
+            PopupContent::AddressMenu { .. } => PopupKind::AddressMenu,
             PopupContent::BookmarkFolder { .. } => PopupKind::BookmarkFolder,
             PopupContent::Unlock { .. } => PopupKind::Unlock,
             PopupContent::Update { .. } => PopupKind::Update,
@@ -722,6 +775,20 @@ pub enum Request {
         text: String,
         rect: PopupRect,
     },
+    /// The shell: right-click in the address bar at (`x`, `y`) (shell CSS px); `selection`
+    /// is the selected text, `has_text` whether the bar is non-empty, `dirty` whether it
+    /// was edited since it was focused (Undo).
+    ShowAddressMenu {
+        x: f64,
+        y: f64,
+        selection: String,
+        has_text: bool,
+        dirty: bool,
+    },
+    /// The popup: a choice in the address bar's context menu.
+    AddressMenuAction {
+        action: AddressMenuAction,
+    },
     /// The shell moved the keyboard selection in the suggestions.
     AddressSuggestSelect {
         selected: Option<usize>,
@@ -759,6 +826,8 @@ pub enum Request {
 
     // ---- new tab page ----
     GetTopSites,
+    /// The new-tab page's options (search engine name).
+    GetNewTabConfig,
     PinSite {
         url: String,
         title: String,
@@ -1095,6 +1164,7 @@ impl Sender {
                     | R::AddressSuggest { .. }
                     | R::AddressSuggestSelect { .. }
                     | R::AddressSuggestPick { .. }
+                    | R::ShowAddressMenu { .. }
                     | R::HidePopup
                     | R::ShowBookmarkFolder { .. }
                     | R::ShowBookmarkMenu { .. }
@@ -1135,6 +1205,7 @@ impl Sender {
                     | R::SavePasswordReply { .. }
                     | R::PermissionReply { .. }
                     | R::AddressSuggestPick { .. }
+                    | R::AddressMenuAction { .. }
                     | R::FillReply { .. }
                     | R::SuggestPick { .. }
                     | R::SuggestUnlock { .. }
@@ -1146,7 +1217,12 @@ impl Sender {
             ),
             Sender::Page(Page::NewTab) => matches!(
                 req,
-                R::GetTopSites | R::PinSite { .. } | R::UnpinSite { .. } | R::HideSite { .. } | R::Navigate { .. }
+                R::GetTopSites
+                    | R::GetNewTabConfig
+                    | R::PinSite { .. }
+                    | R::UnpinSite { .. }
+                    | R::HideSite { .. }
+                    | R::Navigate { .. }
             ),
             Sender::Page(Page::History) => matches!(
                 req,
@@ -1397,9 +1473,11 @@ pub enum Event {
     Nav {
         state: NavState,
     },
-    /// Shell layout options.
+    /// Shell layout options: the theme and the default search engine's name (the
+    /// address bar's placeholder).
     ShellConfig {
         theme: Theme,
+        search_name: String,
     },
     /// To the popup view: render this content.
     Popup {
@@ -1461,6 +1539,12 @@ pub enum Event {
     AddressSuggestions {
         text: String,
         entries: Vec<AddressSuggestion>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        inline: Option<InlineCompletion>,
+    },
+    /// To the shell: apply this edit to the address bar (its context menu's choice).
+    AddressEdit {
+        edit: AddressEdit,
     },
     FocusAddressBar,
     /// The host moved the focus to the page (a bookmark or link was opened):
@@ -2096,12 +2180,15 @@ mod tests {
             Request::SavePasswordReply { tab_id: 1, origin: "https://a.example".into(), accept: true, never: false },
             Request::PermissionReply { prompt_id: 7, allow: true, remember: true },
             Request::AddressSuggest { text: "ru".into(), rect },
+            Request::ShowAddressMenu { x: 10.0, y: 40.0, selection: "ab".into(), has_text: true, dirty: false },
+            Request::AddressMenuAction { action: AddressMenuAction::PasteAndGo },
             Request::AddressSuggestSelect { selected: Some(1) },
             Request::AddressSuggestPick { url: "https://rust-lang.org/".into() },
             Request::SitePermissionRemove { kind: "localNetwork".into() },
             Request::FillReply { tab_id: 1, origin: "https://a.example".into(), entry_id: None },
             Request::Quit,
             Request::GetTopSites,
+            Request::GetNewTabConfig,
             Request::PinSite { url: "https://a.example/".into(), title: "A".into() },
             Request::QueryHistory { text: "q".into(), before: Some(5), limit: 10 },
             Request::DeleteHistoryRange { from: 1, to: 2 },
@@ -2335,6 +2422,50 @@ mod tests {
     }
 
     #[test]
+    fn new_tab_config_is_new_tab_page_only() {
+        let req = Request::GetNewTabConfig;
+        assert!(Sender::Page(Page::NewTab).permits(&req));
+        assert!(!Sender::Shell.permits(&req) && !Sender::Popup.permits(&req));
+        for p in Page::ALL {
+            if p != Page::NewTab {
+                assert!(!Sender::Page(p).permits(&req), "{p:?}");
+            }
+        }
+        assert_eq!(serde_json::to_value(&req).unwrap(), serde_json::json!({"cmd": "getNewTabConfig"}));
+    }
+
+    #[test]
+    fn address_menu_permits() {
+        let show = Request::ShowAddressMenu { x: 1.0, y: 2.0, selection: String::new(), has_text: false, dirty: false };
+        let act = Request::AddressMenuAction { action: AddressMenuAction::Copy };
+        assert!(Sender::Shell.permits(&show) && !Sender::Shell.permits(&act));
+        assert!(Sender::Popup.permits(&act) && !Sender::Popup.permits(&show));
+        for p in Page::ALL {
+            assert!(!Sender::Page(p).permits(&show) && !Sender::Page(p).permits(&act), "{p:?}");
+        }
+        assert!(!PopupKind::AddressMenu.takes_focus(), "the address bar keeps the focus and its selection");
+        let content = PopupContent::AddressMenu {
+            can_undo: false,
+            can_cut: true,
+            can_copy: true,
+            can_paste: true,
+            paste_is_url: true,
+            can_delete: true,
+            can_select_all: true,
+        };
+        assert_eq!(content.kind(), PopupKind::AddressMenu);
+        let ev = Event::AddressEdit { edit: AddressEdit::Insert { text: "x".into() } }.to_json();
+        assert!(ev.contains(r#""event":"addressEdit""#) && ev.contains(r#""insert""#), "{ev}");
+        let inline = Event::AddressSuggestions {
+            text: "exa".into(),
+            entries: vec![],
+            inline: Some(InlineCompletion { text: "example.com".into(), url: "https://example.com/".into(), index: 1 }),
+        }
+        .to_json();
+        assert!(inline.contains(r#""inline":{"text":"example.com""#), "{inline}");
+    }
+
+    #[test]
     fn address_suggestions_are_shell_and_popup_only() {
         let rect = PopupRect { x: 100.0, y: 60.0, width: 500.0, height: 0.0 };
         let ask = Request::AddressSuggest { text: "ru".into(), rect };
@@ -2372,7 +2503,7 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(parsed.request, Request::AddressSuggest { ref text, .. } if text == "ru"));
-        let ev = Event::AddressSuggestions { text: "ru".into(), entries: vec![] }.to_json();
+        let ev = Event::AddressSuggestions { text: "ru".into(), entries: vec![], inline: None }.to_json();
         assert!(ev.contains(r#""event":"addressSuggestions""#), "{ev}");
     }
 
@@ -2517,7 +2648,7 @@ mod tests {
                     bookmarks_bar: true,
                 },
             },
-            Event::ShellConfig { theme: Theme::Dark },
+            Event::ShellConfig { theme: Theme::Dark, search_name: "DuckDuckGo".into() },
             Event::Popup { content: PopupContent::Menu { zoom: 1.0, can_reopen: true } },
             Event::Popup {
                 content: PopupContent::Shield {

@@ -3,7 +3,7 @@
 //! bookmarks and history pages whose title or address matches, most visited first, without
 //! duplicates. Pure logic over the store; the shell and the popup only display and pick.
 
-use crate::protocol::{AddressSuggestion, AddressSuggestionKind};
+use crate::protocol::{AddressSuggestion, AddressSuggestionKind, InlineCompletion};
 use crate::storage::Store;
 use crate::urlclean;
 
@@ -55,10 +55,89 @@ pub fn suggestions(store: &Store, text: &str, search_template: &str) -> Vec<Addr
     out
 }
 
+/// Inline autocomplete (Krunk 0.6.0): the text the address bar shows completed while the user
+/// types, like Chrome and Firefox. Only an address is completed, never a search: the typed
+/// text must be a prefix of a bookmark's or history page's URL once its scheme and `www.`
+/// are ignored (a typed scheme or `www.` is matched as typed), it must be at least two
+/// characters, and it must not contain a space. The first matching row wins (bookmarks, then
+/// history by visits); the completion keeps what the user typed and appends the rest of the
+/// URL (a root page without its trailing slash). Enter goes to that row's URL.
+pub fn inline_completion(typed: &str, entries: &[AddressSuggestion]) -> Option<InlineCompletion> {
+    let typed = typed.trim();
+    if typed.chars().count() < 2 || typed.chars().any(char::is_whitespace) {
+        return None;
+    }
+    let typed_l = typed.to_lowercase();
+    for (index, e) in entries.iter().enumerate() {
+        if matches!(e.kind, AddressSuggestionKind::Search | AddressSuggestionKind::Url) {
+            continue;
+        }
+        let url_l = e.url.to_lowercase();
+        let Some(no_scheme) = url_l.strip_prefix("https://").or_else(|| url_l.strip_prefix("http://")) else {
+            continue;
+        };
+        let bare = no_scheme.strip_prefix("www.").unwrap_or(no_scheme);
+        let target = if typed_l.starts_with("http://") || typed_l.starts_with("https://") {
+            url_l.as_str()
+        } else if typed_l.starts_with("www.") {
+            no_scheme
+        } else {
+            bare
+        };
+        let Some(rest) = target.strip_prefix(typed_l.as_str()) else { continue };
+        // A root page completes to its host (no trailing slash); anything else to the full URL.
+        let root = !no_scheme.trim_end_matches('/').contains('/');
+        let rest = if root { rest.strip_suffix('/').unwrap_or(rest) } else { rest };
+        if rest.is_empty() {
+            continue;
+        }
+        return Some(InlineCompletion { text: format!("{typed}{rest}"), url: e.url.clone(), index });
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::storage::BOOKMARKS_BAR;
+
+    fn row(url: &str, kind: AddressSuggestionKind) -> AddressSuggestion {
+        AddressSuggestion { url: url.into(), title: String::new(), kind, fill: url.into() }
+    }
+
+    #[test]
+    fn inline_completion_rules() {
+        use AddressSuggestionKind::*;
+        let rows = vec![
+            row("https://duckduckgo.com/?q=exa", Search),
+            row("https://www.example.com/", Bookmark),
+            row("https://example.org/docs/intro", History),
+            row("http://exam.test/", History),
+        ];
+        let c = |t: &str| inline_completion(t, &rows);
+        // A host prefix completes to the host of the first matching row (no trailing slash).
+        let got = c("exa").unwrap();
+        assert_eq!((got.text.as_str(), got.url.as_str(), got.index), ("example.com", "https://www.example.com/", 1));
+        // The user's case is kept for the typed part.
+        assert_eq!(c("EXA").unwrap().text, "EXAmple.com");
+        // Past the host: the full URL of the row that still matches.
+        assert_eq!(c("example.org/d").unwrap().text, "example.org/docs/intro");
+        // A typed scheme or www. is matched literally.
+        assert_eq!(c("https://www.exa").unwrap().text, "https://www.example.com");
+        assert_eq!(c("www.exa").unwrap().text, "www.example.com");
+        // With a scheme the scheme must match too: the http:// row is skipped for "https://exam".
+        assert_eq!(c("https://exam").unwrap().text, "https://example.org/docs/intro");
+        assert_eq!(c("http://exam.").unwrap().text, "http://exam.test");
+        // Searches are never completed: a space, one character, or no matching address.
+        assert!(c("exa mple").is_none());
+        assert!(c("e").is_none());
+        assert!(c("zzz").is_none());
+        assert!(c("   ").is_none());
+        // The typed text equal to a row is not "completed" with nothing.
+        assert!(inline_completion("example.com", &[row("https://example.com/", History)]).is_none());
+        // A mid-word match only counts as a prefix of the host, never inside it.
+        assert!(inline_completion("ample", &rows).is_none());
+    }
 
     const DDG: &str = "https://duckduckgo.com/?q={searchTerms}";
 

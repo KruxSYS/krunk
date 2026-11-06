@@ -67,6 +67,23 @@
     ];
   }
 
+  // The address bar's context menu (0.6.0). The popup has no focus (the bar keeps its
+  // selection); a click sends the choice, the host makes the edit through the shell.
+  function renderAddressMenu(c) {
+    const act = (action) => { LB.post('addressMenuAction', { action: action }); close(); };
+    return [
+      item('Undo', 'Ctrl+Z', () => act('undo'), !c.canUndo),
+      sep(),
+      item('Cut', 'Ctrl+X', () => act('cut'), !c.canCut),
+      item('Copy', 'Ctrl+C', () => act('copy'), !c.canCopy),
+      item('Paste', 'Ctrl+V', () => act('paste'), !c.canPaste),
+      item(c.pasteIsUrl ? 'Paste and go' : 'Paste and search', '', () => act('pasteAndGo'), !c.canPaste),
+      item('Delete', 'Del', () => act('delete'), !c.canDelete),
+      sep(),
+      item('Select all', 'Ctrl+A', () => act('selectAll'), !c.canSelectAll),
+    ];
+  }
+
   // Short names for request types (the blocked list's badges).
   const KIND_LABELS = { xmlhttprequest: 'xhr', sub_frame: 'frame', main_frame: 'page', stylesheet: 'css', websocket: 'socket', image: 'image', script: 'script', ping: 'ping', media: 'media', font: 'font', object: 'object', other: 'other', document: 'page' };
   const kindLabel = (k) => KIND_LABELS[k] || k;
@@ -239,8 +256,12 @@
     }
     return [el('div', { class: 'panel pop' }, parts)];
   }
-  // The popup asks the host for the height its content needs.
-  function fit() { LB.post('popupResize', { height: document.body.scrollHeight + 2 }); }
+  // The popup asks the host for the height its content needs: #root's height (the body is
+  // pinned to the window's height, so it cannot shrink) plus the body's 1px borders.
+  function fit() { LB.post('popupResize', { height: root.offsetHeight + 2 }); }
+  // Content whose height depends on its items: the window is opened with an upper bound
+  // and fitted right after the render (the ⋮ menu used to leave a gap at the bottom).
+  const FITS = { menu: true, tabMenu: true, bookmarkMenu: true, siteInfo: true, addressMenu: true };
 
 
   // Login suggestions under a focused field: the matching usernames (with the host for a
@@ -514,13 +535,13 @@
   LB.on('popup', function (m) {
     current = m.content;
     const c = m.content;
-    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
+    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
     root.textContent = '';
     root.dataset.kind = c.kind;
     (render ? render(c) : []).forEach((n) => n && root.appendChild(n));
     const first = document.getElementById('master') || document.getElementById('bm-name') || document.getElementById('default') || root.querySelector('button:not([disabled])');
-    if (first && c.kind !== 'suggest') first.focus();
-    if (c.kind === 'siteInfo') requestAnimationFrame(fit);
+    if (first && c.kind !== 'suggest' && c.kind !== 'addressMenu' && c.kind !== 'addressSuggest') first.focus();
+    if (FITS[c.kind]) requestAnimationFrame(fit);
   });
 
   document.addEventListener('keydown', function (e) {

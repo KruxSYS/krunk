@@ -35,6 +35,11 @@ const SESSION_KEY: &str = "session";
 const DOWNLOADS_KEY: &str = "downloads";
 /// Timer that saves the session shortly after the last tab change.
 const SESSION_TIMER: usize = 1;
+/// Zoom watcher: Ctrl+wheel and per-site zoom change the engine's zoom without telling the
+/// host (CEF 156 has no zoom callback); the active tab is read every 100 ms while a Krunk
+/// window is in front, and the toolbar is updated on a change.
+const ZOOM_TIMER: usize = 15;
+const ZOOM_WATCH_MS: u32 = 100;
 const SESSION_DEBOUNCE_MS: u32 = 2000;
 
 mod blocking;
@@ -101,7 +106,7 @@ struct TabView {
 
 /// The popup view in its popup window, shared by all frames: it is owned by the frame it
 /// is shown for (created hidden at start).
-struct Popup {
+pub(super) struct Popup {
     window: Window,
     view: Option<View>,
     ready: bool,
@@ -121,6 +126,15 @@ pub(super) struct Frame {
     active: Cell<bool>,
     /// The bookmarks bar shows in this window (laid out with it).
     bar: Cell<bool>,
+    /// The zoom factor the toolbar shows (the zoom watcher pushes a change).
+    last_zoom: Cell<f64>,
+}
+
+/// Which popup window: the shared one, or the menu over it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum PopupSlot {
+    Main,
+    Menu,
 }
 
 pub struct Browser {
@@ -136,6 +150,13 @@ pub struct Browser {
     frames: RefCell<Vec<Rc<Frame>>>,
     views: RefCell<HashMap<TabId, TabView>>,
     popup: RefCell<Option<Popup>>,
+    /// A second popup window for a menu opened from inside the first one (an item of a
+    /// bookmark folder dropdown): the dropdown stays open underneath, as in Chrome.
+    menu_popup: RefCell<Option<Popup>>,
+    /// The menu popup is being hidden by the host (its deactivation is not the user leaving).
+    menu_closing: Cell<bool>,
+    /// The request being dispatched came from the menu popup's view.
+    from_menu_popup: Cell<bool>,
     /// Views the engine is creating for a page's `window.open`, waiting for
     /// their tab's CreateView effect.
     adopted: RefCell<HashMap<TabId, (View, Rc<TabNet>)>>,
@@ -224,6 +245,9 @@ impl Browser {
             frames: RefCell::new(Vec::new()),
             views: RefCell::new(HashMap::new()),
             popup: RefCell::new(None),
+            menu_popup: RefCell::new(None),
+            menu_closing: Cell::new(false),
+            from_menu_popup: Cell::new(false),
             adopted: RefCell::new(HashMap::new()),
             downloads: RefCell::new(Downloads::new()),
             parts_jobs: segmented::PartsJobs::default(),
@@ -281,13 +305,16 @@ impl Browser {
         // The popup (menus, prompts, the pointer-lock hint) is created now,
         // hidden: creating its browser later would take the keyboard focus
         // from the page once (a game would see the window lose focus).
-        browser.create_popup(window);
+        browser.create_popup(window, PopupSlot::Main);
         browser.restore_or_open_start();
         if browser.frames.borrow().is_empty() {
             return Err("Cannot create the browser window".into());
         }
         browser.init_updates();
         browser.start_power_timer();
+        if let Some(w) = browser.app() {
+            w.set_timer(ZOOM_TIMER, ZOOM_WATCH_MS);
+        }
         browser.mem_report_line("start");
         Ok(browser)
     }
@@ -399,6 +426,7 @@ impl Browser {
             hit_map: RefCell::new(None),
             active: Cell::new(true),
             bar: Cell::new(false),
+            last_zoom: Cell::new(1.0),
         });
         window.set_events(Rc::new(FrameEvents { b: self.me.clone(), win }));
         self.frames.borrow_mut().push(frame.clone());
@@ -1047,11 +1075,39 @@ impl Browser {
             bookmarked,
             blocked: view.map(|v| v.net.blocked()).unwrap_or(0),
             site_allowed: view.is_some_and(|v| v.net.allowed()),
-            zoom: view.map(|v| v.view.zoom()).unwrap_or(1.0),
+            zoom: {
+                let z = view.map(|v| v.view.zoom()).unwrap_or(1.0);
+                if let Some(f) = self.frame(win) {
+                    f.last_zoom.set(z);
+                }
+                z
+            },
             private: tab.private,
             login_form: view.is_some_and(|v| v.net.login_form.get()),
             bookmarks_bar: self.bar_shown(win),
         })
+    }
+
+    /// The zoom watcher's tick: pushes the toolbar state when the front window's active
+    /// tab has a zoom the chip does not show yet.
+    fn zoom_tick(&self) {
+        let Some(win) = self.cur_id() else { return };
+        let Some(f) = self.frame(win) else { return };
+        if !f.window.is_foreground() {
+            return;
+        }
+        let Some(c) = self.active_view_of(win) else { return };
+        if (c.zoom() - f.last_zoom.get()).abs() > 1e-6 {
+            self.send_nav_to(win);
+        }
+    }
+
+    /// What the user typed (or pasted) into the address bar: an address or a search.
+    pub(super) fn navigate_input(&self, input: &str) {
+        self.address_suggest_close();
+        let template = self.settings.borrow().search_template().to_string();
+        let url = urlclean::input_to_url(input, &template);
+        self.navigate_active(&url);
     }
 
     /// Every frame's toolbar (address, buttons, shield) for its active tab.
@@ -1078,7 +1134,7 @@ impl Browser {
     fn send_shell_config(&self) {
         let e = {
             let s = self.settings.borrow();
-            Event::ShellConfig { theme: s.theme }
+            Event::ShellConfig { theme: s.theme, search_name: s.search_name() }
         };
         self.post_shell(&e);
     }
@@ -1469,11 +1525,12 @@ impl Browser {
                     }
                 }
                 Sender::Popup => {
-                    let popup = self.popup.borrow().as_ref().and_then(|p| p.view.clone());
+                    let slot = self.request_slot();
+                    let popup = self.popup_slot(slot).borrow().as_ref().and_then(|p| p.view.clone());
                     if let Some(c) = popup {
                         self.send_theme_to(&c);
                     }
-                    self.popup_ready();
+                    self.popup_ready(slot);
                 }
                 Sender::Page(_) => {
                     if let Some(c) = tab.and_then(|t| self.tab_view(t)) {
@@ -1500,14 +1557,15 @@ impl Browser {
             }
             Request::ReopenClosedTab => self.run_command(Command::ReopenClosedTab),
             Request::Navigate { input } => {
-                self.address_suggest_close();
-                let template = self.settings.borrow().search_template().to_string();
-                let url = urlclean::input_to_url(&input, &template);
-                self.navigate_active(&url);
+                self.navigate_input(&input);
                 if sender == Sender::Shell || sender == Sender::Page(Page::NewTab) {
                     self.focus_page_after_navigation();
                 }
             }
+            Request::ShowAddressMenu { x, y, selection, has_text, dirty } => {
+                self.show_address_menu(x, y, selection, has_text, dirty)
+            }
+            Request::AddressMenuAction { action } => self.address_menu_action(action),
             Request::Back => self.run_command(Command::Back),
             Request::Forward => self.run_command(Command::Forward),
             Request::Reload => self.run_command(Command::Reload),
@@ -1543,10 +1601,11 @@ impl Browser {
                     }
                 }
             }
-            Request::HidePopup => match self.menu_from_folder.take() {
-                Some(folder) if sender == Sender::Popup => self.show_bookmark_folder(folder, None),
-                _ => self.hide_popup(),
-            },
+            Request::HidePopup if self.request_slot() == PopupSlot::Menu => {
+                // Esc or a click outside the item menu: back to the open folder dropdown.
+                self.hide_menu_popup(true);
+            }
+            Request::HidePopup => self.hide_popup(),
             Request::PopupResize { height } => self.popup_resize(height),
             Request::ShowFolderItemMenu { id, x, y } => self.show_folder_item_menu(id, x, y),
             Request::MoveBookmarkInFolder { id, parent, index } => self.move_bookmark_in_folder(id, parent, index),
@@ -1718,11 +1777,31 @@ impl Browser {
     }
 
     fn show_popup(&self, content: PopupContent, rect: Option<PopupRect>) {
+        self.show_popup_in(PopupSlot::Main, content, rect);
+    }
+
+    pub(super) fn popup_slot(&self, slot: PopupSlot) -> &RefCell<Option<Popup>> {
+        match slot {
+            PopupSlot::Main => &self.popup,
+            PopupSlot::Menu => &self.menu_popup,
+        }
+    }
+
+    /// The slot a popup-view request refers to (set while its message is dispatched).
+    pub(super) fn request_slot(&self) -> PopupSlot {
+        if self.from_menu_popup.get() {
+            PopupSlot::Menu
+        } else {
+            PopupSlot::Main
+        }
+    }
+
+    pub(super) fn show_popup_in(&self, slot: PopupSlot, content: PopupContent, rect: Option<PopupRect>) {
         let Some(main) = self.window() else { return };
-        if self.popup.borrow().is_none() && !self.create_popup(main) {
+        if self.popup_slot(slot).borrow().is_none() && !self.create_popup(main, slot) {
             return;
         }
-        let mut guard = self.popup.borrow_mut();
+        let mut guard = self.popup_slot(slot).borrow_mut();
         let Some(popup) = guard.as_mut() else { return };
         let kind = content.kind();
         popup.content = Some(content.clone());
@@ -1759,8 +1838,11 @@ impl Browser {
         }
     }
 
-    fn create_popup(&self, main: Window) -> bool {
-        let events: Rc<dyn WindowEvents> = Rc::new(PopupEvents(self.me.clone()));
+    fn create_popup(&self, main: Window, slot: PopupSlot) -> bool {
+        let events: Rc<dyn WindowEvents> = match slot {
+            PopupSlot::Main => Rc::new(PopupEvents(self.me.clone())),
+            PopupSlot::Menu => Rc::new(MenuPopupEvents(self.me.clone())),
+        };
         let window = match Window::create_popup(main, events) {
             Ok(w) => w,
             Err(e) => {
@@ -1780,14 +1862,16 @@ impl Browser {
         let weak = self.me.clone();
         c.on_message(move |source, json| {
             if let Some(b) = weak.upgrade() {
-                let owner = b.popup.try_borrow().ok().and_then(|p| p.as_ref().and_then(|p| p.owner));
+                let owner = b.popup_slot(slot).try_borrow().ok().and_then(|p| p.as_ref().and_then(|p| p.owner));
+                b.from_menu_popup.set(slot == PopupSlot::Menu);
                 b.on_ui_message(Channel::Popup, owner, source, json);
+                b.from_menu_popup.set(false);
             }
         });
         let weak = self.me.clone();
         c.on_key(move |key| {
             weak.upgrade().is_some_and(|b| {
-                let owner = b.popup.try_borrow().ok().and_then(|p| p.as_ref().and_then(|p| p.owner));
+                let owner = b.popup_slot(slot).try_borrow().ok().and_then(|p| p.as_ref().and_then(|p| p.owner));
                 if let Some(win) = owner {
                     b.make_current(win);
                 }
@@ -1802,13 +1886,14 @@ impl Browser {
         let (w, h) = window.client_size();
         c.set_bounds(0, 0, w, h);
         c.set_visible(window.is_visible());
-        *self.popup.borrow_mut() = Some(Popup { window, view: Some(c), ready: false, content: None, owner: None });
+        *self.popup_slot(slot).borrow_mut() =
+            Some(Popup { window, view: Some(c), ready: false, content: None, owner: None });
         true
     }
 
-    fn popup_ready(&self) {
+    fn popup_ready(&self, slot: PopupSlot) {
         let pending = {
-            let mut guard = self.popup.borrow_mut();
+            let mut guard = self.popup_slot(slot).borrow_mut();
             let Some(p) = guard.as_mut() else { return };
             p.ready = true;
             if p.window.is_visible() {
@@ -1846,8 +1931,42 @@ impl Browser {
         suppressed
     }
 
-    /// Hides the popup. A hidden prompt counts as dismissed, never confirmed.
+    /// Hides the menu popup (the item menu over a folder dropdown). With `reactivate`, the
+    /// dropdown underneath gets the keyboard back; otherwise the caller closes it too.
+    pub(super) fn hide_menu_popup(&self, reactivate: bool) {
+        self.menu_from_folder.set(None);
+        let hidden = {
+            let Ok(mut guard) = self.menu_popup.try_borrow_mut() else { return };
+            let Some(p) = guard.as_mut() else { return };
+            let visible = p.window.is_visible();
+            if visible {
+                self.menu_closing.set(true);
+                p.window.hide();
+                self.menu_closing.set(false);
+            }
+            p.content = None;
+            visible
+        };
+        if hidden && reactivate {
+            let main = self
+                .popup
+                .try_borrow()
+                .ok()
+                .and_then(|p| p.as_ref().filter(|p| p.window.is_visible()).map(|p| (p.window, p.view.clone())));
+            if let Some((w, view)) = main {
+                let r = w.rect();
+                w.show_at(ScreenRect { x: r.x, y: r.y, width: r.width, height: r.height }, true);
+                if let Some(c) = view {
+                    c.focus();
+                }
+            }
+        }
+    }
+
+    /// Hides the popup (and the menu over it). A hidden prompt counts as dismissed, never
+    /// confirmed.
     fn hide_popup(&self) {
+        self.hide_menu_popup(false);
         self.menu_from_folder.set(None);
         let (was_visible, content, owner) = {
             let Ok(mut guard) = self.popup.try_borrow_mut() else { return };
@@ -1959,6 +2078,34 @@ impl WindowEvents for PopupEvents {
             }
         }
     }
+    // Activation moving to the menu popup (an item menu over this dropdown) is not the user
+    // leaving: the default no-op keeps the dropdown open.
+}
+
+/// The menu popup: losing activation to the dropdown underneath just closes the menu;
+/// losing it to anything else closes both, like a click outside.
+struct MenuPopupEvents(Weak<Browser>);
+
+impl WindowEvents for MenuPopupEvents {
+    fn activated(&self, active: bool) {
+        if active {
+            return;
+        }
+        let Some(b) = self.0.upgrade() else { return };
+        if b.menu_closing.get() {
+            return;
+        }
+        b.hide_menu_popup(false);
+        b.hide_popup_by_focus_loss();
+    }
+
+    fn activation_to_popup(&self) {
+        if let Some(b) = self.0.upgrade() {
+            if !b.menu_closing.get() {
+                b.hide_menu_popup(false);
+            }
+        }
+    }
 }
 
 /// Events of the hidden application window: timers, worker-thread wake-ups and
@@ -2005,6 +2152,7 @@ impl WindowEvents for AppEvents {
             CLIPBOARD_TIMER => b.clipboard_timer(),
             drag::DRAG_TIMER => b.drag_tick(),
             segmented::PARTS_TIMER => b.parts_tick(),
+            ZOOM_TIMER => b.zoom_tick(),
             UPDATE_TIMER => {
                 if let Some(w) = b.app() {
                     w.set_timer(UPDATE_TIMER, blocking::UPDATE_CHECK_INTERVAL_MS);
@@ -2122,6 +2270,17 @@ impl WindowEvents for FrameEvents {
                     b.focus_active();
                 }
             });
+        }
+    }
+
+    fn size_loop(&self, active: bool) {
+        let Some(b) = self.b.upgrade() else { return };
+        if active {
+            b.hide_popup();
+            b.hide_status();
+            b.hide_hint();
+        } else {
+            b.schedule_session_save();
         }
     }
 

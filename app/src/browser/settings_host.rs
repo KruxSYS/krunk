@@ -151,6 +151,9 @@ impl Browser {
             self.send_shell_config();
             self.send_nav();
             self.layout();
+        } else if old.search_engine != new.search_engine || old.custom_search_url != new.custom_search_url {
+            // The address bar's placeholder names the engine, in every window.
+            self.send_shell_config();
         }
         if old.user_agent != new.user_agent {
             let ids: Vec<TabId> = self.views.borrow().keys().copied().collect();

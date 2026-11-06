@@ -232,10 +232,18 @@ async function testShell(browser) {
   await page.keyboard.press('Escape');
   check(!(await sent(page)).some((m) => m.cmd === 'navigate' && m.input.includes('garbage')), 'Escape does not navigate');
 
+  // The address bar's placeholder names the default search engine and follows the setting.
+  await emit(page, { event: 'shellConfig', theme: 'system', searchName: 'DuckDuckGo' });
+  await page.waitForTimeout(20);
+  check((await page.getAttribute('#address', 'placeholder')) === 'Search with DuckDuckGo or enter address', 'placeholder names DuckDuckGo');
+  await emit(page, { event: 'shellConfig', theme: 'system', searchName: 'Brave Search' });
+  await page.waitForTimeout(20);
+  check((await page.getAttribute('#address', 'placeholder')) === 'Search with Brave Search or enter address', 'placeholder follows a search-engine change at once');
+
   // Menu popup open/close.
   await page.click('#menu');
   const sp = await lastSent(page, 'showPopup');
-  check(sp && sp.popup === 'menu' && sp.rect.width === 280 && sp.rect.height === 542 && sp.rect.x >= 0 && sp.rect.y > 60, 'menu sends showPopup with a rect below the toolbar');
+  check(sp && sp.popup === 'menu' && sp.rect.width === 280 && sp.rect.height === 542 && sp.rect.x >= 0 && sp.rect.y > 60, 'menu sends showPopup with a rect below the toolbar (542 is the upper bound; the popup fits itself)');
   check(await page.locator('#menu.on').count() === 1, 'menu button highlighted while open');
   await page.click('#menu');
   check((await lastSent(page, 'hidePopup')) !== undefined, 'clicking menu again sends hidePopup');
@@ -337,6 +345,113 @@ async function testShell(browser) {
   await page.keyboard.press('ArrowDown');
   await page.waitForTimeout(20);
   check(await page.locator('#address').inputValue() === 'rus', 'a stale answer (other text) is ignored');
+
+  // 0.6.0: inline autocomplete. The host's answer carries `inline`; the bar shows the
+  // completed text with the tail selected and the row highlighted; Enter goes there.
+  const inl = { text: 'rust-lang.org', url: 'https://www.rust-lang.org/', index: 1 };
+  await page.click('#address');
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('rus');
+  await page.waitForTimeout(120);
+  await emit(page, { event: 'addressSuggestions', text: 'rus', entries: rows, inline: inl });
+  await page.waitForTimeout(30);
+  let selRange = await page.evaluate(() => { const a = document.getElementById('address'); return [a.value, a.selectionStart, a.selectionEnd]; });
+  check(selRange[0] === 'rust-lang.org' && selRange[1] === 3 && selRange[2] === 13, 'inline completion fills the rest and selects it (' + JSON.stringify(selRange) + ')');
+  sel = await lastSent(page, 'addressSuggestSelect');
+  check(sel && sel.selected === 1, 'the completed row is highlighted in the popup');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(30);
+  let pick = await lastSent(page, 'addressSuggestPick');
+  check(pick && pick.url === 'https://www.rust-lang.org/', 'Enter goes to the completed entry');
+  // Typing on replaces the selection and asks again.
+  await page.click('#address');
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('rus');
+  await page.waitForTimeout(120);
+  await emit(page, { event: 'addressSuggestions', text: 'rus', entries: rows, inline: inl });
+  await page.waitForTimeout(30);
+  await page.keyboard.type('x');
+  await page.waitForTimeout(120);
+  check(await page.locator('#address').inputValue() === 'rusx' && (await lastSent(page, 'addressSuggest')).text === 'rusx', 'typing on replaces the completion and continues');
+  // Backspace removes the completion and it is not put back for that keystroke.
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('rus');
+  await page.waitForTimeout(120);
+  await emit(page, { event: 'addressSuggestions', text: 'rus', entries: rows, inline: inl });
+  await page.waitForTimeout(30);
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(120);
+  check(await page.locator('#address').inputValue() === 'rus', 'Backspace removes the completion (' + await page.locator('#address').inputValue() + ')');
+  await emit(page, { event: 'addressSuggestions', text: 'rus', entries: rows, inline: inl });
+  await page.waitForTimeout(30);
+  check(await page.locator('#address').inputValue() === 'rus', 'and the completion is not re-added after a deletion');
+  // Arrows move the highlight; Esc reverts to the typed text.
+  await page.keyboard.type('t');
+  await page.waitForTimeout(120);
+  await emit(page, { event: 'addressSuggestions', text: 'rust', entries: rows, inline: { text: 'rust-lang.org', url: 'https://www.rust-lang.org/', index: 1 } });
+  await page.waitForTimeout(30);
+  await page.keyboard.press('ArrowDown');
+  await page.waitForTimeout(20);
+  sel = await lastSent(page, 'addressSuggestSelect');
+  check(sel && sel.selected === 2 && await page.locator('#address').inputValue() === 'https://docs.rs/', 'Down from the completed row moves to the next one');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(20);
+  check(await page.locator('#address').inputValue() === 'rust', 'Esc reverts to the typed text');
+  // A completion never lands when the caret is not at the end (an edit in the middle).
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('rus');
+  await page.evaluate(() => { const a = document.getElementById('address'); a.setSelectionRange(1, 1); });
+  await page.waitForTimeout(120);
+  await emit(page, { event: 'addressSuggestions', text: 'rus', entries: rows, inline: inl });
+  await page.waitForTimeout(30);
+  check(await page.locator('#address').inputValue() === 'rus', 'no completion while the caret is inside the text');
+
+  // 0.6.0: the address bar's context menu. The shell asks the host with the selection and
+  // the edit state; the host's addressEdit events make the edits.
+  await page.click('#address');
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('hello world');
+  // (A right-click inside the selection keeps it; the event is dispatched directly so the
+  // test does not depend on where the glyphs fall.)
+  const rightClick = () => page.evaluate(() => { const a = document.getElementById('address'); a.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 10 })); });
+  await page.evaluate(() => { const a = document.getElementById('address'); a.setSelectionRange(0, 5); });
+  await rightClick();
+  await page.waitForTimeout(30);
+  const cm = await lastSent(page, 'showAddressMenu');
+  check(cm && cm.selection === 'hello' && cm.hasText === true && cm.dirty === true && cm.x > 0 && cm.y > 0, 'right-click sends showAddressMenu with the selection and edit state (' + JSON.stringify(cm) + ')');
+  await emit(page, { event: 'addressEdit', edit: { insert: { text: 'bye' } } });
+  await page.waitForTimeout(130);
+  check(await page.locator('#address').inputValue() === 'bye world', 'addressEdit insert replaces the selection with the clipboard text');
+  check((await lastSent(page, 'addressSuggest')).text === 'bye world', 'and asks for suggestions again');
+  await page.evaluate(() => { const a = document.getElementById('address'); a.setSelectionRange(0, 4); });
+  await emit(page, { event: 'addressEdit', edit: 'deleteSelection' });
+  await page.waitForTimeout(30);
+  check(await page.locator('#address').inputValue() === 'world', 'addressEdit deleteSelection removes the selection (Cut/Delete)');
+  await emit(page, { event: 'addressEdit', edit: 'selectAll' });
+  await page.waitForTimeout(30);
+  selRange = await page.evaluate(() => { const a = document.getElementById('address'); return [a.selectionStart, a.selectionEnd]; });
+  check(selRange[0] === 0 && selRange[1] === 5, 'addressEdit selectAll selects everything');
+  await rightClick();
+  await page.waitForTimeout(30);
+  const beforeEsc = (await sent(page)).length;
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(20);
+  check((await sent(page)).slice(beforeEsc).some((m) => m.cmd === 'hidePopup') && await page.evaluate(() => document.activeElement === document.getElementById('address')), 'Esc closes the menu and keeps the field');
+  // Copying the whole unedited address copies the full URL.
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(30);
+  await page.click('#address');
+  await page.waitForTimeout(30);
+  const copied = await page.evaluate(() => {
+    const a = document.getElementById('address'); a.select();
+    let got = null;
+    const e = new ClipboardEvent('copy', { clipboardData: new DataTransfer(), bubbles: true, cancelable: true });
+    a.dispatchEvent(e);
+    got = e.defaultPrevented ? e.clipboardData.getData('text/plain') : null;
+    return got;
+  });
+  check(copied !== null && copied.startsWith('http'), 'copy of the whole unedited address gives the full URL (' + copied + ')');
+  await page.keyboard.press('Escape');
   await page.keyboard.press('Escape');
   await page.waitForTimeout(20);
 
@@ -580,6 +695,12 @@ async function testPopup(browser) {
   await page.evaluate(() => { window.__host.autoSimulate = false; });
   check((await lastSent(page, 'ready')) !== undefined, 'popup posts ready');
   await emit(page, { event: 'popup', content: { kind: 'menu', zoom: 1.25, canReopen: true } });
+  await page.waitForTimeout(50);
+  {
+    const fitMenu = await lastSent(page, 'popupResize');
+    const want = await page.evaluate(() => document.getElementById('root').offsetHeight + 2);
+    check(fitMenu && fitMenu.height === want && want < 542 && want > 400, 'the menu asks for exactly its content height (' + (fitMenu && fitMenu.height) + ' = #root + borders, below the 542 bound)');
+  }
   await page.waitForSelector('.item');
   check(await page.locator('#zoom-value').textContent() === '125%', 'menu shows zoom');
   await shot(page, 'popup-menu.png');
@@ -785,8 +906,10 @@ async function testNewTab(browser) {
     ['https://192.168.1.1/', 'Router admin'],
   ].map(([url, title, pinned], i) => ({ url, title, pinned: !!pinned, favicon: i === 9 ? null : '/favicon?host=' + new URL(url).hostname }));
   const { page, errors, external } = await openPage(browser, 'https://krunk.invalid/newtab.html', { width: 1100, height: 640 }, 1,
-    (t) => { window.__host.handlers.getTopSites = () => t; }, tiles);
+    (t) => { window.__host.handlers.getTopSites = () => t; window.__host.handlers.getNewTabConfig = () => ({ searchName: 'Ecosia' }); }, tiles);
   await page.waitForSelector('.tile');
+  await page.waitForFunction(() => document.getElementById('q').placeholder.includes('Ecosia'));
+  check((await page.getAttribute('#q', 'placeholder')) === 'Search with Ecosia or enter address', 'the search box names the default engine (getNewTabConfig)');
   check((await page.locator('.tile').count()) === 10, 'renders 10 tiles');
   check((await page.locator('.tile.pinned').count()) === 1, 'one pinned tile');
   // A tile without a favicon shows its letter centred in the circle.
@@ -1509,7 +1632,7 @@ async function testShellM4(browser) {
     h.state.active = 1;
     h.tabsEvent();
     h.navEvent({ zoom: 1.25, bookmarked: true, bookmarksBar: true });
-    h.emit({ event: 'shellConfig', theme: 'system' });
+    h.emit({ event: 'shellConfig', theme: 'system', searchName: 'DuckDuckGo' });
     h.emit({ event: 'bookmarksBar', items: [
       { id: 10, title: 'Rust', url: 'https://www.rust-lang.org/', isFolder: false, favicon: '/favicon?host=www.rust-lang.org' },
       { id: 11, title: 'News', url: null, isFolder: true, favicon: null },
@@ -2686,6 +2809,24 @@ async function testTabWindows(browser) {
   // The popup's tab menu.
   ({ page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 240, height: 256 }, 1));
   await page.evaluate(() => { window.__host.autoSimulate = false; });
+  await emit(page, { event: 'popup', content: { kind: 'addressMenu', canUndo: false, canCut: true, canCopy: true, canPaste: true, pasteIsUrl: true, canDelete: true, canSelectAll: true } });
+  await page.waitForTimeout(50);
+  check(await page.locator('.item').count() === 7 && await page.locator('.item[disabled]').count() === 1 && (await page.textContent('#root')).includes('Paste and go'), 'address menu: 7 items, Undo disabled, "Paste and go" for an address in the clipboard');
+  {
+    const fitMenu = await lastSent(page, 'popupResize');
+    check(fitMenu && fitMenu.height > 150 && fitMenu.height < 260, 'the address menu fits its content (' + (fitMenu && fitMenu.height) + ')');
+  }
+  await page.click('.item:has-text("Paste and go")');
+  await page.waitForTimeout(20);
+  let am = await lastSent(page, 'addressMenuAction');
+  check(am && am.action === 'pasteAndGo' && (await lastSent(page, 'hidePopup')) !== undefined, '"Paste and go" sends addressMenuAction{pasteAndGo} and closes');
+  await emit(page, { event: 'popup', content: { kind: 'addressMenu', canUndo: true, canCut: false, canCopy: false, canPaste: true, pasteIsUrl: false, canDelete: false, canSelectAll: true } });
+  await page.waitForTimeout(50);
+  check((await page.textContent('#root')).includes('Paste and search') && await page.locator('.item[disabled]').count() === 3, '"Paste and search" for words; Cut/Copy/Delete disabled without a selection');
+  await page.click('.item:has-text("Undo")');
+  await page.waitForTimeout(20);
+  am = await lastSent(page, 'addressMenuAction');
+  check(am && am.action === 'undo', 'Undo sends addressMenuAction{undo}');
   await emit(page, { event: 'popup', content: { kind: 'tabMenu', tabId: 7, canMove: false, canCloseRight: false } });
   await page.waitForSelector('.item');
   const labels = await page.$$eval('.item .label', (ns) => ns.map((n) => n.textContent));

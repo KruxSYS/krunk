@@ -3,6 +3,7 @@
 //! addresses, and moves from dragging items on the bar or onto its folders.
 
 use super::Browser;
+use super::PopupSlot;
 use crate::log::{info, warning};
 use lb_core::bookmarks::bookmarkable;
 use lb_core::layout;
@@ -68,7 +69,40 @@ impl Browser {
         let mode = self.settings.borrow().bookmarks_bar;
         self.bookmark_menu_at.set(Some(rect));
         let at = layout::bookmark_menu_rect(rect.x, rect.y, id.is_some(), is_folder);
-        self.show_popup(PopupContent::BookmarkMenu { id, is_folder, title, url, children, mode, can_add }, Some(at));
+        // From inside a folder dropdown the menu goes into the second popup window, so
+        // the dropdown stays open underneath.
+        let slot = if self.menu_from_folder.get().is_some() { PopupSlot::Menu } else { PopupSlot::Main };
+        self.show_popup_in(
+            slot,
+            PopupContent::BookmarkMenu { id, is_folder, title, url, children, mode, can_add },
+            Some(at),
+        );
+    }
+
+    /// The popup the bookmark menu (or its editor) is in.
+    fn bookmark_menu_slot(&self) -> PopupSlot {
+        if self.menu_from_folder.get().is_some() {
+            PopupSlot::Menu
+        } else {
+            PopupSlot::Main
+        }
+    }
+
+    /// After a change made from a folder item's menu: the menu goes away and the dropdown
+    /// shows the folder as it is now (or closes when the folder itself is gone).
+    fn refresh_folder_after_menu(&self) {
+        let Some(folder) = self.menu_from_folder.get() else { return };
+        self.hide_menu_popup(false);
+        self.menu_from_folder.set(None);
+        let exists = matches!(self.store.borrow().bookmark(folder), Ok(Some(b)) if b.is_folder);
+        if exists && self.open_folder() == Some(folder) {
+            self.show_bookmark_folder(folder, None);
+            if let Some(c) = self.popup.try_borrow().ok().and_then(|p| p.as_ref().and_then(|p| p.view.clone())) {
+                c.focus();
+            }
+        } else {
+            self.hide_popup();
+        }
     }
 
     /// A choice in the bar's menu.
@@ -103,11 +137,15 @@ impl Browser {
                 };
                 let at = self.bookmark_menu_at.get().unwrap_or(PopupRect { x: 8.0, y: 8.0, width: 1.0, height: 1.0 });
                 let is_folder = matches!(content, PopupContent::BookmarkEdit { is_folder: true, .. });
-                self.show_popup(content, Some(layout::bookmark_edit_rect(at.x, at.y, is_folder)));
+                let slot = self.bookmark_menu_slot();
+                self.show_popup_in(slot, content, Some(layout::bookmark_edit_rect(at.x, at.y, is_folder)));
                 return;
             }
+            // Opening something closes the dropdown too; editing keeps it (refreshed below).
+            BookmarkAction::Delete | BookmarkAction::AddPage if self.menu_from_folder.get().is_some() => {}
             _ => self.hide_popup(),
         }
+        let from_folder = self.menu_from_folder.get().is_some();
         match action {
             BookmarkAction::OpenNewTab => {
                 if let Some(u) = url {
@@ -161,16 +199,25 @@ impl Browser {
             BookmarkAction::ShowNever => self.change_settings(|s| s.bookmarks_bar = BookmarksBar::Never),
             BookmarkAction::Edit | BookmarkAction::NewFolder => {}
         }
+        if from_folder {
+            self.refresh_folder_after_menu();
+        }
     }
 
     /// The editor's Save: rename or edit bookmark `id`, or a new folder in `parent`.
     pub(super) fn save_bookmark(&self, id: Option<i64>, parent: i64, title: &str, url: Option<&str>) {
-        self.hide_popup();
+        let from_folder = self.menu_from_folder.get().is_some();
+        if !from_folder {
+            self.hide_popup();
+        }
         let r = match id {
             Some(id) => self.store.borrow().edit_bookmark(id, title, url),
             None => self.store.borrow().add_folder(parent, title).map(|_| ()),
         };
         self.bar_changed("edit", r);
+        if from_folder {
+            self.refresh_folder_after_menu();
+        }
     }
 
     /// The open folder dropdown's items: is `id` one of them (`folders_too`: or a subfolder)?
@@ -215,8 +262,8 @@ impl Browser {
             width: 240.0,
             height: 320.0,
         };
-        self.show_bookmark_menu(Some(id), at);
         self.menu_from_folder.set(Some(folder));
+        self.show_bookmark_menu(Some(id), at);
     }
 
     /// Dragging inside the open folder dropdown: `id` (one of its items) to `index` of

@@ -43,6 +43,19 @@ pub enum SearchEngine {
 }
 
 impl SearchEngine {
+    /// The engine's name as shown in the address bar's placeholder; `None` for `Custom`.
+    pub fn name(self) -> Option<&'static str> {
+        Some(match self {
+            SearchEngine::DuckDuckGo => "DuckDuckGo",
+            SearchEngine::Google => "Google",
+            SearchEngine::Bing => "Bing",
+            SearchEngine::Brave => "Brave Search",
+            SearchEngine::Startpage => "Startpage",
+            SearchEngine::Ecosia => "Ecosia",
+            SearchEngine::Custom => return None,
+        })
+    }
+
     /// Search URL template; `None` for `Custom` (uses `custom_search_url`).
     pub fn template(self) -> Option<&'static str> {
         Some(match self {
@@ -324,6 +337,19 @@ impl Settings {
     /// The search URL template in effect.
     pub fn search_template(&self) -> &str {
         self.search_engine.template().unwrap_or(&self.custom_search_url)
+    }
+
+    /// The name of the search engine in effect: the preset's name, or the custom
+    /// template's host (without `www.`), or "your search engine".
+    pub fn search_name(&self) -> String {
+        if let Some(n) = self.search_engine.name() {
+            return n.to_string();
+        }
+        url::Url::parse(&self.custom_search_url)
+            .ok()
+            .and_then(|u| u.host_str().map(|h| h.trim_start_matches("www.").to_string()))
+            .filter(|h| !h.is_empty())
+            .unwrap_or_else(|| "your search engine".to_string())
     }
 
     /// Checks every field; returns all problems at once so the settings page
@@ -647,6 +673,19 @@ mod tests {
 
     fn fields(s: &Settings) -> Vec<&'static str> {
         s.validate().err().unwrap_or_default().into_iter().map(|e| e.field).collect()
+    }
+
+    #[test]
+    fn search_name_follows_the_engine() {
+        let mut s = Settings::default();
+        assert_eq!(s.search_name(), "DuckDuckGo");
+        s.search_engine = SearchEngine::Brave;
+        assert_eq!(s.search_name(), "Brave Search");
+        s.search_engine = SearchEngine::Custom;
+        s.custom_search_url = "https://www.searx.example/search?q={searchTerms}".into();
+        assert_eq!(s.search_name(), "searx.example");
+        s.custom_search_url = "not a url".into();
+        assert_eq!(s.search_name(), "your search engine");
     }
 
     #[test]

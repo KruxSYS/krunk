@@ -39,6 +39,10 @@ impl Browser {
 
             // ---- new tab page ----
             Request::GetTopSites => self.reply_db(tab, req_id, self.store.borrow().top_sites(TOP_SITES, now)),
+            Request::GetNewTabConfig => {
+                let name = self.settings.borrow().search_name();
+                self.reply(tab, Event::ok(req_id, serde_json::json!({ "searchName": name })));
+            }
             Request::PinSite { url, title } => self.reply_db(tab, req_id, self.store.borrow().pin_site(&url, &title)),
             Request::UnpinSite { url } => self.reply_db(tab, req_id, self.store.borrow().unpin_site(&url)),
             Request::HideSite { url } => self.reply_db(tab, req_id, self.store.borrow().hide_site(&url)),

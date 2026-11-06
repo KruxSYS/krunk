@@ -6,7 +6,8 @@
 use std::cell::RefCell;
 
 use lb_core::omnibox;
-use lb_core::protocol::{AddressSuggestion, Event, PopupContent, PopupKind, PopupRect};
+use lb_core::protocol::{AddressEdit, AddressMenuAction, AddressSuggestion, Event, PopupContent, PopupKind, PopupRect};
+use lb_core::urlclean;
 
 use super::Browser;
 use crate::log::info;
@@ -15,7 +16,14 @@ use crate::log::info;
 pub(super) struct OmniboxHost {
     /// The rows shown now (for a selection change without a new query).
     entries: RefCell<Vec<AddressSuggestion>>,
+    /// The selected text when the context menu opened (Cut/Copy), and whether the bar
+    /// had been edited (Undo).
+    menu_selection: RefCell<Option<String>>,
 }
+
+/// The context menu's size in shell CSS px (an upper bound; the popup fits itself).
+const ADDRESS_MENU_W: f64 = 230.0;
+const ADDRESS_MENU_H: f64 = 260.0;
 
 impl Browser {
     /// What the shell typed; `rect` is the dropdown's place and width (shell CSS px).
@@ -29,7 +37,9 @@ impl Browser {
             let template = self.settings.borrow().search_template().to_string();
             omnibox::suggestions(&self.store.borrow(), &text, &template)
         };
-        self.post_shell(&Event::AddressSuggestions { text, entries: entries.clone() });
+        let inline = omnibox::inline_completion(&text, &entries);
+        let selected = inline.as_ref().map(|i| i.index);
+        self.post_shell(&Event::AddressSuggestions { text, entries: entries.clone(), inline });
         if entries.is_empty() {
             self.address_suggest_close();
             return;
@@ -37,7 +47,78 @@ impl Browser {
         let height = omnibox::height_css(entries.len());
         let popup_rect = PopupRect { x: rect.x, y: rect.y, width: rect.width.max(300.0), height };
         *self.omnibox.entries.borrow_mut() = entries.clone();
-        self.show_popup(PopupContent::AddressSuggest { entries, selected: None }, Some(popup_rect));
+        self.show_popup(PopupContent::AddressSuggest { entries, selected }, Some(popup_rect));
+    }
+
+    /// Right-click in the address bar: the edit menu, with the items the state allows.
+    pub(super) fn show_address_menu(&self, x: f64, y: f64, selection: String, has_text: bool, dirty: bool) {
+        if !x.is_finite() || !y.is_finite() {
+            return;
+        }
+        let Some(main) = self.window() else { return };
+        let clip =
+            crate::ffi::secure::clipboard_text(main.hwnd()).map(|t| t.trim().to_string()).filter(|t| !t.is_empty());
+        let paste_is_url = clip.as_deref().is_some_and(|t| {
+            let template = self.settings.borrow().search_template().to_string();
+            urlclean::input_to_url(t, &template) != urlclean::search_url(t, &template)
+        });
+        let has_selection = !selection.is_empty();
+        *self.omnibox.menu_selection.borrow_mut() = Some(selection);
+        self.address_suggest_close();
+        let content = PopupContent::AddressMenu {
+            can_undo: dirty,
+            can_cut: has_selection,
+            can_copy: has_selection,
+            can_paste: clip.is_some(),
+            paste_is_url,
+            can_delete: has_selection,
+            can_select_all: has_text,
+        };
+        let rect = PopupRect {
+            x: x.clamp(0.0, 8192.0),
+            y: y.clamp(0.0, 8192.0),
+            width: ADDRESS_MENU_W,
+            height: ADDRESS_MENU_H,
+        };
+        self.show_popup(content, Some(rect));
+    }
+
+    /// A choice in the address bar's menu.
+    pub(super) fn address_menu_action(&self, action: AddressMenuAction) {
+        if self.popup_kind() != Some(PopupKind::AddressMenu) {
+            return;
+        }
+        let selection = self.omnibox.menu_selection.borrow_mut().take().unwrap_or_default();
+        self.hide_popup();
+        let Some(main) = self.window() else { return };
+        let edit = match action {
+            AddressMenuAction::Undo => Some(AddressEdit::Undo),
+            AddressMenuAction::Copy => {
+                crate::ffi::secure::copy_text(main.hwnd(), &selection);
+                None
+            }
+            AddressMenuAction::Cut => {
+                crate::ffi::secure::copy_text(main.hwnd(), &selection);
+                Some(AddressEdit::DeleteSelection)
+            }
+            AddressMenuAction::Delete => Some(AddressEdit::DeleteSelection),
+            AddressMenuAction::SelectAll => Some(AddressEdit::SelectAll),
+            AddressMenuAction::Paste => {
+                crate::ffi::secure::clipboard_text(main.hwnd()).map(|text| AddressEdit::Insert { text })
+            }
+            AddressMenuAction::PasteAndGo => {
+                if let Some(text) = crate::ffi::secure::clipboard_text(main.hwnd()).filter(|t| !t.trim().is_empty()) {
+                    info!("address bar: paste and go");
+                    self.navigate_input(&text);
+                    self.post_shell(&Event::BlurAddressBar);
+                    self.focus_page_after_navigation();
+                }
+                None
+            }
+        };
+        if let Some(edit) = edit {
+            self.post_shell(&Event::AddressEdit { edit });
+        }
     }
 
     /// The shell moved the selection: the popup highlights that row.

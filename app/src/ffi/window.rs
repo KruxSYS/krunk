@@ -28,6 +28,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// re-entrancy (a modal dialog pumps messages while a callback runs).
 pub trait WindowEvents {
     fn resized(&self, _width: i32, _height: i32) {}
+    /// An edge or corner drag started (`true`) or ended.
+    fn size_loop(&self, _active: bool) {}
     fn minimized(&self, _minimized: bool) {}
     fn moved(&self) {}
     /// The window was activated or deactivated.
@@ -896,6 +898,45 @@ extern "system" fn main_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
             set_caption(hwnd, &events(hwnd), caption_button(wparam.0), true);
             LRESULT(0)
         }
+        // Edge and corner drags run without the system's modal size loop: inside that loop
+        // the engine runs no tasks (CEF only allows them for its own windows), so pages would
+        // freeze until the mouse is released. This loop resizes on every mouse move instead.
+        WM_NCLBUTTONDOWN if (HTLEFT..=HTBOTTOMRIGHT).contains(&(wparam.0 as u32)) && !Window(hwnd).is_maximized() => {
+            sizing_start(hwnd, wparam.0 as u32);
+            LRESULT(0)
+        }
+        windows::Win32::UI::WindowsAndMessaging::WM_MOUSEMOVE if sizing_active(hwnd) => {
+            sizing_move(hwnd);
+            LRESULT(0)
+        }
+        windows::Win32::UI::WindowsAndMessaging::WM_LBUTTONUP if sizing_active(hwnd) => {
+            sizing_end(hwnd, false);
+            LRESULT(0)
+        }
+        windows::Win32::UI::WindowsAndMessaging::WM_CAPTURECHANGED if sizing_active(hwnd) => {
+            sizing_end(hwnd, false);
+            LRESULT(0)
+        }
+        windows::Win32::UI::WindowsAndMessaging::WM_KEYDOWN
+            if sizing_active(hwnd) && wparam.0 as u16 == windows::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE.0 =>
+        {
+            sizing_end(hwnd, true);
+            LRESULT(0)
+        }
+        windows::Win32::UI::WindowsAndMessaging::WM_SETCURSOR if sizing_active(hwnd) => {
+            sizing_cursor(hwnd);
+            LRESULT(1)
+        }
+        windows::Win32::UI::WindowsAndMessaging::WM_TIMER if wparam.0 == SIZING_TIMER => {
+            use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_ESCAPE};
+            // SAFETY: a plain key-state query.
+            // Bit 15: down now; bit 0: pressed since the last call (a tap between two ticks).
+            let state = unsafe { GetAsyncKeyState(i32::from(VK_ESCAPE.0)) } as u16;
+            if sizing_active(hwnd) && state & 0x8001 != 0 {
+                sizing_end(hwnd, true);
+            }
+            LRESULT(0)
+        }
         WM_NCLBUTTONUP if caption_button(wparam.0).is_some() => {
             let button = caption_button(wparam.0);
             let (_, pressed) = caption_of(hwnd);
@@ -1095,6 +1136,136 @@ extern "system" fn main_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
             r
         }
         _ => wndproc(hwnd, msg, wparam, lparam),
+    }
+}
+
+/// The smallest window (DIP), also WM_GETMINMAXINFO's answer.
+const MIN_WIDTH_DIP: f64 = 480.0;
+const MIN_HEIGHT_DIP: f64 = 320.0;
+
+/// An edge or corner drag in progress: the hit code, the window rect and the cursor at the press.
+struct Sizing {
+    edge: u32,
+    start: RECT,
+    cursor: POINT,
+}
+
+/// While an edge drag runs, this timer polls Esc (the keyboard stays with the page).
+const SIZING_TIMER: usize = 0x5a1;
+
+thread_local! {
+    static SIZING: RefCell<HashMap<isize, Sizing>> = RefCell::new(HashMap::new());
+}
+
+use windows::Win32::UI::WindowsAndMessaging::{
+    HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT,
+};
+
+fn sizing_active(hwnd: HWND) -> bool {
+    SIZING.with(|s| s.borrow().contains_key(&(hwnd.0 as isize)))
+}
+
+fn sizing_start(hwnd: HWND, edge: u32) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::SetCapture;
+    use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetWindowRect, SetTimer};
+    let (mut start, mut cursor) = (RECT::default(), POINT::default());
+    // SAFETY: plain queries on our own window; capture and the timer end in sizing_end.
+    unsafe {
+        let _ = GetWindowRect(hwnd, &mut start);
+        let _ = GetCursorPos(&mut cursor);
+        SetCapture(hwnd);
+        SetTimer(Some(hwnd), SIZING_TIMER, 50, None);
+    }
+    SIZING.with(|s| s.borrow_mut().insert(hwnd.0 as isize, Sizing { edge, start, cursor }));
+    if let Some(ev) = events(hwnd) {
+        ev.size_loop(true);
+    }
+    sizing_cursor(hwnd);
+}
+
+fn sizing_move(hwnd: HWND) {
+    use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER};
+    let Some((edge, start, at)) =
+        SIZING.with(|s| s.borrow().get(&(hwnd.0 as isize)).map(|z| (z.edge, z.start, z.cursor)))
+    else {
+        return;
+    };
+    let mut cursor = POINT::default();
+    // SAFETY: plain query.
+    unsafe {
+        let _ = GetCursorPos(&mut cursor);
+    }
+    let (dx, dy) = (cursor.x - at.x, cursor.y - at.y);
+    let scale = Window(hwnd).scale();
+    let (min_w, min_h) = ((MIN_WIDTH_DIP * scale) as i32, (MIN_HEIGHT_DIP * scale) as i32);
+    let mut r = start;
+    let left = matches!(edge, HTLEFT | HTTOPLEFT | HTBOTTOMLEFT);
+    let right = matches!(edge, HTRIGHT | HTTOPRIGHT | HTBOTTOMRIGHT);
+    let top = matches!(edge, HTTOP | HTTOPLEFT | HTTOPRIGHT);
+    let bottom = matches!(edge, HTBOTTOM | HTBOTTOMLEFT | HTBOTTOMRIGHT);
+    if left {
+        r.left = (start.left + dx).min(start.right - min_w);
+    }
+    if right {
+        r.right = (start.right + dx).max(start.left + min_w);
+    }
+    if top {
+        r.top = (start.top + dy).min(start.bottom - min_h);
+    }
+    if bottom {
+        r.bottom = (start.bottom + dy).max(start.top + min_h);
+    }
+    // SAFETY: moving our own window; WM_SIZE lays the children out.
+    unsafe {
+        let _ =
+            SetWindowPos(hwnd, None, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+}
+
+fn sizing_end(hwnd: HWND, cancel: bool) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetCapture, ReleaseCapture};
+    use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER};
+    let Some(z) = SIZING.with(|s| s.borrow_mut().remove(&(hwnd.0 as isize))) else { return };
+    // SAFETY: releasing our own capture; restoring our own rect and the focus we moved.
+    unsafe {
+        if GetCapture() == hwnd {
+            let _ = ReleaseCapture();
+        }
+        if cancel {
+            let r = z.start;
+            let _ = SetWindowPos(
+                hwnd,
+                None,
+                r.left,
+                r.top,
+                r.right - r.left,
+                r.bottom - r.top,
+                SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+        }
+        let _ = windows::Win32::UI::WindowsAndMessaging::KillTimer(Some(hwnd), SIZING_TIMER);
+    }
+    if let Some(ev) = events(hwnd) {
+        ev.size_loop(false);
+    }
+}
+
+fn sizing_cursor(hwnd: HWND) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        LoadCursorW, SetCursor, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE,
+    };
+    let Some(edge) = SIZING.with(|s| s.borrow().get(&(hwnd.0 as isize)).map(|z| z.edge)) else { return };
+    let id = match edge {
+        HTLEFT | HTRIGHT => IDC_SIZEWE,
+        HTTOP | HTBOTTOM => IDC_SIZENS,
+        HTTOPLEFT | HTBOTTOMRIGHT => IDC_SIZENWSE,
+        _ => IDC_SIZENESW,
+    };
+    // SAFETY: system cursors.
+    unsafe {
+        if let Ok(c) = LoadCursorW(None, id) {
+            SetCursor(Some(c));
+        }
     }
 }
 
@@ -1315,7 +1486,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
             unsafe {
                 let mmi = &mut *(lparam.0 as *mut MINMAXINFO);
                 let scale = f64::from(GetDpiForWindow(hwnd).max(96)) / 96.0;
-                mmi.ptMinTrackSize = POINT { x: (480.0 * scale) as i32, y: (320.0 * scale) as i32 };
+                mmi.ptMinTrackSize = POINT { x: (MIN_WIDTH_DIP * scale) as i32, y: (MIN_HEIGHT_DIP * scale) as i32 };
             }
             LRESULT(0)
         }

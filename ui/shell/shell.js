@@ -528,7 +528,9 @@
   const address = $('address');
   // Suggestions while typing (0.5.1): the host shows them in a popup under the bar that
   // never takes the focus; the shell keeps the rows and the keyboard selection.
-  const suggest = { text: '', entries: [], selected: null, timer: null, open: false };
+  // `inline`: the completion shown selected after the caret (0.6.0); `noInline`: the last
+  // edit was a deletion, so the completion is not put back for that keystroke.
+  const suggest = { text: '', entries: [], selected: null, timer: null, open: false, inline: null, noInline: false };
   function suggestRect() {
     const r = address.getBoundingClientRect();
     return { x: r.left, y: r.bottom + 4, width: r.width, height: 0 };
@@ -555,26 +557,77 @@
     let i = suggest.selected === null ? (delta > 0 ? 0 : n - 1) : suggest.selected + delta;
     if (i < 0 || i >= n) i = null;
     suggest.selected = i;
+    suggest.inline = null;
     address.value = i === null ? suggest.text : suggest.entries[i].fill;
     address.setSelectionRange(address.value.length, address.value.length);
     LB.post('addressSuggestSelect', { selected: i });
     return true;
   }
   LB.on('addressSuggestions', function (e) {
-    if (document.activeElement !== address || e.text !== address.value.trim()) return;
+    // Only for what the bar asked last (its value may already carry an inline completion).
+    if (document.activeElement !== address || e.text !== suggest.text) return;
     suggest.entries = e.entries || [];
     suggest.selected = null;
+    suggest.inline = null;
     suggest.open = suggest.entries.length > 0;
+    // Inline autocomplete: the first matching address is completed after the caret and
+    // selected, so typing on replaces it and Enter goes there; never after a deletion.
+    const atEnd = address.selectionStart === address.value.length && address.selectionEnd === address.value.length;
+    if (e.inline && !suggest.noInline && atEnd && address.value.trim() === suggest.text && e.inline.text.length > suggest.text.length) {
+      address.value = e.inline.text;
+      address.setSelectionRange(address.value.length - (e.inline.text.length - suggest.text.length), address.value.length);
+      suggest.inline = e.inline;
+      suggest.selected = e.inline.index;
+      LB.post('addressSuggestSelect', { selected: e.inline.index });
+    }
   });
   address.addEventListener('focus', function () { state.editing = true; state.dirty = false; address.select(); });
   address.addEventListener('blur', function () { state.editing = false; state.dirty = false; closeSuggestions(); renderNav(); });
-  address.addEventListener('input', function () { state.dirty = true; askSuggestions(); });
+  address.addEventListener('input', function (e) {
+    state.dirty = true;
+    suggest.noInline = !!(e.inputType && e.inputType.indexOf('delete') === 0);
+    askSuggestions();
+  });
+  // Copying the whole, unedited address copies the page's full URL (never a shortened display).
+  address.addEventListener('copy', function (e) {
+    if (state.dirty || !state.nav || !state.nav.url) return;
+    if (address.selectionStart === 0 && address.selectionEnd === address.value.length && e.clipboardData) {
+      e.clipboardData.setData('text/plain', state.nav.url);
+      e.preventDefault();
+    }
+  });
+  // The context menu (0.6.0): the host shows it without taking the focus, so the bar keeps
+  // its selection; the host answers with addressEdit for the edits the shell must make.
+  let addressMenuOpen = false;
+  address.addEventListener('contextmenu', function (e) {
+    e.preventDefault();
+    if (document.activeElement !== address) { address.focus(); address.select(); }
+    const selection = address.value.substring(address.selectionStart, address.selectionEnd);
+    closeSuggestions();
+    addressMenuOpen = true;
+    LB.post('showAddressMenu', { x: e.clientX, y: e.clientY, selection: selection, hasText: address.value.length > 0, dirty: state.dirty });
+  });
+  document.addEventListener('mousedown', function () { if (addressMenuOpen) { addressMenuOpen = false; LB.post('hidePopup'); } }, true);
+  LB.on('addressEdit', function (m) {
+    addressMenuOpen = false;
+    if (document.activeElement !== address) address.focus();
+    const ed = m.edit;
+    const kind = typeof ed === 'string' ? ed : Object.keys(ed)[0];
+    if (kind === 'undo') { document.execCommand('undo'); }
+    else if (kind === 'deleteSelection') { address.setRangeText('', address.selectionStart, address.selectionEnd, 'end'); }
+    else if (kind === 'insert') { address.setRangeText(ed.insert.text, address.selectionStart, address.selectionEnd, 'end'); }
+    else if (kind === 'selectAll') { address.select(); return; }
+    state.dirty = true;
+    suggest.noInline = kind === 'deleteSelection';
+    askSuggestions();
+  });
   address.addEventListener('keydown', function (e) {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       if (selectSuggestion(e.key === 'ArrowDown' ? 1 : -1)) e.preventDefault();
       return;
     }
     if (e.key === 'Escape') {
+      if (addressMenuOpen) { e.preventDefault(); addressMenuOpen = false; LB.post('hidePopup'); return; }
       if (suggest.open) { e.preventDefault(); address.value = suggest.text; closeSuggestions(); return; }
       address.value = state.nav ? state.nav.url : '';
       state.dirty = false;
@@ -869,6 +922,8 @@
   LB.on('shellConfig', function (m) {
     document.documentElement.classList.toggle('dark', m.theme === 'dark');
     document.documentElement.classList.toggle('light', m.theme === 'light');
+    // The placeholder names the default search engine (it changes with the setting).
+    if (m.searchName) address.placeholder = 'Search with ' + m.searchName + ' or enter address';
   });
   LB.on('focusAddressBar', function () { address.focus(); address.select(); });
   LB.on('blurAddressBar', function () { state.dirty = false; if (document.activeElement === address) address.blur(); else renderNav(); });
@@ -894,7 +949,7 @@
     $('find-count').textContent = find.value ? (m.total > 0 ? m.active + '/' + m.total : '0/0') : '';
     $('findbar').classList.toggle('nomatch', !!find.value && m.total === 0);
   });
-  LB.on('popupClosed', function () { setPopup(null); suggest.open = false; suggest.entries = []; suggest.selected = null; });
+  LB.on('popupClosed', function () { setPopup(null); addressMenuOpen = false; suggest.open = false; suggest.entries = []; suggest.selected = null; suggest.inline = null; });
 
   // Keep keyboard shortcuts working while the shell has focus: the host sees
   // them through AcceleratorKeyPressed, so the shell does nothing extra here.

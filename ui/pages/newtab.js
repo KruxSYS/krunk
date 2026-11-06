@@ -37,6 +37,9 @@
 
   function load() {
     LB.request('getTopSites').then(render, function () { render([]); });
+    LB.request('getNewTabConfig').then(function (c) {
+      if (c && c.searchName) document.getElementById('q').placeholder = 'Search with ' + c.searchName + ' or enter address';
+    }, function () {});
   }
 
   document.getElementById('search').addEventListener('submit', function (e) {

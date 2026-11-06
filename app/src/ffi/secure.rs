@@ -7,8 +7,8 @@ use windows::Win32::Security::Cryptography::{
     CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
 };
 use windows::Win32::System::DataExchange::{
-    CloseClipboard, EmptyClipboard, GetClipboardSequenceNumber, OpenClipboard, RegisterClipboardFormatW,
-    SetClipboardData,
+    CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, OpenClipboard,
+    RegisterClipboardFormatW, SetClipboardData,
 };
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 use zeroize::Zeroizing;
@@ -165,6 +165,33 @@ unsafe fn set_dword(format: PCWSTR, value: u32) {
         if SetClipboardData(id, Some(HANDLE(mem.0))).is_err() {
             let _ = GlobalFree(Some(mem));
         }
+    }
+}
+
+/// The clipboard's text, if it holds any (at most 64 KiB, for "Paste and go").
+pub fn clipboard_text(owner: HWND) -> Option<String> {
+    const MAX_CHARS: usize = 65_536;
+    // SAFETY: standard clipboard sequence on the UI thread; the handle from
+    // GetClipboardData is owned by the system and only read while locked.
+    unsafe {
+        OpenClipboard(Some(owner)).ok()?;
+        let result = (|| {
+            let h = GetClipboardData(CF_UNICODETEXT).ok()?;
+            let mem = windows::Win32::Foundation::HGLOBAL(h.0);
+            let ptr = GlobalLock(mem) as *const u16;
+            if ptr.is_null() {
+                return None;
+            }
+            let mut len = 0usize;
+            while len < MAX_CHARS && *ptr.add(len) != 0 {
+                len += 1;
+            }
+            let text = String::from_utf16_lossy(std::slice::from_raw_parts(ptr, len));
+            let _ = GlobalUnlock(mem);
+            Some(text)
+        })();
+        let _ = CloseClipboard();
+        result
     }
 }
 
