@@ -541,7 +541,7 @@ URL settings come from `.env`, which the operator provides.
   sync passphrase or recovery key."
 
 ### 5.5 Settings allowlist (synced vs device-local)
-- **Synced:** `searchEngine`, `customSearchUrl`, `startup`, `homepage`, `showHomeButton`,
+- **Synced:** `searchEngine`, `customSearchUrl`, `startup`, `homepage`,
   `showBookmarksBar`, `adblockEnabled`, `filterLists`, `blockThirdPartyCookies`, `httpsOnly`,
   `sendDnt`, `sendGpc`, `stripTrackingParams`, `clearOnExit`, `engineSecurityComponents`,
   `vaultAutolockMinutes`, `offerSavePasswords`, `askWhereToSave`, `defaultZoom`, `theme`.

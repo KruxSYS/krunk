@@ -31,6 +31,7 @@ pub mod sitedata;
 pub mod storage;
 pub mod sync;
 pub mod tabs;
+pub mod toggle;
 pub mod update;
 pub mod urlclean;
 pub mod vault;

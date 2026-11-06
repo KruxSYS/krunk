@@ -3,7 +3,6 @@
   "customSearchUrl": "",
   "startup": "restoreSession",
   "homepage": "https://duckduckgo.com/",
-  "showHomeButton": true,
   "bookmarksBar": "always",
   "hardwareAcceleration": true,
   "tabSleepMinutes": 5,

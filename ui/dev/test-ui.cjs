@@ -233,6 +233,44 @@ async function testShell(browser) {
   await page.waitForTimeout(20);
   check(await page.locator('#shield.on').count() === 0, 'popupClosed from host clears highlight');
 
+  // The press on ⋮ while its menu is open deactivates the popup: the host sends popupClosed
+  // before the click arrives. The click must close, not reopen (3 clicks: open, closed, open).
+  check(await page.locator('#home').count() === 0, 'the Home button is gone (0.5)');
+  const countShows = async () => (await sent(page)).filter((m) => m.cmd === 'showPopup' && m.popup === 'menu').length;
+  await page.click('#menu');
+  const shows1 = await countShows();
+  check(await page.locator('#menu.on').count() === 1, 'toggle: click 1 opens the menu');
+  const mb = await page.locator('#menu').boundingBox();
+  await page.mouse.move(mb.x + mb.width / 2, mb.y + mb.height / 2);
+  await page.mouse.down();
+  await emit(page, { event: 'popupClosed' });
+  await page.waitForTimeout(20);
+  await page.mouse.up();
+  await page.waitForTimeout(20);
+  check((await countShows()) === shows1, 'toggle: click 2 (popup closed by the press) does not reopen it');
+  check(await page.locator('#menu.on').count() === 0, 'toggle: menu button not highlighted after click 2');
+  await page.click('#menu');
+  check((await countShows()) === shows1 + 1 && await page.locator('#menu.on').count() === 1, 'toggle: click 3 opens the menu again');
+  await page.click('#menu');
+  check(await page.locator('#menu.on').count() === 0, 'toggle: click 4 closes it (no stale press record)');
+
+  // The address bar keeps the user's text only after typing: a focused but untouched field
+  // follows a navigation (a bookmark click), and blurAddressBar ends editing.
+  await page.click('#address');
+  const h2 = await page.evaluate(() => window.__host);
+  await page.evaluate(() => { const h = window.__host; h.state.tabs.find((t) => t.id === h.state.active).url = 'https://moved.example/'; h.navEvent({}); });
+  await page.waitForTimeout(20);
+  check(await page.locator('#address').inputValue() === 'https://moved.example/', 'a nav while the field is focused but untouched shows the new URL');
+  await page.keyboard.type('typed text');
+  await page.evaluate(() => { const h = window.__host; h.state.tabs.find((t) => t.id === h.state.active).url = 'https://moved2.example/'; h.navEvent({}); });
+  await page.waitForTimeout(20);
+  check((await page.locator('#address').inputValue()).endsWith('typed text'), 'a nav while the user typed keeps the typed text');
+  await emit(page, { event: 'blurAddressBar' });
+  await page.waitForTimeout(20);
+  const afterBlur = await page.evaluate(() => ({ active: document.activeElement === document.getElementById('address'), value: document.getElementById('address').value }));
+  check(!afterBlur.active && afterBlur.value === 'https://moved2.example/', 'blurAddressBar leaves the field and shows the page URL');
+  void h2;
+
   // Toolbar buttons.
   await page.click('#back');
   check((await lastSent(page, 'back')) !== undefined, 'back button sends back');
@@ -1183,7 +1221,7 @@ async function testShellM4(browser) {
     h.state.active = 1;
     h.tabsEvent();
     h.navEvent({ zoom: 1.25, bookmarked: true, bookmarksBar: true });
-    h.emit({ event: 'shellConfig', showHomeButton: true, theme: 'system' });
+    h.emit({ event: 'shellConfig', theme: 'system' });
     h.emit({ event: 'bookmarksBar', items: [
       { id: 10, title: 'Rust', url: 'https://www.rust-lang.org/', isFolder: false, favicon: '/favicon?host=www.rust-lang.org' },
       { id: 11, title: 'News', url: null, isFolder: true, favicon: null },

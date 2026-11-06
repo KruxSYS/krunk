@@ -124,7 +124,6 @@ pub struct Settings {
     pub custom_search_url: String,
     pub startup: Startup,
     pub homepage: String,
-    pub show_home_button: bool,
     /// Replaces 0.3's `showBookmarksBar` (false became `never`; see `from_json_lenient`).
     pub bookmarks_bar: BookmarksBar,
 
@@ -207,7 +206,6 @@ impl Default for Settings {
             custom_search_url: String::new(),
             startup: Startup::RestoreSession,
             homepage: "https://duckduckgo.com/".into(),
-            show_home_button: true,
             bookmarks_bar: BookmarksBar::Always,
             hardware_acceleration: true,
             tab_sleep_minutes: 5,
@@ -664,6 +662,22 @@ mod tests {
         assert_eq!(both.bookmarks_bar, BookmarksBar::NewTab);
         let json = serde_json::to_string(&both).unwrap();
         assert!(json.contains(r#""bookmarksBar":"newTab""#) && !json.contains("showBookmarksBar"), "{json}");
+    }
+
+    /// 0.4 and earlier had a Home button with `showHomeButton`; 0.5 removed it.
+    /// Old files still load, the field is ignored, and saving drops it.
+    #[test]
+    fn home_button_setting_is_ignored_and_dropped() {
+        let old = Settings::from_json_lenient(
+            r#"{"showHomeButton":false,"homepage":"https://a.example/","theme":"dark","startup":"homepage"}"#,
+        );
+        assert_eq!(old.homepage, "https://a.example/");
+        assert_eq!(old.theme, Theme::Dark);
+        assert_eq!(old.startup, Startup::Homepage);
+        let strict: Settings = serde_json::from_str(r#"{"showHomeButton":true}"#).unwrap();
+        assert_eq!(strict, Settings::default());
+        let json = serde_json::to_string(&old).unwrap();
+        assert!(!json.contains("showHomeButton") && !json.contains("homeButton"), "{json}");
     }
 
     #[test]

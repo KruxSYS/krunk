@@ -23,7 +23,12 @@ impl Browser {
         let now = now_ms();
         match request {
             Request::ToggleBookmark => self.toggle_bookmark(),
-            Request::ShowBookmarkFolder { id, rect } => self.show_bookmark_folder(id, rect),
+            Request::ShowBookmarkFolder { id, rect } => {
+                // A click on the folder button that closed its dropdown stays closed.
+                if rect.is_none() || !self.toggle_suppressed(&format!("folder:{id}")) {
+                    self.show_bookmark_folder(id, rect);
+                }
+            }
             Request::Find { query, backwards } => self.find(&query, backwards),
             Request::FindClose => {
                 let active = self.active_id();

@@ -120,7 +120,7 @@ impl Browser {
         if old.theme != new.theme {
             self.apply_theme();
         }
-        if old.bookmarks_bar != new.bookmarks_bar || old.show_home_button != new.show_home_button {
+        if old.bookmarks_bar != new.bookmarks_bar {
             self.send_shell_config();
             self.send_nav();
             self.layout();

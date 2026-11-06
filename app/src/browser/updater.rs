@@ -92,8 +92,17 @@ impl UpdateHost {
 
 impl Browser {
     pub(super) fn init_updates(&self) {
-        // The installer of the last update has finished by now.
+        // The installer of the last update has finished by now. When Krunk was
+        // started by that installer, the installer is still exiting and holds its
+        // own file for a moment: try again a little later.
         let _ = std::fs::remove_dir_all(download_dir());
+        for delay in [30_000, 120_000] {
+            crate::ffi::cef::post_ui_delayed(delay, || {
+                if download_dir().exists() && std::fs::remove_dir_all(download_dir()).is_ok() {
+                    info!("update: removed the previous installer download");
+                }
+            });
+        }
         match &self.updates.config {
             Ok(c) => info!(
                 "update check: {} ({})",

@@ -141,6 +141,8 @@ pub struct Browser {
     download_ops: RefCell<HashMap<u32, (u32, Option<DownloadControl>)>>,
     /// Button rect of the open bookmarks-bar folder dropdown.
     folder_anchor: Cell<Option<PopupRect>>,
+    /// Swallows the click that closed a toolbar popup (see `lb_core::toggle`).
+    toggle: RefCell<lb_core::toggle::ToggleGuard>,
     /// Where the shell asked for the shield panel (it grows with its list from there).
     shield_anchor: Cell<Option<PopupRect>>,
     /// The tab krunk://adblock shows the blocked requests of (opened from its shield).
@@ -208,6 +210,7 @@ impl Browser {
             parts_jobs: segmented::PartsJobs::default(),
             download_ops: RefCell::new(HashMap::new()),
             folder_anchor: Cell::new(None),
+            toggle: RefCell::new(lb_core::toggle::ToggleGuard::default()),
             bookmark_menu_at: Cell::new(None),
             adblock_source: Cell::new(None),
             shield_anchor: Cell::new(None),
@@ -430,7 +433,7 @@ impl Browser {
         let weak = self.me.clone();
         c.on_got_focus(move || {
             if let Some(b) = weak.upgrade() {
-                b.hide_popup();
+                b.hide_popup_by_focus_loss();
             }
         });
     }
@@ -1025,7 +1028,7 @@ impl Browser {
     fn send_shell_config(&self) {
         let e = {
             let s = self.settings.borrow();
-            Event::ShellConfig { show_home_button: s.show_home_button, theme: s.theme }
+            Event::ShellConfig { theme: s.theme }
         };
         self.post_shell(&e);
     }
@@ -1147,7 +1150,23 @@ impl Browser {
             self.new_tab(Some(url), private);
         } else {
             self.navigate_active(url);
+            self.focus_page_after_navigation();
         }
+    }
+
+    /// A bookmark, a history entry or a new-tab tile was opened: the page
+    /// gets the focus, and the address bar stops editing and shows the new
+    /// address (a new-tab page's address-bar hold ends).
+    fn focus_page_after_navigation(&self) {
+        let Some(id) = self.active_id() else { return };
+        self.address_focus.set(None);
+        if let Some(c) = self.active_view() {
+            c.focus();
+        }
+        if let Some(s) = self.shell() {
+            s.post_json(&Event::BlurAddressBar.to_json());
+        }
+        let _ = id;
     }
 
     fn navigate_active(&self, url: &str) {
@@ -1412,17 +1431,14 @@ impl Browser {
                 let template = self.settings.borrow().search_template().to_string();
                 let url = urlclean::input_to_url(&input, &template);
                 self.navigate_active(&url);
-                if sender == Sender::Shell {
-                    if let Some(c) = self.active_view() {
-                        c.focus();
-                    }
+                if sender == Sender::Shell || sender == Sender::Page(Page::NewTab) {
+                    self.focus_page_after_navigation();
                 }
             }
             Request::Back => self.run_command(Command::Back),
             Request::Forward => self.run_command(Command::Forward),
             Request::Reload => self.run_command(Command::Reload),
             Request::Stop => self.run_command(Command::Stop),
-            Request::Home => self.run_command(Command::Home),
             Request::OpenUrl { url, new_tab } => self.open_url(&url, new_tab, false),
             Request::OpenPage { page } => {
                 if let Some(p) = Page::from_name(&page) {
@@ -1436,7 +1452,13 @@ impl Browser {
             Request::DevToolsDock { dock } => self.set_devtools_dock(dock),
             Request::DevToolsClose => self.close_active_devtools(),
             Request::ShowPopup { popup, rect } => {
-                if popup.shell_may_open() && rect.is_valid() {
+                let anchor = match popup {
+                    PopupKind::Menu => "menu",
+                    _ => "shield",
+                };
+                if self.toggle_suppressed(anchor) {
+                    // The click that closed it: stay closed.
+                } else if popup.shell_may_open() && rect.is_valid() {
                     match popup {
                         PopupKind::Menu => self.show_popup(self.menu_content(), Some(rect)),
                         _ => {
@@ -1699,6 +1721,29 @@ impl Browser {
         }
     }
 
+    /// The popup lost activation, or another view took the focus: the
+    /// popup closes, and the toolbar click that may have caused this does
+    /// not reopen it (`toggle`).
+    fn hide_popup_by_focus_loss(&self) {
+        let anchor = self.popup.try_borrow().ok().and_then(|p| {
+            p.as_ref().filter(|p| p.window.is_visible()).and_then(|p| p.content.as_ref()?.toggle_anchor())
+        });
+        if let Some(a) = anchor {
+            self.toggle.borrow_mut().closed_by_focus_loss(&a, now_ms() as u64);
+        }
+        self.hide_popup();
+    }
+
+    /// Is this request to open a toolbar popup the click that just closed
+    /// it? Then the shell is told it stays closed.
+    pub(super) fn toggle_suppressed(&self, anchor: &str) -> bool {
+        let suppressed = self.toggle.borrow_mut().suppress(anchor, now_ms() as u64);
+        if suppressed {
+            self.post_shell(&Event::PopupClosed);
+        }
+        suppressed
+    }
+
     /// Hides the popup. A hidden prompt counts as dismissed, never confirmed.
     fn hide_popup(&self) {
         let (was_visible, content, owner) = {
@@ -1807,7 +1852,7 @@ impl WindowEvents for PopupEvents {
     fn activated(&self, active: bool) {
         if !active {
             if let Some(b) = self.0.upgrade() {
-                b.hide_popup();
+                b.hide_popup_by_focus_loss();
             }
         }
     }

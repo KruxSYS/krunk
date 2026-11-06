@@ -395,7 +395,9 @@
     $('forward').disabled = !n.canGoForward;
     $('reload-icon').setAttribute('href', n.loading ? '#i-stop' : '#i-reload');
     $('reload').title = n.loading ? 'Stop (Esc)' : 'Reload (Ctrl+R)';
-    if (!state.editing) $('address').value = n.url;
+    // The user's own text stays while they type; a focused but untouched field
+    // follows the page (a bookmark opened while the caret was in the field).
+    if (!(state.editing && state.dirty)) $('address').value = n.url;
     $('star').classList.toggle('bookmarked', !!n.bookmarked);
     // Built-in pages (krunk://) cannot be bookmarked.
     $('star').hidden = !n.url || n.url.startsWith('krunk://');
@@ -418,17 +420,18 @@
   $('reload').addEventListener('click', function () {
     LB.post(state.nav && state.nav.loading ? 'stop' : 'reload');
   });
-  $('home').addEventListener('click', function () { LB.post('home'); });
   $('newtab').addEventListener('click', function () { LB.post('newTab', {}); });
   $('star').addEventListener('click', function () { LB.post('toggleBookmark'); });
 
   // ---------- address bar ----------
   const address = $('address');
-  address.addEventListener('focus', function () { state.editing = true; address.select(); });
-  address.addEventListener('blur', function () { state.editing = false; renderNav(); });
+  address.addEventListener('focus', function () { state.editing = true; state.dirty = false; address.select(); });
+  address.addEventListener('blur', function () { state.editing = false; state.dirty = false; renderNav(); });
+  address.addEventListener('input', function () { state.dirty = true; });
   address.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') {
       address.value = state.nav ? state.nav.url : '';
+      state.dirty = false;
       address.blur();
     }
   });
@@ -438,13 +441,20 @@
     if (!input) return;
     LB.post('navigate', { input: input });
     state.editing = false;
+    state.dirty = false;
     address.blur();
   });
 
   // ---------- popups (menu, shield) ----------
   const POPUP_SIZES = { menu: [280, 542], shield: [300, 226] };
+  // The press on the button deactivates the open popup, which closes it before the click
+  // arrives (the host then says popupClosed). The click must not reopen it: the press
+  // remembers what was open. The host has the same guard (lb_core::toggle).
+  let downWhileOpen = null;
+  function rememberOpen(kind) { downWhileOpen = state.popup === kind ? kind : null; }
   function togglePopup(kind, button) {
-    if (state.popup === kind) {
+    if (state.popup === kind || downWhileOpen === kind) {
+      downWhileOpen = null;
       LB.post('hidePopup');
       setPopup(null);
       return;
@@ -456,6 +466,7 @@
     setPopup(kind);
   }
   function setPopup(kind) {
+    if (kind !== null) downWhileOpen = null;
     state.popup = kind;
     $('menu').classList.toggle('on', kind === 'menu');
     $('shield').classList.toggle('on', kind === 'shield');
@@ -479,10 +490,11 @@
         const btn = el('button', { class: 'bm folder', title: b.title, 'data-folder': b.id, 'data-id': b.id }, [
           svgIcon('i-folder', 'folder-icon'), el('span', { text: b.title }),
         ]);
+        btn.addEventListener('pointerdown', function () { rememberOpen('folder:' + b.id); });
         btn.addEventListener('click', function () {
           if (barDrag.suppressClick) return;
           const key = 'folder:' + b.id;
-          if (state.popup === key) { LB.post('hidePopup'); setPopup(null); return; }
+          if (state.popup === key || downWhileOpen === key) { downWhileOpen = null; LB.post('hidePopup'); setPopup(null); return; }
           const r = btn.getBoundingClientRect();
           LB.post('showBookmarkFolder', { id: b.id, rect: { x: r.left, y: r.top, width: Math.max(1, r.width), height: Math.max(1, r.height) } });
           setPopup(key);
@@ -603,7 +615,9 @@
   }
   $('key').addEventListener('click', function () { LB.post('requestFill'); });
   $('zoom').addEventListener('click', function () { LB.post('zoom', { action: 'reset' }); });
+  $('menu').addEventListener('pointerdown', function () { rememberOpen('menu'); });
   $('menu').addEventListener('click', function () { togglePopup('menu', $('menu')); });
+  $('shield').addEventListener('pointerdown', function () { rememberOpen('shield'); });
   $('shield').addEventListener('click', function () { togglePopup('shield', $('shield')); });
 
   // ---------- host events ----------
@@ -619,11 +633,11 @@
     renderNav();
   });
   LB.on('shellConfig', function (m) {
-    $('home').hidden = !m.showHomeButton;
     document.documentElement.classList.toggle('dark', m.theme === 'dark');
     document.documentElement.classList.toggle('light', m.theme === 'light');
   });
   LB.on('focusAddressBar', function () { address.focus(); address.select(); });
+  LB.on('blurAddressBar', function () { state.dirty = false; if (document.activeElement === address) address.blur(); else renderNav(); });
   // The address bar may be focused before the shell itself has the keyboard
   // focus: select again when it arrives, so typing replaces the text.
   window.addEventListener('focus', function () { if (document.activeElement === address) address.select(); });

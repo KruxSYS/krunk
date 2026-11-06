@@ -384,6 +384,17 @@ impl PopupContent {
             PopupContent::BookmarkEdit { .. } => PopupKind::BookmarkEdit,
         }
     }
+
+    /// The toolbar anchor that toggles this popup, for the reopen guard
+    /// (`toggle::ToggleGuard`); `None` for popups without a toggle button.
+    pub fn toggle_anchor(&self) -> Option<String> {
+        match self {
+            PopupContent::Menu { .. } => Some("menu".into()),
+            PopupContent::Shield { .. } => Some("shield".into()),
+            PopupContent::BookmarkFolder { id, .. } => Some(format!("folder:{id}")),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -421,7 +432,6 @@ pub enum Request {
     Forward,
     Reload,
     Stop,
-    Home,
     /// Opens an http(s) or built-in URL (bookmarks bar, page links).
     OpenUrl {
         url: String,
@@ -878,7 +888,6 @@ impl Sender {
                     | R::Forward
                     | R::Reload
                     | R::Stop
-                    | R::Home
                     | R::ToggleBookmark
                     | R::HitMap { .. }
                     | R::WindowControl { .. }
@@ -1160,7 +1169,6 @@ pub enum Event {
     },
     /// Shell layout options.
     ShellConfig {
-        show_home_button: bool,
         theme: Theme,
     },
     /// To the popup view: render this content.
@@ -1204,6 +1212,9 @@ pub enum Event {
         theme: Theme,
     },
     FocusAddressBar,
+    /// The host moved the focus to the page (a bookmark or link was opened):
+    /// the address bar stops editing and shows the page's address.
+    BlurAddressBar,
     /// To the shell: the mouse is over (or pressing) a caption button. The
     /// buttons are hit-tested natively, so the shell never sees the mouse
     /// over them.
@@ -1747,7 +1758,6 @@ mod tests {
             Request::Forward,
             Request::Reload,
             Request::Stop,
-            Request::Home,
             Request::OpenUrl { url: "https://b.example/".into(), new_tab: true },
             Request::OpenPage { page: "settings".into() },
             Request::ToggleBookmark,
@@ -2019,7 +2029,7 @@ mod tests {
                     bookmarks_bar: true,
                 },
             },
-            Event::ShellConfig { show_home_button: true, theme: Theme::Dark },
+            Event::ShellConfig { theme: Theme::Dark },
             Event::Popup { content: PopupContent::Menu { zoom: 1.0, can_reopen: true } },
             Event::Popup {
                 content: PopupContent::Shield {
@@ -2109,6 +2119,7 @@ mod tests {
             Event::DownloadsChanged { active: 1 },
             Event::Theme { theme: Theme::Light },
             Event::FocusAddressBar,
+            Event::BlurAddressBar,
             Event::ShowFind,
             Event::Toast { message: "hi".into() },
             Event::RestartRequired,
