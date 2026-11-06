@@ -51,6 +51,7 @@ mod pointer;
 mod power;
 mod segmented;
 mod settings_host;
+mod siteinfo;
 mod status;
 mod storage;
 mod updater;
@@ -1010,7 +1011,9 @@ impl Browser {
         let tab = m.active()?;
         let views = self.views.try_borrow().ok()?;
         let view = views.get(&tab.id);
-        let secure = tab.url.starts_with("https://") && !pages::is_pages_origin(&tab.url);
+        // A page the engine refused for a certificate error shows an error page: no lock.
+        let cert_error = self.tab_view(tab.id).is_some_and(|v| v.has_cert_error());
+        let secure = tab.url.starts_with("https://") && !pages::is_pages_origin(&tab.url) && !cert_error;
         let bookmarked = self.store.try_borrow().ok().is_some_and(|s| s.is_bookmarked(&tab.url).unwrap_or(false));
         Some(NavState {
             tab_id: tab.id,
@@ -1477,6 +1480,7 @@ impl Browser {
             Request::ShowPopup { popup, rect } => {
                 let anchor = match popup {
                     PopupKind::Menu => "menu",
+                    PopupKind::SiteInfo => "siteInfo",
                     _ => "shield",
                 };
                 if self.toggle_suppressed(anchor) {
@@ -1484,6 +1488,7 @@ impl Browser {
                 } else if popup.shell_may_open() && rect.is_valid() {
                     match popup {
                         PopupKind::Menu => self.show_popup(self.menu_content(), Some(rect)),
+                        PopupKind::SiteInfo => self.show_site_info(rect),
                         _ => {
                             self.shield_anchor.set(Some(rect));
                             self.show_shield();
@@ -1495,6 +1500,7 @@ impl Browser {
                 Some(folder) if sender == Sender::Popup => self.show_bookmark_folder(folder, None),
                 _ => self.hide_popup(),
             },
+            Request::PopupResize { height } => self.popup_resize(height),
             Request::ShowFolderItemMenu { id, x, y } => self.show_folder_item_menu(id, x, y),
             Request::MoveBookmarkInFolder { id, parent, index } => self.move_bookmark_in_folder(id, parent, index),
             Request::FolderItemDragOut { id } => {

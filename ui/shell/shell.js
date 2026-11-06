@@ -547,7 +547,7 @@
   });
 
   // ---------- popups (menu, shield) ----------
-  const POPUP_SIZES = { menu: [280, 542], shield: [300, 226] };
+  const POPUP_SIZES = { menu: [280, 542], shield: [300, 226], siteInfo: [360, 260] };
   // The press on the button deactivates the open popup, which closes it before the click
   // arrives (the host then says popupClosed). The click must not reopen it: the press
   // remembers what was open. The host has the same guard (lb_core::toggle).
@@ -571,6 +571,7 @@
     state.popup = kind;
     $('menu').classList.toggle('on', kind === 'menu');
     $('shield').classList.toggle('on', kind === 'shield');
+    $('site-icon').classList.toggle('on', kind === 'siteInfo');
     document.documentElement.classList.toggle('tab-menu', kind === 'tabMenu');
     document.querySelectorAll('.bm[data-folder]').forEach(function (b) {
       b.classList.toggle('on', kind === 'folder:' + b.dataset.folder);
@@ -693,7 +694,7 @@
   // being edited) onto the bar bookmarks it where it is dropped; a chip follows the
   // cursor. A plain click still focuses the field. The host takes the title and address
   // from the tab itself.
-  const urlDrag = { pointerId: null, startX: 0, startY: 0, moved: false, chip: null, target: null, fromField: false };
+  const urlDrag = { pointerId: null, startX: 0, startY: 0, moved: false, chip: null, target: null, fromField: false, suppressClick: false };
   function urlDragStart(e, fromField) {
     if (e.button !== 0 || !state.nav || !state.nav.url || state.nav.url.startsWith('krunk://')) return;
     if (fromField && state.editing) return;
@@ -703,7 +704,16 @@
     urlDrag.pointerId = e.pointerId; urlDrag.startX = e.clientX; urlDrag.startY = e.clientY;
     urlDrag.moved = false; urlDrag.target = null; urlDrag.fromField = fromField;
   }
-  $('site-icon').addEventListener('pointerdown', function (e) { urlDragStart(e, false); });
+  $('site-icon').addEventListener('pointerdown', function (e) { rememberOpen('siteInfo'); urlDragStart(e, false); });
+  // A click (not a drag) on the site icon: the lock popup with the connection and certificate.
+  $('site-icon').addEventListener('click', function () {
+    if (urlDrag.suppressClick || !state.nav || !state.nav.url) return;
+    const r = $('site-icon').getBoundingClientRect();
+    const size = POPUP_SIZES.siteInfo;
+    if (state.popup === 'siteInfo' || downWhileOpen === 'siteInfo') { downWhileOpen = null; LB.post('hidePopup'); setPopup(null); return; }
+    LB.post('showPopup', { popup: 'siteInfo', rect: { x: Math.max(0, r.left - 8), y: r.bottom + 6, width: size[0], height: size[1] } });
+    setPopup('siteInfo');
+  });
   address.addEventListener('pointerdown', function (e) { urlDragStart(e, true); });
   $('omnibox').addEventListener('pointermove', function (e) {
     if (urlDrag.pointerId !== e.pointerId) return;
@@ -735,6 +745,9 @@
       if (fromField && commit) { address.focus(); address.select(); }
       return;
     }
+    // The release that ends a drag is not a click on the icon.
+    urlDrag.suppressClick = true;
+    setTimeout(function () { urlDrag.suppressClick = false; }, 0);
     if (!commit || !t) return;
     if (t.into !== undefined) LB.post('bookmarkActivePage', { parent: t.into, index: 1000000 });
     else LB.post('bookmarkActivePage', { parent: BAR_ROOT, index: t.index });

@@ -250,6 +250,13 @@ async function testShell(browser) {
   // The press on ⋮ while its menu is open deactivates the popup: the host sends popupClosed
   // before the click arrives. The click must close, not reopen (3 clicks: open, closed, open).
   check(await page.locator('#home').count() === 0, 'the Home button is gone (0.5)');
+  // The site icon opens the lock popup under itself; a second click closes it.
+  await page.click('#site-icon');
+  const si = await lastSent(page, 'showPopup');
+  check(si && si.popup === 'siteInfo' && si.rect.width === 360 && si.rect.y > 40 && si.rect.x < 200, 'the site icon sends showPopup{siteInfo} under the icon (' + JSON.stringify(si && si.rect) + ')');
+  check(await page.locator('#site-icon.on').count() === 1, 'site icon highlighted while its popup is open');
+  await page.click('#site-icon');
+  check((await lastSent(page, 'hidePopup')) !== undefined && await page.locator('#site-icon.on').count() === 0, 'clicking it again closes the popup');
   const countShows = async () => (await sent(page)).filter((m) => m.cmd === 'showPopup' && m.popup === 'menu').length;
   await page.click('#menu');
   const shows1 = await countShows();
@@ -544,9 +551,60 @@ async function testPopup(browser) {
   await emit(page, { event: 'popup', content: { kind: 'shield', host: 'news.example.com', blocked: 37, allowed: false, enabled: true } });
   await page.waitForSelector('.panel');
   await shot(page, 'popup-shield.png');
-  await page.locator('button', { hasText: 'Allow ads on this site' }).click();
+  check(await page.locator('#site-toggle.on[aria-checked="true"]').count() === 1 && (await page.textContent('.pop-title')) === 'Blocking ads and trackers', 'shield header: the site switch is on');
+  await page.click('#site-toggle');
   const al = await lastSent(page, 'shieldAllowSite');
-  check(al && al.allow === true, 'shield allow sends shieldAllowSite{allow:true}');
+  check(al && al.allow === true, 'the switch sends shieldAllowSite{allow:true}');
+  // Dark theme.
+  await emit(page, { event: 'theme', theme: 'dark' });
+  await emit(page, { event: 'popup', content: { kind: 'shield', host: 'news.example.com', blocked: 37, allowed: true, enabled: true, recent: [
+    { url: 'https://ads.example/a.js', host: 'ads.example', kind: 'script', count: 3, redirected: false },
+    { url: 'https://px.example/p.gif', host: 'px.example', kind: 'image', count: 1, redirected: false },
+  ], distinct: 2 } });
+  await page.waitForTimeout(40);
+  check(await page.locator('#site-toggle:not(.on)[aria-checked="false"]').count() === 1 && (await page.textContent('.pop-title')) === 'Ads allowed on this site', 'allowed site: switch off, title says so');
+  check(await page.locator('.badge.kind-script').count() === 1 && await page.locator('.badge.kind-image').count() === 1, 'type badges per blocked address');
+  await shot(page, 'popup-shield-dark.png');
+  await emit(page, { event: 'theme', theme: 'light' });
+
+  // The lock popup (site info), every state.
+  const leafCert = { subject: 'example.com', subjectOrg: 'Example Org', issuer: 'DigiCert TLS RSA SHA256 2020 CA1', issuerOrg: 'DigiCert Inc', notBefore: 1735689600, notAfter: 1798761600, sans: ['example.com', 'www.example.com'], keyAlgorithm: 'RSA 2048 bits', signatureAlgorithm: 'SHA-256 with RSA', sha256: 'AA:BB:CC', serial: '01' };
+  const caCert = { subject: 'DigiCert TLS RSA SHA256 2020 CA1', subjectOrg: 'DigiCert Inc', issuer: 'DigiCert Global Root CA', issuerOrg: 'DigiCert Inc', notBefore: 1600000000, notAfter: 1900000000, sans: [], keyAlgorithm: 'RSA 2048 bits', signatureAlgorithm: 'SHA-256 with RSA', sha256: 'DD:EE:FF', serial: '02' };
+  ({ page, errors } = await make(360, 260));
+  await emit(page, { event: 'popup', content: { kind: 'siteInfo', info: { host: 'example.com', kind: 'https', secure: true, warnings: [], protocol: 'TLS 1.3', cipher: null, certs: [leafCert, caCert] } } });
+  await page.waitForSelector('.pop-title');
+  check((await page.textContent('.pop-title')) === 'Connection is secure' && await page.locator('.pop-icon.ok').count() === 1, 'https: "Connection is secure"');
+  check((await page.textContent('.panel')).includes('TLS 1.3') && (await page.textContent('.panel')).includes('not reported by the engine'), 'protocol shown, cipher "not reported by the engine"');
+  check((await page.textContent('.cert.leaf')).includes('example.com, www.example.com') && (await page.textContent('.cert.leaf')).includes('AA:BB:CC'), 'leaf: SANs and fingerprint');
+  let fitReq = await lastSent(page, 'popupResize');
+  check(fitReq && fitReq.height > 100, 'the popup asks the host for its height (' + (fitReq && fitReq.height) + ')');
+  check(await page.locator('#cert-chain').isHidden(), 'the chain is folded');
+  await page.click('#cert-details');
+  await page.waitForTimeout(20);
+  check(await page.locator('#cert-chain').isVisible() && (await page.textContent('#cert-chain')).includes('DigiCert Global Root CA'), '"Certificate details" shows the issuer chain');
+  const fitReq2 = await lastSent(page, 'popupResize');
+  check(fitReq2 && fitReq2.height > fitReq.height, 'and asks for more height (' + fitReq2.height + ' > ' + fitReq.height + ')');
+  await shot(page, 'popup-siteinfo-https.png');
+  await emit(page, { event: 'popup', content: { kind: 'siteInfo', info: { host: 'expired.badssl.com', kind: 'https', secure: false, warnings: ['Certificate error: the certificate has expired or is not yet valid.'], protocol: 'TLS 1.2', cipher: null, certs: [Object.assign({}, leafCert, { subject: '*.badssl.com', notAfter: 1430000000 })] } } });
+  await page.waitForSelector('.pop-card.warning');
+  check((await page.textContent('.pop-title')) === 'Connection is not secure' && (await page.textContent('.pop-card.warning')).includes('expired') && (await page.textContent('.cert.leaf')).includes('(expired)'), 'certificate error: warning card and "(expired)"');
+  await shot(page, 'popup-siteinfo-expired.png');
+  await emit(page, { event: 'popup', content: { kind: 'siteInfo', info: { host: 'mixed.badssl.com', kind: 'https', secure: true, warnings: ['This page shows insecure images or media (mixed content).'], protocol: 'TLS 1.2', cipher: null, certs: [leafCert] } } });
+  await page.waitForSelector('.pop-card.warning');
+  check((await page.textContent('.pop-card.warning')).includes('mixed content') && await page.locator('.pop-icon.warn').count() === 1, 'mixed content: a warning');
+  await emit(page, { event: 'popup', content: { kind: 'siteInfo', info: { host: 'neverssl.com', kind: 'http', secure: false, warnings: [], protocol: null, cipher: null, certs: [] } } });
+  await page.waitForSelector('.plain-note');
+  check((await page.textContent('.plain-note')) === 'Connection is not secure. No certificate.' && await page.locator('.cert').count() === 0, 'http: "Connection is not secure. No certificate."');
+  await shot(page, 'popup-siteinfo-http.png');
+  await emit(page, { event: 'popup', content: { kind: 'siteInfo', info: { host: '', kind: 'internal', secure: false, warnings: [], protocol: null, cipher: null, certs: [] } } });
+  await page.waitForTimeout(20);
+  check((await page.textContent('.pop-title')) === 'Krunk page', 'internal page: "Krunk page"');
+  await emit(page, { event: 'theme', theme: 'dark' });
+  await emit(page, { event: 'popup', content: { kind: 'siteInfo', info: { host: 'example.com', kind: 'https', secure: true, warnings: [], protocol: 'TLS 1.3', cipher: null, certs: [leafCert, caCert] } } });
+  await page.waitForSelector('.pop-title');
+  await shot(page, 'popup-siteinfo-dark.png');
+  await emit(page, { event: 'theme', theme: 'light' });
+  check(errors.length === 0, 'site info: no console errors (' + errors.join(' | ') + ')');
 
   ({ page, errors } = await make(360, 150));
   const save = { kind: 'savePassword', tabId: 7, origin: 'https://bank.example', username: 'alice', update: false };
@@ -1390,7 +1448,7 @@ async function testBlockedList(browser) {
   ];
   await emit(page, { event: 'popup', content: { kind: 'shield', host: 'news.example.com', blocked: 10, allowed: false, enabled: true, recent: recent, distinct: 14 } });
   await page.waitForSelector('.blocked');
-  check(await page.locator('.blocked').count() === 3, 'the shield lists the newest blocked addresses');
+  check(await page.locator('.blocked').count() === 3 && await page.locator('.blocked .badge').count() === 3, 'the shield lists the newest blocked addresses with type badges');
   check((await page.locator('.blocked').nth(1).textContent()).includes('www.google-analytics.com') && (await page.locator('.blocked').nth(1).textContent()).includes('×7'), 'host, path and count');
   check(await page.evaluate(() => document.getElementById('root').getBoundingClientRect().bottom) <= 226 + 12 + 72 + 32, 'the panel fits the size the host gives it (3 rows)');
   check(await page.evaluate(() => Array.from(document.querySelectorAll('.blocked .addr')).every((n) => n.scrollWidth <= n.clientWidth + 1 || getComputedStyle(n).textOverflow === 'ellipsis')), 'long addresses are cut with an ellipsis');
@@ -1581,14 +1639,14 @@ async function testShieldAndHttpsOnly(browser) {
   await emit(page, { event: 'popup', content: { kind: 'shield', host: 'news.example.com', blocked: 42, allowed: false, enabled: true } });
   await page.waitForSelector('.panel');
   check((await page.locator('.big').textContent()) === '42', 'popover shows 42 blocked');
-  check((await page.textContent('.origin')) === 'news.example.com', 'popover shows the site');
+  check((await page.textContent('.pop-sub')) === 'news.example.com', 'popover shows the site');
   await shot(page, 'popup-shield-count.png');
-  await page.locator('button', { hasText: 'Allow ads on this site' }).click();
+  await page.click('#site-toggle[title="Allow ads on this site"]');
   const al = await lastSent(page, 'shieldAllowSite');
-  check(al && al.allow === true, '"Allow ads on this site" sends shieldAllowSite{allow:true}');
+  check(al && al.allow === true, '"Allow ads on this site" (the switch) sends shieldAllowSite{allow:true}');
   await emit(page, { event: 'popup', content: { kind: 'shield', host: 'news.example.com', blocked: 0, allowed: true, enabled: true } });
   await page.waitForTimeout(30);
-  await page.locator('button', { hasText: 'Block on this site again' }).click();
+  await page.click('#site-toggle[title="Block on this site again"]');
   check((await lastSent(page, 'shieldAllowSite')).allow === false, 'toggle back sends allow:false');
 
   // HTTPS-only interstitial.

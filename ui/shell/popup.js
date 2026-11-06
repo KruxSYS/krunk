@@ -143,31 +143,105 @@
     LB.post('zoom', { action: action });
   }
 
+  // The shield: the site and its on/off switch, the count, the newest blocked addresses with
+  // a type badge each, "Show all" (krunk://adblock), and the site's cookies and data.
   function renderShield(c) {
-    return [el('div', { class: 'panel' }, [
-      el('h2', { text: c.enabled ? (c.allowed ? 'Blocking is off for' : 'Blocking ads and trackers on') : 'Ad blocking is disabled' }),
-      el('p', { class: 'origin', text: c.host || '' }),
-      el('p', {}, [el('span', { class: 'big', text: String(c.blocked) }), ' blocked on this page']),
-      c.enabled && c.host ? el('div', { class: 'row' }, [
-        el('button', {
-          class: 'btn', onclick: () => { LB.post('shieldAllowSite', { allow: !c.allowed }); close(); },
-          text: c.allowed ? 'Block on this site again' : 'Allow ads on this site',
-        }),
-      ]) : null,
-      c.host ? el('div', { class: 'row' }, [
-        el('button', { class: 'btn', id: 'site-data', onclick: () => { LB.post('openSiteData'); close(); }, text: 'Cookies and site data' }),
-      ]) : null,
-      (c.recent && c.recent.length) ? el('div', { class: 'blocked-list' }, c.recent.map(function (b) {
-        const path = b.url.replace(/^https?:\/\/[^/]+/, '') || '/';
-        return el('div', { class: 'blocked', title: b.url }, [
-          el('span', { class: 'kind', text: kindLabel(b.kind) }),
-          el('span', { class: 'addr' }, [el('strong', { text: b.host }), el('span', { text: path })]),
-          b.count > 1 ? el('span', { class: 'count', text: '×' + b.count }) : null,
-        ]);
-      }).concat([el('button', { class: 'link', id: 'show-blocked', onclick: () => { LB.post('openBlockedPage'); close(); },
-        text: 'Show all ' + c.distinct + ' blocked addresses' })])) : null,
-    ])];
+    const off = !c.enabled;
+    const head = el('div', { class: 'pop-head' }, [
+      el('div', { class: 'pop-icon shield' }, [el('span', { text: off ? '○' : (c.allowed ? '◌' : '●') })]),
+      el('div', { class: 'pop-titles' }, [
+        el('h2', { class: 'pop-title', text: off ? 'Ad blocking is off' : (c.allowed ? 'Ads allowed on this site' : 'Blocking ads and trackers') }),
+        el('div', { class: 'pop-sub', text: c.host || 'No site' }),
+      ]),
+      (!off && c.host) ? el('button', {
+        class: 'switch' + (c.allowed ? '' : ' on'), id: 'site-toggle', role: 'switch', 'aria-checked': c.allowed ? 'false' : 'true',
+        title: c.allowed ? 'Block on this site again' : 'Allow ads on this site',
+        'aria-label': c.allowed ? 'Block on this site again' : 'Allow ads on this site',
+        onclick: () => { LB.post('shieldAllowSite', { allow: !c.allowed }); close(); },
+      }, [el('span', { class: 'knob' })]) : null,
+    ]);
+    const count = el('div', { class: 'pop-card count-card' }, [
+      el('span', { class: 'big', text: String(c.blocked) }),
+      el('span', { class: 'count-label', text: c.blocked === 1 ? 'request blocked on this page' : 'requests blocked on this page' }),
+    ]);
+    const list = (c.recent && c.recent.length) ? el('div', { class: 'pop-card blocked-list' }, c.recent.map(function (b) {
+      const path = b.url.replace(/^https?:\/\/[^/]+/, '') || '/';
+      return el('div', { class: 'blocked', title: b.url }, [
+        el('span', { class: 'badge kind-' + b.kind, text: kindLabel(b.kind) }),
+        el('span', { class: 'addr' }, [el('strong', { text: b.host }), el('span', { text: path })]),
+        b.count > 1 ? el('span', { class: 'count', text: '×' + b.count }) : null,
+      ]);
+    }).concat([el('button', { class: 'link', id: 'show-blocked', onclick: () => { LB.post('openBlockedPage'); close(); },
+      text: 'Show all ' + c.distinct + ' blocked addresses' })])) : null;
+    const foot = c.host ? el('div', { class: 'pop-row' }, [
+      el('button', { class: 'btn', id: 'site-data', onclick: () => { LB.post('openSiteData'); close(); }, text: 'Cookies and site data' }),
+    ]) : null;
+    return [el('div', { class: 'panel pop' }, [head, count, list, foot])];
   }
+
+  // The lock popup: the connection, a warning when something is wrong, the certificate.
+  function dateText(unix) {
+    const d = new Date(unix * 1000);
+    return isNaN(d.getTime()) ? '?' : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+  function certCard(cert, first) {
+    const kv = (k, v) => el('div', { class: 'kv' }, [el('span', { class: 'k', text: k }), el('span', { class: 'v', text: v })]);
+    const expired = cert.notAfter * 1000 < Date.now();
+    return el('div', { class: 'pop-card cert' + (first ? ' leaf' : '') }, [
+      el('div', { class: 'cert-name', text: cert.subject || '(no name)' }),
+      cert.subjectOrg ? kv('Organisation', cert.subjectOrg) : null,
+      cert.sans && cert.sans.length ? kv('Names', cert.sans.join(', ')) : null,
+      kv('Issued by', cert.issuer + (cert.issuerOrg ? ' (' + cert.issuerOrg + ')' : '')),
+      kv('Valid', dateText(cert.notBefore) + ' – ' + dateText(cert.notAfter) + (expired ? ' (expired)' : '')),
+      kv('Key', cert.keyAlgorithm),
+      kv('Signature', cert.signatureAlgorithm),
+      kv('SHA-256', cert.sha256),
+    ]);
+  }
+  function renderSiteInfo(c) {
+    const i = c.info;
+    let title, sub, icon;
+    if (i.kind === 'internal') { title = 'Krunk page'; sub = 'A built-in page of Krunk'; icon = 'K'; }
+    else if (i.kind === 'file') { title = 'Local file'; sub = 'A file on this computer'; icon = '▤'; }
+    else if (i.kind === 'http') { title = 'Connection is not secure'; sub = 'No certificate. Anything you send can be read on the way.'; icon = '!'; }
+    else if (i.kind !== 'https') { title = 'No connection information'; sub = ''; icon = '?'; }
+    else if (i.warnings.length) { title = 'Connection is not secure'; sub = i.host; icon = '!'; }
+    else if (i.secure) { title = 'Connection is secure'; sub = i.host; icon = '🔒'; }
+    else { title = 'Connection information unavailable'; sub = i.host; icon = '?'; }
+    const state = i.kind !== 'https' ? 'plain' : (i.warnings.length || !i.secure ? 'warn' : 'ok');
+    const head = el('div', { class: 'pop-head' }, [
+      el('div', { class: 'pop-icon ' + state }, [el('span', { text: icon })]),
+      el('div', { class: 'pop-titles' }, [el('h2', { class: 'pop-title', text: title }), el('div', { class: 'pop-sub', text: sub })]),
+    ]);
+    const parts = [head];
+    (i.warnings || []).forEach((w) => parts.push(el('div', { class: 'pop-card warning', text: w })));
+    if (i.kind === 'http') parts.push(el('div', { class: 'pop-card plain-note', text: 'Connection is not secure. No certificate.' }));
+    if (i.kind === 'https') {
+      const kv = (k, v) => el('div', { class: 'kv' }, [el('span', { class: 'k', text: k }), el('span', { class: 'v', text: v })]);
+      parts.push(el('div', { class: 'pop-card' }, [
+        kv('Protocol', i.protocol || 'not reported by the engine'),
+        kv('Cipher', i.cipher || 'not reported by the engine'),
+        kv('Certificate', i.certs.length ? (i.certs.length === 1 ? '1 certificate' : i.certs.length + ' certificates in the chain') : 'none'),
+      ]));
+      if (i.certs.length) {
+        parts.push(certCard(i.certs[0], true));
+        if (i.certs.length > 1) {
+          const chain = el('div', { id: 'cert-chain', hidden: true }, i.certs.slice(1).map((cert) => certCard(cert, false)));
+          const toggle = el('button', { class: 'link', id: 'cert-details', text: 'Certificate details (' + (i.certs.length - 1) + ' more)' });
+          toggle.addEventListener('click', () => {
+            chain.hidden = !chain.hidden;
+            toggle.textContent = chain.hidden ? 'Certificate details (' + (i.certs.length - 1) + ' more)' : 'Hide certificate details';
+            fit();
+          });
+          parts.push(toggle, chain);
+        }
+      }
+    }
+    return [el('div', { class: 'panel pop' }, parts)];
+  }
+  // The popup asks the host for the height its content needs.
+  function fit() { LB.post('popupResize', { height: document.body.scrollHeight + 2 }); }
+
 
   function renderSave(c) {
     const reply = (accept, never) => {
@@ -378,12 +452,13 @@
   LB.on('popup', function (m) {
     current = m.content;
     const c = m.content;
-    const render = { menu: renderMenu, shield: renderShield, savePassword: renderSave, fill: renderFill, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
+    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, savePassword: renderSave, fill: renderFill, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
     root.textContent = '';
     root.dataset.kind = c.kind;
     (render ? render(c) : []).forEach((n) => n && root.appendChild(n));
     const first = document.getElementById('master') || document.getElementById('bm-name') || document.getElementById('default') || root.querySelector('button:not([disabled])');
     if (first) first.focus();
+    if (c.kind === 'siteInfo') requestAnimationFrame(fit);
   });
 
   document.addEventListener('keydown', function (e) {

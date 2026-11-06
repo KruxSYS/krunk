@@ -123,6 +123,8 @@ pub struct EntryInput {
 pub enum PopupKind {
     Menu,
     Shield,
+    /// The lock/site icon's popup: the connection and the certificate.
+    SiteInfo,
     SavePassword,
     Fill,
     /// A folder of the bookmarks bar (opened with `ShowBookmarkFolder`).
@@ -142,7 +144,7 @@ pub enum PopupKind {
 impl PopupKind {
     /// Prompts about passwords must come from the host, never the shell.
     pub fn shell_may_open(self) -> bool {
-        matches!(self, PopupKind::Menu | PopupKind::Shield)
+        matches!(self, PopupKind::Menu | PopupKind::Shield | PopupKind::SiteInfo)
     }
 
     /// Every popup has buttons, so every popup takes keyboard focus. This
@@ -246,6 +248,10 @@ pub enum PopupContent {
         /// How many different addresses were blocked.
         #[serde(default)]
         distinct: u32,
+    },
+    /// The lock popup (see `certinfo`).
+    SiteInfo {
+        info: crate::certinfo::SiteInfo,
     },
     /// "Save password for `username` on `origin`?" (no password is sent to the UI).
     SavePassword {
@@ -367,6 +373,7 @@ impl PopupContent {
         match self {
             PopupContent::Menu { .. } => PopupKind::Menu,
             PopupContent::Shield { .. } => PopupKind::Shield,
+            PopupContent::SiteInfo { .. } => PopupKind::SiteInfo,
             PopupContent::SavePassword { .. } => PopupKind::SavePassword,
             PopupContent::Fill { .. } => PopupKind::Fill,
             PopupContent::BookmarkFolder { .. } => PopupKind::BookmarkFolder,
@@ -384,6 +391,7 @@ impl PopupContent {
         match self {
             PopupContent::Menu { .. } => Some("menu".into()),
             PopupContent::Shield { .. } => Some("shield".into()),
+            PopupContent::SiteInfo { .. } => Some("siteInfo".into()),
             PopupContent::BookmarkFolder { id, .. } => Some(format!("folder:{id}")),
             _ => None,
         }
@@ -474,6 +482,11 @@ pub enum Request {
         rect: PopupRect,
     },
     HidePopup,
+    /// The popup's content needs another height (CSS px): the site-info popup grows when
+    /// "Certificate details" opens. The host clamps it to the work area.
+    PopupResize {
+        height: f64,
+    },
     /// Opens a bookmarks-bar folder in the popup. The shell passes the
     /// rect under the folder button; the popup passes `None` to show a
     /// subfolder in place.
@@ -944,6 +957,7 @@ impl Sender {
                     | R::SaveBookmark { .. }
                     | R::HidePopup
                     | R::ShowBookmarkFolder { rect: None, .. }
+                    | R::PopupResize { .. }
                     | R::ShowFolderItemMenu { .. }
                     | R::MoveBookmarkInFolder { .. }
                     | R::FolderItemDragOut { .. }
@@ -1880,6 +1894,7 @@ mod tests {
             Request::ShowFolderItemMenu { id: 4, x: 10.0, y: 20.0 },
             Request::MoveBookmarkInFolder { id: 4, parent: 2, index: 1 },
             Request::FolderItemDragOut { id: 4 },
+            Request::PopupResize { height: 420.0 },
             Request::BookmarkActivePage { parent: 1, index: 0 },
             Request::AddBookmarkAt { url: "https://a.example/".into(), parent: 1, index: 2 },
             Request::SaveSettings { settings: Box::new(Settings::default()) },
@@ -1989,6 +2004,17 @@ mod tests {
             parse_request(Sender::Popup, r#"{"cmd":"showFolderItemMenu","id":12,"x":20,"y":40}"#).unwrap().request,
             folder_menu
         );
+        // The popup may ask for another height; nothing else may.
+        let resize = Request::PopupResize { height: 300.0 };
+        assert!(Sender::Popup.permits(&resize) && !Sender::Shell.permits(&resize));
+        assert!(Page::ALL.iter().all(|p| !Sender::Page(*p).permits(&resize)));
+        // The lock popup is a shell popup like the menu and the shield.
+        assert!(PopupKind::SiteInfo.shell_may_open() && PopupKind::SiteInfo.takes_focus());
+        let info = PopupContent::SiteInfo { info: crate::certinfo::site_info("http://neverssl.com/", None) };
+        assert_eq!(info.kind(), PopupKind::SiteInfo);
+        assert_eq!(info.toggle_anchor().as_deref(), Some("siteInfo"));
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains(r#""kind":"siteInfo""#) && json.contains(r#""kind":"http""#), "{json}");
         let parsed = parse_request(
             Sender::Shell,
             r#"{"cmd":"showBookmarkMenu","id":null,"rect":{"x":1,"y":2,"width":240,"height":300}}"#,

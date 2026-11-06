@@ -291,6 +291,9 @@ pub(super) struct ViewInner {
     closed: Cell<bool>,
     /// Net error of the current load cycle (reported when loading stops).
     pub load_error: Cell<Option<i32>>,
+    /// The certificate error of the latest navigation (the engine cancelled it), until the
+    /// next navigation starts: the lock popup explains it.
+    pub cert_error: RefCell<Option<lb_core::certinfo::SslReport>>,
     /// Frames (by identifier) that report playing audio.
     audible_frames: RefCell<std::collections::HashSet<String>>,
     devtools_id: Cell<i32>,
@@ -357,6 +360,7 @@ impl View {
             started: Cell::new(false),
             closed: Cell::new(false),
             load_error: Cell::new(None),
+            cert_error: RefCell::new(None),
             audible_frames: RefCell::new(std::collections::HashSet::new()),
             devtools_id: Cell::new(0),
             devtools_calls: RefCell::new(HashMap::new()),
@@ -772,6 +776,34 @@ impl View {
         let dpi = unsafe { windows::Win32::UI::HiDpi::GetDpiForWindow(hwnd) }.max(96);
         let scale = f64::from(dpi) / 96.0;
         Some(((f64::from(p.x) / scale) as i32, (f64::from(p.y) / scale) as i32))
+    }
+
+    /// What the engine reports about the page's connection: the visible navigation entry's
+    /// SSL status, with the certificate chain as DER. A navigation the engine refused for a
+    /// certificate error has no entry of its own: that error is reported instead.
+    pub fn ssl_report(&self) -> Option<lb_core::certinfo::SslReport> {
+        let from_entry = self.host().and_then(|h| h.visible_navigation_entry()).and_then(|e| {
+            let s = e.sslstatus()?;
+            let url = CefString::from(&e.url()).to_string();
+            Some(client::ssl_report(
+                url,
+                s.is_secure_connection() != 0,
+                s.cert_status(),
+                s.sslversion(),
+                s.content_status(),
+                s.x509_certificate(),
+            ))
+        });
+        match from_entry {
+            Some(r) if !r.chain.is_empty() || self.0.cert_error.borrow().is_none() => Some(r),
+            _ => self.0.cert_error.borrow().clone().or(from_entry),
+        }
+    }
+
+    /// The latest navigation was refused for a certificate error (the engine's error page
+    /// shows): the address bar must not show a lock.
+    pub fn has_cert_error(&self) -> bool {
+        self.0.cert_error.borrow().is_some()
     }
 
     /// Calls a DevTools protocol method on this browser (fire and forget).

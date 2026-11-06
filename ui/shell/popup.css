@@ -53,11 +53,52 @@ body { background: var(--bg-raised); border: 1px solid var(--border); border-rad
   background: var(--bg-raised); color: var(--fg); font: inherit; }
 .bookmark-edit input:focus { outline: none; border-color: var(--accent); }
 .bookmark-edit .error { margin: 0 0 6px; min-height: 0; }
+/* Shared look of the shield and site-info popups: a header row with an icon, a title and a
+   subtitle, then cards. */
+.pop { padding: 10px 10px 8px; }
+.pop-head { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; }
+.pop-icon { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex: none; border-radius: 50%;
+            background: var(--bg-hover); color: var(--fg); font-size: 15px; font-weight: 700; }
+.pop-icon.ok { background: #dcfce7; color: #15803d; }
+.pop-icon.warn { background: #fee2e2; color: #b91c1c; }
+.pop-icon.shield { background: #dbeafe; color: #1d4ed8; }
+.pop-titles { flex: 1; min-width: 0; }
+.pop-title { margin: 0; font-size: 14px; font-weight: 600; line-height: 1.25; }
+.pop-sub { color: var(--fg-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pop-card { margin: 0 0 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.pop-card.warning { border-color: #fca5a5; background: #fef2f2; color: #991b1b; }
+:root.dark .pop-card.warning { background: #3b1d1d; border-color: #7f1d1d; color: #fecaca; }
+@media (prefers-color-scheme: dark) { :root:not(.light) .pop-card.warning { background: #3b1d1d; border-color: #7f1d1d; color: #fecaca; } }
+.pop-card.plain-note { color: var(--fg-muted); }
+.pop-row { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.count-card { display: flex; align-items: baseline; gap: 8px; }
+.count-label { color: var(--fg-muted); }
+.kv { display: flex; gap: 8px; margin: 2px 0; font-size: 12px; }
+.kv .k { flex: none; width: 82px; color: var(--fg-muted); }
+.kv .v { flex: 1; min-width: 0; word-break: break-all; }
+.cert-name { margin: 0 0 4px; font-weight: 600; }
+.cert:not(.leaf) { background: var(--bg-raised); }
+#cert-chain[hidden] { display: none; }
+/* The on/off switch of the shield. */
+.switch { position: relative; width: 36px; height: 20px; flex: none; padding: 0; border: 0; border-radius: 10px;
+          background: var(--border); cursor: pointer; transition: background .15s; }
+.switch .knob { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff;
+                box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: left .15s; }
+.switch.on { background: var(--accent); }
+.switch.on .knob { left: 18px; }
 /* Shield panel: what was blocked. */
-.blocked-list { margin: 10px 0 0; border-top: 1px solid var(--border); padding-top: 6px; }
+.blocked-list { padding: 6px 10px; }
 .blocked { display: flex; align-items: center; gap: 6px; height: 24px; font-size: 12px; }
-.blocked .kind { flex: none; min-width: 52px; padding: 1px 4px; border-radius: 4px; background: var(--bg-hover);
-                 color: var(--fg-muted); font-size: 10px; text-align: center; text-transform: uppercase; }
+.badge { flex: none; min-width: 52px; padding: 1px 5px; border-radius: 10px; background: var(--bg-hover);
+         color: var(--fg-muted); font-size: 10px; text-align: center; text-transform: uppercase; letter-spacing: .02em; }
+.badge.kind-script { background: #fef3c7; color: #92400e; }
+.badge.kind-image, .badge.kind-media, .badge.kind-font { background: #dbeafe; color: #1e40af; }
+.badge.kind-ping, .badge.kind-xhr, .badge.kind-fetch, .badge.kind-beacon { background: #fce7f3; color: #9d174d; }
+.badge.kind-frame, .badge.kind-subdocument, .badge.kind-document { background: #ede9fe; color: #5b21b6; }
+:root.dark .badge.kind-script { background: #78350f; color: #fde68a; }
+:root.dark .badge.kind-image, :root.dark .badge.kind-media, :root.dark .badge.kind-font { background: #1e3a8a; color: #bfdbfe; }
+:root.dark .badge.kind-ping, :root.dark .badge.kind-xhr, :root.dark .badge.kind-fetch, :root.dark .badge.kind-beacon { background: #831843; color: #fbcfe8; }
+:root.dark .badge.kind-frame, :root.dark .badge.kind-subdocument, :root.dark .badge.kind-document { background: #4c1d95; color: #ddd6fe; }
 .blocked .addr { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--fg-muted); }
 .blocked .addr strong { color: var(--fg); font-weight: 600; }
 .blocked .count { flex: none; color: var(--fg-muted); }

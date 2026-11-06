@@ -537,6 +537,22 @@ impl Window {
         ScreenRect { x: 0, y: 0, width: 1920, height: 1080 }
     }
 
+    /// Changes the window's height, keeping its position and width.
+    pub fn resize_height(self, height: i32) {
+        // SAFETY: valid window handle.
+        unsafe {
+            let _ = SetWindowPos(
+                self.0,
+                None,
+                0,
+                0,
+                self.rect().width,
+                height.max(1),
+                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+        }
+    }
+
     /// Repaints the window's own client area (the DevTools splitter and strip).
     pub fn invalidate(self) {
         // SAFETY: valid window handle.

@@ -272,13 +272,19 @@ wrap_load_handler! {
             frame: Option<&mut Frame>,
             error_code: Errorcode,
             _error_text: Option<&CefString>,
-            _failed_url: Option<&CefString>,
+            failed_url: Option<&CefString>,
         ) {
             if !is_main(&frame) {
                 return;
             }
             if let Some(view) = lookup(self.key) {
                 view.load_error.set(Some(sys::cef_errorcode_t::from(error_code) as i32));
+                // The error page (an interstitial, say) shows for the failed address: the
+                // address bar must say so, not keep the previous page's address.
+                let url = text(failed_url);
+                if !url.is_empty() {
+                    view.ev.address.with(|f| f(url));
+                }
             }
         }
     }
@@ -363,6 +369,35 @@ wrap_download_image_callback! {
     }
 }
 
+/// Plain data from the engine's SSL status, for `lb_core::certinfo`.
+pub(super) fn ssl_report(
+    url: String,
+    secure: bool,
+    status: CertStatus,
+    version: SslVersion,
+    content: SslContentStatus,
+    cert: Option<X509Certificate>,
+) -> lb_core::certinfo::SslReport {
+    let mut chain = Vec::new();
+    if let Some(c) = cert {
+        if let Some(der) = c.derencoded() {
+            chain.push(binary_bytes(&der));
+        }
+        let mut issuers = Vec::new();
+        c.derencoded_issuer_chain(Some(&mut issuers));
+        chain.extend(issuers.iter().flatten().map(binary_bytes).take(8));
+    }
+    lb_core::certinfo::SslReport {
+        url,
+        secure,
+        // Flag enums: the raw bits, whatever combination the engine set.
+        cert_status: *status.as_ref() as i32 as u32,
+        version: *version.as_ref() as i32,
+        content_status: *content.as_ref() as i32 as u32,
+        chain,
+    }
+}
+
 pub(super) fn binary_bytes(bin: &BinaryValue) -> Vec<u8> {
     let (ptr, len) = (bin.raw_data() as *const u8, bin.size());
     if ptr.is_null() || len == 0 {
@@ -441,10 +476,33 @@ wrap_request_handler! {
                 return 0;
             }
             let url = request.map(|r| CefString::from(&r.url()).to_string()).unwrap_or_default();
+            if let Some(view) = lookup(self.key) {
+                // A new navigation: the last certificate error no longer describes the page.
+                *view.cert_error.borrow_mut() = None;
+            }
             let nav = NavigationStart { url, redirected: is_redirect == 1 };
             // Fail closed: no view or no policy = no navigation.
             let allow = lookup(self.key).and_then(|v| v.ev.before_browse.with(|f| f(&nav))).unwrap_or(false);
             c_int::from(!allow)
+        }
+
+        /// The engine refuses the navigation (the default: no "proceed anyway"); what it
+        /// found is kept for the lock popup.
+        fn on_certificate_error(
+            &self,
+            _browser: Option<&mut Browser>,
+            _cert_error: Errorcode,
+            request_url: Option<&CefString>,
+            ssl_info: Option<&mut Sslinfo>,
+            _callback: Option<&mut Callback>,
+        ) -> c_int {
+            if let (Some(view), Some(info)) = (lookup(self.key), ssl_info) {
+                let report = ssl_report(
+                    text(request_url),
+                    false, info.cert_status(), SslVersion::default(), SslContentStatus::default(), info.x509_certificate());
+                *view.cert_error.borrow_mut() = Some(report);
+            }
+            0
         }
 
         fn on_open_urlfrom_tab(
