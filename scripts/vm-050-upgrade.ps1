@@ -92,8 +92,11 @@ switch ($Phase) {
   'prep' {
     $bak = 'C:\pipeline\krunk\data-backup-050'
     New-Item -ItemType Directory -Force $bak | Out-Null
-    Copy-Item "$data\browser.db", "$data\vault.json" $bak -Force
+    Copy-Item "$data\browser.db", "$data\vault.json" $bak -Force -ErrorAction SilentlyContinue
     Log "[$P] backed up browser.db and vault.json to $bak"
+    # A clean data folder, so that the live 0.4.0 makes genuine 0.4.0 data (schema v4).
+    Get-Process Krunk -EA SilentlyContinue | Stop-Process -Force; Start-Sleep 1
+    Remove-Item -Recurse -Force $data -ErrorAction SilentlyContinue
     $ProgressPreference = 'SilentlyContinue'
     Invoke-WebRequest 'https://krunk.209.wf/download/0.4.0/Krunk-Setup-0.4.0.exe' -OutFile $old -UseBasicParsing
     $sums = (Invoke-WebRequest 'https://krunk.209.wf/download/0.4.0/SHA256SUMS' -UseBasicParsing).Content
@@ -110,22 +113,33 @@ switch ($Phase) {
     SafeGo 'http://localhost:8092/move.html?upgrade=1' 3000
     SafeKeys '^t' 1200; SafeGo 'https://example.com/' 3000
     SafeKeys '^d' 1500
-    # A vault with one saved login (the "Save password?" prompt), as in vm-050-autofill.ps1.
-    SafeKeys '^t' 1200; SafeGo 'krunk://passwords' 3500
-    Click 640 371 300; Keys 'Krunk-test-master-1' 200
-    Click 640 438 300; Keys 'Krunk-test-master-1' 200
-    Click 456 551 4000
-    SafeGo 'http://localhost:8094/origin-login.html' 3500
-    Click 170 237 400; Keys 'upgrade-user' 200
-    Click 170 315 400; Keys 'Up-grade-pass-1' 200
-    Keys '{ENTER}' 2500
-    Shot "$P-040-save-prompt"
-    Click 1220 157 2000
-    SafeGo 'krunk://passwords' 3000
-    Shot "$P-040-passwords"
     SafeKeys '^t' 1200; SafeGo 'krunk://history' 2500
     SafeKeys '^n' 2500; SafeGo 'http://localhost:8092/move.html?w=second' 3000
     Shot "$P-040-tabs"
+    KrunkWindows $P
+    ExitAll ([U]::GetForegroundWindow())
+  }
+  'vault' {
+    # In the installed 0.4.0 (window at 40,30 1200x720): a vault with one login saved through
+    # the "Save password?" prompt, then Exit from the menu so the session keeps both windows.
+    Start-Installed
+    $A = MainWindow
+    [U]::MoveWindow($A, 40, 30, 1200, 720, $true) | Out-Null; Start-Sleep 1
+    if (-not (Focus $A)) { throw 'no focus' }
+    SafeKeys '^t' 1200; SafeGo 'krunk://passwords' 3500
+    Click 640 400 300; Keys 'Krunk-test-master-1' 200
+    Click 640 468 300; Keys 'Krunk-test-master-1' 200
+    Click 456 581 4000
+    Shot "$P-040-vault"
+    SafeGo 'http://localhost:8094/origin-login.html' 3500
+    Click 211 267 400; Keys 'upgrade-user' 200
+    Click 211 345 400; Keys 'Up-grade-pass-1' 200
+    Keys '{ENTER}' 2500
+    Shot "$P-040-save-prompt"
+    Click 1180 187 2000
+    SafeGo 'krunk://passwords' 3000
+    Shot "$P-040-passwords"
+    Listing
     KrunkWindows $P
     ExitAll ([U]::GetForegroundWindow())
   }
@@ -152,6 +166,9 @@ switch ($Phase) {
   }
   'restore' {
     Install $old
+    Get-Process Krunk -EA SilentlyContinue | Stop-Process -Force; Start-Sleep 1
+    Remove-Item -Recurse -Force $data -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force $data | Out-Null
     Copy-Item 'C:\pipeline\krunk\data-backup-050\browser.db', 'C:\pipeline\krunk\data-backup-050\vault.json' $data -Force -ErrorAction SilentlyContinue
     Listing
     Log "[$P] restored 0.4.0 and the data from prep"
