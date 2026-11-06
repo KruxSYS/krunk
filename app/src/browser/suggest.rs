@@ -290,6 +290,11 @@ impl Browser {
         }
     }
 
+    /// The tab whose suggestion dropdown is open.
+    pub(super) fn suggest_open_tab(&self) -> Option<TabId> {
+        self.suggest.open.borrow().as_ref().map(|o| o.tab)
+    }
+
     /// The dropdown was hidden without a choice.
     pub(super) fn suggest_dismissed(&self) {
         self.suggest.open.borrow_mut().take();

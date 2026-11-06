@@ -15,7 +15,7 @@
 <p id="state"></p>
 <script>
   function show() {
-    document.getElementById('state').textContent = 'frame: user="' + document.getElementById('fuser').value + '" password-length=' + document.getElementById('fpw').value.length;
+    document.getElementById('state').textContent = 'frame: user="' + document.getElementById('fuser').value + '" password-length=' + document.getElementById('fpw').value.length + ' bridge=' + (window.__lbHost ? 'yes' : 'no');
   }
   ['input', 'change', 'focus', 'blur'].forEach((ev) => document.addEventListener(ev, show, true));
   setInterval(show, 500);

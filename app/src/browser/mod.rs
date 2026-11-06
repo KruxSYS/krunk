@@ -438,7 +438,7 @@ impl Browser {
                 b.on_key(key)
             })
         });
-        self.hook_focus(&shell);
+        self.hook_focus(&shell, None);
         shell.start(window.hwnd(), SHELL_URL).map_err(|e| format!("Cannot create the browser window: {e}"))?;
         shell.set_visible(true);
         *frame.shell.borrow_mut() = Some(shell);
@@ -446,11 +446,16 @@ impl Browser {
         Ok(())
     }
 
-    /// A view getting the focus closes the popup.
-    fn hook_focus(&self, c: &View) {
+    /// A view getting the focus closes the popup. The exception is the suggestion dropdown
+    /// of tab `tab` itself: the engine reports the focus again when it moves into a frame of
+    /// another process (a cross-origin iframe), right when that frame's field opened it.
+    fn hook_focus(&self, c: &View, tab: Option<TabId>) {
         let weak = self.me.clone();
         c.on_got_focus(move || {
             if let Some(b) = weak.upgrade() {
+                if tab.is_some() && b.popup_kind() == Some(PopupKind::Suggest) && b.suggest_open_tab() == tab {
+                    return;
+                }
                 b.hide_popup_by_focus_loss();
             }
         });
@@ -667,7 +672,7 @@ impl Browser {
     }
 
     fn hook_tab(&self, id: TabId, c: &View, host_navigation: Rc<Cell<bool>>, net: Rc<TabNet>) {
-        self.hook_focus(c);
+        self.hook_focus(c, Some(id));
         self.hook_tab_keys(id, c);
 
         let weak = self.me.clone();

@@ -118,8 +118,12 @@ impl ProcessScriptlets {
 
 thread_local! {
     static SCRIPTLETS: RefCell<ProcessScriptlets> = RefCell::new(ProcessScriptlets::default());
-    /// Content scripts per browser identifier (from the browser's extra info).
-    static SCRIPTS: RefCell<HashMap<i32, Scripts>> = RefCell::new(HashMap::new());
+    /// Content scripts per browser identifier (from the browser's extra info), with the number
+    /// of live browser objects for that identifier: when a frame moves to this process (a
+    /// cross-origin iframe, a reload), CEF creates the new browser object before it destroys
+    /// the old one with the same identifier, so a plain remove-on-destroy would drop the entry
+    /// the new frames need (their login script then never ran).
+    static SCRIPTS: RefCell<HashMap<i32, (Scripts, u32)>> = RefCell::new(HashMap::new());
     /// The dispatch function of each main frame, by frame identifier.
     static DISPATCH: RefCell<HashMap<String, V8Value>> = RefCell::new(HashMap::new());
     /// The pointer-lock shim of each frame, by frame identifier.
@@ -136,14 +140,27 @@ wrap_render_process_handler! {
         fn on_browser_created(&self, browser: Option<&mut Browser>, extra_info: Option<&mut DictionaryValue>) {
             let (Some(browser), Some(info)) = (browser, extra_info) else { return };
             let scripts = Scripts::from_dictionary(info);
-            SCRIPTS.with(|s| s.borrow_mut().insert(browser.identifier(), scripts));
+            SCRIPTS.with(|s| {
+                let mut s = s.borrow_mut();
+                let e = s.entry(browser.identifier()).or_insert((scripts, 0));
+                e.0 = scripts;
+                e.1 += 1;
+            });
             let received = scriptlets::from_extra_info(info);
             SCRIPTLETS.with(|s| s.borrow_mut().apply(received));
         }
 
         fn on_browser_destroyed(&self, browser: Option<&mut Browser>) {
             if let Some(b) = browser {
-                SCRIPTS.with(|s| s.borrow_mut().remove(&b.identifier()));
+                SCRIPTS.with(|s| {
+                    let mut s = s.borrow_mut();
+                    if let Some(e) = s.get_mut(&b.identifier()) {
+                        e.1 = e.1.saturating_sub(1);
+                        if e.1 == 0 {
+                            s.remove(&b.identifier());
+                        }
+                    }
+                });
             }
         }
 
@@ -156,7 +173,7 @@ wrap_render_process_handler! {
             let (Some(browser), Some(frame), Some(context)) = (browser, frame, context) else { return };
             // First, before anything of the page runs: uBO's scriptlets.
             run_scriptlets(browser, frame, context);
-            let scripts = SCRIPTS.with(|s| s.borrow().get(&browser.identifier()).copied()).unwrap_or_default();
+            let scripts = SCRIPTS.with(|s| s.borrow().get(&browser.identifier()).map(|e| e.0)).unwrap_or_default();
             context_created(scripts, frame, context);
         }
 

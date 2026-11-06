@@ -21,7 +21,7 @@
 <iframe src="http://127.0.0.1:8095/frame-login.html"></iframe>
 <script>
   function show() {
-    document.getElementById('state').textContent = 'top: user="' + document.getElementById('user').value + '" password-length=' + document.getElementById('pw').value.length;
+    document.getElementById('state').textContent = 'top: user="' + document.getElementById('user').value + '" password-length=' + document.getElementById('pw').value.length + ' bridge=' + (window.__lbHost ? 'yes' : 'no');
   }
   ['input', 'change', 'focus', 'blur'].forEach((ev) => document.addEventListener(ev, show, true));
   // Every input/change event with the field and its value length: a fill must fire both.

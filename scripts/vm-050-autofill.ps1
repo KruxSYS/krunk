@@ -94,9 +94,9 @@ Shot "$P-9-suggestion-no-prompt"
 Click 190 276 1500
 Shot "$P-10-filled-from-suggestion"
 # (6) The iframe: only its own origin's login.
-Click 175 630 1200
+Click 175 667 1200
 Shot "$P-11-iframe-suggestion"
-Click 305 665 1500
+Click 305 702 1500
 Shot "$P-12-iframe-filled"
 # (7) https: the exact origin first, then the registrable-domain match; never the http entry.
 SafeGo 'https://login.krunk-test.test:8443/origin-login.html' 3500
