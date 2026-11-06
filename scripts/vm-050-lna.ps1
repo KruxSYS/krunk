@@ -34,7 +34,13 @@ function Title { [TW]::Txt($A) }
 function Snippet([string]$js, [int]$wait = 3000) { Keys $js 300; Keys '{ENTER}' $wait }
 function FetchLoopback([string]$tag) { Snippet "fetch{(}'http://localhost:8094/log?lna=$tag'{)}.then{(}r=>document.title='LNA-LOOPBACK-OK '{+}r.status,e=>document.title='LNA-LOOPBACK-FAIL '{+}e.message{)}" }
 function FetchLan([string]$tag) { Snippet "fetch{(}'http://$($lan):8094/log?lna=$tag'{)}.then{(}r=>document.title='LNA-LAN-OK '{+}r.status,e=>document.title='LNA-LAN-FAIL '{+}e.message{)}" }
-function OpenConsole { SafeGo 'https://example.com/' 4000; SafeKeys '{F12}' 4000; Keys '{ESC}' 1500 }
+# DevTools stays open across navigations and F12 only toggles it: close it first (the strip's
+# × at the top right; a click there is harmless when DevTools is closed), then open the console.
+# DevTools stays open across navigations and F12 only toggles it: close it first (the strip's
+# × at the top right; a click there is harmless when DevTools is closed), open it, pick its
+# Console tab and click into the console so the typed snippet lands in the prompt (Esc would
+# toggle the drawer, and a '?' typed outside the prompt opens DevTools' settings).
+function OpenConsole { Click 1258 116 800; SafeGo 'https://example.com/' 4000; SafeKeys '{F12}' 4000; Click 930 142 1000; Click 1000 660 500 }
 
 try {
 # (1) Loopback from a public page: the prompt, Allow (remembered).
@@ -55,14 +61,15 @@ Shot "$P-3-remembered-no-prompt"
 FetchLan 'lan-first'
 Log "[4] LAN with the stored choice: $(Title)"
 Shot "$P-4-lan-with-stored-choice"
-Keys '{F12}' 1500
+Click 1258 116 1000
 # (4) krunk://sitedata shows and removes the stored permission (shield panel → Cookies and site data).
 Click 1215 56 1500
 Shot "$P-5-shield-panel"
-Click 1128 400 3500   # "Cookies and site data" in the shield panel
+Click 1140 214 3500   # "Cookies and site data" in the shield panel
 Shot "$P-6-sitedata-allowed"
-Click 1060 215 2000   # Remove
+Click 1054 266 2000   # Remove
 Shot "$P-7-sitedata-removed"
+SafeKeys '^w' 1500    # the site-data tab closes; back to the example.com tab
 # (5) The prompt is back; Block (remembered) makes the fetch fail; sitedata says Blocked.
 OpenConsole
 FetchLoopback 'after-remove'
@@ -73,10 +80,11 @@ Shot "$P-9-blocked-fetch-fails"
 OpenConsole
 FetchLoopback 'blocked-stored'
 Log "[6] blocked, stored: $(Title)"
-Keys '{F12}' 1500
+Click 1258 116 1000
 Click 1215 56 1500
-Click 1128 400 3500
+Click 1140 214 3500
 Shot "$P-10-sitedata-blocked"
+SafeKeys '^w' 1500
 # (6) Private tab: the prompt every time, nothing remembered.
 SafeKeys '^+n' 2500
 OpenConsole

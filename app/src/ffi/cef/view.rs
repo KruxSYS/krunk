@@ -303,8 +303,9 @@ pub(super) struct ViewInner {
     pub cert_error: RefCell<Option<lb_core::certinfo::SslReport>>,
     /// Frames (by identifier) that report playing audio.
     audible_frames: RefCell<std::collections::HashSet<String>>,
-    /// Open permission prompts the host still has to answer, by prompt id.
-    pub(super) permission_prompts: RefCell<std::collections::HashMap<u64, PermissionPromptCallback>>,
+    /// Open permission prompts the host still has to answer, by prompt id: the engine's
+    /// callback and the requesting origin.
+    pub(super) permission_prompts: RefCell<std::collections::HashMap<u64, (PermissionPromptCallback, String)>>,
     devtools_id: Cell<i32>,
     /// DevTools protocol calls in flight: method (for error logs) and the
     /// callback waiting for the result, if any.
@@ -992,9 +993,24 @@ impl View {
     }
 
     /// Answers an open permission prompt; false when the engine no longer waits for it.
+    /// Chromium stores the answer in its own content settings (`Preferences`) and would never
+    /// ask again; the host keeps its own per-site choice, so the engine's record is reset right
+    /// after the answer was taken, and every later request comes back through the host.
     pub fn answer_permission(&self, prompt_id: u64, allow: bool) -> bool {
-        let Some(cb) = self.0.permission_prompts.borrow_mut().remove(&prompt_id) else { return false };
+        let Some((cb, origin)) = self.0.permission_prompts.borrow_mut().remove(&prompt_id) else { return false };
         cb.cont(if allow { PermissionRequestResult::ACCEPT } else { PermissionRequestResult::DENY });
+        let view = View(self.0.clone());
+        super::post_ui_delayed(100, move || {
+            let Some(ctx) = view.host().and_then(|h| h.request_context()) else { return };
+            let url = CefString::from(origin.as_str());
+            for kind in [
+                ContentSettingTypes::LOCAL_NETWORK,
+                ContentSettingTypes::LOOPBACK_NETWORK,
+                ContentSettingTypes::LOCAL_NETWORK_ACCESS,
+            ] {
+                ctx.set_content_setting(Some(&url), Some(&url), kind, ContentSettingValues::DEFAULT);
+            }
+        });
         true
     }
 

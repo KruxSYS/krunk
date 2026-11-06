@@ -481,8 +481,8 @@ wrap_permission_handler! {
         ) -> c_int {
             let Some(request) = lb_core::permissions::network_request(requested_permissions) else { return 0 };
             let (Some(view), Some(callback)) = (lookup(self.key), callback) else { return 0 };
-            view.permission_prompts.borrow_mut().insert(prompt_id, callback.clone());
             let origin = text(requesting_origin);
+            view.permission_prompts.borrow_mut().insert(prompt_id, (callback.clone(), origin.clone()));
             view.ev.permission.with(|f| f(prompt_id, origin.clone(), request.loopback));
             1
         }
