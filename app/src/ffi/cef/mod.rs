@@ -124,6 +124,9 @@ pub fn run_engine(config: EngineConfig, start: Start) -> Result<i32, String> {
 
 /// `BrowserProcessHandler::on_context_initialized`: the engine is ready.
 fn context_initialized() {
+    if let Some(mut ctx) = request_context_get_global_context() {
+        app::apply_profile_prefs(&mut ctx);
+    }
     scheme::register(request_context_get_global_context(), true);
     let start = START.with(|s| s.borrow_mut().take());
     let keep = start.and_then(|f| f());

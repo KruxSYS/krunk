@@ -628,6 +628,27 @@ async function testPopup(browser) {
   await page.locator('.choice', { hasText: 'bob' }).click();
   const f = await lastSent(page, 'fillReply');
   check(f && f.entryId === 'e2' && f.tabId === 9 && f.origin === 'https://mail.example', 'choosing an entry sends fillReply{entryId,tabId,origin}');
+
+  // 0.5: the suggestion dropdown under a login field: the usernames (a sister host named),
+  // no password anywhere, and "Unlock Krunk passwords" while the vault is locked.
+  await emit(page, { event: 'popup', content: { kind: 'suggest', tabId: 9, frameId: 'frame-7', origin: 'https://mail.example', locked: false, entries: [
+    { id: 'e1', username: 'alice@mail.example' }, { id: 'e3', username: 'bob', host: 'accounts.mail.example' },
+  ] } });
+  await page.waitForSelector('.suggest');
+  check(await page.locator('.suggest').count() === 2 && (await page.textContent('.suggest:nth-child(2) .host')) === 'accounts.mail.example', 'two suggestions, the domain match shows its host');
+  check(!(await page.content()).includes('password') || !(await page.textContent('body')).toLowerCase().includes('secret'), 'no password in the dropdown');
+  check(await page.evaluate(() => document.activeElement === document.body || document.activeElement === null), 'the dropdown takes no focus');
+  await shot(page, 'popup-suggest.png');
+  await page.locator('.suggest').first().click();
+  const sp = await lastSent(page, 'suggestPick');
+  check(sp && sp.entryId === 'e1' && sp.tabId === 9 && sp.frameId === 'frame-7', 'choosing sends suggestPick{entryId,tabId,frameId}');
+  await emit(page, { event: 'popup', content: { kind: 'suggest', tabId: 9, frameId: 'frame-7', origin: 'https://mail.example', locked: true, entries: [] } });
+  await page.waitForSelector('#suggest-unlock');
+  check((await page.textContent('#suggest-unlock')).includes('Unlock Krunk passwords'), 'locked vault: one Unlock entry');
+  await shot(page, 'popup-suggest-locked.png');
+  await page.click('#suggest-unlock');
+  const su = await lastSent(page, 'suggestUnlock');
+  check(su && su.tabId === 9 && su.frameId === 'frame-7', 'Unlock sends suggestUnlock{tabId,frameId}');
   check(errors.length === 0, 'prompts: no console errors (' + errors.join(' | ') + ')');
 
   // The update prompt.
@@ -2241,6 +2262,52 @@ async function testLoginScript(browser) {
   });
   await page.waitForTimeout(700);
   check(await page.evaluate(() => window.__posted.some((m) => m.lb === 'loginForm')), 'a login form added after load is announced (loginForm)');
+
+  // 0.5: focusing the password or the username field reports it with its rect; typing,
+  // Esc and leaving the field report a blur; a fill from the browser lands in that form.
+  await page.focus('input[name=p]');
+  await page.waitForTimeout(30);
+  let ff = await page.evaluate(() => window.__posted.filter((m) => m.lb === 'fieldFocus').pop());
+  check(ff && ff.field === 'password' && ff.rect && ff.rect.width > 10 && ff.rect.height > 5, 'focusing the password field posts fieldFocus{field:password, rect}');
+  await page.focus('input[name=u]');
+  await page.waitForTimeout(30);
+  ff = await page.evaluate(() => window.__posted.filter((m) => m.lb === 'fieldFocus').pop());
+  const blurs = await page.evaluate(() => window.__posted.filter((m) => m.lb === 'fieldBlur').length);
+  check(ff && ff.field === 'username' && blurs >= 1, 'the username field of the form posts fieldFocus{field:username} after a blur of the password');
+  await page.keyboard.type('a');
+  await page.waitForTimeout(30);
+  check((await page.evaluate(() => window.__posted.filter((m) => m.lb === 'fieldBlur').length)) === blurs + 1, 'typing posts fieldBlur');
+  check(!(await page.evaluate(() => window.__posted.some((m) => m.password !== undefined))), 'no password left the page without a submit');
+  // Fill: a page whose stand-in bridge can deliver a message.
+  const ctx2 = await browser.newContext();
+  await ctx2.route('**/*', (r) => r.abort());
+  await ctx2.route('https://login.example/**', (r) => r.fulfill({ status: 200, headers: { 'content-type': 'text/html' },
+    body: '<!doctype html><body><form id="a"><input name="u" type="text"><input name="p" type="password"></form><form id="b"><input name="u2" type="email"><input name="p2" type="password"></form><iframe src="https://frame.example/login"></iframe></body>' }));
+  await ctx2.route('https://frame.example/**', (r) => r.fulfill({ status: 200, headers: { 'content-type': 'text/html' },
+    body: '<!doctype html><body><form><input name="fu" type="text"><input name="fp" type="password"></form></body>' }));
+  await ctx2.addInitScript(() => {
+    window.__posted = []; window.__listeners = [];
+    window.__lbHost = { postMessage: (m) => window.__posted.push(m), addEventListener: (t, fn) => window.__listeners.push(fn) };
+    window.__deliver = (d) => window.__listeners.forEach((fn) => fn({ data: d }));
+  });
+  await ctx2.addInitScript({ path: path.join(__dirname, '..', 'inject', 'login.js') });
+  const p2 = await ctx2.newPage();
+  await p2.goto('https://login.example/');
+  await p2.waitForTimeout(100);
+  await p2.focus('#b input[name=u2]');
+  await p2.waitForTimeout(30);
+  await p2.evaluate(() => window.__deliver({ lbFill: { username: 'carol', password: 'hunter2' } }));
+  await p2.waitForTimeout(30);
+  const filled = await p2.evaluate(() => ({ u: document.querySelector('#a input[name=u]').value, p: document.querySelector('#a input[name=p]').value, u2: document.querySelector('#b input[name=u2]').value, p2: document.querySelector('#b input[name=p2]').value }));
+  check(filled.u2 === 'carol' && filled.p2 === 'hunter2' && filled.u === '' && filled.p === '', 'the fill lands in the focused form only (' + JSON.stringify(filled) + ')');
+  // The iframe runs the script too and reports its own field (its own __posted).
+  const frame = p2.frames().find((f) => f.url().startsWith('https://frame.example/'));
+  await frame.focus('input[name=fp]');
+  await p2.waitForTimeout(30);
+  const framePosted = await frame.evaluate(() => window.__posted.filter((m) => m.lb === 'fieldFocus').map((m) => m.field));
+  check(framePosted.includes('password'), 'a login field in a cross-origin iframe reports fieldFocus from the frame');
+  check(!(await frame.evaluate(() => window.__posted.some((m) => m.lb === 'loginForm'))), 'an iframe does not announce loginForm (top-level only)');
+  await ctx2.close();
   check(errors.length === 0, 'login script raises no page errors (' + errors.join(' | ') + ')');
   check(external.length === 0, 'no network requests (' + external.join(', ') + ')');
   await context.close();

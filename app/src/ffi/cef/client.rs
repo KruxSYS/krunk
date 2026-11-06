@@ -131,6 +131,7 @@ wrap_client! {
             let source = MessageSource {
                 url: CefString::from(&frame.url()).to_string(),
                 main_frame: frame.is_main() == 1 && frame.is_valid() == 1 && current_main,
+                frame_id: CefString::from(&frame.identifier()).to_string(),
             };
             view.deliver_message(&source, json);
             1

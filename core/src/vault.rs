@@ -347,16 +347,115 @@ impl Verifier {
     }
 }
 
-/// May the stored login for `entry_origin` be filled into a page whose
-/// top-level document is `sender_url`? Only on an exact origin match
-/// (scheme, host and port), where `sender_url` must be the origin the
-/// browser reported for the message, never a URL the page claims.
-/// Hosts are compared after IDNA normalization, so a look-alike Unicode
-/// host never matches the ASCII one.
+/// How a stored login relates to a page (Krunk 0.5.0: exact origin first, then the same
+/// registrable domain).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum MatchKind {
+    /// Same scheme, host and port.
+    Exact,
+    /// Same registrable domain (public-suffix list), both https: `accounts.example.com`
+    /// for a login saved on `example.com`. An http page only ever gets exact matches, and
+    /// an https entry is never offered to an http page.
+    Domain,
+}
+
+/// The registrable domain of an origin or URL (`login.bank.example` → `bank.example`),
+/// from the host the URL parser normalized (punycode, lower case).
+pub fn registrable_domain(url: &str) -> Option<String> {
+    let host = url::Url::parse(url).ok()?.host_str()?.to_ascii_lowercase();
+    if host.parse::<std::net::IpAddr>().is_ok() {
+        return None;
+    }
+    psl::domain_str(&host).map(str::to_string)
+}
+
+/// How the login for `entry_origin` matches a page at `sender_url` (the origin the
+/// browser reported for the frame, never one the page claims), or `None`.
+pub fn match_kind(entry_origin: &str, sender_url: &str) -> Option<MatchKind> {
+    let (a, b) = (origin_of(entry_origin)?, origin_of(sender_url)?);
+    let web = |o: &str| o.starts_with("https://") || o.starts_with("http://");
+    if !web(&a) || !web(&b) {
+        return None;
+    }
+    if a == b {
+        return Some(MatchKind::Exact);
+    }
+    if !a.starts_with("https://") || !b.starts_with("https://") {
+        return None;
+    }
+    match (registrable_domain(&a), registrable_domain(&b)) {
+        (Some(x), Some(y)) if x == y => Some(MatchKind::Domain),
+        _ => None,
+    }
+}
+
+/// May the stored login for `entry_origin` be filled into a page whose document is
+/// `sender_url`? Exact origin, or (https only) the same registrable domain; see
+/// [`match_kind`]. Hosts are compared after IDNA normalization, so a look-alike
+/// Unicode host never matches the ASCII one.
 pub fn fill_allowed(entry_origin: &str, sender_url: &str) -> bool {
-    match (origin_of(entry_origin), origin_of(sender_url)) {
-        (Some(a), Some(b)) => a == b && (a.starts_with("https://") || a.starts_with("http://")),
-        _ => false,
+    match_kind(entry_origin, sender_url).is_some()
+}
+
+/// The locked-vault index (Krunk 0.5.0): which sites have logins, without the vault's
+/// key. Each entry origin and its registrable domain are stored as `HMAC-SHA256(key, ·)`
+/// tags; the key is random and kept DPAPI-wrapped in the database, so the tags reveal
+/// nothing offline and no more than the browsing history does on the user's own session.
+#[derive(Debug, Clone)]
+pub struct HintIndex {
+    key: Zeroizing<[u8; 32]>,
+}
+
+impl HintIndex {
+    pub fn new(key: [u8; 32]) -> HintIndex {
+        HintIndex { key: Zeroizing::new(key) }
+    }
+
+    pub fn random() -> HintIndex {
+        let mut key = [0u8; 32];
+        getrandom::fill(&mut key).expect("system randomness");
+        HintIndex::new(key)
+    }
+
+    pub fn key(&self) -> &[u8; 32] {
+        &self.key
+    }
+
+    fn tag(&self, kind: &str, value: &str) -> String {
+        use chacha20poly1305::aead::KeyInit;
+        use hmac::{Hmac, Mac};
+        let mut mac = Hmac::<sha2::Sha256>::new_from_slice(&*self.key).expect("any key length");
+        mac.update(kind.as_bytes());
+        mac.update(b":");
+        mac.update(value.as_bytes());
+        mac.finalize().into_bytes().iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// The tags to store for a set of entry origins: one per origin, one per registrable
+    /// domain of an https origin.
+    pub fn tags_for<'a>(&self, origins: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+        let mut out = std::collections::BTreeSet::new();
+        for o in origins {
+            if let Some(origin) = origin_of(o) {
+                out.insert(self.tag("origin", &origin));
+                if origin.starts_with("https://") {
+                    if let Some(d) = registrable_domain(&origin) {
+                        out.insert(self.tag("domain", &d));
+                    }
+                }
+            }
+        }
+        out.into_iter().collect()
+    }
+
+    /// Does a page at `url` have logins, by the stored `tags`?
+    pub fn has_logins(&self, url: &str, tags: &[String]) -> bool {
+        let Some(origin) = origin_of(url) else { return false };
+        if tags.contains(&self.tag("origin", &origin)) {
+            return true;
+        }
+        origin.starts_with("https://")
+            && registrable_domain(&origin).is_some_and(|d| tags.contains(&self.tag("domain", &d)))
     }
 }
 
@@ -523,6 +622,17 @@ impl Vault {
             Some(o) => self.entries.iter().filter(|e| e.origin == o).collect(),
             None => Vec::new(),
         }
+    }
+
+    /// Logins for a page: exact-origin matches first, then the same registrable domain
+    /// (https only), each group sorted by username.
+    pub fn matches_for(&self, url: &str) -> Vec<(&Entry, MatchKind)> {
+        let mut v: Vec<(&Entry, MatchKind)> =
+            self.entries.iter().filter_map(|e| match_kind(&e.origin, url).map(|k| (e, k))).collect();
+        v.sort_by(|a, b| {
+            a.1.cmp(&b.1).then_with(|| a.0.username.cmp(&b.0.username)).then_with(|| a.0.origin.cmp(&b.0.origin))
+        });
+        v
     }
 
     /// Adds a login, or updates the password of an existing one with the
@@ -1025,10 +1135,24 @@ mod tests {
         let e = "https://bank.example";
         assert!(fill_allowed(e, "https://bank.example/login?next=/"));
         assert!(fill_allowed(e, "https://BANK.example:443/"));
-        assert!(!fill_allowed(e, "https://bank.example:8443/"), "port");
+        assert_eq!(
+            match_kind(e, "https://bank.example:8443/"),
+            Some(MatchKind::Domain),
+            "another port: the same site, a domain match"
+        );
         assert!(!fill_allowed(e, "http://bank.example/"), "scheme");
-        assert!(!fill_allowed(e, "https://login.bank.example/"), "subdomain");
-        assert!(!fill_allowed("https://login.bank.example", "https://bank.example/"), "parent domain");
+        // 0.5: the same registrable domain matches too (https only).
+        assert_eq!(match_kind(e, "https://login.bank.example/"), Some(MatchKind::Domain), "subdomain");
+        assert_eq!(
+            match_kind("https://login.bank.example", "https://bank.example/"),
+            Some(MatchKind::Domain),
+            "parent domain"
+        );
+        assert_eq!(match_kind(e, "https://bank.example/x"), Some(MatchKind::Exact));
+        assert_eq!(match_kind("http://bank.example", "http://login.bank.example/"), None, "http: exact only");
+        assert_eq!(match_kind("http://bank.example", "https://bank.example/"), None, "an http entry never fills https");
+        assert_eq!(match_kind("https://a.github.io", "https://b.github.io/"), None, "github.io is a public suffix");
+        assert_eq!(match_kind("https://192.168.1.5", "https://192.168.1.6/"), None, "addresses have no domain");
         assert!(!fill_allowed(e, "https://bank.example.evil.com/"), "suffix");
         assert!(!fill_allowed(e, "https://evilbank.example/"), "prefix");
         // Cyrillic 'а' look-alike: normalizes to punycode, never equals the ASCII host.
@@ -1039,6 +1163,51 @@ mod tests {
         assert!(!fill_allowed("null", "data:text/html,x"));
         assert!(!fill_allowed("file:///C:/x", "file:///C:/x"));
         assert!(!fill_allowed(e, "not a url"));
+    }
+
+    #[test]
+    fn matches_are_exact_first_then_domain() {
+        let dir = TestDir::new("matches");
+        let mut v = Vault::create(&dir.file(), PW, KdfParams::insecure_for_tests(), &NoWrap).unwrap();
+        v.save_login("https://accounts.example.com/", "sub-user", z("p"), 1, &NoWrap).unwrap();
+        v.save_login("https://example.com/login", "bob", z("p"), 2, &NoWrap).unwrap();
+        v.save_login("https://example.com/login", "alice", z("p"), 3, &NoWrap).unwrap();
+        v.save_login("https://other.example/", "x", z("p"), 4, &NoWrap).unwrap();
+        v.save_login("http://example.com/", "plain", z("p"), 5, &NoWrap).unwrap();
+        let m: Vec<(String, MatchKind)> =
+            v.matches_for("https://example.com/").into_iter().map(|(e, k)| (e.username.clone(), k)).collect();
+        assert_eq!(
+            m,
+            vec![
+                ("alice".into(), MatchKind::Exact),
+                ("bob".into(), MatchKind::Exact),
+                ("sub-user".into(), MatchKind::Domain)
+            ]
+        );
+        let http: Vec<String> =
+            v.matches_for("http://example.com/").into_iter().map(|(e, _)| e.username.clone()).collect();
+        assert_eq!(http, vec!["plain"], "an http page gets only its exact http entry");
+        assert!(v.matches_for("https://evil.example/").is_empty());
+    }
+
+    #[test]
+    fn hint_index_tags_sites_without_the_vault_key() {
+        let idx = HintIndex::new([7u8; 32]);
+        let tags = idx.tags_for(["https://accounts.example.com", "http://plain.example"]);
+        assert_eq!(tags.len(), 3, "origin + domain for https, origin only for http");
+        assert!(tags.iter().all(|t| t.len() == 64 && t.chars().all(|c| c.is_ascii_hexdigit())));
+        assert!(idx.has_logins("https://accounts.example.com/login", &tags), "exact origin");
+        assert!(idx.has_logins("https://www.example.com/", &tags), "same registrable domain");
+        assert!(!idx.has_logins("http://www.example.com/", &tags), "http page: no domain match");
+        assert!(idx.has_logins("http://plain.example/", &tags));
+        assert!(!idx.has_logins("https://plain.example/", &tags), "the http entry does not count for https");
+        assert!(!idx.has_logins("https://other.example/", &tags));
+        // Another key gives other tags: a stolen tag list says nothing without the key.
+        let other = HintIndex::new([8u8; 32]);
+        assert!(!other.has_logins("https://accounts.example.com/", &tags));
+        assert_ne!(other.tags_for(["https://accounts.example.com"]), tags);
+        assert!(!tags.iter().any(|t| t.contains("example")), "tags are opaque");
+        assert_ne!(HintIndex::random().key(), HintIndex::random().key());
     }
 
     #[test]

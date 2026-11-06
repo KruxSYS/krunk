@@ -1,0 +1,24 @@
+<!doctype html>
+<!-- The cross-origin login form inside scripts/vm-www/8094/login.html (served on 127.0.0.1:8095). -->
+<html lang="en"><head><meta charset="utf-8"><title>Frame login</title>
+<style>
+  body { font: 15px system-ui, sans-serif; margin: 12px; background: #f4f0e6; }
+  input { font: inherit; padding: 5px 8px; width: 240px; display: block; margin: 4px 0 10px; }
+  #state { font-family: ui-monospace, monospace; color: #555; font-size: 13px; }
+</style></head><body>
+<strong>Frame login (127.0.0.1:8095)</strong>
+<form id="f" action="/log" method="get">
+  <label>Username <input id="fuser" name="username" type="text" autocomplete="username"></label>
+  <label>Password <input id="fpw" name="password" type="password" autocomplete="current-password"></label>
+  <button type="submit">Sign in</button>
+</form>
+<p id="state"></p>
+<script>
+  function show() {
+    document.getElementById('state').textContent = 'frame: user="' + document.getElementById('fuser').value + '" password-length=' + document.getElementById('fpw').value.length;
+  }
+  ['input', 'change', 'focus', 'blur'].forEach((ev) => document.addEventListener(ev, show, true));
+  setInterval(show, 500);
+  show();
+</script>
+</body></html>

@@ -125,6 +125,9 @@ pub enum PopupKind {
     Shield,
     /// The lock/site icon's popup: the connection and the certificate.
     SiteInfo,
+    /// The login suggestions under a focused password or username field: it never takes
+    /// the focus from the field (the host shows it without activation).
+    Suggest,
     SavePassword,
     Fill,
     /// A folder of the bookmarks bar (opened with `ShowBookmarkFolder`).
@@ -153,7 +156,7 @@ impl PopupKind {
     /// it covers already had focus). (The "Press Esc" hint is not a popup:
     /// it is a native overlay, see `overlay`.)
     pub fn takes_focus(self) -> bool {
-        true
+        self != PopupKind::Suggest
     }
 }
 
@@ -252,6 +255,15 @@ pub enum PopupContent {
     /// The lock popup (see `certinfo`).
     SiteInfo {
         info: crate::certinfo::SiteInfo,
+    },
+    /// Login suggestions for the focused field of frame `frame_id` in tab `tab_id`.
+    /// `locked`: the vault has logins for the site but is locked (one "Unlock" entry).
+    Suggest {
+        tab_id: u32,
+        frame_id: String,
+        origin: String,
+        locked: bool,
+        entries: Vec<SuggestChoice>,
     },
     /// "Save password for `username` on `origin`?" (no password is sent to the UI).
     SavePassword {
@@ -353,6 +365,45 @@ pub enum UpdateChoice {
 pub enum UnlockPurpose {
     Save,
     Fill,
+    /// Unlock chosen from the suggestion dropdown under a login field (Krunk 0.5.0).
+    Suggest,
+}
+
+/// Which login field has the focus (the suggestion dropdown).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FieldKind {
+    Password,
+    Username,
+}
+
+/// A field's rectangle in CSS px of its own frame's viewport (untrusted; clamped by the host).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FieldRect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl FieldRect {
+    pub fn is_sane(&self) -> bool {
+        [self.x, self.y, self.width, self.height].iter().all(|v| v.is_finite() && (-16384.0..=16384.0).contains(v))
+            && self.width >= 0.0
+            && self.height >= 0.0
+    }
+}
+
+/// A login in the suggestion dropdown (no password).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SuggestChoice {
+    pub id: String,
+    pub username: String,
+    /// The entry's host when it is a registrable-domain match (another host of the site).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
 }
 
 /// An entry of the bookmarks bar or of a folder dropdown.
@@ -374,6 +425,7 @@ impl PopupContent {
             PopupContent::Menu { .. } => PopupKind::Menu,
             PopupContent::Shield { .. } => PopupKind::Shield,
             PopupContent::SiteInfo { .. } => PopupKind::SiteInfo,
+            PopupContent::Suggest { .. } => PopupKind::Suggest,
             PopupContent::SavePassword { .. } => PopupKind::SavePassword,
             PopupContent::Fill { .. } => PopupKind::Fill,
             PopupContent::BookmarkFolder { .. } => PopupKind::BookmarkFolder,
@@ -827,6 +879,18 @@ pub enum Request {
     },
     /// From the shield panel: open the site-data page for the active tab.
     OpenSiteData,
+    /// The suggestion dropdown (popup): fill entry `entry_id` into frame `frame_id` of tab
+    /// `tab_id`. The host re-checks the tab, the frame and the entry's origin.
+    SuggestPick {
+        tab_id: u32,
+        frame_id: String,
+        entry_id: String,
+    },
+    /// The suggestion dropdown (popup): "Unlock Krunk passwords" for the focused field.
+    SuggestUnlock {
+        tab_id: u32,
+        frame_id: String,
+    },
 
     // ---- about / https-only ----
     GetAbout,
@@ -866,6 +930,8 @@ pub enum Channel {
 /// Classification of a message source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
+    /// An http(s) sub-frame: only the login-field messages are accepted from it.
+    WebFrame { origin: String },
     /// Our own UI: parse with [`parse_request`].
     Privileged(Sender),
     /// An ordinary web page on this origin: parse with [`parse_content`] only.
@@ -884,11 +950,16 @@ pub const POPUP_PATH: &str = "/popup.html";
 ///   exact pages origin; other http(s) pages are web content.
 /// * Messages from sub-frames are always rejected.
 pub fn classify(channel: Channel, source: &str, top_level: bool) -> Result<Source, ProtocolError> {
-    if !top_level {
-        return Err(ProtocolError::Forbidden);
-    }
     let url = url::Url::parse(source).map_err(|_| ProtocolError::Forbidden)?;
     let origin = url.origin().ascii_serialization();
+    if !top_level {
+        // A sub-frame is never privileged; an http(s) one may report its login fields.
+        let own = origin == pages::SHELL_ORIGIN || origin == pages::PAGES_ORIGIN;
+        return match (channel, url.scheme()) {
+            (Channel::Tab, "http" | "https") if !own => Ok(Source::WebFrame { origin }),
+            _ => Err(ProtocolError::Forbidden),
+        };
+    }
     match channel {
         Channel::Shell | Channel::Popup => {
             let want = if channel == Channel::Shell { SHELL_PATH } else { POPUP_PATH };
@@ -987,6 +1058,8 @@ impl Sender {
                     | R::OpenSiteData
                     | R::SavePasswordReply { .. }
                     | R::FillReply { .. }
+                    | R::SuggestPick { .. }
+                    | R::SuggestUnlock { .. }
                     | R::VaultStatus
                     | R::VaultUnlock { .. }
                     | R::UpdateReply { .. }
@@ -1133,7 +1206,7 @@ pub fn parse_request(sender: Sender, json: &str) -> Result<Envelope, ProtocolErr
 }
 
 /// Messages from scripts injected into web content (untrusted).
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(tag = "lb", rename_all = "camelCase", deny_unknown_fields)]
 pub enum ContentMessage {
     /// The top-level document has a login form. (Empty struct variants, not
@@ -1144,12 +1217,24 @@ pub enum ContentMessage {
     /// The user clicked the key badge in a login field. The host shows a
     /// trusted confirmation in the shell before anything is filled.
     RequestFill {},
+    /// A login field got the focus (any frame): the host may show suggestions.
+    FieldFocus { field: FieldKind, rect: FieldRect },
+    /// The field lost the focus, or the user typed or pressed Esc.
+    FieldBlur {},
     /// Class names and ids used on the page, for generic cosmetic filters.
     /// (A page can only affect which elements get hidden on itself.)
     PageTokens { classes: Vec<String>, ids: Vec<String> },
 }
 
 /// Parses a message from web content.
+/// Parses a message from an http(s) sub-frame: only the login-field messages are accepted.
+pub fn parse_content_frame(json: &str) -> Result<ContentMessage, ProtocolError> {
+    match parse_content(json)? {
+        m @ (ContentMessage::FieldFocus { .. } | ContentMessage::FieldBlur {}) => Ok(m),
+        _ => Err(ProtocolError::Forbidden),
+    }
+}
+
 pub fn parse_content(json: &str) -> Result<ContentMessage, ProtocolError> {
     if json.len() > MAX_CONTENT_BYTES {
         return Err(ProtocolError::TooLarge);
@@ -1473,7 +1558,11 @@ mod tests {
         assert_eq!(classify(Channel::Tab, "https://krunk.invalid/x.html", true), Err(ProtocolError::Forbidden));
         assert_eq!(classify(Channel::Tab, "data:text/html,x", true), Err(ProtocolError::Forbidden));
         assert_eq!(classify(Channel::Tab, "file:///C:/x.html", true), Err(ProtocolError::Forbidden));
-        assert_eq!(classify(Channel::Tab, "https://bank.example/", false), Err(ProtocolError::Forbidden));
+        // 0.5: an http(s) sub-frame is a WebFrame (login-field messages only).
+        assert_eq!(
+            classify(Channel::Tab, "https://bank.example/", false),
+            Ok(Source::WebFrame { origin: "https://bank.example".into() })
+        );
     }
 
     /// The engine reports the sender as the frame's committed URL plus its
@@ -1497,8 +1586,12 @@ mod tests {
         // The shell document in a sub-frame (is_main false) is never privileged.
         forbidden(Channel::Shell, SHELL, false);
         forbidden(Channel::Tab, &Page::Settings.url(), false);
-        // A page iframed into a tab cannot speak for the tab's origin.
-        forbidden(Channel::Tab, "https://bank.example/login", false);
+        // A page iframed into a tab cannot speak for the tab's origin: it is a WebFrame of its
+        // own origin (login-field messages only, see `parse_content_frame`).
+        assert_eq!(
+            classify(Channel::Tab, "https://bank.example/login", false),
+            Ok(Source::WebFrame { origin: "https://bank.example".into() })
+        );
         // Main frames: exactly as before.
         assert_eq!(classify(Channel::Shell, SHELL, true), Ok(Source::Privileged(Sender::Shell)));
         assert_eq!(
@@ -1924,6 +2017,8 @@ mod tests {
             Request::DeleteHistoryRange { from: 1, to: 2 },
             Request::ClearBrowsingData { data: ClearData { history: true, ..ClearData::default() } },
             Request::MoveBookmark { id: 1, parent: 2, index: 0 },
+            Request::SuggestPick { tab_id: 3, frame_id: "f1".into(), entry_id: "e1".into() },
+            Request::SuggestUnlock { tab_id: 3, frame_id: "f1".into() },
             Request::ShowFolderItemMenu { id: 4, x: 10.0, y: 20.0 },
             Request::MoveBookmarkInFolder { id: 4, parent: 2, index: 1 },
             Request::FolderItemDragOut { id: 4 },
@@ -2085,6 +2180,68 @@ mod tests {
         assert_eq!((m.x, m.y, m.width, m.height), (5.0, 6.0, 240.0, 353.0));
         assert_eq!(crate::layout::bookmark_menu_rect(0.0, 0.0, true, true).height, 293.0);
         assert_eq!(crate::layout::bookmark_menu_rect(0.0, 0.0, false, false).height, 222.0);
+    }
+
+    #[test]
+    fn login_field_messages_from_sub_frames() {
+        assert_eq!(
+            classify(Channel::Tab, "https://login.example/frame.html", false),
+            Ok(Source::WebFrame { origin: "https://login.example".into() })
+        );
+        assert_eq!(classify(Channel::Tab, "https://krunk.invalid/newtab.html", false), Err(ProtocolError::Forbidden));
+        assert_eq!(
+            classify(Channel::Tab, "https://shell.krunk.invalid/shell.html", false),
+            Err(ProtocolError::Forbidden)
+        );
+        assert_eq!(
+            classify(Channel::Shell, "https://shell.krunk.invalid/shell.html", false),
+            Err(ProtocolError::Forbidden)
+        );
+        assert_eq!(classify(Channel::Tab, "data:text/html,x", false), Err(ProtocolError::Forbidden));
+        assert_eq!(
+            classify(Channel::Tab, "https://a.example/", true),
+            Ok(Source::Web { origin: "https://a.example".into() })
+        );
+        // Only the field messages count from a sub-frame.
+        let focus = r#"{"lb":"fieldFocus","field":"password","rect":{"x":10,"y":20,"width":200,"height":30}}"#;
+        let blur = r#"{"lb":"fieldBlur"}"#;
+        assert!(matches!(
+            parse_content_frame(focus),
+            Ok(ContentMessage::FieldFocus { field: FieldKind::Password, .. })
+        ));
+        assert!(matches!(parse_content_frame(blur), Ok(ContentMessage::FieldBlur {})));
+        assert!(
+            parse_content_frame(r#"{"lb":"submit","username":"u","password":"p"}"#).is_err(),
+            "no submit from a frame"
+        );
+        assert!(parse_content_frame(r#"{"lb":"loginForm"}"#).is_err());
+        assert!(parse_content_frame(r#"{"lb":"requestFill"}"#).is_err());
+        // The main frame still gets everything, the field messages included.
+        assert!(matches!(parse_content(focus), Ok(ContentMessage::FieldFocus { .. })));
+        assert!(
+            parse_content(r#"{"lb":"fieldFocus","field":"password","rect":{"x":1,"y":2,"width":3,"height":4,"z":5}}"#)
+                .is_err(),
+            "no unknown rect fields"
+        );
+        assert!(!FieldRect { x: f64::NAN, y: 0.0, width: 1.0, height: 1.0 }.is_sane());
+        assert!(FieldRect { x: 1.0, y: 2.0, width: 3.0, height: 4.0 }.is_sane());
+        assert!(!FieldRect { x: 1.0, y: 2.0, width: -3.0, height: 4.0 }.is_sane());
+        // The dropdown's requests come from the popup only; the dropdown never takes focus.
+        let pick = Request::SuggestPick { tab_id: 1, frame_id: "f".into(), entry_id: "e".into() };
+        let unlock = Request::SuggestUnlock { tab_id: 1, frame_id: "f".into() };
+        assert!(Sender::Popup.permits(&pick) && Sender::Popup.permits(&unlock));
+        assert!(!Sender::Shell.permits(&pick) && !Sender::Shell.permits(&unlock));
+        assert!(Page::ALL.iter().all(|p| !Sender::Page(*p).permits(&pick) && !Sender::Page(*p).permits(&unlock)));
+        assert!(!PopupKind::Suggest.takes_focus() && !PopupKind::Suggest.shell_may_open());
+        let content = PopupContent::Suggest {
+            tab_id: 1,
+            frame_id: "f".into(),
+            origin: "https://a.example".into(),
+            locked: true,
+            entries: vec![],
+        };
+        assert_eq!(content.kind(), PopupKind::Suggest);
+        assert!(serde_json::to_string(&content).unwrap().contains(r#""locked":true"#));
     }
 
     #[test]

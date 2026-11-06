@@ -79,6 +79,18 @@ body { background: var(--bg-raised); border: 1px solid var(--border); border-rad
 .cert-name { margin: 0 0 4px; font-weight: 600; }
 .cert:not(.leaf) { background: var(--bg-raised); }
 #cert-chain[hidden] { display: none; }
+/* Login suggestions under a field (no focus: the field keeps it). */
+.suggest-list { padding: 4px; }
+.suggest { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 10px; border: 0; border-radius: 6px;
+           background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+.suggest:hover { background: var(--bg-hover); }
+.suggest .key-glyph { flex: none; width: 20px; text-align: center; }
+.suggest .label { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.suggest .user { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.suggest .host { color: var(--fg-muted); font-size: 11px; }
+.suggest.locked .label { font-weight: 600; }
+.suggest-foot { padding: 6px 10px 2px; color: var(--fg-muted); font-size: 11px; border-top: 1px solid var(--border); margin-top: 4px;
+                overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The on/off switch of the shield. */
 .switch { position: relative; width: 36px; height: 20px; flex: none; padding: 0; border: 0; border-radius: 10px;
           background: var(--border); cursor: pointer; transition: background .15s; }

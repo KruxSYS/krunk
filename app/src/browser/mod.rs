@@ -54,6 +54,7 @@ mod settings_host;
 mod siteinfo;
 mod status;
 mod storage;
+mod suggest;
 mod updater;
 
 pub use power::PowerOptions;
@@ -147,6 +148,8 @@ pub struct Browser {
     toggle: RefCell<lb_core::toggle::ToggleGuard>,
     /// The link-status label (the address of the link under the mouse).
     status: status::StatusHost,
+    /// Login suggestions under a focused field.
+    suggest: suggest::SuggestHost,
     /// Some tab was given a user agent other than the one the engine started with.
     ua_overridden: Cell<bool>,
     /// Where the shell asked for the shield panel (it grows with its list from there).
@@ -222,6 +225,7 @@ impl Browser {
             folder_anchor: Cell::new(None),
             toggle: RefCell::new(lb_core::toggle::ToggleGuard::default()),
             status: status::StatusHost::default(),
+            suggest: suggest::SuggestHost::default(),
             ua_overridden: Cell::new(false),
             bookmark_menu_at: Cell::new(None),
             adblock_source: Cell::new(None),
@@ -1398,7 +1402,19 @@ impl Browser {
                     self.login_submitted(id, &origin, username, password)
                 }
                 Ok(ContentMessage::RequestFill {}) => self.request_fill(id, Some(&origin)),
+                Ok(ContentMessage::FieldFocus { field, rect }) => {
+                    self.field_focus(id, &source.frame_id, &origin, true, field, rect)
+                }
+                Ok(ContentMessage::FieldBlur {}) => self.field_blur(id, &source.frame_id),
                 Err(_) => {}
+            },
+            // An http(s) iframe: only its login fields, for its own origin.
+            Ok(Source::WebFrame { origin }) => match protocol::parse_content_frame(json) {
+                Ok(ContentMessage::FieldFocus { field, rect }) => {
+                    self.field_focus(id, &source.frame_id, &origin, false, field, rect)
+                }
+                Ok(ContentMessage::FieldBlur {}) => self.field_blur(id, &source.frame_id),
+                _ => {}
             },
             Err(_) => {}
         }
@@ -1610,6 +1626,8 @@ impl Browser {
                 self.save_password_reply(tab_id, &origin, accept, never)
             }
             Request::FillReply { tab_id, origin, entry_id } => self.fill_reply(tab_id, &origin, entry_id),
+            Request::SuggestPick { tab_id, frame_id, entry_id } => self.suggest_pick(tab_id, &frame_id, &entry_id),
+            Request::SuggestUnlock { tab_id, frame_id } => self.suggest_unlock(tab_id, &frame_id),
             Request::RequestFill => {
                 let active = self.active_id();
                 if let Some(id) = active {

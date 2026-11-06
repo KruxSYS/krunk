@@ -41,14 +41,14 @@ pub(super) struct PendingSave {
 /// Vault state owned by the browser.
 #[derive(Default)]
 pub(super) struct VaultHost {
-    vault: RefCell<Option<Vault>>,
+    pub(super) vault: RefCell<Option<Vault>>,
     rate: RefCell<core_vault::RateLimiter>,
     /// A key derivation (create/unlock/verify/change) is running.
     busy: Cell<bool>,
     last_activity: Cell<i64>,
     pending_save: RefCell<Option<PendingSave>>,
     /// What to do after the unlock prompt succeeds.
-    unlock_for: RefCell<Option<(TabId, String, UnlockPurpose)>>,
+    pub(super) unlock_for: RefCell<Option<(TabId, String, UnlockPurpose)>>,
     clipboard_seq: Cell<Option<u32>>,
 }
 
@@ -88,7 +88,7 @@ fn secret_reply(req_id: Option<u32>, secret: &str, note: Option<&str>) -> Zeroiz
 }
 
 /// Appends `s` as a JSON string literal without intermediate allocations.
-fn push_json_string(out: &mut String, s: &str) {
+pub(super) fn push_json_string(out: &mut String, s: &str) {
     out.push('"');
     for c in s.chars() {
         match c {
@@ -114,15 +114,16 @@ impl Browser {
         }
     }
 
-    fn vault_exists(&self) -> bool {
+    pub(super) fn vault_exists(&self) -> bool {
         core_vault::exists(&self.dirs.vault())
     }
 
-    fn vault_unlocked(&self) -> bool {
+    pub(super) fn vault_unlocked(&self) -> bool {
         self.vaults.vault.borrow().is_some()
     }
 
-    fn touch_vault(&self) {
+    pub(super) fn touch_vault(&self) {
+        self.refresh_hint_index();
         self.vaults.last_activity.set(now_ms());
     }
 
@@ -157,6 +158,7 @@ impl Browser {
 
     fn vault_opened(&self, v: Vault) {
         *self.vaults.vault.borrow_mut() = Some(v);
+        self.refresh_hint_index();
         self.touch_vault();
         if let Some(w) = self.app() {
             w.set_timer(VAULT_TIMER, VAULT_CHECK_MS);
@@ -653,6 +655,7 @@ impl Browser {
             PopupContent::SavePassword { .. } => {
                 self.vaults.pending_save.borrow_mut().take();
             }
+            PopupContent::Suggest { .. } => self.suggest_dismissed(),
             PopupContent::Unlock { purpose, .. } => {
                 self.vaults.unlock_for.borrow_mut().take();
                 if *purpose == UnlockPurpose::Save {
@@ -665,7 +668,7 @@ impl Browser {
 
     // ------------------------------------------------------------ unlock prompt
 
-    fn show_unlock_prompt(&self, error: Option<String>) {
+    pub(super) fn show_unlock_prompt(&self, error: Option<String>) {
         let Some((tab_id, origin, purpose)) = self.vaults.unlock_for.borrow().clone() else { return };
         let wait_ms = self.vaults.rate.borrow().wait_ms(now_ms());
         self.show_prompt(PopupContent::Unlock { tab_id, origin, purpose, error, wait_ms }, 0);
@@ -701,6 +704,7 @@ impl Browser {
                     self.hide_popup();
                 }
             }
+            UnlockPurpose::Suggest => self.after_unlock_suggest(tab_id, &origin),
         }
     }
 }

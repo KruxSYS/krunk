@@ -2,7 +2,7 @@
 //! preferences) and for subprocesses (the renderer bridge).
 
 use super::renderer;
-use crate::log::warning;
+use crate::log::{info, warning};
 use cef::*;
 
 wrap_app! {
@@ -93,7 +93,10 @@ wrap_request_context_handler! {
     }
 }
 
-/// Handler for every request context (sets the profile preferences).
+/// Handler for the contexts created with `request_context_create_context` (the private
+/// one): it sets the profile preferences. CEF never calls `on_request_context_initialized`
+/// of the *default* handler for the global context, so `context_initialized` applies
+/// them there itself.
 pub(super) fn context_handler() -> RequestContextHandler {
     LbContextHandler::new()
 }
@@ -101,7 +104,7 @@ pub(super) fn context_handler() -> RequestContextHandler {
 /// Profile preferences of every request context: no password manager or
 /// autofill (Krunk has its own vault), no network prediction and no
 /// local IP addresses in WebRTC.
-fn apply_profile_prefs(ctx: &mut RequestContext) {
+pub(super) fn apply_profile_prefs(ctx: &mut RequestContext) {
     let prefs: &[(&str, Pref)] = &[
         ("credentials_enable_service", Pref::Bool(false)),
         ("credentials_enable_autosignin", Pref::Bool(false)),
@@ -115,9 +118,9 @@ fn apply_profile_prefs(ctx: &mut RequestContext) {
         // (which also triggered a Windows Firewall prompt).
         ("webrtc.ip_handling_policy", Pref::Str("default_public_interface_only")),
     ];
-    for (name, value) in prefs {
-        set_pref(ctx, name, *value);
-    }
+    let applied = prefs.iter().filter(|(name, value)| set_pref(ctx, name, *value)).count();
+    let scope = if ctx.is_global() != 0 { "default" } else { "private" };
+    info!("engine preferences applied ({scope} profile): {applied}/{}", prefs.len());
 }
 
 #[derive(Clone, Copy)]
@@ -127,8 +130,10 @@ enum Pref {
     Str(&'static str),
 }
 
-fn set_pref(ctx: &mut RequestContext, name: &str, pref: Pref) {
-    let Some(mut value) = value_create() else { return };
+/// Sets one preference and reads it back; false (with a warning) when the
+/// engine refused it or kept another value.
+fn set_pref(ctx: &mut RequestContext, name: &str, pref: Pref) -> bool {
+    let Some(mut value) = value_create() else { return false };
     match pref {
         Pref::Bool(b) => value.set_bool(i32::from(b)),
         Pref::Int(i) => value.set_int(i),
@@ -137,10 +142,20 @@ fn set_pref(ctx: &mut RequestContext, name: &str, pref: Pref) {
     let name = CefString::from(name);
     if ctx.can_set_preference(Some(&name)) == 0 {
         warning!("engine preference {name} cannot be set");
-        return;
+        return false;
     }
     let mut error = CefString::from("");
     if ctx.set_preference(Some(&name), Some(&mut value), Some(&mut error)) == 0 {
         warning!("engine preference {name}: {error}");
+        return false;
     }
+    let kept = ctx.preference(Some(&name)).is_some_and(|v| match pref {
+        Pref::Bool(b) => (v.bool() != 0) == b,
+        Pref::Int(i) => v.int() == i,
+        Pref::Str(s) => CefString::from(&v.string()).to_string() == s,
+    });
+    if !kept {
+        warning!("engine preference {name} was not kept");
+    }
+    kept
 }

@@ -243,6 +243,26 @@
   function fit() { LB.post('popupResize', { height: document.body.scrollHeight + 2 }); }
 
 
+  // Login suggestions under a focused field: the matching usernames (with the host for a
+  // sister site of the same domain), or "Unlock Krunk passwords" while the vault is locked.
+  // The popup never has the focus here (the field keeps it): plain clicks only.
+  function renderSuggest(c) {
+    const pick = (id) => { LB.post('suggestPick', { tabId: c.tabId, frameId: c.frameId, entryId: id }); close(); };
+    const rows = [];
+    if (c.locked) {
+      rows.push(el('button', { class: 'suggest locked', id: 'suggest-unlock', onclick: () => LB.post('suggestUnlock', { tabId: c.tabId, frameId: c.frameId }) }, [
+        el('span', { class: 'key-glyph', text: '🔒' }), el('span', { class: 'label', text: 'Unlock Krunk passwords' }),
+      ]));
+    } else {
+      c.entries.forEach((e) => rows.push(el('button', { class: 'suggest', onclick: () => pick(e.id) }, [
+        el('span', { class: 'key-glyph', text: '🔑' }),
+        el('span', { class: 'label' }, [el('span', { class: 'user', text: e.username || '(no username)' }), e.host ? el('span', { class: 'host', text: e.host }) : null]),
+      ])));
+    }
+    rows.push(el('div', { class: 'suggest-foot', text: 'Krunk passwords · ' + c.origin.replace(/^https?:\/\//, '') }));
+    return [el('div', { class: 'suggest-list' }, rows)];
+  }
+
   function renderSave(c) {
     const reply = (accept, never) => {
       LB.post('savePasswordReply', { tabId: c.tabId, origin: c.origin, accept: accept, never: never });
@@ -452,12 +472,12 @@
   LB.on('popup', function (m) {
     current = m.content;
     const c = m.content;
-    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, savePassword: renderSave, fill: renderFill, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
+    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, fill: renderFill, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
     root.textContent = '';
     root.dataset.kind = c.kind;
     (render ? render(c) : []).forEach((n) => n && root.appendChild(n));
     const first = document.getElementById('master') || document.getElementById('bm-name') || document.getElementById('default') || root.querySelector('button:not([disabled])');
-    if (first) first.focus();
+    if (first && c.kind !== 'suggest') first.focus();
     if (c.kind === 'siteInfo') requestAnimationFrame(fit);
   });
 

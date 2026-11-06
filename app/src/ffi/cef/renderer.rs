@@ -221,15 +221,18 @@ fn context_created(scripts: Scripts, frame: &mut Frame, context: &mut V8Context)
     if scripts.pointer_lock {
         install_pointer_lock(frame, context);
     }
+    // The bridge and the login script run in every http(s) frame: a login form in an iframe
+    // gets suggestions for its own origin (the host accepts only the field messages from
+    // sub-frames). Page tokens are a main-frame matter.
+    install_bridge(frame, context);
+    if scripts.login {
+        eval(context, assets::inject_script("login.js"));
+    }
     if !main {
         return;
     }
-    install_bridge(frame, context);
     if scripts.page_tokens {
         eval(context, assets::inject_script("page-tokens.js"));
-    }
-    if scripts.login {
-        eval(context, assets::inject_script("login.js"));
     }
 }
 

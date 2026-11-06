@@ -126,6 +126,8 @@ pub struct MessageSource {
     /// The frame's committed URL.
     pub url: String,
     pub main_frame: bool,
+    /// The engine's identifier of the sending frame (for a reply to that frame).
+    pub frame_id: String,
 }
 
 /// A page asked for a new window (`window.open`, `target=_blank`).
@@ -600,6 +602,30 @@ impl View {
             args.set_string(0, Some(&CefString::from(json)));
         }
         frame.send_process_message(ProcessId::RENDERER, Some(&mut message));
+    }
+
+    /// Posts a JSON message to one frame's `__lbHost` listeners (any frame with the
+    /// bridge); `false` if the frame is gone. Used for a login fill into the frame that
+    /// asked.
+    pub fn post_json_to_frame(&self, frame_id: &str, json: &str) -> bool {
+        let Some(frame) = self.browser().and_then(|b| b.frame_by_identifier(Some(&CefString::from(frame_id)))) else {
+            return false;
+        };
+        if frame.is_valid() != 1 {
+            return false;
+        }
+        let Some(mut message) = process_message_create(Some(&CefString::from(TO_PAGE))) else { return false };
+        if let Some(args) = message.argument_list() {
+            args.set_string(0, Some(&CefString::from(json)));
+        }
+        frame.send_process_message(ProcessId::RENDERER, Some(&mut message));
+        true
+    }
+
+    /// The committed URL of one frame, if it still exists.
+    pub fn frame_url(&self, frame_id: &str) -> Option<String> {
+        let frame = self.browser()?.frame_by_identifier(Some(&CefString::from(frame_id)))?;
+        (frame.is_valid() == 1).then(|| CefString::from(&frame.url()).to_string())
     }
 
     /// Sends a pointer-lock event (JSON) to one frame; `false` if the frame
