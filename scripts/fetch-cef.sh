@@ -7,7 +7,9 @@
 #
 # The archive is an untrusted download: it is kept in its own cache directory, checked against
 # the SHA-1 published in the CEF build index (cef-builds.spotifycdn.com/index.json) *and* the
-# SHA-256 pinned in cef.lock, and only then extracted.
+# SHA-256 pinned in cef.lock, and only then extracted. With CEF_SOURCE=self-built in cef.lock
+# (Krunk's own build, scripts/cef-build/) there is no download and no index: the archive must
+# already be in the cache and match the pinned SHA-256.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 lock="$root/cef.lock"
@@ -19,10 +21,21 @@ out="$cache/$CEF_VERSION"
 cdn=${CEF_DOWNLOAD_URL:-https://cef-builds.spotifycdn.com}
 mkdir -p "$downloads"
 
-# 1. The index must list exactly this archive with this SHA-1.
-index="$downloads/index.json"
-curl -fsS -o "$index" "$cdn/index.json"
-python3 -I - "$index" "$CEF_ARCHIVE" "$CEF_SHA1" <<'EOF'
+archive="$downloads/$CEF_ARCHIVE"
+if [ "${CEF_SOURCE:-spotify}" = self-built ]; then
+  # Krunk's own build of CEF (scripts/cef-build/): it is not in CEF's index and is not
+  # downloaded. The archive comes from the artifact store named in cef.lock (CEF_ARTIFACT),
+  # copied into the cache by hand, and is checked by its pinned SHA-256 only.
+  if [ ! -f "$archive" ]; then
+    echo "self-built CEF archive not found: $archive" >&2
+    echo "copy it from $CEF_ARTIFACT (see scripts/cef-build/README.md)" >&2
+    exit 1
+  fi
+else
+  # 1. The index must list exactly this archive with this SHA-1.
+  index="$downloads/index.json"
+  curl -fsS -o "$index" "$cdn/index.json"
+  python3 -I - "$index" "$CEF_ARCHIVE" "$CEF_SHA1" <<'EOF'
 import json, sys
 index, name, sha1 = sys.argv[1:]
 files = [f for v in json.load(open(index))["windows64"]["versions"] for f in v["files"]]
@@ -33,13 +46,13 @@ if match[0]["sha1"] != sha1:
     sys.exit(f"index SHA-1 {match[0]['sha1']} != pinned {sha1}")
 EOF
 
-# 2. Download (once) and verify both hashes.
-archive="$downloads/$CEF_ARCHIVE"
-if [ ! -f "$archive" ]; then
-  curl -fSL --retry 3 -o "$archive.part" "$cdn/${CEF_ARCHIVE//+/%2B}"
-  mv "$archive.part" "$archive"
+  # 2. Download (once) and verify both hashes.
+  if [ ! -f "$archive" ]; then
+    curl -fSL --retry 3 -o "$archive.part" "$cdn/${CEF_ARCHIVE//+/%2B}"
+    mv "$archive.part" "$archive"
+  fi
+  echo "$CEF_SHA1  $archive" | sha1sum -c --quiet -
 fi
-echo "$CEF_SHA1  $archive" | sha1sum -c --quiet -
 sha256=$(sha256sum "$archive" | cut -d' ' -f1)
 if [ "${1:-}" = "--pin" ]; then
   sed -i "s/^CEF_SHA256=.*/CEF_SHA256=$sha256/" "$lock"

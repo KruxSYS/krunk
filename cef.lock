@@ -1,10 +1,24 @@
 # CEF binary distribution used by Krunk (read by scripts/fetch-cef.sh).
-# To move to a newer CEF: bump the `cef` crate pin in app/Cargo.toml, update these values from
-# https://cef-builds.spotifycdn.com/index.json (windows64, "minimal"), run `scripts/fetch-cef.sh --pin`
-# to record the SHA-256, then `scripts/build-dist.sh --release`.
+#
+# Since 0.5.2 the engine is Krunk's own build of CEF with proprietary codecs (H.264, HEVC,
+# AAC, AC-3/E-AC-3): same CEF commit and Chromium tag as the Spotify "minimal" build, so the
+# `cef` crate pin in app/Cargo.toml is unchanged. How it is built: scripts/cef-build/README.md.
+# The archive is not downloaded: copy it from CEF_ARTIFACT into ~/.cache/krunk-cef/downloads/;
+# fetch-cef.sh checks the SHA-256 and exports it.
+#
+# To move to a newer CEF: bump the `cef` crate pin in app/Cargo.toml, rebuild the engine with
+# scripts/cef-build/cross-build.sh (or, for a stock Spotify build, set CEF_SOURCE=spotify and
+# CEF_SHA1 from https://cef-builds.spotifycdn.com/index.json), update these values, run
+# `scripts/fetch-cef.sh --pin` to record the SHA-256, then `scripts/build-dist.sh --release`.
 CEF_CRATE=156.3.0+156.0.15
 CEF_VERSION=156.0.15
 CHROMIUM_VERSION=156.0.8078.80
-CEF_ARCHIVE=cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_windows64_minimal.tar.bz2
-CEF_SHA1=b690e035689ee20ba9d2500ac8953815bc7ed46a
-CEF_SHA256=371efdf09dce30569d9a0880727be79fea96ab5ba6f7be533c9332bb0790385a
+CEF_SOURCE=self-built
+CEF_ARCHIVE=cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_windows64_minimal_krunk-codecs.tar.bz2
+CEF_SHA256=a8bb5c42e420929645ac6432946437d8273681e6fbffc187c94ce6ada03e8dda
+# Where the archive is kept (outside git, with the release artifacts): the pipeline's artifact
+# store and the GitHub release of 0.5.2 (dist/).
+CEF_ARTIFACT=/work/projects/browser/.pipeline/artifacts/cef/cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_windows64_minimal_krunk-codecs.tar.bz2
+# Build inputs: CEF cf671c0, Chromium tag 156.0.8078.80, Linux->Windows cross build, GN args in
+# scripts/cef-build/cross-build.sh (is_official_build proprietary_codecs ffmpeg_branding=Chrome
+# enable_platform_hevc enable_platform_ac3_eac3_audio), MSVC 14.51.36231 / SDK 10.0.28000.0.

@@ -55,10 +55,19 @@ tools/pebrand/target/release/pebrand brand "$CEF_PATH/bootstrap.exe" "$out/Krunk
   "$manifest" "$version" assets/brand/krunk.ico
 cp "target/$target/$profile/Krunk.dll" "$out/"
 for f in libcef.dll chrome_elf.dll d3dcompiler_47.dll dxcompiler.dll vk_swiftshader.dll \
-         vk_swiftshader_icd.json vulkan-1.dll icudtl.dat v8_context_snapshot.bin resources.pak \
+         vk_swiftshader_icd.json vulkan-1.dll icudtl.dat resources.pak \
          chrome_100_percent.pak chrome_200_percent.pak; do
   cp "$CEF_PATH/$f" "$out/"
 done
+# The V8 start-up snapshot: CEF's binary distribution has the Blink context snapshot, Krunk's
+# cross-built engine (scripts/cef-build) has V8's plain snapshot_blob.bin instead (Chromium
+# cannot generate the context snapshot off Windows). Ship whichever the archive contains.
+snapshot=""
+for f in v8_context_snapshot.bin snapshot_blob.bin; do
+  [ -f "$CEF_PATH/$f" ] && { snapshot=$f; cp "$CEF_PATH/$f" "$out/"; break; }
+done
+[ -n "$snapshot" ] || { echo "no V8 snapshot (v8_context_snapshot.bin or snapshot_blob.bin) in $CEF_PATH" >&2; exit 1; }
+echo "V8 snapshot: $snapshot" >&2
 cp "$CEF_PATH"/locales/*.pak "$out/locales/"
 mkdir -p "$out/licenses"
 cp "$CEF_PATH/LICENSE.txt" "$out/licenses/CEF-LICENSE.txt"

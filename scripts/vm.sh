@@ -42,8 +42,10 @@ case "${1:-}" in
     # shellcheck source=/dev/null
     source "$(dirname "$0")/../cef.lock"
     ssh "$VM" "Get-Process Krunk -ErrorAction SilentlyContinue | Stop-Process -Force" >/dev/null || true
+    # The marker is the archive's SHA-256, not the CEF version: 0.5.2 switched to a self-built
+    # engine of the same version.
     have=$(ssh "$VM" "Get-Content -ErrorAction SilentlyContinue '$FWD/app/.cef-version'" | tr -d '\r' || true)
-    if [ "$have" = "$CEF_VERSION" ]; then
+    if [ "$have" = "$CEF_SHA256" ]; then
       for f in Krunk.dll Krunk.exe THIRD-PARTY-NOTICES.txt; do
         scp -q "$dist/Krunk-win-x64/$f" "$VM:$FWD/app/$f"
       done
@@ -53,8 +55,8 @@ case "${1:-}" in
       ssh "$VM" "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '$FWD/app';
         Expand-Archive -Force '$FWD/Krunk-win-x64.zip' '$FWD/unpack';
         Move-Item '$FWD/unpack/Krunk-win-x64' '$FWD/app'; Remove-Item -Recurse -Force '$FWD/unpack';
-        Remove-Item '$FWD/Krunk-win-x64.zip'; Set-Content '$FWD/app/.cef-version' '$CEF_VERSION'" >/dev/null
-      echo "deployed the full folder (CEF $CEF_VERSION)"
+        Remove-Item '$FWD/Krunk-win-x64.zip'; Set-Content '$FWD/app/.cef-version' '$CEF_SHA256'" >/dev/null
+      echo "deployed the full folder (CEF $CEF_VERSION, archive $CEF_SHA256)"
     fi ;;
   ps1) run_ps1 "$2" ;;
   start)
