@@ -1,0 +1,127 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Krunk media and GPU probe</title>
+<style>
+  body { font: 13px/1.4 system-ui, sans-serif; margin: 12px; }
+  table { border-collapse: collapse; margin: 6px 0 12px; }
+  td, th { border: 1px solid #ccc; padding: 2px 8px; text-align: left; }
+  .yes { background: #d9f7d9; } .no { background: #ffd9d9; } .maybe { background: #fff3c4; }
+  video { width: 240px; height: 135px; background: #000; margin-right: 8px; }
+  pre { background: #f4f4f4; padding: 6px; white-space: pre-wrap; }
+</style>
+<h1>Krunk media and GPU probe</h1>
+<p id="ua"></p>
+<h2>Codec support</h2>
+<table id="codecs"><tr><th>Type</th><th>MediaSource.isTypeSupported</th><th>canPlayType</th></tr></table>
+<h2>Playback</h2>
+<div>
+  <video id="mp4" controls muted playsinline></video>
+  <video id="webm" controls muted playsinline></video>
+  <video id="dash" controls muted playsinline></video>
+  <video id="hls" controls muted playsinline></video>
+</div>
+<pre id="play"></pre>
+<h2>GPU</h2>
+<pre id="gpu"></pre>
+<script>
+const out = {};
+function log(k, v) {
+  out[k] = v;
+  fetch('/log?' + encodeURIComponent(k) + '=' + encodeURIComponent(String(v)), { cache: 'no-store' }).catch(() => {});
+}
+document.getElementById('ua').textContent = navigator.userAgent;
+log('ua', navigator.userAgent);
+
+// Codec matrix.
+const types = [
+  ['H.264 baseline', 'video/mp4; codecs="avc1.42E01E"'],
+  ['H.264 high', 'video/mp4; codecs="avc1.640028"'],
+  ['H.264 + AAC', 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"'],
+  ['HEVC', 'video/mp4; codecs="hev1.1.6.L93.B0"'],
+  ['HEVC hvc1', 'video/mp4; codecs="hvc1.1.6.L93.B0"'],
+  ['AAC-LC', 'audio/mp4; codecs="mp4a.40.2"'],
+  ['AC-3', 'audio/mp4; codecs="ac-3"'],
+  ['E-AC-3', 'audio/mp4; codecs="ec-3"'],
+  ['MP3 (mp4)', 'audio/mp4; codecs="mp4a.69"'],
+  ['MP3', 'audio/mpeg'],
+  ['FLAC (mp4)', 'audio/mp4; codecs="flac"'],
+  ['Opus (mp4)', 'audio/mp4; codecs="opus"'],
+  ['VP9 (mp4)', 'video/mp4; codecs="vp09.00.10.08"'],
+  ['AV1 (mp4)', 'video/mp4; codecs="av01.0.05M.08"'],
+  ['VP8 webm', 'video/webm; codecs="vp8"'],
+  ['VP9 webm', 'video/webm; codecs="vp9"'],
+  ['AV1 webm', 'video/webm; codecs="av01.0.05M.08"'],
+  ['Opus webm', 'audio/webm; codecs="opus"'],
+  ['Vorbis webm', 'audio/webm; codecs="vorbis"'],
+  ['MPEG-TS H.264', 'video/mp2t; codecs="avc1.42E01E"'],
+  ['HLS (native)', 'application/vnd.apple.mpegurl'],
+];
+const probe = document.createElement('video');
+const table = document.getElementById('codecs');
+const matrix = [];
+for (const [name, type] of types) {
+  const mse = ('MediaSource' in window) ? MediaSource.isTypeSupported(type) : 'n/a';
+  const cpt = probe.canPlayType(type) || '""';
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td>${name}<br><small>${type}</small></td><td class="${mse === true ? 'yes' : mse === false ? 'no' : 'maybe'}">${mse}</td><td class="${cpt === 'probably' ? 'yes' : cpt === '""' ? 'no' : 'maybe'}">${cpt}</td>`;
+  table.appendChild(tr);
+  matrix.push(`${type} | mse=${mse} | canPlayType=${cpt}`);
+}
+log('codecs', matrix.join(' ;; '));
+
+// Playback of local files and public streams.
+const playLog = document.getElementById('play');
+function watch(id, label) {
+  const v = document.getElementById(id);
+  const say = (m) => { playLog.textContent += `${label}: ${m}\n`; log('play-' + label, m); };
+  v.addEventListener('loadedmetadata', () => say(`loadedmetadata ${v.videoWidth}x${v.videoHeight} ${v.duration.toFixed(1)}s`));
+  v.addEventListener('playing', () => say('playing'));
+  v.addEventListener('timeupdate', function tu() { if (v.currentTime > 1.5) { say(`currentTime ${v.currentTime.toFixed(1)} decoded frames ${v.getVideoPlaybackQuality ? v.getVideoPlaybackQuality().totalVideoFrames : '?'}`); v.removeEventListener('timeupdate', tu); } });
+  v.addEventListener('error', () => say(`error code=${v.error && v.error.code} ${v.error && v.error.message}`));
+  return v;
+}
+const mp4 = watch('mp4', 'mp4-h264-aac'); mp4.src = 'test-h264-aac.mp4'; mp4.play().catch(e => log('play-mp4-h264-aac-play', e.message));
+const webm = watch('webm', 'webm-vp9-opus'); webm.src = 'test-vp9-opus.webm'; webm.play().catch(e => log('play-webm-vp9-opus-play', e.message));
+
+function script(src) { return new Promise((ok, no) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = () => no(new Error('load failed ' + src)); document.head.appendChild(s); }); }
+script('https://cdn.dashjs.org/v4.7.4/dash.all.min.js').then(() => {
+  const v = watch('dash', 'dash-h264');
+  const p = dashjs.MediaPlayer().create();
+  p.on('error', (e) => log('play-dash-h264-error', JSON.stringify(e.error).slice(0, 300)));
+  p.initialize(v, 'https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps.mpd', true);
+}).catch(e => log('play-dash-h264', e.message));
+script('https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js').then(() => {
+  const v = watch('hls', 'hls-h264');
+  if (Hls.isSupported()) {
+    const h = new Hls();
+    h.on(Hls.Events.ERROR, (ev, d) => log('play-hls-h264-error', `${d.type} ${d.details} fatal=${d.fatal}`));
+    h.loadSource('https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8');
+    h.attachMedia(v); v.play().catch(() => {});
+  } else { log('play-hls-h264', 'hls.js not supported (no MSE)'); }
+}).catch(e => log('play-hls-h264', e.message));
+
+// GPU.
+const gpu = document.getElementById('gpu');
+function glInfo(kind) {
+  const c = document.createElement('canvas');
+  const gl = c.getContext(kind);
+  if (!gl) return `${kind}: no context`;
+  const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  const r = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+  const vnd = dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR);
+  return `${kind}: renderer="${r}" vendor="${vnd}" version="${gl.getParameter(gl.VERSION)}"`;
+}
+const lines = [glInfo('webgl'), glInfo('webgl2')];
+lines.push(`hardwareConcurrency=${navigator.hardwareConcurrency} devicePixelRatio=${devicePixelRatio}`);
+lines.push(`userAgentData=${navigator.userAgentData ? JSON.stringify(navigator.userAgentData.brands) : 'none'}`);
+gpu.textContent = lines.join('\n');
+lines.forEach((l, i) => log('gpu' + i, l));
+if (navigator.gpu) {
+  navigator.gpu.requestAdapter().then(a => {
+    if (!a) { log('webgpu', 'no adapter'); gpu.textContent += '\nwebgpu: no adapter'; return; }
+    const info = a.info || {};
+    const s = `webgpu: vendor="${info.vendor}" architecture="${info.architecture}" device="${info.device}" description="${info.description}" fallback=${a.isFallbackAdapter}`;
+    gpu.textContent += '\n' + s; log('webgpu', s);
+  }).catch(e => log('webgpu', 'error ' + e.message));
+} else { log('webgpu', 'navigator.gpu missing'); gpu.textContent += '\nwebgpu: navigator.gpu missing'; }
+</script>
