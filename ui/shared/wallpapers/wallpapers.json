@@ -1,0 +1,62 @@
+[
+ {
+  "id": "aurora",
+  "title": "Aurora",
+  "look": "dark",
+  "dim": 25
+ },
+ {
+  "id": "nebula",
+  "title": "Nebula",
+  "look": "dark",
+  "dim": 15
+ },
+ {
+  "id": "bokeh",
+  "title": "City lights",
+  "look": "dark",
+  "dim": 25
+ },
+ {
+  "id": "dusk",
+  "title": "Dusk",
+  "look": "dark",
+  "dim": 10
+ },
+ {
+  "id": "forest",
+  "title": "Misty forest",
+  "look": "dark",
+  "dim": 35
+ },
+ {
+  "id": "lake",
+  "title": "Alpine lake",
+  "look": "dark",
+  "dim": 30
+ },
+ {
+  "id": "dunes",
+  "title": "Dunes",
+  "look": "light",
+  "dim": 0
+ },
+ {
+  "id": "coast",
+  "title": "Coast",
+  "look": "light",
+  "dim": 0
+ },
+ {
+  "id": "paper",
+  "title": "Paper waves",
+  "look": "light",
+  "dim": 0
+ },
+ {
+  "id": "mint",
+  "title": "Mint",
+  "look": "light",
+  "dim": 0
+ }
+]

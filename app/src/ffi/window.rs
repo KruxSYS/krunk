@@ -11,7 +11,7 @@ use windows::core::{w, HSTRING, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     ClientToScreen, GetMonitorInfoW, GetStockObject, MonitorFromPoint, HBRUSH, MONITORINFO, MONITOR_DEFAULTTONEAREST,
-    WHITE_BRUSH,
+    NULL_BRUSH,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
@@ -80,6 +80,10 @@ pub trait WindowEvents {
     /// DevTools is docked in this window.
     fn devtools_chrome(&self) -> Option<DevToolsChrome> {
         None
+    }
+    /// The frame's theme is dark (what shows between its child views; 0.7.0).
+    fn background_dark(&self) -> bool {
+        false
     }
     /// A strip button was clicked.
     fn strip_clicked(&self, _button: StripButton) {}
@@ -172,7 +176,9 @@ fn register(class: PCWSTR, style: u32, proc_: WndProc) -> Result<(), String> {
             hIcon: app_icon(instance.into(), 32),
             hIconSm: app_icon(instance.into(), 16),
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
-            hbrBackground: HBRUSH(GetStockObject(WHITE_BRUSH).0),
+            // No class brush: a white erase showed through between two views while switching
+            // tabs (0.7.0, R7). The frame paints its own theme colour (`paint_chrome`).
+            hbrBackground: HBRUSH(GetStockObject(NULL_BRUSH).0),
             lpszClassName: class,
             ..Default::default()
         };
@@ -1339,10 +1345,13 @@ fn paint_chrome(hwnd: HWND) {
     // SAFETY: BeginPaint/EndPaint pair on our own window; GDI objects are released.
     unsafe {
         let dc = BeginPaint(hwnd, &mut ps);
-        let chrome = events(hwnd).and_then(|e| e.devtools_chrome());
-        let dark = chrome.is_some_and(|c| c.dark);
+        let ev = events(hwnd);
+        let chrome = ev.as_ref().and_then(|e| e.devtools_chrome());
+        // The theme, also without DevTools: this is what shows between two views (R7).
+        let dark = chrome.map_or_else(|| ev.as_ref().is_some_and(|e| e.background_dark()), |c| c.dark);
         let rgb = |r: u32, g: u32, b: u32| windows::Win32::Foundation::COLORREF(r | (g << 8) | (b << 16));
-        let bg = if dark { rgb(32, 33, 36) } else { rgb(241, 243, 244) };
+        // The pages' --bg (ui/shared/common.css).
+        let bg = if dark { rgb(31, 32, 35) } else { rgb(243, 244, 246) };
         let bg_brush = CreateSolidBrush(bg);
         let _ = FillRect(dc, &ps.rcPaint, bg_brush);
         let _ = DeleteObject(HGDIOBJ(bg_brush.0));

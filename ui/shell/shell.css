@@ -5,7 +5,8 @@ body { display: flex; flex-direction: column; background: var(--bg); }
 /* ---- tab strip ---- */
 /* The tab row is the window's title bar: empty space in it drags the window
    (hit-tested by the host from the rects shell.js reports). */
-#tabstrip { display: flex; align-items: flex-end; height: 36px; padding: 0 0 0 6px; gap: 2px; background: var(--strip-bg, transparent); }
+#tabstrip { display: flex; align-items: flex-end; height: 36px; padding: 0 0 0 6px; gap: 2px; background: var(--strip-bg, transparent);
+            color: var(--strip-fg, var(--bg-fg, var(--fg))); }
 #tabs { display: flex; flex: 0 1 0; min-width: 0; height: 100%; align-items: flex-end; gap: 2px;
         overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
 #tabs::-webkit-scrollbar { display: none; }
@@ -15,6 +16,9 @@ body { display: flex; flex-direction: column; background: var(--bg); }
   flex: 0 1 256px; min-width: 72px; height: 30px; padding: 0 6px 0 10px;
   border-radius: 8px 8px 0 0; cursor: default; color: var(--fg-muted);
 }
+/* On a custom strip or background colour (0.7.0, R3) the inactive tabs use its readable text. */
+:root.custom-strip .tab:not(.active):not(.private) { color: var(--strip-fg, var(--bg-fg)); opacity: .85; }
+:root.custom-strip #tabstrip > .tb, :root.custom-strip #new-tab { color: var(--strip-fg, var(--bg-fg)); }
 /* Width changes slide (a tab closing or opening, frozen widths released); during a drag the
    other tabs slide aside, and the dropped tab slides into its slot. */
 .tab { transition: flex-basis .16s ease, min-width .16s ease, padding .16s ease, opacity .16s ease, transform .17s ease; }
@@ -84,7 +88,9 @@ html.fullscreen #caption, html.fullscreen #drag-space { display: none; }
 #media-chip .icon { width: 13px; height: 13px; stroke: #fff; }
 #media-chip[hidden] { display: none; }
 #toolbar { display: flex; align-items: center; height: 40px; padding: 0 6px; gap: 2px; background: var(--toolbar-bg, var(--bg-raised));
-           border-bottom: 1px solid var(--border); }
+           border-bottom: 1px solid var(--border); color: var(--toolbar-fg, var(--fg)); }
+/* The toolbar's buttons take its readable text colour (0.7.0, R3); the address field keeps the theme's. */
+#toolbar > .tb, #toolbar > #ext-actions .tb, #toolbar > #downloads, #toolbar > #menu { color: inherit; }
 .tb { display: flex; align-items: center; justify-content: center; gap: 3px; min-width: 32px; height: 32px; border: 0;
       border-radius: 6px; background: none; padding: 0 6px; cursor: pointer; color: var(--fg); position: relative; }
 .tb:hover:not(:disabled) { background: var(--bg-hover); }
@@ -102,7 +108,14 @@ html.fullscreen #caption, html.fullscreen #drag-space { display: none; }
            background: var(--bg); border: 1px solid transparent; border-radius: 16px; }
 #omnibox:focus-within { border-color: var(--accent); background: var(--bg-raised); }
 #omnibox.private { background: var(--private-bg); }
-#address { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: var(--fg); font: inherit; font-size: 1.077rem; }
+#address-wrap { flex: 1; min-width: 0; position: relative; display: flex; align-items: center; align-self: stretch; }
+#address { flex: 1; min-width: 0; border: 0; outline: 0; padding: 0; background: none; color: var(--fg); font: inherit; font-size: 1.077rem; -webkit-user-drag: none; }
+/* The formatted address over the unfocused field (same font, same place; never takes a click). */
+#address-display { position: absolute; inset: 0; display: flex; align-items: center; overflow: hidden; white-space: pre; pointer-events: none;
+  font: inherit; font-size: 1.077rem; color: var(--fg-muted); }
+#address-display[hidden] { display: none; }
+#address-display .host { color: var(--fg); }
+#address.formatted { color: transparent; }
 #site-icon { display: flex; color: var(--fg-muted); }
 #site-icon.secure { color: #16a34a; }
 #private-badge { display: flex; align-items: center; gap: 4px; padding: 1px 8px 1px 4px; border-radius: 10px;

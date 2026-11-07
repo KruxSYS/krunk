@@ -152,6 +152,10 @@ pub(super) struct ExtHost {
     /// Per tab: the identifier of the installed bundle script.
     scripts: RefCell<HashMap<TabId, String>>,
     contexts: RefCell<HashMap<TabId, Vec<ExtContext>>>,
+    /// Tabs whose Page and Runtime DevTools domains are on (0.7.0, R24: only while an enabled
+    /// extension has content scripts for them; every event of an enabled domain crosses to the
+    /// browser process, which slowed every page down).
+    domains: RefCell<std::collections::HashSet<TabId>>,
 }
 
 impl ExtHost {
@@ -166,6 +170,7 @@ impl ExtHost {
             next_id: Cell::new(1),
             alarms: RefCell::new(HashMap::new()),
             request_origin: RefCell::new(None),
+            domains: RefCell::new(std::collections::HashSet::new()),
             scripts: RefCell::new(HashMap::new()),
             contexts: RefCell::new(HashMap::new()),
         }
@@ -474,7 +479,27 @@ impl Browser {
             view.devtools_method("Page.removeScriptToEvaluateOnNewDocument", &json!({ "identifier": old }));
         }
         if bundle.is_empty() {
+            // No content scripts for this tab (any more): the domains go off again.
+            if self.ext.domains.borrow_mut().remove(&tab) {
+                view.devtools_method("Runtime.disable", &json!({}));
+                view.devtools_method("Page.disable", &json!({}));
+                self.ext.contexts.borrow_mut().remove(&tab);
+            }
             return;
+        }
+        #[cfg(feature = "perf-probe")]
+        if super::perf_probe::off("cdp") {
+            return;
+        }
+        // The Page domain (the scripts added below run on new documents only while it is on),
+        // the Runtime domain (contexts, binding calls) and the binding.
+        if self.ext.domains.borrow_mut().insert(tab) {
+            view.devtools_method("Page.enable", &json!({}));
+            view.devtools_method("Runtime.enable", &json!({}));
+            view.devtools_method(
+                "Runtime.addBinding",
+                &json!({ "name": ext::BINDING_NAME, "executionContextName": ext::WORLD_NAME }),
+            );
         }
         let weak = self.me.clone();
         let params = json!({ "source": bundle, "worldName": ext::WORLD_NAME, "runImmediately": true });
@@ -502,21 +527,16 @@ impl Browser {
         });
     }
 
-    /// The tab's browser exists now (DevTools calls before that are lost): the Page domain
-    /// (the scripts added below run on new documents only while it is on), the Runtime
-    /// domain (contexts, binding calls), the binding and the bundle.
+    /// The tab's browser exists now (DevTools calls before that are lost): the bundle, with the
+    /// domains it needs, if any extension has content scripts.
     pub(super) fn ext_tab_created(&self, tab: TabId) {
         let Some(view) = self.tab_view(tab) else { return };
-        view.devtools_method("Page.enable", &json!({}));
-        view.devtools_method("Runtime.enable", &json!({}));
-        view.devtools_method(
-            "Runtime.addBinding",
-            &json!({ "name": ext::BINDING_NAME, "executionContextName": ext::WORLD_NAME }),
-        );
+        self.ext.domains.borrow_mut().remove(&tab);
         self.ext_install_bundle(tab, &view, view.is_private());
     }
 
     pub(super) fn ext_detach_tab(&self, tab: TabId) {
+        self.ext.domains.borrow_mut().remove(&tab);
         self.ext.scripts.borrow_mut().remove(&tab);
         self.ext.contexts.borrow_mut().remove(&tab);
         self.ext_tab_event("tabRemoved", json!({ "tabId": tab, "windowId": self.window_of(tab) }));

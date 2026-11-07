@@ -31,6 +31,8 @@ impl Browser {
                     "engineHints": self.engine_hints.borrow().clone(),
                     "cdm": widevine_cdm_version(&self.dirs.profile()),
                     "dnsPresets": lb_core::dns::PRESETS.iter().map(|p| serde_json::json!({ "id": p.id, "name": p.name, "resolver": p.resolver() })).collect::<Vec<_>>(),
+                    "wallpapers": super::library::wallpaper_list(),
+                    "ntpImageUrl": (!s.ntp.image.is_empty()).then(|| lb_core::assets::ntp_image_url(&s.ntp.image)),
                 });
                 self.reply(tab, Event::ok(req_id, data));
             }
@@ -65,6 +67,7 @@ impl Browser {
                 self.import_run(tab, req_id, profile, types, primary_password)
             }
             Request::ImportCsv => self.import_csv(tab, req_id),
+            Request::RepairEngine => self.repair_now(),
             Request::OpenGpuInternals => {
                 if let Some(t) = tab {
                     self.navigate_tab(t, "chrome://gpu/");
@@ -82,6 +85,9 @@ impl Browser {
             "hardwareAcceleration": self.settings.borrow().hardware_acceleration,
             "runningWithGpu": !args.split_whitespace().any(|a| a == "--disable-gpu"),
             "arguments": args,
+            // What the engine really runs with: Krunk's switches merged into CEF's own (0.7.0).
+            "commandLine": engine::command_line(),
+            "integrity": self.integrity_json(),
             "gpuProcess": crate::ffi::procmem::browser_tree().iter().any(|p| p.kind == crate::ffi::procmem::Kind::Gpu),
             "cef": cef,
             "chromium": chromium,
@@ -98,6 +104,7 @@ impl Browser {
             "chromium": chromium,
             "dataDir": self.dirs.root().display().to_string(),
             "arguments": self.running_settings.browser_arguments(),
+            "integrity": self.integrity_json(),
         })
     }
 
@@ -344,7 +351,13 @@ impl Browser {
         self.apply_frame_theme();
         let e = {
             let s = self.settings.borrow();
-            Event::Theme { theme, accent: s.appearance.accent.clone(), ui_font_px: s.appearance.ui_font_px }.to_json()
+            Event::Theme {
+                theme,
+                accent: s.appearance.accent.clone(),
+                ui_font_px: s.appearance.ui_font_px,
+                colors: lb_core::color::ThemeColors::from_appearance(&s.appearance),
+            }
+            .to_json()
         };
         let popup = self.popup.borrow().as_ref().and_then(|p| p.view.clone());
         if let Some(c) = popup {
@@ -375,8 +388,13 @@ impl Browser {
     pub(super) fn send_theme_to(&self, c: &engine::View) {
         let s = self.settings.borrow();
         c.post_json(
-            &Event::Theme { theme: s.theme, accent: s.appearance.accent.clone(), ui_font_px: s.appearance.ui_font_px }
-                .to_json(),
+            &Event::Theme {
+                theme: s.theme,
+                accent: s.appearance.accent.clone(),
+                ui_font_px: s.appearance.ui_font_px,
+                colors: lb_core::color::ThemeColors::from_appearance(&s.appearance),
+            }
+            .to_json(),
         );
     }
 

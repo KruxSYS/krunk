@@ -517,6 +517,7 @@
     // The user's own text stays while they type; a focused but untouched field
     // follows the page (a bookmark opened while the caret was in the field).
     if (!(state.editing && state.dirty)) $('address').value = n.url;
+    renderAddressDisplay();
     $('star').classList.toggle('bookmarked', !!n.bookmarked);
     // Built-in pages (krunk://) cannot be bookmarked.
     $('star').hidden = !n.url || n.url.startsWith('krunk://');
@@ -544,6 +545,17 @@
 
   // ---------- address bar ----------
   const address = $('address');
+  // The unfocused bar shows the address formatted (0.7.0, R5): the host in full colour, the
+  // scheme and the rest muted. It is the field's own text in the same place (the field's text is
+  // only made transparent), so a press puts the caret exactly where the pointer is.
+  function renderAddressDisplay() {
+    const box = $('address-display');
+    const m = document.activeElement !== address && /^(https?:\/\/)([^\/?#]*)(.*)$/.exec(address.value);
+    box.textContent = '';
+    address.classList.toggle('formatted', !!m);
+    box.hidden = !m;
+    if (m) box.append(el('span', { text: m[1] }), el('span', { class: 'host', text: m[2] }), el('span', { text: m[3] }));
+  }
   // Suggestions while typing (0.5.1): the host shows them in a popup under the bar that
   // never takes the focus; the shell keeps the rows and the keyboard selection.
   // `inline`: the completion shown selected after the caret (0.6.0); `noInline`: the last
@@ -599,8 +611,52 @@
       LB.post('addressSuggestSelect', { selected: e.inline.index });
     }
   });
-  address.addEventListener('focus', function () { state.editing = true; state.dirty = false; address.select(); });
-  address.addEventListener('blur', function () { state.editing = false; state.dirty = false; closeSuggestions(); renderNav(); });
+  // Focus by keyboard (Ctrl+L, a new tab) selects the whole address. A mouse press lets the field
+  // do what text fields do (0.7.0, R4): drag selects, a double click a word, a triple click all;
+  // a plain click into the unfocused bar selects all on release, as in Chrome.
+  const press = { pointer: false, wasFocused: false, selectTimer: null };
+  address.addEventListener('mousedown', function (e) {
+    if (e.button !== 0) return;
+    press.pointer = true;
+    press.wasFocused = document.activeElement === address;
+    // A press inside a selection would drag the text; collapse it so the press starts a new one.
+    if (press.wasFocused && e.detail === 1 && address.selectionStart !== address.selectionEnd) {
+      address.setSelectionRange(address.selectionStart, address.selectionStart);
+    }
+  });
+  address.addEventListener('focus', function () {
+    state.editing = true; state.dirty = false;
+    renderAddressDisplay();
+    if (!press.pointer) address.select();
+  });
+  // (After the click: the engine places the caret only once the click is handled; `detail`
+  // counts the clicks.)
+  address.addEventListener('click', function (e) {
+    const fresh = press.pointer && !press.wasFocused;
+    press.pointer = false;
+    if (!fresh || e.detail !== 1) return;
+    press.selectTimer = setTimeout(function () {
+      press.selectTimer = null;
+      if (document.activeElement === address && !state.dirty && address.selectionStart === address.selectionEnd) address.select();
+    }, 0);
+  });
+  // A key pressed before that (or a second press) wins over the select-all.
+  ['keydown', 'mousedown'].forEach(function (t) {
+    address.addEventListener(t, function () { if (press.selectTimer) { clearTimeout(press.selectTimer); press.selectTimer = null; } }, true);
+  });
+  // The address is never dragged out of the field: a press inside a selection starts a new one.
+  address.addEventListener('dragstart', function (e) { e.preventDefault(); });
+  address.addEventListener('blur', function () {
+    state.editing = false; state.dirty = false; press.pointer = false;
+    // The selection goes with the focus (R5): the unfocused bar shows the formatted address.
+    address.setSelectionRange(0, 0);
+    address.scrollLeft = 0;
+    closeSuggestions(); renderNav();
+  });
+  // A press anywhere else in the shell (toolbar, tabs, bookmarks bar) takes the focus from the bar.
+  document.addEventListener('pointerdown', function (e) {
+    if (document.activeElement === address && !$('omnibox').contains(e.target)) address.blur();
+  }, true);
   address.addEventListener('input', function (e) {
     state.dirty = true;
     suggest.noInline = !!(e.inputType && e.inputType.indexOf('delete') === 0);
@@ -831,21 +887,16 @@
   $('bookmarks-bar').addEventListener('pointerup', function (e) { endBarDrag(e, true); });
   $('bookmarks-bar').addEventListener('pointercancel', function (e) { endBarDrag(e, false); });
 
-  // Dragging the page from the address bar (the site icon, or the field while it is not
-  // being edited) onto the bar bookmarks it where it is dropped; a chip follows the
-  // cursor. A plain click still focuses the field. The host takes the title and address
-  // from the tab itself.
-  const urlDrag = { pointerId: null, startX: 0, startY: 0, moved: false, chip: null, target: null, fromField: false, suppressClick: false };
-  function urlDragStart(e, fromField) {
+  // Dragging the page by the site icon onto the bar bookmarks it where it is dropped; a chip
+  // follows the cursor. (Up to 0.6.0 the unfocused field dragged it too; since 0.7.0 a drag in
+  // the field selects text.) The host takes the title and address from the tab itself.
+  const urlDrag = { pointerId: null, startX: 0, startY: 0, moved: false, chip: null, target: null, suppressClick: false };
+  function urlDragStart(e) {
     if (e.button !== 0 || !state.nav || !state.nav.url || state.nav.url.startsWith('krunk://')) return;
-    if (fromField && state.editing) return;
-    // The field must not take the caret (and select its text, which would start a text drag)
-    // on the press; a click without movement focuses it on release instead.
-    if (fromField) e.preventDefault();
     urlDrag.pointerId = e.pointerId; urlDrag.startX = e.clientX; urlDrag.startY = e.clientY;
-    urlDrag.moved = false; urlDrag.target = null; urlDrag.fromField = fromField;
+    urlDrag.moved = false; urlDrag.target = null;
   }
-  $('site-icon').addEventListener('pointerdown', function (e) { rememberOpen('siteInfo'); urlDragStart(e, false); });
+  $('site-icon').addEventListener('pointerdown', function (e) { rememberOpen('siteInfo'); urlDragStart(e); });
   // A click (not a drag) on the site icon: the lock popup with the connection and certificate.
   $('site-icon').addEventListener('click', function () {
     if (urlDrag.suppressClick || !state.nav || !state.nav.url) return;
@@ -855,7 +906,6 @@
     LB.post('showPopup', { popup: 'siteInfo', rect: { x: Math.max(0, r.left - 8), y: r.bottom + 6, width: size[0], height: size[1] } });
     setPopup('siteInfo');
   });
-  address.addEventListener('pointerdown', function (e) { urlDragStart(e, true); });
   $('omnibox').addEventListener('pointermove', function (e) {
     if (urlDrag.pointerId !== e.pointerId) return;
     if (!urlDrag.moved) {
@@ -877,15 +927,11 @@
   });
   function endUrlDrag(e, commit) {
     if (urlDrag.pointerId !== e.pointerId) return;
-    const moved = urlDrag.moved, t = urlDrag.target, fromField = urlDrag.fromField;
+    const moved = urlDrag.moved, t = urlDrag.target;
     urlDrag.pointerId = null;
     if (urlDrag.chip) { urlDrag.chip.remove(); urlDrag.chip = null; }
     clearBarMarks();
-    if (!moved) {
-      // A click: the field gets the caret as usual.
-      if (fromField && commit) { address.focus(); address.select(); }
-      return;
-    }
+    if (!moved) return;
     // The release that ends a drag is not a click on the icon.
     urlDrag.suppressClick = true;
     setTimeout(function () { urlDrag.suppressClick = false; }, 0);
@@ -968,7 +1014,7 @@
     renderNav();
   });
   // Appearance (0.6.0): colours as CSS variables, density/shape as classes, hidden items.
-  function applyAppearance(a) {
+  function applyAppearance(a, colors) {
     if (!a) return;
     const root = document.documentElement;
     const set = (name, v) => { if (v) root.style.setProperty(name, v); else root.style.removeProperty(name); };
@@ -976,6 +1022,13 @@
     set('--toolbar-bg', a.toolbarColor);
     set('--strip-bg', a.stripColor);
     set('--bg', a.backgroundColor);
+    // Readable text on the custom colours (0.7.0, R3; computed by the host, WCAG AA).
+    const c = colors || {};
+    set('--accent-fg', c.accentFg);
+    set('--toolbar-fg', c.toolbarFg);
+    set('--strip-fg', c.stripFg);
+    set('--bg-fg', c.backgroundFg);
+    root.classList.toggle('custom-strip', !!(c.stripFg || c.backgroundFg));
     // (common.css sets the size on html and body: both get the override.)
     const fs = a.uiFontPx && a.uiFontPx !== 13 ? a.uiFontPx + 'px' : '';
     root.style.fontSize = fs;
@@ -993,10 +1046,14 @@
     document.documentElement.classList.toggle('light', m.theme === 'light');
     // The placeholder names the default search engine (it changes with the setting).
     if (m.searchName) address.placeholder = 'Search with ' + m.searchName + ' or enter address';
-    applyAppearance(m.appearance);
+    applyAppearance(m.appearance, m.colors);
   });
   LB.on('focusAddressBar', function () { address.focus(); address.select(); });
-  LB.on('blurAddressBar', function () { state.dirty = false; if (document.activeElement === address) address.blur(); else renderNav(); });
+  LB.on('blurAddressBar', function () {
+    state.dirty = false;
+    if (document.activeElement === address) address.blur();
+    else { address.setSelectionRange(0, 0); renderNav(); }
+  });
   // The address bar may be focused before the shell itself has the keyboard
   // focus: select again when it arrives, so typing replaces the text.
   window.addEventListener('focus', function () { if (document.activeElement === address) address.select(); });

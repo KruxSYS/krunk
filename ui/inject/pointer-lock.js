@@ -113,17 +113,24 @@
     var get = nativeLike(function () { return inLock(this) ? value(this) : orig.call(this); }, 'get ' + prop);
     defineProperty(proto, prop, { get: get, set: desc.set, configurable: true, enumerable: desc.enumerable });
   }
-  var MP = MouseEv.prototype;
-  override(MP, 'movementX', function (e) { return movementOf(e).x; });
-  override(MP, 'movementY', function (e) { return movementOf(e).y; });
-  override(MP, 'clientX', function () { return frozen.cx; });
-  override(MP, 'clientY', function () { return frozen.cy; });
-  override(MP, 'x', function () { return frozen.cx; });
-  override(MP, 'y', function () { return frozen.cy; });
-  override(MP, 'pageX', function () { return frozen.cx + window.scrollX; });
-  override(MP, 'pageY', function () { return frozen.cy + window.scrollY; });
-  override(MP, 'screenX', function () { return frozen.sx; });
-  override(MP, 'screenY', function () { return frozen.sy; });
+  // Installed with the first lock of this document (0.7.0, R24): until then every page read
+  // of an event's position went through these wrappers for nothing.
+  var gettersInstalled = false;
+  function installGetters() {
+    if (gettersInstalled) return;
+    gettersInstalled = true;
+    var MP = MouseEv.prototype;
+    override(MP, 'movementX', function (e) { return movementOf(e).x; });
+    override(MP, 'movementY', function (e) { return movementOf(e).y; });
+    override(MP, 'clientX', function () { return frozen.cx; });
+    override(MP, 'clientY', function () { return frozen.cy; });
+    override(MP, 'x', function () { return frozen.cx; });
+    override(MP, 'y', function () { return frozen.cy; });
+    override(MP, 'pageX', function () { return frozen.cx + window.scrollX; });
+    override(MP, 'pageY', function () { return frozen.cy + window.scrollY; });
+    override(MP, 'screenX', function () { return frozen.sx; });
+    override(MP, 'screenY', function () { return frozen.sy; });
+  }
 
   // The position when the lock starts.
   window.addEventListener('mousemove', function (e) {
@@ -223,6 +230,7 @@
       if (!p.el.isConnected) { send(stringify({ lb: 'pointerUnlock' })); p.reject(new DOMExc('The element was removed.', 'WrongDocumentError')); return; }
       var before = locked;
       if (before && before !== p.el) before.removeAttribute(markAttr);
+      installGetters();
       locked = p.el; frozen = last;
       captureTargets(true);
       p.resolve();

@@ -1,0 +1,36 @@
+Krunk's built-in new tab page wallpapers (0.7.0)
+=================================================
+
+All ten were made for Krunk; none is a third-party image. assets/wallpapers/make.py turns them
+into ui/shared/wallpapers/*.webp (2048x1152, plus 320 px thumbnails; 1.3 MB in all).
+
+Generated with the z-image-turbo text-to-image model (z-image-turbo-fp8-e4m3fn_flux,
+2048x1152, on the project's SwarmUI server). The PNG originals are not kept in git
+(assets/wallpapers/originals/, ignored): to regenerate one, run the same prompt, size and seed.
+
+  aurora  seed 7001  "Wide landscape photograph of a green aurora borealis over snowy mountains at
+                      night, deep blue starry sky, calm, no people, no text, high detail, desktop
+                      wallpaper"
+  dunes   seed 7002  "Wide landscape photograph of soft sand dunes at golden hour, warm light, long
+                      gentle shadows, pale sky, minimal, no people, no text, desktop wallpaper"
+  forest  seed 7003  "Wide landscape photograph of a misty pine forest in the early morning, soft
+                      diffuse light, layers of fog between the trees, muted green and grey, calm, no
+                      people, no text, desktop wallpaper"
+  coast   seed 7004  "Aerial photograph of a calm turquoise sea meeting a white sandy beach, gentle
+                      waves, bright daylight, clean minimal composition, no people, no boats, no
+                      text, desktop wallpaper"
+  nebula  seed 7005  "Abstract deep space nebula, dark navy and violet clouds of gas with faint stars,
+                      soft glow, calm, dark wallpaper, no text, no planets"
+  lake    seed 7006  "Wide landscape photograph of a still alpine lake reflecting mountains and a
+                      bright blue sky with light clouds, crisp daylight, no people, no boats, no
+                      text, desktop wallpaper"
+  bokeh   seed 7007  "Out of focus city lights at night, soft round bokeh in warm amber and cool blue
+                      on a very dark background, abstract, no buildings visible, no text, dark
+                      desktop wallpaper"
+  paper   seed 7008  "Abstract layered paper waves in soft pastel peach, lilac and mint, smooth curves
+                      with gentle shadows, light and airy, minimal, no text, light desktop wallpaper"
+
+Drawn by make.py itself (numpy gradients, no original):
+
+  dusk    a dark navy / violet / coral gradient
+  mint    a light mint / sky / lime gradient

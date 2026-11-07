@@ -18,6 +18,10 @@ path = "src/lib.rs"
 # The update check also accepts http:// servers (local update-flow tests only;
 # scripts/build-dist.sh --dev, output in target/dev-dist/, never dist/).
 dev-updates = []
+# KRUNK_PERF_OFF=media,login,... switches page scripts (and `cdp`: the per-tab DevTools domains)
+# off, to measure what each costs (Speedometer, R24). scripts/build-dist.sh --probe only, never
+# in a release.
+perf-probe = []
 
 [dependencies]
 lb_core = { path = "../core", package = "core" }

@@ -17,9 +17,12 @@
     $('q').placeholder = c.searchName ? 'Search with ' + c.searchName + ' or enter address' : 'Search the web or type an address';
     // Background (styles through the CSSOM: the page's CSP has no inline styles).
     const bg = $('bg'), dim = $('dim');
-    document.body.classList.toggle('has-image', n.background === 'image' && !!c.imageUrl);
-    if (n.background === 'image' && c.imageUrl) {
-      bg.style.backgroundImage = 'url("' + c.imageUrl + '")';
+    // A built-in wallpaper (0.7.0) or the user's own image; a light wallpaper gets dark text.
+    const imageUrl = n.background === 'wallpaper' ? c.wallpaperUrl : n.background === 'image' ? c.imageUrl : null;
+    document.body.classList.toggle('has-image', !!imageUrl);
+    document.body.classList.toggle('image-light', !!imageUrl && n.background === 'wallpaper' && c.wallpaperLook === 'light');
+    if (imageUrl) {
+      bg.style.backgroundImage = 'url("' + imageUrl + '")';
       bg.style.backgroundColor = '';
       bg.style.filter = n.imageBlur ? 'blur(' + n.imageBlur + 'px)' : '';
       dim.style.opacity = String((n.imageDim || 0) / 100);
@@ -38,7 +41,21 @@
     box.hidden = n.showTiles === false;
     box.style.setProperty('--cols', String(n.columns || 6));
     renderKeys(c.shortcuts || [], n.showShortcuts !== false);
+    renderWallpapers(c.wallpapers || [], n);
     fillPanel(n);
+  }
+
+  // The built-in wallpapers as thumbnails; a click chooses one (with its usual darkening).
+  function renderWallpapers(list, n) {
+    const box = $('wallpapers');
+    box.textContent = '';
+    list.forEach(function (w) {
+      const on = n.background === 'wallpaper' && n.wallpaper === w.id;
+      const b = el('button', { type: 'button', class: 'wallpaper' + (on ? ' on' : ''), title: w.title, 'aria-label': w.title, 'aria-pressed': on ? 'true' : 'false', 'data-id': w.id },
+        [el('img', { src: w.thumb, alt: '' })]);
+      b.addEventListener('click', function () { saveOptions({ background: 'wallpaper', wallpaper: w.id, imageDim: w.dim, imageBlur: 0 }); });
+      box.appendChild(b);
+    });
   }
 
   function renderKeys(list, show) {
@@ -65,6 +82,7 @@
   function fillPanel(n) {
     document.querySelectorAll('input[name=bg]').forEach((r) => { r.checked = r.value === (n.background || 'none'); });
     setField('bg-color', n.backgroundColor || '');
+    if (typeof colorPicker !== 'undefined') colorPicker.sync();
     $('dim-range').value = n.imageDim || 0; $('dim-val').textContent = (n.imageDim || 0) + ' %';
     $('blur-range').value = n.imageBlur || 0; $('blur-val').textContent = (n.imageBlur || 0) + ' px';
     document.querySelectorAll('input[name=tiles]').forEach((r) => { r.checked = r.value === (n.tiles || 'mostVisited'); });
@@ -77,9 +95,20 @@
   $('panel-close').addEventListener('click', function () { panel.close(); });
   document.querySelectorAll('input[name=bg]').forEach((r) => r.addEventListener('change', function () {
     if (r.value === 'image' && !(config && config.imageUrl)) { pickImage(); return; }
+    if (r.value === 'wallpaper') {
+      // The current one, else the first.
+      const list = (config && config.wallpapers) || [];
+      const cur = list.find((w) => w.id === currentNtp().wallpaper) || list[0];
+      if (cur) saveOptions({ background: 'wallpaper', wallpaper: cur.id, imageDim: cur.dim, imageBlur: 0 });
+      return;
+    }
     saveOptions({ background: r.value });
   }));
-  $('bg-color').addEventListener('change', function () { saveOptions({ background: 'color', backgroundColor: $('bg-color').value.trim() }); });
+  const colorPicker = ColorPicker.attach($('bg-color'), { presets: ['#ffffff', '#f3f4f6', '#1f2023', '#111827', '#1e1b4b', '#14532d'], label: 'Background colour', resetLabel: 'Reset' });
+  $('bg-color').addEventListener('change', function () {
+    const v = $('bg-color').value.trim();
+    saveOptions(v ? { background: 'color', backgroundColor: v } : { background: 'none', backgroundColor: '' });
+  });
   $('pick-image').addEventListener('click', pickImage);
   function pickImage() {
     LB.request('ntpPickImage').then(function (c) { applyConfig(c); $('panel-error').textContent = ''; }, function (e) { $('panel-error').textContent = e.message; fillPanel(currentNtp()); });

@@ -8,6 +8,9 @@
 //! closes Krunk (the installer waits for that, then starts the new version).
 //! A portable copy (no uninstaller next to Krunk.exe) gets the download page
 //! instead. Every rejection is logged with its reason.
+//!
+//! Repair (0.7.0): when the installed files are not this release's (`integrity.rs`), or an
+//! update did not happen, the same prompt offers the installer of this very version.
 
 use super::Browser;
 use crate::ffi::http::{self, ProxyMode};
@@ -55,6 +58,9 @@ pub(super) struct UpdateHost {
     failed: RefCell<Option<String>>,
     waiting: RefCell<Vec<Reply>>,
     auto_checked: Cell<bool>,
+    /// Why the installed files need a repair (0.7.0); the prompt then offers this version's
+    /// installer.
+    repair: RefCell<Option<String>>,
 }
 
 /// The update server and release key built into this copy (`build.rs`).
@@ -86,6 +92,7 @@ impl UpdateHost {
             failed: RefCell::new(None),
             waiting: RefCell::new(Vec::new()),
             auto_checked: Cell::new(false),
+            repair: RefCell::new(None),
         }
     }
 }
@@ -113,6 +120,70 @@ impl Browser {
         }
         if let Some(w) = self.app() {
             w.set_timer(APP_UPDATE_TIMER, update::FIRST_CHECK_DELAY_MS);
+        }
+        self.check_last_install();
+    }
+
+    /// Did the update started last time happen? The installer leaves `update-error.txt` in the
+    /// data folder when it stops without touching the old version (0.7.0).
+    fn check_last_install(&self) {
+        let installing = std::mem::take(&mut self.updates.status.borrow_mut().installing);
+        let marker = self.dirs.root().join("update-error.txt");
+        let error = std::fs::read_to_string(&marker).ok().map(|t| t.trim().chars().take(300).collect::<String>());
+        let _ = std::fs::remove_file(&marker);
+        if installing.is_empty() && error.is_none() {
+            return;
+        }
+        self.save_update_status();
+        if installing == env!("CARGO_PKG_VERSION") && error.is_none() {
+            info!("update: now running {installing}, as installed");
+            return;
+        }
+        let why =
+            error.filter(|e| !e.is_empty()).unwrap_or_else(|| "the installer did not replace Krunk's files".into());
+        warning!("update to {installing} did not happen: {why}");
+        *self.updates.failed.borrow_mut() = Some(format!("the update to {installing} did not complete: {why}"));
+        // Offer it again soon instead of in a minute.
+        let weak = self.me.clone();
+        crate::ffi::cef::post_ui_delayed(5_000, move || {
+            if let Some(b) = weak.upgrade() {
+                b.check_for_updates(None);
+            }
+        });
+    }
+
+    fn save_update_status(&self) {
+        let s = self.updates.status.borrow();
+        let _ = lb_core::vault::write_atomic(&self.updates.path, s.to_json().as_bytes());
+    }
+
+    pub(super) fn updates_allow_http(&self) -> bool {
+        self.updates.config.as_ref().is_ok_and(|c| c.allow_http)
+    }
+
+    /// The installed files are not this release's: offer this version's installer (installed
+    /// copies) or the download page (portable ones). Shown once the manifest is known.
+    pub(super) fn offer_repair(&self, reason: String) {
+        *self.updates.repair.borrow_mut() = Some(reason);
+        let ready = self.updates.offered.borrow().as_ref().is_some_and(|m| m.version >= current_version());
+        if ready {
+            if matches!(self.popup_kind(), None | Some(PopupKind::Update)) {
+                self.show_update_prompt(UpdateProgress::Offered);
+            }
+        } else {
+            self.check_for_updates(None);
+        }
+    }
+
+    /// krunk://gpu's Repair button.
+    pub(super) fn repair_now(&self) {
+        if self.updates.repair.borrow().is_none() {
+            *self.updates.repair.borrow_mut() = Some("Repair asked for on krunk://gpu".into());
+        }
+        let ready = self.updates.offered.borrow().clone().filter(|m| m.version >= current_version());
+        match ready {
+            Some(m) => self.update_reply_with(m, UpdateChoice::Install),
+            None => self.check_for_updates(None),
         }
     }
 
@@ -185,8 +256,14 @@ impl Browser {
             Ok(m) => match update::offer(&current, &m) {
                 Offer::UpToDate => {
                     info!("update check: up to date (server has {}, released {})", m.version, m.released);
-                    *self.updates.offered.borrow_mut() = None;
-                    ("Krunk is up to date".to_string(), true, None)
+                    let same = m.version == current;
+                    if same {
+                        self.check_release_files(&m);
+                    }
+                    // A repair installs this very version again.
+                    let repair = same && self.updates.repair.borrow().is_some();
+                    *self.updates.offered.borrow_mut() = repair.then_some(m);
+                    ("Krunk is up to date".to_string(), true, repair.then_some(Offer::Install))
                 }
                 o => {
                     info!("update check: Krunk {} is available ({o:?}, {} bytes)", m.version, m.size);
@@ -218,9 +295,10 @@ impl Browser {
         }
     }
 
-    /// Can this copy install the offered update itself?
+    /// Can this copy install the offered update (or repair) itself?
     fn can_install(&self, m: &Manifest) -> bool {
-        process::is_installed() && update::offer(&current_version(), m) == Offer::Install
+        let repair = self.updates.repair.borrow().is_some() && m.version == current_version();
+        process::is_installed() && (repair || update::offer(&current_version(), m) == Offer::Install)
     }
 
     fn show_update_prompt(&self, state: UpdateProgress) {
@@ -231,12 +309,19 @@ impl Browser {
     fn update_prompt_content(&self, state: UpdateProgress) -> Option<PopupContent> {
         let offered = self.updates.offered.borrow();
         let m = offered.as_ref()?;
+        // A failed update shows its error until the next try.
+        let state = match (state, self.updates.failed.borrow().clone()) {
+            (UpdateProgress::Offered, Some(error)) => UpdateProgress::Failed { error },
+            (s, _) => s,
+        };
+        let repair = self.updates.repair.borrow().clone().filter(|_| m.version == current_version());
         Some(PopupContent::Update {
             version: m.version.to_string(),
             current: env!("CARGO_PKG_VERSION").to_string(),
             install: self.can_install(m),
-            has_notes: m.notes_url.is_some(),
+            has_notes: m.notes_url.is_some() && repair.is_none(),
             state,
+            repair,
         })
     }
 
@@ -274,6 +359,10 @@ impl Browser {
             self.hide_update_prompt();
             return;
         };
+        self.update_reply_with(m, choice);
+    }
+
+    fn update_reply_with(&self, m: Manifest, choice: UpdateChoice) {
         match choice {
             UpdateChoice::Later => self.hide_update_prompt(),
             UpdateChoice::Notes => {
@@ -368,6 +457,10 @@ impl Browser {
             warning!("update: cannot start the installer: {e}");
             self.update_failed(format!("cannot start the installer: {e}"));
             return;
+        }
+        if let Some(m) = self.updates.offered.borrow().as_ref() {
+            self.updates.status.borrow_mut().installing = m.version.to_string();
+            self.save_update_status();
         }
         self.show_update_prompt(UpdateProgress::Installing);
         // The installer waits until Krunk has exited, installs, and starts it again.

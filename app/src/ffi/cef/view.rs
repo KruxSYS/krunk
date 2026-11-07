@@ -20,8 +20,8 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{
-    SetWindowPos, ShowWindow, SWP_NOACTIVATE, SWP_NOZORDER, SW_HIDE, SW_SHOW, WS_CHILD, WS_CLIPCHILDREN,
-    WS_CLIPSIBLINGS, WS_TABSTOP,
+    IsWindowVisible, SetWindowPos, ShowWindow, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+    SWP_SHOWWINDOW, SW_HIDE, SW_SHOW, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_TABSTOP,
 };
 use zeroize::Zeroizing;
 
@@ -467,6 +467,11 @@ impl View {
         self.hwnd()
     }
 
+    /// The colour the view was created with (`ViewOptions::background`).
+    pub fn background(&self) -> u32 {
+        self.0.background
+    }
+
     fn hwnd(&self) -> Option<HWND> {
         let h = self.host()?.window_handle();
         (!h.0.is_null()).then(|| HWND(h.0.cast()))
@@ -550,16 +555,44 @@ impl View {
         }
     }
 
-    /// Shows or hides the view; hidden browsers render nothing and run their
-    /// timers slower.
+    /// Shows or hides the view. A shown view goes on top of its siblings: the tab switch shows
+    /// the new page over the old one before hiding that (0.7.0, R7).
+    ///
+    /// Hiding CEF's window hides nothing from the engine (`was_hidden` only works without a
+    /// window, and the engine's widget inside never hears that its parent was hidden), so the
+    /// page keeps running as a visible one. Hiding that widget window directly does not work
+    /// either: shown again, it stays blank (tried in 0.7.0).
     pub fn set_visible(&self, visible: bool) {
         match (self.hwnd(), self.host()) {
             (Some(h), Some(host)) => {
                 // SAFETY: the browser's own child window.
-                let _ = unsafe { ShowWindow(h, if visible { SW_SHOW } else { SW_HIDE }) };
+                unsafe {
+                    if visible {
+                        let _ = SetWindowPos(
+                            h,
+                            Some(HWND_TOP),
+                            0,
+                            0,
+                            0,
+                            0,
+                            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                        );
+                    } else {
+                        let _ = ShowWindow(h, SW_HIDE);
+                    }
+                }
                 host.was_hidden(i32::from(!visible));
             }
             _ => self.0.pending.borrow_mut().visible = Some(visible),
+        }
+    }
+
+    /// Shown (or asked to be shown before the browser exists).
+    pub fn is_visible(&self) -> bool {
+        match self.hwnd() {
+            // SAFETY: a plain query on the browser's own window.
+            Some(h) => unsafe { IsWindowVisible(h) }.as_bool(),
+            None => self.0.pending.borrow().visible == Some(true),
         }
     }
 

@@ -313,10 +313,8 @@
     document.querySelectorAll('input[name=theme]').forEach((r) => { r.checked = r.value === settings.theme; });
     stateHidden('custom-row', settings.searchEngine !== 'custom');
     stateHidden('new-tab-url-row', settings.newTabPage !== 'custom');
-    document.querySelectorAll('#accent-swatches .swatch').forEach((b) => {
-      b.classList.toggle('on', (settings.appearance ? settings.appearance.accent : '') === b.dataset.color);
-      if (b.dataset.color) b.style.setProperty('--c', b.dataset.color);
-    });
+    pickers.forEach((p) => p.sync());
+    renderWallpapers();
     stateHidden('discard-row', !settings.tabDiscardEnabled);
     $('download-dir').textContent = settings.downloadDir || 'Downloads (default)';
     $('default-dir').hidden = !settings.downloadDir;
@@ -466,15 +464,53 @@
       function (err) { $('lists-status').textContent = err.message; $('update-lists').disabled = false; });
   });
 
-  // ---------- other controls ----------
-  document.querySelectorAll('#accent-swatches .swatch').forEach(function (b) {
-    b.addEventListener('click', function () {
-      const next = collect();
-      next.appearance.accent = b.dataset.color;
-      save(next);
-    });
+  // ---------- colours and the new tab page background (0.7.0, R2/R3) ----------
+  // Real colour pickers: the dialog, the hex field, presets, reset; changes apply live.
+  const PRESETS = {
+    accent: ['', '#2563eb', '#7c3aed', '#db2777', '#dc2626', '#ea580c', '#16a34a', '#0d9488'],
+    surface: ['', '#ffffff', '#f3f4f6', '#e0e7ff', '#1f2023', '#111827', '#0f172a', '#1e1b4b'],
+  };
+  const pickers = Array.from(document.querySelectorAll('input[data-picker]')).map(function (input) {
+    return ColorPicker.attach(input, { presets: PRESETS[input.dataset.picker] || [], label: input.closest('.row').querySelector('label, .label').textContent });
   });
+  // A colour for the new tab page also makes it the background.
+  $('ntp.backgroundColor').addEventListener('change', function () {
+    const next = collect();
+    next.ntp.background = next.ntp.backgroundColor ? 'color' : (next.ntp.background === 'color' ? 'none' : next.ntp.background);
+    save(next);
+  });
+  let wallpapers = [];
+  function renderWallpapers() {
+    const box = $('settings-wallpapers');
+    box.textContent = '';
+    const n = settings.ntp || {};
+    wallpapers.forEach(function (w) {
+      const on = n.background === 'wallpaper' && n.wallpaper === w.id;
+      const b = LB.el('button', { type: 'button', class: 'wallpaper' + (on ? ' on' : ''), title: w.title, 'aria-label': w.title, 'aria-pressed': on ? 'true' : 'false', 'data-id': w.id },
+        [LB.el('img', { src: w.thumb, alt: '' })]);
+      b.addEventListener('click', function () {
+        const next = collect();
+        Object.assign(next.ntp, { background: 'wallpaper', wallpaper: w.id, imageDim: w.dim, imageBlur: 0 });
+        save(next);
+      });
+      box.appendChild(b);
+    });
+    $('ntp-image-desc').textContent = n.background === 'image' ? 'In use: your picture.' : n.image ? 'Chosen before (not in use).' : 'A picture from your computer.';
+  }
+  $('ntp-pick-image').addEventListener('click', function () {
+    LB.request('ntpPickImage').then(function () { return LB.request('getSettings'); }).then(function (r) { settings = r.settings; render(); },
+      function (e) { if (e && e.message) Page.toast(e.message); });
+  });
+  $('ntp-no-background').addEventListener('click', function () {
+    const next = collect();
+    next.ntp.background = 'none';
+    save(next);
+  });
+
+  // ---------- other controls ----------
   document.querySelectorAll('[data-key], input[name=startup], input[name=theme], input[name=plevel]').forEach(function (input) {
+    // (Fields with their own save: the new tab page colour also switches the background.)
+    if (input.dataset.ownSave !== undefined) return;
     input.addEventListener('change', function () { save(); });
   });
   $('pick-dir').addEventListener('click', function () {
@@ -633,6 +669,7 @@
     if (r.engineHints) HINT_DEFAULTS = r.engineHints;
     $('cdm-status').textContent = r.cdm ? 'Widevine module ' + r.cdm + ' is installed.' : 'Widevine module: not downloaded yet.';
     dnsPresets = r.dnsPresets || [];
+    wallpapers = r.wallpapers || [];
     banner(r.restartRequired);
     $('about').textContent = 'Krunk ' + r.about.version + ' · Chromium ' + r.about.chromium + ' (CEF ' + r.about.cef + ')' + ' · data in ' + r.about.dataDir;
     render();

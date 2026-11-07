@@ -207,6 +207,8 @@ pub enum NtpBackground {
     Color,
     /// The image the user picked, stored in the profile (`ntp-background.<ext>`).
     Image,
+    /// One of Krunk's built-in wallpapers (`Ntp::wallpaper`; 0.7.0).
+    Wallpaper,
 }
 
 /// Which tiles the new tab page shows.
@@ -232,6 +234,8 @@ pub struct Ntp {
     pub image_dim: u8,
     /// Blur over the image, 0–20 px.
     pub image_blur: u8,
+    /// The built-in wallpaper's id (`assets::wallpapers`) when `background` is `Wallpaper`.
+    pub wallpaper: String,
     pub tiles: TileSource,
     pub columns: u8,
     pub rows: u8,
@@ -248,6 +252,7 @@ impl Default for Ntp {
             image: String::new(),
             image_dim: 30,
             image_blur: 0,
+            wallpaper: String::new(),
             tiles: TileSource::MostVisited,
             columns: 6,
             rows: 2,
@@ -552,6 +557,22 @@ pub const DISABLED_FEATURES: &[&str] = &[
     "AimServerRequestOnStartupEnabled",
 ];
 
+/// Switches whose value is a comma-separated list. Chromium keeps only the last occurrence of a
+/// switch (`base::CommandLine`), so every source (the engine's own start-up switches, Krunk's,
+/// the user's extra flags) is merged into one value instead of appended again (0.7.0: CEF's
+/// own `--disable-features` used to be silently replaced by Krunk's).
+pub const LIST_SWITCHES: &[&str] =
+    &["disable-features", "enable-features", "disable-blink-features", "enable-blink-features"];
+
+/// Merges two values of a list switch: the items of `existing` first, then the new ones from
+/// `ours`, each once, empty items dropped.
+pub fn merge_switch_list(existing: &str, ours: &str) -> String {
+    let mut items: Vec<String> =
+        existing.split(',').chain(ours.split(',')).map(str::trim).filter(|f| !f.is_empty()).map(String::from).collect();
+    dedup_keep_first(&mut items);
+    items.join(",")
+}
+
 /// Switches we always pass (documented in the README).
 pub const BASE_SWITCHES: &[&str] = &["--no-pings", "--disable-domain-reliability", "--disable-background-networking"];
 
@@ -629,6 +650,9 @@ impl Settings {
             if !ok {
                 err("newTabUrl", "Enter a web address (https://…) or a krunk:// page");
             }
+        }
+        if self.ntp.background == NtpBackground::Wallpaper && crate::assets::wallpaper(&self.ntp.wallpaper).is_none() {
+            err("ntp.wallpaper", "Choose one of the built-in wallpapers");
         }
         if !self.ntp_search_url.trim().is_empty() {
             let t = self.ntp_search_url.trim();
@@ -801,6 +825,10 @@ impl Settings {
                         s.custom_search_url = d.custom_search_url.clone();
                     }
                     "homepage" => s.homepage = d.homepage.clone(),
+                    "ntp.wallpaper" => {
+                        s.ntp.background = d.ntp.background;
+                        s.ntp.wallpaper = d.ntp.wallpaper.clone();
+                    }
                     "tabSleepMinutes" => s.tab_sleep_minutes = d.tab_sleep_minutes,
                     "tabDiscardMinutes" => {
                         s.tab_discard_enabled = d.tab_discard_enabled;
@@ -864,26 +892,22 @@ impl Settings {
             // ...and they never go to the proxy, which would resolve them.
             args.push(format!("--proxy-bypass-list={}", unreachable.join(";")));
         }
-        let mut disabled: Vec<String> = DISABLED_FEATURES.iter().map(|s| s.to_string()).collect();
-        let mut enabled: Vec<String> = Vec::new();
+        // The list switches, in LIST_SWITCHES order; the user's lists are merged into ours.
+        let mut lists: Vec<String> = vec![DISABLED_FEATURES.join(","), String::new(), String::new(), String::new()];
         for flag in self.extra_flags.split_whitespace() {
-            // Chromium only honours the last --disable-features/--enable-features,
-            // so merge the user's lists into ours.
-            if let Some(list) = flag.strip_prefix("--disable-features=") {
-                disabled.extend(list.split(',').filter(|f| !f.is_empty()).map(String::from));
-            } else if let Some(list) = flag.strip_prefix("--enable-features=") {
-                enabled.extend(list.split(',').filter(|f| !f.is_empty()).map(String::from));
-            } else {
-                args.push(flag.to_string());
+            let (name, value) = flag.trim_start_matches('-').split_once('=').unwrap_or((flag, ""));
+            match LIST_SWITCHES.iter().position(|l| l.eq_ignore_ascii_case(name)) {
+                Some(i) if flag.starts_with("--") => lists[i] = merge_switch_list(&lists[i], value),
+                _ => args.push(flag.to_string()),
             }
         }
-        dedup_keep_first(&mut disabled);
-        dedup_keep_first(&mut enabled);
         // A feature both enabled and disabled stays disabled.
-        enabled.retain(|f| !disabled.contains(f));
-        args.push(format!("--disable-features={}", disabled.join(",")));
-        if !enabled.is_empty() {
-            args.push(format!("--enable-features={}", enabled.join(",")));
+        let disabled: Vec<&str> = lists[0].split(',').collect();
+        lists[1] = lists[1].split(',').filter(|f| !disabled.contains(f)).collect::<Vec<_>>().join(",");
+        for (name, list) in LIST_SWITCHES.iter().zip(&lists) {
+            if !list.is_empty() {
+                args.push(format!("--{name}={list}"));
+            }
         }
         // The same switch twice (e.g. --disable-gpu from the toggle and the
         // extra flags): keep the first.
@@ -1511,6 +1535,48 @@ mod tests {
         assert_eq!(a.matches("--disable-features=").count(), 1);
         assert!(a.contains(",Foo"));
         assert!(a.contains("--enable-features=Bar"));
+    }
+
+    #[test]
+    fn ntp_wallpaper_must_be_built_in() {
+        let mut s = Settings::default();
+        s.ntp.background = NtpBackground::Wallpaper;
+        s.ntp.wallpaper = "aurora".into();
+        assert_eq!(s.validate(), Ok(()));
+        s.ntp.wallpaper = "../../secret".into();
+        assert!(s.validate().unwrap_err().iter().any(|e| e.field == "ntp.wallpaper"));
+        // A stored choice survives a round trip; an unknown id falls back to the default page.
+        let ok = Settings::from_json_lenient(r#"{"ntp":{"background":"wallpaper","wallpaper":"dunes"}}"#);
+        assert_eq!((ok.ntp.background, ok.ntp.wallpaper.as_str()), (NtpBackground::Wallpaper, "dunes"));
+        let bad = Settings::from_json_lenient(r#"{"ntp":{"background":"wallpaper","wallpaper":"gone"}}"#);
+        assert_eq!(bad.validate(), Ok(()));
+        assert_ne!((bad.ntp.background, bad.ntp.wallpaper.as_str()), (NtpBackground::Wallpaper, "gone"));
+    }
+
+    #[test]
+    fn list_switches_are_merged_into_one() {
+        assert_eq!(
+            merge_switch_list(
+                "GlicActorUi,AutofillActorMode,LensOverlay,KillOnInvalidNavigationHeaders",
+                &DISABLED_FEATURES.join(",")
+            ),
+            format!(
+                "GlicActorUi,AutofillActorMode,LensOverlay,KillOnInvalidNavigationHeaders,{}",
+                DISABLED_FEATURES.join(",")
+            )
+        );
+        assert_eq!(merge_switch_list("A,B", "B,,C"), "A,B,C");
+        assert_eq!(merge_switch_list("", "A"), "A");
+        let s = Settings {
+            extra_flags: "--disable-blink-features=Foo --disable-blink-features=Bar --enable-features=X,MediaRouter --disable-features=Y".into(),
+            ..Settings::default()
+        };
+        let sw = s.browser_switches();
+        assert_eq!(sw.iter().filter(|a| a.starts_with("--disable-blink-features=")).count(), 1);
+        assert!(sw.contains(&"--disable-blink-features=Foo,Bar".to_string()), "{sw:?}");
+        assert!(sw.contains(&format!("--disable-features={},Y", DISABLED_FEATURES.join(","))), "{sw:?}");
+        // MediaRouter is disabled by Krunk: enabling it is ignored.
+        assert!(sw.contains(&"--enable-features=X".to_string()), "{sw:?}");
     }
 
     #[test]

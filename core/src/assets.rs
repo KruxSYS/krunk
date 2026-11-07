@@ -39,10 +39,42 @@ pub fn mime_for(key: &str) -> &'static str {
         "json" => "application/json",
         "svg" => "image/svg+xml",
         "png" => "image/png",
+        "webp" => "image/webp",
         "ico" => "image/x-icon",
         "woff2" => "font/woff2",
         _ => "application/octet-stream",
     }
+}
+
+/// A built-in new-tab wallpaper (0.7.0, R2; built by assets/wallpapers/make.py into
+/// ui/shared/wallpapers/, served with the UI files).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Wallpaper {
+    pub id: String,
+    pub title: String,
+    /// "dark" or "light": the colour of what the new tab page draws over it.
+    pub look: String,
+    /// The darkening it starts with (percent).
+    pub dim: u8,
+}
+
+pub fn wallpapers() -> Vec<Wallpaper> {
+    #[allow(clippy::expect_used)] // checked by a test
+    serde_json::from_str(include_str!("../../ui/shared/wallpapers/wallpapers.json")).expect("wallpapers.json")
+}
+
+pub fn wallpaper(id: &str) -> Option<Wallpaper> {
+    wallpapers().into_iter().find(|w| w.id == id)
+}
+
+/// The wallpaper image and its thumbnail on the internal origin.
+pub fn wallpaper_url(id: &str) -> String {
+    format!("https://krunk.invalid/shared/wallpapers/{id}.webp")
+}
+
+pub fn wallpaper_thumb_url(id: &str) -> String {
+    format!("https://krunk.invalid/shared/wallpapers/{id}-thumb.webp")
 }
 
 /// Maps a request URL on one of our origins to an embedded file.
@@ -246,6 +278,31 @@ pub fn allow_navigation(channel: Channel, current: &str, target: &str, host_init
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn built_in_wallpapers_are_served_and_small() {
+        let list = wallpapers();
+        assert!(list.len() >= 8, "R2 asks for at least 8, got {}", list.len());
+        assert!(list.iter().any(|w| w.look == "dark") && list.iter().any(|w| w.look == "light"));
+        let mut total = 0;
+        for w in &list {
+            assert!(w.look == "dark" || w.look == "light", "{w:?}");
+            assert!(w.dim <= 80, "{w:?}");
+            for key in [format!("shared/wallpapers/{}.webp", w.id), format!("shared/wallpapers/{}-thumb.webp", w.id)] {
+                let (_, bytes) = get(&key).unwrap_or_else(|| panic!("{key} is not embedded"));
+                assert_eq!(&bytes[..4], b"RIFF", "{key}");
+                assert_eq!(&bytes[8..12], b"WEBP", "{key}");
+                total += bytes.len();
+            }
+            assert_eq!(mime_for(&format!("{}.webp", w.id)), "image/webp");
+            assert_eq!(
+                resolve(&wallpaper_url(&w.id)).map(|a| a.key.to_string()),
+                Some(format!("shared/wallpapers/{}.webp", w.id))
+            );
+        }
+        assert!(total <= 4 * 1024 * 1024, "wallpapers take {total} bytes; the budget is 4 MB");
+        assert!(wallpaper("no-such").is_none());
+    }
 
     #[test]
     fn ntp_image_requests() {

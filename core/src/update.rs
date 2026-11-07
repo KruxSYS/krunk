@@ -15,8 +15,12 @@
 //! { "version": "0.2.1", "released": "2026-11-05",
 //!   "url": "/download/0.2.1/Krunk-Setup-0.2.1.exe",
 //!   "sha256": "<64 hex digits>", "size": 143519795,
-//!   "notes_url": "/download/0.2.1/NOTES.md", "min_supported": "0.2.0" }
+//!   "notes_url": "/download/0.2.1/NOTES.md", "min_supported": "0.2.0",
+//!   "files_url": "/download/0.7.0/files.json", "files_sha256": "<64 hex digits>" }
 //! ```
+//! `files_url` (0.7.0) lists every file of the release with its SHA-256 (`core::integrity`):
+//! after an update, Krunk checks the installed files against it. Its hash is in the signed
+//! manifest, so the list needs no signature of its own; older versions ignore both fields.
 //! `min_supported` is the oldest version the installer can update in place;
 //! older copies are pointed at the download page instead.
 
@@ -164,6 +168,10 @@ struct RawManifest {
     notes_url: Option<String>,
     #[serde(default)]
     min_supported: Option<String>,
+    #[serde(default)]
+    files_url: Option<String>,
+    #[serde(default)]
+    files_sha256: Option<String>,
 }
 
 /// A signed, checked manifest.
@@ -177,6 +185,8 @@ pub struct Manifest {
     pub size: u64,
     pub notes_url: Option<Url>,
     pub min_supported: Option<Version>,
+    /// The release's file list and its SHA-256 (0.7.0).
+    pub files: Option<(Url, [u8; 32])>,
 }
 
 /// Checks the signature over the exact manifest bytes, then the manifest.
@@ -222,7 +232,21 @@ fn parse_manifest(bytes: &[u8], cfg: &Config) -> Result<Manifest, UpdateError> {
     if raw.released.len() > 64 {
         return Err(UpdateError::Malformed("released is too long".into()));
     }
-    Ok(Manifest { version, released: raw.released, url, sha256, size: raw.size, notes_url, min_supported })
+    let files = match (raw.files_url.as_deref(), raw.files_sha256.as_deref()) {
+        (None | Some(""), _) => None,
+        (Some(f), Some(hash)) => {
+            let u = manifest_url.join(f).map_err(|e| UpdateError::Malformed(format!("files_url: {e}")))?;
+            check_scheme(&u, cfg.allow_http)?;
+            if u.origin() != cfg.base.origin() {
+                return Err(UpdateError::CrossOrigin(u.to_string()));
+            }
+            let h = parse_sha256(hash)
+                .ok_or_else(|| UpdateError::Malformed("files_sha256 must be 64 hex digits".into()))?;
+            Some((u, h))
+        }
+        (Some(_), None) => return Err(UpdateError::Malformed("files_url without files_sha256".into())),
+    };
+    Ok(Manifest { version, released: raw.released, url, sha256, size: raw.size, notes_url, min_supported, files })
 }
 
 pub fn parse_version(v: &str) -> Result<Version, UpdateError> {
@@ -282,6 +306,11 @@ impl DownloadCheck {
         self.bytes
     }
 
+    /// The SHA-256 of what was fed so far.
+    pub fn sha256(&self) -> [u8; 32] {
+        self.hasher.clone().finalize().into()
+    }
+
     /// The whole file arrived: does it match the manifest?
     pub fn finish(self, m: &Manifest) -> Result<(), UpdateError> {
         if self.bytes != m.size {
@@ -305,6 +334,9 @@ pub struct Status {
     /// available", or why it failed).
     pub last_result: String,
     pub last_ok: bool,
+    /// The version an installer was started for (0.7.0): the next start tells whether the
+    /// update happened (empty: none pending).
+    pub installing: String,
 }
 
 impl Status {
@@ -407,6 +439,32 @@ mod tests {
         assert_eq!(verify(body.as_bytes(), b"", &cfg()), Err(UpdateError::BadSignatureEncoding));
         let short = Base64::encode_string(&[1u8; 32]).into_bytes();
         assert_eq!(verify(body.as_bytes(), &short, &cfg()), Err(UpdateError::BadSignatureEncoding));
+    }
+
+    #[test]
+    fn the_file_list_is_optional_and_checked() {
+        // 0.6.0's manifests have none.
+        let body = good();
+        assert_eq!(verify(body.as_bytes(), &sign(TEST_SEED, body.as_bytes()), &cfg()).unwrap().files, None);
+        let hash = to_hex(&Sha256::digest(b"files"));
+        let with = body.replace(
+            r#""min_supported":"0.2.0""#,
+            &format!(r#""min_supported":"0.2.0","files_url":"/download/0.7.0/files.json","files_sha256":"{hash}""#),
+        );
+        let m = verify(with.as_bytes(), &sign(TEST_SEED, with.as_bytes()), &cfg()).unwrap();
+        let (u, h) = m.files.unwrap();
+        assert_eq!(u.as_str(), "https://krunk.example/download/0.7.0/files.json");
+        assert_eq!(to_hex(&h), hash);
+        let other = with.replace("/download/0.7.0/files.json", "https://evil.example/files.json");
+        assert!(matches!(
+            verify(other.as_bytes(), &sign(TEST_SEED, other.as_bytes()), &cfg()),
+            Err(UpdateError::CrossOrigin(_))
+        ));
+        let no_hash = body.replace(r#""min_supported":"0.2.0""#, r#""min_supported":"0.2.0","files_url":"/f.json""#);
+        assert!(matches!(
+            verify(no_hash.as_bytes(), &sign(TEST_SEED, no_hash.as_bytes()), &cfg()),
+            Err(UpdateError::Malformed(_))
+        ));
     }
 
     #[test]
@@ -551,7 +609,12 @@ mod tests {
 
     #[test]
     fn status_round_trips() {
-        let s = Status { last_check_ms: 5, last_result: "Krunk is up to date".into(), last_ok: true };
+        let s = Status {
+            last_check_ms: 5,
+            last_result: "Krunk is up to date".into(),
+            last_ok: true,
+            installing: String::new(),
+        };
         assert_eq!(Status::from_json(&s.to_json()), s);
         assert_eq!(Status::from_json("garbage"), Status::default());
     }

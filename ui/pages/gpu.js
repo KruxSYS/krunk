@@ -36,19 +36,60 @@
     }).catch((e) => { $('webgpu').textContent = 'error: ' + e.message; });
   } else { $('webgpu').textContent = 'not available'; }
 
-  // Codecs (the same probes as the 0.5.0 diagnosis).
+  // Codecs: what the engine says it can decode (MSE or <video>), the same probes as the 0.5.0
+  // diagnosis plus E-AC-3. The paragraph above the table is written from these answers and
+  // from which engine libcef.dll is (0.7.0; it used to be a fixed text about the old engine).
   const types = [['H.264', 'video/mp4; codecs="avc1.42E01E"'], ['HEVC', 'video/mp4; codecs="hev1.1.6.L93.B0"'], ['AAC', 'audio/mp4; codecs="mp4a.40.2"'],
-    ['AC-3', 'audio/mp4; codecs="ac-3"'], ['VP9', 'video/webm; codecs="vp9"'], ['AV1', 'video/mp4; codecs="av01.0.05M.08"'],
+    ['AC-3', 'audio/mp4; codecs="ac-3"'], ['E-AC-3', 'audio/mp4; codecs="ec-3"'], ['VP9', 'video/webm; codecs="vp9"'], ['AV1', 'video/mp4; codecs="av01.0.05M.08"'],
     ['Opus', 'audio/webm; codecs="opus"'], ['MP3', 'audio/mpeg'], ['FLAC', 'audio/mp4; codecs="flac"']];
   const v = document.createElement('video');
+  const codecs = {};
   types.forEach(([name, type]) => {
     const ok = ('MediaSource' in window && MediaSource.isTypeSupported(type)) || v.canPlayType(type) === 'probably';
+    codecs[name] = ok;
     const tr = document.createElement('tr');
     const th = document.createElement('th'); th.textContent = name;
     const td = document.createElement('td'); td.textContent = ok ? 'yes' : 'no'; td.className = ok ? 'yes' : 'no';
     tr.append(th, td);
     $('codecs').appendChild(tr);
   });
+  const list = (names) => names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : names.join('');
+
+  function codecText(integrity) {
+    const yes = Object.keys(codecs).filter((n) => codecs[n]);
+    const no = Object.keys(codecs).filter((n) => !codecs[n]);
+    const flavor = integrity && integrity.flavor;
+    let text = 'This engine decodes ' + list(yes) + '.';
+    if (flavor === 'release') {
+      text = "This is Krunk's own engine build with the proprietary codecs: it decodes " + list(yes) + '.';
+      const platform = no.filter((n) => n === 'HEVC' || n === 'AC-3' || n === 'E-AC-3');
+      if (platform.length) text += ' ' + list(platform) + (platform.length > 1 ? ' depend' : ' depends') + ' on Windows: HEVC needs a hardware decoder (a GPU that decodes it, or the HEVC Video Extensions), AC-3 and E-AC-3 need the Dolby decoder that Windows 11 24H2 and later no longer include.';
+    } else if (flavor === 'minimal') {
+      text = 'This is the old engine without H.264, AAC, HEVC or AC-3 (Krunk 0.5.1 and earlier): an update did not replace libcef.dll. It decodes ' + list(yes) + '.';
+    } else if (no.length) {
+      text += ' It does not decode ' + list(no) + '.';
+    }
+    $('codec-text').textContent = text;
+    // The release engine decodes H.264 and AAC on every Windows: a "no" means other files.
+    const broken = flavor === 'minimal' || (flavor === 'release' && (!codecs['H.264'] || !codecs.AAC)) || (integrity && integrity.checked && !integrity.healthy);
+    $('codec-warning').hidden = !broken;
+    if (broken) $('codec-warning').textContent = "Engine files don't match this release: run Repair (above) to reinstall them.";
+  }
+  codecText(null);
+
+  const FLAVORS = { release: "Krunk's engine with proprietary codecs (this release's)", minimal: 'the old engine without H.264/AAC (Krunk 0.5.1 or earlier)', unknown: 'not the engine this release ships', missing: 'libcef.dll is missing' };
+  function engineFiles(i) {
+    if (!i || !i.checked) {
+      $('engine-build').textContent = 'checking (runs in the background after start)…';
+      return;
+    }
+    $('engine-build').textContent = (FLAVORS[i.flavor] || i.flavor) + (i.libcef ? ' · libcef.dll ' + i.libcef + '…' : '');
+    $('engine-files').textContent = i.summary + ' (' + i.engineFiles + ' engine files' + (i.releaseChecked ? ', and the release list from the update server' : '') + ')';
+    $('repair').hidden = i.healthy;
+    $('repair').textContent = i.installed ? 'Repair' : 'Download Krunk';
+    codecText(i);
+  }
+  $('repair').addEventListener('click', () => { $('repair').disabled = true; LB.post('repairEngine'); });
 
   function verdict(info) {
     const renderer = g1 ? g1.renderer : '';
@@ -74,6 +115,9 @@
     $('setting').textContent = info.hardwareAcceleration ? 'on' : 'off';
     $('running').textContent = info.runningWithGpu ? 'GPU enabled (no --disable-gpu)' : '--disable-gpu (software)';
     $('arguments').textContent = info.arguments;
+    $('command-line').textContent = info.commandLine || '–';
+    engineFiles(info.integrity);
+    if (!info.integrity || !info.integrity.checked) setTimeout(() => LB.request('getGpuInfo').then((i) => engineFiles(i.integrity)), 25000);
     $('gpu-process').textContent = info.gpuProcess ? 'running' : 'none';
     $('engine').textContent = 'Chromium ' + info.chromium + ' (CEF ' + info.cef + ')';
     $('widevine').textContent = info.widevine ? info.widevine + ' (downloaded by the engine into the profile; not VMP-signed)' : info.protectedContent ? 'not downloaded yet (the engine fetches it a minute or two after start)' : 'not installed (Settings → Privacy & security → Protected content)';

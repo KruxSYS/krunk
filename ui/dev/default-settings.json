@@ -100,6 +100,7 @@
     "image": "",
     "imageDim": 30,
     "imageBlur": 0,
+    "wallpaper": "",
     "tiles": "mostVisited",
     "columns": 6,
     "rows": 2,

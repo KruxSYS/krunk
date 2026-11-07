@@ -229,12 +229,27 @@
   if (!isTop) return;
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', check, { once: true });
   else check();
-  var timer = null;
-  // Observe `document`, not documentElement: this runs at document creation,
-  // when documentElement may not exist yet (observe(null) would throw).
-  new MutationObserver(function () {
+  // Late login forms (rendered by script, or shown after a click): the DOM is watched only for
+  // a while, from the start until 10 s after the page loaded and for 5 s after a click or a
+  // history change (0.7.0, R24; up to 0.6.0 the whole document was watched for as long as no
+  // password field appeared, which cost every busy page time). Observe `document`, not
+  // documentElement: this runs at document creation, when documentElement may not exist yet.
+  var timer = null, until = Infinity, observer = null;
+  function watch(ms) {
     if (announced) return;
-    clearTimeout(timer);
-    timer = setTimeout(check, 400);
-  }).observe(document, { childList: true, subtree: true });
+    until = Math.max(until === Infinity ? 0 : until, Date.now() + ms);
+    if (!observer) {
+      observer = new MutationObserver(function () {
+        if (announced || Date.now() > until) { observer.disconnect(); observer = null; return; }
+        clearTimeout(timer);
+        timer = setTimeout(check, 400);
+      });
+      observer.observe(document, { childList: true, subtree: true });
+    }
+  }
+  watch(Infinity);
+  window.addEventListener('load', function () { until = Date.now() + 10000; }, { once: true });
+  document.addEventListener('click', function () { watch(5000); setTimeout(check, 400); }, true);
+  window.addEventListener('popstate', function () { watch(5000); }, true);
+  window.addEventListener('hashchange', function () { watch(5000); }, true);
 })();

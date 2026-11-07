@@ -22,13 +22,27 @@ wrap_app! {
             if !browser {
                 return;
             }
+            // CEF has already added its own start-up switches (e.g. a --disable-features list).
+            // Chromium keeps only the last occurrence of a switch, so a second one would replace
+            // CEF's: list switches are merged, any other repeated switch is replaced by ours.
             for s in &self.switches {
                 let Some(body) = s.strip_prefix("--") else { continue };
-                match body.split_once('=') {
-                    Some((name, value)) => {
-                        cl.append_switch_with_value(Some(&CefString::from(name)), Some(&CefString::from(value)))
+                let (name, value) = body.split_once('=').unwrap_or((body, ""));
+                let key = CefString::from(name);
+                let mut value = value.to_string();
+                if cl.has_switch(Some(&key)) != 0 {
+                    let existing = CefString::from(&cl.switch_value(Some(&key))).to_string();
+                    if lb_core::settings::LIST_SWITCHES.contains(&name) {
+                        value = lb_core::settings::merge_switch_list(&existing, &value);
+                    } else if existing != value {
+                        warning!("engine switch --{name}: the engine's value {existing:?} is replaced by Krunk's");
                     }
-                    None => cl.append_switch(Some(&CefString::from(body))),
+                    cl.remove_switch(Some(&key));
+                }
+                if value.is_empty() && !body.contains('=') {
+                    cl.append_switch(Some(&key));
+                } else {
+                    cl.append_switch_with_value(Some(&key), Some(&CefString::from(value.as_str())));
                 }
             }
         }
@@ -79,8 +93,21 @@ wrap_browser_process_handler! {
         fn default_request_context_handler(&self) -> Option<RequestContextHandler> {
             Some(context_handler())
         }
+
+        fn on_before_child_process_launch(&self, command_line: Option<&mut CommandLine>) {
+            // Chromium's thread profiler treats every build that is not a branded Chrome
+            // release as a developer build and samples the main thread of each engine process
+            // ten times a second (`--start-stack-profiler`, for crash-free UMA reports Krunk never
+            // sends). It cost the pages a measurable share of their time (R24): never in Krunk.
+            if let Some(cl) = command_line {
+                cl.remove_switch(Some(&CefString::from(STACK_PROFILER_SWITCH)));
+            }
+        }
     }
 }
+
+/// Chromium's `switches::kStartStackProfiler`.
+const STACK_PROFILER_SWITCH: &str = "start-stack-profiler";
 
 wrap_request_context_handler! {
     struct LbContextHandler;

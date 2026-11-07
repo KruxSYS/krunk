@@ -348,6 +348,12 @@ pub fn versions() -> (String, String) {
     (format!("{}.{}.{}", v[0], v[1], v[2]), format!("{}.{}.{}.{}", v[4], v[5], v[6], v[7]))
 }
 
+/// The browser process's command line as the engine runs it (CEF's own switches and
+/// Krunk's, merged; 0.7.0).
+pub fn command_line() -> String {
+    command_line_get_global().map(|c| CefString::from(&c.command_line_string()).to_string()).unwrap_or_default()
+}
+
 /// The engine's default user agent (what Chromium sends without an
 /// override; reduced UA format).
 pub fn default_user_agent() -> String {

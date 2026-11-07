@@ -8,15 +8,35 @@ body.has-image { color: #fff; }
 body.has-image #search input { background: rgba(255,255,255,.92); color: #1f2937; }
 body.has-image .tile { color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.7); }
 body.has-image #keys { background: rgba(0,0,0,.45); }
-main { width: min(820px, 92vw); padding-top: 16vh; }
+/* Readability on any background (0.7.0, R2): an opaque search box, a scrim behind the tile labels
+   and the shortcut list; light wallpapers get dark text instead of white. */
+body.has-image #search input { box-shadow: 0 2px 10px rgba(0,0,0,.25); }
+body.has-image .tile .label { padding: 1px 6px; border-radius: 6px; background: rgba(0,0,0,.35); }
+body.has-image #keys { color: #fff; backdrop-filter: blur(6px); }
+body.has-image #keys kbd { color: rgba(255,255,255,.75); }
+body.image-light { color: #1f2937; }
+body.image-light .tile { color: #1f2937; text-shadow: 0 1px 2px rgba(255,255,255,.8); }
+body.image-light .tile .label { background: rgba(255,255,255,.6); }
+body.image-light .tile:hover { background: rgba(255,255,255,.45); }
+body.image-light #keys { color: #1f2937; background: rgba(255,255,255,.7); }
+body.image-light #keys kbd { color: #4b5563; }
+.wallpapers { display: grid; grid-template-columns: repeat(5, 72px); gap: 6px; margin: 2px 0 6px 24px; }
+.wallpaper { padding: 0; width: 72px; height: 41px; border: 2px solid transparent; border-radius: 6px; overflow: hidden; cursor: pointer; background: var(--bg); }
+.wallpaper img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.wallpaper:hover { border-color: var(--border); }
+.wallpaper.on { border-color: var(--accent); }
+main { width: min(820px, 92vw); padding-top: 16vh; min-width: 0; }
 #search input { width: 100%; height: 48px; padding: 0 22px; border: 1px solid var(--border); border-radius: 24px;
                 background: var(--bg-raised); color: var(--fg); font: inherit; font-size: 1.231rem; outline: none;
                 box-shadow: 0 1px 4px rgba(0,0,0,.06); }
 #search input:focus { border-color: var(--accent); }
 #search[hidden], #tiles[hidden] { display: none; }
-#tiles { display: grid; grid-template-columns: repeat(var(--cols, 6), 1fr); gap: 14px; margin-top: 40px; }
+/* Fixed-width tiles (0.7.0, R1): a long title never widens a column. They wrap inside the
+   content column; the Columns setting caps how many share a row. */
+#tiles { --tile-w: 112px; --gap: 14px; display: grid; grid-template-columns: repeat(auto-fill, var(--tile-w)); gap: var(--gap);
+         justify-content: center; margin: 40px auto 0; max-width: min(100%, calc(var(--cols, 6) * var(--tile-w) + (var(--cols, 6) - 1) * var(--gap))); }
 .tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 18px 8px 12px;
-        border-radius: 12px; color: var(--fg); text-decoration: none; }
+        width: var(--tile-w); min-width: 0; border-radius: 12px; color: var(--fg); text-decoration: none; }
 .tile:hover { background: var(--bg-raised); box-shadow: 0 1px 6px rgba(0,0,0,.08); }
 body.has-image .tile:hover { background: rgba(0,0,0,.35); }
 .tile.dragging { opacity: .4; }
@@ -27,7 +47,9 @@ body.has-image .tile:hover { background: rgba(0,0,0,.35); }
 .tile .avatar img, .tile .avatar .fav { width: 24px; height: 24px; }
 .tile .avatar .fav.letter { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px;
                             border-radius: 50%; font-size: 1.538rem; background: transparent; }
-.tile .label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.923rem; }
+/* At most two lines, then an ellipsis; the full title is the tile's tooltip. */
+.tile .label { width: 100%; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+               overflow: hidden; text-align: center; line-height: 1.3; overflow-wrap: anywhere; font-size: 0.923rem; }
 .tile .tools { position: absolute; top: 4px; right: 4px; display: flex; opacity: 0; }
 .tile:hover .tools, .tile:focus-within .tools { opacity: 1; }
 .tile .tools .icon-btn { min-width: 22px; height: 22px; padding: 0 3px; }
@@ -46,6 +68,9 @@ body.has-image .tile:hover { background: rgba(0,0,0,.35); }
 #keys-list kbd { font: 11px/1.4 var(--font); color: var(--fg-muted); white-space: nowrap; }
 .link { border: 0; background: none; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
 #customize { position: fixed; right: 16px; bottom: 16px; }
+/* On a picture the button carries its own colours (the page's text colour follows the picture). */
+body.has-image #customize { background: rgba(17,24,39,.72); border-color: rgba(255,255,255,.25); color: #fff; backdrop-filter: blur(6px); }
+body.image-light #customize { background: rgba(255,255,255,.85); border-color: rgba(0,0,0,.15); color: #1f2937; }
 dialog fieldset { border: 1px solid var(--border); border-radius: 8px; margin: 0 0 12px; padding: 8px 12px; display: flex; flex-direction: column; gap: 6px; }
 dialog legend { font-weight: 600; }
 dialog label { display: flex; align-items: center; gap: 8px; }
@@ -54,3 +79,11 @@ dialog .buttons { display: flex; justify-content: flex-end; gap: 8px; }
 dialog input[type=text], dialog input[type=number] { font: inherit; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); }
 #tile-form label { flex-direction: column; align-items: stretch; gap: 4px; margin-bottom: 10px; }
 .field-error { color: var(--danger); min-height: 1.2em; margin: 4px 0; }
+/* 0.7.0 (R3): the colour picker in the Customize panel. */
+.color-row { margin: 0 0 4px 24px; }
+.color-picker { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.swatches { display: flex; gap: 5px; }
+.swatch { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--border); background: var(--c, var(--accent)); cursor: pointer; padding: 0; }
+.swatch.on { border-color: var(--fg); }
+.color-input { width: 32px; height: 24px; padding: 0 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-raised); cursor: pointer; }
+.color-picker input[type=text] { width: 78px; font-family: Consolas, monospace; }

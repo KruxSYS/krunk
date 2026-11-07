@@ -12,3 +12,6 @@ section.card h2 { font-size: 1.231rem; margin: 18px 0 10px; }
 .mono { font-family: Consolas, monospace; font-size: 0.923rem; }
 .help { color: var(--fg-muted); font-size: 0.923rem; }
 code { font-family: Consolas, monospace; background: var(--bg); padding: 0 4px; border-radius: 4px; }
+.warning { color: #b45309; font-weight: 600; }
+:root.dark .warning, :root:not(.light) .warning { color: #f59e0b; }
+#repair { margin-left: 8px; }

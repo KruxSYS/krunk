@@ -38,6 +38,10 @@ function label(v) {
   }
   return String(t || '').replace(/\s+/g, ' ').trim().slice(0, 80);
 }
+// Event-driven (0.7.0, R24): a video only matters once it has metadata, and the media events
+// (they reach a capturing listener on the document) say when; a frame says so with its own
+// `load`. Up to 0.6.0 a MutationObserver on every same-origin document recorded every change
+// of the page, which cost DOM-heavy pages a measurable share of their time.
 function hook(doc) {
   if (docsHooked.has(doc)) return;
   docsHooked.add(doc);
@@ -48,7 +52,12 @@ function hook(doc) {
       schedule();
     }, true);
   });
-  if (typeof MutationObserver === 'function') new MutationObserver(schedule).observe(doc.documentElement, { childList: true, subtree: true });
+  doc.addEventListener('load', function (e) {
+    var f = e.target;
+    if (!f || (f.tagName !== 'IFRAME' && f.tagName !== 'FRAME')) return;
+    try { if (f.contentDocument) hook(f.contentDocument); } catch (err) { /* another site */ }
+    schedule();
+  }, true);
 }
 // The floating window's close button pauses the video; "Back to tab" leaves it playing
 // (as does the browser's own exit, which announces itself first).

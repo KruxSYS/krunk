@@ -6,6 +6,8 @@
 #   scripts/build-dist.sh --debug    debug build, same layout (for testing; not for release)
 #   scripts/build-dist.sh --dev      release build with the dev-updates feature (the update
 #                                    check also accepts http://) -> target/dev-dist/, never dist/
+#   scripts/build-dist.sh --probe    release build with the perf-probe feature (KRUNK_PERF_OFF
+#                                    switches page scripts off, for benchmarks) -> target/probe-dist/
 #
 # UPDATE_BASE_URL (default https://krunk.209.wf, the live server) is where the update check looks
 # and what the installer names as the homepage, and
@@ -25,8 +27,9 @@ features=()
 case "${1:-}" in
   --debug) profile=debug ;;
   --dev) dist="$root/target/dev-dist"; features=(--features dev-updates) ;;
+  --probe) dist="$root/target/probe-dist"; features=(--features perf-probe) ;;
   "") ;;
-  *) echo "usage: $0 [--debug | --dev]" >&2; exit 2 ;;
+  *) echo "usage: $0 [--debug | --dev | --probe]" >&2; exit 2 ;;
 esac
 
 # The update server, also passed to build.rs (app/build.rs has the same default).
@@ -101,7 +104,25 @@ cp "$CEF_PATH/CREDITS.html" "$out/licenses/Chromium-CREDITS.html"
   echo "4. Creative Commons Attribution-ShareAlike 3.0"
   echo "----------------------------------------------"
   cat assets/filters/LICENSE-CC-BY-SA-3.0.txt
+  echo
+  echo "5. New tab page wallpapers"
+  echo "--------------------------"
+  echo "The ten built-in wallpapers (Krunk.dll, shared/wallpapers/) were made for Krunk: eight"
+  echo "generated with the z-image-turbo model from Krunk's own prompts, two drawn by Krunk's build"
+  echo "script. No third-party image is included. Prompts and seeds: assets/wallpapers/SOURCES.txt"
+  echo "in Krunk's source repository."
 } > "$out/THIRD-PARTY-NOTICES.txt"
+
+# The engine files must be the ones Krunk checks itself against (engine-files.sha256, built into
+# Krunk.dll by core/src/integrity.rs). After a CEF change: regenerate the list with
+#   (cd dist/Krunk-win-x64 && find . -type f ! -name Krunk.exe ! -name Krunk.dll \
+#      ! -name THIRD-PARTY-NOTICES.txt ! -path './licenses/*' | sed 's#^\./##' | LC_ALL=C sort | xargs sha256sum) > engine-files.sha256
+# and rebuild.
+(cd "$out" && sha256sum --quiet -c "$root/engine-files.sha256") || {
+  echo "error: the engine files differ from engine-files.sha256 (see the comment above)" >&2; exit 1; }
+listed=$(wc -l < "$root/engine-files.sha256")
+present=$(cd "$out" && find . -type f ! -name Krunk.exe ! -name Krunk.dll ! -name THIRD-PARTY-NOTICES.txt ! -path './licenses/*' | wc -l)
+[ "$listed" -eq "$present" ] || { echo "error: $present engine files in the package, $listed in engine-files.sha256" >&2; exit 1; }
 
 # The package ships no Markdown: README and SECURITY are read on the website and in the
 # repository. Fail rather than ship one that slipped in (checked before the installer and zip).
@@ -115,10 +136,15 @@ fi
 # Per-user installer (NSIS, see installer/krunk.nsi).
 makensis=$("$root/scripts/fetch-nsis.sh")
 setup="Krunk-Setup-$version.exe"
+# Every file the installer writes, for its check before writing (installer/krunk.nsi, CheckFile).
+files_nsh=$(mktemp --suffix=.nsh)
+(cd "$out" && find . -type f | sed 's#^\./##' | LC_ALL=C sort) | sed 's#/#\\#g; s#.*#!insertmacro CheckFile "&"#' > "$files_nsh"
 NSISDIR="$(dirname "$(dirname "$makensis")")/share/nsis" "$makensis" -V2 -NOCD \
   -DVERSION="$version" -DSRC="$out" -DOUT="$dist/$setup" -DICON="$root/assets/brand/krunk.ico" \
-  -DSIDE_IMAGE="$root/assets/brand/installer-side.bmp" -DHOMEPAGE="$UPDATE_BASE_URL" \
+  -DSIDE_IMAGE="$root/assets/brand/installer-side.bmp" -DHOMEPAGE="$UPDATE_BASE_URL" -DFILES_NSH="$files_nsh" \
   "$root/installer/krunk.nsi"
+
+rm -f "$files_nsh"
 
 cd "$dist"
 rm -f Krunk-win-x64.zip SHA256SUMS

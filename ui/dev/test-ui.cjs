@@ -19,7 +19,7 @@ const SHOTS = process.argv[2] || null;
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: https://*.ext.krunk.invalid; font-src 'self'; " +
   "connect-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
-const MIME = { html: 'text/html', css: 'text/css', js: 'text/javascript', svg: 'image/svg+xml', png: 'image/png' };
+const MIME = { html: 'text/html', css: 'text/css', js: 'text/javascript', svg: 'image/svg+xml', png: 'image/png', webp: 'image/webp', json: 'application/json' };
 
 let failures = 0;
 let passes = 0;
@@ -242,12 +242,13 @@ async function testShell(browser) {
   const dups = (await sent(page)).filter((m) => m.cmd === 'duplicateTab');
   check(dups.length === dupBefore + 1 && dups[dups.length - 1].id === inactive, 'double-click on an inactive tab sends one duplicateTab{id:' + inactive + '}');
 
-  // Address bar.
+  // Address bar (a click selects the address once the click is handled, before anyone types).
   await page.click('#address');
+  await page.waitForTimeout(30);
   await page.keyboard.type('rust borrow checker');
   await page.keyboard.press('Enter');
   const nav = await lastSent(page, 'navigate');
-  check(nav && nav.input === 'rust borrow checker', 'typing + Enter sends navigate{input}');
+  check(nav && nav.input === 'rust borrow checker', 'typing + Enter sends navigate{input} (' + JSON.stringify(nav) + ')');
   await page.click('#address');
   await page.keyboard.type('garbage');
   await page.keyboard.press('Escape');
@@ -981,10 +982,159 @@ async function testPopup(browser) {
   await emit(page, { event: 'popup', content: Object.assign({}, upd, { install: false, hasNotes: false }) });
   await page.waitForTimeout(20);
   check(await page.locator('button', { hasText: 'Download' }).count() === 1 && await page.locator('button', { hasText: 'Release notes' }).count() === 0, 'portable copy: Download, no notes button without notes');
+  // 0.7.0: the same prompt repairs a copy whose files are not this release's.
+  await emit(page, { event: 'popup', content: { kind: 'update', version: '0.7.0', current: '0.7.0', install: true, hasNotes: false, state: { step: 'offered' },
+    repair: 'libcef.dll is the old engine without H.264/AAC (Krunk 0.5.1 or earlier): an update did not replace it' } });
+  await page.waitForTimeout(20);
+  await shot(page, 'popup-repair.png');
+  check((await page.textContent('h2')) === 'Repair Krunk 0.7.0' && (await page.textContent('.panel p')).includes('without H.264/AAC') && (await page.textContent('.panel p')).includes('reinstalls this version'), 'repair prompt names the problem and what Repair does');
+  await page.locator('button', { hasText: 'Repair' }).click();
+  check((await lastSent(page, 'updateReply')).choice === 'install', 'Repair sends updateReply{install}');
   check(errors.length === 0, 'update prompt: no console errors (' + errors.join(' | ') + ')');
 }
 
+async function testGpu(browser) {
+  console.log('krunk://gpu (0.7.0: engine identity, generated codec text, Repair)');
+  const base = { hardwareAcceleration: true, runningWithGpu: true, arguments: '--no-pings --disable-features=AutofillServerCommunication', gpuProcess: true,
+    commandLine: '"C:\\Krunk\\Krunk.exe" --disable-features=GlicActorUi,AutofillActorMode,LensOverlay,KillOnInvalidNavigationHeaders,AutofillServerCommunication --no-pings',
+    cef: '156.0.15', chromium: '156.0.8078.80', widevine: null, protectedContent: false };
+  // Playwright's Chromium has no H.264/AAC: the probe answers like Krunk's engine (or like the old one).
+  const codecs = (h264) => { const real = MediaSource.isTypeSupported.bind(MediaSource);
+    MediaSource.isTypeSupported = (t) => /avc1|mp4a/.test(t) ? h264 : /hev1|ac-3|ec-3/.test(t) ? false : real(t); };
+  const healthy = Object.assign({}, base, { integrity: { checked: true, flavor: 'release', libcef: 'c4e38bbf9f097016', engineFiles: 232, problems: [], releaseChecked: true, healthy: true, summary: 'The installed files match this release', installed: true } });
+  let { page, errors, external } = await openPage(browser, 'https://krunk.invalid/gpu.html', { width: 900, height: 1200 }, 1,
+    (a) => { window.__host.handlers.getGpuInfo = () => a.info; (new Function('h', a.codecs))(true); }, { info: healthy, codecs: '(' + codecs.toString() + ')(h)' });
+  await page.waitForFunction(() => document.getElementById('engine-build').textContent.includes('c4e38bbf'));
+  const text = await page.textContent('#codec-text');
+  check(text.startsWith("This is Krunk's own engine build with the proprietary codecs") && text.includes('H.264') && text.includes('AAC') && !text.includes('has no H.264'), 'codec text comes from the probe and the engine (no stale "no H.264" text)');
+  check(text.includes('HEVC') && text.includes('Dolby'), 'HEVC and AC-3 explained as Windows matters');
+  check(await page.locator('#codec-warning').isHidden() && await page.locator('#repair').isHidden(), 'healthy engine: no warning, no Repair');
+  check((await page.textContent('#command-line')).includes('GlicActorUi,AutofillActorMode,LensOverlay,KillOnInvalidNavigationHeaders,AutofillServerCommunication'), 'the real engine command line (one merged --disable-features) is shown');
+  check((await page.textContent('#engine-files')).includes('match this release') && (await page.textContent('#engine-files')).includes('232 engine files'), 'engine files line');
+  check(await page.locator('td.yes', { hasText: 'yes' }).count() >= 2 && await page.locator('#codecs th', { hasText: 'E-AC-3' }).count() === 1, 'codec table with E-AC-3');
+  await shot(page, 'gpu-healthy.png');
+  check(errors.length === 0, 'healthy: no console errors (' + errors.join(' | ') + ')');
+  check(external.length === 0, 'no network requests (' + external.join(', ') + ')');
+  await page.context().close();
+  // The operator's case: the old engine left behind by an update.
+  const minimal = Object.assign({}, base, { integrity: { checked: true, flavor: 'minimal', libcef: '07168eacd81bc09a', engineFiles: 232, problems: [{ path: 'libcef.dll', kind: 'changed' }], releaseChecked: false, healthy: false,
+    summary: 'libcef.dll is the old engine without H.264/AAC (Krunk 0.5.1 or earlier): an update did not replace it', installed: true } });
+  ({ page, errors } = await openPage(browser, 'https://krunk.invalid/gpu.html', { width: 900, height: 1200 }, 1,
+    (a) => { window.__host.handlers.getGpuInfo = () => a.info; (new Function('h', a.codecs))(false); }, { info: minimal, codecs: '(' + codecs.toString() + ')(h)' }));
+  await page.waitForFunction(() => document.getElementById('engine-build').textContent.includes('07168eac'));
+  check((await page.textContent('#codec-text')).includes('old engine without H.264') && await page.locator('#codec-warning').isVisible(), 'old engine: says so and warns');
+  check(await page.locator('#repair').isVisible() && (await page.textContent('#repair')) === 'Repair', 'Repair button shown');
+  await page.click('#repair');
+  await page.waitForTimeout(30);
+  check(!!(await lastSent(page, 'repairEngine')) && await page.locator('#repair').isDisabled(), 'Repair sends repairEngine once');
+  await shot(page, 'gpu-minimal.png');
+  check(errors.length === 0, 'minimal: no console errors (' + errors.join(' | ') + ')');
+  await page.context().close();
+  // Not checked yet (the check runs 20 s after start).
+  ({ page, errors } = await openPage(browser, 'https://krunk.invalid/gpu.html', { width: 900, height: 1200 }, 1,
+    (a) => { window.__host.handlers.getGpuInfo = () => a; }, Object.assign({}, base, { integrity: { checked: false } })));
+  await page.waitForFunction(() => document.getElementById('engine-build').textContent.includes('checking'));
+  check(await page.locator('#repair').isHidden(), 'not checked yet: no Repair');
+  check(errors.length === 0, 'unchecked: no console errors (' + errors.join(' | ') + ')');
+  await page.context().close();
+}
+
 const DAY = 86400000;
+
+// 0.7.0 (R2/R3): the Customize panel's wallpapers and colour picker; light wallpapers get dark text.
+async function testNewTabBackgrounds(browser) {
+  console.log('new tab page: wallpapers and colour (R2, R3)');
+  const setup = () => {
+    const h = window.__host.handlers;
+    const wallpapers = [['aurora', 'Aurora', 'dark', 25], ['dunes', 'Dunes', 'light', 0]].map(([id, title, look, dim]) => ({ id, title, look, dim, thumb: 'https://krunk.invalid/shared/wallpapers/' + id + '-thumb.webp' }));
+    window.__ntp = { background: 'none', backgroundColor: '', image: '', imageDim: 30, imageBlur: 0, wallpaper: '', tiles: 'mostVisited', columns: 6, rows: 2, showShortcuts: true, showSearch: true, showTiles: true };
+    const cfg = () => {
+      const w = window.__ntp.background === 'wallpaper' ? wallpapers.find((x) => x.id === window.__ntp.wallpaper) : null;
+      return { searchName: 'Google', shortcuts: [['New tab', 'Ctrl+T']], ntp: window.__ntp, imageUrl: null, wallpapers,
+        wallpaperUrl: w ? 'https://krunk.invalid/shared/wallpapers/' + w.id + '.webp' : null, wallpaperLook: w ? w.look : null };
+    };
+    h.getTopSites = () => [{ url: 'https://example.org/', title: 'Example', pinned: false, favicon: null }];
+    h.getNewTabConfig = cfg;
+    h.setNtpOptions = (m) => { window.__ntp = m.ntp; return cfg(); };
+  };
+  const { page, errors, external } = await openPage(browser, 'https://krunk.invalid/newtab.html', { width: 1100, height: 700 }, 1, setup);
+  await page.waitForSelector('.tile:not(.add)');
+  await page.click('#customize');
+  check(await page.locator('#wallpapers .wallpaper').count() === 2, 'the Customize panel shows the wallpaper thumbnails');
+  await page.click('#wallpapers .wallpaper[data-id="aurora"]');
+  await page.waitForTimeout(60);
+  let o = await lastSent(page, 'setNtpOptions');
+  check(o && o.ntp.background === 'wallpaper' && o.ntp.wallpaper === 'aurora' && o.ntp.imageDim === 25, 'a thumbnail chooses the wallpaper with its darkening');
+  let st = await page.evaluate(() => ({ img: getComputedStyle(document.getElementById('bg')).backgroundImage, has: document.body.classList.contains('has-image'), light: document.body.classList.contains('image-light'), dim: getComputedStyle(document.getElementById('dim')).opacity }));
+  check(st.img.includes('/shared/wallpapers/aurora.webp') && st.has && !st.light && st.dim === '0.25', 'the page shows it, darkened, with light text (' + JSON.stringify(st) + ')');
+  const darkBtn = await page.evaluate(() => getComputedStyle(document.getElementById('customize')).color);
+  check(darkBtn === 'rgb(255, 255, 255)', 'the Customize button has light text on a dark wallpaper (' + darkBtn + ')');
+  await shot(page, 'newtab-wallpaper-dark.png');
+  await page.click('#wallpapers .wallpaper[data-id="dunes"]');
+  await page.waitForTimeout(60);
+  st = await page.evaluate(() => ({ light: document.body.classList.contains('image-light'), color: getComputedStyle(document.querySelector('.tile')).color }));
+  check(st.light && st.color === 'rgb(31, 41, 55)', 'a light wallpaper gets dark text (' + JSON.stringify(st) + ')');
+  const btn = () => page.evaluate(() => { const c = getComputedStyle(document.getElementById('customize')); return c.color + ' on ' + c.backgroundColor; });
+  check(await btn() === 'rgb(31, 41, 55) on rgba(255, 255, 255, 0.85)', 'the Customize button stays readable on a light wallpaper (' + await btn() + ')');
+  await shot(page, 'newtab-wallpaper-light.png');
+  // The colour picker: a swatch and the dialog.
+  await page.click('.color-row .swatch[data-color="#1e1b4b"]');
+  await page.waitForTimeout(60);
+  o = await lastSent(page, 'setNtpOptions');
+  check(o.ntp.background === 'color' && o.ntp.backgroundColor === '#1e1b4b', 'a colour swatch makes a colour background');
+  check(await page.evaluate(() => getComputedStyle(document.getElementById('bg')).backgroundColor) === 'rgb(30, 27, 75)', 'and the page shows it');
+  await page.click('.color-row .reset-color');
+  await page.waitForTimeout(60);
+  check((await lastSent(page, 'setNtpOptions')).ntp.background === 'none', 'Reset leaves no background');
+  check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
+  check(external.length === 0, 'no network requests (' + external.join(', ') + ')');
+  await page.context().close();
+}
+
+// 0.7.0 (R1): the operator's long tile titles never widen the grid or the page.
+async function testNewTabLongTitles(browser) {
+  console.log('new tab page: long titles (R1)');
+  const titles = [
+    ['https://plique.example/', 'Home — PLIQUE DMA'], ['https://www.youtube.com/', 'YouTube'],
+    ['https://perfectaim.example/', 'PerfectAim - Undetected Game Cheats'], ['https://azeroth.example/', 'Azeroth Survivors'],
+    ['https://login.example/', 'Login'], ['https://app.plex.tv/', 'Plex'],
+    ['https://duckduckgo.com/?q=perfectaim', 'perfectaim at DuckDuckGo'], ['https://canyoublockit.com/', 'Can You Block It ? - A Simple Ad Block Tester'],
+    ['https://www.youtube.com/feed', 'YouTube'], ['https://adblock-tester.com/', 'Ad Blocker Test | Check if Your Ad Blocker Works'],
+    ['https://rabbitrun.example/', 'RabbitRun'],
+    ['https://forums.plex.tv/t/solved', 'SOLVED New Media Server or New Firefox version causing Error Playing Video in Browser | Plex Forum'],
+  ].map(([url, title]) => ({ url, title, pinned: false, favicon: null }));
+  const setup = (t) => {
+    const h = window.__host.handlers;
+    h.getTopSites = () => t;
+    h.getNewTabConfig = () => ({ searchName: 'Google', shortcuts: [['New tab', 'Ctrl+T']], ntp: { background: 'none', backgroundColor: '', image: '', imageDim: 30, imageBlur: 0, tiles: 'mostVisited', columns: 6, rows: 2, showShortcuts: true, showSearch: true, showTiles: true }, imageUrl: null });
+  };
+  let worst = [];
+  for (const width of [800, 1024, 1280, 1920, 2560]) {
+    for (const zoom of [1, 1.25, 1.5]) {
+      const { page, errors } = await openPage(browser, 'https://krunk.invalid/newtab.html', { width: Math.round(width / zoom), height: 900 }, zoom, setup, titles);
+      await page.waitForSelector('.tile:not(.add)');
+      const r = await page.evaluate(() => {
+        const doc = document.documentElement, main = document.querySelector('main').getBoundingClientRect();
+        const tiles = [...document.querySelectorAll('.tile')].map((t) => t.getBoundingClientRect());
+        const labels = [...document.querySelectorAll('.tile .label')];
+        const lineH = parseFloat(getComputedStyle(labels[0]).lineHeight);
+        return {
+          hscroll: doc.scrollWidth > doc.clientWidth,
+          outside: tiles.filter((b) => b.left < main.left - 0.5 || b.right > main.right + 0.5 || b.right > doc.clientWidth).length,
+          widths: [...new Set(tiles.map((b) => Math.round(b.width)))],
+          maxLines: Math.max(...labels.map((l) => Math.round(l.getBoundingClientRect().height / lineH))),
+          longTip: document.querySelector('.tile[data-url="https://forums.plex.tv/t/solved"]').title,
+        };
+      });
+      const ok = !r.hscroll && r.outside === 0 && r.widths.length === 1 && r.maxLines <= 2 && r.longTip.startsWith('SOLVED New Media Server or New Firefox version causing Error Playing Video');
+      if (!ok) worst.push(width + 'px@' + zoom + ': ' + JSON.stringify(r));
+      if (SHOTS && zoom === 1 && [800, 1280, 1920].includes(width)) await shot(page, 'newtab-long-titles-' + width + '.png');
+      if (errors.length) worst.push('errors: ' + errors.join(' | '));
+      await page.context().close();
+    }
+  }
+  check(worst.length === 0, 'long titles at 800–2560 px and 100/125/150 %: no horizontal scrollbar, every tile inside the column, one tile width, at most 2 lines, the full title in the tooltip' + (worst.length ? ' (' + worst.join('; ') + ')' : ''));
+}
 
 async function testNewTab(browser) {
   console.log('new tab page');
@@ -1804,22 +1954,49 @@ async function testBookmarksBar(browser) {
   let bp = await lastSent(page, 'bookmarkActivePage');
   check(bp && bp.parent === 1 && bp.index === 2, 'dropped before Wikipedia: bookmarkActivePage{parent:1, index:2} (' + JSON.stringify(bp) + ')');
   check(await page.locator('#url-chip').count() === 0, 'the chip is gone');
-  // From the (unfocused) address field into the folder.
+  // 0.7.0 (R4): a drag in the (unfocused) address field selects text; it never drags the page.
   const ab = await page.locator('#address').boundingBox();
-  to = await box(11);
+  const before = (await sent(page)).filter((m) => m.cmd === 'bookmarkActivePage').length;
   await page.mouse.move(ab.x + 40, ab.y + ab.height / 2);
   await page.mouse.down();
-  await page.mouse.move(ab.x + 60, ab.y + 10, { steps: 3 });
-  await page.mouse.move(to.x + to.width / 2, to.y + 10, { steps: 6 });
-  check(await page.locator('.bm[data-id="11"].drop-into').count() === 1, 'the address dragged over the folder lights it up');
+  await page.mouse.move(ab.x + 90, ab.y + ab.height / 2, { steps: 5 });
+  check(await page.locator('#url-chip').count() === 0, 'a drag in the field makes no chip');
   await page.mouse.up();
-  bp = await lastSent(page, 'bookmarkActivePage');
-  check(bp && bp.parent === 11, 'dropped on the folder: bookmarkActivePage{parent:11}');
-  check(await page.evaluate(() => document.activeElement !== document.getElementById('address')), 'a drag from the field does not focus it');
-  // A plain click on the field still focuses it with the text selected.
-  await page.mouse.click(ab.x + 40, ab.y + ab.height / 2);
+  const dragSel = await page.evaluate(() => { const a = document.getElementById('address'); return { focused: document.activeElement === a, start: a.selectionStart, end: a.selectionEnd, len: a.value.length }; });
+  check(dragSel.focused && dragSel.end > dragSel.start && dragSel.end - dragSel.start < dragSel.len, 'a drag in the unfocused field focuses it and selects the dragged part (' + JSON.stringify(dragSel) + ')');
+  check((await sent(page)).filter((m) => m.cmd === 'bookmarkActivePage').length === before, 'and bookmarks nothing');
+  // The same in the focused field, even inside the selection: a new selection, no text drag.
+  await page.evaluate(() => document.getElementById('address').select());
+  await page.mouse.move(ab.x + 30, ab.y + ab.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(ab.x + 70, ab.y + ab.height / 2, { steps: 5 });
+  await page.mouse.up();
+  const dragSel2 = await page.evaluate(() => { const a = document.getElementById('address'); return { start: a.selectionStart, end: a.selectionEnd, len: a.value.length }; });
+  check(dragSel2.end > dragSel2.start && dragSel2.end - dragSel2.start < dragSel2.len, 'a drag inside the selected address selects again (' + JSON.stringify(dragSel2) + ')');
+  // Double click: a word; triple click: everything.
+  await page.mouse.dblclick(ab.x + 100, ab.y + ab.height / 2);
+  const word = await page.evaluate(() => { const a = document.getElementById('address'); return a.value.slice(a.selectionStart, a.selectionEnd); });
+  check(word.length > 0 && !word.includes('/') && word.length < 'https://www.rust-lang.org/'.length, 'a double click selects a word (' + word + ')');
+  await page.mouse.click(ab.x + 100, ab.y + ab.height / 2, { clickCount: 3 });
+  check(await page.evaluate(() => { const a = document.getElementById('address'); return a.selectionStart === 0 && a.selectionEnd === a.value.length; }), 'a triple click selects all');
+  // A press elsewhere in the shell blurs the bar: selection gone, formatted address back (R5).
+  const back = await page.locator('#toolbar').boundingBox();
+  await page.mouse.click(back.x + back.width - 5, back.y + 4);
   await page.waitForTimeout(20);
-  check(await page.evaluate(() => { const a = document.getElementById('address'); return document.activeElement === a && a.selectionEnd - a.selectionStart === a.value.length; }), 'a click on the field focuses it and selects the address');
+  const blurred = await page.evaluate(() => { const a = document.getElementById('address'); return { focused: document.activeElement === a, collapsed: a.selectionStart === a.selectionEnd, display: !document.getElementById('address-display').hidden, host: (document.querySelector('#address-display .host') || {}).textContent }; });
+  check(!blurred.focused && blurred.collapsed && blurred.display && blurred.host === 'www.rust-lang.org', 'a click outside the bar blurs it and the formatted address returns (' + JSON.stringify(blurred) + ')');
+  // A plain click on the unfocused field focuses it with the text selected.
+  await page.waitForTimeout(600);
+  await page.mouse.click(ab.x + 40, ab.y + ab.height / 2);
+  await page.waitForTimeout(30);
+  const clickSel = await page.evaluate(() => { const a = document.getElementById('address'); return { focused: document.activeElement === a, start: a.selectionStart, end: a.selectionEnd, len: a.value.length }; });
+  check(clickSel.focused && clickSel.start === 0 && clickSel.end === clickSel.len, 'a click on the field focuses it and selects the address (' + JSON.stringify(clickSel) + ')');
+  check(await page.locator('#address-display').isHidden(), 'the focused field shows its own text');
+  // The host says the page took the focus (a click into the page).
+  await emit(page, { event: 'blurAddressBar' });
+  await page.waitForTimeout(20);
+  check(await page.evaluate(() => document.activeElement !== document.getElementById('address') && document.getElementById('address').selectionStart === document.getElementById('address').selectionEnd), 'blurAddressBar: the bar gives up focus and selection');
+  await page.click('#address');
   await page.keyboard.press('Escape');
   // Text dropped on the bar (HTML5 drag and drop): an http(s) address becomes a bookmark.
   to = await box(10);
@@ -2554,7 +2731,9 @@ function settingsMock(defaults) {
     { id: 'quad9-dot', name: 'Quad9 (DoT)', resolver: { kind: 'tls', name: 'Quad9 (DoT)', host: 'dns.quad9.net', ip: '9.9.9.9', port: 853, path: '', stamp: '' } },
     { id: 'cloudflare-doh', name: 'Cloudflare (DoH)', resolver: { kind: 'https', name: 'Cloudflare (DoH)', host: 'cloudflare-dns.com', ip: '1.1.1.1', port: 443, path: '/dns-query', stamp: '' } },
   ];
-  h.getSettings = () => ({ settings: st.settings, restartRequired: restart(st.settings), dnsPresets: DNS_PRESETS, about: { version: '0.1.0', cef: '156.0.15', chromium: '156.0.8078.80', dataDir: 'C:\\Users\\me\\AppData\\Local\\Krunk' }, userAgents: UAS, defaultUserAgent: UA_DEFAULT });
+  const WALLPAPERS = [['aurora', 'Aurora', 'dark', 25], ['dunes', 'Dunes', 'light', 0], ['nebula', 'Nebula', 'dark', 15]]
+    .map(([id, title, look, dim]) => ({ id, title, look, dim, thumb: 'https://krunk.invalid/shared/wallpapers/' + id + '-thumb.webp' }));
+  h.getSettings = () => ({ settings: st.settings, restartRequired: restart(st.settings), dnsPresets: DNS_PRESETS, wallpapers: WALLPAPERS, about: { version: '0.1.0', cef: '156.0.15', chromium: '156.0.8078.80', dataDir: 'C:\\Users\\me\\AppData\\Local\\Krunk' }, userAgents: UAS, defaultUserAgent: UA_DEFAULT });
   h.importDetect = () => [
     { id: 'firefox:abcd.default-release', browser: 'firefox', label: 'Firefox – default-release', path: 'C:\\Users\\me\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\abcd.default-release', isDefault: true, hasHistory: true, hasBookmarks: true, hasPasswords: true },
     { id: 'chrome:Default', browser: 'chrome', label: 'Google Chrome – Person 1 (Default)', path: 'C:\\Users\\me\\AppData\\Local\\Google\\Chrome\\User Data\\Default', isDefault: true, hasHistory: true, hasBookmarks: false, hasPasswords: true },
@@ -2640,10 +2819,12 @@ async function testSettings(browser) {
   await page.waitForTimeout(40);
   check((await lastSent(page, 'permissionSet')).state === 'allow', 'changing an answer sends permissionSet');
   await tab('general');
-  // 0.6.0 appearance: the accent swatches and the toolbar-item toggles.
+  // 0.6.0 appearance: the accent swatches and the toolbar-item toggles; 0.7.0: real colour pickers.
   await tab('appearance');
-  check(await page.locator('#accent-swatches .swatch').count() === 8 && await page.locator('#accent-swatches .swatch.on[data-color=""]').count() === 1, 'eight accent swatches, the default selected');
-  await page.click('#accent-swatches .swatch[data-color="#16a34a"]');
+  const accentRow = '.row:has([data-key="appearance.accent"])';
+  check(await page.locator(accentRow + ' .swatch').count() === 8 && await page.locator(accentRow + ' .swatch.on[data-color=""]').count() === 1, 'eight accent swatches, the default selected');
+  check(await page.locator('input[type=color]').count() === 5 && await page.locator('.reset-color').count() === 5, 'a colour dialog and Reset for the accent, toolbar, strip, background and new tab page');
+  await page.click(accentRow + ' .swatch[data-color="#16a34a"]');
   await page.waitForTimeout(60);
   {
     const saved = await lastSent(page, 'saveSettings');
@@ -2651,12 +2832,58 @@ async function testSettings(browser) {
     const acc = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim());
     check(acc === '#16a34a', 'and the page uses it at once (' + acc + ')');
   }
+  // A custom colour from the dialog: live while it moves, saved once more at the end.
+  {
+    const before = (await sent(page)).filter((m) => m.cmd === 'saveSettings').length;
+    await page.evaluate(() => {
+      const c = document.querySelector('.row:has([data-key="appearance.toolbarColor"]) input[type=color]');
+      ['#101828', '#1d2939', '#344054'].forEach((v) => { c.value = v; c.dispatchEvent(new Event('input', { bubbles: true })); });
+    });
+    await page.waitForTimeout(250);
+    const saves = (await sent(page)).filter((m) => m.cmd === 'saveSettings').slice(before);
+    check(saves.length >= 1 && saves.length <= 2 && saves[saves.length - 1].settings.appearance.toolbarColor === '#344054', 'the dialog\'s colour applies live, throttled (' + saves.length + ' saves)');
+    check(await page.inputValue('[data-key="appearance.toolbarColor"]') === '#344054', 'the hex field follows the dialog');
+    await page.fill('[data-key="appearance.toolbarColor"]', '#fde68a');
+    await page.press('[data-key="appearance.toolbarColor"]', 'Tab');
+    await page.waitForTimeout(60);
+    check((await lastSent(page, 'saveSettings')).settings.appearance.toolbarColor === '#fde68a' && await page.evaluate(() => document.querySelector('.row:has([data-key="appearance.toolbarColor"]) input[type=color]').value) === '#fde68a', 'typing a hex value saves it and moves the dialog\'s colour');
+    await page.click('.row:has([data-key="appearance.toolbarColor"]) .reset-color');
+    await page.waitForTimeout(60);
+    check((await lastSent(page, 'saveSettings')).settings.appearance.toolbarColor === '' && await page.locator('.row:has([data-key="appearance.toolbarColor"]) .reset-color').isDisabled(), 'Reset to default clears it');
+  }
+  // The host's theme message carries the readable text colour for a custom colour (WCAG).
+  await emit(page, { event: 'theme', theme: 'light', accent: '#ffe066', colors: { accent: '#ffe066', accentFg: '#111827', background: '#0f172a', backgroundFg: '#ffffff' } });
+  await page.waitForTimeout(30);
+  {
+    const v = await page.evaluate(() => { const cs = getComputedStyle(document.documentElement); return [cs.getPropertyValue('--accent-fg').trim(), cs.getPropertyValue('--on-bg').trim(), getComputedStyle(document.querySelector('.panel.active .panel-title')).color]; });
+    check(v[0] === '#111827' && v[1] === '#ffffff' && v[2] === 'rgb(255, 255, 255)', 'the page uses the readable text colours (' + v.join(', ') + ')');
+  }
+  await emit(page, { event: 'theme', theme: 'light' });
+  // 0.7.0 (R2): the new tab page background: built-in wallpapers, a colour, your own image.
+  check(await page.locator('#settings-wallpapers .wallpaper').count() === 3, 'the wallpaper thumbnails');
+  await page.click('#settings-wallpapers .wallpaper[data-id="dunes"]');
+  await page.waitForTimeout(60);
+  {
+    const n = (await lastSent(page, 'saveSettings')).settings.ntp;
+    check(n.background === 'wallpaper' && n.wallpaper === 'dunes' && n.imageDim === 0, 'a thumbnail saves the wallpaper with its usual darkening');
+    check(await page.locator('#settings-wallpapers .wallpaper.on[data-id="dunes"]').count() === 1, 'and shows it chosen');
+  }
+  await page.fill('[data-key="ntp.backgroundColor"]', '#123456');
+  await page.press('[data-key="ntp.backgroundColor"]', 'Tab');
+  await page.waitForTimeout(60);
+  {
+    const n = (await lastSent(page, 'saveSettings')).settings.ntp;
+    check(n.background === 'color' && n.backgroundColor === '#123456', 'a new tab page colour becomes its background');
+  }
+  await page.click('#ntp-no-background');
+  await page.waitForTimeout(60);
+  check((await lastSent(page, 'saveSettings')).settings.ntp.background === 'none', 'No background');
   await page.uncheck('[data-key="appearance.showZoomChip"]');
   await page.waitForTimeout(60);
   check((await lastSent(page, 'saveSettings')).settings.appearance.showZoomChip === false, 'hiding the zoom indicator is saved');
   await page.check('[data-key="appearance.showZoomChip"]');
   await page.waitForTimeout(60);
-  await page.click('#accent-swatches .swatch[data-color=""]');
+  await page.click(accentRow + ' .swatch[data-color=""]');
   await page.waitForTimeout(60);
   await tab('general');
   await page.selectOption('#newTabPage', 'custom');
@@ -3306,12 +3533,19 @@ async function testMediaScript(browser) {
   await context.addInitScript(() => {
     window.__posted = [];
     window.__lbHost = { postMessage: (m) => window.__posted.push(m), addEventListener: () => {} };
+    // 0.7.0 (R24): the script must not watch the page's DOM.
+    window.__observers = [];
+    const MO = window.MutationObserver;
+    window.MutationObserver = function (cb) { window.__observers.push(1); return new MO(cb); };
   });
   await context.addInitScript({ path: path.join(__dirname, '..', 'inject', 'media.js') });
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   await page.goto('https://media.example/');
+  await page.waitForTimeout(1500);
+  // (Counted before any waitForFunction: Playwright's own polling may create one.)
+  const observers = await page.evaluate(() => window.__observers.length);
   await page.waitForFunction(() => { const m = window.__posted.filter((x) => x.lb === 'media').pop(); return m && m.videos.length >= 3 && m.videos.some((v) => v.playing); }, null, { timeout: 8000 }).catch(() => {});
   const media = await page.evaluate(() => window.__posted.filter((x) => x.lb === 'media').pop());
   check(media && media.videos.length === 3, 'media lists the three eligible videos (two of the page, one in a same-origin frame; disablepictureinpicture left out) (' + JSON.stringify(media) + ')');
@@ -3336,8 +3570,42 @@ async function testMediaScript(browser) {
   await page.evaluate(() => document.getElementById('a').pause());
   await page.waitForFunction(() => { const m = window.__posted.filter((x) => x.lb === 'media').pop(); return m && !m.videos[0].playing; }, null, { timeout: 3000 }).catch(() => {});
   check(await page.evaluate(() => !window.__posted.filter((x) => x.lb === 'media').pop().videos[0].playing), 'pausing reports the change');
-  check(!(await page.evaluate(() => Object.keys(window).some((k) => /krunk|lbHost/i.test(k) && k !== '__lbHost'))), 'no global added to the page');
+  // Added later: a video, and a frame with a video (found through their own events).
+  await page.evaluate(() => {
+    const v = document.createElement('video'); v.src = '/v.webm'; v.muted = true; v.title = 'Late clip'; document.body.appendChild(v);
+    const f = document.createElement('iframe'); f.srcdoc = '<video src="https://media.example/v.webm" muted title="Late frame clip"></video>'; document.body.appendChild(f);
+  });
+  await page.waitForFunction(() => { const m = window.__posted.filter((x) => x.lb === 'media').pop(); return m && m.videos.length >= 5; }, null, { timeout: 8000 }).catch(() => {});
+  const late = await page.evaluate(() => window.__posted.filter((x) => x.lb === 'media').pop());
+  check(late && late.videos.length === 5 && late.videos.some((v) => v.label === 'Late clip') && late.videos.some((v) => v.label === 'Late frame clip'), 'a video and a frame added later are found without watching the DOM (' + (late && late.videos.map((v) => v.label).join(', ')) + ')');
+  check(observers === 0, 'no MutationObserver in the page (0.7.0, R24) (' + observers + ')');
+  check(!(await page.evaluate(() => Object.keys(window).some((k) => /krunk|lbHost/i.test(k) && !['__lbHost', '__observers'].includes(k)))), 'no global added to the page');
   check(errors.length === 0, 'media script raises no page errors (' + errors.join(' | ') + ')');
+  await context.close();
+}
+
+// 0.7.0 (R7): painted.js says once when the top document painted its first content.
+async function testPaintedScript(browser) {
+  console.log('injected painted script');
+  const context = await browser.newContext();
+  await context.route('**/*', (r) => r.fulfill({ status: 200, headers: { 'content-type': 'text/html' },
+    body: '<!doctype html><body style="background:#111;color:#eee"><h1>Painted</h1><iframe srcdoc="<p>frame</p>"></iframe></body>' }));
+  await context.addInitScript(() => {
+    window.__posted = [];
+    const host = { postMessage: (m) => window.__posted.push(m), addEventListener: () => {} };
+    window.__lbHostForTest = host;
+  });
+  const src = fs.readFileSync(path.join(__dirname, '..', 'inject', 'painted.js'), 'utf8');
+  await context.addInitScript({ content: '(function (__lbHost) {\n' + src + '\n})(window.__lbHostForTest);' });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await page.goto('https://paint.example/');
+  await page.waitForTimeout(800);
+  const top = await page.evaluate(() => window.__posted.filter((m) => m.lb === 'painted').length);
+  const frame = await page.frames()[1].evaluate(() => (window.__posted || []).length);
+  check(top === 1 && frame === 0, 'painted: once from the top document, never from a frame (top ' + top + ', frame ' + frame + ')');
+  check(errors.length === 0, 'painted script raises no page errors (' + errors.join(' | ') + ')');
   await context.close();
 }
 
@@ -3516,6 +3784,8 @@ async function testPointerLockShim(browser) {
   await page.goto('https://game.example/');
   check(await page.evaluate(() => Element.prototype.requestPointerLock.toString()) === 'function requestPointerLock() { [native code] }', 'requestPointerLock looks native');
   check(await page.evaluate(() => 'pointerLockElement' in Document.prototype && document.pointerLockElement === null), 'pointerLockElement is null when unlocked');
+  // 0.7.0 (R24): the event position getters stay the engine's own until a lock is granted.
+  check(await page.evaluate(() => ['clientX', 'movementX', 'screenY'].every((p) => Object.getOwnPropertyDescriptor(MouseEvent.prototype, p).get.name === 'get ' + p)), 'MouseEvent getters untouched before the first lock');
   // Without a user gesture: refused, pointerlockerror, nothing sent.
   const noGesture = await page.evaluate(() => window.noGesture);
   check(noGesture === 'NotAllowedError', 'without user activation the promise rejects (NotAllowedError)');
@@ -3863,6 +4133,8 @@ async function testTabWindows(browser) {
     if (!ONLY || ONLY.includes('ShellHiDpi')) await testShellHiDpi(browser);
     if (!ONLY || ONLY.includes('Popup')) await testPopup(browser);
     if (!ONLY || ONLY.includes('NewTab')) await testNewTab(browser);
+    if (!ONLY || ONLY.includes('NewTabLongTitles')) await testNewTabLongTitles(browser);
+    if (!ONLY || ONLY.includes('NewTabBackgrounds')) await testNewTabBackgrounds(browser);
     if (!ONLY || ONLY.includes('History')) await testHistory(browser);
     if (!ONLY || ONLY.includes('Bookmarks')) await testBookmarks(browser);
     if (!ONLY || ONLY.includes('Downloads')) await testDownloads(browser);
@@ -3881,6 +4153,8 @@ async function testTabWindows(browser) {
     if (!ONLY || ONLY.includes('Settings')) await testSettings(browser);
     if (!ONLY || ONLY.includes('LoginScript')) await testLoginScript(browser);
     if (!ONLY || ONLY.includes('MediaScript')) await testMediaScript(browser);
+    if (!ONLY || ONLY.includes('Gpu')) await testGpu(browser);
+    if (!ONLY || ONLY.includes('PaintedScript')) await testPaintedScript(browser);
   } finally {
     await browser.close();
   }

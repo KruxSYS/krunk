@@ -2,7 +2,7 @@
 body { min-height: 100vh; }
 .page { max-width: 960px; margin: 0 auto; padding: 24px 24px 64px; }
 .page-header { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
-.page-header h1 { margin: 0 auto 0 0; font-size: 1.692rem; font-weight: 600; }
+.page-header h1 { margin: 0 auto 0 0; font-size: 1.692rem; font-weight: 600; color: var(--on-bg, inherit); }
 .search { width: 320px; max-width: 100%; height: 34px; padding: 0 14px; border: 1px solid var(--border);
           border-radius: 17px; background: var(--bg-raised); color: var(--fg); font: inherit; outline: none; }
 .search:focus { border-color: var(--accent); }

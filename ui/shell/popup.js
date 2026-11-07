@@ -671,7 +671,8 @@
   function renderUpdate(c) {
     const reply = (choice) => LB.post('updateReply', { choice: choice });
     const s = c.state || { step: 'offered' };
-    const body = [el('h2', { text: 'Krunk ' + c.version + ' is available' })];
+    // A repair (0.7.0): the installed files are not this release's; the same steps reinstall it.
+    const body = [el('h2', { text: c.repair ? 'Repair Krunk ' + c.version : 'Krunk ' + c.version + ' is available' })];
     if (s.step === 'downloading') {
       body.push(el('p', { text: 'Downloading… ' + s.percent + '%' }));
       body.push(el('progress', { max: '100', value: String(s.percent) }));
@@ -681,13 +682,14 @@
     } else {
       body.push(s.step === 'failed'
         ? el('p', { class: 'error', text: 'The update failed: ' + s.error })
-        : el('p', { text: c.install ? 'You have ' + c.current + '. Krunk restarts to finish the update; your tabs are restored.'
+        : el('p', { text: c.repair ? c.repair + '. ' + (c.install ? 'Krunk reinstalls this version and restarts; your tabs and data are kept.' : 'Download Krunk again from the Krunk website.')
+          : c.install ? 'You have ' + c.current + '. Krunk restarts to finish the update; your tabs are restored.'
           : 'You have ' + c.current + '. Download the new version from the Krunk website.' }));
       body.push(el('div', { class: 'row' }, [
         c.hasNotes ? el('button', { class: 'btn', onclick: () => { reply('notes'); }, text: 'Release notes' }) : null,
         el('button', { class: 'btn', onclick: () => { reply('later'); }, text: 'Later' }),
         el('button', { class: 'btn primary', id: 'default', onclick: () => reply('install'),
-          text: !c.install ? 'Download' : s.step === 'failed' ? 'Try again' : 'Update now' }),
+          text: !c.install ? 'Download' : s.step === 'failed' ? 'Try again' : c.repair ? 'Repair' : 'Update now' }),
       ]));
     }
     return [el('div', { class: 'panel' }, body)];

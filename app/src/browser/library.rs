@@ -136,11 +136,18 @@ impl Browser {
     /// What the new tab page needs: the search engine's name, the shortcut list and its options.
     pub(super) fn ntp_config(&self) -> serde_json::Value {
         let s = self.settings.borrow();
+        let wallpaper = (s.ntp.background == lb_core::settings::NtpBackground::Wallpaper)
+            .then(|| lb_core::assets::wallpaper(&s.ntp.wallpaper))
+            .flatten();
         serde_json::json!({
             "searchName": s.search_name(),
             "shortcuts": lb_core::keys::SHORTCUTS,
             "ntp": s.ntp,
             "imageUrl": if s.ntp.image.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(lb_core::assets::ntp_image_url(&s.ntp.image)) },
+            // 0.7.0 (R2): the built-in wallpapers and the chosen one.
+            "wallpapers": wallpaper_list(),
+            "wallpaperUrl": wallpaper.as_ref().map(|w| lb_core::assets::wallpaper_url(&w.id)),
+            "wallpaperLook": wallpaper.as_ref().map(|w| w.look.clone()),
         })
     }
 
@@ -429,4 +436,17 @@ fn friendly_db_error(e: &DbError) -> String {
         DbError::QueryReturnedNoRows => "Not found".into(),
         _ => "Database error".into(),
     }
+}
+
+/// The built-in wallpapers for the pickers (new tab page, settings).
+pub(super) fn wallpaper_list() -> Vec<serde_json::Value> {
+    lb_core::assets::wallpapers()
+        .iter()
+        .map(|w| {
+            serde_json::json!({
+                "id": w.id, "title": w.title, "look": w.look, "dim": w.dim,
+                "thumb": lb_core::assets::wallpaper_thumb_url(&w.id),
+            })
+        })
+        .collect()
 }

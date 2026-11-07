@@ -55,9 +55,12 @@ mod find;
 mod flight;
 mod frame;
 mod import;
+mod integrity;
 mod jobs;
 mod library;
 mod omnibox;
+#[cfg(feature = "perf-probe")]
+mod perf_probe;
 mod permissions;
 mod pip;
 mod pointer;
@@ -86,6 +89,15 @@ use blocking::{
 };
 /// Background behind the UI views (matches --bg in common.css).
 const UI_BACKGROUND: u32 = 0xFFF3_F4F6;
+/// What a tab view shows before its page has painted (0.7.0, R7): the dark theme's page colour
+/// (`--bg` in ui/shared/common.css) or white. Web pages that set no background of their own
+/// still get white (`Emulation.setDefaultBackgroundColorOverride`, view.rs).
+const TAB_BACKGROUND_DARK: u32 = 0xFF1F_2023;
+/// How long a tab switch keeps the old page while the new view has not loaded once, and the
+/// pause after its load before the swap (R7).
+const REVEAL_TIMEOUT_MS: i64 = 1000;
+const REVEAL_SETTLE_MS: i64 = 50;
+const TAB_BACKGROUND_LIGHT: u32 = 0xFFFF_FFFF;
 
 /// Live state of a tab's browser view.
 struct TabView {
@@ -110,6 +122,9 @@ struct TabView {
     downloads: Rc<Cell<u32>>,
     /// DevTools is docked next to the page (open or opening).
     devtools: Cell<bool>,
+    /// The view has finished loading once (0.7.0, R7): before that it may show a blank frame,
+    /// so a tab switch keeps the old page on screen until then.
+    loaded_once: Cell<bool>,
 }
 
 /// The popup view in its popup window, shared by all frames: it is owned by the frame it
@@ -196,6 +211,8 @@ pub struct Browser {
     /// The engine's own client hints (read from the shell page once it loaded): the
     /// metadata of an override that changes only the user agent or the language.
     engine_hints: RefCell<Option<lb_core::headers::ClientHints>>,
+    /// A tab switch waiting for the new view's first load: (window, old tab, new tab).
+    pending_reveal: Cell<Option<(WindowId, TabId, TabId)>>,
     /// The custom-DNS stub, once the settings asked for it.
     dns: RefCell<Option<crate::dns::Engine>>,
     /// Where the shell asked for the shield panel (it grows with its list from there).
@@ -235,6 +252,8 @@ pub struct Browser {
     pointer: pointer::PointerHost,
     /// Krunk's own update check.
     updates: updater::UpdateHost,
+    /// Whether the installed files are this release's (0.7.0).
+    integrity: integrity::IntegrityHost,
     /// A tab being dragged between windows.
     drag: Cell<Option<drag::TabDrag>>,
     /// A bookmark dragged out of a folder dropdown (host-driven, like a torn-off tab).
@@ -289,6 +308,7 @@ impl Browser {
             ua_overridden: Cell::new(false),
             first_url: RefCell::new(HashMap::new()),
             engine_hints: RefCell::new(None),
+            pending_reveal: Cell::new(None),
             dns: RefCell::new(None),
             bookmark_menu_at: Cell::new(None),
             adblock_source: Cell::new(None),
@@ -313,6 +333,7 @@ impl Browser {
             site_data: RefCell::new(HashMap::new()),
             pointer: pointer::PointerHost::default(),
             updates: updater::UpdateHost::new(dirs.update_status()),
+            integrity: integrity::IntegrityHost::default(),
             drag: Cell::new(None),
             bar_drag: Cell::new(None),
             menu_from_folder: Cell::new(None),
@@ -347,6 +368,7 @@ impl Browser {
             return Err("Cannot create the browser window".into());
         }
         browser.init_updates();
+        browser.init_integrity();
         browser.start_power_timer();
         if let Some(w) = browser.app() {
             w.set_timer(ZOOM_TIMER, ZOOM_WATCH_MS);
@@ -539,6 +561,13 @@ impl Browser {
                     return;
                 }
                 b.hide_popup_by_focus_loss();
+                // A click into the page (0.7.0, R5): the address bar of its window gives up its
+                // selection and shows the page's address again.
+                if let Some(id) = tab {
+                    if let Some(win) = b.window_of(id) {
+                        b.post_shell_to(win, &Event::BlurAddressBar);
+                    }
+                }
             }
         });
     }
@@ -683,7 +712,8 @@ impl Browser {
         let net = Rc::new(TabNet::new(self.net.clone()));
         let scripts = {
             let s = self.settings.borrow();
-            Scripts {
+            #[cfg_attr(not(feature = "perf-probe"), allow(unused_mut))]
+            let mut scripts = Scripts {
                 gpc: s.send_gpc,
                 dnt: s.send_dnt,
                 page_tokens: s.adblock_enabled,
@@ -692,10 +722,18 @@ impl Browser {
                 pointer_lock: true,
                 notify: true,
                 media: true,
-            }
+            };
+            #[cfg(feature = "perf-probe")]
+            perf_probe::apply(&mut scripts);
+            scripts
         };
-        let view =
-            View::new(ViewOptions { role: Role::Tab, private, scripts, background: 0, policy: Some(net.policy()) });
+        let view = View::new(ViewOptions {
+            role: Role::Tab,
+            private,
+            scripts,
+            background: self.tab_background(),
+            policy: Some(net.policy()),
+        });
         (view, net)
     }
 
@@ -744,7 +782,12 @@ impl Browser {
                 warning!("tab {id}: {e}");
             }
         }
-        view.set_visible(active && !window.is_minimized());
+        // The active tab's new view is shown at once only if nothing else shows in the window;
+        // otherwise the tab switch that follows keeps the old page until this one has loaded
+        // (R7: a new view's first frame is blank).
+        let other_shown =
+            self.views.borrow().iter().any(|(t, v)| *t != id && self.window_of(*t) == Some(win) && v.view.is_visible());
+        view.set_visible(active && !window.is_minimized() && !other_shown);
         self.views.borrow_mut().insert(
             id,
             TabView {
@@ -760,6 +803,7 @@ impl Browser {
                 media_use: Cell::new((false, false)),
                 downloads: Rc::new(Cell::new(0)),
                 devtools: Cell::new(false),
+                loaded_once: Cell::new(false),
             },
         );
         if active {
@@ -809,6 +853,7 @@ impl Browser {
                 b.tab_changed(id);
                 if !state.loading {
                     b.address_focus_loaded(id);
+                    b.first_load_done(id);
                 }
             }
         });
@@ -895,6 +940,14 @@ impl Browser {
                 if let (Some(dark), Some(v)) = (b.color_scheme(), b.tab_view(id)) {
                     v.set_color_scheme(Some(dark));
                 }
+                // The view was made with the dark theme's colour (what shows before the page has
+                // painted, R7); a page without a background of its own still gets white.
+                if let Some(v) = b.tab_view(id).filter(|v| v.background() != TAB_BACKGROUND_LIGHT) {
+                    v.devtools_method(
+                        "Emulation.setDefaultBackgroundColorOverride",
+                        &serde_json::json!({ "color": { "r": 255, "g": 255, "b": 255, "a": 1 } }),
+                    );
+                }
             }
         });
         let weak = self.me.clone();
@@ -948,6 +1001,56 @@ impl Browser {
         }
     }
 
+    fn tab_background(&self) -> u32 {
+        if self.frame_dark() {
+            TAB_BACKGROUND_DARK
+        } else {
+            TAB_BACKGROUND_LIGHT
+        }
+    }
+
+    /// Shows `to` on top, then hides `from` (and its DevTools).
+    fn swap_views(&self, win: WindowId, from: Option<TabId>, to: TabId) {
+        if let Some(t) = self.tab_view(to) {
+            t.set_visible(!self.frame(win).is_some_and(|f| f.window.is_minimized()));
+        }
+        if let Some(f) = from.and_then(|f| self.tab_view(f)) {
+            f.set_visible(false);
+            // Its DevTools waits, hidden, until the tab is shown again.
+            if f.devtools_open() {
+                f.set_devtools_visible(false);
+            }
+        }
+    }
+
+    /// The tab a switch waited for has loaded (or waited long enough): swap the views now.
+    fn reveal(&self, to: TabId) {
+        let Some((win, from, pending)) = self.pending_reveal.get() else { return };
+        if pending != to {
+            return;
+        }
+        self.pending_reveal.set(None);
+        // Still the window's active tab (else a later switch has taken over).
+        if self.ws.borrow().model(win).and_then(|m| m.active().map(|t| t.id)) == Some(to) {
+            let from = Some(from).filter(|f| self.window_of(*f) == Some(win));
+            self.swap_views(win, from, to);
+        }
+    }
+
+    /// A tab's view painted its first content, or finished a load: ready to be shown.
+    fn first_load_done(&self, id: TabId) {
+        let first = self.views.borrow().get(&id).is_some_and(|v| !v.loaded_once.replace(true));
+        if first && self.pending_reveal.get().is_some_and(|(_, _, to)| to == id) {
+            // A frame for the compositor to present the page's first paint.
+            let weak = self.me.clone();
+            crate::ffi::cef::post_ui_delayed(REVEAL_SETTLE_MS, move || {
+                if let Some(b) = weak.upgrade() {
+                    b.reveal(id);
+                }
+            });
+        }
+    }
+
     fn activate_view(&self, win: WindowId, from: Option<TabId>, to: TabId) {
         self.close_ext_popup();
         self.auto_pip_switch(from, to);
@@ -964,16 +1067,27 @@ impl Browser {
         if let Some(f) = from {
             self.stop_find(f);
         }
-        // `from` may have moved to another window meanwhile; only hide it if it is still here.
-        if let Some(f) = from.filter(|f| self.window_of(*f) == Some(win)).and_then(|f| self.tab_view(f)) {
-            f.set_visible(false);
-            // Its DevTools waits, hidden, until the tab is shown again.
-            if f.devtools_open() {
-                f.set_devtools_visible(false);
+        // No gap between the two pages (0.7.0, R7): the new view gets its place while still
+        // hidden, is shown on top of the old one, and only then is the old one hidden. (Before,
+        // hiding first showed the frame's background for a moment, and the new view was sized
+        // after it appeared.) A view that has not loaded once yet (a discarded tab coming back,
+        // a new one) would show a blank frame first: the old page stays until it has.
+        self.layout();
+        let old = from.filter(|f| *f != to && self.window_of(*f) == Some(win));
+        let minimized = self.frame(win).is_some_and(|f| f.window.is_minimized());
+        let ready = self.views.borrow().get(&to).is_some_and(|v| v.loaded_once.get());
+        self.pending_reveal.set(None);
+        match old {
+            Some(f) if !ready && !minimized && self.tab_view(f).is_some() => {
+                self.pending_reveal.set(Some((win, f, to)));
+                let weak = self.me.clone();
+                crate::ffi::cef::post_ui_delayed(REVEAL_TIMEOUT_MS, move || {
+                    if let Some(b) = weak.upgrade() {
+                        b.reveal(to);
+                    }
+                });
             }
-        }
-        if let Some(t) = self.tab_view(to) {
-            t.set_visible(!self.frame(win).is_some_and(|f| f.window.is_minimized()));
+            _ => self.swap_views(win, old, to),
         }
         // Wake after showing: a frozen page resumes as a visible one.
         self.wake_tab(to);
@@ -1290,7 +1404,12 @@ impl Browser {
     fn send_shell_config(&self) {
         let e = {
             let s = self.settings.borrow();
-            Event::ShellConfig { theme: s.theme, search_name: s.search_name(), appearance: s.appearance.clone() }
+            Event::ShellConfig {
+                theme: s.theme,
+                search_name: s.search_name(),
+                appearance: s.appearance.clone(),
+                colors: lb_core::color::ThemeColors::from_appearance(&s.appearance),
+            }
         };
         self.post_shell(&e);
     }
@@ -1667,6 +1786,7 @@ impl Browser {
                 Ok(ContentMessage::NotificationPermission {}) => self.notification_permission_requested(id, &origin),
                 Ok(ContentMessage::Media { videos }) => self.media_changed(id, &origin, videos),
                 Ok(ContentMessage::PipBackToTab {}) => self.pip_back_to_tab(id),
+                Ok(ContentMessage::Painted {}) => self.first_load_done(id),
                 Ok(ContentMessage::CardSubmit { number, exp_month, exp_year, name }) => {
                     self.card_submitted(id, &origin, &number, exp_month, exp_year, name)
                 }
@@ -1734,6 +1854,10 @@ impl Browser {
                 Sender::Page(_) => {
                     if let Some(c) = tab.and_then(|t| self.tab_view(t)) {
                         self.send_theme_to(&c);
+                    }
+                    // Krunk's own page has its theme: the tab switch may show it (R7).
+                    if let Some(t) = tab {
+                        self.first_load_done(t);
                     }
                 }
             },
@@ -1952,6 +2076,7 @@ impl Browser {
             | Request::GetAbout
             | Request::GetGpuInfo
             | Request::OpenGpuInternals
+            | Request::RepairEngine
             | Request::ImportDetect
             | Request::ImportRun { .. }
             | Request::ImportCsv) => self.dispatch_settings(tab, req_id, r),
@@ -2500,6 +2625,10 @@ struct FrameEvents {
 impl WindowEvents for FrameEvents {
     fn devtools_chrome(&self) -> Option<crate::ffi::window::DevToolsChrome> {
         self.b.upgrade().and_then(|b| b.devtools_chrome(self.win))
+    }
+
+    fn background_dark(&self) -> bool {
+        self.b.upgrade().is_some_and(|b| b.frame_dark())
     }
 
     fn strip_clicked(&self, button: lb_core::layout::StripButton) {

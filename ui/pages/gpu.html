@@ -34,8 +34,12 @@
     <table class="kv">
       <tr><th>Hardware acceleration</th><td id="setting"></td></tr>
       <tr><th>Engine started with</th><td id="running"></td></tr>
-      <tr><th>Browser arguments</th><td id="arguments" class="mono"></td></tr>
+      <tr><th>Krunk's switches</th><td id="arguments" class="mono"></td></tr>
+      <tr><th>Engine command line</th><td id="command-line" class="mono"></td></tr>
       <tr><th>Engine</th><td id="engine"></td></tr>
+      <tr><th>Engine build</th><td id="engine-build">Checking…</td></tr>
+      <tr><th>Engine files</th><td><span id="engine-files">Checking…</span>
+        <button id="repair" class="btn small" hidden>Repair</button></td></tr>
       <tr><th>Widevine CDM</th><td id="widevine"></td></tr>
     </table>
     <p class="help">The setting is in <a href="settings.html#advanced">Settings → Advanced</a>; it needs a restart.
@@ -45,9 +49,8 @@
 
   <section class="card">
     <h2>Media codecs</h2>
-    <p>This engine build decodes VP8, VP9, AV1, Opus, Vorbis, FLAC and MP3. It has no H.264, HEVC, AAC, AC-3 or E-AC-3
-      decoders, so Plex direct play and transcodes, and other H.264/AAC-only streams, do not play. A codec-enabled engine
-      needs a separate build (see the README).</p>
+    <p id="codec-text"></p>
+    <p id="codec-warning" class="warning" hidden></p>
     <table class="kv" id="codecs"></table>
   </section>
 </div>

@@ -358,6 +358,10 @@ pub enum PopupContent {
         install: bool,
         has_notes: bool,
         state: UpdateProgress,
+        /// Not an update: the installed files are not this release's (0.7.0), why in words;
+        /// "Update now" then installs this very version again.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repair: Option<String>,
     },
     /// The context menu of tab `tab_id`. `can_move`: the window has other tabs, so the tab
     /// can move to a new window of its own; `can_close_right`: there are tabs to its right.
@@ -656,6 +660,9 @@ pub enum Request {
     GetGpuInfo,
     /// krunk://gpu: open Chromium's own chrome://gpu page in this tab (a host navigation).
     OpenGpuInternals,
+    /// krunk://gpu and About (0.7.0): reinstall this version because the installed files are
+    /// not this release's (the host decides; the page only asks).
+    RepairEngine,
     ToggleBookmark,
     /// The shell's tab-row layout for hit testing the frameless window.
     HitMap {
@@ -1482,7 +1489,9 @@ impl Sender {
             ),
             Sender::Page(Page::Settings) => matches!(
                 req,
-                R::PermissionExceptions
+                // 0.7.0 (R2): Appearance has the new tab page's background too.
+                R::NtpPickImage
+                    | R::PermissionExceptions
                     | R::PermissionSet { .. }
                     | R::BounceStatus
                     | R::BounceCleanNow
@@ -1513,8 +1522,8 @@ impl Sender {
             Sender::Page(Page::Downloads) => {
                 matches!(req, R::GetDownloads | R::ClearDownloads | R::DownloadAction { .. })
             }
-            Sender::Page(Page::About) => matches!(req, R::GetAbout),
-            Sender::Page(Page::Gpu) => matches!(req, R::GetGpuInfo | R::OpenGpuInternals),
+            Sender::Page(Page::About) => matches!(req, R::GetAbout | R::RepairEngine),
+            Sender::Page(Page::Gpu) => matches!(req, R::GetGpuInfo | R::OpenGpuInternals | R::RepairEngine),
             Sender::Page(Page::Tasks) => matches!(req, R::GetTasks | R::KillTask { .. }),
             Sender::Page(Page::Extensions) => matches!(
                 req,
@@ -1662,6 +1671,9 @@ pub enum ContentMessage {
     /// The floating video window's "Back to tab" was used (main frame only; 0.6.0): the tab
     /// and its window come to the front.
     PipBackToTab {},
+    /// The document painted its first content (main frame only; 0.7.0, R7): a tab switch that
+    /// kept the old page on screen while this view was blank can show it now.
+    Painted {},
     /// A checkout form with a card number was sent (main frame only; 0.6.0): the browser may
     /// offer to save the card. No security code is ever sent.
     CardSubmit {
@@ -1820,6 +1832,9 @@ pub enum Event {
         /// Appearance options (CSS variables and toolbar items); absent in old messages.
         #[serde(default)]
         appearance: crate::settings::Appearance,
+        /// The custom colours with their readable text colours (0.7.0, R3).
+        #[serde(default)]
+        colors: crate::color::ThemeColors,
     },
     /// To an extension's pages (0.6.0): a message, a storage change, an action click, a
     /// tab event, an alarm, install/startup.
@@ -1902,6 +1917,9 @@ pub enum Event {
         /// The UI font size for Krunk's pages and the popup (0 = default).
         #[serde(default, skip_serializing_if = "is_zero_u8")]
         ui_font_px: u8,
+        /// The custom colours with their readable text colours (0.7.0, R3).
+        #[serde(default, skip_serializing_if = "crate::color::ThemeColors::is_empty")]
+        colors: crate::color::ThemeColors,
     },
     /// To the shell: the suggestions for `text` (the popup shows them; the shell keeps them
     /// for the keyboard).
@@ -2397,6 +2415,7 @@ mod tests {
             install: true,
             has_notes: true,
             state: UpdateProgress::Downloading { percent: 40 },
+            repair: None,
         };
         let v: serde_json::Value = serde_json::to_value(&content).unwrap();
         assert_eq!(v["kind"], "update");
@@ -2504,6 +2523,7 @@ mod tests {
             Request::OpenPage { page: "settings".into(), section: Some("privacy".into()) },
             Request::GetGpuInfo,
             Request::OpenGpuInternals,
+            Request::RepairEngine,
             Request::ImportDetect,
             Request::ImportRun {
                 profile: "firefox:default".into(),
@@ -2851,7 +2871,7 @@ mod tests {
         let reqs = [
             Request::GetNewTabConfig,
             Request::SetNtpOptions { ntp: crate::settings::Ntp::default() },
-            Request::NtpPickImage,
+            // (NtpPickImage: also the settings page since 0.7.0, its own test.)
             Request::ReorderTiles { urls: vec![] },
             Request::AddTile { url: "https://a.example/".into(), title: "A".into() },
             Request::EditTile {
@@ -2870,11 +2890,18 @@ mod tests {
             }
         }
         assert_eq!(serde_json::to_value(&reqs[0]).unwrap(), serde_json::json!({"cmd": "getNewTabConfig"}));
-        let theme = Event::Theme { theme: Theme::Light, accent: "#ff0000".into(), ui_font_px: 0 }.to_json();
+        let theme =
+            Event::Theme { theme: Theme::Light, accent: "#ff0000".into(), ui_font_px: 0, colors: Default::default() }
+                .to_json();
         assert!(theme.contains("\"accent\":\"#ff0000\""));
-        assert!(!Event::Theme { theme: Theme::Light, accent: String::new(), ui_font_px: 0 }
-            .to_json()
-            .contains("accent"));
+        assert!(!Event::Theme {
+            theme: Theme::Light,
+            accent: String::new(),
+            ui_font_px: 0,
+            colors: Default::default()
+        }
+        .to_json()
+        .contains("accent"));
     }
 
     #[test]
@@ -3023,6 +3050,10 @@ mod tests {
         assert_eq!(parse_content(r#"{"lb":"media","videos":[{"index":40}]}"#), Err(ProtocolError::Invalid("videos")));
         assert_eq!(parse_content(r#"{"lb":"pipBackToTab"}"#), Ok(ContentMessage::PipBackToTab {}));
         assert!(parse_content_frame(r#"{"lb":"pipBackToTab"}"#).is_err());
+        // 0.7.0: first paint (top frame only; nothing to say but that).
+        assert_eq!(parse_content(r#"{"lb":"painted"}"#), Ok(ContentMessage::Painted {}));
+        assert!(parse_content_frame(r#"{"lb":"painted"}"#).is_err());
+        assert!(parse_content(r#"{"lb":"painted","tab":3}"#).is_err());
         let chooser = PopupContent::Pip {
             tab_id: 3,
             videos: vec![VideoInfo { index: 0, label: "A".into(), width: 1, height: 1, playing: true, pip: false }],
@@ -3325,6 +3356,28 @@ mod tests {
     }
 
     #[test]
+    fn ntp_image_picker_is_for_the_new_tab_and_settings_pages() {
+        let r = Request::NtpPickImage;
+        assert!(Sender::Page(Page::NewTab).permits(&r) && Sender::Page(Page::Settings).permits(&r));
+        assert!(!Sender::Shell.permits(&r) && !Sender::Popup.permits(&r));
+        for p in Page::ALL.iter().filter(|p| !matches!(p, Page::NewTab | Page::Settings)) {
+            assert!(!Sender::Page(*p).permits(&r), "{p:?}");
+        }
+    }
+
+    #[test]
+    fn repair_is_for_the_gpu_and_about_pages() {
+        let r = Request::RepairEngine;
+        assert!(Sender::Page(Page::Gpu).permits(&r) && Sender::Page(Page::About).permits(&r));
+        assert!(!Sender::Shell.permits(&r) && !Sender::Popup.permits(&r));
+        for p in Page::ALL.iter().filter(|p| !matches!(p, Page::Gpu | Page::About)) {
+            assert!(!Sender::Page(*p).permits(&r), "{p:?}");
+        }
+        // Nothing to choose: the host reinstalls the version its signed manifest names.
+        assert_eq!(parse_request(Sender::Page(Page::Gpu), r#"{"cmd":"repairEngine"}"#).unwrap().request, r);
+    }
+
+    #[test]
     fn tab_moves_are_shell_and_popup_only() {
         let drag = Request::TabDragOut { id: 1, offset_x: 1.0, offset_y: 1.0 };
         let menu = Request::ShowTabMenu { id: 1, rect: PopupRect { x: 1.0, y: 1.0, width: 240.0, height: 196.0 } };
@@ -3410,7 +3463,12 @@ mod tests {
                     pip: false,
                 },
             },
-            Event::ShellConfig { theme: Theme::Dark, search_name: "DuckDuckGo".into(), appearance: Default::default() },
+            Event::ShellConfig {
+                theme: Theme::Dark,
+                search_name: "DuckDuckGo".into(),
+                appearance: Default::default(),
+                colors: Default::default(),
+            },
             Event::Popup { content: PopupContent::Menu { zoom: 1.0, can_reopen: true, has_video: false } },
             Event::Popup {
                 content: PopupContent::Shield {
@@ -3503,7 +3561,7 @@ mod tests {
             },
             Event::VaultState { exists: true, locked: false },
             Event::DownloadsChanged { active: 1 },
-            Event::Theme { theme: Theme::Light, accent: String::new(), ui_font_px: 0 },
+            Event::Theme { theme: Theme::Light, accent: String::new(), ui_font_px: 0, colors: Default::default() },
             Event::FocusAddressBar,
             Event::BlurAddressBar,
             Event::ShowFind,

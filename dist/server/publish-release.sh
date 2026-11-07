@@ -17,7 +17,9 @@
 # manifest is written last, so a client never sees a manifest for files that are not there yet.
 #
 # Layout written:
-#   download/<VERSION>/Krunk-Setup-<VERSION>.exe, Krunk-win-x64.zip, NOTES.md, SHA256SUMS
+#   download/<VERSION>/Krunk-Setup-<VERSION>.exe, Krunk-win-x64.zip, NOTES.md, SHA256SUMS,
+#                      files.json (every file of the release with its SHA-256, from the zip;
+#                      Krunk 0.7.0+ checks its installed files against it, core/src/integrity.rs)
 #   download/release.json              (the website's download box)
 #   updates/win-x64/latest.json(.sig)  (Krunk's update check, see core/src/update.rs)
 set -euo pipefail
@@ -69,10 +71,21 @@ setup_size=$(stat -c %s "$rel/$setup_name")
 zip_sha=$(sha256sum "$rel/Krunk-win-x64.zip" | cut -d' ' -f1)
 zip_size=$(stat -c %s "$rel/Krunk-win-x64.zip")
 
+# The release's file list, from the zip (the installer holds the same folder). Its SHA-256 goes
+# into the signed manifest, so it needs no signature of its own.
+command -v unzip >/dev/null || { echo "unzip is required" >&2; exit 1; }
+mkdir -p "$work/unpacked"
+unzip -q "$rel/Krunk-win-x64.zip" -d "$work/unpacked"
+[ -d "$work/unpacked/Krunk-win-x64" ] || { echo "the zip has no Krunk-win-x64 folder" >&2; exit 1; }
+(cd "$work/unpacked/Krunk-win-x64" && find . -type f | sed 's#^\./##' | LC_ALL=C sort | while read -r f; do
+  printf '%s\t%s\n' "$f" "$(sha256sum "$f" | cut -d' ' -f1)"; done) |
+  python3 -c 'import json,sys; v=sys.argv[1]; files=dict(l.rstrip("\n").split("\t") for l in sys.stdin); print(json.dumps({"version": v, "files": files}, separators=(",", ":")))' "$version" > "$rel/files.json"
+files_sha=$(sha256sum "$rel/files.json" | cut -d' ' -f1)
+
 # The update manifest: compact, one line, signed byte for byte.
 manifest="$stage/updates/win-x64/latest.json"
-printf '{"version":"%s","released":"%s","url":"/download/%s/%s","sha256":"%s","size":%s,"notes_url":"/download/%s/NOTES.md","min_supported":"%s"}\n' \
-  "$version" "$released" "$version" "$setup_name" "$setup_sha" "$setup_size" "$version" "$min_supported" > "$manifest"
+printf '{"version":"%s","released":"%s","url":"/download/%s/%s","sha256":"%s","size":%s,"notes_url":"/download/%s/NOTES.md","min_supported":"%s","files_url":"/download/%s/files.json","files_sha256":"%s"}\n' \
+  "$version" "$released" "$version" "$setup_name" "$setup_sha" "$setup_size" "$version" "$min_supported" "$version" "$files_sha" > "$manifest"
 openssl pkeyutl -sign -rawin -inkey "$key" -in "$manifest" | base64 -w0 > "$manifest.sig"
 # Check it as Krunk will, with the public half of the same key.
 openssl pkey -in "$key" -pubout -out "$work/pub.pem"

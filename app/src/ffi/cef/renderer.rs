@@ -325,6 +325,8 @@ fn context_created(scripts: Scripts, frame: &mut Frame, context: &mut V8Context)
         // The page's videos for Picture-in-Picture; same-origin frames are walked by it.
         eval_with_bridge(context, assets::inject_script("media.js"), host.as_ref());
     }
+    // First paint, for the tab switch (0.7.0).
+    eval_with_bridge(context, assets::inject_script("painted.js"), host.as_ref());
 }
 
 /// Runs the scriptlets matching the frame's document. About:blank and

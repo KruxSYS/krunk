@@ -5,6 +5,10 @@
 ; Menu shortcut (and optionally one on the desktop) and an "Apps & features" entry under HKCU.
 ; /S installs silently (used by Krunk's updater, which also passes /RELAUNCH to start Krunk
 ; again afterwards). A running Krunk is closed, or waited for, before files are replaced.
+; Since 0.7.0 nothing is written until every file the package replaces is writable (an engine
+; process that outlived Krunk is ended, a file still in use is moved aside); otherwise the old
+; version stays as it is, the exit code is 3 and %LOCALAPPDATA%\Krunk\update-error.txt says
+; why (Krunk shows it at its next start). No file is ever skipped (AllowSkipFiles off).
 ; The uninstaller removes the program; Krunk's data (%LOCALAPPDATA%\Krunk) is deleted only if
 ; the user ticks that option (never with /S).
 
@@ -32,6 +36,9 @@ Target amd64-unicode
 SetCompressor /SOLID lzma
 RequestExecutionLevel user
 ManifestDPIAware true
+; A file that cannot be written stops the installation instead of leaving the old one (0.6.0:
+; a silent update kept a locked libcef.dll of 0.5.1).
+AllowSkipFiles off
 
 !define APP "Krunk"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Krunk"
@@ -147,11 +154,75 @@ FunctionEnd
 !insertmacro WaitForKrunk ""
 !insertmacro WaitForKrunk "un."
 
+; Every file of the package (build-dist.sh writes the list): !insertmacro CheckFile "<path>".
+; An existing file must open for writing; one still in use is renamed to <path>.old-krunk (a
+; loaded program image can be renamed, not overwritten; Krunk deletes these at its next start).
+; $R8 counts the files that could be neither written nor moved, $R7 names the first.
+!macro CheckFile REL
+  ${If} ${FileExists} "$INSTDIR\${REL}"
+    ClearErrors
+    FileOpen $2 "$INSTDIR\${REL}" a
+    ${If} ${Errors}
+      Delete "$INSTDIR\${REL}.old-krunk"
+      ClearErrors
+      Rename "$INSTDIR\${REL}" "$INSTDIR\${REL}.old-krunk"
+      ${If} ${Errors}
+        IntOp $R8 $R8 + 1
+        ${If} $R7 == ""
+          StrCpy $R7 "${REL}"
+        ${EndIf}
+      ${EndIf}
+    ${Else}
+      FileClose $2
+    ${EndIf}
+  ${EndIf}
+!macroend
+
+Function CheckAllFiles
+  StrCpy $R8 0
+  StrCpy $R7 ""
+  !ifdef FILES_NSH
+    !include "${FILES_NSH}"
+  !endif
+FunctionEnd
+
+; Leaves the old version as it is and tells Krunk why (it shows the reason at its next start).
+Function StopUntouched
+  CreateDirectory "$LOCALAPPDATA\Krunk"
+  FileOpen $3 "$LOCALAPPDATA\Krunk\update-error.txt" w
+  FileWrite $3 "$R7 is in use by another program and could not be replaced; nothing was changed"
+  FileClose $3
+  SetErrorLevel 3
+  ${IfNot} ${Silent}
+    MessageBox MB_ICONSTOP "$R7 is in use by another program, so Krunk ${VERSION} could not be installed. Nothing was changed. Close the program (or restart Windows) and run the installer again."
+  ${EndIf}
+  Quit
+FunctionEnd
+
+Function PrepareFiles
+  Call CheckAllFiles
+  ${If} $R8 > 0
+    ; An engine process of the old Krunk can outlive the browser for a while: end the ones
+    ; running from this folder, then try once more.
+    DetailPrint "Ending Krunk processes that still use $R7"
+    ; (The folder goes through the environment: a quote in it cannot break the command.)
+    System::Call 'kernel32::SetEnvironmentVariable(t "KRUNK_DIR", t "$INSTDIR\")'
+    nsExec::Exec `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Get-Process | Where-Object { $$_.Path -and $$_.Path.StartsWith($$env:KRUNK_DIR, 'OrdinalIgnoreCase') } | Stop-Process -Force"`
+    Pop $0
+    Sleep 2000
+    Call CheckAllFiles
+  ${EndIf}
+  ${If} $R8 > 0
+    Call StopUntouched
+  ${EndIf}
+FunctionEnd
+
 ; ---------------------------------------------------------------------------- install
 
 Section "Krunk" SecMain
   SectionIn RO
   Call WaitForKrunk
+  Call PrepareFiles
   SetOutPath "$INSTDIR"
   ; 0.2.x shipped README.md and SECURITY.md; the package has no Markdown any more. Only the
   ; install folder itself (non-recursive), never the user data in $LOCALAPPDATA\Krunk.
@@ -161,6 +232,10 @@ Section "Krunk" SecMain
   Delete "$INSTDIR\v8_context_snapshot.bin"
   SetOverwrite on
   File /r "${SRC}\*.*"
+  ; Files moved aside above: gone now if nothing holds them any more (else Krunk removes them).
+  Delete "$INSTDIR\*.old-krunk"
+  Delete "$INSTDIR\locales\*.old-krunk"
+  Delete "$LOCALAPPDATA\Krunk\update-error.txt"
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
   SetShellVarContext current
@@ -194,6 +269,15 @@ Function .onInit
       SectionSetFlags ${SecDesktop} 0
     ${EndIf}
   ${EndIf}
+FunctionEnd
+
+; A file that could not be written after all (AllowSkipFiles off stops the installation): say so.
+Function .onInstFailed
+  CreateDirectory "$LOCALAPPDATA\Krunk"
+  FileOpen $3 "$LOCALAPPDATA\Krunk\update-error.txt" w
+  FileWrite $3 "the installer stopped because a file could not be written; run the installer again"
+  FileClose $3
+  SetErrorLevel 3
 FunctionEnd
 
 Function .onInstSuccess

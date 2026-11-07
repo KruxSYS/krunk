@@ -396,37 +396,25 @@
     </div>
     <div class="card group" data-keywords="accent colour color toolbar tab strip background density compact font size rounded square tabs toolbar items downloads zoom">
       <h3>Colours and layout</h3>
-      <div class="row setting" data-keywords="accent colour color">
-        <div class="text"><label for="appearance.accent">Accent colour</label><p class="desc">Links, highlights and the active toggle. Empty: the theme's blue.</p>
+      <div class="row setting" data-keywords="accent colour color custom">
+        <div class="text"><label for="appearance.accent">Accent colour</label><p class="desc">Links, highlights and the active toggle. Text on it stays readable.</p>
           <p class="field-error" data-error-for="appearance.accent"></p></div>
-        <div class="control accent-row">
-          <span class="swatches" id="accent-swatches">
-            <button type="button" class="swatch" data-color="" title="Default"></button>
-            <button type="button" class="swatch" data-color="#2563eb" title="Blue"></button>
-            <button type="button" class="swatch" data-color="#7c3aed" title="Violet"></button>
-            <button type="button" class="swatch" data-color="#db2777" title="Pink"></button>
-            <button type="button" class="swatch" data-color="#dc2626" title="Red"></button>
-            <button type="button" class="swatch" data-color="#ea580c" title="Orange"></button>
-            <button type="button" class="swatch" data-color="#16a34a" title="Green"></button>
-            <button type="button" class="swatch" data-color="#0d9488" title="Teal"></button>
-          </span>
-          <input type="text" id="appearance.accent" data-key="appearance.accent" placeholder="#2563eb" size="8" spellcheck="false">
-        </div>
+        <div class="control"><input type="text" id="appearance.accent" data-key="appearance.accent" data-picker="accent" placeholder="#2563eb" size="8" spellcheck="false"></div>
       </div>
-      <div class="row setting" data-keywords="toolbar colour color">
-        <div class="text"><label for="appearance.toolbarColor">Toolbar colour</label><p class="desc">Empty: the theme's.</p>
+      <div class="row setting" data-keywords="toolbar colour color custom">
+        <div class="text"><label for="appearance.toolbarColor">Toolbar colour</label><p class="desc">The bar with the address field.</p>
           <p class="field-error" data-error-for="appearance.toolbarColor"></p></div>
-        <div class="control"><input type="text" id="appearance.toolbarColor" data-key="appearance.toolbarColor" placeholder="#ffffff" size="8" spellcheck="false"></div>
+        <div class="control"><input type="text" id="appearance.toolbarColor" data-key="appearance.toolbarColor" data-picker="surface" placeholder="#ffffff" size="8" spellcheck="false"></div>
       </div>
-      <div class="row setting" data-keywords="tab strip colour color">
+      <div class="row setting" data-keywords="tab strip colour color custom">
         <div class="text"><label for="appearance.stripColor">Tab strip colour</label>
           <p class="field-error" data-error-for="appearance.stripColor"></p></div>
-        <div class="control"><input type="text" id="appearance.stripColor" data-key="appearance.stripColor" placeholder="#f3f4f6" size="8" spellcheck="false"></div>
+        <div class="control"><input type="text" id="appearance.stripColor" data-key="appearance.stripColor" data-picker="surface" placeholder="#f3f4f6" size="8" spellcheck="false"></div>
       </div>
-      <div class="row setting" data-keywords="background colour color">
+      <div class="row setting" data-keywords="background frame colour color custom">
         <div class="text"><label for="appearance.backgroundColor">Background colour</label><p class="desc">Behind the tab strip and Krunk's own pages.</p>
           <p class="field-error" data-error-for="appearance.backgroundColor"></p></div>
-        <div class="control"><input type="text" id="appearance.backgroundColor" data-key="appearance.backgroundColor" placeholder="#f3f4f6" size="8" spellcheck="false"></div>
+        <div class="control"><input type="text" id="appearance.backgroundColor" data-key="appearance.backgroundColor" data-picker="surface" placeholder="#f3f4f6" size="8" spellcheck="false"></div>
       </div>
       <div class="row setting" data-keywords="density compact normal tab strip">
         <div class="text"><label for="appearance.density">Tab strip density</label></div>
@@ -452,6 +440,23 @@
       <div class="row setting" data-keywords="toolbar items show hide extensions button">
         <div class="text"><label for="appearance.showExtensionsButton">Show the extensions button</label><p class="desc">Once extensions are installed.</p></div>
         <div class="control"><input type="checkbox" id="appearance.showExtensionsButton" data-key="appearance.showExtensionsButton"></div>
+      </div>
+    </div>
+    <div class="card group" id="ntp-card" data-keywords="new tab page background wallpaper image colour color picture">
+      <h3>New tab page background</h3>
+      <div class="row setting" data-keywords="wallpaper background new tab">
+        <div class="text"><span class="label">Wallpaper</span><p class="desc">Built-in pictures; the new tab page keeps its text readable on each.</p></div>
+        <div class="control"><div id="settings-wallpapers" class="wallpapers" role="group" aria-label="Wallpapers"></div></div>
+      </div>
+      <div class="row setting" data-keywords="new tab background colour color custom">
+        <div class="text"><label for="ntp.backgroundColor">Colour</label><p class="desc">A plain colour instead of a picture.</p>
+          <p class="field-error" data-error-for="ntp.backgroundColor"></p></div>
+        <div class="control"><input type="text" id="ntp.backgroundColor" data-key="ntp.backgroundColor" data-own-save data-picker="surface" placeholder="#1f2937" size="8" spellcheck="false"></div>
+      </div>
+      <div class="row setting" data-keywords="new tab background image picture own">
+        <div class="text"><span class="label">Your own image</span><p class="desc" id="ntp-image-desc">A picture from your computer.</p></div>
+        <div class="control"><button type="button" id="ntp-pick-image" class="btn">Choose image…</button>
+          <button type="button" id="ntp-no-background" class="btn">No background</button></div>
       </div>
     </div>
     <div class="card group">
@@ -614,6 +619,7 @@
 </div>
 <script src="shared/bridge.js"></script>
 <script src="shared/page.js"></script>
+<script src="shared/colorpicker.js"></script>
 <script src="settings.js"></script>
 </body>
 </html>
