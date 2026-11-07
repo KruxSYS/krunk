@@ -76,9 +76,9 @@ SafeGo 'http://localhost:8094/tracking.html' 4000
 Click (X 1215) (Y 56) 1500       # the shield
 $pr = PopupRectNow; Log "[$P] shield popup: $(if ($pr) { "$($pr.Left),$($pr.Top)-$($pr.Right),$($pr.Bottom)" } else { 'none' })"
 Shot "$P-8-shield"
-if ($pr) { Click ($pr.Left + 111) ($pr.Top + 270) 3500 }  # "Show all N blocked addresses" -> krunk://adblock
+if ($pr) { Click ($pr.Left + 111) ($pr.Top + 246) 3500 }  # "Show all N blocked addresses" -> krunk://adblock
 Shot "$P-8b-blocked-with-lists"
-Keys '%{LEFT}' 2500
+SafeGo 'http://localhost:8094/tracking.html' 4000
 Click (X 1215) (Y 56) 1500
 $pr = PopupRectNow
 if ($pr) { Click ($pr.Right - 34) ($pr.Top + 34) 3500 }   # the site switch (reloads the page)
