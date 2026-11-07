@@ -61,8 +61,32 @@
     box.appendChild(sums);
   }
 
+  // A visitor using Krunk: the browser leaves `window.krunk = { version }` on this site only
+  // (frozen, main frame, independent of the User-Agent). The box says whether it is current.
+  function krunkVersion() {
+    try {
+      var k = window.krunk;
+      return k && typeof k.version === 'string' && /^\d+\.\d+\.\d+/.test(k.version) ? k.version : null;
+    } catch (e) { return null; }
+  }
+  function cmpVersion(a, b) {
+    var pa = a.split('.').map(Number), pb = b.split('.').map(Number);
+    for (var i = 0; i < 3; i++) { if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) < (pb[i] || 0) ? -1 : 1; }
+    return 0;
+  }
+  function usingKrunk(latest) {
+    var mine = krunkVersion();
+    if (!mine) return;
+    var p = el('p', { class: 'using' + (latest && cmpVersion(mine, latest) < 0 ? ' outdated' : ''), id: 'using-krunk' });
+    p.appendChild(el('strong', { text: "You're using Krunk " + mine }));
+    if (!latest) p.appendChild(document.createTextNode(' — thank you.'));
+    else if (cmpVersion(mine, latest) < 0) p.appendChild(document.createTextNode(' — version ' + latest + ' is available: Krunk offers it in Settings → About (Update now), or download it below.'));
+    else p.appendChild(document.createTextNode(' — up to date' + (cmpVersion(mine, latest) > 0 ? ' (ahead of the published release)' : '') + '.'));
+    box.insertBefore(p, box.firstChild);
+  }
+
   fetch('/download/release.json', { cache: 'no-cache' })
     .then(function (res) { if (!res.ok) throw new Error(res.status); return res.json(); })
-    .then(render)
-    .catch(none);
+    .then(function (r) { render(r); usingKrunk(String(r.version)); })
+    .catch(function () { none(); usingKrunk(null); });
 })();

@@ -76,6 +76,15 @@ Then build Krunk for that server: `UPDATE_BASE_URL=https://downloads.example.org
 - Cloudflare sees the requests, and so the client IPs. It cannot forge an update: Krunk
   checks the signature and the installer's hash.
 
+### The site knows Krunk (0.6.0)
+Krunk leaves a frozen `window.krunk = { version }` in the main frame of pages on its update
+server's origin (built in at build time: `UPDATE_BASE_URL`, the live site), and nowhere else.
+`site/app.js` reads it next to `/download/release.json` and the download box says "You're
+using Krunk X — up to date" or "— version Y is available". Nothing depends on the
+User-Agent (which users may edit), other sites never see the marker, and the page's script
+stays external (`script-src 'self'`, no inline script). Other browsers get the download box
+as before.
+
 ## Account and sync API (`api`, `db`, `secrets`, `backup`)
 The account and sync API (`server/`, the `krunk-sync` binary) and its PostgreSQL 18.6
 database are defined here too. Design: `docs/sync/PLAN.md`; decisions:
@@ -94,7 +103,10 @@ database are defined here too. Design: `docs/sync/PLAN.md`; decisions:
 - The only operator settings are in `.env` (see `.env.example`): the Turnstile keys and SMTP.
   Without them, accounts stay **closed**: `/api/v1/web/config` reports
   `accounts_enabled: false`, the account endpoints answer `503 accounts_disabled`, and the pages
-  at `/account/` say "Accounts are coming soon". Setting both and restarting opens them; no code
+  at `/account/` say "Accounts are coming soon". Since 0.6.0 the config hands out
+  `turnstile_site_key` as soon as the Turnstile keys are set, SMTP or not, so the bot check can
+  be seen on the forms while registration still answers 503 (the provisioning steps show one
+  by one). Setting both and restarting opens them; no code
   change is needed (docs/sync/OPEN_QUESTIONS.md, "Operator provisioning"). `api` reads them
   through `env_file`: `.env` (this folder's, then the repository root's; on ai-pipe the live
   `.env`), then `staging.env` (below). On ai-pipe the live `.env` is copied from the working

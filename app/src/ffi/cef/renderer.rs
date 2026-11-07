@@ -309,6 +309,12 @@ fn context_created(scripts: Scripts, frame: &mut Frame, context: &mut V8Context)
     if !main {
         return;
     }
+    // Krunk's own website (the update server's origin, 0.6.0 R27): a frozen `window.krunk`
+    // with the version, so the site can say "you're using Krunk". Main frames of that origin
+    // only; no other site sees it, and it does not depend on the User-Agent.
+    if is_site_origin(&document_url(frame)) {
+        eval(context, SITE_MARKER);
+    }
     if scripts.page_tokens {
         eval_with_bridge(context, assets::inject_script("page-tokens.js"), host.as_ref());
     }
@@ -400,6 +406,20 @@ fn install_bridge(frame: &mut Frame, context: &mut V8Context) -> Option<V8Value>
     DISPATCH.with(|d| d.borrow_mut().insert(id, (context.clone(), dispatch)));
     host
 }
+
+/// The update server's origin (built in; `app/build.rs`).
+fn is_site_origin(document_url: &str) -> bool {
+    let base = url::Url::parse(env!("KRUNK_UPDATE_BASE_URL")).ok().map(|u| u.origin());
+    let here = url::Url::parse(document_url).ok().map(|u| u.origin());
+    base.is_some() && base == here
+}
+
+/// `window.krunk = Object.freeze({ version })`, not writable, not configurable.
+const SITE_MARKER: &str = concat!(
+    "Object.defineProperty(window, 'krunk', { value: Object.freeze({ version: '",
+    env!("CARGO_PKG_VERSION"),
+    "' }), writable: false, configurable: false, enumerable: false });"
+);
 
 /// Runs an injected script as `(function (__lbHost) { … })(host)`.
 fn eval_with_bridge(context: &mut V8Context, code: &str, host: Option<&V8Value>) {

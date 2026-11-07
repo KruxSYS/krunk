@@ -149,8 +149,10 @@ async fn web_config(State(state): State<AppState>, client: Client) -> ApiResult 
     let enabled = state.config.accounts_enabled();
     Ok(Json(WebConfig {
         accounts_enabled: enabled,
-        // No widget key while accounts are closed, so the pages don't load Turnstile.
-        turnstile_site_key: if enabled { &state.config.turnstile_site_key } else { "" },
+        // The widget key goes out as soon as it is configured, before SMTP opens the accounts
+        // (0.6.0): the forms show the bot check while registration still answers 503, so the
+        // operator can see the provisioning on the live site step by step.
+        turnstile_site_key: &state.config.turnstile_site_key,
         public_base_url: &state.config.public_base_url,
     })
     .into_response())
@@ -208,8 +210,8 @@ pub mod tests {
 
     #[tokio::test]
     async fn web_config_is_public_and_never_cached() {
-        // Closed (no Turnstile/SMTP): no site key is handed out. The rate limit fails open when
-        // the database is unreachable, so the config still answers.
+        // Closed (no Turnstile/SMTP): the (empty) configured site key. The rate limit fails open
+        // when the database is unreachable, so the config still answers.
         let (status, h, body) = call(axum::http::Request::get("/api/v1/web/config").body(Body::empty()).unwrap()).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(h[header::CACHE_CONTROL], "no-store");
@@ -225,6 +227,17 @@ pub mod tests {
         .await;
         let v = json(&body);
         assert_eq!(v["accounts_enabled"], true);
+        assert_eq!(v["turnstile_site_key"], "0x4AAAsite");
+        // Turnstile provisioned but no SMTP yet (0.6.0 M17 steps 1-2): the key goes out, the
+        // accounts stay closed.
+        let keys_only = [("TURNSTILE_SITE_KEY", "0x4AAAsite"), ("TURNSTILE_SECRET_KEY", "0x4AAAsecret")];
+        let (_, _, body) = call_with(
+            state_with(&keys_only),
+            axum::http::Request::get("/api/v1/web/config").body(Body::empty()).unwrap(),
+        )
+        .await;
+        let v = json(&body);
+        assert_eq!(v["accounts_enabled"], false);
         assert_eq!(v["turnstile_site_key"], "0x4AAAsite");
     }
 
