@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Engine speed probe</title>
+<style>body { font: 15px system-ui; margin: 32px; } #stage div { padding: 2px; border: 1px solid #ccc; display: inline-block; }</style></head>
+<body>
+<h1>Engine speed probe</h1>
+<p>Krunk 0.7.0 (R24): pure JavaScript, DOM building with forced layout, and the animation-frame interval, each timed
+on its own (best of 5), reported to <code>/log</code>.</p>
+<pre id="out"></pre>
+<div id="stage"></div>
+<script>
+'use strict';
+const tag = new URLSearchParams(location.search).get('tag') || 'cpu';
+function best(fn, n = 5) { let b = Infinity; for (let i = 0; i < n; i++) { const t = performance.now(); fn(); b = Math.min(b, performance.now() - t); } return b; }
+function js() {
+  let s = 0; const a = [];
+  for (let i = 0; i < 200000; i++) { a.push({ i, v: Math.sqrt(i) }); }
+  a.sort((x, y) => y.v - x.v);
+  for (const o of a) s += o.i % 7;
+  const j = JSON.stringify(a.slice(0, 20000)); s += JSON.parse(j).length;
+  for (let i = 0; i < 20000; i++) s += /a(b+)c/.test('xxabbbbbcyy' + i) ? 1 : 0;
+  return s;
+}
+function dom() {
+  const st = document.getElementById('stage'); st.textContent = '';
+  for (let i = 0; i < 3000; i++) { const d = document.createElement('div'); d.className = 'c' + (i % 10); d.textContent = 'item ' + i; st.appendChild(d); }
+  let h = st.offsetHeight;
+  for (let i = 0; i < 300; i++) { st.children[i].style.width = (20 + i % 50) + 'px'; h += st.children[i].offsetWidth; }
+  st.textContent = ''; return h;
+}
+function frames(n) {
+  return new Promise((resolve) => { const ts = []; (function f(t) { ts.push(t); if (ts.length > n) resolve(ts); else requestAnimationFrame(f); })(performance.now()); });
+}
+(async () => {
+  await new Promise((r) => setTimeout(r, 1500));
+  const r = { js: best(js), dom: best(dom) };
+  const ts = await frames(120);
+  const d = ts.slice(2).map((t, i) => t - ts[i + 1]);
+  r.frame = d.reduce((a, b) => a + b, 0) / d.length;
+  r.frameMax = Math.max(...d);
+  const line = `${tag} js=${r.js.toFixed(1)}ms dom=${r.dom.toFixed(1)}ms frame=${r.frame.toFixed(2)}ms frameMax=${r.frameMax.toFixed(1)}ms`;
+  document.getElementById('out').textContent = line;
+  fetch('/log?' + encodeURIComponent(line)).catch(() => {});
+})();
+</script>
+</body>
+</html>

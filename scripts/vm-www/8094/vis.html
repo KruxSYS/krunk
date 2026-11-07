@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Visibility probe</title>
+<style>body { font: 16px system-ui; background: #111827; color: #e5e7eb; margin: 40px; } b { color: #fbbf24; }</style></head>
+<body>
+<h1>Visibility probe</h1>
+<p>Every second this page reports to <code>/log</code> whether the browser treats it as visible: <code>document.visibilityState</code>,
+how many animation frames ran in that second, and its size. A background tab should say <b>hidden</b> and run no frames.</p>
+<pre id="out"></pre>
+<script>
+// Krunk 0.7.0 (R7/R24): are background tabs hidden from the engine's point of view?
+let frames = 0;
+(function tick() { frames++; requestAnimationFrame(tick); })();
+const tag = new URLSearchParams(location.search).get('tag') || 'vis';
+setInterval(() => {
+  const line = `${tag} state=${document.visibilityState} hidden=${document.hidden} raf=${frames} size=${innerWidth}x${innerHeight}`;
+  frames = 0;
+  document.getElementById('out').textContent = line + '\n' + document.getElementById('out').textContent.slice(0, 2000);
+  fetch('/log?' + encodeURIComponent(line)).catch(() => {});
+}, 1000);
+document.addEventListener('visibilitychange', () => fetch('/log?' + encodeURIComponent(`${tag} visibilitychange ${document.visibilityState}`)).catch(() => {}));
+</script>
+</body>
+</html>
