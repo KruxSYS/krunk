@@ -854,3 +854,57 @@ HTTP/CONNECT proxy on 127.0.0.1:8888.
     - No `CONNECT shell.krunk.invalid` or `krunk.invalid` ever appears in the
       proxy log.
 
+
+## Krunk 0.6.0 (round 6)
+Scripted on the VM: `scripts/vm-060-*.ps1` with the pages in `scripts/vm-www/8094/` (evidence in
+`.pipeline/evidence-0.6.0/m*/`). By hand, each in a fresh profile unless said otherwise:
+
+### Shell and tabs (M1–M4)
+1. **Menus fit their content** at 100 % and 125 %, light and dark; a right-click on a bookmarks-bar
+   folder opens its item menu while the folder stays open; Ctrl+wheel updates the zoom chip at
+   once; a second window shows the same search engine name in its address bar.
+2. **Live resize:** drag a window edge: the page follows the frame without a gap or a frozen area.
+3. **Address bar:** typing `wiki` completes inline to a visited address (Enter goes there, Delete
+   removes the completion); right-click → Paste and go; "Copy" from the bar gives the full URL.
+4. **Tabs:** right-click the title bar → the caption menu; Shift+Esc → krunk://tasks with PIDs,
+   End process on a renderer shows the crashed-tab page; a page with sound shows the speaker,
+   clicking it mutes the tab, the tab menu has Mute site; Settings → General → New tabs.
+### Downloads, new tab, appearance (M5–M6)
+5. A download flies to the toolbar button (pulses; reduced motion: badge only); the downloads
+   popup and krunk://downloads show speed, ETA and per-connection segments for a large file.
+6. New-tab page: shortcuts section, background image, tile editing, sections; Settings →
+   Appearance changes accent, colours, density, font, tab shape and toolbar items live and after
+   a restart.
+### Permissions and site data (M7)
+7. `scripts/vm-www/8094/perm.html`: camera, microphone, notifications, location, clipboard,
+   local network, pointer lock each ask once; Settings → Permissions lists the answers; the lock
+   popup shows them per site; the address bar chip shows camera/microphone in use.
+8. krunk://storage: sortable columns, usage per site and totals, select and clear.
+### Privacy (M8–M10)
+9. Tracking protection Standard/Strict/Custom on `tracking.html`: the Strict-only probe
+   (`cdn.ravelin.com`) is blocked only in Strict; referrer trimming and bounce cleanup per
+   `docs/TRACKING_PROTECTION.md`.
+10. Request headers: Accept-Language and the client hints edited in Settings → Advanced change
+    `navigator.language` / `userAgentData` and the wire headers of a new tab alike (`ua.html`);
+    Reset restores the engine's values.
+11. Custom DNS: add a DoT/DoH/stamp resolver, Custom on; `pktmon` elevated on port 53 while
+    browsing counts 0 packets; the Test buttons show latencies.
+### Passwords and payments (M11–M12)
+12. `signup.html`: the new-password field offers "Use a strong password", both fields fill, the
+    login is saved on submit with the Undo/Edit toast; nothing in a private tab.
+13. `checkout.html`: a typed card offers "Save this card?" (brand and last four only); after a
+    restart the card field's dropdown unlocks and fills number, expiry and name, the CVC stays
+    empty; the profile contains no plaintext number.
+### Media and extensions (M13–M15)
+14. `pip.html`: the PiP button; Alt+P opens the chooser for two videos; the floating window's
+    Back to tab activates the tab; the setting "Automatic Picture-in-Picture" moves a playing
+    video out on Ctrl+T and back on return.
+15. Settings → Privacy → Protected content on, restart: `drm.html` plays the Shaka Widevine test
+    stream; krunk://gpu shows the CDM version.
+16. krunk://extensions: install `scripts/vm-ext/krunk-fixture.zip`; `ext.html` gets the banner
+    and the blocked image; the toolbar popup pings the content script; Options opens a tab;
+    krunk://newtab and a private tab get nothing; Disable removes the button; uBlock Origin Lite
+    and Dark Reader install from their Web Store addresses.
+### Website (M16)
+17. On the site (`https://krunk.209.wf`) Krunk shows "You're using Krunk 0.6.0 — up to date";
+    other browsers get the download box; `view-source:` of another site never has `window.krunk`.

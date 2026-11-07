@@ -156,6 +156,9 @@ Section "Krunk" SecMain
   ; 0.2.x shipped README.md and SECURITY.md; the package has no Markdown any more. Only the
   ; install folder itself (non-recursive), never the user data in $LOCALAPPDATA\Krunk.
   Delete "$INSTDIR\*.md"
+  ; Up to 0.5.1 the engine shipped v8_context_snapshot.bin; Krunk's own engine build (0.5.2+)
+  ; ships snapshot_blob.bin instead. The stale file would be loaded in preference: remove it.
+  Delete "$INSTDIR\v8_context_snapshot.bin"
   SetOverwrite on
   File /r "${SRC}\*.*"
   WriteUninstaller "$INSTDIR\uninstall.exe"

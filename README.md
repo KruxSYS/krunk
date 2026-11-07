@@ -14,20 +14,20 @@ used. It installs per user without administrator rights, or runs portable from a
 - background-tab sleep, to save memory
 
 ## Download and requirements
-- **Installer:** `Krunk-Setup-0.3.0.exe` (about 137 MB), from `https://krunk.209.wf`. It installs for the current user
+- **Installer:** `Krunk-Setup-0.6.0.exe` (about 138 MB), from `https://krunk.209.wf`. It installs for the current user
   only, without administrator rights:
   - to `%LOCALAPPDATA%\Programs\Krunk`, with a Start Menu shortcut and, if you tick it, one on
     the desktop;
   - with an entry in Settings → Apps → Installed apps (per user, `HKCU`).
-  If Krunk is running, the installer asks you to close it. `Krunk-Setup-0.3.0.exe /S` installs
+  If Krunk is running, the installer asks you to close it. `Krunk-Setup-0.6.0.exe /S` installs
   silently; it then closes a running Krunk itself and waits up to 30 s for it.
   **Uninstalling** removes the program and the shortcuts. Your data (`%LOCALAPPDATA%\Krunk`) is
   kept unless you tick "Also delete my Krunk data"; a silent uninstall (`/S`) always keeps it.
-- **Portable:** `Krunk-win-x64.zip` (about 184 MB; 423 MB unpacked). Extract it anywhere and
+- **Portable:** `Krunk-win-x64.zip` (about 185 MB; 426 MB unpacked). Extract it anywhere and
   run `Krunk.exe`. Keep all files of the folder together; if one is missing, Krunk says so at
   startup. The portable copy uses the same data folder as the installed one.
 - **Verify:** check `SHA256SUMS` (the installer, the zip and the three main binaries):
-  - PowerShell: `Get-FileHash Krunk-Setup-0.3.0.exe`
+  - PowerShell: `Get-FileHash Krunk-Setup-0.6.0.exe`
   - Linux: `sha256sum -c SHA256SUMS`
 - **System:** Windows 10 or 11, 64-bit. No runtime is needed.
 - **Data location:** everything is stored in `%LOCALAPPDATA%\Krunk`:
