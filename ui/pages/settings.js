@@ -630,7 +630,8 @@
       let s = t + ': ' + c.imported + ' imported';
       if (c.updated) s += ', ' + c.updated + ' updated';
       if (c.merged) s += ', ' + c.merged + ' already there';
-      if (c.skipped) s += ', ' + c.skipped + ' skipped';
+      // 0.7.0 (R25): why entries were skipped.
+      if (c.skipped) s += ', ' + c.skipped + ' skipped' + (c.skippedReasons && c.skippedReasons.length ? ' (' + c.skippedReasons.map((x) => x.reason + ': ' + x.count).join(', ') + ')' : '');
       if (c.appBound) s += ' (' + c.appBound + ' protected by Chrome, export a CSV for those)';
       parts.push(s);
     });

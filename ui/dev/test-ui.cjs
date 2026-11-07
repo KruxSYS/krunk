@@ -2989,7 +2989,7 @@ function settingsMock(defaults) {
   ];
   h.importRun = (m) => {
     if (m.profile === 'chrome:Default') return { history: { imported: 120, merged: 3 }, passwords: { imported: 0, merged: 0, skipped: 0, appBound: 2 } };
-    return { history: { imported: 9, merged: 0 }, bookmarks: { imported: 1, folders: 0, merged: 0 }, passwords: { imported: 1, updated: 1, merged: 2, skipped: 0, appBound: 0 } };
+    return { history: { imported: 9, merged: 0 }, bookmarks: { imported: 1, folders: 0, merged: 0 }, passwords: { imported: 1, updated: 1, merged: 2, skipped: 3, skippedReasons: [{ reason: 'no website address', count: 1 }, { reason: 'unreadable entry', count: 2 }], appBound: 0 } };
   };
   h.importCsv = () => ({ passwords: { imported: 2, merged: 0, skipped: 1, appBound: 0 } });
   h.saveSettings = (m) => {
@@ -3540,7 +3540,7 @@ async function testSettings(browser) {
   await page.waitForTimeout(60);
   const run = await lastSent(page, 'importRun');
   check(run && run.profile === 'firefox:abcd.default-release' && run.types.join(',') === 'history,bookmarks,passwords' && run.primaryPassword === 'fx-secret', 'Import asks the host for the chosen profile, types and primary password');
-  check((await page.textContent('#import-result')) === 'history: 9 imported · bookmarks: 1 imported · passwords: 1 imported, 1 updated, 2 already there', 'the counts are shown (' + await page.textContent('#import-result') + ')');
+  check((await page.textContent('#import-result')) === 'history: 9 imported · bookmarks: 1 imported · passwords: 1 imported, 1 updated, 2 already there, 3 skipped (no website address: 1, unreadable entry: 2)', 'the counts are shown (' + await page.textContent('#import-result') + ')');
   check((await page.inputValue('#import-profiles .row:nth-child(1) input[type=password]')) === '', 'the primary password field is cleared afterwards');
   await page.click('#import-profiles .row:nth-child(2) button');
   await page.waitForTimeout(60);

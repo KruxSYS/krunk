@@ -1,6 +1,6 @@
 //! Merging imported data into Krunk's own stores without duplicates: history by (url, visit
 //! time), bookmarks with the Netscape-import rules (same folder and URL), logins by origin
-//! and username (a different password updates the entry, the same one is skipped).
+//! and username (a different password updates the entry, the same one is already there).
 
 use zeroize::Zeroizing;
 
@@ -18,7 +18,11 @@ pub struct VisitCounts {
 pub struct LoginCounts {
     pub added: usize,
     pub updated: usize,
-    pub skipped: usize,
+    /// The same login with the same password is already in the vault.
+    pub merged: usize,
+    /// Not a login Krunk can keep (no web origin, no password, too long) — 0.7.0: counted
+    /// apart from `merged`, which 0.6.0 reported as "already there" too.
+    pub invalid: usize,
 }
 
 impl Store {
@@ -54,18 +58,18 @@ impl Vault {
         let mut changed = false;
         for login in logins {
             let Some(origin) = crate::urlclean::origin_of(&login.url) else {
-                counts.skipped += 1;
+                counts.invalid += 1;
                 continue;
             };
             if login.password.is_empty()
                 || login.username.chars().count() > 512
                 || login.password.chars().count() > 1024
             {
-                counts.skipped += 1;
+                counts.invalid += 1;
                 continue;
             }
             match self.entries.iter_mut().find(|e| e.origin == origin && e.username == login.username) {
-                Some(e) if *e.password == *login.password => counts.skipped += 1,
+                Some(e) if *e.password == *login.password => counts.merged += 1,
                 Some(e) => {
                     e.password = login.password;
                     e.updated = now;
@@ -174,7 +178,7 @@ mod tests {
             login("https://c.example/", "carol", ""),    // empty password: skip
         ];
         let c = v.import_logins(batch, 1_700_000_000_000, &NoWrap).unwrap();
-        assert_eq!(c, LoginCounts { added: 1, updated: 1, skipped: 3 });
+        assert_eq!(c, LoginCounts { added: 1, updated: 1, merged: 1, invalid: 2 });
         let alice = v.for_origin("https://a.example/").into_iter().find(|e| e.username == "alice").unwrap();
         assert_eq!(alice.password.as_str(), "new");
         assert_eq!(alice.updated, 1_700_000_000_000);
@@ -185,6 +189,6 @@ mod tests {
         assert_eq!(again.entries().len(), 2);
         let c2 =
             again.import_logins(vec![login("https://b.example/", "bob", "b")], 1_700_000_000_001, &NoWrap).unwrap();
-        assert_eq!(c2, LoginCounts { added: 0, updated: 0, skipped: 1 });
+        assert_eq!(c2, LoginCounts { added: 0, updated: 0, merged: 1, invalid: 0 });
     }
 }

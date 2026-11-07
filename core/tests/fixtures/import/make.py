@@ -212,6 +212,34 @@ def make_firefox(name, master_password, legacy, aes=False):
     make_places(os.path.join(d, "places.sqlite"))
 
 
+def make_firefox_nohostname(name):
+    """Krunk 0.7.0 (R25): a logins.json as some Firefox versions and tools write it: entries
+    without `hostname` (the origin only in formSubmitURL), null fields, one that does not decrypt,
+    one with an empty password, one that is not an object at all."""
+    make_firefox(name, "", legacy=False, aes=True)
+    d = os.path.join(OUT, name)
+    sdr_key = det(32, name + "-sdr")
+    enc = lambda text, tag: sdr_encrypt(sdr_key, text, f"{name}-{tag}", True)
+    logins = [
+        {"id": 1, "hostname": "https://login.example", "formSubmitURL": "https://login.example", "httpRealm": None,
+         "encryptedUsername": enc("fx-alice", "u1"), "encryptedPassword": enc("Fx-pass-alice-1", "p1"), "timeCreated": MS_2024},
+        {"id": 2, "formSubmitURL": "https://accounts.forms.example/signin", "httpRealm": None,
+         "encryptedUsername": enc("no-host-user", "u2"), "encryptedPassword": enc("No-host-pass-2", "p2")},
+        {"id": 3, "hostname": None, "formSubmitURL": None, "httpRealm": "https://realm.example",
+         "encryptedUsername": enc("realm-user", "u3"), "encryptedPassword": enc("Realm-pass-3", "p3")},
+        {"id": 4, "hostname": None, "formSubmitURL": None, "httpRealm": "Intranet",
+         "encryptedUsername": enc("nowhere", "u4"), "encryptedPassword": enc("Nowhere-pass-4", "p4")},
+        {"id": 5, "hostname": "https://broken.example", "encryptedUsername": "bm90IGEgYmxvYg==", "encryptedPassword": "bm90IGEgYmxvYg=="},
+        {"id": 6, "hostname": "https://empty.example", "encryptedUsername": enc("empty-user", "u6"), "encryptedPassword": enc("", "p6")},
+        {"id": 7, "hostname": 5, "encryptedUsername": 1},
+        "not an entry",
+    ]
+    with open(os.path.join(d, "logins.json"), "w") as f:
+        json.dump({"nextId": 9, "logins": logins, "version": 3}, f, indent=1)
+    # No history or bookmarks needed.
+    os.remove(os.path.join(d, "places.sqlite"))
+
+
 def make_places(path):
     if os.path.exists(path):
         os.remove(path)
@@ -392,11 +420,15 @@ def make_csv():
 
 
 def main():
+    if sys.argv[1:] == ["firefox-nohostname"]:
+        make_firefox_nohostname("firefox-nohostname")
+        return
     make_firefox("firefox-nomaster", "", legacy=False, aes=True)
     make_firefox("firefox-master", "fx-master-pw", legacy=False)
     make_firefox("firefox-legacy", "fx-master-pw", legacy=True)
     make_chromium("chrome")
     make_csv()
+    make_firefox_nohostname("firefox-nohostname")
     print("fixtures written to", OUT)
 
 

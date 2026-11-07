@@ -51,7 +51,15 @@ impl Unprotect for PlainDpapi {
 struct Parsed {
     history: Option<Vec<Visit>>,
     bookmarks: Option<Vec<ImportNode>>,
-    logins: Option<(Vec<Login>, usize, usize)>, // logins, app-bound rows, unreadable rows
+    logins: Option<ParsedLogins>,
+}
+
+/// Logins read, rows protected by Chrome (app-bound), and the rows that could not be used by
+/// reason (0.7.0, R25).
+struct ParsedLogins {
+    logins: Vec<Login>,
+    app_bound: usize,
+    skipped: Vec<(String, usize)>,
 }
 
 fn family_id(f: Family) -> &'static str {
@@ -99,7 +107,8 @@ fn parse_profile(profile: &Profile, types: &[String], primary_password: &str, te
                     ImportError::WrongPassword => "wrong Firefox primary password".to_string(),
                     other => other.to_string(),
                 })?;
-                parsed.logins = Some((got.logins, 0, got.skipped));
+                let skipped = got.reasons.iter().map(|(r, n)| (r.to_string(), *n)).collect();
+                parsed.logins = Some(ParsedLogins { logins: got.logins, app_bound: 0, skipped });
             }
         }
         _ => {
@@ -119,7 +128,9 @@ fn parse_profile(profile: &Profile, types: &[String], primary_password: &str, te
                 let keys = chromium::local_state_keys(&state).map_err(|e| e.to_string())?;
                 let login_data = copy_file(&profile.path, temp, "Login Data")?;
                 let got = chromium::read_logins(&login_data, &keys, &PlainDpapi).map_err(|e| e.to_string())?;
-                parsed.logins = Some((got.logins, got.app_bound, got.skipped));
+                let skipped =
+                    if got.skipped > 0 { vec![("unreadable rows".to_string(), got.skipped)] } else { Vec::new() };
+                parsed.logins = Some(ParsedLogins { logins: got.logins, app_bound: got.app_bound, skipped });
             }
         }
     }
@@ -285,7 +296,15 @@ impl Browser {
         let result = self.import_merge(Parsed {
             history: None,
             bookmarks: None,
-            logins: Some((parsed.logins, 0, parsed.skipped)),
+            logins: Some(ParsedLogins {
+                logins: parsed.logins,
+                app_bound: 0,
+                skipped: if parsed.skipped > 0 {
+                    vec![("rows without an address or password".to_string(), parsed.skipped)]
+                } else {
+                    Vec::new()
+                },
+            }),
         });
         self.reply(tab, Event::ok(req_id, result));
     }
@@ -322,20 +341,34 @@ impl Browser {
                 }
             }
         }
-        if let Some((logins, app_bound, unreadable)) = parsed.logins {
+        if let Some(ParsedLogins { logins, app_bound, mut skipped }) = parsed.logins {
             let merged = match self.vaults.vault.borrow_mut().as_mut() {
                 Some(v) => v.import_logins(logins, now_ms(), &Dpapi).map_err(|e| e.to_string()),
                 None => Err("Krunk passwords are locked".to_string()),
             };
             match merged {
                 Ok(c) => {
+                    if c.invalid > 0 {
+                        skipped.push(("not a website login".to_string(), c.invalid));
+                    }
+                    let total: usize = skipped.iter().map(|(_, n)| n).sum();
+                    let reasons: Vec<String> = skipped.iter().map(|(r, n)| format!("{r}: {n}")).collect();
                     info!(
-                        "import: passwords {} added, {} updated, {} already there, {} skipped, {} app-bound",
-                        c.added, c.updated, c.skipped, unreadable, app_bound
+                        "import: passwords {} added, {} updated, {} already there, {} skipped ({}), {} app-bound",
+                        c.added,
+                        c.updated,
+                        c.merged,
+                        total,
+                        reasons.join(", "),
+                        app_bound
                     );
                     out.insert(
                         "passwords".into(),
-                        serde_json::json!({ "imported": c.added, "updated": c.updated, "merged": c.skipped, "skipped": unreadable, "appBound": app_bound }),
+                        serde_json::json!({
+                            "imported": c.added, "updated": c.updated, "merged": c.merged, "skipped": total,
+                            "skippedReasons": skipped.iter().map(|(r, n)| serde_json::json!({ "reason": r, "count": n })).collect::<Vec<_>>(),
+                            "appBound": app_bound,
+                        }),
                     );
                     self.touch_vault();
                 }

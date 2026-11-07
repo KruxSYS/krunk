@@ -10,28 +10,58 @@ use super::nss::Key4;
 use super::{is_web_url, open_readonly, us_to_ms, ImportError, Login, Visit};
 use crate::netscape::ImportNode;
 
-/// Logins and how many entries could not be read.
+/// Logins and the entries that could not be used, by reason.
 pub struct FirefoxLogins {
     pub logins: Vec<Login>,
     pub skipped: usize,
+    /// Why entries were skipped (reason, count), in a fixed order (0.7.0, R25).
+    pub reasons: Vec<(&'static str, usize)>,
 }
 
 #[derive(Deserialize)]
 struct LoginsFile {
+    /// Each entry read on its own: one odd entry never stops the others (0.7.0).
     #[serde(default)]
-    logins: Vec<RawLogin>,
+    logins: Vec<serde_json::Value>,
 }
 
+/// One entry, every field optional (Firefox versions and tools that write `logins.json`
+/// differ: some leave out `hostname` and keep the origin in `formSubmitURL`).
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RawLogin {
-    hostname: String,
     #[serde(default)]
-    encrypted_username: String,
+    hostname: Option<String>,
     #[serde(default)]
-    encrypted_password: String,
+    origin: Option<String>,
+    #[serde(default, rename = "formSubmitURL")]
+    form_submit_url: Option<String>,
+    #[serde(default)]
+    form_action_origin: Option<String>,
+    #[serde(default)]
+    http_realm: Option<String>,
+    #[serde(default)]
+    encrypted_username: Option<String>,
+    #[serde(default)]
+    encrypted_password: Option<String>,
     #[serde(default)]
     time_created: Option<i64>,
+}
+
+pub const SKIP_NO_ADDRESS: &str = "no website address";
+pub const SKIP_UNDECRYPTABLE: &str = "could not be decrypted";
+pub const SKIP_NO_PASSWORD: &str = "no password";
+pub const SKIP_UNREADABLE: &str = "unreadable entry";
+
+impl RawLogin {
+    /// The site: `hostname`, else `origin`, else the origin of the form's action, else an
+    /// HTTP-auth realm that is an address.
+    fn site(&self) -> Option<String> {
+        [&self.hostname, &self.origin, &self.form_submit_url, &self.form_action_origin, &self.http_realm]
+            .into_iter()
+            .flatten()
+            .find_map(|u| crate::urlclean::origin_of(u.trim()))
+    }
 }
 
 /// Reads the saved logins of a profile directory (`key4.db` and `logins.json` inside).
@@ -42,31 +72,49 @@ pub fn read_logins(profile: &Path, primary_password: &str) -> Result<FirefoxLogi
         return Err(ImportError::NotFound("logins.json".into()));
     }
     let text = std::fs::read_to_string(&logins_path).map_err(|e| ImportError::Read(format!("logins.json: {e}")))?;
-    let file: LoginsFile = serde_json::from_str(&text).map_err(|e| ImportError::Format(format!("logins.json: {e}")))?;
+    // (A file saved by another tool may start with a byte-order mark.)
+    let file: LoginsFile = serde_json::from_str(text.trim_start_matches('\u{feff}'))
+        .map_err(|e| ImportError::Format(format!("logins.json: {e}")))?;
+    let mut out = FirefoxLogins { logins: Vec::new(), skipped: 0, reasons: Vec::new() };
     if file.logins.is_empty() {
-        return Ok(FirefoxLogins { logins: Vec::new(), skipped: 0 });
+        return Ok(out);
     }
     let key = Key4::read(&profile.join("key4.db"))?.unlock(primary_password)?;
-    let mut out = FirefoxLogins { logins: Vec::new(), skipped: 0 };
-    for raw in file.logins {
-        let (Ok(username), Ok(password)) =
-            (key.decrypt_field(&raw.encrypted_username), key.decrypt_field(&raw.encrypted_password))
-        else {
-            out.skipped += 1;
+    let mut counts: [(&'static str, usize); 4] =
+        [(SKIP_NO_ADDRESS, 0), (SKIP_UNDECRYPTABLE, 0), (SKIP_NO_PASSWORD, 0), (SKIP_UNREADABLE, 0)];
+    let mut skip = |reason: &'static str| {
+        if let Some(c) = counts.iter_mut().find(|(r, _)| *r == reason) {
+            c.1 += 1;
+        }
+    };
+    for value in file.logins {
+        let Ok(raw) = serde_json::from_value::<RawLogin>(value) else {
+            skip(SKIP_UNREADABLE);
             continue;
         };
-        if password.is_empty() || crate::urlclean::origin_of(&raw.hostname).is_none() {
-            out.skipped += 1;
+        let Some(site) = raw.site() else {
+            skip(SKIP_NO_ADDRESS);
+            continue;
+        };
+        let decrypt = |f: &Option<String>| key.decrypt_field(f.as_deref().unwrap_or(""));
+        let (Ok(username), Ok(password)) = (decrypt(&raw.encrypted_username), decrypt(&raw.encrypted_password)) else {
+            skip(SKIP_UNDECRYPTABLE);
+            continue;
+        };
+        if password.is_empty() {
+            skip(SKIP_NO_PASSWORD);
             continue;
         }
         out.logins.push(Login {
-            url: raw.hostname,
+            url: site,
             username: username.to_string(),
             password,
             note: Zeroizing::new(String::new()),
             created_ms: raw.time_created.filter(|t| *t > 0),
         });
     }
+    out.reasons = counts.into_iter().filter(|(_, n)| *n > 0).collect();
+    out.skipped = out.reasons.iter().map(|(_, n)| n).sum();
     Ok(out)
 }
 
@@ -197,6 +245,27 @@ mod tests {
         let bookmarks = read_bookmarks(&Path::new(&dir).join("places.sqlite")).unwrap();
         println!("bookmark nodes: {bookmarks:?}");
         assert!(!got.logins.is_empty());
+    }
+
+    #[test]
+    fn entries_without_hostname_and_odd_ones() {
+        // 0.7.0 (R25): the operator's Firefox wrote entries without `hostname`.
+        let got = read_logins(&fixture("firefox-nohostname"), "").unwrap();
+        let names: Vec<(&str, &str)> = got.logins.iter().map(|l| (l.url.as_str(), l.username.as_str())).collect();
+        assert_eq!(
+            names,
+            [
+                ("https://login.example", "fx-alice"),
+                ("https://accounts.forms.example", "no-host-user"),
+                ("https://realm.example", "realm-user")
+            ]
+        );
+        assert_eq!(got.logins[1].password.as_str(), "No-host-pass-2");
+        assert_eq!(
+            got.reasons,
+            [(SKIP_NO_ADDRESS, 1), (SKIP_UNDECRYPTABLE, 1), (SKIP_NO_PASSWORD, 1), (SKIP_UNREADABLE, 2)]
+        );
+        assert_eq!(got.skipped, 5);
     }
 
     #[test]

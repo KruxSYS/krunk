@@ -1,0 +1,56 @@
+{
+ "nextId": 9,
+ "logins": [
+  {
+   "id": 1,
+   "hostname": "https://login.example",
+   "formSubmitURL": "https://login.example",
+   "httpRealm": null,
+   "encryptedUsername": "MEMEEPgAAAAAAAAAAAAAAAAAAAEwHQYJYIZIAWUDBAEqBBA2T87ktO+TmU6mUhaGoai/BBDNBOLi9j88XzW1S9tU4TEt",
+   "encryptedPassword": "MEMEEPgAAAAAAAAAAAAAAAAAAAEwHQYJYIZIAWUDBAEqBBAwaiOJTTdEm1LcUewxRLSpBBDUGadm1nEmrgPa05LlMgxv",
+   "timeCreated": 1700000000000
+  },
+  {
+   "id": 2,
+   "formSubmitURL": "https://accounts.forms.example/signin",
+   "httpRealm": null,
+   "encryptedUsername": "MEMEEPgAAAAAAAAAAAAAAAAAAAEwHQYJYIZIAWUDBAEqBBDywJ9WlDS5CIjIkF5rqDboBBBuLaQzpHICD7QzctBbwPBH",
+   "encryptedPassword": "MEMEEPgAAAAAAAAAAAAAAAAAAAEwHQYJYIZIAWUDBAEqBBBfFJTkMr+zdZ9F3i6/DipEBBD8RyKqO85MSC/HymGShMK0"
+  },
+  {
+   "id": 3,
+   "hostname": null,
+   "formSubmitURL": null,
+   "httpRealm": "https://realm.example",
+   "encryptedUsername": "MEMEEPgAAAAAAAAAAAAAAAAAAAEwHQYJYIZIAWUDBAEqBBABtl6x6VyWA7Po6Oz7xzipBBDHZM623kR/kQauMOOmELbP",
+   "encryptedPassword": "MEMEEPgAAAAAAAAAAAAAAAAAAAEwHQYJYIZIAWUDBAEqBBCQeRIly5tztTD4E2rF1K1rBBAU8SVjcgXBuJjnZDBZ6a6K"
+  },
+  {
+   "id": 4,
+   "hostname": null,
+   "formSubmitURL": null,
+   "httpRealm": "Intranet",
+   "encryptedUsername": "MEMEEPgAAAAAAAAAAAAAAAAAAAEwHQYJYIZIAWUDBAEqBBB8Vw/kbbKqUi0bb9AIQrgXBBD+qp7xH9tOn0kn1gyL2FBc",
+   "encryptedPassword": "MEMEEPgAAAAAAAAAAAAAAAAAAAEwHQYJYIZIAWUDBAEqBBB/qIWW7rCYT0eEr6pSP+YtBBDHhs60gH+PTqdeldlSA7Bc"
+  },
+  {
+   "id": 5,
+   "hostname": "https://broken.example",
+   "encryptedUsername": "bm90IGEgYmxvYg==",
+   "encryptedPassword": "bm90IGEgYmxvYg=="
+  },
+  {
+   "id": 6,
+   "hostname": "https://empty.example",
+   "encryptedUsername": "MEMEEPgAAAAAAAAAAAAAAAAAAAEwHQYJYIZIAWUDBAEqBBAt0/zMLxZNNnJsq54/uiGmBBAgNmpbZR5DN/Mghjj5UOT9",
+   "encryptedPassword": "MEMEEPgAAAAAAAAAAAAAAAAAAAEwHQYJYIZIAWUDBAEqBBA9IXh1Ms5npyXBeg2KzPKDBBAjooUOSIIuEwXrvU0HUdf9"
+  },
+  {
+   "id": 7,
+   "hostname": 5,
+   "encryptedUsername": 1
+  },
+  "not an entry"
+ ],
+ "version": 3
+}
