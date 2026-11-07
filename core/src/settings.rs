@@ -376,6 +376,8 @@ pub struct Settings {
     // Passwords
     pub vault_autolock_minutes: u32,
     pub offer_save_passwords: bool,
+    /// Offer to save a payment card after a checkout (Krunk 0.6.0).
+    pub offer_save_cards: bool,
     /// The password generator (Krunk 0.6.0).
     pub passgen: crate::passgen::Passgen,
 
@@ -458,6 +460,7 @@ impl Default for Settings {
             permissions: PermissionDefaults::default(),
             vault_autolock_minutes: 15,
             offer_save_passwords: true,
+            offer_save_cards: true,
             passgen: crate::passgen::Passgen::default(),
             download_dir: String::new(),
             ask_where_to_save: false,

@@ -131,6 +131,10 @@ pub enum PopupKind {
     SavePassword,
     /// "Password saved · Undo · Edit" after a generated password was used (0.6.0).
     PasswordSaved,
+    /// Saved cards under a card field (0.6.0).
+    CardFill,
+    /// "Save this card?" (0.6.0).
+    SaveCard,
     Fill,
     /// A folder of the bookmarks bar (opened with `ShowBookmarkFolder`).
     BookmarkFolder,
@@ -171,7 +175,7 @@ impl PopupKind {
     /// it covers already had focus). (The "Press Esc" hint is not a popup:
     /// it is a native overlay, see `overlay`.)
     pub fn takes_focus(self) -> bool {
-        !matches!(self, PopupKind::Suggest | PopupKind::AddressSuggest | PopupKind::AddressMenu)
+        !matches!(self, PopupKind::Suggest | PopupKind::CardFill | PopupKind::AddressSuggest | PopupKind::AddressMenu)
     }
 }
 
@@ -286,6 +290,21 @@ pub enum PopupContent {
         /// `SuggestGenerate` and the host fills what it generated.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         generated: Option<String>,
+    },
+    /// Saved cards for a card field of frame `frame_id` (0.6.0; masked labels only).
+    CardFill {
+        tab_id: u32,
+        frame_id: String,
+        origin: String,
+        locked: bool,
+        cards: Vec<CardChoice>,
+    },
+    /// "Save this card?" after a checkout (0.6.0; the brand and last four digits only).
+    SaveCard {
+        tab_id: u32,
+        origin: String,
+        brand: String,
+        last4: String,
     },
     /// "Save password for `username` on `origin`?" (no password is sent to the UI).
     SavePassword {
@@ -502,8 +521,12 @@ pub enum AddressSuggestionKind {
 pub enum UnlockPurpose {
     Save,
     Fill,
+    /// A card offered to save at checkout (0.6.0).
+    SaveCard,
     /// Unlock chosen from the suggestion dropdown under a login field (Krunk 0.5.0).
     Suggest,
+    /// Unlock chosen from the card dropdown under a payment field (0.6.0).
+    CardFill,
     /// Settings → import passwords from another browser or a CSV file (Krunk 0.5.0).
     Import,
 }
@@ -514,6 +537,8 @@ pub enum UnlockPurpose {
 pub enum FieldKind {
     Password,
     Username,
+    /// A payment-card field (`autocomplete=cc-*`): saved cards are offered (0.6.0).
+    Card,
     /// A password field where a new password is chosen (`autocomplete=new-password`, a
     /// confirm field, a sign-up form): the generator is offered.
     NewPassword,
@@ -569,6 +594,8 @@ impl PopupContent {
             PopupContent::SiteInfo { .. } => PopupKind::SiteInfo,
             PopupContent::Suggest { .. } => PopupKind::Suggest,
             PopupContent::SavePassword { .. } => PopupKind::SavePassword,
+            PopupContent::CardFill { .. } => PopupKind::CardFill,
+            PopupContent::SaveCard { .. } => PopupKind::SaveCard,
             PopupContent::PasswordSaved { .. } => PopupKind::PasswordSaved,
             PopupContent::Fill { .. } => PopupKind::Fill,
             PopupContent::Permission { .. } => PopupKind::Permission,
@@ -1052,6 +1079,35 @@ pub enum Request {
     VaultDelete {
         id: String,
     },
+    // ---- payment cards (0.6.0) ----
+    CardList,
+    CardSave {
+        card: CardInput,
+    },
+    CardDelete {
+        id: String,
+    },
+    /// The full number and address; requires the master password again.
+    CardReveal {
+        id: String,
+        password: Secret,
+    },
+    /// The number to the clipboard (cleared after 30 s).
+    CardCopy {
+        id: String,
+    },
+    /// A card chosen in the fill dropdown of frame `frame_id`.
+    CardFillPick {
+        tab_id: u32,
+        frame_id: String,
+        card_id: String,
+    },
+    /// The answer to "Save this card?".
+    SaveCardReply {
+        tab_id: u32,
+        origin: String,
+        accept: bool,
+    },
     /// Origins on the "never save" list, and removing one.
     GetNeverSave,
     NeverSaveRemove {
@@ -1339,6 +1395,8 @@ impl Sender {
                     | R::SuggestPick { .. }
                     | R::SuggestUnlock { .. }
                     | R::SuggestGenerate { .. }
+                    | R::CardFillPick { .. }
+                    | R::SaveCardReply { .. }
                     | R::VaultStatus
                     | R::VaultUnlock { .. }
                     | R::UpdateReply { .. }
@@ -1389,6 +1447,11 @@ impl Sender {
                     | R::VaultCopy { .. }
                     | R::VaultSave { .. }
                     | R::VaultDelete { .. }
+                    | R::CardList
+                    | R::CardSave { .. }
+                    | R::CardDelete { .. }
+                    | R::CardReveal { .. }
+                    | R::CardCopy { .. }
                     | R::VaultChangePassword { .. }
                     | R::GetNeverSave
                     | R::NeverSaveRemove { .. }
@@ -1533,6 +1596,17 @@ pub enum ContentMessage {
     /// Class names and ids used on the page, for generic cosmetic filters.
     /// (A page can only affect which elements get hidden on itself.)
     PageTokens { classes: Vec<String>, ids: Vec<String> },
+    /// A checkout form with a card number was sent (main frame only; 0.6.0): the browser may
+    /// offer to save the card. No security code is ever sent.
+    CardSubmit {
+        number: String,
+        #[serde(default, rename = "expMonth")]
+        exp_month: u8,
+        #[serde(default, rename = "expYear")]
+        exp_year: u16,
+        #[serde(default)]
+        name: String,
+    },
     /// The page called `Notification.requestPermission()` (Krunk's shim; the engine never
     /// asks the embedder for notifications in Alloy style).
     NotificationPermission {},
@@ -1755,6 +1829,35 @@ pub enum Event {
     },
     /// Settings that need a restart changed.
     RestartRequired,
+}
+
+/// A saved card as the fill dropdown shows it (0.6.0).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CardChoice {
+    pub id: String,
+    /// "Visa •••• 1111" or the nickname.
+    pub label: String,
+    pub name: String,
+}
+
+/// A card from the passwords page (0.6.0). The security code is never part of it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CardInput {
+    /// `None` adds a card.
+    pub id: Option<String>,
+    /// `None` keeps the stored number when editing.
+    pub number: Option<Secret>,
+    pub exp_month: u8,
+    pub exp_year: u16,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub nickname: String,
+    /// `None` keeps the stored address when editing.
+    #[serde(default)]
+    pub address: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2663,6 +2766,76 @@ mod tests {
         assert!(!Event::Theme { theme: Theme::Light, accent: String::new(), ui_font_px: 0 }
             .to_json()
             .contains("accent"));
+    }
+
+    #[test]
+    fn payment_card_messages() {
+        for r in [
+            Request::CardList,
+            Request::CardDelete { id: "c".into() },
+            Request::CardCopy { id: "c".into() },
+            Request::CardReveal { id: "c".into(), password: Secret::from("pw") },
+            Request::CardSave {
+                card: CardInput {
+                    id: None,
+                    number: Some(Secret::from("4111111111111111")),
+                    exp_month: 1,
+                    exp_year: 2030,
+                    name: String::new(),
+                    nickname: String::new(),
+                    address: None,
+                },
+            },
+        ] {
+            assert!(Sender::Page(Page::Passwords).permits(&r), "{r:?}");
+            assert!(
+                !Sender::Popup.permits(&r) && !Sender::Shell.permits(&r) && !Sender::Page(Page::Settings).permits(&r),
+                "{r:?}"
+            );
+        }
+        let pick = Request::CardFillPick { tab_id: 1, frame_id: "f".into(), card_id: "c".into() };
+        let reply = Request::SaveCardReply { tab_id: 1, origin: "https://shop.example".into(), accept: true };
+        assert!(Sender::Popup.permits(&pick) && Sender::Popup.permits(&reply));
+        assert!(!Sender::Shell.permits(&pick) && !Sender::Page(Page::Passwords).permits(&reply));
+        let json = serde_json::to_string(&Request::CardSave {
+            card: CardInput {
+                id: Some("x".into()),
+                number: None,
+                exp_month: 2,
+                exp_year: 2031,
+                name: "A".into(),
+                nickname: "".into(),
+                address: Some("addr".into()),
+            },
+        })
+        .unwrap();
+        assert!(json.contains("\"expMonth\":2") && !json.contains("cvc"));
+        let m = parse_content(
+            r#"{"lb":"cardSubmit","number":"4111 1111 1111 1111","expMonth":12,"expYear":2030,"name":"A"}"#,
+        )
+        .unwrap();
+        assert!(matches!(m, ContentMessage::CardSubmit { exp_month: 12, .. }));
+        assert!(parse_content_frame(r#"{"lb":"cardSubmit","number":"4111111111111111"}"#).is_err(), "main frame only");
+        let focus =
+            parse_content(r#"{"lb":"fieldFocus","field":"card","rect":{"x":1,"y":2,"width":30,"height":10}}"#).unwrap();
+        assert!(matches!(focus, ContentMessage::FieldFocus { field: FieldKind::Card, .. }));
+        let fill = PopupContent::CardFill {
+            tab_id: 1,
+            frame_id: "f".into(),
+            origin: "o".into(),
+            locked: false,
+            cards: vec![CardChoice { id: "c".into(), label: "Visa •••• 1111".into(), name: "A".into() }],
+        };
+        assert_eq!(fill.kind(), PopupKind::CardFill);
+        let save = PopupContent::SaveCard { tab_id: 1, origin: "o".into(), brand: "Visa".into(), last4: "1111".into() };
+        assert_eq!(save.kind(), PopupKind::SaveCard);
+        assert!(
+            !PopupKind::CardFill.takes_focus() && PopupKind::SaveCard.takes_focus(),
+            "the dropdown leaves the field focused"
+        );
+        assert_eq!(serde_json::to_string(&UnlockPurpose::CardFill).unwrap(), "\"cardFill\"");
+        assert_eq!(serde_json::to_string(&UnlockPurpose::SaveCard).unwrap(), "\"saveCard\"");
+        assert!(!serde_json::to_string(&save).unwrap().contains("number"));
     }
 
     #[test]

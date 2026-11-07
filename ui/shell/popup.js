@@ -377,6 +377,36 @@
     return [el('div', { class: 'suggest-list' }, rows)];
   }
 
+  // Saved cards under a card field (0.6.0): masked labels; the host fills what was chosen.
+  function renderCardFill(c) {
+    const rows = [];
+    if (c.locked) {
+      rows.push(el('button', { class: 'suggest locked', id: 'suggest-unlock', onclick: () => LB.post('suggestUnlock', { tabId: c.tabId, frameId: c.frameId }) }, [
+        el('span', { class: 'key-glyph', text: '🔒' }), el('span', { class: 'label', text: 'Unlock Krunk passwords' }),
+      ]));
+    } else {
+      c.cards.forEach((k) => rows.push(el('button', { class: 'suggest card', 'data-id': k.id, onclick: () => { LB.post('cardFillPick', { tabId: c.tabId, frameId: c.frameId, cardId: k.id }); close(); } }, [
+        el('span', { class: 'key-glyph', text: '💳' }),
+        el('span', { class: 'label' }, [el('span', { class: 'user', text: k.label }), k.name ? el('span', { class: 'host', text: k.name }) : null]),
+      ])));
+    }
+    rows.push(el('div', { class: 'suggest-foot', text: 'Krunk payment methods · ' + c.origin.replace(/^https?:\/\//, '') }));
+    return [el('div', { class: 'suggest-list' }, rows)];
+  }
+
+  // "Save this card?" after a checkout (0.6.0): the brand and last four digits only.
+  function renderSaveCard(c) {
+    const reply = (accept) => { LB.post('saveCardReply', { tabId: c.tabId, origin: c.origin, accept: accept }); close(); };
+    return [el('div', { class: 'panel' }, [
+      el('h2', { text: 'Save this card?' }),
+      el('p', {}, [el('strong', { text: c.brand + ' •••• ' + c.last4 }), ' used on ', el('span', { class: 'origin', text: c.origin.replace(/^https?:\/\//, '') }), '. The security code is never stored.']),
+      el('div', { class: 'row' }, [
+        el('button', { class: 'btn', id: 'card-not-now', onclick: () => reply(false), text: 'Not now' }),
+        el('button', { class: 'btn primary', id: 'default', onclick: () => reply(true), text: 'Save card' }),
+      ]),
+    ])];
+  }
+
   // "Password saved" after a generated password was used (0.6.0): Undo puts things back,
   // Edit opens the entry; it goes away by itself.
   function renderPasswordSaved(c) {
@@ -520,7 +550,7 @@
     }
     setTimeout(() => input.focus(), 0);
     return [el('div', { class: 'panel' }, [
-      el('h2', { text: c.purpose === 'save' ? 'Unlock to save this password' : c.purpose === 'import' ? 'Unlock to import passwords' : 'Unlock to fill this login' }),
+      el('h2', { text: c.purpose === 'save' ? 'Unlock to save this password' : c.purpose === 'saveCard' ? 'Unlock to save this card' : c.purpose === 'cardFill' ? 'Unlock to fill this card' : c.purpose === 'import' ? 'Unlock to import passwords' : 'Unlock to fill this login' }),
       el('p', { class: 'origin', text: c.origin }),
       form,
       err,
@@ -657,12 +687,12 @@
   LB.on('popup', function (m) {
     current = m.content;
     const c = m.content;
-    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
+    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, cardFill: renderCardFill, saveCard: renderSaveCard, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
     root.textContent = '';
     root.dataset.kind = c.kind;
     (render ? render(c) : []).forEach((n) => n && root.appendChild(n));
     const first = document.getElementById('master') || document.getElementById('bm-name') || document.getElementById('default') || root.querySelector('button:not([disabled])');
-    if (first && c.kind !== 'suggest' && c.kind !== 'addressMenu' && c.kind !== 'addressSuggest') first.focus();
+    if (first && c.kind !== 'suggest' && c.kind !== 'cardFill' && c.kind !== 'addressMenu' && c.kind !== 'addressSuggest') first.focus();
     if (FITS[c.kind]) requestAnimationFrame(fit);
   });
 

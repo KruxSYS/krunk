@@ -109,6 +109,7 @@
   function load() {
     LB.request('vaultList').then(function (list) { entries = list; render(); }, function () { status(); });
     LB.request('getNeverSave').then(renderNever, function () {});
+    loadCards();
   }
 
   function render() {
@@ -141,6 +142,88 @@
       ]));
     });
   }
+
+  // ---- payment methods (0.6.0) ----
+  let cards = [];
+  function loadCards() {
+    LB.request('cardList').then(function (list) { cards = list; renderCards(); }, function () {});
+  }
+  function renderCards() {
+    const box = $('cards');
+    box.textContent = '';
+    if (!cards.length) { box.appendChild(el('div', { class: 'empty', text: 'No payment methods yet. Krunk offers to save a card after a checkout, or click Add card.' })); return; }
+    cards.forEach(function (c) {
+      const secret = el('span', { class: 'secret', text: '•••• •••• •••• ' + c.last4 });
+      const addr = el('span', { class: 'note', hidden: true });
+      box.appendChild(el('div', { class: 'row pw-row card-row', 'data-id': c.id }, [
+        el('span', { class: 'brand', text: '💳' }),
+        el('span', { class: 'main' }, [
+          el('span', { class: 'name', text: (c.nickname ? c.nickname + ' · ' : '') + c.brand }),
+          el('span', { class: 'user', text: (c.name || '(no name)') + ' · expires ' + String(c.expMonth).padStart(2, '0') + '/' + c.expYear }),
+          addr,
+        ]),
+        secret,
+        el('span', { class: 'actions' }, [
+          el('button', { class: 'btn small', text: 'Show', onclick: () => revealCard(c, secret, addr) }),
+          el('button', { class: 'btn small', text: 'Copy number', onclick: () => copyCard(c) }),
+          Page.iconButton('edit', 'Edit', () => editCard(c)),
+          Page.iconButton('trash', 'Delete', () => removeCard(c)),
+        ]),
+      ]));
+    });
+  }
+  function copyCard(c) {
+    LB.request('cardCopy', { id: c.id }).then(function () { Page.toast('Card number copied – the clipboard is cleared in 30 s'); }, (err) => Page.toast(err.message));
+  }
+  function removeCard(c) {
+    Page.confirm('Delete the ' + c.brand + ' card ending in ' + c.last4 + '?', { ok: 'Delete', danger: true })
+      .then(function (yes) { if (yes) LB.request('cardDelete', { id: c.id }).then(loadCards, (err) => Page.toast(err.message)); });
+  }
+  let cardRevealTarget = null;
+  function revealCard(c, secretEl, addrEl) {
+    cardRevealTarget = { c: c, el: secretEl, addr: addrEl };
+    revealTarget = null;
+    $('reveal-error').textContent = '';
+    $('reveal-pw').value = '';
+    $('reveal-dialog').showModal();
+  }
+  let editingCard = null;
+  function editCard(c) {
+    editingCard = c || null;
+    $('card-title').textContent = c ? 'Edit card' : 'Add card';
+    $('k-number').value = '';
+    $('k-number').placeholder = c ? '•••• •••• •••• ' + c.last4 + ' (unchanged)' : '';
+    $('k-month').value = c ? c.expMonth : '';
+    $('k-year').value = c ? c.expYear : '';
+    $('k-name').value = c ? c.name : '';
+    $('k-nick').value = c ? c.nickname : '';
+    $('k-address').value = '';
+    $('k-address').placeholder = c && c.hasAddress ? '(unchanged)' : '';
+    $('k-error').textContent = '';
+    $('card-dialog').showModal();
+  }
+  $('card-add').addEventListener('click', () => editCard(null));
+  $('card-form').addEventListener('submit', function (ev) {
+    if (ev.submitter && ev.submitter.value === 'cancel') return;
+    ev.preventDefault();
+    const number = $('k-number').value.trim();
+    if (!editingCard && !number) { $('k-error').textContent = 'Enter the card number.'; return; }
+    const card = {
+      id: editingCard ? editingCard.id : null,
+      number: number || null,
+      expMonth: Number($('k-month').value) || 0,
+      expYear: Number($('k-year').value) || 0,
+      name: $('k-name').value.trim(),
+      nickname: $('k-nick').value.trim(),
+      address: editingCard && $('k-address').value === '' ? null : $('k-address').value,
+    };
+    LB.request('cardSave', { card: card }).then(function () {
+      $('k-number').value = '';
+      $('card-dialog').close();
+      Page.toast('Card saved');
+      loadCards();
+    }, function (err) { $('k-error').textContent = err.message; });
+  });
 
   function renderNever(list) {
     const box = $('never');
@@ -180,6 +263,18 @@
     ev.preventDefault();
     const pw = $('reveal-pw').value;
     $('reveal-pw').value = '';
+    if (cardRevealTarget) {
+      const k = cardRevealTarget;
+      LB.request('cardReveal', { id: k.c.id, password: pw }).then(function (r) {
+        $('reveal-dialog').close();
+        k.el.textContent = r.number.replace(/(\d{4})(?=\d)/g, '$1 ');
+        k.el.classList.add('shown');
+        if (r.address) { k.addr.textContent = 'Address: ' + r.address; k.addr.hidden = false; }
+        setTimeout(function () { k.el.textContent = '•••• •••• •••• ' + k.c.last4; k.el.classList.remove('shown'); k.addr.textContent = ''; k.addr.hidden = true; }, 20000);
+        cardRevealTarget = null;
+      }, function (err) { $('reveal-error').textContent = err.message; });
+      return;
+    }
     const t = revealTarget;
     LB.request('vaultReveal', { id: t.e.id, password: pw }).then(function (r) {
       $('reveal-dialog').close();

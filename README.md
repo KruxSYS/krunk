@@ -632,6 +632,24 @@ open, the login is saved without asking and a toast offers **Undo** (deletes the
 or puts the previous password back) and **Edit** (opens the entry on krunk://passwords);
 otherwise the usual "Save password?" prompt appears. Nothing is offered in private tabs.
 
+### Payment methods
+
+The vault also keeps payment cards (0.6.0): the number, expiry, name on the card, a nickname
+and a billing address — **never the security code**, which has no field anywhere and is not
+read from pages. Cards are encrypted like logins (vault format 2, AAD `lb-vault:card:<id>`;
+a vault without cards keeps format 1 byte for byte) and listed masked on krunk://passwords →
+Payment methods; **Show** needs the master password again and hides the number after 20 s;
+**Copy number** clears the clipboard after 30 s. On a checkout page (a field with
+`autocomplete=cc-*` or a card-number name) the dropdown under the card field lists the saved
+cards (or **Unlock Krunk passwords** first); choosing one fills the number, expiry
+(`cc-exp`, `cc-exp-month`, `cc-exp-year`, two- or four-digit years as the field suggests) and
+name of that form, and you type the code. When a form with a Luhn-valid card number is sent
+from a main frame and the vault exists, Krunk offers **Save this card?** with the brand and
+last four digits (Settings → Passwords → "Offer to save payment cards"; never in private
+tabs; nothing is offered for a number already stored). A `payments` sync collection is
+defined in `docs/sync/PROTOCOL.md` §9.5 under the passwords key; the upload waits for the
+sync client.
+
 ### Chromium switches
 Built by `core::settings::Settings::browser_switches` and added in
 `CefApp::OnBeforeCommandLineProcessing`. Always:

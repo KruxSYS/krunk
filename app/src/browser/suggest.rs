@@ -33,6 +33,8 @@ struct Open {
     frame_id: String,
     origin: String,
     rect: PopupRect,
+    /// The dropdown is for a payment-card field (0.6.0).
+    card: bool,
 }
 
 /// After a fill the page focuses the filled field (and the focus returns from the unlock
@@ -68,6 +70,9 @@ impl Browser {
     ) {
         if self.active_id() != Some(tab) || !rect.is_sane() {
             return;
+        }
+        if field == FieldKind::Card {
+            return self.card_field_focus(tab, frame_id, origin, main_frame, rect);
         }
         let now = now_ms();
         if now - self.suggest.shown_at.get() < MIN_INTERVAL_MS {
@@ -134,13 +139,19 @@ impl Browser {
                 FieldKind::Password => "password",
                 FieldKind::Username => "username",
                 FieldKind::NewPassword => "new-password",
+                FieldKind::Card => "card",
             },
             if locked { "vault locked" } else { "matches" },
             if main_frame { "" } else { ", in a frame" }
         );
         self.suggest.shown_at.set(now);
-        *self.suggest.open.borrow_mut() =
-            Some(Open { tab, frame_id: frame_id.to_string(), origin: origin.to_string(), rect: popup_rect });
+        *self.suggest.open.borrow_mut() = Some(Open {
+            tab,
+            frame_id: frame_id.to_string(),
+            origin: origin.to_string(),
+            rect: popup_rect,
+            card: false,
+        });
         let offered = generated.as_ref().map(|g| g.to_string());
         *self.suggest.generated.borrow_mut() = generated;
         self.show_popup(
@@ -156,6 +167,112 @@ impl Browser {
         );
     }
 
+    /// A payment-card field got the focus: the saved cards (masked), or "Unlock" while the
+    /// vault is locked and has cards. Never in private tabs.
+    fn card_field_focus(&self, tab: TabId, frame_id: &str, origin: &str, main_frame: bool, rect: FieldRect) {
+        if self.tab(tab).is_some_and(|t| t.private) || !self.vault_exists() {
+            return;
+        }
+        let now = now_ms();
+        if now - self.suggest.shown_at.get() < MIN_INTERVAL_MS {
+            return;
+        }
+        let just_filled = self.suggest.quiet.borrow();
+        if just_filled.as_ref().is_some_and(|(t, f, until)| *t == tab && f == frame_id && now < *until) {
+            return;
+        }
+        drop(just_filled);
+        let locked = !self.vault_unlocked();
+        let cards = if locked { Vec::new() } else { self.card_choices() };
+        if !locked && cards.is_empty() {
+            return;
+        }
+        let Some(anchor) = self.suggest_anchor(tab, main_frame, rect) else { return };
+        let rows = if locked { 1 } else { cards.len() };
+        let popup_rect = PopupRect {
+            x: anchor.x,
+            y: anchor.y,
+            width: WIDTH_CSS.max(anchor.width.min(420.0)),
+            height: rows as f64 * ROW_CSS + FOOT_CSS,
+        };
+        info!("tab {tab}: saved cards for a card field ({})", if locked { "vault locked" } else { "choices" });
+        self.suggest.shown_at.set(now);
+        *self.suggest.open.borrow_mut() = Some(Open {
+            tab,
+            frame_id: frame_id.to_string(),
+            origin: origin.to_string(),
+            rect: popup_rect,
+            card: true,
+        });
+        self.show_popup(
+            PopupContent::CardFill {
+                tab_id: tab,
+                frame_id: frame_id.to_string(),
+                origin: origin.to_string(),
+                locked,
+                cards,
+            },
+            Some(popup_rect),
+        );
+    }
+
+    fn card_choices(&self) -> Vec<lb_core::protocol::CardChoice> {
+        self.vaults
+            .vault
+            .borrow()
+            .as_ref()
+            .map(|v| {
+                v.card_summaries()
+                    .into_iter()
+                    .map(|c| lb_core::protocol::CardChoice {
+                        id: c.id,
+                        label: if c.nickname.is_empty() {
+                            format!("{} •••• {}", c.brand, c.last4)
+                        } else {
+                            format!("{} ({} •••• {})", c.nickname, c.brand, c.last4)
+                        },
+                        name: c.name,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// A card chosen in the dropdown: its number, expiry and name go to that frame's form.
+    pub(super) fn card_fill_pick(&self, tab: TabId, frame_id: &str, card_id: &str) {
+        let open = self.suggest.open.borrow_mut().take();
+        self.hide_popup();
+        let Some(o) = open.filter(|o| o.tab == tab && o.frame_id == frame_id && o.card) else {
+            info!("card fill dropped: no dropdown for that frame");
+            return;
+        };
+        if self.active_id() != Some(o.tab) {
+            return;
+        }
+        let Some(view) = self.tab_view(o.tab) else { return };
+        let Some(frame_url) = view.frame_url(&o.frame_id) else { return };
+        if lb_core::urlclean::origin_of(&frame_url).as_deref() != Some(o.origin.as_str()) {
+            info!("card fill dropped: the frame navigated");
+            return;
+        }
+        let message = {
+            let vault = self.vaults.vault.borrow();
+            let Some(c) = vault.as_ref().and_then(|v| v.card(card_id)) else { return };
+            let mut m = Zeroizing::new(String::with_capacity(c.number.len() + c.name.len() + 96));
+            m.push_str("{\"lbFill\":{\"card\":{\"number\":");
+            super::vault::push_json_string(&mut m, &c.number);
+            m.push_str(&format!(",\"expMonth\":{},\"expYear\":{},\"name\":", c.exp_month, c.exp_year));
+            super::vault::push_json_string(&mut m, &c.name);
+            m.push_str("}}}");
+            m
+        };
+        if view.post_json_to_frame(&o.frame_id, &message) {
+            info!("tab {tab}: card filled");
+            *self.suggest.quiet.borrow_mut() = Some((o.tab, o.frame_id.clone(), now_ms() + QUIET_AFTER_FILL_MS));
+            self.touch_vault();
+        }
+    }
+
     /// The page's view of a password field, checked against Krunk's heuristics: only a
     /// field where a new password is chosen gets the generator.
     pub(super) fn resolve_field_kind(
@@ -167,6 +284,7 @@ impl Browser {
     ) -> FieldKind {
         match field {
             FieldKind::Username => FieldKind::Username,
+            FieldKind::Card => FieldKind::Card,
             FieldKind::Password | FieldKind::NewPassword => {
                 if lb_core::passgen::wants_new_password(autocomplete, passwords, text) {
                     FieldKind::NewPassword
@@ -223,7 +341,7 @@ impl Browser {
                 let (x, y) = cursor::position();
                 x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height
             });
-        if !on_popup && self.popup_kind() == Some(PopupKind::Suggest) {
+        if !on_popup && matches!(self.popup_kind(), Some(PopupKind::Suggest | PopupKind::CardFill)) {
             self.hide_popup();
         }
     }
@@ -312,7 +430,8 @@ impl Browser {
         let open = self.suggest.open.borrow_mut().take();
         let Some(o) = open.filter(|o| o.tab == tab && o.frame_id == frame_id) else { return };
         *self.suggest.unlock_frame.borrow_mut() = Some(o.clone());
-        *self.vaults.unlock_for.borrow_mut() = Some((tab, o.origin.clone(), UnlockPurpose::Suggest));
+        let purpose = if o.card { UnlockPurpose::CardFill } else { UnlockPurpose::Suggest };
+        *self.vaults.unlock_for.borrow_mut() = Some((tab, o.origin.clone(), purpose));
         self.show_unlock_prompt(None);
     }
 
@@ -323,6 +442,27 @@ impl Browser {
             self.hide_popup();
             return;
         };
+        if o.card {
+            // The card dropdown again, now with the choices.
+            let cards = self.card_choices();
+            if cards.is_empty() {
+                self.hide_popup();
+                return;
+            }
+            let rect = PopupRect { height: cards.len() as f64 * ROW_CSS + FOOT_CSS, ..o.rect };
+            *self.suggest.open.borrow_mut() = Some(Open { rect, ..o.clone() });
+            self.show_popup(
+                PopupContent::CardFill {
+                    tab_id: o.tab,
+                    frame_id: o.frame_id.clone(),
+                    origin: o.origin.clone(),
+                    locked: false,
+                    cards,
+                },
+                Some(rect),
+            );
+            return;
+        }
         let url = format!("{origin}/");
         let matches: Vec<(String, String, MatchKind)> = self
             .vaults

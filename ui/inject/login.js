@@ -66,10 +66,34 @@
     });
   }
 
+  // A checkout: a form with a card number is sent (0.6.0). Expiry and name go along when the
+  // form has them; the security code never leaves the page.
+  var lastCard = { value: null, time: 0 };
+  function captureCard(scope) {
+    var fields = cardFields(scope && scope.querySelectorAll ? scope : null);
+    var num = null;
+    for (var i = 0; i < fields.length; i++) if (cardField(fields[i]) === 'cc-number') { num = fields[i]; break; }
+    if (!num || !num.value) return;
+    var digits = num.value.replace(/[\s-]/g, '');
+    if (!/^\d{12,19}$/.test(digits)) return;
+    var now = Date.now();
+    if (lastCard.value === digits && now - lastCard.time < 3000) return;
+    lastCard = { value: digits, time: now };
+    var m = { lb: 'cardSubmit', number: digits, expMonth: 0, expYear: 0, name: '' };
+    fields.forEach(function (f) {
+      var k = cardField(f), v = String(f.value || '').trim();
+      if (k === 'cc-name') m.name = v.slice(0, 128);
+      else if (k === 'cc-exp-month') m.expMonth = parseInt(v, 10) || 0;
+      else if (k === 'cc-exp-year') m.expYear = v.length === 2 ? 2000 + parseInt(v, 10) : parseInt(v, 10) || 0;
+      else if (k === 'cc-exp') { var p = v.match(/^(\d{1,2})\s*[\/\-\s]\s*(\d{2,4})$/); if (p) { m.expMonth = parseInt(p[1], 10); m.expYear = p[2].length === 2 ? 2000 + parseInt(p[2], 10) : parseInt(p[2], 10); } }
+    });
+    host.postMessage(m);
+  }
+
   if (isTop) {
     // Form submissions, Enter in a password field, and clicks on submit-like
     // buttons (for script-driven login forms without a real submit).
-    document.addEventListener('submit', function (e) { capture(e.target); }, true);
+    document.addEventListener('submit', function (e) { capture(e.target); captureCard(e.target); }, true);
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && e.target && e.target.type === 'password') capture(e.target.form);
     }, true);
@@ -78,12 +102,27 @@
       if (!b) return;
       var form = b.form || b.closest('form');
       if (form ? passwordFields(form).length : passwordFields().length) capture(form);
+      if (form ? cardFields(form).length : cardFields().length) captureCard(form);
     }, true);
   }
 
   // ---- suggestions: which login field has the focus ----
+  // Payment-card fields (0.6.0): the autocomplete tokens, else common names.
+  var CARD_RE = /(card.?num|cardnumber|ccnum|cc-number|cc_number|credit.?card|\bpan\b)/i;
+  function cardField(el) {
+    if (!el || el.tagName !== 'INPUT') return null;
+    var ac = (el.getAttribute('autocomplete') || '').toLowerCase();
+    if (ac.indexOf('cc-') === 0) return ac;
+    var hint = (el.name || '') + ' ' + (el.id || '') + ' ' + (el.getAttribute('placeholder') || '');
+    return CARD_RE.test(hint) ? 'cc-number' : null;
+  }
+  function cardFields(scope) {
+    return Array.prototype.filter.call((scope || document).querySelectorAll('input'), function (el) { return visible(el) && cardField(el); });
+  }
   function fieldKind(el) {
     if (!el || el.tagName !== 'INPUT' || !visible(el)) return null;
+    var cc = cardField(el);
+    if (cc) return cc === 'cc-csc' ? null : 'card';
     var type = (el.getAttribute('type') || 'text').toLowerCase();
     if (type === 'password') {
       // A new password is being chosen (0.6.0): the browser offers a generated one. The
@@ -145,6 +184,25 @@
   host.addEventListener('message', function (e) {
     var d = e.data;
     if (!d || !d.lbFill) return;
+    if (d.lbFill.card) {
+      // A saved card: every card field of the form that has the focus (or the first form
+      // with one), by its autocomplete token or name; the security code is never filled.
+      var c = d.lbFill.card;
+      var scope = (focused && focused.form) || (cardFields()[0] && cardFields()[0].form) || document;
+      var mm = String(c.expMonth).padStart(2, '0'), yy = String(c.expYear);
+      cardFields(scope).forEach(function (f) {
+        var k = cardField(f);
+        var hint = ((f.name || '') + ' ' + (f.id || '')).toLowerCase();
+        if (k === 'cc-number') setValue(f, c.number);
+        else if (k === 'cc-name' || k === 'cc-given-name' || k === 'cc-family-name') setValue(f, c.name);
+        else if (k === 'cc-exp-month') setValue(f, mm);
+        else if (k === 'cc-exp-year') setValue(f, /2-digit|yy$/.test(hint) || f.maxLength === 2 ? yy.slice(2) : yy);
+        else if (k === 'cc-exp') setValue(f, mm + '/' + yy.slice(2));
+      });
+      focused = null;
+      quietUntil = Date.now() + 1000;
+      return;
+    }
     var pw = null, user = null;
     var target = focused || document.activeElement;
     var kind = fieldKind(target);

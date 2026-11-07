@@ -26,6 +26,9 @@ use std::path::{Path, PathBuf};
 use zeroize::{Zeroize, Zeroizing};
 
 const FORMAT: u32 = 1;
+/// Format 2 (Krunk 0.6.0): the same file plus sealed payment cards. Written only once a
+/// card exists, so vaults without cards stay byte-identical to 0.5.2's.
+const FORMAT_CARDS: u32 = 2;
 const KEY_LEN: usize = 32;
 const NONCE_LEN: usize = 24;
 const SALT_LEN: usize = 16;
@@ -35,6 +38,7 @@ const CHECK_PLAINTEXT: &[u8] = b"LightBrowser vault key check v1";
 const AAD_CHECK: &[u8] = b"lb-vault:check";
 const AAD_VAULT_KEY: &[u8] = b"lb-vault:vault-key";
 const AAD_MANIFEST: &[u8] = b"lb-vault:manifest";
+const AAD_CARD_PREFIX: &[u8] = b"lb-vault:card:";
 
 /// Minimum master-password length accepted by `create` and `change_password`.
 pub const MIN_MASTER_LEN: usize = 8;
@@ -168,6 +172,9 @@ struct VaultFile {
     vault_key: String,
     manifest: Sealed,
     entries: Vec<SealedEntry>,
+    /// Payment cards (format 2); absent in files without any.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    cards: Vec<SealedEntry>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -175,6 +182,147 @@ struct VaultFile {
 struct Manifest {
     generation: u64,
     ids: Vec<String>,
+    /// The card ids, in file order (format 2); absent without cards.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    card_ids: Vec<String>,
+}
+
+/// A decrypted payment card (Krunk 0.6.0). The security code is never stored.
+#[derive(Clone)]
+pub struct Card {
+    pub id: String,
+    /// Digits only (12–19).
+    pub number: Zeroizing<String>,
+    pub exp_month: u8,
+    pub exp_year: u16,
+    pub name: String,
+    pub nickname: String,
+    /// Billing address, free text (optional).
+    pub address: Zeroizing<String>,
+    pub created: i64,
+    pub updated: i64,
+}
+
+impl std::fmt::Debug for Card {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Card")
+            .field("id", &self.id)
+            .field("number", &"<redacted>")
+            .field("nickname", &self.nickname)
+            .finish()
+    }
+}
+
+#[derive(Serialize)]
+struct CardOut<'a> {
+    number: &'a str,
+    exp_month: u8,
+    exp_year: u16,
+    name: &'a str,
+    nickname: &'a str,
+    address: &'a str,
+    created: i64,
+    updated: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CardIn {
+    number: String,
+    exp_month: u8,
+    exp_year: u16,
+    name: String,
+    nickname: String,
+    address: String,
+    created: i64,
+    updated: i64,
+}
+
+/// A card as listed (masked: the brand and the last four digits only).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CardSummary {
+    pub id: String,
+    pub nickname: String,
+    pub brand: String,
+    pub last4: String,
+    pub exp_month: u8,
+    pub exp_year: u16,
+    pub name: String,
+    pub has_address: bool,
+}
+
+/// The card brand from the number's leading digits (display only).
+pub fn card_brand(number: &str) -> &'static str {
+    let starts = |p: &str| number.starts_with(p);
+    let in_range = |lo: u32, hi: u32, n: usize| {
+        number.get(..n).and_then(|s| s.parse::<u32>().ok()).is_some_and(|v| (lo..=hi).contains(&v))
+    };
+    if number.is_empty() {
+        ""
+    } else if starts("4") {
+        "Visa"
+    } else if in_range(51, 55, 2) || in_range(2221, 2720, 4) {
+        "Mastercard"
+    } else if starts("34") || starts("37") {
+        "American Express"
+    } else if starts("6011") || starts("65") || in_range(644, 649, 3) {
+        "Discover"
+    } else if starts("35") {
+        "JCB"
+    } else if starts("36") || starts("38") || starts("39") || in_range(300, 305, 3) {
+        "Diners Club"
+    } else if starts("62") {
+        "UnionPay"
+    } else {
+        "Card"
+    }
+}
+
+/// Digits only, 12–19 of them, passing the Luhn check (spaces and dashes may separate groups).
+pub fn normalize_card_number(text: &str) -> Option<String> {
+    if text.chars().any(|c| !(c.is_ascii_digit() || c == ' ' || c == '-')) {
+        return None;
+    }
+    let digits: String = text.chars().filter(|c| c.is_ascii_digit()).collect();
+    ((12..=19).contains(&digits.len()) && luhn_ok(&digits)).then_some(digits)
+}
+
+pub fn luhn_ok(digits: &str) -> bool {
+    let mut sum = 0u32;
+    for (i, c) in digits.bytes().rev().enumerate() {
+        if !c.is_ascii_digit() {
+            return false;
+        }
+        let mut d = u32::from(c - b'0');
+        if i % 2 == 1 {
+            d *= 2;
+            if d > 9 {
+                d -= 9;
+            }
+        }
+        sum += d;
+    }
+    !digits.is_empty() && sum.is_multiple_of(10)
+}
+
+fn card_aad(id: &str) -> Vec<u8> {
+    let mut v = AAD_CARD_PREFIX.to_vec();
+    v.extend_from_slice(id.as_bytes());
+    v
+}
+
+fn validate_card(number: &str, exp_month: u8, exp_year: u16, name: &str, nickname: &str, address: &str) -> VResult<()> {
+    if normalize_card_number(number).as_deref() != Some(number) {
+        return Err(VaultError::InvalidEntry("card number"));
+    }
+    if !(1..=12).contains(&exp_month) || !(2000..=2100).contains(&exp_year) {
+        return Err(VaultError::InvalidEntry("expiry"));
+    }
+    if name.chars().count() > 128 || nickname.chars().count() > 64 || address.len() > 2048 {
+        return Err(VaultError::InvalidEntry("card text too long"));
+    }
+    Ok(())
 }
 
 /// A decrypted login. Secret fields are wiped on drop.
@@ -481,6 +629,7 @@ pub struct Vault {
     vk: Zeroizing<[u8; KEY_LEN]>,
     generation: u64,
     pub(crate) entries: Vec<Entry>,
+    cards: Vec<Card>,
 }
 
 impl std::fmt::Debug for Vault {
@@ -507,6 +656,7 @@ impl Vault {
             vk: Zeroizing::new(random::<KEY_LEN>()?),
             generation: 0,
             entries: Vec::new(),
+            cards: Vec::new(),
         };
         vault.save(wrapper)?;
         Ok(vault)
@@ -520,7 +670,7 @@ impl Vault {
 
     fn open_str(path: &Path, text: &str, password: &str, wrapper: &dyn KeyWrapper) -> VResult<Vault> {
         let file: VaultFile = serde_json::from_str(text).map_err(json_err)?;
-        if file.format != FORMAT || file.kdf.alg != "argon2id" {
+        if !(file.format == FORMAT || file.format == FORMAT_CARDS) || file.kdf.alg != "argon2id" {
             return Err(VaultError::Corrupt("unsupported format".into()));
         }
         if file.wrap != wrapper.name() {
@@ -562,6 +712,27 @@ impl Vault {
         if manifest.ids.iter().map(String::as_str).ne(ids.iter().copied()) {
             return Err(VaultError::Corrupt("entries were added, removed or reordered".into()));
         }
+        let card_ids: Vec<&str> = file.cards.iter().map(|c| c.id.as_str()).collect();
+        if manifest.card_ids.iter().map(String::as_str).ne(card_ids.iter().copied()) {
+            return Err(VaultError::Corrupt("cards were added, removed or reordered".into()));
+        }
+        let mut cards = Vec::with_capacity(file.cards.len());
+        for sc in &file.cards {
+            let pt = open_sealed(&vk, &Sealed { nonce: sc.nonce.clone(), ct: sc.ct.clone() }, &card_aad(&sc.id))
+                .ok_or_else(|| VaultError::Corrupt("card failed authentication".into()))?;
+            let c: CardIn = serde_json::from_slice(&pt).map_err(json_err)?;
+            cards.push(Card {
+                id: sc.id.clone(),
+                number: Zeroizing::new(c.number),
+                exp_month: c.exp_month,
+                exp_year: c.exp_year,
+                name: c.name,
+                nickname: c.nickname,
+                address: Zeroizing::new(c.address),
+                created: c.created,
+                updated: c.updated,
+            });
+        }
 
         let mut entries = Vec::with_capacity(file.entries.len());
         for se in &file.entries {
@@ -578,7 +749,7 @@ impl Vault {
                 updated: e.updated,
             });
         }
-        Ok(Vault { path: path.to_path_buf(), params, salt, kek, vk, generation: manifest.generation, entries })
+        Ok(Vault { path: path.to_path_buf(), params, salt, kek, vk, generation: manifest.generation, entries, cards })
     }
 
     /// Re-checks the master password (for revealing a password).
@@ -720,6 +891,100 @@ impl Vault {
         Ok(id)
     }
 
+    // ------------------------------------------------------------ cards (0.6.0)
+
+    pub fn cards(&self) -> &[Card] {
+        &self.cards
+    }
+
+    pub fn card(&self, id: &str) -> Option<&Card> {
+        self.cards.iter().find(|c| c.id == id)
+    }
+
+    pub fn card_summaries(&self) -> Vec<CardSummary> {
+        self.cards
+            .iter()
+            .map(|c| CardSummary {
+                id: c.id.clone(),
+                nickname: c.nickname.clone(),
+                brand: card_brand(&c.number).to_string(),
+                last4: c.number.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect(),
+                exp_month: c.exp_month,
+                exp_year: c.exp_year,
+                name: c.name.clone(),
+                has_address: !c.address.is_empty(),
+            })
+            .collect()
+    }
+
+    /// A card with this number is already stored.
+    pub fn has_card_number(&self, number: &str) -> bool {
+        self.cards.iter().any(|c| *c.number == *number)
+    }
+
+    /// Adds (`id` = `None`) or edits a card; `number`/`address` = `None` keep the stored ones.
+    #[allow(clippy::too_many_arguments)]
+    pub fn save_card(
+        &mut self,
+        id: Option<&str>,
+        number: Option<Zeroizing<String>>,
+        exp_month: u8,
+        exp_year: u16,
+        name: &str,
+        nickname: &str,
+        address: Option<Zeroizing<String>>,
+        now: i64,
+        wrapper: &dyn KeyWrapper,
+    ) -> VResult<String> {
+        let number = number.map(|n| Zeroizing::new(n.chars().filter(|c| c.is_ascii_digit()).collect::<String>()));
+        let id = match id {
+            Some(id) => {
+                let c = self.cards.iter_mut().find(|c| c.id == id).ok_or(VaultError::NotFound)?;
+                let number_ref = number.as_ref().unwrap_or(&c.number);
+                let address_ref = address.as_ref().unwrap_or(&c.address);
+                validate_card(number_ref, exp_month, exp_year, name, nickname, address_ref)?;
+                if let Some(n) = number {
+                    c.number = n;
+                }
+                if let Some(a) = address {
+                    c.address = a;
+                }
+                c.exp_month = exp_month;
+                c.exp_year = exp_year;
+                c.name = name.to_string();
+                c.nickname = nickname.to_string();
+                c.updated = now;
+                c.id.clone()
+            }
+            None => {
+                let number = number.ok_or(VaultError::InvalidEntry("card number"))?;
+                let address = address.unwrap_or_default();
+                validate_card(&number, exp_month, exp_year, name, nickname, &address)?;
+                let id = random_id()?;
+                self.cards.push(Card {
+                    id: id.clone(),
+                    number,
+                    exp_month,
+                    exp_year,
+                    name: name.to_string(),
+                    nickname: nickname.to_string(),
+                    address,
+                    created: now,
+                    updated: now,
+                });
+                id
+            }
+        };
+        self.save(wrapper)?;
+        Ok(id)
+    }
+
+    pub fn delete_card(&mut self, id: &str, wrapper: &dyn KeyWrapper) -> VResult<()> {
+        let i = self.cards.iter().position(|c| c.id == id).ok_or(VaultError::NotFound)?;
+        self.cards.remove(i);
+        self.save(wrapper)
+    }
+
     pub fn delete(&mut self, id: &str, wrapper: &dyn KeyWrapper) -> VResult<()> {
         let i = self.entries.iter().position(|e| e.id == id).ok_or(VaultError::NotFound)?;
         self.entries.remove(i);
@@ -779,20 +1044,45 @@ impl Vault {
             let s = seal(&self.vk, &pt, &entry_aad(&e.id))?;
             entries.push(SealedEntry { id: e.id.clone(), nonce: s.nonce, ct: s.ct });
         }
-        let manifest = Manifest { generation, ids: self.entries.iter().map(|e| e.id.clone()).collect() };
+        let mut cards = Vec::with_capacity(self.cards.len());
+        for c in &self.cards {
+            let mut pt = Zeroizing::new(Vec::new());
+            serde_json::to_writer(
+                &mut *pt,
+                &CardOut {
+                    number: &c.number,
+                    exp_month: c.exp_month,
+                    exp_year: c.exp_year,
+                    name: &c.name,
+                    nickname: &c.nickname,
+                    address: &c.address,
+                    created: c.created,
+                    updated: c.updated,
+                },
+            )
+            .map_err(|_| VaultError::Corrupt("encoding failed".into()))?;
+            let s = seal(&self.vk, &pt, &card_aad(&c.id))?;
+            cards.push(SealedEntry { id: c.id.clone(), nonce: s.nonce, ct: s.ct });
+        }
+        let manifest = Manifest {
+            generation,
+            ids: self.entries.iter().map(|e| e.id.clone()).collect(),
+            card_ids: self.cards.iter().map(|c| c.id.clone()).collect(),
+        };
         let manifest = seal(
             &self.vk,
             &serde_json::to_vec(&manifest).map_err(|_| VaultError::Corrupt("encoding failed".into()))?,
             AAD_MANIFEST,
         )?;
         let file = VaultFile {
-            format: FORMAT,
+            format: if cards.is_empty() { FORMAT } else { FORMAT_CARDS },
             kdf: KdfRecord { alg: "argon2id".into(), params: self.params, salt: b64(&self.salt) },
             wrap: wrapper.name().into(),
             check,
             vault_key,
             manifest,
             entries,
+            cards,
         };
         let json = serde_json::to_vec_pretty(&file).map_err(|_| VaultError::Corrupt("encoding failed".into()))?;
         write_atomic(&self.path, &json).map_err(|e| VaultError::Io(e.to_string()))?;
@@ -872,6 +1162,71 @@ mod tests {
         v.save_login("https://bank.example/login", "alice", z(SECRET), 1, &NoWrap).unwrap();
         v.save_login("https://mail.example:8443/", "bob", z("p2"), 2, &NoWrap).unwrap();
         v
+    }
+
+    #[test]
+    fn cards_round_trip_and_the_format_stays_put_without_them() {
+        let dir = TestDir::new("cards");
+        let mut v = fast_vault(&dir);
+        let before = std::fs::read_to_string(dir.file()).unwrap();
+        assert!(
+            before.contains("\"format\": 1") && !before.contains("cards") && !before.contains("cardIds"),
+            "no card: the 0.5.2 layout"
+        );
+        assert_eq!(card_brand("4111111111111111"), "Visa");
+        assert_eq!(card_brand("5500000000000004"), "Mastercard");
+        assert_eq!(card_brand("378282246310005"), "American Express");
+        assert_eq!(card_brand("6011111111111117"), "Discover");
+        assert_eq!(normalize_card_number("4111 1111 1111 1111").as_deref(), Some("4111111111111111"));
+        assert!(normalize_card_number("4111 1111 1111 1112").is_none(), "Luhn");
+        assert!(normalize_card_number("4111x111").is_none() && normalize_card_number("41111111111").is_none());
+        let id = v
+            .save_card(
+                None,
+                Some(z("4111 1111 1111 1111")),
+                12,
+                2030,
+                "Alice Example",
+                "Visa work",
+                Some(z("1 Main St")),
+                5,
+                &NoWrap,
+            )
+            .unwrap();
+        assert!(v.save_card(None, Some(z("1234")), 12, 2030, "", "", None, 5, &NoWrap).is_err(), "bad number");
+        assert!(
+            v.save_card(None, Some(z("4111111111111111")), 13, 2030, "", "", None, 5, &NoWrap).is_err(),
+            "bad month"
+        );
+        let after = std::fs::read_to_string(dir.file()).unwrap();
+        assert!(after.contains("\"format\": 2") && after.contains("\"cards\""), "format 2 once a card exists");
+        assert!(!after.contains("4111") && !after.contains("Alice"), "nothing in clear");
+        let s = &v.card_summaries()[0];
+        assert_eq!(
+            (s.brand.as_str(), s.last4.as_str(), s.exp_month, s.exp_year, s.nickname.as_str(), s.has_address),
+            ("Visa", "1111", 12, 2030, "Visa work", true)
+        );
+        assert!(v.has_card_number("4111111111111111") && !v.has_card_number("5500000000000004"));
+        drop(v);
+        let mut v2 = Vault::open(&dir.file(), PW, &NoWrap).unwrap();
+        assert_eq!(v2.cards().len(), 1);
+        assert_eq!(*v2.card(&id).unwrap().number, "4111111111111111");
+        assert_eq!(*v2.card(&id).unwrap().address, "1 Main St");
+        // Edit keeps the number and address when they are not given.
+        v2.save_card(Some(&id), None, 1, 2031, "Alice E.", "Visa", None, 6, &NoWrap).unwrap();
+        assert_eq!((*v2.card(&id).unwrap().number).as_str(), "4111111111111111");
+        assert_eq!(v2.card(&id).unwrap().exp_year, 2031);
+        assert_eq!(v2.entries().len(), 2, "logins untouched");
+        v2.delete_card(&id, &NoWrap).unwrap();
+        assert!(v2.cards().is_empty());
+        let gone = std::fs::read_to_string(dir.file()).unwrap();
+        assert!(gone.contains("\"format\": 1"), "back to format 1 without cards");
+        // A card list tampered with (a card removed from the file) is caught by the manifest.
+        v2.save_card(None, Some(z("5500000000000004")), 3, 2029, "", "", None, 7, &NoWrap).unwrap();
+        let text = std::fs::read_to_string(dir.file()).unwrap();
+        let mut json: serde_json::Value = serde_json::from_str(&text).unwrap();
+        json["cards"] = serde_json::json!([]);
+        assert!(matches!(Vault::open_str(&dir.file(), &json.to_string(), PW, &NoWrap), Err(VaultError::Corrupt(_))));
     }
 
     #[test]

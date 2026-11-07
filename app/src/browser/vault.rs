@@ -11,7 +11,9 @@ use crate::log::{info, warning};
 use lb_core::layout;
 use lb_core::pages::Page;
 use lb_core::passgen;
-use lb_core::protocol::{CopyField, EntryInput, Event, FillChoice, PopupContent, PopupKind, Request, UnlockPurpose};
+use lb_core::protocol::{
+    CardInput, CopyField, EntryInput, Event, FillChoice, PopupContent, PopupKind, Request, UnlockPurpose,
+};
 use lb_core::secret::Secret;
 use lb_core::storage::now_ms;
 use lb_core::tabs::TabId;
@@ -19,6 +21,17 @@ use lb_core::urlclean;
 use lb_core::vault::{self as core_vault, fill_allowed, prompt_still_valid, KdfParams, Vault, VaultError};
 use std::cell::{Cell, RefCell};
 use zeroize::Zeroizing;
+
+/// A card seen at checkout (0.6.0): the number stays in a zeroizing buffer until saved.
+pub(super) struct PendingCard {
+    tab_id: TabId,
+    origin: String,
+    number: Zeroizing<String>,
+    exp_month: u8,
+    exp_year: u16,
+    name: String,
+    created: i64,
+}
 
 /// Timer: auto-lock check.
 pub(super) const VAULT_TIMER: usize = 4;
@@ -40,6 +53,9 @@ pub(super) struct PendingSave {
     created: i64,
 }
 
+/// A generated password the user chose: tab, origin, the password, when (ms).
+type GeneratedPassword = (TabId, String, Zeroizing<String>, i64);
+
 /// Vault state owned by the browser.
 #[derive(Default)]
 pub(super) struct VaultHost {
@@ -49,11 +65,13 @@ pub(super) struct VaultHost {
     busy: Cell<bool>,
     last_activity: Cell<i64>,
     pending_save: RefCell<Option<PendingSave>>,
+    /// A card offered to save at checkout (0.6.0), waiting for the answer or the unlock.
+    pending_card: RefCell<Option<PendingCard>>,
     /// What to do after the unlock prompt succeeds.
     pub(super) unlock_for: RefCell<Option<(TabId, String, UnlockPurpose)>>,
     /// A generated password the user chose (tab, origin, password, when): its submit is
     /// saved without asking (0.6.0).
-    generated: RefCell<Option<(TabId, String, Zeroizing<String>, i64)>>,
+    generated: RefCell<Option<GeneratedPassword>>,
     /// The last automatic save, for the toast's Undo: the entry and the password it replaced
     /// (`None`: the entry was new and is deleted).
     auto_saved: RefCell<Option<(String, Option<Zeroizing<String>>)>>,
@@ -263,6 +281,40 @@ impl Browser {
                         self.reply_vault(tab, req_id, r);
                     }
                     Request::VaultChangePassword { old, new } => self.vault_change_password(tab, req_id, old, new),
+                    Request::CardList => {
+                        let list = self.vaults.vault.borrow().as_ref().map(Vault::card_summaries).unwrap_or_default();
+                        self.reply(tab, Event::ok(req_id, list));
+                    }
+                    Request::CardSave { card } => {
+                        let CardInput { id, number, exp_month, exp_year, name, nickname, address } = card;
+                        let r = match self.vaults.vault.borrow_mut().as_mut() {
+                            Some(v) => v.save_card(
+                                id.as_deref(),
+                                number.map(Secret::into_zeroizing),
+                                exp_month,
+                                exp_year,
+                                &name,
+                                &nickname,
+                                address.map(Zeroizing::new),
+                                now_ms(),
+                                &Dpapi,
+                            ),
+                            None => Err(VaultError::NotFound),
+                        };
+                        if r.is_ok() {
+                            self.touch_vault();
+                        }
+                        self.reply_vault(tab, req_id, r);
+                    }
+                    Request::CardDelete { id } => {
+                        let r = match self.vaults.vault.borrow_mut().as_mut() {
+                            Some(v) => v.delete_card(&id, &Dpapi),
+                            None => Err(VaultError::NotFound),
+                        };
+                        self.reply_vault(tab, req_id, r);
+                    }
+                    Request::CardReveal { id, password } => self.card_reveal(tab, req_id, id, password),
+                    Request::CardCopy { id } => self.card_copy(tab, req_id, &id),
                     _ => {}
                 }
             }
@@ -429,6 +481,130 @@ impl Browser {
             }
             None => self.reply(tab, Event::err(req_id, "Could not access the clipboard")),
         }
+    }
+
+    /// The full card number and the address, after the master password again (like a
+    /// password reveal); the reply is built in a zeroizing buffer.
+    fn card_reveal(&self, tab: Option<TabId>, req_id: Option<u32>, id: String, password: Secret) {
+        let ok = self.vaults.vault.borrow().as_ref().is_some_and(|v| v.verify_password(&password));
+        if !ok {
+            self.reply(tab, Event::err(req_id, "Wrong master password."));
+            return;
+        }
+        let card = self
+            .vaults
+            .vault
+            .borrow()
+            .as_ref()
+            .and_then(|v| v.card(&id).map(|c| (c.number.clone(), c.address.clone())));
+        let Some((number, address)) = card else {
+            self.reply(tab, Event::err(req_id, "Card not found"));
+            return;
+        };
+        let Some(c) = tab.and_then(|t| self.tab_view(t)) else { return };
+        let mut out = Zeroizing::new(String::with_capacity(number.len() + address.len() + 96));
+        out.push_str("{\"event\":\"reply\",\"reqId\":");
+        match req_id {
+            Some(id) => out.push_str(&id.to_string()),
+            None => out.push_str("null"),
+        }
+        out.push_str(",\"ok\":true,\"data\":{\"number\":");
+        push_json_string(&mut out, &number);
+        out.push_str(",\"address\":");
+        push_json_string(&mut out, &address);
+        out.push_str("}}");
+        c.post_json(&out);
+        self.touch_vault();
+    }
+
+    fn card_copy(&self, tab: Option<TabId>, req_id: Option<u32>, id: &str) {
+        let Some(w) = self.app() else { return };
+        let number = self.vaults.vault.borrow().as_ref().and_then(|v| v.card(id).map(|c| c.number.clone()));
+        let Some(number) = number else {
+            self.reply(tab, Event::err(req_id, "Card not found"));
+            return;
+        };
+        match secure::copy_private(w.hwnd(), &number) {
+            Some(seq) => {
+                self.vaults.clipboard_seq.set(Some(seq));
+                w.set_timer(CLIPBOARD_TIMER, CLIPBOARD_CLEAR_MS);
+                self.reply(tab, Event::ok(req_id, ()));
+            }
+            None => self.reply(tab, Event::err(req_id, "Could not access the clipboard")),
+        }
+    }
+
+    // ------------------------------------------------------------ cards at checkout (0.6.0)
+
+    /// A checkout form with a card number was sent on `origin`: offer to save the card
+    /// (never in private tabs, not when it is stored already, only with a vault).
+    pub(super) fn card_submitted(
+        &self,
+        tab_id: TabId,
+        origin: &str,
+        number: &str,
+        exp_month: u8,
+        exp_year: u16,
+        name: String,
+    ) {
+        if !self.settings.borrow().offer_save_cards
+            || self.active_id() != Some(tab_id)
+            || self.tab(tab_id).is_some_and(|t| t.private)
+            || !self.vault_exists()
+        {
+            return;
+        }
+        let Some(number) = core_vault::normalize_card_number(number) else { return };
+        if self.vaults.vault.borrow().as_ref().is_some_and(|v| v.has_card_number(&number)) {
+            return;
+        }
+        let brand = core_vault::card_brand(&number).to_string();
+        let last4: String = number.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
+        *self.vaults.pending_card.borrow_mut() = Some(PendingCard {
+            tab_id,
+            origin: origin.to_string(),
+            number: Zeroizing::new(number),
+            exp_month,
+            exp_year,
+            name,
+            created: now_ms(),
+        });
+        info!("tab {tab_id}: card seen at checkout ({brand} •••• {last4}); offering to save");
+        self.show_prompt(PopupContent::SaveCard { tab_id, origin: origin.to_string(), brand, last4 }, 0);
+    }
+
+    pub(super) fn save_card_reply(&self, tab_id: TabId, origin: &str, accept: bool) {
+        let pending = self.vaults.pending_card.borrow_mut().take();
+        self.hide_popup();
+        let Some(p) = pending else { return };
+        if !accept || p.tab_id != tab_id || p.origin != origin || now_ms() - p.created > PENDING_SAVE_MS {
+            return;
+        }
+        if !self.vault_unlocked() {
+            *self.vaults.pending_card.borrow_mut() = Some(p);
+            *self.vaults.unlock_for.borrow_mut() = Some((tab_id, origin.to_string(), UnlockPurpose::SaveCard));
+            self.show_unlock_prompt(None);
+            return;
+        }
+        self.store_pending_card(p);
+    }
+
+    fn store_pending_card(&self, p: PendingCard) {
+        let (month, year) = if (1..=12).contains(&p.exp_month) && (2000..=2100).contains(&p.exp_year) {
+            (p.exp_month, p.exp_year)
+        } else {
+            // The page gave no usable expiry: the user completes it on the passwords page.
+            (1, 2000 + (now_ms() / 31_557_600_000) as u16 + 1)
+        };
+        let r = match self.vaults.vault.borrow_mut().as_mut() {
+            Some(v) => v.save_card(None, Some(p.number), month, year, &p.name, "", None, now_ms(), &Dpapi).map(|_| ()),
+            None => return,
+        };
+        match r {
+            Ok(()) => info!("card saved"),
+            Err(e) => warning!("saving the card failed: {e}"),
+        }
+        self.touch_vault();
     }
 
     fn vault_save_entry(&self, tab: Option<TabId>, req_id: Option<u32>, entry: EntryInput) {
@@ -728,13 +904,19 @@ impl Browser {
             PopupContent::SavePassword { .. } => {
                 self.vaults.pending_save.borrow_mut().take();
             }
-            PopupContent::Suggest { .. } => self.suggest_dismissed(),
+            PopupContent::Suggest { .. } | PopupContent::CardFill { .. } => self.suggest_dismissed(),
+            PopupContent::SaveCard { .. } => {
+                self.vaults.pending_card.borrow_mut().take();
+            }
             PopupContent::Permission { prompt_id, .. } => self.permission_dismissed(*prompt_id),
             PopupContent::Unlock { purpose, .. } => {
                 self.vaults.unlock_for.borrow_mut().take();
                 match purpose {
                     UnlockPurpose::Save => {
                         self.vaults.pending_save.borrow_mut().take();
+                    }
+                    UnlockPurpose::SaveCard => {
+                        self.vaults.pending_card.borrow_mut().take();
                     }
                     UnlockPurpose::Import => self.import_unlock_dismissed(),
                     _ => {}
@@ -782,7 +964,12 @@ impl Browser {
                     self.hide_popup();
                 }
             }
-            UnlockPurpose::Suggest => self.after_unlock_suggest(tab_id, &origin),
+            UnlockPurpose::SaveCard => {
+                if let Some(p) = self.vaults.pending_card.borrow_mut().take() {
+                    self.store_pending_card(p);
+                }
+            }
+            UnlockPurpose::Suggest | UnlockPurpose::CardFill => self.after_unlock_suggest(tab_id, &origin),
             UnlockPurpose::Import => self.after_unlock_import(),
         }
     }

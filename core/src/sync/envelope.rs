@@ -41,6 +41,9 @@ pub const COLLECTIONS: &[(&str, KeyKind)] = &[
     ("device_meta", KeyKind::Ak),
     ("passwords", KeyKind::Pak),
     ("never_save", KeyKind::Pak),
+    // Payment cards (0.6.0): in the passwords domain, under PAK; the upload waits for the
+    // sync client (PLAN S6).
+    ("payments", KeyKind::Pak),
 ];
 
 pub fn key_kind(collection: &str) -> Option<KeyKind> {
@@ -284,6 +287,43 @@ mod tests {
         // Another collection's key.
         let other = collection_keys(&[9u8; 32], &ACC, "bookmarks", 2);
         assert_eq!(open_record(&other.ck, &ACC, &env), Err(SyncError::Auth));
+    }
+
+    /// A payment card record (0.6.0): the passwords key domain, its own collection keys, no
+    /// security code, and a tombstone the size of a card.
+    #[test]
+    fn payments_records() {
+        assert_eq!(key_kind("payments"), Some(KeyKind::Pak));
+        let pak = [5u8; 32];
+        let keys = collection_keys(&pak, &ACC, "payments", 1);
+        let pw_keys = collection_keys(&pak, &ACC, "passwords", 1);
+        assert_ne!(keys.ck, pw_keys.ck, "own encryption key");
+        assert_ne!(keys.ik, pw_keys.ik, "own id key");
+        let card_id = "0123456789abcdef0123456789abcdef";
+        let id = record_id(&keys.ik, card_id.as_bytes());
+        assert_ne!(id, record_id(&pw_keys.ik, card_id.as_bytes()), "the same id in two collections differs");
+        let card = RecordPlain {
+            ver: 7,
+            dev: 2,
+            deleted: false,
+            data: serde_json::json!({
+                "number": "4111111111111111", "exp_month": 12, "exp_year": 2030,
+                "name": "Alice Example", "nickname": "Work Visa", "address": "1 Main St",
+                "created": 1_700_000_000_000u64, "updated": 1_700_000_000_000u64
+            }),
+        };
+        let env = seal_record(&keys.ck, &ACC, "payments", &id, 1, &card, None).unwrap();
+        assert_eq!(env.k, KeyKind::Pak);
+        assert_eq!(env.c, "payments");
+        assert!(!env.ct.contains("4111"), "the number is inside the ciphertext only");
+        assert_eq!(open_record(&keys.ck, &ACC, &env).unwrap(), card);
+        assert_eq!(open_record(&pw_keys.ck, &ACC, &env), Err(SyncError::Auth), "not the passwords key");
+        let mut e = env.clone();
+        e.k = KeyKind::Ak;
+        assert_eq!(open_record(&keys.ck, &ACC, &e), Err(SyncError::Malformed("collection or key kind")));
+        let tomb = RecordPlain { ver: 8, dev: 2, deleted: true, data: serde_json::Value::Null };
+        let t = seal_record(&keys.ck, &ACC, "payments", &id, 1, &tomb, Some(256)).unwrap();
+        assert_eq!(unb64(&t.ct).unwrap().len(), unb64(&env.ct).unwrap().len(), "a tombstone keeps the bucket");
     }
 
     #[test]

@@ -62,6 +62,7 @@
   },
   "vaultAutolockMinutes": 15,
   "offerSavePasswords": true,
+  "offerSaveCards": true,
   "passgen": {
     "length": 20,
     "symbols": true

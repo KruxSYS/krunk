@@ -541,6 +541,7 @@ the per-record high-water mark kept in `sync_items`.
 | `never_save` | PAK | origin | `{origin, added}` | Add/remove LWW (in the passwords domain, because origins reveal accounts) |
 | `pins` | AK | URL | `{url, title, state:"pinned"\|"hidden", sort}` | LWW per URL |
 | `device_meta` | AK | device id | `{name}` | Written by the owner or a renaming device. LWW. The server shows "Device #short" instead |
+| `payments` | PAK | vault card id (32 hex) | `{number, exp_month, exp_year, name, nickname, address, created, updated}` — never a security code (0.6.0) | Per-card LWW by `ver`; a tombstone deletes the card. Same vault re-encryption and merge-back rules as `passwords` (the natural key is the card id; a remote record whose number matches a local card adopts the remote id). **Upload pending:** the sync client of PLAN S6 is not built yet; the collection, its keys and the envelope are defined and tested so that the format is fixed now |
 
 **Vault entries ↔ password records (sync re-encryption and merge-back):**
 - **Outgoing:** while the vault is unlocked, every vault change (`Vault::save_login`, `upsert`,

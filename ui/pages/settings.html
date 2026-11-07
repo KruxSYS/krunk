@@ -301,6 +301,10 @@
           <p class="field-error" data-error-for="vaultAutolockMinutes"></p></div>
         <div class="control"><input type="number" id="vaultAutolockMinutes" data-key="vaultAutolockMinutes" data-type="number" min="1" max="1440"> <span class="unit">min</span></div>
       </div>
+      <div class="row setting" data-keywords="offer save payment cards checkout credit card">
+        <div class="text"><label for="offerSaveCards">Offer to save payment cards</label><p class="desc">After a checkout, Krunk asks whether to keep the card (number, expiry, name; never the security code) in its vault.</p></div>
+        <div class="control"><input type="checkbox" id="offerSaveCards" data-key="offerSaveCards"></div>
+      </div>
       <div class="row setting" data-keywords="generate strong password length symbols sign up">
         <div class="text"><label for="passgenLength">Generated passwords</label><p class="desc">On a sign-up or change-password form, the dropdown offers a strong password and fills both fields; the login is saved when the form is sent (Undo in the toast). Never in private tabs.</p>
           <p class="field-error" data-error-for="passgen.length"></p></div>

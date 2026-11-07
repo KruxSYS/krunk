@@ -520,7 +520,10 @@ impl Browser {
         let weak = self.me.clone();
         c.on_got_focus(move || {
             if let Some(b) = weak.upgrade() {
-                if tab.is_some() && b.popup_kind() == Some(PopupKind::Suggest) && b.suggest_open_tab() == tab {
+                if tab.is_some()
+                    && matches!(b.popup_kind(), Some(PopupKind::Suggest | PopupKind::CardFill))
+                    && b.suggest_open_tab() == tab
+                {
                     return;
                 }
                 b.hide_popup_by_focus_loss();
@@ -1631,6 +1634,9 @@ impl Browser {
                 }
                 Ok(ContentMessage::RequestFill {}) => self.request_fill(id, Some(&origin)),
                 Ok(ContentMessage::NotificationPermission {}) => self.notification_permission_requested(id, &origin),
+                Ok(ContentMessage::CardSubmit { number, exp_month, exp_year, name }) => {
+                    self.card_submitted(id, &origin, &number, exp_month, exp_year, name)
+                }
                 Ok(ContentMessage::FieldFocus { field, rect, autocomplete, passwords, form_text }) => {
                     let field = self.resolve_field_kind(field, &autocomplete, passwords, &form_text);
                     self.field_focus(id, &source.frame_id, &origin, true, field, rect)
@@ -1924,6 +1930,8 @@ impl Browser {
             Request::SuggestPick { tab_id, frame_id, entry_id } => self.suggest_pick(tab_id, &frame_id, &entry_id),
             Request::SuggestUnlock { tab_id, frame_id } => self.suggest_unlock(tab_id, &frame_id),
             Request::SuggestGenerate { tab_id, frame_id } => self.suggest_generate(tab_id, &frame_id),
+            Request::CardFillPick { tab_id, frame_id, card_id } => self.card_fill_pick(tab_id, &frame_id, &card_id),
+            Request::SaveCardReply { tab_id, origin, accept } => self.save_card_reply(tab_id, &origin, accept),
             Request::PasswordSavedUndo { entry_id } => self.password_saved_undo(&entry_id),
             Request::PasswordSavedEdit { entry_id } => {
                 self.open_page_at(Page::Passwords, Some(&format!("entry={entry_id}")));
@@ -1946,7 +1954,12 @@ impl Browser {
             | Request::VaultChangePassword { .. }
             | Request::GeneratePassword { .. }
             | Request::GetNeverSave
-            | Request::NeverSaveRemove { .. }) => self.dispatch_vault(tab, req_id, r),
+            | Request::NeverSaveRemove { .. }
+            | Request::CardList
+            | Request::CardSave { .. }
+            | Request::CardDelete { .. }
+            | Request::CardReveal { .. }
+            | Request::CardCopy { .. }) => self.dispatch_vault(tab, req_id, r),
             Request::ShieldAllowSite { allow } => self.shield_allow_site(allow),
             r @ (Request::GetAllowlist
             | Request::AllowlistAdd { .. }

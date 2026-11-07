@@ -2219,6 +2219,16 @@ async function testPasswords(browser) {
     h.getNeverSave = () => ['https://ads.example'];
     h.vaultReveal = (m) => { if (m.password !== 'correct horse battery') throw new Error('Wrong master password.'); return m.id === 'a2' ? { password: 'mail-pw', note: 'Recovery code 4417' } : { password: 'Tr0ub4dor&3', note: '' }; };
     h.generatePassword = () => ({ password: 'k7#Vq2!mZp9@Lr4$Wx8e' });
+    // 0.6.0 payment methods: masked summaries; the number only after the master password.
+    st.cards = st.cards || [
+      { id: 'k1', nickname: 'Work Visa', brand: 'Visa', last4: '1111', expMonth: 12, expYear: 2030, name: 'Alice Example', hasAddress: true },
+      { id: 'k2', nickname: '', brand: 'Mastercard', last4: '4444', expMonth: 3, expYear: 2029, name: '', hasAddress: false },
+    ];
+    h.cardList = () => st.cards;
+    h.cardSave = (m) => { if (!m.card.id && !/^\d{12,19}$/.test(m.card.number.replace(/[\s-]/g, ''))) throw new Error('That is not a card number.'); if (!m.card.id) st.cards.push({ id: 'k3', nickname: m.card.nickname, brand: 'Visa', last4: m.card.number.slice(-4), expMonth: m.card.expMonth, expYear: m.card.expYear, name: m.card.name, hasAddress: !!m.card.address }); return null; };
+    h.cardDelete = (m) => { st.cards = st.cards.filter((c) => c.id !== m.id); return null; };
+    h.cardReveal = (m) => { if (m.password !== 'correct horse battery') throw new Error('Wrong master password.'); return { number: '4111111111111111', address: m.id === 'k1' ? '1 Main St, Springfield' : '' }; };
+    h.cardCopy = () => null;
   };
   const entries = [
     { id: 'a1', origin: 'https://github.com', username: 'octocat', hasNote: false, updated: 1 },
@@ -2269,7 +2279,7 @@ async function testPasswords(browser) {
   // List.
   await page.setViewportSize({ width: 1000, height: 560 });
   await page.waitForSelector('.pw-row');
-  check((await page.locator('.pw-row').count()) === 3, 'lists 3 logins');
+  check((await page.locator('.pw-row:not(.card-row)').count()) === 3, 'lists 3 logins');
   check(!(await page.content()).includes('Tr0ub4dor'), 'no password in the page before reveal');
   await page.waitForTimeout(100);
   await shot(page, 'passwords-list.png');
@@ -2331,6 +2341,56 @@ async function testPasswords(browser) {
   await page.waitForTimeout(60);
   const ed = await lastSent(page, 'vaultSave');
   check(ed && ed.entry.id === 'a2' && ed.entry.note === null && ed.entry.password === null, 'edit keeps the stored note and password (null) (got ' + JSON.stringify(ed && ed.entry) + ')');
+  // 0.6.0 payment methods: masked list, reveal/copy/add/edit/delete, never a security code.
+  await page.waitForSelector('.card-row');
+  check((await page.locator('.card-row').count()) === 2 && (await page.textContent('.card-row[data-id="k1"] .secret')) === '•••• •••• •••• 1111' && (await page.textContent('.card-row[data-id="k1"] .name')) === 'Work Visa · Visa' && (await page.textContent('.card-row[data-id="k2"] .user')).includes('expires 03/2029'), 'payment methods listed masked with nickname, brand, name and expiry');
+  check(!(await page.content()).includes('4111111111111111') && !(await page.content()).includes('1 Main St'), 'no card number or address in the page before reveal');
+  await page.locator('.card-row[data-id="k1"]').hover();
+  await page.locator('.card-row[data-id="k1"] button', { hasText: 'Copy number' }).click();
+  await page.waitForTimeout(40);
+  { const cc = await lastSent(page, 'cardCopy'); const toasts = await page.locator('.toast').allTextContents();
+    check(cc && cc.id === 'k1' && toasts.some((t) => t.includes('Card number copied')), 'Copy number sends cardCopy{id} and mentions the 30 s clear (' + JSON.stringify(cc) + ' ' + JSON.stringify(toasts) + ')'); }
+  await page.locator('.card-row[data-id="k1"] button', { hasText: 'Show' }).click();
+  await page.fill('#reveal-pw', 'nope');
+  await page.press('#reveal-pw', 'Enter');
+  await page.waitForTimeout(60);
+  check((await page.textContent('#reveal-error')).includes('Wrong'), 'card reveal with a wrong master password fails');
+  await page.fill('#reveal-pw', 'correct horse battery');
+  await page.press('#reveal-pw', 'Enter');
+  await page.waitForTimeout(60);
+  check((await page.textContent('.card-row[data-id="k1"] .secret')) === '4111 1111 1111 1111' && (await page.textContent('.card-row[data-id="k1"] .note')) === 'Address: 1 Main St, Springfield', 'reveal shows the grouped number and the address after the master password');
+  const kr = await lastSent(page, 'cardReveal');
+  check(kr && kr.id === 'k1' && kr.password === 'correct horse battery', 'reveal sends cardReveal{id,password}');
+  await shot(page, 'passwords-cards.png');
+  await page.click('#card-add');
+  check((await page.textContent('#card-dialog')).includes('never stored') && (await page.locator('#card-dialog input').count()) === 6, 'the card dialog says the security code is never stored and has no CVC field');
+  await page.locator('#card-dialog button[value="ok"]').click();
+  check((await page.textContent('#k-error')).includes('Enter the card number'), 'an empty card number is refused in the page');
+  await page.fill('#k-number', '5555 5555 5555 4444');
+  await page.fill('#k-month', '7');
+  await page.fill('#k-year', '2031');
+  await page.fill('#k-name', 'Alice Example');
+  await page.fill('#k-nick', 'Personal');
+  await page.locator('#card-dialog button[value="ok"]').click();
+  await page.waitForTimeout(60);
+  const ks = await lastSent(page, 'cardSave');
+  check(ks && ks.card.id === null && ks.card.number === '5555 5555 5555 4444' && ks.card.expMonth === 7 && ks.card.expYear === 2031 && ks.card.nickname === 'Personal' && ks.card.address === '' && Object.keys(ks.card).sort().join() === 'address,expMonth,expYear,id,name,nickname,number', 'Add sends cardSave{card} without a security code (' + JSON.stringify(ks && ks.card) + ')');
+  check(await page.inputValue('#k-number') === '' && (await page.locator('.card-row').count()) === 3, 'the number field is cleared and the list reloads');
+  await page.locator('.card-row[data-id="k1"]').hover();
+  await page.locator('.card-row[data-id="k1"] .icon-btn[title="Edit"]').click();
+  check((await page.getAttribute('#k-number', 'placeholder')).includes('1111 (unchanged)') && (await page.getAttribute('#k-address', 'placeholder')) === '(unchanged)', 'edit keeps the stored number and address unless typed');
+  await page.fill('#k-nick', 'Company Visa');
+  await page.press('#k-nick', 'Enter');
+  await page.waitForTimeout(60);
+  const ke = await lastSent(page, 'cardSave');
+  check(ke && ke.card.id === 'k1' && ke.card.number === null && ke.card.address === null && ke.card.nickname === 'Company Visa', 'edit sends number:null and address:null (unchanged) (' + JSON.stringify(ke && ke.card) + ')');
+  await page.locator('.card-row[data-id="k2"]').hover();
+  await page.locator('.card-row[data-id="k2"] .icon-btn[title="Delete"]').click();
+  await page.waitForSelector('#lb-dialog-ok');
+  check((await page.textContent('.lb-dialog-text')).includes('Mastercard card ending in 4444'), 'Delete asks first, naming the card');
+  await page.click('#lb-dialog-ok');
+  await page.waitForTimeout(60);
+  check((await lastSent(page, 'cardDelete')).id === 'k2' && (await page.locator('.card-row').count()) === 2, 'then sends cardDelete{id} and the list reloads');
   await page.click('#change');
   await page.fill('#c-old', 'correct horse battery');
   await page.fill('#c-new', 'new master pass 1');
@@ -2369,6 +2429,38 @@ async function testPasswords(browser) {
   await emit(page, { event: 'popup', content: { kind: 'fill', tabId: 4, origin: 'https://bank.example', entries: [] } });
   await page.waitForTimeout(60);
   check((await page.textContent('h2')) === 'No saved logins', 'fill prompt with no entries');
+  // 0.6.0 payment methods: the card dropdown (locked and unlocked) and the save offer.
+  await emit(page, { event: 'popup', content: { kind: 'cardFill', tabId: 4, frameId: 'f1', origin: 'https://shop.example', locked: true, cards: [] } });
+  await page.waitForSelector('#suggest-unlock');
+  await page.click('#suggest-unlock');
+  const cu = await lastSent(page, 'suggestUnlock');
+  check(cu && cu.tabId === 4 && cu.frameId === 'f1', 'a locked card dropdown offers Unlock (suggestUnlock{tabId,frameId})');
+  await emit(page, { event: 'popup', content: { kind: 'cardFill', tabId: 4, frameId: 'f1', origin: 'https://shop.example', locked: false, cards: [{ id: 'k1', label: 'Work Visa · Visa •••• 1111', name: 'Alice Example' }, { id: 'k2', label: 'Mastercard •••• 4444', name: '' }] } });
+  await page.waitForSelector('.suggest.card');
+  check((await page.locator('.suggest.card').count()) === 2 && (await page.textContent('.suggest.card[data-id="k1"]')).includes('•••• 1111') && !(await page.content()).includes('4111'), 'the card dropdown lists masked cards only');
+  check(await page.evaluate(() => document.activeElement === document.body || document.activeElement === null || document.activeElement.tagName !== 'BUTTON'), 'the card dropdown does not steal the focus from the page field');
+  await shot(page, 'popup-card-fill.png');
+  await page.click('.suggest.card[data-id="k2"]');
+  const cf = await lastSent(page, 'cardFillPick');
+  check(cf && cf.tabId === 4 && cf.frameId === 'f1' && cf.cardId === 'k2', 'choosing a card sends cardFillPick{tabId,frameId,cardId}');
+  await page.setViewportSize({ width: 360, height: 150 });
+  await emit(page, { event: 'popup', content: { kind: 'saveCard', tabId: 4, origin: 'https://shop.example', brand: 'Visa', last4: '1111' } });
+  await page.waitForSelector('#card-not-now');
+  check((await page.textContent('h2')) === 'Save this card?' && (await page.textContent('.panel')).includes('Visa •••• 1111') && (await page.textContent('.panel')).includes('never stored'), 'the save offer shows the brand and last four and says the code is never stored');
+  await shot(page, 'popup-save-card.png');
+  await page.click('#card-not-now');
+  const sc = await lastSent(page, 'saveCardReply');
+  check(sc && sc.accept === false && sc.origin === 'https://shop.example' && sc.tabId === 4, 'Not now sends saveCardReply{accept:false}');
+  await emit(page, { event: 'popup', content: { kind: 'unlock', tabId: 4, origin: 'https://shop.example', purpose: 'cardFill', error: null, waitMs: 0 } });
+  await page.waitForSelector('#master');
+  check((await page.textContent('h2')) === 'Unlock to fill this card', 'the unlock prompt from the card dropdown says so');
+  await emit(page, { event: 'popup', content: { kind: 'unlock', tabId: 4, origin: 'https://shop.example', purpose: 'saveCard', error: null, waitMs: 0 } });
+  await page.waitForFunction(() => document.querySelector('h2')?.textContent === 'Unlock to save this card');
+  check(true, 'the unlock prompt for a card to save says so');
+  await emit(page, { event: 'popup', content: { kind: 'saveCard', tabId: 4, origin: 'https://shop.example', brand: 'Visa', last4: '1111' } });
+  await page.waitForSelector('#default');
+  await page.click('#default');
+  check((await lastSent(page, 'saveCardReply')).accept === true, 'Save card sends saveCardReply{accept:true}');
   check(errors.length === 0, 'popup: no console errors (' + errors.join(' | ') + ')');
 
   // Shell key icon.
@@ -2547,6 +2639,12 @@ async function testSettings(browser) {
   check(await page.isChecked('[data-key=hardwareAcceleration]'), 'defaults: GPU on');
   await tab('passwords');
   check(await page.inputValue('[data-key="passgen.length"]') === '20' && await page.isChecked('[data-key="passgen.symbols"]'), 'generated passwords: 20 characters with symbols by default');
+  check(await page.isChecked('#offerSaveCards'), 'defaults: offer to save payment cards');
+  await page.click('#offerSaveCards');
+  await page.waitForTimeout(60);
+  check((await lastSent(page, 'saveSettings')).settings.offerSaveCards === false, 'the card offer can be switched off');
+  await page.click('#offerSaveCards');
+  await page.waitForTimeout(60);
   await page.fill('[data-key="passgen.length"]', '32');
   await page.press('[data-key="passgen.length"]', 'Tab');
   await page.waitForTimeout(60);
@@ -3086,6 +3184,54 @@ async function testLoginScript(browser) {
   {
     const ff = await p2.evaluate(() => window.__posted.filter((m) => m.lb === 'fieldFocus').pop());
     check(ff && ff.field === 'password' && ff.passwords === 1, 'a plain login password field is still "password" with its details (' + JSON.stringify(ff) + ')');
+  }
+  // 0.6.0 payment cards: a checkout form reports its card field, a card fill lands in the
+  // cc-* fields (never the security code), and the submit posts the number without the code.
+  await p2.evaluate(() => {
+    const f = document.createElement('form');
+    f.id = 'checkout';
+    f.innerHTML = '<input name="cardholder" autocomplete="cc-name"><input name="cardnumber" autocomplete="cc-number" inputmode="numeric"><input name="exp" autocomplete="cc-exp" placeholder="MM/YY"><input name="cvc" autocomplete="cc-csc" maxlength="4"><button>Pay now</button>';
+    document.body.appendChild(f);
+    window.__posted.length = 0;
+  });
+  await p2.waitForTimeout(1100);
+  await p2.focus('#checkout input[name=cvc]');
+  await p2.waitForTimeout(30);
+  check(!(await p2.evaluate(() => window.__posted.some((m) => m.lb === 'fieldFocus'))), 'the security-code field is not a card field');
+  await p2.focus('#checkout input[name=cardnumber]');
+  await p2.waitForTimeout(30);
+  {
+    const ff = await p2.evaluate(() => window.__posted.filter((m) => m.lb === 'fieldFocus').pop());
+    check(ff && ff.field === 'card' && ff.rect && ff.rect.width > 10, 'focusing the card number posts fieldFocus{field:card, rect} (' + JSON.stringify(ff) + ')');
+  }
+  await p2.evaluate(() => window.__deliver({ lbFill: { card: { number: '4111111111111111', expMonth: 12, expYear: 2030, name: 'Alice Example' } } }));
+  await p2.waitForTimeout(30);
+  {
+    const v = await p2.evaluate(() => ({ n: document.querySelector('#checkout input[name=cardnumber]').value, e: document.querySelector('#checkout input[name=exp]').value, h: document.querySelector('#checkout input[name=cardholder]').value, c: document.querySelector('#checkout input[name=cvc]').value, p: document.querySelector('#a input[name=p]').value }));
+    check(v.n === '4111111111111111' && v.e === '12/30' && v.h === 'Alice Example' && v.c === '' && v.p === '', 'a card fill sets number, cc-exp as MM/YY and the name; the CVC and other forms stay empty (' + JSON.stringify(v) + ')');
+  }
+  await p2.waitForTimeout(1100);
+  await p2.fill('#checkout input[name=cvc]', '123');
+  await p2.evaluate(() => { document.getElementById('checkout').addEventListener('submit', (e) => e.preventDefault()); window.__posted.length = 0; });
+  await p2.click('#checkout button');
+  await p2.waitForTimeout(30);
+  {
+    const cs = await p2.evaluate(() => window.__posted.filter((m) => m.lb === 'cardSubmit'));
+    check(cs.length === 1 && cs[0].number === '4111111111111111' && cs[0].expMonth === 12 && cs[0].expYear === 2030 && cs[0].name === 'Alice Example' && Object.keys(cs[0]).sort().join() === 'expMonth,expYear,lb,name,number', 'Pay posts one cardSubmit{number,expMonth,expYear,name} and nothing else (' + JSON.stringify(cs) + ')');
+    check(!(await p2.evaluate(() => JSON.stringify(window.__posted).includes('123'))), 'the security code never leaves the page');
+  }
+  // A field found by name only (no autocomplete) counts; a short number does not.
+  await p2.evaluate(() => { const f = document.createElement('form'); f.id = 'c2'; f.innerHTML = '<input name="ccnum" value="12345"><button>Buy</button>'; document.body.appendChild(f); f.addEventListener('submit', (e) => e.preventDefault()); window.__posted.length = 0; });
+  await p2.click('#c2 button');
+  await p2.waitForTimeout(30);
+  check(!(await p2.evaluate(() => window.__posted.some((m) => m.lb === 'cardSubmit'))), 'a 5-digit value in a card-named field is not a card');
+  await p2.waitForTimeout(3100);
+  await p2.fill('#c2 input', '5555 5555 5555 4444');
+  await p2.click('#c2 button');
+  await p2.waitForTimeout(30);
+  {
+    const cs = await p2.evaluate(() => window.__posted.filter((m) => m.lb === 'cardSubmit').pop());
+    check(cs && cs.number === '5555555555554444' && cs.expMonth === 0, 'a card-named field without autocomplete posts the digits only (' + JSON.stringify(cs) + ')');
   }
   await ctx2.close();
   check(errors.length === 0, 'login script raises no page errors (' + errors.join(' | ') + ')');
