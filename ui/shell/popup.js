@@ -377,7 +377,7 @@
   function fit() { LB.post('popupResize', { height: root.offsetHeight + 2 }); }
   // Content whose height depends on its items: the window is opened with an upper bound
   // and fitted right after the render (the ⋮ menu used to leave a gap at the bottom).
-  const FITS = { menu: true, tabMenu: true, bookmarkMenu: true, siteInfo: true, addressMenu: true, captionMenu: true, downloads: true, permission: true, passwordSaved: true, pip: true };
+  const FITS = { suggest: true, cardFill: true, menu: true, tabMenu: true, bookmarkMenu: true, siteInfo: true, addressMenu: true, captionMenu: true, downloads: true, permission: true, passwordSaved: true, pip: true };
 
 
   // Login suggestions under a focused field: the matching usernames (with the host for a

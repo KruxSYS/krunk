@@ -81,6 +81,33 @@
     set('--accent-fg', c.accentFg);
     set('--bg', c.background);
     set('--on-bg', c.backgroundFg);
+    // 0.7.0 (R16): links in the accent colour where it reads (WCAG AA on the cards), else the
+    // accent moved towards the text colour until it does.
+    root.style.removeProperty('--link');
+    if (accent || c.accent) requestAnimationFrame(function () { set('--link', readableLink()); });
+  }
+  function rgbOf(css) {
+    const m = /rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)/.exec(css || '');
+    return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+  }
+  function lum(c) {
+    const f = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]);
+  }
+  function contrast(a, b) { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); }
+  // The accent, or the first mix towards the text colour that reaches 4.5:1 on the cards and the page.
+  function readableLink() {
+    const probe = document.createElement('span');
+    document.documentElement.appendChild(probe);
+    const read = (v) => { probe.style.color = 'var(' + v + ')'; return rgbOf(getComputedStyle(probe).color); };
+    const accent = read('--accent'), fg = read('--fg'), raised = read('--bg-raised'), bg = read('--bg');
+    probe.remove();
+    if (!accent || !fg || !raised || !bg) return '';
+    for (let t = 0; t <= 1.0001; t += 0.1) {
+      const c = accent.map((v, i) => Math.round(v + (fg[i] - v) * t));
+      if (contrast(c, raised) >= 4.5 && contrast(c, bg) >= 4.5) return 'rgb(' + c.join(',') + ')';
+    }
+    return 'var(--fg)';
   }
   // The UI font size (Settings → Appearance) for Krunk's own pages.
   function applyFontSize(px) {

@@ -923,6 +923,14 @@ async function testPopup(browser) {
   check(!(await page.content()).includes('password') || !(await page.textContent('body')).toLowerCase().includes('secret'), 'no password in the dropdown');
   check(await page.evaluate(() => document.activeElement === document.body || document.activeElement === null), 'the dropdown takes no focus');
   await shot(page, 'popup-suggest.png');
+  {
+    // R18: the footer keeps space below it, and the popup asks for its full height.
+    await page.waitForTimeout(40);
+    const gap = await page.evaluate(() => { const f = document.querySelector('.suggest-foot').getBoundingClientRect(); const r = document.getElementById('root').getBoundingClientRect(); return Math.round(r.bottom - f.bottom); });
+    const fit = await lastSent(page, 'popupResize');
+    const need = await page.evaluate(() => document.getElementById('root').offsetHeight);
+    check(gap >= 6 && fit && fit.height >= need, 'the suggestion list has room below its footer (' + gap + ' px) and fits its content (' + (fit && fit.height) + ' >= ' + need + ')');
+  }
   await page.locator('.suggest').first().click();
   const sp = await lastSent(page, 'suggestPick');
   check(sp && sp.entryId === 'e1' && sp.tabId === 9 && sp.frameId === 'frame-7', 'choosing sends suggestPick{entryId,tabId,frameId}');
@@ -1552,6 +1560,30 @@ async function testTasks(browser) {
   await page.click('#rows tr[data-kind=renderer]');
   await page.waitForTimeout(20);
   check(!(await page.locator('#end').isDisabled()), 'a renderer can be ended');
+  // R19: the selected row is readable in both themes (WCAG AA for its text, the muted columns too).
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate((t) => LB.applyTheme(t, '', null), theme);
+    await page.mouse.move(5, 5);
+    await page.waitForTimeout(40);
+    const ratios = await page.evaluate(() => {
+      // (color-mix() computes to color(srgb r g b) with 0..1 channels.)
+      const parse = (c) => { const m = /rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)/.exec(c); if (m) return m.slice(1, 4).map(Number); return /color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)/.exec(c).slice(1, 4).map((v) => Number(v) * 255); };
+      const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
+      const tr = document.querySelector('#rows tr.selected');
+      const bg = parse(getComputedStyle(tr).backgroundColor);
+      return [...tr.querySelectorAll('td')].map((td) => {
+        const st = getComputedStyle(td);
+        let fg = parse(st.color);
+        const o = Number(st.opacity);
+        fg = fg.map((v, i) => v * o + bg[i] * (1 - o));
+        const a = lum(fg), b = lum(bg);
+        return Math.round((Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05) * 100) / 100;
+      });
+    });
+    check(ratios.every((r) => r >= 4.5), theme + ': the selected row reads at AA (' + ratios.join(', ') + ')');
+    await shot(page, 'tasks-selected-' + theme + '.png');
+  }
+  await page.evaluate(() => LB.applyTheme('light', '', null));
   await page.click('#end');
   await page.waitForTimeout(50);
   const k = await lastSent(page, 'killTask');
@@ -3823,6 +3855,65 @@ async function testNoHintsScript(browser) {
   }
 }
 
+// 0.7.0 (R16): every link on Krunk's pages is styled (never the browser's blue) and reads at
+// WCAG AA on what is behind it, light and dark, with the default and a custom accent.
+// 0.7.0 (R17): on the permissions page a group's description and table start where its heading does.
+async function testPermissionsPadding(browser) {
+  console.log('permissions padding (R17)');
+  const { page, context } = await openPage(browser, 'https://krunk.invalid/settings.html#permissions', { width: 1100, height: 800 }, 1);
+  await page.waitForSelector('.panel.active[data-tab=permissions]');
+  const r = await page.evaluate(() => [...document.querySelectorAll('.panel[data-tab=permissions] .card.group')].map((g) => {
+    const h = g.querySelector('h3').getBoundingClientRect().left;
+    return [...g.querySelectorAll(':scope > .desc, :scope > table')].map((n) => {
+      const x = n.tagName === 'TABLE' ? n.querySelector('th').getBoundingClientRect().left : n.getBoundingClientRect().left;
+      return Math.round(x - h);
+    });
+  }).flat());
+  check(r.length >= 3 && r.every((d) => Math.abs(d) <= 1), 'descriptions and the sites table line up with the headings (offsets ' + r.join(',') + ')');
+  await shot(page, 'settings-permissions.png');
+  await context.close();
+}
+
+async function testLinkSweep(browser) {
+  console.log('link sweep (R16)');
+  const pages = ['about', 'adblock', 'bookmarks', 'downloads', 'extensions', 'gpu', 'history', 'https-only', 'newtab', 'passwords', 'settings', 'sitedata', 'storage', 'tasks'];
+  const measure = () => {
+    const parse = (c) => { const m = /rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?/.exec(c); return m ? [+m[1], +m[2], +m[3], m[4] === undefined ? 1 : +m[4]] : null; };
+    const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
+    const bgOf = (n) => { for (; n; n = n.parentElement) { const b = parse(getComputedStyle(n).backgroundColor); if (b && b[3] > 0.9) return b; } return parse(getComputedStyle(document.body).backgroundColor) || [255, 255, 255, 1]; };
+    const out = [];
+    document.querySelectorAll('a[href]').forEach((a) => {
+      const r = a.getBoundingClientRect();
+      if (!r.width || !r.height || getComputedStyle(a).visibility === 'hidden') return;
+      const fg = parse(getComputedStyle(a).color), bg = bgOf(a);
+      const x = lum(fg), y = lum(bg);
+      out.push({ text: a.textContent.trim().slice(0, 30), color: getComputedStyle(a).color, ratio: Math.round((Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05) * 100) / 100 });
+    });
+    return out;
+  };
+  for (const theme of ['light', 'dark']) {
+    for (const accent of ['', '#f59e0b']) {
+      const bad = [];
+      let count = 0;
+      for (const p of pages) {
+        const { page, context } = await openPage(browser, 'https://krunk.invalid/' + p + '.html', { width: 1200, height: 900 }, 1);
+        await page.waitForTimeout(250);
+        // Settings: every section at once, so its links count too.
+        await page.evaluate(() => document.querySelectorAll('.panel[data-tab]').forEach((n) => { n.classList.add('active'); n.hidden = false; n.style.display = 'block'; }));
+        await page.evaluate(([t, a]) => LB.applyTheme(t, a, null), [theme, accent]);
+        await page.waitForTimeout(80);
+        for (const l of await page.evaluate(measure)) {
+          count++;
+          if (l.color === 'rgb(0, 0, 238)' || l.color === 'rgb(85, 26, 139)' || l.ratio < 4.5) bad.push(p + ': "' + l.text + '" ' + l.color + ' ' + l.ratio);
+        }
+        if (theme === 'dark' && !accent && (p === 'settings' || p === 'about')) await shot(page, 'links-' + p + '-dark.png');
+        await context.close();
+      }
+      check(bad.length === 0 && count > 5, theme + (accent ? ', amber accent' : '') + ': ' + count + ' links, all styled and AA (' + bad.slice(0, 6).join(' | ') + ')');
+    }
+  }
+}
+
 async function testPaintedScript(browser) {
   console.log('injected painted script');
   const context = await browser.newContext();
@@ -4445,6 +4536,8 @@ async function testTabWindows(browser) {
     if (!ONLY || ONLY.includes('Gpu')) await testGpu(browser);
     if (!ONLY || ONLY.includes('PaintedScript')) await testPaintedScript(browser);
     if (!ONLY || ONLY.includes('NoHints')) await testNoHintsScript(browser);
+    if (!ONLY || ONLY.includes('LinkSweep')) await testLinkSweep(browser);
+    if (!ONLY || ONLY.includes('PermissionsPadding')) await testPermissionsPadding(browser);
   } finally {
     await browser.close();
   }

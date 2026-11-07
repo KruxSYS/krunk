@@ -4,7 +4,7 @@
 .tabs { display: flex; flex-direction: column; gap: 2px; width: 190px; flex: none; position: sticky; top: 16px; }
 .tabs a { display: block; padding: 8px 12px; border-radius: 8px; color: var(--fg); text-decoration: none; font-weight: 500; }
 .tabs a:hover { background: var(--bg-hover); }
-.tabs a.active { background: var(--bg-raised); border: 1px solid var(--border); color: var(--accent); }
+.tabs a.active { background: var(--bg-raised); border: 1px solid var(--border); color: var(--link); }
 .panels { flex: 1; min-width: 0; }
 @media (max-width: 760px) {
   .layout { flex-direction: column; gap: 12px; }
@@ -118,3 +118,8 @@ table.exceptions th { color: var(--fg-muted); font-weight: 600; border-top: 0; }
 #dns-list .resolver .status { color: var(--fg-muted); }
 #dns-form select { height: 32px; }
 #dns-form #dns-address { flex: 1; min-width: 200px; }
+/* 0.7.0 (R17): a group's own description and table line up with its heading. */
+.card.group > .desc { margin: 0 16px 10px; color: var(--fg-muted); font-size: 0.923rem; line-height: 1.45; }
+.card.group > table.exceptions { width: calc(100% - 32px); margin: 0 16px 10px; }
+table.exceptions th:first-child, table.exceptions td:first-child { padding-left: 0; }
+table.exceptions th:last-child, table.exceptions td:last-child { padding-right: 0; text-align: right; }

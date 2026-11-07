@@ -8,7 +8,7 @@
 .dl.state-interrupted .sub { color: var(--danger, #dc2626); }
 .dl .dl-bar, .dl .dl-segments { margin: 6px 0 2px; max-width: 560px; }
 .dl .links { display: flex; gap: 12px; margin-top: 6px; }
-.dl .links button { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font: inherit; }
+.dl .links button { border: 0; background: none; padding: 0; color: var(--link); cursor: pointer; font: inherit; }
 .dl .links button:hover { text-decoration: underline; }
 .dl .url { margin-top: 2px; font-size: 0.923rem; color: var(--fg-muted); overflow-wrap: anywhere; user-select: text; }
 .dl .when { margin-top: 2px; font-size: 0.923rem; color: var(--fg-muted); }

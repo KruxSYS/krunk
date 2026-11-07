@@ -66,7 +66,7 @@ body.has-image .tile:hover { background: rgba(0,0,0,.35); }
 #keys-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 2px 24px; font-size: 0.923rem; }
 #keys-list li { display: flex; justify-content: space-between; gap: 10px; }
 #keys-list kbd { font: 11px/1.4 var(--font); color: var(--fg-muted); white-space: nowrap; }
-.link { border: 0; background: none; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
+.link { border: 0; background: none; color: var(--link); cursor: pointer; font: inherit; padding: 0; }
 #customize { position: fixed; right: 16px; bottom: 16px; }
 /* On a picture the button carries its own colours (the page's text colour follows the picture). */
 body.has-image #customize { background: rgba(17,24,39,.72); border-color: rgba(255,255,255,.25); color: #fff; backdrop-filter: blur(6px); }

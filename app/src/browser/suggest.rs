@@ -21,7 +21,7 @@ use zeroize::Zeroizing;
 /// Pages can fire focus events freely: the dropdown shows at most this often.
 const MIN_INTERVAL_MS: i64 = 250;
 const ROW_CSS: f64 = 38.0;
-const FOOT_CSS: f64 = 34.0;
+const FOOT_CSS: f64 = 42.0;
 const WIDTH_CSS: f64 = 300.0;
 const KEY_KV: &str = "vault_hint_key";
 const TAGS_KV: &str = "vault_hint_tags";

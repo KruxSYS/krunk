@@ -9,7 +9,9 @@ table.tasks th.sorted::after { content: ' ▲'; font-size: 10px; }
 table.tasks th.sorted.desc::after { content: ' ▼'; }
 table.tasks tbody tr { cursor: default; }
 table.tasks tbody tr:hover { background: var(--bg-hover); }
-table.tasks tbody tr.selected { background: var(--accent-soft, #cfe3ff); }
+/* 0.7.0 (R19): the selected row reads in both themes (the muted text too), and stays marked on hover. */
+table.tasks tbody tr.selected, table.tasks tbody tr.selected:hover { background: var(--accent-soft); color: var(--fg); box-shadow: inset 3px 0 0 var(--accent); }
+table.tasks tbody tr.selected td.kind, table.tasks tbody tr.selected td.title .tabs { color: var(--fg); opacity: .8; }
 table.tasks td.title { max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
 table.tasks td.title .tabs { color: var(--fg-muted); font-size: 0.923rem; }
 table.tasks td.kind { color: var(--fg-muted); }
