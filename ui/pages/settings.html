@@ -446,8 +446,8 @@
   <!-- ================================================================ Advanced -->
   <section class="panel" data-tab="advanced" data-section="advanced proxy flags user agent gpu hardware acceleration devtools about updates version reset">
     <h2 class="panel-title">Advanced</h2>
-    <div class="card group">
-      <h3>User agent</h3>
+    <div class="card group" id="headers-card">
+      <h3>Request headers</h3>
       <div class="row setting" data-keywords="default user agent krunk">
         <div class="text"><span class="label">Krunk's user agent</span><p class="desc">What sites see unless you choose another below.</p>
           <p id="default-ua" class="mono desc"></p></div>
@@ -466,6 +466,49 @@
         <div class="text"><label for="userAgent">Custom user agent</label><p class="desc">Printable ASCII, 512 characters at most. Empty means the default.</p>
           <p class="field-error" data-error-for="userAgent"></p></div>
         <div class="control wide"><input type="text" id="userAgent" data-key="userAgent" placeholder="(default)" spellcheck="false"></div>
+      </div>
+      <div class="row setting" data-keywords="accept-language language header">
+        <div class="text"><label for="acceptLanguage">Accept-Language</label><p class="desc">A comma list like <code>en-GB, en, de</code>; the engine adds the weights. Empty: your Windows language. Also sets <code>navigator.language</code>; applies to every tab at once.</p>
+          <p class="field-error" data-error-for="headers.acceptLanguage"></p></div>
+        <div class="control"><input type="text" id="acceptLanguage" data-key="headers.acceptLanguage" placeholder="(system)" spellcheck="false"></div>
+      </div>
+      <div class="row setting" data-keywords="client hints sec-ch-ua platform brands user agent data">
+        <div class="text"><label for="hints-on">Client hints (Sec-CH-UA*)</label><p class="desc">What <code>navigator.userAgentData</code> and the <code>Sec-CH-UA</code>, <code>-Mobile</code>, <code>-Platform</code> headers say, plus the high-entropy hints sites may ask for (platform version, architecture, bitness, model, full version list). Off: the engine's own values (Chromium on Windows). Sent on https pages only, like Chrome.</p>
+          <p class="field-error" data-error-for="headers.hints"></p></div>
+        <div class="control"><input type="checkbox" id="hints-on"></div>
+      </div>
+      <div class="row setting column hint-fields" id="hint-fields" data-keywords="client hints fields">
+        <div class="grid2">
+          <label>Brands (Sec-CH-UA) <input type="text" id="hint-brands" spellcheck="false" placeholder='"Not:A-Brand";v="8", "Chromium";v="156"'></label>
+          <label>Full version <input type="text" id="hint-fullVersion" spellcheck="false" placeholder="(engine's)"></label>
+          <label>Platform <input type="text" id="hint-platform" spellcheck="false"></label>
+          <label>Platform version <input type="text" id="hint-platformVersion" spellcheck="false"></label>
+          <label>Architecture <input type="text" id="hint-architecture" spellcheck="false"></label>
+          <label>Bitness <input type="text" id="hint-bitness" spellcheck="false"></label>
+          <label>Model <input type="text" id="hint-model" spellcheck="false" placeholder="(none)"></label>
+          <label class="checks"><input type="checkbox" id="hint-mobile"> Mobile</label>
+          <label class="checks"><input type="checkbox" id="hint-wow64"> WoW64</label>
+        </div>
+      </div>
+      <div class="row setting column" data-keywords="custom headers add remove per site rules">
+        <div class="text"><span class="label">Custom headers</span><p class="desc">Set a header on every request, or remove one (leave the value empty). "Sites" limits a rule to pages on those sites (comma list); later rules win.</p>
+          <p class="field-error" data-error-for="headers.rules"></p></div>
+        <div id="header-rules" class="sublist"></div>
+        <form id="header-form" class="inline-form" autocomplete="off">
+          <input type="text" id="header-name" placeholder="X-Header" spellcheck="false" aria-label="Header name">
+          <input type="text" id="header-value" placeholder="value (empty removes it)" spellcheck="false" aria-label="Header value">
+          <input type="text" id="header-sites" placeholder="sites (optional)" spellcheck="false" aria-label="Sites">
+          <button class="btn" type="submit">Add</button>
+          <p class="field-error" id="header-error"></p>
+        </form>
+      </div>
+      <div class="row setting column" data-keywords="read-only headers reasons">
+        <div class="text"><span class="label">Read-only headers</span><p class="desc">Added by the network stack after Krunk's hook, or decided elsewhere.</p></div>
+        <div id="readonly-headers" class="readonly-list"></div>
+      </div>
+      <div class="row setting" data-keywords="reset headers defaults">
+        <div class="text"><span class="label">Reset request headers</span><p class="desc">Krunk's user agent, the system language, the engine's client hints, no custom headers.</p></div>
+        <div class="control"><button id="headers-reset" class="btn">Reset</button></div>
       </div>
     </div>
 

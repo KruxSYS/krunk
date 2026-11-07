@@ -28,6 +28,7 @@ impl Browser {
                     "about": self.about(),
                     "userAgents": lb_core::useragents::PRESETS,
                     "defaultUserAgent": engine::default_user_agent(),
+                    "engineHints": self.engine_hints.borrow().clone(),
                 });
                 self.reply(tab, Event::ok(req_id, data));
             }
@@ -182,11 +183,19 @@ impl Browser {
             // The address bar's placeholder names the engine, in every window.
             self.send_shell_config();
         }
-        if old.user_agent != new.user_agent {
+        if old.user_agent != new.user_agent || old.headers != new.headers {
+            self.net.set_headers(&new.headers);
             let ids: Vec<TabId> = self.views.borrow().keys().copied().collect();
             for id in ids {
                 self.apply_user_agent_to(id);
             }
+            info!(
+                "request headers: user agent {}, accept-language {:?}, client hints {}, {} custom rule(s)",
+                if new.user_agent.is_empty() { "default" } else { "custom" },
+                new.headers.accept_language_list(),
+                if new.headers.hints.is_some() { "overridden" } else { "engine" },
+                new.headers.rules.len()
+            );
         }
         // Privacy headers and ad blocking switch immediately (the navigator
         // properties for DNT/GPC follow on newly opened tabs).
@@ -221,26 +230,88 @@ impl Browser {
         // on exit) is read from the settings when it is used.
     }
 
-    /// The user agent: the engine starts with the one from the settings; a
-    /// change made while running is applied per tab (DevTools protocol)
-    /// until the next start.
-    pub(super) fn apply_user_agent_to(&self, id: TabId) {
-        let (now, at_start) = (self.settings.borrow().user_agent.clone(), self.running_settings.user_agent.clone());
-        if now == at_start {
-            // Back to the value the engine started with: tabs that were given another
-            // user agent meanwhile drop their override (new tabs never had one).
-            if self.ua_overridden.get() {
-                if let Some(c) = self.tab_view(id) {
-                    c.set_user_agent(None);
-                }
+    /// The user agent, `Accept-Language` and client hints of a tab (0.6.0 request headers):
+    /// the engine starts with the settings' user agent; everything else, and any change made
+    /// while running, is a DevTools override per tab (`core::headers::user_agent_override`).
+    /// `done` runs once the engine acknowledged it (or at once when there is nothing to send).
+    pub(super) fn apply_user_agent_to_then(&self, id: TabId, done: impl FnOnce(&Browser) + 'static) {
+        let (ua_now, at_start, headers) = {
+            let s = self.settings.borrow();
+            (s.user_agent.clone(), self.running_settings.user_agent.clone(), s.headers.clone())
+        };
+        let Some(c) = self.tab_view(id) else { return done(self) };
+        // The language alone still needs the override; it then carries the engine's own
+        // hints (read from the shell page at startup) so nothing else changes.
+        let hints = headers
+            .hints
+            .clone()
+            .or_else(|| (!headers.accept_language.is_empty()).then(|| self.engine_hints.borrow().clone()).flatten());
+        let params = if ua_now == at_start && !headers.overrides() {
+            // Back to what the engine started with: tabs given an override meanwhile drop
+            // it (new tabs never had one).
+            if !self.ua_overridden.get() {
+                return done(self);
             }
+            serde_json::json!({ "userAgent": "" })
+        } else {
+            let ua = if ua_now.is_empty() { engine::default_user_agent() } else { ua_now };
+            self.ua_overridden.set(true);
+            lb_core::headers::user_agent_override(
+                &ua,
+                &headers.accept_language_list(),
+                hints.as_ref(),
+                &engine::versions().1,
+            )
+        };
+        let weak = self.me.clone();
+        let done = std::cell::RefCell::new(Some(done));
+        c.set_user_agent_override(&params, move |ok| {
+            if !ok {
+                warning!("tab {id}: the user-agent override was not applied");
+            }
+            if let (Some(b), Some(done)) = (weak.upgrade(), done.borrow_mut().take()) {
+                done(&b);
+            }
+        });
+    }
+
+    pub(super) fn apply_user_agent_to(&self, id: TabId) {
+        self.apply_user_agent_to_then(id, |_| {});
+    }
+
+    /// Reads the engine's own client hints from the shell page (once, when it has loaded).
+    pub(super) fn probe_engine_hints(&self) {
+        if self.engine_hints.borrow().is_some() {
             return;
         }
-        let ua = if now.is_empty() { engine::default_user_agent() } else { now };
-        if let Some(c) = self.tab_view(id) {
-            c.set_user_agent(Some(&ua));
-            self.ua_overridden.set(true);
-        }
+        let Some(shell) = self.shell() else { return };
+        let weak = self.me.clone();
+        shell.eval_json(
+            "navigator.userAgentData.getHighEntropyValues(['architecture','bitness','model','platformVersion','uaFullVersion','wow64']).then(h => Object.assign(h, { brands: navigator.userAgentData.brands, mobile: navigator.userAgentData.mobile, platform: navigator.userAgentData.platform }))",
+            move |v| {
+                let Some(b) = weak.upgrade() else { return };
+                match v.as_ref().and_then(lb_core::headers::ClientHints::from_user_agent_data) {
+                    Some(h) => {
+                        info!("engine client hints: {} on {} {}", h.sec_ch_ua(), h.platform, h.platform_version);
+                        *b.engine_hints.borrow_mut() = Some(h);
+                        // Tabs that only change the language were waiting for these.
+                        if !b.settings.borrow().headers.accept_language.is_empty() {
+                            let ids: Vec<TabId> = b.views.borrow().keys().copied().collect();
+                            for id in ids {
+                                b.apply_user_agent_to(id);
+                            }
+                        }
+                    }
+                    None => warning!("engine client hints: not readable from the shell page"),
+                }
+            },
+        );
+    }
+
+    /// Does a new tab need the override before its first request?
+    pub(super) fn headers_overridden(&self) -> bool {
+        let s = self.settings.borrow();
+        s.user_agent != self.running_settings.user_agent || s.headers.overrides()
     }
 
     /// Default zoom for a page that has no zoom level of its own yet (the

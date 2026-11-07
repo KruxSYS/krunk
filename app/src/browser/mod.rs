@@ -188,6 +188,11 @@ pub struct Browser {
     omnibox: omnibox::OmniboxHost,
     /// Some tab was given a user agent other than the one the engine started with.
     ua_overridden: Cell<bool>,
+    /// Tabs started at about:blank because of edited headers: their real first URL.
+    first_url: RefCell<HashMap<TabId, String>>,
+    /// The engine's own client hints (read from the shell page once it loaded): the
+    /// metadata of an override that changes only the user agent or the language.
+    engine_hints: RefCell<Option<lb_core::headers::ClientHints>>,
     /// Where the shell asked for the shield panel (it grows with its list from there).
     shield_anchor: Cell<Option<PopupRect>>,
     /// The tab krunk://adblock shows the blocked requests of (opened from its shield).
@@ -271,6 +276,8 @@ impl Browser {
             permissions: permissions::PermissionHost::default(),
             omnibox: omnibox::OmniboxHost::default(),
             ua_overridden: Cell::new(false),
+            first_url: RefCell::new(HashMap::new()),
+            engine_hints: RefCell::new(None),
             bookmark_menu_at: Cell::new(None),
             adblock_source: Cell::new(None),
             shield_anchor: Cell::new(None),
@@ -459,6 +466,12 @@ impl Browser {
             policy: None,
         });
         shell.on_before_browse(|nav| assets::allow_navigation(Channel::Shell, "", &nav.url, true));
+        let weak = self.me.clone();
+        shell.on_load_finished(move |_| {
+            if let Some(b) = weak.upgrade() {
+                b.probe_engine_hints();
+            }
+        });
         let weak = self.me.clone();
         shell.on_open_tab(move |url, _| {
             // Links in the shell never open windows; open them as tabs instead.
@@ -697,7 +710,15 @@ impl Browser {
         // A popup's browser is being created by the engine already.
         if !popup {
             host_navigation.set(true);
-            if let Err(e) = view.start(window.hwnd(), &url) {
+            // With edited headers the tab starts blank and navigates once the engine has
+            // acknowledged the override, so even the first request carries it.
+            let first = if self.headers_overridden() {
+                self.first_url.borrow_mut().insert(id, url.clone());
+                "about:blank".to_string()
+            } else {
+                url.clone()
+            };
+            if let Err(e) = view.start(window.hwnd(), &first) {
                 warning!("tab {id}: {e}");
             }
         }
@@ -841,7 +862,12 @@ impl Browser {
         let weak = self.me.clone();
         c.on_created(move || {
             if let Some(b) = weak.upgrade() {
-                b.apply_user_agent_to(id);
+                let first = b.first_url.borrow_mut().remove(&id);
+                b.apply_user_agent_to_then(id, move |b| {
+                    if let Some(url) = first {
+                        b.navigate_tab(id, &url);
+                    }
+                });
                 if let (Some(dark), Some(v)) = (b.color_scheme(), b.tab_view(id)) {
                     v.set_color_scheme(Some(dark));
                 }

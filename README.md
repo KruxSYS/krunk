@@ -569,6 +569,32 @@ VK  --XChaCha20-Poly1305 (fresh 24-byte nonce, AAD = entry id)--> each login; ma
   on an exact origin match.
 - **Copies:** excluded from clipboard history and cleared after 30 s.
 
+### Request headers
+
+Settings → Advanced → Request headers (0.6.0) edits what every request says about the
+browser: the user agent (the 0.5 picker and custom string), `Accept-Language` (a comma list;
+the engine adds the weights and `navigator.language` follows), the client hints
+(`Sec-CH-UA`, `-Mobile`, `-Platform` and the high-entropy hints sites ask for:
+platform version, architecture, bitness, model, full version list, WoW64) and custom headers:
+set on every request or on the listed sites, or removed (an empty value). The user agent and
+the hints go through DevTools' `Emulation.setUserAgentOverride` per tab, so the headers and
+`navigator.userAgentData` always agree; a new tab starts blank and navigates once the engine
+acknowledged the override, so even its first request carries it (popups opened by pages get
+it a moment after their first request). A custom user-agent string without overridden hints
+sends no client hints at all (as 0.5 did: a browser that is not Chromium has none).
+`Accept-Language` travels with the same override (the only runtime route; the engine's
+own client hints, read from the shell page at startup, go with it so nothing else changes),
+for every request of every tab and `navigator.language`. Custom rules are applied in Krunk's request hook, which
+runs before the network stack adds its own headers: `Host`, `Connection`, `Accept-Encoding`,
+`Content-Length`, `Cookie`, `Sec-Fetch-*`, `Priority` and the `Sec-CH-UA*` family are
+therefore read-only (the page lists them with the reason). Client hints are only sent on
+https pages, like Chrome. Workers do not see the override (a limitation of the DevTools
+route): their `navigator.userAgentData` is the engine's.
+
+Web pages see nothing of Krunk's page bridge since 0.6.0: the injected scripts (login
+detection, page tokens, the notification shim) get it as a closure argument, and only Krunk's
+own pages have `window.__lbHost`.
+
 ### Chromium switches
 Built by `core::settings::Settings::browser_switches` and added in
 `CefApp::OnBeforeCommandLineProcessing`. Always:

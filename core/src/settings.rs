@@ -367,6 +367,9 @@ pub struct Settings {
     /// Tracking protection (Krunk 0.6.0). `block_third_party_cookies` and
     /// `strip_tracking_params` above are derived from it (see `sync_protection`).
     pub protection: crate::protection::Protection,
+    /// Request headers (Krunk 0.6.0): Accept-Language, client hints, custom rules. The
+    /// user-agent string itself is `user_agent` below.
+    pub headers: crate::headers::Headers,
 
     // Passwords
     pub vault_autolock_minutes: u32,
@@ -440,6 +443,7 @@ impl Default for Settings {
             filter_lists_rev: FILTER_LISTS_REV,
             block_third_party_cookies: false,
             protection: crate::protection::Protection::default(),
+            headers: crate::headers::Headers::default(),
             https_only: false,
             send_dnt: true,
             send_gpc: true,
@@ -682,6 +686,11 @@ impl Settings {
         if self.user_agent.len() > 512 || self.user_agent.chars().any(|c| c.is_control() || !c.is_ascii()) {
             err("userAgent", "Must be printable ASCII, at most 512 characters");
         }
+        if let Err(errs) = self.headers.validate() {
+            for (field, message) in errs {
+                err(field, &message);
+            }
+        }
         if !self.proxy.is_empty() && !is_proxy(&self.proxy) {
             err("proxy", "Use host:port, scheme://host:port (http, https, socks4, socks5) or direct://");
         }
@@ -779,6 +788,9 @@ impl Settings {
                     "downloadConnections" => s.download_connections = d.download_connections,
                     "customLists" => s.custom_lists.clear(),
                     "userAgent" => s.user_agent.clear(),
+                    "headers.acceptLanguage" => s.headers.accept_language.clear(),
+                    "headers.hints" => s.headers.hints = None,
+                    "headers.rules" => s.headers.rules.clear(),
                     "proxy" => s.proxy.clear(),
                     "extraFlags" => s.extra_flags.clear(),
                     "defaultZoom" => s.default_zoom = d.default_zoom,

@@ -27,6 +27,8 @@ pub enum NetVerdict {
         dnt: bool,
         gpc: bool,
         referrer: Option<String>,
+        /// Custom headers: set (`Some(value)`) or removed (`None`).
+        headers: Vec<(String, Option<String>)>,
     },
     Block,
     /// Do not send it; answer with this body instead (`$redirect`).
@@ -49,6 +51,27 @@ pub trait RequestPolicy: Send + Sync {
 
     /// A request was answered with a redirect to `new_url` (bounce-tracker bookkeeping).
     fn redirected(&self, _resource_type: i32, _from_url: &str, _new_url: &str) {}
+}
+
+/// Rewrites the request's header map without the named headers (case-insensitive).
+fn remove_headers(request: &mut Request, names: &[&str]) {
+    let Some(mut map) = string_multimap_alloc() else { return };
+    request.header_map(Some(&mut map));
+    let Some(mut kept) = string_multimap_alloc() else { return };
+    let n = string_multimap_size(Some(&mut map));
+    for i in 0..n {
+        let mut key = CefString::from("");
+        let mut value = CefString::from("");
+        string_multimap_key(Some(&mut map), i, Some(&mut key));
+        string_multimap_value(Some(&mut map), i, Some(&mut value));
+        let k = key.to_string();
+        if !names.iter().any(|r| r.eq_ignore_ascii_case(&k)) {
+            string_multimap_append(Some(&mut kept), Some(&key), Some(&value));
+        }
+    }
+    request.set_header_map(Some(&mut kept));
+    string_multimap_free(Some(&mut map));
+    string_multimap_free(Some(&mut kept));
 }
 
 /// A `$redirect` stand-in (content type, body) waiting to be served.
@@ -145,7 +168,7 @@ wrap_resource_request_handler! {
                     }
                     ReturnValue::CONTINUE
                 }
-                NetVerdict::Allow { dnt, gpc, referrer } => {
+                NetVerdict::Allow { dnt, gpc, referrer, headers } => {
                     if dnt {
                         request.set_header_by_name(Some(&CefString::from("DNT")), Some(&CefString::from("1")), 1);
                     }
@@ -156,6 +179,15 @@ wrap_resource_request_handler! {
                         Some("") => request.set_referrer(None, ReferrerPolicy::NO_REFERRER),
                         Some(r) => request.set_referrer(Some(&CefString::from(r)), ReferrerPolicy::NEVER_CLEAR_REFERRER),
                         None => {}
+                    }
+                    let removed: Vec<&str> = headers.iter().filter(|(_, v)| v.is_none()).map(|(n, _)| n.as_str()).collect();
+                    if !removed.is_empty() {
+                        remove_headers(request, &removed);
+                    }
+                    for (name, value) in &headers {
+                        if let Some(v) = value {
+                            request.set_header_by_name(Some(&CefString::from(name.as_str())), Some(&CefString::from(v.as_str())), 1);
+                        }
                     }
                     ReturnValue::CONTINUE
                 }

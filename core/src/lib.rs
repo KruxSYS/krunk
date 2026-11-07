@@ -14,6 +14,7 @@ pub mod downloads;
 pub mod filterlists;
 pub mod frame;
 pub mod frecency;
+pub mod headers;
 pub mod history;
 pub mod import;
 pub mod keys;

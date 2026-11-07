@@ -9,7 +9,8 @@
  if(d){o.push('userAgentData.platform = '+d.platform);o.push('brands = '+JSON.stringify(d.brands));
   try{const h=await d.getHighEntropyValues(['architecture','bitness','model','platformVersion','uaFullVersion','fullVersionList','wow64']);o.push('highEntropy = '+JSON.stringify(h));}catch(e){o.push('highEntropy error '+e)}}
  else o.push('userAgentData missing');
- let hdr={};try{hdr=await (await fetch('/headers',{cache:'no-store'})).json();}catch(e){o.push('headers fetch error '+e)}
+ o.push('typeof __lbHost = '+typeof __lbHost+' ("__lbHost" in window: '+('__lbHost' in window)+')');
+ let hdr={};try{hdr=await (await fetch('/headers',{cache:'no-store',headers:{'X-Page-Header':'secret'}})).json();}catch(e){o.push('headers fetch error '+e)}
  o.push('--- request headers seen by the server (fetch) ---');
  for(const k of Object.keys(hdr).sort())o.push(k+': '+hdr[k]);
  document.getElementById('o').textContent=o.join('\n');

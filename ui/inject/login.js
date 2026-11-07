@@ -7,11 +7,11 @@
 // own origin), so a login form inside an iframe gets suggestions too.
 (function () {
   'use strict';
-  if (!window.__lbHost) return;
+  if (typeof __lbHost !== 'object' || !__lbHost) return;
   if (location.protocol !== 'https:' && location.protocol !== 'http:') return;
   // Never on Krunk's own pages (they are not web content).
   if (/(^|\.)krunk\.invalid$/.test(location.hostname)) return;
-  var host = window.__lbHost;
+  var host = __lbHost;
   var isTop = window.top === window;
   var announced = false;
   var lastSubmit = { value: null, time: 0 };

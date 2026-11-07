@@ -631,7 +631,9 @@ mod tests {
         ] {
             assert!(b.check(url, page, ResourceKind::Script).is_blocked(), "{url}");
         }
-        assert!(!b.check("https://cdn.jsdelivr.net/npm/lodash@4/lodash.min.js", page, ResourceKind::Script).is_blocked());
+        assert!(!b
+            .check("https://cdn.jsdelivr.net/npm/lodash@4/lodash.min.js", page, ResourceKind::Script)
+            .is_blocked());
         let nocoin = bundled_list("nocoin").unwrap();
         let n = Blocker::from_lists(&[("nocoin", &nocoin)], 8);
         assert!(n.check("https://coinhive.com/lib/coinhive.min.js?t=1", page, ResourceKind::Script).is_blocked());

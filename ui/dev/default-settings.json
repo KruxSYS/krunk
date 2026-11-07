@@ -51,6 +51,11 @@
     "referrer": "origin",
     "bounceCleanup": true
   },
+  "headers": {
+    "acceptLanguage": "",
+    "hints": null,
+    "rules": []
+  },
   "vaultAutolockMinutes": 15,
   "offerSavePasswords": true,
   "downloadDir": "",

@@ -80,6 +80,92 @@
     const p = userAgents.find((u) => u.userAgent === ua);
     return p ? p.id : 'custom';
   }
+  // 0.6.0 request headers: client hints, custom rules and the read-only list.
+  const READ_ONLY_HEADERS = [
+    ['Host', 'set by the network stack from the address'], ['Connection', 'managed by the network stack'],
+    ['Content-Length', 'computed from the request body'], ['Accept-Encoding', 'the engine negotiates compression itself'],
+    ['Cookie', 'the cookie jar (see Cookies and site data)'], ['Referer', 'the tracking-protection level decides what other sites learn'],
+    ['Origin', 'security-relevant: set by the engine'], ['DNT', 'Settings → Privacy → Do Not Track'], ['Sec-GPC', 'Settings → Privacy → Global Privacy Control'],
+    ['Sec-Fetch-Site / -Mode / -Dest / -User', 'added by the network stack after Krunk\'s hook'], ['Priority', 'added by the network stack after Krunk\'s hook'],
+    ['Upgrade-Insecure-Requests', 'added by the engine for navigations'], ['Sec-CH-UA*', 'edited through the client hints above'],
+  ];
+  // The engine's own values (the host reads them from the shell page; a fallback until then).
+  let HINT_DEFAULTS = { brands: [{ brand: 'Not:A-Brand', version: '8' }, { brand: 'Chromium', version: '156' }], fullVersion: '', platform: 'Windows', platformVersion: '15.0.0', architecture: 'x86', bitness: '64', model: '', mobile: false, wow64: false };
+  const HINT_FIELDS = ['fullVersion', 'platform', 'platformVersion', 'architecture', 'bitness', 'model'];
+  function brandsText(brands) { return (brands || []).map((b) => '"' + b.brand + '";v="' + b.version + '"').join(', '); }
+  function parseBrands(text) {
+    return text.split(',').map((part) => {
+      const m = part.match(/^\s*"?([^";]+?)"?\s*;\s*(?:v=)?"?([^"]+?)"?\s*$/);
+      return m ? { brand: m[1].trim(), version: m[2].trim() } : null;
+    }).filter(Boolean);
+  }
+  function renderHeaders() {
+    const h = settings.headers || { acceptLanguage: '', hints: null, rules: [] };
+    const on = !!h.hints;
+    if ($('hints-on') !== document.activeElement) $('hints-on').checked = on;
+    const src = h.hints || HINT_DEFAULTS;
+    if (!$('hint-fields').contains(document.activeElement)) {
+      $('hint-brands').value = brandsText(src.brands);
+      HINT_FIELDS.forEach((k) => { $('hint-' + k).value = src[k] || ''; });
+      $('hint-mobile').checked = !!src.mobile;
+      $('hint-wow64').checked = !!src.wow64;
+    }
+    stateHidden('hint-fields', !on);
+    const list = $('header-rules');
+    list.textContent = '';
+    if (!(h.rules || []).length) list.appendChild(el('p', { class: 'muted', text: 'No custom headers.' }));
+    (h.rules || []).forEach(function (r, i) {
+      list.appendChild(el('div', { class: 'row rule', 'data-name': r.name }, [
+        el('span', { class: 'name', text: r.name }),
+        el('span', { class: 'value', text: r.value === null || r.value === undefined ? '(removed)' : r.value }),
+        r.sites && r.sites.length ? el('span', { class: 'tag', text: r.sites.join(', ') }) : null,
+        Page.iconButton('trash', 'Remove ' + r.name, function () {
+          const s = collect();
+          s.headers.rules = s.headers.rules.filter((_, j) => j !== i);
+          save(s);
+        }),
+      ]));
+    });
+    if (!$('readonly-headers').childElementCount) {
+      READ_ONLY_HEADERS.forEach(([n, why]) => {
+        $('readonly-headers').appendChild(el('span', { class: 'name', text: n }));
+        $('readonly-headers').appendChild(el('span', { class: 'why', text: why }));
+      });
+    }
+  }
+  function collectHints(s) {
+    s.headers = s.headers || { acceptLanguage: '', hints: null, rules: [] };
+    if (!$('hints-on').checked) { s.headers.hints = null; return; }
+    const prev = (settings.headers && settings.headers.hints) || HINT_DEFAULTS;
+    const hints = Object.assign({}, prev, { brands: parseBrands($('hint-brands').value), mobile: $('hint-mobile').checked, wow64: $('hint-wow64').checked });
+    HINT_FIELDS.forEach((k) => { hints[k] = $('hint-' + k).value.trim(); });
+    s.headers.hints = hints;
+  }
+  $('hints-on').addEventListener('change', function () { save(); });
+  document.querySelectorAll('#hint-fields input').forEach((i) => i.addEventListener('change', function () { save(); }));
+  $('header-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    const name = $('header-name').value.trim();
+    const value = $('header-value').value;
+    const sites = $('header-sites').value.split(',').map((x) => x.trim()).filter(Boolean);
+    $('header-error').textContent = '';
+    if (!name) { $('header-error').textContent = 'Enter a header name'; return; }
+    const s = collect();
+    s.headers.rules = (s.headers.rules || []).concat([{ name: name, value: value === '' ? null : value, sites: sites }]);
+    save(s).then(function (ok) {
+      if (ok === false) return;
+      const err = document.querySelector('[data-error-for="headers.rules"]');
+      if (err && err.textContent) { $('header-error').textContent = err.textContent; return; }
+      $('header-name').value = ''; $('header-value').value = ''; $('header-sites').value = '';
+    });
+  });
+  $('headers-reset').addEventListener('click', function () {
+    const s = collect();
+    s.userAgent = '';
+    s.headers = { acceptLanguage: '', hints: null, rules: [] };
+    save(s).then(function () { Page.toast('Request headers reset'); });
+  });
+
   function renderUserAgent() {
     const sel = $('userAgentPreset');
     if (sel.options.length === 2 && userAgents.length) {
@@ -153,6 +239,7 @@
     $('download-dir').textContent = settings.downloadDir || 'Downloads (default)';
     $('default-dir').hidden = !settings.downloadDir;
     renderUserAgent();
+    renderHeaders();
     LB.applyTheme(settings.theme, settings.appearance && settings.appearance.accent);
     renderLists();
   }
@@ -174,6 +261,7 @@
     if (theme) s.theme = theme.value;
     const plevel = document.querySelector('input[name=plevel]:checked');
     if (plevel) { s.protection = s.protection || {}; s.protection.level = plevel.value; }
+    collectHints(s);
     // Something that is not a whole number becomes an out-of-range value, so
     // the host's validation reports the field (instead of the message failing to parse).
     ['tabSleepMinutes', 'tabDiscardMinutes', 'vaultAutolockMinutes'].forEach((k) => {
@@ -456,6 +544,7 @@
     settings = r.settings;
     userAgents = r.userAgents || [];
     defaultUserAgent = r.defaultUserAgent || '';
+    if (r.engineHints) HINT_DEFAULTS = r.engineHints;
     banner(r.restartRequired);
     $('about').textContent = 'Krunk ' + r.about.version + ' · Chromium ' + r.about.chromium + ' (CEF ' + r.about.cef + ')' + ' · data in ' + r.about.dataDir;
     render();

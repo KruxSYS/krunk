@@ -953,8 +953,26 @@ impl View {
         self.host().is_some_and(|h| h.is_audio_muted() != 0)
     }
 
-    pub fn set_user_agent(&self, ua: Option<&str>) {
-        self.devtools_method("Emulation.setUserAgentOverride", &serde_json::json!({ "userAgent": ua.unwrap_or("") }));
+    /// Evaluates `expression` in the page (a promise is awaited) and hands back its JSON
+    /// value, or `None` when it threw or the call failed.
+    pub fn eval_json(&self, expression: &str, done: impl FnOnce(Option<serde_json::Value>) + 'static) {
+        let params = serde_json::json!({ "expression": expression, "awaitPromise": true, "returnByValue": true });
+        self.devtools_call("Runtime.evaluate", &params, move |r| {
+            let value = r.ok().and_then(|v| {
+                if v.get("exceptionDetails").is_some() {
+                    return None;
+                }
+                v.get("result")?.get("value").cloned()
+            });
+            done(value);
+        });
+    }
+
+    /// `Emulation.setUserAgentOverride` with the parameters from `core::headers`
+    /// (`{userAgent: ""}` clears the override); `done` runs once the engine acknowledged
+    /// it, so a navigation started after it carries the override.
+    pub fn set_user_agent_override(&self, params: &serde_json::Value, done: impl FnOnce(bool) + 'static) {
+        self.devtools_call("Emulation.setUserAgentOverride", params, move |r| done(r.is_ok()));
     }
 
     // ------------------------------------------------------------ events

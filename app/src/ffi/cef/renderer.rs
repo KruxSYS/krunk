@@ -34,7 +34,7 @@ const MAX_MESSAGE: usize = 8 * 1024 * 1024;
 
 /// Installs `window.__lbHost` and returns the dispatch function for
 /// browser-to-page messages. Built-ins are captured before page scripts run.
-const SHIM: &str = r#"(function (send) {
+const SHIM: &str = r#"(function (send, expose) {
   'use strict';
   var stringify = JSON.stringify, parse = JSON.parse, listeners = [];
   var host = Object.freeze({
@@ -46,8 +46,10 @@ const SHIM: &str = r#"(function (send) {
       for (var i = 0; i < listeners.length; i++) if (listeners[i] === fn) { listeners.splice(i, 1); return; }
     }
   });
-  Object.defineProperty(window, '__lbHost', { value: host, writable: false, configurable: false, enumerable: false });
-  return function (json) {
+  // Krunk's own pages find the bridge on the window; web pages never do (0.6.0: nothing to
+  // fingerprint), their injected scripts get it as a closure argument.
+  if (expose) Object.defineProperty(window, '__lbHost', { value: host, writable: false, configurable: false, enumerable: false });
+  var dispatch = function (json) {
     var data;
     try { data = parse(json); } catch (e) { return; }
     var copy = listeners.slice(), ev = { data: data };
@@ -55,6 +57,8 @@ const SHIM: &str = r#"(function (send) {
       try { copy[i](ev); } catch (e) { setTimeout(function () { throw e; }); }
     }
   };
+  dispatch.host = host;
+  return dispatch;
 })"#;
 
 /// Reports whether this frame plays audio: unmuted media elements that
@@ -265,18 +269,18 @@ fn context_created(scripts: Scripts, frame: &mut Frame, context: &mut V8Context)
     // The bridge and the login script run in every http(s) frame: a login form in an iframe
     // gets suggestions for its own origin (the host accepts only the field messages from
     // sub-frames). Page tokens are a main-frame matter.
-    install_bridge(frame, context);
+    let host = install_bridge(frame, context);
     if scripts.login {
-        eval(context, assets::inject_script("login.js"));
+        eval_with_bridge(context, assets::inject_script("login.js"), host.as_ref());
     }
     if !main {
         return;
     }
     if scripts.page_tokens {
-        eval(context, assets::inject_script("page-tokens.js"));
+        eval_with_bridge(context, assets::inject_script("page-tokens.js"), host.as_ref());
     }
     if scripts.notify {
-        eval(context, assets::inject_script("notify.js"));
+        eval_with_bridge(context, assets::inject_script("notify.js"), host.as_ref());
     }
 }
 
@@ -339,14 +343,36 @@ fn eval(context: &mut V8Context, code: &str) -> Option<V8Value> {
     }
 }
 
-fn install_bridge(frame: &mut Frame, context: &mut V8Context) {
-    let Some(shim) = eval(context, SHIM) else { return };
+/// Installs the page bridge; returns the host object the injected scripts get. Only
+/// Krunk's own origins see it as `window.__lbHost`.
+fn install_bridge(frame: &mut Frame, context: &mut V8Context) -> Option<V8Value> {
+    let shim = eval(context, SHIM)?;
     let mut handler = SendToBrowser::new();
-    let Some(send) = v8_value_create_function(Some(&CefString::from("send")), Some(&mut handler)) else { return };
-    let Some(dispatch) = shim.execute_function(None, Some(&[Some(send)])) else { return };
-    if dispatch.is_function() == 1 {
-        let id = CefString::from(&frame.identifier()).to_string();
-        DISPATCH.with(|d| d.borrow_mut().insert(id, dispatch));
+    let send = v8_value_create_function(Some(&CefString::from("send")), Some(&mut handler))?;
+    let own = url::Url::parse(&CefString::from(&frame.url()).to_string())
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h == "krunk.invalid" || h.ends_with(".krunk.invalid")))
+        .unwrap_or(false);
+    let expose = v8_value_create_bool(i32::from(own))?;
+    let dispatch = shim.execute_function(None, Some(&[Some(send), Some(expose)]))?;
+    if dispatch.is_function() != 1 {
+        return None;
+    }
+    let host = dispatch.value_bykey(Some(&CefString::from("host")));
+    let id = CefString::from(&frame.identifier()).to_string();
+    DISPATCH.with(|d| d.borrow_mut().insert(id, dispatch));
+    host
+}
+
+/// Runs an injected script as `(function (__lbHost) { … })(host)`.
+fn eval_with_bridge(context: &mut V8Context, code: &str, host: Option<&V8Value>) {
+    if code.is_empty() {
+        return;
+    }
+    let Some(host) = host else { return };
+    let Some(f) = eval(context, &format!("(function (__lbHost) {{\n{code}\n}})")) else { return };
+    if f.is_function() == 1 {
+        let _ = f.execute_function(None, Some(&[Some(host.clone())]));
     }
 }
 

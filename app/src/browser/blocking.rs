@@ -15,6 +15,7 @@ use lb_core::assets;
 use lb_core::blocker::{self, Allowlist, Blocker, Decision, ResourceKind, ScriptletEngine};
 use lb_core::cookies;
 use lb_core::filterlists::{self, Rebuilt, SourceSet, UpdateState, MAX_LIST_BYTES};
+use lb_core::headers::Headers;
 use lb_core::pages::Page;
 use lb_core::protection::{self, Protection, Referrer, ThirdPartyCookies, TrackerSet};
 use lb_core::protocol::{ContentMessage, Event, PopupContent, Request};
@@ -119,6 +120,9 @@ pub(super) struct NetShared {
     trackers: RwLock<Arc<TrackerSet>>,
     /// Top-level redirects seen by the IO thread (from, to), drained by the bounce timer.
     hops: Mutex<Vec<(String, String)>>,
+    /// Custom request headers (0.6.0, Settings → Advanced → Request headers).
+    headers: RwLock<Arc<Headers>>,
+    has_header_rules: AtomicBool,
     notifier: OnceLock<AppNotifier>,
     /// An APP_SHIELD message is on its way to the UI thread.
     shield_posted: AtomicBool,
@@ -158,6 +162,22 @@ impl NetShared {
         let e = p.effective();
         self.cookie_policy.store(cookie_policy_code(e.third_party_cookies), Relaxed);
         self.referrer_policy.store(referrer_code(e.referrer), Relaxed);
+    }
+
+    pub fn set_headers(&self, h: &Headers) {
+        self.has_header_rules.store(!h.rules.is_empty(), Relaxed);
+        if let Ok(mut w) = self.headers.write() {
+            *w = Arc::new(h.clone());
+        }
+    }
+
+    /// The custom header rules for a page at `top` (cheap when there are none).
+    fn header_rules(&self, top: &str) -> Vec<(String, Option<String>)> {
+        if !self.has_header_rules.load(Relaxed) {
+            return Vec::new();
+        }
+        let host = urlclean::host_of(top).unwrap_or_default();
+        self.headers.read().ok().map(|h| h.rules_for(&host)).unwrap_or_default()
     }
 
     pub fn set_trackers(&self, t: TrackerSet) {
@@ -256,7 +276,7 @@ impl RequestPolicy for TabPolicy {
             // Only built-in pages may load from the internal origins.
             let top_level = req.resource_type == 0;
             return if assets::internal_request_allowed(req.url, req.initiator, top_level) {
-                NetVerdict::Allow { dnt: false, gpc: false, referrer: None }
+                NetVerdict::Allow { dnt: false, gpc: false, referrer: None, headers: Vec::new() }
             } else {
                 NetVerdict::Block
             };
@@ -268,7 +288,13 @@ impl RequestPolicy for TabPolicy {
         } else {
             protection::trim_referrer(req.referrer, req.url, referrer_from_code(self.net.referrer_policy.load(Relaxed)))
         };
-        let headers = NetVerdict::Allow { dnt: self.net.dnt.load(Relaxed), gpc: self.net.gpc.load(Relaxed), referrer };
+        let top_for_rules = self.tab.top_url.lock().map(|t| t.clone()).unwrap_or_default();
+        let headers = NetVerdict::Allow {
+            dnt: self.net.dnt.load(Relaxed),
+            gpc: self.net.gpc.load(Relaxed),
+            referrer,
+            headers: self.net.header_rules(&top_for_rules),
+        };
         if !self.net.enabled() || self.tab.allowed.load(Relaxed) || !blocker::is_filterable(req.url) {
             return headers;
         }
@@ -425,6 +451,7 @@ impl Browser {
         self.net.set_enabled(enabled);
         self.net.set_privacy_headers(dnt, gpc);
         self.net.set_protection(&self.settings.borrow().protection);
+        self.net.set_headers(&self.settings.borrow().headers);
         self.load_trackers();
         *f.allowlist.borrow_mut() = Allowlist::new(self.store.borrow().allowlist().unwrap_or_default());
         *f.user.borrow_mut() =

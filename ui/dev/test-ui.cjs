@@ -2409,6 +2409,8 @@ function settingsMock(defaults) {
     if (s.searchEngine === 'custom' && !/%s|\{searchTerms\}/.test(s.customSearchUrl)) errs.push({ field: 'customSearchUrl', message: 'Must contain %s where the search terms go' });
     if (s.extraFlags.split(/\s+/).some((t) => t && !/^--[A-Za-z0-9][\w.-]*(=[^\s"'`;&|<>]+)?$/.test(t))) errs.push({ field: 'extraFlags', message: 'Not a valid flag (use --flag or --flag=value)' });
     if (s.tabSleepMinutes > 1440) errs.push({ field: 'tabSleepMinutes', message: 'Must be between 0 and 1440 minutes' });
+    const ro = (s.headers && s.headers.rules || []).find((r) => /^(cookie|host|referer)$/i.test(r.name));
+    if (ro) errs.push({ field: 'headers.rules', message: ro.name + ': ' + ro.name + ' is read-only: the cookie jar' });
     if (errs.length) { const e = new Error('Some settings are not valid'); e.data = errs; throw e; }
     st.settings = s;
     return { settings: s, restartRequired: restart(s) };
@@ -2736,6 +2738,53 @@ async function testSettings(browser) {
   await page.selectOption('#userAgentPreset', '');
   await page.waitForTimeout(80);
   check(await page.evaluate(() => window.__settings.settings.userAgent) === '' && await page.locator('#custom-ua-row').isHidden(), 'Krunk (default) clears the string');
+  // 0.6.0: request headers (Accept-Language, client hints, custom rules, read-only list, Reset).
+  check(await page.locator('#hint-fields').isHidden() && !(await page.isChecked('#hints-on')) && await page.locator('#readonly-headers .name').count() === 13, 'client hints off by default, the read-only list has 13 rows');
+  await page.fill('#acceptLanguage', 'de-DE, de');
+  await page.press('#acceptLanguage', 'Tab');
+  await page.waitForTimeout(80);
+  check(await page.evaluate(() => window.__settings.settings.headers.acceptLanguage) === 'de-DE, de', 'Accept-Language is saved');
+  await page.check('#hints-on');
+  await page.waitForTimeout(80);
+  {
+    const h = await page.evaluate(() => window.__settings.settings.headers.hints);
+    check(h && h.platform === 'Windows' && h.brands.length === 2 && h.brands[1].brand === 'Chromium' && await page.locator('#hint-fields').isVisible(), 'the hints switch stores the engine\'s values and shows the fields (' + JSON.stringify(h) + ')');
+  }
+  await page.fill('#hint-platform', 'Krunk OS');
+  await page.press('#hint-platform', 'Tab');
+  await page.fill('#hint-brands', '"Chromium";v="156", "Krunk";v="0.6"');
+  await page.press('#hint-brands', 'Tab');
+  await page.waitForTimeout(80);
+  {
+    const h = await page.evaluate(() => window.__settings.settings.headers.hints);
+    check(h.platform === 'Krunk OS' && h.brands.length === 2 && h.brands[1].brand === 'Krunk' && h.brands[1].version === '0.6', 'platform and brands edits are saved (' + JSON.stringify(h.brands) + ')');
+  }
+  await page.fill('#header-name', 'X-Krunk-Test');
+  await page.fill('#header-value', '1');
+  await page.click('#header-form button');
+  await page.waitForTimeout(80);
+  await page.fill('#header-name', 'X-Page-Header');
+  await page.fill('#header-sites', 'krunk-test.test, example.com');
+  await page.click('#header-form button');
+  await page.waitForTimeout(80);
+  {
+    const r = await page.evaluate(() => window.__settings.settings.headers.rules);
+    check(r.length === 2 && r[0].name === 'X-Krunk-Test' && r[0].value === '1' && r[0].sites.length === 0 && r[1].value === null && r[1].sites.join() === 'krunk-test.test,example.com', 'two rules: a set header everywhere and a removal on two sites (' + JSON.stringify(r) + ')');
+    check(await page.locator('#header-rules .rule').count() === 2 && (await page.textContent('#header-rules')).includes('(removed)') && await page.inputValue('#header-name') === '', 'the rules are listed and the form cleared');
+  }
+  await page.fill('#header-name', 'Cookie');
+  await page.click('#header-form button');
+  await page.waitForTimeout(80);
+  check((await page.textContent('#header-error')).includes('read-only') && await page.evaluate(() => window.__settings.settings.headers.rules.length) === 2, 'a read-only name is refused with the reason (' + await page.textContent('#header-error') + ')');
+  await page.locator('#header-rules .rule[data-name="X-Krunk-Test"] .icon-btn').click();
+  await page.waitForTimeout(80);
+  check(await page.evaluate(() => window.__settings.settings.headers.rules.length) === 1, 'Remove drops the rule');
+  await page.click('#headers-reset');
+  await page.waitForTimeout(80);
+  {
+    const h = await page.evaluate(() => window.__settings.settings.headers);
+    check(h.acceptLanguage === '' && h.hints === null && h.rules.length === 0 && await page.evaluate(() => window.__settings.settings.userAgent) === '' && await page.locator('#hint-fields').isHidden(), 'Reset clears the language, hints, rules and user agent');
+  }
   check((await page.textContent('#about')).includes('Krunk 0.1.0') && await page.locator('a[href="gpu.html"]').count() >= 1, 'About line and a link to krunk://gpu in Advanced');
 
   // Search across every tab, and deep links.
