@@ -300,10 +300,36 @@ pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> Pop
         PopupKind::CaptionMenu => (250.0, 352.0),
         PopupKind::Downloads => (380.0, 420.0),
         PopupKind::Pip => (340.0, 300.0),
+        PopupKind::PipVolume => (PIP_BAR_MIN_WIDTH_DIP, PIP_BAR_HEIGHT_DIP),
         PopupKind::BookmarkEdit => (340.0, 214.0),
     };
     let x = (shell_width_css - w - 8.0).max(0.0);
     PopupRect { x, y: SHELL_HEIGHT_DIP - 4.0, width: w, height: h }
+}
+
+/// The volume bar next to the floating video window (0.7.0, R8), in DIP.
+pub const PIP_BAR_HEIGHT_DIP: f64 = 40.0;
+pub const PIP_BAR_MIN_WIDTH_DIP: f64 = 240.0;
+const PIP_BAR_GAP_DIP: f64 = 4.0;
+
+/// Where the volume bar goes (screen pixels): as wide as the floating window (at least
+/// [`PIP_BAR_MIN_WIDTH_DIP`]), flush under it; above it when the work area ends there; over
+/// its bottom edge when neither fits. Always inside the work area.
+pub fn pip_bar_rect(pip: Rect, work: Rect, scale: f64) -> Rect {
+    let h = (PIP_BAR_HEIGHT_DIP * scale).round() as i32;
+    let gap = (PIP_BAR_GAP_DIP * scale).round() as i32;
+    let width = pip.width.max((PIP_BAR_MIN_WIDTH_DIP * scale).round() as i32).min(work.width);
+    let below = pip.y + pip.height + gap;
+    let above = pip.y - gap - h;
+    let y = if below + h <= work.y + work.height {
+        below
+    } else if above >= work.y {
+        above
+    } else {
+        pip.y + pip.height - h
+    };
+    let x = pip.x.clamp(work.x, (work.x + work.width - width).max(work.x));
+    Rect { x, y: y.clamp(work.y, (work.y + work.height - h).max(work.y)), width, height: h }
 }
 
 fn folder_height(items: usize) -> f64 {
@@ -333,6 +359,25 @@ pub fn next_zoom(current: f64, zoom_in: bool) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_pip_volume_bar_stays_next_to_the_floating_window() {
+        let work = Rect { x: 0, y: 0, width: 1920, height: 1040 };
+        let r = |x, y, width, height| Rect { x, y, width, height };
+        // Room below: flush under it, as wide as it.
+        assert_eq!(pip_bar_rect(r(1400, 600, 400, 225), work, 1.0), r(1400, 829, 400, 40));
+        // At the bottom of the work area: above it.
+        assert_eq!(pip_bar_rect(r(1400, 800, 400, 225), work, 1.0), r(1400, 756, 400, 40));
+        // A small window: the bar keeps its minimum width, inside the screen.
+        assert_eq!(pip_bar_rect(r(1800, 100, 160, 90), work, 1.0), r(1680, 194, 240, 40));
+        // 150 %: sizes scale.
+        assert_eq!(pip_bar_rect(r(100, 100, 600, 338), work, 1.5), r(100, 444, 600, 60));
+        // A window filling the height: over its bottom edge.
+        assert_eq!(pip_bar_rect(r(0, 0, 1920, 1040), work, 1.0), r(0, 1000, 1920, 40));
+        // A second monitor left of the primary.
+        let left = Rect { x: -1280, y: 0, width: 1280, height: 984 };
+        assert_eq!(pip_bar_rect(r(-1290, 50, 300, 170), left, 1.0), r(-1280, 224, 300, 40));
+    }
 
     #[test]
     fn bar_band_follows_the_toolbar() {

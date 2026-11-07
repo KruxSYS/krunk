@@ -1,9 +1,9 @@
 // Krunk 0.6.0: the page's videos for the Picture-in-Picture button and chooser (R24).
 // Runs in the main frame; same-origin frames are walked from here (a frame from another
 // site keeps its own controls). Reports {lb:'media', videos:[…]} when the list changes and
-// does the PiP request itself on a `krunk-pip` DOM event: the browser fires it through
-// DevTools with a user gesture (CEF allows PiP only with user activation; the shell's button
-// is another window), so no global is exposed to the page.
+// does the PiP request (and, 0.7.0, sets the volume of the video in it) on a `krunk-pip` DOM
+// event: the browser fires it through DevTools with a user gesture (CEF allows PiP only with
+// user activation; the shell's button is another window), so no global is exposed to the page.
 'use strict';
 if (typeof __lbHost !== 'object' || !__lbHost) return;
 if (location.protocol !== 'https:' && location.protocol !== 'http:') return;
@@ -45,7 +45,7 @@ function label(v) {
 function hook(doc) {
   if (docsHooked.has(doc)) return;
   docsHooked.add(doc);
-  ['play', 'playing', 'pause', 'ended', 'emptied', 'loadedmetadata', 'resize', 'enterpictureinpicture', 'leavepictureinpicture'].forEach(function (t) {
+  ['play', 'playing', 'pause', 'ended', 'emptied', 'loadedmetadata', 'resize', 'volumechange', 'enterpictureinpicture', 'leavepictureinpicture'].forEach(function (t) {
     doc.addEventListener(t, function (e) {
       if (!(e.target instanceof HTMLVideoElement)) return;
       if (t === 'leavepictureinpicture') left(e.target);
@@ -75,7 +75,7 @@ function scan() {
     for (var i = 0; i < vs.length && list.length < 32; i++) {
       var v = vs[i];
       if (v.readyState < 1 || v.disablePictureInPicture) continue;
-      info.push({ index: list.length, label: label(v), width: v.videoWidth, height: v.videoHeight, playing: !v.paused && !v.ended, pip: doc.pictureInPictureElement === v });
+      info.push({ index: list.length, label: label(v), width: v.videoWidth, height: v.videoHeight, playing: !v.paused && !v.ended, pip: doc.pictureInPictureElement === v, volume: Math.round(v.volume * 100), muted: v.muted });
       list.push(v);
     }
   });
@@ -91,6 +91,16 @@ document.addEventListener('krunk-pip', function (e) {
   var d = e.detail;
   if (!d || typeof d.done !== 'function') return;
   var p;
+  if (d.volume !== undefined) {
+    // The volume bar next to the floating window (0.7.0, R8): the video in it.
+    var pv = videos.filter(function (x) { return x.ownerDocument.pictureInPictureElement === x; })[0];
+    if (pv) {
+      pv.volume = Math.max(0, Math.min(100, Number(d.volume) || 0)) / 100;
+      pv.muted = !!d.muted;
+    }
+    d.done(Promise.resolve({ set: !!pv }));
+    return;
+  }
   if (d.exit) {
     var cur = videos.filter(function (x) { return x.ownerDocument.pictureInPictureElement === x; })[0];
     expectedExit = !!cur;

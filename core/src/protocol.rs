@@ -159,6 +159,9 @@ pub enum PopupKind {
     Downloads,
     /// Which video goes to Picture-in-Picture when the page has several (0.6.0).
     Pip,
+    /// The volume bar next to the floating video window (0.7.0, R8). Opened by the host only;
+    /// it never takes the keyboard (the floating window keeps it).
+    PipVolume,
     /// A tab's context menu (right-click on the tab).
     TabMenu,
     /// The bookmarks bar's context menu (right-click on an item, a folder or the bar).
@@ -182,7 +185,14 @@ impl PopupKind {
     /// it covers already had focus). (The "Press Esc" hint is not a popup:
     /// it is a native overlay, see `overlay`.)
     pub fn takes_focus(self) -> bool {
-        !matches!(self, PopupKind::Suggest | PopupKind::CardFill | PopupKind::AddressSuggest | PopupKind::AddressMenu)
+        !matches!(
+            self,
+            PopupKind::Suggest
+                | PopupKind::CardFill
+                | PopupKind::AddressSuggest
+                | PopupKind::AddressMenu
+                | PopupKind::PipVolume
+        )
     }
 }
 
@@ -274,6 +284,8 @@ pub enum PopupContent {
     },
     /// The Picture-in-Picture chooser (0.6.0): the active tab's videos.
     Pip { tab_id: u32, videos: Vec<VideoInfo> },
+    /// The floating video's volume (0.7.0, R8): percent and mute of tab `tab_id`'s video.
+    PipVolume { tab_id: u32, volume: u32, muted: bool },
     Shield {
         host: String,
         blocked: u32,
@@ -577,6 +589,7 @@ impl PopupContent {
             PopupContent::CaptionMenu { .. } => PopupKind::CaptionMenu,
             PopupContent::Downloads { .. } => PopupKind::Downloads,
             PopupContent::Pip { .. } => PopupKind::Pip,
+            PopupContent::PipVolume { .. } => PopupKind::PipVolume,
             PopupContent::BookmarkMenu { .. } => PopupKind::BookmarkMenu,
             PopupContent::BookmarkEdit { .. } => PopupKind::BookmarkEdit,
         }
@@ -1204,6 +1217,13 @@ pub enum Request {
         tab_id: u32,
         index: u32,
     },
+    /// The floating video's volume bar (popup, 0.7.0): `volume` percent (0-100) and mute for
+    /// the video of tab `tab_id` that is in Picture-in-Picture.
+    PipVolume {
+        tab_id: u32,
+        volume: u32,
+        muted: bool,
+    },
     /// The suggestion dropdown (popup): "Unlock Krunk passwords" for the focused field.
     SuggestUnlock {
         tab_id: u32,
@@ -1423,6 +1443,7 @@ impl Sender {
                     | R::FillReply { .. }
                     | R::SuggestPick { .. }
                     | R::PipPick { .. }
+                    | R::PipVolume { .. }
                     | R::SuggestUnlock { .. }
                     | R::SuggestGenerate { .. }
                     | R::CardFillPick { .. }
@@ -1629,6 +1650,15 @@ pub struct VideoInfo {
     /// This video is in Picture-in-Picture now.
     #[serde(default)]
     pub pip: bool,
+    /// Volume in percent, 0 to 100 (0.7.0, R8: the floating window's volume bar).
+    #[serde(default = "full_volume")]
+    pub volume: u32,
+    #[serde(default)]
+    pub muted: bool,
+}
+
+fn full_volume() -> u32 {
+    100
 }
 
 /// The media script reports at most this many videos, each label at most this long.
@@ -1706,7 +1736,9 @@ pub fn parse_content(json: &str) -> Result<ContentMessage, ProtocolError> {
     let msg: ContentMessage = serde_json::from_str(json).map_err(malformed)?;
     if let ContentMessage::Media { videos } = &msg {
         if videos.len() > MAX_VIDEOS
-            || videos.iter().any(|v| v.label.chars().count() > MAX_VIDEO_LABEL_CHARS || v.index as usize >= MAX_VIDEOS)
+            || videos.iter().any(|v| {
+                v.label.chars().count() > MAX_VIDEO_LABEL_CHARS || v.index as usize >= MAX_VIDEOS || v.volume > 100
+            })
         {
             return Err(ProtocolError::Invalid("videos"));
         }
@@ -3022,6 +3054,36 @@ mod tests {
     }
 
     #[test]
+    fn picture_in_picture_volume_messages() {
+        // 0.7.0 (R8): the volume bar is the host's popup; only it sets the volume.
+        assert!(!PopupKind::PipVolume.shell_may_open() && !PopupKind::PipVolume.takes_focus());
+        let set = Request::PipVolume { tab_id: 1, volume: 40, muted: false };
+        assert!(Sender::Popup.permits(&set) && !Sender::Shell.permits(&set) && !Sender::Ext.permits(&set));
+        for p in Page::ALL.iter() {
+            assert!(!Sender::Page(*p).permits(&set), "{p:?}");
+        }
+        let env = parse_request(Sender::Popup, r#"{"cmd":"pipVolume","tabId":3,"volume":25,"muted":true}"#).unwrap();
+        assert_eq!(env.request, Request::PipVolume { tab_id: 3, volume: 25, muted: true });
+        let bar = PopupContent::PipVolume { tab_id: 3, volume: 25, muted: true };
+        assert_eq!(bar.kind(), PopupKind::PipVolume);
+        assert_eq!(bar.toggle_anchor(), None);
+        let json = serde_json::to_string(&bar).unwrap();
+        assert!(json.contains("\"kind\":\"pipVolume\"") && json.contains("\"volume\":25"), "{json}");
+        // The page reports each video's volume and mute; older scripts without them mean full volume.
+        match parse_content(r#"{"lb":"media","videos":[{"index":0,"volume":30,"muted":true},{"index":1}]}"#).unwrap() {
+            ContentMessage::Media { videos } => {
+                assert_eq!((videos[0].volume, videos[0].muted), (30, true));
+                assert_eq!((videos[1].volume, videos[1].muted), (100, false));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            parse_content(r#"{"lb":"media","videos":[{"index":0,"volume":101}]}"#),
+            Err(ProtocolError::Invalid("videos"))
+        );
+    }
+
+    #[test]
     fn picture_in_picture_messages() {
         assert!(PopupKind::Pip.shell_may_open() && PopupKind::Pip.takes_focus());
         let pick = Request::PipPick { tab_id: 1, index: 2 };
@@ -3056,7 +3118,16 @@ mod tests {
         assert!(parse_content(r#"{"lb":"painted","tab":3}"#).is_err());
         let chooser = PopupContent::Pip {
             tab_id: 3,
-            videos: vec![VideoInfo { index: 0, label: "A".into(), width: 1, height: 1, playing: true, pip: false }],
+            videos: vec![VideoInfo {
+                index: 0,
+                label: "A".into(),
+                width: 1,
+                height: 1,
+                playing: true,
+                pip: false,
+                volume: 100,
+                muted: false,
+            }],
         };
         assert_eq!(chooser.kind(), PopupKind::Pip);
         assert_eq!(chooser.toggle_anchor().as_deref(), Some("pip"));

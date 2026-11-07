@@ -3,12 +3,85 @@
 //! shell's button lives in another window). The page's media script (`ui/inject/media.js`)
 //! lists the videos and does the request on a `krunk-pip` DOM event fired by the evaluate
 //! call, so nothing is added to the page's globals.
+//!
+//! The volume bar (0.7.0, R8): the engine's floating window has mute but no volume. Krunk finds
+//! that window (`ffi::pipwin`), follows it, takes the mouse wheel over it, and shows its own
+//! popup view with a volume slider flush under it while the pointer is over either (and for a
+//! moment after a change). The slider sets the video's volume through the same DOM event; the
+//! page's own changes come back with the media script's report.
 
-use super::{Browser, TabId};
+use super::{Browser, PopupSlot, TabId};
+use crate::ffi::pipwin::{self, PipEvents, PipWindow};
+use crate::ffi::window::{ScreenRect, Window, WindowEvents};
 use crate::log::{info, warning};
-use lb_core::protocol::{PopupContent, PopupRect, VideoInfo};
+use lb_core::layout;
+use lb_core::protocol::{Event, PopupContent, PopupRect, VideoInfo};
 use lb_core::storage::now_ms;
 use lb_core::urlclean;
+use std::rc::Weak;
+
+/// Polls while a video is in the floating window: finds the window, hides the bar.
+pub(super) const PIP_TIMER: usize = 18;
+const PIP_TICK_MS: u32 = 100;
+/// The engine opens its window shortly after the page's `enterpictureinpicture`.
+const FIND_TRIES: u32 = 30;
+/// The bar stays this long after the pointer left (to reach it from the window) …
+const HOVER_GRACE_MS: u64 = 300;
+/// … and this long after a volume change.
+const CHANGE_HOLD_MS: u64 = 2000;
+/// One wheel notch.
+const WHEEL_STEP: f64 = 5.0;
+
+/// The floating window of one tab's video and its volume bar.
+pub(super) struct PipBar {
+    tab: TabId,
+    window: Option<PipWindow>,
+    tries: u32,
+    volume: u32,
+    muted: bool,
+    shown: bool,
+    /// Keep the bar until then (ms), even without the pointer.
+    hold_until: u64,
+}
+
+/// The bar's popup window takes no activation and needs no window events.
+pub(super) struct PipBarEvents;
+
+impl WindowEvents for PipBarEvents {}
+
+/// The engine window's moves, wheel and hovering, handled after its message.
+struct PipHook(Weak<Browser>);
+
+impl PipEvents for PipHook {
+    fn wheel(&self, delta: f64) {
+        if let Some(b) = self.0.upgrade() {
+            b.defer(move |b| b.pip_wheel(delta));
+        }
+    }
+    fn moved(&self) {
+        if let Some(b) = self.0.upgrade() {
+            b.defer(|b| b.pip_bar_place());
+        }
+    }
+    fn hovered(&self) {
+        if let Some(b) = self.0.upgrade() {
+            b.defer(|b| b.pip_hovered());
+        }
+    }
+    fn destroyed(&self) {
+        if let Some(b) = self.0.upgrade() {
+            b.defer(|b| b.pip_window_gone());
+        }
+    }
+}
+
+/// The evaluate expression that sets the volume of the video in the floating window.
+fn volume_expression(volume: u32, muted: bool) -> String {
+    format!(
+        "(function(){{var r=null;document.dispatchEvent(new CustomEvent('krunk-pip',{{detail:{{volume:{volume},\
+         muted:{muted},done:function(p){{r=p}}}}}}));return r||Promise.reject(new Error('no media script'))}})()"
+    )
+}
 
 /// The evaluate expression: asks the media script for video `index`, or to leave PiP.
 fn pip_expression(index: Option<u32>) -> String {
@@ -30,13 +103,19 @@ impl Browser {
             return;
         }
         let pip_before = net.videos.borrow().iter().any(|v| v.pip);
-        let pip_now = videos.iter().any(|v| v.pip);
+        let in_pip = videos.iter().find(|v| v.pip).map(|v| (v.volume.min(100), v.muted));
+        let pip_now = in_pip.is_some();
         *net.videos.borrow_mut() = videos;
         if pip_before != pip_now {
             info!("tab {tab}: picture-in-picture {}", if pip_now { "on" } else { "off" });
             if !pip_now && self.auto_pip_tab.get() == Some(tab) {
                 self.auto_pip_tab.set(None);
             }
+        }
+        match in_pip {
+            Some((volume, muted)) => self.pip_bar_update(tab, volume, muted),
+            None if self.pip_bar.borrow().as_ref().is_some_and(|p| p.tab == tab) => self.pip_bar_stop(),
+            None => {}
         }
         self.send_nav();
     }
@@ -155,5 +234,263 @@ impl Browser {
             self.auto_pip_tab.set(Some(from));
             self.pip_request(from, index);
         }
+    }
+}
+
+// ------------------------------------------------------------ the volume bar (0.7.0, R8)
+
+impl Browser {
+    /// The page reported the video in the floating window (with its volume): start following
+    /// that window, or show the page's own change on the bar.
+    fn pip_bar_update(&self, tab: TabId, volume: u32, muted: bool) {
+        let other = self.pip_bar.borrow().as_ref().is_some_and(|p| p.tab != tab);
+        if other {
+            self.pip_bar_stop();
+        }
+        let refresh = {
+            let mut guard = self.pip_bar.borrow_mut();
+            match guard.as_mut() {
+                Some(p) => {
+                    let changed = (p.volume, p.muted) != (volume, muted);
+                    p.volume = volume;
+                    p.muted = muted;
+                    changed && p.shown
+                }
+                None => {
+                    *guard = Some(PipBar { tab, window: None, tries: 0, volume, muted, shown: false, hold_until: 0 });
+                    if let Some(app) = self.app() {
+                        app.set_timer(PIP_TIMER, PIP_TICK_MS);
+                    }
+                    false
+                }
+            }
+        };
+        if refresh {
+            self.pip_bar_post();
+        }
+        if self.pip_bar.borrow().as_ref().is_some_and(|p| p.window.is_none()) {
+            self.pip_find();
+        }
+    }
+
+    /// Looks for the engine's window (the page announces PiP a moment before it appears).
+    fn pip_find(&self) {
+        let found = {
+            let mut guard = self.pip_bar.borrow_mut();
+            let Some(p) = guard.as_mut().filter(|p| p.window.is_none()) else { return };
+            p.tries += 1;
+            let w = pipwin::find(&[]);
+            if let Some(w) = w {
+                p.window = Some(w);
+                let r = w.rect();
+                info!("tab {}: floating video window found ({}x{} at {},{})", p.tab, r.width, r.height, r.x, r.y);
+            } else if p.tries == FIND_TRIES {
+                warning!("tab {}: no floating video window found; no volume bar", p.tab);
+            }
+            w
+        };
+        if let Some(w) = found {
+            w.watch(std::rc::Rc::new(PipHook(self.me.clone())));
+            // Shown at first, so the bar is discovered; it hides once the pointer is elsewhere.
+            if let Some(p) = self.pip_bar.borrow_mut().as_mut() {
+                p.hold_until = now_ms() as u64 + CHANGE_HOLD_MS;
+            }
+            self.pip_bar_show();
+        }
+    }
+
+    /// Every [`PIP_TICK_MS`] while a video is in the floating window.
+    pub(super) fn pip_tick(&self) {
+        let (window, tries, shown, hold_until) = match self.pip_bar.borrow().as_ref() {
+            Some(p) => (p.window, p.tries, p.shown, p.hold_until),
+            None => {
+                if let Some(app) = self.app() {
+                    app.kill_timer(PIP_TIMER);
+                }
+                return;
+            }
+        };
+        let Some(w) = window else {
+            if tries < FIND_TRIES {
+                self.pip_find();
+            }
+            return;
+        };
+        if !w.exists() {
+            self.pip_window_gone();
+            return;
+        }
+        let over = self.pip_pointer_over(w);
+        let now = now_ms() as u64;
+        if over {
+            if let Some(p) = self.pip_bar.borrow_mut().as_mut() {
+                p.hold_until = p.hold_until.max(now + HOVER_GRACE_MS);
+            }
+            if !shown {
+                self.pip_bar_show();
+            }
+        } else if shown && now >= hold_until {
+            self.pip_bar_hide();
+        }
+    }
+
+    /// Is the pointer over the floating window or the bar?
+    fn pip_pointer_over(&self, w: PipWindow) -> bool {
+        let (x, y) = crate::ffi::cursor::position();
+        let inside = |r: ScreenRect| x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
+        let bar = self.pip_popup.borrow().as_ref().filter(|p| p.window.is_visible()).map(|p| p.window.rect());
+        w.is_visible() && inside(w.rect()) || bar.is_some_and(inside)
+    }
+
+    fn pip_hovered(&self) {
+        let shown = self.pip_bar.borrow().as_ref().map(|p| p.shown);
+        if shown == Some(false) {
+            if let Some(p) = self.pip_bar.borrow_mut().as_mut() {
+                p.hold_until = now_ms() as u64 + HOVER_GRACE_MS;
+            }
+            self.pip_bar_show();
+        }
+    }
+
+    /// The bar's rectangle next to the floating window (screen pixels).
+    fn pip_bar_rect(w: PipWindow) -> ScreenRect {
+        let r = w.rect();
+        let work = Window::work_area_at(r.x + r.width / 2, r.y + r.height / 2);
+        let b = layout::pip_bar_rect(
+            layout::Rect { x: r.x, y: r.y, width: r.width, height: r.height },
+            layout::Rect { x: work.x, y: work.y, width: work.width, height: work.height },
+            w.scale(),
+        );
+        ScreenRect { x: b.x, y: b.y, width: b.width, height: b.height }
+    }
+
+    fn pip_bar_show(&self) {
+        let Some(w) = self.pip_bar.borrow().as_ref().and_then(|p| p.window) else { return };
+        if !w.is_visible() {
+            return;
+        }
+        if self.pip_popup.borrow().is_none() {
+            // Owned by the hidden application window: the bar stays when a browser window is
+            // minimised (the floating window does too).
+            let Some(app) = self.app() else { return };
+            if !self.create_popup(app, PopupSlot::Pip) {
+                return;
+            }
+        }
+        if let Some(p) = self.pip_bar.borrow_mut().as_mut() {
+            p.shown = true;
+        }
+        let r = Self::pip_bar_rect(w);
+        if let Some(popup) = self.pip_popup.borrow().as_ref() {
+            popup.window.set_activatable(false);
+            popup.window.set_topmost(true);
+            popup.window.show_at(r, false);
+            if let Some(c) = &popup.view {
+                c.set_bounds(0, 0, r.width, r.height);
+                c.set_visible(true);
+            }
+        }
+        self.pip_bar_post();
+    }
+
+    /// The floating window moved or changed size: the bar goes with it.
+    fn pip_bar_place(&self) {
+        let Some(w) = self.pip_bar.borrow().as_ref().filter(|p| p.shown).and_then(|p| p.window) else { return };
+        if !w.is_visible() {
+            self.pip_bar_hide();
+            return;
+        }
+        let r = Self::pip_bar_rect(w);
+        if let Some(popup) = self.pip_popup.borrow().as_ref() {
+            popup.window.show_at(r, false);
+            if let Some(c) = &popup.view {
+                c.set_bounds(0, 0, r.width, r.height);
+            }
+        }
+    }
+
+    /// Sends the bar its content (now or once its document is ready).
+    fn pip_bar_post(&self) {
+        let Some(content) = self.pip_bar.borrow().as_ref().map(|p| PopupContent::PipVolume {
+            tab_id: p.tab,
+            volume: p.volume,
+            muted: p.muted,
+        }) else {
+            return;
+        };
+        let mut guard = self.pip_popup.borrow_mut();
+        let Some(popup) = guard.as_mut() else { return };
+        popup.content = Some(content.clone());
+        if popup.ready {
+            if let Some(c) = &popup.view {
+                c.post_json(&Event::Popup { content }.to_json());
+            }
+        }
+    }
+
+    fn pip_bar_hide(&self) {
+        if let Some(p) = self.pip_bar.borrow_mut().as_mut() {
+            p.shown = false;
+        }
+        if let Some(popup) = self.pip_popup.borrow().as_ref() {
+            if popup.window.is_visible() {
+                popup.window.hide();
+            }
+        }
+    }
+
+    /// The video left the floating window (or its tab is gone).
+    fn pip_bar_stop(&self) {
+        let bar = self.pip_bar.borrow_mut().take();
+        if let Some(w) = bar.and_then(|p| p.window) {
+            w.unwatch();
+        }
+        self.pip_bar_hide();
+        if let Some(app) = self.app() {
+            app.kill_timer(PIP_TIMER);
+        }
+    }
+
+    fn pip_window_gone(&self) {
+        let tab = self.pip_bar.borrow().as_ref().map(|p| p.tab);
+        if let Some(tab) = tab {
+            info!("tab {tab}: floating video window closed");
+        }
+        self.pip_bar_stop();
+    }
+
+    /// The bar's slider or mute button.
+    pub(super) fn pip_set_volume(&self, tab: TabId, volume: u32, muted: bool) {
+        let volume = volume.min(100);
+        {
+            let mut guard = self.pip_bar.borrow_mut();
+            let Some(p) = guard.as_mut().filter(|p| p.tab == tab) else { return };
+            p.volume = volume;
+            p.muted = muted;
+            p.hold_until = now_ms() as u64 + CHANGE_HOLD_MS;
+        }
+        let Some(view) = self.tab_view(tab) else { return };
+        let params = serde_json::json!({
+            "expression": volume_expression(volume, muted),
+            "awaitPromise": true,
+            "returnByValue": true,
+        });
+        view.devtools_call("Runtime.evaluate", &params, move |r| {
+            let set = r.as_ref().ok().and_then(|v| v.pointer("/result/value/set")).and_then(|v| v.as_bool());
+            if set != Some(true) {
+                warning!("tab {tab}: volume of the floating video not set ({r:?})");
+            }
+        });
+    }
+
+    /// The wheel over the floating window: up is louder; leaves mute.
+    fn pip_wheel(&self, notches: f64) {
+        let Some((tab, volume)) = self.pip_bar.borrow().as_ref().map(|p| (p.tab, p.volume)) else { return };
+        let next = (f64::from(volume) + notches * WHEEL_STEP).round().clamp(0.0, 100.0) as u32;
+        self.pip_set_volume(tab, next, false);
+        if let Some(p) = self.pip_bar.borrow_mut().as_mut() {
+            p.hold_until = now_ms() as u64 + CHANGE_HOLD_MS;
+        }
+        self.pip_bar_show();
     }
 }

@@ -158,6 +158,8 @@ pub(super) struct Frame {
 pub(super) enum PopupSlot {
     Main,
     Menu,
+    /// The volume bar next to the floating video window (0.7.0, R8).
+    Pip,
 }
 
 pub struct Browser {
@@ -180,10 +182,13 @@ pub struct Browser {
     /// A second popup window for a menu opened from inside the first one (an item of a
     /// bookmark folder dropdown): the dropdown stays open underneath, as in Chrome.
     menu_popup: RefCell<Option<Popup>>,
+    /// The floating video's volume bar (created when first needed) and its state.
+    pip_popup: RefCell<Option<Popup>>,
+    pip_bar: RefCell<Option<pip::PipBar>>,
     /// The menu popup is being hidden by the host (its deactivation is not the user leaving).
     menu_closing: Cell<bool>,
     /// The request being dispatched came from the menu popup's view.
-    from_menu_popup: Cell<bool>,
+    request_from: Cell<PopupSlot>,
     /// Views the engine is creating for a page's `window.open`, waiting for
     /// their tab's CreateView effect.
     adopted: RefCell<HashMap<TabId, (View, Rc<TabNet>)>>,
@@ -292,8 +297,10 @@ impl Browser {
             task_samples: tasks::TaskSamples::default(),
             flight: flight::FlightHost::default(),
             menu_popup: RefCell::new(None),
+            pip_popup: RefCell::new(None),
+            pip_bar: RefCell::new(None),
             menu_closing: Cell::new(false),
-            from_menu_popup: Cell::new(false),
+            request_from: Cell::new(PopupSlot::Main),
             adopted: RefCell::new(HashMap::new()),
             downloads: RefCell::new(Downloads::new()),
             parts_jobs: segmented::PartsJobs::default(),
@@ -1974,6 +1981,9 @@ impl Browser {
                     }
                 }
             }
+            // The volume bar is placed and hidden by the host only.
+            Request::HidePopup | Request::PopupResize { .. } if self.request_slot() == PopupSlot::Pip => {}
+            Request::PipVolume { tab_id, volume, muted } => self.pip_set_volume(tab_id, volume, muted),
             Request::HidePopup if self.request_slot() == PopupSlot::Menu => {
                 // Esc or a click outside the item menu: back to the open folder dropdown.
                 self.hide_menu_popup(true);
@@ -2204,16 +2214,13 @@ impl Browser {
         match slot {
             PopupSlot::Main => &self.popup,
             PopupSlot::Menu => &self.menu_popup,
+            PopupSlot::Pip => &self.pip_popup,
         }
     }
 
     /// The slot a popup-view request refers to (set while its message is dispatched).
     pub(super) fn request_slot(&self) -> PopupSlot {
-        if self.from_menu_popup.get() {
-            PopupSlot::Menu
-        } else {
-            PopupSlot::Main
-        }
+        self.request_from.get()
     }
 
     pub(super) fn show_popup_in(&self, slot: PopupSlot, content: PopupContent, rect: Option<PopupRect>) {
@@ -2258,12 +2265,13 @@ impl Browser {
         }
     }
 
-    fn create_popup(&self, main: Window, slot: PopupSlot) -> bool {
+    pub(super) fn create_popup(&self, owner: Window, slot: PopupSlot) -> bool {
         let events: Rc<dyn WindowEvents> = match slot {
             PopupSlot::Main => Rc::new(PopupEvents(self.me.clone())),
             PopupSlot::Menu => Rc::new(MenuPopupEvents(self.me.clone())),
+            PopupSlot::Pip => Rc::new(pip::PipBarEvents),
         };
-        let window = match Window::create_popup(main, events) {
+        let window = match Window::create_popup(owner, events) {
             Ok(w) => w,
             Err(e) => {
                 warning!("popup: {e}");
@@ -2283,9 +2291,9 @@ impl Browser {
         c.on_message(move |source, json| {
             if let Some(b) = weak.upgrade() {
                 let owner = b.popup_slot(slot).try_borrow().ok().and_then(|p| p.as_ref().and_then(|p| p.owner));
-                b.from_menu_popup.set(slot == PopupSlot::Menu);
+                b.request_from.set(slot);
                 b.on_ui_message(Channel::Popup, owner, source, json);
-                b.from_menu_popup.set(false);
+                b.request_from.set(PopupSlot::Main);
             }
         });
         let weak = self.me.clone();
@@ -2323,8 +2331,11 @@ impl Browser {
             }
         };
         if let Some((content, c)) = pending {
+            let focus = content.kind().takes_focus();
             c.post_json(&Event::Popup { content }.to_json());
-            c.focus();
+            if focus {
+                c.focus();
+            }
         }
     }
 
@@ -2594,6 +2605,7 @@ impl WindowEvents for AppEvents {
             ZOOM_TIMER => b.zoom_tick(),
             flight::FLIGHT_TIMER => b.flight_tick(),
             bounce::BOUNCE_TIMER => b.bounce_tick(),
+            pip::PIP_TIMER => b.pip_tick(),
             UPDATE_TIMER => {
                 if let Some(w) = b.app() {
                     w.set_timer(UPDATE_TIMER, blocking::UPDATE_CHECK_INTERVAL_MS);

@@ -6,6 +6,7 @@
 if (typeof __lbHost !== 'object' || !__lbHost) return;
 if (window.top !== window) return;
 if (location.protocol !== 'https:' && location.protocol !== 'http:') return;
+if (/(^|\.)krunk\.invalid$/.test(location.hostname)) return;   // Krunk's own pages say `ready`
 var host = __lbHost, sent = false;
 function done() {
   if (sent) return;

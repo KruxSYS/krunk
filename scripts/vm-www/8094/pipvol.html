@@ -1,0 +1,25 @@
+<!doctype html>
+<!-- Picture-in-Picture volume test (Krunk 0.7.0, R8, scripts/vm-070-pip.ps1): one looping video
+     with sound. The title and the big line show its volume and mute, so the window title (read
+     by the script) and the screenshots prove what the bar and the wheel did. Keys on the page:
+     8 sets 80 %, 2 sets 20 %, m toggles mute (the page's own controls). -->
+<html><head><meta charset="utf-8"><title>vol ?</title></head>
+<body style="background:#223;color:#fff;font:16px sans-serif">
+<h2>Volume</h2>
+<div id="state" style="font:bold 40px sans-serif;margin:8px 0">?</div>
+<video id="a" src="test-h264-aac.mp4" width="400" muted autoplay loop playsinline controls title="Trailer (H.264)"></video>
+<script>
+const v = document.getElementById('a');
+function show() {
+  const t = 'vol ' + Math.round(v.volume * 100) + (v.muted ? ' muted' : ' on');
+  document.title = t;
+  document.getElementById('state').textContent = t;
+}
+v.addEventListener('volumechange', show);
+document.addEventListener('keydown', (e) => {
+  if (e.key === '8') v.volume = 0.8;
+  if (e.key === '2') v.volume = 0.2;
+  if (e.key === 'm') v.muted = !v.muted;
+});
+show();
+</script></body></html>

@@ -390,6 +390,58 @@
     return [el('div', { class: 'panel-title', text: 'Which video?' })].concat(rows);
   }
 
+  // The volume bar next to the floating video window (0.7.0, R8). The host shows and places it;
+  // it never takes the keyboard. A change goes to the page at most every 50 ms; the page's own
+  // changes come back as a new `pipVolume` content, applied unless the slider is being dragged.
+  const pv = { tabId: 0, volume: 100, muted: false, dragging: false, timer: null, sentAt: 0 };
+  function pvSend() {
+    pv.sentAt = Date.now();
+    if (pv.timer) return;
+    pv.timer = setTimeout(function () {
+      pv.timer = null;
+      LB.post('pipVolume', { tabId: pv.tabId, volume: pv.volume, muted: pv.muted });
+    }, 50);
+  }
+  function pvPaint() {
+    const slider = document.getElementById('pv-slider');
+    if (!slider) return;
+    slider.value = String(pv.muted ? 0 : pv.volume);
+    slider.style.setProperty('--fill', (pv.muted ? 0 : pv.volume) + '%');
+    const mute = document.getElementById('pv-mute');
+    const silent = pv.muted || pv.volume === 0;
+    mute.dataset.level = silent ? 'off' : pv.volume < 50 ? 'low' : 'high';
+    mute.setAttribute('aria-pressed', String(pv.muted));
+    mute.title = pv.muted ? 'Unmute' : 'Mute';
+    document.getElementById('pv-pct').textContent = pv.muted ? 'Muted' : pv.volume + '%';
+  }
+  function pvSet(volume, muted) {
+    pv.volume = Math.max(0, Math.min(100, Math.round(volume)));
+    pv.muted = muted;
+    pvPaint();
+    pvSend();
+  }
+  function renderPipVolume(c) {
+    pv.tabId = c.tabId; pv.volume = c.volume; pv.muted = c.muted;
+    const slider = el('input', { type: 'range', id: 'pv-slider', min: '0', max: '100', step: '1', 'aria-label': 'Volume', tabindex: '-1' });
+    slider.addEventListener('input', function () { pvSet(Number(slider.value), false); });
+    slider.addEventListener('pointerdown', function () { pv.dragging = true; });
+    const done = function () { pv.dragging = false; };
+    slider.addEventListener('pointerup', done);
+    slider.addEventListener('pointercancel', done);
+    const mute = el('button', { type: 'button', id: 'pv-mute', class: 'pv-mute', tabindex: '-1', 'aria-label': 'Mute', onclick: function () {
+      // Unmuting at 0 % would stay silent: back to a quarter.
+      if (pv.muted || pv.volume === 0) pvSet(pv.volume === 0 ? 25 : pv.volume, false);
+      else pvSet(pv.volume, true);
+    } }, [el('span', { class: 'pv-icon', 'aria-hidden': 'true' })]);
+    const bar = el('div', { class: 'pv-bar' }, [mute, slider, el('span', { id: 'pv-pct', class: 'pv-pct' })]);
+    bar.addEventListener('wheel', function (e) {
+      e.preventDefault();
+      pvSet((pv.muted ? 0 : pv.volume) + (e.deltaY < 0 ? 5 : -5), false);
+    }, { passive: false });
+    requestAnimationFrame(pvPaint);
+    return [bar];
+  }
+
   // Saved cards under a card field (0.6.0): masked labels; the host fills what was chosen.
   function renderCardFill(c) {
     const rows = [];
@@ -700,14 +752,23 @@
 
   let current = null;
   LB.on('popup', function (m) {
-    current = m.content;
     const c = m.content;
-    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, cardFill: renderCardFill, saveCard: renderSaveCard, pip: renderPip, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
+    // The volume bar is updated in place (a re-render would drop a drag in progress).
+    if (c.kind === 'pipVolume' && current && current.kind === 'pipVolume' && document.getElementById('pv-slider')) {
+      current = c;
+      pv.tabId = c.tabId;
+      if (!pv.dragging && !pv.timer && Date.now() - pv.sentAt > 300) { pv.volume = c.volume; pv.muted = c.muted; pvPaint(); }
+      return;
+    }
+    current = m.content;
+    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, cardFill: renderCardFill, saveCard: renderSaveCard, pip: renderPip, pipVolume: renderPipVolume, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
     root.textContent = '';
     root.dataset.kind = c.kind;
+    // The volume bar matches the engine's floating window, which is always dark.
+    document.body.classList.toggle('pv-dark', c.kind === 'pipVolume');
     (render ? render(c) : []).forEach((n) => n && root.appendChild(n));
     const first = document.getElementById('master') || document.getElementById('bm-name') || document.getElementById('default') || root.querySelector('button:not([disabled])');
-    if (first && c.kind !== 'suggest' && c.kind !== 'cardFill' && c.kind !== 'addressMenu' && c.kind !== 'addressSuggest') first.focus();
+    if (first && c.kind !== 'suggest' && c.kind !== 'cardFill' && c.kind !== 'addressMenu' && c.kind !== 'addressSuggest' && c.kind !== 'pipVolume') first.focus();
     if (FITS[c.kind]) requestAnimationFrame(fit);
   });
 

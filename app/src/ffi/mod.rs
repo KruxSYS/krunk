@@ -7,6 +7,7 @@ pub mod cursor;
 pub mod dialogs;
 pub mod http;
 pub mod overlay;
+pub mod pipwin;
 pub mod process;
 pub mod procmem;
 pub mod secure;

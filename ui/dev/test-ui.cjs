@@ -2655,6 +2655,38 @@ async function testPasswords(browser) {
   await page.click('.pip-row[data-index="1"]');
   const pp = await lastSent(page, 'pipPick');
   check(pp && pp.tabId === 4 && pp.index === 1, 'a row sends pipPick{tabId,index}');
+  // 0.7.0 (R8): the volume bar next to the floating window.
+  await page.setViewportSize({ width: 400, height: 40 });
+  await emit(page, { event: 'popup', content: { kind: 'pipVolume', tabId: 4, volume: 60, muted: false } });
+  await page.waitForSelector('#pv-slider');
+  await page.waitForTimeout(40);
+  const pvState = () => page.evaluate(() => ({ v: document.getElementById('pv-slider').value, pct: document.getElementById('pv-pct').textContent, level: document.getElementById('pv-mute').dataset.level, focused: document.activeElement && document.activeElement.id }));
+  let pvs = await pvState();
+  check(pvs.v === '60' && pvs.pct === '60%' && pvs.level === 'high' && pvs.focused !== 'pv-slider' && pvs.focused !== 'pv-mute', 'the volume bar shows the video\'s volume and takes no focus (' + JSON.stringify(pvs) + ')');
+  check(await page.evaluate(() => document.body.classList.contains('pv-dark') && getComputedStyle(document.body).backgroundColor === 'rgb(32, 33, 36)'), 'the bar is dark like the floating window');
+  await shot(page, 'popup-pip-volume.png');
+  const box = await page.locator('#pv-slider').boundingBox();
+  await page.mouse.click(box.x + box.width * 0.25, box.y + box.height / 2);
+  await page.waitForTimeout(120);
+  let pvSent = await lastSent(page, 'pipVolume');
+  check(pvSent && pvSent.tabId === 4 && pvSent.volume >= 20 && pvSent.volume <= 30 && pvSent.muted === false, 'a click on the slider sends pipVolume (' + JSON.stringify(pvSent) + ')');
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(0, -100);
+  await page.waitForTimeout(120);
+  const afterWheel = (await lastSent(page, 'pipVolume')).volume;
+  check(afterWheel === pvSent.volume + 5, 'the wheel over the bar raises it by 5 (' + afterWheel + ')');
+  await page.click('#pv-mute');
+  await page.waitForTimeout(120);
+  pvSent = await lastSent(page, 'pipVolume');
+  pvs = await pvState();
+  check(pvSent.muted === true && pvSent.volume === afterWheel && pvs.pct === 'Muted' && pvs.level === 'off', 'mute keeps the volume and says Muted (' + JSON.stringify(pvs) + ')');
+  // The page's own change comes back (after the bar's own change has settled).
+  await page.waitForTimeout(320);
+  await emit(page, { event: 'popup', content: { kind: 'pipVolume', tabId: 4, volume: 10, muted: false } });
+  await page.waitForTimeout(40);
+  pvs = await pvState();
+  check(pvs.v === '10' && pvs.pct === '10%' && pvs.level === 'low', 'the page\'s volume change moves the slider (' + JSON.stringify(pvs) + ')');
+  check(await page.evaluate(() => !!document.getElementById('pv-slider') && document.getElementById('root').dataset.kind === 'pipVolume'), 'updated in place');
   check(errors.length === 0, 'popup: no console errors (' + errors.join(' | ') + ')');
 
   // Shell key icon.
@@ -3605,6 +3637,11 @@ async function testPaintedScript(browser) {
   const top = await page.evaluate(() => window.__posted.filter((m) => m.lb === 'painted').length);
   const frame = await page.frames()[1].evaluate(() => (window.__posted || []).length);
   check(top === 1 && frame === 0, 'painted: once from the top document, never from a frame (top ' + top + ', frame ' + frame + ')');
+  // Krunk's own pages announce themselves with `ready` (a `painted` there is a malformed request).
+  await page.goto('https://krunk.invalid/newtab.html');
+  await page.waitForTimeout(800);
+  const own = await page.evaluate(() => window.__posted.length);
+  check(own === 0, 'painted: nothing from Krunk\'s own pages (' + own + ')');
   check(errors.length === 0, 'painted script raises no page errors (' + errors.join(' | ') + ')');
   await context.close();
 }
