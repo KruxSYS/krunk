@@ -31,7 +31,7 @@
       item('History', 'Ctrl+H', () => command('history')),
       item('Bookmarks', 'Ctrl+Shift+O', () => command('bookmarks')),
       item('Downloads', 'Ctrl+J', () => command('downloads')),
-      item('Passwords', '', () => openPage('passwords')),
+      item('Passwords & payments', '', () => openPage('passwords')),
       item('Cookies and site data', '', () => openPage('storage')),
       item('Extensions', '', () => openPage('extensions')),
       sep(),
@@ -647,6 +647,8 @@
       el('p', { class: 'origin', text: c.origin }),
       form,
       err,
+      // 0.7.0 (R13): the passwords page opens the vault with the recovery phrase.
+      el('button', { type: 'button', class: 'link forgot', id: 'forgot', text: 'Forgot master password?', onclick: () => { LB.post('openPage', { page: 'passwords', section: 'recover' }); close(); } }),
     ])];
   }
 

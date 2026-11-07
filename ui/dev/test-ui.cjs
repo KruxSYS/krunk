@@ -2413,7 +2413,31 @@ async function testPasswords(browser) {
   const vaultMock = (st) => {
     const h = window.__host.handlers;
     window.__vault = st;
-    h.vaultStatus = () => ({ exists: st.exists, locked: st.locked, busy: false, waitMs: st.waitMs });
+    h.vaultStatus = () => ({ exists: st.exists, locked: st.locked, busy: false, waitMs: st.waitMs, recovery: st.recovery || null });
+    // 0.7.0 (R13): the recovery phrase. A BIP39 test vector, never a real phrase.
+    const TEST_WORDS = 'legal winner thank year wave sausage worth useful legal winner thank year wave sausage worth useful legal winner thank year wave sausage worth title'.split(' ');
+    h.vaultRecoveryCreate = (m) => { if (m.password !== 'correct horse battery') throw new Error('Wrong master password.'); st.pending = true; return { words: TEST_WORDS, confirm: [2, 9, 17] }; };
+    h.vaultRecoveryConfirm = (m) => {
+      const bad = m.answers.find((a) => a.word !== TEST_WORDS[a.position - 1]);
+      if (bad) throw new Error('Word ' + bad.position + ' is not right');
+      st.recovery = 1794000000000; st.pending = false;
+      return { created: st.recovery };
+    };
+    h.vaultRecoveryCancel = () => { st.cancelled = (st.cancelled || 0) + 1; st.pending = false; return null; };
+    h.vaultRecoveryCopy = () => null;
+    h.vaultRecoverySave = () => ({ saved: true });
+    h.vaultRecoveryRemove = (m) => { if (m.password !== 'correct horse battery') throw new Error('Wrong master password.'); st.recovery = null; return null; };
+    h.vaultRecoveryCheck = (m) => {
+      const w = m.phrase.split(/[^A-Za-z0-9]+/).filter((x) => x && !/^\d+$/.test(x));
+      if (w.length !== 24) return { ok: false, message: 'A recovery phrase has 24 words; this has ' + w.length, unknown: [] };
+      const unknown = w.map((x, i) => (/^q+$/.test(x) ? i + 1 : 0)).filter(Boolean);
+      return unknown.length ? { ok: false, message: 'Word' + (unknown.length > 1 ? 's ' : ' ') + unknown.join(', ') + ' not in the word list', unknown } : { ok: true };
+    };
+    h.vaultRecover = (m) => {
+      if (m.phrase.split(/[^A-Za-z0-9]+/).filter((x) => x && !/^\d+$/.test(x)).join(' ') !== TEST_WORDS.join(' ')) throw new Error('This recovery phrase does not open the vault');
+      st.locked = false; st.recoveredWith = m.new; return null;
+    };
+    h.vaultChangePassword = (m) => { if (m.old !== 'correct horse battery') throw new Error('Wrong master password.'); return null; };
     h.vaultSetup = (m) => { if (m.password.length < 8) throw new Error('too short'); st.exists = true; st.locked = false; return null; };
     h.vaultUnlock = (m) => {
       if (m.password === 'correct horse battery') { st.locked = false; st.waitMs = 0; return null; }
@@ -2602,19 +2626,141 @@ async function testPasswords(browser) {
   await page.fill('#c-new', 'new master pass 1');
   await page.fill('#c-new2', 'new master pass 2');
   await page.locator('#change-dialog button[value="ok"]').click();
-  check((await page.textContent('#c-error')).includes('do not match'), 'change: mismatch caught');
+  check((await page.textContent('#c-new2-error')).includes('do not match') && await page.evaluate(() => document.activeElement.id) === 'c-new2', 'change: the mismatch is shown under the repeat field, which gets the focus');
+  // R14: every field has its label, a show/hide button and its own error line.
+  const grid = await page.$$eval('#change-dialog .field-grid > label', (ns) => ns.map((n) => n.textContent + '>' + n.htmlFor));
+  check(JSON.stringify(grid) === JSON.stringify(['Current password>c-old', 'New password>c-new', 'Repeat new password>c-new2']), 'labelled fields (' + grid.join(', ') + ')');
+  await page.click('#c-new + .reveal');
+  check(await page.$eval('#c-new', (e) => e.type) === 'text' && await page.$eval('#c-new + .reveal', (e) => e.getAttribute('aria-pressed')) === 'true', 'the eye shows the new password');
+  check((await page.textContent('#c-strength')).startsWith('Strength:'), 'a strength meter for the new password (' + await page.textContent('#c-strength') + ')');
+  await shot(page, 'passwords-change-dialog.png');
+  await page.fill('#c-old', '');
+  await page.fill('#c-new', 'short');
+  await page.locator('#change-dialog button[value="ok"]').click();
+  check((await page.textContent('#c-old-error')).includes('current master password') && (await page.textContent('#c-new-error')).includes('8 characters') && await page.evaluate(() => document.activeElement.id) === 'c-old', 'empty current and short new: both said at once, focus on the first');
+  await page.fill('#c-old', 'wrong password');
   await page.fill('#c-new', 'new master pass 1');
   await page.fill('#c-new2', 'new master pass 1');
   await page.locator('#change-dialog button[value="ok"]').click();
+  await page.waitForTimeout(60);
+  check((await page.textContent('#c-old-error')).includes('Wrong master password') && await page.inputValue('#c-new') === 'new master pass 1', 'a wrong current password is said under it and nothing typed is lost');
+  await page.fill('#c-old', 'correct horse battery');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(60);
   const ch = await lastSent(page, 'vaultChangePassword');
-  check(ch && ch.old === 'correct horse battery' && ch.new === 'new master pass 1', 'change sends old and new');
+  check(ch && ch.old === 'correct horse battery' && ch.new === 'new master pass 1' && !(await page.$eval('#change-dialog', (d) => d.open)), 'Enter sends old and new; the dialog closes');
+  await page.click('#change');
+  await page.keyboard.press('Escape');
+  check(!(await page.$eval('#change-dialog', (d) => d.open)), 'Esc closes it');
+
+  // R13: the recovery phrase card and its three steps.
+  check((await page.textContent('#recovery-state')) === 'No recovery phrase' && (await page.textContent('#recovery-make')) === 'Create recovery phrase', 'no phrase yet: the card says so');
+  await page.click('#recovery-make');
+  await page.waitForSelector('#rd-step1:not([hidden])');
+  await page.fill('#rd-pw', 'nope');
+  await page.click('#rd-next1');
+  await page.waitForTimeout(40);
+  check((await page.textContent('#rd-pw-error')).includes('Wrong master password'), 'the master password comes first');
+  await page.fill('#rd-pw', 'correct horse battery');
+  await page.click('#rd-next1');
+  await page.waitForSelector('#rd-step2:not([hidden])');
+  const shownWords = await page.$$eval('#rd-words li', (ns) => ns.map((n) => n.textContent));
+  check(shownWords.length === 24 && shownWords[23] === 'title', 'the 24 words, numbered in order');
+  await shot(page, 'passwords-recovery-words.png');
+  await page.click('#rd-copy');
+  await page.click('#rd-save');
+  await page.waitForTimeout(40);
+  check((await lastSent(page, 'vaultRecoveryCopy')) !== undefined && (await lastSent(page, 'vaultRecoverySave')) !== undefined, 'Copy and Save to file ask the host (the words are not sent back)');
+  await page.click('#rd-next2');
+  await page.waitForSelector('#rd-step3:not([hidden])');
+  const askedLabels = await page.$$eval('#rd-asked label', (ns) => ns.map((n) => n.textContent));
+  check(JSON.stringify(askedLabels) === JSON.stringify(['Word 2', 'Word 9', 'Word 17']), 'three words are asked back (' + askedLabels.join(', ') + ')');
+  await page.fill('#rd-a0', 'winner');
+  await page.fill('#rd-a1', 'legal');
+  await page.fill('#rd-a2', 'zoo');
+  await page.click('#rd-confirm');
+  await page.waitForTimeout(40);
+  check((await page.textContent('#rd-error')).includes('Word 17 is not right'), 'a wrong word is named');
+  await page.fill('#rd-a2', 'legal');
+  await page.click('#rd-confirm');
+  await page.waitForTimeout(60);
+  check(!(await page.$eval('#recovery-dialog', (d) => d.open)) && (await page.textContent('#recovery-state')).startsWith('Recovery phrase made on') && (await page.textContent('#recovery-make')) === 'Make a new phrase', 'confirmed: the card shows the phrase and offers a new one');
+  check(await page.evaluate(() => !window.__vault.cancelled) && await page.locator('#rd-words li').count() === 0, 'the words are gone from the page; nothing cancelled');
+  // Closing half way tells the host to forget the words.
+  await page.click('#recovery-make');
+  await page.fill('#rd-pw', 'correct horse battery');
+  await page.click('#rd-next1');
+  await page.waitForSelector('#rd-step2:not([hidden])');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(40);
+  check(await page.evaluate(() => window.__vault.cancelled === 1) && await page.locator('#rd-words li').count() === 0, 'Esc on the words: vaultRecoveryCancel, the words are cleared');
+  await page.click('#recovery-remove');
+  await page.fill('#rr-pw', 'correct horse battery');
+  await page.locator('#recovery-remove-dialog button[value="ok"]').click();
+  await page.waitForTimeout(60);
+  check((await page.textContent('#recovery-state')) === 'No recovery phrase', 'Remove takes the phrase away (after the master password)');
+  await page.evaluate(() => { window.__vault.recovery = 1794000000000; });
+  await page.locator('#recovery').scrollIntoViewIfNeeded();
+  await shot(page, 'passwords-recovery-card.png');
+  // R15: the name everywhere.
+  {
+    const fs = require('fs');
+    const files = ['pages/settings.html', 'pages/passwords.html', 'shell/popup.js'].map((f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8')).join('\n');
+    check(!/Manage passwords(?! &(amp;)? payments)/.test(files) && /Manage passwords &amp; payments/.test(files) && (await page.textContent('h1')) === 'Passwords & payments', 'R15: "Manage passwords & payments" everywhere; the page is "Passwords & payments"');
+  }
   check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
+
+  // R13: a forgotten master password, from the locked page.
+  await page.context().close();
+  ({ page, errors } = await openPage(browser, 'https://krunk.invalid/passwords.html', { width: 1000, height: 640 }, 1, vaultMock, { exists: true, locked: true, waitMs: 0, entries, recovery: 1794000000000 }));
+  await page.waitForSelector('#unlock:not([hidden])');
+  await page.click('#forgot');
+  await page.waitForSelector('#recover-form:not([hidden])');
+  await page.waitForTimeout(30);
+  check(await page.evaluate(() => document.activeElement.id) === 'r-phrase', 'Forgot master password? opens the phrase form, focused');
+  const words = 'legal winner thank year wave sausage worth useful legal winner thank year wave sausage worth useful legal winner thank year wave sausage worth title'.split(' ');
+  await page.fill('#r-phrase', words.slice(0, 23).join(' '));
+  check((await page.textContent('#r-phrase-msg')) === '23 of 24 words', 'it counts the words');
+  await page.fill('#r-phrase', words.slice(0, 4).concat(['qqqq']).concat(words.slice(5)).join(' '));
+  await page.waitForTimeout(400);
+  check((await page.textContent('#r-phrase-msg')).includes('Word 5 not in the word list') && await page.$eval('#r-phrase-msg', (e) => e.classList.contains('bad')), 'an unknown word is named (' + await page.textContent('#r-phrase-msg') + ')');
+  // Numbered, over several lines: fine.
+  await page.fill('#r-phrase', words.map((w, i) => (i + 1) + '. ' + w).join('\n'));
+  await page.waitForTimeout(400);
+  check(await page.$eval('#r-phrase-msg', (e) => e.classList.contains('ok')), 'a numbered phrase over several lines is accepted');
+  await page.fill('#r-new', 'brand new master');
+  await page.fill('#r-new2', 'brand new mastery');
+  await page.click('#recover-btn');
+  check((await page.textContent('#r-pw-error')).includes('do not match'), 'the new password is checked first');
+  await page.fill('#r-new2', 'brand new master');
+  await shot(page, 'passwords-recover.png');
+  await page.click('#recover-btn');
+  await page.waitForSelector('#list-section:not([hidden])');
+  const rec = await lastSent(page, 'vaultRecover');
+  check(rec && rec.new === 'brand new master' && rec.phrase.includes('legal') && await page.evaluate(() => window.__vault.recoveredWith) === 'brand new master', 'vaultRecover{phrase,new} opens the vault');
+  check(await page.inputValue('#r-phrase') === '' && await page.inputValue('#r-new') === '', 'the phrase and the password are cleared from the page');
+  check(errors.length === 0, 'recover: no console errors (' + errors.join(' | ') + ')');
+  await page.context().close();
+  // Without a phrase: the page says it cannot be recovered; #recover from the unlock popup.
+  ({ page, errors } = await openPage(browser, 'https://krunk.invalid/passwords.html#recover', { width: 1000, height: 560 }, 1, vaultMock, { exists: true, locked: true, waitMs: 0, entries }));
+  await page.waitForSelector('#recover:not([hidden])');
+  check(await page.locator('#recover-none').isVisible() && await page.locator('#recover-form').isHidden() && (await page.textContent('#recover-none')).includes('no recovery phrase'), '#recover without a phrase: it says the vault cannot be opened');
+  await page.click('#recover-none-back');
+  check(await page.locator('#unlock').isVisible(), 'Back goes to the unlock form');
+  await page.context().close();
 
   // Popup unlock prompt + save prompt.
   ({ page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 360, height: 200 }, 1));
   await emit(page, { event: 'popup', content: { kind: 'unlock', tabId: 4, origin: 'https://bank.example', purpose: 'fill', error: null, waitMs: 0 } });
   await page.waitForSelector('#master');
   check(await page.evaluate(() => document.activeElement.id) === 'master', 'unlock prompt focuses the password field');
+  await page.click('#forgot');
+  {
+    const op = await lastSent(page, 'openPage');
+    check(op && op.page === 'passwords' && op.section === 'recover', 'the unlock prompt offers "Forgot master password?" (krunk://passwords#recover)');
+  }
+  await emit(page, { event: 'popup', content: { kind: 'unlock', tabId: 4, origin: 'https://bank.example', purpose: 'fill', error: null, waitMs: 0 } });
+  await page.waitForSelector('#master');
   await page.fill('#master', 'correct horse battery');
   await shot(page, 'popup-unlock.png');
   await page.click('#unlock');
@@ -3259,6 +3405,14 @@ async function testSettings(browser) {
   check(await page.evaluate(() => window.__settings.settings.userAgent) === '' && await page.locator('#custom-ua-row').isHidden(), 'Krunk (default) clears the string');
   // 0.6.0: request headers (Accept-Language, client hints, custom rules, read-only list, Reset).
   check(await page.locator('#hint-fields').isHidden() && !(await page.isChecked('#hints-on')) && await page.locator('#readonly-headers .name').count() === 13, 'client hints off by default, the read-only list has 13 rows');
+  // 0.7.0 (R12): "Send client hints", on by default; off disables the custom hints.
+  check(await page.isChecked('#sendClientHints'), 'Send client hints: on by default');
+  await page.uncheck('#sendClientHints');
+  await page.waitForTimeout(80);
+  check(await page.evaluate(() => window.__settings.settings.headers.sendClientHints) === false && await page.isDisabled('#hints-on'), 'off is saved; custom hints cannot be set while none are sent');
+  await page.check('#sendClientHints');
+  await page.waitForTimeout(80);
+  check(await page.evaluate(() => window.__settings.settings.headers.sendClientHints) === true && !(await page.isDisabled('#hints-on')), 'and on again');
   await page.fill('#acceptLanguage', 'de-DE, de');
   await page.press('#acceptLanguage', 'Tab');
   await page.waitForTimeout(80);
@@ -3638,6 +3792,37 @@ async function testMediaScript(browser) {
 }
 
 // 0.7.0 (R7): painted.js says once when the top document painted its first content.
+// 0.7.0 (R12): nohints.js removes navigator.userAgentData only when the engine has no
+// metadata (an empty object); with the engine's own it changes nothing.
+async function testNoHintsScript(browser) {
+  console.log('injected nohints script');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'inject', 'nohints.js'), 'utf8');
+  for (const empty of [true, false]) {
+    const context = await browser.newContext();
+    await context.route('**/*', (r) => r.fulfill({ status: 200, headers: { 'content-type': 'text/html' }, body: '<!doctype html><p>x</p>' }));
+    if (empty) {
+      // What the engine gives a page under a user-agent override without metadata.
+      await context.addInitScript(() => {
+        const d = Object.getOwnPropertyDescriptor(Navigator.prototype, 'userAgentData');
+        const fake = { brands: [], mobile: false, platform: '' };
+        Object.defineProperty(Navigator.prototype, 'userAgentData', { get: () => fake, configurable: true, enumerable: d ? d.enumerable : true });
+      });
+    }
+    // Evaluated at the page's top level, as the renderer does: it must declare nothing there.
+    await context.addInitScript({ content: src });
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e)));
+    await page.goto('https://hints.example/');
+    check(await page.evaluate(() => typeof d === 'undefined' && typeof v === 'undefined'), 'nohints leaves no globals (a page may declare its own d)');
+    const r = await page.evaluate(() => ({ has: 'userAgentData' in navigator, type: typeof navigator.userAgentData, brands: navigator.userAgentData ? navigator.userAgentData.brands.length : -1 }));
+    if (empty) check(!r.has && r.type === 'undefined', 'no metadata: navigator.userAgentData is gone (' + JSON.stringify(r) + ')');
+    else check(r.has && r.brands > 0, 'the engine\'s metadata: navigator.userAgentData stays (' + JSON.stringify(r) + ')');
+    check(errors.length === 0, 'nohints raises no errors (' + errors.join(' | ') + ')');
+    await context.close();
+  }
+}
+
 async function testPaintedScript(browser) {
   console.log('injected painted script');
   const context = await browser.newContext();
@@ -4259,6 +4444,7 @@ async function testTabWindows(browser) {
     if (!ONLY || ONLY.includes('MediaScript')) await testMediaScript(browser);
     if (!ONLY || ONLY.includes('Gpu')) await testGpu(browser);
     if (!ONLY || ONLY.includes('PaintedScript')) await testPaintedScript(browser);
+    if (!ONLY || ONLY.includes('NoHints')) await testNoHintsScript(browser);
   } finally {
     await browser.close();
   }

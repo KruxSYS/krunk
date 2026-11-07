@@ -9,7 +9,17 @@
 //!     --KeyWrapper (DPAPI CurrentUser on Windows)--> stored "vaultKey"
 //! VK  --XChaCha20-Poly1305, fresh 24-byte nonce, AAD = entry id--> each entry
 //! VK  --XChaCha20-Poly1305--> manifest (entry ids + generation)
+//!
+//! recovery phrase (24 BIP39 words = 256 bits, never stored)
+//!     --Argon2id(recovery salt, ≥ the master's cost)--> seed --HPKE DeriveKeyPair--> X25519 key pair
+//! VK  --HPKE base (X25519-HKDF-SHA256, HKDF-SHA256, ChaCha20Poly1305) to the public key-->
+//!     --KeyWrapper--> stored "recovery.sealed" (format 3, Krunk 0.7.0)
 //! ```
+//!
+//! The recovery slot keeps only the public key, so every save seals the current VK to it: a
+//! changed master password (new VK) keeps the phrase valid without knowing it, and a new phrase
+//! (new key pair) makes the old one useless. Like the master path it needs the same Windows
+//! account (DPAPI).
 //!
 //! The file is JSON with base64 fields. All plaintext secrets live in
 //! `Zeroizing` buffers and are wiped on drop; locking the vault means
@@ -39,6 +49,11 @@ const AAD_CHECK: &[u8] = b"lb-vault:check";
 const AAD_VAULT_KEY: &[u8] = b"lb-vault:vault-key";
 const AAD_MANIFEST: &[u8] = b"lb-vault:manifest";
 const AAD_CARD_PREFIX: &[u8] = b"lb-vault:card:";
+/// Format 3 (Krunk 0.7.0): formats 1/2 plus a recovery slot. Written only while a recovery
+/// phrase exists, so vaults without one stay readable by 0.6.0.
+const FORMAT_RECOVERY: u32 = 3;
+/// HPKE `info` of the recovery seal.
+const RECOVERY_INFO: &[u8] = b"krunk-vault-recovery-v1";
 
 /// Minimum master-password length accepted by `create` and `change_password`.
 pub const MIN_MASTER_LEN: usize = 8;
@@ -60,6 +75,10 @@ pub enum VaultError {
     NotFound,
     Io(String),
     Random,
+    /// The recovery phrase does not open this vault (0.7.0).
+    WrongPhrase,
+    /// The vault has no recovery phrase.
+    NoRecovery,
 }
 
 impl std::fmt::Display for VaultError {
@@ -76,6 +95,8 @@ impl std::fmt::Display for VaultError {
             VaultError::NotFound => write!(f, "Entry not found"),
             VaultError::Io(m) => write!(f, "Vault I/O error: {m}"),
             VaultError::Random => write!(f, "System random number generator failed"),
+            VaultError::WrongPhrase => write!(f, "This recovery phrase does not open the vault"),
+            VaultError::NoRecovery => write!(f, "This vault has no recovery phrase"),
         }
     }
 }
@@ -175,6 +196,56 @@ struct VaultFile {
     /// Payment cards (format 2); absent in files without any.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     cards: Vec<SealedEntry>,
+    /// The recovery slot (format 3); absent without a recovery phrase.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    recovery: Option<RecoverySlot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RecoverySlot {
+    kdf: KdfRecord,
+    /// The X25519 public key the vault key is sealed to.
+    public: String,
+    /// `wrapper.protect(enc || ct)` of the HPKE seal of the vault key, base64.
+    sealed: String,
+    /// When the phrase was made (unix ms).
+    created: i64,
+}
+
+/// The recovery slot of an unlocked vault (no secret in it).
+#[derive(Debug, Clone, Copy)]
+struct RecoveryKey {
+    params: KdfParams,
+    salt: [u8; SALT_LEN],
+    public: [u8; 32],
+    created: i64,
+}
+
+/// The recovery cost: the master's, at least the default (the phrase protects the same keys).
+fn recovery_params(master: KdfParams) -> KdfParams {
+    // (Unit tests with the cheap parameters stay cheap.)
+    if cfg!(test) && master == KdfParams::insecure_for_tests() {
+        return master;
+    }
+    let d = KdfParams::default();
+    KdfParams { m_kib: master.m_kib.max(d.m_kib), t: master.t.max(d.t), p: master.p.max(d.p) }
+}
+
+/// The phrase's key pair (secret, public).
+fn recovery_keypair(
+    phrase: &crate::recovery::Phrase,
+    salt: &[u8; SALT_LEN],
+    params: KdfParams,
+) -> VResult<(Zeroizing<[u8; 32]>, [u8; 32])> {
+    let mut seed = Zeroizing::new([0u8; KEY_LEN]);
+    let p = Params::new(params.m_kib, params.t, params.p, Some(KEY_LEN))
+        .map_err(|e| VaultError::Corrupt(format!("KDF parameters: {e}")))?;
+    Argon2::new(Algorithm::Argon2id, Version::V0x13, p)
+        .hash_password_into(phrase.entropy(), salt, seed.as_mut())
+        .map_err(|e| VaultError::Corrupt(format!("KDF: {e}")))?;
+    let (sk, pk) = crate::sync::crypto::hpke_derive_keypair(seed.as_ref());
+    Ok((Zeroizing::new(sk), pk))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -619,6 +690,22 @@ pub fn exists(path: &Path) -> bool {
     path.is_file()
 }
 
+/// When the vault's recovery phrase was made, read without opening the vault (the locked
+/// passwords page offers "Forgot master password?" only with one). Krunk 0.7.0.
+pub fn recovery_in_file(path: &Path) -> Option<i64> {
+    #[derive(Deserialize)]
+    struct Peek {
+        #[serde(default)]
+        recovery: Option<PeekSlot>,
+    }
+    #[derive(Deserialize)]
+    struct PeekSlot {
+        created: i64,
+    }
+    let text = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str::<Peek>(&text).ok()?.recovery.map(|r| r.created)
+}
+
 /// An unlocked vault. Dropping it locks the vault (all key material and
 /// plaintext are wiped).
 pub struct Vault {
@@ -630,6 +717,7 @@ pub struct Vault {
     generation: u64,
     pub(crate) entries: Vec<Entry>,
     cards: Vec<Card>,
+    recovery: Option<RecoveryKey>,
 }
 
 impl std::fmt::Debug for Vault {
@@ -657,6 +745,7 @@ impl Vault {
             generation: 0,
             entries: Vec::new(),
             cards: Vec::new(),
+            recovery: None,
         };
         vault.save(wrapper)?;
         Ok(vault)
@@ -668,9 +757,10 @@ impl Vault {
         Self::open_str(path, &text, password, wrapper)
     }
 
-    fn open_str(path: &Path, text: &str, password: &str, wrapper: &dyn KeyWrapper) -> VResult<Vault> {
+    /// The file, checked for what this version reads, and its KDF parameters and salt.
+    fn parse_file(text: &str, wrapper: &dyn KeyWrapper) -> VResult<(VaultFile, KdfParams, [u8; SALT_LEN])> {
         let file: VaultFile = serde_json::from_str(text).map_err(json_err)?;
-        if !(file.format == FORMAT || file.format == FORMAT_CARDS) || file.kdf.alg != "argon2id" {
+        if ![FORMAT, FORMAT_CARDS, FORMAT_RECOVERY].contains(&file.format) || file.kdf.alg != "argon2id" {
             return Err(VaultError::Corrupt("unsupported format".into()));
         }
         if file.wrap != wrapper.name() {
@@ -682,7 +772,11 @@ impl Vault {
         }
         let salt: [u8; SALT_LEN] =
             unb64(&file.kdf.salt)?.try_into().map_err(|_| VaultError::Corrupt("salt length".into()))?;
+        Ok((file, params, salt))
+    }
 
+    fn open_str(path: &Path, text: &str, password: &str, wrapper: &dyn KeyWrapper) -> VResult<Vault> {
+        let (file, params, salt) = Self::parse_file(text, wrapper)?;
         let kek = derive_kek(password, &salt, params)?;
         // Key check: wrong password (or tampered salt/params) fails here.
         let check = open_sealed(&kek, &file.check, AAD_CHECK).ok_or(VaultError::WrongPassword)?;
@@ -704,7 +798,18 @@ impl Vault {
             return Err(VaultError::Corrupt("vault key length".into()));
         }
         vk.copy_from_slice(&vk_bytes);
+        Self::with_keys(path, file, params, salt, kek, vk)
+    }
 
+    /// The vault from its file once the keys are known: every entry and card authenticated.
+    fn with_keys(
+        path: &Path,
+        file: VaultFile,
+        params: KdfParams,
+        salt: [u8; SALT_LEN],
+        kek: Zeroizing<[u8; KEY_LEN]>,
+        vk: Zeroizing<[u8; KEY_LEN]>,
+    ) -> VResult<Vault> {
         let manifest_bytes = open_sealed(&vk, &file.manifest, AAD_MANIFEST)
             .ok_or_else(|| VaultError::Corrupt("manifest failed authentication".into()))?;
         let manifest: Manifest = serde_json::from_slice(&manifest_bytes).map_err(json_err)?;
@@ -749,7 +854,105 @@ impl Vault {
                 updated: e.updated,
             });
         }
-        Ok(Vault { path: path.to_path_buf(), params, salt, kek, vk, generation: manifest.generation, entries, cards })
+        let recovery = match &file.recovery {
+            Some(r) => Some(Self::recovery_key(r)?),
+            None => None,
+        };
+        Ok(Vault {
+            path: path.to_path_buf(),
+            params,
+            salt,
+            kek,
+            vk,
+            generation: manifest.generation,
+            entries,
+            cards,
+            recovery,
+        })
+    }
+
+    fn recovery_key(r: &RecoverySlot) -> VResult<RecoveryKey> {
+        if r.kdf.alg != "argon2id" || !r.kdf.params.sane() {
+            return Err(VaultError::Corrupt("recovery parameters".into()));
+        }
+        let salt: [u8; SALT_LEN] =
+            unb64(&r.kdf.salt)?.try_into().map_err(|_| VaultError::Corrupt("recovery salt".into()))?;
+        let public: [u8; 32] =
+            unb64(&r.public)?.try_into().map_err(|_| VaultError::Corrupt("recovery key".into()))?;
+        Ok(RecoveryKey { params: r.kdf.params, salt, public, created: r.created })
+    }
+
+    /// Opens the vault at `path` with its recovery phrase and gives it the new master password
+    /// `new` (new salt, new vault key; the phrase stays valid). For a forgotten master password.
+    pub fn recover(
+        path: &Path,
+        phrase: &crate::recovery::Phrase,
+        new: &str,
+        wrapper: &dyn KeyWrapper,
+    ) -> VResult<Vault> {
+        if new.chars().count() < MIN_MASTER_LEN {
+            return Err(VaultError::WeakPassword);
+        }
+        let text = Zeroizing::new(std::fs::read_to_string(path).map_err(|e| VaultError::Io(e.to_string()))?);
+        let (file, params, salt) = Self::parse_file(&text, wrapper)?;
+        let slot = file.recovery.clone().ok_or(VaultError::NoRecovery)?;
+        let key = Self::recovery_key(&slot)?;
+        let (sk, pk) = recovery_keypair(phrase, &key.salt, key.params)?;
+        if pk != key.public {
+            return Err(VaultError::WrongPhrase);
+        }
+        let inner = wrapper.unprotect(&unb64(&slot.sealed)?).map_err(VaultError::Wrap)?;
+        if inner.len() <= 32 {
+            return Err(VaultError::Corrupt("recovery seal".into()));
+        }
+        let (enc, ct) = inner.split_at(32);
+        let sealed = crate::sync::crypto::Sealed {
+            enc: enc.try_into().map_err(|_| VaultError::Corrupt("recovery seal".into()))?,
+            ct: ct.to_vec(),
+        };
+        let vk = crate::sync::crypto::open_key(&sk, RECOVERY_INFO, &sealed)
+            .map_err(|_| VaultError::Corrupt("recovery seal failed authentication".into()))?;
+        // The old KEK is not known: a placeholder until the new password is set below.
+        let mut vault = Self::with_keys(path, file, params, salt, Zeroizing::new([0u8; KEY_LEN]), vk)?;
+        vault.salt = random::<SALT_LEN>()?;
+        vault.kek = derive_kek(new, &vault.salt, vault.params)?;
+        vault.vk = Zeroizing::new(random::<KEY_LEN>()?);
+        vault.save(wrapper)?;
+        Ok(vault)
+    }
+
+    /// Makes `phrase` the vault's recovery phrase (a new key pair: an older phrase stops
+    /// working). `now` is unix ms.
+    pub fn set_recovery(
+        &mut self,
+        phrase: &crate::recovery::Phrase,
+        now: i64,
+        wrapper: &dyn KeyWrapper,
+    ) -> VResult<()> {
+        let params = recovery_params(self.params);
+        let salt = random::<SALT_LEN>()?;
+        let (_, public) = recovery_keypair(phrase, &salt, params)?;
+        let before = self.recovery.replace(RecoveryKey { params, salt, public, created: now });
+        if let Err(e) = self.save(wrapper) {
+            self.recovery = before;
+            return Err(e);
+        }
+        Ok(())
+    }
+
+    /// Removes the recovery phrase (the file goes back to format 1 or 2).
+    pub fn remove_recovery(&mut self, wrapper: &dyn KeyWrapper) -> VResult<()> {
+        let before = self.recovery.take();
+        if let Err(e) = self.save(wrapper) {
+            self.recovery = before;
+            return Err(e);
+        }
+        Ok(())
+    }
+
+    /// When the recovery phrase was made, if there is one.
+    pub fn recovery_created(&self) -> Option<i64> {
+        self.recovery.map(|r| r.created)
     }
 
     /// Re-checks the master password (for revealing a password).
@@ -1074,8 +1277,29 @@ impl Vault {
             &serde_json::to_vec(&manifest).map_err(|_| VaultError::Corrupt("encoding failed".into()))?,
             AAD_MANIFEST,
         )?;
+        let recovery = match &self.recovery {
+            Some(r) => {
+                let sealed = crate::sync::crypto::seal(&r.public, RECOVERY_INFO, self.vk.as_ref())
+                    .map_err(|_| VaultError::Corrupt("recovery key".into()))?;
+                let mut inner = Zeroizing::new(sealed.enc.to_vec());
+                inner.extend_from_slice(&sealed.ct);
+                Some(RecoverySlot {
+                    kdf: KdfRecord { alg: "argon2id".into(), params: r.params, salt: b64(&r.salt) },
+                    public: b64(&r.public),
+                    sealed: b64(&wrapper.protect(&inner).map_err(VaultError::Wrap)?),
+                    created: r.created,
+                })
+            }
+            None => None,
+        };
         let file = VaultFile {
-            format: if cards.is_empty() { FORMAT } else { FORMAT_CARDS },
+            format: if recovery.is_some() {
+                FORMAT_RECOVERY
+            } else if cards.is_empty() {
+                FORMAT
+            } else {
+                FORMAT_CARDS
+            },
             kdf: KdfRecord { alg: "argon2id".into(), params: self.params, salt: b64(&self.salt) },
             wrap: wrapper.name().into(),
             check,
@@ -1083,6 +1307,7 @@ impl Vault {
             manifest,
             entries,
             cards,
+            recovery,
         };
         let json = serde_json::to_vec_pretty(&file).map_err(|_| VaultError::Corrupt("encoding failed".into()))?;
         write_atomic(&self.path, &json).map_err(|e| VaultError::Io(e.to_string()))?;
@@ -1162,6 +1387,133 @@ mod tests {
         v.save_login("https://bank.example/login", "alice", z(SECRET), 1, &NoWrap).unwrap();
         v.save_login("https://mail.example:8443/", "bob", z("p2"), 2, &NoWrap).unwrap();
         v
+    }
+
+    // ------------------------------------------------------------ recovery phrase (0.7.0)
+
+    fn phrase(byte: u8) -> crate::recovery::Phrase {
+        crate::recovery::Phrase::from_entropy([byte; 32])
+    }
+
+    #[test]
+    fn the_recovery_cost_is_at_least_the_masters() {
+        let d = KdfParams::default();
+        assert_eq!(recovery_params(KdfParams { m_kib: 1024, t: 1, p: 1 }), d);
+        let strong = KdfParams { m_kib: 256 * 1024, t: 4, p: 2 };
+        assert_eq!(recovery_params(strong), strong);
+        assert_eq!(recovery_params(KdfParams { m_kib: 128 * 1024, t: 2, p: 1 }), KdfParams { m_kib: 128 * 1024, t: 3, p: 1 });
+    }
+
+    #[test]
+    fn a_recovery_phrase_opens_the_vault_and_sets_a_new_password() {
+        let dir = TestDir::new("recovery");
+        let mut v = fast_vault(&dir);
+        v.save_card(None, Some(z("4111111111111111")), 12, 2030, "A", "", None, 3, &NoWrap).unwrap();
+        assert_eq!(v.recovery_created(), None);
+        assert_eq!(recovery_in_file(&dir.file()), None);
+        v.set_recovery(&phrase(0x42), 77, &NoWrap).unwrap();
+        assert_eq!(v.recovery_created(), Some(77));
+        assert_eq!(recovery_in_file(&dir.file()), Some(77));
+        let text = std::fs::read_to_string(dir.file()).unwrap();
+        assert!(text.contains("\"format\": 3") && text.contains("\"recovery\"") && text.contains("\"cards\""), "format 3, cards kept");
+        // Neither the phrase nor its bits are in the file.
+        let p = phrase(0x42);
+        assert!(!text.contains(&p.words()[0]) && !text.contains(&b64(p.entropy())));
+        drop(v);
+        // The master password still opens it and sees the slot.
+        assert_eq!(Vault::open(&dir.file(), PW, &NoWrap).unwrap().recovery_created(), Some(77));
+        // Forgotten password: the phrase opens it with a new one.
+        let v = Vault::recover(&dir.file(), &phrase(0x42), "a brand new master", &NoWrap).unwrap();
+        assert_eq!(v.entries().len(), 2);
+        assert_eq!(v.entries()[0].password.as_str(), SECRET);
+        assert_eq!(v.cards().len(), 1);
+        assert_eq!(v.recovery_created(), Some(77), "the phrase stays");
+        drop(v);
+        assert_eq!(Vault::open(&dir.file(), PW, &NoWrap).unwrap_err(), VaultError::WrongPassword, "the old password is gone");
+        let v = Vault::open(&dir.file(), "a brand new master", &NoWrap).unwrap();
+        assert_eq!(v.entries().len(), 2);
+        // The phrase still works after that (a second recovery).
+        drop(v);
+        assert!(Vault::recover(&dir.file(), &phrase(0x42), "third password!", &NoWrap).is_ok());
+        // Short new passwords are refused before anything happens.
+        assert_eq!(Vault::recover(&dir.file(), &phrase(0x42), "short", &NoWrap).unwrap_err(), VaultError::WeakPassword);
+    }
+
+    #[test]
+    fn a_wrong_or_replaced_phrase_fails_and_a_password_change_keeps_it_valid() {
+        let dir = TestDir::new("recovery2");
+        let mut v = fast_vault(&dir);
+        assert_eq!(Vault::recover(&dir.file(), &phrase(1), "new password 1", &NoWrap).unwrap_err(), VaultError::NoRecovery);
+        v.set_recovery(&phrase(1), 1, &NoWrap).unwrap();
+        assert_eq!(Vault::recover(&dir.file(), &phrase(2), "new password 1", &NoWrap).unwrap_err(), VaultError::WrongPhrase);
+        // A master password change rotates the vault key; the phrase still opens it.
+        v.change_password(PW, "changed password", &NoWrap).unwrap();
+        drop(v);
+        let mut v = Vault::recover(&dir.file(), &phrase(1), "after change 1", &NoWrap).unwrap();
+        assert_eq!(v.entries().len(), 2);
+        // A new phrase: the old one stops working.
+        v.set_recovery(&phrase(3), 2, &NoWrap).unwrap();
+        drop(v);
+        assert_eq!(Vault::recover(&dir.file(), &phrase(1), "after change 2", &NoWrap).unwrap_err(), VaultError::WrongPhrase);
+        let mut v = Vault::recover(&dir.file(), &phrase(3), "after change 3", &NoWrap).unwrap();
+        // Removed: back to the 0.6.0 layout, readable by older versions.
+        v.remove_recovery(&NoWrap).unwrap();
+        let text = std::fs::read_to_string(dir.file()).unwrap();
+        assert!(text.contains("\"format\": 1") && !text.contains("recovery"));
+        drop(v);
+        assert_eq!(Vault::recover(&dir.file(), &phrase(3), "after change 4", &NoWrap).unwrap_err(), VaultError::NoRecovery);
+        assert!(Vault::open(&dir.file(), "after change 3", &NoWrap).is_ok());
+    }
+
+    #[test]
+    fn a_tampered_recovery_slot_is_refused() {
+        let dir = TestDir::new("recovery3");
+        let mut v = fast_vault(&dir);
+        v.set_recovery(&phrase(9), 1, &NoWrap).unwrap();
+        drop(v);
+        let good = std::fs::read_to_string(dir.file()).unwrap();
+        let mut file: serde_json::Value = serde_json::from_str(&good).unwrap();
+        // Another public key: the phrase no longer matches it.
+        let mut other = file.clone();
+        other["recovery"]["public"] = serde_json::json!(b64(&[7u8; 32]));
+        std::fs::write(dir.file(), serde_json::to_string(&other).unwrap()).unwrap();
+        assert_eq!(Vault::recover(&dir.file(), &phrase(9), "new password 9", &NoWrap).unwrap_err(), VaultError::WrongPhrase);
+        // A changed seal: fails authentication, nothing is written.
+        let sealed = file["recovery"]["sealed"].as_str().unwrap().to_string();
+        let mut bytes = unb64(&sealed).unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] ^= 1;
+        file["recovery"]["sealed"] = serde_json::json!(b64(&bytes));
+        let tampered = serde_json::to_string(&file).unwrap();
+        std::fs::write(dir.file(), &tampered).unwrap();
+        assert!(matches!(Vault::recover(&dir.file(), &phrase(9), "new password 9", &NoWrap), Err(VaultError::Corrupt(_))));
+        assert_eq!(std::fs::read_to_string(dir.file()).unwrap(), tampered, "untouched");
+        // Unknown fields in the slot are refused like everywhere else.
+        let mut extra: serde_json::Value = serde_json::from_str(&good).unwrap();
+        extra["recovery"]["phrase"] = serde_json::json!("abandon");
+        std::fs::write(dir.file(), serde_json::to_string(&extra).unwrap()).unwrap();
+        assert!(matches!(Vault::open(&dir.file(), PW, &NoWrap), Err(VaultError::Corrupt(_))));
+    }
+
+    #[test]
+    fn older_vaults_get_a_recovery_phrase() {
+        // A format 1 (0.5.x) and a format 2 (0.6.0) vault: both open, take a phrase (format 3)
+        // and recover.
+        for cards in [false, true] {
+            let dir = TestDir::new(if cards { "recovery-f2" } else { "recovery-f1" });
+            let mut v = fast_vault(&dir);
+            if cards {
+                v.save_card(None, Some(z("5500000000000004")), 1, 2031, "B", "", None, 3, &NoWrap).unwrap();
+            }
+            drop(v);
+            let before = std::fs::read_to_string(dir.file()).unwrap();
+            assert!(before.contains(if cards { "\"format\": 2" } else { "\"format\": 1" }));
+            let mut v = Vault::open(&dir.file(), PW, &NoWrap).unwrap();
+            v.set_recovery(&phrase(5), 1, &NoWrap).unwrap();
+            drop(v);
+            let v = Vault::recover(&dir.file(), &phrase(5), "migrated password", &NoWrap).unwrap();
+            assert_eq!((v.entries().len(), v.cards().len()), (2, usize::from(cards)));
+        }
     }
 
     #[test]

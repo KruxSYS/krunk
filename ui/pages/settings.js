@@ -110,7 +110,10 @@
       $('hint-mobile').checked = !!src.mobile;
       $('hint-wow64').checked = !!src.wow64;
     }
-    stateHidden('hint-fields', !on);
+    // Nothing to customise while no hints are sent (0.7.0).
+    const sending = h.sendClientHints !== false;
+    $('hints-on').disabled = !sending;
+    stateHidden('hint-fields', !on || !sending);
     const list = $('header-rules');
     list.textContent = '';
     if (!(h.rules || []).length) list.appendChild(el('p', { class: 'muted', text: 'No custom headers.' }));

@@ -168,7 +168,7 @@ impl NetShared {
     }
 
     pub fn set_headers(&self, h: &Headers) {
-        self.has_header_rules.store(!h.rules.is_empty(), Relaxed);
+        self.has_header_rules.store(!h.rules.is_empty() || !h.send_client_hints, Relaxed);
         if let Ok(mut w) = self.headers.write() {
             *w = Arc::new(h.clone());
         }
@@ -180,7 +180,15 @@ impl NetShared {
             return Vec::new();
         }
         let host = urlclean::host_of(top).unwrap_or_default();
-        self.headers.read().ok().map(|h| h.rules_for(&host)).unwrap_or_default()
+        self.headers
+            .read()
+            .ok()
+            .map(|h| {
+                let mut out = h.hint_removals();
+                out.extend(h.rules_for(&host));
+                out
+            })
+            .unwrap_or_default()
     }
 
     pub fn set_trackers(&self, t: TrackerSet) {

@@ -35,6 +35,7 @@ pub mod pointer_lock;
 pub mod preprocess;
 pub mod protection;
 pub mod protocol;
+pub mod recovery;
 pub mod secret;
 pub mod segdl;
 pub mod settings;

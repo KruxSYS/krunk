@@ -40,7 +40,7 @@ const GENERATED_MS: i64 = 30 * 60 * 1000;
 const VAULT_CHECK_MS: u32 = 30_000;
 /// Timer: clear the clipboard after a copy.
 pub(super) const CLIPBOARD_TIMER: usize = 5;
-const CLIPBOARD_CLEAR_MS: u32 = 30_000;
+pub(super) const CLIPBOARD_CLEAR_MS: u32 = 30_000;
 /// A pending "Save password?" is dropped after this long.
 const PENDING_SAVE_MS: i64 = 5 * 60 * 1000;
 
@@ -60,9 +60,11 @@ type GeneratedPassword = (TabId, String, Zeroizing<String>, i64);
 #[derive(Default)]
 pub(super) struct VaultHost {
     pub(super) vault: RefCell<Option<Vault>>,
-    rate: RefCell<core_vault::RateLimiter>,
+    pub(super) rate: RefCell<core_vault::RateLimiter>,
     /// A key derivation (create/unlock/verify/change) is running.
-    busy: Cell<bool>,
+    pub(super) busy: Cell<bool>,
+    /// A new recovery phrase shown but not yet confirmed (0.7.0).
+    pub(super) recovery: RefCell<Option<super::vault_recovery::PendingPhrase>>,
     last_activity: Cell<i64>,
     pending_save: RefCell<Option<PendingSave>>,
     /// A card offered to save at checkout (0.6.0), waiting for the answer or the unlock.
@@ -75,10 +77,10 @@ pub(super) struct VaultHost {
     /// The last automatic save, for the toast's Undo: the entry and the password it replaced
     /// (`None`: the entry was new and is deleted).
     auto_saved: RefCell<Option<(String, Option<Zeroizing<String>>)>>,
-    clipboard_seq: Cell<Option<u32>>,
+    pub(super) clipboard_seq: Cell<Option<u32>>,
 }
 
-fn wrong_password_message(wait_ms: u64) -> String {
+pub(super) fn wrong_password_message(wait_ms: u64) -> String {
     if wait_ms > 0 {
         format!("Wrong master password. Try again in {} s.", wait_ms.div_ceil(1000))
     } else {
@@ -87,7 +89,7 @@ fn wrong_password_message(wait_ms: u64) -> String {
 }
 
 /// User-facing text for a vault error (contains no secrets by construction).
-fn vault_error_message(e: &VaultError) -> String {
+pub(super) fn vault_error_message(e: &VaultError) -> String {
     match e {
         VaultError::Wrap(_) => "This vault can only be opened by the Windows account (and PC) that created it.".into(),
         other => other.to_string(),
@@ -159,11 +161,13 @@ impl Browser {
             "locked": !self.vault_unlocked(),
             "busy": self.vaults.busy.get(),
             "waitMs": self.vaults.rate.borrow().wait_ms(now_ms()),
+            // 0.7.0: a recovery phrase exists (when it was made), readable while locked.
+            "recovery": core_vault::recovery_in_file(&self.dirs.vault()),
         })
     }
 
     /// Tells passwords pages and the shell that the vault state changed.
-    fn push_vault_state(&self) {
+    pub(super) fn push_vault_state(&self) {
         let e = Event::VaultState { exists: self.vault_exists(), locked: !self.vault_unlocked() }.to_json();
         let tabs: Vec<TabId> = self
             .ws
@@ -182,7 +186,7 @@ impl Browser {
         }
     }
 
-    fn vault_opened(&self, v: Vault) {
+    pub(super) fn vault_opened(&self, v: Vault) {
         *self.vaults.vault.borrow_mut() = Some(v);
         self.refresh_hint_index();
         self.touch_vault();
@@ -258,6 +262,13 @@ impl Browser {
             Request::NeverSaveRemove { origin } => {
                 self.reply_db(tab, req_id, self.store.borrow().never_save_remove(&origin))
             }
+            // The recovery phrase: these work while locked (or need nothing of the vault).
+            Request::VaultRecoveryCancel => {
+                self.vaults.recovery.borrow_mut().take();
+                self.reply(tab, Event::ok(req_id, ()));
+            }
+            Request::VaultRecoveryCheck { phrase } => self.recovery_check(tab, req_id, phrase),
+            Request::VaultRecover { phrase, new } => self.recover_vault(tab, req_id, phrase, new),
             other => {
                 // Everything else needs an unlocked vault.
                 if !self.vault_unlocked() {
@@ -281,6 +292,11 @@ impl Browser {
                         self.reply_vault(tab, req_id, r);
                     }
                     Request::VaultChangePassword { old, new } => self.vault_change_password(tab, req_id, old, new),
+                    Request::VaultRecoveryCreate { password } => self.recovery_create(tab, req_id, password),
+                    Request::VaultRecoveryConfirm { answers } => self.recovery_confirm(tab, req_id, answers),
+                    Request::VaultRecoveryCopy => self.recovery_copy(tab, req_id),
+                    Request::VaultRecoverySave => self.recovery_save(tab, req_id),
+                    Request::VaultRecoveryRemove { password } => self.recovery_remove(tab, req_id, password),
                     Request::CardList => {
                         let list = self.vaults.vault.borrow().as_ref().map(Vault::card_summaries).unwrap_or_default();
                         self.reply(tab, Event::ok(req_id, list));
@@ -321,7 +337,7 @@ impl Browser {
         }
     }
 
-    fn reply_vault<T: serde::Serialize>(&self, tab: Option<TabId>, req_id: Option<u32>, r: Result<T, VaultError>) {
+    pub(super) fn reply_vault<T: serde::Serialize>(&self, tab: Option<TabId>, req_id: Option<u32>, r: Result<T, VaultError>) {
         match r {
             Ok(v) => self.reply(tab, Event::ok(req_id, v)),
             Err(e) => self.reply(tab, Event::err(req_id, vault_error_message(&e))),
@@ -943,7 +959,7 @@ impl Browser {
     }
 
     /// Continues a save or fill that was waiting for the vault.
-    fn after_unlock(&self) {
+    pub(super) fn after_unlock(&self) {
         let Some((tab_id, origin, purpose)) = self.vaults.unlock_for.borrow_mut().take() else { return };
         let active = self.active_id();
         let url = self.tab(tab_id).map(|t| t.url.clone()).unwrap_or_default();

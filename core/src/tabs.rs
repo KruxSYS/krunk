@@ -590,7 +590,7 @@ fn page_title(p: Page) -> &'static str {
         Page::NewTab => "New tab",
         Page::History => "History",
         Page::Bookmarks => "Bookmarks",
-        Page::Passwords => "Passwords",
+        Page::Passwords => "Passwords & payments",
         Page::Settings => "Settings",
         Page::Downloads => "Downloads",
         Page::About => "About Krunk",

@@ -258,8 +258,23 @@ pub fn valid_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The user-agent client hint request headers (`Sec-CH-UA` and the high-entropy ones).
+pub const CLIENT_HINT_HEADERS: &[&str] = &[
+    "Sec-CH-UA",
+    "Sec-CH-UA-Mobile",
+    "Sec-CH-UA-Platform",
+    "Sec-CH-UA-Platform-Version",
+    "Sec-CH-UA-Arch",
+    "Sec-CH-UA-Bitness",
+    "Sec-CH-UA-Model",
+    "Sec-CH-UA-Full-Version",
+    "Sec-CH-UA-Full-Version-List",
+    "Sec-CH-UA-WoW64",
+    "Sec-CH-UA-Form-Factors",
+];
+
 /// The request-header settings.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Headers {
     /// `Accept-Language` as a comma list without q-values (the engine adds them); empty: the
@@ -267,15 +282,35 @@ pub struct Headers {
     pub accept_language: String,
     /// Client hints; `None`: the engine's own (no override unless the user agent is changed).
     pub hints: Option<ClientHints>,
+    /// Send client hints at all (0.7.0, R12; on by default). Off: no `Sec-CH-UA*` header on
+    /// any request, `Accept-CH`/`Critical-CH` change nothing, and pages and workers have no
+    /// `navigator.userAgentData`.
+    pub send_client_hints: bool,
     pub rules: Vec<HeaderRule>,
+}
+
+impl Default for Headers {
+    fn default() -> Headers {
+        Headers { accept_language: String::new(), hints: None, send_client_hints: true, rules: Vec::new() }
+    }
 }
 
 impl Headers {
     /// Does this need the DevTools override (beyond a custom user-agent string)? The
     /// language does too: the override is the only way to change it at runtime (with the
-    /// engine's own hints, so nothing else changes).
+    /// engine's own hints, so nothing else changes); no client hints at all does as well.
     pub fn overrides(&self) -> bool {
-        self.hints.is_some() || !self.accept_language.is_empty()
+        self.hints.is_some() || !self.accept_language.is_empty() || !self.send_client_hints
+    }
+
+    /// Request-header changes beyond the custom rules: with client hints off, every
+    /// `Sec-CH-UA*` header is removed (a safety net behind the override, which already keeps
+    /// the engine from adding them).
+    pub fn hint_removals(&self) -> Vec<(String, Option<String>)> {
+        if self.send_client_hints {
+            return Vec::new();
+        }
+        CLIENT_HINT_HEADERS.iter().map(|n| (n.to_string(), None)).collect()
     }
 
     pub fn validate(&self) -> Result<(), Vec<(&'static str, String)>> {
@@ -363,6 +398,28 @@ pub fn user_agent_override(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn client_hints_can_be_off() {
+        let on = Headers::default();
+        assert!(on.send_client_hints && !on.overrides() && on.hint_removals().is_empty());
+        // Older settings (0.6.0) have no field: on.
+        let old: Headers = serde_json::from_str(r#"{"acceptLanguage":"","rules":[]}"#).unwrap();
+        assert!(old.send_client_hints);
+        let off = Headers { send_client_hints: false, ..Headers::default() };
+        assert!(off.overrides(), "the override without metadata is what switches them off");
+        let removed: Vec<String> = off.hint_removals().into_iter().map(|(n, v)| {
+            assert!(v.is_none());
+            n.to_ascii_lowercase()
+        }).collect();
+        for h in ["sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform", "sec-ch-ua-full-version-list", "sec-ch-ua-arch"] {
+            assert!(removed.contains(&h.to_string()), "{h}");
+        }
+        // The override without hints carries no metadata (so the engine adds no hints).
+        let p = user_agent_override("UA/1", "", None, "156.0.1.2");
+        assert!(p.get("userAgentMetadata").is_none());
+        assert_eq!(serde_json::to_value(&off).unwrap()["sendClientHints"], false);
+    }
 
     #[test]
     fn hints_defaults_and_header_text() {

@@ -54,6 +54,7 @@ mod filter_lists;
 mod find;
 mod flight;
 mod frame;
+mod hints;
 mod import;
 mod integrity;
 mod jobs;
@@ -77,6 +78,7 @@ mod updater;
 pub use power::PowerOptions;
 use power::{MEMREPORT_TIMER, POWER_TIMER};
 mod vault;
+mod vault_recovery;
 
 use settings_host::EXIT_TIMER;
 
@@ -197,6 +199,8 @@ pub struct Browser {
     parts_jobs: segmented::PartsJobs,
     /// Engine downloads Krunk gave up (cancelled at their next update).
     abandoned_downloads: RefCell<std::collections::HashSet<u32>>,
+    /// Tabs auto-attached to their workers and frames while client hints are off (0.7.0).
+    hints_attached: RefCell<std::collections::HashSet<TabId>>,
     /// When the list was loaded, and the addresses of the downloads the last close stopped.
     stopped_by_close: RefCell<(i64, Vec<String>)>,
     /// Running downloads by engine download id: our id and the controls
@@ -309,6 +313,7 @@ impl Browser {
             downloads: RefCell::new(Downloads::new()),
             parts_jobs: segmented::PartsJobs::default(),
             abandoned_downloads: RefCell::new(Default::default()),
+            hints_attached: RefCell::new(Default::default()),
             stopped_by_close: RefCell::new((0, Vec::new())),
             download_ops: RefCell::new(HashMap::new()),
             folder_anchor: Cell::new(None),
@@ -945,6 +950,7 @@ impl Browser {
         c.on_created(move || {
             if let Some(b) = weak.upgrade() {
                 b.ext_tab_created(id);
+                b.hints_attach(id);
                 let first = b.first_url.borrow_mut().remove(&id);
                 b.apply_user_agent_to_then(id, move |b| {
                     if let Some(url) = first {
@@ -1000,6 +1006,7 @@ impl Browser {
 
     fn destroy_view(&self, id: TabId) {
         self.ext_detach_tab(id);
+        self.hints_attached.borrow_mut().remove(&id);
         self.pointer.hints.borrow_mut().forget(id);
         if self.status.tab.get() == Some(id) {
             self.hide_status();
@@ -2147,6 +2154,14 @@ impl Browser {
             | Request::VaultSave { .. }
             | Request::VaultDelete { .. }
             | Request::VaultChangePassword { .. }
+            | Request::VaultRecoveryCreate { .. }
+            | Request::VaultRecoveryConfirm { .. }
+            | Request::VaultRecoveryCancel
+            | Request::VaultRecoveryCopy
+            | Request::VaultRecoverySave
+            | Request::VaultRecoveryRemove { .. }
+            | Request::VaultRecoveryCheck { .. }
+            | Request::VaultRecover { .. }
             | Request::GeneratePassword { .. }
             | Request::GetNeverSave
             | Request::NeverSaveRemove { .. }

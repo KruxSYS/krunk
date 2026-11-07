@@ -182,3 +182,6 @@ body.pv-dark { --bg-raised: #202124; --bg-hover: #3c4043; --fg: #e8eaed; --fg-mu
 .suggest.generated .user { color: var(--accent); }
 .suggest .host.mono { font-family: ui-monospace, Consolas, monospace; font-size: 0.923rem; color: var(--fg); letter-spacing: .02em; word-break: break-all; white-space: normal; }
 .panel.toast p { margin: 0 0 8px; }
+.link { border: 0; background: none; padding: 0; color: var(--link, var(--accent)); cursor: pointer; font: inherit; }
+.link:hover { text-decoration: underline; }
+.panel .forgot { margin-top: 2px; font-size: 0.923rem; }

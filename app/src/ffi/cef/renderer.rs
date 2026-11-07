@@ -283,6 +283,10 @@ fn context_created(scripts: Scripts, frame: &mut Frame, context: &mut V8Context)
     if scripts.dnt {
         eval(context, assets::inject_script("dnt.js"));
     }
+    // No user-agent metadata ("Send client hints" off): no navigator.userAgentData (0.7.0).
+    if document_url(frame).starts_with("http") {
+        eval(context, assets::inject_script("nohints.js"));
+    }
     if scripts.audio {
         install_audio_tracker(context);
     }

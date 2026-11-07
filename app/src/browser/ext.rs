@@ -544,6 +544,8 @@ impl Browser {
 
     fn ext_devtools_event(&self, tab: TabId, method: &str, params: &Value) {
         match method {
+            // A worker or frame paused for "Send client hints" off (0.7.0, `hints`).
+            "Target.attachedToTarget" => self.hints_target_attached(tab, params),
             "Runtime.executionContextCreated" => {
                 let Some(ctx) = params.get("context") else { return };
                 if ctx.get("name").and_then(|n| n.as_str()) != Some(ext::WORLD_NAME) {

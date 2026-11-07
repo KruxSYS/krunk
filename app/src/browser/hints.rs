@@ -1,0 +1,75 @@
+//! "Send client hints" off (Krunk 0.7.0, R12). The user-agent override without metadata
+//! (`settings_host::apply_user_agent_to_then`) keeps the engine from sending any `Sec-CH-UA*`
+//! header and from acting on `Accept-CH`/`Critical-CH`; the request hook removes any left
+//! (`core::headers::Headers::hint_removals`); `ui/inject/nohints.js` removes the then empty
+//! `navigator.userAgentData` in every frame. Workers are separate DevTools targets: while the
+//! setting is off each tab auto-attaches to its workers, paused at their start, removes
+//! `userAgentData` and lets them run. (Shared workers are not the page's targets: their script
+//! still sees the object; their requests carry no hints.)
+
+use super::Browser;
+use crate::log::info;
+use lb_core::tabs::TabId;
+use serde_json::{json, Value};
+
+/// Run in a worker paused at its start.
+const WORKER_SCRIPT: &str =
+    "(function(){try{delete WorkerNavigator.prototype.userAgentData}catch(e){}})()";
+
+impl Browser {
+    fn hints_off(&self) -> bool {
+        !self.settings.borrow().headers.send_client_hints
+    }
+
+    /// A tab's browser exists (before its first navigation), or the setting changed: attach
+    /// to its workers and frames while client hints are off, stop when they are on again.
+    pub(super) fn hints_attach(&self, tab: TabId) {
+        let Some(view) = self.tab_view(tab) else { return };
+        let off = self.hints_off();
+        if !off && !self.hints_attached.borrow().contains(&tab) {
+            return;
+        }
+        if off {
+            self.hints_attached.borrow_mut().insert(tab);
+        } else {
+            self.hints_attached.borrow_mut().remove(&tab);
+        }
+        // Workers only: an out-of-process frame paused this way did not resume in CEF; frames
+        // need no help (their requests follow the override, nohints.js runs in them).
+        view.devtools_method(
+            "Target.setAutoAttach",
+            &json!({
+                "autoAttach": off,
+                "waitForDebuggerOnStart": off,
+                "flatten": true,
+                "filter": [{ "type": "iframe", "exclude": true }, { "type": "page", "exclude": true }, {}],
+            }),
+        );
+    }
+
+    /// A worker or frame of `tab` was attached (paused): fix it up, then let it run.
+    pub(super) fn hints_target_attached(&self, tab: TabId, params: &Value) {
+        let Some(view) = self.tab_view(tab) else { return };
+        let Some(session) = params.get("sessionId").and_then(Value::as_str) else { return };
+        let kind = params.pointer("/targetInfo/type").and_then(Value::as_str).unwrap_or("");
+        let waiting = params.get("waitingForDebugger").and_then(Value::as_bool).unwrap_or(false);
+        info!("tab {tab}: attached {kind} target (waiting {waiting})");
+        if self.hints_off() {
+            match kind {
+                "worker" | "service_worker" | "shared_worker" => {
+                    view.devtools_session_method(
+                        session,
+                        "Runtime.evaluate",
+                        &json!({ "expression": WORKER_SCRIPT, "silent": true }),
+                    );
+                    info!("tab {tab}: {kind} without client hints");
+                }
+                _ => {}
+            }
+        }
+        // Whatever it is: it waits for this.
+        if waiting {
+            view.devtools_session_method(session, "Runtime.runIfWaitingForDebugger", &json!({}));
+        }
+    }
+}

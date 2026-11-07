@@ -1104,6 +1104,35 @@ pub enum Request {
         old: Secret,
         new: Secret,
     },
+    /// The recovery phrase (Krunk 0.7.0, R13; the passwords page only). Create (or replace)
+    /// one after the master password: the host makes the words and keeps them until confirmed
+    /// (the reply has them and three word positions to type back).
+    VaultRecoveryCreate {
+        password: Secret,
+    },
+    /// The words typed back for the positions asked: the phrase becomes the vault's.
+    VaultRecoveryConfirm {
+        answers: Vec<RecoveryAnswer>,
+    },
+    /// The new phrase is not wanted (dialog closed): it is forgotten.
+    VaultRecoveryCancel,
+    /// The new phrase to the clipboard (cleared after a minute) or into a text file the user
+    /// picks.
+    VaultRecoveryCopy,
+    VaultRecoverySave,
+    /// Removes the recovery phrase (after the master password).
+    VaultRecoveryRemove {
+        password: Secret,
+    },
+    /// Is this a recovery phrase (word list and checksum only; nothing is opened)?
+    VaultRecoveryCheck {
+        phrase: Secret,
+    },
+    /// Forgotten master password: open the vault with the phrase and set `new`.
+    VaultRecover {
+        phrase: Secret,
+        new: Secret,
+    },
     GeneratePassword {
         #[serde(default = "default_pw_len")]
         length: u32,
@@ -1504,6 +1533,14 @@ impl Sender {
                     | R::CardReveal { .. }
                     | R::CardCopy { .. }
                     | R::VaultChangePassword { .. }
+                    | R::VaultRecoveryCreate { .. }
+                    | R::VaultRecoveryConfirm { .. }
+                    | R::VaultRecoveryCancel
+                    | R::VaultRecoveryCopy
+                    | R::VaultRecoverySave
+                    | R::VaultRecoveryRemove { .. }
+                    | R::VaultRecoveryCheck { .. }
+                    | R::VaultRecover { .. }
                     | R::GetNeverSave
                     | R::NeverSaveRemove { .. }
                     | R::GeneratePassword { .. }
@@ -1630,6 +1667,14 @@ pub fn parse_request(sender: Sender, json: &str) -> Result<Envelope, ProtocolErr
         return Err(ProtocolError::Forbidden);
     }
     Ok(Envelope { req_id, request })
+}
+
+/// A word of the recovery phrase typed back: `position` is 1-based.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecoveryAnswer {
+    pub position: u32,
+    pub word: Secret,
 }
 
 /// A video on the page as the media script reports it (0.6.0). `index` is the script's own
@@ -3051,6 +3096,40 @@ mod tests {
             }],
         };
         assert!(ev.to_json().contains("\"event\":\"extActions\"") && ev.to_json().contains("\"hasPopup\":true"));
+    }
+
+    #[test]
+    fn recovery_phrase_messages_are_for_the_passwords_page_only() {
+        let all = [
+            r#"{"cmd":"vaultRecoveryCreate","password":"pw"}"#,
+            r#"{"cmd":"vaultRecoveryConfirm","answers":[{"position":3,"word":"zoo"}]}"#,
+            r#"{"cmd":"vaultRecoveryCancel"}"#,
+            r#"{"cmd":"vaultRecoveryCopy"}"#,
+            r#"{"cmd":"vaultRecoverySave"}"#,
+            r#"{"cmd":"vaultRecoveryRemove","password":"pw"}"#,
+            r#"{"cmd":"vaultRecoveryCheck","phrase":"abandon"}"#,
+            r#"{"cmd":"vaultRecover","phrase":"abandon","new":"new master"}"#,
+        ];
+        for json in all {
+            assert!(parse_request(Sender::Page(Page::Passwords), json).is_ok(), "{json}");
+            for sender in [Sender::Shell, Sender::Popup, Sender::Ext] {
+                assert_eq!(parse_request(sender, json), Err(ProtocolError::Forbidden), "{sender:?} {json}");
+            }
+            for p in Page::ALL.iter().filter(|p| **p != Page::Passwords) {
+                assert_eq!(parse_request(Sender::Page(*p), json), Err(ProtocolError::Forbidden), "{p:?} {json}");
+            }
+        }
+        // The phrase and the words are secrets: never printed, unknown fields refused.
+        let r = parse_request(
+            Sender::Page(Page::Passwords),
+            r#"{"cmd":"vaultRecover","phrase":"legal winner thank year","new":"hunter22"}"#,
+        )
+        .unwrap();
+        let shown = format!("{r:?}");
+        assert!(!shown.contains("winner") && !shown.contains("hunter22"), "{shown}");
+        let c = parse_request(Sender::Page(Page::Passwords), all[1]).unwrap();
+        assert!(!format!("{c:?}").contains("zoo"));
+        assert!(parse_request(Sender::Page(Page::Passwords), r#"{"cmd":"vaultRecoveryConfirm","answers":[{"position":3,"word":"zoo","hint":1}]}"#).is_err());
     }
 
     #[test]

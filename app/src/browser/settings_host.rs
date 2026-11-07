@@ -199,12 +199,19 @@ impl Browser {
             let ids: Vec<TabId> = self.views.borrow().keys().copied().collect();
             for id in ids {
                 self.apply_user_agent_to(id);
+                self.hints_attach(id);
             }
             info!(
                 "request headers: user agent {}, accept-language {:?}, client hints {}, {} custom rule(s)",
                 if new.user_agent.is_empty() { "default" } else { "custom" },
                 new.headers.accept_language_list(),
-                if new.headers.hints.is_some() { "overridden" } else { "engine" },
+                if !new.headers.send_client_hints {
+                    "off"
+                } else if new.headers.hints.is_some() {
+                    "overridden"
+                } else {
+                    "engine"
+                },
                 new.headers.rules.len()
             );
         }
@@ -256,10 +263,15 @@ impl Browser {
         let Some(c) = self.tab_view(id) else { return done(self) };
         // The language alone still needs the override; it then carries the engine's own
         // hints (read from the shell page at startup) so nothing else changes.
-        let hints = headers
-            .hints
-            .clone()
-            .or_else(|| (!headers.accept_language.is_empty()).then(|| self.engine_hints.borrow().clone()).flatten());
+        // "Send client hints" off (0.7.0): an override without metadata, so none are sent.
+        let hints = if !headers.send_client_hints {
+            None
+        } else {
+            headers
+                .hints
+                .clone()
+                .or_else(|| (!headers.accept_language.is_empty()).then(|| self.engine_hints.borrow().clone()).flatten())
+        };
         let params = if ua_now == at_start && !headers.overrides() {
             // Back to what the engine started with: tabs given an override meanwhile drop
             // it (new tabs never had one).

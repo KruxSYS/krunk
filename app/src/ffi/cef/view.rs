@@ -916,6 +916,36 @@ impl View {
         self.send_devtools(method, params, Some(Box::new(done)));
     }
 
+    /// Calls a DevTools method on an attached target's session (flat mode: a worker or an
+    /// out-of-process frame the page auto-attached, 0.7.0). Fire and forget; failures are
+    /// logged.
+    pub fn devtools_session_method(&self, session_id: &str, method: &str, params: &serde_json::Value) {
+        let Some(h) = self.host() else { return };
+        if self.0.devtools_observer.borrow().is_none() {
+            let mut observer = client::devtools_observer(self.0.key);
+            *self.0.devtools_observer.borrow_mut() = h.add_dev_tools_message_observer(Some(&mut observer));
+        }
+        let id = self.0.devtools_id.get() + 1;
+        self.0.devtools_id.set(id);
+        let what = format!("{method} (session {})", &session_id[..session_id.len().min(8)]);
+        let logged = what.clone();
+        self.0.devtools_calls.borrow_mut().insert(
+            id,
+            (
+                what,
+                Some(Box::new(move |r: DevToolsResult| match r {
+                    Ok(_) => crate::log::info!("DevTools {logged}: ok"),
+                    Err(e) => crate::log::warning!("DevTools {logged}: {e}"),
+                })),
+            ),
+        );
+        let message = serde_json::json!({ "id": id, "sessionId": session_id, "method": method, "params": params });
+        if h.send_dev_tools_message(Some(message.to_string().as_bytes())) == 0 {
+            self.0.devtools_calls.borrow_mut().remove(&id);
+            crate::log::warning!("DevTools method {method} (session) could not be sent");
+        }
+    }
+
     fn send_devtools(&self, method: &str, params: &serde_json::Value, done: Option<DevToolsDone>) {
         let fail = |done: Option<DevToolsDone>, why: &str| {
             if let Some(d) = done {
