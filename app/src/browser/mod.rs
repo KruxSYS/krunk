@@ -741,6 +741,7 @@ impl Browser {
                 pointer_lock: true,
                 notify: true,
                 media: true,
+                no_hints: !s.headers.send_client_hints,
             };
             #[cfg(feature = "perf-probe")]
             perf_probe::apply(&mut scripts);

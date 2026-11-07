@@ -2,10 +2,11 @@
 //! (`settings_host::apply_user_agent_to_then`) keeps the engine from sending any `Sec-CH-UA*`
 //! header and from acting on `Accept-CH`/`Critical-CH`; the request hook removes any left
 //! (`core::headers::Headers::hint_removals`); `ui/inject/nohints.js` removes the then empty
-//! `navigator.userAgentData` in every frame. Workers are separate DevTools targets: while the
-//! setting is off each tab auto-attaches to its workers, paused at their start, removes
-//! `userAgentData` and lets them run. (Shared workers are not the page's targets: their script
-//! still sees the object; their requests carry no hints.)
+//! `navigator.userAgentData` in every frame, and tabs made while the setting is off delete it in
+//! frames of other sites too (their process keeps the engine's metadata). Workers are separate
+//! DevTools targets: while the setting is off each tab auto-attaches to its workers, paused at
+//! their start, removes `userAgentData` and lets them run. (Shared workers are not the page's
+//! targets: their script still sees the object; their requests carry no hints.)
 
 use super::Browser;
 use crate::log::info;
@@ -13,8 +14,7 @@ use lb_core::tabs::TabId;
 use serde_json::{json, Value};
 
 /// Run in a worker paused at its start.
-const WORKER_SCRIPT: &str =
-    "(function(){try{delete WorkerNavigator.prototype.userAgentData}catch(e){}})()";
+const WORKER_SCRIPT: &str = "(function(){try{delete WorkerNavigator.prototype.userAgentData}catch(e){}})()";
 
 impl Browser {
     fn hints_off(&self) -> bool {

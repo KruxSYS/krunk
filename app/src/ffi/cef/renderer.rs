@@ -274,6 +274,9 @@ wrap_render_process_handler! {
     }
 }
 
+/// "Send client hints" off for this tab: `navigator.userAgentData` goes in every frame.
+const NO_USER_AGENT_DATA: &str = "(function(){try{delete Navigator.prototype.userAgentData}catch(e){}})()";
+
 fn context_created(scripts: Scripts, frame: &mut Frame, context: &mut V8Context) {
     let main = frame.is_main() == 1;
     // Navigator properties matching the privacy headers: every frame.
@@ -284,7 +287,9 @@ fn context_created(scripts: Scripts, frame: &mut Frame, context: &mut V8Context)
         eval(context, assets::inject_script("dnt.js"));
     }
     // No user-agent metadata ("Send client hints" off): no navigator.userAgentData (0.7.0).
-    if document_url(frame).starts_with("http") {
+    if scripts.no_hints {
+        eval(context, NO_USER_AGENT_DATA);
+    } else if document_url(frame).starts_with("http") {
         eval(context, assets::inject_script("nohints.js"));
     }
     if scripts.audio {

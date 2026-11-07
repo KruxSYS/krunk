@@ -111,6 +111,12 @@ cp "$CEF_PATH/CREDITS.html" "$out/licenses/Chromium-CREDITS.html"
   echo "generated with the z-image-turbo model from Krunk's own prompts, two drawn by Krunk's build"
   echo "script. No third-party image is included. Prompts and seeds: assets/wallpapers/SOURCES.txt"
   echo "in Krunk's source repository."
+  echo
+  echo "6. BIP39 English word list"
+  echo "--------------------------"
+  echo "The recovery phrase uses the BIP39 English word list and checksum (bitcoin/bips, BIP-0039,"
+  echo "through the Rust crate bip39 by Steven Roose et al.), dedicated to the public domain"
+  echo "under CC0 1.0 Universal: https://creativecommons.org/publicdomain/zero/1.0/"
 } > "$out/THIRD-PARTY-NOTICES.txt"
 
 # The engine files must be the ones Krunk checks itself against (engine-files.sha256, built into

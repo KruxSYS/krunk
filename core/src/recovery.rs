@@ -232,7 +232,9 @@ mod tests {
         assert_ne!(a.entropy(), b.entropy());
         assert_eq!(a.words().len(), WORDS);
         assert_eq!(Phrase::parse(&a.text()).unwrap().entropy(), a.entropy());
-        assert!(a.word_is(3, &a.words()[2]) && !a.word_is(3, "zzzz") && !a.word_is(0, "abandon") && !a.word_is(25, "x"));
+        assert!(
+            a.word_is(3, &a.words()[2]) && !a.word_is(3, "zzzz") && !a.word_is(0, "abandon") && !a.word_is(25, "x")
+        );
         assert_eq!(format!("{a:?}"), "Phrase(…)", "never printed");
         for _ in 0..50 {
             let p = ask_positions().unwrap();

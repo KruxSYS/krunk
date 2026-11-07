@@ -337,7 +337,12 @@ impl Browser {
         }
     }
 
-    pub(super) fn reply_vault<T: serde::Serialize>(&self, tab: Option<TabId>, req_id: Option<u32>, r: Result<T, VaultError>) {
+    pub(super) fn reply_vault<T: serde::Serialize>(
+        &self,
+        tab: Option<TabId>,
+        req_id: Option<u32>,
+        r: Result<T, VaultError>,
+    ) {
         match r {
             Ok(v) => self.reply(tab, Event::ok(req_id, v)),
             Err(e) => self.reply(tab, Event::err(req_id, vault_error_message(&e))),

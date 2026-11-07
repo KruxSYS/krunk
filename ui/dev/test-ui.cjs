@@ -2750,7 +2750,7 @@ async function testPasswords(browser) {
   await page.context().close();
 
   // Popup unlock prompt + save prompt.
-  ({ page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 360, height: 200 }, 1));
+  ({ page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 360, height: 230 }, 1));
   await emit(page, { event: 'popup', content: { kind: 'unlock', tabId: 4, origin: 'https://bank.example', purpose: 'fill', error: null, waitMs: 0 } });
   await page.waitForSelector('#master');
   check(await page.evaluate(() => document.activeElement.id) === 'master', 'unlock prompt focuses the password field');

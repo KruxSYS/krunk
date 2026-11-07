@@ -877,8 +877,7 @@ impl Vault {
         }
         let salt: [u8; SALT_LEN] =
             unb64(&r.kdf.salt)?.try_into().map_err(|_| VaultError::Corrupt("recovery salt".into()))?;
-        let public: [u8; 32] =
-            unb64(&r.public)?.try_into().map_err(|_| VaultError::Corrupt("recovery key".into()))?;
+        let public: [u8; 32] = unb64(&r.public)?.try_into().map_err(|_| VaultError::Corrupt("recovery key".into()))?;
         Ok(RecoveryKey { params: r.kdf.params, salt, public, created: r.created })
     }
 
@@ -1401,7 +1400,10 @@ mod tests {
         assert_eq!(recovery_params(KdfParams { m_kib: 1024, t: 1, p: 1 }), d);
         let strong = KdfParams { m_kib: 256 * 1024, t: 4, p: 2 };
         assert_eq!(recovery_params(strong), strong);
-        assert_eq!(recovery_params(KdfParams { m_kib: 128 * 1024, t: 2, p: 1 }), KdfParams { m_kib: 128 * 1024, t: 3, p: 1 });
+        assert_eq!(
+            recovery_params(KdfParams { m_kib: 128 * 1024, t: 2, p: 1 }),
+            KdfParams { m_kib: 128 * 1024, t: 3, p: 1 }
+        );
     }
 
     #[test]
@@ -1415,7 +1417,10 @@ mod tests {
         assert_eq!(v.recovery_created(), Some(77));
         assert_eq!(recovery_in_file(&dir.file()), Some(77));
         let text = std::fs::read_to_string(dir.file()).unwrap();
-        assert!(text.contains("\"format\": 3") && text.contains("\"recovery\"") && text.contains("\"cards\""), "format 3, cards kept");
+        assert!(
+            text.contains("\"format\": 3") && text.contains("\"recovery\"") && text.contains("\"cards\""),
+            "format 3, cards kept"
+        );
         // Neither the phrase nor its bits are in the file.
         let p = phrase(0x42);
         assert!(!text.contains(&p.words()[0]) && !text.contains(&b64(p.entropy())));
@@ -1429,7 +1434,11 @@ mod tests {
         assert_eq!(v.cards().len(), 1);
         assert_eq!(v.recovery_created(), Some(77), "the phrase stays");
         drop(v);
-        assert_eq!(Vault::open(&dir.file(), PW, &NoWrap).unwrap_err(), VaultError::WrongPassword, "the old password is gone");
+        assert_eq!(
+            Vault::open(&dir.file(), PW, &NoWrap).unwrap_err(),
+            VaultError::WrongPassword,
+            "the old password is gone"
+        );
         let v = Vault::open(&dir.file(), "a brand new master", &NoWrap).unwrap();
         assert_eq!(v.entries().len(), 2);
         // The phrase still works after that (a second recovery).
@@ -1443,9 +1452,15 @@ mod tests {
     fn a_wrong_or_replaced_phrase_fails_and_a_password_change_keeps_it_valid() {
         let dir = TestDir::new("recovery2");
         let mut v = fast_vault(&dir);
-        assert_eq!(Vault::recover(&dir.file(), &phrase(1), "new password 1", &NoWrap).unwrap_err(), VaultError::NoRecovery);
+        assert_eq!(
+            Vault::recover(&dir.file(), &phrase(1), "new password 1", &NoWrap).unwrap_err(),
+            VaultError::NoRecovery
+        );
         v.set_recovery(&phrase(1), 1, &NoWrap).unwrap();
-        assert_eq!(Vault::recover(&dir.file(), &phrase(2), "new password 1", &NoWrap).unwrap_err(), VaultError::WrongPhrase);
+        assert_eq!(
+            Vault::recover(&dir.file(), &phrase(2), "new password 1", &NoWrap).unwrap_err(),
+            VaultError::WrongPhrase
+        );
         // A master password change rotates the vault key; the phrase still opens it.
         v.change_password(PW, "changed password", &NoWrap).unwrap();
         drop(v);
@@ -1454,14 +1469,20 @@ mod tests {
         // A new phrase: the old one stops working.
         v.set_recovery(&phrase(3), 2, &NoWrap).unwrap();
         drop(v);
-        assert_eq!(Vault::recover(&dir.file(), &phrase(1), "after change 2", &NoWrap).unwrap_err(), VaultError::WrongPhrase);
+        assert_eq!(
+            Vault::recover(&dir.file(), &phrase(1), "after change 2", &NoWrap).unwrap_err(),
+            VaultError::WrongPhrase
+        );
         let mut v = Vault::recover(&dir.file(), &phrase(3), "after change 3", &NoWrap).unwrap();
         // Removed: back to the 0.6.0 layout, readable by older versions.
         v.remove_recovery(&NoWrap).unwrap();
         let text = std::fs::read_to_string(dir.file()).unwrap();
         assert!(text.contains("\"format\": 1") && !text.contains("recovery"));
         drop(v);
-        assert_eq!(Vault::recover(&dir.file(), &phrase(3), "after change 4", &NoWrap).unwrap_err(), VaultError::NoRecovery);
+        assert_eq!(
+            Vault::recover(&dir.file(), &phrase(3), "after change 4", &NoWrap).unwrap_err(),
+            VaultError::NoRecovery
+        );
         assert!(Vault::open(&dir.file(), "after change 3", &NoWrap).is_ok());
     }
 
@@ -1477,7 +1498,10 @@ mod tests {
         let mut other = file.clone();
         other["recovery"]["public"] = serde_json::json!(b64(&[7u8; 32]));
         std::fs::write(dir.file(), serde_json::to_string(&other).unwrap()).unwrap();
-        assert_eq!(Vault::recover(&dir.file(), &phrase(9), "new password 9", &NoWrap).unwrap_err(), VaultError::WrongPhrase);
+        assert_eq!(
+            Vault::recover(&dir.file(), &phrase(9), "new password 9", &NoWrap).unwrap_err(),
+            VaultError::WrongPhrase
+        );
         // A changed seal: fails authentication, nothing is written.
         let sealed = file["recovery"]["sealed"].as_str().unwrap().to_string();
         let mut bytes = unb64(&sealed).unwrap();
@@ -1486,7 +1510,10 @@ mod tests {
         file["recovery"]["sealed"] = serde_json::json!(b64(&bytes));
         let tampered = serde_json::to_string(&file).unwrap();
         std::fs::write(dir.file(), &tampered).unwrap();
-        assert!(matches!(Vault::recover(&dir.file(), &phrase(9), "new password 9", &NoWrap), Err(VaultError::Corrupt(_))));
+        assert!(matches!(
+            Vault::recover(&dir.file(), &phrase(9), "new password 9", &NoWrap),
+            Err(VaultError::Corrupt(_))
+        ));
         assert_eq!(std::fs::read_to_string(dir.file()).unwrap(), tampered, "untouched");
         // Unknown fields in the slot are refused like everywhere else.
         let mut extra: serde_json::Value = serde_json::from_str(&good).unwrap();

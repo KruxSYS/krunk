@@ -408,11 +408,17 @@ mod tests {
         assert!(old.send_client_hints);
         let off = Headers { send_client_hints: false, ..Headers::default() };
         assert!(off.overrides(), "the override without metadata is what switches them off");
-        let removed: Vec<String> = off.hint_removals().into_iter().map(|(n, v)| {
-            assert!(v.is_none());
-            n.to_ascii_lowercase()
-        }).collect();
-        for h in ["sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform", "sec-ch-ua-full-version-list", "sec-ch-ua-arch"] {
+        let removed: Vec<String> = off
+            .hint_removals()
+            .into_iter()
+            .map(|(n, v)| {
+                assert!(v.is_none());
+                n.to_ascii_lowercase()
+            })
+            .collect();
+        for h in
+            ["sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform", "sec-ch-ua-full-version-list", "sec-ch-ua-arch"]
+        {
             assert!(removed.contains(&h.to_string()), "{h}");
         }
         // The override without hints carries no metadata (so the engine adds no hints).

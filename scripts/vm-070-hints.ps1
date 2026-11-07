@@ -54,7 +54,11 @@ SafeGo 'krunk://settings' 2500
 $c = ClientRect (MainWindow)
 Click ([int]($c.Left + 968 * $c.Scale)) ([int]($c.Top + 146 * $c.Scale)) 300; Keys 'send client hints' 1500
 Shot "$P-live-setting"
-Log "[$P-live] (click the switch on the screenshot's row next)"
+Click 1106 349 1200
+Shot "$P-live-switched-off"
+Add-Content $log "=== live, after switching off ==="
+SafeGo 'http://127.0.0.1:8095/hints.html' 6000
+Shot "$P-live-after"
 Get-Process Krunk -ErrorAction SilentlyContinue | Stop-Process -Force
 Log "[$P] server log:"
 Get-Content $log | ForEach-Object { Log "  $_" }

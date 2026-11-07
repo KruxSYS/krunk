@@ -3129,7 +3129,11 @@ mod tests {
         assert!(!shown.contains("winner") && !shown.contains("hunter22"), "{shown}");
         let c = parse_request(Sender::Page(Page::Passwords), all[1]).unwrap();
         assert!(!format!("{c:?}").contains("zoo"));
-        assert!(parse_request(Sender::Page(Page::Passwords), r#"{"cmd":"vaultRecoveryConfirm","answers":[{"position":3,"word":"zoo","hint":1}]}"#).is_err());
+        assert!(parse_request(
+            Sender::Page(Page::Passwords),
+            r#"{"cmd":"vaultRecoveryConfirm","answers":[{"position":3,"word":"zoo","hint":1}]}"#
+        )
+        .is_err());
     }
 
     #[test]

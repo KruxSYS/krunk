@@ -55,6 +55,9 @@ pub struct Scripts {
     pub notify: bool,
     /// The page's videos for Picture-in-Picture (main frame; Krunk 0.6.0).
     pub media: bool,
+    /// "Send client hints" off when the tab was made (0.7.0): no `navigator.userAgentData` in
+    /// any frame, also in frames of other sites (their own process has the engine's metadata).
+    pub no_hints: bool,
 }
 
 impl Scripts {
@@ -69,6 +72,7 @@ impl Scripts {
             ("plock", self.pointer_lock),
             ("notify", self.notify),
             ("media", self.media),
+            ("nohints", self.no_hints),
         ] {
             d.set_bool(Some(&CefString::from(k)), i32::from(v));
         }
@@ -86,6 +90,7 @@ impl Scripts {
             pointer_lock: get("plock"),
             notify: get("notify"),
             media: get("media"),
+            no_hints: get("nohints"),
         }
     }
 }
