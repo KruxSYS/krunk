@@ -9,8 +9,8 @@
 .dl .links { display: flex; gap: 12px; margin-top: 6px; }
 .dl .links button { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font: inherit; }
 .dl .links button:hover { text-decoration: underline; }
-.dl .url { margin-top: 2px; font-size: 12px; color: var(--fg-muted); overflow-wrap: anywhere; user-select: text; }
-.dl .when { margin-top: 2px; font-size: 12px; color: var(--fg-muted); }
+.dl .url { margin-top: 2px; font-size: 0.923rem; color: var(--fg-muted); overflow-wrap: anywhere; user-select: text; }
+.dl .when { margin-top: 2px; font-size: 0.923rem; color: var(--fg-muted); }
 .dl:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 /* The row's context menu. */
 .ctx-menu { position: fixed; z-index: 10; min-width: 220px; padding: 6px 0; border: 1px solid var(--border);
@@ -20,3 +20,8 @@
 .ctx-menu .menu-item:hover:not([disabled]), .ctx-menu .menu-item:focus-visible { background: var(--bg-hover); outline: none; }
 .ctx-menu .menu-item[disabled] { color: var(--fg-muted); }
 .ctx-menu .menu-sep { height: 1px; margin: 5px 0; background: var(--border); }
+
+/* 0.6.0: one segment per connection of a download fetched in parts. */
+.segments { display: flex; gap: 2px; width: 100%; height: 8px; margin: 4px 0; }
+.segments .seg { flex: 1 1 auto; background: var(--border); border-radius: 4px; overflow: hidden; }
+.segments .seg .fill { display: block; height: 100%; background: var(--accent, #1a73e8); }

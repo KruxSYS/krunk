@@ -17,6 +17,7 @@ mod net;
 mod renderer;
 mod scheme;
 mod scriptlets;
+pub mod tasks;
 mod view;
 
 pub use cookies::{cookie_header, delete_cookies, list_cookies, set_cookie_value, Profile};

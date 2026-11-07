@@ -12,6 +12,8 @@ pub enum Command {
     /// Ctrl+N: a new window with a new-tab page.
     NewWindow,
     NewPrivateTab,
+    /// A new window whose tabs are private (the title bar's menu).
+    NewPrivateWindow,
     CloseTab,
     ReopenClosedTab,
     NextTab,
@@ -46,6 +48,8 @@ pub enum Command {
     InspectElement,
     /// Full screen without the tab strip and toolbar (F11).
     Fullscreen,
+    /// Shift+Esc: the task manager window.
+    TaskManager,
 }
 
 /// Virtual-key codes (winuser.h).
@@ -79,6 +83,24 @@ pub mod vk {
         c as u32
     }
 }
+
+/// The shortcuts the new tab page lists (label, keys), in display order.
+pub const SHORTCUTS: &[(&str, &str)] = &[
+    ("New tab", "Ctrl+T"),
+    ("Reopen closed tab", "Ctrl+Shift+T"),
+    ("New window", "Ctrl+N"),
+    ("New private tab", "Ctrl+Shift+N"),
+    ("Address bar", "Ctrl+L"),
+    ("Find in page", "Ctrl+F"),
+    ("Zoom in / out / reset", "Ctrl++ / Ctrl+- / Ctrl+0"),
+    ("Task manager", "Shift+Esc"),
+    ("History", "Ctrl+H"),
+    ("Bookmarks", "Ctrl+Shift+O"),
+    ("Downloads", "Ctrl+J"),
+    ("Bookmark this page", "Ctrl+D"),
+    ("Developer tools", "F12"),
+    ("Full screen", "F11"),
+];
 
 /// Maps a key press to a command. `vk` is the virtual-key code; letters
 /// are their upper-case ASCII codes.
@@ -130,6 +152,7 @@ pub fn command_for(vk: u32, ctrl: bool, shift: bool, alt: bool) -> Option<Comman
         (true, false, false, k) if k == vk::letter('P') => Print,
         (false, false, false, vk::F12) => DevTools,
         (false, false, false, vk::F11) => Fullscreen,
+        (false, true, false, vk::ESCAPE) => TaskManager,
         (true, true, false, k) if k == vk::letter('I') => DevTools,
         (true, true, false, k) if k == vk::letter('C') => InspectElement,
         _ => return None,
@@ -160,6 +183,39 @@ pub fn devtools_keeps(vk: u32, ctrl: bool, shift: bool, alt: bool) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn listed_shortcuts_are_real() {
+        // Every listed single shortcut maps to a command.
+        let parse = |k: &str| {
+            let mut ctrl = false;
+            let mut shift = false;
+            let mut key = "";
+            for part in k.split('+') {
+                match part {
+                    "Ctrl" => ctrl = true,
+                    "Shift" => shift = true,
+                    p => key = p,
+                }
+            }
+            let vk = match key {
+                "T" | "N" | "L" | "F" | "H" | "O" | "J" | "D" => vk::letter(key.chars().next().unwrap()),
+                "Esc" => vk::ESCAPE,
+                "F12" => vk::F12,
+                "F11" => vk::F11,
+                "0" => vk::KEY_0,
+                _ => return None,
+            };
+            command_for(vk, ctrl, shift, false)
+        };
+        for (label, keys) in SHORTCUTS {
+            if keys.contains(" / ") {
+                continue;
+            }
+            assert!(parse(keys).is_some(), "{label}: {keys}");
+        }
+        assert_eq!(parse("Shift+Esc"), Some(Command::TaskManager));
+    }
     use super::Command::*;
     use super::*;
 

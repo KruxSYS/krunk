@@ -538,6 +538,8 @@ impl TabModel {
                 loading: t.loading,
                 private: t.private,
                 sleeping: !t.is_live() || t.asleep,
+                audible: false,
+                muted: false,
             })
             .collect()
     }
@@ -597,6 +599,7 @@ fn page_title(p: Page) -> &'static str {
         Page::Adblock => "Ad blocking",
         Page::HttpsOnly => "Not secure",
         Page::Gpu => "Graphics",
+        Page::Tasks => "Task manager",
     }
 }
 

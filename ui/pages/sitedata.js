@@ -33,17 +33,21 @@
       box.appendChild(el('div', { class: 'empty', text: 'Permissions are not remembered in private tabs.' }));
       return;
     }
-    if (p.localNetwork === null || p.localNetwork === undefined) {
-      box.appendChild(el('div', { class: 'empty', text: 'No permissions saved for this site. Krunk asks when the site wants to reach your local network.' }));
+    const LABEL = { camera: 'Camera', microphone: 'Microphone', geolocation: 'Location', notifications: 'Notifications', clipboardRead: 'Clipboard (read)', midi: 'MIDI devices', screenShare: 'Screen sharing', localNetwork: 'Local network access' };
+    const kinds = Object.keys(p).filter(function (k) { return p[k] !== null && p[k] !== undefined; });
+    if (!kinds.length) {
+      box.appendChild(el('div', { class: 'empty', text: 'No permissions saved for this site. Krunk asks when the site wants to use your camera, microphone, location, clipboard, MIDI devices, screen, notifications or your local network.' }));
       return;
     }
-    box.appendChild(el('div', { class: 'perm-row' }, [
-      el('span', { class: 'perm-name', text: 'Local network access' }),
-      el('span', { class: 'perm-state ' + (p.localNetwork ? 'allowed' : 'blocked'), text: p.localNetwork ? 'Allowed' : 'Blocked' }),
-      el('button', { class: 'link-btn', id: 'perm-remove', text: 'Remove', onclick: function () {
-        LB.request('sitePermissionRemove', { kind: 'localNetwork' }).then(load).catch(fail);
-      } }),
-    ]));
+    kinds.forEach(function (k) {
+      box.appendChild(el('div', { class: 'perm-row', 'data-kind': k }, [
+        el('span', { class: 'perm-name', text: LABEL[k] || k }),
+        el('span', { class: 'perm-state ' + (p[k] ? 'allowed' : 'blocked'), text: p[k] ? 'Allowed' : 'Blocked' }),
+        el('button', { class: 'link-btn perm-remove', text: 'Remove', onclick: function () {
+          LB.request('sitePermissionRemove', { kind: k }).then(load).catch(fail);
+        } }),
+      ]));
+    });
   }
 
   function renderCookies(cookies) {

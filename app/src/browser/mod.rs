@@ -49,6 +49,7 @@ mod downloads;
 mod drag;
 mod filter_lists;
 mod find;
+mod flight;
 mod frame;
 mod import;
 mod jobs;
@@ -63,6 +64,7 @@ mod siteinfo;
 mod status;
 mod storage;
 mod suggest;
+mod tasks;
 mod updater;
 
 pub use power::PowerOptions;
@@ -98,6 +100,8 @@ struct TabView {
     stage_since: Cell<i64>,
     /// The page is playing audio (never put to sleep).
     audio: Rc<Cell<bool>>,
+    /// The page uses the camera / the microphone (the address bar's chip).
+    media_use: Cell<(bool, bool)>,
     /// Downloads in progress started by this tab (never put to sleep).
     downloads: Rc<Cell<u32>>,
     /// DevTools is docked next to the page (open or opening).
@@ -150,6 +154,10 @@ pub struct Browser {
     frames: RefCell<Vec<Rc<Frame>>>,
     views: RefCell<HashMap<TabId, TabView>>,
     popup: RefCell<Option<Popup>>,
+    /// The task manager's previous byte samples (network rate).
+    task_samples: tasks::TaskSamples,
+    /// The download-start flight (an icon flying to the downloads button).
+    flight: flight::FlightHost,
     /// A second popup window for a menu opened from inside the first one (an item of a
     /// bookmark folder dropdown): the dropdown stays open underneath, as in Chrome.
     menu_popup: RefCell<Option<Popup>>,
@@ -245,6 +253,8 @@ impl Browser {
             frames: RefCell::new(Vec::new()),
             views: RefCell::new(HashMap::new()),
             popup: RefCell::new(None),
+            task_samples: tasks::TaskSamples::default(),
+            flight: flight::FlightHost::default(),
             menu_popup: RefCell::new(None),
             menu_closing: Cell::new(false),
             from_menu_popup: Cell::new(false),
@@ -645,6 +655,7 @@ impl Browser {
                 login: true,
                 audio: true,
                 pointer_lock: true,
+                notify: true,
             }
         };
         let view =
@@ -668,9 +679,15 @@ impl Browser {
         let host_navigation = Rc::new(Cell::new(false));
         let audio = Rc::new(Cell::new(false));
         let audio2 = audio.clone();
+        let weak_audio = self.me.clone();
         view.on_audio(move |playing| {
             info!("tab {id}: audio {}", if playing { "playing" } else { "stopped" });
             audio2.set(playing);
+            if let Some(b) = weak_audio.upgrade() {
+                if let Some(win) = b.window_of(id) {
+                    b.send_tabs_to(win);
+                }
+            }
         });
         self.hook_tab(id, &view, host_navigation.clone(), net.clone());
         self.hook_blocking(&view, net.clone());
@@ -695,6 +712,7 @@ impl Browser {
                 stage: Cell::new(lb_core::memory::Stage::Awake),
                 stage_since: Cell::new(now_ms()),
                 audio,
+                media_use: Cell::new((false, false)),
                 downloads: Rc::new(Cell::new(0)),
                 devtools: Cell::new(false),
             },
@@ -768,6 +786,8 @@ impl Browser {
             if let Some(b) = weak.upgrade() {
                 b.release_address_focus_unless(id, &url);
                 b.with_tab(id, |m, t| m.set_url(t, &url));
+                b.apply_site_mute(id, &url);
+                b.apply_notification_setting(id, &url);
                 b.tab_changed(id);
             }
         });
@@ -1050,9 +1070,85 @@ impl Browser {
 
     fn send_tabs_to(&self, win: WindowId) {
         let state = self.ws.try_borrow().ok().and_then(|ws| ws.model(win).map(|m| (m.infos(), m.active_id())));
-        if let Some((tabs, active)) = state {
+        if let Some((mut tabs, active)) = state {
+            // Sound and mute state live with the views, not the model.
+            if let Ok(views) = self.views.try_borrow() {
+                for t in tabs.iter_mut() {
+                    if let Some(v) = views.get(&t.id) {
+                        t.audible = v.audio.get();
+                        t.muted = v.view.audio_muted();
+                    }
+                }
+            }
             self.post_shell_to(win, &Event::Tabs { tabs, active });
         }
+    }
+
+    /// Is `origin` muted ("Mute site": kind `sound` in the site permissions)?
+    fn site_muted(&self, origin: &str) -> bool {
+        self.store.try_borrow().ok().and_then(|s| s.permission(origin, "sound").ok().flatten()) == Some(false)
+    }
+
+    /// "Mute site" / "Unmute site": remembered for the site, applied to all its tabs now and
+    /// to every later navigation to it.
+    fn mute_site(&self, id: TabId, mute: bool) {
+        let Some(origin) = self.tab(id).and_then(|t| urlclean::origin_of(&t.url)) else { return };
+        let r = if mute {
+            self.store.borrow().permission_set(&origin, "sound", false, now_ms())
+        } else {
+            self.store.borrow().permission_remove(&origin, "sound").map(|_| ())
+        };
+        if let Err(e) = r {
+            warning!("mute site: {e}");
+        }
+        info!("site {origin}: {}", if mute { "muted" } else { "unmuted" });
+        let ids: Vec<TabId> = self.views.borrow().keys().copied().collect();
+        for tid in ids {
+            if self.tab(tid).and_then(|t| urlclean::origin_of(&t.url)).as_deref() == Some(origin.as_str()) {
+                if let Some(v) = self.tab_view(tid) {
+                    v.set_audio_muted(mute);
+                }
+            }
+        }
+        for f in self.all_frames() {
+            self.send_tabs_to(f.id);
+        }
+    }
+
+    /// A tab navigated: a muted site stays muted, another site's tab is unmuted.
+    fn apply_site_mute(&self, id: TabId, url: &str) {
+        let Some(origin) = urlclean::origin_of(url) else { return };
+        let muted = self.site_muted(&origin);
+        if let Some(v) = self.tab_view(id) {
+            if v.audio_muted() != muted {
+                v.set_audio_muted(muted);
+            }
+        }
+    }
+
+    /// Right-click on the caption or the empty strip: Krunk's window menu at the cursor.
+    fn show_caption_menu(&self, win: WindowId, sx: i32, sy: i32) {
+        let Some(f) = self.frame(win) else { return };
+        self.make_current(win);
+        let scale = f.window.scale();
+        let (ox, oy) = f.window.client_to_screen(0, 0);
+        let rect = PopupRect {
+            x: (f64::from(sx - ox) / scale).max(0.0),
+            y: (f64::from(sy - oy) / scale).max(0.0),
+            width: 250.0,
+            height: 352.0,
+        };
+        let can_bookmark_all = self
+            .ws
+            .borrow()
+            .model(win)
+            .is_some_and(|m| m.tabs().iter().any(|t| !t.private && lb_core::bookmarks::bookmarkable(&t.url)));
+        let content = PopupContent::CaptionMenu {
+            maximized: f.window.is_maximized(),
+            can_reopen: self.ws.borrow().closed_count() > 0,
+            can_bookmark_all,
+        };
+        self.show_popup(content, Some(rect));
     }
 
     fn nav_state(&self, win: WindowId) -> Option<NavState> {
@@ -1085,6 +1181,8 @@ impl Browser {
             private: tab.private,
             login_form: view.is_some_and(|v| v.net.login_form.get()),
             bookmarks_bar: self.bar_shown(win),
+            camera: view.is_some_and(|v| v.media_use.get().0),
+            microphone: view.is_some_and(|v| v.media_use.get().1),
         })
     }
 
@@ -1134,7 +1232,7 @@ impl Browser {
     fn send_shell_config(&self) {
         let e = {
             let s = self.settings.borrow();
-            Event::ShellConfig { theme: s.theme, search_name: s.search_name() }
+            Event::ShellConfig { theme: s.theme, search_name: s.search_name(), appearance: s.appearance.clone() }
         };
         self.post_shell(&e);
     }
@@ -1176,9 +1274,26 @@ impl Browser {
 
     fn new_tab(&self, url: Option<&str>, private: bool) {
         let Some(win) = self.cur_id() else { return };
-        let Some((id, effects)) =
-            self.ws.borrow_mut().open(win, url.unwrap_or(""), private, Position::End, true, now_ms())
-        else {
+        // Settings → New tabs: what a plain new tab opens, and where it goes.
+        let (target, position) = {
+            let s = self.settings.borrow();
+            let target = match url {
+                Some(u) => u.to_string(),
+                None => s.new_tab_target().unwrap_or_default(),
+            };
+            let position = match s.new_tab_position {
+                lb_core::settings::NewTabPosition::End => Position::End,
+                lb_core::settings::NewTabPosition::AfterCurrent => self
+                    .ws
+                    .borrow()
+                    .model(win)
+                    .and_then(|m| m.active_id())
+                    .map(Position::AfterOpener)
+                    .unwrap_or(Position::End),
+            };
+            (target, position)
+        };
+        let Some((id, effects)) = self.ws.borrow_mut().open(win, &target, private, position, true, now_ms()) else {
             return;
         };
         // A new-tab page: typing goes to the address bar at once, and the
@@ -1236,6 +1351,11 @@ impl Browser {
         }
         let Some(win) = self.window_of(opener) else { return };
         let private = self.tab(opener).is_some_and(|t| t.private);
+        let foreground = match self.settings.borrow().link_tabs {
+            lb_core::settings::LinkTabs::Auto => foreground,
+            lb_core::settings::LinkTabs::Switch => true,
+            lb_core::settings::LinkTabs::Background => false,
+        };
         let Some((_, effects)) =
             self.ws.borrow_mut().open(win, url, private, Position::AfterOpener(opener), foreground, now_ms())
         else {
@@ -1353,6 +1473,7 @@ impl Browser {
             Command::NewTab => self.new_tab(None, false),
             Command::NewWindow => self.new_window(),
             Command::NewPrivateTab => self.new_tab(None, true),
+            Command::NewPrivateWindow => self.new_private_window(),
             Command::CloseTab => {
                 // Bind first: an `if let` scrutinee's `Ref` lives for the whole block.
                 let active = self.active_id();
@@ -1386,6 +1507,7 @@ impl Browser {
             Command::Print => self.active_do(|c| c.print()),
             Command::DevTools => self.toggle_devtools(),
             Command::Fullscreen => self.toggle_fullscreen(),
+            Command::TaskManager => self.open_page(Page::Tasks),
             // The element under the mouse, or DevTools as such when the
             // mouse is not over the page.
             Command::InspectElement => {
@@ -1475,6 +1597,7 @@ impl Browser {
                     self.login_submitted(id, &origin, username, password)
                 }
                 Ok(ContentMessage::RequestFill {}) => self.request_fill(id, Some(&origin)),
+                Ok(ContentMessage::NotificationPermission {}) => self.notification_permission_requested(id, &origin),
                 Ok(ContentMessage::FieldFocus { field, rect }) => {
                     self.field_focus(id, &source.frame_id, &origin, true, field, rect)
                 }
@@ -1557,7 +1680,15 @@ impl Browser {
             }
             Request::ReopenClosedTab => self.run_command(Command::ReopenClosedTab),
             Request::Navigate { input } => {
-                self.navigate_input(&input);
+                if sender == Sender::Page(Page::NewTab) {
+                    // The new tab page's box may send words to another search engine.
+                    let template = self.settings.borrow().ntp_search_template().to_string();
+                    self.address_suggest_close();
+                    let url = urlclean::input_to_url(&input, &template);
+                    self.navigate_active(&url);
+                } else {
+                    self.navigate_input(&input);
+                }
                 if sender == Sender::Shell || sender == Sender::Page(Page::NewTab) {
                     self.focus_page_after_navigation();
                 }
@@ -1566,6 +1697,37 @@ impl Browser {
                 self.show_address_menu(x, y, selection, has_text, dirty)
             }
             Request::AddressMenuAction { action } => self.address_menu_action(action),
+            Request::TabMute { id, muted } => {
+                if let Some(v) = self.tab_view(id) {
+                    v.set_audio_muted(muted);
+                    info!("tab {id}: {}", if muted { "muted" } else { "unmuted" });
+                }
+                if let Some(win) = self.window_of(id) {
+                    self.send_tabs_to(win);
+                }
+            }
+            Request::BookmarkAllTabs => {
+                self.hide_popup();
+                self.bookmark_all_tabs();
+            }
+            Request::CaptionWindow { action } => {
+                self.hide_popup();
+                if let Some(w) = self.window() {
+                    w.control(action);
+                }
+            }
+            Request::PermissionExceptions => self.reply(tab, Event::ok(req_id, self.permission_exceptions())),
+            Request::PermissionSet { origin, kind, state } => match self.permission_set(&origin, kind, state) {
+                Ok(()) => {
+                    if sender == Sender::Popup && self.popup_kind() == Some(PopupKind::SiteInfo) {
+                        self.show_popup(self.site_info_content(), None);
+                    }
+                    self.reply(tab, Event::ok(req_id, ()));
+                }
+                Err(e) => self.reply(tab, Event::err(req_id, e)),
+            },
+            Request::GetTasks => self.reply(tab, Event::ok(req_id, self.task_rows())),
+            Request::KillTask { id } => self.kill_task(tab, req_id, id),
             Request::Back => self.run_command(Command::Back),
             Request::Forward => self.run_command(Command::Forward),
             Request::Reload => self.run_command(Command::Reload),
@@ -1586,6 +1748,7 @@ impl Browser {
                 let anchor = match popup {
                     PopupKind::Menu => "menu",
                     PopupKind::SiteInfo => "siteInfo",
+                    PopupKind::Downloads => "downloads",
                     _ => "shield",
                 };
                 if self.toggle_suppressed(anchor) {
@@ -1593,6 +1756,7 @@ impl Browser {
                 } else if popup.shell_may_open() && rect.is_valid() {
                     match popup {
                         PopupKind::Menu => self.show_popup(self.menu_content(), Some(rect)),
+                        PopupKind::Downloads => self.show_popup(self.downloads_content(), Some(rect)),
                         PopupKind::SiteInfo => self.show_site_info(rect),
                         _ => {
                             self.shield_anchor.set(Some(rect));
@@ -1644,7 +1808,18 @@ impl Browser {
                 });
                 if let (Some((can_move, can_close_right)), true) = (state, rect.is_valid()) {
                     let rect = layout::tab_menu_rect(rect.x, rect.y);
-                    self.show_popup(PopupContent::TabMenu { tab_id: id, can_move, can_close_right }, Some(rect));
+                    let origin = self.tab(id).and_then(|t| urlclean::origin_of(&t.url));
+                    let muted_site = origin.as_deref().is_some_and(|o| self.site_muted(o));
+                    self.show_popup(
+                        PopupContent::TabMenu {
+                            tab_id: id,
+                            can_move,
+                            can_close_right,
+                            muted_site,
+                            has_site: origin.is_some(),
+                        },
+                        Some(rect),
+                    );
                 }
             }
             Request::TabMenuAction { id, action } => {
@@ -1670,6 +1845,7 @@ impl Browser {
                     TabAction::Close => self.close_tab(id),
                     TabAction::CloseOthers => self.close_many(id, CloseMany::Others),
                     TabAction::CloseRight => self.close_many(id, CloseMany::Right),
+                    TabAction::MuteSite | TabAction::UnmuteSite => self.mute_site(id, action == TabAction::MuteSite),
                 }
             }
             Request::HitMap { map } => {
@@ -1995,6 +2171,22 @@ impl Browser {
     fn server(&self) -> impl Fn(&str) -> InternalResponse + 'static {
         let weak = self.me.clone();
         move |uri: &str| {
+            // The new tab page's background image (copied into the profile when picked).
+            if let Some(name) = lb_core::assets::ntp_image_request(uri) {
+                let bytes = weak.upgrade().and_then(|b| {
+                    let want = b.settings.try_borrow().ok()?.ntp.image.clone();
+                    (!want.is_empty() && want == name).then(|| std::fs::read(b.dirs.root().join(&want)).ok())?
+                });
+                return match bytes {
+                    Some(body) => InternalResponse {
+                        status: 200,
+                        reason: "OK",
+                        headers: lb_core::assets::ntp_image_headers(&name).to_string(),
+                        body: Cow::Owned(body),
+                    },
+                    None => InternalResponse::not_found(),
+                };
+            }
             if let Some(host) = assets::favicon_request(uri) {
                 let png = weak.upgrade().and_then(|b| b.store.try_borrow().ok()?.favicon(&host).ok()?);
                 return match png {
@@ -2153,6 +2345,7 @@ impl WindowEvents for AppEvents {
             drag::DRAG_TIMER => b.drag_tick(),
             segmented::PARTS_TIMER => b.parts_tick(),
             ZOOM_TIMER => b.zoom_tick(),
+            flight::FLIGHT_TIMER => b.flight_tick(),
             UPDATE_TIMER => {
                 if let Some(w) = b.app() {
                     w.set_timer(UPDATE_TIMER, blocking::UPDATE_CHECK_INTERVAL_MS);
@@ -2271,6 +2464,12 @@ impl WindowEvents for FrameEvents {
                 }
             });
         }
+    }
+
+    fn caption_menu(&self, x: i32, y: i32) -> bool {
+        let Some(b) = self.b.upgrade() else { return false };
+        b.show_caption_menu(self.win, x, y);
+        true
     }
 
     fn size_loop(&self, active: bool) {

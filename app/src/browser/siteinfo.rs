@@ -10,7 +10,11 @@ impl Browser {
     pub(super) fn site_info_content(&self) -> PopupContent {
         let url = self.active_tab().map(|t| t.url.clone()).unwrap_or_default();
         let report = self.active_view().and_then(|v| v.ssl_report());
-        PopupContent::SiteInfo { info: certinfo::site_info(&url, report.as_ref()) }
+        let mut info = certinfo::site_info(&url, report.as_ref());
+        if !info.origin.is_empty() && !self.active_tab().is_some_and(|t| t.private) {
+            info.permissions = self.site_permission_rows(&info.origin);
+        }
+        PopupContent::SiteInfo { info }
     }
 
     /// Opens the lock popup under the site icon (`rect`: shell CSS px).

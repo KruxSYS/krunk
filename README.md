@@ -511,8 +511,28 @@ what happened in 0.4.0. Krunk now answers: a prompt under the toolbar ("Connect 
 your local network?" or "Connect to this computer?") with Block and Allow, remembered for the
 site when "Remember for this site" is left on. Stored answers are listed and can be removed on
 the site's Cookies and site data page (shield panel → Cookies and site data → Permissions).
-Private tabs ask every time and remember nothing. Dismissing the prompt blocks once. Every
-other permission type is unchanged (denied by the engine's default).
+Private tabs ask every time and remember nothing. Dismissing the prompt blocks once.
+
+### Site permissions
+
+Since 0.6.0 Krunk asks about the other permissions too, in the same prompt: **camera**,
+**microphone** (and both at once), **location**, **notifications**, **clipboard reading**,
+**MIDI devices** (with system exclusive) and **screen sharing**, next to local network access.
+Camera, microphone and screen sharing arrive through CEF's media-access callback; location,
+clipboard, MIDI and notifications through its permission-prompt callback; and because the Alloy
+runtime never asks the embedder for notifications, a small script in every web page makes
+`Notification.requestPermission()` ask Krunk and resolves once the answer is written into the
+engine's content settings. Every answer is per origin: "Remember for this site" stores it,
+Settings → Permissions lists the stored answers (change or remove them) and sets the default
+per kind (ask, or block without asking), the lock popup shows and changes the current site's
+answers, and clearing a site's data on the Cookies and site data page forgets them. While a
+page uses the camera or microphone a red chip in the address bar says so. Screen sharing shows
+the camera chip (the engine reports it as a video capture).
+
+Once allowed, `new Notification()` shows a normal Windows toast (the engine's own notification
+UI). What stays missing: a device picker (the engine uses the default camera and microphone,
+and screen sharing shows no window chooser: the whole screen is shared) and HTTP authentication
+dialogs.
 
 ### Password vault
 ```
@@ -789,9 +809,9 @@ Testing on Windows:
 - **WebSocket connections are not filtered** by the ad blocker: CEF does not pass them to the
   request handler. Theme changes reach pages through DevTools emulation, so a page that has
   DevTools open shows the system theme.
-- **HTTP authentication and most site permission prompts** (camera, microphone, location,
-  notifications) are not shown: CEF's Alloy runtime denies them by default. The one exception
-  is local network access (see below), which Krunk asks about itself.
+- **HTTP authentication dialogs** are not shown (the engine's Alloy runtime denies them).
+  Site permissions are asked since 0.6.0 (see "Site permissions"), but there is no device
+  picker and no window chooser for screen sharing.
 - **Media codecs.** Since 0.5.2 the engine is Krunk's own build of CEF 156.0.15 with
   proprietary codecs (`scripts/cef-build/`): H.264 (AVC) video and AAC audio play in MP4, HLS
   and DASH streams, next to VP8, VP9, AV1, Opus, Vorbis, FLAC and MP3. Still missing or

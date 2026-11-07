@@ -41,6 +41,9 @@ pub trait RequestPolicy: Send + Sync {
 
     /// May a request to `url` send or store cookies (third-party blocking)?
     fn cookie_allowed(&self, url: &str) -> bool;
+
+    /// A request finished with `bytes` of body received (the task manager's network column).
+    fn loaded(&self, _bytes: u64) {}
 }
 
 /// A `$redirect` stand-in (content type, body) waiting to be served.
@@ -84,6 +87,18 @@ wrap_resource_request_handler! {
                 ),
                 body: std::borrow::Cow::Owned(body),
             }))
+        }
+
+        fn on_resource_load_complete(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            _request: Option<&mut Request>,
+            _response: Option<&mut Response>,
+            _status: UrlrequestStatus,
+            received_content_length: i64,
+        ) {
+            self.policy.loaded(received_content_length.max(0) as u64);
         }
 
         fn on_before_resource_load(

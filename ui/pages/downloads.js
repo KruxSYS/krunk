@@ -30,6 +30,23 @@
     return parts.join(' · ');
   }
 
+  function left(s) { return s >= 3600 ? Math.round(s / 3600) + ' h left' : s >= 60 ? Math.round(s / 60) + ' min left' : s + ' s left'; }
+  // One bar segment per connection for a download in parts (each filled to its own progress).
+  function bar(d) {
+    if (d.partProgress && d.partProgress.length > 1) {
+      const total = d.partProgress.reduce((a, p) => a + p.len, 0) || 1;
+      // (Widths through the CSSOM: the pages' CSP has no inline styles.)
+      return el('div', { class: 'segments', title: d.partProgress.length + ' connections' }, d.partProgress.map((p) => {
+        const fill = el('span', { class: 'fill' });
+        fill.style.width = Math.min(100, 100 * p.done / Math.max(1, p.len)) + '%';
+        const seg = el('span', { class: 'seg' }, [fill]);
+        seg.style.flexBasis = (100 * p.len / total) + '%';
+        return seg;
+      }));
+    }
+    return el('progress', d.total ? { max: d.total, value: d.received } : {});
+  }
+
   let items = [];
   function render(list_) {
     items = list_;
@@ -46,8 +63,13 @@
       if (d.state === 'completed') status = size(d.total || d.received);
       else if (d.state === 'cancelled') status = 'Cancelled';
       else if (d.state === 'interrupted') status = 'Failed' + (d.reason ? ' – ' + d.reason : '');
-      else status = size(d.received) + (d.total ? ' of ' + size(d.total) : '') + (d.state === 'paused' ? ' – paused' : '') +
-        (d.connections && d.state === 'inProgress' ? ' · ' + d.connections + ' connections' : '');
+      else {
+        status = size(d.received) + (d.total ? ' of ' + size(d.total) : '') + (d.state === 'paused' ? ' – paused' : '');
+        // 0.6.0: the smoothed speed and the time left, and the connections of a download in parts.
+        if (d.state === 'inProgress' && d.speed) status += ' · ' + size(d.speed) + '/s';
+        if (d.state === 'inProgress' && d.eta !== null && d.eta !== undefined) status += ' · ' + left(d.eta);
+        if (d.connections && d.state === 'inProgress') status += ' · ' + d.connections + ' connections';
+      }
       const links = [];
       if (d.state === 'completed') {
         links.push(el('button', { text: 'Open file', onclick: function () { act(d.id, 'open'); } }));
@@ -67,7 +89,7 @@
           el('div', { class: 'sub', text: status }),
           el('div', { class: 'url', title: d.url, text: d.url }),
           el('div', { class: 'when', text: when(d) }),
-          running ? el('progress', d.total ? { max: d.total, value: d.received } : {}) : null,
+          running ? bar(d) : null,
           el('div', { class: 'links' }, links),
         ]),
       ]);

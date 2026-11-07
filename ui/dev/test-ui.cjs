@@ -15,6 +15,8 @@ const path = require('path');
 
 const UI = path.resolve(__dirname, '..');
 const SHOTS = process.argv[2] || null;
+// ONLY=NewTab,Settings runs those sections alone (a comma list of the test function names without 'test').
+const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; " +
   "connect-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 const MIME = { html: 'text/html', css: 'text/css', js: 'text/javascript', svg: 'image/svg+xml', png: 'image/png' };
@@ -138,6 +140,25 @@ async function testShell(browser) {
   check(await page.locator('.tab.active').getAttribute('data-id') === '1', 'tab 1 active');
   check((await page.locator('.tab.private').count()) === 1, 'private tab has private style');
   check((await page.locator('.tab.private .private-mark').count()) === 1, 'private tab shows mask indicator');
+  // 0.6.0: a speaker on a tab that plays sound; a click mutes it (tabMute); muted shows crossed out.
+  await page.evaluate(() => { const h = window.__host; h.state.tabs[1].audible = true; h.state.tabs[3].muted = true; h.tabsEvent(); });
+  await page.waitForTimeout(30);
+  check((await page.locator('.tab[data-id="2"] .audio:not(.muted)').count()) === 1 && (await page.locator('.tab[data-id="4"] .audio.muted').count()) === 1 && (await page.locator('.tab[data-id="1"] .audio').count()) === 0, 'speaker on the audible tab, crossed out on the muted one, none elsewhere');
+  await page.click('.tab[data-id="2"] .audio');
+  await page.waitForTimeout(20);
+  {
+    const m = await lastSent(page, 'tabMute');
+    check(m && m.id === 2 && m.muted === true, 'clicking the speaker sends tabMute{id, muted:true}');
+    check(!(await sent(page)).some((x) => x.cmd === 'activateTab' && x.id === 2), 'the click does not activate the tab');
+  }
+  await page.click('.tab[data-id="4"] .audio');
+  await page.waitForTimeout(20);
+  {
+    const m = await lastSent(page, 'tabMute');
+    check(m && m.id === 4 && m.muted === false, 'clicking the crossed-out speaker unmutes');
+  }
+  await page.evaluate(() => { const h = window.__host; delete h.state.tabs[1].audible; delete h.state.tabs[3].muted; h.tabsEvent(); });
+  await page.waitForTimeout(30);
   check((await page.locator('.tab[data-id="2"] .spinner').count()) === 1, 'loading tab shows spinner');
   check((await page.locator('.tab.sleeping').count()) === 1, 'sleeping tab dimmed');
   check(await page.locator('#address').inputValue() === 'https://www.rust-lang.org/', 'address shows active URL');
@@ -239,6 +260,26 @@ async function testShell(browser) {
   await emit(page, { event: 'shellConfig', theme: 'system', searchName: 'Brave Search' });
   await page.waitForTimeout(20);
   check((await page.getAttribute('#address', 'placeholder')) === 'Search with Brave Search or enter address', 'placeholder follows a search-engine change at once');
+  // 0.6.0 appearance through shellConfig: variables, density, tab shape, hidden items.
+  await emit(page, { event: 'shellConfig', theme: 'system', searchName: 'DuckDuckGo', appearance: { accent: '#16a34a', toolbarColor: '#fff7ed', stripColor: '', backgroundColor: '', density: 'compact', uiFontPx: 15, roundedTabs: false, showDownloadsButton: true, showZoomChip: false, showExtensionsButton: true } });
+  await page.waitForTimeout(30);
+  {
+    const st = await page.evaluate(() => { const r = document.documentElement; const cs = getComputedStyle(r); return { accent: cs.getPropertyValue('--accent').trim(), toolbar: getComputedStyle(document.getElementById('toolbar')).backgroundColor, font: r.style.fontSize, compact: r.classList.contains('compact'), square: r.classList.contains('square-tabs'), strip: document.getElementById('tabstrip').getBoundingClientRect().height, zoom: getComputedStyle(document.getElementById('zoom')).display }; });
+    check(st.accent === '#16a34a' && st.toolbar === 'rgb(255, 247, 237)' && st.font === '15px' && st.compact && st.square && st.strip === 30 && st.zoom === 'none', 'appearance applies live: accent, toolbar colour, font size, compact strip (30px), square tabs, zoom chip hidden (' + JSON.stringify(st) + ')');
+  }
+  await emit(page, { event: 'shellConfig', theme: 'system', searchName: 'DuckDuckGo', appearance: { accent: '', toolbarColor: '', stripColor: '', backgroundColor: '', density: 'normal', uiFontPx: 13, roundedTabs: true, showDownloadsButton: true, showZoomChip: true, showExtensionsButton: true } });
+  await page.waitForTimeout(30);
+  check(!(await page.evaluate(() => document.documentElement.classList.contains('compact'))) && (await page.evaluate(() => document.documentElement.style.fontSize)) === '', 'defaults restore the normal look');
+  // 0.6.0: the camera/microphone chip follows the nav state.
+  await page.evaluate(() => { window.__host.navEvent({ camera: true, microphone: false }); });
+  await page.waitForTimeout(30);
+  {
+    const st = await page.evaluate(() => { const g = (id) => { const e = document.getElementById(id); const r = e.getBoundingClientRect(); return { hidden: e.hidden, w: r.width, h: r.height, d: getComputedStyle(e).display }; }; return { chip: g('media-chip'), cam: g('media-cam'), mic: g('media-mic'), nav: window.__host && window.__host.state.active }; });
+    check(!st.chip.hidden && st.chip.w > 0 && !st.cam.hidden && st.cam.w > 0 && st.mic.hidden, 'camera in use: the chip shows the camera only (' + JSON.stringify(st) + ')');
+  }
+  await page.evaluate(() => { window.__host.navEvent({ camera: false, microphone: false }); });
+  await page.waitForTimeout(30);
+  check(await page.locator('#media-chip').isHidden(), 'no media in use: no chip');
 
   // Menu popup open/close.
   await page.click('#menu');
@@ -740,6 +781,15 @@ async function testPopup(browser) {
   const leafCert = { subject: 'example.com', subjectOrg: 'Example Org', issuer: 'DigiCert TLS RSA SHA256 2020 CA1', issuerOrg: 'DigiCert Inc', notBefore: 1735689600, notAfter: 1798761600, sans: ['example.com', 'www.example.com'], keyAlgorithm: 'RSA 2048 bits', signatureAlgorithm: 'SHA-256 with RSA', sha256: 'AA:BB:CC', serial: '01' };
   const caCert = { subject: 'DigiCert TLS RSA SHA256 2020 CA1', subjectOrg: 'DigiCert Inc', issuer: 'DigiCert Global Root CA', issuerOrg: 'DigiCert Inc', notBefore: 1600000000, notAfter: 1900000000, sans: [], keyAlgorithm: 'RSA 2048 bits', signatureAlgorithm: 'SHA-256 with RSA', sha256: 'DD:EE:FF', serial: '02' };
   ({ page, errors } = await make(360, 260));
+  await emit(page, { event: 'popup', content: { kind: 'siteInfo', info: { host: 'example.com', kind: 'https', secure: true, warnings: [], protocol: 'TLS 1.3', cipher: null, certs: [leafCert, caCert], origin: 'https://example.com', permissions: [{ kind: 'camera', state: 'allow' }, { kind: 'microphone', state: 'ask' }, { kind: 'geolocation', state: 'block' }] } } });
+  await page.waitForSelector('#site-permissions');
+  check(await page.locator('#site-permissions .perm-select').count() === 3 && await page.inputValue('#site-permissions .perm-select[data-kind=camera]') === 'allow' && await page.inputValue('#site-permissions .perm-select[data-kind=geolocation]') === 'block', 'the lock popup lists the site\'s permissions with their states');
+  await page.selectOption('#site-permissions .perm-select[data-kind=microphone]', 'block');
+  await page.waitForTimeout(20);
+  {
+    const ps = await lastSent(page, 'permissionSet');
+    check(ps && ps.origin === 'https://example.com' && ps.kind === 'microphone' && ps.state === 'block', 'changing one sends permissionSet{origin, kind, state}');
+  }
   await emit(page, { event: 'popup', content: { kind: 'siteInfo', info: { host: 'example.com', kind: 'https', secure: true, warnings: [], protocol: 'TLS 1.3', cipher: null, certs: [leafCert, caCert] } } });
   await page.waitForSelector('.pop-title');
   check((await page.textContent('.pop-title')) === 'Connection is secure' && await page.locator('.pop-icon.ok').count() === 1, 'https: "Connection is secure"');
@@ -793,6 +843,22 @@ async function testPopup(browser) {
   // 0.5: the local network access prompt (host-opened; Allow/Block, remembered unless private).
   ({ page, errors } = await make(380, 196));
   const perm = { kind: 'permission', tabId: 3, promptId: 41, origin: 'https://app.plex.tv', loopback: false, private: false };
+  // 0.6.0: other kinds get their own wording; several kinds are listed together.
+  await emit(page, { event: 'popup', content: Object.assign({}, perm, { kinds: ['camera', 'microphone'], promptId: 42 }) });
+  await page.waitForTimeout(30);
+  check((await page.textContent('h2')) === 'Allow camera and microphone?' && (await page.textContent('.panel p')).includes('use your camera and use your microphone'), 'camera+microphone prompt wording');
+  await page.click('#default');
+  await page.waitForTimeout(20);
+  {
+    const r = await lastSent(page, 'permissionReply');
+    check(r && r.promptId === 42 && r.allow === true && r.remember === true, 'Allow replies with the prompt id and remember');
+  }
+  await emit(page, { event: 'popup', content: Object.assign({}, perm, { kinds: ['geolocation'], promptId: 43 }) });
+  await page.waitForTimeout(30);
+  check((await page.textContent('h2')) === 'Know your location?', 'geolocation prompt wording');
+  await emit(page, { event: 'popup', content: Object.assign({}, perm, { kinds: ['notifications'], promptId: 44, private: true }) });
+  await page.waitForTimeout(30);
+  check((await page.textContent('h2')) === 'Show notifications?' && (await page.textContent('.panel')).includes('not remembered'), 'notifications prompt, private tab note');
   await emit(page, { event: 'popup', content: perm });
   await page.waitForSelector('.panel');
   await shot(page, 'popup-permission.png');
@@ -906,11 +972,104 @@ async function testNewTab(browser) {
     ['https://192.168.1.1/', 'Router admin'],
   ].map(([url, title, pinned], i) => ({ url, title, pinned: !!pinned, favicon: i === 9 ? null : '/favicon?host=' + new URL(url).hostname }));
   const { page, errors, external } = await openPage(browser, 'https://krunk.invalid/newtab.html', { width: 1100, height: 640 }, 1,
-    (t) => { window.__host.handlers.getTopSites = () => t; window.__host.handlers.getNewTabConfig = () => ({ searchName: 'Ecosia' }); }, tiles);
-  await page.waitForSelector('.tile');
+    (t) => {
+      const h = window.__host.handlers;
+      h.getTopSites = () => t;
+      const cfg = () => ({ searchName: 'Ecosia', shortcuts: [['New tab', 'Ctrl+T'], ['Task manager', 'Shift+Esc']], ntp: window.__ntp || { background: 'none', backgroundColor: '', image: '', imageDim: 30, imageBlur: 0, tiles: 'mostVisited', columns: 6, rows: 2, showShortcuts: true, showSearch: true, showTiles: true }, imageUrl: null });
+      h.getNewTabConfig = cfg;
+      h.setNtpOptions = (m) => { window.__ntp = m.ntp; return cfg(); };
+      h.reorderTiles = () => null;
+      h.addTile = (m) => { if (!/^https?:/.test(m.url)) throw new Error('Enter a web address'); return null; };
+      h.editTile = () => true;
+    }, tiles);
+  await page.waitForSelector('.tile:not(.add)');
   await page.waitForFunction(() => document.getElementById('q').placeholder.includes('Ecosia'));
   check((await page.getAttribute('#q', 'placeholder')) === 'Search with Ecosia or enter address', 'the search box names the default engine (getNewTabConfig)');
-  check((await page.locator('.tile').count()) === 10, 'renders 10 tiles');
+  // 0.6.0: the shortcut-keys section, hideable.
+  check(await page.locator('#keys').isVisible() && await page.locator('#keys-list li').count() === 2 && (await page.textContent('#keys-list')).includes('Shift+Esc'), 'the keyboard-shortcut section lists the host\'s shortcuts');
+  await page.click('#keys-hide');
+  await page.waitForTimeout(40);
+  {
+    const o = await lastSent(page, 'setNtpOptions');
+    check(o && o.ntp.showShortcuts === false && await page.locator('#keys').isHidden(), '"Hide" saves showShortcuts=false and hides the section');
+  }
+  // The customize panel: background colour, grid, tile source, show/hide.
+  await page.click('#customize');
+  await page.waitForTimeout(40);
+  check(await page.locator('#panel').evaluate((d) => d.open), 'Customize opens the panel');
+  await page.fill('#bg-color', '#112233');
+  await page.dispatchEvent('#bg-color', 'change');
+  await page.waitForTimeout(40);
+  {
+    const o = await lastSent(page, 'setNtpOptions');
+    check(o && o.ntp.background === 'color' && o.ntp.backgroundColor === '#112233', 'a colour saves background=color');
+    const bg = await page.evaluate(() => getComputedStyle(document.getElementById('bg')).backgroundColor);
+    check(bg === 'rgb(17, 34, 51)', 'and the page shows it (' + bg + ')');
+  }
+  await page.waitForTimeout(150); // the colour's reply re-fills the panel; let it land first
+  await page.fill('#cols', '4');
+  await page.dispatchEvent('#cols', 'change');
+  await page.waitForTimeout(40);
+  {
+    const o = await lastSent(page, 'setNtpOptions');
+    const v = await page.evaluate(() => document.getElementById('tiles').style.getPropertyValue('--cols'));
+    check(o.ntp.columns === 4 && v === '4', 'columns change the grid variable (' + JSON.stringify(o.ntp) + ' --cols=' + v + ')');
+  }
+  await page.check('input[name=tiles][value=custom]');
+  await page.waitForTimeout(40);
+  check((await lastSent(page, 'setNtpOptions')).ntp.tiles === 'custom', 'the tile source is saved');
+  await page.uncheck('#show-search');
+  await page.waitForTimeout(40);
+  check((await lastSent(page, 'setNtpOptions')).ntp.showSearch === false && await page.locator('#search').isHidden(), 'the search box can be hidden');
+  await page.check('#show-search');
+  await page.waitForTimeout(40);
+  await page.click('#panel-close');
+  await page.waitForTimeout(40);
+  // Add a shortcut by hand (force add: the host only parses the address).
+  await page.click('#add-tile');
+  await page.waitForTimeout(40);
+  await page.fill('#tile-name', 'My site');
+  await page.fill('#tile-url', 'https://my.example/');
+  await page.click('#tile-save');
+  await page.waitForTimeout(60);
+  {
+    const a = await lastSent(page, 'addTile');
+    check(a && a.url === 'https://my.example/' && a.title === 'My site', 'the Add dialog sends addTile{url,title}');
+  }
+  await page.click('#add-tile');
+  await page.waitForTimeout(40);
+  await page.fill('#tile-url', 'not a url');
+  await page.click('#tile-save');
+  await page.waitForTimeout(60);
+  check((await page.textContent('#tile-error')).includes('web address'), 'a refused address shows the host\'s message');
+  await page.click('#tile-cancel');
+  // Edit: the pencil on a tile.
+  await page.hover('.tile:not(.add) >> nth=0');
+  await page.click('.tile:not(.add) >> nth=0 >> .icon-btn[title=Edit]');
+  await page.waitForTimeout(40);
+  await page.fill('#tile-name', 'Renamed');
+  await page.click('#tile-save');
+  await page.waitForTimeout(60);
+  {
+    const e = await lastSent(page, 'editTile');
+    check(e && e.url === 'https://www.rust-lang.org/' && e.title === 'Renamed' && e.newUrl === 'https://www.rust-lang.org/', 'Edit sends editTile');
+  }
+  // Drag the third tile before the first: the new order goes to the host.
+  await page.evaluate(() => {
+    const t = document.querySelectorAll('.tile:not(.add)');
+    const dt = new DataTransfer();
+    t[2].dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }));
+    const r = t[0].getBoundingClientRect();
+    t[0].dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt, clientX: r.left + 2, clientY: r.top + 2 }));
+    t[0].dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt, clientX: r.left + 2, clientY: r.top + 2 }));
+    t[2].dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt }));
+  });
+  await page.waitForTimeout(60);
+  {
+    const o = await lastSent(page, 'reorderTiles');
+    check(o && o.urls[0] === 'https://en.wikipedia.org/wiki/Main_Page' && o.urls[1] === 'https://www.rust-lang.org/', 'dropping a tile before the first sends the new order (' + (o && o.urls.slice(0, 3).join(', ')) + ')');
+  }
+  check((await page.locator('.tile:not(.add)').count()) === 10, 'renders 10 tiles (plus the Add tile)');
   check((await page.locator('.tile.pinned').count()) === 1, 'one pinned tile');
   // A tile without a favicon shows its letter centred in the circle.
   const off = await page.evaluate(() => {
@@ -1142,6 +1301,10 @@ async function testDownloads(browser) {
   await page.keyboard.press('Escape');
   check(await page.locator('.ctx-menu').count() === 0, 'Esc closes the menu');
   // A running one: pause (or resume) and cancel first; no file actions.
+  await emit(page, { event: 'downloads', items: [Object.assign({}, items[0], { state: 'inProgress', received: 100, total: 1000, connections: 4, speed: 2048, eta: 75, partProgress: [{ done: 100, len: 250 }, { done: 0, len: 250 }, { done: 0, len: 250 }, { done: 0, len: 250 }] })].concat(items.slice(1)) });
+  await page.waitForTimeout(40);
+  check((await page.textContent('.row.dl .sub')).includes('2.0 KB/s') && (await page.textContent('.row.dl .sub')).includes('1 min left') && (await page.textContent('.row.dl .sub')).includes('4 connections'), 'the page shows speed, time left and the connections (' + await page.textContent('.row.dl .sub') + ')');
+  check(await page.locator('.row.dl .segments .seg').count() === 4 && (await page.$eval('.row.dl .segments .seg .fill', (e) => e.style.width)) === '40%', 'the page shows one segment per connection, filled per part');
   await emit(page, { event: 'downloads', items: [Object.assign({}, items[0], { state: 'inProgress', received: 100, connections: 4 })].concat(items.slice(1)) });
   await page.waitForTimeout(50);
   check((await page.locator('.dl[data-id="3"] .sub').textContent()).includes('4 connections'), 'a download in parts shows its connections');
@@ -1167,13 +1330,52 @@ async function testDownloads(browser) {
   check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
 }
 
+async function testTasks(browser) {
+  console.log('task manager page');
+  const rows = [
+    { id: 1, kind: 'browser', title: 'Browser', pid: 4321, cpu: 1.5, memory: 150e6, workingSet: 160e6, private: 140e6, network: 0, killable: false, tabs: [] },
+    { id: 2, kind: 'gpu', title: 'GPU Process', pid: 4400, cpu: 0.2, memory: 60e6, workingSet: 70e6, private: 50e6, network: 0, killable: true, tabs: [] },
+    { id: 3, kind: 'renderer', title: 'Tab: Example Domain', pid: 5000, cpu: 12.25, memory: 90e6, workingSet: 95e6, private: 80e6, network: 20480, killable: true, tabs: [{ id: 7, title: 'Example Domain' }, { id: 8, title: 'Docs' }] },
+    { id: 4, kind: 'utility', title: 'Utility: Network Service', pid: 4500, cpu: 0.0, memory: 30e6, workingSet: 32e6, private: 25e6, network: 0, killable: true, tabs: [] },
+  ];
+  const { page, errors, external } = await openPage(browser, 'https://krunk.invalid/tasks.html', { width: 1000, height: 600 }, 1,
+    (r) => { window.__host.handlers.getTasks = () => r; window.__host.handlers.killTask = (m) => { window.__host.killed = m.id; return { ended: true }; }; }, rows);
+  await page.waitForSelector('#rows tr');
+  check(await page.locator('#rows tr').count() === 4, 'renders the 4 tasks');
+  check((await page.textContent('#summary')).includes('4 tasks') && (await page.textContent('#summary')).includes('1 renderer'), 'summary counts tasks and renderers');
+  const rendererRow = page.locator('#rows tr[data-kind=renderer]');
+  check((await rendererRow.textContent()).includes('Example Domain, Docs') && (await rendererRow.textContent()).includes('(2 tabs)') && (await rendererRow.textContent()).includes('20.0 KB/s') && (await rendererRow.textContent()).includes('12.3 %') && (await rendererRow.textContent()).includes('5000'), 'a renderer row lists its tabs, network rate, CPU and PID');
+  check(await page.locator('#end').isDisabled(), 'End process is disabled with nothing selected');
+  await page.click('#rows tr[data-kind=browser]');
+  await page.waitForTimeout(20);
+  check(await page.locator('#end').isDisabled() && (await page.textContent('#end')).includes('not the browser'), 'the browser process cannot be ended');
+  await page.click('#rows tr[data-kind=renderer]');
+  await page.waitForTimeout(20);
+  check(!(await page.locator('#end').isDisabled()), 'a renderer can be ended');
+  await page.click('#end');
+  await page.waitForTimeout(50);
+  const k = await lastSent(page, 'killTask');
+  check(k && k.id === 3, 'End process sends killTask{id} for the selected renderer');
+  // Sorting: by memory, descending first.
+  await page.click('th[data-sort=memory]');
+  await page.waitForTimeout(20);
+  check(await page.locator('#rows tr').first().getAttribute('data-kind') === 'browser', 'sort by memory puts the largest first');
+  await page.click('th[data-sort=memory]');
+  await page.waitForTimeout(20);
+  check(await page.locator('#rows tr').first().getAttribute('data-kind') === 'utility', 'a second click reverses the order');
+  await shot(page, 'tasks.png');
+  check(errors.length === 0, 'no console errors (' + errors.join('; ') + ')');
+  check(external.length === 0, 'no network requests (' + external.join(', ') + ')');
+  await page.context().close();
+}
+
 async function testStorage(browser) {
   console.log('storage page');
   const long = 'x'.repeat(120);
   const data = {
     sites: [
-      { site: 'example.com', cookies: 2, origins: ['https://example.com', 'https://www.example.com'] },
-      { site: 'news.example', cookies: 1, origins: [] },
+      { site: 'example.com', cookies: 2, origins: ['https://example.com', 'https://www.example.com'], lastUsed: Date.now() - 3 * 3600000 },
+      { site: 'news.example', cookies: 1, origins: [], lastUsed: Date.now() - 20000 },
       { site: 'tracker.example', cookies: 0, origins: ['https://tracker.example'] },
     ],
     cookies: {
@@ -1197,7 +1399,53 @@ async function testStorage(browser) {
   check((await page.locator('.site').count()) === 3, 'lists 3 sites');
   check((await page.locator('#summary').textContent()).includes('3 sites, 3 cookies'), 'summary counts sites and cookies');
   await page.waitForFunction(() => document.querySelector('.site[data-site="example.com"] .count').textContent.includes('KB'));
-  check((await page.locator('.site[data-site="example.com"] .count').textContent()).includes('2 cookies · 50.8 KB'), 'site row shows cookies and storage size');
+  check((await page.locator('.site[data-site="example.com"] .count').textContent()) === '2 cookies · local 2.0 KB · IndexedDB 48.8 KB · 50.8 KB', 'site row shows cookies, the breakdown and the storage size (' + await page.locator('.site[data-site="example.com"] .count').textContent() + ')');
+  check((await page.locator('#summary').textContent()).includes('3 sites, 3 cookies, 50.8 KB of site data'), 'the total at the top (' + await page.locator('#summary').textContent() + ')');
+  check((await page.locator('.site[data-site="example.com"] .last').textContent()) === '3 h ago' && (await page.locator('.site[data-site="news.example"] .last').textContent()) === 'just now' && (await page.locator('.site[data-site="tracker.example"] .last').textContent()) === 'never used', 'last used per site');
+  const order = async () => (await page.locator('.site').evaluateAll((l) => l.map((n) => n.dataset.site))).join(',');
+  check(await order() === 'example.com,news.example,tracker.example', 'sorted by name first');
+  await page.selectOption('#sort', 'usage');
+  check(await order() === 'example.com,news.example,tracker.example', 'sort by usage: bytes, then cookies');
+  await page.selectOption('#sort', 'lastUsed');
+  check(await order() === 'news.example,example.com,tracker.example', 'sort by last used: most recent first, unknown last (' + await order() + ')');
+  await page.selectOption('#sort', 'name');
+  // Selection and clearing whole sites.
+  check(await page.locator('#clear-selected').isHidden(), 'no Clear selected button without a selection');
+  await page.locator('.site[data-site="example.com"] .pick').click();
+  await page.locator('.site[data-site="news.example"] .pick').click();
+  check(await page.locator('#clear-selected').textContent() === 'Clear selected (2)' && await page.locator('.site.open').count() === 0, 'selecting two sites shows Clear selected (2) and does not expand them');
+  await page.locator('.site[data-site="news.example"] .pick').focus();
+  await page.keyboard.press('Space');
+  await page.waitForTimeout(40);
+  check(await page.locator('#clear-selected').textContent() === 'Clear selected (1)' && await page.locator('.site.open').count() === 0 && await page.evaluate(() => document.activeElement.classList.contains('pick')), 'Space on a focused checkbox unticks it, keeps the focus and does not expand the row');
+  await page.keyboard.press('Space');
+  await page.waitForTimeout(40);
+  check(await page.locator('#clear-selected').textContent() === 'Clear selected (2)', 'and ticks it again');
+  await page.evaluate(() => { window.__host.sent.length = 0; });
+  await page.click('#clear-selected');
+  await acceptInPage(page);
+  await page.waitForTimeout(100);
+  {
+    const sent = await page.evaluate(() => window.__host.sent.filter((m) => m.cmd === 'storageDeleteSite' || m.cmd === 'storageClearOrigin').map((m) => m.cmd + ':' + (m.site || m.origin)).join(' '));
+    check(sent === 'storageDeleteSite:example.com storageClearOrigin:https://example.com storageClearOrigin:https://www.example.com storageDeleteSite:news.example', 'Clear selected deletes the cookies and clears every origin of each site (' + sent + ')');
+  }
+  check(await page.locator('#clear-selected').isHidden(), 'the selection is empty again');
+  await page.evaluate(() => { window.__host.sent.length = 0; });
+  await page.fill('#search', 'tracker');
+  await page.waitForTimeout(200);
+  await page.click('#clear-shown');
+  await acceptInPage(page);
+  await page.waitForTimeout(100);
+  {
+    const sent = await page.evaluate(() => window.__host.sent.filter((m) => m.cmd === 'storageDeleteSite' || m.cmd === 'storageClearOrigin').map((m) => m.cmd + ':' + (m.site || m.origin)).join(' '));
+    check(sent === 'storageClearOrigin:https://tracker.example', 'Clear all shown clears only the filtered sites (' + sent + ')');
+  }
+  await page.fill('#search', '');
+  await page.waitForTimeout(200);
+  await page.locator('.site[data-site="news.example"] > .row .icon-btn').click();
+  await acceptInPage(page);
+  await page.waitForTimeout(60);
+  check((await lastSent(page, 'storageDeleteSite')).site === 'news.example', 'the row\'s trash button clears that site');
   await page.locator('.site[data-site="example.com"] > .row').click();
   await page.waitForSelector('.site.open tr[data-name="session"]');
   const valueCell = page.locator('tr[data-name="session"] td.value');
@@ -1215,7 +1463,7 @@ async function testStorage(browser) {
   await page.locator('.site.open .origin button').first().click();
   await acceptInPage(page);
   check((await lastSent(page, 'storageClearOrigin')).origin === 'https://example.com', 'clear site data of an origin');
-  await page.locator('.site.open .site-actions button').click();
+  await page.locator('.site.open .site-actions button:not(.clear-site)').click();
   await acceptInPage(page);
   check((await lastSent(page, 'storageDeleteSite')).site === 'example.com', 'delete all cookies of a site');
   await page.click('#delete-all');
@@ -1257,7 +1505,7 @@ async function testSiteData(browser) {
   await page.click('#reload');
   await page.waitForTimeout(50);
   check((await page.textContent('.perm-name')) === 'Local network access' && (await page.textContent('.perm-state')) === 'Allowed', 'a stored local-network permission is listed');
-  await page.click('#perm-remove');
+  await page.click('.perm-remove');
   await page.waitForTimeout(50);
   check((await lastSent(page, 'sitePermissionRemove')).kind === 'localNetwork', 'Remove asks the host to forget it');
   await page.evaluate(() => { const get = window.__host.handlers.siteDataGet; window.__host.handlers.siteDataGet = () => Object.assign({}, get(), { permissions: { localNetwork: false } }); });
@@ -1665,9 +1913,25 @@ async function testShellM4(browser) {
   await emit(page, { event: 'downloadsChanged', active: 2 });
   await page.waitForTimeout(20);
   check(await page.locator('#downloads').isVisible() && await page.locator('#downloads-count').textContent() === '2', 'downloads button shows 2 active');
+  // 0.6.0: the button opens its popup (Ctrl+J keeps opening the page); a new download pulses it.
   await page.click('#downloads');
-  const dc = await lastSent(page, 'command');
-  check(dc && dc.command.command === 'downloads', 'downloads button opens the downloads page');
+  await page.waitForTimeout(20);
+  {
+    const dp = await lastSent(page, 'showPopup');
+    check(dp && dp.popup === 'downloads' && dp.rect.width === 380 && dp.rect.y > 40, 'downloads button opens the downloads popup under the toolbar');
+    check(await page.locator('#downloads.on').count() === 1, 'the button is highlighted while its popup is open');
+  }
+  await emit(page, { event: 'popupClosed' });
+  await page.waitForTimeout(20);
+  await emit(page, { event: 'downloadStarted' });
+  await page.waitForTimeout(50);
+  check(await page.locator('#downloads.pulse').count() === 1, 'downloadStarted pulses the button');
+  {
+    const hm = await lastSent(page, 'hitMap');
+    check(hm && hm.map.downloads && hm.map.downloads.width > 10 && hm.map.downloads.x > 500, 'the hit map now reports the downloads button for the flight target (' + JSON.stringify(hm && hm.map.downloads) + ')');
+  }
+  await page.waitForTimeout(950);
+  check(await page.locator('#downloads.pulse').count() === 0, 'the pulse ends by itself');
   // Find bar.
   await emit(page, { event: 'showFind' });
   await page.waitForSelector('#findbar:not([hidden])');
@@ -2174,8 +2438,64 @@ async function testSettings(browser) {
   // 0.5: the page is tabbed; a control must be on the shown tab before it is used.
   const tab = async (name) => { await page.click('#tabs a[data-tab="' + name + '"]'); await page.waitForTimeout(20); };
   check(await page.locator('.panel.active[data-tab=general]').count() === 1 && await page.locator('#tabs a.active[data-tab=general]').count() === 1, 'the General tab is shown first');
-  check(await page.locator('.panel').count() === 6 && await page.locator('.panel.active').count() === 1, 'six tabs, one shown');
+  check(await page.locator('.panel').count() === 7 && await page.locator('.panel.active').count() === 1, 'seven tabs, one shown');
   check(await page.inputValue('#searchEngine') === 'duckDuckGo', 'defaults: DuckDuckGo');
+  // 0.6.0: new-tab behaviour (defaults keep the 0.5 behaviour).
+  check(await page.inputValue('#newTabPage') === 'krunk' && await page.inputValue('#newTabPosition') === 'end' && await page.inputValue('#linkTabs') === 'auto' && await page.inputValue('#ntpSearchUrl') === '', 'new-tab defaults: Krunk page, at the end, links as asked, default search');
+  check(await page.locator('#new-tab-url-row').isHidden(), 'the custom address row is hidden unless "custom"');
+  // 0.6.0 permissions: the defaults and the per-site table.
+  await tab('permissions');
+  check(await page.locator('[data-key^="permissions."]').count() === 8 && await page.inputValue('[data-key="permissions.camera"]') === 'ask', 'eight permission defaults, all Ask');
+  await page.selectOption('[data-key="permissions.midi"]', 'block');
+  await page.waitForTimeout(60);
+  check((await lastSent(page, 'saveSettings')).settings.permissions.midi === 'block', 'a default change is saved');
+  await page.selectOption('[data-key="permissions.midi"]', 'ask');
+  await page.waitForTimeout(60);
+  await page.evaluate(() => { window.__host.handlers.permissionExceptions = () => [{ origin: 'https://a.example', kind: 'camera', allow: true }, { origin: 'https://b.example', kind: 'geolocation', allow: false }]; window.__host.handlers.permissionSet = () => null; });
+  await page.evaluate(() => LB.request('permissionExceptions').then(() => {}));
+  await page.waitForTimeout(60);
+  await tab('general');
+  await tab('permissions');
+  await page.waitForFunction(() => document.querySelectorAll('#perm-rows tr[data-origin]').length === 2);
+  check(await page.locator('#perm-rows tr[data-origin]').count() === 2 && (await page.textContent('#perm-rows')).includes('https://b.example'), 'the exceptions table lists the stored answers');
+  await page.click('#perm-rows tr[data-origin="https://a.example"] button');
+  await page.waitForTimeout(40);
+  {
+    const ps = await lastSent(page, 'permissionSet');
+    check(ps && ps.origin === 'https://a.example' && ps.kind === 'camera' && ps.state === 'ask', 'Remove sends permissionSet{state: ask}');
+  }
+  await page.selectOption('#perm-rows tr[data-origin="https://b.example"] select', 'allow');
+  await page.waitForTimeout(40);
+  check((await lastSent(page, 'permissionSet')).state === 'allow', 'changing an answer sends permissionSet');
+  await tab('general');
+  // 0.6.0 appearance: the accent swatches and the toolbar-item toggles.
+  await tab('appearance');
+  check(await page.locator('#accent-swatches .swatch').count() === 8 && await page.locator('#accent-swatches .swatch.on[data-color=""]').count() === 1, 'eight accent swatches, the default selected');
+  await page.click('#accent-swatches .swatch[data-color="#16a34a"]');
+  await page.waitForTimeout(60);
+  {
+    const saved = await lastSent(page, 'saveSettings');
+    check(saved && saved.settings.appearance.accent === '#16a34a', 'a swatch saves the accent');
+    const acc = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim());
+    check(acc === '#16a34a', 'and the page uses it at once (' + acc + ')');
+  }
+  await page.uncheck('[data-key="appearance.showZoomChip"]');
+  await page.waitForTimeout(60);
+  check((await lastSent(page, 'saveSettings')).settings.appearance.showZoomChip === false, 'hiding the zoom indicator is saved');
+  await page.check('[data-key="appearance.showZoomChip"]');
+  await page.waitForTimeout(60);
+  await page.click('#accent-swatches .swatch[data-color=""]');
+  await page.waitForTimeout(60);
+  await tab('general');
+  await page.selectOption('#newTabPage', 'custom');
+  await page.waitForTimeout(60);
+  check(await page.locator('#new-tab-url-row').isVisible(), 'choosing "custom" shows the address row');
+  {
+    const saved = await lastSent(page, 'saveSettings');
+    check(saved && saved.settings.newTabPage === 'custom', 'the choice is saved (newTabPage=custom)');
+  }
+  await page.selectOption('#newTabPage', 'krunk');
+  await page.waitForTimeout(60);
   check(await page.isChecked('input[name=startup][value=restoreSession]'), 'defaults: restore session');
   check((await page.locator('#trackingPrevention, [data-key=smartscreen]').count()) === 0, 'no Edge-only settings');
   check(!(await page.isChecked('[data-key=engineSecurityComponents]')), 'defaults: no engine downloads from Google');
@@ -2809,6 +3129,36 @@ async function testTabWindows(browser) {
   // The popup's tab menu.
   ({ page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 240, height: 256 }, 1));
   await page.evaluate(() => { window.__host.autoSimulate = false; });
+  await emit(page, { event: 'popup', content: { kind: 'downloads', items: [
+    { id: 3, url: 'https://x.example/big.bin', fileName: 'big.bin', path: 'C:\\d\\big.bin', state: 'inProgress', received: 25000000, total: 64000000, started: 1, speed: 4200000, eta: 9, connections: 4, partProgress: [{ done: 16000000, len: 16000000 }, { done: 6000000, len: 16000000 }, { done: 3000000, len: 16000000 }, { done: 0, len: 16000000 }] },
+    { id: 2, url: 'https://x.example/one.bin', fileName: 'one.bin', path: 'C:\\d\\one.bin', state: 'inProgress', received: 1000, total: 4000, started: 1, speed: 500 },
+    { id: 1, url: 'https://x.example/done.zip', fileName: 'done.zip', path: 'C:\\d\\done.zip', state: 'completed', received: 999, total: 999, started: 1, finished: 2 },
+  ] } });
+  await page.waitForTimeout(60);
+  check(await page.locator('.dl-row').count() === 3 && await page.locator('#dl-all').count() === 1, 'downloads popup: 3 rows and "Show all downloads"');
+  check((await page.textContent('.dl-row[data-id="3"] .dl-status')).includes('4.0 MB/s') && (await page.textContent('.dl-row[data-id="3"] .dl-status')).includes('9 s left'), 'a running download shows its speed and time left (' + await page.textContent('.dl-row[data-id="3"] .dl-status') + ')');
+  check(await page.locator('.dl-row[data-id="3"] .segments .seg').count() === 4, 'four connections: four bar segments');
+  {
+    const fills = await page.$$eval('.dl-row[data-id="3"] .segments .seg .fill', (els) => els.map((e) => e.style.width));
+    check(fills[0] === '100%' && fills[1] === '37.5%' && fills[3] === '0%', 'each segment is filled to its part\'s progress (' + fills.join(',') + ')');
+  }
+  check(await page.locator('.dl-row[data-id="2"] progress').count() === 1 && await page.locator('.dl-row[data-id="2"] .segments').count() === 0, 'a single-connection download shows one bar');
+  {
+    const fit = await lastSent(page, 'popupResize');
+    check(fit && fit.height > 150, 'the downloads popup fits its content (' + (fit && fit.height) + ')');
+  }
+  await page.click('.dl-row[data-id="3"] .link:has-text("Pause")');
+  await page.waitForTimeout(20);
+  {
+    const a = await lastSent(page, 'downloadAction');
+    check(a && a.id === 3 && a.action === 'pause', 'Pause in the popup sends downloadAction{pause}');
+  }
+  await page.click('#dl-all');
+  await page.waitForTimeout(20);
+  {
+    const o = await lastSent(page, 'openPage');
+    check(o && o.page === 'downloads', '"Show all downloads" opens the page');
+  }
   await emit(page, { event: 'popup', content: { kind: 'addressMenu', canUndo: false, canCut: true, canCopy: true, canPaste: true, pasteIsUrl: true, canDelete: true, canSelectAll: true } });
   await page.waitForTimeout(50);
   check(await page.locator('.item').count() === 7 && await page.locator('.item[disabled]').count() === 1 && (await page.textContent('#root')).includes('Paste and go'), 'address menu: 7 items, Undo disabled, "Paste and go" for an address in the clipboard');
@@ -2827,10 +3177,61 @@ async function testTabWindows(browser) {
   await page.waitForTimeout(20);
   am = await lastSent(page, 'addressMenuAction');
   check(am && am.action === 'undo', 'Undo sends addressMenuAction{undo}');
+  await emit(page, { event: 'popup', content: { kind: 'tabMenu', tabId: 5, canMove: true, canCloseRight: true, hasSite: true, mutedSite: false } });
+  await page.waitForTimeout(30);
+  check((await page.textContent('#root')).includes('Mute site') && !(await page.textContent('#root')).includes('Unmute site'), 'tab menu offers "Mute site" for a site');
+  await page.click('.item:has-text("Mute site")');
+  await page.waitForTimeout(20);
+  {
+    const a = await lastSent(page, 'tabMenuAction');
+    check(a && a.id === 5 && a.action === 'muteSite', '"Mute site" sends tabMenuAction{muteSite}');
+  }
+  await emit(page, { event: 'popup', content: { kind: 'tabMenu', tabId: 5, canMove: true, canCloseRight: true, hasSite: true, mutedSite: true } });
+  await page.waitForTimeout(30);
+  check((await page.textContent('#root')).includes('Unmute site'), 'a muted site gets "Unmute site"');
+  await emit(page, { event: 'popup', content: { kind: 'tabMenu', tabId: 5, canMove: true, canCloseRight: true, hasSite: false } });
+  await page.waitForTimeout(30);
+  check(await page.locator('.item:has-text("Mute site")[disabled]').count() === 1, 'no site (a built-in page): the mute item is disabled');
+  // The title bar's menu.
+  await emit(page, { event: 'popup', content: { kind: 'captionMenu', maximized: false, canReopen: true, canBookmarkAll: true } });
+  await page.waitForTimeout(50);
+  check(await page.locator('.item').count() === 9 && (await page.textContent('#root')).includes('Maximize') && (await page.textContent('#root')).includes('Task manager'), 'caption menu: 9 items incl. Maximize and Task manager');
+  {
+    const fit = await lastSent(page, 'popupResize');
+    check(fit && fit.height > 200 && fit.height < 352, 'the caption menu fits its content (' + (fit && fit.height) + ')');
+  }
+  await page.click('.item:has-text("Minimize")');
+  await page.waitForTimeout(20);
+  {
+    const w = await lastSent(page, 'captionWindow');
+    check(w && w.action === 'minimize' && (await lastSent(page, 'hidePopup')) !== undefined, 'Minimize sends captionWindow{minimize} and closes');
+  }
+  await emit(page, { event: 'popup', content: { kind: 'captionMenu', maximized: true, canReopen: false, canBookmarkAll: false } });
+  await page.waitForTimeout(30);
+  check((await page.textContent('#root')).includes('Restore') && await page.locator('.item[disabled]').count() === 2, 'maximized: "Restore"; Reopen and Bookmark all disabled when nothing to do');
+  await page.click('.item:has-text("Task manager")');
+  await page.waitForTimeout(20);
+  {
+    const c = await lastSent(page, 'command');
+    check(c && c.command && c.command.command === 'taskManager', '"Task manager" sends command{taskManager}');
+  }
+  await emit(page, { event: 'popup', content: { kind: 'captionMenu', maximized: false, canReopen: true, canBookmarkAll: true } });
+  await page.waitForTimeout(30);
+  await page.click('.item:has-text("Bookmark all tabs")');
+  await page.waitForTimeout(20);
+  check((await lastSent(page, 'bookmarkAllTabs')) !== undefined, '"Bookmark all tabs" sends bookmarkAllTabs');
+  await emit(page, { event: 'popup', content: { kind: 'captionMenu', maximized: false, canReopen: true, canBookmarkAll: true } });
+  await page.waitForTimeout(30);
+  await page.click('.item:has-text("New private window")');
+  await page.waitForTimeout(20);
+  {
+    const c = await lastSent(page, 'command');
+    check(c && c.command && c.command.command === 'newPrivateWindow', '"New private window" sends command{newPrivateWindow}');
+  }
   await emit(page, { event: 'popup', content: { kind: 'tabMenu', tabId: 7, canMove: false, canCloseRight: false } });
   await page.waitForSelector('.item');
   const labels = await page.$$eval('.item .label', (ns) => ns.map((n) => n.textContent));
-  check(JSON.stringify(labels) === JSON.stringify(['Reload', 'Duplicate', 'Move to new window', 'New window', 'Close tab', 'Close other tabs', 'Close tabs to the right']), 'tab menu items (' + labels.join(', ') + ')');
+  check(JSON.stringify(labels) === JSON.stringify(['Reload', 'Duplicate', 'Move to new window', 'New window', 'Mute site', 'Close tab', 'Close other tabs', 'Close tabs to the right']), 'tab menu items (' + labels.join(', ') + ')');
   check(await page.locator('.item', { hasText: 'Move to new window' }).isDisabled(), '"Move to new window" is disabled for a window\'s only tab');
   check(await page.locator('.item', { hasText: 'Close other tabs' }).isDisabled(), '"Close other tabs" is disabled for a window\'s only tab');
   check(await page.locator('.item', { hasText: 'Close tabs to the right' }).isDisabled(), '"Close tabs to the right" is disabled with nothing to the right');
@@ -2884,29 +3285,30 @@ async function testTabWindows(browser) {
   if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
   const browser = await chromium.launch();
   try {
-    await testShell(browser);
-    await testScriptletInjection(browser);
-    await testPointerLockShim(browser);
-    await testShellFrame(browser);
-    await testTabAnimations(browser);
-    await testTabWindows(browser);
-    await testShellHiDpi(browser);
-    await testPopup(browser);
-    await testNewTab(browser);
-    await testHistory(browser);
-    await testBookmarks(browser);
-    await testDownloads(browser);
-    await testStorage(browser);
-    await testSiteData(browser);
-    await testShellM4(browser);
-    await testBookmarksBar(browser);
-    await testFolderPopup(browser);
-    await testShieldAndHttpsOnly(browser);
-    await testBlockedList(browser);
-    await testFilterLists(browser);
-    await testPasswords(browser);
-    await testSettings(browser);
-    await testLoginScript(browser);
+    if (!ONLY || ONLY.includes('Shell')) await testShell(browser);
+    if (!ONLY || ONLY.includes('ScriptletInjection')) await testScriptletInjection(browser);
+    if (!ONLY || ONLY.includes('PointerLockShim')) await testPointerLockShim(browser);
+    if (!ONLY || ONLY.includes('ShellFrame')) await testShellFrame(browser);
+    if (!ONLY || ONLY.includes('TabAnimations')) await testTabAnimations(browser);
+    if (!ONLY || ONLY.includes('TabWindows')) await testTabWindows(browser);
+    if (!ONLY || ONLY.includes('ShellHiDpi')) await testShellHiDpi(browser);
+    if (!ONLY || ONLY.includes('Popup')) await testPopup(browser);
+    if (!ONLY || ONLY.includes('NewTab')) await testNewTab(browser);
+    if (!ONLY || ONLY.includes('History')) await testHistory(browser);
+    if (!ONLY || ONLY.includes('Bookmarks')) await testBookmarks(browser);
+    if (!ONLY || ONLY.includes('Downloads')) await testDownloads(browser);
+    if (!ONLY || ONLY.includes('Storage')) await testStorage(browser);
+    if (!ONLY || ONLY.includes('Tasks')) await testTasks(browser);
+    if (!ONLY || ONLY.includes('SiteData')) await testSiteData(browser);
+    if (!ONLY || ONLY.includes('ShellM4')) await testShellM4(browser);
+    if (!ONLY || ONLY.includes('BookmarksBar')) await testBookmarksBar(browser);
+    if (!ONLY || ONLY.includes('FolderPopup')) await testFolderPopup(browser);
+    if (!ONLY || ONLY.includes('ShieldAndHttpsOnly')) await testShieldAndHttpsOnly(browser);
+    if (!ONLY || ONLY.includes('BlockedList')) await testBlockedList(browser);
+    if (!ONLY || ONLY.includes('FilterLists')) await testFilterLists(browser);
+    if (!ONLY || ONLY.includes('Passwords')) await testPasswords(browser);
+    if (!ONLY || ONLY.includes('Settings')) await testSettings(browser);
+    if (!ONLY || ONLY.includes('LoginScript')) await testLoginScript(browser);
   } finally {
     await browser.close();
   }

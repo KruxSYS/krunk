@@ -204,6 +204,38 @@ impl Browser {
         }
     }
 
+    /// "Bookmark all tabs" (the title bar's menu): every bookmarkable tab of the current window
+    /// goes into a new folder on the bar, named after the day.
+    pub(super) fn bookmark_all_tabs(&self) {
+        let Some(win) = self.cur_id() else { return };
+        let pages: Vec<(String, String)> = {
+            let ws = self.ws.borrow();
+            let Some(m) = ws.model(win) else { return };
+            m.tabs()
+                .iter()
+                .filter(|t| !t.private && bookmarkable(&t.url))
+                .map(|t| (t.title.clone(), t.url.clone()))
+                .collect()
+        };
+        if pages.is_empty() {
+            return;
+        }
+        let name = format!("Tabs {}", lb_core::storage::date_ymd(now_ms()));
+        let folder = match self.store.borrow().add_folder(BOOKMARKS_BAR, &name) {
+            Ok(id) => id,
+            Err(e) => return self.bar_changed("bookmark all tabs", Err::<(), _>(e)),
+        };
+        let mut r = Ok(());
+        for (title, url) in &pages {
+            let t = if title.trim().is_empty() { url.clone() } else { title.clone() };
+            if let Err(e) = self.store.borrow().add_bookmark(folder, &t, url) {
+                r = Err(e);
+            }
+        }
+        info!("bookmarks bar: {} tabs bookmarked into '{name}'", pages.len());
+        self.bar_changed("bookmark all tabs", r);
+    }
+
     /// The editor's Save: rename or edit bookmark `id`, or a new folder in `parent`.
     pub(super) fn save_bookmark(&self, id: Option<i64>, parent: i64, title: &str, url: Option<&str>) {
         let from_folder = self.menu_from_folder.get().is_some();

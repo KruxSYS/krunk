@@ -4,7 +4,7 @@
 //! touches only the view's `Send + Sync` network policy.
 
 use super::net::{self, RequestPolicy};
-use super::renderer::{AUDIO_TO_BROWSER, POINTER_TO_BROWSER, TO_BROWSER};
+use super::renderer::{AUDIO_TO_BROWSER, PID_TO_BROWSER, POINTER_TO_BROWSER, TO_BROWSER};
 use super::view::{
     child_window_info, lookup, DownloadControl, DownloadStart, DownloadStatus, DownloadUpdate, KeyPress, LoadingState,
     MessageSource, NavigationStart, NewWindow, Role, View, ViewInner,
@@ -111,6 +111,13 @@ wrap_client! {
                 let id = CefString::from(&frame.identifier()).to_string();
                 if let Some(view) = lookup(self.key) {
                     view.ev.pointer.with(|f| f(id, json));
+                }
+                return 1;
+            }
+            if name == PID_TO_BROWSER {
+                let pid = message.argument_list().map(|a| a.int(0)).unwrap_or(0);
+                if let Some(view) = lookup(self.key) {
+                    view.renderer_pid.set(pid.max(0) as u32);
                 }
                 return 1;
             }
@@ -306,6 +313,12 @@ wrap_display_handler! {
             }
         }
 
+        fn on_media_access_change(&self, _browser: Option<&mut Browser>, has_video_access: c_int, has_audio_access: c_int) {
+            if let Some(view) = lookup(self.key) {
+                view.ev.media_use.with(|f| f(has_video_access != 0, has_audio_access != 0));
+            }
+        }
+
         fn on_status_message(&self, _browser: Option<&mut Browser>, value: Option<&CefString>) {
             if let Some(view) = lookup(self.key) {
                 view.ev.status.with(|f| f(text(value)));
@@ -463,9 +476,9 @@ wrap_focus_handler! {
     }
 }
 
-// Local network access (Krunk 0.5.0): Chromium asks before a public page may reach a
-// private address or this computer. Those prompts go to the host (which asks the user or
-// answers from its store); every other permission type stays with the engine's default.
+// Permissions (Krunk 0.5.0: local network access; 0.6.0: every prompt type and media
+// access). Every prompt goes to the host, which asks the user or answers from its store and
+// defaults; an unknown type is denied there rather than left hanging.
 wrap_permission_handler! {
     struct Permissions {
         key: u64,
@@ -479,11 +492,27 @@ wrap_permission_handler! {
             requested_permissions: u32,
             callback: Option<&mut PermissionPromptCallback>,
         ) -> c_int {
-            let Some(request) = lb_core::permissions::network_request(requested_permissions) else { return 0 };
             let (Some(view), Some(callback)) = (lookup(self.key), callback) else { return 0 };
             let origin = text(requesting_origin);
             view.permission_prompts.borrow_mut().insert(prompt_id, (callback.clone(), origin.clone()));
-            view.ev.permission.with(|f| f(prompt_id, origin.clone(), request.loopback));
+            view.ev.permission.with(|f| f(prompt_id, origin.clone(), requested_permissions));
+            1
+        }
+
+        fn on_request_media_access_permission(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            requesting_origin: Option<&CefString>,
+            requested_permissions: u32,
+            callback: Option<&mut MediaAccessCallback>,
+        ) -> c_int {
+            let (Some(view), Some(callback)) = (lookup(self.key), callback) else { return 0 };
+            let id = view.media_next.get() + 1;
+            view.media_next.set(id);
+            let origin = text(requesting_origin);
+            view.media_prompts.borrow_mut().insert(id, (callback.clone(), requested_permissions));
+            view.ev.media_access.with(|f| f(id, origin.clone(), requested_permissions));
             1
         }
 

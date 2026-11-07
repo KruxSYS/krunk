@@ -24,6 +24,7 @@
   <nav id="tabs" class="tabs" aria-label="Settings sections">
     <a href="#general" data-tab="general">General</a>
     <a href="#privacy" data-tab="privacy">Privacy &amp; security</a>
+    <a href="#permissions" data-tab="permissions">Permissions</a>
     <a href="#passwords" data-tab="passwords">Passwords &amp; import</a>
     <a href="#downloads" data-tab="downloads">Downloads</a>
     <a href="#appearance" data-tab="appearance">Appearance</a>
@@ -55,6 +56,50 @@
         <div class="text"><label for="customSearchUrl">Custom search URL</label><p class="desc">Use <code>%s</code> where the search terms go.</p>
           <p class="field-error" data-error-for="customSearchUrl"></p></div>
         <div class="control wide"><input type="text" id="customSearchUrl" data-key="customSearchUrl" placeholder="https://search.example/?q=%s" spellcheck="false"></div>
+      </div>
+    </div>
+
+    <div class="card group" data-keywords="new tab page tabs open position switch links">
+      <h3>New tabs</h3>
+      <div class="row setting" data-keywords="new tab opens page homepage blank custom">
+        <div class="text"><label for="newTabPage">A new tab opens</label><p class="desc">Ctrl+T, the + button and the menu.</p></div>
+        <div class="control">
+          <select id="newTabPage" data-key="newTabPage">
+            <option value="krunk">Krunk's new tab page</option>
+            <option value="homepage">The homepage</option>
+            <option value="blank">A blank page</option>
+            <option value="custom">A custom address…</option>
+          </select>
+        </div>
+      </div>
+      <div class="row setting" id="new-tab-url-row" data-keywords="new tab custom address url">
+        <div class="text"><label for="newTabUrl">Custom new-tab address</label><p class="desc">A web address or a krunk:// page.</p>
+          <p class="field-error" data-error-for="newTabUrl"></p></div>
+        <div class="control wide"><input type="text" id="newTabUrl" data-key="newTabUrl" placeholder="https://start.example/" spellcheck="false"></div>
+      </div>
+      <div class="row setting" data-keywords="new tab position end next to current">
+        <div class="text"><label for="newTabPosition">Where new tabs open</label></div>
+        <div class="control">
+          <select id="newTabPosition" data-key="newTabPosition">
+            <option value="end">At the end of the tab strip</option>
+            <option value="afterCurrent">Next to the current tab</option>
+          </select>
+        </div>
+      </div>
+      <div class="row setting" data-keywords="links new tab switch background foreground">
+        <div class="text"><label for="linkTabs">Links opened in a new tab</label><p class="desc">Middle click, Ctrl+click and links that ask for a new tab.</p></div>
+        <div class="control">
+          <select id="linkTabs" data-key="linkTabs">
+            <option value="auto">As the link asks (Chrome's behaviour)</option>
+            <option value="switch">Always switch to the new tab</option>
+            <option value="background">Always open in the background</option>
+          </select>
+        </div>
+      </div>
+      <div class="row setting" data-keywords="new tab page search box engine">
+        <div class="text"><label for="ntpSearchUrl">New tab page search</label><p class="desc">Empty: the search engine above. Else a search URL with <code>%s</code>.</p>
+          <p class="field-error" data-error-for="ntpSearchUrl"></p></div>
+        <div class="control wide"><input type="text" id="ntpSearchUrl" data-key="ntpSearchUrl" placeholder="(default search engine)" spellcheck="false"></div>
       </div>
     </div>
 
@@ -259,6 +304,66 @@
         </div>
       </div>
     </div>
+    <div class="card group" data-keywords="accent colour color toolbar tab strip background density compact font size rounded square tabs toolbar items downloads zoom">
+      <h3>Colours and layout</h3>
+      <div class="row setting" data-keywords="accent colour color">
+        <div class="text"><label for="appearance.accent">Accent colour</label><p class="desc">Links, highlights and the active toggle. Empty: the theme's blue.</p>
+          <p class="field-error" data-error-for="appearance.accent"></p></div>
+        <div class="control accent-row">
+          <span class="swatches" id="accent-swatches">
+            <button type="button" class="swatch" data-color="" title="Default"></button>
+            <button type="button" class="swatch" data-color="#2563eb" title="Blue"></button>
+            <button type="button" class="swatch" data-color="#7c3aed" title="Violet"></button>
+            <button type="button" class="swatch" data-color="#db2777" title="Pink"></button>
+            <button type="button" class="swatch" data-color="#dc2626" title="Red"></button>
+            <button type="button" class="swatch" data-color="#ea580c" title="Orange"></button>
+            <button type="button" class="swatch" data-color="#16a34a" title="Green"></button>
+            <button type="button" class="swatch" data-color="#0d9488" title="Teal"></button>
+          </span>
+          <input type="text" id="appearance.accent" data-key="appearance.accent" placeholder="#2563eb" size="8" spellcheck="false">
+        </div>
+      </div>
+      <div class="row setting" data-keywords="toolbar colour color">
+        <div class="text"><label for="appearance.toolbarColor">Toolbar colour</label><p class="desc">Empty: the theme's.</p>
+          <p class="field-error" data-error-for="appearance.toolbarColor"></p></div>
+        <div class="control"><input type="text" id="appearance.toolbarColor" data-key="appearance.toolbarColor" placeholder="#ffffff" size="8" spellcheck="false"></div>
+      </div>
+      <div class="row setting" data-keywords="tab strip colour color">
+        <div class="text"><label for="appearance.stripColor">Tab strip colour</label>
+          <p class="field-error" data-error-for="appearance.stripColor"></p></div>
+        <div class="control"><input type="text" id="appearance.stripColor" data-key="appearance.stripColor" placeholder="#f3f4f6" size="8" spellcheck="false"></div>
+      </div>
+      <div class="row setting" data-keywords="background colour color">
+        <div class="text"><label for="appearance.backgroundColor">Background colour</label><p class="desc">Behind the tab strip and Krunk's own pages.</p>
+          <p class="field-error" data-error-for="appearance.backgroundColor"></p></div>
+        <div class="control"><input type="text" id="appearance.backgroundColor" data-key="appearance.backgroundColor" placeholder="#f3f4f6" size="8" spellcheck="false"></div>
+      </div>
+      <div class="row setting" data-keywords="density compact normal tab strip">
+        <div class="text"><label for="appearance.density">Tab strip density</label></div>
+        <div class="control"><select id="appearance.density" data-key="appearance.density"><option value="normal">Normal</option><option value="compact">Compact</option></select></div>
+      </div>
+      <div class="row setting" data-keywords="font size ui text">
+        <div class="text"><label for="appearance.uiFontPx">UI font size</label><p class="desc">The tab strip, toolbar, menus and Krunk's pages.</p>
+          <p class="field-error" data-error-for="appearance.uiFontPx"></p></div>
+        <div class="control"><select id="appearance.uiFontPx" data-key="appearance.uiFontPx" data-type="number"><option value="12">12 px</option><option value="13">13 px (default)</option><option value="14">14 px</option><option value="15">15 px</option><option value="16">16 px</option></select></div>
+      </div>
+      <div class="row setting" data-keywords="rounded square tabs">
+        <div class="text"><label for="appearance.roundedTabs">Rounded tabs</label></div>
+        <div class="control"><input type="checkbox" id="appearance.roundedTabs" data-key="appearance.roundedTabs"></div>
+      </div>
+      <div class="row setting" data-keywords="toolbar items show hide downloads button">
+        <div class="text"><label for="appearance.showDownloadsButton">Show the downloads button</label><p class="desc">Ctrl+J opens the downloads either way.</p></div>
+        <div class="control"><input type="checkbox" id="appearance.showDownloadsButton" data-key="appearance.showDownloadsButton"></div>
+      </div>
+      <div class="row setting" data-keywords="toolbar items show hide zoom indicator chip">
+        <div class="text"><label for="appearance.showZoomChip">Show the zoom indicator</label></div>
+        <div class="control"><input type="checkbox" id="appearance.showZoomChip" data-key="appearance.showZoomChip"></div>
+      </div>
+      <div class="row setting" data-keywords="toolbar items show hide extensions button">
+        <div class="text"><label for="appearance.showExtensionsButton">Show the extensions button</label><p class="desc">Once extensions are installed.</p></div>
+        <div class="control"><input type="checkbox" id="appearance.showExtensionsButton" data-key="appearance.showExtensionsButton"></div>
+      </div>
+    </div>
     <div class="card group">
       <h3>Pages</h3>
       <div class="row setting" data-keywords="default zoom page size percent">
@@ -273,6 +378,28 @@
           </select>
         </div>
       </div>
+    </div>
+  </section>
+
+  <!-- ================================================================ Permissions -->
+  <section class="panel" data-tab="permissions" data-section="permissions camera microphone location geolocation notifications clipboard midi screen share local network sites exceptions">
+    <h2 class="panel-title">Permissions</h2>
+    <div class="card group">
+      <h3>Defaults</h3>
+      <p class="desc">What Krunk does when a site asks and you have not decided for that site: ask you, or block without asking. Your answers are remembered per site below (never in private tabs).</p>
+      <div class="row setting" data-keywords="camera"><div class="text"><label for="permissions.camera">Camera</label></div><div class="control"><select id="permissions.camera" data-key="permissions.camera"><option value="ask">Ask</option><option value="block">Block</option></select></div></div>
+      <div class="row setting" data-keywords="microphone"><div class="text"><label for="permissions.microphone">Microphone</label></div><div class="control"><select id="permissions.microphone" data-key="permissions.microphone"><option value="ask">Ask</option><option value="block">Block</option></select></div></div>
+      <div class="row setting" data-keywords="location geolocation"><div class="text"><label for="permissions.geolocation">Location</label></div><div class="control"><select id="permissions.geolocation" data-key="permissions.geolocation"><option value="ask">Ask</option><option value="block">Block</option></select></div></div>
+      <div class="row setting" data-keywords="notifications"><div class="text"><label for="permissions.notifications">Notifications</label></div><div class="control"><select id="permissions.notifications" data-key="permissions.notifications"><option value="ask">Ask</option><option value="block">Block</option></select></div></div>
+      <div class="row setting" data-keywords="clipboard read"><div class="text"><label for="permissions.clipboardRead">Clipboard (read)</label><p class="desc">Sites reading what you copied.</p></div><div class="control"><select id="permissions.clipboardRead" data-key="permissions.clipboardRead"><option value="ask">Ask</option><option value="block">Block</option></select></div></div>
+      <div class="row setting" data-keywords="midi devices"><div class="text"><label for="permissions.midi">MIDI devices</label></div><div class="control"><select id="permissions.midi" data-key="permissions.midi"><option value="ask">Ask</option><option value="block">Block</option></select></div></div>
+      <div class="row setting" data-keywords="screen share sharing"><div class="text"><label for="permissions.screenShare">Screen sharing</label></div><div class="control"><select id="permissions.screenShare" data-key="permissions.screenShare"><option value="ask">Ask</option><option value="block">Block</option></select></div></div>
+      <div class="row setting" data-keywords="local network access"><div class="text"><label for="permissions.localNetwork">Local network</label><p class="desc">Devices on your network and programs on this computer.</p></div><div class="control"><select id="permissions.localNetwork" data-key="permissions.localNetwork"><option value="ask">Ask</option><option value="block">Block</option></select></div></div>
+    </div>
+    <div class="card group" data-keywords="exceptions sites allowed blocked">
+      <h3>Sites</h3>
+      <p class="desc">Your answers per site. Change one, or remove it so Krunk asks again.</p>
+      <table class="exceptions" id="perm-exceptions"><thead><tr><th>Site</th><th>Permission</th><th>Answer</th><th></th></tr></thead><tbody id="perm-rows"><tr><td colspan="4" class="muted">No sites yet.</td></tr></tbody></table>
     </div>
   </section>
 

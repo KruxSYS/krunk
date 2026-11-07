@@ -137,6 +137,20 @@ impl Store {
         Ok(origins)
     }
 
+    /// Every visited web origin with its most recent visit (0.6.0: the site-data
+    /// page's "last used").
+    pub fn visited_origins_last(&self) -> DbResult<Vec<(String, i64)>> {
+        let mut stmt = self.conn.prepare("SELECT url, last_visit FROM urls WHERE visit_count > 0")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        let mut last: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
+        for (u, t) in rows.filter_map(Result::ok) {
+            let Some(u) = url::Url::parse(&u).ok().filter(|u| matches!(u.scheme(), "http" | "https")) else { continue };
+            let e = last.entry(u.origin().ascii_serialization()).or_insert(0);
+            *e = (*e).max(t);
+        }
+        Ok(last.into_iter().collect())
+    }
+
     /// The most recent visit for `url`, if any.
     pub fn last_visit(&self, url: &str) -> DbResult<Option<i64>> {
         self.conn

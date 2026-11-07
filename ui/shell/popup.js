@@ -60,10 +60,86 @@
       sep(),
       item('New window', 'Ctrl+N', () => command('newWindow')),
       sep(),
+      item(c.mutedSite ? 'Unmute site' : 'Mute site', '', () => act(c.mutedSite ? 'unmuteSite' : 'muteSite'), !c.hasSite),
+      sep(),
       item('Close tab', 'Ctrl+W', () => act('close')),
       // "Other tabs" exist exactly when the tab could move to a window of its own.
       item('Close other tabs', '', () => act('closeOthers'), !c.canMove),
       item('Close tabs to the right', '', () => act('closeRight'), !c.canCloseRight),
+    ];
+  }
+
+  // The downloads button's popup (0.6.0): the newest downloads with speed, time left and a
+  // progress bar split per connection; actions go through downloadAction like the page.
+  function dlSize(n) {
+    if (n === null || n === undefined) return '';
+    const u = ['B', 'KB', 'MB', 'GB'];
+    let i = 0;
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return (i ? n.toFixed(1) : Math.round(n)) + ' ' + u[i];
+  }
+  function dlLeft(s) { return s >= 3600 ? Math.round(s / 3600) + ' h left' : s >= 60 ? Math.round(s / 60) + ' min left' : s + ' s left'; }
+  function dlBar(d) {
+    if (d.partProgress && d.partProgress.length > 1) {
+      const total = d.partProgress.reduce((a, p) => a + p.len, 0) || 1;
+      // (Widths through the CSSOM: the pages' CSP has no inline styles.)
+      return el('div', { class: 'segments', title: d.partProgress.length + ' connections' }, d.partProgress.map((p) => {
+        const fill = el('span', { class: 'fill' });
+        fill.style.width = Math.min(100, 100 * p.done / Math.max(1, p.len)) + '%';
+        const seg = el('span', { class: 'seg' }, [fill]);
+        seg.style.flexBasis = (100 * p.len / total) + '%';
+        return seg;
+      }));
+    }
+    return el('progress', d.total ? { max: d.total, value: d.received } : {});
+  }
+  function dlStatus(d) {
+    if (d.state === 'completed') return dlSize(d.total || d.received);
+    if (d.state === 'cancelled') return 'Cancelled';
+    if (d.state === 'interrupted') return 'Failed' + (d.reason ? ' – ' + d.reason : '');
+    let s = dlSize(d.received) + (d.total ? ' of ' + dlSize(d.total) : '');
+    if (d.state === 'paused') return s + ' – paused';
+    if (d.speed) s += ' · ' + dlSize(d.speed) + '/s';
+    if (d.eta !== null && d.eta !== undefined) s += ' · ' + dlLeft(d.eta);
+    return s;
+  }
+  function renderDownloads(c) {
+    const act = (id, action) => { LB.post('downloadAction', { id: id, action: action }); };
+    const rows = c.items.map(function (d) {
+      const running = d.state === 'inProgress' || d.state === 'paused';
+      const btns = [];
+      if (d.state === 'completed') btns.push(el('button', { class: 'link', text: 'Open', onclick: () => { act(d.id, 'open'); close(); } }), el('button', { class: 'link', text: 'Show in folder', onclick: () => { act(d.id, 'showInFolder'); close(); } }));
+      if (d.state === 'inProgress') btns.push(el('button', { class: 'link', text: 'Pause', onclick: () => act(d.id, 'pause') }));
+      if (d.state === 'paused') btns.push(el('button', { class: 'link', text: 'Resume', onclick: () => act(d.id, 'resume') }));
+      if (running) btns.push(el('button', { class: 'link', text: 'Cancel', onclick: () => act(d.id, 'cancel') }));
+      return el('div', { class: 'dl-row' + (d.state === 'interrupted' || d.state === 'cancelled' ? ' failed' : ''), 'data-id': String(d.id) }, [
+        el('div', { class: 'dl-name', title: d.path, text: d.fileName }),
+        el('div', { class: 'dl-status', text: dlStatus(d) }),
+        running ? dlBar(d) : null,
+        el('div', { class: 'dl-links' }, btns),
+      ]);
+    });
+    if (!rows.length) rows.push(el('div', { class: 'dl-empty', text: 'No downloads yet.' }));
+    rows.push(el('button', { class: 'item', id: 'dl-all', onclick: () => openPage('downloads') }, [el('span', { class: 'label', text: 'Show all downloads' }), el('span', { class: 'kbd', text: 'Ctrl+J' })]));
+    return [el('div', { class: 'dl-list' }, rows)];
+  }
+
+  // Right-click on the title bar or the empty tab strip (0.6.0): Krunk's commands plus the
+  // window controls the system menu used to offer there.
+  function renderCaptionMenu(c) {
+    const win = (action) => { LB.post('captionWindow', { action: action }); close(); };
+    return [
+      item('New tab', 'Ctrl+T', () => command('newTab')),
+      item('New window', 'Ctrl+N', () => command('newWindow')),
+      item('New private window', '', () => command('newPrivateWindow')),
+      item('Reopen closed tab', 'Ctrl+Shift+T', () => command('reopenClosedTab'), !c.canReopen),
+      sep(),
+      item('Bookmark all tabs…', '', () => { LB.post('bookmarkAllTabs'); close(); }, !c.canBookmarkAll),
+      item('Task manager', 'Shift+Esc', () => command('taskManager')),
+      sep(),
+      item(c.maximized ? 'Restore' : 'Maximize', '', () => win('maximize')),
+      item('Minimize', '', () => win('minimize')),
+      item('Close', 'Alt+F4', () => win('close')),
     ];
   }
 
@@ -254,6 +330,16 @@
         }
       }
     }
+    // Permissions (0.6.0): every kind with its state for this site; a change is stored.
+    if (i.origin && i.permissions && i.permissions.length) {
+      const rows = i.permissions.map((p) => {
+        const sel = el('select', { class: 'perm-select', 'data-kind': p.kind }, ['ask', 'allow', 'block'].map((v) => el('option', { value: v, text: v === 'ask' ? 'Ask' : v === 'allow' ? 'Allow' : 'Block' })));
+        sel.value = p.state;
+        sel.addEventListener('change', () => { LB.post('permissionSet', { origin: i.origin, kind: p.kind, state: sel.value }); });
+        return el('div', { class: 'kv perm' }, [el('span', { class: 'k', text: PERM_LABEL[p.kind] || p.kind }), sel]);
+      });
+      parts.push(el('div', { class: 'pop-card', id: 'site-permissions' }, [el('div', { class: 'pop-sub', text: 'Permissions' })].concat(rows)));
+    }
     return [el('div', { class: 'panel pop' }, parts)];
   }
   // The popup asks the host for the height its content needs: #root's height (the body is
@@ -261,7 +347,7 @@
   function fit() { LB.post('popupResize', { height: root.offsetHeight + 2 }); }
   // Content whose height depends on its items: the window is opened with an upper bound
   // and fitted right after the render (the ⋮ menu used to leave a gap at the bottom).
-  const FITS = { menu: true, tabMenu: true, bookmarkMenu: true, siteInfo: true, addressMenu: true };
+  const FITS = { menu: true, tabMenu: true, bookmarkMenu: true, siteInfo: true, addressMenu: true, captionMenu: true, downloads: true, permission: true };
 
 
   // Login suggestions under a focused field: the matching usernames (with the host for a
@@ -320,6 +406,18 @@
 
   // "Connect to devices on your local network?" (Krunk 0.5.0): the engine's local network
   // access check, answered by the user; remembered for the site unless the tab is private.
+  // What each permission kind asks for (0.6.0; the keys match core::permissions::Kind).
+  const PERM = {
+    camera: ['Use your camera?', 'use your camera'],
+    microphone: ['Use your microphone?', 'use your microphone'],
+    geolocation: ['Know your location?', 'know your location'],
+    notifications: ['Show notifications?', 'show notifications'],
+    clipboardRead: ['Read your clipboard?', 'read text and images you copied'],
+    midi: ['Use your MIDI devices?', 'control your MIDI devices (including system-exclusive messages)'],
+    screenShare: ['Share your screen?', 'see your screen'],
+    localNetwork: ['Connect to devices on your local network?', 'connect to a device on your local network (a NAS, a media server, a printer…)'],
+  };
+  const PERM_LABEL = { camera: 'Camera', microphone: 'Microphone', geolocation: 'Location', notifications: 'Notifications', clipboardRead: 'Clipboard (read)', midi: 'MIDI devices', screenShare: 'Screen sharing', localNetwork: 'Local network' };
   function renderPermission(c) {
     const remember = el('input', { type: 'checkbox', id: 'remember', checked: !c.private });
     const reply = (allow) => {
@@ -328,11 +426,13 @@
     };
     let host = c.origin;
     try { host = new URL(c.origin).host; } catch (e) { /* keep the origin */ }
-    return [el('div', { class: 'panel' }, [
-      el('h2', { text: c.loopback ? 'Connect to this computer?' : 'Connect to devices on your local network?' }),
-      el('p', {}, [el('span', { class: 'origin', text: host }), c.loopback
-        ? ' wants to connect to a program on this computer.'
-        : ' wants to connect to a device on your local network (a NAS, a media server, a printer…).']),
+    const kinds = (c.kinds && c.kinds.length) ? c.kinds : ['localNetwork'];
+    const one = kinds.length === 1 ? kinds[0] : null;
+    const title = one === 'localNetwork' && c.loopback ? 'Connect to this computer?' : one ? PERM[one][0] : 'Allow ' + kinds.map((k) => PERM_LABEL[k] || k).join(' and ').toLowerCase() + '?';
+    const wants = kinds.map((k) => (k === 'localNetwork' && c.loopback) ? 'connect to a program on this computer' : (PERM[k] ? PERM[k][1] : k)).join(' and ');
+    return [el('div', { class: 'panel', 'data-kinds': kinds.join(' ') }, [
+      el('h2', { text: title }),
+      el('p', {}, [el('span', { class: 'origin', text: host }), ' wants to ' + wants + '.']),
       c.private
         ? el('p', { class: 'muted', text: 'Private tab: this answer is not remembered.' })
         : el('label', { class: 'check' }, [remember, ' Remember for this site']),
@@ -535,7 +635,7 @@
   LB.on('popup', function (m) {
     current = m.content;
     const c = m.content;
-    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
+    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
     root.textContent = '';
     root.dataset.kind = c.kind;
     (render ? render(c) : []).forEach((n) => n && root.appendChild(n));

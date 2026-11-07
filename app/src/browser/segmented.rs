@@ -165,6 +165,7 @@ impl Browser {
             id
         };
         info!("download {id} started: {} bytes over {} connections", fetch.total, parts.len());
+        self.download_flight(tab);
         if let Some(v) = tab.and_then(|t| self.views.borrow().get(&t).map(|v| v.downloads.clone())) {
             v.set(v.get() + 1);
         }
@@ -239,13 +240,28 @@ impl Browser {
 
     /// `PARTS_TIMER`: progress into the list.
     pub(super) fn parts_tick(&self) {
-        let progress: Vec<(u32, u64, u64)> = self
+        let progress: Vec<(u32, u64, u64, Vec<lb_core::downloads::PartProgress>)> = self
             .parts_jobs
             .jobs
             .borrow()
             .iter()
             .filter(|(_, j)| j.running)
-            .map(|(id, j)| (*id, j.shared.received.load(Ordering::Relaxed), j.fetch.total))
+            .map(|(id, j)| {
+                let parts = j
+                    .shared
+                    .parts
+                    .lock()
+                    .map(|p| {
+                        p.iter()
+                            .map(|part| lb_core::downloads::PartProgress {
+                                done: part.next.saturating_sub(part.start),
+                                len: (part.end - part.start).saturating_add(1),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                (*id, j.shared.received.load(Ordering::Relaxed), j.fetch.total, parts)
+            })
             .collect();
         if progress.is_empty() {
             if let Some(app) = self.app() {
@@ -254,9 +270,11 @@ impl Browser {
             return;
         }
         {
+            let now = now_ms();
             let mut d = self.downloads.borrow_mut();
-            for (id, received, total) in progress {
-                d.progress(id, received as i64, Some(total as i64));
+            for (id, received, total, parts) in progress {
+                d.progress_at(id, received as i64, Some(total as i64), now);
+                d.set_part_progress(id, parts);
             }
         }
         self.push_downloads();

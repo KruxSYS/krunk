@@ -51,6 +51,8 @@ pub struct Scripts {
     pub audio: bool,
     /// The pointer-lock shim (all frames).
     pub pointer_lock: bool,
+    /// The `Notification.requestPermission` shim (main frame; Krunk 0.6.0).
+    pub notify: bool,
 }
 
 impl Scripts {
@@ -63,6 +65,7 @@ impl Scripts {
             ("login", self.login),
             ("audio", self.audio),
             ("plock", self.pointer_lock),
+            ("notify", self.notify),
         ] {
             d.set_bool(Some(&CefString::from(k)), i32::from(v));
         }
@@ -78,6 +81,7 @@ impl Scripts {
             login: get("login"),
             audio: get("audio"),
             pointer_lock: get("plock"),
+            notify: get("notify"),
         }
     }
 }
@@ -268,11 +272,16 @@ pub(super) struct Events {
     pub inspect: Slot<dyn FnMut(InspectAt)>,
     /// The docked DevTools opened (true) or closed.
     pub devtools: Slot<dyn FnMut(bool)>,
-    /// The engine asks whether a page may reach the local network (Krunk 0.5.0): the prompt
-    /// id, the requesting origin and whether only this computer (loopback) is asked for.
-    pub permission: Slot<dyn FnMut(u64, String, bool)>,
+    /// The engine asks for a permission (Krunk 0.5.0: local network; 0.6.0: every type):
+    /// the prompt id, the requesting origin and the request bits.
+    pub permission: Slot<dyn FnMut(u64, String, u32)>,
     /// The engine withdrew a permission prompt (the page navigated away).
     pub permission_gone: Slot<dyn FnMut(u64)>,
+    /// `getUserMedia` / `getDisplayMedia` (Krunk 0.6.0): the request id, the origin and the
+    /// media access bits.
+    pub media_access: Slot<dyn FnMut(u64, String, u32)>,
+    /// The page started or stopped using the camera (video) / the microphone (audio).
+    pub media_use: Slot<dyn FnMut(bool, bool)>,
 }
 
 /// Remembered until the browser exists.
@@ -286,6 +295,8 @@ struct Pending {
 }
 
 pub(super) struct ViewInner {
+    /// The renderer's process id (reported by the renderer; 0 until then).
+    pub(super) renderer_pid: Cell<u32>,
     pub key: u64,
     pub role: Role,
     pub private: bool,
@@ -306,6 +317,9 @@ pub(super) struct ViewInner {
     /// Open permission prompts the host still has to answer, by prompt id: the engine's
     /// callback and the requesting origin.
     pub(super) permission_prompts: RefCell<std::collections::HashMap<u64, (PermissionPromptCallback, String)>>,
+    /// Media access requests waiting for the host's answer: the callback and the bits asked.
+    pub(super) media_prompts: RefCell<std::collections::HashMap<u64, (MediaAccessCallback, u32)>>,
+    pub(super) media_next: Cell<u64>,
     devtools_id: Cell<i32>,
     /// DevTools protocol calls in flight: method (for error logs) and the
     /// callback waiting for the result, if any.
@@ -372,8 +386,11 @@ impl View {
             load_error: Cell::new(None),
             cert_error: RefCell::new(None),
             permission_prompts: RefCell::new(std::collections::HashMap::new()),
+            media_prompts: RefCell::new(std::collections::HashMap::new()),
+            media_next: Cell::new(0),
             audible_frames: RefCell::new(std::collections::HashSet::new()),
             devtools_id: Cell::new(0),
+            renderer_pid: Cell::new(0),
             devtools_calls: RefCell::new(HashMap::new()),
             devtools_observer: RefCell::new(None),
             devtools: RefCell::new(None),
@@ -915,6 +932,27 @@ impl View {
     }
 
     /// Overrides the user agent of this browser (`None` = the default).
+    /// The OS process of this view's renderer, as the renderer reported it (0 until then).
+    pub fn renderer_pid(&self) -> u32 {
+        self.0.renderer_pid.get()
+    }
+
+    /// CEF's browser identifier (the task manager maps it to a task).
+    pub fn browser_id(&self) -> Option<i32> {
+        self.browser().map(|b| b.identifier())
+    }
+
+    /// Mutes or unmutes the page's sound (the page's own `muted` state is untouched).
+    pub fn set_audio_muted(&self, muted: bool) {
+        if let Some(h) = self.host() {
+            h.set_audio_muted(i32::from(muted));
+        }
+    }
+
+    pub fn audio_muted(&self) -> bool {
+        self.host().is_some_and(|h| h.is_audio_muted() != 0)
+    }
+
     pub fn set_user_agent(&self, ua: Option<&str>) {
         self.devtools_method("Emulation.setUserAgentOverride", &serde_json::json!({ "userAgent": ua.unwrap_or("") }));
     }
@@ -983,8 +1021,38 @@ impl View {
 
     /// The engine asks whether the page may reach the local network: (prompt id, requesting
     /// origin, loopback only). Answer with `answer_permission`.
-    pub fn on_permission(&self, f: impl FnMut(u64, String, bool) + 'static) {
+    pub fn on_permission(&self, f: impl FnMut(u64, String, u32) + 'static) {
         self.0.ev.permission.set(Box::new(f));
+    }
+
+    pub fn on_media_access(&self, f: impl FnMut(u64, String, u32) + 'static) {
+        self.0.ev.media_access.set(Box::new(f));
+    }
+
+    pub fn on_media_use(&self, f: impl FnMut(bool, bool) + 'static) {
+        self.0.ev.media_use.set(Box::new(f));
+    }
+
+    /// Answers a media access request (`getUserMedia`, `getDisplayMedia`): everything asked
+    /// for, or nothing.
+    pub fn answer_media(&self, id: u64, allow: bool) -> bool {
+        let Some((cb, bits)) = self.0.media_prompts.borrow_mut().remove(&id) else { return false };
+        cb.cont(if allow { bits } else { 0 });
+        true
+    }
+
+    /// Sets the engine's own notification permission for `origin` (the engine never asks the
+    /// embedder for it in Alloy style, so Krunk's answer is written into its content settings;
+    /// `None` resets it to "ask").
+    pub fn set_notifications_setting(&self, origin: &str, allow: Option<bool>) {
+        let Some(ctx) = self.host().and_then(|h| h.request_context()) else { return };
+        let url = CefString::from(origin);
+        let value = match allow {
+            Some(true) => ContentSettingValues::ALLOW,
+            Some(false) => ContentSettingValues::BLOCK,
+            None => ContentSettingValues::DEFAULT,
+        };
+        ctx.set_content_setting(Some(&url), Some(&url), ContentSettingTypes::NOTIFICATIONS, value);
     }
 
     /// The engine withdrew the prompt (navigation): the host's prompt should go too.
@@ -1003,10 +1071,16 @@ impl View {
         super::post_ui_delayed(100, move || {
             let Some(ctx) = view.host().and_then(|h| h.request_context()) else { return };
             let url = CefString::from(origin.as_str());
+            // Every type Krunk decides itself: the engine must ask again next time.
             for kind in [
                 ContentSettingTypes::LOCAL_NETWORK,
                 ContentSettingTypes::LOOPBACK_NETWORK,
                 ContentSettingTypes::LOCAL_NETWORK_ACCESS,
+                ContentSettingTypes::GEOLOCATION,
+                ContentSettingTypes::MEDIASTREAM_CAMERA,
+                ContentSettingTypes::MEDIASTREAM_MIC,
+                ContentSettingTypes::CLIPBOARD_READ_WRITE,
+                ContentSettingTypes::MIDI_SYSEX,
             ] {
                 ctx.set_content_setting(Some(&url), Some(&url), kind, ContentSettingValues::DEFAULT);
             }

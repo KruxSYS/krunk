@@ -62,6 +62,10 @@ pub trait WindowEvents {
     fn maximized_changed(&self, _maximized: bool) {}
     /// The main window lost activation to its own popup window.
     fn activation_to_popup(&self) {}
+    /// Right-click on the caption (or the empty tab strip): the host's menu at this screen point.
+    fn caption_menu(&self, _x: i32, _y: i32) -> bool {
+        false
+    }
     /// Relative mouse movement from raw input (only while it is registered
     /// with [`Window::capture_raw_mouse`]).
     fn raw_mouse(&self, _dx: i32, _dy: i32) {}
@@ -891,7 +895,10 @@ extern "system" fn main_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
             if wparam.0 as u32 == windows::Win32::UI::WindowsAndMessaging::HTCAPTION =>
         {
             let (x, y) = ((lparam.0 & 0xffff) as i16 as i32, ((lparam.0 >> 16) & 0xffff) as i16 as i32);
-            system_menu_at(hwnd, x, y);
+            // Krunk's own menu (0.6.0); the system menu stays on Alt+Space.
+            if !events(hwnd).is_some_and(|ev| ev.caption_menu(x, y)) {
+                system_menu_at(hwnd, x, y);
+            }
             LRESULT(0)
         }
         WM_NCLBUTTONDOWN | WM_NCLBUTTONDBLCLK if caption_button(wparam.0).is_some() => {

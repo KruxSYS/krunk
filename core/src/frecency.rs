@@ -8,6 +8,7 @@
 use crate::storage::{DbResult, Store};
 use crate::urlclean::host_of;
 use rusqlite::params;
+use rusqlite::OptionalExtension;
 use serde::Serialize;
 use std::collections::HashMap;
 
@@ -152,6 +153,53 @@ impl Store {
         Ok(())
     }
 
+    /// The pinned tiles only (the "own list" mode of the new tab page).
+    pub fn pinned_tiles(&self, n: usize) -> DbResult<Vec<Tile>> {
+        let mut stmt = self.conn.prepare_cached("SELECT url, title FROM tiles WHERE state = ?1 ORDER BY position")?;
+        let rows = stmt.query_map([TILE_PINNED], |r| {
+            Ok(Tile { url: r.get(0)?, title: r.get(1)?, pinned: true, favicon: None, score: f64::INFINITY })
+        })?;
+        let mut tiles: Vec<Tile> = rows.collect::<DbResult<_>>()?;
+        tiles.truncate(n);
+        for t in &mut tiles {
+            if let Some(h) = host_of(&t.url) {
+                t.favicon = self.favicon_url(&h)?;
+            }
+        }
+        Ok(tiles)
+    }
+
+    /// The pinned tiles in this order (URLs not pinned are ignored; a URL that is a
+    /// most-visited tile is pinned by the reorder, keeping its title from history).
+    pub fn reorder_tiles(&self, urls: &[String]) -> DbResult<()> {
+        for (i, url) in urls.iter().enumerate() {
+            let title: String = self
+                .conn
+                .query_row("SELECT title FROM urls WHERE url = ?1", [url], |r| r.get(0))
+                .optional()?
+                .unwrap_or_default();
+            self.conn.execute(
+                "INSERT INTO tiles(url, title, state, position) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(url) DO UPDATE SET state = excluded.state, position = excluded.position,
+                 title = CASE WHEN tiles.title = '' THEN excluded.title ELSE tiles.title END",
+                params![url, title, TILE_PINNED, i as i64],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Changes a pinned tile's address and title (its position stays).
+    pub fn edit_tile(&self, url: &str, new_url: &str, title: &str) -> DbResult<bool> {
+        if url != new_url {
+            self.conn.execute("DELETE FROM tiles WHERE url = ?1", [new_url])?;
+        }
+        let n = self.conn.execute(
+            "UPDATE tiles SET url = ?2, title = ?3 WHERE url = ?1 AND state = ?4",
+            params![url, new_url, title, TILE_PINNED],
+        )?;
+        Ok(n > 0)
+    }
+
     /// Removes a tile from the grid (history itself is kept).
     pub fn hide_site(&self, url: &str) -> DbResult<()> {
         self.conn.execute(
@@ -166,6 +214,27 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn own_list_reorder_and_edit() {
+        let s = Store::open_in_memory().unwrap();
+        s.record_visit("https://a.example/", "A site", 1_700_000_000_000).unwrap();
+        s.pin_site("https://p.example/", "P").unwrap();
+        s.pin_site("https://q.example/", "Q").unwrap();
+        // A most-visited tile dragged into the order gets pinned with its history title.
+        s.reorder_tiles(&["https://q.example/".into(), "https://a.example/".into(), "https://p.example/".into()])
+            .unwrap();
+        let urls: Vec<String> = s.pinned_tiles(10).unwrap().into_iter().map(|t| t.url).collect();
+        assert_eq!(urls, vec!["https://q.example/", "https://a.example/", "https://p.example/"]);
+        assert_eq!(s.pinned_tiles(10).unwrap()[1].title, "A site");
+        assert_eq!(s.pinned_tiles(2).unwrap().len(), 2);
+        assert!(s.edit_tile("https://p.example/", "https://p2.example/", "P2").unwrap());
+        let t = s.pinned_tiles(10).unwrap();
+        assert_eq!((t[2].url.as_str(), t[2].title.as_str()), ("https://p2.example/", "P2"));
+        assert!(!s.edit_tile("https://nope.example/", "https://x.example/", "X").unwrap());
+        // The own list ignores history: top_sites would add A's neighbours, pinned_tiles does not.
+        assert!(s.pinned_tiles(10).unwrap().iter().all(|t| t.pinned));
+    }
 
     const NOW: i64 = 1_000 * DAY_MS;
 

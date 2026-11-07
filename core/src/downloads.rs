@@ -56,17 +56,81 @@ pub struct DownloadItem {
     /// or quit, they are deleted at the next start.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parts: Vec<String>,
+    /// Smoothed speed in bytes per second while it runs (Krunk 0.6.0; 0 when done).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub speed: u64,
+    /// Seconds left at that speed, when the total is known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eta: Option<u64>,
+    /// Per connection of a download in parts: bytes done and the part's length (one bar
+    /// segment each); empty for a single connection or when done.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub part_progress: Vec<PartProgress>,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PartProgress {
+    pub done: u64,
+    pub len: u64,
+}
+
+/// A download's speed: an exponential moving average over the samples of the last seconds,
+/// so the number is steady but follows a change within a few seconds.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Meter {
+    last: Option<(i64, i64)>,
+    rate: f64,
+}
+
+/// Half-life of the smoothing, ms.
+const METER_HALF_LIFE_MS: f64 = 1500.0;
+
+impl Meter {
+    /// Records `received` bytes at `now` (unix ms); returns the smoothed bytes per second.
+    pub fn sample(&mut self, now: i64, received: i64) -> u64 {
+        if let Some((t, r)) = self.last {
+            let dt = (now - t) as f64;
+            if dt >= 50.0 {
+                let inst = ((received - r).max(0) as f64) * 1000.0 / dt;
+                let a = 1.0 - 0.5f64.powf(dt / METER_HALF_LIFE_MS);
+                self.rate = if self.rate == 0.0 { inst } else { self.rate + a * (inst - self.rate) };
+                self.last = Some((now, received));
+            } else if received < r {
+                self.last = Some((now, received));
+            }
+        } else {
+            self.last = Some((now, received));
+        }
+        self.rate.max(0.0).round() as u64
+    }
+}
+
+/// Seconds left at `speed` bytes/s, when the total is known and the speed is not zero.
+pub fn eta_secs(speed: u64, received: i64, total: Option<i64>) -> Option<u64> {
+    let total = total?;
+    if speed == 0 || total <= received {
+        return None;
+    }
+    Some(((total - received) as u64).div_ceil(speed))
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Downloads {
     items: Vec<DownloadItem>,
     next_id: u32,
+    /// Speed meters of the running downloads (never saved).
+    #[serde(skip)]
+    meters: std::collections::HashMap<u32, Meter>,
 }
 
 impl Downloads {
     pub fn new() -> Downloads {
-        Downloads { items: Vec::new(), next_id: 1 }
+        Downloads { items: Vec::new(), next_id: 1, meters: Default::default() }
     }
 
     /// Restores a saved list; downloads that were running when the browser
@@ -85,8 +149,11 @@ impl Downloads {
 
     /// Serialized list for persistence (private downloads are left out).
     pub fn to_json(&self) -> String {
-        let saved =
-            Downloads { items: self.items.iter().filter(|i| !i.private).cloned().collect(), next_id: self.next_id };
+        let saved = Downloads {
+            items: self.items.iter().filter(|i| !i.private).cloned().collect(),
+            next_id: self.next_id,
+            meters: Default::default(),
+        };
         serde_json::to_string(&saved).unwrap_or_else(|_| "{}".into())
     }
 
@@ -121,6 +188,9 @@ impl Downloads {
             page_url: None,
             connections: None,
             parts: Vec::new(),
+            speed: 0,
+            eta: None,
+            part_progress: Vec::new(),
         });
         // Drop the oldest finished entries beyond the cap.
         while self.items.len() > MAX_ITEMS {
@@ -140,6 +210,23 @@ impl Downloads {
             if let Some(t) = total.filter(|t| *t >= 0) {
                 i.total = Some(t);
             }
+        }
+    }
+
+    /// Progress with a time stamp: also updates the smoothed speed and the time left.
+    pub fn progress_at(&mut self, id: u32, received: i64, total: Option<i64>, now: i64) {
+        self.progress(id, received, total);
+        let speed = self.meters.entry(id).or_default().sample(now, received.max(0));
+        if let Some(i) = self.items.iter_mut().find(|i| i.id == id) {
+            i.speed = speed;
+            i.eta = eta_secs(speed, i.received, i.total);
+        }
+    }
+
+    /// The per-connection progress of a download in parts (one bar segment each).
+    pub fn set_part_progress(&mut self, id: u32, parts: Vec<PartProgress>) {
+        if let Some(i) = self.items.iter_mut().find(|i| i.id == id) {
+            i.part_progress = parts;
         }
     }
 
@@ -173,6 +260,10 @@ impl Downloads {
             i.finished = if state.is_finished() { i.finished.or(Some(now)) } else { None };
             if state.is_finished() {
                 i.parts.clear();
+                i.part_progress.clear();
+                i.speed = 0;
+                i.eta = None;
+                self.meters.remove(&id);
             }
             if state == DownloadState::Completed {
                 if let Some(t) = i.total {
@@ -270,6 +361,46 @@ pub fn unique_path(dir: &Path, name: &str, exists: impl Fn(&Path) -> bool) -> Pa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn speed_is_smoothed_and_eta_follows_it() {
+        let mut m = Meter::default();
+        assert_eq!(m.sample(1000, 0), 0);
+        // 1 MB/s for a second: the first sample sets the rate.
+        assert_eq!(m.sample(2000, 1_000_000), 1_000_000);
+        // A burst of 3 MB/s moves the average part of the way (half-life 1.5 s).
+        let after = m.sample(3000, 4_000_000);
+        assert!(after > 1_500_000 && after < 2_500_000, "{after}");
+        // Samples closer than 50 ms are ignored (no division by nothing).
+        assert_eq!(m.sample(3010, 4_000_100), after);
+        assert_eq!(eta_secs(after, 4_000_000, Some(10_000_000)), Some(6_000_000u64.div_ceil(after)));
+        assert_eq!(eta_secs(0, 1, Some(10)), None);
+        assert_eq!(eta_secs(100, 10, Some(10)), None);
+        assert_eq!(eta_secs(100, 10, None), None);
+        let mut d = Downloads::new();
+        let id = d.start("https://x.example/f.bin", std::path::Path::new("C:\\d\\f.bin"), Some(2_000_000), 1000, false);
+        d.progress_at(id, 0, Some(2_000_000), 1000);
+        d.progress_at(id, 500_000, Some(2_000_000), 1500);
+        d.set_part_progress(
+            id,
+            vec![PartProgress { done: 250_000, len: 1_000_000 }, PartProgress { done: 250_000, len: 1_000_000 }],
+        );
+        let i = d.get(id).unwrap().clone();
+        assert_eq!(i.speed, 1_000_000);
+        assert_eq!(i.eta, Some(2));
+        assert_eq!(i.part_progress.len(), 2);
+        let json = serde_json::to_string(&i).unwrap();
+        assert!(json.contains("\"speed\":1000000") && json.contains("\"partProgress\""), "{json}");
+        // Finishing clears the transient fields, and they are not saved.
+        d.set_state(id, DownloadState::Completed, None, 2000);
+        let i = d.get(id).unwrap().clone();
+        assert_eq!((i.speed, i.eta, i.part_progress.len()), (0, None, 0));
+        let json = serde_json::to_string(&i).unwrap();
+        assert!(!json.contains("speed") && !json.contains("partProgress") && !json.contains("eta"), "{json}");
+        // A saved list restores without the meters.
+        let back = Downloads::from_json(&d.to_json());
+        assert_eq!(back.items().len(), 1);
+    }
 
     #[test]
     fn lifecycle() {

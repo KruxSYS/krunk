@@ -114,6 +114,26 @@ impl Browser {
         self.reply(tab, Event::ok(req_id, serde_json::json!({ "settings": new, "restartRequired": restart })));
     }
 
+    /// A whole candidate from a page other than the settings page (the new tab page's
+    /// customize panel): validated, saved and applied; the caller replies.
+    pub(super) fn save_settings_from(
+        &self,
+        _tab: Option<TabId>,
+        _req_id: Option<u32>,
+        new: Settings,
+    ) -> Result<(), Vec<String>> {
+        if let Err(errors) = new.validate() {
+            return Err(errors.into_iter().map(|e| format!("{}: {}", e.field, e.message)).collect());
+        }
+        if let Err(e) = self.store.borrow().save_settings(&new) {
+            warning!("saving settings: {e}");
+            return Err(vec!["Could not save settings".into()]);
+        }
+        let old = std::mem::replace(&mut *self.settings.borrow_mut(), new.clone());
+        self.apply_settings(&old, &new);
+        Ok(())
+    }
+
     /// A change of the settings from elsewhere than the settings page (the bookmarks bar's
     /// menu): validated, saved and applied the same way.
     pub(super) fn change_settings(&self, f: impl FnOnce(&mut Settings)) {
@@ -144,8 +164,13 @@ impl Browser {
         {
             self.start_power_timer();
         }
-        if old.theme != new.theme {
+        if old.theme != new.theme || old.appearance != new.appearance {
+            // Appearance options are CSS variables: the shell, the popup and the pages take
+            // them live through the same path as the theme.
             self.apply_theme();
+        }
+        if old.ntp != new.ntp {
+            self.push_ntp_config();
         }
         if old.bookmarks_bar != new.bookmarks_bar {
             self.send_shell_config();
@@ -226,7 +251,10 @@ impl Browser {
         }
         self.send_shell_config();
         self.apply_frame_theme();
-        let e = Event::Theme { theme }.to_json();
+        let e = {
+            let s = self.settings.borrow();
+            Event::Theme { theme, accent: s.appearance.accent.clone(), ui_font_px: s.appearance.ui_font_px }.to_json()
+        };
         let popup = self.popup.borrow().as_ref().and_then(|p| p.view.clone());
         if let Some(c) = popup {
             c.post_json(&e);
@@ -254,7 +282,11 @@ impl Browser {
 
     /// Theme for one page that just loaded.
     pub(super) fn send_theme_to(&self, c: &engine::View) {
-        c.post_json(&Event::Theme { theme: self.settings.borrow().theme }.to_json());
+        let s = self.settings.borrow();
+        c.post_json(
+            &Event::Theme { theme: s.theme, accent: s.appearance.accent.clone(), ui_font_px: s.appearance.ui_font_px }
+                .to_json(),
+        );
     }
 
     // ------------------------------------------------------------ exit / restart

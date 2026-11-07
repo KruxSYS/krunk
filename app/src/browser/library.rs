@@ -14,9 +14,6 @@ use lb_core::tabs::TabId;
 use lb_core::urlclean;
 use serde::Serialize;
 
-/// Number of tiles on the new-tab page.
-const TOP_SITES: usize = 12;
-
 impl Browser {
     /// Requests of the built-in pages and the shell's library features.
     pub(super) fn dispatch_library(&self, sender: Sender, tab: Option<TabId>, req_id: Option<u32>, request: Request) {
@@ -38,10 +35,51 @@ impl Browser {
             }
 
             // ---- new tab page ----
-            Request::GetTopSites => self.reply_db(tab, req_id, self.store.borrow().top_sites(TOP_SITES, now)),
-            Request::GetNewTabConfig => {
-                let name = self.settings.borrow().search_name();
-                self.reply(tab, Event::ok(req_id, serde_json::json!({ "searchName": name })));
+            Request::GetTopSites => {
+                let (source, n) = {
+                    let s = self.settings.borrow();
+                    (s.ntp.tiles, s.ntp.tile_count())
+                };
+                let r = match source {
+                    lb_core::settings::TileSource::MostVisited => self.store.borrow().top_sites(n, now),
+                    lb_core::settings::TileSource::Custom => self.store.borrow().pinned_tiles(n),
+                };
+                self.reply_db(tab, req_id, r)
+            }
+            Request::GetNewTabConfig => self.reply(tab, Event::ok(req_id, self.ntp_config())),
+            Request::SetNtpOptions { ntp } => {
+                // The image file name is the host's: the page cannot point it elsewhere.
+                let image = self.settings.borrow().ntp.image.clone();
+                let mut candidate = self.settings.borrow().clone();
+                candidate.ntp = lb_core::settings::Ntp { image, ..ntp };
+                match self.save_settings_from(tab, req_id, candidate) {
+                    Ok(()) => self.reply(tab, Event::ok(req_id, self.ntp_config())),
+                    Err(errors) => self.reply(tab, Event::err(req_id, errors.join("; "))),
+                }
+            }
+            Request::NtpPickImage => self.ntp_pick_image(tab, req_id),
+            Request::ReorderTiles { urls } => {
+                let urls: Vec<String> = urls.into_iter().filter(|u| bookmarkable(u)).take(72).collect();
+                self.reply_db(tab, req_id, self.store.borrow().reorder_tiles(&urls))
+            }
+            Request::AddTile { url, title } => {
+                let u = urlclean::input_to_url(url.trim(), "https://duckduckgo.com/?q={searchTerms}");
+                if !bookmarkable(&u) {
+                    return self.reply(tab, Event::err(req_id, "Enter a web address"));
+                }
+                let t = if title.trim().is_empty() {
+                    urlclean::host_of(&u).unwrap_or_default()
+                } else {
+                    title.trim().to_string()
+                };
+                self.reply_db(tab, req_id, self.store.borrow().pin_site(&u, &t))
+            }
+            Request::EditTile { url, new_url, title } => {
+                let u = urlclean::input_to_url(new_url.trim(), "https://duckduckgo.com/?q={searchTerms}");
+                if !bookmarkable(&u) {
+                    return self.reply(tab, Event::err(req_id, "Enter a web address"));
+                }
+                self.reply_db(tab, req_id, self.store.borrow().edit_tile(&url, &u, title.trim()))
             }
             Request::PinSite { url, title } => self.reply_db(tab, req_id, self.store.borrow().pin_site(&url, &title)),
             Request::UnpinSite { url } => self.reply_db(tab, req_id, self.store.borrow().unpin_site(&url)),
@@ -95,6 +133,70 @@ impl Browser {
     }
 
     /// Replies with a database result (errors become an error reply).
+    /// What the new tab page needs: the search engine's name, the shortcut list and its options.
+    pub(super) fn ntp_config(&self) -> serde_json::Value {
+        let s = self.settings.borrow();
+        serde_json::json!({
+            "searchName": s.search_name(),
+            "shortcuts": lb_core::keys::SHORTCUTS,
+            "ntp": s.ntp,
+            "imageUrl": if s.ntp.image.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(lb_core::assets::ntp_image_url(&s.ntp.image)) },
+        })
+    }
+
+    /// Every open new tab page gets the options again (the customize panel of one page, or
+    /// the settings page, changed them).
+    pub(super) fn push_ntp_config(&self) {
+        let event = Event::NewTabConfig { config: self.ntp_config() }.to_json();
+        let tabs: Vec<TabId> = self
+            .ws
+            .borrow()
+            .tabs()
+            .filter(|(_, t)| lb_core::pages::Page::from_url(&t.url) == Some(lb_core::pages::Page::NewTab))
+            .map(|(_, t)| t.id)
+            .collect();
+        for id in tabs {
+            if let Some(c) = self.tab_view(id) {
+                c.post_json(&event);
+            }
+        }
+    }
+
+    /// "Choose image": the file dialog, then a copy of the picture into the profile (the
+    /// previous one is removed) and the setting switched to the image.
+    fn ntp_pick_image(&self, tab: Option<TabId>, req_id: Option<u32>) {
+        let Some(w) = self.window() else { return };
+        let Some(path) =
+            dialogs::open_file(w.hwnd(), "Background image", ("Images", "*.png;*.jpg;*.jpeg;*.webp;*.gif"))
+        else {
+            return self.reply(tab, Event::err(req_id, "No image chosen"));
+        };
+        let ext = path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).unwrap_or_default();
+        if !matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp" | "gif") {
+            return self.reply(tab, Event::err(req_id, "Choose a PNG, JPEG, WebP or GIF file"));
+        }
+        let name = format!("ntp-background-{}.{ext}", now_ms());
+        let dest = self.dirs.root().join(&name);
+        if let Err(e) = std::fs::copy(&path, &dest) {
+            warning!("new tab background: copying {} failed: {e}", path.display());
+            return self.reply(tab, Event::err(req_id, "The image could not be copied into the profile"));
+        }
+        let old = self.settings.borrow().ntp.image.clone();
+        let mut candidate = self.settings.borrow().clone();
+        candidate.ntp.image = name;
+        candidate.ntp.background = lb_core::settings::NtpBackground::Image;
+        match self.save_settings_from(tab, req_id, candidate) {
+            Ok(()) => {
+                if !old.is_empty() {
+                    let _ = std::fs::remove_file(self.dirs.root().join(old));
+                }
+                info!("new tab background: image set");
+                self.reply(tab, Event::ok(req_id, self.ntp_config()));
+            }
+            Err(errors) => self.reply(tab, Event::err(req_id, errors.join("; "))),
+        }
+    }
+
     pub(super) fn reply_db<T: Serialize>(&self, tab: Option<TabId>, req_id: Option<u32>, r: Result<T, DbError>) {
         match r {
             Ok(v) => self.reply(tab, Event::ok(req_id, v)),
@@ -175,6 +277,12 @@ impl Browser {
             self.downloads.borrow_mut().clear_finished();
             self.save_downloads();
             self.push_downloads();
+        }
+        if data.site_data && data.since.is_none() {
+            // Stored permission answers are site data too.
+            if let Err(e) = self.store.borrow().permissions_clear() {
+                warning!("clear permissions: {e}");
+            }
         }
         let kinds = ClearKinds { cookies: data.cookies, cache: data.cache, site_data: data.site_data };
         info!(

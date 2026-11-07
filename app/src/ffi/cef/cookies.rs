@@ -180,6 +180,7 @@ fn cookie_info(c: &Cookie) -> CookieInfo {
         domain: c.domain.to_string(),
         path: c.path.to_string(),
         expires: (c.has_expires != 0).then(|| windows_us_to_unix_ms(c.expires.val)),
+        last_access: (c.last_access.val != 0).then(|| windows_us_to_unix_ms(c.last_access.val)),
         secure: c.secure != 0,
         http_only: c.httponly != 0,
         same_site: if same_site == CookieSameSite::NO_RESTRICTION.get_raw() {

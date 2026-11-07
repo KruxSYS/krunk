@@ -1,19 +1,33 @@
-body { display: flex; justify-content: center; }
+/* The body's own background would paint over the fixed layers below (html keeps the
+   theme's background as the canvas), so the body is transparent here. */
+body { display: flex; justify-content: center; position: relative; min-height: 100vh; background: transparent; }
+/* Background image and dim layers (0.6.0), behind everything. */
+#bg { position: fixed; inset: 0; background-size: cover; background-position: center; z-index: -2; }
+#dim { position: fixed; inset: 0; background: #000; opacity: 0; z-index: -1; }
+body.has-image { color: #fff; }
+body.has-image #search input { background: rgba(255,255,255,.92); color: #1f2937; }
+body.has-image .tile { color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.7); }
+body.has-image #keys { background: rgba(0,0,0,.45); }
 main { width: min(820px, 92vw); padding-top: 16vh; }
 #search input { width: 100%; height: 48px; padding: 0 22px; border: 1px solid var(--border); border-radius: 24px;
-                background: var(--bg-raised); color: var(--fg); font: inherit; font-size: 16px; outline: none;
+                background: var(--bg-raised); color: var(--fg); font: inherit; font-size: 1.231rem; outline: none;
                 box-shadow: 0 1px 4px rgba(0,0,0,.06); }
 #search input:focus { border-color: var(--accent); }
-#tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 14px; margin-top: 40px; }
+#search[hidden], #tiles[hidden] { display: none; }
+#tiles { display: grid; grid-template-columns: repeat(var(--cols, 6), 1fr); gap: 14px; margin-top: 40px; }
 .tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 18px 8px 12px;
         border-radius: 12px; color: var(--fg); text-decoration: none; }
 .tile:hover { background: var(--bg-raised); box-shadow: 0 1px 6px rgba(0,0,0,.08); }
+body.has-image .tile:hover { background: rgba(0,0,0,.35); }
+.tile.dragging { opacity: .4; }
+.tile.drop-before { box-shadow: -3px 0 0 var(--accent); }
+.tile.drop-after { box-shadow: 3px 0 0 var(--accent); }
 .tile .avatar { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px;
                 border-radius: 50%; background: var(--bg-raised); border: 1px solid var(--border); }
 .tile .avatar img, .tile .avatar .fav { width: 24px; height: 24px; }
 .tile .avatar .fav.letter { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px;
-                            border-radius: 50%; font-size: 20px; background: transparent; }
-.tile .label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+                            border-radius: 50%; font-size: 1.538rem; background: transparent; }
+.tile .label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.923rem; }
 .tile .tools { position: absolute; top: 4px; right: 4px; display: flex; opacity: 0; }
 .tile:hover .tools, .tile:focus-within .tools { opacity: 1; }
 .tile .tools .icon-btn { min-width: 22px; height: 22px; padding: 0 3px; }
@@ -21,5 +35,22 @@ main { width: min(820px, 92vw); padding-top: 16vh; }
 .tile .pinned-mark { position: absolute; top: 14px; left: calc(50% + 16px); display: flex; padding: 2px; border-radius: 50%; background: var(--bg-raised); color: var(--accent); }
 .tile .pinned-mark .icon { width: 13px; height: 13px; }
 .tile.pinned .tools .pin { color: var(--accent); }
-#empty { margin-top: 40px; text-align: center; color: var(--fg-muted); }
-#empty { grid-column: 1 / -1; }
+.tile.add .avatar { border-style: dashed; font-size: 1.846rem; color: var(--fg-muted); }
+#empty { margin-top: 40px; text-align: center; color: var(--fg-muted); grid-column: 1 / -1; }
+/* Keyboard shortcuts (0.6.0): a compact two-column list the user can hide. */
+#keys { margin-top: 48px; padding: 10px 16px 12px; border-radius: 12px; background: var(--bg-raised); border: 1px solid var(--border); }
+#keys[hidden] { display: none; }
+.keys-head { display: flex; justify-content: space-between; align-items: center; font-weight: 600; margin-bottom: 6px; }
+#keys-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 2px 24px; font-size: 0.923rem; }
+#keys-list li { display: flex; justify-content: space-between; gap: 10px; }
+#keys-list kbd { font: 11px/1.4 var(--font); color: var(--fg-muted); white-space: nowrap; }
+.link { border: 0; background: none; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
+#customize { position: fixed; right: 16px; bottom: 16px; }
+dialog fieldset { border: 1px solid var(--border); border-radius: 8px; margin: 0 0 12px; padding: 8px 12px; display: flex; flex-direction: column; gap: 6px; }
+dialog legend { font-weight: 600; }
+dialog label { display: flex; align-items: center; gap: 8px; }
+dialog .sliders label { gap: 10px; }
+dialog .buttons { display: flex; justify-content: flex-end; gap: 8px; }
+dialog input[type=text], dialog input[type=number] { font: inherit; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); }
+#tile-form label { flex-direction: column; align-items: stretch; gap: 4px; margin-bottom: 10px; }
+.field-error { color: var(--danger); min-height: 1.2em; margin: 4px 0; }

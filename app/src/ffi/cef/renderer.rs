@@ -22,6 +22,8 @@ pub(super) const TO_BROWSER: &str = "lb.msg";
 pub(super) const TO_PAGE: &str = "lb.evt";
 /// A frame started or stopped playing audio (`bool`).
 pub(super) const AUDIO_TO_BROWSER: &str = "lb.audio";
+/// Renderer → browser: this renderer's process id (once per browser, for the task manager).
+pub(super) const PID_TO_BROWSER: &str = "lb.pid";
 /// Pointer lock, frame to browser (`LockMessage` JSON) and back (events).
 pub(super) const POINTER_TO_BROWSER: &str = "lb.plock";
 pub(super) const POINTER_TO_FRAME: &str = "lb.plock.evt";
@@ -87,6 +89,25 @@ const AUDIO_TRACKER: &str = r#"(function (report) {
     } });
   });
 })"#;
+
+thread_local! {
+    /// Browsers whose renderer already told the host its process id.
+    static PID_SENT: RefCell<std::collections::HashSet<i32>> = RefCell::new(std::collections::HashSet::new());
+}
+
+/// Tells the browser process which OS process hosts this browser (the task manager shows
+/// PIDs; CEF's task list has none).
+fn report_pid(browser: &mut Browser, frame: &mut Frame) {
+    let id = browser.identifier();
+    if !PID_SENT.with(|s| s.borrow_mut().insert(id)) {
+        return;
+    }
+    let Some(mut message) = process_message_create(Some(&CefString::from(PID_TO_BROWSER))) else { return };
+    if let Some(args) = message.argument_list() {
+        args.set_int(0, std::process::id() as i32);
+    }
+    frame.send_process_message(ProcessId::BROWSER, Some(&mut message));
+}
 
 /// The uBO scriptlets of this renderer process (one engine for all its
 /// browsers; see `scriptlets.rs`).
@@ -171,6 +192,9 @@ wrap_render_process_handler! {
             context: Option<&mut V8Context>,
         ) {
             let (Some(browser), Some(frame), Some(context)) = (browser, frame, context) else { return };
+            if frame.is_main() == 1 {
+                report_pid(browser, frame);
+            }
             // First, before anything of the page runs: uBO's scriptlets.
             run_scriptlets(browser, frame, context);
             let scripts = SCRIPTS.with(|s| s.borrow().get(&browser.identifier()).map(|e| e.0)).unwrap_or_default();
@@ -250,6 +274,9 @@ fn context_created(scripts: Scripts, frame: &mut Frame, context: &mut V8Context)
     }
     if scripts.page_tokens {
         eval(context, assets::inject_script("page-tokens.js"));
+    }
+    if scripts.notify {
+        eval(context, assets::inject_script("notify.js"));
     }
 }
 

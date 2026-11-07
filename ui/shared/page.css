@@ -2,12 +2,12 @@
 body { min-height: 100vh; }
 .page { max-width: 960px; margin: 0 auto; padding: 24px 24px 64px; }
 .page-header { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
-.page-header h1 { margin: 0 auto 0 0; font-size: 22px; font-weight: 600; }
+.page-header h1 { margin: 0 auto 0 0; font-size: 1.692rem; font-weight: 600; }
 .search { width: 320px; max-width: 100%; height: 34px; padding: 0 14px; border: 1px solid var(--border);
           border-radius: 17px; background: var(--bg-raised); color: var(--fg); font: inherit; outline: none; }
 .search:focus { border-color: var(--accent); }
 .card { background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
-.group-title { margin: 22px 0 8px; font-size: 13px; font-weight: 600; color: var(--fg-muted); }
+.group-title { margin: 22px 0 8px; font-size: 1rem; font-weight: 600; color: var(--fg-muted); }
 .row { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 6px 12px; border-top: 1px solid var(--border); }
 .row:first-child { border-top: 0; }
 .row:hover { background: var(--bg-hover); }
@@ -17,8 +17,8 @@ body { min-height: 100vh; }
 .row .main { flex: 1; min-width: 0; display: flex; gap: 10px; align-items: baseline; }
 .row .main a, .row .main .name { color: var(--fg); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row .main a:hover { text-decoration: underline; }
-.row .sub { color: var(--fg-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.row .time { width: 64px; flex: none; color: var(--fg-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.row .sub { color: var(--fg-muted); font-size: 0.923rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .time { width: 64px; flex: none; color: var(--fg-muted); font-size: 0.923rem; font-variant-numeric: tabular-nums; }
 .row .actions { display: flex; gap: 4px; opacity: 0; }
 .row:hover .actions, .row:focus-within .actions { opacity: 1; }
 .icon-btn { display: flex; align-items: center; justify-content: center; min-width: 28px; height: 28px; padding: 0 6px;
@@ -29,7 +29,7 @@ body { min-height: 100vh; }
 dialog { border: 1px solid var(--border); border-radius: 12px; padding: 20px 22px; background: var(--bg-raised);
          color: var(--fg); min-width: 360px; box-shadow: 0 12px 40px rgba(0,0,0,.25); }
 dialog::backdrop { background: rgba(0,0,0,.35); }
-dialog h2 { margin: 0 0 14px; font-size: 17px; }
+dialog h2 { margin: 0 0 14px; font-size: 1.308rem; }
 dialog label { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
 dialog .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 select, input[type=text] { height: 30px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px;

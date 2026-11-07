@@ -38,6 +38,9 @@ pub struct HitMap {
     /// would be dropped.
     #[serde(default)]
     pub tab_centers: Vec<f64>,
+    /// The downloads button (the target of the download-start flight); zero when hidden.
+    #[serde(default)]
+    pub downloads: PopupRect,
 }
 
 impl HitMap {
@@ -138,6 +141,7 @@ mod tests {
             maximize: r(908.0, 0.0, 46.0, 36.0),
             close: r(954.0, 0.0, 46.0, 36.0),
             tab_centers: vec![50.0, 150.0, 250.0],
+            downloads: PopupRect { x: 0.0, y: 0.0, width: 0.0, height: 0.0 },
         }
     }
 

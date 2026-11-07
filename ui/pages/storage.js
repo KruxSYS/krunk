@@ -1,13 +1,17 @@
 // krunk://storage: cookies grouped by site (registrable domain), per-origin site data
 // with sizes, and deleting a cookie, a site's cookies, all cookies or an origin's data.
+// 0.6.0: sort by name, usage or last used; a usage breakdown and the last use per site;
+// select sites and clear them, or clear everything shown; the totals at the top.
 (function () {
   'use strict';
   const el = LB.el;
   const list = document.getElementById('list');
   const search = document.getElementById('search');
+  const sortSel = document.getElementById('sort');
   const VALUE_PREVIEW = 48;
   let sites = [];
   const open = new Set();
+  const selected = new Set();
   const usage = new Map(); // origin -> {usage, breakdown}
 
   function size(n) {
@@ -20,8 +24,20 @@
   const KIND = { local_storage: 'local storage', indexeddb: 'IndexedDB', cache_storage: 'Cache Storage',
     service_workers: 'service workers', file_systems: 'file systems', websql: 'Web SQL', shared_storage: 'shared storage',
     storage_buckets: 'storage buckets', interest_groups: 'interest groups', shader_cache: 'shader cache' };
+  // The row's short breakdown: the engine's storage types folded into three groups.
+  const GROUP = { local_storage: 'local', indexeddb: 'IndexedDB', cache_storage: 'cache', service_workers: 'cache' };
   function expiry(ms) { return ms === null || ms === undefined ? 'Session' : new Date(ms).toLocaleString(); }
   function sameSite(s) { return { unspecified: '–', none: 'None', lax: 'Lax', strict: 'Strict' }[s] || s; }
+  function ago(ms) {
+    if (!ms) return 'never used';
+    const d = Date.now() - ms;
+    if (d < 60000) return 'just now';
+    if (d < 3600000) return Math.round(d / 60000) + ' min ago';
+    if (d < 86400000) return Math.round(d / 3600000) + ' h ago';
+    if (d < 172800000) return 'yesterday';
+    if (d < 30 * 86400000) return Math.round(d / 86400000) + ' days ago';
+    return new Date(ms).toLocaleDateString();
+  }
 
   function load() {
     return LB.request('storageList').then(function (r) {
@@ -43,12 +59,48 @@
     s.origins.forEach(function (o) { const u = usage.get(o); if (u && u.usage) { total += u.usage; known = true; } });
     return known ? total : null;
   }
+  // "local 2.0 KB · IndexedDB 50 KB · cache 3 KB" over the site's origins.
+  function siteBreakdown(s) {
+    const groups = {};
+    s.origins.forEach(function (o) {
+      const u = usage.get(o);
+      if (!u) return;
+      u.breakdown.forEach(function (b) { const g = GROUP[b[0]] || 'other'; groups[g] = (groups[g] || 0) + b[1]; });
+    });
+    return ['local', 'IndexedDB', 'cache', 'other'].filter(function (g) { return groups[g]; }).map(function (g) { return g + ' ' + size(groups[g]); });
+  }
+
+  function shownSites() {
+    const q = search.value.trim().toLowerCase();
+    const shown = sites.filter(function (s) { return !q || s.site.indexOf(q) >= 0 || s.origins.some(function (o) { return o.indexOf(q) >= 0; }); });
+    const by = sortSel.value;
+    if (by === 'usage') {
+      shown.sort(function (a, b) { return (siteUsage(b) || 0) - (siteUsage(a) || 0) || b.cookies - a.cookies || a.site.localeCompare(b.site); });
+    } else if (by === 'lastUsed') {
+      shown.sort(function (a, b) { return (b.lastUsed || 0) - (a.lastUsed || 0) || a.site.localeCompare(b.site); });
+    } else {
+      shown.sort(function (a, b) { return a.site.localeCompare(b.site); });
+    }
+    return shown;
+  }
+
+  // The selection buttons (without re-rendering the list: a checkbox keeps its focus).
+  function updateHeader(shown) {
+    const selBtn = document.getElementById('clear-selected');
+    selBtn.hidden = !selected.size;
+    selBtn.textContent = 'Clear selected (' + selected.size + ')';
+    document.getElementById('clear-shown').disabled = !(shown || shownSites()).length;
+  }
 
   function render() {
     const q = search.value.trim().toLowerCase();
-    const shown = sites.filter(function (s) { return !q || s.site.indexOf(q) >= 0 || s.origins.some(function (o) { return o.indexOf(q) >= 0; }); });
+    const shown = shownSites();
     const cookieTotal = sites.reduce(function (n, s) { return n + s.cookies; }, 0);
-    document.getElementById('summary').textContent = sites.length + ' sites, ' + cookieTotal + ' cookies' + (q ? ' · ' + shown.length + ' shown' : '');
+    let bytes = 0;
+    sites.forEach(function (s) { bytes += siteUsage(s) || 0; });
+    document.getElementById('summary').textContent = sites.length + ' sites, ' + cookieTotal + ' cookies' +
+      (bytes ? ', ' + size(bytes) + ' of site data' : '') + (q ? ' · ' + shown.length + ' shown' : '');
+    updateHeader(shown);
     list.textContent = '';
     if (!shown.length) {
       list.appendChild(el('div', { class: 'empty', text: q ? 'No site matches.' : 'No cookies or site data.' }));
@@ -59,12 +111,20 @@
 
   function siteNode(s) {
     const used = siteUsage(s);
+    const parts = [s.cookies + (s.cookies === 1 ? ' cookie' : ' cookies')].concat(siteBreakdown(s));
+    const check = el('input', { type: 'checkbox', class: 'pick', 'aria-label': 'Select ' + s.site });
+    check.checked = selected.has(s.site);
+    check.addEventListener('click', function (e) { e.stopPropagation(); });
+    check.addEventListener('change', function () { if (check.checked) selected.add(s.site); else selected.delete(s.site); updateHeader(); });
     const node = el('div', { class: 'site' + (open.has(s.site) ? ' open' : ''), 'data-site': s.site }, [
       el('div', { class: 'row', tabindex: '0', role: 'button', 'aria-expanded': open.has(s.site) ? 'true' : 'false' }, [
+        check,
         el('span', { class: 'chev', text: '›' }),
         Page.favicon('https://' + s.site + '/'),
         el('div', { class: 'main' }, [el('span', { class: 'name', text: s.site })]),
-        el('span', { class: 'count', text: s.cookies + (s.cookies === 1 ? ' cookie' : ' cookies') + (used ? ' · ' + size(used) : '') }),
+        el('span', { class: 'count', text: parts.join(' · ') + (used ? ' · ' + size(used) : '') }),
+        el('span', { class: 'last', title: s.lastUsed ? new Date(s.lastUsed).toLocaleString() : '', text: ago(s.lastUsed) }),
+        Page.iconButton('trash', 'Clear ' + s.site, function (e) { e.stopPropagation(); clearSites([s]); }),
       ]),
       el('div', { class: 'details' }),
     ]);
@@ -75,8 +135,9 @@
       head.setAttribute('aria-expanded', open.has(s.site) ? 'true' : 'false');
       if (open.has(s.site)) fillDetails(s, node.lastChild);
     };
-    head.addEventListener('click', toggle);
-    head.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+    head.addEventListener('click', function (e) { if (!e.target.closest('.icon-btn, .pick')) toggle(); });
+    // Only the row itself: Space on its checkbox and Enter on its button do their own thing.
+    head.addEventListener('keydown', function (e) { if (e.target === head && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggle(); } });
     if (open.has(s.site)) fillDetails(s, node.lastChild);
     return node;
   }
@@ -110,6 +171,7 @@
       });
     }
     box.appendChild(el('div', { class: 'site-actions' }, [
+      el('button', { class: 'link-btn danger clear-site', text: 'Clear ' + s.site + ' (cookies, data and permissions)', onclick: function () { clearSites([s]); } }),
       s.cookies ? el('button', { class: 'link-btn danger', text: 'Delete all cookies of ' + s.site, onclick: function () { deleteSite(s.site); } }) : null,
     ]));
   }
@@ -155,6 +217,29 @@
         .catch(function (e) { Page.toast(e.message); });
     });
   }
+
+  // Clears whole sites: their cookies, then every origin's storage (which also forgets the
+  // permission answers). Sequential, so the engine sees one request at a time.
+  function clearSites(which) {
+    if (!which.length) return;
+    const what = which.length === 1 ? which[0].site : which.length + ' sites';
+    Page.confirm('Clear all cookies, site data and permission answers of ' + what + '? You will be signed out there.', { ok: 'Clear', danger: true }).then(function (yes) {
+      if (!yes) return;
+      let chain = Promise.resolve();
+      which.forEach(function (s) {
+        if (s.cookies) chain = chain.then(function () { return LB.request('storageDeleteSite', { site: s.site }); });
+        s.origins.forEach(function (o) { chain = chain.then(function () { return LB.request('storageClearOrigin', { origin: o }).then(function () { usage.delete(o); }); }); });
+        chain = chain.then(function () { selected.delete(s.site); open.delete(s.site); });
+      });
+      chain.then(function () { Page.toast(which.length === 1 ? 'Site cleared' : which.length + ' sites cleared'); load(); })
+        .catch(function (e) { Page.toast(e.message); load(); });
+    });
+  }
+  document.getElementById('clear-selected').addEventListener('click', function () {
+    clearSites(sites.filter(function (s) { return selected.has(s.site); }));
+  });
+  document.getElementById('clear-shown').addEventListener('click', function () { clearSites(shownSites()); });
+  sortSel.addEventListener('change', render);
 
   document.getElementById('delete-all').addEventListener('click', function () {
     Page.confirm('Delete all cookies? You will be signed out of most sites.', { ok: 'Delete all', danger: true }).then(function (yes) {

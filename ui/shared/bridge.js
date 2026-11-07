@@ -69,12 +69,20 @@
   }
 
   // Theme for every built-in page: "system" follows prefers-color-scheme.
-  function applyTheme(theme) {
+  function applyTheme(theme, accent) {
     const root = document.documentElement;
     root.classList.toggle('dark', theme === 'dark');
     root.classList.toggle('light', theme === 'light');
+    // 0.6.0: the accent colour from Settings → Appearance (empty = the theme's own).
+    if (accent) root.style.setProperty('--accent', accent); else root.style.removeProperty('--accent');
   }
-  on('theme', function (m) { applyTheme(m.theme); });
+  // The UI font size (Settings → Appearance) for Krunk's own pages.
+  function applyFontSize(px) {
+    const fs = px && px !== 13 ? px + 'px' : '';
+    document.documentElement.style.fontSize = fs;
+    if (document.body) document.body.style.fontSize = fs;
+  }
+  on('theme', function (m) { applyTheme(m.theme, m.accent); if (m.uiFontPx !== undefined) applyFontSize(m.uiFontPx); });
 
   window.LB = { post: post, request: request, on: on, el: el, applyTheme: applyTheme, _dispatch: dispatch };
 })();

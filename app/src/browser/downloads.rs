@@ -6,7 +6,7 @@ use crate::ffi::dialogs;
 use crate::log::{info, warning};
 use lb_core::downloads::{interrupt_reason_text, sanitize_file_name, unique_path, DownloadState};
 use lb_core::pages::Page;
-use lb_core::protocol::{DownloadAction, Event, Request};
+use lb_core::protocol::{DownloadAction, Event, PopupContent, PopupKind, Request};
 use lb_core::storage::now_ms;
 use lb_core::tabs::TabId;
 use std::cell::Cell;
@@ -15,6 +15,9 @@ use std::rc::Rc;
 
 /// Minimum time between progress pushes to the downloads page.
 const PROGRESS_PUSH_MS: i64 = 400;
+
+/// Rows the downloads popup shows (the page shows everything).
+const DOWNLOADS_POPUP_MAX: usize = 8;
 
 impl Browser {
     /// `tab`: the tab whose view this is (a tab with a running download
@@ -88,6 +91,15 @@ impl Browser {
         self.download_ops.borrow_mut().insert(start.id, (id, None));
         start.accept(&path);
         self.push_downloads();
+        self.download_flight(tab);
+    }
+
+    /// The downloads button's popup: the list, newest first.
+    pub(super) fn downloads_content(&self) -> PopupContent {
+        let mut items = self.downloads.borrow().items();
+        items.reverse();
+        items.truncate(DOWNLOADS_POPUP_MAX);
+        PopupContent::Downloads { items }
     }
 
     fn download_updated(&self, update: DownloadUpdate, tab: Option<TabId>, last_push: &Cell<i64>) {
@@ -109,7 +121,7 @@ impl Browser {
         let changed = {
             let mut d = self.downloads.borrow_mut();
             let before = d.get(id).map(|i| i.state);
-            d.progress(id, update.received, update.total);
+            d.progress_at(id, update.received, update.total, now_ms());
             if !update.path.as_os_str().is_empty() {
                 d.set_path(id, &update.path);
             }
@@ -275,6 +287,10 @@ impl Browser {
             (d.items(), d.active_count())
         };
         let event = Event::Downloads { items }.to_json();
+        // The button's popup, if open, shows the same list.
+        if self.popup_kind() == Some(PopupKind::Downloads) {
+            self.show_popup(self.downloads_content(), None);
+        }
         let tabs: Vec<TabId> = self
             .ws
             .borrow()

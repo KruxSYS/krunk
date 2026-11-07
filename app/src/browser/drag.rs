@@ -77,6 +77,15 @@ impl Browser {
         self.apply(ops);
     }
 
+    /// "New private window" (the title bar's menu): a window whose first tab is private.
+    pub(super) fn new_private_window(&self) {
+        let bounds = self.cascade_bounds();
+        let (_, tab, ops) = self.ws.borrow_mut().open_window("", true, bounds, false, now_ms());
+        info!("new private window");
+        self.address_focus.set(Some(tab));
+        self.apply(ops);
+    }
+
     /// "Move to new window" (tab context menu). Refused for a window's only tab.
     pub(super) fn move_tab_to_new_window(&self, tab: TabId) {
         let bounds = self.cascade_bounds();

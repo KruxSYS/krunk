@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Task manager</title>
+<link rel="stylesheet" href="shared/common.css">
+<link rel="stylesheet" href="shared/page.css">
+<link rel="stylesheet" href="tasks.css">
+</head>
+<body>
+<div class="page wide">
+  <div class="page-header">
+    <h1>Task manager</h1>
+    <span id="summary" class="muted"></span>
+    <button id="end" class="btn danger" disabled>End process</button>
+  </div>
+  <div class="card">
+    <table id="tasks" class="tasks">
+      <thead>
+        <tr>
+          <th data-sort="title" class="sortable sorted asc">Task</th>
+          <th data-sort="kind" class="sortable">Type</th>
+          <th data-sort="memory" class="sortable num">Memory</th>
+          <th data-sort="workingSet" class="sortable num">Working set</th>
+          <th data-sort="private" class="sortable num">Private</th>
+          <th data-sort="cpu" class="sortable num">CPU</th>
+          <th data-sort="network" class="sortable num">Network</th>
+          <th data-sort="pid" class="sortable num">PID</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <p class="muted note">Memory is the engine's private footprint of the process; working set and private bytes come from
+    Windows. CPU is the share of all processors. Network counts what the tabs of a renderer received since the previous
+    second. Ending a renderer shows its tabs the "page crashed" message; the browser process cannot be ended here.
+    Refreshes every second (Shift+Esc opens this page).</p>
+</div>
+<script src="shared/bridge.js"></script>
+<script src="shared/page.js"></script>
+<script src="tasks.js"></script>
+</body>
+</html>

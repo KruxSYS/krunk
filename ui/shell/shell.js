@@ -26,7 +26,7 @@
     const node = el('div', {
       class: 'tab', role: 'tab', 'data-id': id,
       onmousedown: function (e) {
-        if (e.button !== 0 || e.target.closest('.close')) return;
+        if (e.button !== 0 || e.target.closest('.close, .audio')) return;
         // Double-click duplicates. Detected here rather than with dblclick: the first press
         // activates the tab and re-renders it, which can swallow a dblclick.
         if (lastPress.id === id && e.timeStamp - lastPress.at < DOUBLE_PRESS_MS) {
@@ -63,10 +63,18 @@
       : t.favicon
         ? el('img', { class: 'favicon', src: t.favicon, alt: '' })
         : svgIcon('i-globe', 'favicon');
+    // A speaker while the page plays sound (crossed out when the tab is muted); a click
+    // toggles the mute (0.6.0).
+    const speaker = (t.audible || t.muted) ? el('button', {
+      class: 'audio' + (t.muted ? ' muted' : ''), title: t.muted ? 'Unmute tab' : 'Mute tab', 'aria-label': t.muted ? 'Unmute tab' : 'Mute tab',
+      onclick: function (e) { e.stopPropagation(); LB.post('tabMute', { id: t.id, muted: !t.muted }); },
+      onmousedown: function (e) { e.stopPropagation(); },
+    }, [svgIcon(t.muted ? 'i-audio-off' : 'i-audio')]) : null;
     node.replaceChildren.apply(node, [
       t.private ? el('span', { class: 'private-mark', title: 'Private tab' }, [svgIcon('i-mask')]) : null,
       icon,
       el('span', { class: 'title', text: t.title || 'New tab' }),
+      speaker,
       el('button', {
         class: 'close', title: 'Close tab (Ctrl+W)', 'aria-label': 'Close tab',
         onclick: function (e) { e.stopPropagation(); closeWithMouse(t.id); },
@@ -215,6 +223,7 @@
       minimize: rectOf($('win-min')),
       maximize: rectOf($('win-max')),
       close: rectOf($('win-close')),
+      downloads: $('downloads').hidden ? { x: 0, y: 0, width: 0, height: 0 } : rectOf($('downloads')),
     };
     const json = JSON.stringify(map);
     if (json === lastMap) return;
@@ -349,7 +358,7 @@
   // because activating the pressed tab re-renders the tabs (the node goes away).
   function attachDrag(node, id) {
     node.addEventListener('pointerdown', function (e) {
-      if (e.button !== 0 || e.target.closest('.close')) return;
+      if (e.button !== 0 || e.target.closest('.close, .audio')) return;
       if (settling) return;
       const r = node.getBoundingClientRect();
       drag = { id: id, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY,
@@ -491,6 +500,11 @@
     const zoomed = Math.abs((n.zoom || 1) - 1) > 0.001;
     $('zoom').hidden = !zoomed;
     $('key').hidden = !n.loginForm;
+    // 0.6.0: camera / microphone in use.
+    $('media-chip').hidden = !(n.camera || n.microphone);
+    $('media-cam').hidden = !n.camera;
+    $('media-mic').hidden = !n.microphone;
+    $('media-chip').title = n.camera && n.microphone ? 'This page uses your camera and microphone' : n.camera ? 'This page uses your camera' : 'This page uses your microphone';
     $('zoom').textContent = Math.round((n.zoom || 1) * 100) + '%';
     $('back').disabled = !n.canGoBack;
     $('forward').disabled = !n.canGoForward;
@@ -648,7 +662,7 @@
   });
 
   // ---------- popups (menu, shield) ----------
-  const POPUP_SIZES = { menu: [280, 542], shield: [300, 226], siteInfo: [360, 260] };
+  const POPUP_SIZES = { menu: [280, 542], shield: [300, 226], siteInfo: [360, 260], downloads: [380, 420] };
   // The press on the button deactivates the open popup, which closes it before the click
   // arrives (the host then says popupClosed). The click must not reopen it: the press
   // remembers what was open. The host has the same guard (lb_core::toggle).
@@ -671,6 +685,7 @@
     if (kind !== null) downWhileOpen = null;
     state.popup = kind;
     $('menu').classList.toggle('on', kind === 'menu');
+    $('downloads').classList.toggle('on', kind === 'downloads');
     $('shield').classList.toggle('on', kind === 'shield');
     $('site-icon').classList.toggle('on', kind === 'siteInfo');
     document.documentElement.classList.toggle('tab-menu', kind === 'tabMenu');
@@ -919,11 +934,33 @@
     $('bookmarks-bar').hidden = !m.state.bookmarksBar;
     renderNav();
   });
+  // Appearance (0.6.0): colours as CSS variables, density/shape as classes, hidden items.
+  function applyAppearance(a) {
+    if (!a) return;
+    const root = document.documentElement;
+    const set = (name, v) => { if (v) root.style.setProperty(name, v); else root.style.removeProperty(name); };
+    set('--accent', a.accent);
+    set('--toolbar-bg', a.toolbarColor);
+    set('--strip-bg', a.stripColor);
+    set('--bg', a.backgroundColor);
+    // (common.css sets the size on html and body: both get the override.)
+    const fs = a.uiFontPx && a.uiFontPx !== 13 ? a.uiFontPx + 'px' : '';
+    root.style.fontSize = fs;
+    document.body.style.fontSize = fs;
+    root.classList.toggle('compact', a.density === 'compact');
+    root.classList.toggle('square-tabs', a.roundedTabs === false);
+    state.showDownloads = a.showDownloadsButton !== false;
+    $('downloads').classList.toggle('off', !state.showDownloads);
+    $('zoom').classList.toggle('off', a.showZoomChip === false);
+    state.appearance = a;
+    reportHitMap();
+  }
   LB.on('shellConfig', function (m) {
     document.documentElement.classList.toggle('dark', m.theme === 'dark');
     document.documentElement.classList.toggle('light', m.theme === 'light');
     // The placeholder names the default search engine (it changes with the setting).
     if (m.searchName) address.placeholder = 'Search with ' + m.searchName + ' or enter address';
+    applyAppearance(m.appearance);
   });
   LB.on('focusAddressBar', function () { address.focus(); address.select(); });
   LB.on('blurAddressBar', function () { state.dirty = false; if (document.activeElement === address) address.blur(); else renderNav(); });
@@ -938,7 +975,18 @@
     $('downloads-count').textContent = String(m.active);
     $('downloads').title = m.active ? m.active + ' download(s) in progress (Ctrl+J)' : 'Downloads (Ctrl+J)';
   });
-  $('downloads').addEventListener('click', function () { LB.post('command', { command: { command: 'downloads' } }); });
+  // 0.6.0: the button opens its popup (Ctrl+J still opens the page); a new download pulses it.
+  $('downloads').addEventListener('pointerdown', function () { rememberOpen('downloads'); });
+  $('downloads').addEventListener('click', function () { togglePopup('downloads', $('downloads')); });
+  LB.on('downloadStarted', function () {
+    const b = $('downloads');
+    b.hidden = false;
+    b.classList.remove('pulse');
+    void b.offsetWidth;
+    b.classList.add('pulse');
+    setTimeout(function () { b.classList.remove('pulse'); }, 900);
+    reportHitMap();
+  });
   LB.on('showFind', function () {
     $('findbar').hidden = false;
     find.focus();

@@ -78,6 +78,198 @@ pub enum Startup {
     Homepage,
 }
 
+/// What a new tab opens (Krunk 0.6.0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NewTabPage {
+    /// Krunk's new tab page (search box and shortcut tiles).
+    #[default]
+    Krunk,
+    /// The homepage setting.
+    Homepage,
+    /// An empty page.
+    Blank,
+    /// `new_tab_url`.
+    Custom,
+}
+
+/// Where a new tab goes in the strip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NewTabPosition {
+    #[default]
+    End,
+    AfterCurrent,
+}
+
+/// Whether a link opened in a new tab (middle click, Ctrl+click, `target=_blank`) becomes
+/// the active tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LinkTabs {
+    /// As the page asked: `target=_blank` in front, middle click and Ctrl+click behind.
+    #[default]
+    Auto,
+    Switch,
+    Background,
+}
+
+/// What Krunk does when a site asks for a permission and nothing is stored for the site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PermissionDefault {
+    #[default]
+    Ask,
+    Block,
+}
+
+/// Per-permission defaults (Krunk 0.6.0); everything asks unless changed.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PermissionDefaults {
+    pub camera: PermissionDefault,
+    pub microphone: PermissionDefault,
+    pub geolocation: PermissionDefault,
+    pub notifications: PermissionDefault,
+    pub clipboard_read: PermissionDefault,
+    pub midi: PermissionDefault,
+    pub screen_share: PermissionDefault,
+    pub local_network: PermissionDefault,
+}
+
+impl PermissionDefaults {
+    pub fn get(&self, kind: crate::permissions::Kind) -> PermissionDefault {
+        use crate::permissions::Kind as K;
+        match kind {
+            K::Camera => self.camera,
+            K::Microphone => self.microphone,
+            K::Geolocation => self.geolocation,
+            K::Notifications => self.notifications,
+            K::ClipboardRead => self.clipboard_read,
+            K::Midi => self.midi,
+            K::ScreenShare => self.screen_share,
+            K::LocalNetwork => self.local_network,
+        }
+    }
+}
+
+/// Tab-strip density (Krunk 0.6.0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Density {
+    #[default]
+    Normal,
+    Compact,
+}
+
+/// Appearance options beyond the theme (Krunk 0.6.0). Colours are `#rrggbb` or empty for
+/// the theme's own; everything applies live (CSS variables in the shell, popup and pages).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Appearance {
+    /// Accent colour (links, highlights, the active toggle); empty = the theme's.
+    pub accent: String,
+    pub toolbar_color: String,
+    pub strip_color: String,
+    pub background_color: String,
+    pub density: Density,
+    /// UI font size in CSS px (12–16; 13 is the design size).
+    pub ui_font_px: u8,
+    pub rounded_tabs: bool,
+    pub show_downloads_button: bool,
+    pub show_zoom_chip: bool,
+    pub show_extensions_button: bool,
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Appearance {
+            accent: String::new(),
+            toolbar_color: String::new(),
+            strip_color: String::new(),
+            background_color: String::new(),
+            density: Density::Normal,
+            ui_font_px: 13,
+            rounded_tabs: true,
+            show_downloads_button: true,
+            show_zoom_chip: true,
+            show_extensions_button: true,
+        }
+    }
+}
+
+/// The new tab page's background (Krunk 0.6.0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NtpBackground {
+    #[default]
+    None,
+    Color,
+    /// The image the user picked, stored in the profile (`ntp-background.<ext>`).
+    Image,
+}
+
+/// Which tiles the new tab page shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TileSource {
+    /// Pinned tiles, then the most visited sites.
+    #[default]
+    MostVisited,
+    /// Only the user's own (pinned) list.
+    Custom,
+}
+
+/// New tab page options (Krunk 0.6.0); the defaults are the 0.5 page.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Ntp {
+    pub background: NtpBackground,
+    pub background_color: String,
+    /// The stored image's file name (set by the host when one is picked).
+    pub image: String,
+    /// Darkening over the image, 0–80 percent.
+    pub image_dim: u8,
+    /// Blur over the image, 0–20 px.
+    pub image_blur: u8,
+    pub tiles: TileSource,
+    pub columns: u8,
+    pub rows: u8,
+    pub show_shortcuts: bool,
+    pub show_search: bool,
+    pub show_tiles: bool,
+}
+
+impl Default for Ntp {
+    fn default() -> Self {
+        Ntp {
+            background: NtpBackground::None,
+            background_color: String::new(),
+            image: String::new(),
+            image_dim: 30,
+            image_blur: 0,
+            tiles: TileSource::MostVisited,
+            columns: 6,
+            rows: 2,
+            show_shortcuts: true,
+            show_search: true,
+            show_tiles: true,
+        }
+    }
+}
+
+impl Ntp {
+    /// Tiles the page shows at most.
+    pub fn tile_count(&self) -> usize {
+        usize::from(self.columns.clamp(1, 12)) * usize::from(self.rows.clamp(1, 6))
+    }
+}
+
+/// `#rrggbb` (lower or upper case), or empty.
+pub fn is_hex_color(s: &str) -> bool {
+    s.is_empty() || (s.len() == 7 && s.starts_with('#') && s[1..].chars().all(|c| c.is_ascii_hexdigit()))
+}
+
 /// Where DevTools is docked next to its tab's page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -170,6 +362,8 @@ pub struct Settings {
     /// Krunk releases. Needs a restart.
     pub engine_security_components: bool,
     pub clear_on_exit: ClearOnExit,
+    /// Permission defaults (Krunk 0.6.0).
+    pub permissions: PermissionDefaults,
 
     // Passwords
     pub vault_autolock_minutes: u32,
@@ -191,9 +385,22 @@ pub struct Settings {
     /// Extra Chromium command-line switches, whitespace separated.
     pub extra_flags: String,
 
+    // New tabs (Krunk 0.6.0; the defaults are the 0.5 behaviour)
+    pub new_tab_page: NewTabPage,
+    /// The address `NewTabPage::Custom` opens.
+    pub new_tab_url: String,
+    pub new_tab_position: NewTabPosition,
+    pub link_tabs: LinkTabs,
+    /// Where the new tab page's search box sends its words: empty = the default search
+    /// engine, else a search URL template with `%s` or `{searchTerms}`.
+    pub ntp_search_url: String,
+
     // Appearance
     pub default_zoom: f64,
     pub theme: Theme,
+    pub appearance: Appearance,
+    /// The new tab page's options.
+    pub ntp: Ntp,
 
     // Updates
     /// Check `<update server>/updates/win-x64/latest.json` a minute after
@@ -235,6 +442,7 @@ impl Default for Settings {
             strip_tracking_params: true,
             engine_security_components: false,
             clear_on_exit: ClearOnExit::default(),
+            permissions: PermissionDefaults::default(),
             vault_autolock_minutes: 15,
             offer_save_passwords: true,
             download_dir: String::new(),
@@ -243,8 +451,15 @@ impl Default for Settings {
             user_agent: String::new(),
             proxy: String::new(),
             extra_flags: String::new(),
+            new_tab_page: NewTabPage::Krunk,
+            new_tab_url: String::new(),
+            new_tab_position: NewTabPosition::End,
+            link_tabs: LinkTabs::Auto,
+            ntp_search_url: String::new(),
             default_zoom: 1.0,
             theme: Theme::System,
+            appearance: Appearance::default(),
+            ntp: Ntp::default(),
             check_updates_automatically: true,
             devtools_dock: DevToolsDock::Right,
             devtools_size_right: 480.0,
@@ -339,6 +554,29 @@ impl Settings {
         self.search_engine.template().unwrap_or(&self.custom_search_url)
     }
 
+    /// What a new tab opens: `None` for Krunk's new tab page, else the address.
+    pub fn new_tab_target(&self) -> Option<String> {
+        match self.new_tab_page {
+            NewTabPage::Krunk => None,
+            NewTabPage::Homepage => Some(self.homepage.clone()),
+            NewTabPage::Blank => Some("about:blank".into()),
+            NewTabPage::Custom => {
+                let t = self.new_tab_url.trim();
+                Some(crate::pages::Page::from_display(t).map(|p| p.url()).unwrap_or_else(|| t.to_string()))
+            }
+        }
+    }
+
+    /// The search template the new tab page's box uses.
+    pub fn ntp_search_template(&self) -> &str {
+        let t = self.ntp_search_url.trim();
+        if t.is_empty() {
+            self.search_template()
+        } else {
+            t
+        }
+    }
+
     /// The name of the search engine in effect: the preset's name, or the custom
     /// template's host (without `www.`), or "your search engine".
     pub fn search_name(&self) -> String {
@@ -358,6 +596,42 @@ impl Settings {
         let mut errs = Vec::new();
         let mut err = |field: &'static str, message: &str| errs.push(FieldError { field, message: message.into() });
 
+        if self.new_tab_page == NewTabPage::Custom {
+            let t = self.new_tab_url.trim();
+            let ok = url::Url::parse(t).map(|u| matches!(u.scheme(), "http" | "https")).unwrap_or(false)
+                || crate::pages::Page::from_display(t).is_some();
+            if !ok {
+                err("newTabUrl", "Enter a web address (https://…) or a krunk:// page");
+            }
+        }
+        if !self.ntp_search_url.trim().is_empty() {
+            let t = self.ntp_search_url.trim();
+            let ok = (t.contains("%s") || t.contains("{searchTerms}"))
+                && url::Url::parse(t).map(|u| matches!(u.scheme(), "http" | "https")).unwrap_or(false);
+            if !ok {
+                err("ntpSearchUrl", "Enter a search URL with %s where the words go");
+            }
+        }
+        for (field, value) in [
+            ("appearance.accent", &self.appearance.accent),
+            ("appearance.toolbarColor", &self.appearance.toolbar_color),
+            ("appearance.stripColor", &self.appearance.strip_color),
+            ("appearance.backgroundColor", &self.appearance.background_color),
+            ("ntp.backgroundColor", &self.ntp.background_color),
+        ] {
+            if !is_hex_color(value) {
+                err(field, "Enter a colour like #2563eb (or leave it empty)");
+            }
+        }
+        if !(12..=16).contains(&self.appearance.ui_font_px) {
+            err("appearance.uiFontPx", "Between 12 and 16 px");
+        }
+        if !(1..=12).contains(&self.ntp.columns) || !(1..=6).contains(&self.ntp.rows) {
+            err("ntp.columns", "1–12 columns and 1–6 rows");
+        }
+        if self.ntp.image_dim > 80 || self.ntp.image_blur > 20 {
+            err("ntp.imageDim", "Dim up to 80 %, blur up to 20 px");
+        }
         if self.search_engine == SearchEngine::Custom {
             let t = &self.custom_search_url;
             if !(t.contains("%s") || t.contains("{searchTerms}")) {
@@ -673,6 +947,77 @@ mod tests {
 
     fn fields(s: &Settings) -> Vec<&'static str> {
         s.validate().err().unwrap_or_default().into_iter().map(|e| e.field).collect()
+    }
+
+    #[test]
+    fn new_tab_settings_default_to_the_old_behaviour_and_validate() {
+        // A 0.5 settings file has none of the new-tab fields.
+        let s = Settings::from_json_lenient(r#"{"searchEngine":"google","homepage":"https://h.example/"}"#);
+        assert_eq!(s.new_tab_page, NewTabPage::Krunk);
+        assert_eq!(s.new_tab_position, NewTabPosition::End);
+        assert_eq!(s.link_tabs, LinkTabs::Auto);
+        assert_eq!(s.new_tab_url, "");
+        assert_eq!(s.ntp_search_url, "");
+        assert_eq!(s.new_tab_target(), None);
+        assert_eq!(s.ntp_search_template(), "https://www.google.com/search?q={searchTerms}");
+        assert!(s.validate().is_ok());
+        let mut s = s;
+        s.new_tab_page = NewTabPage::Homepage;
+        assert_eq!(s.new_tab_target().as_deref(), Some("https://h.example/"));
+        s.new_tab_page = NewTabPage::Blank;
+        assert_eq!(s.new_tab_target().as_deref(), Some("about:blank"));
+        s.new_tab_page = NewTabPage::Custom;
+        s.new_tab_url = "krunk://history".into();
+        assert_eq!(s.new_tab_target().as_deref(), Some(crate::pages::Page::History.url().as_str()));
+        s.new_tab_url = "not a url".into();
+        assert_eq!(fields(&s), vec!["newTabUrl"]);
+        s.new_tab_url = "https://start.example/".into();
+        s.ntp_search_url = "https://s.example/?q=%s".into();
+        assert!(s.validate().is_ok());
+        assert_eq!(s.ntp_search_template(), "https://s.example/?q=%s");
+        s.ntp_search_url = "https://s.example/".into();
+        assert_eq!(fields(&s), vec!["ntpSearchUrl"]);
+        // Round trip keeps the camelCase names the settings page uses.
+        s.ntp_search_url.clear();
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains("\"newTabPage\":\"custom\"") && json.contains("\"linkTabs\":\"auto\""), "{json}");
+    }
+
+    #[test]
+    fn permission_defaults_all_ask() {
+        let s = Settings::from_json_lenient(r#"{"theme":"dark"}"#);
+        for k in crate::permissions::Kind::ALL {
+            assert_eq!(s.permissions.get(k), PermissionDefault::Ask, "{k:?}");
+        }
+        let s = Settings::from_json_lenient(r#"{"permissions":{"camera":"block","midi":"block"}}"#);
+        assert_eq!(s.permissions.get(crate::permissions::Kind::Camera), PermissionDefault::Block);
+        assert_eq!(s.permissions.get(crate::permissions::Kind::Geolocation), PermissionDefault::Ask);
+        assert!(serde_json::to_string(&s).unwrap().contains("\"clipboardRead\":\"ask\""));
+    }
+
+    #[test]
+    fn appearance_and_ntp_defaults_and_validation() {
+        let s = Settings::from_json_lenient(r#"{"theme":"dark"}"#);
+        assert_eq!(s.appearance, Appearance::default());
+        assert_eq!(s.ntp, Ntp::default());
+        assert_eq!(s.ntp.tile_count(), 12);
+        assert!(s.validate().is_ok());
+        let mut s = s;
+        s.appearance.accent = "#AbCdEf".into();
+        s.ntp.background = NtpBackground::Color;
+        s.ntp.background_color = "#123456".into();
+        assert!(s.validate().is_ok());
+        s.appearance.accent = "red".into();
+        s.appearance.ui_font_px = 20;
+        s.ntp.columns = 0;
+        s.ntp.image_dim = 90;
+        assert_eq!(fields(&s), vec!["appearance.accent", "appearance.uiFontPx", "ntp.columns", "ntp.imageDim"]);
+        assert!(is_hex_color("") && is_hex_color("#ff0000") && !is_hex_color("#ff00") && !is_hex_color("ff0000"));
+        let json = serde_json::to_string(&Settings::default()).unwrap();
+        assert!(
+            json.contains("\"appearance\":{\"accent\":\"\"") && json.contains("\"ntp\":{\"background\":\"none\""),
+            "{json}"
+        );
     }
 
     #[test]

@@ -71,6 +71,20 @@ pub struct SiteInfo {
     pub cipher: Option<String>,
     /// Leaf first.
     pub certs: Vec<CertSummary>,
+    /// The site's origin (for the permission rows), empty for non-web pages.
+    #[serde(default)]
+    pub origin: String,
+    /// What the site may do (Krunk 0.6.0); the lock popup changes them.
+    #[serde(default)]
+    pub permissions: Vec<SitePermissionRow>,
+}
+
+/// One permission of a site in the lock popup.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SitePermissionRow {
+    pub kind: crate::permissions::Kind,
+    pub state: crate::permissions::PermissionState,
 }
 
 pub fn classify_url(url: &str) -> SiteKind {
@@ -91,8 +105,17 @@ pub fn site_info(url: &str, report: Option<&SslReport>) -> SiteInfo {
     let url = report.map(|r| r.url.as_str()).filter(|u| !u.is_empty()).unwrap_or(url);
     let kind = classify_url(url);
     let host = crate::urlclean::host_of(url).unwrap_or_default();
-    let mut info =
-        SiteInfo { host, kind, secure: false, warnings: Vec::new(), protocol: None, cipher: None, certs: Vec::new() };
+    let mut info = SiteInfo {
+        host,
+        kind,
+        secure: false,
+        warnings: Vec::new(),
+        protocol: None,
+        cipher: None,
+        certs: Vec::new(),
+        origin: crate::urlclean::origin_of(url).unwrap_or_default(),
+        permissions: Vec::new(),
+    };
     if kind != SiteKind::Https {
         return info;
     }

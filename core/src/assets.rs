@@ -98,6 +98,35 @@ pub fn favicon_headers() -> &'static str {
      Cache-Control: max-age=3600"
 }
 
+/// The new tab page's background image: `https://krunk.invalid/ntp-image/<name>` → the file
+/// name (only the host's own `ntp-background-<ms>.<ext>` names, no paths).
+pub fn ntp_image_request(url: &str) -> Option<String> {
+    let u = Url::parse(url).ok()?;
+    if u.origin().ascii_serialization() != pages::PAGES_ORIGIN {
+        return None;
+    }
+    let name = u.path().strip_prefix("/ntp-image/")?;
+    let ok = name.starts_with("ntp-background-")
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
+        && !name.contains("..");
+    ok.then(|| name.to_string())
+}
+
+pub fn ntp_image_url(name: &str) -> String {
+    format!("{}/ntp-image/{name}", pages::PAGES_ORIGIN)
+}
+
+pub fn ntp_image_headers(name: &str) -> String {
+    let mime = match name.rsplit('.').next().unwrap_or("") {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        _ => "application/octet-stream",
+    };
+    format!("Content-Type: {mime}\r\nX-Content-Type-Options: nosniff\r\nCross-Origin-Resource-Policy: same-origin\r\nCache-Control: max-age=86400")
+}
+
 /// An injected content script (`ui/inject/*.js`). These are embedded but
 /// never served over the internal origins.
 pub fn inject_script(name: &str) -> &'static str {
@@ -212,6 +241,22 @@ pub fn allow_navigation(channel: Channel, current: &str, target: &str, host_init
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ntp_image_requests() {
+        assert_eq!(
+            ntp_image_request("https://krunk.invalid/ntp-image/ntp-background-17.png").as_deref(),
+            Some("ntp-background-17.png")
+        );
+        assert_eq!(
+            ntp_image_request(&ntp_image_url("ntp-background-1.webp")).as_deref(),
+            Some("ntp-background-1.webp")
+        );
+        assert!(ntp_image_request("https://krunk.invalid/ntp-image/../browser.db").is_none());
+        assert!(ntp_image_request("https://krunk.invalid/ntp-image/vault.json").is_none());
+        assert!(ntp_image_request("https://shell.krunk.invalid/ntp-image/ntp-background-1.png").is_none());
+        assert!(ntp_image_headers("ntp-background-1.jpg").starts_with("Content-Type: image/jpeg"));
+    }
 
     #[test]
     fn table_is_sorted_and_has_required_files() {

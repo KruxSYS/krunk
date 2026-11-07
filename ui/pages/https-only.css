@@ -1,7 +1,7 @@
 body { display: flex; justify-content: center; min-height: 100vh; }
 main { width: min(620px, 90vw); padding-top: 14vh; }
-.badge { width: 48px; height: 48px; border-radius: 50%; background: var(--danger); color: #fff; font-size: 28px;
+.badge { width: 48px; height: 48px; border-radius: 50%; background: var(--danger); color: #fff; font-size: 2.154rem;
          font-weight: 700; display: flex; align-items: center; justify-content: center; }
-h1 { font-size: 22px; margin: 18px 0 10px; }
+h1 { font-size: 1.692rem; margin: 18px 0 10px; }
 .url { font-family: Consolas, monospace; word-break: break-all; color: var(--fg-muted); }
 .buttons { display: flex; gap: 10px; margin-top: 24px; }

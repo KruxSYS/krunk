@@ -12,7 +12,7 @@
   let defaultUserAgent = '';
 
   // ---------- tabs and deep links ----------
-  const TABS = ['general', 'privacy', 'passwords', 'downloads', 'appearance', 'advanced'];
+  const TABS = ['general', 'privacy', 'permissions', 'passwords', 'downloads', 'appearance', 'advanced'];
   function tabFromHash() {
     const h = (location.hash || '').replace(/^#/, '').toLowerCase();
     return TABS.includes(h) ? h : 'general';
@@ -24,6 +24,8 @@
       if (a.dataset.tab === name) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
     });
     window.scrollTo(0, 0);
+    // The per-site answers change while the page is open (prompts in other tabs).
+    if (name === 'permissions' && typeof loadPermissions === 'function') loadPermissions();
   }
   window.addEventListener('hashchange', function () { if (!$('filter').value.trim()) showTab(tabFromHash()); });
   showTab(tabFromHash());
@@ -105,11 +107,16 @@
     document.querySelectorAll('input[name=startup]').forEach((r) => { r.checked = r.value === settings.startup; });
     document.querySelectorAll('input[name=theme]').forEach((r) => { r.checked = r.value === settings.theme; });
     stateHidden('custom-row', settings.searchEngine !== 'custom');
+    stateHidden('new-tab-url-row', settings.newTabPage !== 'custom');
+    document.querySelectorAll('#accent-swatches .swatch').forEach((b) => {
+      b.classList.toggle('on', (settings.appearance ? settings.appearance.accent : '') === b.dataset.color);
+      if (b.dataset.color) b.style.setProperty('--c', b.dataset.color);
+    });
     stateHidden('discard-row', !settings.tabDiscardEnabled);
     $('download-dir').textContent = settings.downloadDir || 'Downloads (default)';
     $('default-dir').hidden = !settings.downloadDir;
     renderUserAgent();
-    LB.applyTheme(settings.theme);
+    LB.applyTheme(settings.theme, settings.appearance && settings.appearance.accent);
     renderLists();
   }
 
@@ -162,6 +169,7 @@
         showErrors(err.data);
         // Keep what the user typed so they can fix it; nothing was stored.
         stateHidden('custom-row', candidate.searchEngine !== 'custom');
+        stateHidden('new-tab-url-row', candidate.newTabPage !== 'custom');
       } else {
         $('save-error').textContent = err.message;
         $('save-error').hidden = false;
@@ -244,6 +252,13 @@
   });
 
   // ---------- other controls ----------
+  document.querySelectorAll('#accent-swatches .swatch').forEach(function (b) {
+    b.addEventListener('click', function () {
+      const next = collect();
+      next.appearance.accent = b.dataset.color;
+      save(next);
+    });
+  });
   document.querySelectorAll('[data-key], input[name=startup], input[name=theme]').forEach(function (input) {
     input.addEventListener('change', function () { save(); });
   });
@@ -371,6 +386,26 @@
     $('import-result').hidden = true;
     LB.request('importCsv').then(function (r) { if (r) showImportResult(r); }, function (err) { showImportResult(null, err.message); });
   });
+  // 0.6.0: the per-site permission answers.
+  const PERM_LABEL = { camera: 'Camera', microphone: 'Microphone', geolocation: 'Location', notifications: 'Notifications', clipboardRead: 'Clipboard (read)', midi: 'MIDI devices', screenShare: 'Screen sharing', localNetwork: 'Local network' };
+  function loadPermissions() {
+    return LB.request('permissionExceptions').then(function (list) {
+      const body = $('perm-rows');
+      body.textContent = '';
+      if (!list.length) { body.appendChild(el('tr', {}, [el('td', { colspan: '4', class: 'muted', text: 'No sites yet.' })])); return; }
+      list.forEach(function (p) {
+        const sel = el('select', {}, [el('option', { value: 'allow', text: 'Allow' }), el('option', { value: 'block', text: 'Block' })]);
+        sel.value = p.allow ? 'allow' : 'block';
+        sel.addEventListener('change', function () { LB.request('permissionSet', { origin: p.origin, kind: p.kind, state: sel.value }).then(loadPermissions); });
+        body.appendChild(el('tr', { 'data-origin': p.origin, 'data-kind': p.kind }, [
+          el('td', { text: p.origin }), el('td', { text: PERM_LABEL[p.kind] || p.kind }), el('td', {}, [sel]),
+          el('td', {}, [el('button', { class: 'btn small', text: 'Remove', onclick: function () { LB.request('permissionSet', { origin: p.origin, kind: p.kind, state: 'ask' }).then(loadPermissions); } })]),
+        ]));
+      });
+    }).catch(function () {});
+  }
+  if (tabFromHash() !== 'permissions') loadPermissions(); // else showTab() loaded them
+
   function loadImportProfiles() {
     LB.request('importDetect').then(renderImportProfiles, function () { renderImportProfiles([]); });
   }

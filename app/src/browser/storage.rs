@@ -12,8 +12,9 @@ use crate::log::{info, warning};
 use lb_core::pages::Page;
 use lb_core::protocol::{Event, Request};
 use lb_core::sitedata::{
-    self, cookies_for_origin, cookies_of_site, dom_storage_id, dom_storage_items, is_site, is_web_origin, summarize,
-    web_origin, CookieSelection, OriginUsage, StorageArea, MAX_KEY_LEN, MAX_USAGE_ORIGINS, MAX_VALUE_LEN,
+    self, cookies_for_origin, cookies_of_site, dom_storage_id, dom_storage_items, is_site, is_web_origin,
+    set_last_used, summarize, web_origin, CookieSelection, OriginUsage, StorageArea, MAX_KEY_LEN, MAX_USAGE_ORIGINS,
+    MAX_VALUE_LEN,
 };
 use lb_core::tabs::{Position, TabId};
 use std::cell::RefCell;
@@ -59,8 +60,11 @@ impl Browser {
                 }
                 origins.sort();
                 origins.dedup();
+                let visits = self.store.borrow().visited_origins_last().unwrap_or_default();
                 list_cookies(Profile::Default, move |cookies| {
-                    reply(Event::ok(req_id, serde_json::json!({ "sites": summarize(&cookies, &origins) })));
+                    let mut sites = summarize(&cookies, &origins);
+                    set_last_used(&mut sites, &visits);
+                    reply(Event::ok(req_id, serde_json::json!({ "sites": sites })));
                 });
             }
             Request::StorageUsage { origins } => {
@@ -123,6 +127,12 @@ impl Browser {
                     return reply(Event::err(req_id, "Not a web origin"));
                 }
                 let Some(shell) = self.shell() else { return reply(Event::err(req_id, "Not ready")) };
+                // 0.6.0: a site that loses its data also loses its permission answers.
+                match self.store.borrow().permissions_clear_origin(&origin) {
+                    Ok(n) if n > 0 => info!("storage page: forgot {n} permission answers of the cleared origin"),
+                    Ok(_) => {}
+                    Err(e) => warning!("forgetting the origin's permissions failed: {e}"),
+                }
                 shell.devtools_call(
                     "Storage.clearDataForOrigin",
                     &serde_json::json!({ "origin": origin, "storageTypes": "all" }),

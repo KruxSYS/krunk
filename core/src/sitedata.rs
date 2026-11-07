@@ -41,6 +41,9 @@ pub struct CookieInfo {
     pub secure: bool,
     pub http_only: bool,
     pub same_site: SameSite,
+    /// Unix ms of the last access (0.6.0; `None` when the engine has none).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_access: Option<i64>,
 }
 
 impl CookieInfo {
@@ -96,16 +99,31 @@ pub struct SiteSummary {
     pub cookies: u32,
     /// Web origins of this site that may hold storage (visited or open).
     pub origins: Vec<String>,
+    /// Unix ms of the last visit or cookie access (0.6.0), when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used: Option<i64>,
 }
 
 /// Groups cookies and known origins by site, sorted by site name.
 pub fn summarize(cookies: &[CookieInfo], origins: &[String]) -> Vec<SiteSummary> {
     let mut sites: BTreeMap<String, SiteSummary> = BTreeMap::new();
     fn site_entry(sites: &mut BTreeMap<String, SiteSummary>, site: String) -> &mut SiteSummary {
-        sites.entry(site.clone()).or_insert_with(|| SiteSummary { site, cookies: 0, origins: Vec::new() })
+        sites.entry(site.clone()).or_insert_with(|| SiteSummary {
+            site,
+            cookies: 0,
+            origins: Vec::new(),
+            last_used: None,
+        })
+    }
+    fn touch(s: &mut SiteSummary, at: Option<i64>) {
+        if let Some(t) = at.filter(|t| *t > 0) {
+            s.last_used = Some(s.last_used.map_or(t, |u| u.max(t)));
+        }
     }
     for c in cookies {
-        site_entry(&mut sites, c.site()).cookies += 1;
+        let s = site_entry(&mut sites, c.site());
+        s.cookies += 1;
+        touch(s, c.last_access);
     }
     for o in origins {
         let Some(host) = origin_host(o) else { continue };
@@ -119,6 +137,18 @@ pub fn summarize(cookies: &[CookieInfo], origins: &[String]) -> Vec<SiteSummary>
         s.origins.sort();
     }
     list
+}
+
+/// Adds the history's last visit per origin (0.6.0: the "last used" column):
+/// a site is as recent as its most recent origin or cookie.
+pub fn set_last_used(sites: &mut [SiteSummary], visits: &[(String, i64)]) {
+    for s in sites {
+        for (o, t) in visits {
+            if *t > 0 && s.origins.iter().any(|x| x == o) {
+                s.last_used = Some(s.last_used.map_or(*t, |u| u.max(*t)));
+            }
+        }
+    }
 }
 
 /// The cookies of one site, sorted by domain, path and name.
@@ -286,6 +316,7 @@ mod tests {
             secure: true,
             http_only: false,
             same_site: SameSite::Lax,
+            last_access: None,
         }
     }
 
@@ -308,6 +339,31 @@ mod tests {
         assert_eq!(s[2].origins, ["http://localhost:8081"]);
         assert_eq!(s[3].cookies, 0, "an origin without cookies is listed for its storage");
         assert_eq!(cookies_of_site(&cookies, "example.com").len(), 2);
+    }
+
+    #[test]
+    fn last_used_from_cookies_and_visits() {
+        let mut a = cookie("a", ".example.com");
+        a.last_access = Some(5_000);
+        let cookies = [a, cookie("b", "other.org")];
+        let origins = ["https://www.example.com".to_string(), "https://other.org".into(), "https://new.test".into()];
+        let mut s = summarize(&cookies, &origins);
+        assert_eq!(s.iter().map(|x| x.site.as_str()).collect::<Vec<_>>(), ["example.com", "new.test", "other.org"]);
+        assert_eq!(s[0].last_used, Some(5_000), "a cookie's last access counts");
+        assert_eq!(s[2].last_used, None);
+        set_last_used(
+            &mut s,
+            &[
+                ("https://www.example.com".into(), 9_000),
+                ("https://other.org".into(), 0),
+                ("https://new.test".into(), 7_000),
+            ],
+        );
+        assert_eq!(s[0].last_used, Some(9_000), "the most recent of visit and cookie wins");
+        assert_eq!(s[2].last_used, None, "a zero timestamp is unknown");
+        assert_eq!(s[1].last_used, Some(7_000));
+        let j = serde_json::to_value(&s[2]).unwrap();
+        assert!(j.get("lastUsed").is_none(), "unknown is left out of the JSON");
     }
 
     #[test]

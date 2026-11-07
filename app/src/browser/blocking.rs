@@ -24,7 +24,7 @@ use lb_core::urlclean::{self, LoadFailure, RewriteOptions};
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering::Relaxed};
 use std::sync::{mpsc, Arc, Mutex, OnceLock, RwLock};
 
 /// `WM_APP` code: the filter worker finished.
@@ -179,6 +179,8 @@ struct TabShared {
     /// Ad blocking is off for this page (allowlisted site).
     allowed: AtomicBool,
     blocked: AtomicU32,
+    /// Bytes received by this tab's requests (the task manager's network rate).
+    received: AtomicU64,
 }
 
 /// The network policy of one tab (runs on the IO thread).
@@ -239,6 +241,10 @@ impl RequestPolicy for TabPolicy {
         verdict
     }
 
+    fn loaded(&self, bytes: u64) {
+        self.tab.received.fetch_add(bytes, Relaxed);
+    }
+
     fn cookie_allowed(&self, url: &str) -> bool {
         if !self.net.block_third_party_cookies.load(Relaxed) {
             return true;
@@ -297,6 +303,11 @@ impl TabNet {
 
     pub fn blocked(&self) -> u32 {
         self.io.blocked.load(Relaxed)
+    }
+
+    /// Bytes this tab's requests received so far.
+    pub fn received(&self) -> u64 {
+        self.io.received.load(Relaxed)
     }
 
     /// What was blocked on the page so far (oldest first).

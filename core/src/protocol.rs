@@ -145,6 +145,10 @@ pub enum PopupKind {
     AddressMenu,
     /// "Krunk X.Y.Z is available" (opened by the host after an update check).
     Update,
+    /// The title bar's menu (right-click on the caption or the empty strip, Krunk 0.6.0).
+    CaptionMenu,
+    /// The downloads button's popup (Krunk 0.6.0): the list with speed and progress.
+    Downloads,
     /// A tab's context menu (right-click on the tab).
     TabMenu,
     /// The bookmarks bar's context menu (right-click on an item, a folder or the bar).
@@ -156,7 +160,7 @@ pub enum PopupKind {
 impl PopupKind {
     /// Prompts about passwords must come from the host, never the shell.
     pub fn shell_may_open(self) -> bool {
-        matches!(self, PopupKind::Menu | PopupKind::Shield | PopupKind::SiteInfo)
+        matches!(self, PopupKind::Menu | PopupKind::Shield | PopupKind::SiteInfo | PopupKind::Downloads)
     }
 
     /// Every popup has buttons, so every popup takes keyboard focus. This
@@ -181,6 +185,9 @@ pub enum TabAction {
     CloseOthers,
     /// Close the tabs to the right of this one.
     CloseRight,
+    /// Mute or unmute every tab of this tab's site, and remember it for the site.
+    MuteSite,
+    UnmuteSite,
 }
 
 /// What the bookmarks bar's context menu can do.
@@ -222,7 +229,7 @@ pub enum CaptionButton {
 }
 
 /// A rectangle in CSS pixels relative to the shell's viewport.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PopupRect {
     pub x: f64,
@@ -298,9 +305,12 @@ pub enum PopupContent {
         can_delete: bool,
         can_select_all: bool,
     },
-    /// A public page on `origin` wants to reach the local network (`loopback`: this
-    /// computer). In a private tab the answer is never remembered.
+    /// A page on `origin` asks for permissions (`kinds`; Krunk 0.6.0: camera, microphone,
+    /// location, notifications, clipboard, MIDI, screen sharing, local network — `loopback`
+    /// means "this computer" for the latter). In a private tab the answer is never remembered.
     Permission {
+        #[serde(default)]
+        kinds: Vec<crate::permissions::Kind>,
         tab_id: u32,
         prompt_id: u64,
         origin: String,
@@ -345,6 +355,22 @@ pub enum PopupContent {
         tab_id: u32,
         can_move: bool,
         can_close_right: bool,
+        /// The tab's site is muted (the menu offers "Unmute site").
+        #[serde(default)]
+        muted_site: bool,
+        /// The tab is on a site (the mute items apply).
+        #[serde(default)]
+        has_site: bool,
+    },
+    /// The downloads button's popup: the most recent downloads first.
+    Downloads {
+        items: Vec<crate::downloads::DownloadItem>,
+    },
+    /// Right-click on the window's title bar or the empty tab strip (Krunk 0.6.0).
+    CaptionMenu {
+        maximized: bool,
+        can_reopen: bool,
+        can_bookmark_all: bool,
     },
     /// The bookmarks bar's context menu: on bookmark or folder `id`, or on the bar itself
     /// (`id` none). `children`: a folder's bookmarks (for "Open all"); `can_add`: the page
@@ -534,6 +560,8 @@ impl PopupContent {
             PopupContent::Unlock { .. } => PopupKind::Unlock,
             PopupContent::Update { .. } => PopupKind::Update,
             PopupContent::TabMenu { .. } => PopupKind::TabMenu,
+            PopupContent::CaptionMenu { .. } => PopupKind::CaptionMenu,
+            PopupContent::Downloads { .. } => PopupKind::Downloads,
             PopupContent::BookmarkMenu { .. } => PopupKind::BookmarkMenu,
             PopupContent::BookmarkEdit { .. } => PopupKind::BookmarkEdit,
         }
@@ -546,6 +574,7 @@ impl PopupContent {
             PopupContent::Menu { .. } => Some("menu".into()),
             PopupContent::Shield { .. } => Some("shield".into()),
             PopupContent::SiteInfo { .. } => Some("siteInfo".into()),
+            PopupContent::Downloads { .. } => Some("downloads".into()),
             PopupContent::BookmarkFolder { id, .. } => Some(format!("folder:{id}")),
             _ => None,
         }
@@ -789,6 +818,32 @@ pub enum Request {
     AddressMenuAction {
         action: AddressMenuAction,
     },
+    /// The shell: the speaker icon on a tab was clicked (mute or unmute that tab).
+    TabMute {
+        id: u32,
+        muted: bool,
+    },
+    /// The popup (caption menu): bookmark every tab of the window into a new folder.
+    BookmarkAllTabs,
+    /// The popup (caption menu): minimize, maximize/restore or close the window.
+    CaptionWindow {
+        action: WindowAction,
+    },
+    /// The settings page: every stored per-site permission.
+    PermissionExceptions,
+    /// The settings page: set (or the lock popup: change) a site's permission; `Ask` removes
+    /// the stored decision.
+    PermissionSet {
+        origin: String,
+        kind: crate::permissions::Kind,
+        state: crate::permissions::PermissionState,
+    },
+    /// The task manager page: the current rows.
+    GetTasks,
+    /// The task manager page: end the process behind task `id` (never the browser).
+    KillTask {
+        id: i64,
+    },
     /// The shell moved the keyboard selection in the suggestions.
     AddressSuggestSelect {
         selected: Option<usize>,
@@ -826,8 +881,29 @@ pub enum Request {
 
     // ---- new tab page ----
     GetTopSites,
-    /// The new-tab page's options (search engine name).
+    /// The new-tab page's options (search engine name, shortcuts, the page's settings).
     GetNewTabConfig,
+    /// The new-tab page's customize panel saved its options.
+    SetNtpOptions {
+        ntp: crate::settings::Ntp,
+    },
+    /// The new-tab page: pick a background image (the host opens the file dialog).
+    NtpPickImage,
+    /// The new-tab page: the tiles' new order (pinned URLs, left to right).
+    ReorderTiles {
+        urls: Vec<String>,
+    },
+    /// The new-tab page: a tile added by hand (pinned, no address check beyond parsing).
+    AddTile {
+        url: String,
+        title: String,
+    },
+    /// The new-tab page: a tile's title and address changed.
+    EditTile {
+        url: String,
+        new_url: String,
+        title: String,
+    },
     PinSite {
         url: String,
         title: String,
@@ -1165,6 +1241,7 @@ impl Sender {
                     | R::AddressSuggestSelect { .. }
                     | R::AddressSuggestPick { .. }
                     | R::ShowAddressMenu { .. }
+                    | R::TabMute { .. }
                     | R::HidePopup
                     | R::ShowBookmarkFolder { .. }
                     | R::ShowBookmarkMenu { .. }
@@ -1206,6 +1283,10 @@ impl Sender {
                     | R::PermissionReply { .. }
                     | R::AddressSuggestPick { .. }
                     | R::AddressMenuAction { .. }
+                    | R::PermissionSet { .. }
+                    | R::BookmarkAllTabs
+                    | R::CaptionWindow { .. }
+                    | R::DownloadAction { .. }
                     | R::FillReply { .. }
                     | R::SuggestPick { .. }
                     | R::SuggestUnlock { .. }
@@ -1219,6 +1300,11 @@ impl Sender {
                 req,
                 R::GetTopSites
                     | R::GetNewTabConfig
+                    | R::SetNtpOptions { .. }
+                    | R::NtpPickImage
+                    | R::ReorderTiles { .. }
+                    | R::AddTile { .. }
+                    | R::EditTile { .. }
                     | R::PinSite { .. }
                     | R::UnpinSite { .. }
                     | R::HideSite { .. }
@@ -1261,7 +1347,9 @@ impl Sender {
             ),
             Sender::Page(Page::Settings) => matches!(
                 req,
-                R::GetSettings
+                R::PermissionExceptions
+                    | R::PermissionSet { .. }
+                    | R::GetSettings
                     | R::SaveSettings { .. }
                     | R::ResetSettings
                     | R::PickDownloadFolder
@@ -1287,6 +1375,7 @@ impl Sender {
             }
             Sender::Page(Page::About) => matches!(req, R::GetAbout),
             Sender::Page(Page::Gpu) => matches!(req, R::GetGpuInfo | R::OpenGpuInternals),
+            Sender::Page(Page::Tasks) => matches!(req, R::GetTasks | R::KillTask { .. }),
             Sender::Page(Page::Storage) => matches!(
                 req,
                 R::StorageList
@@ -1379,6 +1468,9 @@ pub enum ContentMessage {
     /// Class names and ids used on the page, for generic cosmetic filters.
     /// (A page can only affect which elements get hidden on itself.)
     PageTokens { classes: Vec<String>, ids: Vec<String> },
+    /// The page called `Notification.requestPermission()` (Krunk's shim; the engine never
+    /// asks the embedder for notifications in Alloy style).
+    NotificationPermission {},
 }
 
 /// Parses a message from web content.
@@ -1427,6 +1519,11 @@ pub struct TabInfo {
     pub private: bool,
     /// Asleep or discarded (shown dimmed).
     pub sleeping: bool,
+    /// The page plays sound (speaker icon), and whether the tab is muted (Krunk 0.6.0).
+    #[serde(default)]
+    pub audible: bool,
+    #[serde(default)]
+    pub muted: bool,
 }
 
 /// Navigation state of the active tab.
@@ -1451,6 +1548,15 @@ pub struct NavState {
     /// whether the active tab is the new-tab page).
     #[serde(default)]
     pub bookmarks_bar: bool,
+    /// The page uses the camera / the microphone now (the address bar's chip, Krunk 0.6.0).
+    #[serde(default)]
+    pub camera: bool,
+    #[serde(default)]
+    pub microphone: bool,
+}
+
+fn is_zero_u8(n: &u8) -> bool {
+    *n == 0
 }
 
 /// Messages to the shell or a built-in page.
@@ -1478,6 +1584,9 @@ pub enum Event {
     ShellConfig {
         theme: Theme,
         search_name: String,
+        /// Appearance options (CSS variables and toolbar items); absent in old messages.
+        #[serde(default)]
+        appearance: crate::settings::Appearance,
     },
     /// To the popup view: render this content.
     Popup {
@@ -1526,6 +1635,12 @@ pub enum Event {
         active: i32,
         total: i32,
     },
+    /// To the shell: a download just started (the button pulses; the flight was native).
+    DownloadStarted,
+    /// To a new tab page: its options changed (the same object `getNewTabConfig` returns).
+    NewTabConfig {
+        config: serde_json::Value,
+    },
     DownloadsChanged {
         active: u32,
     },
@@ -1533,6 +1648,12 @@ pub enum Event {
     /// the OS through `prefers-color-scheme`).
     Theme {
         theme: Theme,
+        /// Accent colour override for pages and the popup (empty = the theme's own).
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        accent: String,
+        /// The UI font size for Krunk's pages and the popup (0 = default).
+        #[serde(default, skip_serializing_if = "is_zero_u8")]
+        ui_font_px: u8,
     },
     /// To the shell: the suggestions for `text` (the popup shows them; the shell keeps them
     /// for the keyboard).
@@ -2122,6 +2243,7 @@ mod tests {
                     maximize: rect,
                     close: rect,
                     tab_centers: vec![10.0, 90.0],
+                    downloads: PopupRect::default(),
                 },
             },
             Request::WindowControl { action: WindowAction::Maximize },
@@ -2182,6 +2304,17 @@ mod tests {
             Request::AddressSuggest { text: "ru".into(), rect },
             Request::ShowAddressMenu { x: 10.0, y: 40.0, selection: "ab".into(), has_text: true, dirty: false },
             Request::AddressMenuAction { action: AddressMenuAction::PasteAndGo },
+            Request::TabMute { id: 3, muted: true },
+            Request::BookmarkAllTabs,
+            Request::CaptionWindow { action: WindowAction::Maximize },
+            Request::GetTasks,
+            Request::KillTask { id: 42 },
+            Request::PermissionExceptions,
+            Request::PermissionSet {
+                origin: "https://a.example".into(),
+                kind: crate::permissions::Kind::Camera,
+                state: crate::permissions::PermissionState::Block,
+            },
             Request::AddressSuggestSelect { selected: Some(1) },
             Request::AddressSuggestPick { url: "https://rust-lang.org/".into() },
             Request::SitePermissionRemove { kind: "localNetwork".into() },
@@ -2189,6 +2322,15 @@ mod tests {
             Request::Quit,
             Request::GetTopSites,
             Request::GetNewTabConfig,
+            Request::SetNtpOptions { ntp: crate::settings::Ntp::default() },
+            Request::NtpPickImage,
+            Request::ReorderTiles { urls: vec!["https://a.example/".into()] },
+            Request::AddTile { url: "https://b.example/".into(), title: "B".into() },
+            Request::EditTile {
+                url: "https://b.example/".into(),
+                new_url: "https://c.example/".into(),
+                title: "C".into(),
+            },
             Request::PinSite { url: "https://a.example/".into(), title: "A".into() },
             Request::QueryHistory { text: "q".into(), before: Some(5), limit: 10 },
             Request::DeleteHistoryRange { from: 1, to: 2 },
@@ -2423,15 +2565,119 @@ mod tests {
 
     #[test]
     fn new_tab_config_is_new_tab_page_only() {
-        let req = Request::GetNewTabConfig;
-        assert!(Sender::Page(Page::NewTab).permits(&req));
-        assert!(!Sender::Shell.permits(&req) && !Sender::Popup.permits(&req));
-        for p in Page::ALL {
-            if p != Page::NewTab {
-                assert!(!Sender::Page(p).permits(&req), "{p:?}");
+        let reqs = [
+            Request::GetNewTabConfig,
+            Request::SetNtpOptions { ntp: crate::settings::Ntp::default() },
+            Request::NtpPickImage,
+            Request::ReorderTiles { urls: vec![] },
+            Request::AddTile { url: "https://a.example/".into(), title: "A".into() },
+            Request::EditTile {
+                url: "https://a.example/".into(),
+                new_url: "https://b.example/".into(),
+                title: "B".into(),
+            },
+        ];
+        for req in &reqs {
+            assert!(Sender::Page(Page::NewTab).permits(req), "{req:?}");
+            assert!(!Sender::Shell.permits(req) && !Sender::Popup.permits(req), "{req:?}");
+            for p in Page::ALL {
+                if p != Page::NewTab {
+                    assert!(!Sender::Page(p).permits(req), "{p:?} {req:?}");
+                }
             }
         }
-        assert_eq!(serde_json::to_value(&req).unwrap(), serde_json::json!({"cmd": "getNewTabConfig"}));
+        assert_eq!(serde_json::to_value(&reqs[0]).unwrap(), serde_json::json!({"cmd": "getNewTabConfig"}));
+        let theme = Event::Theme { theme: Theme::Light, accent: "#ff0000".into(), ui_font_px: 0 }.to_json();
+        assert!(theme.contains("\"accent\":\"#ff0000\""));
+        assert!(!Event::Theme { theme: Theme::Light, accent: String::new(), ui_font_px: 0 }
+            .to_json()
+            .contains("accent"));
+    }
+
+    #[test]
+    fn permission_requests_and_prompt() {
+        use crate::permissions::{Kind, PermissionState};
+        let list = Request::PermissionExceptions;
+        let set = Request::PermissionSet {
+            origin: "https://a.example".into(),
+            kind: Kind::Geolocation,
+            state: PermissionState::Allow,
+        };
+        assert!(Sender::Page(Page::Settings).permits(&list) && Sender::Page(Page::Settings).permits(&set));
+        assert!(Sender::Popup.permits(&set) && !Sender::Popup.permits(&list));
+        assert!(!Sender::Shell.permits(&set));
+        for p in Page::ALL.iter().filter(|p| **p != Page::Settings) {
+            assert!(!Sender::Page(*p).permits(&list) && !Sender::Page(*p).permits(&set), "{p:?}");
+        }
+        let json = serde_json::to_string(&set).unwrap();
+        assert!(json.contains("\"kind\":\"geolocation\"") && json.contains("\"state\":\"allow\""), "{json}");
+        assert!(matches!(
+            parse_content(r#"{"lb":"notificationPermission"}"#),
+            Ok(ContentMessage::NotificationPermission {})
+        ));
+        assert!(parse_content_frame(r#"{"lb":"notificationPermission"}"#).is_err(), "main frame only");
+        let c = PopupContent::Permission {
+            kinds: vec![Kind::Camera, Kind::Microphone],
+            tab_id: 1,
+            prompt_id: 2,
+            origin: "https://a.example".into(),
+            loopback: false,
+            private: false,
+        };
+        assert!(serde_json::to_string(&c).unwrap().contains("\"kinds\":[\"camera\",\"microphone\"]"));
+    }
+
+    #[test]
+    fn downloads_popup() {
+        assert!(PopupKind::Downloads.shell_may_open() && PopupKind::Downloads.takes_focus());
+        let c = PopupContent::Downloads { items: vec![] };
+        assert_eq!(c.kind(), PopupKind::Downloads);
+        assert_eq!(c.toggle_anchor().as_deref(), Some("downloads"));
+        let act = Request::DownloadAction { id: 1, action: DownloadAction::Pause };
+        assert!(
+            Sender::Popup.permits(&act) && Sender::Page(Page::Downloads).permits(&act) && !Sender::Shell.permits(&act)
+        );
+        assert!(Event::DownloadStarted.to_json().contains("downloadStarted"));
+    }
+
+    #[test]
+    fn tasks_caption_and_mute_permits() {
+        let get = Request::GetTasks;
+        let kill = Request::KillTask { id: 7 };
+        assert!(Sender::Page(Page::Tasks).permits(&get) && Sender::Page(Page::Tasks).permits(&kill));
+        assert!(!Sender::Shell.permits(&get) && !Sender::Popup.permits(&kill));
+        for p in Page::ALL.iter().filter(|p| **p != Page::Tasks) {
+            assert!(!Sender::Page(*p).permits(&get) && !Sender::Page(*p).permits(&kill), "{p:?}");
+        }
+        let mute = Request::TabMute { id: 1, muted: true };
+        assert!(Sender::Shell.permits(&mute) && !Sender::Popup.permits(&mute));
+        let all = Request::BookmarkAllTabs;
+        let ctl = Request::CaptionWindow { action: WindowAction::Minimize };
+        assert!(Sender::Popup.permits(&all) && Sender::Popup.permits(&ctl) && !Sender::Shell.permits(&all));
+        assert!(
+            !Sender::Shell.permits(&ctl)
+                && !Sender::Popup.permits(&Request::WindowControl { action: WindowAction::Close })
+        );
+        for p in Page::ALL {
+            assert!(!Sender::Page(p).permits(&mute) && !Sender::Page(p).permits(&all), "{p:?}");
+        }
+        let c = PopupContent::CaptionMenu { maximized: false, can_reopen: true, can_bookmark_all: true };
+        assert_eq!(c.kind(), PopupKind::CaptionMenu);
+        assert!(PopupKind::CaptionMenu.takes_focus());
+        let info = TabInfo {
+            id: 1,
+            title: "t".into(),
+            url: "u".into(),
+            favicon: None,
+            loading: false,
+            private: false,
+            sleeping: false,
+            audible: true,
+            muted: false,
+        };
+        assert!(serde_json::to_string(&info).unwrap().contains("\"audible\":true"));
+        let menu = serde_json::to_value(TabAction::MuteSite).unwrap();
+        assert_eq!(menu, serde_json::json!("muteSite"));
     }
 
     #[test]
@@ -2519,6 +2765,7 @@ mod tests {
         assert!(Page::ALL.iter().filter(|p| **p != Page::SiteData).all(|p| !Sender::Page(*p).permits(&remove)));
         assert!(!PopupKind::Permission.shell_may_open() && PopupKind::Permission.takes_focus());
         let content = PopupContent::Permission {
+            kinds: vec![crate::permissions::Kind::LocalNetwork],
             tab_id: 1,
             prompt_id: 7,
             origin: "https://app.plex.tv".into(),
@@ -2594,7 +2841,13 @@ mod tests {
         let parsed = parse_request(Sender::Popup, r#"{"cmd":"command","command":{"command":"newWindow"}}"#).unwrap();
         assert_eq!(parsed.request, Request::Command { command: Command::NewWindow });
         assert_eq!(Event::TabDropHint { index: Some(1) }.to_json(), r#"{"event":"tabDropHint","index":1}"#);
-        let menu = PopupContent::TabMenu { tab_id: 2, can_move: false, can_close_right: true };
+        let menu = PopupContent::TabMenu {
+            tab_id: 2,
+            can_move: false,
+            can_close_right: true,
+            muted_site: false,
+            has_site: true,
+        };
         assert_eq!(menu.kind(), PopupKind::TabMenu);
         let json = serde_json::to_string(&menu).unwrap();
         assert!(json.contains(r#""canCloseRight":true"#), "{json}");
@@ -2628,6 +2881,8 @@ mod tests {
                     loading: true,
                     private: true,
                     sleeping: false,
+                    audible: false,
+                    muted: false,
                 }],
                 active: Some(1),
             },
@@ -2646,9 +2901,11 @@ mod tests {
                     private: false,
                     login_form: true,
                     bookmarks_bar: true,
+                    camera: false,
+                    microphone: false,
                 },
             },
-            Event::ShellConfig { theme: Theme::Dark, search_name: "DuckDuckGo".into() },
+            Event::ShellConfig { theme: Theme::Dark, search_name: "DuckDuckGo".into(), appearance: Default::default() },
             Event::Popup { content: PopupContent::Menu { zoom: 1.0, can_reopen: true } },
             Event::Popup {
                 content: PopupContent::Shield {
@@ -2734,11 +2991,14 @@ mod tests {
                     page_url: Some("https://e.com/".into()),
                     connections: Some(4),
                     parts: Vec::new(),
+                    speed: 0,
+                    eta: None,
+                    part_progress: Vec::new(),
                 }],
             },
             Event::VaultState { exists: true, locked: false },
             Event::DownloadsChanged { active: 1 },
-            Event::Theme { theme: Theme::Light },
+            Event::Theme { theme: Theme::Light, accent: String::new(), ui_font_px: 0 },
             Event::FocusAddressBar,
             Event::BlurAddressBar,
             Event::ShowFind,
