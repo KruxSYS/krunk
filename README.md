@@ -944,6 +944,9 @@ Testing on Windows:
 - **HTTP authentication dialogs** are not shown (the engine's Alloy runtime denies them).
   Site permissions are asked since 0.6.0 (see "Site permissions"), but there is no device
   picker and no window chooser for screen sharing.
+- **DNSCrypt is not implemented.** A DNSCrypt `sdns://` stamp in the custom DNS list is
+  parsed and kept, shown as "not supported", and skipped: the next resolver in the list
+  answers. DoH (HTTP/2 and HTTP/3), DoT, DoQ and plain DNS work.
 - **Media codecs.** Since 0.5.2 the engine is Krunk's own build of CEF 156.0.15 with
   proprietary codecs (`scripts/cef-build/`): H.264 (AVC) video and AAC audio play in MP4, HLS
   and DASH streams, next to VP8, VP9, AV1, Opus, Vorbis, FLAC and MP3. Still missing or
@@ -963,8 +966,8 @@ Testing on Windows:
   CEF locales and SwiftShader (software rendering for machines without a usable GPU) are kept.
 - **Discarding loses back/forward history.** A discarded tab reloads its last URL; its history
   and any unsaved form input are lost. Discard is off by default.
-  - Cosmetic filtering of generic rules is limited to the first 2000 class names and ids a
-    page reports.
+- **Cosmetic filtering of generic rules** is limited to the first 2000 class names and ids a
+  page reports.
 - **uBO's procedural cosmetic filters** (`:has-text()`, `:upward()`, `:remove()` and similar) are not
   executed: only plain CSS selectors hide elements. Scriptlets written for uBO's isolated world
   run in the page's world, because CEF provides no isolated world for them.
