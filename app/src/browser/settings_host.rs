@@ -98,7 +98,8 @@ impl Browser {
 
     /// Validates, persists and applies new settings. Invalid settings are
     /// never stored; the field errors go back to the page.
-    fn save_settings(&self, tab: Option<TabId>, req_id: Option<u32>, new: Settings) {
+    fn save_settings(&self, tab: Option<TabId>, req_id: Option<u32>, mut new: Settings) {
+        new.sync_protection();
         if let Err(errors) = new.validate() {
             self.reply(tab, Event::invalid(req_id, &errors));
             return;
@@ -120,8 +121,9 @@ impl Browser {
         &self,
         _tab: Option<TabId>,
         _req_id: Option<u32>,
-        new: Settings,
+        mut new: Settings,
     ) -> Result<(), Vec<String>> {
+        new.sync_protection();
         if let Err(errors) = new.validate() {
             return Err(errors.into_iter().map(|e| format!("{}: {}", e.field, e.message)).collect());
         }
@@ -189,7 +191,18 @@ impl Browser {
         // Privacy headers and ad blocking switch immediately (the navigator
         // properties for DNT/GPC follow on newly opened tabs).
         self.net.set_privacy_headers(new.send_dnt, new.send_gpc);
-        let lists_changed = old.filter_lists != new.filter_lists || old.custom_lists != new.custom_lists;
+        // Tracking protection: cookie and referrer policies at once; the lists a level adds
+        // go through the rebuild below.
+        if old.protection != new.protection {
+            self.net.set_protection(&new.protection);
+            let e = new.protection.effective();
+            info!(
+                "tracking protection: {:?} (cookies {:?}, referrer {:?}, fingerprinting {}, cryptomining {}, bounce cleanup {})",
+                e.level, e.third_party_cookies, e.referrer, e.fingerprinting, e.cryptomining, e.bounce_cleanup
+            );
+        }
+        let lists_changed =
+            old.effective_filter_lists() != new.effective_filter_lists() || old.custom_lists != new.custom_lists;
         if old.adblock_enabled != new.adblock_enabled || lists_changed {
             self.net.set_enabled(new.adblock_enabled);
             if new.adblock_enabled {

@@ -364,6 +364,9 @@ pub struct Settings {
     pub clear_on_exit: ClearOnExit,
     /// Permission defaults (Krunk 0.6.0).
     pub permissions: PermissionDefaults,
+    /// Tracking protection (Krunk 0.6.0). `block_third_party_cookies` and
+    /// `strip_tracking_params` above are derived from it (see `sync_protection`).
+    pub protection: crate::protection::Protection,
 
     // Passwords
     pub vault_autolock_minutes: u32,
@@ -435,7 +438,8 @@ impl Default for Settings {
             filter_lists: FILTER_LISTS.iter().map(|s| s.to_string()).collect(),
             custom_lists: Vec::new(),
             filter_lists_rev: FILTER_LISTS_REV,
-            block_third_party_cookies: true,
+            block_third_party_cookies: false,
+            protection: crate::protection::Protection::default(),
             https_only: false,
             send_dnt: true,
             send_gpc: true,
@@ -701,6 +705,26 @@ impl Settings {
         }
     }
 
+    /// Derives the two 0.5 toggles from the protection level in force, so the code paths
+    /// that read them (the engine switch, navigation rewriting) follow the level.
+    pub fn sync_protection(&mut self) {
+        let e = self.protection.effective();
+        self.block_third_party_cookies = e.third_party_cookies == crate::protection::ThirdPartyCookies::All;
+        self.strip_tracking_params = e.strip_params;
+    }
+
+    /// The filter lists the engine is built from: the user's choice plus the lists the
+    /// protection level adds (cryptomining, fingerprinting).
+    pub fn effective_filter_lists(&self) -> Vec<String> {
+        let mut lists = self.filter_lists.clone();
+        for extra in self.protection.extra_lists() {
+            if !lists.iter().any(|l| l == extra) {
+                lists.push(extra.to_string());
+            }
+        }
+        lists
+    }
+
     /// Loads settings from JSON, resetting any invalid field to its default
     /// instead of failing (a corrupt settings file must not brick startup).
     pub fn from_json_lenient(json: &str) -> Settings {
@@ -726,6 +750,15 @@ impl Settings {
             }
         }
         s.filter_lists_rev = FILTER_LISTS_REV;
+        // 0.5 and earlier had two toggles instead of the protection levels.
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(json) {
+            if v.get("protection").is_none() {
+                let b = v.get("blockThirdPartyCookies").and_then(serde_json::Value::as_bool).unwrap_or(true);
+                let p = v.get("stripTrackingParams").and_then(serde_json::Value::as_bool).unwrap_or(true);
+                s.protection = crate::protection::Protection::from_legacy(b, p);
+            }
+        }
+        s.sync_protection();
         if let Err(errs) = s.validate() {
             let d = Settings::default();
             for e in errs {
@@ -1338,10 +1371,18 @@ mod tests {
             Settings { hardware_acceleration: false, ..Settings::default() },
             Settings { proxy: "127.0.0.1:8080".into(), ..Settings::default() },
             Settings { extra_flags: "--force-dark-mode".into(), ..Settings::default() },
-            Settings { block_third_party_cookies: false, ..Settings::default() },
+            Settings { block_third_party_cookies: true, ..Settings::default() },
         ] {
             assert!(changed.restart_required(&running), "{changed:?}");
         }
+        // The level, not the derived toggle, is what the page sends: Strict blocks every
+        // third-party cookie through the engine switch, so it needs a restart.
+        let mut strict = Settings {
+            protection: crate::protection::Protection::preset(crate::protection::Level::Strict),
+            ..Settings::default()
+        };
+        strict.sync_protection();
+        assert!(strict.block_third_party_cookies && strict.restart_required(&running));
     }
 
     /// The UI tests use `ui/dev/default-settings.json`; it must match the real
@@ -1362,8 +1403,8 @@ mod tests {
         let count = |s: &Settings| {
             s.browser_arguments().split_whitespace().filter(|a| *a == BLOCK_THIRD_PARTY_COOKIES_SWITCH).count()
         };
-        let on = Settings::default();
-        assert!(on.block_third_party_cookies, "on by default");
+        let on = Settings { block_third_party_cookies: true, ..Settings::default() };
+        assert!(!Settings::default().block_third_party_cookies, "Standard blocks trackers' cookies, not all");
         assert_eq!(count(&on), 1);
         // Also typed into the extra flags: still passed exactly once.
         let twice =
@@ -1386,7 +1427,23 @@ mod tests {
         assert_eq!(s.tab_sleep_minutes, 10);
         let d = Settings::default();
         assert_eq!(s.hardware_acceleration, d.hardware_acceleration);
-        assert!(s.block_third_party_cookies, "a settings file from before the toggle blocks third-party cookies");
+        assert_eq!(
+            s.protection,
+            crate::protection::Protection::default(),
+            "a 0.5 file with the default toggles is Standard"
+        );
+        assert!(!s.block_third_party_cookies, "…which blocks trackers' cookies, not all");
+        // 0.5 toggles the user changed survive as a Custom level.
+        let custom = Settings::from_json_lenient(r#"{"blockThirdPartyCookies":false,"stripTrackingParams":false}"#);
+        assert_eq!(custom.protection.level, crate::protection::Level::Custom);
+        assert!(!custom.protection.strip_params && !custom.strip_tracking_params);
+        assert_eq!(custom.protection.third_party_cookies, crate::protection::ThirdPartyCookies::Off);
+        let all = Settings::from_json_lenient(r#"{"blockThirdPartyCookies":true,"stripTrackingParams":false}"#);
+        assert!(all.block_third_party_cookies, "the derived toggle follows the level");
+        let lists = Settings::from_json_lenient(r#"{"protection":{"level":"strict"}}"#);
+        assert!(lists.effective_filter_lists().iter().any(|l| l == "krunk-fingerprinting"));
+        assert!(!Settings::default().effective_filter_lists().iter().any(|l| l == "krunk-fingerprinting"));
+        assert!(Settings::default().effective_filter_lists().iter().any(|l| l == "nocoin"));
         assert_eq!(s.vault_autolock_minutes, d.vault_autolock_minutes);
         assert_eq!(s.filter_lists, d.filter_lists);
         assert_eq!(s.validate(), Ok(()));

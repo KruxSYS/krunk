@@ -28,6 +28,7 @@ pub mod passgen;
 pub mod permissions;
 pub mod pointer_lock;
 pub mod preprocess;
+pub mod protection;
 pub mod protocol;
 pub mod secret;
 pub mod segdl;

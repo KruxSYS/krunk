@@ -16,6 +16,7 @@ use lb_core::blocker::{self, Allowlist, Blocker, Decision, ResourceKind, Scriptl
 use lb_core::cookies;
 use lb_core::filterlists::{self, Rebuilt, SourceSet, UpdateState, MAX_LIST_BYTES};
 use lb_core::pages::Page;
+use lb_core::protection::{self, Protection, Referrer, ThirdPartyCookies, TrackerSet};
 use lb_core::protocol::{ContentMessage, Event, PopupContent, Request};
 use lb_core::settings::{updater_proxy, UpdaterProxy};
 use lb_core::storage::now_ms;
@@ -24,7 +25,7 @@ use lb_core::urlclean::{self, LoadFailure, RewriteOptions};
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering::Relaxed};
 use std::sync::{mpsc, Arc, Mutex, OnceLock, RwLock};
 
 /// `WM_APP` code: the filter worker finished.
@@ -111,7 +112,13 @@ pub(super) struct NetShared {
     enabled: AtomicBool,
     dnt: AtomicBool,
     gpc: AtomicBool,
-    block_third_party_cookies: AtomicBool,
+    /// Tracking protection (0.6.0): the cookie policy (`ThirdPartyCookies` as u8), the
+    /// referrer policy (`Referrer` as u8) and the known-tracker hosts of the privacy lists.
+    cookie_policy: AtomicU8,
+    referrer_policy: AtomicU8,
+    trackers: RwLock<Arc<TrackerSet>>,
+    /// Top-level redirects seen by the IO thread (from, to), drained by the bounce timer.
+    hops: Mutex<Vec<(String, String)>>,
     notifier: OnceLock<AppNotifier>,
     /// An APP_SHIELD message is on its way to the UI thread.
     shield_posted: AtomicBool,
@@ -145,8 +152,27 @@ impl NetShared {
         self.gpc.store(gpc, Relaxed);
     }
 
-    pub fn set_block_third_party_cookies(&self, on: bool) {
-        self.block_third_party_cookies.store(on, Relaxed);
+    /// Applies the cookie and referrer policies of a protection level (the lists go
+    /// through the engine rebuild).
+    pub fn set_protection(&self, p: &Protection) {
+        let e = p.effective();
+        self.cookie_policy.store(cookie_policy_code(e.third_party_cookies), Relaxed);
+        self.referrer_policy.store(referrer_code(e.referrer), Relaxed);
+    }
+
+    pub fn set_trackers(&self, t: TrackerSet) {
+        if let Ok(mut w) = self.trackers.write() {
+            *w = Arc::new(t);
+        }
+    }
+
+    fn trackers(&self) -> Option<Arc<TrackerSet>> {
+        self.trackers.read().ok().map(|t| t.clone())
+    }
+
+    /// The redirect hops recorded since the last call.
+    pub fn take_hops(&self) -> Vec<(String, String)> {
+        self.hops.lock().map(|mut h| std::mem::take(&mut *h)).unwrap_or_default()
     }
 
     pub fn set_notifier(&self, n: AppNotifier) {
@@ -162,6 +188,33 @@ impl NetShared {
         }
     }
 }
+
+fn cookie_policy_code(p: ThirdPartyCookies) -> u8 {
+    match p {
+        ThirdPartyCookies::Off => 0,
+        ThirdPartyCookies::Trackers => 1,
+        ThirdPartyCookies::All => 2,
+    }
+}
+
+fn referrer_code(r: Referrer) -> u8 {
+    match r {
+        Referrer::Full => 0,
+        Referrer::Origin => 1,
+        Referrer::None => 2,
+    }
+}
+
+fn referrer_from_code(c: u8) -> Referrer {
+    match c {
+        1 => Referrer::Origin,
+        2 => Referrer::None,
+        _ => Referrer::Full,
+    }
+}
+
+/// Most redirect hops kept between two bounce-timer ticks.
+const MAX_HOPS: usize = 256;
 
 /// Blocked addresses the shield panel lists (the rest are on krunk://adblock).
 const SHIELD_RECENT: usize = 6;
@@ -203,12 +256,19 @@ impl RequestPolicy for TabPolicy {
             // Only built-in pages may load from the internal origins.
             let top_level = req.resource_type == 0;
             return if assets::internal_request_allowed(req.url, req.initiator, top_level) {
-                NetVerdict::Allow { dnt: false, gpc: false }
+                NetVerdict::Allow { dnt: false, gpc: false, referrer: None }
             } else {
                 NetVerdict::Block
             };
         }
-        let headers = NetVerdict::Allow { dnt: self.net.dnt.load(Relaxed), gpc: self.net.gpc.load(Relaxed) };
+        // Tracking protection: a cross-site request says at most the origin it comes from
+        // (nothing in Strict); off for sites the shield exempts.
+        let referrer = if self.tab.allowed.load(Relaxed) {
+            None
+        } else {
+            protection::trim_referrer(req.referrer, req.url, referrer_from_code(self.net.referrer_policy.load(Relaxed)))
+        };
+        let headers = NetVerdict::Allow { dnt: self.net.dnt.load(Relaxed), gpc: self.net.gpc.load(Relaxed), referrer };
         if !self.net.enabled() || self.tab.allowed.load(Relaxed) || !blocker::is_filterable(req.url) {
             return headers;
         }
@@ -246,11 +306,31 @@ impl RequestPolicy for TabPolicy {
     }
 
     fn cookie_allowed(&self, url: &str) -> bool {
-        if !self.net.block_third_party_cookies.load(Relaxed) {
+        let policy = self.net.cookie_policy.load(Relaxed);
+        if policy == 0 || self.tab.allowed.load(Relaxed) {
             return true;
         }
         let top = self.tab.top_url.lock().map(|t| t.clone()).unwrap_or_default();
-        !cookies::is_third_party(&top, url)
+        if !cookies::is_third_party(&top, url) {
+            return true;
+        }
+        if policy == 2 {
+            return false;
+        }
+        // Trackers only: a third party the privacy lists name.
+        let Some(host) = urlclean::host_of(url) else { return true };
+        !self.net.trackers().is_some_and(|t| t.is_tracker(&host))
+    }
+
+    fn redirected(&self, resource_type: i32, from_url: &str, new_url: &str) {
+        if resource_type != 0 {
+            return;
+        }
+        if let Ok(mut h) = self.net.hops.lock() {
+            if h.len() < MAX_HOPS {
+                h.push((from_url.to_string(), new_url.to_string()));
+            }
+        }
     }
 }
 
@@ -337,14 +417,15 @@ impl Browser {
     /// Loads the allowlist and the engine (from cache if valid, otherwise
     /// compiled on a worker) and schedules the daily update check.
     pub(super) fn init_filters(&self) {
-        let (enabled, dnt, gpc, block_3pc) = {
+        let (enabled, dnt, gpc) = {
             let s = self.settings.borrow();
-            (s.adblock_enabled, s.send_dnt, s.send_gpc, s.block_third_party_cookies)
+            (s.adblock_enabled, s.send_dnt, s.send_gpc)
         };
         let f = &self.filters;
         self.net.set_enabled(enabled);
         self.net.set_privacy_headers(dnt, gpc);
-        self.net.set_block_third_party_cookies(block_3pc);
+        self.net.set_protection(&self.settings.borrow().protection);
+        self.load_trackers();
         *f.allowlist.borrow_mut() = Allowlist::new(self.store.borrow().allowlist().unwrap_or_default());
         *f.user.borrow_mut() =
             self.store.borrow().kv_get(filterlists::USER_FILTERS_KEY).ok().flatten().unwrap_or_default();
@@ -403,10 +484,24 @@ impl Browser {
     }
 
     /// Everything the engine is built from, as the settings and "My filters" say now.
+    /// The known-tracker hosts for the cookie policy, from the privacy lists' current
+    /// texts (a download or the bundled copy).
+    pub(super) fn load_trackers(&self) {
+        let ids: Vec<String> = protection::TRACKER_LISTS.iter().map(|s| s.to_string()).collect();
+        let texts = filterlists::current_texts(
+            &self.dirs.filters(),
+            &filterlists::Sources::builtin(&ids),
+            &self.filters.update.borrow(),
+        );
+        let t = TrackerSet::from_lists(texts.iter().map(|(_, t)| t.as_str()));
+        info!("tracking protection: {} known tracker hosts", t.len());
+        self.net.set_trackers(t);
+    }
+
     pub(super) fn filter_sources(&self) -> SourceSet {
         let s = self.settings.borrow();
         SourceSet {
-            builtin: s.filter_lists.clone(),
+            builtin: s.effective_filter_lists(),
             custom: s.custom_lists.clone(),
             user: self.filters.user.borrow().clone(),
         }
@@ -498,6 +593,9 @@ impl Browser {
             info!("filter lists checked; {}", r.state.schedule_note(now_ms()));
         }
         *f.update.borrow_mut() = r.state;
+        if checked {
+            self.load_trackers();
+        }
         if let Some(next) = f.queued.take() {
             // The sources changed meanwhile: the replies wait for the engine that has them.
             self.spawn_filter_job(next);

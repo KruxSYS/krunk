@@ -177,20 +177,60 @@
       </div>
     </div>
 
+    <div class="card group" id="protection-card">
+      <h3>Tracking protection</h3>
+      <div class="row setting column" data-keywords="tracking protection level standard strict custom trackers fingerprinting cryptomining bounce referrer">
+        <div class="text"><span class="label">Level</span><p class="desc">What Krunk does against cross-site tracking, on top of the ad and tracker lists above. The shield in the toolbar turns everything off for one site.</p></div>
+        <div class="control radios" role="radiogroup" aria-label="Tracking protection level">
+          <label><input type="radio" name="plevel" value="standard"> <span><b>Standard</b> – cryptominers blocked, known trackers get no cookies, tracking parameters removed, other sites only see where you came from (not the page), bounce trackers cleared daily.</span></label>
+          <label><input type="radio" name="plevel" value="strict"> <span><b>Strict</b> – also blocks fingerprinting scripts and every third-party cookie, sends no referrer to other sites and clears bounce trackers hourly. Some sites break.</span></label>
+          <label><input type="radio" name="plevel" value="custom"> <span><b>Custom</b> – choose each part below.</span></label>
+        </div>
+      </div>
+      <div class="row setting protection-part" data-keywords="fingerprinting scripts canvas">
+        <div class="text"><label for="p-fingerprinting">Block fingerprinting scripts</label><p class="desc">Krunk's list of device-fingerprinting services. Standard relies on EasyPrivacy instead: some of them also guard sign-in and checkout pages.</p></div>
+        <div class="control"><input type="checkbox" id="p-fingerprinting" data-key="protection.fingerprinting"></div>
+      </div>
+      <div class="row setting protection-part" data-keywords="cryptominers coin mining nocoin">
+        <div class="text"><label for="p-cryptomining">Block cryptominers</label><p class="desc">The NoCoin list.</p></div>
+        <div class="control"><input type="checkbox" id="p-cryptomining" data-key="protection.cryptomining"></div>
+      </div>
+      <div class="row setting protection-part" data-keywords="third-party cookies block trackers all">
+        <div class="text"><label for="p-cookies">Third-party cookies <span class="tag">restart</span></label>
+          <p class="desc">"Known trackers": the hosts the privacy filter lists name. "All": every site's cookies inside other sites, also for scripts (that part needs a restart); embedded sign-ins and comment widgets may break.</p></div>
+        <div class="control"><select id="p-cookies" data-key="protection.thirdPartyCookies">
+          <option value="off">Allowed</option>
+          <option value="trackers">Blocked for known trackers</option>
+          <option value="all">Blocked for all</option>
+        </select></div>
+      </div>
+      <div class="row setting protection-part" data-keywords="tracking parameters utm fbclid links strip">
+        <div class="text"><label for="p-strip">Remove tracking parameters from links</label><p class="desc">utm_*, fbclid and the like are cut from addresses before they load.</p></div>
+        <div class="control"><input type="checkbox" id="p-strip" data-key="protection.stripParams"></div>
+      </div>
+      <div class="row setting protection-part" data-keywords="referrer referer header other sites">
+        <div class="text"><label for="p-referrer">What other sites learn about the page you come from</label><p class="desc">The Referer header on requests to another site. The engine's default already sends only the site unless a page asks for more; "Only the site" enforces it, "Nothing" drops the header.</p></div>
+        <div class="control"><select id="p-referrer" data-key="protection.referrer">
+          <option value="full">What the page asks for (engine default)</option>
+          <option value="origin">Only the site</option>
+          <option value="none">Nothing</option>
+        </select></div>
+      </div>
+      <div class="row setting protection-part" data-keywords="bounce trackers redirect clear">
+        <div class="text"><label for="p-bounce">Clear bounce trackers</label><p class="desc">Sites you only ever passed through as a redirect lose their cookies and storage (daily; hourly in Strict).</p></div>
+        <div class="control"><input type="checkbox" id="p-bounce" data-key="protection.bounceCleanup"></div>
+      </div>
+      <div class="row setting" data-keywords="bounce trackers status clean now">
+        <div class="text"><span class="label">Bounce trackers</span><p class="desc" id="bounce-status">…</p></div>
+        <div class="control"><button id="bounce-clean" class="btn">Clean now</button></div>
+      </div>
+    </div>
+
     <div class="card group">
       <h3>Cookies and tracking</h3>
-      <div class="row setting" data-keywords="third-party cookies block">
-        <div class="text"><label for="blockThirdPartyCookies">Block third-party cookies <span class="tag">restart</span></label>
-          <p class="desc">Blocks every site's cookies inside other sites. It may break embedded sign-ins, comments and video widgets; turn it off if a site misbehaves. No per-site exceptions.</p></div>
-        <div class="control"><input type="checkbox" id="blockThirdPartyCookies" data-key="blockThirdPartyCookies"></div>
-      </div>
       <div class="row setting" data-keywords="https only mode upgrade warn http">
         <div class="text"><label for="httpsOnly">HTTPS-only mode</label><p class="desc">Upgrade every site to HTTPS and warn before plain HTTP.</p></div>
         <div class="control"><input type="checkbox" id="httpsOnly" data-key="httpsOnly"></div>
-      </div>
-      <div class="row setting" data-keywords="tracking parameters utm fbclid links strip">
-        <div class="text"><label for="stripTrackingParams">Remove tracking parameters from links</label><p class="desc">utm_*, fbclid and the like are cut from addresses before they load.</p></div>
-        <div class="control"><input type="checkbox" id="stripTrackingParams" data-key="stripTrackingParams"></div>
       </div>
       <div class="row setting" data-keywords="do not track dnt header">
         <div class="text"><label for="sendDnt">Send “Do Not Track”</label><p class="desc">A request header; sites may ignore it.</p></div>

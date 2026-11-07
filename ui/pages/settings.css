@@ -81,3 +81,8 @@ table.exceptions { width: 100%; border-collapse: collapse; font-size: 1rem; }
 table.exceptions th, table.exceptions td { text-align: left; padding: 6px 10px; border-top: 1px solid var(--border); }
 table.exceptions th { color: var(--fg-muted); font-weight: 600; border-top: 0; }
 .btn.small { padding: 2px 8px; font-size: 0.923rem; }
+/* Tracking protection: the parts a preset decides are shown greyed. */
+.protection-part.preset .text { opacity: .6; }
+#protection-card .radios label { align-items: flex-start; }
+#protection-card .radios input { margin-top: 3px; flex: none; }
+#protection-card .radios span { line-height: 1.4; }

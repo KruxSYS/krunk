@@ -831,6 +831,10 @@ pub enum Request {
     },
     /// The settings page: every stored per-site permission.
     PermissionExceptions,
+    /// Settings page (0.6.0 tracking protection): the bounce-tracker bookkeeping.
+    BounceStatus,
+    /// Clear the due bounce trackers now (replies `{cleaned}`).
+    BounceCleanNow,
     /// The settings page: set (or the lock popup: change) a site's permission; `Ask` removes
     /// the stored decision.
     PermissionSet {
@@ -1349,6 +1353,8 @@ impl Sender {
                 req,
                 R::PermissionExceptions
                     | R::PermissionSet { .. }
+                    | R::BounceStatus
+                    | R::BounceCleanNow
                     | R::GetSettings
                     | R::SaveSettings { .. }
                     | R::ResetSettings
@@ -2310,6 +2316,8 @@ mod tests {
             Request::GetTasks,
             Request::KillTask { id: 42 },
             Request::PermissionExceptions,
+            Request::BounceStatus,
+            Request::BounceCleanNow,
             Request::PermissionSet {
                 origin: "https://a.example".into(),
                 kind: crate::permissions::Kind::Camera,
@@ -2605,6 +2613,13 @@ mod tests {
         };
         assert!(Sender::Page(Page::Settings).permits(&list) && Sender::Page(Page::Settings).permits(&set));
         assert!(Sender::Popup.permits(&set) && !Sender::Popup.permits(&list));
+        for r in [Request::BounceStatus, Request::BounceCleanNow] {
+            assert!(Sender::Page(Page::Settings).permits(&r), "{r:?}");
+            assert!(!Sender::Popup.permits(&r) && !Sender::Shell.permits(&r), "{r:?}");
+            for p in Page::ALL.iter().filter(|p| **p != Page::Settings) {
+                assert!(!Sender::Page(*p).permits(&r), "{p:?} {r:?}");
+            }
+        }
         assert!(!Sender::Shell.permits(&set));
         for p in Page::ALL.iter().filter(|p| **p != Page::Settings) {
             assert!(!Sender::Page(*p).permits(&list) && !Sender::Page(*p).permits(&set), "{p:?}");

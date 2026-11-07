@@ -96,6 +96,8 @@ const BUNDLED: &[(&str, &[u8])] = &[
     ("ublock-unbreak", include_bytes!(concat!(env!("OUT_DIR"), "/ublock-unbreak.txt.deflate"))),
     ("ublock-quick-fixes", include_bytes!(concat!(env!("OUT_DIR"), "/ublock-quick-fixes.txt.deflate"))),
     ("ublock-badware", include_bytes!(concat!(env!("OUT_DIR"), "/ublock-badware.txt.deflate"))),
+    ("nocoin", include_bytes!(concat!(env!("OUT_DIR"), "/nocoin.txt.deflate"))),
+    ("krunk-fingerprinting", include_bytes!(concat!(env!("OUT_DIR"), "/krunk-fingerprinting.txt.deflate"))),
 ];
 
 /// Where each list can be refreshed from (used by the daily updater).
@@ -108,6 +110,8 @@ pub fn list_url(id: &str) -> Option<&'static str> {
         "ublock-unbreak" => "https://ublockorigin.github.io/uAssets/filters/unbreak.txt",
         "ublock-quick-fixes" => "https://ublockorigin.github.io/uAssets/filters/quick-fixes.txt",
         "ublock-badware" => "https://ublockorigin.github.io/uAssets/filters/badware.txt",
+        "nocoin" => "https://raw.githubusercontent.com/hoshsadiq/adblock-nocoin-list/master/nocoin.txt",
+        // Krunk's own list ships with each release and is never downloaded.
         _ => return None,
     })
 }
@@ -127,6 +131,8 @@ pub fn list_title(id: &str) -> &'static str {
         "ublock-unbreak" => "uBlock filters – Unbreak",
         "ublock-quick-fixes" => "uBlock filters – Quick fixes",
         "ublock-badware" => "uBlock filters – Badware risks",
+        "nocoin" => "NoCoin (cryptominers)",
+        "krunk-fingerprinting" => "Krunk fingerprinting protection",
         _ => "Unknown list",
     }
 }
@@ -412,6 +418,7 @@ impl Blocker {
     pub fn bundled_texts(enabled: &[String]) -> Vec<(String, String)> {
         FILTER_LISTS
             .iter()
+            .chain(crate::protection::EXTRA_LISTS.iter())
             .filter(|id| enabled.iter().any(|e| e == *id))
             .filter_map(|id| bundled_list(id).map(|t| (id.to_string(), t)))
             .collect()
@@ -610,6 +617,25 @@ pub fn hide_css<'a>(selectors: impl Iterator<Item = &'a String>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fingerprinting_list_rules_match() {
+        let text = bundled_list("krunk-fingerprinting").unwrap();
+        let b = Blocker::from_lists(&[("krunk-fingerprinting", &text)], 7);
+        let page = "http://localhost:8094/tracking.html";
+        for url in [
+            "https://cdn.jsdelivr.net/npm/@fingerprintjs/fingerprintjs@4/dist/fp.min.js?t=1",
+            "https://openfpcdn.io/fingerprintjs/v4/iife.min.js",
+            "https://h.online-metrix.net/fp/tags.js",
+            "https://cdn.castle.io/v2/castle.js",
+        ] {
+            assert!(b.check(url, page, ResourceKind::Script).is_blocked(), "{url}");
+        }
+        assert!(!b.check("https://cdn.jsdelivr.net/npm/lodash@4/lodash.min.js", page, ResourceKind::Script).is_blocked());
+        let nocoin = bundled_list("nocoin").unwrap();
+        let n = Blocker::from_lists(&[("nocoin", &nocoin)], 8);
+        assert!(n.check("https://coinhive.com/lib/coinhive.min.js?t=1", page, ResourceKind::Script).is_blocked());
+    }
 
     #[test]
     fn explain_names_the_rule_and_its_list() {

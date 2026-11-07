@@ -21,10 +21,12 @@ pub struct NetRequest<'a> {
 /// What to do with a request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NetVerdict {
-    /// Send it, optionally with `DNT: 1` / `Sec-GPC: 1`.
+    /// Send it, optionally with `DNT: 1` / `Sec-GPC: 1`, and with the `Referer` trimmed to
+    /// `referrer` (`Some("")` drops it; `None` leaves the engine's choice).
     Allow {
         dnt: bool,
         gpc: bool,
+        referrer: Option<String>,
     },
     Block,
     /// Do not send it; answer with this body instead (`$redirect`).
@@ -44,6 +46,9 @@ pub trait RequestPolicy: Send + Sync {
 
     /// A request finished with `bytes` of body received (the task manager's network column).
     fn loaded(&self, _bytes: u64) {}
+
+    /// A request was answered with a redirect to `new_url` (bounce-tracker bookkeeping).
+    fn redirected(&self, _resource_type: i32, _from_url: &str, _new_url: &str) {}
 }
 
 /// A `$redirect` stand-in (content type, body) waiting to be served.
@@ -89,6 +94,20 @@ wrap_resource_request_handler! {
             }))
         }
 
+        fn on_resource_redirect(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            request: Option<&mut Request>,
+            _response: Option<&mut Response>,
+            new_url: Option<&mut CefString>,
+        ) {
+            let (Some(request), Some(new_url)) = (request, new_url) else { return };
+            let resource_type = sys::cef_resource_type_t::from(request.resource_type()) as i32;
+            let from = CefString::from(&request.url()).to_string();
+            self.policy.redirected(resource_type, &from, &new_url.to_string());
+        }
+
         fn on_resource_load_complete(
             &self,
             _browser: Option<&mut Browser>,
@@ -126,12 +145,17 @@ wrap_resource_request_handler! {
                     }
                     ReturnValue::CONTINUE
                 }
-                NetVerdict::Allow { dnt, gpc } => {
+                NetVerdict::Allow { dnt, gpc, referrer } => {
                     if dnt {
                         request.set_header_by_name(Some(&CefString::from("DNT")), Some(&CefString::from("1")), 1);
                     }
                     if gpc {
                         request.set_header_by_name(Some(&CefString::from("Sec-GPC")), Some(&CefString::from("1")), 1);
+                    }
+                    match referrer.as_deref() {
+                        Some("") => request.set_referrer(None, ReferrerPolicy::NO_REFERRER),
+                        Some(r) => request.set_referrer(Some(&CefString::from(r)), ReferrerPolicy::NEVER_CLEAR_REFERRER),
+                        None => {}
                     }
                     ReturnValue::CONTINUE
                 }

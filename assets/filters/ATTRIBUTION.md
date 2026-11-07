@@ -14,6 +14,8 @@ the date of the last fetch is in `FETCHED`.
 | `ublock-unbreak.txt` | https://github.com/uBlockOrigin/uAssets (`filters/unbreak.txt`) | Raymond Hill and uAssets contributors | GPL-3.0 |
 | `ublock-quick-fixes.txt` | https://github.com/uBlockOrigin/uAssets (`filters/quick-fixes.txt`) | Raymond Hill and uAssets contributors | GPL-3.0 |
 | `ublock-badware.txt` | https://github.com/uBlockOrigin/uAssets (`filters/badware.txt`) | Raymond Hill and uAssets contributors | GPL-3.0 |
+| `nocoin.txt` | https://github.com/hoshsadiq/adblock-nocoin-list (`nocoin.txt`) | Hosh Sadiq and contributors | MIT (https://mit-license.org/) |
+| `krunk-fingerprinting.txt` | Krunk's own (this repository) | The Krunk authors | MIT (the project licence) |
 
 EasyList licence statement: https://easylist.to/pages/licence.html
 

@@ -13,6 +13,9 @@ const LISTS: &[&str] = &[
     "ublock-unbreak",
     "ublock-quick-fixes",
     "ublock-badware",
+    // Krunk 0.6.0 tracking protection: cryptominers (NoCoin, MIT) and fingerprinting scripts.
+    "nocoin",
+    "krunk-fingerprinting",
 ];
 
 fn main() {

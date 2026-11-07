@@ -90,8 +90,45 @@
     $('default-ua').textContent = defaultUserAgent;
   }
 
+  // Tracking protection (0.6.0): what Standard and Strict stand for (mirrors core::protection).
+  const PROTECTION_PRESETS = {
+    standard: { fingerprinting: false, cryptomining: true, thirdPartyCookies: 'trackers', stripParams: true, referrer: 'origin', bounceCleanup: true },
+    strict: { fingerprinting: true, cryptomining: true, thirdPartyCookies: 'all', stripParams: true, referrer: 'none', bounceCleanup: true },
+  };
+  function effectiveProtection() {
+    const p = settings.protection || { level: 'standard' };
+    return p.level === 'custom' ? p : Object.assign({ level: p.level }, PROTECTION_PRESETS[p.level] || PROTECTION_PRESETS.standard);
+  }
+  function renderProtection() {
+    const p = settings.protection || { level: 'standard' };
+    const eff = effectiveProtection();
+    document.querySelectorAll('input[name=plevel]').forEach((r) => { r.checked = r.value === p.level; });
+    const custom = p.level === 'custom';
+    document.querySelectorAll('.protection-part [data-key]').forEach(function (input) {
+      const k = input.dataset.key.replace(/^protection\./, '');
+      if (input.type === 'checkbox') input.checked = !!eff[k]; else input.value = eff[k];
+      input.disabled = !custom;
+    });
+    document.querySelectorAll('.protection-part').forEach((row) => row.classList.toggle('preset', !custom));
+  }
+  function loadBounceStatus() {
+    LB.request('bounceStatus').then(function (b) {
+      const last = b.lastCleanupMs ? new Date(b.lastCleanupMs).toLocaleString() : 'never';
+      $('bounce-status').textContent = b.watched + (b.watched === 1 ? ' site' : ' sites') + ' seen only as a redirect · ' + b.cleanedTotal + ' cleared so far · last cleanup ' + last;
+    }).catch(function () {});
+  }
+  $('bounce-clean').addEventListener('click', function () {
+    LB.request('bounceCleanNow').then(function (r) {
+      Page.toast(r.cleaned ? r.cleaned + (r.cleaned === 1 ? ' site cleared' : ' sites cleared') : 'Nothing to clear');
+      loadBounceStatus();
+    }, function (e) { Page.toast(e.message); });
+  });
+
   function render() {
+    renderProtection();
     document.querySelectorAll('[data-key]').forEach(function (input) {
+      // A preset's values are shown but not the user's: they stay as saved.
+      if (input.disabled && input.closest('.protection-part')) return;
       // A save reply for another field must not overwrite what the user is
       // typing here; this field is saved on its own change event.
       if (input === document.activeElement) return;
@@ -123,6 +160,8 @@
   function collect() {
     const s = JSON.parse(JSON.stringify(settings));
     document.querySelectorAll('[data-key]').forEach(function (input) {
+      // A disabled protection control shows the preset, not a choice to keep.
+      if (input.disabled && input.closest('.protection-part')) return;
       let v;
       if (input.type === 'checkbox') v = input.checked;
       else if (input.dataset.type === 'number') v = input.value === '' ? NaN : Number(input.value);
@@ -133,6 +172,8 @@
     if (startup) s.startup = startup.value;
     const theme = document.querySelector('input[name=theme]:checked');
     if (theme) s.theme = theme.value;
+    const plevel = document.querySelector('input[name=plevel]:checked');
+    if (plevel) { s.protection = s.protection || {}; s.protection.level = plevel.value; }
     // Something that is not a whole number becomes an out-of-range value, so
     // the host's validation reports the field (instead of the message failing to parse).
     ['tabSleepMinutes', 'tabDiscardMinutes', 'vaultAutolockMinutes'].forEach((k) => {
@@ -259,7 +300,7 @@
       save(next);
     });
   });
-  document.querySelectorAll('[data-key], input[name=startup], input[name=theme]').forEach(function (input) {
+  document.querySelectorAll('[data-key], input[name=startup], input[name=theme], input[name=plevel]').forEach(function (input) {
     input.addEventListener('change', function () { save(); });
   });
   $('pick-dir').addEventListener('click', function () {
@@ -420,6 +461,7 @@
     render();
     loadFilterStatus();
     loadAllowlist();
+    loadBounceStatus();
     loadUpdates();
     loadImportProfiles();
   });

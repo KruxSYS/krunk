@@ -1,0 +1,58 @@
+[Adblock Plus 2.0]
+! Title: Krunk fingerprinting protection
+! Description: Scripts whose purpose is to fingerprint the browser (device identification by
+!   canvas, audio, fonts, WebGL and the like). Enabled by the Strict tracking-protection level
+!   and the Custom "fingerprinting" switch; Standard relies on EasyPrivacy's rules instead,
+!   because several of these services also serve fraud prevention on sign-in and checkout pages.
+! Licence: MIT (part of Krunk, https://github.com/krunk-browser)
+! Version: 2026-11-07
+!
+! FingerprintJS (open source and Pro) and its CDNs
+||fpjscdn.net^
+||fpcdn.io^
+||fpnpmcdn.net^
+||api.fpjs.io^
+||openfpcdn.io^
+||cdn.jsdelivr.net/npm/@fingerprintjs/
+||unpkg.com/@fingerprintjs/
+||cdn.jsdelivr.net/npm/fingerprintjs2
+||cdnjs.cloudflare.com/ajax/libs/fingerprintjs2/
+! ClientJS and similar libraries from public CDNs
+||cdn.jsdelivr.net/npm/clientjs
+||unpkg.com/clientjs
+! Device-fingerprinting services (fraud / identity vendors)
+||h.online-metrix.net^
+||online-metrix.net^$third-party
+||iesnare.com^
+||iovation.com^$third-party
+||cdn.sardine.ai^
+||api.sardine.ai^
+||seondf.com^
+||seon.io^$third-party
+||cdn.castle.io^
+||api.castle.io^
+||js.datadome.co^
+||ct.pipedream.io^
+||cdn.deviceatlas.com^
+||d.alicdn.com/alilog/mlog/aplus_v2.js
+||b.sf-syndication.com^
+||fingerprint.com^$third-party
+||sift.com^$third-party
+||cdn.sift.com^
+||clientgear.net^
+||nexus.ensighten.com^$script
+! Canvas / audio fingerprinting helpers served as "analytics"
+||cdn.perfdrive.com^
+||static.perfdrive.com^
+||ndc.perfdrive.com^
+||fp.ravelin.com^
+||cdn.ravelin.com^
+||riskified.com^$third-party
+||beacon.riskified.com^
+||c.riskified.com^
+||cdn.forter.com^
+||forter.com^$third-party
+||www.arkoselabs.com/api/
+||client-api.arkoselabs.com^$third-party
+||cdn.kaptcha.com^
+||tr.snapchat.com/config/

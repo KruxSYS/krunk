@@ -460,12 +460,21 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
     decisions, plus the scriptlet engine giving a YouTube watch page its scripts.
 
 ### Privacy
-- **Third-party cookies:** blocked by default (Settings → Privacy):
-  - Network cookies: a `CefCookieAccessFilter` asks `core::cookies::is_third_party` for every
-    cookie a request would send or store. A cookie is third-party when the request's registrable
-    domain (Public Suffix List) differs from the tab's top-level site. This applies at once.
-  - Script access (`document.cookie`): Chromium's `--test-third-party-cookie-phaseout` switch
-    (needs a restart). The profile preference alone did not block it in CEF 156, so both are used.
+- **Tracking protection levels** (0.6.0, Settings → Privacy → Tracking protection; the
+  research and the full table are in `docs/TRACKING_PROTECTION.md`). **Standard** (default):
+  the NoCoin cryptominer list, no cookies for third-party requests to hosts the privacy lists
+  name, tracking parameters stripped, cross-site requests carry only the origin as `Referer`,
+  bounce trackers (sites only ever seen as a redirect hop, never visited) lose their cookies
+  and storage daily. **Strict** adds Krunk's fingerprinting list, blocks every third-party
+  cookie, sends no `Referer` to other sites and cleans bounce trackers hourly. **Custom**
+  picks each part. The shield's site switch turns all of it off for one site.
+- **Third-party cookies:** a `CefCookieAccessFilter` asks `core::cookies::is_third_party` for
+  every cookie a request would send or store (a cookie is third-party when the request's
+  registrable domain differs from the tab's top-level site), then the level decides: known
+  trackers only (`core::protection::TrackerSet`, the `||host^` rules of EasyPrivacy and uBO's
+  privacy list) or all. This applies at once. "All" also blocks script access
+  (`document.cookie`) through Chromium's `--test-third-party-cookie-phaseout` switch (needs
+  a restart); the profile preference alone did not block it in CEF 156.
 - **Tracking parameters** (`utm_*`, `fbclid`, `gclid`, ...) are stripped before navigating.
 - **`DNT: 1` and `Sec-GPC: 1`** headers on every request, plus `navigator.doNotTrack` and
   `navigator.globalPrivacyControl` in every frame.

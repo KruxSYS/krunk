@@ -2375,9 +2375,16 @@ function settingsMock(defaults) {
   const h = window.__host.handlers;
   const clone = (x) => JSON.parse(JSON.stringify(x));
   const running = clone(defaults);
+  window.__running = running;
   const st = { settings: clone(defaults), allow: ['news.example.com'] };
   window.__settings = st;
-  const restart = (s) => ['hardwareAcceleration', 'proxy', 'extraFlags', 'blockThirdPartyCookies', 'engineSecurityComponents'].some((k) => s[k] !== running[k]);
+  // The host derives blockThirdPartyCookies from the protection level (sync_protection).
+  const PRESETS = { standard: { thirdPartyCookies: 'trackers' }, strict: { thirdPartyCookies: 'all' } };
+  const sync = (s) => { const p = s.protection || { level: 'standard' }; const eff = p.level === 'custom' ? p : PRESETS[p.level]; s.blockThirdPartyCookies = eff.thirdPartyCookies === 'all'; return s; };
+  const restart = (s) => ['hardwareAcceleration', 'proxy', 'extraFlags', 'blockThirdPartyCookies', 'engineSecurityComponents'].some((k) => sync(s)[k] !== running[k]);
+  window.__bounce = { watched: 2, cleanedTotal: 5, lastCleanupMs: Date.now() - 3600e3 };
+  h.bounceStatus = () => window.__bounce;
+  h.bounceCleanNow = () => { window.__bounce = { watched: 0, cleanedTotal: 7, lastCleanupMs: Date.now() }; return { cleaned: 2 }; };
   const UA_DEFAULT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36';
   const UAS = [
     { id: 'chrome-windows', label: 'Chrome 157 on Windows', userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36' },
@@ -2501,7 +2508,7 @@ async function testSettings(browser) {
   check(!(await page.isChecked('[data-key=engineSecurityComponents]')), 'defaults: no engine downloads from Google');
   check((await page.textContent('#about')).includes('Chromium 156.0.8078.80 (CEF 156.0.15)'), 'engine versions in the footer');
   check(await page.isChecked('[data-key=hardwareAcceleration]'), 'defaults: GPU on');
-  check(await page.isChecked('[data-key=blockThirdPartyCookies]'), 'defaults: third-party cookies blocked');
+  check(await page.isChecked('input[name=plevel][value=standard]') && await page.locator('input[name=plevel]:checked').count() === 1, 'defaults: tracking protection Standard');
   check(await page.locator('#restart-banner').isHidden(), 'no restart banner at first');
   check((await page.textContent('#lists-summary')) === '4 of 5 filter lists on (1 added by you) · 3 filters of your own', 'filter lists summarized (' + await page.textContent('#lists-summary') + ')');
   check((await page.getAttribute('#manage-lists', 'href')) === 'adblock.html#lists' && (await page.getAttribute('#manage-filters', 'href')) === 'adblock.html#filters', 'links to the lists and My filters on krunk://adblock');
@@ -2586,13 +2593,38 @@ async function testSettings(browser) {
   await page.fill('#tabSleepMinutes', '5');
   await page.press('#tabSleepMinutes', 'Tab');
   await page.waitForTimeout(60);
-  // Third-party cookie blocking is restart-only too, and is saved.
+  // Tracking protection (0.6.0): the presets show their values greyed; Strict blocks all
+  // third-party cookies, which the host turns into the engine switch (restart banner).
   await tab('privacy');
-  await page.uncheck('[data-key=blockThirdPartyCookies]');
+  check(await page.locator('.protection-part [data-key]').count() === 6 && await page.locator('.protection-part [data-key]:disabled').count() === 6, 'the six parts are shown disabled under a preset');
+  check(await page.inputValue('[data-key="protection.thirdPartyCookies"]') === 'trackers' && await page.inputValue('[data-key="protection.referrer"]') === 'origin' && !(await page.isChecked('[data-key="protection.fingerprinting"]')) && await page.isChecked('[data-key="protection.cryptomining"]'), 'Standard: trackers\' cookies, origin referrer, no fingerprinting list, NoCoin on');
+  check((await page.textContent('#bounce-status')).startsWith('2 sites seen only as a redirect · 5 cleared so far · last cleanup '), 'bounce-tracker status (' + await page.textContent('#bounce-status') + ')');
+  await page.check('input[name=plevel][value=strict]');
   await page.waitForTimeout(60);
-  const tp = await lastSent(page, 'saveSettings');
-  check(tp && tp.settings.blockThirdPartyCookies === false && await page.locator('#restart-banner').isVisible(), 'third-party cookie toggle saves and shows the restart banner');
-  await page.check('[data-key=blockThirdPartyCookies]');
+  {
+    const tp = await lastSent(page, 'saveSettings');
+    check(tp && tp.settings.protection.level === 'strict' && await page.locator('#restart-banner').isVisible(), 'Strict saves the level and shows the restart banner (all third-party cookies need the engine switch)');
+    check(await page.inputValue('[data-key="protection.thirdPartyCookies"]') === 'all' && await page.inputValue('[data-key="protection.referrer"]') === 'none' && await page.isChecked('[data-key="protection.fingerprinting"]'), 'Strict: all cookies, no referrer, fingerprinting on');
+    check(tp.settings.protection.fingerprinting === false, 'the stored custom choices are untouched by a preset');
+  }
+  await page.check('input[name=plevel][value=custom]');
+  await page.waitForTimeout(60);
+  check(await page.locator('.protection-part [data-key]:disabled').count() === 0 && !(await page.isChecked('[data-key="protection.fingerprinting"]')) && await page.inputValue('[data-key="protection.thirdPartyCookies"]') === 'trackers', 'Custom enables the parts with the stored choices');
+  await page.selectOption('[data-key="protection.referrer"]', 'none');
+  await page.check('[data-key="protection.fingerprinting"]');
+  await page.waitForTimeout(60);
+  {
+    const tp = await lastSent(page, 'saveSettings');
+    check(tp.settings.protection.level === 'custom' && tp.settings.protection.referrer === 'none' && tp.settings.protection.fingerprinting === true && tp.settings.protection.thirdPartyCookies === 'trackers', 'Custom choices are saved');
+    // (The proxy set earlier in this test keeps the banner up; the cookie policy alone would not.)
+    const banner = await page.evaluate(() => !document.getElementById('restart-banner').hidden);
+    const expected = await page.evaluate(() => ['hardwareAcceleration', 'proxy', 'extraFlags', 'engineSecurityComponents'].some((k) => window.__settings.settings[k] !== window.__running[k]));
+    check(banner === expected && tp.settings.blockThirdPartyCookies !== true, 'Custom with trackers-only cookies does not ask for a restart by itself');
+  }
+  await page.click('#bounce-clean');
+  await page.waitForTimeout(80);
+  check((await lastSent(page, 'bounceCleanNow')) !== undefined && (await page.textContent('#bounce-status')).startsWith('0 sites seen only as a redirect · 7 cleared'), 'Clean now clears the due bounce trackers and refreshes the status');
+  await page.check('input[name=plevel][value=standard]');
   await page.waitForTimeout(60);
   // Engine security components: opt-in, restart-only.
   await page.check('[data-key=engineSecurityComponents]');

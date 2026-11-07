@@ -1,0 +1,19 @@
+<!doctype html><html><head><meta charset="utf-8"><title>tracking probe</title></head><body style="font:16px sans-serif">
+<p>Tracking protection probe (served from http://localhost:8094, a different site from www.krunk-test.test).</p>
+<ul>
+ <li><a id="echo" href="https://www.krunk-test.test:8443/headers?utm_source=newsletter&utm_campaign=x&fbclid=abc&keep=1">Cross-site link to the headers echo with utm_* and fbclid</a></li>
+ <li><a id="same" href="/headers?utm_source=same&keep=2">Same-site link to this server's echo</a></li>
+ <li><a id="bounce" href="/bounce?to=https%3A%2F%2Fwww.krunk-test.test%3A8443%2Fperm.html">Through a redirect hop (localhost → www.krunk-test.test)</a></li>
+</ul>
+<pre id="o"></pre>
+<script>
+const o=document.getElementById('o');
+function say(k,r){o.textContent+=k+': '+r+'\n';document.title='TRK '+k+' '+r}
+// Third-party scripts the lists know: a cryptominer (NoCoin) and a fingerprinting CDN (Krunk's list).
+// fp-easyprivacy is in EasyPrivacy (blocked at every level); fp-krunk (Ravelin) only in Krunk's fingerprinting list (Strict).
+// (jsdelivr's fingerprintjs is not usable as a probe: uBO redirects it to a stub, so it 'loads' at every level.)
+const probes=[['miner','https://coinhive.com/lib/coinhive.min.js'],['fp-easyprivacy','https://openfpcdn.io/fingerprintjs/v4/iife.min.js'],['fp-krunk','https://cdn.ravelin.com/js/ravelin-core+track+encrypt+promise.min.js'],['tracker-img','https://www.google-analytics.com/collect?v=1&t=pageview&tid=UA-1']];
+// A cache-busting query: a script the renderer kept in its memory cache would not be requested again.
+probes.forEach(([k,u])=>{const s=document.createElement(k==='tracker-img'?'img':'script');s.onload=()=>say(k,'loaded');s.onerror=()=>say(k,'blocked or failed');s.src=u+(u.includes('?')?'&':'?')+'t='+Date.now();document.body.appendChild(s)});
+fetch('https://www.krunk-test.test:8443/headers?utm_source=fetch',{credentials:'omit'}).then(r=>r.json()).then(h=>say('fetch-referer',JSON.stringify(h.Referer||null)+' url-utm='+(h['X-Original-Url']||'n/a')),e=>say('fetch-referer','err '+e.message));
+</script></body></html>

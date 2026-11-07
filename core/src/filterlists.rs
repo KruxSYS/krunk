@@ -144,8 +144,14 @@ impl<'a> Sources<'a> {
         Sources { builtin: enabled, custom: &[], user: "" }
     }
 
+    /// The bundled lists that are on: the catalogue's plus the ones a tracking-protection
+    /// level adds (`protection::EXTRA_LISTS`, not on the lists page).
     fn builtin_ids(&self) -> impl Iterator<Item = &'static str> + '_ {
-        FILTER_LISTS.iter().copied().filter(|id| self.builtin.iter().any(|e| e == id))
+        FILTER_LISTS
+            .iter()
+            .chain(crate::protection::EXTRA_LISTS.iter())
+            .copied()
+            .filter(|id| self.builtin.iter().any(|e| e == id))
     }
 
     /// The added lists that are on: (id, url).
@@ -523,6 +529,22 @@ mod tests {
         let back = UpdateState::from_json(&s.to_json());
         assert_eq!(back, s);
         assert_eq!(UpdateState::from_json("garbage"), UpdateState::default());
+    }
+
+    #[test]
+    fn protection_lists_are_sources_too() {
+        let enabled = vec!["easylist".to_string(), "nocoin".into(), "krunk-fingerprinting".into(), "nope".into()];
+        let ids: Vec<&str> = Sources::builtin(&enabled).builtin_ids().collect();
+        assert_eq!(ids, ["easylist", "nocoin", "krunk-fingerprinting"]);
+        let dir = std::env::temp_dir().join(format!("krunk-lists-{}", std::process::id()));
+        let texts = current_texts(&dir, &Sources::builtin(&enabled), &UpdateState::default());
+        assert!(texts.iter().any(|(id, t)| id == "nocoin" && t.contains("coinhive")), "the bundled NoCoin text");
+        assert!(texts.iter().any(|(id, t)| id == "krunk-fingerprinting" && t.contains("fpjscdn.net")));
+        assert_ne!(
+            cache_key(&enabled, &UpdateState::default()),
+            cache_key(&enabled[..1], &UpdateState::default()),
+            "the extra lists change the key"
+        );
     }
 
     #[test]

@@ -26,6 +26,10 @@ while ($l.IsListening) {
     $h = @{}; foreach ($k in $req.Headers.AllKeys) { $h[$k] = $req.Headers[$k] }
     $res.AddHeader('Cache-Control', 'no-store'); $res.ContentType = 'application/json'
     $bytes = [Text.Encoding]::UTF8.GetBytes(($h | ConvertTo-Json -Compress))
+  } elseif ($path -eq 'bounce') {
+    # A redirect hop (bounce-tracker test): /bounce?to=<url> answers 302 there.
+    $res.StatusCode = 302; $res.AddHeader('Location', $req.QueryString['to']); $res.AddHeader('Cache-Control', 'no-store')
+    $bytes = [byte[]]::new(0)
   } elseif ($path -eq 'set-cookie') {
     $res.AddHeader('Set-Cookie', 'tp_header=1; Path=/; SameSite=None; Secure')
     $res.AddHeader('Cache-Control', 'no-store')

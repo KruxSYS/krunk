@@ -44,6 +44,7 @@ const SESSION_DEBOUNCE_MS: u32 = 2000;
 
 mod blocking;
 mod bookmarks_bar;
+mod bounce;
 mod devtools;
 mod downloads;
 mod drag;
@@ -299,6 +300,7 @@ impl Browser {
         let _ = browser.app.set(app);
         browser.net.set_notifier(app.notifier());
         browser.init_filters();
+        browser.start_bounce_timer();
         browser.init_vault();
         engine::set_internal_server(browser.server());
         let weak = browser.me.clone();
@@ -1717,6 +1719,10 @@ impl Browser {
                 }
             }
             Request::PermissionExceptions => self.reply(tab, Event::ok(req_id, self.permission_exceptions())),
+            Request::BounceStatus => self.reply(tab, Event::ok(req_id, self.bounce_status())),
+            Request::BounceCleanNow => self.clean_bounces(Some(Box::new(move |b, n| {
+                b.reply(tab, Event::ok(req_id, serde_json::json!({ "cleaned": n })));
+            }))),
             Request::PermissionSet { origin, kind, state } => match self.permission_set(&origin, kind, state) {
                 Ok(()) => {
                     if sender == Sender::Popup && self.popup_kind() == Some(PopupKind::SiteInfo) {
@@ -2346,6 +2352,7 @@ impl WindowEvents for AppEvents {
             segmented::PARTS_TIMER => b.parts_tick(),
             ZOOM_TIMER => b.zoom_tick(),
             flight::FLIGHT_TIMER => b.flight_tick(),
+            bounce::BOUNCE_TIMER => b.bounce_tick(),
             UPDATE_TIMER => {
                 if let Some(w) = b.app() {
                     w.set_timer(UPDATE_TIMER, blocking::UPDATE_CHECK_INTERVAL_MS);

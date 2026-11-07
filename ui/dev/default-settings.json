@@ -20,7 +20,7 @@
   ],
   "customLists": [],
   "filterListsRev": 1,
-  "blockThirdPartyCookies": true,
+  "blockThirdPartyCookies": false,
   "httpsOnly": false,
   "sendDnt": true,
   "sendGpc": true,
@@ -41,6 +41,15 @@
     "midi": "ask",
     "screenShare": "ask",
     "localNetwork": "ask"
+  },
+  "protection": {
+    "level": "standard",
+    "fingerprinting": false,
+    "cryptomining": true,
+    "thirdPartyCookies": "trackers",
+    "stripParams": true,
+    "referrer": "origin",
+    "bounceCleanup": true
   },
   "vaultAutolockMinutes": 15,
   "offerSavePasswords": true,

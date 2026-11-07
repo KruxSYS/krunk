@@ -38,6 +38,7 @@ fetch() { # name url
 
 UBO=https://ublockorigin.github.io/uAssets/filters
 fetch easylist.txt           https://easylist.to/easylist/easylist.txt
+fetch nocoin.txt             https://raw.githubusercontent.com/hoshsadiq/adblock-nocoin-list/master/nocoin.txt
 fetch easyprivacy.txt        https://easylist.to/easylist/easyprivacy.txt
 fetch ublock-filters.txt     $UBO/filters.txt
 fetch ublock-privacy.txt     $UBO/privacy.txt
