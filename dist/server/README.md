@@ -75,6 +75,11 @@ Then build Krunk for that server: `UPDATE_BASE_URL=https://downloads.example.org
   Check it with `curl -sI https://krunk.209.wf/updates/win-x64/latest.json` (`cf-cache-status`).
 - Cloudflare sees the requests, and so the client IPs. It cannot forge an update: Krunk
   checks the signature and the installer's hash.
+- Operator provisioning so far (0.6.0): the live `.env` holds the Turnstile keys for
+  `krunk.209.wf` (step 1–2 of docs/sync/OPEN_QUESTIONS.md "Operator provisioning"), nothing
+  else; `/api/v1/web/config` shows the site key with `accounts_enabled: false` until SMTP
+  (step 3) is set. A changed `.env` takes effect with the next deploy (containers are
+  re-created; a plain restart keeps the old environment).
 
 ### The site knows Krunk (0.6.0)
 Krunk leaves a frozen `window.krunk = { version }` in the main frame of pages on its update
