@@ -67,6 +67,15 @@ impl Browser {
             self.abandon_download(start);
             return;
         }
+        // A Web Store package (0.7.0, R20): never saved, it goes to the install flow.
+        if let Some(id) = lb_core::ext::webstore_crx_id(&start.url) {
+            info!("download of extension {id} from the Web Store: to the install flow");
+            self.abandon_download(start);
+            if !private {
+                self.ext_install_from_store(&id, None, None, tab);
+            }
+            return;
+        }
         let ask = self.settings.borrow().ask_where_to_save;
         let name = sanitize_file_name(&start.suggested_name);
         let Some(folder) = self.download_folder() else {

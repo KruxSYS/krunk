@@ -377,7 +377,7 @@
   function fit() { LB.post('popupResize', { height: root.offsetHeight + 2 }); }
   // Content whose height depends on its items: the window is opened with an upper bound
   // and fitted right after the render (the ⋮ menu used to leave a gap at the bottom).
-  const FITS = { suggest: true, cardFill: true, menu: true, tabMenu: true, bookmarkMenu: true, siteInfo: true, addressMenu: true, captionMenu: true, downloads: true, permission: true, passwordSaved: true, pip: true };
+  const FITS = { extInstall: true, suggest: true, cardFill: true, menu: true, tabMenu: true, bookmarkMenu: true, siteInfo: true, addressMenu: true, captionMenu: true, downloads: true, permission: true, passwordSaved: true, pip: true };
 
 
   // Login suggestions under a focused field: the matching usernames (with the host for a
@@ -468,6 +468,24 @@
     }, { passive: false });
     requestAnimationFrame(pvPaint);
     return [bar];
+  }
+
+  // "Add this extension?" (0.7.0, R20): every install path asks first, with what it may do.
+  function renderExtInstall(c) {
+    const reply = (accept) => { LB.post('extInstallReply', { requestId: c.requestId, accept: accept }); };
+    const list = c.warnings.length
+      ? el('ul', { class: 'ext-warnings' }, c.warnings.map((w) => el('li', { text: w })))
+      : el('p', { class: 'muted', text: 'It needs no special permissions.' });
+    return [el('div', { class: 'panel ext-install' }, [
+      el('h2', { text: (c.previous ? 'Update “' : 'Add “') + c.name + '”?' }),
+      el('p', { class: 'muted ext-meta', text: 'Version ' + c.version + (c.previous ? ' (installed: ' + c.previous + ')' : '') + ' · ' + c.source }),
+      c.warnings.length ? el('p', { class: 'ext-can', text: 'It can:' }) : null,
+      list,
+      el('div', { class: 'row' }, [
+        el('button', { class: 'btn', id: 'ext-cancel', onclick: () => reply(false), text: 'Cancel' }),
+        el('button', { class: 'btn primary', id: 'default', onclick: () => reply(true), text: c.previous ? 'Update' : 'Add extension' }),
+      ]),
+    ])];
   }
 
   // Saved cards under a card field (0.6.0): masked labels; the host fills what was chosen.
@@ -799,7 +817,7 @@
       return;
     }
     current = m.content;
-    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, cardFill: renderCardFill, saveCard: renderSaveCard, pip: renderPip, pipVolume: renderPipVolume, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
+    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, cardFill: renderCardFill, saveCard: renderSaveCard, pip: renderPip, pipVolume: renderPipVolume, extInstall: renderExtInstall, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
     root.textContent = '';
     root.dataset.kind = c.kind;
     // The volume bar matches the engine's floating window, which is always dark.
@@ -815,6 +833,8 @@
       // Dismissing a prompt is never a confirmation.
       if (current && current.kind === 'savePassword') {
         LB.post('savePasswordReply', { tabId: current.tabId, origin: current.origin, accept: false, never: false });
+      } else if (current && current.kind === 'extInstall') {
+        LB.post('extInstallReply', { requestId: current.requestId, accept: false });
       } else if (current && current.kind === 'fill') {
         LB.post('fillReply', { tabId: current.tabId, origin: current.origin, entryId: null });
       }

@@ -156,6 +156,27 @@ pub(super) struct ExtHost {
     /// extension has content scripts for them; every event of an enabled domain crosses to the
     /// browser process, which slowed every page down).
     domains: RefCell<std::collections::HashSet<TabId>>,
+    /// A package waiting for the install confirmation (0.7.0, R20).
+    pending_install: RefCell<Option<PendingInstall>>,
+    /// The extension whose popup closed last, and when (ms): the toolbar click that closed it
+    /// (by taking the focus) does not open it again (0.7.0, R21).
+    popup_closed: RefCell<(String, i64)>,
+}
+
+/// A package's files, its id and whether the Web Store signed it.
+type Prepared = (Vec<(String, Vec<u8>)>, String, bool);
+
+/// A verified package and who asked for it, until the user answers.
+pub(super) struct PendingInstall {
+    request_id: u32,
+    files: Vec<(String, Vec<u8>)>,
+    id: String,
+    source: String,
+    /// The page that asked (krunk://extensions) and its request, or `None` for the store's
+    /// "Add to Krunk" (the store tab gets a notice instead).
+    tab: Option<TabId>,
+    req_id: Option<u32>,
+    store_tab: Option<TabId>,
 }
 
 impl ExtHost {
@@ -171,6 +192,8 @@ impl ExtHost {
             alarms: RefCell::new(HashMap::new()),
             request_origin: RefCell::new(None),
             domains: RefCell::new(std::collections::HashSet::new()),
+            pending_install: RefCell::new(None),
+            popup_closed: RefCell::new((String::new(), 0)),
             scripts: RefCell::new(HashMap::new()),
             contexts: RefCell::new(HashMap::new()),
         }
@@ -866,6 +889,11 @@ impl Browser {
             .iter()
             .find(|e| e.installed.id == ext_id && e.installed.enabled)
             .and_then(|e| e.popup_path());
+        let (closed, at) = self.ext.popup_closed.borrow().clone();
+        if popup.is_some() && closed == ext_id && now_ms() - at < 400 {
+            info!("extension {}: popup stays closed (its button was the click away)", self.ext_name(ext_id));
+            return;
+        }
         match popup {
             Some(p) => self.open_ext_popup(ext_id, &p, rect),
             None => {
@@ -896,6 +924,17 @@ impl Browser {
             }
         };
         let view = self.ext_view(ext_id, true);
+        // Esc closes it (0.7.0, R21); the page sees the key first only if it handles it itself.
+        let weak = self.me.clone();
+        view.on_key(move |key| {
+            if key.vk == lb_core::keys::vk::ESCAPE && !key.ctrl && !key.alt && !key.shift {
+                if let Some(b) = weak.upgrade() {
+                    b.defer(|b| b.close_ext_popup_because("Esc"));
+                }
+                return true;
+            }
+            false
+        });
         let weak = self.me.clone();
         view.on_load_finished(move |_| {
             if let Some(b) = weak.upgrade() {
@@ -970,13 +1009,23 @@ impl Browser {
         p.view.set_bounds(0, 0, r.width, r.height);
     }
 
+    /// The window lost activation: the popup closes unless it is what took it.
+    pub(super) fn ext_popup_window_deactivated(&self) {
+        let keep = self.ext.popup.borrow().as_ref().is_none_or(|p| !p.shown || p.window.owns_foreground());
+        if !keep {
+            self.close_ext_popup_because("its window lost activation");
+        }
+    }
+
     pub(super) fn close_ext_popup(&self) {
         self.close_ext_popup_because("closed");
     }
 
-    fn close_ext_popup_because(&self, why: &str) {
-        if let Some(p) = self.ext.popup.borrow_mut().take() {
+    pub(super) fn close_ext_popup_because(&self, why: &str) {
+        let taken = self.ext.popup.try_borrow_mut().ok().and_then(|mut p| p.take());
+        if let Some(p) = taken {
             info!("extension {}: popup {why}", self.ext_name(&p.ext));
+            *self.ext.popup_closed.borrow_mut() = (p.ext.clone(), now_ms());
             p.view.close();
             p.window.destroy();
         }
@@ -1825,18 +1874,22 @@ impl Browser {
         Ok(installed)
     }
 
-    /// A zip or CRX3 in memory.
-    fn ext_install_bytes(&self, bytes: &[u8], source: &str, expect_id: Option<&str>) -> Result<Installed, String> {
-        let (zip, id) = if bytes.starts_with(b"Cr24") {
-            let crx = ext::parse_crx(bytes).map_err(|e| e.to_string())?;
-            (crx.zip, Some(crx.id))
+    /// A zip or a CRX3 in memory: the files and the id. A CRX3 must carry a valid signature by
+    /// its own key (0.7.0); `expect_id` (a Web Store download) must be that id.
+    fn ext_prepare_bytes(&self, bytes: &[u8], expect_id: Option<&str>) -> Result<Prepared, String> {
+        let (zip, id, store_signed) = if bytes.starts_with(b"Cr24") {
+            let v = ext::verify_crx(bytes).map_err(|e| e.to_string())?;
+            (v.crx.zip, Some(v.crx.id), v.store_signed)
         } else {
-            (bytes.to_vec(), None)
+            (bytes.to_vec(), None, false)
         };
         if let (Some(want), Some(got)) = (expect_id, id.as_deref()) {
             if want != got {
                 return Err(format!("the package is signed for another id ({got}), not {want}"));
             }
+        }
+        if expect_id.is_some() && !store_signed {
+            return Err("the package from the Web Store is not signed by the Web Store".into());
         }
         let entries = ext::unzip(&zip).map_err(|e| e.to_string())?;
         let files: Vec<(String, Vec<u8>)> = entries.into_iter().map(|e| (e.name, e.data)).collect();
@@ -1858,7 +1911,114 @@ impl Browser {
                 }
             }
         };
-        self.ext_install_files(files, id, source)
+        Ok((files, id, store_signed))
+    }
+
+    /// Every install path ends here (0.7.0, R20): the verified package is shown with what it
+    /// may do, and installed only when the user says so.
+    fn ext_confirm_install(
+        &self,
+        prepared: Result<Prepared, String>,
+        source: String,
+        source_text: &str,
+        tab: Option<TabId>,
+        req_id: Option<u32>,
+        store_tab: Option<TabId>,
+    ) {
+        let (files, id, store_signed) = match prepared {
+            Ok(p) => p,
+            Err(e) => {
+                warning!("extension install failed: {e}");
+                self.ext_install_reply(tab, req_id, Err(e.clone()));
+                self.ext_store_notice(store_tab, &format!("Krunk could not add this extension: {e}"));
+                return;
+            }
+        };
+        let manifest = files
+            .iter()
+            .find(|(n, _)| n == "manifest.json")
+            .ok_or_else(|| "the package has no manifest.json".to_string())
+            .and_then(|(_, b)| Manifest::parse(&String::from_utf8_lossy(b)).map_err(|e| e.to_string()));
+        let manifest = match manifest {
+            Ok(m) => m,
+            Err(e) => {
+                warning!("extension install failed: {e}");
+                self.ext_install_reply(tab, req_id, Err(e.clone()));
+                self.ext_store_notice(store_tab, &format!("Krunk could not add this extension: {e}"));
+                return;
+            }
+        };
+        // Its name in the user's language (the same as after the install).
+        let messages: Value = files
+            .iter()
+            .find(|(n, _)| {
+                self.ext_languages().iter().any(|l| *n == format!("_locales/{l}/messages.json"))
+                    || manifest.default_locale.as_deref().is_some_and(|d| *n == format!("_locales/{d}/messages.json"))
+            })
+            .and_then(|(_, b)| serde_json::from_slice(b).ok())
+            .unwrap_or(json!({}));
+        let name = ext::localize(&manifest.name, &messages);
+        let previous =
+            self.ext.exts.borrow().iter().find(|e| e.installed.id == id).map(|e| e.installed.version.clone());
+        let request_id = self.ext.next_id.get() as u32;
+        self.ext.next_id.set(self.ext.next_id.get() + 1);
+        let src = if store_signed {
+            format!("{source_text}, signed by the Chrome Web Store")
+        } else {
+            source_text.to_string()
+        };
+        let warnings = ext::install_warnings(&manifest);
+        info!("extension: asking before installing {name} {} ({id}) from {source}", manifest.version);
+        // A newer request replaces one still waiting (that one counts as declined).
+        if let Some(old) = self.ext.pending_install.borrow_mut().take() {
+            self.ext_install_reply(old.tab, old.req_id, Err("replaced by another install".into()));
+        }
+        *self.ext.pending_install.borrow_mut() =
+            Some(PendingInstall { request_id, files, id, source, tab, req_id, store_tab });
+        let entries = warnings.len();
+        self.show_prompt(
+            lb_core::protocol::PopupContent::ExtInstall {
+                request_id,
+                name,
+                version: manifest.version.clone(),
+                source: src,
+                warnings,
+                previous,
+            },
+            entries,
+        );
+    }
+
+    /// The confirmation's answer.
+    pub(super) fn ext_install_answer(&self, request_id: u32, accept: bool) {
+        let pending = {
+            let mut slot = self.ext.pending_install.borrow_mut();
+            if slot.as_ref().is_none_or(|p| p.request_id != request_id) {
+                return;
+            }
+            slot.take()
+        };
+        let Some(p) = pending else { return };
+        self.hide_popup();
+        if !accept {
+            info!("extension install declined ({})", p.id);
+            self.ext_install_reply(p.tab, p.req_id, Err("declined".into()));
+            return;
+        }
+        let result = self.ext_install_files(p.files, p.id, &p.source);
+        if let (Some(store_tab), Ok(i)) = (p.store_tab, &result) {
+            self.ext_store_notice(Some(store_tab), &format!("{} was added to Krunk.", i.name));
+        }
+        self.ext_install_reply(p.tab, p.req_id, result);
+        self.push_ext_list();
+    }
+
+    /// The confirmation closed without an answer: declined.
+    pub(super) fn ext_install_dismissed(&self, request_id: u32) {
+        let waiting = self.ext.pending_install.borrow().as_ref().is_some_and(|p| p.request_id == request_id);
+        if waiting {
+            self.ext_install_answer(request_id, false);
+        }
     }
 
     pub(super) fn ext_install_file(&self, tab: Option<TabId>, req_id: Option<u32>) {
@@ -1869,14 +2029,10 @@ impl Browser {
             self.reply(tab, Event::ok(req_id, Value::Null));
             return;
         };
-        let result = std::fs::read(&path).map_err(|e| e.to_string()).and_then(|bytes| {
-            self.ext_install_bytes(
-                &bytes,
-                &format!("file:{}", path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()),
-                None,
-            )
-        });
-        self.ext_install_reply(tab, req_id, result);
+        let file = path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+        let prepared =
+            std::fs::read(&path).map_err(|e| e.to_string()).and_then(|bytes| self.ext_prepare_bytes(&bytes, None));
+        self.ext_confirm_install(prepared, format!("file:{file}"), &format!("The file {file}"), tab, req_id, None);
     }
 
     pub(super) fn ext_install_folder(&self, tab: Option<TabId>, req_id: Option<u32>) {
@@ -1885,24 +2041,41 @@ impl Browser {
             self.reply(tab, Event::ok(req_id, Value::Null));
             return;
         };
-        let result = read_tree(&path).and_then(|files| {
-            self.ext_install_files(files, ext::id_from_path(&path), &format!("folder:{}", path.display()))
-        });
-        self.ext_install_reply(tab, req_id, result);
+        let prepared = read_tree(&path).map(|files| (files, ext::id_from_path(&path), false));
+        self.ext_confirm_install(
+            prepared,
+            format!("folder:{}", path.display()),
+            &format!("The folder {} (unpacked, not signed)", path.display()),
+            tab,
+            req_id,
+            None,
+        );
     }
 
     pub(super) fn ext_install_url(&self, tab: Option<TabId>, req_id: Option<u32>, url: &str) {
-        let Some(id) = ext::webstore_id(url) else {
+        let Some(id) = ext::webstore_id(url).or_else(|| ext::webstore_crx_id(url)) else {
             self.reply(
                 tab,
                 Event::err(req_id, "That is not a Chrome Web Store extension address (…/detail/<name>/<id>)."),
             );
             return;
         };
-        let Some(download) = ext::webstore_download_url(&id) else { return };
+        self.ext_install_from_store(&id, tab, req_id, None);
+    }
+
+    /// Downloads extension `id` from the Web Store (over HTTPS, never into Downloads), checks
+    /// its signatures and asks before installing it.
+    pub(super) fn ext_install_from_store(
+        &self,
+        id: &str,
+        tab: Option<TabId>,
+        req_id: Option<u32>,
+        store_tab: Option<TabId>,
+    ) {
+        let Some(download) = ext::webstore_download_url(id) else { return };
         let proxy = self.ext_proxy();
         info!("extension: downloading {id} from the Web Store");
-        let id2 = id.clone();
+        let id2 = id.to_string();
         self.spawn_job(
             "extension download",
             move || {
@@ -1910,14 +2083,50 @@ impl Browser {
                 http::get_with(&download, MAX_CRX_BYTES, &opts)
             },
             move |b, r| {
-                let result = r.and_then(|bytes| b.ext_install_bytes(&bytes, &format!("webstore:{id2}"), Some(&id2)));
-                b.ext_install_reply(tab, req_id, result);
+                let prepared = r.and_then(|bytes| b.ext_prepare_bytes(&bytes, Some(&id2)));
+                b.ext_confirm_install(prepared, format!("webstore:{id2}"), "Chrome Web Store", tab, req_id, store_tab);
             },
         );
     }
 
+    /// "Add to Krunk" on a store page (0.7.0, R20): the id comes from the tab's own address.
+    pub(super) fn ext_store_click(&self, tab: TabId) {
+        let url = self.tab(tab).map(|t| t.url.clone()).unwrap_or_default();
+        match ext::webstore_id(&url) {
+            Some(id) => self.ext_install_from_store(&id, None, None, Some(tab)),
+            None => warning!("tab {tab}: \"Add to Krunk\" on a page that is not a store detail page"),
+        }
+    }
+
+    /// A one-line notice on the store page (in the tab's page through its media-free bridge).
+    fn ext_store_notice(&self, tab: Option<TabId>, text: &str) {
+        let Some(view) = tab.and_then(|t| self.tab_view(t)) else { return };
+        view.post_json(&json!({ "event": "krunkStore", "text": text }).to_string());
+    }
+
+    /// The extensions page, if open, shows the new list.
+    fn push_ext_list(&self) {
+        let event = json!({ "event": "extChanged", "extensions": self.ext_list_json() }).to_string();
+        let tabs: Vec<TabId> = self
+            .ws
+            .borrow()
+            .tabs()
+            .filter(|(_, t)| lb_core::pages::Page::from_url(&t.url) == Some(lb_core::pages::Page::Extensions))
+            .map(|(_, t)| t.id)
+            .collect();
+        for id in tabs {
+            if let Some(c) = self.tab_view(id) {
+                c.post_json(&event);
+            }
+        }
+    }
+
     fn ext_install_reply(&self, tab: Option<TabId>, req_id: Option<u32>, result: Result<Installed, String>) {
+        if tab.is_none() && req_id.is_none() {
+            return;
+        }
         match result {
+            Err(e) if e == "declined" => self.reply(tab, Event::ok(req_id, json!({ "declined": true }))),
             Ok(i) => self.reply(
                 tab,
                 Event::ok(req_id, json!({ "installed": i.id, "name": i.name, "extensions": self.ext_list_json() })),

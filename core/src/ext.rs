@@ -548,6 +548,114 @@ pub fn parse_crx(bytes: &[u8]) -> Result<Crx, ExtError> {
     Ok(Crx { id, zip: bytes[header_end..].to_vec() })
 }
 
+/// A CRX3 package whose signature by its own developer key checks out (0.7.0, R20): the
+/// header's `crx_id` is the hash of one of its `sha256_with_rsa` keys, and that key signed
+/// `"CRX3 SignedData\0" || len(signed_header_data) || signed_header_data || zip`. A Web Store
+/// package also carries the store's proof (`store_signed`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedCrx {
+    pub crx: Crx,
+    pub store_signed: bool,
+}
+
+/// The Chrome Web Store's publisher key: the SHA-256 of its SubjectPublicKeyInfo
+/// (Chromium `components/crx_file/crx_verifier.cc`, `kPublisherKeyHash`).
+const WEBSTORE_KEY_HASH: [u8; 32] = [
+    0x61, 0xf7, 0xf2, 0xa6, 0xbf, 0xcf, 0x74, 0xcd, 0x0b, 0xc1, 0xfe, 0x24, 0x97, 0xcc, 0x9b, 0x04, 0x25, 0x4c, 0x65,
+    0x8f, 0x79, 0xf2, 0x14, 0x53, 0x92, 0x86, 0x7e, 0xa8, 0x36, 0x63, 0x67, 0xcf,
+];
+
+/// Checks a CRX3's developer signature (and notes the store's). Errors name what failed.
+pub fn verify_crx(bytes: &[u8]) -> Result<VerifiedCrx, ExtError> {
+    use sha2::Digest;
+    let bad = |s: &str| ExtError::Invalid(format!("the package's signature is not valid: {s}"));
+    let crx = parse_crx(bytes)?;
+    let header_len = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
+    let header = &bytes[12..12 + header_len];
+    let signed_data = protobuf_fields(header)
+        .find(|(f, _)| *f == 10000)
+        .map(|(_, v)| v.to_vec())
+        .ok_or_else(|| bad("no signed header data"))?;
+    let mut message = b"CRX3 SignedData\x00".to_vec();
+    message.extend_from_slice(&(signed_data.len() as u32).to_le_bytes());
+    message.extend_from_slice(&signed_data);
+    message.extend_from_slice(&crx.zip);
+    let mut developer = false;
+    let mut store = false;
+    for (field, proof) in protobuf_fields(header) {
+        if field != 2 {
+            continue;
+        }
+        let mut key = None;
+        let mut sig = None;
+        for (f, v) in protobuf_fields(proof) {
+            match f {
+                1 => key = Some(v),
+                2 => sig = Some(v),
+                _ => {}
+            }
+        }
+        let (Some(key), Some(sig)) = (key, sig) else { continue };
+        let is_dev = id_from_public_key(key) == crx.id;
+        let is_store = sha2::Sha256::digest(key).as_slice() == WEBSTORE_KEY_HASH;
+        if !is_dev && !is_store {
+            continue;
+        }
+        let Some(pkcs1) = spki_rsa_key(key) else { return Err(bad("an RSA key does not parse")) };
+        let ok = ring::signature::UnparsedPublicKey::new(&ring::signature::RSA_PKCS1_2048_8192_SHA256, pkcs1)
+            .verify(&message, sig)
+            .is_ok();
+        if !ok {
+            return Err(bad(if is_dev {
+                "the developer's signature does not match"
+            } else {
+                "the Web Store's signature does not match"
+            }));
+        }
+        developer |= is_dev;
+        store |= is_store;
+    }
+    if !developer {
+        return Err(bad("no signature by the extension's own key"));
+    }
+    Ok(VerifiedCrx { crx, store_signed: store })
+}
+
+/// The PKCS#1 RSAPublicKey inside a DER SubjectPublicKeyInfo (rsaEncryption).
+fn spki_rsa_key(der: &[u8]) -> Option<&[u8]> {
+    fn tlv(b: &[u8]) -> Option<(u8, &[u8], &[u8])> {
+        let tag = *b.first()?;
+        let first = *b.get(1)?;
+        let (len, start) = if first & 0x80 == 0 {
+            (usize::from(first), 2)
+        } else {
+            let n = usize::from(first & 0x7f);
+            if n == 0 || n > 4 {
+                return None;
+            }
+            let mut len = 0usize;
+            for i in 0..n {
+                len = (len << 8) | usize::from(*b.get(2 + i)?);
+            }
+            (len, 2 + n)
+        };
+        let body = b.get(start..start.checked_add(len)?)?;
+        Some((tag, body, &b[start + len..]))
+    }
+    const RSA_OID: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01];
+    let (0x30, spki, _) = tlv(der)? else { return None };
+    let (0x30, alg, rest) = tlv(spki)? else { return None };
+    let (0x06, oid, _) = tlv(alg)? else { return None };
+    if oid != RSA_OID {
+        return None;
+    }
+    let (0x03, bits, _) = tlv(rest)? else { return None };
+    match bits.split_first() {
+        Some((0, key)) => Some(key),
+        _ => None,
+    }
+}
+
 /// The length-delimited (wire type 2) fields of a protobuf message, in order.
 fn protobuf_fields(mut b: &[u8]) -> impl Iterator<Item = (u64, &[u8])> {
     std::iter::from_fn(move || {
@@ -610,6 +718,73 @@ pub fn webstore_id(url: &str) -> Option<String> {
         return None;
     }
     u.path_segments()?.rfind(|s| valid_id(s)).map(str::to_string)
+}
+
+/// The Chrome Web Store's page origins (where "Add to Krunk" is offered).
+pub fn is_store_origin(origin: &str) -> bool {
+    matches!(origin, "https://chromewebstore.google.com" | "https://chrome.google.com")
+}
+
+/// The extension id of a Web Store package download (`clients2.google.com/service/update2/crx?…
+/// &x=id%3D<id>%26uc`), the address the store and Chrome's updater fetch (0.7.0: such a download
+/// is never saved, it goes to the install flow).
+pub fn webstore_crx_id(url: &str) -> Option<String> {
+    let u = url::Url::parse(url.trim()).ok()?;
+    if u.scheme() != "https" || u.host_str()? != "clients2.google.com" || !u.path().starts_with("/service/update2/crx")
+    {
+        return None;
+    }
+    let x = u.query_pairs().find(|(k, _)| k == "x")?.1.into_owned();
+    let id = url::form_urlencoded::parse(x.as_bytes()).find(|(k, _)| k == "id")?.1.into_owned();
+    valid_id(&id).then_some(id)
+}
+
+/// What the install confirmation says an extension may do (0.7.0, R20), in Chrome's words where
+/// it has them: the sites first, then the API permissions that matter. Empty: nothing special.
+pub fn install_warnings(m: &Manifest) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let scope: Vec<MatchPattern> = m.scope().iter().filter_map(|p| MatchPattern::parse(p)).collect();
+    if scope.iter().any(MatchPattern::is_all_sites) {
+        out.push("Read and change all your data on all websites".into());
+    } else if !scope.is_empty() {
+        let mut hosts: Vec<String> = scope.iter().map(MatchPattern::describe).collect();
+        hosts.dedup();
+        let shown: Vec<String> = hosts.iter().take(4).cloned().collect();
+        let more = hosts.len().saturating_sub(shown.len());
+        out.push(format!(
+            "Read and change your data on {}{}",
+            shown.join(", "),
+            if more > 0 {
+                format!(" and {more} other site{}", if more == 1 { "" } else { "s" })
+            } else {
+                String::new()
+            }
+        ));
+    }
+    for p in m.api_permissions() {
+        let w = match p {
+            "tabs" | "webNavigation" => "Read your browsing history",
+            "history" => "Read and change your browsing history",
+            "bookmarks" => "Read and change your bookmarks",
+            "cookies" => "Read and change cookies of the sites it can access",
+            "downloads" => "Manage your downloads",
+            "clipboardRead" => "Read data you copy and paste",
+            "clipboardWrite" => "Change data you copy and paste",
+            "notifications" => "Display notifications",
+            "declarativeNetRequest" | "declarativeNetRequestWithHostAccess" => "Block content on any page",
+            "management" => "Manage your apps, extensions and themes",
+            "privacy" => "Change your privacy-related settings",
+            "proxy" => "Read and change your proxy settings",
+            "geolocation" => "Detect your physical location",
+            "nativeMessaging" => "Communicate with cooperating native applications",
+            "debugger" => "Access the page debugger backend",
+            _ => continue,
+        };
+        if !out.iter().any(|x| x == w) {
+            out.push(w.to_string());
+        }
+    }
+    out
 }
 
 /// Standard base64 (a manifest's `key`).
@@ -1245,6 +1420,60 @@ mod tests {
         assert_eq!(parse_crx(&crx2).unwrap().id, want);
         assert!(parse_crx(b"Cr24\x02\x00\x00\x00").is_err(), "CRX2 refused");
         assert!(parse_crx(&zip).is_err());
+    }
+
+    #[test]
+    fn install_warnings_and_store_downloads() {
+        let m = |json: &str| Manifest::parse(json).unwrap();
+        let ubo = m(
+            r#"{"manifest_version":3,"name":"uBO Lite","version":"1.0","permissions":["declarativeNetRequest","storage","scripting","activeTab"],"host_permissions":["<all_urls>"]}"#,
+        );
+        assert_eq!(
+            install_warnings(&ubo),
+            ["Read and change all your data on all websites", "Block content on any page"]
+        );
+        let few = m(
+            r#"{"manifest_version":3,"name":"x","version":"1","permissions":["tabs","storage"],"host_permissions":["https://*.example.com/*","https://a.test/*","https://b.test/*","https://c.test/*","https://d.test/*"]}"#,
+        );
+        assert_eq!(
+            install_warnings(&few),
+            [
+                "Read and change your data on example.com and its subdomains, a.test, b.test, c.test and 1 other site",
+                "Read your browsing history"
+            ]
+        );
+        assert!(install_warnings(&m(r#"{"manifest_version":3,"name":"x","version":"1","permissions":["storage"]}"#))
+            .is_empty());
+        let id = "a".repeat(32);
+        let url = format!("https://clients2.google.com/service/update2/crx?response=redirect&prodversion=156.0.0.0&acceptformat=crx3&x=id%3D{id}%26uc");
+        assert_eq!(webstore_crx_id(&url).as_deref(), Some(id.as_str()));
+        assert_eq!(webstore_download_url(&id).and_then(|u| webstore_crx_id(&u)).as_deref(), Some(id.as_str()));
+        assert!(webstore_crx_id("https://evil.example/service/update2/crx?x=id%3Daaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            .is_none());
+        assert!(webstore_crx_id(
+            "http://clients2.google.com/service/update2/crx?x=id%3Daaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        )
+        .is_none());
+        assert!(webstore_crx_id("https://clients2.google.com/service/update2/crx?x=id%3Dnot-an-id").is_none());
+    }
+
+    #[test]
+    fn crx_signatures_are_checked() {
+        // core/tests/fixtures/crx/make.py: throwaway RSA keys, a one-file zip.
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/crx");
+        let read = |n: &str| std::fs::read(dir.join(n)).unwrap();
+        let ok = verify_crx(&read("signed.crx")).unwrap();
+        assert!(valid_id(&ok.crx.id) && !ok.store_signed);
+        let files = unzip(&ok.crx.zip).unwrap();
+        assert_eq!(files[0].name, "manifest.json");
+        let e = verify_crx(&read("tampered.crx")).unwrap_err().to_string();
+        assert!(e.contains("does not match"), "{e}");
+        let e = verify_crx(&read("wrong-key.crx")).unwrap_err().to_string();
+        assert!(e.contains("own key"), "{e}");
+        // The unsigned test package above has no signed data at all.
+        assert!(verify_crx(b"Cr24\x03\x00\x00\x00\x00\x00\x00\x00PK").is_err());
+        // A SubjectPublicKeyInfo that is not RSA is refused.
+        assert!(spki_rsa_key(&[0x30, 0x03, 0x30, 0x01, 0x00]).is_none());
     }
 
     #[test]

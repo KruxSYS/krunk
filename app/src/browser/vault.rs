@@ -930,6 +930,7 @@ impl Browser {
                 self.vaults.pending_card.borrow_mut().take();
             }
             PopupContent::Permission { prompt_id, .. } => self.permission_dismissed(*prompt_id),
+            PopupContent::ExtInstall { request_id, .. } => self.ext_install_dismissed(*request_id),
             PopupContent::Unlock { purpose, .. } => {
                 self.vaults.unlock_for.borrow_mut().take();
                 match purpose {

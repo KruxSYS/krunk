@@ -159,6 +159,9 @@ pub enum PopupKind {
     Downloads,
     /// Which video goes to Picture-in-Picture when the page has several (0.6.0).
     Pip,
+    /// "Add <extension>?" before any extension is installed (0.7.0, R20): its name, the
+    /// verified source and what it may do. Opened by the host only.
+    ExtInstall,
     /// The volume bar next to the floating video window (0.7.0, R8). Opened by the host only;
     /// it never takes the keyboard (the floating window keeps it).
     PipVolume,
@@ -286,6 +289,18 @@ pub enum PopupContent {
     Pip { tab_id: u32, videos: Vec<VideoInfo> },
     /// The floating video's volume (0.7.0, R8): percent and mute of tab `tab_id`'s video.
     PipVolume { tab_id: u32, volume: u32, muted: bool },
+    /// The install confirmation (0.7.0, R20). `request_id` is echoed by the answer.
+    ExtInstall {
+        request_id: u32,
+        name: String,
+        version: String,
+        /// Where it comes from ("Chrome Web Store, signed by the store", "File krunk.zip", …).
+        source: String,
+        warnings: Vec<String>,
+        /// It replaces an installed version (`previous`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        previous: Option<String>,
+    },
     Shield {
         host: String,
         blocked: u32,
@@ -590,6 +605,7 @@ impl PopupContent {
             PopupContent::Downloads { .. } => PopupKind::Downloads,
             PopupContent::Pip { .. } => PopupKind::Pip,
             PopupContent::PipVolume { .. } => PopupKind::PipVolume,
+            PopupContent::ExtInstall { .. } => PopupKind::ExtInstall,
             PopupContent::BookmarkMenu { .. } => PopupKind::BookmarkMenu,
             PopupContent::BookmarkEdit { .. } => PopupKind::BookmarkEdit,
         }
@@ -1246,6 +1262,11 @@ pub enum Request {
         tab_id: u32,
         index: u32,
     },
+    /// The install confirmation's answer (popup, 0.7.0).
+    ExtInstallReply {
+        request_id: u32,
+        accept: bool,
+    },
     /// The floating video's volume bar (popup, 0.7.0): `volume` percent (0-100) and mute for
     /// the video of tab `tab_id` that is in Picture-in-Picture.
     PipVolume {
@@ -1473,6 +1494,7 @@ impl Sender {
                     | R::SuggestPick { .. }
                     | R::PipPick { .. }
                     | R::PipVolume { .. }
+                    | R::ExtInstallReply { .. }
                     | R::SuggestUnlock { .. }
                     | R::SuggestGenerate { .. }
                     | R::CardFillPick { .. }
@@ -1749,6 +1771,9 @@ pub enum ContentMessage {
     /// The document painted its first content (main frame only; 0.7.0, R7): a tab switch that
     /// kept the old page on screen while this view was blank can show it now.
     Painted {},
+    /// "Add to Krunk" on a Chrome Web Store detail page (0.7.0, R20; top frame of the store
+    /// only). The host takes the extension id from the tab's address, never from the page.
+    ExtStoreClick {},
     /// A checkout form with a card number was sent (main frame only; 0.6.0): the browser may
     /// offer to save the card. No security code is ever sent.
     CardSubmit {
@@ -3096,6 +3121,37 @@ mod tests {
             }],
         };
         assert!(ev.to_json().contains("\"event\":\"extActions\"") && ev.to_json().contains("\"hasPopup\":true"));
+    }
+
+    #[test]
+    fn extension_install_confirmation_messages() {
+        // 0.7.0 (R20): the confirmation is the host's popup; only it answers.
+        assert!(!PopupKind::ExtInstall.shell_may_open() && PopupKind::ExtInstall.takes_focus());
+        let reply = Request::ExtInstallReply { request_id: 4, accept: true };
+        assert!(Sender::Popup.permits(&reply));
+        for s in [Sender::Shell, Sender::Ext] {
+            assert!(!s.permits(&reply), "{s:?}");
+        }
+        for p in Page::ALL.iter() {
+            assert!(!Sender::Page(*p).permits(&reply), "{p:?}");
+        }
+        let c = PopupContent::ExtInstall {
+            request_id: 4,
+            name: "uBO Lite".into(),
+            version: "1.0".into(),
+            source: "Chrome Web Store".into(),
+            warnings: vec!["Read and change all your data on all websites".into()],
+            previous: None,
+        };
+        assert_eq!(c.kind(), PopupKind::ExtInstall);
+        let json = serde_json::to_string(&c).unwrap();
+        assert!(json.contains("\"kind\":\"extInstall\"") && json.contains("\"requestId\":4") && !json.contains("previous"), "{json}");
+        // The store page's click: nothing but the click (the host reads the id from the tab).
+        assert_eq!(parse_content(r#"{"lb":"extStoreClick"}"#), Ok(ContentMessage::ExtStoreClick {}));
+        assert!(parse_content(r#"{"lb":"extStoreClick","id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}"#).is_err(), "no id from the page");
+        assert!(parse_content_frame(r#"{"lb":"extStoreClick"}"#).is_err(), "top frame only");
+        assert!(crate::ext::is_store_origin("https://chromewebstore.google.com"));
+        assert!(!crate::ext::is_store_origin("https://chromewebstore.google.com.evil.example"));
     }
 
     #[test]

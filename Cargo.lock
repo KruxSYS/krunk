@@ -523,6 +523,7 @@ dependencies = [
  "miniz_oxide",
  "pbkdf2",
  "psl",
+ "ring",
  "rusqlite",
  "semver",
  "serde",

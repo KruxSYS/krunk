@@ -41,6 +41,7 @@ pbkdf2 = "0.13"
 sha1 = "0.11"
 aes-gcm = "0.11"
 bip39 = { version = "3", default-features = false, features = ["std"] }
+ring = "0.17"
 
 [dev-dependencies]
 ed25519-dalek = { version = "3", default-features = false, features = ["fast"] }

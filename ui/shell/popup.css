@@ -185,3 +185,8 @@ body.pv-dark { --bg-raised: #202124; --bg-hover: #3c4043; --fg: #e8eaed; --fg-mu
 .link { border: 0; background: none; padding: 0; color: var(--link, var(--accent)); cursor: pointer; font: inherit; }
 .link:hover { text-decoration: underline; }
 .panel .forgot { margin-top: 2px; font-size: 0.923rem; }
+.ext-install h2 { overflow-wrap: anywhere; }
+.ext-install .ext-meta { margin: 0 0 10px; font-size: 0.923rem; }
+.ext-install .ext-can { margin: 0 0 4px; font-weight: 600; }
+.ext-warnings { margin: 0 0 12px; padding-left: 20px; }
+.ext-warnings li { margin: 3px 0; }

@@ -579,6 +579,8 @@ impl Browser {
                     return;
                 }
                 b.hide_popup_by_focus_loss();
+                // An extension's popup closes too (0.7.0, R21): a click on the page or the toolbar.
+                b.close_ext_popup_because("another view took the focus");
                 // A click into the page (0.7.0, R5): the address bar of its window gives up its
                 // selection and shows the page's address again.
                 if let Some(id) = tab {
@@ -1809,6 +1811,12 @@ impl Browser {
                 Ok(ContentMessage::Media { videos }) => self.media_changed(id, &origin, videos),
                 Ok(ContentMessage::PipBackToTab {}) => self.pip_back_to_tab(id),
                 Ok(ContentMessage::Painted {}) => self.first_load_done(id),
+                // Only the store's own pages (and their tab's address decides what is installed).
+                Ok(ContentMessage::ExtStoreClick {}) => {
+                    if lb_core::ext::is_store_origin(&origin) {
+                        self.ext_store_click(id);
+                    }
+                }
                 Ok(ContentMessage::CardSubmit { number, exp_month, exp_year, name }) => {
                     self.card_submitted(id, &origin, &number, exp_month, exp_year, name)
                 }
@@ -1999,6 +2007,7 @@ impl Browser {
             // The volume bar is placed and hidden by the host only.
             Request::HidePopup | Request::PopupResize { .. } if self.request_slot() == PopupSlot::Pip => {}
             Request::PipVolume { tab_id, volume, muted } => self.pip_set_volume(tab_id, volume, muted),
+            Request::ExtInstallReply { request_id, accept } => self.ext_install_answer(request_id, accept),
             Request::HidePopup if self.request_slot() == PopupSlot::Menu => {
                 // Esc or a click outside the item menu: back to the open folder dropdown.
                 self.hide_menu_popup(true);
@@ -2248,6 +2257,10 @@ impl Browser {
 
     pub(super) fn show_popup_in(&self, slot: PopupSlot, content: PopupContent, rect: Option<PopupRect>) {
         let Some(main) = self.window() else { return };
+        // Another popup of Krunk's replaces an extension's (0.7.0, R21).
+        if rect.is_some() && slot != PopupSlot::Pip {
+            self.close_ext_popup_because("another popup opened");
+        }
         if self.popup_slot(slot).borrow().is_none() && !self.create_popup(main, slot) {
             return;
         }
@@ -2705,6 +2718,8 @@ impl WindowEvents for FrameEvents {
         } else {
             // Alt+Tab or a click into another window ends the lock.
             b.release_pointer(lb_core::pointer_lock::Release::WindowDeactivated);
+            // Checked after the activation settled (it may have gone to the popup itself).
+            b.defer(|b| b.ext_popup_window_deactivated());
         }
         b.send_window_state();
     }

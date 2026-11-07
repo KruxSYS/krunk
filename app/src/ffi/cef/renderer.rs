@@ -324,6 +324,13 @@ fn context_created(scripts: Scripts, frame: &mut Frame, context: &mut V8Context)
     if is_site_origin(&document_url(frame)) {
         eval(context, SITE_MARKER);
     }
+    // The Chrome Web Store (0.7.0, R20): "Add to Krunk" instead of "Add to Chrome".
+    if url::Url::parse(&document_url(frame))
+        .ok()
+        .is_some_and(|u| u.scheme() == "https" && u.host_str() == Some("chromewebstore.google.com"))
+    {
+        eval_with_bridge(context, assets::inject_script("webstore.js"), host.as_ref());
+    }
     if scripts.page_tokens {
         eval_with_bridge(context, assets::inject_script("page-tokens.js"), host.as_ref());
     }

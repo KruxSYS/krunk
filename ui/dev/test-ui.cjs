@@ -2854,6 +2854,22 @@ async function testPasswords(browser) {
   await page.click('.pip-row[data-index="1"]');
   const pp = await lastSent(page, 'pipPick');
   check(pp && pp.tabId === 4 && pp.index === 1, 'a row sends pipPick{tabId,index}');
+  // 0.7.0 (R20): the install confirmation.
+  await page.setViewportSize({ width: 400, height: 260 });
+  await emit(page, { event: 'popup', content: { kind: 'extInstall', requestId: 7, name: 'uBlock Origin Lite', version: '2026.11.1', source: 'Chrome Web Store, signed by the Chrome Web Store', warnings: ['Read and change all your data on all websites', 'Block content on any page'] } });
+  await page.waitForSelector('.ext-install');
+  check((await page.textContent('h2')) === 'Add “uBlock Origin Lite”?' && await page.locator('.ext-warnings li').count() === 2 && (await page.textContent('.ext-meta')).includes('signed by the Chrome Web Store') && await page.evaluate(() => document.activeElement.id) === 'default', 'the confirmation names the extension, its source and what it can do; Add has the focus');
+  await shot(page, 'popup-ext-install.png');
+  await page.keyboard.press('Escape');
+  check((await lastSent(page, 'extInstallReply')).accept === false, 'Esc declines');
+  await emit(page, { event: 'popup', content: { kind: 'extInstall', requestId: 8, name: 'Dark Reader', version: '4.9', source: 'The file dark.crx', warnings: [], previous: '4.8' } });
+  await page.waitForSelector('.ext-install');
+  check((await page.textContent('h2')) === 'Update “Dark Reader”?' && (await page.textContent('.ext-install')).includes('no special permissions') && (await page.textContent('#default')) === 'Update', 'an update says so; no warnings: says it needs none');
+  await page.click('#default');
+  {
+    const r = await lastSent(page, 'extInstallReply');
+    check(r.requestId === 8 && r.accept === true, 'Update sends extInstallReply{requestId, accept:true}');
+  }
   // 0.7.0 (R8): the volume bar next to the floating window.
   await page.setViewportSize({ width: 400, height: 40 });
   await emit(page, { event: 'popup', content: { kind: 'pipVolume', tabId: 4, volume: 60, muted: false } });
@@ -3874,6 +3890,40 @@ async function testPermissionsPadding(browser) {
   await context.close();
 }
 
+// 0.7.0 (R20): webstore.js on a store detail page: "Add to Chrome" becomes "Add to Krunk"; the
+// click goes to Krunk (without the id) and not to the store; elsewhere on the store nothing changes.
+async function testWebStoreScript(browser) {
+  console.log('injected webstore script (R20)');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'inject', 'webstore.js'), 'utf8');
+  const context = await browser.newContext();
+  await context.route('**/*', (r) => r.fulfill({ status: 200, headers: { 'content-type': 'text/html' },
+    body: '<!doctype html><body><h1>Dark Reader</h1><button id="b" disabled aria-disabled="true"><span class="x"><span>Add to Chrome</span></span></button><p id="clicked">no</p>' +
+      '<script>document.getElementById("b").addEventListener("click", () => { document.getElementById("clicked").textContent = "store"; });' +
+      'setTimeout(() => { const c = document.createElement("button"); c.id = "late"; c.textContent = "Add to Chrome"; document.body.appendChild(c); }, 300);</script>' }));
+  await context.addInitScript(() => {
+    window.__posted = [];
+    window.__listeners = [];
+    window.__lbHostForTest = { postMessage: (m) => window.__posted.push(m), addEventListener: (t, f) => window.__listeners.push(f) };
+  });
+  await context.addInitScript({ content: '(function (__lbHost) {\n' + src + '\n})(window.__lbHostForTest);' });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await page.goto('https://chromewebstore.google.com/detail/dark-reader/eimadpbcbfnmbkopoojfekhnkhdbieeh');
+  await page.waitForTimeout(700);
+  check((await page.textContent('#b')) === 'Add to Krunk' && !(await page.isDisabled('#b')) && (await page.textContent('#late')) === 'Add to Krunk', 'the store button (and one added later) says Add to Krunk and is enabled');
+  await page.click('#b');
+  const posted = await page.evaluate(() => window.__posted);
+  check(posted.length === 1 && JSON.stringify(posted[0]) === '{"lb":"extStoreClick"}' && (await page.textContent('#clicked')) === 'no', 'the click goes to Krunk only, with no id in it');
+  await page.evaluate(() => window.__listeners.forEach((f) => f({ data: { event: 'krunkStore', text: 'Dark Reader was added to Krunk.' } })));
+  check((await page.textContent('#krunk-store-notice')) === 'Dark Reader was added to Krunk.', 'Krunk\'s answer shows on the page');
+  await page.goto('https://chromewebstore.google.com/category/extensions');
+  await page.waitForTimeout(500);
+  check((await page.textContent('#b')) === 'Add to Chrome', 'not a detail page: nothing changes');
+  check(errors.length === 0, 'webstore script raises no errors (' + errors.join(' | ') + ')');
+  await context.close();
+}
+
 async function testLinkSweep(browser) {
   console.log('link sweep (R16)');
   const pages = ['about', 'adblock', 'bookmarks', 'downloads', 'extensions', 'gpu', 'history', 'https-only', 'newtab', 'passwords', 'settings', 'sitedata', 'storage', 'tasks'];
@@ -3963,19 +4013,25 @@ async function testExtensions(browser) {
       h.extSet = (m) => { const x = window.__exts.find((e) => e.id === m.id); if (m.enabled !== undefined) x.enabled = m.enabled; if (m.private !== undefined) x.allowedInPrivate = m.private; return window.__exts; };
       h.extRemove = (m) => { window.__exts = window.__exts.filter((e) => e.id !== m.id); return window.__exts; };
       h.extInstallFile = () => ({ installed: 'c'.repeat(32), name: 'From file', extensions: window.__exts.concat([Object.assign({}, window.__exts[0], { id: 'c'.repeat(32), name: 'From file', enabled: true, source: 'file:x.zip' })]) });
-      h.extInstallFolder = () => null;
+      h.extInstallFolder = () => ({ declined: true });
       h.extInstallUrl = (m) => { if (!/chromewebstore/.test(m.url)) throw new Error('That is not a Chrome Web Store extension address (…/detail/<name>/<id>).'); return { installed: 'd'.repeat(32), name: 'From the store', extensions: window.__exts }; };
     }, exts);
   await page.waitForSelector('.ext');
   check((await page.locator('.ext').count()) === 2, 'lists the 2 extensions');
   const first = page.locator('.ext[data-id="' + id1 + '"]');
-  check((await first.locator('.scope').textContent()).includes('localhost, all websites') && (await first.locator('.scope .all').count()) === 1, 'the scope list names the sites, "all websites" marked');
-  check((await first.locator('.apis .yes').textContent()).includes('chrome.runtime, chrome.storage') && (await first.locator('.apis .no').textContent()).includes('chrome.webRequest (blocking network interception') && (await first.locator('.apis .no').textContent()).includes('chrome.notifications (reached for at runtime'), 'the API survey: provided, not provided with the reason, runtime discoveries');
-  check((await first.locator('.chips').textContent()).includes('1 content script') && (await first.locator('.chips').textContent()).includes('1 network rule (1 not translated)'), 'chips: content scripts, rules');
-  check((await first.locator('img').getAttribute('src')).startsWith('data:image/png') && (await page.locator('.ext[data-id="' + id2 + '"] .icon').textContent()) === '🧩', 'the icon is shown when there is one, a placeholder otherwise');
-  check(await page.locator('.ext[data-id="' + id2 + '"]').evaluate((e) => e.classList.contains('disabled')), 'a disabled extension is dimmed');
+  // 0.7.0 (R22): cards: what it reaches up front, the rest under Details.
+  check((await first.locator('.reach').textContent()) === 'Can read and change all websites' && await first.locator('.reach.all').count() === 1, 'all websites is said up front, marked');
+  check((await first.locator('.partial-note').textContent()).includes('not in Krunk (2)'), 'what Krunk does not provide is pointed out on the card');
+  await first.locator('.more summary').click();
+  const dl = await first.locator('.more dl').textContent();
+  check(dl.includes('chrome.runtime, chrome.storage') && dl.includes('chrome.webRequest — blocking network interception') && dl.includes('chrome.notifications — reached for at runtime') && dl.includes('1 content script') && dl.includes('1 network rule (1 not translated)') && dl.includes('localhost'), 'Details: uses, not in Krunk with the reason, parts, rules, sites (' + dl.slice(0, 160) + ')');
+  check((await first.locator('img').getAttribute('src')).startsWith('data:image/png') && await page.locator('.ext[data-id="' + id2 + '"] .icon .puzzle').count() === 1, 'the icon is shown when there is one, a placeholder otherwise');
+  check(await page.locator('.ext[data-id="' + id2 + '"]').evaluate((e) => e.classList.contains('disabled')) && (await page.textContent('.ext[data-id="' + id2 + '"] .reach')) === 'Does not read or change web pages', 'a disabled extension is dimmed; one without sites says so');
   await shot(page, 'extensions.png');
-  await first.locator('input[data-key="enabled"]').click();
+  await page.evaluate(() => LB.applyTheme('dark', '', null));
+  await shot(page, 'extensions-dark.png');
+  await page.evaluate(() => LB.applyTheme('light', '', null));
+  await first.locator('.switch').click();
   await page.waitForTimeout(60);
   const st = await lastSent(page, 'extSet');
   check(st && st.id === id1 && st.enabled === false, 'the Enabled toggle sends extSet{enabled:false}');
@@ -3992,6 +4048,9 @@ async function testExtensions(browser) {
   await page.click('#install-file');
   await page.waitForTimeout(80);
   check((await lastSent(page, 'extInstallFile')) !== undefined && (await page.locator('.ext').count()) === 2 && (await page.locator('.toast').textContent()).includes('Installed From file'), 'Install from file: the reply refreshes the list and toasts');
+  await page.click('#install-folder');
+  await page.waitForTimeout(80);
+  check((await page.locator('.toast').last().textContent()).includes('Not installed'), 'a declined install says Not installed');
   await page.fill('#url', 'https://example.com/not-a-store');
   await page.click('#install-url');
   await page.waitForTimeout(80);
@@ -4002,7 +4061,8 @@ async function testExtensions(browser) {
   check((await lastSent(page, 'extInstallUrl')).url.includes('chromewebstore') && await page.inputValue('#url') === '', 'a store address is sent and the field cleared');
   await emit(page, { event: 'extChanged', extensions: [] });
   await page.waitForTimeout(40);
-  check(await page.locator('#empty').isVisible(), 'extChanged with nothing installed shows the empty text');
+  check(await page.locator('#empty').isVisible() && (await page.textContent('#empty h2')) === 'No extensions yet' && (await page.textContent('#empty')).includes('Add to Krunk'), 'extChanged with nothing installed shows the empty state, which says how to add one');
+  await shot(page, 'extensions-empty.png');
   check(errors.length === 0, 'no console errors (' + errors.join('; ') + ')');
   check(external.length === 0, 'no network requests (' + external.join(', ') + ')');
   await page.context().close();
@@ -4537,6 +4597,7 @@ async function testTabWindows(browser) {
     if (!ONLY || ONLY.includes('PaintedScript')) await testPaintedScript(browser);
     if (!ONLY || ONLY.includes('NoHints')) await testNoHintsScript(browser);
     if (!ONLY || ONLY.includes('LinkSweep')) await testLinkSweep(browser);
+    if (!ONLY || ONLY.includes('WebStore')) await testWebStoreScript(browser);
     if (!ONLY || ONLY.includes('PermissionsPadding')) await testPermissionsPadding(browser);
   } finally {
     await browser.close();

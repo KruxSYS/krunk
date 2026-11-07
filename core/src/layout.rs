@@ -301,6 +301,7 @@ pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> Pop
         PopupKind::Downloads => (380.0, 420.0),
         PopupKind::Pip => (340.0, 300.0),
         PopupKind::PipVolume => (PIP_BAR_MIN_WIDTH_DIP, PIP_BAR_HEIGHT_DIP),
+        PopupKind::ExtInstall => (400.0, 120.0 + 24.0 * entries.clamp(1, 8) as f64),
         PopupKind::BookmarkEdit => (340.0, 214.0),
     };
     let x = (shell_width_css - w - 8.0).max(0.0);
