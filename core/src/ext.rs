@@ -582,8 +582,9 @@ pub fn verify_crx(bytes: &[u8]) -> Result<VerifiedCrx, ExtError> {
     message.extend_from_slice(&crx.zip);
     let mut developer = false;
     let mut store = false;
+    // sha256_with_rsa = 2 and sha256_with_ecdsa = 3 (the store signs with ECDSA P-256).
     for (field, proof) in protobuf_fields(header) {
-        if field != 2 {
+        if field != 2 && field != 3 {
             continue;
         }
         let mut key = None;
@@ -601,10 +602,17 @@ pub fn verify_crx(bytes: &[u8]) -> Result<VerifiedCrx, ExtError> {
         if !is_dev && !is_store {
             continue;
         }
-        let Some(pkcs1) = spki_rsa_key(key) else { return Err(bad("an RSA key does not parse")) };
-        let ok = ring::signature::UnparsedPublicKey::new(&ring::signature::RSA_PKCS1_2048_8192_SHA256, pkcs1)
-            .verify(&message, sig)
-            .is_ok();
+        let ok = if field == 2 {
+            let Some(pkcs1) = spki_key(key, RSA_OID) else { return Err(bad("an RSA key does not parse")) };
+            ring::signature::UnparsedPublicKey::new(&ring::signature::RSA_PKCS1_2048_8192_SHA256, pkcs1)
+                .verify(&message, sig)
+                .is_ok()
+        } else {
+            let Some(point) = spki_key(key, EC_OID) else { return Err(bad("an ECDSA key does not parse")) };
+            ring::signature::UnparsedPublicKey::new(&ring::signature::ECDSA_P256_SHA256_ASN1, point)
+                .verify(&message, sig)
+                .is_ok()
+        };
         if !ok {
             return Err(bad(if is_dev {
                 "the developer's signature does not match"
@@ -621,8 +629,12 @@ pub fn verify_crx(bytes: &[u8]) -> Result<VerifiedCrx, ExtError> {
     Ok(VerifiedCrx { crx, store_signed: store })
 }
 
-/// The PKCS#1 RSAPublicKey inside a DER SubjectPublicKeyInfo (rsaEncryption).
-fn spki_rsa_key(der: &[u8]) -> Option<&[u8]> {
+const RSA_OID: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01];
+const EC_OID: &[u8] = &[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01];
+
+/// The key inside a DER SubjectPublicKeyInfo of algorithm `oid`: the PKCS#1 RSAPublicKey for
+/// rsaEncryption, the uncompressed point for id-ecPublicKey.
+fn spki_key<'a>(der: &'a [u8], want: &[u8]) -> Option<&'a [u8]> {
     fn tlv(b: &[u8]) -> Option<(u8, &[u8], &[u8])> {
         let tag = *b.first()?;
         let first = *b.get(1)?;
@@ -642,11 +654,10 @@ fn spki_rsa_key(der: &[u8]) -> Option<&[u8]> {
         let body = b.get(start..start.checked_add(len)?)?;
         Some((tag, body, &b[start + len..]))
     }
-    const RSA_OID: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01];
     let (0x30, spki, _) = tlv(der)? else { return None };
     let (0x30, alg, rest) = tlv(spki)? else { return None };
     let (0x06, oid, _) = tlv(alg)? else { return None };
-    if oid != RSA_OID {
+    if oid != want {
         return None;
     }
     let (0x03, bits, _) = tlv(rest)? else { return None };
@@ -1457,6 +1468,16 @@ mod tests {
         assert!(webstore_crx_id("https://clients2.google.com/service/update2/crx?x=id%3Dnot-an-id").is_none());
     }
 
+    /// A package fetched from the live store: `KRUNK_CRX=/path/x.crx cargo test -p core -- --ignored store_crx`.
+    #[test]
+    #[ignore]
+    fn store_crx_from_the_live_store() {
+        let path = std::env::var("KRUNK_CRX").expect("KRUNK_CRX");
+        let v = verify_crx(&std::fs::read(path).unwrap()).unwrap();
+        assert!(v.store_signed, "signed by the Web Store");
+        println!("{} store-signed", v.crx.id);
+    }
+
     #[test]
     fn crx_signatures_are_checked() {
         // core/tests/fixtures/crx/make.py: throwaway RSA keys, a one-file zip.
@@ -1473,7 +1494,10 @@ mod tests {
         // The unsigned test package above has no signed data at all.
         assert!(verify_crx(b"Cr24\x03\x00\x00\x00\x00\x00\x00\x00PK").is_err());
         // A SubjectPublicKeyInfo that is not RSA is refused.
-        assert!(spki_rsa_key(&[0x30, 0x03, 0x30, 0x01, 0x00]).is_none());
+        assert!(spki_key(&[0x30, 0x03, 0x30, 0x01, 0x00], RSA_OID).is_none());
+        // An ECDSA P-256 developer key works too (the store signs that way).
+        let ec = verify_crx(&read("signed-ec.crx")).unwrap();
+        assert!(valid_id(&ec.crx.id) && !ec.store_signed);
     }
 
     #[test]

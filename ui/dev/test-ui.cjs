@@ -2792,10 +2792,12 @@ async function testPasswords(browser) {
     check(op && op.page === 'passwords' && op.section === 'recover', 'the unlock prompt offers "Forgot master password?" (krunk://passwords#recover)');
   }
   await emit(page, { event: 'popup', content: { kind: 'unlock', tabId: 4, origin: 'https://bank.example', purpose: 'fill', error: null, waitMs: 0 } });
+  await page.waitForTimeout(60);
   await page.waitForSelector('#master');
   await page.fill('#master', 'correct horse battery');
   await shot(page, 'popup-unlock.png');
   await page.click('#unlock');
+  await page.waitForTimeout(30);
   const un = await lastSent(page, 'vaultUnlock');
   check(un && un.password === 'correct horse battery', 'unlock prompt sends vaultUnlock');
   await emit(page, { event: 'popup', content: { kind: 'unlock', tabId: 4, origin: 'https://bank.example', purpose: 'fill', error: 'Wrong master password. Try again in 4 s.', waitMs: 4000 } });
@@ -2863,7 +2865,7 @@ async function testPasswords(browser) {
   await page.keyboard.press('Escape');
   check((await lastSent(page, 'extInstallReply')).accept === false, 'Esc declines');
   await emit(page, { event: 'popup', content: { kind: 'extInstall', requestId: 8, name: 'Dark Reader', version: '4.9', source: 'The file dark.crx', warnings: [], previous: '4.8' } });
-  await page.waitForSelector('.ext-install');
+  await page.waitForFunction(() => document.querySelector('h2') && document.querySelector('h2').textContent.startsWith('Update'));
   check((await page.textContent('h2')) === 'Update “Dark Reader”?' && (await page.textContent('.ext-install')).includes('no special permissions') && (await page.textContent('#default')) === 'Update', 'an update says so; no warnings: says it needs none');
   await page.click('#default');
   {

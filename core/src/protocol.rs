@@ -3145,10 +3145,16 @@ mod tests {
         };
         assert_eq!(c.kind(), PopupKind::ExtInstall);
         let json = serde_json::to_string(&c).unwrap();
-        assert!(json.contains("\"kind\":\"extInstall\"") && json.contains("\"requestId\":4") && !json.contains("previous"), "{json}");
+        assert!(
+            json.contains("\"kind\":\"extInstall\"") && json.contains("\"requestId\":4") && !json.contains("previous"),
+            "{json}"
+        );
         // The store page's click: nothing but the click (the host reads the id from the tab).
         assert_eq!(parse_content(r#"{"lb":"extStoreClick"}"#), Ok(ContentMessage::ExtStoreClick {}));
-        assert!(parse_content(r#"{"lb":"extStoreClick","id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}"#).is_err(), "no id from the page");
+        assert!(
+            parse_content(r#"{"lb":"extStoreClick","id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}"#).is_err(),
+            "no id from the page"
+        );
         assert!(parse_content_frame(r#"{"lb":"extStoreClick"}"#).is_err(), "top frame only");
         assert!(crate::ext::is_store_origin("https://chromewebstore.google.com"));
         assert!(!crate::ext::is_store_origin("https://chromewebstore.google.com.evil.example"));

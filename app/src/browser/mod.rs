@@ -579,8 +579,6 @@ impl Browser {
                     return;
                 }
                 b.hide_popup_by_focus_loss();
-                // An extension's popup closes too (0.7.0, R21): a click on the page or the toolbar.
-                b.close_ext_popup_because("another view took the focus");
                 // A click into the page (0.7.0, R5): the address bar of its window gives up its
                 // selection and shows the page's address again.
                 if let Some(id) = tab {
@@ -1643,6 +1641,12 @@ impl Browser {
         // Esc ends the pointer lock (the page does not get it), else page
         // full screen.
         if key.vk == keys::vk::ESCAPE && !key.ctrl && !key.alt && !key.shift {
+            // An extension's popup closes first (0.7.0, R21; it takes no activation, so its
+            // keys can arrive here).
+            if self.ext_popup_open() {
+                self.close_ext_popup_because("Esc");
+                return true;
+            }
             if self.pointer_locked() {
                 self.release_pointer(lb_core::pointer_lock::Release::Escape);
                 return true;
@@ -2641,6 +2645,7 @@ impl WindowEvents for AppEvents {
             ZOOM_TIMER => b.zoom_tick(),
             bounce::BOUNCE_TIMER => b.bounce_tick(),
             pip::PIP_TIMER => b.pip_tick(),
+            ext::EXT_POPUP_TIMER => b.ext_popup_tick(),
             UPDATE_TIMER => {
                 if let Some(w) = b.app() {
                     w.set_timer(UPDATE_TIMER, blocking::UPDATE_CHECK_INTERVAL_MS);
@@ -2718,8 +2723,6 @@ impl WindowEvents for FrameEvents {
         } else {
             // Alt+Tab or a click into another window ends the lock.
             b.release_pointer(lb_core::pointer_lock::Release::WindowDeactivated);
-            // Checked after the activation settled (it may have gone to the popup itself).
-            b.defer(|b| b.ext_popup_window_deactivated());
         }
         b.send_window_state();
     }

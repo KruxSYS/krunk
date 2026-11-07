@@ -2,6 +2,7 @@
   signed.crx       a zip signed by its own (throwaway) 2048-bit RSA key, crx_id = that key
   tampered.crx     the same with one byte of the zip changed
   wrong-key.crx    signed by a second key while crx_id names the first
+  signed-ec.crx    signed by its own ECDSA P-256 key (sha256_with_ecdsa, as the store signs)
 Run from this folder: python3 make.py (needs openssl). The keys are generated anew and thrown
 away; only the packages are kept.
 """
@@ -29,9 +30,10 @@ def field(num, data):
     return varint((num << 3) | 2) + varint(len(data)) + data
 
 
-def key(tmp, name):
+def key(tmp, name, ec=False):
     pem = os.path.join(tmp, name + ".pem")
-    subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048", "-out", pem], check=True, capture_output=True)
+    alg = ["-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-256"] if ec else ["-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048"]
+    subprocess.run(["openssl", "genpkey"] + alg + ["-out", pem], check=True, capture_output=True)
     der = subprocess.run(["openssl", "pkey", "-in", pem, "-pubout", "-outform", "DER"], check=True, capture_output=True).stdout
     return pem, der
 
@@ -42,12 +44,12 @@ def sign(pem, data, tmp):
     return subprocess.run(["openssl", "dgst", "-sha256", "-sign", pem, msg], check=True, capture_output=True).stdout
 
 
-def crx(zip_bytes, id_key_der, signer_pem, signer_der, tmp, tamper=False):
+def crx(zip_bytes, id_key_der, signer_pem, signer_der, tmp, tamper=False, ec=False):
     crx_id = hashlib.sha256(id_key_der).digest()[:16]
     signed_data = field(1, crx_id)
     message = b"CRX3 SignedData\x00" + struct.pack("<I", len(signed_data)) + signed_data + zip_bytes
     sig = sign(signer_pem, message, tmp)
-    header = field(2, field(1, signer_der) + field(2, sig)) + field(10000, signed_data)
+    header = field(3 if ec else 2, field(1, signer_der) + field(2, sig)) + field(10000, signed_data)
     body = bytearray(zip_bytes)
     if tamper:
         body[40] ^= 1
@@ -66,6 +68,8 @@ def main():
         open("tampered.crx", "wb").write(crx(zip_bytes, der, pem, der, tmp, tamper=True))
         # crx_id names key a, but key b signed it (and only b's proof is in the header).
         open("wrong-key.crx", "wb").write(crx(zip_bytes, der, pem2, der2, tmp))
+        pem3, der3 = key(tmp, "c", ec=True)
+        open("signed-ec.crx", "wb").write(crx(zip_bytes, der3, pem3, der3, tmp, ec=True))
 
 
 if __name__ == "__main__":

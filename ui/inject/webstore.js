@@ -6,7 +6,7 @@
 'use strict';
 if (typeof __lbHost !== 'object' || !__lbHost) return;
 var host = __lbHost;
-var LABEL = /^\s*(add to chrome|switch to chrome|get chrome|add to (your )?browser|install|remove from chrome)\s*$/i;
+var LABEL = /^\s*(add to chrome|switch to chrome|get chrome|add to (your )?browser|install|remove from chrome|checking…)\s*$/i;
 function isDetail() { return /\/detail\/[^/]+\/[a-p]{32}/.test(location.pathname) || /\/detail\/[a-p]{32}/.test(location.pathname); }
 function relabel(root) {
   if (!isDetail()) return;

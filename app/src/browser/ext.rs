@@ -30,7 +30,7 @@ use serde_json::{json, Value};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 
 /// Largest file served from a package.
 const MAX_FILE_BYTES: u64 = 32 * 1024 * 1024;
@@ -163,6 +163,13 @@ pub(super) struct ExtHost {
     popup_closed: RefCell<(String, i64)>,
 }
 
+/// While an extension's popup is open: a click outside it or another program in front closes
+/// it (0.7.0, R21).
+pub(super) const EXT_POPUP_TIMER: usize = 19;
+const EXT_POPUP_TICK_MS: u32 = 50;
+/// The click that opened it is still held for a moment.
+const POPUP_GRACE_MS: i64 = 300;
+
 /// A package's files, its id and whether the Web Store signed it.
 type Prepared = (Vec<(String, Vec<u8>)>, String, bool);
 
@@ -203,36 +210,11 @@ impl ExtHost {
 struct BackgroundEvents;
 impl WindowEvents for BackgroundEvents {}
 
-struct ExtPopupEvents(Weak<Browser>);
+struct ExtPopupEvents;
 impl WindowEvents for ExtPopupEvents {
-    fn activated(&self, active: bool) {
-        if !active {
-            if let Some(b) = self.0.upgrade() {
-                // A hidden popup (its page still loading; the browser created inside it
-                // hands activation around) is not the user leaving, nor is activation
-                // handed back right after showing: take it again, once.
-                let (hidden, fresh, own) = b
-                    .ext
-                    .popup
-                    .borrow()
-                    .as_ref()
-                    .map(|p| (!p.shown, p.shown && now_ms() - p.opened_at < 400, p.window.owns_foreground()))
-                    .unwrap_or((true, false, false));
-                // A click inside the popup moves the focus to the browser view in it: that
-                // is still the popup.
-                if hidden || own {
-                    return;
-                }
-                if fresh {
-                    if let Some(p) = b.ext.popup.borrow().as_ref() {
-                        p.window.show_at(p.window.rect(), true);
-                    }
-                    return;
-                }
-                b.close_ext_popup_because("it lost activation");
-            }
-        }
-    }
+    // Activation and focus bounce between the popup, its browser view and the main window
+    // while it opens, so they decide nothing (0.7.0, R21): `ext_popup_tick` watches the mouse
+    // and the foreground window instead.
 }
 
 fn read_json(path: &Path) -> Option<Value> {
@@ -916,7 +898,7 @@ impl Browser {
             width: (rect.width * scale).round() as i32,
             height: (rect.height * scale).round() as i32,
         };
-        let window = match Window::create_popup(f.window, Rc::new(ExtPopupEvents(self.me.clone()))) {
+        let window = match Window::create_popup(f.window, Rc::new(ExtPopupEvents)) {
             Ok(w) => w,
             Err(e) => {
                 warning!("extension popup: {e}");
@@ -982,6 +964,9 @@ impl Browser {
         self.place_ext_popup(p, w, h);
         p.view.set_visible(true);
         p.view.focus();
+        if let Some(app) = self.app() {
+            app.set_timer(EXT_POPUP_TIMER, EXT_POPUP_TICK_MS);
+        }
         info!("extension {}: popup opened ({}x{})", self.ext_name(&p.ext), w as i32, h as i32);
     }
 
@@ -1009,11 +994,33 @@ impl Browser {
         p.view.set_bounds(0, 0, r.width, r.height);
     }
 
-    /// The window lost activation: the popup closes unless it is what took it.
-    pub(super) fn ext_popup_window_deactivated(&self) {
-        let keep = self.ext.popup.borrow().as_ref().is_none_or(|p| !p.shown || p.window.owns_foreground());
-        if !keep {
-            self.close_ext_popup_because("its window lost activation");
+    pub(super) fn ext_popup_open(&self) -> bool {
+        self.ext.popup.try_borrow().ok().is_some_and(|p| p.as_ref().is_some_and(|p| p.shown))
+    }
+
+    /// `EXT_POPUP_TIMER`: a mouse button down outside the popup (the page, the toolbar, the tab
+    /// strip, another window) or another program in front closes it.
+    pub(super) fn ext_popup_tick(&self) {
+        let state = self.ext.popup.borrow().as_ref().map(|p| (p.shown, p.opened_at, p.window.rect()));
+        let Some((shown, opened_at, r)) = state else {
+            if let Some(app) = self.app() {
+                app.kill_timer(EXT_POPUP_TIMER);
+            }
+            return;
+        };
+        if !shown || now_ms() - opened_at < POPUP_GRACE_MS {
+            return;
+        }
+        if !crate::ffi::window::foreground_is_ours() {
+            self.close_ext_popup_because("another program came to the front");
+            return;
+        }
+        if crate::ffi::cursor::buttons() != 0 {
+            let (x, y) = crate::ffi::cursor::position();
+            let inside = x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
+            if !inside {
+                self.close_ext_popup_because("a click outside it");
+            }
         }
     }
 

@@ -21,7 +21,8 @@
 .ext .reach.none { color: var(--fg-muted); }
 .ext .partial-note { margin: 0; font-size: 0.923rem; color: color-mix(in srgb, #d97706 75%, var(--fg)); }
 .ext.disabled .icon, .ext.disabled .title, .ext.disabled .desc, .ext.disabled .reach { opacity: 0.55; }
-.ext .more summary { cursor: pointer; color: var(--fg-muted); font-size: 0.923rem; width: max-content; }
+.ext .more { text-align: left; }
+.ext .more summary { cursor: pointer; color: var(--fg-muted); font-size: 0.923rem; display: list-item; width: fit-content; }
 .ext .more summary:hover { color: var(--fg); }
 .ext .more dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 12px; margin: 8px 0 0; font-size: 0.923rem; }
 .ext .more dt { color: var(--fg-muted); }
