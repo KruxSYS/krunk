@@ -68,6 +68,8 @@ for f in v8_context_snapshot.bin snapshot_blob.bin; do
 done
 [ -n "$snapshot" ] || { echo "no V8 snapshot (v8_context_snapshot.bin or snapshot_blob.bin) in $CEF_PATH" >&2; exit 1; }
 echo "V8 snapshot: $snapshot" >&2
+# Widevine VMP signing (R25): only with EVS credentials on this host; never blocks the build.
+scripts/vmp-sign.sh "$out"
 cp "$CEF_PATH"/locales/*.pak "$out/locales/"
 mkdir -p "$out/licenses"
 cp "$CEF_PATH/LICENSE.txt" "$out/licenses/CEF-LICENSE.txt"

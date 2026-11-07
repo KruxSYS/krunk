@@ -276,6 +276,12 @@
           <p class="desc">Certificate revocation and Certificate Transparency lists. Off: the engine never contacts Google in the background and the lists only change with new Krunk releases.</p></div>
         <div class="control"><input type="checkbox" id="engineSecurityComponents" data-key="engineSecurityComponents"></div>
       </div>
+      <div class="row setting" data-keywords="protected content drm widevine netflix spotify video audio cdm">
+        <div class="text"><label for="protectedContent">Protected content (Widevine) <span class="tag">restart</span></label>
+          <p class="desc">Lets sites play DRM-protected video and audio with Google's Widevine module. The engine downloads it from Google (update.googleapis.com, edgedl.me.gvt1.com) a minute or two after the next start and keeps it in the profile under Google's terms; the engine's other components come with it, as with the setting above. Krunk is not VMP-signed, so services that insist on a verified player (Netflix, Amazon, Disney+, Spotify's web player) still refuse.</p>
+          <p class="desc" id="cdm-status"></p></div>
+        <div class="control"><input type="checkbox" id="protectedContent" data-key="protectedContent"></div>
+      </div>
     </div>
 
     <div class="card group">

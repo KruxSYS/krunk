@@ -27,6 +27,7 @@
   "sendGpc": true,
   "stripTrackingParams": true,
   "engineSecurityComponents": false,
+  "protectedContent": false,
   "clearOnExit": {
     "history": false,
     "cookies": false,

@@ -259,6 +259,13 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   General → Media → "Automatic Picture-in-Picture" does it when you switch tabs while a video
   plays and reverses it when you return. Videos inside a frame from another site (an embedded
   player) are not listed: use the player's own control.
+- **Protected content (Widevine)** (0.6.0; Settings → Privacy & security, off by default,
+  restart): lets sites play DRM media with Google's Widevine module. Krunk does not bundle
+  it: when the setting is on, the engine's component updater downloads it from Google
+  (`update.googleapis.com`, `edgedl.me.gvt1.com`) into `profile\WidevineCdm` a minute or
+  two after start, under Google's terms; the setting also lets the updater's other components
+  through, as "Download engine security components" does. Settings and krunk://gpu show the
+  installed version. Krunk's binaries are not VMP-signed (see Known limitations).
 - **Zoom** is remembered per site, as in Chrome. "Default zoom" in Settings applies to sites you
   have not zoomed.
 - **Memory:** background tabs go to sleep after 5 minutes. Optionally they can be unloaded
@@ -505,8 +512,8 @@ them off by default, verified with the proxy: a fresh profile idle for five minu
 page loads contacted **no `*.google.com`, `*.googleapis.com` or `*.gvt1.com` host**. The only
 traffic not caused by pages is the filter-list update and Krunk's update check (below).
 
-The setting **"Download engine security components from Google"** (off by default, restart
-required) lets the component updater run. It then fetches the certificate revocation list
+The settings **"Download engine security components from Google"** and **"Protected content
+(Widevine)"** (both off by default, restart required) let the component updater run. It then fetches the certificate revocation list
 (CRLSet) and the Certificate Transparency list from `update.googleapis.com` and
 `edgedl.me.gvt1.com`. The updater installs Chrome's standard set of components, because CEF has
 no per-component switch. Everything else stays off.
@@ -890,8 +897,14 @@ Testing on Windows:
 - **No Safe Browsing / SmartScreen.** CEF has no working Safe Browsing, and the WebView2
   build's optional SmartScreen setting is gone. Ad and tracker blocking and third-party cookie
   blocking replace Edge's tracking prevention.
-- **No DRM (Widevine) playback.** Netflix, Spotify Web and similar sites that need DRM do not
-  play.
+- **DRM without VMP.** With "Protected content" on, Widevine (L3, software) plays streams
+  whose licence server accepts an unverified player (test streams, many smaller services).
+  Krunk's binaries carry no Widevine VMP signature, so Netflix, Amazon, Disney+ and Spotify's
+  web player, which insist on a verified player, refuse playback. A release can be signed
+  with castLabs EVS by the build host (`scripts/vmp-sign.sh`, run by `build-dist.sh` when
+  `~/.config/krunk/evs` holds the account); without credentials the build logs "VMP signing
+  skipped (no EVS credentials)" and ships unsigned. Hardware-secure (L1) playback is not
+  available either way.
 - **No page freezing in the background.** `Page.setWebLifecycleState frozen` is not used: in
   CEF 156 a windowed (Alloy-style child window) browser never repaints after it is unfrozen.
   Background tabs rely on Chromium's hidden-page throttling plus garbage collection; discard
@@ -920,7 +933,8 @@ Testing on Windows:
     which Windows 11 24H2 and later no longer ship; it reports unsupported there.
   - **Dolby Vision** profiles are mapped to HEVC and follow the same rule. **MPEG-H** and
     **DTS** audio are not built.
-  - **Widevine** (DRM for Netflix, Spotify, ...) is not included.
+  - **Widevine** (DRM) is not bundled: the engine downloads Google's module when "Protected
+    content" is on (see above).
   Patent licensing for the H.264/HEVC/AAC decoders (MPEG LA / Via LA pools) is the
   distributor's responsibility; see the 0.5.2 release notes.
 - **Size:** about 423 MB unpacked (184 MB zipped), against about 6 MB for the WebView2 build. All

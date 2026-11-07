@@ -29,6 +29,7 @@ impl Browser {
                     "userAgents": lb_core::useragents::PRESETS,
                     "defaultUserAgent": engine::default_user_agent(),
                     "engineHints": self.engine_hints.borrow().clone(),
+                    "cdm": widevine_cdm_version(&self.dirs.profile()),
                     "dnsPresets": lb_core::dns::PRESETS.iter().map(|p| serde_json::json!({ "id": p.id, "name": p.name, "resolver": p.resolver() })).collect::<Vec<_>>(),
                 });
                 self.reply(tab, Event::ok(req_id, data));
@@ -84,6 +85,8 @@ impl Browser {
             "gpuProcess": crate::ffi::procmem::browser_tree().iter().any(|p| p.kind == crate::ffi::procmem::Kind::Gpu),
             "cef": cef,
             "chromium": chromium,
+            "widevine": widevine_cdm_version(&self.dirs.profile()),
+            "protectedContent": self.running_settings.protected_content,
         })
     }
 
@@ -447,4 +450,21 @@ impl Browser {
             }
         }
     }
+}
+
+/// The Widevine CDM the engine's component updater put into the profile (0.6.0): the highest
+/// `profile\WidevineCdm\<version>\_platform_specific\win_x64\widevinecdm.dll`, if any.
+pub(super) fn widevine_cdm_version(profile: &std::path::Path) -> Option<String> {
+    let dir = std::fs::read_dir(profile.join("WidevineCdm")).ok()?;
+    let mut versions: Vec<(Vec<u32>, String)> = dir
+        .flatten()
+        .filter(|e| e.path().join("_platform_specific").join("win_x64").join("widevinecdm.dll").is_file())
+        .map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            let parts: Vec<u32> = name.split('.').map(|p| p.parse().unwrap_or(0)).collect();
+            (parts, name)
+        })
+        .collect();
+    versions.sort();
+    versions.pop().map(|(_, name)| name)
 }

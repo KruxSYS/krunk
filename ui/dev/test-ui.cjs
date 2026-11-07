@@ -2530,7 +2530,7 @@ function settingsMock(defaults) {
   // The host derives blockThirdPartyCookies from the protection level (sync_protection).
   const PRESETS = { standard: { thirdPartyCookies: 'trackers' }, strict: { thirdPartyCookies: 'all' } };
   const sync = (s) => { const p = s.protection || { level: 'standard' }; const eff = p.level === 'custom' ? p : PRESETS[p.level]; s.blockThirdPartyCookies = eff.thirdPartyCookies === 'all'; return s; };
-  const restart = (s) => ['hardwareAcceleration', 'proxy', 'extraFlags', 'blockThirdPartyCookies', 'engineSecurityComponents'].some((k) => sync(s)[k] !== running[k]);
+  const restart = (s) => ['hardwareAcceleration', 'proxy', 'extraFlags', 'blockThirdPartyCookies', 'engineSecurityComponents', 'protectedContent'].some((k) => sync(s)[k] !== running[k]);
   window.__bounce = { watched: 2, cleanedTotal: 5, lastCleanupMs: Date.now() - 3600e3 };
   h.bounceStatus = () => window.__bounce;
   // 0.6.0 custom DNS: presets, parsing and the stub's status come from the host.
@@ -2677,6 +2677,18 @@ async function testSettings(browser) {
   await page.waitForTimeout(60);
   check((await page.locator('#trackingPrevention, [data-key=smartscreen]').count()) === 0, 'no Edge-only settings');
   check(!(await page.isChecked('[data-key=engineSecurityComponents]')), 'defaults: no engine downloads from Google');
+  // 0.6.0: protected content (Widevine) off by default, needs a restart, shows the CDM status.
+  await tab('privacy');
+  check(!(await page.isChecked('#protectedContent')) && (await page.textContent('#cdm-status')).includes('not downloaded yet'), 'defaults: protected content off, no Widevine module');
+  await page.click('#protectedContent');
+  await page.waitForTimeout(60);
+  {
+    const sv = await lastSent(page, 'saveSettings');
+    check(sv && sv.settings.protectedContent === true && (await page.locator('#restart-banner').isVisible()), 'protected content on: saved and the restart banner shows');
+  }
+  await page.click('#protectedContent');
+  await page.waitForTimeout(60);
+  await tab('general');
   check((await page.textContent('#about')).includes('Chromium 156.0.8078.80 (CEF 156.0.15)'), 'engine versions in the footer');
   check(await page.isChecked('[data-key=hardwareAcceleration]'), 'defaults: GPU on');
   await tab('passwords');
@@ -2805,7 +2817,7 @@ async function testSettings(browser) {
     check(tp.settings.protection.level === 'custom' && tp.settings.protection.referrer === 'none' && tp.settings.protection.fingerprinting === true && tp.settings.protection.thirdPartyCookies === 'trackers', 'Custom choices are saved');
     // (The proxy set earlier in this test keeps the banner up; the cookie policy alone would not.)
     const banner = await page.evaluate(() => !document.getElementById('restart-banner').hidden);
-    const expected = await page.evaluate(() => ['hardwareAcceleration', 'proxy', 'extraFlags', 'engineSecurityComponents'].some((k) => window.__settings.settings[k] !== window.__running[k]));
+    const expected = await page.evaluate(() => ['hardwareAcceleration', 'proxy', 'extraFlags', 'engineSecurityComponents', 'protectedContent'].some((k) => window.__settings.settings[k] !== window.__running[k]));
     check(banner === expected && tp.settings.blockThirdPartyCookies !== true, 'Custom with trackers-only cookies does not ask for a restart by itself');
   }
   await page.click('#bounce-clean');

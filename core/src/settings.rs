@@ -364,6 +364,10 @@ pub struct Settings {
     /// no contact with Google at all; these lists then only update with
     /// Krunk releases. Needs a restart.
     pub engine_security_components: bool,
+    /// Protected content (Krunk 0.6.0): lets sites play DRM media with Google's Widevine
+    /// module, which the engine's component updater downloads into the profile (so the
+    /// updater runs, as with `engine_security_components`). Needs a restart.
+    pub protected_content: bool,
     pub clear_on_exit: ClearOnExit,
     /// Permission defaults (Krunk 0.6.0).
     pub permissions: PermissionDefaults,
@@ -460,6 +464,7 @@ impl Default for Settings {
             send_gpc: true,
             strip_tracking_params: true,
             engine_security_components: false,
+            protected_content: false,
             clear_on_exit: ClearOnExit::default(),
             permissions: PermissionDefaults::default(),
             vault_autolock_minutes: 15,
@@ -841,7 +846,7 @@ impl Settings {
     pub fn browser_switches(&self) -> Vec<String> {
         let mut args: Vec<String> = BASE_SWITCHES.iter().map(|s| s.to_string()).collect();
         let mut unreachable: Vec<&str> = INTERNAL_HOSTS.to_vec();
-        if !self.engine_security_components {
+        if !self.engine_security_components && !self.protected_content {
             args.push(NO_COMPONENT_UPDATE_SWITCH.into());
             unreachable.extend(UPDATER_HOSTS);
         }
@@ -1597,6 +1602,25 @@ mod tests {
         assert!(on.restart_required(&Settings::default()), "needs a restart");
         // Old settings files have no such field: off.
         assert!(!Settings::from_json_lenient(r#"{"theme":"dark"}"#).engine_security_components);
+    }
+
+    /// Protected content (Widevine, 0.6.0): off by default; on, the component updater runs so
+    /// the engine can fetch the CDM — the same switches as the security-components setting.
+    #[test]
+    fn protected_content_opt_in() {
+        let d = Settings::default();
+        assert!(!d.protected_content, "off by default");
+        assert!(d.browser_switches().iter().any(|s| s == NO_COMPONENT_UPDATE_SWITCH));
+        let on = Settings { protected_content: true, ..Settings::default() };
+        let a = on.browser_switches();
+        assert!(!a.iter().any(|s| s == NO_COMPONENT_UPDATE_SWITCH), "the updater may run");
+        assert!(a
+            .iter()
+            .any(|s| s == "--host-resolver-rules=MAP krunk.invalid ~NOTFOUND, MAP *.krunk.invalid ~NOTFOUND"));
+        assert!(on.restart_required(&d), "needs a restart");
+        let both = Settings { protected_content: true, engine_security_components: true, ..Settings::default() };
+        assert_eq!(both.browser_switches(), a, "either setting alone opens the same door");
+        assert!(!Settings::from_json_lenient(r#"{"theme":"dark"}"#).protected_content);
     }
 
     #[test]

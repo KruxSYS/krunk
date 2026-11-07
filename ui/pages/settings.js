@@ -631,6 +631,7 @@
     userAgents = r.userAgents || [];
     defaultUserAgent = r.defaultUserAgent || '';
     if (r.engineHints) HINT_DEFAULTS = r.engineHints;
+    $('cdm-status').textContent = r.cdm ? 'Widevine module ' + r.cdm + ' is installed.' : 'Widevine module: not downloaded yet.';
     dnsPresets = r.dnsPresets || [];
     banner(r.restartRequired);
     $('about').textContent = 'Krunk ' + r.about.version + ' · Chromium ' + r.about.chromium + ' (CEF ' + r.about.cef + ')' + ' · data in ' + r.about.dataDir;

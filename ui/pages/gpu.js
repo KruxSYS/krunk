@@ -76,6 +76,7 @@
     $('arguments').textContent = info.arguments;
     $('gpu-process').textContent = info.gpuProcess ? 'running' : 'none';
     $('engine').textContent = 'Chromium ' + info.chromium + ' (CEF ' + info.cef + ')';
+    $('widevine').textContent = info.widevine ? info.widevine + ' (downloaded by the engine into the profile; not VMP-signed)' : info.protectedContent ? 'not downloaded yet (the engine fetches it a minute or two after start)' : 'not installed (Settings → Privacy & security → Protected content)';
     verdict(info);
   }, (e) => { $('verdict-text').textContent = 'Unavailable: ' + e.message; });
   $('open-internals').addEventListener('click', () => LB.post('openGpuInternals'));
