@@ -50,6 +50,8 @@ pub(super) struct SuggestHost {
     unlock_frame: RefCell<Option<Open>>,
     index: RefCell<Option<HintIndex>>,
     tags: RefCell<Option<Vec<String>>>,
+    /// The password the open dropdown offers for a new-password field (0.6.0).
+    generated: RefCell<Option<Zeroizing<String>>>,
 }
 
 impl Browser {
@@ -98,14 +100,28 @@ impl Browser {
             Vec::new()
         };
         let locked = !self.vault_unlocked() && self.vault_exists() && self.site_has_logins(&url);
-        if entries.is_empty() && !locked {
+        // A new password is being chosen: offer a generated one (never in private tabs; the
+        // page gets it only when the user picks it).
+        let generated = if field == FieldKind::NewPassword && !self.tab(tab).is_some_and(|t| t.private) {
+            let p = self.settings.borrow().passgen.clone();
+            match lb_core::passgen::generate(p.length, p.symbols) {
+                Ok(pw) => Some(pw),
+                Err(e) => {
+                    warning!("password generator: {e}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        if entries.is_empty() && !locked && generated.is_none() {
             if self.suggest.open.borrow().is_some() {
                 self.hide_popup();
             }
             return;
         }
         let Some(anchor) = self.suggest_anchor(tab, main_frame, rect) else { return };
-        let rows = if locked { 1 } else { entries.len() };
+        let rows = if locked { 1 } else { entries.len() + usize::from(generated.is_some()) };
         let popup_rect = PopupRect {
             x: anchor.x,
             y: anchor.y,
@@ -117,6 +133,7 @@ impl Browser {
             match field {
                 FieldKind::Password => "password",
                 FieldKind::Username => "username",
+                FieldKind::NewPassword => "new-password",
             },
             if locked { "vault locked" } else { "matches" },
             if main_frame { "" } else { ", in a frame" }
@@ -124,6 +141,8 @@ impl Browser {
         self.suggest.shown_at.set(now);
         *self.suggest.open.borrow_mut() =
             Some(Open { tab, frame_id: frame_id.to_string(), origin: origin.to_string(), rect: popup_rect });
+        let offered = generated.as_ref().map(|g| g.to_string());
+        *self.suggest.generated.borrow_mut() = generated;
         self.show_popup(
             PopupContent::Suggest {
                 tab_id: tab,
@@ -131,9 +150,62 @@ impl Browser {
                 origin: origin.to_string(),
                 locked,
                 entries,
+                generated: offered,
             },
             Some(popup_rect),
         );
+    }
+
+    /// The page's view of a password field, checked against Krunk's heuristics: only a
+    /// field where a new password is chosen gets the generator.
+    pub(super) fn resolve_field_kind(
+        &self,
+        field: FieldKind,
+        autocomplete: &str,
+        passwords: u32,
+        text: &str,
+    ) -> FieldKind {
+        match field {
+            FieldKind::Username => FieldKind::Username,
+            FieldKind::Password | FieldKind::NewPassword => {
+                if lb_core::passgen::wants_new_password(autocomplete, passwords, text) {
+                    FieldKind::NewPassword
+                } else {
+                    FieldKind::Password
+                }
+            }
+        }
+    }
+
+    /// "Use a strong password" in the dropdown: the password the dropdown offered goes into
+    /// the new-password fields of that frame, and the submit that follows saves it without
+    /// asking (see `login_submitted`).
+    pub(super) fn suggest_generate(&self, tab: TabId, frame_id: &str) {
+        let open = self.suggest.open.borrow_mut().take();
+        let generated = self.suggest.generated.borrow_mut().take();
+        self.hide_popup();
+        let (Some(o), Some(pw)) = (open.filter(|o| o.tab == tab && o.frame_id == frame_id), generated) else {
+            info!("generated password dropped: no dropdown for that frame");
+            return;
+        };
+        if self.active_id() != Some(o.tab) {
+            return;
+        }
+        let Some(view) = self.tab_view(o.tab) else { return };
+        let Some(frame_url) = view.frame_url(&o.frame_id) else { return };
+        if lb_core::urlclean::origin_of(&frame_url).as_deref() != Some(o.origin.as_str()) {
+            info!("generated password dropped: the frame navigated");
+            return;
+        }
+        let mut m = Zeroizing::new(String::with_capacity(pw.len() + 48));
+        m.push_str("{\"lbFill\":{\"generated\":true,\"password\":");
+        super::vault::push_json_string(&mut m, &pw);
+        m.push_str("}}");
+        if view.post_json_to_frame(&o.frame_id, &m) {
+            info!("tab {tab}: generated password filled ({} characters)", pw.len());
+            *self.suggest.quiet.borrow_mut() = Some((o.tab, o.frame_id.clone(), now_ms() + QUIET_AFTER_FILL_MS));
+            self.remember_generated(o.tab, &o.origin, pw);
+        }
     }
 
     /// The field lost the focus (or the user typed or pressed Esc): the dropdown goes,
@@ -283,6 +355,7 @@ impl Browser {
                         origin: o.origin,
                         locked: false,
                         entries,
+                        generated: None,
                     },
                     Some(rect),
                 );

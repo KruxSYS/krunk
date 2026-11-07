@@ -143,3 +143,6 @@ body { background: var(--bg-raised); border: 1px solid var(--border); border-rad
 .suggest.addr .glyph { width: 18px; text-align: center; flex: none; font-size: 1rem; }
 .suggest.addr .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
 .suggest.addr .url { color: var(--fg-muted); font-size: 0.923rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1 1 auto; min-width: 0; }
+.suggest.generated .user { color: var(--accent); }
+.suggest .host.mono { font-family: ui-monospace, Consolas, monospace; font-size: 0.923rem; color: var(--fg); letter-spacing: .02em; word-break: break-all; white-space: normal; }
+.panel.toast p { margin: 0 0 8px; }

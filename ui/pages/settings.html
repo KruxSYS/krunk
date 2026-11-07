@@ -301,6 +301,15 @@
           <p class="field-error" data-error-for="vaultAutolockMinutes"></p></div>
         <div class="control"><input type="number" id="vaultAutolockMinutes" data-key="vaultAutolockMinutes" data-type="number" min="1" max="1440"> <span class="unit">min</span></div>
       </div>
+      <div class="row setting" data-keywords="generate strong password length symbols sign up">
+        <div class="text"><label for="passgenLength">Generated passwords</label><p class="desc">On a sign-up or change-password form, the dropdown offers a strong password and fills both fields; the login is saved when the form is sent (Undo in the toast). Never in private tabs.</p>
+          <p class="field-error" data-error-for="passgen.length"></p></div>
+        <div class="control"><input type="number" id="passgenLength" data-key="passgen.length" data-type="number" min="8" max="128"> <span class="unit">characters</span></div>
+      </div>
+      <div class="row setting" data-keywords="generated password symbols punctuation">
+        <div class="text"><label for="passgenSymbols">Symbols in generated passwords</label><p class="desc">!#$%&amp;*+-=?@^_~ next to letters and digits (look-alikes are left out either way).</p></div>
+        <div class="control"><input type="checkbox" id="passgenSymbols" data-key="passgen.symbols"></div>
+      </div>
       <div class="row setting" data-keywords="manage passwords change master password">
         <div class="text"><span class="label">Vault</span><p class="desc"><a href="passwords.html">Manage passwords</a> · <a href="passwords.html#change">Change master password…</a></p></div>
       </div>

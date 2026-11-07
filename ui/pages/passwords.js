@@ -25,6 +25,17 @@
         load();
         // Linked from Settings → "Change master password…".
         if (location.hash === '#change') { history.replaceState(null, '', location.pathname); $('change').click(); }
+        // Linked from the "Password saved" toast (0.6.0): show that entry.
+        if (location.hash.indexOf('#entry=') === 0) {
+          const id = decodeURIComponent(location.hash.slice(7));
+          history.replaceState(null, '', location.pathname);
+          let tries = 0;
+          const find = setInterval(function () {
+            const row = document.querySelector('.pw-row[data-id="' + id.replace(/"/g, '') + '"]');
+            if (row) { row.classList.add('highlight'); row.scrollIntoView({ block: 'center' }); }
+            if (row || ++tries > 20) clearInterval(find);
+          }, 100);
+        }
       }
       return s;
     });

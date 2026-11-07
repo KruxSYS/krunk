@@ -85,13 +85,33 @@
   function fieldKind(el) {
     if (!el || el.tagName !== 'INPUT' || !visible(el)) return null;
     var type = (el.getAttribute('type') || 'text').toLowerCase();
-    if (type === 'password') return 'password';
+    if (type === 'password') {
+      // A new password is being chosen (0.6.0): the browser offers a generated one. The
+      // browser re-checks with its own heuristics from the details sent along.
+      var ac = (el.getAttribute('autocomplete') || '').toLowerCase();
+      return ac === 'new-password' || passwordFields(el.form || document).length >= 2 ? 'newPassword' : 'password';
+    }
     if ((type === 'text' || type === 'email' || type === 'tel') && passwordFor(el)) return 'username';
     return null;
   }
+  // What the browser needs to decide whether this is a sign-up or change-password form.
+  function formDetails(el) {
+    var scope = el.form || document;
+    var text = (scope.textContent || '') + ' ' + Array.prototype.map.call(scope.querySelectorAll('button, input[type="submit"]'), function (b) { return b.value || b.textContent || ''; }).join(' ');
+    return {
+      autocomplete: (el.getAttribute('autocomplete') || '').slice(0, 32),
+      passwords: passwordFields(scope).length,
+      formText: text.replace(/\s+/g, ' ').trim().slice(0, 300),
+    };
+  }
   function report(el, kind) {
     var r = el.getBoundingClientRect();
-    host.postMessage({ lb: 'fieldFocus', field: kind, rect: { x: r.left, y: r.top, width: r.width, height: r.height } });
+    var m = { lb: 'fieldFocus', field: kind, rect: { x: r.left, y: r.top, width: r.width, height: r.height } };
+    if (kind !== 'username') {
+      var d = formDetails(el);
+      m.autocomplete = d.autocomplete; m.passwords = d.passwords; m.formText = d.formText;
+    }
+    host.postMessage(m);
   }
   function blur() {
     if (!focused) return;
@@ -128,10 +148,19 @@
     var pw = null, user = null;
     var target = focused || document.activeElement;
     var kind = fieldKind(target);
-    if (kind === 'password') { pw = target; user = usernameFor(pw); }
+    if (kind === 'password' || kind === 'newPassword') { pw = target; user = usernameFor(pw); }
     else if (kind === 'username') { user = target; pw = passwordFor(user); }
     if (!pw) { pw = passwordFields()[0]; user = pw ? usernameFor(pw) : null; }
     if (!pw) return;
+    if (d.lbFill.generated) {
+      // A generated password: every password field of the form (the confirm field too),
+      // the username is left alone.
+      passwordFields(pw.form || document).forEach(function (f) { setValue(f, d.lbFill.password); });
+      focused = null;
+      quietUntil = Date.now() + 1000;
+      pw.focus();
+      return;
+    }
     if (user && d.lbFill.username) setValue(user, d.lbFill.username);
     setValue(pw, d.lbFill.password);
     focused = null;

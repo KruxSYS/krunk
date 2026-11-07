@@ -129,6 +129,8 @@ pub enum PopupKind {
     /// the focus from the field (the host shows it without activation).
     Suggest,
     SavePassword,
+    /// "Password saved · Undo · Edit" after a generated password was used (0.6.0).
+    PasswordSaved,
     Fill,
     /// A folder of the bookmarks bar (opened with `ShowBookmarkFolder`).
     BookmarkFolder,
@@ -280,10 +282,22 @@ pub enum PopupContent {
         origin: String,
         locked: bool,
         entries: Vec<SuggestChoice>,
+        /// A generated password to offer for a new-password field (0.6.0); the choice sends
+        /// `SuggestGenerate` and the host fills what it generated.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        generated: Option<String>,
     },
     /// "Save password for `username` on `origin`?" (no password is sent to the UI).
     SavePassword {
         tab_id: u32,
+        origin: String,
+        username: String,
+        update: bool,
+    },
+    /// The login was saved without asking (a generated password): Undo and Edit (0.6.0).
+    PasswordSaved {
+        tab_id: u32,
+        entry_id: String,
         origin: String,
         username: String,
         update: bool,
@@ -500,6 +514,9 @@ pub enum UnlockPurpose {
 pub enum FieldKind {
     Password,
     Username,
+    /// A password field where a new password is chosen (`autocomplete=new-password`, a
+    /// confirm field, a sign-up form): the generator is offered.
+    NewPassword,
 }
 
 /// A field's rectangle in CSS px of its own frame's viewport (untrusted; clamped by the host).
@@ -552,6 +569,7 @@ impl PopupContent {
             PopupContent::SiteInfo { .. } => PopupKind::SiteInfo,
             PopupContent::Suggest { .. } => PopupKind::Suggest,
             PopupContent::SavePassword { .. } => PopupKind::SavePassword,
+            PopupContent::PasswordSaved { .. } => PopupKind::PasswordSaved,
             PopupContent::Fill { .. } => PopupKind::Fill,
             PopupContent::Permission { .. } => PopupKind::Permission,
             PopupContent::AddressSuggest { .. } => PopupKind::AddressSuggest,
@@ -1123,6 +1141,20 @@ pub enum Request {
         tab_id: u32,
         frame_id: String,
     },
+    /// "Use a strong password" in the dropdown (0.6.0): fill the generated password into the
+    /// new-password fields of that frame.
+    SuggestGenerate {
+        tab_id: u32,
+        frame_id: String,
+    },
+    /// The toast after an automatic save (0.6.0, a popup): undo it (delete the new entry or
+    /// restore the old password) or open the entry on the passwords page.
+    PasswordSavedUndo {
+        entry_id: String,
+    },
+    PasswordSavedEdit {
+        entry_id: String,
+    },
 
     // ---- about / https-only ----
     GetAbout,
@@ -1294,6 +1326,8 @@ impl Sender {
                     | R::ShieldAllowSite { .. }
                     | R::OpenSiteData
                     | R::SavePasswordReply { .. }
+                    | R::PasswordSavedUndo { .. }
+                    | R::PasswordSavedEdit { .. }
                     | R::PermissionReply { .. }
                     | R::AddressSuggestPick { .. }
                     | R::AddressMenuAction { .. }
@@ -1304,6 +1338,7 @@ impl Sender {
                     | R::FillReply { .. }
                     | R::SuggestPick { .. }
                     | R::SuggestUnlock { .. }
+                    | R::SuggestGenerate { .. }
                     | R::VaultStatus
                     | R::VaultUnlock { .. }
                     | R::UpdateReply { .. }
@@ -1481,7 +1516,18 @@ pub enum ContentMessage {
     /// trusted confirmation in the shell before anything is filled.
     RequestFill {},
     /// A login field got the focus (any frame): the host may show suggestions.
-    FieldFocus { field: FieldKind, rect: FieldRect },
+    FieldFocus {
+        field: FieldKind,
+        rect: FieldRect,
+        /// 0.6.0: what the page knows about a password field (`autocomplete`, the number of
+        /// visible password fields in its form, the form's text) for the new-password check.
+        #[serde(default)]
+        autocomplete: String,
+        #[serde(default)]
+        passwords: u32,
+        #[serde(default, rename = "formText")]
+        form_text: String,
+    },
     /// The field lost the focus, or the user typed or pressed Esc.
     FieldBlur {},
     /// Class names and ids used on the page, for generic cosmetic filters.
@@ -2582,6 +2628,7 @@ mod tests {
             origin: "https://a.example".into(),
             locked: true,
             entries: vec![],
+            generated: None,
         };
         assert_eq!(content.kind(), PopupKind::Suggest);
         assert!(serde_json::to_string(&content).unwrap().contains(r#""locked":true"#));
@@ -2616,6 +2663,50 @@ mod tests {
         assert!(!Event::Theme { theme: Theme::Light, accent: String::new(), ui_font_px: 0 }
             .to_json()
             .contains("accent"));
+    }
+
+    #[test]
+    fn password_generator_messages() {
+        let gen = Request::SuggestGenerate { tab_id: 1, frame_id: "f".into() };
+        assert!(Sender::Popup.permits(&gen) && !Sender::Shell.permits(&gen));
+        for p in Page::ALL.iter() {
+            assert!(!Sender::Page(*p).permits(&gen), "{p:?}");
+        }
+        let undo = Request::PasswordSavedUndo { entry_id: "e".into() };
+        let edit = Request::PasswordSavedEdit { entry_id: "e".into() };
+        assert!(Sender::Popup.permits(&undo) && Sender::Popup.permits(&edit));
+        assert!(!Sender::Shell.permits(&undo) && !Sender::Page(Page::Passwords).permits(&edit));
+        let focus = parse_content(r#"{"lb":"fieldFocus","field":"newPassword","rect":{"x":1,"y":2,"width":30,"height":10},"autocomplete":"new-password","passwords":2,"formText":"Sign up"}"#).unwrap();
+        match focus {
+            ContentMessage::FieldFocus { field, autocomplete, passwords, form_text, .. } => {
+                assert_eq!(field, FieldKind::NewPassword);
+                assert_eq!((autocomplete.as_str(), passwords, form_text.as_str()), ("new-password", 2, "Sign up"));
+            }
+            m => panic!("{m:?}"),
+        }
+        let old =
+            parse_content(r#"{"lb":"fieldFocus","field":"password","rect":{"x":1,"y":2,"width":30,"height":10}}"#)
+                .unwrap();
+        assert!(matches!(old, ContentMessage::FieldFocus { passwords: 0, .. }), "0.5 pages send no extras");
+        let toast = PopupContent::PasswordSaved {
+            tab_id: 1,
+            entry_id: "e1".into(),
+            origin: "https://a.example".into(),
+            username: "u".into(),
+            update: false,
+        };
+        assert_eq!(toast.kind(), PopupKind::PasswordSaved);
+        assert!(serde_json::to_string(&toast).unwrap().contains(r#""entryId":"e1""#));
+        let json = serde_json::to_string(&PopupContent::Suggest {
+            tab_id: 1,
+            frame_id: "f".into(),
+            origin: "o".into(),
+            locked: false,
+            entries: vec![],
+            generated: Some("Xy".into()),
+        })
+        .unwrap();
+        assert!(json.contains(r#""generated":"Xy""#));
     }
 
     #[test]

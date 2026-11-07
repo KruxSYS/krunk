@@ -22,6 +22,8 @@ use zeroize::Zeroizing;
 
 /// Timer: auto-lock check.
 pub(super) const VAULT_TIMER: usize = 4;
+/// A generated password counts as chosen for this long (sign-up forms take a while).
+const GENERATED_MS: i64 = 30 * 60 * 1000;
 const VAULT_CHECK_MS: u32 = 30_000;
 /// Timer: clear the clipboard after a copy.
 pub(super) const CLIPBOARD_TIMER: usize = 5;
@@ -49,6 +51,12 @@ pub(super) struct VaultHost {
     pending_save: RefCell<Option<PendingSave>>,
     /// What to do after the unlock prompt succeeds.
     pub(super) unlock_for: RefCell<Option<(TabId, String, UnlockPurpose)>>,
+    /// A generated password the user chose (tab, origin, password, when): its submit is
+    /// saved without asking (0.6.0).
+    generated: RefCell<Option<(TabId, String, Zeroizing<String>, i64)>>,
+    /// The last automatic save, for the toast's Undo: the entry and the password it replaced
+    /// (`None`: the entry was new and is deleted).
+    auto_saved: RefCell<Option<(String, Option<Zeroizing<String>>)>>,
     clipboard_seq: Cell<Option<u32>>,
 }
 
@@ -485,6 +493,16 @@ impl Browser {
         {
             return;
         }
+        // A generated password the user chose on this site: saved at once with an Undo
+        // toast when the vault is open; otherwise the usual prompt.
+        let generated = self.vaults.generated.borrow().as_ref().is_some_and(|(t, o, pw, when)| {
+            *t == tab_id && o == origin && **pw == *password && now_ms() - when < GENERATED_MS
+        });
+        if generated && self.vault_unlocked() {
+            self.vaults.generated.borrow_mut().take();
+            self.auto_save(tab_id, origin, username, password.into_zeroizing());
+            return;
+        }
         // Already saved with this password: nothing to ask.
         let (update, unchanged) = match self.vaults.vault.borrow().as_ref() {
             Some(v) => {
@@ -552,6 +570,61 @@ impl Browser {
             return;
         }
         self.store_pending(p);
+    }
+
+    pub(super) fn remember_generated(&self, tab: TabId, origin: &str, password: Zeroizing<String>) {
+        *self.vaults.generated.borrow_mut() = Some((tab, origin.to_string(), password, now_ms()));
+    }
+
+    /// Saves (or updates) the login and tells the shell, which shows "Saved · Undo · Edit".
+    fn auto_save(&self, tab_id: TabId, origin: &str, username: String, password: Zeroizing<String>) {
+        let (result, previous) = {
+            let mut guard = self.vaults.vault.borrow_mut();
+            let Some(v) = guard.as_mut() else { return };
+            let previous = v
+                .for_origin(origin)
+                .into_iter()
+                .find(|e| e.username == username)
+                .map(|e| Zeroizing::new(e.password.to_string()));
+            (v.save_login(origin, &username, password, now_ms(), &Dpapi), previous)
+        };
+        match result {
+            Ok(id) => {
+                let update = previous.is_some();
+                info!("login {} automatically (generated password)", if update { "updated" } else { "saved" });
+                *self.vaults.auto_saved.borrow_mut() = Some((id.clone(), previous));
+                self.show_prompt(
+                    PopupContent::PasswordSaved { tab_id, entry_id: id, origin: origin.to_string(), username, update },
+                    0,
+                );
+            }
+            Err(e) => warning!("saving the generated login failed: {e}"),
+        }
+        self.touch_vault();
+    }
+
+    /// Undo of the toast: delete the new entry, or put the previous password back.
+    pub(super) fn password_saved_undo(&self, entry_id: &str) {
+        let Some((id, previous)) = self.vaults.auto_saved.borrow_mut().take().filter(|(id, _)| id == entry_id) else {
+            return;
+        };
+        let r = {
+            let mut guard = self.vaults.vault.borrow_mut();
+            let Some(v) = guard.as_mut() else { return };
+            match previous {
+                None => v.delete(&id, &Dpapi),
+                Some(old) => {
+                    let (origin, username) =
+                        v.entry(&id).map(|e| (e.origin.clone(), e.username.clone())).unwrap_or_default();
+                    v.upsert(Some(&id), &origin, &username, Some(old), None, now_ms(), &Dpapi).map(|_| ())
+                }
+            }
+        };
+        match r {
+            Ok(()) => info!("automatic save undone"),
+            Err(e) => warning!("undoing the save failed: {e}"),
+        }
+        self.touch_vault();
     }
 
     fn store_pending(&self, p: PendingSave) {

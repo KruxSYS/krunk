@@ -1631,7 +1631,8 @@ impl Browser {
                 }
                 Ok(ContentMessage::RequestFill {}) => self.request_fill(id, Some(&origin)),
                 Ok(ContentMessage::NotificationPermission {}) => self.notification_permission_requested(id, &origin),
-                Ok(ContentMessage::FieldFocus { field, rect }) => {
+                Ok(ContentMessage::FieldFocus { field, rect, autocomplete, passwords, form_text }) => {
+                    let field = self.resolve_field_kind(field, &autocomplete, passwords, &form_text);
                     self.field_focus(id, &source.frame_id, &origin, true, field, rect)
                 }
                 Ok(ContentMessage::FieldBlur {}) => self.field_blur(id, &source.frame_id),
@@ -1639,7 +1640,8 @@ impl Browser {
             },
             // An http(s) iframe: only its login fields, for its own origin.
             Ok(Source::WebFrame { origin }) => match protocol::parse_content_frame(json) {
-                Ok(ContentMessage::FieldFocus { field, rect }) => {
+                Ok(ContentMessage::FieldFocus { field, rect, autocomplete, passwords, form_text }) => {
+                    let field = self.resolve_field_kind(field, &autocomplete, passwords, &form_text);
                     self.field_focus(id, &source.frame_id, &origin, false, field, rect)
                 }
                 Ok(ContentMessage::FieldBlur {}) => self.field_blur(id, &source.frame_id),
@@ -1921,6 +1923,11 @@ impl Browser {
             Request::FillReply { tab_id, origin, entry_id } => self.fill_reply(tab_id, &origin, entry_id),
             Request::SuggestPick { tab_id, frame_id, entry_id } => self.suggest_pick(tab_id, &frame_id, &entry_id),
             Request::SuggestUnlock { tab_id, frame_id } => self.suggest_unlock(tab_id, &frame_id),
+            Request::SuggestGenerate { tab_id, frame_id } => self.suggest_generate(tab_id, &frame_id),
+            Request::PasswordSavedUndo { entry_id } => self.password_saved_undo(&entry_id),
+            Request::PasswordSavedEdit { entry_id } => {
+                self.open_page_at(Page::Passwords, Some(&format!("entry={entry_id}")));
+            }
             Request::RequestFill => {
                 let active = self.active_id();
                 if let Some(id) = active {

@@ -1,0 +1,26 @@
+<!doctype html>
+<!-- Password generation test (Krunk 0.6.0, scripts/vm-060-passgen.ps1): a sign-up form with a
+     new-password field and its confirmation. The page prints the field lengths and whether the
+     two passwords agree, so the screenshots show what the browser filled. -->
+<html lang="en"><head><meta charset="utf-8"><title>Sign up test</title>
+<style>
+  body { font: 16px system-ui, sans-serif; margin: 24px; }
+  input { font: inherit; padding: 6px 8px; width: 260px; display: block; margin: 6px 0 14px; }
+  #state { font-family: ui-monospace, monospace; color: #555; }
+</style></head><body>
+<h1>Create your account (localhost:8094)</h1>
+<form id="f" action="/log" method="get">
+  <label>Username <input id="user" name="username" type="text" autocomplete="username"></label>
+  <label>Password <input id="pw" name="password" type="password" autocomplete="new-password"></label>
+  <label>Confirm password <input id="pw2" name="password2" type="password" autocomplete="new-password"></label>
+  <button type="submit">Create account</button>
+</form>
+<p id="state"></p>
+<script>
+  function show() {
+    var a = document.getElementById('pw').value, b = document.getElementById('pw2').value;
+    document.getElementById('state').textContent = 'user="' + document.getElementById('user').value + '" password-length=' + a.length + ' confirm-length=' + b.length + ' same=' + (a === b && a.length > 0) + ' bridge=' + (typeof __lbHost === 'undefined' ? 'no' : 'yes');
+  }
+  ['input', 'change', 'focus', 'blur'].forEach(function (ev) { document.addEventListener(ev, show, true); });
+  show();
+</script></body></html>

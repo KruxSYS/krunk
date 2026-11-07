@@ -619,6 +619,19 @@ Web pages see nothing of Krunk's page bridge since 0.6.0: the injected scripts (
 detection, page tokens, the notification shim) get it as a closure argument, and only Krunk's
 own pages have `window.__lbHost`.
 
+### Generated passwords
+
+On a sign-up or change-password form (`autocomplete=new-password`, a password with its
+confirmation, or a form whose text says sign up / register / new password — the page's hint
+and Krunk's own heuristics in `core::passgen::wants_new_password` both have to agree), the
+login dropdown under the password field offers **Use a strong password** with the generated
+password shown (0.6.0; Settings → Passwords sets the length, 8–128, and whether symbols are
+used; look-alike characters are never used). Choosing it fills every password field of the
+form; the username is left alone. When the form is sent with that password and the vault is
+open, the login is saved without asking and a toast offers **Undo** (deletes the new entry,
+or puts the previous password back) and **Edit** (opens the entry on krunk://passwords);
+otherwise the usual "Save password?" prompt appears. Nothing is offered in private tabs.
+
 ### Chromium switches
 Built by `core::settings::Settings::browser_switches` and added in
 `CefApp::OnBeforeCommandLineProcessing`. Always:

@@ -924,6 +924,27 @@ async function testPopup(browser) {
   await page.click('#suggest-unlock');
   const su = await lastSent(page, 'suggestUnlock');
   check(su && su.tabId === 9 && su.frameId === 'frame-7', 'Unlock sends suggestUnlock{tabId,frameId}');
+  // 0.6.0: a generated password for a new-password field, and the "saved" toast after it.
+  await emit(page, { event: 'popup', content: { kind: 'suggest', tabId: 9, frameId: 'frame-7', origin: 'https://mail.example', locked: false, entries: [{ id: 'e1', username: 'alice@mail.example' }], generated: 'Xq7#vLm2pR9wZk4tB8nH' } });
+  await page.waitForSelector('#suggest-generate');
+  check(await page.locator('.suggest').count() === 2 && (await page.textContent('#suggest-generate')).includes('Use a strong password') && (await page.textContent('#suggest-generate .mono')) === 'Xq7#vLm2pR9wZk4tB8nH', 'the dropdown offers the generated password after the logins');
+  await shot(page, 'popup-suggest-generated.png');
+  await page.click('#suggest-generate');
+  const sg = await lastSent(page, 'suggestGenerate');
+  check(sg && sg.tabId === 9 && sg.frameId === 'frame-7', 'choosing it sends suggestGenerate{tabId,frameId}');
+  await emit(page, { event: 'popup', content: { kind: 'passwordSaved', tabId: 9, entryId: 'e9', origin: 'https://mail.example', username: 'newuser', update: false } });
+  await page.waitForSelector('#saved-undo');
+  check((await page.textContent('.panel.toast')).includes('Password saved for newuser on mail.example') && await page.locator('#saved-edit').count() === 1, 'the saved toast names the login with Undo and Edit');
+  await shot(page, 'popup-password-saved.png');
+  await page.click('#saved-undo');
+  const un = await lastSent(page, 'passwordSavedUndo');
+  check(un && un.entryId === 'e9', 'Undo sends passwordSavedUndo{entryId}');
+  await emit(page, { event: 'popup', content: { kind: 'passwordSaved', tabId: 9, entryId: 'e9', origin: 'https://mail.example', username: 'newuser', update: true } });
+  await page.waitForFunction(() => (document.querySelector('.panel.toast') || {}).textContent?.includes('Password updated'));
+  check((await page.textContent('.panel.toast')).includes('Password updated'), 'an updated login says so');
+  await page.click('#saved-edit');
+  const ed = await lastSent(page, 'passwordSavedEdit');
+  check(ed && ed.entryId === 'e9', 'Edit sends passwordSavedEdit{entryId}');
   check(errors.length === 0, 'prompts: no console errors (' + errors.join(' | ') + ')');
 
   // The update prompt.
@@ -2524,6 +2545,16 @@ async function testSettings(browser) {
   check(!(await page.isChecked('[data-key=engineSecurityComponents]')), 'defaults: no engine downloads from Google');
   check((await page.textContent('#about')).includes('Chromium 156.0.8078.80 (CEF 156.0.15)'), 'engine versions in the footer');
   check(await page.isChecked('[data-key=hardwareAcceleration]'), 'defaults: GPU on');
+  await tab('passwords');
+  check(await page.inputValue('[data-key="passgen.length"]') === '20' && await page.isChecked('[data-key="passgen.symbols"]'), 'generated passwords: 20 characters with symbols by default');
+  await page.fill('[data-key="passgen.length"]', '32');
+  await page.press('[data-key="passgen.length"]', 'Tab');
+  await page.waitForTimeout(60);
+  check((await lastSent(page, 'saveSettings')).settings.passgen.length === 32, 'the generator length is saved');
+  await page.fill('[data-key="passgen.length"]', '20');
+  await page.press('[data-key="passgen.length"]', 'Tab');
+  await page.waitForTimeout(60);
+  await tab('advanced');
   check(await page.isChecked('input[name=plevel][value=standard]') && await page.locator('input[name=plevel]:checked').count() === 1, 'defaults: tracking protection Standard');
   check(await page.locator('#restart-banner').isHidden(), 'no restart banner at first');
   check((await page.textContent('#lists-summary')) === '4 of 5 filter lists on (1 added by you) · 3 filters of your own', 'filter lists summarized (' + await page.textContent('#lists-summary') + ')');
@@ -3028,6 +3059,34 @@ async function testLoginScript(browser) {
   const framePosted = await frame.evaluate(() => window.__posted.filter((m) => m.lb === 'fieldFocus').map((m) => m.field));
   check(framePosted.includes('password'), 'a login field in a cross-origin iframe reports fieldFocus from the frame');
   check(!(await frame.evaluate(() => window.__posted.some((m) => m.lb === 'loginForm'))), 'an iframe does not announce loginForm (top-level only)');
+  // 0.6.0: a new-password field reports its details, and a generated fill lands in every
+  // password field of the form (not the username).
+  await p2.evaluate(() => {
+    const f = document.createElement('form');
+    f.id = 'signup';
+    f.innerHTML = '<input name="su" type="text"><input name="np" type="password" autocomplete="new-password"><input name="np2" type="password" autocomplete="new-password"><button>Create account</button>';
+    document.body.appendChild(f);
+  });
+  await p2.waitForTimeout(1100); // the quiet second after the previous fill
+  await p2.focus('#signup input[name=np]');
+  await p2.waitForTimeout(30);
+  {
+    const ff = await p2.evaluate(() => window.__posted.filter((m) => m.lb === 'fieldFocus').pop());
+    check(ff && ff.field === 'newPassword' && ff.autocomplete === 'new-password' && ff.passwords === 2 && ff.formText.includes('Create account'), 'a new-password field posts fieldFocus{newPassword, autocomplete, passwords, formText} (' + JSON.stringify(ff) + ')');
+  }
+  await p2.evaluate(() => window.__deliver({ lbFill: { generated: true, password: 'Gen3rated#Pass' } }));
+  await p2.waitForTimeout(30);
+  {
+    const v = await p2.evaluate(() => ({ su: document.querySelector('#signup input[name=su]').value, np: document.querySelector('#signup input[name=np]').value, np2: document.querySelector('#signup input[name=np2]').value, p: document.querySelector('#a input[name=p]').value }));
+    check(v.np === 'Gen3rated#Pass' && v.np2 === 'Gen3rated#Pass' && v.su === '' && v.p === '', 'a generated fill lands in both password fields of the form only (' + JSON.stringify(v) + ')');
+  }
+  await p2.waitForTimeout(1100);
+  await p2.focus('#a input[name=p]');
+  await p2.waitForTimeout(30);
+  {
+    const ff = await p2.evaluate(() => window.__posted.filter((m) => m.lb === 'fieldFocus').pop());
+    check(ff && ff.field === 'password' && ff.passwords === 1, 'a plain login password field is still "password" with its details (' + JSON.stringify(ff) + ')');
+  }
   await ctx2.close();
   check(errors.length === 0, 'login script raises no page errors (' + errors.join(' | ') + ')');
   check(external.length === 0, 'no network requests (' + external.join(', ') + ')');

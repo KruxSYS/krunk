@@ -376,6 +376,8 @@ pub struct Settings {
     // Passwords
     pub vault_autolock_minutes: u32,
     pub offer_save_passwords: bool,
+    /// The password generator (Krunk 0.6.0).
+    pub passgen: crate::passgen::Passgen,
 
     // Downloads
     /// Empty = the user's Downloads folder.
@@ -456,6 +458,7 @@ impl Default for Settings {
             permissions: PermissionDefaults::default(),
             vault_autolock_minutes: 15,
             offer_save_passwords: true,
+            passgen: crate::passgen::Passgen::default(),
             download_dir: String::new(),
             ask_where_to_save: false,
             download_connections: 4,
@@ -697,6 +700,9 @@ impl Settings {
         if let Err(e) = self.dns.validate() {
             err("dns", &e);
         }
+        if let Err(e) = self.passgen.validate() {
+            err("passgen.length", &e);
+        }
         if !self.proxy.is_empty() && !is_proxy(&self.proxy) {
             err("proxy", "Use host:port, scheme://host:port (http, https, socks4, socks5) or direct://");
         }
@@ -798,6 +804,7 @@ impl Settings {
                     "headers.hints" => s.headers.hints = None,
                     "headers.rules" => s.headers.rules.clear(),
                     "dns" => s.dns = crate::dns::Dns::default(),
+                    "passgen.length" => s.passgen = crate::passgen::Passgen::default(),
                     "proxy" => s.proxy.clear(),
                     "extraFlags" => s.extra_flags.clear(),
                     "defaultZoom" => s.default_zoom = d.default_zoom,

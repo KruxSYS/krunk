@@ -62,6 +62,10 @@
   },
   "vaultAutolockMinutes": 15,
   "offerSavePasswords": true,
+  "passgen": {
+    "length": 20,
+    "symbols": true
+  },
   "downloadDir": "",
   "askWhereToSave": false,
   "downloadConnections": 4,

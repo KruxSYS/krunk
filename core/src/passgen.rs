@@ -49,9 +49,90 @@ pub fn generate(length: u32, symbols: bool) -> Result<Zeroizing<String>, getrand
     Ok(Zeroizing::new(out.iter().map(|&b| b as char).collect()))
 }
 
+/// Settings of the generator (Krunk 0.6.0).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Passgen {
+    pub length: u32,
+    pub symbols: bool,
+}
+
+impl Default for Passgen {
+    fn default() -> Passgen {
+        Passgen { length: 20, symbols: true }
+    }
+}
+
+impl Passgen {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.length < MIN_LEN || self.length > MAX_LEN {
+            return Err(format!("The length is {MIN_LEN} to {MAX_LEN}"));
+        }
+        Ok(())
+    }
+}
+
+/// Is a focused password field one where a *new* password is being chosen (sign-up, change
+/// password), so a generated one should be offered? `autocomplete` is the field's attribute,
+/// `passwords` the number of visible password fields in its form, `text` the form's visible
+/// text and button labels (truncated by the page).
+pub fn wants_new_password(autocomplete: &str, passwords: u32, text: &str) -> bool {
+    let ac = autocomplete.trim().to_ascii_lowercase();
+    if ac == "new-password" {
+        return true;
+    }
+    if ac == "current-password" || ac == "one-time-code" {
+        return false;
+    }
+    if passwords >= 2 {
+        return true;
+    }
+    if passwords == 0 {
+        return false;
+    }
+    let t = text.to_ascii_lowercase();
+    [
+        "sign up",
+        "signup",
+        "register",
+        "create account",
+        "create an account",
+        "create your account",
+        "new password",
+        "choose a password",
+        "set a password",
+        "set password",
+        "change password",
+        "reset password",
+        "konto erstellen",
+        "registrieren",
+        "neues passwort",
+        "inscription",
+        "créer un compte",
+        "nouveau mot de passe",
+    ]
+    .iter()
+    .any(|k| t.contains(k))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_password_detection() {
+        assert!(wants_new_password("new-password", 1, ""));
+        assert!(!wants_new_password("current-password", 2, "Sign up"), "the attribute wins");
+        assert!(wants_new_password("", 2, ""), "password + confirm");
+        assert!(wants_new_password("", 1, "Create your account · Sign up"));
+        assert!(wants_new_password("off", 1, "Neues Passwort wählen"));
+        assert!(!wants_new_password("", 1, "Sign in · Forgot password?"));
+        assert!(!wants_new_password("username", 0, "Register"), "no password field: no offer");
+        let p = Passgen::default();
+        assert_eq!((p.length, p.symbols), (20, true));
+        assert!(Passgen { length: 7, symbols: true }.validate().is_err());
+        assert!(Passgen { length: 128, symbols: false }.validate().is_ok());
+    }
 
     #[test]
     fn length_and_classes() {

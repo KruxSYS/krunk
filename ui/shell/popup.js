@@ -347,7 +347,7 @@
   function fit() { LB.post('popupResize', { height: root.offsetHeight + 2 }); }
   // Content whose height depends on its items: the window is opened with an upper bound
   // and fitted right after the render (the ⋮ menu used to leave a gap at the bottom).
-  const FITS = { menu: true, tabMenu: true, bookmarkMenu: true, siteInfo: true, addressMenu: true, captionMenu: true, downloads: true, permission: true };
+  const FITS = { menu: true, tabMenu: true, bookmarkMenu: true, siteInfo: true, addressMenu: true, captionMenu: true, downloads: true, permission: true, passwordSaved: true };
 
 
   // Login suggestions under a focused field: the matching usernames (with the host for a
@@ -365,9 +365,31 @@
         el('span', { class: 'key-glyph', text: '🔑' }),
         el('span', { class: 'label' }, [el('span', { class: 'user', text: e.username || '(no username)' }), e.host ? el('span', { class: 'host', text: e.host }) : null]),
       ])));
+      // 0.6.0: a generated password for a new-password field; the host fills what it offered.
+      if (c.generated) {
+        rows.push(el('button', { class: 'suggest generated', id: 'suggest-generate', onclick: () => { LB.post('suggestGenerate', { tabId: c.tabId, frameId: c.frameId }); close(); } }, [
+          el('span', { class: 'key-glyph', text: '✨' }),
+          el('span', { class: 'label' }, [el('span', { class: 'user', text: 'Use a strong password' }), el('span', { class: 'host mono', text: c.generated })]),
+        ]));
+      }
     }
     rows.push(el('div', { class: 'suggest-foot', text: 'Krunk passwords · ' + c.origin.replace(/^https?:\/\//, '') }));
     return [el('div', { class: 'suggest-list' }, rows)];
+  }
+
+  // "Password saved" after a generated password was used (0.6.0): Undo puts things back,
+  // Edit opens the entry; it goes away by itself.
+  function renderPasswordSaved(c) {
+    const act = (cmd) => { LB.post(cmd, { entryId: c.entryId }); close(); };
+    setTimeout(function () { if (current && current.kind === 'passwordSaved' && current.entryId === c.entryId) close(); }, 8000);
+    return [el('div', { class: 'panel toast' }, [
+      el('p', {}, [el('strong', { text: c.update ? 'Password updated' : 'Password saved' }), c.username ? ' for ' + c.username : '', ' on ', el('span', { class: 'origin', text: c.origin.replace(/^https?:\/\//, '') })]),
+      el('div', { class: 'row' }, [
+        el('button', { class: 'btn', id: 'saved-undo', onclick: () => act('passwordSavedUndo'), text: 'Undo' }),
+        el('button', { class: 'btn', id: 'saved-edit', onclick: () => act('passwordSavedEdit'), text: 'Edit' }),
+        el('button', { class: 'btn primary', id: 'default', onclick: () => close(), text: 'OK' }),
+      ]),
+    ])];
   }
 
   function renderSave(c) {
@@ -635,7 +657,7 @@
   LB.on('popup', function (m) {
     current = m.content;
     const c = m.content;
-    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
+    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
     root.textContent = '';
     root.dataset.kind = c.kind;
     (render ? render(c) : []).forEach((n) => n && root.appendChild(n));
