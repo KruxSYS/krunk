@@ -283,7 +283,7 @@ pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> Pop
     let (w, h) = match kind {
         PopupKind::SavePassword => (360.0, 150.0),
         PopupKind::Fill => (340.0, 110.0 + 42.0 * entries.clamp(1, 6) as f64),
-        PopupKind::Menu => (280.0, 542.0),
+        PopupKind::Menu => (280.0, 580.0),
         PopupKind::Shield => (300.0, 226.0),
         PopupKind::SiteInfo => (360.0, 260.0),
         PopupKind::Suggest | PopupKind::CardFill => (300.0, 160.0),
@@ -299,6 +299,7 @@ pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> Pop
         PopupKind::BookmarkMenu => (240.0, 352.0),
         PopupKind::CaptionMenu => (250.0, 352.0),
         PopupKind::Downloads => (380.0, 420.0),
+        PopupKind::Pip => (340.0, 300.0),
         PopupKind::BookmarkEdit => (340.0, 214.0),
     };
     let x = (shell_width_css - w - 8.0).max(0.0);

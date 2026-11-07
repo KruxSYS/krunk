@@ -91,6 +91,7 @@ html.fullscreen #caption, html.fullscreen #drag-space { display: none; }
 .tb:disabled { opacity: .35; cursor: default; }
 .tb.small { min-width: 26px; height: 26px; }
 .tb.on { background: var(--bg-hover); }
+#pip.active { color: var(--accent); }
 #star.bookmarked .icon { fill: #f59e0b; stroke: #f59e0b; }
 #omnibox { flex: 1; display: flex; align-items: center; gap: 6px; height: 32px; margin: 0 6px; padding: 0 4px 0 10px;
            background: var(--bg); border: 1px solid transparent; border-radius: 16px; }

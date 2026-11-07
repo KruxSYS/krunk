@@ -155,6 +155,8 @@ pub enum PopupKind {
     CaptionMenu,
     /// The downloads button's popup (Krunk 0.6.0): the list with speed and progress.
     Downloads,
+    /// Which video goes to Picture-in-Picture when the page has several (0.6.0).
+    Pip,
     /// A tab's context menu (right-click on the tab).
     TabMenu,
     /// The bookmarks bar's context menu (right-click on an item, a folder or the bar).
@@ -166,7 +168,10 @@ pub enum PopupKind {
 impl PopupKind {
     /// Prompts about passwords must come from the host, never the shell.
     pub fn shell_may_open(self) -> bool {
-        matches!(self, PopupKind::Menu | PopupKind::Shield | PopupKind::SiteInfo | PopupKind::Downloads)
+        matches!(
+            self,
+            PopupKind::Menu | PopupKind::Shield | PopupKind::SiteInfo | PopupKind::Downloads | PopupKind::Pip
+        )
     }
 
     /// Every popup has buttons, so every popup takes keyboard focus. This
@@ -261,7 +266,12 @@ pub enum PopupContent {
     Menu {
         zoom: f64,
         can_reopen: bool,
+        /// The active tab has a video (the Picture-in-Picture item; 0.6.0).
+        #[serde(default)]
+        has_video: bool,
     },
+    /// The Picture-in-Picture chooser (0.6.0): the active tab's videos.
+    Pip { tab_id: u32, videos: Vec<VideoInfo> },
     Shield {
         host: String,
         blocked: u32,
@@ -275,9 +285,7 @@ pub enum PopupContent {
         distinct: u32,
     },
     /// The lock popup (see `certinfo`).
-    SiteInfo {
-        info: crate::certinfo::SiteInfo,
-    },
+    SiteInfo { info: crate::certinfo::SiteInfo },
     /// Login suggestions for the focused field of frame `frame_id` in tab `tab_id`.
     /// `locked`: the vault has logins for the site but is locked (one "Unlock" entry).
     Suggest {
@@ -292,41 +300,16 @@ pub enum PopupContent {
         generated: Option<String>,
     },
     /// Saved cards for a card field of frame `frame_id` (0.6.0; masked labels only).
-    CardFill {
-        tab_id: u32,
-        frame_id: String,
-        origin: String,
-        locked: bool,
-        cards: Vec<CardChoice>,
-    },
+    CardFill { tab_id: u32, frame_id: String, origin: String, locked: bool, cards: Vec<CardChoice> },
     /// "Save this card?" after a checkout (0.6.0; the brand and last four digits only).
-    SaveCard {
-        tab_id: u32,
-        origin: String,
-        brand: String,
-        last4: String,
-    },
+    SaveCard { tab_id: u32, origin: String, brand: String, last4: String },
     /// "Save password for `username` on `origin`?" (no password is sent to the UI).
-    SavePassword {
-        tab_id: u32,
-        origin: String,
-        username: String,
-        update: bool,
-    },
+    SavePassword { tab_id: u32, origin: String, username: String, update: bool },
     /// The login was saved without asking (a generated password): Undo and Edit (0.6.0).
-    PasswordSaved {
-        tab_id: u32,
-        entry_id: String,
-        origin: String,
-        username: String,
-        update: bool,
-    },
+    PasswordSaved { tab_id: u32, entry_id: String, origin: String, username: String, update: bool },
     /// The address-bar suggestions for what the user typed; `selected` is the row the
     /// keyboard picked (the shell owns the selection).
-    AddressSuggest {
-        entries: Vec<AddressSuggestion>,
-        selected: Option<usize>,
-    },
+    AddressSuggest { entries: Vec<AddressSuggestion>, selected: Option<usize> },
     /// The address bar's context menu: which items are enabled, and whether the clipboard
     /// holds an address ("Paste and go") or words ("Paste and search").
     AddressMenu {
@@ -351,11 +334,7 @@ pub enum PopupContent {
         private: bool,
     },
     /// "Fill the login for `origin`?" with the matching entries.
-    Fill {
-        tab_id: u32,
-        origin: String,
-        entries: Vec<FillChoice>,
-    },
+    Fill { tab_id: u32, origin: String, entries: Vec<FillChoice> },
     /// "Unlock your passwords" before saving or filling on `origin`.
     Unlock {
         tab_id: u32,
@@ -367,11 +346,7 @@ pub enum PopupContent {
         wait_ms: u64,
     },
     /// Contents of a bookmarks-bar folder.
-    BookmarkFolder {
-        id: i64,
-        title: String,
-        items: Vec<BarItem>,
-    },
+    BookmarkFolder { id: i64, title: String, items: Vec<BarItem> },
     /// A newer Krunk: Update now (or Download) / Later / Release notes.
     Update {
         version: String,
@@ -396,15 +371,9 @@ pub enum PopupContent {
         has_site: bool,
     },
     /// The downloads button's popup: the most recent downloads first.
-    Downloads {
-        items: Vec<crate::downloads::DownloadItem>,
-    },
+    Downloads { items: Vec<crate::downloads::DownloadItem> },
     /// Right-click on the window's title bar or the empty tab strip (Krunk 0.6.0).
-    CaptionMenu {
-        maximized: bool,
-        can_reopen: bool,
-        can_bookmark_all: bool,
-    },
+    CaptionMenu { maximized: bool, can_reopen: bool, can_bookmark_all: bool },
     /// The bookmarks bar's context menu: on bookmark or folder `id`, or on the bar itself
     /// (`id` none). `children`: a folder's bookmarks (for "Open all"); `can_add`: the page
     /// can be bookmarked here ("Add this page").
@@ -418,13 +387,7 @@ pub enum PopupContent {
         can_add: bool,
     },
     /// Edit bookmark or folder `id`, or name a new folder in `parent` (`id` none).
-    BookmarkEdit {
-        id: Option<i64>,
-        parent: i64,
-        is_folder: bool,
-        title: String,
-        url: Option<String>,
-    },
+    BookmarkEdit { id: Option<i64>, parent: i64, is_folder: bool, title: String, url: Option<String> },
 }
 
 /// Where an accepted update is.
@@ -607,6 +570,7 @@ impl PopupContent {
             PopupContent::TabMenu { .. } => PopupKind::TabMenu,
             PopupContent::CaptionMenu { .. } => PopupKind::CaptionMenu,
             PopupContent::Downloads { .. } => PopupKind::Downloads,
+            PopupContent::Pip { .. } => PopupKind::Pip,
             PopupContent::BookmarkMenu { .. } => PopupKind::BookmarkMenu,
             PopupContent::BookmarkEdit { .. } => PopupKind::BookmarkEdit,
         }
@@ -620,6 +584,7 @@ impl PopupContent {
             PopupContent::Shield { .. } => Some("shield".into()),
             PopupContent::SiteInfo { .. } => Some("siteInfo".into()),
             PopupContent::Downloads { .. } => Some("downloads".into()),
+            PopupContent::Pip { .. } => Some("pip".into()),
             PopupContent::BookmarkFolder { id, .. } => Some(format!("folder:{id}")),
             _ => None,
         }
@@ -1192,6 +1157,11 @@ pub enum Request {
         frame_id: String,
         entry_id: String,
     },
+    /// The Picture-in-Picture chooser (popup): video `index` of tab `tab_id` (0.6.0).
+    PipPick {
+        tab_id: u32,
+        index: u32,
+    },
     /// The suggestion dropdown (popup): "Unlock Krunk passwords" for the focused field.
     SuggestUnlock {
         tab_id: u32,
@@ -1393,6 +1363,7 @@ impl Sender {
                     | R::DownloadAction { .. }
                     | R::FillReply { .. }
                     | R::SuggestPick { .. }
+                    | R::PipPick { .. }
                     | R::SuggestUnlock { .. }
                     | R::SuggestGenerate { .. }
                     | R::CardFillPick { .. }
@@ -1566,6 +1537,30 @@ pub fn parse_request(sender: Sender, json: &str) -> Result<Envelope, ProtocolErr
     Ok(Envelope { req_id, request })
 }
 
+/// A video on the page as the media script reports it (0.6.0). `index` is the script's own
+/// numbering (document order, same-origin frames included); the host hands it back for a pick.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VideoInfo {
+    pub index: u32,
+    /// Title, aria-label or the file name; the chooser's row.
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub width: u32,
+    #[serde(default)]
+    pub height: u32,
+    #[serde(default)]
+    pub playing: bool,
+    /// This video is in Picture-in-Picture now.
+    #[serde(default)]
+    pub pip: bool,
+}
+
+/// The media script reports at most this many videos, each label at most this long.
+pub const MAX_VIDEOS: usize = 32;
+pub const MAX_VIDEO_LABEL_CHARS: usize = 80;
+
 /// Messages from scripts injected into web content (untrusted).
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(tag = "lb", rename_all = "camelCase", deny_unknown_fields)]
@@ -1596,6 +1591,12 @@ pub enum ContentMessage {
     /// Class names and ids used on the page, for generic cosmetic filters.
     /// (A page can only affect which elements get hidden on itself.)
     PageTokens { classes: Vec<String>, ids: Vec<String> },
+    /// The page's videos changed (main frame only; 0.6.0): the Picture-in-Picture button and
+    /// chooser. Same-origin frames are included by the main frame's script.
+    Media { videos: Vec<VideoInfo> },
+    /// The floating video window's "Back to tab" was used (main frame only; 0.6.0): the tab
+    /// and its window come to the front.
+    PipBackToTab {},
     /// A checkout form with a card number was sent (main frame only; 0.6.0): the browser may
     /// offer to save the card. No security code is ever sent.
     CardSubmit {
@@ -1626,6 +1627,13 @@ pub fn parse_content(json: &str) -> Result<ContentMessage, ProtocolError> {
         return Err(ProtocolError::TooLarge);
     }
     let msg: ContentMessage = serde_json::from_str(json).map_err(malformed)?;
+    if let ContentMessage::Media { videos } = &msg {
+        if videos.len() > MAX_VIDEOS
+            || videos.iter().any(|v| v.label.chars().count() > MAX_VIDEO_LABEL_CHARS || v.index as usize >= MAX_VIDEOS)
+        {
+            return Err(ProtocolError::Invalid("videos"));
+        }
+    }
     if let ContentMessage::PageTokens { classes, ids } = &msg {
         if classes.len() + ids.len() > MAX_PAGE_TOKENS
             || classes.iter().chain(ids).any(|t| t.is_empty() || t.chars().count() > MAX_TOKEN_CHARS)
@@ -1692,6 +1700,12 @@ pub struct NavState {
     pub camera: bool,
     #[serde(default)]
     pub microphone: bool,
+    /// Videos on the page (the Picture-in-Picture button; 0.6.0) and whether one of them is
+    /// in the floating window now.
+    #[serde(default)]
+    pub videos: u32,
+    #[serde(default)]
+    pub pip: bool,
 }
 
 fn is_zero_u8(n: &u8) -> bool {
@@ -2839,6 +2853,52 @@ mod tests {
     }
 
     #[test]
+    fn picture_in_picture_messages() {
+        assert!(PopupKind::Pip.shell_may_open() && PopupKind::Pip.takes_focus());
+        let pick = Request::PipPick { tab_id: 1, index: 2 };
+        assert!(Sender::Popup.permits(&pick) && !Sender::Shell.permits(&pick));
+        for p in Page::ALL.iter() {
+            assert!(!Sender::Page(*p).permits(&pick), "{p:?}");
+        }
+        let m = parse_content(
+            r#"{"lb":"media","videos":[{"index":0,"label":"Trailer","width":640,"height":360,"playing":true,"pip":false},{"index":1}]}"#,
+        )
+        .unwrap();
+        match &m {
+            ContentMessage::Media { videos } => {
+                assert_eq!(videos.len(), 2);
+                assert_eq!(videos[0].label, "Trailer");
+                assert!(videos[0].playing && !videos[1].playing && videos[1].label.is_empty());
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(parse_content_frame(r#"{"lb":"media","videos":[]}"#).is_err(), "main frame only");
+        assert!(parse_content(r#"{"lb":"media","videos":[{"index":0,"cvc":1}]}"#).is_err(), "unknown fields");
+        let long = format!(r#"{{"lb":"media","videos":[{{"index":0,"label":"{}"}}]}}"#, "x".repeat(81));
+        assert_eq!(parse_content(&long), Err(ProtocolError::Invalid("videos")));
+        let many = format!(r#"{{"lb":"media","videos":[{}]}}"#, vec![r#"{"index":0}"#; 33].join(","));
+        assert_eq!(parse_content(&many), Err(ProtocolError::Invalid("videos")));
+        assert_eq!(parse_content(r#"{"lb":"media","videos":[{"index":40}]}"#), Err(ProtocolError::Invalid("videos")));
+        assert_eq!(parse_content(r#"{"lb":"pipBackToTab"}"#), Ok(ContentMessage::PipBackToTab {}));
+        assert!(parse_content_frame(r#"{"lb":"pipBackToTab"}"#).is_err());
+        let chooser = PopupContent::Pip {
+            tab_id: 3,
+            videos: vec![VideoInfo { index: 0, label: "A".into(), width: 1, height: 1, playing: true, pip: false }],
+        };
+        assert_eq!(chooser.kind(), PopupKind::Pip);
+        assert_eq!(chooser.toggle_anchor().as_deref(), Some("pip"));
+        let json = serde_json::to_string(&chooser).unwrap();
+        assert!(json.contains("\"kind\":\"pip\"") && json.contains("\"tabId\":3"));
+        let menu: PopupContent = serde_json::from_str(r#"{"kind":"menu","zoom":1.0,"canReopen":false}"#).unwrap();
+        assert!(matches!(menu, PopupContent::Menu { has_video: false, .. }), "older menus without the flag");
+        let nav: NavState = serde_json::from_str(
+            r#"{"tabId":1,"url":"","canGoBack":false,"canGoForward":false,"loading":false,"secure":false,"bookmarked":false,"blocked":0,"siteAllowed":false,"zoom":1.0,"private":false}"#,
+        )
+        .unwrap();
+        assert_eq!((nav.videos, nav.pip), (0, false));
+    }
+
+    #[test]
     fn password_generator_messages() {
         let gen = Request::SuggestGenerate { tab_id: 1, frame_id: "f".into() };
         assert!(Sender::Popup.permits(&gen) && !Sender::Shell.permits(&gen));
@@ -3204,10 +3264,12 @@ mod tests {
                     bookmarks_bar: true,
                     camera: false,
                     microphone: false,
+                    videos: 0,
+                    pip: false,
                 },
             },
             Event::ShellConfig { theme: Theme::Dark, search_name: "DuckDuckGo".into(), appearance: Default::default() },
-            Event::Popup { content: PopupContent::Menu { zoom: 1.0, can_reopen: true } },
+            Event::Popup { content: PopupContent::Menu { zoom: 1.0, can_reopen: true, has_video: false } },
             Event::Popup {
                 content: PopupContent::Shield {
                     host: "a.example".into(),

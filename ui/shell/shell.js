@@ -500,6 +500,10 @@
     const zoomed = Math.abs((n.zoom || 1) - 1) > 0.001;
     $('zoom').hidden = !zoomed;
     $('key').hidden = !n.loginForm;
+    // 0.6.0: the page has videos; one of them is in the floating window.
+    $('pip').hidden = !(n.videos > 0);
+    $('pip').classList.toggle('active', !!n.pip);
+    $('pip').title = n.pip ? 'Leave Picture-in-Picture (Alt+P)' : n.videos > 1 ? 'Picture-in-Picture: choose a video (Alt+P)' : 'Picture-in-Picture (Alt+P)';
     // 0.6.0: camera / microphone in use.
     $('media-chip').hidden = !(n.camera || n.microphone);
     $('media-cam').hidden = !n.camera;
@@ -662,7 +666,7 @@
   });
 
   // ---------- popups (menu, shield) ----------
-  const POPUP_SIZES = { menu: [280, 542], shield: [300, 226], siteInfo: [360, 260], downloads: [380, 420] };
+  const POPUP_SIZES = { menu: [280, 580], shield: [300, 226], siteInfo: [360, 260], downloads: [380, 420], pip: [340, 300] };
   // The press on the button deactivates the open popup, which closes it before the click
   // arrives (the host then says popupClosed). The click must not reopen it: the press
   // remembers what was open. The host has the same guard (lb_core::toggle).
@@ -686,6 +690,7 @@
     state.popup = kind;
     $('menu').classList.toggle('on', kind === 'menu');
     $('downloads').classList.toggle('on', kind === 'downloads');
+    $('pip').classList.toggle('on', kind === 'pip');
     $('shield').classList.toggle('on', kind === 'shield');
     $('site-icon').classList.toggle('on', kind === 'siteInfo');
     document.documentElement.classList.toggle('tab-menu', kind === 'tabMenu');
@@ -916,6 +921,14 @@
     return function () { clearTimeout(t); t = setTimeout(fn, ms); };
   }
   $('key').addEventListener('click', function () { LB.post('requestFill'); });
+  // Several videos (and none in the floating window yet): the chooser under the button;
+  // otherwise the command toggles the one video.
+  $('pip').addEventListener('pointerdown', function () { rememberOpen('pip'); });
+  $('pip').addEventListener('click', function () {
+    const n = state.nav || {};
+    if (n.videos > 1 && !n.pip) togglePopup('pip', $('pip'));
+    else LB.post('command', { command: { command: 'pictureInPicture' } });
+  });
   $('zoom').addEventListener('click', function () { LB.post('zoom', { action: 'reset' }); });
   $('menu').addEventListener('pointerdown', function () { rememberOpen('menu'); });
   $('menu').addEventListener('click', function () { togglePopup('menu', $('menu')); });

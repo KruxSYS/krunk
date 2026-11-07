@@ -58,6 +58,7 @@ mod jobs;
 mod library;
 mod omnibox;
 mod permissions;
+mod pip;
 mod pointer;
 mod power;
 mod segmented;
@@ -221,6 +222,8 @@ pub struct Browser {
     /// A new-tab page whose address bar must keep the keyboard focus until
     /// the user clicks into the page or navigates.
     address_focus: Cell<Option<TabId>>,
+    /// The tab whose video went to the floating window automatically (setting `auto_pip`).
+    auto_pip_tab: Cell<Option<TabId>>,
     /// `krunk://sitedata` tabs and the site each was opened for.
     site_data: RefCell<HashMap<TabId, storage::SiteDataBinding>>,
     /// Pointer lock and full screen.
@@ -299,6 +302,7 @@ impl Browser {
             exit_cleared: Cell::new(false),
             closing: Cell::new(false),
             address_focus: Cell::new(None),
+            auto_pip_tab: Cell::new(None),
             site_data: RefCell::new(HashMap::new()),
             pointer: pointer::PointerHost::default(),
             updates: updater::UpdateHost::new(dirs.update_status()),
@@ -679,6 +683,7 @@ impl Browser {
                 audio: true,
                 pointer_lock: true,
                 notify: true,
+                media: true,
             }
         };
         let view =
@@ -932,6 +937,7 @@ impl Browser {
     }
 
     fn activate_view(&self, win: WindowId, from: Option<TabId>, to: TabId) {
+        self.auto_pip_switch(from, to);
         self.pointer_tab_activated(to);
         self.hide_status();
         if let Some(f) = from.filter(|f| *f != to) {
@@ -1219,6 +1225,8 @@ impl Browser {
             bookmarks_bar: self.bar_shown(win),
             camera: view.is_some_and(|v| v.media_use.get().0),
             microphone: view.is_some_and(|v| v.media_use.get().1),
+            videos: view.map(|v| v.net.videos.borrow().len() as u32).unwrap_or(0),
+            pip: view.is_some_and(|v| v.net.videos.borrow().iter().any(|x| x.pip)),
         })
     }
 
@@ -1544,6 +1552,7 @@ impl Browser {
             Command::DevTools => self.toggle_devtools(),
             Command::Fullscreen => self.toggle_fullscreen(),
             Command::TaskManager => self.open_page(Page::Tasks),
+            Command::PictureInPicture => self.pip_command(None),
             // The element under the mouse, or DevTools as such when the
             // mouse is not over the page.
             Command::InspectElement => {
@@ -1634,6 +1643,8 @@ impl Browser {
                 }
                 Ok(ContentMessage::RequestFill {}) => self.request_fill(id, Some(&origin)),
                 Ok(ContentMessage::NotificationPermission {}) => self.notification_permission_requested(id, &origin),
+                Ok(ContentMessage::Media { videos }) => self.media_changed(id, &origin, videos),
+                Ok(ContentMessage::PipBackToTab {}) => self.pip_back_to_tab(id),
                 Ok(ContentMessage::CardSubmit { number, exp_month, exp_year, name }) => {
                     self.card_submitted(id, &origin, &number, exp_month, exp_year, name)
                 }
@@ -1797,6 +1808,7 @@ impl Browser {
                     PopupKind::Menu => "menu",
                     PopupKind::SiteInfo => "siteInfo",
                     PopupKind::Downloads => "downloads",
+                    PopupKind::Pip => "pip",
                     _ => "shield",
                 };
                 if self.toggle_suppressed(anchor) {
@@ -1805,6 +1817,7 @@ impl Browser {
                     match popup {
                         PopupKind::Menu => self.show_popup(self.menu_content(), Some(rect)),
                         PopupKind::Downloads => self.show_popup(self.downloads_content(), Some(rect)),
+                        PopupKind::Pip => self.pip_command(Some(rect)),
                         PopupKind::SiteInfo => self.show_site_info(rect),
                         _ => {
                             self.shield_anchor.set(Some(rect));
@@ -1928,6 +1941,7 @@ impl Browser {
             }
             Request::FillReply { tab_id, origin, entry_id } => self.fill_reply(tab_id, &origin, entry_id),
             Request::SuggestPick { tab_id, frame_id, entry_id } => self.suggest_pick(tab_id, &frame_id, &entry_id),
+            Request::PipPick { tab_id, index } => self.pip_pick(tab_id, index),
             Request::SuggestUnlock { tab_id, frame_id } => self.suggest_unlock(tab_id, &frame_id),
             Request::SuggestGenerate { tab_id, frame_id } => self.suggest_generate(tab_id, &frame_id),
             Request::CardFillPick { tab_id, frame_id, card_id } => self.card_fill_pick(tab_id, &frame_id, &card_id),
@@ -2002,7 +2016,13 @@ impl Browser {
 
     fn menu_content(&self) -> PopupContent {
         let zoom = self.active_view().map(|c| c.zoom()).unwrap_or(1.0);
-        PopupContent::Menu { zoom, can_reopen: self.ws.borrow().closed_count() > 0 }
+        let has_video = self
+            .active_id()
+            .and_then(|id| {
+                self.views.try_borrow().ok().map(|v| v.get(&id).is_some_and(|t| !t.net.videos.borrow().is_empty()))
+            })
+            .unwrap_or(false);
+        PopupContent::Menu { zoom, can_reopen: self.ws.borrow().closed_count() > 0, has_video }
     }
 
     /// Shows `content` in the popup. `rect` is in shell CSS pixels; `None`

@@ -43,6 +43,7 @@
       item('Find in page…', 'Ctrl+F', () => command('find')),
       item('Print…', 'Ctrl+P', () => command('print')),
       item('Developer tools', 'F12', () => command('devTools')),
+      item('Picture-in-Picture', 'Alt+P', () => command('pictureInPicture'), !c.hasVideo),
       sep(),
       item('Settings', '', () => openPage('settings')),
       item('About Krunk', '', () => openPage('about')),
@@ -347,7 +348,7 @@
   function fit() { LB.post('popupResize', { height: root.offsetHeight + 2 }); }
   // Content whose height depends on its items: the window is opened with an upper bound
   // and fitted right after the render (the ⋮ menu used to leave a gap at the bottom).
-  const FITS = { menu: true, tabMenu: true, bookmarkMenu: true, siteInfo: true, addressMenu: true, captionMenu: true, downloads: true, permission: true, passwordSaved: true };
+  const FITS = { menu: true, tabMenu: true, bookmarkMenu: true, siteInfo: true, addressMenu: true, captionMenu: true, downloads: true, permission: true, passwordSaved: true, pip: true };
 
 
   // Login suggestions under a focused field: the matching usernames (with the host for a
@@ -375,6 +376,17 @@
     }
     rows.push(el('div', { class: 'suggest-foot', text: 'Krunk passwords · ' + c.origin.replace(/^https?:\/\//, '') }));
     return [el('div', { class: 'suggest-list' }, rows)];
+  }
+
+  // The Picture-in-Picture chooser (0.6.0): the page's videos; the host asks the page.
+  function renderPip(c) {
+    const rows = c.videos.map((v) => el('button', { class: 'item pip-row', 'data-index': String(v.index), onclick: () => { LB.post('pipPick', { tabId: c.tabId, index: v.index }); close(); } }, [
+      el('span', { class: 'label' }, [
+        el('span', { class: 'pip-name', text: v.label || 'Video ' + (v.index + 1) }),
+        el('span', { class: 'pip-meta', text: (v.width && v.height ? v.width + '×' + v.height + ' · ' : '') + (v.pip ? 'in Picture-in-Picture' : v.playing ? 'playing' : 'paused') }),
+      ]),
+    ]));
+    return [el('div', { class: 'panel-title', text: 'Which video?' })].concat(rows);
   }
 
   // Saved cards under a card field (0.6.0): masked labels; the host fills what was chosen.
@@ -687,7 +699,7 @@
   LB.on('popup', function (m) {
     current = m.content;
     const c = m.content;
-    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, cardFill: renderCardFill, saveCard: renderSaveCard, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
+    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, cardFill: renderCardFill, saveCard: renderSaveCard, pip: renderPip, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
     root.textContent = '';
     root.dataset.kind = c.kind;
     (render ? render(c) : []).forEach((n) => n && root.appendChild(n));

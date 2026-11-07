@@ -366,6 +366,8 @@ pub(super) struct TabNet {
     net: Arc<NetShared>,
     /// The page has a login form (key icon in the address bar).
     pub login_form: Cell<bool>,
+    /// The page's videos as the media script reports them (Picture-in-Picture, 0.6.0).
+    pub videos: RefCell<Vec<lb_core::protocol::VideoInfo>>,
     /// Site-specific cosmetic CSS and generic-hide data for the page.
     pub css: RefCell<String>,
     pub generichide: Cell<bool>,
@@ -390,6 +392,7 @@ impl TabNet {
             io: Arc::new(TabShared::default()),
             net,
             login_form: Cell::new(false),
+            videos: RefCell::new(Vec::new()),
             css: RefCell::new(String::new()),
             generichide: Cell::new(false),
             exceptions: RefCell::new(HashSet::new()),
@@ -774,6 +777,7 @@ impl Browser {
         net.logged_blocked.set(0);
         net.visit_pending.set(true);
         net.login_form.set(false);
+        net.videos.borrow_mut().clear();
         let host = urlclean::host_of(uri).unwrap_or_default();
         let allowed = !host.is_empty() && self.filters.allowlist.borrow().contains(&host);
         net.io.allowed.store(allowed, Relaxed);

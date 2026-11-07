@@ -50,6 +50,8 @@ pub enum Command {
     Fullscreen,
     /// Shift+Esc: the task manager window.
     TaskManager,
+    /// Alt+P: the active tab's video in a floating window (0.6.0).
+    PictureInPicture,
 }
 
 /// Virtual-key codes (winuser.h).
@@ -100,6 +102,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Bookmark this page", "Ctrl+D"),
     ("Developer tools", "F12"),
     ("Full screen", "F11"),
+    ("Picture-in-Picture", "Alt+P"),
 ];
 
 /// Maps a key press to a command. `vk` is the virtual-key code; letters
@@ -141,6 +144,7 @@ pub fn command_for(vk: u32, ctrl: bool, shift: bool, alt: bool) -> Option<Comman
         (true, true, false, k) if k == vk::letter('O') => Bookmarks,
         (true, true, false, k) if k == vk::letter('B') => ToggleBookmarksBar,
         (true, false, false, k) if k == vk::letter('J') => Downloads,
+        (false, false, true, k) if k == vk::letter('P') => PictureInPicture,
         (false, false, false, vk::F3) => FindNext,
         (true, false, false, k) if k == vk::letter('G') => FindNext,
         (false, true, false, vk::F3) => FindPrev,
@@ -190,23 +194,25 @@ mod tests {
         let parse = |k: &str| {
             let mut ctrl = false;
             let mut shift = false;
+            let mut alt = false;
             let mut key = "";
             for part in k.split('+') {
                 match part {
                     "Ctrl" => ctrl = true,
                     "Shift" => shift = true,
+                    "Alt" => alt = true,
                     p => key = p,
                 }
             }
             let vk = match key {
-                "T" | "N" | "L" | "F" | "H" | "O" | "J" | "D" => vk::letter(key.chars().next().unwrap()),
+                "T" | "N" | "L" | "F" | "H" | "O" | "J" | "D" | "P" => vk::letter(key.chars().next().unwrap()),
                 "Esc" => vk::ESCAPE,
                 "F12" => vk::F12,
                 "F11" => vk::F11,
                 "0" => vk::KEY_0,
                 _ => return None,
             };
-            command_for(vk, ctrl, shift, false)
+            command_for(vk, ctrl, shift, alt)
         };
         for (label, keys) in SHORTCUTS {
             if keys.contains(" / ") {
@@ -273,6 +279,8 @@ mod tests {
         assert_eq!(ctrl(vk::KEY_0), Some(ZoomReset));
         assert_eq!(ctrl(vk::NUMPAD0), Some(ZoomReset));
         assert_eq!(ctrl(l('P')), Some(Print));
+        assert_eq!(command_for(l('P'), false, false, true), Some(PictureInPicture), "Alt+P");
+        assert_eq!(command_for(l('P'), true, false, true), None, "Ctrl+Alt+P is nothing");
         assert_eq!(ctrl_shift(l('N')), Some(NewPrivateTab));
         assert_eq!(command_for(l('N'), true, false, false), Some(NewWindow));
         assert_eq!(ctrl_shift(l('B')), Some(ToggleBookmarksBar));

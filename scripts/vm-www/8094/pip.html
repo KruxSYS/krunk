@@ -1,11 +1,16 @@
-<!doctype html><html><head><meta charset="utf-8"><title>pip probe</title></head><body style="background:#223;color:#fff;font:16px sans-serif">
+<!doctype html>
+<!-- Picture-in-Picture test (Krunk 0.6.0, scripts/vm-060-pip.ps1; the M0 spike's page): two
+     muted looping videos; `#one` keeps only the first. The page prints the PiP events with
+     the window size, so the screenshots show what the browser did. -->
+<html><head><meta charset="utf-8"><title>pip probe</title></head><body style="background:#223;color:#fff;font:16px sans-serif">
 <h2>Two videos</h2>
-<video id="a" src="test-h264-aac.mp4" width="400" muted autoplay loop playsinline></video>
+<video id="a" src="test-h264-aac.mp4" width="400" muted autoplay loop playsinline title="Trailer (H.264)"></video>
 <video id="b" src="test-vp9-opus.webm" width="300" muted autoplay loop playsinline></video>
 <pre id="o"></pre>
 <script>
+if (location.hash === '#one') { document.getElementById('b').remove(); document.querySelector('h2').textContent = 'One video'; }
 const o=document.getElementById('o');
 for(const v of document.querySelectorAll('video')){v.addEventListener('enterpictureinpicture',e=>{o.textContent+='enter pip '+v.id+' '+e.pictureInPictureWindow.width+'x'+e.pictureInPictureWindow.height+'\n';document.title='PIP '+v.id;fetch('/log?pip=enter-'+v.id)});
- v.addEventListener('leavepictureinpicture',()=>{o.textContent+='leave pip '+v.id+'\n';document.title='PIP left';fetch('/log?pip=leave-'+v.id)});}
-o.textContent='pictureInPictureEnabled='+document.pictureInPictureEnabled+'\n';
+ v.addEventListener('leavepictureinpicture',()=>{o.textContent+='leave pip '+v.id+' paused='+v.paused+'\n';document.title='PIP left';fetch('/log?pip=leave-'+v.id)});}
+o.textContent='pictureInPictureEnabled='+document.pictureInPictureEnabled+' bridge='+(typeof __lbHost==='undefined'?'no':'yes')+'\n';
 </script></body></html>

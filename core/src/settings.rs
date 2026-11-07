@@ -337,6 +337,9 @@ pub struct Settings {
     /// Minutes in the background before a tab is put to sleep; 0 = never.
     pub tab_sleep_minutes: u32,
     pub tab_discard_enabled: bool,
+    /// Switching away from a tab that plays a video puts the video in the floating window
+    /// (Picture-in-Picture) and takes it back when the tab is shown again (Krunk 0.6.0).
+    pub auto_pip: bool,
     /// Minutes in the background before a tab's browser view is unloaded.
     pub tab_discard_minutes: u32,
 
@@ -442,6 +445,7 @@ impl Default for Settings {
             hardware_acceleration: true,
             tab_sleep_minutes: 5,
             tab_discard_enabled: false,
+            auto_pip: false,
             tab_discard_minutes: 30,
             adblock_enabled: true,
             filter_lists: FILTER_LISTS.iter().map(|s| s.to_string()).collect(),

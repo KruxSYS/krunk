@@ -284,7 +284,7 @@ async function testShell(browser) {
   // Menu popup open/close.
   await page.click('#menu');
   const sp = await lastSent(page, 'showPopup');
-  check(sp && sp.popup === 'menu' && sp.rect.width === 280 && sp.rect.height === 542 && sp.rect.x >= 0 && sp.rect.y > 60, 'menu sends showPopup with a rect below the toolbar (542 is the upper bound; the popup fits itself)');
+  check(sp && sp.popup === 'menu' && sp.rect.width === 280 && sp.rect.height === 580 && sp.rect.x >= 0 && sp.rect.y > 60, 'menu sends showPopup with a rect below the toolbar (580 is the upper bound; the popup fits itself)');
   check(await page.locator('#menu.on').count() === 1, 'menu button highlighted while open');
   await page.click('#menu');
   check((await lastSent(page, 'hidePopup')) !== undefined, 'clicking menu again sends hidePopup');
@@ -740,10 +740,18 @@ async function testPopup(browser) {
   {
     const fitMenu = await lastSent(page, 'popupResize');
     const want = await page.evaluate(() => document.getElementById('root').offsetHeight + 2);
-    check(fitMenu && fitMenu.height === want && want < 542 && want > 400, 'the menu asks for exactly its content height (' + (fitMenu && fitMenu.height) + ' = #root + borders, below the 542 bound)');
+    check(fitMenu && fitMenu.height === want && want < 580 && want > 400, 'the menu asks for exactly its content height (' + (fitMenu && fitMenu.height) + ' = #root + borders, below the 580 bound)');
   }
   await page.waitForSelector('.item');
   check(await page.locator('#zoom-value').textContent() === '125%', 'menu shows zoom');
+  // 0.6.0: Picture-in-Picture in the menu, greyed without a video on the page.
+  check(await page.locator('.item', { hasText: 'Picture-in-Picture' }).isDisabled(), 'Picture-in-Picture is disabled without a video');
+  await emit(page, { event: 'popup', content: { kind: 'menu', zoom: 1.25, canReopen: true, hasVideo: true } });
+  await page.waitForTimeout(50);
+  await page.locator('.item', { hasText: 'Picture-in-Picture' }).click();
+  check((await lastSent(page, 'command')).command.command === 'pictureInPicture', 'the item sends command pictureInPicture');
+  await emit(page, { event: 'popup', content: { kind: 'menu', zoom: 1.25, canReopen: true } });
+  await page.waitForTimeout(50);
   await shot(page, 'popup-menu.png');
   await page.locator('.item', { hasText: 'New private tab' }).click();
   const cmd = await lastSent(page, 'command');
@@ -2461,6 +2469,15 @@ async function testPasswords(browser) {
   await page.waitForSelector('#default');
   await page.click('#default');
   check((await lastSent(page, 'saveCardReply')).accept === true, 'Save card sends saveCardReply{accept:true}');
+  // 0.6.0: the Picture-in-Picture chooser.
+  await page.setViewportSize({ width: 340, height: 300 });
+  await emit(page, { event: 'popup', content: { kind: 'pip', tabId: 4, videos: [{ index: 0, label: 'trailer.mp4', width: 640, height: 360, playing: true, pip: false }, { index: 1, label: '', width: 0, height: 0, playing: false, pip: false }] } });
+  await page.waitForSelector('.pip-row');
+  check((await page.locator('.pip-row').count()) === 2 && (await page.textContent('.pip-row[data-index="0"]')).includes('640×360 · playing') && (await page.textContent('.pip-row[data-index="1"]')).includes('Video 2'), 'the chooser lists the videos with size and state');
+  await shot(page, 'popup-pip-chooser.png');
+  await page.click('.pip-row[data-index="1"]');
+  const pp = await lastSent(page, 'pipPick');
+  check(pp && pp.tabId === 4 && pp.index === 1, 'a row sends pipPick{tabId,index}');
   check(errors.length === 0, 'popup: no console errors (' + errors.join(' | ') + ')');
 
   // Shell key icon.
@@ -2479,6 +2496,25 @@ async function testPasswords(browser) {
   check(await page.locator('#key').isVisible(), 'key icon shown for a login form');
   await page.click('#key');
   check((await lastSent(page, 'requestFill')) !== undefined, 'key icon sends requestFill');
+  // 0.6.0: the Picture-in-Picture button: hidden without videos, a command for one, the
+  // chooser for several, "leave" while a video is in the floating window.
+  check(await page.locator('#pip').isHidden(), 'no PiP button without a video');
+  await page.evaluate(() => window.__host.navEvent({ videos: 1, pip: false }));
+  await page.waitForTimeout(40);
+  check(await page.locator('#pip').isVisible() && (await page.getAttribute('#pip', 'title')) === 'Picture-in-Picture (Alt+P)', 'one video shows the PiP button');
+  await page.click('#pip');
+  check((await lastSent(page, 'command')).command.command === 'pictureInPicture', 'one video: the button sends the command');
+  await page.evaluate(() => window.__host.navEvent({ videos: 2, pip: false }));
+  await page.waitForTimeout(40);
+  await page.click('#pip');
+  const sp = await lastSent(page, 'showPopup');
+  check(sp && sp.popup === 'pip' && sp.rect.width === 340, 'two videos: the button opens the chooser popup');
+  await page.evaluate(() => window.__host.navEvent({ videos: 2, pip: true }));
+  await page.waitForTimeout(40);
+  check((await page.getAttribute('#pip', 'class')).includes('active') && (await page.getAttribute('#pip', 'title')).startsWith('Leave'), 'a video in PiP marks the button');
+  await shot(page, 'shell-pip-active.png');
+  await page.click('#pip');
+  check((await lastSent(page, 'command')).command.command === 'pictureInPicture', 'in PiP the button sends the command (leave)');
   check(external.length === 0, 'no network requests');
 }
 
@@ -2633,6 +2669,12 @@ async function testSettings(browser) {
   await page.selectOption('#newTabPage', 'krunk');
   await page.waitForTimeout(60);
   check(await page.isChecked('input[name=startup][value=restoreSession]'), 'defaults: restore session');
+  check(!(await page.isChecked('#autoPip')), 'defaults: automatic Picture-in-Picture off');
+  await page.click('#autoPip');
+  await page.waitForTimeout(60);
+  check((await lastSent(page, 'saveSettings')).settings.autoPip === true, 'automatic Picture-in-Picture can be switched on');
+  await page.click('#autoPip');
+  await page.waitForTimeout(60);
   check((await page.locator('#trackingPrevention, [data-key=smartscreen]').count()) === 0, 'no Edge-only settings');
   check(!(await page.isChecked('[data-key=engineSecurityComponents]')), 'defaults: no engine downloads from Google');
   check((await page.textContent('#about')).includes('Chromium 156.0.8078.80 (CEF 156.0.15)'), 'engine versions in the footer');
@@ -3239,6 +3281,54 @@ async function testLoginScript(browser) {
   await context.close();
 }
 
+// 0.6.0: the media script lists the page's videos for Picture-in-Picture and does the
+// request on the krunk-pip event (here without a gesture, so the engine refuses it).
+async function testMediaScript(browser) {
+  console.log('injected media script');
+  const context = await browser.newContext();
+  const webm = fs.readFileSync(path.join(__dirname, '..', '..', 'scripts', 'vm-www', '8094', 'test-vp9-opus.webm'));
+  await context.route('**/*', (r) => r.abort());
+  await context.route('https://media.example/v.webm', (r) => r.fulfill({ status: 200, headers: { 'content-type': 'video/webm' }, body: webm }));
+  await context.route('https://media.example/', (r) => r.fulfill({ status: 200, headers: { 'content-type': 'text/html' },
+    body: '<!doctype html><body><video id="a" src="/v.webm" muted autoplay loop></video><video id="b" src="/v.webm" muted title="Second clip"></video><video id="c" src="/v.webm" muted disablepictureinpicture></video><iframe id="f" srcdoc="&lt;video id=fv src=https://media.example/v.webm muted&gt;&lt;/video&gt;"></iframe></body>' }));
+  await context.addInitScript(() => {
+    window.__posted = [];
+    window.__lbHost = { postMessage: (m) => window.__posted.push(m), addEventListener: () => {} };
+  });
+  await context.addInitScript({ path: path.join(__dirname, '..', 'inject', 'media.js') });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await page.goto('https://media.example/');
+  await page.waitForFunction(() => { const m = window.__posted.filter((x) => x.lb === 'media').pop(); return m && m.videos.length >= 3 && m.videos.some((v) => v.playing); }, null, { timeout: 8000 }).catch(() => {});
+  const media = await page.evaluate(() => window.__posted.filter((x) => x.lb === 'media').pop());
+  check(media && media.videos.length === 3, 'media lists the three eligible videos (two of the page, one in a same-origin frame; disablepictureinpicture left out) (' + JSON.stringify(media) + ')');
+  if (media && media.videos.length === 3) {
+    const [a, b, f] = media.videos;
+    check(a.playing && a.label === 'v.webm' && a.width > 0 && a.height > 0, 'the playing video: file name, size, playing (' + JSON.stringify(a) + ')');
+    check(!b.playing && b.label === 'Second clip', 'the paused video: its title');
+    check(f.index === 2 && !f.pip, 'the frame video gets the next index');
+  }
+  const r = await page.evaluate(() => new Promise((resolve) => {
+    document.dispatchEvent(new CustomEvent('krunk-pip', { detail: { index: 1, done: (p) => p.then((v) => resolve({ ok: true, v }), (e) => resolve({ ok: false, e: String(e) })) } }));
+  }));
+  check(r && (r.ok || /NotAllowed|gesture|user activation/i.test(r.e)), 'the krunk-pip event asks the engine for PiP (refused without a gesture here) (' + JSON.stringify(r) + ')');
+  const x = await page.evaluate(() => new Promise((resolve) => {
+    document.dispatchEvent(new CustomEvent('krunk-pip', { detail: { exit: true, done: (p) => p.then(resolve, (e) => resolve({ e: String(e) })) } }));
+  }));
+  check(x && (x.exited === false || (r && r.ok)), 'exit with nothing in PiP is a no-op (' + JSON.stringify(x) + ')');
+  const missing = await page.evaluate(() => new Promise((resolve) => {
+    document.dispatchEvent(new CustomEvent('krunk-pip', { detail: { index: 9, done: (p) => p.then(resolve, (e) => resolve({ e: String(e) })) } }));
+  }));
+  check(missing && /no such video/.test(missing.e), 'an unknown index is refused');
+  await page.evaluate(() => document.getElementById('a').pause());
+  await page.waitForFunction(() => { const m = window.__posted.filter((x) => x.lb === 'media').pop(); return m && !m.videos[0].playing; }, null, { timeout: 3000 }).catch(() => {});
+  check(await page.evaluate(() => !window.__posted.filter((x) => x.lb === 'media').pop().videos[0].playing), 'pausing reports the change');
+  check(!(await page.evaluate(() => Object.keys(window).some((k) => /krunk|lbHost/i.test(k) && k !== '__lbHost'))), 'no global added to the page');
+  check(errors.length === 0, 'media script raises no page errors (' + errors.join(' | ') + ')');
+  await context.close();
+}
+
 // uBO scriptlets as Krunk injects them (generated by the core test
 // scriptlet_fixture_is_current): run at document start, before the page's own
 // inline script, they pin window.krunkTest and prune adPlacements from JSON.
@@ -3651,6 +3741,7 @@ async function testTabWindows(browser) {
     if (!ONLY || ONLY.includes('Passwords')) await testPasswords(browser);
     if (!ONLY || ONLY.includes('Settings')) await testSettings(browser);
     if (!ONLY || ONLY.includes('LoginScript')) await testLoginScript(browser);
+    if (!ONLY || ONLY.includes('MediaScript')) await testMediaScript(browser);
   } finally {
     await browser.close();
   }

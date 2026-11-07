@@ -53,6 +53,8 @@ pub struct Scripts {
     pub pointer_lock: bool,
     /// The `Notification.requestPermission` shim (main frame; Krunk 0.6.0).
     pub notify: bool,
+    /// The page's videos for Picture-in-Picture (main frame; Krunk 0.6.0).
+    pub media: bool,
 }
 
 impl Scripts {
@@ -66,6 +68,7 @@ impl Scripts {
             ("audio", self.audio),
             ("plock", self.pointer_lock),
             ("notify", self.notify),
+            ("media", self.media),
         ] {
             d.set_bool(Some(&CefString::from(k)), i32::from(v));
         }
@@ -82,6 +85,7 @@ impl Scripts {
             audio: get("audio"),
             pointer_lock: get("plock"),
             notify: get("notify"),
+            media: get("media"),
         }
     }
 }

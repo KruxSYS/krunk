@@ -252,6 +252,13 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   - Manage logins on `krunk://passwords`. Showing a password asks for the master password again.
 - **Private tabs:** they share an in-memory profile that is discarded when the last private tab
   closes. Nothing from them is written to disk, history, the session or the favicon cache.
+- **Picture-in-Picture** (0.6.0): when a page has a video, a small window icon appears in the
+  address bar; it, the menu's "Picture-in-Picture" and Alt+P send the video to the engine's
+  floating always-on-top window (play/pause, back to tab, close). With several videos a chooser
+  lists them with their size and state; the same control takes the video back. Settings →
+  General → Media → "Automatic Picture-in-Picture" does it when you switch tabs while a video
+  plays and reverses it when you return. Videos inside a frame from another site (an embedded
+  player) are not listed: use the player's own control.
 - **Zoom** is remembered per site, as in Chrome. "Default zoom" in Settings applies to sites you
   have not zoomed.
 - **Memory:** background tabs go to sleep after 5 minutes. Optionally they can be unloaded
