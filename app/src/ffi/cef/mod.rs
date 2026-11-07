@@ -112,6 +112,7 @@ pub fn run_engine(config: EngineConfig, start: Start) -> Result<i32, String> {
         return Err(format!("The browser engine failed to start (code {code})"));
     }
     info!("engine initialized: CEF {}, Chromium {}", versions().0, versions().1);
+    LAUNCHED.store(basetime_now().val, std::sync::atomic::Ordering::Relaxed);
     run_message_loop();
     // Release everything that holds CEF objects before shutting down.
     KEEP.with(|k| k.borrow_mut().take());
@@ -346,6 +347,14 @@ pub fn versions() -> (String, String) {
     // SAFETY: plain getter exported by libcef.dll; entries 0..=7 are defined.
     let v: Vec<i32> = (0..8).map(|i| unsafe { cef_version_info(i) }).collect();
     (format!("{}.{}.{}", v[0], v[1], v[2]), format!("{}.{}.{}.{}", v[4], v[5], v[6], v[7]))
+}
+
+/// When the engine started (CEF base time, microseconds): downloads that started earlier are
+/// ones the engine resumed from an earlier session (0.7.0).
+static LAUNCHED: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(i64::MAX);
+
+pub(super) fn launched_at() -> i64 {
+    LAUNCHED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The browser process's command line as the engine runs it (CEF's own switches and

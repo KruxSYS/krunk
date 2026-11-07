@@ -195,6 +195,10 @@ pub struct Browser {
     downloads: RefCell<Downloads>,
     /// Downloads fetched in parts (segmented.rs).
     parts_jobs: segmented::PartsJobs,
+    /// Engine downloads Krunk gave up (cancelled at their next update).
+    abandoned_downloads: RefCell<std::collections::HashSet<u32>>,
+    /// When the list was loaded, and the addresses of the downloads the last close stopped.
+    stopped_by_close: RefCell<(i64, Vec<String>)>,
     /// Running downloads by engine download id: our id and the controls
     /// (known after the first progress update).
     download_ops: RefCell<HashMap<u32, (u32, Option<DownloadControl>)>>,
@@ -304,6 +308,8 @@ impl Browser {
             adopted: RefCell::new(HashMap::new()),
             downloads: RefCell::new(Downloads::new()),
             parts_jobs: segmented::PartsJobs::default(),
+            abandoned_downloads: RefCell::new(Default::default()),
+            stopped_by_close: RefCell::new((0, Vec::new())),
             download_ops: RefCell::new(HashMap::new()),
             folder_anchor: Cell::new(None),
             toggle: RefCell::new(lb_core::toggle::ToggleGuard::default()),
@@ -604,6 +610,7 @@ impl Browser {
     fn restore_or_open_start(&self) {
         if let Ok(Some(json)) = self.store.borrow().kv_get(DOWNLOADS_KEY) {
             *self.downloads.borrow_mut() = Downloads::from_json(&json);
+            *self.stopped_by_close.borrow_mut() = (now_ms(), self.downloads.borrow().stopped_by_close());
             self.remove_leftover_parts();
         }
         let (startup, homepage) = {
@@ -2603,7 +2610,6 @@ impl WindowEvents for AppEvents {
             drag::DRAG_TIMER => b.drag_tick(),
             segmented::PARTS_TIMER => b.parts_tick(),
             ZOOM_TIMER => b.zoom_tick(),
-            flight::FLIGHT_TIMER => b.flight_tick(),
             bounce::BOUNCE_TIMER => b.bounce_tick(),
             pip::PIP_TIMER => b.pip_tick(),
             UPDATE_TIMER => {
@@ -2623,6 +2629,7 @@ impl WindowEvents for AppEvents {
             APP_DEFERRED => b.run_deferred(),
             APP_JOB => b.jobs_ready(),
             APP_SHIELD => b.shield_changed(),
+            flight::APP_VSYNC => b.flight_tick(),
             _ => {}
         }
     }

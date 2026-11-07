@@ -4,6 +4,7 @@
   analyze.py flash  PATH [--sheet OUT.png]     tab-switch flashes
   analyze.py motion PATH [--box X,Y,W,H]       a moving object (download flight)
   analyze.py bar    PATH --box X,Y,W,H --color RRGGBB [--tol N]   a growing progress bar
+  analyze.py track  PATH --color RRGGBB [--tol N] [--box X,Y,W,H]  an object of one colour
 
 flash: a frame is *white* when >= 98 % of its pixels are within 12 levels of one colour and that
 colour's luminance is >= 245. A run of at most --flash-frames (2) white frames between two
@@ -13,6 +14,9 @@ are reported too. Exit code 1 if any flash.
 
 motion: the object's centroid per frame (pixels that differ from the first frame), the step
 between frames, and how even those steps are.
+
+track: the centroid of the pixels of one colour (the download glyph's disc) per frame, the
+steps between frames, and whether it only moves forward along its path.
 
 bar: the bar's filled width per frame (columns where most pixels match the colour); reports
 backward moves and the largest jump.
@@ -167,9 +171,42 @@ def cmd_bar(a):
     return 0
 
 
+def cmd_track(a):
+    meta, frames, times = load(a.path)
+    sub = box_of(a, frames).astype(int)
+    color = np.array([int(a.color[k : k + 2], 16) for k in (0, 2, 4)])
+    rows = []
+    for i, fr in enumerate(sub):
+        match = np.all(np.abs(fr - color) <= a.tol, axis=2)
+        ys, xs = np.nonzero(match)
+        if len(xs) >= 6:
+            rows.append((i, float(times[i]), float(xs.mean()), float(ys.mean()), int(len(xs))))
+    steps, gaps = [], []
+    for (i0, t0, x0, y0, _), (i1, t1, x1, y1, _) in zip(rows, rows[1:]):
+        steps.append(float(np.hypot(x1 - x0, y1 - y0)))
+        gaps.append(t1 - t0)
+    path = [(r[2], r[3]) for r in rows]
+    # Forward only: each position is no closer to the start than the one before.
+    back = 0
+    if len(path) > 1:
+        d = [np.hypot(x - path[0][0], y - path[0][1]) for x, y in path]
+        back = sum(1 for u, v in zip(d, d[1:]) if v + 1.0 < u)
+    out = {
+        "recording": a.path,
+        "frames_with_object": len(rows),
+        "duration_ms": round(rows[-1][1] - rows[0][1], 1) if rows else 0,
+        "frame_gap_ms": [round(g, 1) for g in gaps],
+        "step_px": [round(x, 1) for x in steps],
+        "backward_steps": back,
+        "path": [{"frame": r[0], "ms": round(r[1], 1), "x": round(r[2], 1), "y": round(r[3], 1), "px": r[4]} for r in rows],
+    }
+    print(json.dumps(out, indent=1))
+    return 0
+
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("mode", choices=["flash", "motion", "bar"])
+    p.add_argument("mode", choices=["flash", "motion", "bar", "track"])
     p.add_argument("path")
     p.add_argument("--sheet")
     p.add_argument("--box")
@@ -177,7 +214,7 @@ def main():
     p.add_argument("--tol", type=int, default=24)
     p.add_argument("--flash-frames", type=int, default=2)
     a = p.parse_args()
-    return {"flash": cmd_flash, "motion": cmd_motion, "bar": cmd_bar}[a.mode](a)
+    return {"flash": cmd_flash, "motion": cmd_motion, "bar": cmd_bar, "track": cmd_track}[a.mode](a)
 
 
 if __name__ == "__main__":

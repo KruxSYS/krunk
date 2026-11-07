@@ -738,6 +738,9 @@ wrap_download_handler! {
                 url: CefString::from(&item.url()).to_string(),
                 suggested_name: text(suggested_name),
                 total: (total > 0).then_some(total),
+                // A download starts with nothing received; one the engine continues from an
+                // earlier session has its bytes (and may keep its old start time).
+                from_earlier_session: item.received_bytes() > 0 || item.start_time().val < super::launched_at(),
                 callback: callback.clone(),
             };
             // Handled: the host continues (or drops = cancels) the callback.

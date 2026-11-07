@@ -1447,7 +1447,9 @@ async function testDownloads(browser) {
     (d) => { window.__host.handlers.getDownloads = () => d; }, items);
   await page.waitForSelector('.dl');
   check((await page.locator('.dl').count()) === 3, 'lists 3 downloads');
-  check((await page.locator('progress').count()) === 1, 'progress bar for the running download');
+  check((await page.locator('.dl-bar').count()) === 1, 'progress bar for the running download');
+  const kinds = await page.$$eval('.dl .dl-icon', (ns) => ns.map((n) => n.dataset.kind));
+  check(JSON.stringify(kinds) === JSON.stringify(['app', 'pdf', 'video']), 'file-type icons by extension (' + kinds.join(', ') + ')');
   check(await page.locator('.dl[data-id="2"] .url').textContent() === 'https://arxiv.org/pdf/1234.5678?download=1&token=abc', 'the full download address is shown');
   const when2 = await page.locator('.dl[data-id="2"] .when').textContent();
   check(/2026/.test(when2) && /finished/.test(when2), 'date and time it started and finished (' + when2 + ')');
@@ -1480,10 +1482,17 @@ async function testDownloads(browser) {
   await page.keyboard.press('Escape');
   check(await page.locator('.ctx-menu').count() === 0, 'Esc closes the menu');
   // A running one: pause (or resume) and cancel first; no file actions.
-  await emit(page, { event: 'downloads', items: [Object.assign({}, items[0], { state: 'inProgress', received: 100, total: 1000, connections: 4, speed: 2048, eta: 75, partProgress: [{ done: 100, len: 250 }, { done: 0, len: 250 }, { done: 0, len: 250 }, { done: 0, len: 250 }] })].concat(items.slice(1)) });
+  const rowBefore = await page.$('.dl[data-id="3"]');
+  await emit(page, { event: 'downloads', items: [Object.assign({}, items[0], { state: 'inProgress', received: 100, total: 1000, connections: 4, speed: 2048, eta: 75, partProgress: [{ done: 100, len: 250, start: 0, conn: 0 }, { done: 0, len: 250, start: 250, conn: 1 }, { done: 0, len: 250, start: 500, conn: 2 }, { done: 0, len: 250, start: 750, conn: 3 }] })].concat(items.slice(1)) });
   await page.waitForTimeout(40);
   check((await page.textContent('.row.dl .sub')).includes('2.0 KB/s') && (await page.textContent('.row.dl .sub')).includes('1 min left') && (await page.textContent('.row.dl .sub')).includes('4 connections'), 'the page shows speed, time left and the connections (' + await page.textContent('.row.dl .sub') + ')');
-  check(await page.locator('.row.dl .segments .seg').count() === 4 && (await page.$eval('.row.dl .segments .seg .fill', (e) => e.style.width)) === '40%', 'the page shows one segment per connection, filled per part');
+  const segs = await page.$$eval('.row.dl .dl-segments .seg', (ns) => ns.map((n) => n.style.left + '/' + n.style.width + '/' + n.className + '/' + Number(/scaleX\(([\d.]+)\)/.exec(n.firstChild.style.transform)[1])));
+  check(segs.length === 4 && segs[0] === '0%/25%/seg c0/0.4' && segs[2] === '50%/25%/seg c2/0', 'the page places each part at its offset, coloured by connection, filled per part (' + segs.join(' ; ') + ')');
+  // A part split while it runs: the new layout shows where the pieces are.
+  await emit(page, { event: 'downloads', items: [Object.assign({}, items[0], { state: 'inProgress', received: 400, total: 1000, connections: 4, partProgress: [{ done: 250, len: 250, start: 0, conn: 0 }, { done: 100, len: 120, start: 250, conn: 1 }, { done: 0, len: 130, start: 370, conn: 0 }, { done: 50, len: 250, start: 500, conn: 2 }, { done: 0, len: 250, start: 750, conn: 3 }] })].concat(items.slice(1)) });
+  await page.waitForTimeout(40);
+  const split = await page.$$eval('.row.dl .dl-segments .seg', (ns) => ns.map((n) => n.style.left + '/' + n.style.width));
+  check(split.length === 5 && split[2] === '37%/13%', 'a split part shows as two pieces at their offsets (' + split.join(' ; ') + ')');
   await emit(page, { event: 'downloads', items: [Object.assign({}, items[0], { state: 'inProgress', received: 100, connections: 4 })].concat(items.slice(1)) });
   await page.waitForTimeout(50);
   check((await page.locator('.dl[data-id="3"] .sub').textContent()).includes('4 connections'), 'a download in parts shows its connections');
@@ -1502,7 +1511,19 @@ async function testDownloads(browser) {
   items[0].state = 'completed'; items[0].received = items[0].total;
   await emit(page, { event: 'downloads', items });
   await page.waitForTimeout(50);
-  check((await page.locator('progress').count()) === 0, 'pushed update re-renders the list');
+  check((await page.locator('.dl-bar, .dl-segments').count()) === 0, 'pushed update re-renders the list');
+  check(rowBefore && await rowBefore.evaluate((n) => n.isConnected && n.dataset.id === '3') === false, 'a row that changes state is rebuilt');
+  // Rows that only progress stay the same element (no flicker, hover kept).
+  const keep = await page.$('.dl[data-id="2"]');
+  await emit(page, { event: 'downloads', items });
+  await page.waitForTimeout(30);
+  check(await keep.evaluate((n) => n.isConnected), 'an unchanged row is kept in place');
+  await emit(page, { event: 'downloads', items: [] });
+  await page.waitForTimeout(30);
+  check((await page.textContent('.empty strong')) === 'No downloads yet' && await page.locator('.dl').count() === 0, 'an empty list says so');
+  await shot(page, 'downloads-empty.png');
+  await emit(page, { event: 'downloads', items });
+  await page.waitForTimeout(30);
   await page.click('#clear');
   check((await lastSent(page, 'clearDownloads')) !== undefined, 'clear list sends clearDownloads');
   check(external.length === 0, 'no network requests');
@@ -4006,24 +4027,70 @@ async function testTabWindows(browser) {
   ({ page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 240, height: 256 }, 1));
   await page.evaluate(() => { window.__host.autoSimulate = false; });
   await emit(page, { event: 'popup', content: { kind: 'downloads', items: [
-    { id: 3, url: 'https://x.example/big.bin', fileName: 'big.bin', path: 'C:\\d\\big.bin', state: 'inProgress', received: 25000000, total: 64000000, started: 1, speed: 4200000, eta: 9, connections: 4, partProgress: [{ done: 16000000, len: 16000000 }, { done: 6000000, len: 16000000 }, { done: 3000000, len: 16000000 }, { done: 0, len: 16000000 }] },
+    { id: 3, url: 'https://x.example/big.bin', fileName: 'big.bin', path: 'C:\\d\\big.bin', state: 'inProgress', received: 25000000, total: 64000000, started: 1, speed: 4200000, eta: 9, connections: 4, partProgress: [{ done: 16000000, len: 16000000, start: 0, conn: 0 }, { done: 6000000, len: 16000000, start: 16000000, conn: 1 }, { done: 3000000, len: 16000000, start: 32000000, conn: 2 }, { done: 0, len: 16000000, start: 48000000, conn: 3 }] },
     { id: 2, url: 'https://x.example/one.bin', fileName: 'one.bin', path: 'C:\\d\\one.bin', state: 'inProgress', received: 1000, total: 4000, started: 1, speed: 500 },
     { id: 1, url: 'https://x.example/done.zip', fileName: 'done.zip', path: 'C:\\d\\done.zip', state: 'completed', received: 999, total: 999, started: 1, finished: 2 },
   ] } });
   await page.waitForTimeout(60);
   check(await page.locator('.dl-row').count() === 3 && await page.locator('#dl-all').count() === 1, 'downloads popup: 3 rows and "Show all downloads"');
   check((await page.textContent('.dl-row[data-id="3"] .dl-status')).includes('4.0 MB/s') && (await page.textContent('.dl-row[data-id="3"] .dl-status')).includes('9 s left'), 'a running download shows its speed and time left (' + await page.textContent('.dl-row[data-id="3"] .dl-status') + ')');
-  check(await page.locator('.dl-row[data-id="3"] .segments .seg').count() === 4, 'four connections: four bar segments');
+  check(await page.locator('.dl-row[data-id="3"] .dl-segments .seg').count() === 4, 'four connections: four bar segments');
   {
-    const fills = await page.$$eval('.dl-row[data-id="3"] .segments .seg .fill', (els) => els.map((e) => e.style.width));
-    check(fills[0] === '100%' && fills[1] === '37.5%' && fills[3] === '0%', 'each segment is filled to its part\'s progress (' + fills.join(',') + ')');
+    const fills = await page.$$eval('.dl-row[data-id="3"] .dl-segments .seg .fill', (els) => els.map((e) => Number(/scaleX\(([\d.]+)\)/.exec(e.style.transform)[1])));
+    check(fills[0] === 1 && fills[1] === 0.375 && fills[3] === 0, 'each segment is filled to its part\'s progress (' + fills.join(',') + ')');
   }
-  check(await page.locator('.dl-row[data-id="2"] progress').count() === 1 && await page.locator('.dl-row[data-id="2"] .segments').count() === 0, 'a single-connection download shows one bar');
+  check(await page.locator('.dl-row[data-id="2"] .dl-bar').count() === 1 && await page.locator('.dl-row[data-id="2"] .dl-segments').count() === 0, 'a single-connection download shows one bar');
+  check(await page.locator('.dl-row[data-id="1"] .dl-icon[data-kind="archive"]').count() === 1 && await page.locator('.dl-row[data-id="2"] .dl-icon[data-kind="disk"]').count() === 1, 'file-type icons in the popup');
+  {
+    // R10: between the host's updates the bar moves on at the download's speed, never backwards.
+    const scale = () => page.$eval('.dl-row[data-id="2"] .dl-fill', (e) => Number(/scaleX\(([\d.]+)\)/.exec(e.style.transform)[1]));
+    const row = await page.$('.dl-row[data-id="2"]');
+    const s0 = await scale();
+    await page.waitForTimeout(400);
+    const s1 = await scale();
+    check(s0 >= 0.25 && s0 < 0.3 && s1 > s0 + 0.03 && s1 <= 0.25 + 500 * 1.5 / 4000 + 0.001, 'the single bar moves on between updates (' + s0.toFixed(3) + ' -> ' + s1.toFixed(3) + ')');
+    // The host reports less than was shown: the bar waits instead of going back.
+    await emit(page, { event: 'popup', content: { kind: 'downloads', items: [
+      { id: 2, url: 'https://x.example/one.bin', fileName: 'one.bin', path: 'C:\\d\\one.bin', state: 'inProgress', received: 1050, total: 4000, started: 1, speed: 500 },
+    ] } });
+    await page.waitForTimeout(20);
+    const s2 = await scale();
+    check(s2 >= s1 && await row.evaluate((n) => n.isConnected), 'never backwards, and the row is updated in place (' + s1.toFixed(3) + ' -> ' + s2.toFixed(3) + ')');
+    // Reduced motion: the bar jumps to each reported value.
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.reload();
+    await page.evaluate(() => { window.__host.autoSimulate = false; });
+    await emit(page, { event: 'popup', content: { kind: 'downloads', items: [
+      { id: 2, url: 'https://x.example/one.bin', fileName: 'one.bin', path: 'C:\\d\\one.bin', state: 'inProgress', received: 1000, total: 4000, started: 1, speed: 500 },
+    ] } });
+    await page.waitForTimeout(400);
+    check(Math.abs(await scale() - 0.25) < 0.001, 'with reduced motion the bar stays at the reported value');
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await emit(page, { event: 'popup', content: { kind: 'downloads', items: [] } });
+    await page.waitForTimeout(30);
+    check((await page.textContent('.dl-empty strong')) === 'No downloads yet', 'the popup says when there are no downloads');
+    await shot(page, 'popup-downloads-empty.png');
+    await emit(page, { event: 'popup', content: { kind: 'downloads', items: [
+      { id: 3, url: 'https://x.example/big.bin', fileName: 'big.bin', path: 'C:\\d\\big.bin', state: 'inProgress', received: 25000000, total: 64000000, started: 1, speed: 4200000, eta: 9, connections: 4, partProgress: [{ done: 16000000, len: 16000000, start: 0, conn: 0 }, { done: 6000000, len: 16000000, start: 16000000, conn: 1 }, { done: 3000000, len: 16000000, start: 32000000, conn: 2 }, { done: 0, len: 16000000, start: 48000000, conn: 3 }] },
+      { id: 1, url: 'https://x.example/done.zip', fileName: 'done.zip', path: 'C:\\d\\done.zip', state: 'completed', received: 999, total: 999, started: 1, finished: 2 },
+    ] } });
+    await page.waitForTimeout(60);
+  }
+  await page.hover('.dl-row[data-id="1"]');
+  await page.waitForTimeout(200);
+  check(await page.$eval('.dl-row[data-id="1"] .dl-acts', (e) => getComputedStyle(e).opacity) === '1', 'a finished download shows its actions on hover');
+  await shot(page, 'popup-downloads.png');
+  await page.click('.dl-row[data-id="1"] .dl-act.folder');
+  check((await lastSent(page, 'downloadAction')).action === 'showInFolder', 'the folder button shows the file in its folder');
   {
     const fit = await lastSent(page, 'popupResize');
     check(fit && fit.height > 150, 'the downloads popup fits its content (' + (fit && fit.height) + ')');
   }
-  await page.click('.dl-row[data-id="3"] .link:has-text("Pause")');
+  await emit(page, { event: 'popup', content: { kind: 'downloads', items: [
+    { id: 3, url: 'https://x.example/big.bin', fileName: 'big.bin', path: 'C:\\d\\big.bin', state: 'inProgress', received: 25000000, total: 64000000, started: 1, speed: 4200000, eta: 9, connections: 4, partProgress: [{ done: 16000000, len: 16000000, start: 0, conn: 0 }, { done: 6000000, len: 16000000, start: 16000000, conn: 1 }] },
+  ] } });
+  await page.waitForTimeout(40);
+  await page.click('.dl-row[data-id="3"] .dl-act.pause');
   await page.waitForTimeout(20);
   {
     const a = await lastSent(page, 'downloadAction');

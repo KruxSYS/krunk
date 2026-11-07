@@ -1669,6 +1669,47 @@ impl AppNotifier {
     }
 }
 
+/// Wakes the UI thread once per display refresh while it runs (0.7.0, R10): a thread waits for
+/// each composition (`DwmFlush`) and posts `code`. At most one wake-up is queued at a time
+/// ([`VsyncPump::ack`]), so a busy UI thread is never flooded. Stops when dropped.
+pub struct VsyncPump {
+    run: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    queued: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl VsyncPump {
+    pub fn start(notifier: AppNotifier, code: usize) -> VsyncPump {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        let run = Arc::new(AtomicBool::new(true));
+        let queued = Arc::new(AtomicBool::new(false));
+        let (r, q) = (run.clone(), queued.clone());
+        let _ = std::thread::Builder::new().name("krunk-vsync".into()).spawn(move || {
+            while r.load(Ordering::Relaxed) {
+                // SAFETY: plain call; waits for the next desktop composition.
+                if unsafe { windows::Win32::Graphics::Dwm::DwmFlush() }.is_err() {
+                    std::thread::sleep(std::time::Duration::from_millis(16));
+                }
+                if r.load(Ordering::Relaxed) && !q.swap(true, Ordering::AcqRel) {
+                    notifier.notify(code);
+                }
+            }
+        });
+        VsyncPump { run, queued }
+    }
+
+    /// The UI thread took the wake-up: the next one may be posted.
+    pub fn ack(&self) {
+        self.queued.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+impl Drop for VsyncPump {
+    fn drop(&mut self) {
+        self.run.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// Does Windows use dark mode for apps? (`AppsUseLightTheme` = 0)
 pub fn system_prefers_dark() -> bool {
     use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};

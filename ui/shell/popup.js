@@ -71,59 +71,87 @@
     ];
   }
 
-  // The downloads button's popup (0.6.0): the newest downloads with speed, time left and a
-  // progress bar split per connection; actions go through downloadAction like the page.
-  function dlSize(n) {
-    if (n === null || n === undefined) return '';
-    const u = ['B', 'KB', 'MB', 'GB'];
-    let i = 0;
-    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
-    return (i ? n.toFixed(1) : Math.round(n)) + ' ' + u[i];
+  // The downloads button's popup (0.6.0): the newest downloads with speed, time left and their
+  // progress. 0.7.0 (R10, R11): file-type icons, actions as icon buttons (on hover for finished
+  // ones; a click on a finished row opens the file), rows updated in place so the bars move
+  // smoothly (ui/shared/dlview.js), and an empty state.
+  const dlRows = new Map();   // id -> { row, sig }
+  function dlAct(id, action) { LB.post('downloadAction', { id: id, action: action }); }
+  function dlButton(label, cls, onclick) {
+    return el('button', { type: 'button', class: 'dl-act ' + cls, title: label, 'aria-label': label, onclick: function (e) { e.stopPropagation(); onclick(); } }, [el('span', { class: 'dl-act-glyph', 'aria-hidden': 'true' })]);
   }
-  function dlLeft(s) { return s >= 3600 ? Math.round(s / 3600) + ' h left' : s >= 60 ? Math.round(s / 60) + ' min left' : s + ' s left'; }
-  function dlBar(d) {
-    if (d.partProgress && d.partProgress.length > 1) {
-      const total = d.partProgress.reduce((a, p) => a + p.len, 0) || 1;
-      // (Widths through the CSSOM: the pages' CSP has no inline styles.)
-      return el('div', { class: 'segments', title: d.partProgress.length + ' connections' }, d.partProgress.map((p) => {
-        const fill = el('span', { class: 'fill' });
-        fill.style.width = Math.min(100, 100 * p.done / Math.max(1, p.len)) + '%';
-        const seg = el('span', { class: 'seg' }, [fill]);
-        seg.style.flexBasis = (100 * p.len / total) + '%';
-        return seg;
-      }));
+  function dlSig(d) { return [d.state, d.fileName, d.partProgress && d.partProgress.length > 1 ? 'parts' : 'one', d.reason || ''].join('|'); }
+  function dlRow(d) {
+    const running = d.state === 'inProgress' || d.state === 'paused';
+    const done = d.state === 'completed';
+    const failed = d.state === 'interrupted' || d.state === 'cancelled';
+    const acts = [];
+    if (done) acts.push(dlButton('Show in folder', 'folder', function () { dlAct(d.id, 'showInFolder'); close(); }));
+    if (d.state === 'inProgress') acts.push(dlButton('Pause', 'pause', function () { dlAct(d.id, 'pause'); }));
+    if (d.state === 'paused') acts.push(dlButton('Resume', 'resume', function () { dlAct(d.id, 'resume'); }));
+    if (running) acts.push(dlButton('Cancel', 'cancel', function () { dlAct(d.id, 'cancel'); }));
+    if (failed) acts.push(dlButton('Retry', 'retry', function () { dlAct(d.id, 'retry'); }));
+    const row = el('div', { class: 'dl-row state-' + d.state, 'data-id': String(d.id), title: done ? 'Open ' + d.fileName : d.path, tabindex: done ? '0' : null, role: done ? 'button' : null }, [
+      DlView.icon(d),
+      el('div', { class: 'dl-main' }, [
+        el('div', { class: 'dl-name', text: d.fileName }),
+        el('div', { class: 'dl-status', text: DlView.status(d) }),
+        running ? DlView.bar(d) : null,
+      ]),
+      el('div', { class: 'dl-acts' }, acts),
+    ]);
+    if (done) {
+      const open = function () { dlAct(d.id, 'open'); close(); };
+      row.addEventListener('click', open);
+      row.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
     }
-    return el('progress', d.total ? { max: d.total, value: d.received } : {});
+    return row;
   }
-  function dlStatus(d) {
-    if (d.state === 'completed') return dlSize(d.total || d.received);
-    if (d.state === 'cancelled') return 'Cancelled';
-    if (d.state === 'interrupted') return 'Failed' + (d.reason ? ' – ' + d.reason : '');
-    let s = dlSize(d.received) + (d.total ? ' of ' + dlSize(d.total) : '');
-    if (d.state === 'paused') return s + ' – paused';
-    if (d.speed) s += ' · ' + dlSize(d.speed) + '/s';
-    if (d.eta !== null && d.eta !== undefined) s += ' · ' + dlLeft(d.eta);
-    return s;
+  // Brings the list to `items`, reusing the rows that did not change kind.
+  function fillDownloads(list, items) {
+    const seen = new Set();
+    let prev = null;
+    const empty = list.querySelector('.dl-empty');
+    if (empty && items.length) empty.remove();
+    items.forEach(function (d) {
+      seen.add(d.id);
+      let r = dlRows.get(d.id);
+      const sig = dlSig(d);
+      if (!r || r.sig !== sig) {
+        const row = dlRow(d);
+        if (r) r.row.replaceWith(row);
+        r = { row: row, sig: sig };
+        dlRows.set(d.id, r);
+      } else {
+        r.row.querySelector('.dl-status').textContent = DlView.status(d);
+        const bar = r.row.querySelector('.dl-bar, .dl-segments');
+        if (bar) DlView.update(bar, d);
+      }
+      const at = prev ? prev.nextSibling : list.firstChild;
+      if (at !== r.row) list.insertBefore(r.row, at);
+      prev = r.row;
+    });
+    dlRows.forEach(function (r, id) {
+      if (!seen.has(id)) { r.row.remove(); dlRows.delete(id); DlView.forget(String(id)); }
+    });
+    if (!items.length && !list.querySelector('.dl-empty')) {
+      list.appendChild(el('div', { class: 'dl-empty' }, [
+        el('span', { class: 'dl-empty-glyph', 'aria-hidden': 'true' }),
+        el('strong', { text: 'No downloads yet' }),
+        el('span', { text: 'Files you download appear here.' }),
+      ]));
+    }
   }
   function renderDownloads(c) {
-    const act = (id, action) => { LB.post('downloadAction', { id: id, action: action }); };
-    const rows = c.items.map(function (d) {
-      const running = d.state === 'inProgress' || d.state === 'paused';
-      const btns = [];
-      if (d.state === 'completed') btns.push(el('button', { class: 'link', text: 'Open', onclick: () => { act(d.id, 'open'); close(); } }), el('button', { class: 'link', text: 'Show in folder', onclick: () => { act(d.id, 'showInFolder'); close(); } }));
-      if (d.state === 'inProgress') btns.push(el('button', { class: 'link', text: 'Pause', onclick: () => act(d.id, 'pause') }));
-      if (d.state === 'paused') btns.push(el('button', { class: 'link', text: 'Resume', onclick: () => act(d.id, 'resume') }));
-      if (running) btns.push(el('button', { class: 'link', text: 'Cancel', onclick: () => act(d.id, 'cancel') }));
-      return el('div', { class: 'dl-row' + (d.state === 'interrupted' || d.state === 'cancelled' ? ' failed' : ''), 'data-id': String(d.id) }, [
-        el('div', { class: 'dl-name', title: d.path, text: d.fileName }),
-        el('div', { class: 'dl-status', text: dlStatus(d) }),
-        running ? dlBar(d) : null,
-        el('div', { class: 'dl-links' }, btns),
-      ]);
-    });
-    if (!rows.length) rows.push(el('div', { class: 'dl-empty', text: 'No downloads yet.' }));
-    rows.push(el('button', { class: 'item', id: 'dl-all', onclick: () => openPage('downloads') }, [el('span', { class: 'label', text: 'Show all downloads' }), el('span', { class: 'kbd', text: 'Ctrl+J' })]));
-    return [el('div', { class: 'dl-list' }, rows)];
+    dlRows.clear();
+    const list = el('div', { class: 'dl-list', id: 'dl-list' });
+    fillDownloads(list, c.items);
+    return [
+      el('div', { class: 'panel-title dl-title', text: 'Downloads' }),
+      list,
+      el('div', { class: 'sep' }),
+      el('button', { class: 'item', id: 'dl-all', onclick: () => openPage('downloads') }, [el('span', { class: 'label', text: 'Show all downloads' }), el('span', { class: 'kbd', text: 'Ctrl+J' })]),
+    ];
   }
 
   // Right-click on the title bar or the empty tab strip (0.6.0): Krunk's commands plus the
@@ -753,6 +781,14 @@
   let current = null;
   LB.on('popup', function (m) {
     const c = m.content;
+    // The downloads list is updated in place (the bars keep moving; hover stays).
+    if (c.kind === 'downloads' && current && current.kind === 'downloads' && document.getElementById('dl-list')) {
+      const before = dlRows.size;
+      current = c;
+      fillDownloads(document.getElementById('dl-list'), c.items);
+      if (dlRows.size !== before) requestAnimationFrame(fit);
+      return;
+    }
     // The volume bar is updated in place (a re-render would drop a drag in progress).
     if (c.kind === 'pipVolume' && current && current.kind === 'pipVolume' && document.getElementById('pv-slider')) {
       current = c;

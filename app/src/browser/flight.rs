@@ -2,34 +2,41 @@
 //! of the page to the downloads button over ~450 ms, drawn with the native layered overlay
 //! (the page is its own window, so the shell cannot draw over it); then the shell pulses the
 //! button. With Windows' "Animation effects" off, only the pulse/badge happens.
+//!
+//! 0.7.0 (R10): frames come at the display's refresh rate (a vsync thread wakes the UI thread
+//! after each composition, instead of a 16 ms timer that Windows rounds to 15.6 or 31 ms), the
+//! position follows the time actually elapsed, and each frame only moves the drawn glyph.
 
 use super::Browser;
 use crate::ffi::overlay::{Overlay, OverlaySpec};
+use crate::ffi::window::VsyncPump;
 use lb_core::overlay::Run;
 use lb_core::tabs::TabId;
 use lb_core::windows::WindowId;
 use std::cell::{Cell, RefCell};
+use std::time::Instant;
 
-pub(super) const FLIGHT_TIMER: usize = 16;
+/// The vsync thread's wake-up (an app message).
+pub(super) const APP_VSYNC: usize = 5;
 const FLIGHT_MS: f64 = 450.0;
-const TICK_MS: u32 = 16;
 
 #[derive(Default)]
 pub(super) struct FlightHost {
     overlay: RefCell<Option<(WindowId, Overlay)>>,
-    started: Cell<i64>,
+    pump: RefCell<Option<VsyncPump>>,
+    started: Cell<Option<Instant>>,
     from: Cell<(i32, i32)>,
     to: Cell<(i32, i32)>,
     win: Cell<Option<WindowId>>,
 }
 
-/// Ease in, then out (a smooth arc of speed).
+/// Ease in, then out (cubic: a gentle start, a quick middle, a soft landing).
 fn ease(t: f64) -> f64 {
     let t = t.clamp(0.0, 1.0);
     if t < 0.5 {
-        2.0 * t * t
+        4.0 * t * t * t
     } else {
-        1.0 - (-2.0 * t + 2.0).powi(2) / 2.0
+        1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
     }
 }
 
@@ -76,17 +83,22 @@ impl Browser {
         self.flight.from.set((sx, sy));
         self.flight.to.set((tx, ty));
         self.flight.win.set(Some(win));
-        self.flight.started.set(lb_core::storage::now_ms());
+        self.flight.started.set(Some(Instant::now()));
         self.flight_tick();
         if let Some(app) = self.app() {
-            app.set_timer(FLIGHT_TIMER, TICK_MS);
+            *self.flight.pump.borrow_mut() = Some(VsyncPump::start(app.notifier(), APP_VSYNC));
         }
     }
 
+    /// One display frame of the flight (`APP_VSYNC`).
     pub(super) fn flight_tick(&self) {
+        if let Some(p) = self.flight.pump.borrow().as_ref() {
+            p.ack();
+        }
         let Some(win) = self.flight.win.get() else { return self.end_flight() };
         let Some(f) = self.frame(win) else { return self.end_flight() };
-        let elapsed = (lb_core::storage::now_ms() - self.flight.started.get()) as f64;
+        let Some(started) = self.flight.started.get() else { return self.end_flight() };
+        let elapsed = started.elapsed().as_secs_f64() * 1000.0;
         let t = ease(elapsed / FLIGHT_MS);
         let scale = f.window.scale();
         let slot = self.flight.overlay.borrow();
@@ -108,7 +120,7 @@ impl Browser {
         let y = fy as f64 + (ty - fy) as f64 * t - (1.0 - (2.0 * t - 1.0).powi(2)) * 40.0 * scale;
         // Shrinks a little and fades at the end.
         let alpha = if t > 0.8 { (255.0 * (1.0 - (t - 0.8) / 0.2)).max(0.0) as u8 } else { 255 };
-        o.show(&spec, x as i32 - w / 2, y as i32 - h / 2, alpha);
+        o.move_to(&spec, x.round() as i32 - w / 2, y.round() as i32 - h / 2, alpha);
         drop(slot);
         if elapsed >= FLIGHT_MS {
             self.end_flight();
@@ -116,9 +128,8 @@ impl Browser {
     }
 
     fn end_flight(&self) {
-        if let Some(app) = self.app() {
-            app.kill_timer(FLIGHT_TIMER);
-        }
+        self.flight.pump.borrow_mut().take();
+        self.flight.started.set(None);
         if let Some((_, o)) = self.flight.overlay.borrow().as_ref() {
             o.hide();
         }

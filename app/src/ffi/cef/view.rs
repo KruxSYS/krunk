@@ -153,6 +153,10 @@ pub struct DownloadStart {
     pub url: String,
     pub suggested_name: String,
     pub total: Option<i64>,
+    /// The engine resumed this download from an earlier session (it already has bytes, or it
+    /// started before this launch): Chromium continues downloads it still had running when
+    /// the browser closed.
+    pub from_earlier_session: bool,
     pub(super) callback: BeforeDownloadCallback,
 }
 

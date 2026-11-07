@@ -4,14 +4,6 @@
   const el = LB.el;
   const list = document.getElementById('list');
 
-  function size(n) {
-    if (n === null || n === undefined) return '';
-    const u = ['B', 'KB', 'MB', 'GB'];
-    let i = 0;
-    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
-    return (i ? n.toFixed(1) : n) + ' ' + u[i];
-  }
-
   function act(id, action) {
     return LB.request('downloadAction', { id: id, action: action }).catch(function (e) { Page.toast(e.message); throw e; });
   }
@@ -30,78 +22,93 @@
     return parts.join(' · ');
   }
 
-  function left(s) { return s >= 3600 ? Math.round(s / 3600) + ' h left' : s >= 60 ? Math.round(s / 60) + ' min left' : s + ' s left'; }
-  // One bar segment per connection for a download in parts (each filled to its own progress).
-  function bar(d) {
-    if (d.partProgress && d.partProgress.length > 1) {
-      const total = d.partProgress.reduce((a, p) => a + p.len, 0) || 1;
-      // (Widths through the CSSOM: the pages' CSP has no inline styles.)
-      return el('div', { class: 'segments', title: d.partProgress.length + ' connections' }, d.partProgress.map((p) => {
-        const fill = el('span', { class: 'fill' });
-        fill.style.width = Math.min(100, 100 * p.done / Math.max(1, p.len)) + '%';
-        const seg = el('span', { class: 'seg' }, [fill]);
-        seg.style.flexBasis = (100 * p.len / total) + '%';
-        return seg;
-      }));
-    }
-    return el('progress', d.total ? { max: d.total, value: d.received } : {});
-  }
-
+  // 0.7.0 (R10, R11): rows are kept and updated in place (keyed by id) so the bars move
+  // smoothly between updates (ui/shared/dlview.js) and hover and focus stay put.
   let items = [];
+  const rows = new Map();   // id -> { row, sig }
+  function sig(d) { return [d.state, d.fileName, d.path, d.partProgress && d.partProgress.length > 1 ? 'parts' : 'one', d.reason || '', d.pageUrl || ''].join('|'); }
+  function statusText(d) {
+    let s = DlView.status(d);
+    if (d.connections && d.state === 'inProgress') s += ' · ' + d.connections + ' connections';
+    return s;
+  }
+  function buildRow(d) {
+    const running = d.state === 'inProgress' || d.state === 'paused';
+    const failed = d.state === 'interrupted' || d.state === 'cancelled';
+    const links = [];
+    if (d.state === 'completed') {
+      links.push(el('button', { text: 'Open file', onclick: function () { act(d.id, 'open'); } }));
+      links.push(el('button', { text: 'Show in folder', onclick: function () { act(d.id, 'showInFolder'); } }));
+    }
+    if (d.state === 'inProgress') links.push(el('button', { text: 'Pause', onclick: function () { act(d.id, 'pause'); } }));
+    if (d.state === 'paused') links.push(el('button', { text: 'Resume', onclick: function () { act(d.id, 'resume'); } }));
+    if (running) links.push(el('button', { text: 'Cancel', onclick: function () { act(d.id, 'cancel'); } }));
+    else {
+      if (failed) links.push(el('button', { text: 'Retry', onclick: function () { act(d.id, 'retry'); } }));
+      links.push(el('button', { text: 'Remove from list', onclick: function () { act(d.id, 'remove'); } }));
+    }
+    const row = el('div', { class: 'row dl state-' + d.state + (failed ? ' failed' : ''), 'data-id': d.id, tabindex: '0' }, [
+      DlView.icon(d),
+      el('div', { class: 'info' }, [
+        el('div', { class: 'name', title: d.path, text: d.fileName }),
+        el('div', { class: 'sub', text: statusText(d) }),
+        running ? DlView.bar(d) : null,
+        el('div', { class: 'url', title: d.url, text: d.url }),
+        el('div', { class: 'when', text: when(d) }),
+        el('div', { class: 'links' }, links),
+      ]),
+    ]);
+    row.addEventListener('contextmenu', function (e) { e.preventDefault(); showMenu(items.find(function (x) { return x.id === d.id; }) || d, e.clientX, e.clientY); });
+    row.addEventListener('keydown', function (e) {
+      if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+        e.preventDefault();
+        const r = row.getBoundingClientRect();
+        showMenu(items.find(function (x) { return x.id === d.id; }) || d, r.left + 40, r.top + 24);
+      }
+    });
+    return row;
+  }
   function render(list_) {
     items = list_;
-    list.textContent = '';
+    const empty = list.querySelector('.empty');
     if (!items.length) {
-      list.appendChild(el('div', { class: 'empty', text: 'Files you download will appear here.' }));
+      rows.forEach(function (r, id) { r.row.remove(); DlView.forget(String(id)); });
+      rows.clear();
+      if (!empty) {
+        list.appendChild(el('div', { class: 'empty' }, [
+          el('span', { class: 'empty-glyph', 'aria-hidden': 'true' }),
+          el('strong', { text: 'No downloads yet' }),
+          el('span', { text: 'Files you download will appear here.' }),
+        ]));
+      }
       return;
     }
+    if (empty) empty.remove();
+    const seen = new Set();
+    let prev = null;
     items.forEach(function (d) {
-      const running = d.state === 'inProgress' || d.state === 'paused';
-      const failed = d.state === 'interrupted' || d.state === 'cancelled';
-      const ext = (d.fileName.split('.').pop() || '').slice(0, 4).toUpperCase();
-      let status;
-      if (d.state === 'completed') status = size(d.total || d.received);
-      else if (d.state === 'cancelled') status = 'Cancelled';
-      else if (d.state === 'interrupted') status = 'Failed' + (d.reason ? ' – ' + d.reason : '');
-      else {
-        status = size(d.received) + (d.total ? ' of ' + size(d.total) : '') + (d.state === 'paused' ? ' – paused' : '');
-        // 0.6.0: the smoothed speed and the time left, and the connections of a download in parts.
-        if (d.state === 'inProgress' && d.speed) status += ' · ' + size(d.speed) + '/s';
-        if (d.state === 'inProgress' && d.eta !== null && d.eta !== undefined) status += ' · ' + left(d.eta);
-        if (d.connections && d.state === 'inProgress') status += ' · ' + d.connections + ' connections';
+      seen.add(d.id);
+      let r = rows.get(d.id);
+      const k = sig(d);
+      if (!r || r.sig !== k) {
+        const row = buildRow(d);
+        const focused = r && r.row.contains(document.activeElement);
+        if (r) r.row.replaceWith(row);
+        if (focused) row.focus();
+        r = { row: row, sig: k };
+        rows.set(d.id, r);
+      } else {
+        r.row.querySelector('.sub').textContent = statusText(d);
+        r.row.querySelector('.when').textContent = when(d);
+        const bar = r.row.querySelector('.dl-bar, .dl-segments');
+        if (bar) DlView.update(bar, d);
       }
-      const links = [];
-      if (d.state === 'completed') {
-        links.push(el('button', { text: 'Open file', onclick: function () { act(d.id, 'open'); } }));
-        links.push(el('button', { text: 'Show in folder', onclick: function () { act(d.id, 'showInFolder'); } }));
-      }
-      if (d.state === 'inProgress') links.push(el('button', { text: 'Pause', onclick: function () { act(d.id, 'pause'); } }));
-      if (d.state === 'paused') links.push(el('button', { text: 'Resume', onclick: function () { act(d.id, 'resume'); } }));
-      if (running) links.push(el('button', { text: 'Cancel', onclick: function () { act(d.id, 'cancel'); } }));
-      else {
-        if (failed) links.push(el('button', { text: 'Retry', onclick: function () { act(d.id, 'retry'); } }));
-        links.push(el('button', { text: 'Remove from list', onclick: function () { act(d.id, 'remove'); } }));
-      }
-      const row = el('div', { class: 'row dl' + (failed ? ' failed' : ''), 'data-id': d.id, tabindex: '0' }, [
-        el('span', { class: 'file-icon', text: ext || 'FILE' }),
-        el('div', { class: 'info' }, [
-          el('div', { class: 'name', title: d.path, text: d.fileName }),
-          el('div', { class: 'sub', text: status }),
-          el('div', { class: 'url', title: d.url, text: d.url }),
-          el('div', { class: 'when', text: when(d) }),
-          running ? bar(d) : null,
-          el('div', { class: 'links' }, links),
-        ]),
-      ]);
-      row.addEventListener('contextmenu', function (e) { e.preventDefault(); showMenu(d, e.clientX, e.clientY); });
-      row.addEventListener('keydown', function (e) {
-        if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
-          e.preventDefault();
-          const r = row.getBoundingClientRect();
-          showMenu(d, r.left + 40, r.top + 24);
-        }
-      });
-      list.appendChild(row);
+      const at = prev ? prev.nextSibling : list.firstChild;
+      if (at !== r.row) list.insertBefore(r.row, at);
+      prev = r.row;
+    });
+    rows.forEach(function (r, id) {
+      if (!seen.has(id)) { r.row.remove(); rows.delete(id); DlView.forget(String(id)); }
     });
   }
 

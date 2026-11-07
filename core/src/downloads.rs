@@ -4,6 +4,11 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+/// Why a download stopped when the browser closed (a download in parts can go on; an engine
+/// download is retried).
+pub const PAUSED_BY_CLOSE: &str = "Paused when Krunk closed";
+pub const INTERRUPTED_BY_CLOSE: &str = "Browser closed";
+
 /// Entries kept in the list (oldest finished ones are dropped first).
 pub const MAX_ITEMS: usize = 200;
 
@@ -66,6 +71,27 @@ pub struct DownloadItem {
     /// segment each); empty for a single connection or when done.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub part_progress: Vec<PartProgress>,
+    /// A download in parts that can go on after a restart (0.7.0): what is left of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume: Option<Resume>,
+}
+
+/// Where a download in parts stands, saved while it runs (0.7.0, R9): the file being written
+/// (all of it allocated; the finished ranges are in place), what identifies the server's
+/// version of the file, and the ranges still missing. The cookies are asked from the engine
+/// again on resume, never saved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Resume {
+    pub temp: String,
+    pub total: u64,
+    #[serde(default)]
+    pub etag: Option<String>,
+    #[serde(default)]
+    pub last_modified: Option<String>,
+    #[serde(default)]
+    pub referer: Option<String>,
+    pub segments: Vec<crate::segdl::Segment>,
 }
 
 fn is_zero(n: &u64) -> bool {
@@ -77,6 +103,12 @@ fn is_zero(n: &u64) -> bool {
 pub struct PartProgress {
     pub done: u64,
     pub len: u64,
+    /// Where the part starts in the file and which connection fetches it (0.7.0: parts are
+    /// split while they run, so the view places each one at its offset).
+    #[serde(default)]
+    pub start: u64,
+    #[serde(default)]
+    pub conn: u32,
 }
 
 /// A download's speed: an exponential moving average over the samples of the last seconds,
@@ -133,18 +165,45 @@ impl Downloads {
         Downloads { items: Vec::new(), next_id: 1, meters: Default::default() }
     }
 
-    /// Restores a saved list; downloads that were running when the browser
-    /// exited are marked interrupted.
+    /// Restores a saved list; downloads that were running when the browser exited are marked
+    /// interrupted, except downloads in parts that saved where they stood (0.7.0): those are
+    /// paused, to go on with Resume.
     pub fn from_json(json: &str) -> Downloads {
         let mut d: Downloads = serde_json::from_str(json).unwrap_or_default();
         d.next_id = d.items.iter().map(|i| i.id).max().unwrap_or(0) + 1;
         for i in &mut d.items {
-            if !i.state.is_finished() {
+            i.part_progress.clear();
+            i.speed = 0;
+            i.eta = None;
+            if i.state.is_finished() {
+                continue;
+            }
+            if i.resume.is_some() {
+                i.state = DownloadState::Paused;
+                i.reason = Some(PAUSED_BY_CLOSE.into());
+            } else {
                 i.state = DownloadState::Interrupted;
-                i.reason = Some("Browser closed".into());
+                i.reason = Some(INTERRUPTED_BY_CLOSE.into());
             }
         }
         d
+    }
+
+    /// The addresses of the downloads the last close stopped (paused or interrupted at this
+    /// start): the engine may start them again by itself right after the start (0.7.0).
+    pub fn stopped_by_close(&self) -> Vec<String> {
+        self.items
+            .iter()
+            .filter(|i| matches!(i.reason.as_deref(), Some(PAUSED_BY_CLOSE | INTERRUPTED_BY_CLOSE)))
+            .map(|i| i.url.clone())
+            .collect()
+    }
+
+    /// Saves (or forgets) where download `id` in parts stands.
+    pub fn set_resume(&mut self, id: u32, resume: Option<Resume>) {
+        if let Some(i) = self.items.iter_mut().find(|i| i.id == id) {
+            i.resume = resume;
+        }
     }
 
     /// Serialized list for persistence (private downloads are left out).
@@ -191,6 +250,7 @@ impl Downloads {
             speed: 0,
             eta: None,
             part_progress: Vec::new(),
+            resume: None,
         });
         // Drop the oldest finished entries beyond the cap.
         while self.items.len() > MAX_ITEMS {
@@ -260,6 +320,7 @@ impl Downloads {
             i.finished = if state.is_finished() { i.finished.or(Some(now)) } else { None };
             if state.is_finished() {
                 i.parts.clear();
+                i.resume = None;
                 i.part_progress.clear();
                 i.speed = 0;
                 i.eta = None;
@@ -383,7 +444,10 @@ mod tests {
         d.progress_at(id, 500_000, Some(2_000_000), 1500);
         d.set_part_progress(
             id,
-            vec![PartProgress { done: 250_000, len: 1_000_000 }, PartProgress { done: 250_000, len: 1_000_000 }],
+            vec![
+                PartProgress { done: 250_000, len: 1_000_000, start: 0, conn: 0 },
+                PartProgress { done: 250_000, len: 1_000_000, start: 1_000_000, conn: 1 },
+            ],
         );
         let i = d.get(id).unwrap().clone();
         assert_eq!(i.speed, 1_000_000);
@@ -464,6 +528,42 @@ mod tests {
         // Finishing clears them too (the host removed or merged the files).
         d.set_state(a, DownloadState::Completed, None, 2);
         assert!(d.get(a).unwrap().parts.is_empty() && !d.to_json().contains("parts"));
+    }
+
+    #[test]
+    fn a_download_in_parts_goes_on_after_a_restart() {
+        use crate::segdl::Segment;
+        let mut d = Downloads::new();
+        let a = d.start("https://e.com/big.iso", Path::new("C:/dl/big.iso"), Some(1 << 26), 1, false);
+        d.set_parts(a, 4, vec!["C:/dl/big.iso.krunkpart".into()]);
+        d.set_part_progress(a, vec![PartProgress { done: 5, len: 10, start: 0, conn: 0 }]);
+        let resume = Resume {
+            temp: "C:/dl/big.iso.krunkpart".into(),
+            total: 1 << 26,
+            etag: Some("\"abc\"".into()),
+            last_modified: None,
+            referer: Some("https://e.com/".into()),
+            segments: vec![Segment { start: 0, end: 99, next: 50 }, Segment { start: 1000, end: 1999, next: 1000 }],
+        };
+        d.set_resume(a, Some(resume.clone()));
+        let json = d.to_json();
+        assert!(!json.to_ascii_lowercase().contains("cookie"), "no cookies saved: {json}");
+        // Krunk quit while it ran: paused, with its file kept and where it stood.
+        let mut back = Downloads::from_json(&json);
+        let item = back.get(a).unwrap();
+        assert_eq!(item.state, DownloadState::Paused);
+        assert_eq!(item.resume.as_ref(), Some(&resume));
+        assert!(item.part_progress.is_empty() && item.speed == 0);
+        assert!(back.take_leftover_parts().is_empty(), "the file is kept for Resume");
+        assert_eq!(back.stopped_by_close(), vec!["https://e.com/big.iso".to_string()]);
+        // It ends (done, cancelled or failed): nothing to resume any more.
+        back.set_state(a, DownloadState::Cancelled, None, 9);
+        assert!(back.get(a).unwrap().resume.is_none() && !back.to_json().contains("segments"));
+        // A 0.6.0 list (no resume state) still restores as interrupted.
+        let old = r#"{"items":[{"id":1,"url":"https://e.com/x","fileName":"x","path":"C:/dl/x","state":"inProgress","received":0,"total":null,"started":1,"reason":null,"parts":["C:/dl/x.part0"],"partProgress":[{"done":1,"len":2}]}],"next_id":2}"#;
+        let mut old = Downloads::from_json(old);
+        assert_eq!(old.get(1).unwrap().state, DownloadState::Interrupted);
+        assert_eq!(old.take_leftover_parts(), vec!["C:/dl/x.part0".to_string()]);
     }
 
     #[test]

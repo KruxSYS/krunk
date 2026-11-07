@@ -106,6 +106,41 @@ impl Overlay {
         }
     }
 
+    /// Moves the last drawing to `x`,`y` at `alpha` without drawing it again (animation
+    /// frames, 0.7.0); draws it if nothing is shown yet.
+    pub fn move_to(&self, spec: &OverlaySpec, x: i32, y: i32, alpha: u8) {
+        let same = self.last.borrow().as_ref().is_some_and(|(s, _, _)| s == spec) && self.is_visible();
+        if !same {
+            self.show(spec, x, y, alpha);
+            return;
+        }
+        if let Some(last) = self.last.borrow_mut().as_mut() {
+            last.1 = x;
+            last.2 = y;
+        }
+        let blend_fn = BLENDFUNCTION {
+            BlendOp: AC_SRC_OVER as u8,
+            BlendFlags: 0,
+            SourceConstantAlpha: alpha,
+            AlphaFormat: AC_SRC_ALPHA as u8,
+        };
+        let dst = POINT { x, y };
+        // SAFETY: our own layered window; without a source DC only position and opacity change.
+        unsafe {
+            let _ = UpdateLayeredWindow(
+                self.hwnd,
+                None,
+                Some(&dst),
+                None,
+                None,
+                None,
+                COLORREF(0),
+                Some(&blend_fn),
+                ULW_ALPHA,
+            );
+        }
+    }
+
     pub fn is_visible(&self) -> bool {
         // SAFETY: valid window handle.
         unsafe { IsWindowVisible(self.hwnd) }.as_bool()

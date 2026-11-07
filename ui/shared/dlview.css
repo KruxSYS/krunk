@@ -1,0 +1,38 @@
+/* Krunk 0.7.0 (R9-R11): the downloads popup and page share these (ui/shared/dlview.js). */
+/* File-type icons: a tinted tile with a line glyph (masks, so they take the kind's colour). */
+.dl-icon { --k: #6b7280; flex: none; width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center;
+           background: color-mix(in srgb, var(--k) 14%, transparent); }
+.dl-glyph { width: 18px; height: 18px; background: var(--k); -webkit-mask: var(--glyph) center / contain no-repeat; mask: var(--glyph) center / contain no-repeat; }
+.dl-icon[data-kind="file"] { --k: #6b7280; --glyph: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='black'%20stroke-width='1.8'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M14%203H7a2%202%200%200%200-2%202v14a2%202%200%200%200%202%202h10a2%202%200%200%200%202-2V8z'/%3E%3Cpath%20d='M14%203v5h5'/%3E%3C/svg%3E"); }
+.dl-icon[data-kind="archive"] { --k: #b45309; --glyph: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='black'%20stroke-width='1.8'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M4%208h16v11a1%201%200%200%201-1%201H5a1%201%200%200%201-1-1z'/%3E%3Cpath%20d='M3%204h18v4H3z'/%3E%3Cpath%20d='M10%2012h4'/%3E%3C/svg%3E"); }
+.dl-icon[data-kind="video"] { --k: #db2777; --glyph: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='black'%20stroke-width='1.8'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Crect%20x='3'%20y='5'%20width='18'%20height='14'%20rx='2'/%3E%3Cpath%20d='M10%209l5%203-5%203z'/%3E%3C/svg%3E"); }
+.dl-icon[data-kind="audio"] { --k: #7c3aed; --glyph: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='black'%20stroke-width='1.8'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M9%2018V5l11-2v13'/%3E%3Ccircle%20cx='6'%20cy='18'%20r='3'/%3E%3Ccircle%20cx='17'%20cy='16'%20r='3'/%3E%3C/svg%3E"); }
+.dl-icon[data-kind="image"] { --k: #059669; --glyph: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='black'%20stroke-width='1.8'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Crect%20x='3'%20y='4'%20width='18'%20height='16'%20rx='2'/%3E%3Ccircle%20cx='9'%20cy='10'%20r='2'/%3E%3Cpath%20d='M21%2016l-5-5-9%209'/%3E%3C/svg%3E"); }
+.dl-icon[data-kind="pdf"] { --k: #dc2626; --glyph: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='black'%20stroke-width='1.8'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M14%203H7a2%202%200%200%200-2%202v14a2%202%200%200%200%202%202h10a2%202%200%200%200%202-2V8z'/%3E%3Cpath%20d='M14%203v5h5'/%3E%3Cpath%20d='M8%2013h8M8%2017h5'/%3E%3C/svg%3E"); }
+.dl-icon[data-kind="doc"] { --k: #2563eb; --glyph: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='black'%20stroke-width='1.8'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M14%203H7a2%202%200%200%200-2%202v14a2%202%200%200%200%202%202h10a2%202%200%200%200%202-2V8z'/%3E%3Cpath%20d='M14%203v5h5'/%3E%3Cpath%20d='M8%2012h8M8%2015h8M8%2018h5'/%3E%3C/svg%3E"); }
+.dl-icon[data-kind="app"] { --k: #0891b2; --glyph: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='black'%20stroke-width='1.8'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Crect%20x='3'%20y='4'%20width='18'%20height='16'%20rx='2'/%3E%3Cpath%20d='M3%209h18M12%2012v5M9.5%2014.5L12%2017l2.5-2.5'/%3E%3C/svg%3E"); }
+.dl-icon[data-kind="disk"] { --k: #4b5563; --glyph: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='black'%20stroke-width='1.8'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Ccircle%20cx='12'%20cy='12'%20r='9'/%3E%3Ccircle%20cx='12'%20cy='12'%20r='2.5'/%3E%3C/svg%3E"); }
+.dl-icon[data-kind="code"] { --k: #65a30d; --glyph: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='black'%20stroke-width='1.8'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M8%208l-4%204%204%204M16%208l4%204-4%204M13.5%206l-3%2012'/%3E%3C/svg%3E"); }
+.dark .dl-icon[data-kind="file"] { --k: #9ca3af; }
+.dark .dl-icon[data-kind="archive"] { --k: #f59e0b; }
+.dark .dl-icon[data-kind="video"] { --k: #f472b6; }
+.dark .dl-icon[data-kind="audio"] { --k: #a78bfa; }
+.dark .dl-icon[data-kind="image"] { --k: #34d399; }
+.dark .dl-icon[data-kind="pdf"] { --k: #f87171; }
+.dark .dl-icon[data-kind="doc"] { --k: #60a5fa; }
+.dark .dl-icon[data-kind="app"] { --k: #22d3ee; }
+.dark .dl-icon[data-kind="disk"] { --k: #9ca3af; }
+.dark .dl-icon[data-kind="code"] { --k: #a3e635; }
+/* Progress: one fill, or the parts of a download in parts at their places in the file. The fills
+   move by transform (dlview.js interpolates between the host's updates). */
+.dl-bar { position: relative; height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.dl-bar .dl-fill { position: absolute; inset: 0; background: var(--accent); transform-origin: 0 50%; transform: scaleX(0); will-change: transform; }
+.dl-bar.paused .dl-fill, .dl-segments.paused .fill { background: var(--fg-muted); }
+.dl-bar.indeterminate .dl-fill { transform: none; width: 30%; animation: dl-slide 1.4s ease-in-out infinite; }
+@keyframes dl-slide { from { left: -30%; } to { left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .dl-bar.indeterminate .dl-fill { animation: none; left: 0; width: 100%; opacity: .45; } }
+.dl-segments { position: relative; height: 8px; border-radius: 4px; background: var(--border); overflow: hidden; }
+.dl-segments .seg { position: absolute; top: 0; bottom: 0; box-shadow: inset 1px 0 0 var(--bg-raised, #fff); overflow: hidden; }
+.dl-segments .seg .fill { position: absolute; inset: 0; transform-origin: 0 50%; transform: scaleX(0); will-change: transform; background: var(--c); }
+.dl-segments .c0 { --c: var(--accent); } .dl-segments .c1 { --c: #10b981; } .dl-segments .c2 { --c: #f59e0b; } .dl-segments .c3 { --c: #8b5cf6; }
+.dl-segments .c4 { --c: #ec4899; } .dl-segments .c5 { --c: #06b6d4; } .dl-segments .c6 { --c: #84cc16; } .dl-segments .c7 { --c: #f97316; }

@@ -4,6 +4,8 @@ Serves the files in ROOT with Range support, a strong ETag and Last-Modified, on
 connection. Query options:
   norange=1     ignore Range (always 200 with the whole file)
   kbps=N        throttle every connection to N KB/s
+  slow=I:K&of=N one slow connection (0.7.0): the request for part I of N (its range starts where
+                Krunk's plan puts part I) gets K KB/s; pieces split off it later are normal
   change=N      after N requests the file "changes" (another ETag: If-Range then gets 200)
   cookie=NAME   answer 403 unless the request has cookie NAME
   noetag=1      no ETag and no Last-Modified (no validator)
@@ -79,6 +81,12 @@ class Handler(BaseHTTPRequestHandler):
             status = 206
             headers["Content-Range"] = "bytes %d-%d/%d" % (start, end, size)
         kbps = int(q.get("kbps", "0"))
+        if "slow" in q and status == 206:
+            index, slow_kbps = (int(x) for x in q["slow"].split(":"))
+            parts = int(q.get("of", "4"))
+            if start == index * -(-size // parts):
+                kbps = slow_kbps
+                log("port=%s slow connection: part %d at %d KB/s" % (self.client_address[1], index, kbps))
         self.send_response(status)
         for k, v in headers.items():
             self.send_header(k, v)

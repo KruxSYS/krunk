@@ -18,6 +18,8 @@ const PROGRESS_PUSH_MS: i64 = 400;
 
 /// Rows the downloads popup shows (the page shows everything).
 const DOWNLOADS_POPUP_MAX: usize = 8;
+/// The engine restarts the downloads of the last session within this long after the start.
+const ENGINE_RESTART_GRACE_MS: i64 = 20_000;
 
 impl Browser {
     /// `tab`: the tab whose view this is (a tab with a running download
@@ -52,10 +54,24 @@ impl Browser {
     }
 
     fn download_starting(&self, start: DownloadStart, private: bool, tab: Option<TabId>) {
+        // Krunk's own list already has it (paused to resume, or interrupted with Retry); the
+        // engine's copy would start it a second time (0.7.0). The engine restarts downloads it
+        // still had at the last close (also ones Krunk took over: the cancel of a dropped
+        // callback is not always saved) right after the start, as new ones.
+        let restarted = {
+            let (loaded, urls) = &*self.stopped_by_close.borrow();
+            now_ms() - loaded < ENGINE_RESTART_GRACE_MS && urls.contains(&start.url)
+        };
+        if start.from_earlier_session || restarted {
+            info!("engine download {} from an earlier session: not continued (Krunk's list has it)", start.id);
+            self.abandon_download(start);
+            return;
+        }
         let ask = self.settings.borrow().ask_where_to_save;
         let name = sanitize_file_name(&start.suggested_name);
         let Some(folder) = self.download_folder() else {
             warning!("download {}: no download folder", start.id);
+            self.abandon_download(start);
             return;
         };
         let mut path = unique_path(&folder, &name, |p| p.exists());
@@ -63,8 +79,10 @@ impl Browser {
             let Some(w) = self.window() else { return };
             match dialogs::save_file(w.hwnd(), "Save as", &name, ("All files", "*.*"), Some(&folder)) {
                 Some(p) => path = p,
-                // Dropping `start` cancels the download.
-                None => return,
+                None => {
+                    self.abandon_download(start);
+                    return;
+                }
             }
         }
         // Large files from servers that send parts: several connections (see segmented.rs).
@@ -102,7 +120,27 @@ impl Browser {
         PopupContent::Downloads { items }
     }
 
+    /// The engine's download is not wanted (Krunk fetches it in parts, or the save dialog was
+    /// cancelled). Dropping its callback should cancel it, but the engine kept such downloads
+    /// alive and resumed them at the next start (0.7.0): its next update cancels it for sure.
+    pub(super) fn abandon_download(&self, start: DownloadStart) {
+        self.abandoned_downloads.borrow_mut().insert(start.id);
+        drop(start);
+    }
+
     fn download_updated(&self, update: DownloadUpdate, tab: Option<TabId>, last_push: &Cell<i64>) {
+        if self.abandoned_downloads.borrow().contains(&update.id) {
+            match update.status {
+                DownloadStatus::InProgress | DownloadStatus::Paused => {
+                    info!("engine download {} given up: cancelled", update.id);
+                    update.control.cancel();
+                }
+                _ => {
+                    self.abandoned_downloads.borrow_mut().remove(&update.id);
+                }
+            }
+            return;
+        }
         // Updates before the download was accepted are not ours yet.
         let Some(id) = self.download_ops.borrow().get(&update.id).map(|(id, _)| *id) else { return };
         if let Some(op) = self.download_ops.borrow_mut().get_mut(&update.id) {
@@ -147,7 +185,7 @@ impl Browser {
 
     /// A live tab to start a download in: the current window's active tab, else any tab, of the
     /// same kind (private or not).
-    fn download_view(&self, private: bool) -> Option<View> {
+    pub(super) fn download_view(&self, private: bool) -> Option<View> {
         let active = self.active_tab().filter(|t| t.private == private).map(|t| t.id);
         let others: Vec<TabId> =
             self.ws.borrow().tabs().filter(|(_, t)| t.private == private).map(|(_, t)| t.id).collect();
@@ -178,6 +216,10 @@ impl Browser {
                     self.reply(tab, Event::err(req_id, "Download not found"));
                     return;
                 };
+                if matches!(action, DownloadAction::Resume | DownloadAction::Retry) {
+                    // The user asks for it: whatever the engine starts for it now is wanted.
+                    self.stopped_by_close.borrow_mut().1.retain(|u| *u != item.url);
+                }
                 if matches!(action, DownloadAction::Pause | DownloadAction::Resume | DownloadAction::Cancel)
                     && self.parts_control(id, action)
                 {

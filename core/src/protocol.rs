@@ -3628,6 +3628,7 @@ mod tests {
                     speed: 0,
                     eta: None,
                     part_progress: Vec::new(),
+                    resume: None,
                 }],
             },
             Event::VaultState { exists: true, locked: false },
