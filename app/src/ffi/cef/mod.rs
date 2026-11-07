@@ -158,6 +158,32 @@ fn relaunched(args: Vec<String>) {
     }
 }
 
+thread_local! {
+    /// Extension origins registered so far (the private context gets them when created).
+    static EXT_HOSTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+/// An extension's origin answers from the internal handler on both profiles (its pages are
+/// never private, but its icons and files are shown in private windows too).
+pub fn register_scheme_host(host: &str) {
+    let new = EXT_HOSTS.with(|h| {
+        let mut h = h.borrow_mut();
+        if h.iter().any(|x| x == host) {
+            false
+        } else {
+            h.push(host.to_string());
+            true
+        }
+    });
+    if !new {
+        return;
+    }
+    scheme::register_host(request_context_get_global_context(), host);
+    if let Some(c) = PRIVATE_CONTEXT.with(|c| c.borrow().clone()) {
+        scheme::register_host(Some(c), host);
+    }
+}
+
 fn internal_response(url: &str) -> InternalResponse {
     match INTERNAL.with(|i| i.borrow().clone()) {
         Some(f) => f(url),
@@ -237,6 +263,9 @@ fn private_context() -> Option<RequestContext> {
     let mut handler = app::context_handler();
     let ctx = request_context_create_context(Some(&settings), Some(&mut handler))?;
     scheme::register(Some(ctx.clone()), false);
+    for host in EXT_HOSTS.with(|h| h.borrow().clone()) {
+        scheme::register_host(Some(ctx.clone()), &host);
+    }
     PRIVATE_CONTEXT.with(|c| *c.borrow_mut() = Some(ctx.clone()));
     info!("private session started");
     Some(ctx)

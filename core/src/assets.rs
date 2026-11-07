@@ -161,12 +161,14 @@ pub fn png_data_url(png: &[u8]) -> Option<String> {
 pub fn csp(host: Host) -> &'static str {
     match host {
         Host::Shell => {
-            "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; \
-             connect-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+            // Extension icons come from the extensions' own origins (0.6.0).
+            "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: https://*.ext.krunk.invalid; \
+             font-src 'self'; connect-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
         }
         Host::Pages => {
-            "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; \
-             connect-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+            // krunk://extensions shows the extensions' icons (0.6.0).
+            "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: https://*.ext.krunk.invalid; \
+             font-src 'self'; connect-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
         }
     }
 }
@@ -216,6 +218,9 @@ pub fn allow_navigation(channel: Channel, current: &str, target: &str, host_init
     match channel {
         Channel::Shell => target_origin == pages::SHELL_ORIGIN && target_url.path() == SHELL_PATH,
         Channel::Popup => target_origin == pages::SHELL_ORIGIN && target_url.path() == POPUP_PATH,
+        // An extension's background or popup view stays on extension origins (its own: the
+        // host's hook checks the id).
+        Channel::Ext => crate::ext::id_of_url(target).is_some(),
         Channel::Tab => {
             if target_origin == pages::SHELL_ORIGIN {
                 return false;

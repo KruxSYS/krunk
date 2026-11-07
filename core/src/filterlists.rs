@@ -46,11 +46,13 @@ pub struct SourceSet {
     pub builtin: Vec<String>,
     pub custom: Vec<CustomList>,
     pub user: String,
+    /// Extensions' static declarativeNetRequest rules, translated (0.6.0).
+    pub ext: String,
 }
 
 impl SourceSet {
     pub fn sources(&self) -> Sources<'_> {
-        Sources { builtin: &self.builtin, custom: &self.custom, user: &self.user }
+        Sources { builtin: &self.builtin, custom: &self.custom, user: &self.user, ext: &self.ext }
     }
 
     /// Every list, on or off (to count their rules), without the user's filters.
@@ -59,6 +61,7 @@ impl SourceSet {
             builtin: FILTER_LISTS.iter().map(|s| s.to_string()).collect(),
             custom: self.custom.iter().map(|l| CustomList { enabled: true, ..l.clone() }).collect(),
             user: String::new(),
+            ext: String::new(),
         }
     }
 }
@@ -136,12 +139,17 @@ pub struct Sources<'a> {
     pub builtin: &'a [String],
     pub custom: &'a [CustomList],
     pub user: &'a str,
+    /// Extensions' rules (0.6.0).
+    pub ext: &'a str,
 }
+
+/// The id of the extensions' rules in the engine.
+pub const EXT_LIST: &str = "extensions";
 
 impl<'a> Sources<'a> {
     /// Only built-in lists (the old way, and the tests).
     pub fn builtin(enabled: &'a [String]) -> Sources<'a> {
-        Sources { builtin: enabled, custom: &[], user: "" }
+        Sources { builtin: enabled, custom: &[], user: "", ext: "" }
     }
 
     /// The bundled lists that are on: the catalogue's plus the ones a tracking-protection
@@ -301,6 +309,9 @@ pub fn cache_key_for(sources: &Sources<'_>, state: &UpdateState) -> u64 {
     if !sources.user.trim().is_empty() {
         desc.push_str(&format!("|{USER_LIST}:{:016x}", fnv64(sources.user.as_bytes())));
     }
+    if !sources.ext.trim().is_empty() {
+        desc.push_str(&format!("|{EXT_LIST}:{:016x}", fnv64(sources.ext.as_bytes())));
+    }
     fnv64(desc.as_bytes())
 }
 
@@ -387,6 +398,9 @@ pub fn current_texts(dir: &std::path::Path, sources: &Sources<'_>, state: &Updat
     }
     if !sources.user.trim().is_empty() {
         out.push((USER_LIST.to_string(), sources.user.to_string()));
+    }
+    if !sources.ext.trim().is_empty() {
+        out.push((EXT_LIST.to_string(), sources.ext.to_string()));
     }
     out
 }
@@ -665,14 +679,14 @@ mod tests {
         let builtin = vec!["easylist".to_string()];
         let none: Vec<CustomList> = Vec::new();
         // Without added lists or own filters: the same key as before them.
-        let plain = Sources { builtin: &builtin, custom: &none, user: "  \n" };
+        let plain = Sources { builtin: &builtin, custom: &none, user: "  \n", ext: "" };
         assert_eq!(cache_key_for(&plain, &UpdateState::default()), cache_key(&builtin, &UpdateState::default()));
         let custom = vec![
             CustomList { url: "https://lists.example/mine.txt".into(), enabled: true },
             CustomList { url: "https://lists.example/off.txt".into(), enabled: false },
         ];
         let user = "! mine\n||own-filter.example^\nexample.com##.promo\n";
-        let sources = Sources { builtin: &builtin, custom: &custom, user };
+        let sources = Sources { builtin: &builtin, custom: &custom, user, ext: "" };
         let fetched = std::cell::RefCell::new(Vec::new());
         let fetch = |url: &str| -> Result<Vec<u8>, String> {
             fetched.borrow_mut().push(url.to_string());
@@ -703,7 +717,7 @@ mod tests {
         assert!(rebuild_sources(&tmp.0, &sources, r.state.clone(), None, false, Some(k), 2000).engine.is_none());
         assert_eq!(r.state.errors.get(&custom_id("https://lists.example/off.txt")), None, "off: not fetched");
         // What krunk://adblock shows.
-        let set = SourceSet { builtin: builtin.clone(), custom: custom.clone(), user: user.into() };
+        let set = SourceSet { builtin: builtin.clone(), custom: custom.clone(), user: user.into(), ext: String::new() };
         assert_eq!(set.sources().custom.len(), 2);
         let counts: BTreeMap<String, usize> = current_texts(&tmp.0, &set.every_list().sources(), &r.state)
             .into_iter()

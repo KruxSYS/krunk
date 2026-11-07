@@ -1,0 +1,5 @@
+{
+  "appName": { "message": "Krunk fixture" },
+  "appDesc": { "message": "Test extension for Krunk 0.6.0: a content script, a background page, a popup, options, storage, alarms and one network rule." },
+  "banner": { "message": "Hello from $NAME$ (visit $COUNT$)", "placeholders": { "name": { "content": "$1" }, "count": { "content": "$2" } } }
+}

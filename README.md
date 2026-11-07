@@ -259,6 +259,28 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   General → Media → "Automatic Picture-in-Picture" does it when you switch tabs while a video
   plays and reverses it when you return. Videos inside a frame from another site (an embedded
   player) are not listed: use the player's own control.
+- **Extensions** (0.6.0; `krunk://extensions`, also in the menu): Krunk runs its own subset of
+  Chrome's Manifest V3, since the engine has no extension system of its own. Install from a
+  `.zip`/`.crx` file, an unpacked folder, or a Chrome Web Store address (the CRX is fetched
+  from Google's download server over HTTPS; its id must match the address). What runs:
+  content scripts (in an isolated world of web pages, with `matches`, `exclude_matches`,
+  `run_at`, `all_frames`, CSS), a background page built around the service worker,
+  the toolbar button with its popup and badge, options pages, and the `chrome.runtime`
+  (messaging, `getURL`, `getManifest`, `openOptionsPage`), `storage` (local/sync/session,
+  `onChanged`), `tabs` (query/get/create/update/remove/reload/sendMessage, `onUpdated`,
+  `onActivated`, `onRemoved`), `action`, `alarms`, `i18n`, `scripting` (`executeScript`,
+  `insertCSS`), `windows` and `permissions.getAll` APIs. Static `declarativeNetRequest`
+  rulesets become filter rules of the ad blocker (`block` and `allow`; `redirect` and
+  `upgradeScheme` rules are counted as "not translated"). Never provided: blocking
+  `webRequest`, `debugger`, native messaging, dynamic or session rules and switching
+  rulesets at runtime, `cookies`, `history`, `bookmarks`, `downloads`, `identity`,
+  `contextMenus`, `notifications` and the rest; the page lists what each extension asked
+  for and whether Krunk has it, and the log says when an extension reaches for something
+  missing. **Isolation:** extensions never run on Krunk's own pages or the shell, not in
+  private tabs unless "Allow in private tabs" is on, and their pages live on their own
+  origin `https://<id>.ext.krunk.invalid`; the scope list on `krunk://extensions` shows
+  which sites each one may read and change. Extensions are stored under
+  `%LOCALAPPDATA%\Krunk\extensions`; Remove deletes the files and the stored data.
 - **Protected content (Widevine)** (0.6.0; Settings → Privacy & security, off by default,
   restart): lets sites play DRM media with Google's Widevine module. Krunk does not bundle
   it: when the setting is on, the engine's component updater downloads it from Google
@@ -964,7 +986,9 @@ Testing on Windows:
   detected. See `docs/SECURITY.md` for the full threat model and what is out of scope.
 - **No tab pinning in the UI.** The memory policy supports pinned tabs, but the tab strip
   cannot pin yet.
-- **Platform support:** no Windows on ARM build and no extensions.
+- **Platform support:** no Windows on ARM build. Extensions run in Krunk's own Manifest V3
+  subset (see Usage): a Web Store extension that needs an API Krunk does not provide works
+  only in part, and `krunk://extensions` says which calls those are.
 - **Tab dragging is Krunk's own, not Chrome's.** Under the Alloy runtime the engine has no tab
   strip, so the drag is done by the host: the torn-off window itself is the drag image (there
   is no translucent preview), and a tab can't be dropped into another program.

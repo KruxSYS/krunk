@@ -33,6 +33,7 @@
       item('Downloads', 'Ctrl+J', () => command('downloads')),
       item('Passwords', '', () => openPage('passwords')),
       item('Cookies and site data', '', () => openPage('storage')),
+      item('Extensions', '', () => openPage('extensions')),
       sep(),
       el('div', { class: 'zoom' }, [
         el('span', { class: 'label', text: 'Zoom' }),

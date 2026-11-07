@@ -1,0 +1,4 @@
+[
+  { "id": 1, "priority": 1, "action": { "type": "block" }, "condition": { "urlFilter": "||localhost/blocked-by-extension", "resourceTypes": ["image", "script", "xmlhttprequest"] } },
+  { "id": 2, "priority": 1, "action": { "type": "redirect", "redirect": { "url": "https://example.com/" } }, "condition": { "urlFilter": "||localhost/redirect-me" } }
+]

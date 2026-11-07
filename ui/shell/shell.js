@@ -666,7 +666,27 @@
   });
 
   // ---------- popups (menu, shield) ----------
-  const POPUP_SIZES = { menu: [280, 580], shield: [300, 226], siteInfo: [360, 260], downloads: [380, 420], pip: [340, 300] };
+  // 0.6.0: the enabled extensions' toolbar buttons (icon from the extension's origin, a
+  // badge, the title). A click sends the button's rect: the host opens the popup under it.
+  LB.on('extActions', function (m) {
+    const box = $('ext-actions');
+    box.textContent = '';
+    (m.actions || []).forEach(function (a) {
+      const badge = a.badge ? el('span', { class: 'badge ext-badge', text: a.badge }) : null;
+      if (badge && a.badgeColor) badge.style.background = a.badgeColor;   // CSSOM: the shell's CSP has no inline styles
+      const b = el('button', { class: 'tb ext-action', 'data-ext': a.id, title: a.title, 'aria-label': a.title }, [
+        a.icon ? el('img', { src: a.icon, alt: '' }) : el('span', { class: 'ext-letter', text: (a.title || '?').charAt(0).toUpperCase() }),
+        badge,
+      ]);
+      b.addEventListener('click', function () {
+        const r = b.getBoundingClientRect();
+        LB.post('extAction', { id: a.id, rect: { x: r.left, y: r.top, width: r.width, height: r.height } });
+      });
+      box.appendChild(b);
+    });
+  });
+
+  const POPUP_SIZES = { menu: [280, 620], shield: [300, 226], siteInfo: [360, 260], downloads: [380, 420], pip: [340, 300] };
   // The press on the button deactivates the open popup, which closes it before the click
   // arrives (the host then says popupClosed). The click must not reopen it: the press
   // remembers what was open. The host has the same guard (lb_core::toggle).

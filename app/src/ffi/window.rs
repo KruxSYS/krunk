@@ -632,6 +632,16 @@ impl Window {
         let _ = unsafe { ShowWindow(self.0, SW_HIDE) };
     }
 
+    /// Is the foreground window this one or a window inside it (a browser view's HWND)?
+    pub fn owns_foreground(self) -> bool {
+        use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GetForegroundWindow, GA_ROOT};
+        // SAFETY: no arguments; GetAncestor on whatever window is in front.
+        unsafe {
+            let fg = GetForegroundWindow();
+            fg == self.0 || GetAncestor(fg, GA_ROOT) == self.0
+        }
+    }
+
     /// Is this the foreground window (the one the keyboard goes to)?
     pub fn is_foreground(self) -> bool {
         // SAFETY: no arguments.

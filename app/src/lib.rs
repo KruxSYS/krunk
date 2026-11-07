@@ -150,7 +150,7 @@ fn migrate_legacy_data() -> Result<Option<String>, String> {
 #[cfg(windows)]
 fn update_filters_headless(dirs: &paths::DataDirs, settings: &lb_core::settings::Settings, user: &str) -> i32 {
     use lb_core::filterlists::{self, Sources, UpdateState, MAX_LIST_BYTES};
-    let sources = Sources { builtin: &settings.filter_lists, custom: &settings.custom_lists, user };
+    let sources = Sources { builtin: &settings.filter_lists, custom: &settings.custom_lists, user, ext: "" };
     use lb_core::settings::{updater_proxy, UpdaterProxy};
     let dir = dirs.filters();
     let _ = std::fs::create_dir_all(&dir);

@@ -1,0 +1,24 @@
+<!doctype html>
+<!-- Extension test page (Krunk 0.6.0, scripts/vm-060-ext.ps1): the fixture's content script adds
+     a banner and a <meta name=krunk-fixture>; an image the fixture's network rule blocks; the
+     page prints whether it can see anything of the extension (it must not). -->
+<html lang="en"><head><meta charset="utf-8"><title>Extension test</title>
+<style>body { font: 16px system-ui, sans-serif; margin: 24px; } #state { font-family: ui-monospace, monospace; color: #555; white-space: pre-wrap; } img { border: 2px solid #c00; }</style></head>
+<body>
+<h1>Extension test (localhost:8094)</h1>
+<p>Blocked by the fixture's declarativeNetRequest rule: <img id="blocked" src="/blocked-by-extension.png?x=1" width="64" height="64" alt="blocked"></p>
+<p>Served normally: <img id="ok" src="/probe.png" width="64" height="64" alt="ok"></p>
+<p id="state"></p>
+<script>
+  window.krunkFixtureMarker = 'page global';
+  function show() {
+    var meta = document.querySelector('meta[name=krunk-fixture]');
+    var banner = document.getElementById('krunk-fixture-banner');
+    document.getElementById('state').textContent =
+      'meta from content script: ' + (meta ? meta.content : 'none') + '\n' +
+      'banner present: ' + !!banner + '\n' +
+      'blocked image loaded: ' + (document.getElementById('blocked').naturalWidth > 0) + ' · ok image loaded: ' + (document.getElementById('ok').naturalWidth > 0) + '\n' +
+      'page sees chrome API: ' + (typeof chrome !== 'undefined' && !!chrome.runtime) + ' · __krunkExt: ' + (typeof window.__krunkExt) + ' · __krunkExtDeliver: ' + (typeof window.__krunkExtDeliver);
+  }
+  window.addEventListener('load', function () { show(); setInterval(show, 1000); });
+</script></body></html>

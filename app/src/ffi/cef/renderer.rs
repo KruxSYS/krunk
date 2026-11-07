@@ -24,6 +24,16 @@ pub(super) const TO_PAGE: &str = "lb.evt";
 pub(super) const AUDIO_TO_BROWSER: &str = "lb.audio";
 /// Renderer → browser: this renderer's process id (once per browser, for the task manager).
 pub(super) const PID_TO_BROWSER: &str = "lb.pid";
+/// Renderer-side diagnostics for the host's log (a line of text).
+pub(super) const DEBUG_TO_BROWSER: &str = "lb.rdebug";
+
+fn rdebug(frame: &mut Frame, text: &str) {
+    let Some(mut message) = process_message_create(Some(&CefString::from(DEBUG_TO_BROWSER))) else { return };
+    if let Some(args) = message.argument_list() {
+        args.set_string(0, Some(&CefString::from(text)));
+    }
+    frame.send_process_message(ProcessId::BROWSER, Some(&mut message));
+}
 /// Pointer lock, frame to browser (`LockMessage` JSON) and back (events).
 pub(super) const POINTER_TO_BROWSER: &str = "lb.plock";
 pub(super) const POINTER_TO_FRAME: &str = "lb.plock.evt";
@@ -149,10 +159,12 @@ thread_local! {
     /// the old one with the same identifier, so a plain remove-on-destroy would drop the entry
     /// the new frames need (their login script then never ran).
     static SCRIPTS: RefCell<HashMap<i32, (Scripts, u32)>> = RefCell::new(HashMap::new());
-    /// The dispatch function of each main frame, by frame identifier.
-    static DISPATCH: RefCell<HashMap<String, V8Value>> = RefCell::new(HashMap::new());
-    /// The pointer-lock shim of each frame, by frame identifier.
-    static POINTER: RefCell<HashMap<String, V8Value>> = RefCell::new(HashMap::new());
+    /// The dispatch function of each main frame, by frame identifier, with the context it
+    /// belongs to: a navigation can create the new document's context before the old one is
+    /// released, so a release only drops the entry of its own context.
+    static DISPATCH: RefCell<HashMap<String, (V8Context, V8Value)>> = RefCell::new(HashMap::new());
+    /// The pointer-lock shim of each frame, by frame identifier (same rule).
+    static POINTER: RefCell<HashMap<String, (V8Context, V8Value)>> = RefCell::new(HashMap::new());
 }
 
 pub(super) fn handler() -> RenderProcessHandler {
@@ -196,6 +208,12 @@ wrap_render_process_handler! {
             context: Option<&mut V8Context>,
         ) {
             let (Some(browser), Some(frame), Some(context)) = (browser, frame, context) else { return };
+            // Only the main world: the extensions' isolated world (0.6.0) is a context of the
+            // same frame too, and must get neither the bridge (it would take over the frame's
+            // dispatch entry) nor the scriptlets and page scripts.
+            if frame.v8_context().is_none_or(|mut main| context.is_same(Some(&mut main)) != 1) {
+                return;
+            }
             if frame.is_main() == 1 {
                 report_pid(browser, frame);
             }
@@ -209,12 +227,17 @@ wrap_render_process_handler! {
             &self,
             _browser: Option<&mut Browser>,
             frame: Option<&mut Frame>,
-            _context: Option<&mut V8Context>,
+            context: Option<&mut V8Context>,
         ) {
-            if let Some(frame) = frame {
-                let id = CefString::from(&frame.identifier()).to_string();
-                DISPATCH.with(|d| d.borrow_mut().remove(&id));
-                POINTER.with(|d| d.borrow_mut().remove(&id));
+            let (Some(frame), Some(context)) = (frame, context) else { return };
+            let id = CefString::from(&frame.identifier()).to_string();
+            for table in [&DISPATCH, &POINTER] {
+                table.with(|d| {
+                    let mut d = d.borrow_mut();
+                    if d.get(&id).is_some_and(|(c, _)| c.is_same(Some(context)) == 1) {
+                        d.remove(&id);
+                    }
+                });
             }
         }
 
@@ -270,6 +293,16 @@ fn context_created(scripts: Scripts, frame: &mut Frame, context: &mut V8Context)
     // gets suggestions for its own origin (the host accepts only the field messages from
     // sub-frames). Page tokens are a main-frame matter.
     let host = install_bridge(frame, context);
+    // An extension's own page (0.6.0): the chrome.* shim before its scripts, main frame only.
+    if main
+        && url::Url::parse(&document_url(frame))
+            .ok()
+            .and_then(|u| u.host_str().map(|h| h.ends_with(".ext.krunk.invalid")))
+            .unwrap_or(false)
+    {
+        eval_with_bridge(context, assets::inject_script("ext-page.js"), host.as_ref());
+        return;
+    }
     if scripts.login {
         eval_with_bridge(context, assets::inject_script("login.js"), host.as_ref());
     }
@@ -364,7 +397,7 @@ fn install_bridge(frame: &mut Frame, context: &mut V8Context) -> Option<V8Value>
     }
     let host = dispatch.value_bykey(Some(&CefString::from("host")));
     let id = CefString::from(&frame.identifier()).to_string();
-    DISPATCH.with(|d| d.borrow_mut().insert(id, dispatch));
+    DISPATCH.with(|d| d.borrow_mut().insert(id, (context.clone(), dispatch)));
     host
 }
 
@@ -397,7 +430,7 @@ fn install_pointer_lock(frame: &mut Frame, context: &mut V8Context) {
     let Some(dispatch) = shim.execute_function(None, Some(&[Some(send)])) else { return };
     if dispatch.is_function() == 1 {
         let id = CefString::from(&frame.identifier()).to_string();
-        POINTER.with(|d| d.borrow_mut().insert(id, dispatch));
+        POINTER.with(|d| d.borrow_mut().insert(id, (context.clone(), dispatch)));
     }
 }
 
@@ -407,14 +440,21 @@ fn deliver(frame: &mut Frame, json: &CefString) {
 }
 
 fn deliver_to(
-    table: &'static std::thread::LocalKey<RefCell<HashMap<String, V8Value>>>,
+    table: &'static std::thread::LocalKey<RefCell<HashMap<String, (V8Context, V8Value)>>>,
     frame: &mut Frame,
     json: &CefString,
 ) {
     let id = CefString::from(&frame.identifier()).to_string();
-    let Some(dispatch) = table.with(|d| d.borrow().get(&id).cloned()) else { return };
-    let Some(context) = frame.v8_context() else { return };
+    let Some(dispatch) = table.with(|d| d.borrow().get(&id).map(|(_, f)| f.clone())) else {
+        rdebug(frame, &format!("no dispatch for frame {id} ({})", CefString::from(&frame.url())));
+        return;
+    };
+    let Some(context) = frame.v8_context() else {
+        rdebug(frame, &format!("no context for frame {id}"));
+        return;
+    };
     if context.enter() != 1 {
+        rdebug(frame, &format!("cannot enter the context of frame {id}"));
         return;
     }
     if let Some(arg) = v8_value_create_string(Some(json)) {

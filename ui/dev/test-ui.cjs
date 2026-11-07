@@ -17,7 +17,7 @@ const UI = path.resolve(__dirname, '..');
 const SHOTS = process.argv[2] || null;
 // ONLY=NewTab,Settings runs those sections alone (a comma list of the test function names without 'test').
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
-const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; " +
+const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: https://*.ext.krunk.invalid; font-src 'self'; " +
   "connect-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 const MIME = { html: 'text/html', css: 'text/css', js: 'text/javascript', svg: 'image/svg+xml', png: 'image/png' };
 
@@ -284,7 +284,7 @@ async function testShell(browser) {
   // Menu popup open/close.
   await page.click('#menu');
   const sp = await lastSent(page, 'showPopup');
-  check(sp && sp.popup === 'menu' && sp.rect.width === 280 && sp.rect.height === 580 && sp.rect.x >= 0 && sp.rect.y > 60, 'menu sends showPopup with a rect below the toolbar (580 is the upper bound; the popup fits itself)');
+  check(sp && sp.popup === 'menu' && sp.rect.width === 280 && sp.rect.height === 620 && sp.rect.x >= 0 && sp.rect.y > 60, 'menu sends showPopup with a rect below the toolbar (620 is the upper bound; the popup fits itself)');
   check(await page.locator('#menu.on').count() === 1, 'menu button highlighted while open');
   await page.click('#menu');
   check((await lastSent(page, 'hidePopup')) !== undefined, 'clicking menu again sends hidePopup');
@@ -740,7 +740,7 @@ async function testPopup(browser) {
   {
     const fitMenu = await lastSent(page, 'popupResize');
     const want = await page.evaluate(() => document.getElementById('root').offsetHeight + 2);
-    check(fitMenu && fitMenu.height === want && want < 580 && want > 400, 'the menu asks for exactly its content height (' + (fitMenu && fitMenu.height) + ' = #root + borders, below the 580 bound)');
+    check(fitMenu && fitMenu.height === want && want < 620 && want > 400, 'the menu asks for exactly its content height (' + (fitMenu && fitMenu.height) + ' = #root + borders, below the 620 bound)');
   }
   await page.waitForSelector('.item');
   check(await page.locator('#zoom-value').textContent() === '125%', 'menu shows zoom');
@@ -3341,6 +3341,131 @@ async function testMediaScript(browser) {
   await context.close();
 }
 
+// 0.6.0: krunk://extensions (the list, the scope and API survey, toggles, remove, the three
+// install paths) and the shell's extension buttons.
+async function testExtensions(browser) {
+  console.log('extensions page');
+  const id1 = 'a'.repeat(32), id2 = 'b'.repeat(32);
+  const exts = [
+    { id: id1, name: 'Krunk fixture', version: '1.0.0', description: 'Test extension', enabled: true, allowedInPrivate: false, source: 'file:krunk-fixture.zip', installedAt: 1, updatedAt: 1,
+      scope: [{ pattern: 'http://localhost/*', text: 'localhost', allSites: false }, { pattern: '<all_urls>', text: 'all websites', allSites: true }],
+      apis: [{ api: 'runtime', supported: true, reason: '' }, { api: 'storage', supported: true, reason: '' }, { api: 'webRequest', supported: false, reason: 'not provided: blocking network interception (use declarativeNetRequest static rules)' }],
+      runtimeUnsupported: ['notifications'], dnrTranslated: 1, dnrSkipped: 1, hasOptions: true, hasPopup: true, hasBackground: true, contentScripts: 1, icon: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', permissions: ['storage', 'tabs'] },
+    { id: id2, name: 'Quiet one', version: '2.1', description: '', enabled: false, allowedInPrivate: true, source: 'webstore:' + id2, installedAt: 2, updatedAt: 2, scope: [], apis: [], runtimeUnsupported: [], dnrTranslated: 0, dnrSkipped: 0, hasOptions: false, hasPopup: false, hasBackground: false, contentScripts: 0, icon: null, permissions: [] },
+  ];
+  const { page, errors, external } = await openPage(browser, 'https://krunk.invalid/extensions.html', { width: 1000, height: 700 }, 1,
+    (list) => {
+      const h = window.__host.handlers;
+      window.__exts = list;
+      h.extList = () => window.__exts;
+      h.extSet = (m) => { const x = window.__exts.find((e) => e.id === m.id); if (m.enabled !== undefined) x.enabled = m.enabled; if (m.private !== undefined) x.allowedInPrivate = m.private; return window.__exts; };
+      h.extRemove = (m) => { window.__exts = window.__exts.filter((e) => e.id !== m.id); return window.__exts; };
+      h.extInstallFile = () => ({ installed: 'c'.repeat(32), name: 'From file', extensions: window.__exts.concat([Object.assign({}, window.__exts[0], { id: 'c'.repeat(32), name: 'From file', enabled: true, source: 'file:x.zip' })]) });
+      h.extInstallFolder = () => null;
+      h.extInstallUrl = (m) => { if (!/chromewebstore/.test(m.url)) throw new Error('That is not a Chrome Web Store extension address (…/detail/<name>/<id>).'); return { installed: 'd'.repeat(32), name: 'From the store', extensions: window.__exts }; };
+    }, exts);
+  await page.waitForSelector('.ext');
+  check((await page.locator('.ext').count()) === 2, 'lists the 2 extensions');
+  const first = page.locator('.ext[data-id="' + id1 + '"]');
+  check((await first.locator('.scope').textContent()).includes('localhost, all websites') && (await first.locator('.scope .all').count()) === 1, 'the scope list names the sites, "all websites" marked');
+  check((await first.locator('.apis .yes').textContent()).includes('chrome.runtime, chrome.storage') && (await first.locator('.apis .no').textContent()).includes('chrome.webRequest (blocking network interception') && (await first.locator('.apis .no').textContent()).includes('chrome.notifications (reached for at runtime'), 'the API survey: provided, not provided with the reason, runtime discoveries');
+  check((await first.locator('.chips').textContent()).includes('1 content script') && (await first.locator('.chips').textContent()).includes('1 network rule (1 not translated)'), 'chips: content scripts, rules');
+  check((await first.locator('img').getAttribute('src')).startsWith('data:image/png') && (await page.locator('.ext[data-id="' + id2 + '"] .icon').textContent()) === '🧩', 'the icon is shown when there is one, a placeholder otherwise');
+  check(await page.locator('.ext[data-id="' + id2 + '"]').evaluate((e) => e.classList.contains('disabled')), 'a disabled extension is dimmed');
+  await shot(page, 'extensions.png');
+  await first.locator('input[data-key="enabled"]').click();
+  await page.waitForTimeout(60);
+  const st = await lastSent(page, 'extSet');
+  check(st && st.id === id1 && st.enabled === false, 'the Enabled toggle sends extSet{enabled:false}');
+  await first.locator('input[data-key="private"]').click();
+  await page.waitForTimeout(60);
+  check((await lastSent(page, 'extSet')).private === true, 'the private toggle sends extSet{private:true}');
+  await first.locator('button', { hasText: 'Options' }).click();
+  check((await lastSent(page, 'extOpenOptions')).id === id1, 'Options sends extOpenOptions');
+  await page.locator('.ext[data-id="' + id2 + '"] button', { hasText: 'Remove' }).click();
+  await page.waitForSelector('#lb-dialog-ok');
+  await page.click('#lb-dialog-ok');
+  await page.waitForTimeout(60);
+  check((await lastSent(page, 'extRemove')).id === id2 && (await page.locator('.ext').count()) === 1, 'Remove asks, sends extRemove and the list shrinks');
+  await page.click('#install-file');
+  await page.waitForTimeout(80);
+  check((await lastSent(page, 'extInstallFile')) !== undefined && (await page.locator('.ext').count()) === 2 && (await page.locator('.toast').textContent()).includes('Installed From file'), 'Install from file: the reply refreshes the list and toasts');
+  await page.fill('#url', 'https://example.com/not-a-store');
+  await page.click('#install-url');
+  await page.waitForTimeout(80);
+  check((await page.textContent('#error')).includes('not a Chrome Web Store'), 'a non-store address is refused with the reason');
+  await page.fill('#url', 'https://chromewebstore.google.com/detail/thing/' + 'd'.repeat(32));
+  await page.click('#install-url');
+  await page.waitForTimeout(80);
+  check((await lastSent(page, 'extInstallUrl')).url.includes('chromewebstore') && await page.inputValue('#url') === '', 'a store address is sent and the field cleared');
+  await emit(page, { event: 'extChanged', extensions: [] });
+  await page.waitForTimeout(40);
+  check(await page.locator('#empty').isVisible(), 'extChanged with nothing installed shows the empty text');
+  check(errors.length === 0, 'no console errors (' + errors.join('; ') + ')');
+  check(external.length === 0, 'no network requests (' + external.join(', ') + ')');
+  await page.context().close();
+
+  // The shell's extension buttons.
+  const shell = await openPage(browser, 'https://shell.krunk.invalid/shell.html', { width: 1000, height: 76 }, 1);
+  await emit(shell.page, { event: 'extActions', actions: [{ id: id1, title: 'Krunk fixture', icon: null, badge: '3', badgeColor: 'rgb(0,128,0)', hasPopup: true }, { id: id2, title: 'Quiet', icon: null, badge: '', badgeColor: '', hasPopup: false }] });
+  await shell.page.waitForSelector('.ext-action');
+  check((await shell.page.locator('.ext-action').count()) === 2 && (await shell.page.textContent('.ext-action[data-ext="' + id1 + '"] .ext-badge')) === '3', 'the shell shows a button per action with its badge');
+  await shell.page.click('.ext-action[data-ext="' + id1 + '"]');
+  const act = await lastSent(shell.page, 'extAction');
+  check(act && act.id === id1 && act.rect.width > 10 && act.rect.y >= 0, 'a click sends extAction{id, rect}');
+  await emit(shell.page, { event: 'extActions', actions: [] });
+  await shell.page.waitForTimeout(40);
+  check((await shell.page.locator('.ext-action').count()) === 0, 'no actions: no buttons');
+  check(shell.errors.length === 0, 'shell: no console errors (' + shell.errors.join('; ') + ')');
+  await shell.page.context().close();
+}
+
+// 0.6.0: the content-script shim as the bundle installs it in a page's isolated world (here
+// the page's own world, with a stand-in for the DevTools binding): matches, run_at, the
+// chrome.* subset, messaging and storage through the binding, unsupported APIs reported.
+async function testExtShim(browser) {
+  console.log('extension content shim');
+  const context = await browser.newContext();
+  await context.route('**/*', (r) => r.abort());
+  await context.route('https://site.example/**', (r) => r.fulfill({ status: 200, headers: { 'content-type': 'text/html' }, body: '<!doctype html><title>Site</title><body><h1>page</h1></body>' }));
+  const shim = fs.readFileSync(path.join(__dirname, '..', 'inject', 'ext-content.js'), 'utf8');
+  const id = 'e'.repeat(32);
+  await context.addInitScript(() => {
+    window.__calls = [];
+    window.__krunkExt = (json) => { window.__calls.push(JSON.parse(json)); };
+  });
+  await context.addInitScript({ content: '(function(){ var __krunkShim = ' + shim.trim() + ';\n' +
+    'var ext = __krunkShim(' + JSON.stringify(id) + ', {name: "Fixture", version: "1"}, {greet: {message: "Hi $who$", placeholders: {who: {content: "$1"}}}});\n' +
+    'ext.run(["https://site.example/*"], [], false, "document_start", ["cs.css"], function (chrome) { window.__ran = (window.__ran||0)+1; window.__id = chrome.runtime.id; window.__url = chrome.runtime.getURL("a/b.png"); window.__msg = chrome.i18n.getMessage("greet", ["Bob"]); window.__manifest = chrome.runtime.getManifest().name; chrome.storage.local.get("k", function (v) { window.__got = v; }); chrome.runtime.sendMessage({ping: 1}).then(function (r) { window.__reply = r; }); chrome.runtime.onMessage.addListener(function (m, s, send) { window.__in = m; send({pong: m.x}); }); void chrome.notifications; });\n' +
+    'ext.run(["https://other.example/*"], [], false, "document_start", [], function () { window.__wrong = true; });\n' +
+    'ext.run(["<all_urls>"], ["https://site.example/*"], false, "document_start", [], function () { window.__excluded = true; });\n' +
+    '})();' });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await page.goto('https://site.example/');
+  await page.waitForTimeout(100);
+  const v = await page.evaluate(() => ({ ran: window.__ran, wrong: window.__wrong, excluded: window.__excluded, id: window.__id, url: window.__url, msg: window.__msg, manifest: window.__manifest, calls: window.__calls, css: !!document.querySelector('link[href$="/cs.css"]') }));
+  check(v.ran === 1 && !v.wrong && !v.excluded, 'only the script whose matches fit runs (' + JSON.stringify([v.ran, v.wrong, v.excluded]) + ')');
+  check(v.id === id && v.url === 'https://' + id + '.ext.krunk.invalid/a/b.png' && v.msg === 'Hi Bob' && v.manifest === 'Fixture' && v.css, 'runtime.id/getURL/getManifest, i18n placeholders, the CSS link');
+  const get = v.calls.find((c) => c.cmd === 'storage.get'), send = v.calls.find((c) => c.cmd === 'runtime.sendMessage'), unsupported = v.calls.find((c) => c.cmd === 'unsupported');
+  check(get && get.ext === id && get.data.area === 'local' && get.data.keys === 'k' && typeof get.id === 'number', 'storage.get goes through the binding with the area and keys');
+  check(send && send.data.message.ping === 1, 'runtime.sendMessage goes through the binding');
+  check(unsupported && unsupported.data.api === 'notifications', 'an API Krunk does not provide is reported once');
+  await page.evaluate(([gid, sid, xid]) => {
+    window.__krunkExtDeliver(JSON.stringify({ ext: xid, reply: gid, data: { k: 42 } }));
+    window.__krunkExtDeliver(JSON.stringify({ ext: xid, reply: sid, data: { ok: true } }));
+    window.__krunkExtDeliver(JSON.stringify({ ext: xid, event: 'message', id: 77, data: { x: 5 }, from: 'bg' }));
+  }, [get.id, send.id, id]);
+  await page.waitForTimeout(50);
+  const after = await page.evaluate(() => ({ got: window.__got, reply: window.__reply, inMsg: window.__in, respond: window.__calls.find((c) => c.cmd === 'respond') }));
+  check(after.got && after.got.k === 42 && after.reply && after.reply.ok === true, 'replies resolve the callback and the promise');
+  check(after.inMsg && after.inMsg.x === 5 && after.respond && after.respond.data.id === 77 && after.respond.data.data.pong === 5, 'a message from the extension reaches onMessage and sendResponse goes back as respond');
+  check(!(await page.evaluate(() => Object.keys(window).some((k) => /^chrome$|^browser$/.test(k)))), 'the page world has no chrome/browser global from the shim');
+  check(errors.length === 0, 'shim raises no page errors (' + errors.join(' | ') + ')');
+  await context.close();
+}
+
 // uBO scriptlets as Krunk injects them (generated by the core test
 // scriptlet_fixture_is_current): run at document start, before the page's own
 // inline script, they pin window.krunkTest and prune adPlacements from JSON.
@@ -3743,6 +3868,8 @@ async function testTabWindows(browser) {
     if (!ONLY || ONLY.includes('Downloads')) await testDownloads(browser);
     if (!ONLY || ONLY.includes('Storage')) await testStorage(browser);
     if (!ONLY || ONLY.includes('Tasks')) await testTasks(browser);
+    if (!ONLY || ONLY.includes('Extensions')) await testExtensions(browser);
+    if (!ONLY || ONLY.includes('ExtShim')) await testExtShim(browser);
     if (!ONLY || ONLY.includes('SiteData')) await testSiteData(browser);
     if (!ONLY || ONLY.includes('ShellM4')) await testShellM4(browser);
     if (!ONLY || ONLY.includes('BookmarksBar')) await testBookmarksBar(browser);

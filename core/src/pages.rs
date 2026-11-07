@@ -46,10 +46,12 @@ pub enum Page {
     Gpu,
     /// The task manager: the engine's processes and what they cost (Krunk 0.6.0).
     Tasks,
+    /// Installed extensions (Krunk 0.6.0).
+    Extensions,
 }
 
 impl Page {
-    pub const ALL: [Page; 13] = [
+    pub const ALL: [Page; 14] = [
         Page::NewTab,
         Page::History,
         Page::Bookmarks,
@@ -63,6 +65,7 @@ impl Page {
         Page::Adblock,
         Page::Gpu,
         Page::Tasks,
+        Page::Extensions,
     ];
 
     /// Short name used in the display URL (`krunk://<name>`) and file name.
@@ -81,6 +84,7 @@ impl Page {
             Page::Adblock => "adblock",
             Page::Gpu => "gpu",
             Page::Tasks => "tasks",
+            Page::Extensions => "extensions",
         }
     }
 

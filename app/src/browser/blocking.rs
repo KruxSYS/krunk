@@ -87,6 +87,8 @@ pub(super) struct FilterState {
     queued: Cell<Option<Fetching>>,
     /// "My filters" (kept in the store under `USER_FILTERS_KEY`).
     pub user: RefCell<String>,
+    /// Extensions' translated declarativeNetRequest rules (0.6.0).
+    pub ext: RefCell<String>,
     /// Hosts the user allowed over plain HTTP this session (HTTPS-only).
     pub http_exceptions: RefCell<HashSet<String>>,
 }
@@ -101,6 +103,7 @@ impl FilterState {
             pending_replies: RefCell::new(Vec::new()),
             queued: Cell::new(None),
             user: RefCell::new(String::new()),
+            ext: RefCell::new(String::new()),
             http_exceptions: RefCell::new(HashSet::new()),
         }
     }
@@ -534,6 +537,20 @@ impl Browser {
             builtin: s.effective_filter_lists(),
             custom: s.custom_lists.clone(),
             user: self.filters.user.borrow().clone(),
+            ext: self.filters.ext.borrow().clone(),
+        }
+    }
+
+    /// The extensions' rules changed: rebuild the engine when they differ (0.6.0).
+    pub(super) fn set_ext_filters(&self, text: String) {
+        if *self.filters.ext.borrow() == text {
+            return;
+        }
+        let rules = filterlists::rule_count(&text);
+        *self.filters.ext.borrow_mut() = text;
+        if self.settings.borrow().adblock_enabled {
+            info!("extensions: {rules} network rule(s) in the blocker");
+            self.spawn_filter_job(Fetching::Nothing);
         }
     }
 

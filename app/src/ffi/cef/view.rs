@@ -219,6 +219,10 @@ impl<F: ?Sized> Default for Slot<F> {
 }
 
 impl<F: ?Sized> Slot<F> {
+    fn is_set(&self) -> bool {
+        self.0.borrow().is_some()
+    }
+
     fn set(&self, f: Box<F>) {
         *self.0.borrow_mut() = Some(f);
     }
@@ -286,6 +290,8 @@ pub(super) struct Events {
     pub media_access: Slot<dyn FnMut(u64, String, u32)>,
     /// The page started or stopped using the camera (video) / the microphone (audio).
     pub media_use: Slot<dyn FnMut(bool, bool)>,
+    /// A DevTools protocol event (method, params); the extensions' binding and contexts.
+    pub devtools_event: Slot<dyn FnMut(String, serde_json::Value)>,
 }
 
 /// Remembered until the browser exists.
@@ -1146,6 +1152,16 @@ impl View {
         self.0.ev.audio.set(Box::new(f));
     }
 
+    /// A DevTools protocol event arrived (after a domain was enabled with a method call).
+    pub fn on_devtools_event(&self, f: impl FnMut(String, serde_json::Value) + 'static) {
+        self.0.ev.devtools_event.set(Box::new(f));
+    }
+
+    /// The same browser view.
+    pub fn same(&self, other: &View) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
+    }
+
     /// A frame sent a pointer-lock message: `(frame identifier, JSON)`.
     pub fn on_pointer_lock(&self, f: impl FnMut(String, String) + 'static) {
         self.0.ev.pointer.set(Box::new(f));
@@ -1173,6 +1189,13 @@ impl View {
 impl ViewInner {
     /// A DevTools protocol call finished: failures are logged, a waiting
     /// callback gets the result.
+    pub(super) fn devtools_event(&self, method: &str, params: &[u8]) {
+        if self.ev.devtools_event.is_set() {
+            let value = serde_json::from_slice(params).unwrap_or(serde_json::Value::Null);
+            self.ev.devtools_event.with(|f| f(method.to_string(), value));
+        }
+    }
+
     pub(super) fn devtools_result(&self, id: i32, success: bool, result: &[u8]) {
         let Some((method, done)) = self.devtools_calls.borrow_mut().remove(&id) else { return };
         if !success {

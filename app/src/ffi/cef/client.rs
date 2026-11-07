@@ -4,7 +4,7 @@
 //! touches only the view's `Send + Sync` network policy.
 
 use super::net::{self, RequestPolicy};
-use super::renderer::{AUDIO_TO_BROWSER, PID_TO_BROWSER, POINTER_TO_BROWSER, TO_BROWSER};
+use super::renderer::{AUDIO_TO_BROWSER, DEBUG_TO_BROWSER, PID_TO_BROWSER, POINTER_TO_BROWSER, TO_BROWSER};
 use super::view::{
     child_window_info, lookup, DownloadControl, DownloadStart, DownloadStatus, DownloadUpdate, KeyPress, LoadingState,
     MessageSource, NavigationStart, NewWindow, Role, View, ViewInner,
@@ -112,6 +112,11 @@ wrap_client! {
                 if let Some(view) = lookup(self.key) {
                     view.ev.pointer.with(|f| f(id, json));
                 }
+                return 1;
+            }
+            if name == DEBUG_TO_BROWSER {
+                let text = message.argument_list().map(|a| CefString::from(&a.string(0)).to_string()).unwrap_or_default();
+                crate::log::info!("renderer: {text}");
                 return 1;
             }
             if name == PID_TO_BROWSER {
@@ -901,6 +906,13 @@ wrap_dev_tools_message_observer! {
         ) {
             if let Some(view) = lookup(self.key) {
                 view.devtools_result(message_id, success == 1, result.unwrap_or_default());
+            }
+        }
+
+        fn on_dev_tools_event(&self, _browser: Option<&mut Browser>, method: Option<&CefString>, params: Option<&[u8]>) {
+            if let Some(view) = lookup(self.key) {
+                let method = method.map(|m| m.to_string()).unwrap_or_default();
+                view.devtools_event(&method, params.unwrap_or_default());
             }
         }
     }

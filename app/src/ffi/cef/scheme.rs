@@ -44,6 +44,18 @@ pub(super) fn register(ctx: Option<RequestContext>, with_shell: bool) {
     }
 }
 
+/// Registers the factory for one more host on the default profile (an extension's origin,
+/// 0.6.0). Registering a host twice is harmless.
+pub(super) fn register_host(ctx: Option<RequestContext>, host: &str) {
+    let Some(ctx) = ctx else { return };
+    let mut factory = InternalFactory::new();
+    ctx.register_scheme_handler_factory(
+        Some(&CefString::from("https")),
+        Some(&CefString::from(host)),
+        Some(&mut factory),
+    );
+}
+
 fn host_of(origin: &str) -> &str {
     origin.strip_prefix("https://").unwrap_or(origin)
 }

@@ -1,0 +1,1974 @@
+//! Extensions (Krunk 0.6.0, R26): installation, state and runtime of Krunk's own Manifest V3
+//! subset (`lb_core::ext` has the pure parts).
+//!
+//! * Packages (zip, CRX3, a folder, a Web Store address) are unpacked into
+//!   `extensions\<id>\`; `extensions\state.json` keeps what is installed, enabled and
+//!   allowed in private tabs; `extensions\<id>.storage.json` is `chrome.storage`.
+//! * Content scripts run in the isolated world `krunk-ext` of every web tab: the bundle
+//!   (`core::ext::content_bundle`) is installed with `Page.addScriptToEvaluateOnNewDocument`,
+//!   calls come back through the DevTools binding `__krunkExt`, replies go in with
+//!   `Runtime.evaluate` in that world. Krunk's own origins never get the bundle (the bundle
+//!   refuses them too) and private tabs only get extensions allowed there.
+//! * Extension pages live on `https://<id>.ext.krunk.invalid`: the background page Krunk
+//!   builds around the service worker (a hidden view), the action popup (a popup window)
+//!   and the options page (a tab). They talk through the page bridge like Krunk's pages.
+//! * Static declarativeNetRequest rules become filter lines of the blocker.
+
+use super::{Browser, TabId, UI_BACKGROUND};
+use crate::ffi::cef::{Role, Scripts, View, ViewOptions};
+use crate::ffi::window::{ScreenRect, Window, WindowEvents};
+use crate::ffi::{dialogs, http};
+use crate::log::{info, warning};
+use lb_core::ext::{self, Installed, Manifest};
+use lb_core::pages::Page;
+use lb_core::protocol::Channel;
+use lb_core::protocol::{Event, ExtAction, PopupRect};
+use lb_core::settings::{updater_proxy, UpdaterProxy};
+use lb_core::storage::now_ms;
+use lb_core::{assets, layout};
+use serde_json::{json, Value};
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::rc::{Rc, Weak};
+
+/// Largest file served from a package.
+const MAX_FILE_BYTES: u64 = 32 * 1024 * 1024;
+/// The Web Store download limit and timeout.
+const MAX_CRX_BYTES: usize = ext::MAX_PACKAGE_BYTES;
+const CRX_TIMEOUT_MS: i32 = 60_000;
+/// A message to a receiver that never answers is dropped after this.
+const MESSAGE_TIMEOUT_MS: i64 = 30_000;
+/// The action popup's size until the page reports its own, and its bounds.
+const POPUP_DEFAULT: (f64, f64) = (360.0, 240.0);
+const POPUP_MAX: (f64, f64) = (800.0, 600.0);
+const POPUP_MIN: (f64, f64) = (25.0, 25.0);
+
+/// An installed extension as loaded from disk.
+pub(super) struct LoadedExt {
+    pub installed: Installed,
+    pub manifest: Manifest,
+    pub root: PathBuf,
+    pub messages_json: String,
+    pub dnr_filters: String,
+    /// `chrome.action` state set at runtime.
+    pub action_title: String,
+    pub action_popup: Option<String>,
+    pub action_icon: Option<String>,
+    pub badge: String,
+    pub badge_color: String,
+    /// APIs the extension reached for at runtime that Krunk does not provide.
+    pub runtime_unsupported: Vec<String>,
+}
+
+impl LoadedExt {
+    fn origin(&self) -> String {
+        ext::origin(&self.installed.id)
+    }
+
+    fn has_tabs_permission(&self) -> bool {
+        self.manifest.permissions.iter().any(|p| p == "tabs" || p == "activeTab")
+    }
+
+    fn action(&self) -> Option<ExtAction> {
+        let a = self.manifest.action.as_ref()?;
+        let icon = self.action_icon.clone().or_else(|| self.manifest.action_icon());
+        let title = if self.action_title.is_empty() {
+            a.default_title.clone().unwrap_or_else(|| self.installed.name.clone())
+        } else {
+            self.action_title.clone()
+        };
+        Some(ExtAction {
+            id: self.installed.id.clone(),
+            title,
+            icon: icon.map(|p| format!("{}/{}", self.origin(), p.trim_start_matches('/'))),
+            badge: self.badge.clone(),
+            badge_color: self.badge_color.clone(),
+            has_popup: self.popup_path().is_some(),
+        })
+    }
+
+    fn popup_path(&self) -> Option<String> {
+        match &self.action_popup {
+            Some(p) if p.is_empty() => None,
+            Some(p) => Some(p.clone()),
+            None => self.manifest.action.as_ref()?.default_popup.clone().filter(|p| !p.is_empty()),
+        }
+    }
+}
+
+/// A content-script world of a tab's frame.
+#[derive(Debug, Clone)]
+struct ExtContext {
+    id: i64,
+    unique: String,
+    main: bool,
+}
+
+/// Who asked, so the answer finds its way back.
+#[derive(Clone)]
+enum Caller {
+    /// A content script: the tab, the world's context and the script's request id.
+    Content { tab: TabId, context: i64, req: u64 },
+    /// An extension page in a view (background, popup) or a tab (options).
+    Page { view: View, req: Option<u32> },
+}
+
+/// The action popup window.
+struct ExtPopup {
+    window: Window,
+    view: View,
+    ext: String,
+    anchor: ScreenRect,
+    scale: f64,
+    /// Shown once the page has loaded (a browser created inside an already active window
+    /// took the activation away again).
+    shown: bool,
+    opened_at: i64,
+}
+
+/// A background page: hidden view; events wait until its scripts ran (the listeners exist).
+struct Background {
+    window: Window,
+    view: View,
+    ready: bool,
+    queued: Vec<String>,
+}
+
+pub(super) struct ExtHost {
+    pub(super) exts: RefCell<Vec<LoadedExt>>,
+    /// Bundles for normal and private tabs (empty: nothing to install).
+    bundles: RefCell<(String, String)>,
+    storage: RefCell<HashMap<String, serde_json::Map<String, Value>>>,
+    backgrounds: RefCell<HashMap<String, Background>>,
+    popup: RefCell<Option<ExtPopup>>,
+    /// Messages waiting for `respond`.
+    pending: RefCell<HashMap<u64, Caller>>,
+    next_id: Cell<u64>,
+    /// Alarm generations (a cleared alarm's timer finds a newer generation and stops).
+    alarms: RefCell<HashMap<String, (u64, Value)>>,
+    /// The extension id of the page whose request is being dispatched.
+    pub(super) request_origin: RefCell<Option<String>>,
+    /// Per tab: the identifier of the installed bundle script.
+    scripts: RefCell<HashMap<TabId, String>>,
+    contexts: RefCell<HashMap<TabId, Vec<ExtContext>>>,
+}
+
+impl ExtHost {
+    pub(super) fn new() -> ExtHost {
+        ExtHost {
+            exts: RefCell::new(Vec::new()),
+            bundles: RefCell::new((String::new(), String::new())),
+            storage: RefCell::new(HashMap::new()),
+            backgrounds: RefCell::new(HashMap::new()),
+            popup: RefCell::new(None),
+            pending: RefCell::new(HashMap::new()),
+            next_id: Cell::new(1),
+            alarms: RefCell::new(HashMap::new()),
+            request_origin: RefCell::new(None),
+            scripts: RefCell::new(HashMap::new()),
+            contexts: RefCell::new(HashMap::new()),
+        }
+    }
+}
+
+struct BackgroundEvents;
+impl WindowEvents for BackgroundEvents {}
+
+struct ExtPopupEvents(Weak<Browser>);
+impl WindowEvents for ExtPopupEvents {
+    fn activated(&self, active: bool) {
+        if !active {
+            if let Some(b) = self.0.upgrade() {
+                // A hidden popup (its page still loading; the browser created inside it
+                // hands activation around) is not the user leaving, nor is activation
+                // handed back right after showing: take it again, once.
+                let (hidden, fresh, own) = b
+                    .ext
+                    .popup
+                    .borrow()
+                    .as_ref()
+                    .map(|p| (!p.shown, p.shown && now_ms() - p.opened_at < 400, p.window.owns_foreground()))
+                    .unwrap_or((true, false, false));
+                // A click inside the popup moves the focus to the browser view in it: that
+                // is still the popup.
+                if hidden || own {
+                    return;
+                }
+                if fresh {
+                    if let Some(p) = b.ext.popup.borrow().as_ref() {
+                        p.window.show_at(p.window.rect(), true);
+                    }
+                    return;
+                }
+                b.close_ext_popup_because("it lost activation");
+            }
+        }
+    }
+}
+
+fn read_json(path: &Path) -> Option<Value> {
+    serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
+}
+
+/// Reads every file under `dir` (relative names with `/`), within the package limits.
+fn read_tree(dir: &Path) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let mut out = Vec::new();
+    let mut total = 0usize;
+    let mut stack = vec![(dir.to_path_buf(), String::new())];
+    while let Some((d, prefix)) = stack.pop() {
+        let rd = std::fs::read_dir(&d).map_err(|e| format!("{}: {e}", d.display()))?;
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            let rel = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
+            let p = e.path();
+            if p.is_dir() {
+                if !name.starts_with('.') {
+                    stack.push((p, rel));
+                }
+                continue;
+            }
+            if !ext::safe_relative_path(&rel) {
+                continue;
+            }
+            let bytes = std::fs::read(&p).map_err(|e| format!("{rel}: {e}"))?;
+            total += bytes.len();
+            if total > ext::MAX_PACKAGE_BYTES || out.len() >= ext::MAX_PACKAGE_FILES {
+                return Err("the folder is too large for an extension".into());
+            }
+            out.push((rel, bytes));
+        }
+    }
+    Ok(out)
+}
+
+/// The package's files with a single top-level folder stripped (zips made from a folder).
+fn normalize_entries(mut files: Vec<(String, Vec<u8>)>) -> Vec<(String, Vec<u8>)> {
+    if files.iter().any(|(n, _)| n == "manifest.json") {
+        return files;
+    }
+    let prefixes: Vec<String> =
+        files.iter().filter_map(|(n, _)| n.split_once('/').map(|(p, _)| p.to_string())).collect();
+    if let Some(first) = prefixes.first() {
+        if prefixes.iter().all(|p| p == first) && files.iter().any(|(n, _)| n == &format!("{first}/manifest.json")) {
+            for (n, _) in files.iter_mut() {
+                *n = n[first.len() + 1..].to_string();
+            }
+        }
+    }
+    files
+}
+
+impl Browser {
+    // ------------------------------------------------------------ start-up and state
+
+    fn ext_dir(&self) -> PathBuf {
+        self.dirs.root().join("extensions")
+    }
+
+    fn ext_state_path(&self) -> PathBuf {
+        self.ext_dir().join("state.json")
+    }
+
+    /// Loads the installed extensions at start-up.
+    pub(super) fn init_extensions(&self) {
+        let list: Vec<Installed> =
+            read_json(&self.ext_state_path()).and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
+        let mut loaded = Vec::new();
+        for inst in list {
+            match self.load_ext(inst.clone()) {
+                Ok(l) => loaded.push(l),
+                Err(e) => warning!("extension {} ({}): not loaded: {e}", inst.name, inst.id),
+            }
+        }
+        let n = loaded.len();
+        *self.ext.exts.borrow_mut() = loaded;
+        if n > 0 {
+            info!(
+                "extensions: {n} installed ({} enabled)",
+                self.ext.exts.borrow().iter().filter(|e| e.installed.enabled).count()
+            );
+        }
+        self.ext_apply_all(false);
+        let ids: Vec<String> = self.ext.exts.borrow().iter().map(|e| e.installed.id.clone()).collect();
+        for id in ids {
+            self.ext_send_background(&id, "startup", json!({}));
+        }
+    }
+
+    fn load_ext(&self, installed: Installed) -> Result<LoadedExt, String> {
+        if !ext::valid_id(&installed.id) {
+            return Err("bad id".into());
+        }
+        let root = self.ext_dir().join(&installed.id);
+        let text = std::fs::read_to_string(root.join("manifest.json")).map_err(|e| format!("manifest.json: {e}"))?;
+        let manifest = Manifest::parse(&text).map_err(|e| e.to_string())?;
+        let messages_json = Self::ext_messages(&root, &manifest, &self.ext_languages());
+        let dnr_filters = Self::ext_dnr_text(&root, &manifest, &installed.name).0;
+        Ok(LoadedExt {
+            installed,
+            manifest,
+            root,
+            messages_json,
+            dnr_filters,
+            action_title: String::new(),
+            action_popup: None,
+            action_icon: None,
+            badge: String::new(),
+            badge_color: String::new(),
+            runtime_unsupported: Vec::new(),
+        })
+    }
+
+    /// The user's languages (the Accept-Language setting, else the engine's).
+    fn ext_languages(&self) -> Vec<String> {
+        let s = self.settings.borrow();
+        let list = if s.headers.accept_language.trim().is_empty() {
+            "en-US,en".to_string()
+        } else {
+            s.headers.accept_language.clone()
+        };
+        list.split(',')
+            .map(|l| l.trim().split(';').next().unwrap_or("").to_string())
+            .filter(|l| !l.is_empty())
+            .collect()
+    }
+
+    /// `_locales/<default_locale>/messages.json` (the user's language first, if present).
+    fn ext_messages(root: &Path, manifest: &Manifest, languages: &[String]) -> String {
+        let mut candidates: Vec<String> = Vec::new();
+        for lang in languages {
+            candidates.push(lang.replace('-', "_"));
+            if let Some((base, _)) = lang.split_once('-') {
+                candidates.push(base.to_string());
+            }
+        }
+        if let Some(d) = &manifest.default_locale {
+            candidates.push(d.clone());
+        }
+        candidates.push("en".into());
+        for c in candidates {
+            let p = root.join("_locales").join(&c).join("messages.json");
+            if let Ok(t) = std::fs::read_to_string(&p) {
+                if serde_json::from_str::<Value>(&t).is_ok() {
+                    return t;
+                }
+            }
+        }
+        String::new()
+    }
+
+    /// The enabled rule resources translated: (filter text, translated, skipped).
+    fn ext_dnr_text(root: &Path, manifest: &Manifest, name: &str) -> (String, usize, usize) {
+        let mut text = String::new();
+        let (mut t, mut s) = (0, 0);
+        if let Some(d) = &manifest.declarative_net_request {
+            for r in d.rule_resources.iter().filter(|r| r.enabled && ext::safe_relative_path(&r.path)) {
+                if let Ok(json) = std::fs::read_to_string(ext::file_path(root, &r.path)) {
+                    match ext::translate_dnr(&format!("{name} ({})", r.id), &json) {
+                        Ok(tr) => {
+                            text.push_str(&tr.filters);
+                            t += tr.translated;
+                            s += tr.skipped;
+                        }
+                        Err(e) => warning!("extension {name}: rules {}: {e}", r.id),
+                    }
+                }
+            }
+        }
+        (text, t, s)
+    }
+
+    fn save_ext_state(&self) {
+        let list: Vec<Installed> = self.ext.exts.borrow().iter().map(|e| e.installed.clone()).collect();
+        let _ = std::fs::create_dir_all(self.ext_dir());
+        if let Ok(json) = serde_json::to_string_pretty(&list) {
+            if let Err(e) = std::fs::write(self.ext_state_path(), json) {
+                warning!("extensions: state not saved: {e}");
+            }
+        }
+    }
+
+    /// Everything that follows a change: bundles, backgrounds, actions, filters, the scheme
+    /// hosts. `changed`: the list is sent to open krunk://extensions pages.
+    fn ext_apply_all(&self, changed: bool) {
+        for id in self.ext.exts.borrow().iter().map(|e| e.installed.id.clone()).collect::<Vec<_>>() {
+            crate::ffi::cef::register_scheme_host(&format!("{id}{}", ext::HOST_SUFFIX));
+        }
+        self.ext_rebuild_bundles();
+        self.ext_sync_backgrounds();
+        self.ext_send_actions();
+        self.ext_sync_filters();
+        if changed {
+            self.save_ext_state();
+            let list = self.ext_list_json();
+            for id in self.tabs_showing(Page::Extensions) {
+                self.reply(Some(id), Event::ExtChanged { extensions: list.clone() });
+            }
+        }
+    }
+
+    fn ext_rebuild_bundles(&self) {
+        let shim = assets::inject_script("ext-content.js");
+        let build = |private: bool| -> String {
+            let exts = self.ext.exts.borrow();
+            let list: Vec<ext::BundledExtension> = exts
+                .iter()
+                .filter(|e| e.installed.enabled && (!private || e.installed.allowed_in_private))
+                .filter(|e| !e.manifest.content_scripts.is_empty())
+                .map(|e| ext::BundledExtension {
+                    id: e.installed.id.clone(),
+                    manifest_json: serde_json::to_string(&e.manifest).unwrap_or_else(|_| "{}".into()),
+                    messages_json: e.messages_json.clone(),
+                    scripts: e
+                        .manifest
+                        .content_scripts
+                        .iter()
+                        .filter(|cs| cs.world.as_deref() != Some("MAIN"))
+                        .map(|cs| ext::BundledScript {
+                            id: e.installed.id.clone(),
+                            matches: cs.matches.clone(),
+                            exclude_matches: cs.exclude_matches.clone(),
+                            all_frames: cs.all_frames,
+                            run_at: cs.run_at.clone().unwrap_or_else(|| "document_idle".into()),
+                            js: cs
+                                .js
+                                .iter()
+                                .filter_map(|f| std::fs::read_to_string(ext::file_path(&e.root, f)).ok())
+                                .map(|src| format!("{src}\n//# sourceURL={}/{}", ext::origin(&e.installed.id), "cs"))
+                                .collect(),
+                            css: cs.css.clone(),
+                        })
+                        .collect(),
+                })
+                .collect();
+            if list.is_empty() {
+                String::new()
+            } else {
+                ext::content_bundle(shim, &list)
+            }
+        };
+        let bundles = (build(false), build(true));
+        let same = *self.ext.bundles.borrow() == bundles;
+        *self.ext.bundles.borrow_mut() = bundles;
+        if !same {
+            let views: Vec<(TabId, View, bool)> =
+                self.views.borrow().iter().map(|(id, v)| (*id, v.view.clone(), v.view.is_private())).collect();
+            for (id, view, private) in views {
+                self.ext_install_bundle(id, &view, private);
+            }
+        }
+    }
+
+    /// Installs (or replaces) the bundle in a tab's isolated world.
+    fn ext_install_bundle(&self, tab: TabId, view: &View, private: bool) {
+        let bundle = {
+            let b = self.ext.bundles.borrow();
+            if private {
+                b.1.clone()
+            } else {
+                b.0.clone()
+            }
+        };
+        if let Some(old) = self.ext.scripts.borrow_mut().remove(&tab) {
+            view.devtools_method("Page.removeScriptToEvaluateOnNewDocument", &json!({ "identifier": old }));
+        }
+        if bundle.is_empty() {
+            return;
+        }
+        let weak = self.me.clone();
+        let params = json!({ "source": bundle, "worldName": ext::WORLD_NAME, "runImmediately": true });
+        view.devtools_call("Page.addScriptToEvaluateOnNewDocument", &params, move |r| {
+            let Some(b) = weak.upgrade() else { return };
+            match r {
+                Ok(v) => {
+                    if let Some(id) = v.get("identifier").and_then(|i| i.as_str()) {
+                        info!("tab {tab}: extension scripts installed ({id})");
+                        b.ext.scripts.borrow_mut().insert(tab, id.to_string());
+                    }
+                }
+                Err(e) => warning!("tab {tab}: extension scripts not installed: {e}"),
+            }
+        });
+    }
+
+    /// A tab view is being set up: its DevTools events (the binding calls and the worlds).
+    pub(super) fn ext_attach_tab(&self, tab: TabId, view: &View) {
+        let weak = self.me.clone();
+        view.on_devtools_event(move |method, params| {
+            if let Some(b) = weak.upgrade() {
+                b.ext_devtools_event(tab, &method, &params);
+            }
+        });
+    }
+
+    /// The tab's browser exists now (DevTools calls before that are lost): the Page domain
+    /// (the scripts added below run on new documents only while it is on), the Runtime
+    /// domain (contexts, binding calls), the binding and the bundle.
+    pub(super) fn ext_tab_created(&self, tab: TabId) {
+        let Some(view) = self.tab_view(tab) else { return };
+        view.devtools_method("Page.enable", &json!({}));
+        view.devtools_method("Runtime.enable", &json!({}));
+        view.devtools_method(
+            "Runtime.addBinding",
+            &json!({ "name": ext::BINDING_NAME, "executionContextName": ext::WORLD_NAME }),
+        );
+        self.ext_install_bundle(tab, &view, view.is_private());
+    }
+
+    pub(super) fn ext_detach_tab(&self, tab: TabId) {
+        self.ext.scripts.borrow_mut().remove(&tab);
+        self.ext.contexts.borrow_mut().remove(&tab);
+        self.ext_tab_event("tabRemoved", json!({ "tabId": tab, "windowId": self.window_of(tab) }));
+    }
+
+    fn ext_devtools_event(&self, tab: TabId, method: &str, params: &Value) {
+        match method {
+            "Runtime.executionContextCreated" => {
+                let Some(ctx) = params.get("context") else { return };
+                if ctx.get("name").and_then(|n| n.as_str()) != Some(ext::WORLD_NAME) {
+                    return;
+                }
+                let id = ctx.get("id").and_then(|i| i.as_i64()).unwrap_or(0);
+                let unique = ctx.get("uniqueId").and_then(|u| u.as_str()).unwrap_or("").to_string();
+                info!("tab {tab}: extension world {id} created");
+                self.ext.contexts.borrow_mut().entry(tab).or_default().push(ExtContext { id, unique, main: false });
+                // Which frame: the main one gets tabs.sendMessage.
+                if let Some(view) = self.tab_view(tab) {
+                    let weak = self.me.clone();
+                    let params =
+                        json!({ "expression": "window.top === window", "contextId": id, "returnByValue": true });
+                    view.devtools_call("Runtime.evaluate", &params, move |r| {
+                        let Some(b) = weak.upgrade() else { return };
+                        let main = r.ok().and_then(|v| v.pointer("/result/value")?.as_bool()) == Some(true);
+                        let mut contexts = b.ext.contexts.borrow_mut();
+                        if let Some(c) = contexts.get_mut(&tab).and_then(|list| list.iter_mut().find(|c| c.id == id)) {
+                            c.main = main;
+                        }
+                    });
+                }
+            }
+            "Runtime.executionContextDestroyed" => {
+                let id = params.get("executionContextId").and_then(|i| i.as_i64());
+                let unique = params.get("executionContextUniqueId").and_then(|u| u.as_str()).map(str::to_string);
+                if let Some(list) = self.ext.contexts.borrow_mut().get_mut(&tab) {
+                    list.retain(|c| {
+                        Some(c.id) != id && (unique.is_none() || Some(c.unique.as_str()) != unique.as_deref())
+                    });
+                }
+            }
+            "Runtime.executionContextsCleared" => {
+                self.ext.contexts.borrow_mut().remove(&tab);
+            }
+            "Runtime.bindingCalled" => {
+                if params.get("name").and_then(|n| n.as_str()) != Some(ext::BINDING_NAME) {
+                    return;
+                }
+                let context = params.get("executionContextId").and_then(|i| i.as_i64()).unwrap_or(0);
+                let payload = params.get("payload").and_then(|p| p.as_str()).unwrap_or("");
+                let Ok(msg) = serde_json::from_str::<Value>(payload) else { return };
+                let ext_id = msg.get("ext").and_then(|e| e.as_str()).unwrap_or("").to_string();
+                let cmd = msg.get("cmd").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                info!("tab {tab}: extension {} call {cmd}", self.ext_name(&ext_id));
+                let data = msg.get("data").cloned().unwrap_or(Value::Null);
+                let req = msg.get("id").and_then(|i| i.as_u64());
+                let enabled = self.ext.exts.borrow().iter().any(|e| e.installed.id == ext_id && e.installed.enabled);
+                if !enabled {
+                    return;
+                }
+                let caller = Caller::Content { tab, context, req: req.unwrap_or(0) };
+                let result = self.ext_op(&caller, &ext_id, &cmd, data);
+                if let (Some(result), Some(req)) = (result, req) {
+                    self.ext_reply(&Caller::Content { tab, context, req }, &ext_id, result);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Delivers JSON to the content world of a tab (a reply or an event).
+    fn ext_deliver_content(&self, tab: TabId, context: i64, json: &Value) {
+        let Some(view) = self.tab_view(tab) else { return };
+        let text = serde_json::to_string(&json.to_string()).unwrap_or_else(|_| "\"\"".into());
+        let params = json!({ "expression": format!("window.__krunkExtDeliver && window.__krunkExtDeliver({text})"), "contextId": context, "returnByValue": true });
+        view.devtools_method("Runtime.evaluate", &params);
+    }
+
+    fn ext_reply(&self, caller: &Caller, ext_id: &str, result: Result<Value, String>) {
+        match caller {
+            Caller::Content { tab, context, req } => {
+                let msg = match result {
+                    Ok(data) => json!({ "ext": ext_id, "reply": req, "data": data }),
+                    Err(e) => json!({ "ext": ext_id, "reply": req, "error": e }),
+                };
+                self.ext_deliver_content(*tab, *context, &msg);
+            }
+            Caller::Page { view, req } => {
+                let ev = match result {
+                    Ok(data) => Event::ok(*req, data),
+                    Err(e) => Event::err(*req, e),
+                };
+                view.post_json(&ev.to_json());
+            }
+        }
+    }
+
+    // ------------------------------------------------------------ pages (background, popup, options)
+
+    /// A request from an extension page (`Request::Ext`): `tab` when the page is in a tab.
+    pub(super) fn ext_page_request(
+        &self,
+        tab: Option<TabId>,
+        req_id: Option<u32>,
+        ext_id: &str,
+        op: &str,
+        data: Value,
+    ) {
+        let origin = self.ext.request_origin.borrow().clone();
+        if origin.as_deref() != Some(ext_id) {
+            warning!("extension request for {ext_id} from another origin refused");
+            return;
+        }
+        let view = match tab {
+            Some(t) => self.tab_view(t),
+            None => self.ext_page_view(ext_id),
+        };
+        let Some(view) = view else { return };
+        let caller = Caller::Page { view, req: req_id };
+        if let Some(result) = self.ext_op(&caller, ext_id, op, data) {
+            self.ext_reply(&caller, ext_id, result);
+        }
+    }
+
+    /// The view a page request without a tab came from: the popup if it shows this
+    /// extension, else its background.
+    fn ext_page_view(&self, ext_id: &str) -> Option<View> {
+        if let Some(p) = self.ext.popup.borrow().as_ref().filter(|p| p.ext == ext_id) {
+            if self.ext_request_from_popup.get() {
+                return Some(p.view.clone());
+            }
+        }
+        self.ext.backgrounds.borrow().get(ext_id).map(|bg| bg.view.clone())
+    }
+
+    fn ext_send_background(&self, ext_id: &str, kind: &str, data: Value) {
+        let json = Event::Ext { ext: ext_id.to_string(), kind: kind.to_string(), data }.to_json();
+        if let Some(bg) = self.ext.backgrounds.borrow_mut().get_mut(ext_id) {
+            if bg.ready {
+                bg.view.post_json(&json);
+            } else {
+                bg.queued.push(json);
+            }
+        }
+    }
+
+    /// The background page finished loading: its listeners exist, queued events go out.
+    fn ext_background_ready(&self, ext_id: &str) {
+        let queued: Vec<String> = {
+            let mut map = self.ext.backgrounds.borrow_mut();
+            let Some(bg) = map.get_mut(ext_id) else { return };
+            bg.ready = true;
+            std::mem::take(&mut bg.queued)
+        };
+        if let Some(bg) = self.ext.backgrounds.borrow().get(ext_id) {
+            for json in queued {
+                bg.view.post_json(&json);
+            }
+        }
+    }
+
+    /// An event to every page of the extension (background and open popup).
+    fn ext_send_pages(&self, ext_id: &str, kind: &str, data: Value) {
+        self.ext_send_background(ext_id, kind, data.clone());
+        if let Some(p) = self.ext.popup.borrow().as_ref().filter(|p| p.ext == ext_id) {
+            p.view.post_json(&Event::Ext { ext: ext_id.to_string(), kind: kind.to_string(), data }.to_json());
+        }
+    }
+
+    fn ext_sync_backgrounds(&self) {
+        let wanted: Vec<(String, String, bool)> = self
+            .ext
+            .exts
+            .borrow()
+            .iter()
+            .filter(|e| e.installed.enabled)
+            .filter_map(|e| e.manifest.background_script().map(|(s, m)| (e.installed.id.clone(), s.to_string(), m)))
+            .collect();
+        let running: Vec<String> = self.ext.backgrounds.borrow().keys().cloned().collect();
+        for id in &running {
+            if !wanted.iter().any(|(w, _, _)| w == id) {
+                self.ext_stop_background(id);
+            }
+        }
+        for (id, _, _) in wanted {
+            if !running.contains(&id) {
+                self.ext_start_background(&id);
+            }
+        }
+    }
+
+    fn ext_start_background(&self, ext_id: &str) {
+        let Some(app) = self.app() else { return };
+        let window = match Window::create_popup(app, Rc::new(BackgroundEvents)) {
+            Ok(w) => w,
+            Err(e) => {
+                warning!("extension {ext_id}: background window: {e}");
+                return;
+            }
+        };
+        let view = self.ext_view(ext_id, false);
+        let weak = self.me.clone();
+        let id_owned = ext_id.to_string();
+        view.on_load_finished(move |_| {
+            if let Some(b) = weak.upgrade() {
+                b.ext_background_ready(&id_owned);
+            }
+        });
+        let url = format!("{}/_krunk/background.html", ext::origin(ext_id));
+        if let Err(e) = view.start(window.hwnd(), &url) {
+            warning!("extension {ext_id}: background page: {e}");
+            window.destroy();
+            return;
+        }
+        view.set_bounds(0, 0, 2, 2);
+        info!("extension {}: background page started", self.ext_name(ext_id));
+        self.ext
+            .backgrounds
+            .borrow_mut()
+            .insert(ext_id.to_string(), Background { window, view, ready: false, queued: Vec::new() });
+    }
+
+    fn ext_stop_background(&self, ext_id: &str) {
+        if let Some(bg) = self.ext.backgrounds.borrow_mut().remove(ext_id) {
+            bg.view.close();
+            bg.window.destroy();
+            info!("extension {}: background page stopped", self.ext_name(ext_id));
+        }
+    }
+
+    /// A view for an extension page (background or popup) of `ext_id`: own origin only.
+    fn ext_view(&self, ext_id: &str, popup: bool) -> View {
+        let view = View::new(ViewOptions {
+            role: Role::Popup,
+            private: false,
+            scripts: Scripts::default(),
+            background: if popup { UI_BACKGROUND } else { 0 },
+            policy: None,
+        });
+        let own = ext::origin(ext_id);
+        let weak = self.me.clone();
+        view.on_before_browse(move |nav| {
+            let ok = nav.url.starts_with(&format!("{own}/"));
+            if !ok {
+                // A link in a popup: a new tab, like target=_blank.
+                if let Some(b) = weak.upgrade() {
+                    if assets::allow_navigation(Channel::Tab, "", &nav.url, false) {
+                        b.open_url(&nav.url, true, false);
+                    }
+                }
+            }
+            ok
+        });
+        let weak = self.me.clone();
+        let from_popup = popup;
+        view.on_message(move |source, json| {
+            if let Some(b) = weak.upgrade() {
+                b.ext_request_from_popup.set(from_popup);
+                b.on_ui_message(Channel::Ext, None, source, json);
+                b.ext_request_from_popup.set(false);
+            }
+        });
+        let weak = self.me.clone();
+        view.on_open_tab(move |url, _foreground| {
+            if let Some(b) = weak.upgrade() {
+                b.open_url(&url, true, false);
+            }
+        });
+        view
+    }
+
+    /// Tabs showing a built-in page.
+    fn tabs_showing(&self, page: Page) -> Vec<TabId> {
+        let ws = self.ws.borrow();
+        let mut out = Vec::new();
+        for win in ws.window_ids() {
+            if let Some(m) = ws.model(win) {
+                for t in m.infos() {
+                    if m.get(t.id).is_some_and(|tab| Page::from_url(&tab.url) == Some(page)) {
+                        out.push(t.id);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    pub(super) fn ext_open_options_request(&self, id: &str) {
+        self.ext_open_options(id);
+    }
+
+    fn ext_proxy(&self) -> http::ProxyMode {
+        match updater_proxy(&self.settings.borrow().proxy) {
+            UpdaterProxy::Named(p) => http::ProxyMode::Named(p),
+            _ => http::ProxyMode::System,
+        }
+    }
+
+    fn ext_name(&self, ext_id: &str) -> String {
+        self.ext
+            .exts
+            .borrow()
+            .iter()
+            .find(|e| e.installed.id == ext_id)
+            .map(|e| e.installed.name.clone())
+            .unwrap_or_else(|| ext_id.to_string())
+    }
+
+    // ------------------------------------------------------------ the action button and popup
+
+    fn ext_actions(&self) -> Vec<ExtAction> {
+        self.ext.exts.borrow().iter().filter(|e| e.installed.enabled).filter_map(LoadedExt::action).collect()
+    }
+
+    pub(super) fn ext_send_actions(&self) {
+        let actions = self.ext_actions();
+        self.post_shell(&Event::ExtActions { actions });
+    }
+
+    /// The toolbar button: the popup, or `action.onClicked` to the background.
+    pub(super) fn ext_action_clicked(&self, ext_id: &str, rect: PopupRect) {
+        let popup = self
+            .ext
+            .exts
+            .borrow()
+            .iter()
+            .find(|e| e.installed.id == ext_id && e.installed.enabled)
+            .and_then(|e| e.popup_path());
+        match popup {
+            Some(p) => self.open_ext_popup(ext_id, &p, rect),
+            None => {
+                let tab = self.active_id().map(|t| self.ext_tab_json(ext_id, t)).unwrap_or(Value::Null);
+                self.ext_send_background(ext_id, "actionClicked", json!({ "tab": tab }));
+            }
+        }
+    }
+
+    fn open_ext_popup(&self, ext_id: &str, path: &str, rect: PopupRect) {
+        self.close_ext_popup();
+        self.hide_popup();
+        let Some(win) = self.cur_id() else { return };
+        let Some(f) = self.frame(win) else { return };
+        let scale = f.window.scale();
+        let origin = f.window.client_to_screen(0, 0);
+        let anchor = ScreenRect {
+            x: origin.0 + (rect.x * scale).round() as i32,
+            y: origin.1 + (rect.y * scale).round() as i32,
+            width: (rect.width * scale).round() as i32,
+            height: (rect.height * scale).round() as i32,
+        };
+        let window = match Window::create_popup(f.window, Rc::new(ExtPopupEvents(self.me.clone()))) {
+            Ok(w) => w,
+            Err(e) => {
+                warning!("extension popup: {e}");
+                return;
+            }
+        };
+        let view = self.ext_view(ext_id, true);
+        let weak = self.me.clone();
+        view.on_load_finished(move |_| {
+            if let Some(b) = weak.upgrade() {
+                b.show_ext_popup();
+            }
+        });
+        let url = format!("{}/{}", ext::origin(ext_id), path.trim_start_matches('/'));
+        if let Err(e) = view.start(window.hwnd(), &url) {
+            warning!("extension popup: {e}");
+            window.destroy();
+            return;
+        }
+        // The largest size first (hidden): the page measures its body and reports.
+        view.set_bounds(0, 0, (POPUP_MAX.0 * scale) as i32, (POPUP_MAX.1 * scale) as i32);
+        let popup =
+            ExtPopup { window, view, ext: ext_id.to_string(), anchor, scale, shown: false, opened_at: now_ms() };
+        *self.ext.popup.borrow_mut() = Some(popup);
+        info!("extension {}: popup loading", self.ext_name(ext_id));
+    }
+
+    /// The popup page loaded: if it has not reported a size within a moment, show it at the
+    /// default size (the report shows it at its own size first).
+    fn show_ext_popup(&self) {
+        let weak = self.me.clone();
+        crate::ffi::cef::post_ui_delayed(600, move || {
+            if let Some(b) = weak.upgrade() {
+                // Only a popup that never reported its size; a shown one keeps its size.
+                let unshown = b.ext.popup.borrow().as_ref().is_some_and(|p| !p.shown);
+                if unshown {
+                    b.show_ext_popup_sized(POPUP_DEFAULT.0, POPUP_DEFAULT.1);
+                }
+            }
+        });
+    }
+
+    fn show_ext_popup_sized(&self, w: f64, h: f64) {
+        let mut guard = self.ext.popup.borrow_mut();
+        let Some(p) = guard.as_mut() else { return };
+        if p.shown {
+            self.place_ext_popup(p, w, h);
+            return;
+        }
+        p.shown = true;
+        p.opened_at = now_ms();
+        self.place_ext_popup(p, w, h);
+        p.view.set_visible(true);
+        p.view.focus();
+        info!("extension {}: popup opened ({}x{})", self.ext_name(&p.ext), w as i32, h as i32);
+    }
+
+    /// Places the popup under its button, `w`×`h` CSS px, within the work area.
+    fn place_ext_popup(&self, p: &ExtPopup, w: f64, h: f64) {
+        let w = w.clamp(POPUP_MIN.0, POPUP_MAX.0);
+        let h = h.clamp(POPUP_MIN.1, POPUP_MAX.1);
+        let work = Window::work_area_at(p.anchor.x, p.anchor.y);
+        // The popup's rect in shell CSS px (right-aligned under the button), as the other
+        // popups are placed; the screen origin is the anchor's window.
+        let css = PopupRect {
+            x: f64::from(p.anchor.width) / p.scale - w,
+            y: f64::from(p.anchor.height) / p.scale + 2.0,
+            width: w,
+            height: h,
+        };
+        let r = layout::popup_screen_rect(
+            css,
+            p.scale,
+            (p.anchor.x, p.anchor.y),
+            layout::Rect { x: work.x, y: work.y, width: work.width, height: work.height },
+        );
+        p.window.set_activatable(true);
+        p.window.show_at(ScreenRect { x: r.x, y: r.y, width: r.width, height: r.height }, true);
+        p.view.set_bounds(0, 0, r.width, r.height);
+    }
+
+    pub(super) fn close_ext_popup(&self) {
+        self.close_ext_popup_because("closed");
+    }
+
+    fn close_ext_popup_because(&self, why: &str) {
+        if let Some(p) = self.ext.popup.borrow_mut().take() {
+            info!("extension {}: popup {why}", self.ext_name(&p.ext));
+            p.view.close();
+            p.window.destroy();
+        }
+    }
+
+    // ------------------------------------------------------------ the API
+
+    /// Runs one `chrome.*` operation. `None`: the answer comes later (messaging).
+    fn ext_op(&self, caller: &Caller, ext_id: &str, op: &str, data: Value) -> Option<Result<Value, String>> {
+        let get_str = |k: &str| data.get(k).and_then(|v| v.as_str()).map(str::to_string);
+        let result: Result<Value, String> = match op {
+            "ready" => Ok(Value::Null),
+            "log" => {
+                let text = get_str("text").unwrap_or_default();
+                let text: String = text.chars().take(500).collect();
+                if get_str("level").as_deref() == Some("error") {
+                    warning!("extension {}: {text}", self.ext_name(ext_id));
+                } else {
+                    info!("extension {}: {text}", self.ext_name(ext_id));
+                }
+                Ok(Value::Null)
+            }
+            "unsupported" => {
+                let api: String = get_str("api").unwrap_or_default().chars().take(80).collect();
+                let name = self.ext_name(ext_id);
+                let mut exts = self.ext.exts.borrow_mut();
+                if let Some(e) = exts.iter_mut().find(|e| e.installed.id == ext_id) {
+                    if !e.runtime_unsupported.contains(&api) {
+                        e.runtime_unsupported.push(api.clone());
+                        info!("extension {name}: uses chrome.{api}, which Krunk does not provide");
+                    }
+                }
+                Ok(Value::Null)
+            }
+            "storage.get" | "storage.set" | "storage.remove" | "storage.clear" | "storage.bytes" => {
+                self.ext_storage_op(ext_id, op, &data)
+            }
+            "runtime.sendMessage" => {
+                let message = data.get("message").cloned().unwrap_or(Value::Null);
+                return self.ext_route_message(caller, ext_id, message, None);
+            }
+            "respond" => {
+                let id = data.get("id").and_then(|i| i.as_u64()).unwrap_or(0);
+                if let Some(target) = self.ext.pending.borrow_mut().remove(&id) {
+                    let reply = data.get("data").cloned().unwrap_or(Value::Null);
+                    self.ext_reply(&target, ext_id, Ok(reply));
+                }
+                Ok(Value::Null)
+            }
+            "tabs.query" => Ok(Value::Array(self.ext_tabs_query(ext_id, &data))),
+            "tabs.get" => {
+                let id = data.get("tabId").and_then(|i| i.as_u64()).unwrap_or(0) as TabId;
+                if self.window_of(id).is_some() {
+                    Ok(self.ext_tab_json(ext_id, id))
+                } else {
+                    Err(format!("No tab with id: {id}."))
+                }
+            }
+            "tabs.getCurrent" => Ok(match caller {
+                Caller::Content { tab, .. } => self.ext_tab_json(ext_id, *tab),
+                Caller::Page { view, .. } => self
+                    .views
+                    .borrow()
+                    .iter()
+                    .find(|(_, v)| v.view.same(view))
+                    .map(|(id, _)| self.ext_tab_json(ext_id, *id))
+                    .unwrap_or(Value::Null),
+            }),
+            "tabs.create" => {
+                let url = get_str("url").unwrap_or_else(|| lb_core::pages::Page::NewTab.url());
+                let url = self.ext_resolve_url(ext_id, &url);
+                if !assets::allow_navigation(Channel::Tab, "", &url, true) {
+                    return Some(Err("That address cannot be opened.".into()));
+                }
+                let active = data.get("active").and_then(|a| a.as_bool()).unwrap_or(true);
+                self.open_url(&url, true, false);
+                let id = self.active_id();
+                if !active {
+                    // Chrome opens it in the background; Krunk's new tab is active: leave it.
+                }
+                Ok(id.map(|t| self.ext_tab_json(ext_id, t)).unwrap_or(Value::Null))
+            }
+            "tabs.update" => {
+                let id = data.get("tabId").and_then(|i| i.as_u64()).map(|i| i as TabId).or_else(|| self.active_id());
+                let Some(id) = id else { return Some(Err("No active tab.".into())) };
+                if let Some(url) = data.pointer("/props/url").and_then(|u| u.as_str()) {
+                    let url = self.ext_resolve_url(ext_id, url);
+                    if !assets::allow_navigation(Channel::Tab, "", &url, true) {
+                        return Some(Err("That address cannot be opened.".into()));
+                    }
+                    if let Some(v) = self.tab_view(id) {
+                        v.navigate(&url);
+                    }
+                }
+                if data.pointer("/props/active").and_then(|a| a.as_bool()) == Some(true) {
+                    self.ext_activate_tab(id);
+                }
+                Ok(self.ext_tab_json(ext_id, id))
+            }
+            "tabs.remove" => {
+                for id in data.get("tabIds").and_then(|t| t.as_array()).cloned().unwrap_or_default() {
+                    if let Some(id) = id.as_u64() {
+                        self.close_tab(id as TabId);
+                    }
+                }
+                Ok(Value::Null)
+            }
+            "tabs.reload" => {
+                let id = data.get("tabId").and_then(|i| i.as_u64()).map(|i| i as TabId).or_else(|| self.active_id());
+                if let Some(v) = id.and_then(|i| self.tab_view(i)) {
+                    v.reload();
+                }
+                Ok(Value::Null)
+            }
+            "tabs.sendMessage" => {
+                let Some(id) = data.get("tabId").and_then(|i| i.as_u64()).map(|i| i as TabId) else {
+                    return Some(Err("tabs.sendMessage needs a tab id".into()));
+                };
+                let message = data.get("message").cloned().unwrap_or(Value::Null);
+                return self.ext_route_message(caller, ext_id, message, Some(id));
+            }
+            "runtime.openOptionsPage" => {
+                self.ext_open_options(ext_id);
+                Ok(Value::Null)
+            }
+            "runtime.reload" => {
+                self.ext_stop_background(ext_id);
+                self.ext_sync_backgrounds();
+                Ok(Value::Null)
+            }
+            "action.setTitle"
+            | "action.setPopup"
+            | "action.setIcon"
+            | "action.setBadgeText"
+            | "action.setBadgeBackgroundColor" => {
+                {
+                    let mut exts = self.ext.exts.borrow_mut();
+                    if let Some(e) = exts.iter_mut().find(|e| e.installed.id == ext_id) {
+                        match op {
+                            "action.setTitle" => {
+                                e.action_title = get_str("title").unwrap_or_default().chars().take(200).collect()
+                            }
+                            "action.setPopup" => e.action_popup = Some(get_str("popup").unwrap_or_default()),
+                            "action.setIcon" => e.action_icon = get_str("path").filter(|p| ext::safe_relative_path(p)),
+                            "action.setBadgeText" => {
+                                e.badge = get_str("text").unwrap_or_default().chars().take(4).collect()
+                            }
+                            _ => e.badge_color = Self::ext_color(data.get("color")),
+                        }
+                    }
+                }
+                self.ext_send_actions();
+                Ok(Value::Null)
+            }
+            "action.getTitle" | "action.getPopup" | "action.getBadgeText" => {
+                let exts = self.ext.exts.borrow();
+                let e = exts.iter().find(|e| e.installed.id == ext_id);
+                Ok(match (op, e) {
+                    ("action.getTitle", Some(e)) => json!(e.action().map(|a| a.title).unwrap_or_default()),
+                    ("action.getPopup", Some(e)) => {
+                        json!(e.popup_path().map(|p| format!("{}/{p}", e.origin())).unwrap_or_default())
+                    }
+                    (_, Some(e)) => json!(e.badge),
+                    _ => json!(""),
+                })
+            }
+            "alarms.create" => {
+                let name = get_str("name").unwrap_or_default();
+                let info = data.get("info").cloned().unwrap_or(json!({}));
+                self.ext_alarm_create(ext_id, &name, &info);
+                Ok(Value::Null)
+            }
+            "alarms.get" => {
+                let name = get_str("name").unwrap_or_default();
+                Ok(self
+                    .ext
+                    .alarms
+                    .borrow()
+                    .get(&format!("{ext_id}/{name}"))
+                    .map(|(_, a)| a.clone())
+                    .unwrap_or(Value::Null))
+            }
+            "alarms.getAll" => Ok(Value::Array(
+                self.ext
+                    .alarms
+                    .borrow()
+                    .iter()
+                    .filter(|(k, _)| k.starts_with(&format!("{ext_id}/")))
+                    .map(|(_, (_, a))| a.clone())
+                    .collect(),
+            )),
+            "alarms.clear" => {
+                let name = get_str("name").unwrap_or_default();
+                Ok(json!(self.ext.alarms.borrow_mut().remove(&format!("{ext_id}/{name}")).is_some()))
+            }
+            "alarms.clearAll" => {
+                self.ext.alarms.borrow_mut().retain(|k, _| !k.starts_with(&format!("{ext_id}/")));
+                Ok(json!(true))
+            }
+            "windows.getCurrent" => Ok(self.ext_window_json(self.cur_id())),
+            "windows.getAll" => {
+                Ok(Value::Array(self.all_frames().iter().map(|f| self.ext_window_json(Some(f.id))).collect()))
+            }
+            "scripting.executeScript" | "scripting.insertCSS" => self.ext_scripting(ext_id, op, &data),
+            "permissions.getAll" => {
+                let exts = self.ext.exts.borrow();
+                let e = exts.iter().find(|e| e.installed.id == ext_id);
+                Ok(json!({
+                    "permissions": e.map(|e| e.manifest.api_permissions().iter().map(|p| p.to_string()).collect::<Vec<_>>()).unwrap_or_default(),
+                    "origins": e.map(|e| e.manifest.scope()).unwrap_or_default(),
+                }))
+            }
+            "dnr.getEnabledRulesets" => {
+                let exts = self.ext.exts.borrow();
+                let ids: Vec<String> = exts
+                    .iter()
+                    .find(|e| e.installed.id == ext_id)
+                    .and_then(|e| e.manifest.declarative_net_request.as_ref())
+                    .map(|d| d.rule_resources.iter().filter(|r| r.enabled).map(|r| r.id.clone()).collect())
+                    .unwrap_or_default();
+                Ok(json!(ids))
+            }
+            "popupSize" => {
+                let w = data.get("width").and_then(|v| v.as_f64()).unwrap_or(POPUP_DEFAULT.0);
+                let h = data.get("height").and_then(|v| v.as_f64()).unwrap_or(POPUP_DEFAULT.1);
+                let mine = self.ext.popup.borrow().as_ref().is_some_and(|p| p.ext == ext_id);
+                if mine {
+                    self.show_ext_popup_sized(w, h);
+                }
+                Ok(Value::Null)
+            }
+            "closePopup" => {
+                if self.ext.popup.borrow().as_ref().is_some_and(|p| p.ext == ext_id) {
+                    self.close_ext_popup_because("Escape");
+                }
+                Ok(Value::Null)
+            }
+            other => Err(format!("chrome.{other} is not provided by Krunk")),
+        };
+        Some(result)
+    }
+
+    fn ext_color(v: Option<&Value>) -> String {
+        match v {
+            Some(Value::String(s)) => s.chars().take(32).collect(),
+            Some(Value::Array(a)) if a.len() >= 3 => {
+                let n = |i: usize| a.get(i).and_then(|x| x.as_u64()).unwrap_or(0).min(255);
+                format!("rgb({},{},{})", n(0), n(1), n(2))
+            }
+            _ => String::new(),
+        }
+    }
+
+    /// `chrome.runtime.getURL`-style resolution of a relative address.
+    fn ext_resolve_url(&self, ext_id: &str, url: &str) -> String {
+        if url.contains("://") || url.starts_with("about:") || url.starts_with("krunk://") {
+            lb_core::pages::Page::from_display(url).map(|p| p.url()).unwrap_or_else(|| url.to_string())
+        } else {
+            format!("{}/{}", ext::origin(ext_id), url.trim_start_matches('/'))
+        }
+    }
+
+    fn ext_open_options(&self, ext_id: &str) {
+        let page = self
+            .ext
+            .exts
+            .borrow()
+            .iter()
+            .find(|e| e.installed.id == ext_id)
+            .and_then(|e| e.manifest.options().map(str::to_string));
+        match page {
+            Some(p) => self.open_url(&format!("{}/{}", ext::origin(ext_id), p.trim_start_matches('/')), true, false),
+            None => info!("extension {}: no options page", self.ext_name(ext_id)),
+        }
+    }
+
+    fn ext_activate_tab(&self, id: TabId) {
+        let Some(win) = self.window_of(id) else { return };
+        let now = now_ms();
+        let ops =
+            self.ws.borrow_mut().update(win, |m| ((), m.activate(id, now))).map(|(_, ops)| ops).unwrap_or_default();
+        self.apply(ops);
+    }
+
+    fn ext_window_json(&self, win: Option<super::WindowId>) -> Value {
+        match win {
+            Some(w) => {
+                json!({ "id": w, "focused": self.cur_id() == Some(w), "incognito": false, "type": "normal", "state": "normal", "alwaysOnTop": false })
+            }
+            None => Value::Null,
+        }
+    }
+
+    /// A `chrome.tabs.Tab` for the extension: the address and title only with the `tabs`
+    /// permission or a host permission for the page.
+    fn ext_tab_json(&self, ext_id: &str, id: TabId) -> Value {
+        let Some(win) = self.window_of(id) else { return Value::Null };
+        let ws = self.ws.borrow();
+        let Some(m) = ws.model(win) else { return Value::Null };
+        let Some(t) = m.get(id) else { return Value::Null };
+        let index = m.infos().iter().position(|i| i.id == id).unwrap_or(0);
+        let active = m.active_id() == Some(id);
+        let exts = self.ext.exts.borrow();
+        let e = exts.iter().find(|e| e.installed.id == ext_id);
+        let may_see = e.is_some_and(|e| {
+            e.has_tabs_permission()
+                || e.manifest.scope().iter().filter_map(|p| ext::MatchPattern::parse(p)).any(|p| p.matches(&t.url))
+        });
+        let (audible, muted) =
+            self.views.borrow().get(&id).map(|v| (v.audio.get(), v.view.audio_muted())).unwrap_or((false, false));
+        let mut tab = json!({
+            "id": id, "windowId": win, "index": index, "active": active, "highlighted": active, "selected": active,
+            "pinned": false, "incognito": t.private, "discarded": t.asleep, "autoDiscardable": true,
+            "status": if t.loading { "loading" } else { "complete" }, "audible": audible, "mutedInfo": { "muted": muted },
+            "groupId": -1,
+        });
+        if may_see {
+            tab["url"] = json!(t.url);
+            tab["title"] = json!(t.title);
+            if let Some(f) = &t.favicon {
+                tab["favIconUrl"] = json!(f);
+            }
+        }
+        tab
+    }
+
+    fn ext_tabs_query(&self, ext_id: &str, q: &Value) -> Vec<Value> {
+        let active = q.get("active").and_then(|v| v.as_bool());
+        let current =
+            q.get("currentWindow").and_then(|v| v.as_bool()).or(q.get("lastFocusedWindow").and_then(|v| v.as_bool()));
+        let window_id = q.get("windowId").and_then(|v| v.as_u64());
+        let patterns: Vec<ext::MatchPattern> = match q.get("url") {
+            Some(Value::String(s)) => ext::MatchPattern::parse(s).into_iter().collect(),
+            Some(Value::Array(a)) => a.iter().filter_map(|s| s.as_str()).filter_map(ext::MatchPattern::parse).collect(),
+            _ => Vec::new(),
+        };
+        let mut out = Vec::new();
+        let cur = self.cur_id();
+        let wins: Vec<super::WindowId> = self.all_frames().iter().map(|f| f.id).collect();
+        for win in wins {
+            if current == Some(true) && Some(win) != cur {
+                continue;
+            }
+            if window_id.is_some_and(|w| w != u64::from(win)) {
+                continue;
+            }
+            let (ids, active_id, urls): (Vec<TabId>, Option<TabId>, Vec<String>) = {
+                let ws = self.ws.borrow();
+                let Some(m) = ws.model(win) else { continue };
+                let infos = m.infos();
+                (
+                    infos.iter().map(|i| i.id).collect(),
+                    m.active_id(),
+                    infos.iter().map(|i| m.get(i.id).map(|t| t.url.clone()).unwrap_or_default()).collect(),
+                )
+            };
+            for (i, id) in ids.iter().enumerate() {
+                if active.is_some_and(|a| a != (Some(*id) == active_id)) {
+                    continue;
+                }
+                if !patterns.is_empty() && !patterns.iter().any(|p| p.matches(&urls[i])) {
+                    continue;
+                }
+                out.push(self.ext_tab_json(ext_id, *id));
+            }
+        }
+        out
+    }
+
+    /// A tab changed, was activated or closed: the backgrounds that may see it hear about it.
+    pub(super) fn ext_tab_event(&self, kind: &str, data: Value) {
+        if self.ext.backgrounds.borrow().is_empty() {
+            return;
+        }
+        let ids: Vec<String> = self.ext.backgrounds.borrow().keys().cloned().collect();
+        for id in ids {
+            let mut d = data.clone();
+            if let Some(tab) = data.get("tabId").and_then(|t| t.as_u64()) {
+                if kind == "tabUpdated" {
+                    let t = self.ext_tab_json(&id, tab as TabId);
+                    let mut change = json!({ "status": t.get("status").cloned().unwrap_or(Value::Null) });
+                    if let Some(u) = t.get("url") {
+                        change["url"] = u.clone();
+                    }
+                    if let Some(u) = t.get("title") {
+                        change["title"] = u.clone();
+                    }
+                    d["changeInfo"] = change;
+                    d["tab"] = t;
+                }
+            }
+            self.ext_send_background(&id, kind, d);
+        }
+    }
+
+    // ------------------------------------------------------------ messaging
+
+    /// `runtime.sendMessage` (to the extension's pages) or `tabs.sendMessage` (to a tab's
+    /// content world). The answer arrives with `respond`.
+    fn ext_route_message(
+        &self,
+        caller: &Caller,
+        ext_id: &str,
+        message: Value,
+        to_tab: Option<TabId>,
+    ) -> Option<Result<Value, String>> {
+        let id = self.ext.next_id.get();
+        self.ext.next_id.set(id + 1);
+        let sender = match caller {
+            Caller::Content { tab, .. } => {
+                let t = self.ext_tab_json(ext_id, *tab);
+                let url = self.views.borrow().get(tab).map(|v| v.net.top_url()).unwrap_or_default();
+                json!({ "id": ext_id, "tab": t, "url": url, "frameId": 0, "origin": lb_core::urlclean::origin_of(&url) })
+            }
+            Caller::Page { .. } => json!({ "id": ext_id, "url": ext::origin(ext_id), "origin": ext::origin(ext_id) }),
+        };
+        match to_tab {
+            Some(tab) => {
+                let context = self
+                    .ext
+                    .contexts
+                    .borrow()
+                    .get(&tab)
+                    .and_then(|l| l.iter().find(|c| c.main).or(l.first()).map(|c| c.id));
+                let Some(context) = context else {
+                    return Some(Err("Could not establish connection. Receiving end does not exist.".into()));
+                };
+                self.ext.pending.borrow_mut().insert(id, caller.clone());
+                let msg = json!({ "ext": ext_id, "event": "message", "id": id, "data": message, "from": ext::origin(ext_id) });
+                self.ext_deliver_content(tab, context, &msg);
+            }
+            None => {
+                let has_pages = self.ext.backgrounds.borrow().contains_key(ext_id)
+                    || self.ext.popup.borrow().as_ref().is_some_and(|p| p.ext == ext_id);
+                if !has_pages {
+                    return Some(Err("Could not establish connection. Receiving end does not exist.".into()));
+                }
+                self.ext.pending.borrow_mut().insert(id, caller.clone());
+                self.ext_send_pages(ext_id, "message", json!({ "id": id, "data": message, "sender": sender }));
+            }
+        }
+        // A receiver that never answers: the caller gets undefined, as in Chrome.
+        let weak = self.me.clone();
+        let ext_owned = ext_id.to_string();
+        crate::ffi::cef::post_ui_delayed(MESSAGE_TIMEOUT_MS, move || {
+            if let Some(b) = weak.upgrade() {
+                if let Some(target) = b.ext.pending.borrow_mut().remove(&id) {
+                    b.ext_reply(&target, &ext_owned, Ok(Value::Null));
+                }
+            }
+        });
+        None
+    }
+
+    // ------------------------------------------------------------ storage
+
+    fn ext_storage_key(ext_id: &str, area: &str) -> String {
+        format!("{ext_id}/{area}")
+    }
+
+    fn ext_storage_load(&self, ext_id: &str, area: &str) {
+        let key = Self::ext_storage_key(ext_id, area);
+        if self.ext.storage.borrow().contains_key(&key) {
+            return;
+        }
+        let map = if area == "session" {
+            serde_json::Map::new()
+        } else {
+            read_json(&self.ext_dir().join(format!("{ext_id}.storage.json")))
+                .and_then(|v| v.get(area).and_then(|a| a.as_object()).cloned())
+                .unwrap_or_default()
+        };
+        self.ext.storage.borrow_mut().insert(key, map);
+    }
+
+    fn ext_storage_save(&self, ext_id: &str) {
+        let mut file = serde_json::Map::new();
+        {
+            let st = self.ext.storage.borrow();
+            for area in ["local", "sync"] {
+                if let Some(m) = st.get(&Self::ext_storage_key(ext_id, area)) {
+                    file.insert(area.into(), Value::Object(m.clone()));
+                }
+            }
+        }
+        let _ = std::fs::create_dir_all(self.ext_dir());
+        if let Err(e) =
+            std::fs::write(self.ext_dir().join(format!("{ext_id}.storage.json")), Value::Object(file).to_string())
+        {
+            warning!("extension {ext_id}: storage not saved: {e}");
+        }
+    }
+
+    fn ext_storage_op(&self, ext_id: &str, op: &str, data: &Value) -> Result<Value, String> {
+        let area = data.get("area").and_then(|a| a.as_str()).unwrap_or("local");
+        if !matches!(area, "local" | "sync" | "session") {
+            return Err("unknown storage area".into());
+        }
+        self.ext_storage_load(ext_id, area);
+        let key = Self::ext_storage_key(ext_id, area);
+        let keys: Option<Vec<String>> = match data.get("keys") {
+            Some(Value::String(s)) => Some(vec![s.clone()]),
+            Some(Value::Array(a)) => Some(a.iter().filter_map(|k| k.as_str().map(str::to_string)).collect()),
+            Some(Value::Object(o)) => Some(o.keys().cloned().collect()),
+            _ => None,
+        };
+        let mut changes = serde_json::Map::new();
+        let result = {
+            let mut st = self.ext.storage.borrow_mut();
+            let map = st.entry(key).or_default();
+            match op {
+                "storage.get" => {
+                    let mut out = serde_json::Map::new();
+                    match (&keys, data.get("keys")) {
+                        (None, _) => out = map.clone(),
+                        (Some(ks), Some(Value::Object(defaults))) => {
+                            for k in ks {
+                                if let Some(v) = map.get(k) {
+                                    out.insert(k.clone(), v.clone());
+                                } else if let Some(d) = defaults.get(k) {
+                                    out.insert(k.clone(), d.clone());
+                                }
+                            }
+                        }
+                        (Some(ks), _) => {
+                            for k in ks {
+                                if let Some(v) = map.get(k) {
+                                    out.insert(k.clone(), v.clone());
+                                }
+                            }
+                        }
+                    }
+                    Value::Object(out)
+                }
+                "storage.set" => {
+                    if let Some(Value::Object(items)) = data.get("items") {
+                        for (k, v) in items {
+                            let old = map.insert(k.clone(), v.clone());
+                            let mut c = json!({ "newValue": v });
+                            if let Some(o) = old {
+                                c["oldValue"] = o;
+                            }
+                            changes.insert(k.clone(), c);
+                        }
+                    }
+                    let size: usize = map.iter().map(|(k, v)| k.len() + v.to_string().len()).sum();
+                    if size > 10 * 1024 * 1024 {
+                        return Err("QUOTA_BYTES quota exceeded".into());
+                    }
+                    Value::Null
+                }
+                "storage.remove" => {
+                    for k in keys.unwrap_or_default() {
+                        if let Some(old) = map.remove(&k) {
+                            changes.insert(k, json!({ "oldValue": old }));
+                        }
+                    }
+                    Value::Null
+                }
+                "storage.clear" => {
+                    for (k, old) in map.iter() {
+                        changes.insert(k.clone(), json!({ "oldValue": old }));
+                    }
+                    map.clear();
+                    Value::Null
+                }
+                _ => {
+                    let bytes: usize = map
+                        .iter()
+                        .filter(|(k, _)| keys.as_ref().is_none_or(|ks| ks.contains(k)))
+                        .map(|(k, v)| k.len() + v.to_string().len())
+                        .sum();
+                    json!(bytes)
+                }
+            }
+        };
+        if !changes.is_empty() {
+            if area != "session" {
+                self.ext_storage_save(ext_id);
+            }
+            let data = json!({ "changes": changes, "area": area });
+            self.ext_send_pages(ext_id, "storageChanged", data.clone());
+            // Content worlds of every tab.
+            let targets: Vec<(TabId, i64)> =
+                self.ext.contexts.borrow().iter().flat_map(|(t, l)| l.iter().map(move |c| (*t, c.id))).collect();
+            let msg = json!({ "ext": ext_id, "event": "storageChanged", "changes": data["changes"], "area": area });
+            for (tab, ctx) in targets {
+                self.ext_deliver_content(tab, ctx, &msg);
+            }
+        }
+        Ok(result)
+    }
+
+    // ------------------------------------------------------------ alarms
+
+    fn ext_alarm_create(&self, ext_id: &str, name: &str, info: &Value) {
+        let key = format!("{ext_id}/{name}");
+        let generation = self.ext.next_id.get();
+        self.ext.next_id.set(generation + 1);
+        let minutes = |k: &str| info.get(k).and_then(|v| v.as_f64()).filter(|m| *m > 0.0);
+        let period = minutes("periodInMinutes");
+        let delay_ms = match (info.get("when").and_then(|w| w.as_f64()), minutes("delayInMinutes"), period) {
+            (Some(when), _, _) => (when as i64 - now_ms()).max(0),
+            (_, Some(d), _) => (d * 60_000.0) as i64,
+            (_, _, Some(p)) => (p * 60_000.0) as i64,
+            _ => 0,
+        };
+        let delay_ms = delay_ms.max(500);
+        let alarm = json!({ "name": name, "scheduledTime": now_ms() + delay_ms, "periodInMinutes": period });
+        self.ext.alarms.borrow_mut().insert(key.clone(), (generation, alarm));
+        self.ext_alarm_arm(ext_id.to_string(), key, generation, delay_ms);
+    }
+
+    fn ext_alarm_arm(&self, ext_id: String, key: String, generation: u64, delay_ms: i64) {
+        let weak = self.me.clone();
+        crate::ffi::cef::post_ui_delayed(delay_ms, move || {
+            let Some(b) = weak.upgrade() else { return };
+            let current = b.ext.alarms.borrow().get(&key).cloned();
+            let Some((g, alarm)) = current else { return };
+            if g != generation {
+                return;
+            }
+            b.ext_send_background(&ext_id, "alarm", json!({ "alarm": alarm }));
+            let period = alarm.get("periodInMinutes").and_then(|p| p.as_f64());
+            match period {
+                Some(p) => {
+                    let next = (p * 60_000.0) as i64;
+                    let mut a = alarm.clone();
+                    a["scheduledTime"] = json!(now_ms() + next);
+                    b.ext.alarms.borrow_mut().insert(key.clone(), (generation, a));
+                    b.ext_alarm_arm(ext_id, key, generation, next.max(500));
+                }
+                None => {
+                    b.ext.alarms.borrow_mut().remove(&key);
+                }
+            }
+        });
+    }
+
+    // ------------------------------------------------------------ scripting
+
+    fn ext_scripting(&self, ext_id: &str, op: &str, data: &Value) -> Result<Value, String> {
+        let Some(tab) = data.get("tabId").and_then(|t| t.as_u64()).map(|t| t as TabId).or_else(|| self.active_id())
+        else {
+            return Err("no tab".into());
+        };
+        let context =
+            self.ext.contexts.borrow().get(&tab).and_then(|l| l.iter().find(|c| c.main).or(l.first()).map(|c| c.id));
+        let Some(context) = context else {
+            return Err("The tab has no extension world (not a web page, or not allowed there).".into());
+        };
+        let root = self.ext.exts.borrow().iter().find(|e| e.installed.id == ext_id).map(|e| e.root.clone());
+        let Some(root) = root else { return Err("unknown extension".into()) };
+        let Some(view) = self.tab_view(tab) else { return Err("no such tab".into()) };
+        let files: Vec<String> = data
+            .get("files")
+            .and_then(|f| f.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+            .unwrap_or_default();
+        let mut code = String::new();
+        for f in files.iter().filter(|f| ext::safe_relative_path(f)) {
+            match std::fs::read_to_string(ext::file_path(&root, f)) {
+                Ok(src) => {
+                    if op == "scripting.insertCSS" {
+                        code.push_str(&format!("(function(){{var s=document.createElement('style');s.textContent={};document.documentElement.appendChild(s);}})();\n", serde_json::to_string(&src).unwrap_or_default()));
+                    } else {
+                        code.push_str(&src);
+                        code.push('\n');
+                    }
+                }
+                Err(e) => return Err(format!("{f}: {e}")),
+            }
+        }
+        if let Some(inline) = data.get("code").and_then(|c| c.as_str()) {
+            code.push_str(inline);
+        }
+        if let Some(css) = data.get("css").and_then(|c| c.as_str()) {
+            code.push_str(&format!("(function(){{var s=document.createElement('style');s.textContent={};document.documentElement.appendChild(s);}})();\n", serde_json::to_string(css).unwrap_or_default()));
+        }
+        if code.is_empty() {
+            return Err("nothing to run".into());
+        }
+        view.devtools_method(
+            "Runtime.evaluate",
+            &json!({ "expression": code, "contextId": context, "userGesture": true }),
+        );
+        Ok(json!([{ "frameId": 0, "result": null }]))
+    }
+
+    // ------------------------------------------------------------ filters (declarativeNetRequest)
+
+    fn ext_sync_filters(&self) {
+        let text: String = self
+            .ext
+            .exts
+            .borrow()
+            .iter()
+            .filter(|e| e.installed.enabled && !e.dnr_filters.is_empty())
+            .map(|e| e.dnr_filters.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.set_ext_filters(text);
+    }
+
+    // ------------------------------------------------------------ serving extension files
+
+    /// A request on an extension origin: the file, the generated background page, the
+    /// messages. `None` when the host is not an installed extension.
+    pub(super) fn ext_response(&self, url: &str) -> Option<crate::ffi::cef::InternalResponse> {
+        use crate::ffi::cef::InternalResponse;
+        use std::borrow::Cow;
+        let id = ext::id_of_url(url)?;
+        let (root, background, messages) = {
+            let exts = self.ext.exts.borrow();
+            let e = exts.iter().find(|e| e.installed.id == id)?;
+            (e.root.clone(), e.manifest.background_script().map(|(s, m)| (s.to_string(), m)), e.messages_json.clone())
+        };
+        let headers = |mime: &str| {
+            format!(
+                "Content-Type: {mime}\r\nContent-Security-Policy: {}\r\nX-Content-Type-Options: nosniff\r\n\
+                 Referrer-Policy: no-referrer\r\nCache-Control: no-cache\r\nAccess-Control-Allow-Origin: *",
+                ext::PAGE_CSP
+            )
+        };
+        let path = url::Url::parse(url).ok()?.path().to_string();
+        if path == "/_krunk/background.html" {
+            let (script, module) = background?;
+            let body = format!(
+                "<!doctype html><html><head><meta charset=\"utf-8\"><title>{id} background</title></head><body>\
+                 <script{} src=\"/{}\"></script></body></html>",
+                if module { " type=\"module\"" } else { "" },
+                script.trim_start_matches('/')
+            );
+            return Some(InternalResponse {
+                status: 200,
+                reason: "OK",
+                headers: headers("text/html; charset=utf-8"),
+                body: Cow::Owned(body.into_bytes()),
+            });
+        }
+        if path == "/_krunk/messages.json" {
+            let body = if messages.is_empty() { "{}".to_string() } else { messages };
+            return Some(InternalResponse {
+                status: 200,
+                reason: "OK",
+                headers: headers("application/json"),
+                body: Cow::Owned(body.into_bytes()),
+            });
+        }
+        let (_, rel) = ext::resolve_file(url)?;
+        let file = ext::file_path(&root, &rel);
+        let meta = std::fs::metadata(&file).ok()?;
+        if !meta.is_file() || meta.len() > MAX_FILE_BYTES {
+            return Some(InternalResponse::not_found());
+        }
+        let body = std::fs::read(&file).ok()?;
+        Some(InternalResponse {
+            status: 200,
+            reason: "OK",
+            headers: headers(ext::mime_for(&rel)),
+            body: Cow::Owned(body),
+        })
+    }
+
+    // ------------------------------------------------------------ installation
+
+    /// Installs a package's files under a fresh folder and loads it. `expect_id`: the Web
+    /// Store id the user asked for must be the package's.
+    fn ext_install_files(&self, files: Vec<(String, Vec<u8>)>, id: String, source: &str) -> Result<Installed, String> {
+        let files = normalize_entries(files);
+        let manifest_text = files
+            .iter()
+            .find(|(n, _)| n == "manifest.json")
+            .map(|(_, b)| String::from_utf8_lossy(b).into_owned())
+            .ok_or("the package has no manifest.json")?;
+        let manifest = Manifest::parse(&manifest_text).map_err(|e| e.to_string())?;
+        let dir = self.ext_dir().join(&id);
+        let staging = self.ext_dir().join(format!("{id}.new"));
+        let _ = std::fs::remove_dir_all(&staging);
+        std::fs::create_dir_all(&staging).map_err(|e| format!("{}: {e}", staging.display()))?;
+        for (name, bytes) in &files {
+            let p = ext::file_path(&staging, name);
+            if let Some(parent) = p.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| format!("{name}: {e}"))?;
+            }
+            std::fs::write(&p, bytes).map_err(|e| format!("{name}: {e}"))?;
+        }
+        let was = self.ext.exts.borrow().iter().find(|e| e.installed.id == id).map(|e| e.installed.clone());
+        if was.is_some() {
+            self.ext_stop_background(&id);
+            self.close_ext_popup();
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::rename(&staging, &dir).map_err(|e| format!("could not place the extension folder: {e}"))?;
+        // Localized name and description, the survey, the rules.
+        let messages = Self::ext_messages(&dir, &manifest, &self.ext_languages());
+        let msg_value: Value = serde_json::from_str(&messages).unwrap_or(json!({}));
+        let name = ext::localize(&manifest.name, &msg_value);
+        let description = ext::localize(&manifest.description, &msg_value);
+        let sources: Vec<String> = files
+            .iter()
+            .filter(|(n, _)| n.ends_with(".js") || n.ends_with(".mjs") || n.ends_with(".html"))
+            .map(|(_, b)| String::from_utf8_lossy(b).into_owned())
+            .collect();
+        let apis = ext::survey_apis(&sources.iter().map(String::as_str).collect::<Vec<_>>());
+        let (_, translated, skipped) = Self::ext_dnr_text(&dir, &manifest, &name);
+        let now = now_ms();
+        let installed = Installed {
+            id: id.clone(),
+            name: name.chars().take(75).collect(),
+            version: manifest.version.clone(),
+            description: description.chars().take(300).collect(),
+            enabled: was.as_ref().map(|w| w.enabled).unwrap_or(true),
+            allowed_in_private: was.as_ref().map(|w| w.allowed_in_private).unwrap_or(false),
+            source: source.to_string(),
+            installed_at: was.as_ref().map(|w| w.installed_at).unwrap_or(now),
+            updated_at: now,
+            apis,
+            dnr_translated: translated,
+            dnr_skipped: skipped,
+        };
+        let loaded = self.load_ext(installed.clone())?;
+        {
+            let mut exts = self.ext.exts.borrow_mut();
+            exts.retain(|e| e.installed.id != id);
+            exts.push(loaded);
+        }
+        let unsupported: Vec<String> = installed.apis.iter().filter(|a| !a.supported).map(|a| a.api.clone()).collect();
+        info!(
+            "extension installed: {} {} ({id}) from {source}; {} content script(s), background {}, {} rule(s) translated, {} skipped{}",
+            installed.name,
+            installed.version,
+            manifest.content_scripts.len(),
+            if manifest.background_script().is_some() { "yes" } else { "no" },
+            translated,
+            skipped,
+            if unsupported.is_empty() { String::new() } else { format!("; not provided: {}", unsupported.join(", ")) }
+        );
+        self.ext_apply_all(true);
+        let reason = if was.is_some() { "update" } else { "install" };
+        self.ext_send_background(
+            &id,
+            "installed",
+            json!({ "reason": reason, "previousVersion": was.map(|w| w.version) }),
+        );
+        Ok(installed)
+    }
+
+    /// A zip or CRX3 in memory.
+    fn ext_install_bytes(&self, bytes: &[u8], source: &str, expect_id: Option<&str>) -> Result<Installed, String> {
+        let (zip, id) = if bytes.starts_with(b"Cr24") {
+            let crx = ext::parse_crx(bytes).map_err(|e| e.to_string())?;
+            (crx.zip, Some(crx.id))
+        } else {
+            (bytes.to_vec(), None)
+        };
+        if let (Some(want), Some(got)) = (expect_id, id.as_deref()) {
+            if want != got {
+                return Err(format!("the package is signed for another id ({got}), not {want}"));
+            }
+        }
+        let entries = ext::unzip(&zip).map_err(|e| e.to_string())?;
+        let files: Vec<(String, Vec<u8>)> = entries.into_iter().map(|e| (e.name, e.data)).collect();
+        let files = normalize_entries(files);
+        let id = match id {
+            Some(i) => i,
+            None => {
+                // A zip without a key: the manifest's `key` if it has one, else its name.
+                let manifest: Value = files
+                    .iter()
+                    .find(|(n, _)| n == "manifest.json")
+                    .and_then(|(_, b)| serde_json::from_slice(b).ok())
+                    .unwrap_or(Value::Null);
+                match manifest.get("key").and_then(|k| k.as_str()).and_then(ext::base64_decode) {
+                    Some(der) => ext::id_from_public_key(&der),
+                    None => {
+                        ext::id_from_public_key(manifest.get("name").and_then(|n| n.as_str()).unwrap_or("").as_bytes())
+                    }
+                }
+            }
+        };
+        self.ext_install_files(files, id, source)
+    }
+
+    pub(super) fn ext_install_file(&self, tab: Option<TabId>, req_id: Option<u32>) {
+        let Some(w) = self.window() else { return };
+        let Some(path) =
+            dialogs::open_file(w.hwnd(), "Install an extension (zip or crx)", ("Extensions", "*.zip;*.crx"))
+        else {
+            self.reply(tab, Event::ok(req_id, Value::Null));
+            return;
+        };
+        let result = std::fs::read(&path).map_err(|e| e.to_string()).and_then(|bytes| {
+            self.ext_install_bytes(
+                &bytes,
+                &format!("file:{}", path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()),
+                None,
+            )
+        });
+        self.ext_install_reply(tab, req_id, result);
+    }
+
+    pub(super) fn ext_install_folder(&self, tab: Option<TabId>, req_id: Option<u32>) {
+        let Some(w) = self.window() else { return };
+        let Some(path) = dialogs::pick_folder(w.hwnd(), "Install an unpacked extension (its folder)", None) else {
+            self.reply(tab, Event::ok(req_id, Value::Null));
+            return;
+        };
+        let result = read_tree(&path).and_then(|files| {
+            self.ext_install_files(files, ext::id_from_path(&path), &format!("folder:{}", path.display()))
+        });
+        self.ext_install_reply(tab, req_id, result);
+    }
+
+    pub(super) fn ext_install_url(&self, tab: Option<TabId>, req_id: Option<u32>, url: &str) {
+        let Some(id) = ext::webstore_id(url) else {
+            self.reply(
+                tab,
+                Event::err(req_id, "That is not a Chrome Web Store extension address (…/detail/<name>/<id>)."),
+            );
+            return;
+        };
+        let Some(download) = ext::webstore_download_url(&id) else { return };
+        let proxy = self.ext_proxy();
+        info!("extension: downloading {id} from the Web Store");
+        let id2 = id.clone();
+        self.spawn_job(
+            "extension download",
+            move || {
+                let opts = http::Options { proxy: &proxy, timeout_ms: CRX_TIMEOUT_MS, user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36", allow_http: false };
+                http::get_with(&download, MAX_CRX_BYTES, &opts)
+            },
+            move |b, r| {
+                let result = r.and_then(|bytes| b.ext_install_bytes(&bytes, &format!("webstore:{id2}"), Some(&id2)));
+                b.ext_install_reply(tab, req_id, result);
+            },
+        );
+    }
+
+    fn ext_install_reply(&self, tab: Option<TabId>, req_id: Option<u32>, result: Result<Installed, String>) {
+        match result {
+            Ok(i) => self.reply(
+                tab,
+                Event::ok(req_id, json!({ "installed": i.id, "name": i.name, "extensions": self.ext_list_json() })),
+            ),
+            Err(e) => {
+                warning!("extension install failed: {e}");
+                self.reply(tab, Event::err(req_id, format!("Install failed: {e}")));
+            }
+        }
+    }
+
+    pub(super) fn ext_set(&self, id: &str, enabled: Option<bool>, private: Option<bool>) {
+        {
+            let mut exts = self.ext.exts.borrow_mut();
+            let Some(e) = exts.iter_mut().find(|e| e.installed.id == id) else { return };
+            if let Some(on) = enabled {
+                e.installed.enabled = on;
+                info!("extension {}: {}", e.installed.name, if on { "enabled" } else { "disabled" });
+            }
+            if let Some(p) = private {
+                e.installed.allowed_in_private = p;
+                info!("extension {}: {} in private tabs", e.installed.name, if p { "allowed" } else { "not allowed" });
+            }
+        }
+        if enabled == Some(false) {
+            self.close_ext_popup();
+        }
+        self.ext_apply_all(true);
+    }
+
+    pub(super) fn ext_remove(&self, id: &str) {
+        let name = self.ext_name(id);
+        self.ext_stop_background(id);
+        self.close_ext_popup();
+        self.ext.exts.borrow_mut().retain(|e| e.installed.id != id);
+        self.ext.alarms.borrow_mut().retain(|k, _| !k.starts_with(&format!("{id}/")));
+        self.ext.storage.borrow_mut().retain(|k, _| !k.starts_with(&format!("{id}/")));
+        let _ = std::fs::remove_dir_all(self.ext_dir().join(id));
+        let _ = std::fs::remove_file(self.ext_dir().join(format!("{id}.storage.json")));
+        info!("extension removed: {name} ({id})");
+        self.ext_apply_all(true);
+    }
+
+    /// krunk://extensions' list.
+    pub(super) fn ext_list_json(&self) -> Value {
+        let exts = self.ext.exts.borrow();
+        Value::Array(
+            exts.iter()
+                .map(|e| {
+                    let i = &e.installed;
+                    let scope: Vec<Value> = e
+                        .manifest
+                        .scope()
+                        .iter()
+                        .filter_map(|p| {
+                            ext::MatchPattern::parse(p)
+                                .map(|m| json!({ "pattern": p, "text": m.describe(), "allSites": m.is_all_sites() }))
+                        })
+                        .collect();
+                    json!({
+                        "id": i.id, "name": i.name, "version": i.version, "description": i.description,
+                        "enabled": i.enabled, "allowedInPrivate": i.allowed_in_private, "source": i.source,
+                        "installedAt": i.installed_at, "updatedAt": i.updated_at,
+                        "scope": scope, "apis": i.apis, "runtimeUnsupported": e.runtime_unsupported,
+                        "dnrTranslated": i.dnr_translated, "dnrSkipped": i.dnr_skipped,
+                        "hasOptions": e.manifest.options().is_some(), "hasPopup": e.popup_path().is_some(),
+                        "hasBackground": e.manifest.background_script().is_some(),
+                        "contentScripts": e.manifest.content_scripts.len(),
+                        "icon": e.manifest.icon().map(|p| format!("{}/{}", e.origin(), p.trim_start_matches('/'))),
+                        "permissions": e.manifest.api_permissions(),
+                    })
+                })
+                .collect(),
+        )
+    }
+}

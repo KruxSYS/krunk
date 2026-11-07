@@ -12,6 +12,7 @@ pub mod certinfo;
 pub mod cookies;
 pub mod dns;
 pub mod downloads;
+pub mod ext;
 pub mod filterlists;
 pub mod frame;
 pub mod frecency;

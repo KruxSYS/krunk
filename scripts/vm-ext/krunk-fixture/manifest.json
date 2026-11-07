@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "__MSG_appName__",
+  "version": "1.0.0",
+  "description": "__MSG_appDesc__",
+  "default_locale": "en",
+  "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" },
+  "permissions": ["storage", "tabs", "alarms", "scripting", "declarativeNetRequest"],
+  "host_permissions": ["http://localhost/*", "http://127.0.0.1/*"],
+  "content_scripts": [
+    { "matches": ["http://localhost/*", "http://127.0.0.1/*", "https://*.krunk-test.test/*"], "js": ["cs.js"], "css": ["cs.css"], "run_at": "document_end" }
+  ],
+  "background": { "service_worker": "bg.js" },
+  "action": { "default_popup": "popup.html", "default_title": "Krunk fixture", "default_icon": { "16": "icons/16.png" } },
+  "options_ui": { "page": "options.html", "open_in_tab": true },
+  "declarative_net_request": { "rule_resources": [{ "id": "block", "enabled": true, "path": "rules.json" }] }
+}

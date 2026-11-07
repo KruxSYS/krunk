@@ -22,6 +22,8 @@ use serde::{Deserialize, Serialize};
 
 /// Maximum size of a privileged message (settings JSON is the largest).
 pub const MAX_REQUEST_BYTES: usize = 256 * 1024;
+/// Requests from extension pages (0.6.0) may be larger: `chrome.storage` values.
+pub const MAX_EXT_REQUEST_BYTES: usize = 8 * 1024 * 1024;
 /// Maximum size of a message from web content.
 pub const MAX_CONTENT_BYTES: usize = 64 * 1024;
 /// Class/id tokens a page may report for generic cosmetic filtering.
@@ -1157,6 +1159,39 @@ pub enum Request {
         frame_id: String,
         entry_id: String,
     },
+    /// An extension page's `chrome.*` call (0.6.0): the extension, the operation and its
+    /// arguments; the host answers with a reply or later with `respond`.
+    Ext {
+        ext: String,
+        op: String,
+        #[serde(default)]
+        data: serde_json::Value,
+    },
+    /// The shell: an extension's toolbar button was clicked (its rect in shell CSS px).
+    ExtAction {
+        id: String,
+        rect: PopupRect,
+    },
+    /// krunk://extensions (0.6.0).
+    ExtList,
+    ExtInstallFile,
+    ExtInstallFolder,
+    ExtInstallUrl {
+        url: String,
+    },
+    ExtSet {
+        id: String,
+        #[serde(default)]
+        enabled: Option<bool>,
+        #[serde(default)]
+        private: Option<bool>,
+    },
+    ExtRemove {
+        id: String,
+    },
+    ExtOpenOptions {
+        id: String,
+    },
     /// The Picture-in-Picture chooser (popup): video `index` of tab `tab_id` (0.6.0).
     PipPick {
         tab_id: u32,
@@ -1207,6 +1242,10 @@ pub enum Sender {
     Shell,
     Popup,
     Page(Page),
+    /// An extension's own page on `https://<id>.ext.krunk.invalid` (0.6.0): the background
+    /// page, the action popup or the options page. Only `Request::Ext` is permitted; the host
+    /// checks the id against the page's origin.
+    Ext,
 }
 
 /// Which browser view a message arrived on.
@@ -1215,6 +1254,8 @@ pub enum Channel {
     Shell,
     Popup,
     Tab,
+    /// An extension's background or popup view (0.6.0).
+    Ext,
 }
 
 /// Classification of a message source.
@@ -1251,6 +1292,13 @@ pub fn classify(channel: Channel, source: &str, top_level: bool) -> Result<Sourc
         };
     }
     match channel {
+        Channel::Ext => {
+            if crate::ext::id_of_url(source).is_some() {
+                Ok(Source::Privileged(Sender::Ext))
+            } else {
+                Err(ProtocolError::Forbidden)
+            }
+        }
         Channel::Shell | Channel::Popup => {
             let want = if channel == Channel::Shell { SHELL_PATH } else { POPUP_PATH };
             if origin == pages::SHELL_ORIGIN && url.path() == want {
@@ -1262,6 +1310,9 @@ pub fn classify(channel: Channel, source: &str, top_level: bool) -> Result<Sourc
         Channel::Tab => {
             if let Some(page) = Page::from_url(source) {
                 return Ok(Source::Privileged(Sender::Page(page)));
+            }
+            if crate::ext::id_of_url(source).is_some() {
+                return Ok(Source::Privileged(Sender::Ext));
             }
             // Our own origins never count as web content.
             if origin == pages::SHELL_ORIGIN || origin == pages::PAGES_ORIGIN {
@@ -1309,6 +1360,7 @@ impl Sender {
                     | R::HitMap { .. }
                     | R::WindowControl { .. }
                     | R::ShowPopup { .. }
+                    | R::ExtAction { .. }
                     | R::AddressSuggest { .. }
                     | R::AddressSuggestSelect { .. }
                     | R::AddressSuggestPick { .. }
@@ -1464,6 +1516,17 @@ impl Sender {
             Sender::Page(Page::About) => matches!(req, R::GetAbout),
             Sender::Page(Page::Gpu) => matches!(req, R::GetGpuInfo | R::OpenGpuInternals),
             Sender::Page(Page::Tasks) => matches!(req, R::GetTasks | R::KillTask { .. }),
+            Sender::Page(Page::Extensions) => matches!(
+                req,
+                R::ExtList
+                    | R::ExtInstallFile
+                    | R::ExtInstallFolder
+                    | R::ExtInstallUrl { .. }
+                    | R::ExtSet { .. }
+                    | R::ExtRemove { .. }
+                    | R::ExtOpenOptions { .. }
+            ),
+            Sender::Ext => matches!(req, R::Ext { .. }),
             Sender::Page(Page::Storage) => matches!(
                 req,
                 R::StorageList
@@ -1525,7 +1588,9 @@ fn malformed(e: serde_json::Error) -> ProtocolError {
 
 /// Parses and authorizes a privileged message.
 pub fn parse_request(sender: Sender, json: &str) -> Result<Envelope, ProtocolError> {
-    if json.len() > MAX_REQUEST_BYTES {
+    // Extension pages store and send larger things (a content blocker's settings).
+    let limit = if sender == Sender::Ext { MAX_EXT_REQUEST_BYTES } else { MAX_REQUEST_BYTES };
+    if json.len() > limit {
         return Err(ProtocolError::TooLarge);
     }
     // Parsed straight from the text (no intermediate JSON tree), so secret
@@ -1712,6 +1777,21 @@ fn is_zero_u8(n: &u8) -> bool {
     *n == 0
 }
 
+/// An extension's toolbar button (0.6.0).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtAction {
+    pub id: String,
+    pub title: String,
+    /// The icon's address on the extension's origin, if it has one.
+    pub icon: Option<String>,
+    #[serde(default)]
+    pub badge: String,
+    #[serde(default)]
+    pub badge_color: String,
+    pub has_popup: bool,
+}
+
 /// Messages to the shell or a built-in page.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "camelCase", rename_all_fields = "camelCase")]
@@ -1740,6 +1820,21 @@ pub enum Event {
         /// Appearance options (CSS variables and toolbar items); absent in old messages.
         #[serde(default)]
         appearance: crate::settings::Appearance,
+    },
+    /// To an extension's pages (0.6.0): a message, a storage change, an action click, a
+    /// tab event, an alarm, install/startup.
+    Ext {
+        ext: String,
+        kind: String,
+        data: serde_json::Value,
+    },
+    /// To the shells (0.6.0): the enabled extensions' toolbar buttons.
+    ExtActions {
+        actions: Vec<ExtAction>,
+    },
+    /// To krunk://extensions: the list changed.
+    ExtChanged {
+        extensions: serde_json::Value,
     },
     /// To the popup view: render this content.
     Popup {
@@ -2850,6 +2945,53 @@ mod tests {
         assert_eq!(serde_json::to_string(&UnlockPurpose::CardFill).unwrap(), "\"cardFill\"");
         assert_eq!(serde_json::to_string(&UnlockPurpose::SaveCard).unwrap(), "\"saveCard\"");
         assert!(!serde_json::to_string(&save).unwrap().contains("number"));
+    }
+
+    #[test]
+    fn extension_messages() {
+        let id = "a".repeat(32);
+        let page = format!("https://{id}.ext.krunk.invalid/popup.html");
+        assert_eq!(classify(Channel::Ext, &page, true), Ok(Source::Privileged(Sender::Ext)));
+        assert_eq!(
+            classify(Channel::Tab, &page, true),
+            Ok(Source::Privileged(Sender::Ext)),
+            "an options page in a tab"
+        );
+        assert!(classify(Channel::Ext, "https://krunk.invalid/newtab.html", true).is_err());
+        assert!(classify(Channel::Ext, &page, false).is_err(), "frames are never privileged");
+        assert!(classify(Channel::Shell, &page, true).is_err());
+        let call =
+            Request::Ext { ext: id.clone(), op: "storage.get".into(), data: serde_json::json!({ "area": "local" }) };
+        assert!(Sender::Ext.permits(&call));
+        assert!(!Sender::Shell.permits(&call) && !Sender::Popup.permits(&call));
+        for p in Page::ALL.iter() {
+            assert!(!Sender::Page(*p).permits(&call), "{p:?}");
+        }
+        let list = Request::ExtList;
+        let set = Request::ExtSet { id: id.clone(), enabled: Some(false), private: None };
+        assert!(Sender::Page(Page::Extensions).permits(&list) && Sender::Page(Page::Extensions).permits(&set));
+        assert!(
+            !Sender::Ext.permits(&list) && !Sender::Page(Page::Settings).permits(&set) && !Sender::Shell.permits(&list)
+        );
+        let action = Request::ExtAction { id: id.clone(), rect: PopupRect { x: 1.0, y: 2.0, width: 3.0, height: 4.0 } };
+        assert!(Sender::Shell.permits(&action) && !Sender::Popup.permits(&action) && !Sender::Ext.permits(&action));
+        let parsed =
+            parse_request(Sender::Ext, &format!(r#"{{"cmd":"ext","ext":"{id}","op":"tabs.query","reqId":7}}"#))
+                .unwrap();
+        assert_eq!(parsed.req_id, Some(7));
+        assert!(matches!(parsed.request, Request::Ext { op, data, .. } if op == "tabs.query" && data.is_null()));
+        assert!(parse_request(Sender::Ext, r#"{"cmd":"getSettings"}"#).is_err(), "nothing else from an extension page");
+        let ev = Event::ExtActions {
+            actions: vec![ExtAction {
+                id,
+                title: "T".into(),
+                icon: None,
+                badge: String::new(),
+                badge_color: String::new(),
+                has_popup: true,
+            }],
+        };
+        assert!(ev.to_json().contains("\"event\":\"extActions\"") && ev.to_json().contains("\"hasPopup\":true"));
     }
 
     #[test]

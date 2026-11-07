@@ -49,6 +49,7 @@ mod devtools;
 mod dns_host;
 mod downloads;
 mod drag;
+mod ext;
 mod filter_lists;
 mod find;
 mod flight;
@@ -224,6 +225,10 @@ pub struct Browser {
     address_focus: Cell<Option<TabId>>,
     /// The tab whose video went to the floating window automatically (setting `auto_pip`).
     auto_pip_tab: Cell<Option<TabId>>,
+    /// Extensions (0.6.0).
+    ext: ext::ExtHost,
+    /// The extension request being dispatched came from the action popup (not the background).
+    ext_request_from_popup: Cell<bool>,
     /// `krunk://sitedata` tabs and the site each was opened for.
     site_data: RefCell<HashMap<TabId, storage::SiteDataBinding>>,
     /// Pointer lock and full screen.
@@ -303,6 +308,8 @@ impl Browser {
             closing: Cell::new(false),
             address_focus: Cell::new(None),
             auto_pip_tab: Cell::new(None),
+            ext: ext::ExtHost::new(),
+            ext_request_from_popup: Cell::new(false),
             site_data: RefCell::new(HashMap::new()),
             pointer: pointer::PointerHost::default(),
             updates: updater::UpdateHost::new(dirs.update_status()),
@@ -315,6 +322,7 @@ impl Browser {
         let _ = browser.app.set(app);
         browser.net.set_notifier(app.notifier());
         browser.init_filters();
+        browser.init_extensions();
         browser.start_bounce_timer();
         browser.apply_dns();
         browser.init_vault();
@@ -719,6 +727,7 @@ impl Browser {
         });
         self.hook_tab(id, &view, host_navigation.clone(), net.clone());
         self.hook_blocking(&view, net.clone());
+        self.ext_attach_tab(id, &view);
         self.hook_downloads(&view, Some(id));
         // A popup's browser is being created by the engine already.
         if !popup {
@@ -809,6 +818,7 @@ impl Browser {
         let net_done = net.clone();
         c.on_load_finished(move |error| {
             if let Some(b) = weak.upgrade() {
+                b.ext_tab_event("tabUpdated", serde_json::json!({ "tabId": id }));
                 b.navigation_completed(id, &net_done, error.map(LoadFailure::from_net_error));
                 // Once per top-level navigation, when it loaded.
                 if net_done.visit_pending.replace(false) && error.is_none() {
@@ -875,6 +885,7 @@ impl Browser {
         let weak = self.me.clone();
         c.on_created(move || {
             if let Some(b) = weak.upgrade() {
+                b.ext_tab_created(id);
                 let first = b.first_url.borrow_mut().remove(&id);
                 b.apply_user_agent_to_then(id, move |b| {
                     if let Some(url) = first {
@@ -921,6 +932,7 @@ impl Browser {
     }
 
     fn destroy_view(&self, id: TabId) {
+        self.ext_detach_tab(id);
         self.pointer.hints.borrow_mut().forget(id);
         if self.status.tab.get() == Some(id) {
             self.hide_status();
@@ -937,7 +949,9 @@ impl Browser {
     }
 
     fn activate_view(&self, win: WindowId, from: Option<TabId>, to: TabId) {
+        self.close_ext_popup();
         self.auto_pip_switch(from, to);
+        self.ext_tab_event("tabActivated", serde_json::json!({ "tabId": to, "windowId": win }));
         self.pointer_tab_activated(to);
         self.hide_status();
         if let Some(f) = from.filter(|f| *f != to) {
@@ -1615,7 +1629,11 @@ impl Browser {
             }
         };
         match protocol::parse_request(sender, json) {
-            Ok(env) => self.dispatch(sender, None, env),
+            Ok(env) => {
+                *self.ext.request_origin.borrow_mut() = lb_core::ext::id_of_url(&source.url);
+                self.dispatch(sender, None, env);
+                *self.ext.request_origin.borrow_mut() = None;
+            }
             Err(e) => warning!("rejected {sender:?} message: {e}"),
         }
     }
@@ -1623,7 +1641,11 @@ impl Browser {
     fn on_tab_message(&self, id: TabId, source: &MessageSource, json: &str) {
         match protocol::classify(Channel::Tab, &source.url, source.main_frame) {
             Ok(Source::Privileged(sender)) => match protocol::parse_request(sender, json) {
-                Ok(env) => self.dispatch(sender, Some(id), env),
+                Ok(env) => {
+                    *self.ext.request_origin.borrow_mut() = lb_core::ext::id_of_url(&source.url);
+                    self.dispatch(sender, Some(id), env);
+                    *self.ext.request_origin.borrow_mut() = None;
+                }
                 Err(e) => warning!("tab {id}: rejected {sender:?} message: {e}"),
             },
             Ok(Source::Web { origin }) => match protocol::parse_content(json) {
@@ -1680,6 +1702,7 @@ impl Browser {
         let Envelope { req_id, request } = env;
         match request {
             Request::Ready => match sender {
+                Sender::Ext => {}
                 Sender::Shell => {
                     // The shell that just loaded is the current window's (its message made it so).
                     let Some(win) = self.cur_id() else { return };
@@ -1688,6 +1711,7 @@ impl Browser {
                     self.send_nav_to(win);
                     self.send_bookmarks_bar();
                     self.post_shell(&Event::DownloadsChanged { active: self.downloads.borrow().active_count() });
+                    self.ext_send_actions();
                     self.send_window_state();
                     self.pass_shell_hit_tests(win);
                     // A new-tab page activated before the shell finished
@@ -1942,6 +1966,21 @@ impl Browser {
             Request::FillReply { tab_id, origin, entry_id } => self.fill_reply(tab_id, &origin, entry_id),
             Request::SuggestPick { tab_id, frame_id, entry_id } => self.suggest_pick(tab_id, &frame_id, &entry_id),
             Request::PipPick { tab_id, index } => self.pip_pick(tab_id, index),
+            Request::Ext { ext, op, data } => self.ext_page_request(tab, req_id, &ext, &op, data),
+            Request::ExtAction { id, rect } => self.ext_action_clicked(&id, rect),
+            Request::ExtList => self.reply(tab, Event::ok(req_id, self.ext_list_json())),
+            Request::ExtInstallFile => self.ext_install_file(tab, req_id),
+            Request::ExtInstallFolder => self.ext_install_folder(tab, req_id),
+            Request::ExtInstallUrl { url } => self.ext_install_url(tab, req_id, &url),
+            Request::ExtSet { id, enabled, private } => {
+                self.ext_set(&id, enabled, private);
+                self.reply(tab, Event::ok(req_id, self.ext_list_json()));
+            }
+            Request::ExtRemove { id } => {
+                self.ext_remove(&id);
+                self.reply(tab, Event::ok(req_id, self.ext_list_json()));
+            }
+            Request::ExtOpenOptions { id } => self.ext_open_options_request(&id),
             Request::SuggestUnlock { tab_id, frame_id } => self.suggest_unlock(tab_id, &frame_id),
             Request::SuggestGenerate { tab_id, frame_id } => self.suggest_generate(tab_id, &frame_id),
             Request::CardFillPick { tab_id, frame_id, card_id } => self.card_fill_pick(tab_id, &frame_id, &card_id),
@@ -2266,6 +2305,9 @@ impl Browser {
                     },
                     None => InternalResponse::not_found(),
                 };
+            }
+            if lb_core::ext::id_of_url(uri).is_some() {
+                return weak.upgrade().and_then(|b| b.ext_response(uri)).unwrap_or_else(InternalResponse::not_found);
             }
             if let Some(host) = assets::favicon_request(uri) {
                 let png = weak.upgrade().and_then(|b| b.store.try_borrow().ok()?.favicon(&host).ok()?);
