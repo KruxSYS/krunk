@@ -1,0 +1,12 @@
+# cargo-audit policy. Ignored advisories need a reason here and in the release notes.
+[advisories]
+ignore = [
+  # hickory-proto 0.25: unbounded loop in NSEC3 closest-encloser proof validation. Krunk
+  # never validates DNSSEC (the `dnssec` features are off and the code is not compiled);
+  # no fixed version exists, and 0.26 moved the DoT/DoH/DoQ clients out of the crate.
+  "RUSTSEC-2026-0118",
+  # hickory-proto 0.25: O(n^2) name compression while encoding. Krunk encodes only the
+  # answers it forwards (one message at a time, bounded by the resolver timeout); the fix
+  # (0.26.1) is the same crate split as above. Revisit with the next engine update.
+  "RUSTSEC-2026-0119",
+]

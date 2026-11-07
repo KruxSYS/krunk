@@ -46,6 +46,7 @@ mod blocking;
 mod bookmarks_bar;
 mod bounce;
 mod devtools;
+mod dns_host;
 mod downloads;
 mod drag;
 mod filter_lists;
@@ -193,6 +194,8 @@ pub struct Browser {
     /// The engine's own client hints (read from the shell page once it loaded): the
     /// metadata of an override that changes only the user agent or the language.
     engine_hints: RefCell<Option<lb_core::headers::ClientHints>>,
+    /// The custom-DNS stub, once the settings asked for it.
+    dns: RefCell<Option<crate::dns::Engine>>,
     /// Where the shell asked for the shield panel (it grows with its list from there).
     shield_anchor: Cell<Option<PopupRect>>,
     /// The tab krunk://adblock shows the blocked requests of (opened from its shield).
@@ -278,6 +281,7 @@ impl Browser {
             ua_overridden: Cell::new(false),
             first_url: RefCell::new(HashMap::new()),
             engine_hints: RefCell::new(None),
+            dns: RefCell::new(None),
             bookmark_menu_at: Cell::new(None),
             adblock_source: Cell::new(None),
             shield_anchor: Cell::new(None),
@@ -308,6 +312,7 @@ impl Browser {
         browser.net.set_notifier(app.notifier());
         browser.init_filters();
         browser.start_bounce_timer();
+        browser.apply_dns();
         browser.init_vault();
         engine::set_internal_server(browser.server());
         let weak = browser.me.clone();
@@ -1745,6 +1750,9 @@ impl Browser {
                 }
             }
             Request::PermissionExceptions => self.reply(tab, Event::ok(req_id, self.permission_exceptions())),
+            r @ (Request::DnsStatus | Request::DnsTest { .. } | Request::DnsParse { .. }) => {
+                self.dispatch_dns(tab, req_id, r)
+            }
             Request::BounceStatus => self.reply(tab, Event::ok(req_id, self.bounce_status())),
             Request::BounceCleanNow => self.clean_bounces(Some(Box::new(move |b, n| {
                 b.reply(tab, Event::ok(req_id, serde_json::json!({ "cleaned": n })));

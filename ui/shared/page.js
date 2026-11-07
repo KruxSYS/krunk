@@ -42,6 +42,8 @@
     pin: 'M9 3h6l-1 6 3 3H7l3-3zM12 12v9',
     edit: 'M4 20h4L19 9l-4-4L4 16zM14 6l4 4',
     trash: 'M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13',
+    up: 'M12 19V5M5 12l7-7 7 7',
+    down: 'M12 5v14M5 12l7 7 7-7',
     folder: 'M3 6h6l2 2h10v11H3z',
     move: 'M5 12h14M13 6l6 6-6 6',
   };

@@ -10,6 +10,7 @@ pub mod blocklog;
 pub mod bookmarks;
 pub mod certinfo;
 pub mod cookies;
+pub mod dns;
 pub mod downloads;
 pub mod filterlists;
 pub mod frame;

@@ -56,6 +56,10 @@
     "hints": null,
     "rules": []
   },
+  "dns": {
+    "mode": "system",
+    "resolvers": []
+  },
   "vaultAutolockMinutes": 15,
   "offerSavePasswords": true,
   "downloadDir": "",

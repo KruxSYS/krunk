@@ -166,6 +166,88 @@
     save(s).then(function () { Page.toast('Request headers reset'); });
   });
 
+  // 0.6.0 custom DNS: the mode, the ordered list with its counters, presets and Test.
+  let dnsPresets = [];
+  let dnsStatus = null;
+  let dnsTests = {};
+  function renderDns() {
+    const d = settings.dns || { mode: 'system', resolvers: [] };
+    document.querySelectorAll('input[name=dnsmode]').forEach((r) => { r.checked = r.value === d.mode; });
+    const sel = $('dns-preset');
+    if (sel.options.length === 1 && dnsPresets.length) dnsPresets.forEach((p) => sel.appendChild(el('option', { value: p.id, text: p.name })));
+    const list = $('dns-list');
+    list.textContent = '';
+    if (!d.resolvers.length) list.appendChild(el('p', { class: 'muted', text: 'No resolvers yet: pick a preset or enter an address.' }));
+    let usable = 0;
+    d.resolvers.forEach(function (r, i) {
+      const supported = r.kind !== 'dnsCrypt';
+      const idx = supported ? usable++ : -1;
+      const st = dnsStatus && dnsStatus.resolvers && idx >= 0 ? dnsStatus.resolvers[idx] : null;
+      const parts = [];
+      if (st && st.queries) parts.push(st.queries + (st.queries === 1 ? ' query' : ' queries') + (st.failures ? ', ' + st.failures + ' failed' : '') + ', last ' + st.lastMs + ' ms');
+      if (st && st.lastError) parts.push(st.lastError);
+      if (dnsTests[i]) parts.push(dnsTests[i]);
+      const move = (from, to) => { const s = collect(); const list = s.dns.resolvers; const [x] = list.splice(from, 1); list.splice(to, 0, x); save(s); };
+      list.appendChild(el('div', { class: 'row resolver' + (supported ? '' : ' off'), 'data-index': String(i) }, [
+        el('span', { class: 'tag kind', text: KIND_LABEL[r.kind] || r.kind }),
+        el('div', { class: 'main' }, [
+          el('span', { class: 'name', text: r.name || address(r) }),
+          el('span', { class: 'sub', text: (r.name && r.name !== address(r) ? address(r) + ' · ' : '') + (r.ip ? 'via ' + r.ip : (supported && !/^\d|^\[/.test(r.host) ? 'name looked up once' : '')) }),
+          parts.length ? el('span', { class: 'sub status', text: parts.join(' · ') }) : null,
+        ]),
+        supported ? el('button', { class: 'btn small test', text: 'Test', onclick: function () {
+          dnsTests[i] = 'testing…'; renderDns();
+          LB.request('dnsTest', { index: idx }).then(function (res) { dnsTests[i] = 'OK, ' + res.ms + ' ms'; renderDns(); }, function (e) { dnsTests[i] = 'failed: ' + e.message; renderDns(); });
+        } }) : el('span', { class: 'sub', text: 'not supported' }),
+        Page.iconButton('up', 'Move up', function () { if (i > 0) move(i, i - 1); }),
+        Page.iconButton('down', 'Move down', function () { if (i + 1 < d.resolvers.length) move(i, i + 1); }),
+        Page.iconButton('trash', 'Remove ' + (r.name || address(r)), function () { const s = collect(); s.dns.resolvers.splice(i, 1); save(s); }),
+      ]));
+    });
+    const status = $('dns-status');
+    if (d.mode !== 'custom') status.textContent = '';
+    else if (!dnsStatus) status.textContent = '';
+    else if (dnsStatus.route === 'stub') status.textContent = 'Active: the engine asks Krunk\'s loopback stub on port ' + dnsStatus.port + ', which asks the list below.';
+    else if (dnsStatus.route === 'direct') status.textContent = 'Active: the engine asks these DoH resolvers directly.';
+    else status.textContent = 'Not active yet.';
+  }
+  const KIND_LABEL = { udp: 'UDP', tcp: 'TCP', tls: 'DoT', https: 'DoH', h3: 'DoH3', quic: 'DoQ', dnsCrypt: 'DNSCrypt' };
+  function address(r) {
+    const port = { udp: 53, tcp: 53, tls: 853, quic: 853, https: 443, h3: 443, dnsCrypt: 443 }[r.kind];
+    const host = (r.host.indexOf(':') >= 0 ? '[' + r.host + ']' : r.host) + (r.port && r.port !== port ? ':' + r.port : '');
+    if (r.kind === 'udp') return host;
+    if (r.kind === 'https' || r.kind === 'h3') return r.kind + '://' + host + (r.path || '/dns-query');
+    return r.kind + '://' + host;
+  }
+  function loadDnsStatus() {
+    LB.request('dnsStatus').then(function (s) { dnsStatus = s; renderDns(); }).catch(function () {});
+  }
+  document.querySelectorAll('input[name=dnsmode]').forEach((r) => r.addEventListener('change', function () { save().then(loadDnsStatus); }));
+  $('dns-preset').addEventListener('change', function () {
+    const p = dnsPresets.find((x) => x.id === $('dns-preset').value);
+    $('dns-preset').value = '';
+    if (!p) return;
+    const s = collect();
+    s.dns.resolvers = (s.dns.resolvers || []).concat([p.resolver]);
+    save(s).then(loadDnsStatus);
+  });
+  $('dns-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    const text = $('dns-address').value.trim();
+    $('dns-error').textContent = '';
+    if (!text) { $('dns-error').textContent = 'Enter a resolver'; return; }
+    LB.request('dnsParse', { text: text }).then(function (r) {
+      const s = collect();
+      s.dns.resolvers = (s.dns.resolvers || []).concat([r]);
+      return save(s).then(function () {
+        const err = document.querySelector('[data-error-for="dns"]');
+        if (err && err.textContent) { $('dns-error').textContent = err.textContent; return; }
+        $('dns-address').value = '';
+        loadDnsStatus();
+      });
+    }, function (err) { $('dns-error').textContent = err.message; });
+  });
+
   function renderUserAgent() {
     const sel = $('userAgentPreset');
     if (sel.options.length === 2 && userAgents.length) {
@@ -240,6 +322,7 @@
     $('default-dir').hidden = !settings.downloadDir;
     renderUserAgent();
     renderHeaders();
+    renderDns();
     LB.applyTheme(settings.theme, settings.appearance && settings.appearance.accent);
     renderLists();
   }
@@ -261,6 +344,9 @@
     if (theme) s.theme = theme.value;
     const plevel = document.querySelector('input[name=plevel]:checked');
     if (plevel) { s.protection = s.protection || {}; s.protection.level = plevel.value; }
+    const dnsmode = document.querySelector('input[name=dnsmode]:checked');
+    s.dns = s.dns || { mode: 'system', resolvers: [] };
+    if (dnsmode) s.dns.mode = dnsmode.value;
     collectHints(s);
     // Something that is not a whole number becomes an out-of-range value, so
     // the host's validation reports the field (instead of the message failing to parse).
@@ -545,12 +631,14 @@
     userAgents = r.userAgents || [];
     defaultUserAgent = r.defaultUserAgent || '';
     if (r.engineHints) HINT_DEFAULTS = r.engineHints;
+    dnsPresets = r.dnsPresets || [];
     banner(r.restartRequired);
     $('about').textContent = 'Krunk ' + r.about.version + ' · Chromium ' + r.about.chromium + ' (CEF ' + r.about.cef + ')' + ' · data in ' + r.about.dataDir;
     render();
     loadFilterStatus();
     loadAllowlist();
     loadBounceStatus();
+    loadDnsStatus();
     loadUpdates();
     loadImportProfiles();
   });

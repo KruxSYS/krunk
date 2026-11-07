@@ -100,3 +100,11 @@ table.exceptions th { color: var(--fg-muted); font-weight: 600; border-top: 0; }
 #header-rules .rule .value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-muted); }
 #header-form input[type=text] { min-width: 0; }
 #header-form #header-value { flex: 1; }
+/* Custom DNS (0.6.0) */
+#dns-list .resolver { gap: 10px; }
+#dns-list .resolver.off { opacity: .55; }
+#dns-list .resolver .tag.kind { min-width: 44px; text-align: center; background: var(--bg); color: var(--fg-muted); border: 1px solid var(--border); }
+#dns-list .resolver .main { flex-direction: column; gap: 1px; align-items: flex-start; }
+#dns-list .resolver .status { color: var(--fg-muted); }
+#dns-form select { height: 32px; }
+#dns-form #dns-address { flex: 1; min-width: 200px; }

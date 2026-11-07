@@ -223,6 +223,11 @@ fn browser_closed(browser: &Browser, private: bool) {
 }
 
 /// The in-memory request context shared by private tabs (created on demand).
+/// See `app::set_doh`.
+pub fn set_doh(mode: &str, templates: &str) -> bool {
+    app::set_doh(mode, templates)
+}
+
 fn private_context() -> Option<RequestContext> {
     if let Some(c) = PRIVATE_CONTEXT.with(|c| c.borrow().clone()) {
         return Some(c);

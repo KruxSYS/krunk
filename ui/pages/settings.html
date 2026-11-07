@@ -226,6 +226,29 @@
       </div>
     </div>
 
+    <div class="card group" id="dns-card">
+      <h3>DNS</h3>
+      <div class="row setting column" data-keywords="dns resolver custom doh dot doq system encrypted">
+        <div class="text"><span class="label">Name resolution</span><p class="desc">Who turns names into addresses. Custom: Krunk's own list, in order, over the engine's secure DNS-over-HTTPS client; Windows' resolver is never asked (a resolver with a name and no address is looked up once through it).</p>
+          <p class="field-error" data-error-for="dns"></p></div>
+        <div class="control radios" role="radiogroup" aria-label="Name resolution">
+          <label><input type="radio" name="dnsmode" value="system"> Windows' resolver (encrypted when it supports it)</label>
+          <label><input type="radio" name="dnsmode" value="custom"> Custom resolvers, in order</label>
+        </div>
+      </div>
+      <div class="row setting column" data-keywords="dns resolvers list add preset stamp sdns test">
+        <div class="text"><span class="label">Resolvers</span><p class="desc">The first one answers; the next is asked after 2 seconds or an error. UDP, TCP, DNS over TLS, HTTPS (HTTP/2 and HTTP/3), QUIC, or an <code>sdns://</code> stamp. DNSCrypt stamps are kept but skipped.</p>
+          <p class="desc" id="dns-status"></p></div>
+        <div id="dns-list" class="sublist"></div>
+        <form id="dns-form" class="inline-form" autocomplete="off">
+          <select id="dns-preset" aria-label="Preset"><option value="">Preset…</option></select>
+          <input type="text" id="dns-address" placeholder="tls://dns.quad9.net, https://…/dns-query, 1.1.1.1 or sdns://…" spellcheck="false" aria-label="Resolver address">
+          <button class="btn" type="submit">Add</button>
+          <p class="field-error" id="dns-error"></p>
+        </form>
+      </div>
+    </div>
+
     <div class="card group">
       <h3>Cookies and tracking</h3>
       <div class="row setting" data-keywords="https only mode upgrade warn http">

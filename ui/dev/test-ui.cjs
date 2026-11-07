@@ -2384,6 +2384,15 @@ function settingsMock(defaults) {
   const restart = (s) => ['hardwareAcceleration', 'proxy', 'extraFlags', 'blockThirdPartyCookies', 'engineSecurityComponents'].some((k) => sync(s)[k] !== running[k]);
   window.__bounce = { watched: 2, cleanedTotal: 5, lastCleanupMs: Date.now() - 3600e3 };
   h.bounceStatus = () => window.__bounce;
+  // 0.6.0 custom DNS: presets, parsing and the stub's status come from the host.
+  window.__dnsStatus = { route: 'system', spki: 'abc=' };
+  h.dnsStatus = () => window.__dnsStatus;
+  h.dnsParse = (m) => {
+    if (m.text === '1.1.1.1') return { kind: 'udp', name: '1.1.1.1', host: '1.1.1.1', ip: '', port: 53, path: '', stamp: '' };
+    if (m.text.startsWith('sdns://Agc')) return { kind: 'https', name: 'https://dns.cloudflare.com/dns-query', host: 'dns.cloudflare.com', ip: '1.1.1.1', port: 443, path: '/dns-query', stamp: m.text };
+    throw new Error('Not a host name: ' + m.text);
+  };
+  h.dnsTest = (m) => { if (m.index === 0) return { ms: 23 }; throw new Error('no answer within 2000 ms'); };
   h.bounceCleanNow = () => { window.__bounce = { watched: 0, cleanedTotal: 7, lastCleanupMs: Date.now() }; return { cleaned: 2 }; };
   const UA_DEFAULT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36';
   const UAS = [
@@ -2392,7 +2401,11 @@ function settingsMock(defaults) {
     { id: 'safari-iphone', label: 'Safari 27 on iPhone', userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0 Mobile/15E148 Safari/604.1' },
   ];
   window.__uas = UAS;
-  h.getSettings = () => ({ settings: st.settings, restartRequired: restart(st.settings), about: { version: '0.1.0', cef: '156.0.15', chromium: '156.0.8078.80', dataDir: 'C:\\Users\\me\\AppData\\Local\\Krunk' }, userAgents: UAS, defaultUserAgent: UA_DEFAULT });
+  const DNS_PRESETS = [
+    { id: 'quad9-dot', name: 'Quad9 (DoT)', resolver: { kind: 'tls', name: 'Quad9 (DoT)', host: 'dns.quad9.net', ip: '9.9.9.9', port: 853, path: '', stamp: '' } },
+    { id: 'cloudflare-doh', name: 'Cloudflare (DoH)', resolver: { kind: 'https', name: 'Cloudflare (DoH)', host: 'cloudflare-dns.com', ip: '1.1.1.1', port: 443, path: '/dns-query', stamp: '' } },
+  ];
+  h.getSettings = () => ({ settings: st.settings, restartRequired: restart(st.settings), dnsPresets: DNS_PRESETS, about: { version: '0.1.0', cef: '156.0.15', chromium: '156.0.8078.80', dataDir: 'C:\\Users\\me\\AppData\\Local\\Krunk' }, userAgents: UAS, defaultUserAgent: UA_DEFAULT });
   h.importDetect = () => [
     { id: 'firefox:abcd.default-release', browser: 'firefox', label: 'Firefox – default-release', path: 'C:\\Users\\me\\AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\abcd.default-release', isDefault: true, hasHistory: true, hasBookmarks: true, hasPasswords: true },
     { id: 'chrome:Default', browser: 'chrome', label: 'Google Chrome – Person 1 (Default)', path: 'C:\\Users\\me\\AppData\\Local\\Google\\Chrome\\User Data\\Default', isDefault: true, hasHistory: true, hasBookmarks: false, hasPasswords: true },
@@ -2409,6 +2422,7 @@ function settingsMock(defaults) {
     if (s.searchEngine === 'custom' && !/%s|\{searchTerms\}/.test(s.customSearchUrl)) errs.push({ field: 'customSearchUrl', message: 'Must contain %s where the search terms go' });
     if (s.extraFlags.split(/\s+/).some((t) => t && !/^--[A-Za-z0-9][\w.-]*(=[^\s"'`;&|<>]+)?$/.test(t))) errs.push({ field: 'extraFlags', message: 'Not a valid flag (use --flag or --flag=value)' });
     if (s.tabSleepMinutes > 1440) errs.push({ field: 'tabSleepMinutes', message: 'Must be between 0 and 1440 minutes' });
+    if (s.dns && s.dns.mode === 'custom' && !(s.dns.resolvers || []).some((r) => r.kind !== 'dnsCrypt')) errs.push({ field: 'dns', message: 'Custom DNS needs at least one supported resolver' });
     const ro = (s.headers && s.headers.rules || []).find((r) => /^(cookie|host|referer)$/i.test(r.name));
     if (ro) errs.push({ field: 'headers.rules', message: ro.name + ': ' + ro.name + ' is read-only: the cookie jar' });
     if (errs.length) { const e = new Error('Some settings are not valid'); e.data = errs; throw e; }
@@ -2627,6 +2641,48 @@ async function testSettings(browser) {
   await page.waitForTimeout(80);
   check((await lastSent(page, 'bounceCleanNow')) !== undefined && (await page.textContent('#bounce-status')).startsWith('0 sites seen only as a redirect · 7 cleared'), 'Clean now clears the due bounce trackers and refreshes the status');
   await page.check('input[name=plevel][value=standard]');
+  await page.waitForTimeout(60);
+  // 0.6.0 custom DNS: the card, presets, parsing, order, Test and the mode.
+  check(await page.isChecked('input[name=dnsmode][value=system]') && (await page.textContent('#dns-list')).includes('No resolvers yet') && await page.locator('#dns-preset option').count() === 3, 'DNS: system by default, no resolvers, the presets listed');
+  await page.check('input[name=dnsmode][value=custom]');
+  await page.waitForTimeout(80);
+  check((await page.textContent('[data-error-for=dns]')).includes('at least one') && await page.evaluate(() => window.__settings.settings.dns.mode) === 'system', 'Custom without a resolver is refused and not stored');
+  await page.check('input[name=dnsmode][value=system]');
+  await page.waitForTimeout(60);
+  await page.selectOption('#dns-preset', 'quad9-dot');
+  await page.waitForTimeout(80);
+  await page.fill('#dns-address', 'sdns://AgcAAAAAAAAABzEuMS4xLjEAEmRucy5jbG91ZGZsYXJlLmNvbQovZG5zLXF1ZXJ5');
+  await page.click('#dns-form button');
+  await page.waitForTimeout(80);
+  await page.fill('#dns-address', '1.1.1.1');
+  await page.click('#dns-form button');
+  await page.waitForTimeout(80);
+  {
+    const d = await page.evaluate(() => window.__settings.settings.dns);
+    check(d.resolvers.length === 3 && d.resolvers[0].kind === 'tls' && d.resolvers[1].stamp.startsWith('sdns://') && d.resolvers[2].kind === 'udp', 'a preset, a stamp and a plain address are added in order (' + d.resolvers.map((r) => r.kind).join(',') + ')');
+    check(await page.locator('#dns-list .resolver').count() === 3 && (await page.textContent('#dns-list .resolver[data-index="0"]')).includes('DoT') && (await page.textContent('#dns-list .resolver[data-index="0"]')).includes('via 9.9.9.9') && await page.inputValue('#dns-address') === '', 'the list shows the kind and the bootstrap address, the form is cleared');
+  }
+  await page.fill('#dns-address', 'bad host');
+  await page.click('#dns-form button');
+  await page.waitForTimeout(80);
+  check((await page.textContent('#dns-error')).includes('Not a host name') && await page.evaluate(() => window.__settings.settings.dns.resolvers.length) === 3, 'a bad address is refused with the host\'s reason');
+  await page.locator('#dns-list .resolver[data-index="2"] .icon-btn[title="Move up"]').click();
+  await page.waitForTimeout(80);
+  check(await page.evaluate(() => window.__settings.settings.dns.resolvers.map((r) => r.kind).join(',')) === 'tls,udp,https', 'Move up reorders the list');
+  await page.evaluate(() => { window.__dnsStatus = { route: 'stub', port: 51234, spki: 'abc=', resolvers: [{ queries: 12, failures: 1, lastMs: 31, lastError: '' }, { queries: 0, failures: 0, lastMs: 0, lastError: '' }, { queries: 0, failures: 0, lastMs: 0, lastError: '' }] }; });
+  await page.check('input[name=dnsmode][value=custom]');
+  await page.waitForTimeout(120);
+  check(await page.evaluate(() => window.__settings.settings.dns.mode) === 'custom' && (await page.textContent('#dns-status')).includes('loopback stub on port 51234') && (await page.textContent('#dns-list .resolver[data-index="0"]')).includes('12 queries, 1 failed, last 31 ms'), 'Custom with resolvers is stored; the status names the stub and the counters show');
+  await page.locator('#dns-list .resolver[data-index="0"] .test').click();
+  await page.waitForTimeout(80);
+  check((await page.textContent('#dns-list .resolver[data-index="0"]')).includes('OK, 23 ms') && (await lastSent(page, 'dnsTest')).index === 0, 'Test shows the latency');
+  await page.locator('#dns-list .resolver[data-index="1"] .test').click();
+  await page.waitForTimeout(80);
+  check((await page.textContent('#dns-list .resolver[data-index="1"]')).includes('failed: no answer within 2000 ms'), 'a failing Test shows the error');
+  await page.locator('#dns-list .resolver[data-index="2"] .icon-btn[title^="Remove"]').click();
+  await page.waitForTimeout(80);
+  check(await page.evaluate(() => window.__settings.settings.dns.resolvers.length) === 2, 'Remove drops a resolver');
+  await page.check('input[name=dnsmode][value=system]');
   await page.waitForTimeout(60);
   // Engine security components: opt-in, restart-only.
   await page.check('[data-key=engineSecurityComponents]');

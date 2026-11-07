@@ -123,6 +123,29 @@ pub(super) fn apply_profile_prefs(ctx: &mut RequestContext) {
     info!("engine preferences applied ({scope} profile): {applied}/{}", prefs.len());
 }
 
+/// Chromium's own DNS-over-HTTPS client (0.6.0 custom DNS): `mode` is `automatic` (the
+/// system resolver, upgraded when possible) or `secure` (the templates only, never the
+/// system resolver); `templates` is a space-separated list of DoH URLs. Global (local
+/// state) preferences: they apply at once to every profile.
+pub(super) fn set_doh(mode: &str, templates: &str) -> bool {
+    let Some(pm) = preference_manager_get_global() else {
+        warning!("dns: no global preference manager");
+        return false;
+    };
+    let mut ok = true;
+    for (name, value) in [("dns_over_https.mode", mode), ("dns_over_https.templates", templates)] {
+        let Some(mut v) = value_create() else { return false };
+        v.set_string(Some(&CefString::from(value)));
+        let n = CefString::from(name);
+        let mut error = CefString::from("");
+        if pm.can_set_preference(Some(&n)) == 0 || pm.set_preference(Some(&n), Some(&mut v), Some(&mut error)) == 0 {
+            warning!("dns: engine preference {name}: {error}");
+            ok = false;
+        }
+    }
+    ok
+}
+
 #[derive(Clone, Copy)]
 enum Pref {
     Bool(bool),

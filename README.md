@@ -569,6 +569,30 @@ VK  --XChaCha20-Poly1305 (fresh 24-byte nonce, AAD = entry id)--> each login; ma
   on an exact origin match.
 - **Copies:** excluded from clipboard history and cleared after 30 s.
 
+### Custom DNS
+
+Settings → Privacy → DNS (0.6.0) chooses who resolves names: Windows' resolver (the engine's
+default, upgraded to encrypted DNS when the system resolver is known to offer it), or
+Krunk's own ordered list. The list takes plain UDP/TCP servers, DNS over TLS (`tls://`), DNS
+over HTTPS over HTTP/2 or HTTP/3 (`https://`, `h3://`), DNS over QUIC (`quic://`) and
+`sdns://` stamps (DNSCrypt stamps are parsed and kept but skipped: the protocol is not
+implemented), with presets for Cloudflare, Quad9, Google, AdGuard and Mullvad. The first
+resolver answers; after 2 seconds or an error the next one is asked. Every resolver has a
+Test button (the latency, or the error) and counters.
+
+How it works: CEF's Alloy runtime only exposes Chromium's own DNS-over-HTTPS client, so Krunk
+puts that client into *secure* mode (it then never falls back to the system resolver) and
+points it at a loopback stub, `https://127.0.0.1:<port>/dns-query`, that Krunk runs in the
+browser process (`app/src/dns.rs`: a small tokio runtime, `hickory-proto` for the
+transports). The stub implements the ordered list and the fallback. Its certificate is
+generated in memory at every start (P-256, never written to disk) and the engine trusts that
+one key only, through `--ignore-certificate-errors-spki-list`. When every entry is a DoH
+resolver, Chromium is given the URLs directly instead (the provider certificates are then
+verified by the engine). Private tabs use the same network service, so they resolve the same
+way. Resolvers given by name and without a bootstrap address (presets have one) are looked up
+once through Windows' resolver, which the log says. A SOCKS proxy still resolves names at the
+proxy; "secure" mode means no resolution at all when every resolver fails (by design).
+
 ### Request headers
 
 Settings → Advanced → Request headers (0.6.0) edits what every request says about the

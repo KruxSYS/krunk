@@ -370,6 +370,8 @@ pub struct Settings {
     /// Request headers (Krunk 0.6.0): Accept-Language, client hints, custom rules. The
     /// user-agent string itself is `user_agent` below.
     pub headers: crate::headers::Headers,
+    /// Custom DNS (Krunk 0.6.0).
+    pub dns: crate::dns::Dns,
 
     // Passwords
     pub vault_autolock_minutes: u32,
@@ -444,6 +446,7 @@ impl Default for Settings {
             block_third_party_cookies: false,
             protection: crate::protection::Protection::default(),
             headers: crate::headers::Headers::default(),
+            dns: crate::dns::Dns::default(),
             https_only: false,
             send_dnt: true,
             send_gpc: true,
@@ -691,6 +694,9 @@ impl Settings {
                 err(field, &message);
             }
         }
+        if let Err(e) = self.dns.validate() {
+            err("dns", &e);
+        }
         if !self.proxy.is_empty() && !is_proxy(&self.proxy) {
             err("proxy", "Use host:port, scheme://host:port (http, https, socks4, socks5) or direct://");
         }
@@ -791,6 +797,7 @@ impl Settings {
                     "headers.acceptLanguage" => s.headers.accept_language.clear(),
                     "headers.hints" => s.headers.hints = None,
                     "headers.rules" => s.headers.rules.clear(),
+                    "dns" => s.dns = crate::dns::Dns::default(),
                     "proxy" => s.proxy.clear(),
                     "extraFlags" => s.extra_flags.clear(),
                     "defaultZoom" => s.default_zoom = d.default_zoom,

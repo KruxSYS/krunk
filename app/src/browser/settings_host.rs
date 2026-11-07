@@ -29,6 +29,7 @@ impl Browser {
                     "userAgents": lb_core::useragents::PRESETS,
                     "defaultUserAgent": engine::default_user_agent(),
                     "engineHints": self.engine_hints.borrow().clone(),
+                    "dnsPresets": lb_core::dns::PRESETS.iter().map(|p| serde_json::json!({ "id": p.id, "name": p.name, "resolver": p.resolver() })).collect::<Vec<_>>(),
                 });
                 self.reply(tab, Event::ok(req_id, data));
             }
@@ -209,6 +210,9 @@ impl Browser {
                 "tracking protection: {:?} (cookies {:?}, referrer {:?}, fingerprinting {}, cryptomining {}, bounce cleanup {})",
                 e.level, e.third_party_cookies, e.referrer, e.fingerprinting, e.cryptomining, e.bounce_cleanup
             );
+        }
+        if old.dns != new.dns {
+            self.apply_dns();
         }
         let lists_changed =
             old.effective_filter_lists() != new.effective_filter_lists() || old.custom_lists != new.custom_lists;

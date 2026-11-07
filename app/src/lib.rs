@@ -13,6 +13,8 @@
 #[cfg(windows)]
 mod browser;
 #[cfg(windows)]
+mod dns;
+#[cfg(windows)]
 mod ffi;
 #[cfg(windows)]
 mod log;
@@ -75,11 +77,17 @@ fn run() -> Result<i32, String> {
     if args.iter().any(|a| a == "--log-blocked") {
         browser::LOG_BLOCKED.store(true, std::sync::atomic::Ordering::Relaxed);
     }
+    // Custom DNS: the engine trusts the loopback stub's key (made now, for this run only).
+    let mut switches = settings.browser_switches();
+    match dns::engine_switch() {
+        Some(sw) => switches.push(sw),
+        None => log::write("WARN", "dns: no stub identity; custom DNS will stay off"),
+    }
     let config = ffi::cef::EngineConfig {
         root_cache: dirs.profile(),
         cache: dirs.profile().join("default"),
         log_file: dirs.root().join("cef.log"),
-        switches: settings.browser_switches(),
+        switches,
         user_agent: settings.user_agent.clone(),
     };
     info!("browser arguments: {}", settings.browser_arguments());

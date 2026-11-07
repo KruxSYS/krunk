@@ -835,6 +835,16 @@ pub enum Request {
     BounceStatus,
     /// Clear the due bounce trackers now (replies `{cleaned}`).
     BounceCleanNow,
+    /// Settings page (0.6.0 custom DNS): the stub's state and per-resolver counters.
+    DnsStatus,
+    /// Resolve a name through resolver `index` alone (replies `{ms}` or an error).
+    DnsTest {
+        index: u32,
+    },
+    /// Turn what the user typed (an address or an `sdns://` stamp) into a resolver.
+    DnsParse {
+        text: String,
+    },
     /// The settings page: set (or the lock popup: change) a site's permission; `Ask` removes
     /// the stored decision.
     PermissionSet {
@@ -1355,6 +1365,9 @@ impl Sender {
                     | R::PermissionSet { .. }
                     | R::BounceStatus
                     | R::BounceCleanNow
+                    | R::DnsStatus
+                    | R::DnsTest { .. }
+                    | R::DnsParse { .. }
                     | R::GetSettings
                     | R::SaveSettings { .. }
                     | R::ResetSettings
@@ -2318,6 +2331,9 @@ mod tests {
             Request::PermissionExceptions,
             Request::BounceStatus,
             Request::BounceCleanNow,
+            Request::DnsStatus,
+            Request::DnsTest { index: 1 },
+            Request::DnsParse { text: "1.1.1.1".into() },
             Request::PermissionSet {
                 origin: "https://a.example".into(),
                 kind: crate::permissions::Kind::Camera,
@@ -2613,7 +2629,13 @@ mod tests {
         };
         assert!(Sender::Page(Page::Settings).permits(&list) && Sender::Page(Page::Settings).permits(&set));
         assert!(Sender::Popup.permits(&set) && !Sender::Popup.permits(&list));
-        for r in [Request::BounceStatus, Request::BounceCleanNow] {
+        for r in [
+            Request::BounceStatus,
+            Request::BounceCleanNow,
+            Request::DnsStatus,
+            Request::DnsTest { index: 0 },
+            Request::DnsParse { text: "x".into() },
+        ] {
             assert!(Sender::Page(Page::Settings).permits(&r), "{r:?}");
             assert!(!Sender::Popup.permits(&r) && !Sender::Shell.permits(&r), "{r:?}");
             for p in Page::ALL.iter().filter(|p| **p != Page::Settings) {
