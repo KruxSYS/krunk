@@ -91,7 +91,7 @@ foreach ($f in Frames) { if (Focus $f) { SafeKeys '%{F4}' 1500 } }
 Start-Sleep 3
 if ($null -ne $lightBefore) { Set-ItemProperty $personalize -Name AppsUseLightTheme -Value $lightBefore -Type DWord }
 Log "[end] Krunk processes: $(@(Get-Process Krunk -ErrorAction SilentlyContinue).Count)"
-Get-Content "$profile\Krunk\krunk.log" | Select-String 'browser arguments|user agent|blocked navigation|WARN|ERROR' | ForEach-Object { Log "[log] $($_.Line.Substring(0, [Math]::Min(400, $_.Line.Length)))" }
+Get-Content "$profile\Krunk\krunk.log" | Select-String 'Krunk.s switches|engine command line|user agent|blocked navigation|WARN|ERROR' | ForEach-Object { Log "[log] $($_.Line.Substring(0, [Math]::Min(400, $_.Line.Length)))" }
 Get-Content 'C:\pipeline\krunk\www\access.log' | Where-Object { $_ -gt $mark -and $_ -match 'log\?ua=' } | ForEach-Object {
   $q = (($_ -split 'log\?ua=')[1] -split ' cookie=')[0]; Log "[ua-seen-by-server] $([uri]::UnescapeDataString($q))"
 }

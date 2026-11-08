@@ -291,6 +291,8 @@ impl Browser {
         if !window.exists() {
             return Err("The window was closed during start-up".into());
         }
+        // What the engine runs with (CEF's switches and Krunk's merged; 0.7.1).
+        info!("engine command line: {}", crate::ffi::cef::command_line());
         let running_settings = settings.clone();
         let browser = Rc::new_cyclic(|me| Browser {
             me: me.clone(),

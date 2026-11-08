@@ -67,7 +67,7 @@ KrunkWindows $P
 foreach ($f in Frames) { if (Focus $f) { SafeKeys '%{F4}' 1500 } }
 Start-Sleep 3
 Log "[end] Krunk processes: $(@(Get-Process Krunk -ErrorAction SilentlyContinue).Count)"
-Get-Content "$profile\Krunk\krunk.log" | Select-String 'browser arguments|PROBE|WARN|ERROR|blocked navigation' | ForEach-Object { Log "[log] $($_.Line.Substring(0, [Math]::Min(3000, $_.Line.Length)))" }
+Get-Content "$profile\Krunk\krunk.log" | Select-String 'Krunk.s switches|engine command line|PROBE|WARN|ERROR|blocked navigation' | ForEach-Object { Log "[log] $($_.Line.Substring(0, [Math]::Min(3000, $_.Line.Length)))" }
 Get-Content 'C:\pipeline\krunk\www\access.log' | Where-Object { $_ -gt $mark -and $_ -match '/log\?' } | ForEach-Object {
   $u = [uri]($_ -split ' ')[2]; Log "[probe] $([uri]::UnescapeDataString($u.Query.TrimStart('?')))"
 }

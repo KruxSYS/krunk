@@ -8,7 +8,8 @@
     document.getElementById('chromium').textContent = a.chromium;
     document.getElementById('cef').textContent = a.cef;
     document.getElementById('dataDir').textContent = a.dataDir;
-    document.getElementById('arguments').textContent = a.arguments;
+    // The engine's own command line (CEF's switches and Krunk's merged; 0.7.1), else Krunk's.
+    document.getElementById('arguments').textContent = a.commandLine || a.arguments;
     // Whether the installed files are this release's (0.7.0); krunk://gpu has the details and
     // the Repair button.
     var i = a.integrity || {};

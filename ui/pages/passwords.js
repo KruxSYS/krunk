@@ -48,23 +48,34 @@
     });
   }
 
-  // The host refuses attempts during the delay; this only shows it.
+  // The host refuses attempts during the delay; this only shows it. Why the last attempt failed
+  // ("Wrong master password.") stays until the next attempt or typing (0.7.1: the countdown
+  // used to replace it and then clear it, so nothing said the password was wrong).
+  let lastError = '';
   function rateLimit(waitMs, message) {
     clearInterval(countdown);
     const btn = $('unlock-btn');
     const err = $('unlock-error');
-    err.textContent = message || '';
+    if (message) lastError = message.replace(/\s*Try again in \d+ s\.?$/, '');
+    err.textContent = lastError;
     let wait = waitMs || 0;
     btn.disabled = wait > 0;
     if (wait <= 0) return;
+    const reason = lastError || 'Too many attempts.';
     const tick = () => {
-      err.textContent = 'Too many attempts. Try again in ' + Math.ceil(wait / 1000) + ' s.';
+      err.textContent = reason + ' Try again in ' + Math.ceil(wait / 1000) + ' s.';
       wait -= 1000;
-      if (wait < 0) { clearInterval(countdown); btn.disabled = false; err.textContent = ''; }
+      if (wait < 0) { clearInterval(countdown); btn.disabled = false; err.textContent = lastError; }
     };
     tick();
     countdown = setInterval(tick, 1000);
   }
+
+  // Typing a new attempt: the old reason goes (a running countdown stays).
+  $('unlock-pw').addEventListener('input', function () {
+    lastError = '';
+    if (!$('unlock-btn').disabled) $('unlock-error').textContent = '';
+  });
 
   // ---- password fields (0.7.0, R14): show/hide and the strength meter ----
   function attachReveal(input) {
@@ -138,6 +149,7 @@
     $('unlock-btn').disabled = true;
     $('unlock-btn').textContent = 'Unlocking…';
     $('unlock-pw').value = '';
+    lastError = '';
     LB.request('vaultUnlock', { password: pw }).then(function () {
       $('unlock-error').textContent = '';
       status();

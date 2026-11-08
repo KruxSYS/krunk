@@ -1001,6 +1001,21 @@ async function testPopup(browser) {
   check(errors.length === 0, 'update prompt: no console errors (' + errors.join(' | ') + ')');
 }
 
+async function testAbout(browser) {
+  console.log('krunk://about (0.7.1: the engine command line)');
+  const about = { version: '0.7.1', cef: '156.0.15', chromium: '156.0.8078.80', dataDir: 'C:\\Users\\me\\AppData\\Local\\Krunk',
+    arguments: '--no-pings --disable-features=AutofillServerCommunication',
+    commandLine: '"C:\\Krunk\\Krunk.exe" --disable-features=GlicActorUi,AutofillActorMode,LensOverlay,KillOnInvalidNavigationHeaders,AutofillServerCommunication --no-pings',
+    integrity: { checked: true, healthy: true, summary: 'The installed files match this release', libcef: 'c4e38bbf9f097016' } };
+  const { page, errors } = await openPage(browser, 'https://krunk.invalid/about.html', { width: 900, height: 700 }, 1,
+    (a) => { window.__host.handlers.getAbout = () => a; }, about);
+  await page.waitForFunction(() => document.getElementById('arguments').textContent.length > 0);
+  check((await page.textContent('#arguments')) === about.commandLine, 'About shows the engine command line (CEF and Krunk features merged)');
+  check((await page.textContent('table')).includes('Engine command line'), 'labelled as the engine command line');
+  check(errors.length === 0, 'about: no console errors (' + errors.join(' | ') + ')');
+  await page.context().close();
+}
+
 async function testGpu(browser) {
   console.log('krunk://gpu (0.7.0: engine identity, generated codec text, Repair)');
   const base = { hardwareAcceleration: true, runningWithGpu: true, arguments: '--no-pings --disable-features=AutofillServerCommunication', gpuProcess: true,
@@ -2527,7 +2542,10 @@ async function testPasswords(browser) {
   await page.click('#unlock-btn');
   await page.waitForTimeout(80);
   check((await page.textContent('#unlock-error')).includes('Try again in'), 'wrong password shows the retry delay');
+  check((await page.textContent('#unlock-error')).includes('Wrong master password'), 'the countdown keeps the reason');
   await page.waitForTimeout(1200);
+  check((await page.textContent('#unlock-error')).trim() === 'Wrong master password.', 'after the delay the reason stays (0.7.1)');
+  check(!(await page.locator('#unlock-btn').isDisabled()), 'unlock enabled again after the delay');
   await page.fill('#unlock-pw', 'wrong again');
   await page.click('#unlock-btn');
   await page.waitForTimeout(80);
@@ -2536,6 +2554,9 @@ async function testPasswords(browser) {
   check(await page.inputValue('#unlock-pw') === '', 'password field cleared after an attempt');
   await shot(page, 'vault-rate-limited.png');
   await page.waitForTimeout(2300);
+  check((await page.textContent('#unlock-error')).includes('Wrong master password'), 'the reason is still there after the second delay');
+  await page.type('#unlock-pw', 'x');
+  check((await page.textContent('#unlock-error')) === '', 'typing a new attempt clears it');
   await page.fill('#unlock-pw', 'correct horse battery');
   await page.click('#unlock-btn');
   await page.waitForSelector('#list-section:not([hidden])');
@@ -4599,6 +4620,7 @@ async function testTabWindows(browser) {
     if (!ONLY || ONLY.includes('LoginScript')) await testLoginScript(browser);
     if (!ONLY || ONLY.includes('MediaScript')) await testMediaScript(browser);
     if (!ONLY || ONLY.includes('Gpu')) await testGpu(browser);
+    if (!ONLY || ONLY.includes('About')) await testAbout(browser);
     if (!ONLY || ONLY.includes('PaintedScript')) await testPaintedScript(browser);
     if (!ONLY || ONLY.includes('NoHints')) await testNoHintsScript(browser);
     if (!ONLY || ONLY.includes('LinkSweep')) await testLinkSweep(browser);

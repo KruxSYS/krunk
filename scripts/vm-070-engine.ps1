@@ -49,7 +49,7 @@ Keys '{END}' 1500
 Shot "$P-4-gpu-codecs"
 SafeGo 'krunk://about' 2500
 Shot "$P-5-about"
-Get-Content "$profile\Krunk\krunk.log" | Select-String 'engine files|release files|engine switch|browser arguments' | ForEach-Object { Log "[$P] log: $_" }
+Get-Content "$profile\Krunk\krunk.log" | Select-String 'engine files|release files|engine switch|Krunk.s switches|engine command line' | ForEach-Object { Log "[$P] log: $_" }
 # Chromium's own chrome://gpu through the page's button (typed chrome:// addresses are searched).
 SafeGo 'krunk://gpu' 3000
 Click (X 881) (Y 210) 3000

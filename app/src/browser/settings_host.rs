@@ -104,6 +104,8 @@ impl Browser {
             "chromium": chromium,
             "dataDir": self.dirs.root().display().to_string(),
             "arguments": self.running_settings.browser_arguments(),
+            // What the engine runs with: CEF's switches and Krunk's, merged (0.7.1).
+            "commandLine": engine::command_line(),
             "integrity": self.integrity_json(),
         })
     }
