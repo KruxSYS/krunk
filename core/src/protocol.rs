@@ -374,8 +374,15 @@ pub enum PopupContent {
         /// Milliseconds before the next attempt is accepted.
         wait_ms: u64,
     },
-    /// Contents of a bookmarks-bar folder.
-    BookmarkFolder { id: i64, title: String, items: Vec<BarItem> },
+    /// Contents of a bookmarks-bar folder. The bar's overflow ("»", 0.7.2) is the bar's own
+    /// folder from item `offset` on (the items that did not fit).
+    BookmarkFolder {
+        id: i64,
+        title: String,
+        items: Vec<BarItem>,
+        #[serde(default)]
+        offset: u32,
+    },
     /// A newer Krunk: Update now (or Download) / Later / Release notes.
     Update {
         version: String,
@@ -744,6 +751,10 @@ pub enum Request {
         id: i64,
         #[serde(default)]
         rect: Option<PopupRect>,
+        /// The bar's overflow (0.7.2, R10): the shell opens the bar's folder from the first
+        /// item that did not fit. Only the shell sends it.
+        #[serde(default)]
+        from: Option<u32>,
     },
     /// Right-click on the bookmarks bar: its menu for bookmark or folder `id`, or for the bar
     /// itself (`id` none), at `rect` (shell CSS px).
@@ -1470,7 +1481,7 @@ impl Sender {
                     | R::BookmarkMenuAction { .. }
                     | R::SaveBookmark { .. }
                     | R::HidePopup
-                    | R::ShowBookmarkFolder { rect: None, .. }
+                    | R::ShowBookmarkFolder { rect: None, from: None, .. }
                     | R::PopupResize { .. }
                     | R::ShowFolderItemMenu { .. }
                     | R::MoveBookmarkInFolder { .. }
@@ -2761,8 +2772,9 @@ mod tests {
             Request::GeneratePassword { length: 24, symbols: false },
             Request::DownloadAction { id: 1, action: DownloadAction::ShowInFolder },
             Request::ClearDownloads,
-            Request::ShowBookmarkFolder { id: 4, rect: Some(rect) },
-            Request::ShowBookmarkFolder { id: 4, rect: None },
+            Request::ShowBookmarkFolder { id: 4, rect: Some(rect), from: None },
+            Request::ShowBookmarkFolder { id: 4, rect: None, from: None },
+            Request::ShowBookmarkFolder { id: 1, rect: Some(rect), from: Some(3) },
             Request::ClearBrowsingData {
                 data: ClearData { cookies: true, cache: true, site_data: true, since: Some(1), ..ClearData::default() },
             },
@@ -3431,6 +3443,26 @@ mod tests {
     }
 
     #[test]
+    fn bar_overflow_permits() {
+        let rect = PopupRect { x: 900.0, y: 0.0, width: 24.0, height: 24.0 };
+        let overflow = Request::ShowBookmarkFolder { id: 1, rect: Some(rect), from: Some(4) };
+        assert!(Sender::Shell.permits(&overflow));
+        // The dropdown opens subfolders in place, never an overflow of its own.
+        assert!(Sender::Popup.permits(&Request::ShowBookmarkFolder { id: 7, rect: None, from: None }));
+        assert!(!Sender::Popup.permits(&Request::ShowBookmarkFolder { id: 1, rect: None, from: Some(4) }));
+        for p in Page::ALL {
+            assert!(!Sender::Page(p).permits(&overflow), "{p:?}");
+        }
+        let parsed = parse_request(
+            Sender::Shell,
+            r#"{"cmd":"showBookmarkFolder","id":1,"rect":{"x":1,"y":2,"width":3,"height":4},"from":2}"#,
+        );
+        assert!(matches!(parsed.map(|e| e.request), Ok(Request::ShowBookmarkFolder { from: Some(2), .. })));
+        let old = PopupContent::BookmarkFolder { id: 1, title: String::new(), items: vec![], offset: 3 };
+        assert!(serde_json::to_string(&old).unwrap().contains(r#""offset":3"#));
+    }
+
+    #[test]
     fn address_menu_permits() {
         let show = Request::ShowAddressMenu { x: 1.0, y: 2.0, selection: String::new(), has_text: false, dirty: false };
         let act = Request::AddressMenuAction { action: AddressMenuAction::Copy };
@@ -3749,6 +3781,7 @@ mod tests {
                         is_folder: false,
                         favicon: Some("/favicon?host=www.bbc.co.uk".into()),
                     }],
+                    offset: 0,
                 },
             },
             Event::BookmarksBar {

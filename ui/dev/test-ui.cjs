@@ -1504,6 +1504,35 @@ async function testBookmarks(browser) {
   check((await page.locator('.toast').textContent()).includes('Imported 42'), 'import result shown');
   await page.click('#export');
   check((await lastSent(page, 'exportBookmarks')) !== undefined, 'export asks the host');
+  // 0.7.2 (R11): a 300-character address and a long title stay on one line, shortened, with the
+  // whole text in the tooltip; the page never scrolls sideways and the rows keep their height.
+  const longUrl = 'https://very-long.example.org/' + 'path/'.repeat(54) + '?q=end';
+  const longTitle = 'A very long bookmark title that goes on and on '.repeat(4).trim();
+  await page.evaluate((x) => {
+    const h = window.__host.handlers;
+    const base = h.getBookmarks;
+    h.getBookmarks = () => { const t = JSON.parse(JSON.stringify(base())); t[1].children.push({ id: 99, parent: 2, isFolder: false, title: x.t, url: x.u, position: 9, added: 0 }); return t; };
+    document.dispatchEvent(new Event('visibilitychange'));
+  }, { t: longTitle, u: longUrl });
+  await page.waitForTimeout(150);
+  await page.locator('.folder', { hasText: 'Other bookmarks' }).click();
+  await page.waitForSelector('#items .row[data-id="99"]');
+  for (const w of [1100, 760]) {
+    await page.setViewportSize({ width: w, height: 600 });
+    await page.waitForTimeout(60);
+    const m = await page.evaluate(() => {
+      const r = document.querySelector('#items .row[data-id="99"]');
+      const other = document.querySelector('#items .row[data-id="21"]');
+      const a = r.querySelector('a'), sub = r.querySelector('.sub');
+      return { scroll: document.scrollingElement.scrollWidth - document.scrollingElement.clientWidth, h: r.offsetHeight, h0: other.offsetHeight,
+        rowRight: r.getBoundingClientRect().right, card: document.getElementById('items').getBoundingClientRect().right,
+        titleOne: a.scrollWidth > a.clientWidth && a.offsetHeight < 30, subOne: sub.scrollWidth > sub.clientWidth && sub.offsetHeight < 30,
+        tip: a.title, subTip: sub.title };
+    });
+    check(m.scroll <= 0 && m.h === m.h0 && m.rowRight <= m.card + 0.5, 'bookmarks page at ' + w + ' px with a 300-character address: no sideways scroll, same row height (' + JSON.stringify([m.scroll, m.h, m.h0]) + ')');
+    check(m.titleOne && m.subOne && m.tip === longTitle + '\n' + longUrl && m.subTip === longUrl, 'title and address are one line each, shortened, with the whole text in the tooltip (' + w + ' px)');
+  }
+  await shot(page, 'bookmarks-long-url.png');
   check(external.length === 0, 'no network requests (' + external.join(', ') + ')');
   check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
 }
@@ -2145,6 +2174,12 @@ async function testBookmarksBar(browser) {
   check(await page.locator('.item.radio.checked').textContent() === 'Show it on new tabs only', 'the current mode is checked');
   check(await page.evaluate(() => document.getElementById('root').getBoundingClientRect().bottom <= 352), 'the bookmark menu fits 240x352 (' + await page.evaluate(() => document.getElementById('root').getBoundingClientRect().bottom) + ')');
   await shot(page, 'popup-bookmark-menu.png');
+  // 0.7.2 (R8): every item has the icon column; the labels start at the same x, the radio
+  // check sits in the icon column.
+  const cols = await page.evaluate(() => Array.from(document.querySelectorAll('.item')).map((i) => [!!i.querySelector('svg.micon'), Math.round(i.querySelector('.label').getBoundingClientRect().left)]));
+  check(cols.every((c) => c[0]) && new Set(cols.map((c) => c[1])).size === 1, 'bookmark menu: an icon column and aligned labels (' + JSON.stringify(cols) + ')');
+  check(await page.locator('.item.radio.checked svg use').getAttribute('href') === '#m-check' && await page.locator('.item.radio:not(.checked) svg use').count() === 0, 'the checked mode shows its check in the icon column');
+  check(await page.locator('.item.danger', { hasText: 'Delete' }).count() === 1, 'Delete is marked as the dangerous item');
   await page.locator('.item', { hasText: 'Open in new window' }).click();
   let a = await lastSent(page, 'bookmarkMenuAction');
   check(a && a.id === 10 && a.action === 'openNewWindow', 'Open in new window sends bookmarkMenuAction{openNewWindow}');
@@ -3668,6 +3703,110 @@ async function testSettings(browser) {
   check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
 }
 
+// 0.7.2 (R9): long titles in a dropdown stay on one line with "…"; every row keeps its height.
+// (R10): the bar's overflow is the bar's folder from `offset` on: a reorder in it counts from there.
+async function testFolderPopupLong(browser) {
+  console.log('popup: bookmark folder, long titles and the bar overflow');
+  const { page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 320, height: 140 }, 1);
+  const long = 'An extremely long bookmark title that would wrap onto a second line in 0.7.1 and break the rows';
+  await emit(page, { event: 'popup', content: { kind: 'bookmarkFolder', id: 1, title: 'Bookmarks bar', offset: 5, items: [
+    { id: 30, title: long, url: 'https://long.example.org/' + 'x'.repeat(200), isFolder: false, favicon: null },
+    { id: 31, title: 'Short', url: 'https://short.example/', isFolder: false, favicon: null },
+    { id: 32, title: 'A folder with a long name that does not fit either, not at all', url: null, isFolder: true, favicon: null },
+  ] } });
+  await page.waitForSelector('.item');
+  await page.waitForTimeout(60);
+  const rows = await page.evaluate(() => Array.from(document.querySelectorAll('.item')).map((i) => {
+    const l = i.querySelector('.label');
+    return { h: i.offsetHeight, lh: l.offsetHeight, cut: l.scrollWidth > l.clientWidth, right: i.getBoundingClientRect().right };
+  }));
+  check(rows.every((r) => r.h === 30 && r.lh < 24 && r.right <= 320) && rows[0].cut && rows[2].cut && !rows[1].cut, 'long titles: one line, shortened, every row 30 px (' + JSON.stringify(rows) + ')');
+  check((await lastSent(page, 'popupResize')) !== undefined, 'the dropdown asks for the height of its rows');
+  await shot(page, 'popup-bookmark-folder-long.png');
+  const fbox = async (id) => page.locator('.item[data-id="' + id + '"]').boundingBox();
+  const s = await fbox(31), t = await fbox(30);
+  await page.mouse.move(s.x + 20, s.y + s.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(s.x + 20, s.y + s.height / 2 - 8, { steps: 3 });
+  await page.mouse.move(t.x + 20, t.y + 3, { steps: 4 });
+  await page.mouse.up();
+  await page.waitForTimeout(30);
+  const mv = await lastSent(page, 'moveBookmarkInFolder');
+  check(mv && mv.id === 31 && mv.parent === 1 && mv.index === 5, 'a reorder in the overflow is counted from its first bar item (' + JSON.stringify(mv) + ')');
+  check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
+}
+
+// 0.7.2 (R10): the bookmarks bar shows the items that fit completely and "»" for the rest.
+async function testBarOverflow(browser) {
+  console.log('bookmarks bar: overflow');
+  const { page, errors } = await openPage(browser, 'https://shell.krunk.invalid/shell.html', { width: 1100, height: 104 }, 1);
+  const items = [];
+  for (let i = 0; i < 16; i++) items.push(i === 5 ? { id: 100 + i, title: 'Folder ' + i, url: null, isFolder: true, favicon: null }
+    : { id: 100 + i, title: 'Bookmark number ' + i, url: 'https://b' + i + '.example/', isFolder: false, favicon: null });
+  await page.evaluate((its) => {
+    const h = window.__host;
+    h.state.tabs = [{ id: 1, title: 'Rust', url: 'https://www.rust-lang.org/', favicon: null, loading: false, private: false, sleeping: false }];
+    h.state.active = 1;
+    h.tabsEvent();
+    h.navEvent({ bookmarksBar: true });
+    h.emit({ event: 'bookmarksBar', items: its });
+  }, items);
+  await page.waitForSelector('#bookmarks-bar .bm');
+  await page.waitForTimeout(50);
+  const state = () => page.evaluate(() => {
+    const bar = document.getElementById('bookmarks-bar');
+    const br = bar.getBoundingClientRect();
+    const more = document.getElementById('bm-more');
+    const shown = Array.from(bar.querySelectorAll('.bm')).filter((n) => getComputedStyle(n).display !== 'none');
+    const last = shown[shown.length - 1];
+    return { shown: shown.length, hidden: bar.querySelectorAll('.bm.overflowed').length, more: !more.hidden,
+      moreRight: Math.round(more.getBoundingClientRect().right), barRight: Math.round(br.right - 8),
+      lastRight: last ? last.getBoundingClientRect().right : 0, moreLeft: more.getBoundingClientRect().left,
+      prefix: shown.every((n, i) => n === bar.querySelectorAll('.bm')[i]) };
+  });
+  let st = await state();
+  check(st.more && st.hidden > 0 && st.shown + st.hidden === 16 && st.prefix && st.lastRight <= st.moreLeft && Math.abs(st.moreRight - st.barRight) <= 1,
+    'at 1100 px: the items that fit, then "»" at the right end (' + JSON.stringify(st) + ')');
+  await page.click('#bm-more');
+  let f = await lastSent(page, 'showBookmarkFolder');
+  check(f && f.id === 1 && f.from === st.shown && f.rect && f.rect.x > 900, '"»" opens the bar\'s folder from the first hidden item (' + JSON.stringify(f) + ')');
+  await page.click('#bm-more');
+  check((await lastSent(page, 'hidePopup')) !== undefined, 'a second click closes it');
+  await shot(page, 'shell-bar-overflow.png');
+  // A narrower window: fewer items; a wide one: all of them and no "»".
+  await page.setViewportSize({ width: 600, height: 104 });
+  await page.waitForTimeout(80);
+  const narrow = await state();
+  check(narrow.shown < st.shown && narrow.more && narrow.lastRight <= narrow.moreLeft, 'the bar recalculates when the window gets narrower (' + narrow.shown + ' shown)');
+  await page.setViewportSize({ width: 3000, height: 104 });
+  await page.waitForTimeout(80);
+  st = await state();
+  check(st.shown === 16 && !st.more, 'all items fit: no "»"');
+  await page.setViewportSize({ width: 1100, height: 104 });
+  await page.waitForTimeout(80);
+  // Fewer bookmarks (one removed): recalculated.
+  await emit(page, { event: 'bookmarksBar', items: items.slice(0, 4) });
+  await page.waitForTimeout(50);
+  st = await state();
+  check(st.shown === 4 && !st.more, 'after removing bookmarks everything fits again');
+  await emit(page, { event: 'bookmarksBar', items: items });
+  await page.waitForTimeout(50);
+  st = await state();
+  // Dragging a bookmark onto "»" moves it to the end of the bar (into the overflow).
+  const from = await page.locator('.bm[data-id="100"]').boundingBox();
+  const more = await page.locator('#bm-more').boundingBox();
+  await page.mouse.move(from.x + 10, from.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(from.x + 40, from.y + 10, { steps: 4 });
+  await page.mouse.move(more.x + more.width / 2, more.y + more.height / 2, { steps: 8 });
+  check(await page.locator('#bm-more.drop-into').count() === 1, '"»" lights up as a drop target');
+  await page.mouse.up();
+  await page.waitForTimeout(30);
+  const mv = await lastSent(page, 'moveBookmark');
+  check(mv && mv.id === 100 && mv.parent === 1 && mv.index >= 16, 'a drop on "»" moves the bookmark to the end of the bar (' + JSON.stringify(mv) + ')');
+  check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
+}
+
 async function testFolderPopup(browser) {
   console.log('popup: bookmark folder');
   const { page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 280, height: 110 }, 1);
@@ -3679,6 +3818,7 @@ async function testFolderPopup(browser) {
   await page.waitForSelector('.item');
   await page.waitForTimeout(100);
   await shot(page, 'popup-bookmark-folder.png');
+  check((await page.locator('.item', { hasText: 'BBC News' }).getAttribute('title')) === 'BBC News\nhttps://www.bbc.co.uk/news', 'a folder row\'s tooltip has the title and the address');
   await page.locator('.item', { hasText: 'Tech' }).click();
   const sf = await lastSent(page, 'showBookmarkFolder');
   check(sf && sf.id === 14 && sf.rect === undefined, 'subfolder opens in place (no rect)');
@@ -4696,6 +4836,8 @@ async function testTabWindows(browser) {
     if (!ONLY || ONLY.includes('ShellM4')) await testShellM4(browser);
     if (!ONLY || ONLY.includes('BookmarksBar')) await testBookmarksBar(browser);
     if (!ONLY || ONLY.includes('FolderPopup')) await testFolderPopup(browser);
+    if (!ONLY || ONLY.includes('FolderPopup')) await testFolderPopupLong(browser);
+    if (!ONLY || ONLY.includes('BarOverflow')) await testBarOverflow(browser);
     if (!ONLY || ONLY.includes('ShieldAndHttpsOnly')) await testShieldAndHttpsOnly(browser);
     if (!ONLY || ONLY.includes('BlockedList')) await testBlockedList(browser);
     if (!ONLY || ONLY.includes('FilterLists')) await testFilterLists(browser);

@@ -18,6 +18,23 @@
       kbd ? el('span', { class: 'kbd', text: kbd }) : null,
     ]);
   }
+  // An item with an icon column (0.7.2, R8): `icon` names a symbol in popup.html; null keeps
+  // the column empty so the labels stay aligned.
+  function iconItem(icon, label, kbd, onclick, disabled) {
+    const b = item(label, kbd, onclick, disabled);
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'icon micon');
+    svg.setAttribute('aria-hidden', 'true');
+    if (icon) {
+      const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+      use.setAttribute('href', '#' + icon);
+      svg.appendChild(use);
+    }
+    b.insertBefore(svg, b.firstChild);
+    b.classList.add('with-icon');
+    b.setAttribute('role', 'menuitem');
+    return b;
+  }
   function openPage(page) { LB.post('openPage', { page: page }); close(); }
   const sep = () => el('div', { class: 'sep' });
 
@@ -198,7 +215,7 @@
   function renderBookmarkMenu(c) {
     const act = (action) => LB.post('bookmarkMenuAction', { id: c.id, action: action });
     const mode = (label, value, action) => {
-      const b = item(label, '', () => act(action));
+      const b = iconItem(c.mode === value ? 'm-check' : null, label, '', () => act(action));
       b.setAttribute('role', 'menuitemradio');
       b.setAttribute('aria-checked', c.mode === value ? 'true' : 'false');
       b.classList.add('radio');
@@ -211,28 +228,29 @@
       mode('Hide the bar', 'never', 'showNever'),
     ];
     const add = [
-      item('Add this page', '', () => act('addPage'), !c.canAdd),
-      item('New folder…', '', () => act('newFolder')),
+      iconItem('m-star', 'Add this page', '', () => act('addPage'), !c.canAdd),
+      iconItem('m-folder-add', 'New folder…', '', () => act('newFolder')),
     ];
+    const danger = (b) => { b.classList.add('danger'); return b; };
     if (c.id === null || c.id === undefined) {
-      return add.concat([sep()], modes, [sep(), item('Bookmark manager', 'Ctrl+Shift+O', () => command('bookmarks'))]);
+      return add.concat([sep()], modes, [sep(), iconItem('m-book', 'Bookmark manager', 'Ctrl+Shift+O', () => command('bookmarks'))]);
     }
     if (c.isFolder) {
       return [
-        item(c.children ? 'Open all (' + c.children + ')' : 'Open all', '', () => act('openAll'), !c.children),
+        iconItem('m-open-all', c.children ? 'Open all (' + c.children + ')' : 'Open all', '', () => act('openAll'), !c.children),
         sep(),
-        item('Rename…', '', () => act('edit')),
-        item(c.children ? 'Delete folder and its ' + c.children + ' bookmarks' : 'Delete folder', '', () => act('delete')),
+        iconItem('m-edit', 'Rename…', '', () => act('edit')),
+        danger(iconItem('m-delete', c.children ? 'Delete folder and its ' + c.children + ' bookmarks' : 'Delete folder', '', () => act('delete'))),
         sep(),
       ].concat(add, [sep()], modes);
     }
     return [
-      item('Open in new tab', '', () => act('openNewTab')),
-      item('Open in new window', '', () => act('openNewWindow')),
-      item('Open in private tab', '', () => act('openPrivate')),
+      iconItem('m-tab', 'Open in new tab', '', () => act('openNewTab')),
+      iconItem('m-window', 'Open in new window', '', () => act('openNewWindow')),
+      iconItem('m-private', 'Open in private tab', '', () => act('openPrivate')),
       sep(),
-      item('Edit…', '', () => act('edit')),
-      item('Delete', '', () => act('delete')),
+      iconItem('m-edit', 'Edit…', '', () => act('edit')),
+      danger(iconItem('m-delete', 'Delete', '', () => act('delete'))),
       sep(),
     ].concat(add, [sep()], modes);
   }
@@ -377,7 +395,7 @@
   function fit() { LB.post('popupResize', { height: root.offsetHeight + 2 }); }
   // Content whose height depends on its items: the window is opened with an upper bound
   // and fitted right after the render (the ⋮ menu used to leave a gap at the bottom).
-  const FITS = { extInstall: true, suggest: true, cardFill: true, menu: true, tabMenu: true, bookmarkMenu: true, siteInfo: true, addressMenu: true, captionMenu: true, downloads: true, permission: true, passwordSaved: true, pip: true };
+  const FITS = { extInstall: true, suggest: true, cardFill: true, menu: true, tabMenu: true, bookmarkMenu: true, siteInfo: true, addressMenu: true, captionMenu: true, downloads: true, permission: true, passwordSaved: true, pip: true, bookmarkFolder: true };
 
 
   // Login suggestions under a focused field: the matching usernames (with the host for a
@@ -681,7 +699,8 @@
     const rows = c.items.map(function (b) {
       const icon = b.isFolder ? el('span', { class: 'folder-glyph', text: '▸' })
         : b.favicon ? el('img', { class: 'fav', src: b.favicon, alt: '' }) : el('span', { class: 'fav dot' });
-      const btn = el('button', { class: 'item', title: b.url || b.title, 'data-id': b.id }, [icon, el('span', { class: 'label', text: b.title })]);
+      // One line, shortened with "…"; the tooltip has the whole title and the address (R9).
+      const btn = el('button', { class: 'item', title: b.url ? (b.title ? b.title + '\n' + b.url : b.url) : b.title, 'data-id': b.id }, [icon, el('span', { class: 'label', text: b.title || b.url || '' })]);
       if (b.isFolder) btn.classList.add('folder');
       btn.addEventListener('click', function (e) {
         if (folderDrag.suppressClick) return;
@@ -761,7 +780,8 @@
     if (t.into !== undefined) {
       if (t.into !== id) LB.post('moveBookmarkInFolder', { id: id, parent: t.into, index: 1000000 });
     } else {
-      LB.post('moveBookmarkInFolder', { id: id, parent: current.id, index: t.index });
+      // The bar's overflow lists the bar's folder from `offset` on (0.7.2).
+      LB.post('moveBookmarkInFolder', { id: id, parent: current.id, index: t.index + (current.offset || 0) });
     }
   }
   root.addEventListener('pointerup', function (e) { endFolderDrag(e, true); });

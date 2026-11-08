@@ -96,7 +96,7 @@ impl Browser {
         self.menu_from_folder.set(None);
         let exists = matches!(self.store.borrow().bookmark(folder), Ok(Some(b)) if b.is_folder);
         if exists && self.open_folder() == Some(folder) {
-            self.show_bookmark_folder(folder, None);
+            self.show_bookmark_folder(folder, None, None);
             if let Some(c) = self.popup.try_borrow().ok().and_then(|p| p.as_ref().and_then(|p| p.view.clone())) {
                 c.focus();
             }
@@ -264,7 +264,7 @@ impl Browser {
     }
 
     /// The open folder dropdown's folder id.
-    fn open_folder(&self) -> Option<i64> {
+    pub(super) fn open_folder(&self) -> Option<i64> {
         let popup = self.popup.try_borrow().ok()?;
         match popup.as_ref().filter(|p| p.window.is_visible())?.content.as_ref()? {
             PopupContent::BookmarkFolder { id, .. } => Some(*id),
@@ -308,7 +308,7 @@ impl Browser {
         }
         let r = self.store.borrow_mut().move_bookmark(id, parent, index);
         self.bar_changed("move in folder", r);
-        self.show_bookmark_folder(folder, None);
+        self.show_bookmark_folder(folder, None, None);
     }
 
     /// The active page dragged from the address bar onto the bar: the host takes the

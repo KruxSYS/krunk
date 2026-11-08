@@ -162,6 +162,12 @@ html.fullscreen #caption, html.fullscreen #drag-space { display: none; }
   content: ''; position: absolute; top: 3px; bottom: 3px; width: 2px; background: var(--accent); border-radius: 1px; }
 .bm.drop-before::before { left: -2px; }
 .bm.drop-after::after { right: -2px; }
+/* 0.7.2 (R10): items that do not fit are in the "»" dropdown at the right end. */
+.bm.overflowed { display: none; }
+.bm-more { flex: none; margin-left: auto; height: 24px; min-width: 28px; padding: 0 8px; border: 0; border-radius: 12px; background: none;
+           color: var(--fg-muted); font: inherit; font-size: 1.077rem; line-height: 1; cursor: pointer; }
+.bm-more:hover, .bm-more.on { background: var(--bg-hover); color: var(--fg); }
+.bm-more.drop-into { background: var(--bg-hover); box-shadow: 0 0 0 2px var(--accent) inset; }
 
 /* ---- downloads button ---- */
 #downloads .badge { position: absolute; right: 0; bottom: 2px; min-width: 15px; padding: 0 3px; border-radius: 8px;

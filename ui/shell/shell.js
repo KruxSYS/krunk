@@ -463,7 +463,8 @@
   function markBarTarget(t) {
     clearBarMarks();
     if (!t) return;
-    if (t.into !== undefined) t.node.classList.add('drop-into');
+    if (t.more) t.more.classList.add('drop-into');
+    else if (t.into !== undefined) t.node.classList.add('drop-into');
     else if (t.others.length) {
       if (t.index < t.others.length) t.others[t.index].classList.add('drop-before');
       else t.others[t.others.length - 1].classList.add('drop-after');
@@ -808,6 +809,7 @@
     document.querySelectorAll('.bm[data-folder]').forEach(function (b) {
       b.classList.toggle('on', kind === 'folder:' + b.dataset.folder);
     });
+    if ($('bm-more')) $('bm-more').classList.toggle('on', kind === 'folder:' + BAR_ROOT);
   }
 
   // ---------- bookmarks bar ----------
@@ -847,7 +849,43 @@
         bar.appendChild(btn);
       }
     });
+    // 0.7.2 (R10): what does not fit goes into "»" at the right end, a dropdown of the bar's
+    // folder from the first hidden item on.
+    const more = el('button', { class: 'bm-more', id: 'bm-more', title: 'More bookmarks', 'aria-label': 'More bookmarks', hidden: '' }, [
+      el('span', { text: '»' }),
+    ]);
+    more.addEventListener('pointerdown', function () { rememberOpen('folder:' + BAR_ROOT); });
+    more.addEventListener('click', function () {
+      const key = 'folder:' + BAR_ROOT;
+      if (state.popup === key || downWhileOpen === key) { downWhileOpen = null; LB.post('hidePopup'); setPopup(null); return; }
+      const r = more.getBoundingClientRect();
+      LB.post('showBookmarkFolder', { id: BAR_ROOT, rect: { x: r.left, y: r.top, width: Math.max(1, r.width), height: Math.max(1, r.height) }, from: state.barOverflowFrom });
+      setPopup(key);
+    });
+    bar.appendChild(more);
+    layoutBar();
   }
+  // Shows the items that fit completely and "»" for the rest (on every render and resize).
+  function layoutBar() {
+    const bar = $('bookmarks-bar');
+    const more = $('bm-more');
+    if (!more || bar.hidden) return;
+    const items = Array.prototype.slice.call(bar.querySelectorAll('.bm'));
+    items.forEach(function (n) { n.classList.remove('overflowed'); });
+    more.hidden = true;
+    const right = function () { return bar.getBoundingClientRect().right - parseFloat(getComputedStyle(bar).paddingRight || '0'); };
+    let first = items.findIndex(function (n) { return n.getBoundingClientRect().right > right() + 0.5; });
+    if (first >= 0) {
+      more.hidden = false;
+      const end = right() - more.getBoundingClientRect().width - 4;
+      first = items.findIndex(function (n) { return n.getBoundingClientRect().right > end + 0.5; });
+      for (let i = first; i < items.length; i++) items[i].classList.add('overflowed');
+    }
+    const from = first >= 0 ? first : items.length;
+    if (state.barOverflowFrom !== from && state.popup === 'folder:' + BAR_ROOT) { LB.post('hidePopup'); setPopup(null); }
+    state.barOverflowFrom = from;
+  }
+  if (window.ResizeObserver) new ResizeObserver(function () { layoutBar(); }).observe($('bookmarks-bar'));
 
   // Right-click: the bar's menu for the item (bookmark or folder) or for the bar itself.
   $('bookmarks-bar').addEventListener('contextmenu', function (e) {
@@ -860,12 +898,16 @@
   // Dragging an item: along the bar it moves there (a mark shows where); over the middle of a
   // folder it goes into that folder (the folder lights up). Pointer events, as for tabs.
   const barDrag = { item: null, startX: 0, pointerId: null, moved: false, target: null, suppressClick: false };
-  function barItems() { return Array.prototype.slice.call($('bookmarks-bar').querySelectorAll('.bm')); }
+  function barItems() { return Array.prototype.slice.call($('bookmarks-bar').querySelectorAll('.bm:not(.overflowed)')); }
   function clearBarMarks() {
     barItems().forEach(function (n) { n.classList.remove('drop-before', 'drop-after', 'drop-into', 'dragging'); });
+    if ($('bm-more')) $('bm-more').classList.remove('drop-into');
   }
-  // Where a drop at x goes: { into: folderId } or { index } among the other items.
+  // Where a drop at x goes: { into: folderId } or { index } among the other items; on "»" it
+  // goes to the end of the bar, into the overflow (0.7.2).
   function barTarget(x) {
+    const more = $('bm-more');
+    if (more && !more.hidden && x >= more.getBoundingClientRect().left) return { index: 1000000, others: [], more: more };
     const others = barItems().filter(function (n) { return n !== barDrag.item; });
     let index = 0;
     for (let i = 0; i < others.length; i++) {
@@ -892,15 +934,10 @@
       $('bookmarks-bar').setPointerCapture(e.pointerId);
       LB.post('hidePopup'); setPopup(null);
     }
-    clearBarMarks();
-    barDrag.item.classList.add('dragging');
     const t = barTarget(e.clientX);
     barDrag.target = t;
-    if (t.into !== undefined) t.node.classList.add('drop-into');
-    else if (t.others.length) {
-      if (t.index < t.others.length) t.others[t.index].classList.add('drop-before');
-      else t.others[t.others.length - 1].classList.add('drop-after');
-    }
+    markBarTarget(t);
+    barDrag.item.classList.add('dragging');
   });
   function endBarDrag(e, commit) {
     if (!barDrag.item || e.pointerId !== barDrag.pointerId) return;

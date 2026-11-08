@@ -2,7 +2,7 @@
 //! setting that does not need a restart, restart, and clear-on-exit.
 
 use super::blocking::Fetching;
-use super::Browser;
+use super::{Browser, PopupSlot};
 use crate::ffi::cef::{self as engine, ClearKinds};
 use crate::ffi::dialogs;
 use crate::ffi::process;
@@ -375,9 +375,13 @@ impl Browser {
             }
             .to_json()
         };
-        let popup = self.popup.borrow().as_ref().and_then(|p| p.view.clone());
-        if let Some(c) = popup {
-            c.post_json(&e);
+        // Both popup windows: the second one shows the bookmark menu over a folder dropdown
+        // (0.7.2, R8: it kept the theme it was made with).
+        for slot in [PopupSlot::Main, PopupSlot::Menu] {
+            let popup = self.popup_slot(slot).borrow().as_ref().and_then(|p| p.view.clone());
+            if let Some(c) = popup {
+                c.post_json(&e);
+            }
         }
         let internal: Vec<TabId> =
             self.ws.borrow().tabs().filter(|(_, t)| Page::from_url(&t.url).is_some()).map(|(_, t)| t.id).collect();

@@ -287,7 +287,7 @@ pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> Pop
         PopupKind::Shield => (300.0, 226.0),
         PopupKind::SiteInfo => (360.0, 260.0),
         PopupKind::Suggest | PopupKind::CardFill => (300.0, 160.0),
-        PopupKind::BookmarkFolder => (280.0, folder_height(entries)),
+        PopupKind::BookmarkFolder => (FOLDER_POPUP_WIDTH, folder_height(entries)),
         PopupKind::Unlock => (360.0, 230.0),
         PopupKind::Permission => (380.0, 196.0),
         PopupKind::PasswordSaved => (360.0, 92.0),
@@ -340,8 +340,16 @@ fn folder_height(items: usize) -> f64 {
 /// A bookmarks-bar folder dropdown anchored under the folder button
 /// (`anchor` is the button's rect in shell CSS pixels).
 pub fn folder_popup_rect(anchor: PopupRect, items: usize) -> PopupRect {
-    PopupRect { x: anchor.x, y: anchor.y + anchor.height + 2.0, width: 280.0, height: folder_height(items) }
+    PopupRect {
+        x: anchor.x,
+        y: anchor.y + anchor.height + 2.0,
+        width: FOLDER_POPUP_WIDTH,
+        height: folder_height(items),
+    }
 }
+
+/// Folder dropdowns are this wide (CSS px); longer titles are shortened with "…" (0.7.2, R9).
+pub const FOLDER_POPUP_WIDTH: f64 = 320.0;
 
 /// Zoom levels offered by Ctrl +/- (like Chromium).
 pub const ZOOM_STEPS: [f64; 17] =
@@ -436,7 +444,7 @@ mod tests {
     fn folder_dropdown() {
         let anchor = PopupRect { x: 120.0, y: 78.0, width: 90.0, height: 24.0 };
         let r = folder_popup_rect(anchor, 3);
-        assert_eq!((r.x, r.y, r.width, r.height), (120.0, 104.0, 280.0, 110.0));
+        assert_eq!((r.x, r.y, r.width, r.height), (120.0, 104.0, 320.0, 110.0));
         assert_eq!(folder_popup_rect(anchor, 0).height, 46.0, "room for an 'empty' line");
         assert_eq!(folder_popup_rect(anchor, 500).height, 600.0, "scrolls beyond 600px");
     }

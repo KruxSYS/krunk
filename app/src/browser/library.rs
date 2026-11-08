@@ -20,10 +20,10 @@ impl Browser {
         let now = now_ms();
         match request {
             Request::ToggleBookmark => self.toggle_bookmark(),
-            Request::ShowBookmarkFolder { id, rect } => {
+            Request::ShowBookmarkFolder { id, rect, from } => {
                 // A click on the folder button that closed its dropdown stays closed.
                 if rect.is_none() || !self.toggle_suppressed(&format!("folder:{id}")) {
-                    self.show_bookmark_folder(id, rect);
+                    self.show_bookmark_folder(id, rect, from);
                 }
             }
             Request::Find { query, backwards } => self.find(&query, backwards),
@@ -352,12 +352,21 @@ impl Browser {
 
     /// Opens a bar folder in the popup: under its button (`rect` from the
     /// shell) or in place of the current folder (`None`, from the popup).
-    pub(super) fn show_bookmark_folder(&self, id: i64, rect: Option<PopupRect>) {
+    /// `from`: the bar's overflow (0.7.2, R10), its items from that index on. A refresh of the
+    /// open dropdown (`rect` none, the same folder) keeps its offset; a subfolder has none.
+    pub(super) fn show_bookmark_folder(&self, id: i64, rect: Option<PopupRect>, from: Option<u32>) {
         let Ok(Some(folder)) = self.store.borrow().bookmark(id) else { return };
         if !folder.is_folder {
             return;
         }
-        let items = self.store.borrow().bar_items(id).unwrap_or_default();
+        let offset = match (rect, from) {
+            (Some(_), Some(from)) if id == lb_core::storage::BOOKMARKS_BAR => from,
+            (Some(_), _) => 0,
+            (None, _) if self.open_folder() == Some(id) => self.folder_offset.get(),
+            (None, _) => 0,
+        };
+        let mut items = self.store.borrow().bar_items(id).unwrap_or_default();
+        items.drain(..(offset as usize).min(items.len()));
         let anchor = match rect {
             Some(r) if r.is_valid() => {
                 self.folder_anchor.set(Some(r));
@@ -369,8 +378,9 @@ impl Browser {
                 None => return,
             },
         };
+        self.folder_offset.set(offset);
         let popup_rect = layout::folder_popup_rect(anchor, items.len());
-        self.show_popup(PopupContent::BookmarkFolder { id, title: folder.title, items }, Some(popup_rect));
+        self.show_popup(PopupContent::BookmarkFolder { id, title: folder.title, items, offset }, Some(popup_rect));
     }
 
     fn import_bookmarks(&self, tab: Option<TabId>, req_id: Option<u32>) {

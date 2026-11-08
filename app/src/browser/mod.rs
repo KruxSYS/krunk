@@ -100,6 +100,10 @@ const TAB_BACKGROUND_DARK: u32 = 0xFF1F_2023;
 const REVEAL_TIMEOUT_MS: i64 = 1000;
 const REVEAL_SETTLE_MS: i64 = 50;
 const TAB_BACKGROUND_LIGHT: u32 = 0xFFFF_FFFF;
+/// What a popup window shows before its page has painted (0.7.2): `--bg-raised` of the theme,
+/// so a menu shown for the first time is never a light box in the dark theme.
+const POPUP_BACKGROUND_DARK: u32 = 0xFF2B_2D31;
+const POPUP_BACKGROUND_LIGHT: u32 = 0xFFFF_FFFF;
 
 /// Live state of a tab's browser view.
 struct TabView {
@@ -211,6 +215,8 @@ pub struct Browser {
     download_ops: RefCell<HashMap<u32, (u32, Option<DownloadControl>)>>,
     /// Button rect of the open bookmarks-bar folder dropdown.
     folder_anchor: Cell<Option<PopupRect>>,
+    /// The open folder dropdown's first item in its folder (the bar's overflow, R10).
+    folder_offset: Cell<u32>,
     /// Swallows the click that closed a toolbar popup (see `lb_core::toggle`).
     toggle: RefCell<lb_core::toggle::ToggleGuard>,
     /// The link-status label (the address of the link under the mouse).
@@ -322,6 +328,7 @@ impl Browser {
             stopped_by_close: RefCell::new((0, Vec::new())),
             download_ops: RefCell::new(HashMap::new()),
             folder_anchor: Cell::new(None),
+            folder_offset: Cell::new(0),
             toggle: RefCell::new(lb_core::toggle::ToggleGuard::default()),
             status: status::StatusHost::default(),
             suggest: suggest::SuggestHost::default(),
@@ -1035,6 +1042,14 @@ impl Browser {
         let view = self.views.borrow_mut().remove(&id);
         if let Some(v) = view {
             v.view.close();
+        }
+    }
+
+    fn popup_background(&self) -> u32 {
+        if self.frame_dark() {
+            POPUP_BACKGROUND_DARK
+        } else {
+            POPUP_BACKGROUND_LIGHT
         }
     }
 
@@ -2338,7 +2353,7 @@ impl Browser {
             role: Role::Popup,
             private: false,
             scripts: Scripts::default(),
-            background: UI_BACKGROUND,
+            background: self.popup_background(),
             policy: None,
         });
         c.on_before_browse(|nav| assets::allow_navigation(Channel::Popup, "", &nav.url, true));

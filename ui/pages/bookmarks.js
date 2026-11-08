@@ -30,7 +30,7 @@
       const b = el('button', {
         class: 'folder' + (f.node.id === selected && !query ? ' selected' : ''), 'data-id': f.node.id,
         onclick: function () { selected = f.node.id; query = ''; document.getElementById('q').value = ''; render(); },
-      }, [Page.svg(Page.ICONS.folder), el('span', { text: f.node.title })]);
+      }, [Page.svg(Page.ICONS.folder), el('span', { text: f.node.title, title: f.node.title })]);
       b.style.paddingLeft = (8 + f.depth * 16) + 'px';
       b.addEventListener('dragover', function (e) { if (dragId !== null && dragId !== f.node.id) { e.preventDefault(); b.classList.add('drop'); } });
       b.addEventListener('dragleave', function () { b.classList.remove('drop'); });
@@ -49,8 +49,8 @@
       el('span', { class: 'main' }, [
         n.isFolder
           ? el('span', { class: 'name', text: n.title, onclick: function () { selected = n.id; render(); } })
-          : el('a', { href: n.url, title: n.url, text: n.title }),
-        n.isFolder ? null : el('span', { class: 'sub', text: n.url }),
+          : el('a', { href: n.url, title: (n.title ? n.title + '\n' : '') + n.url, text: n.title || n.url }),
+        n.isFolder ? null : el('span', { class: 'sub', title: n.url, text: n.url }),
       ]),
       el('span', { class: 'actions' }, [
         Page.iconButton('edit', 'Edit', function () { edit(n); }),
