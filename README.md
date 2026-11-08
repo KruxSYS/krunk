@@ -14,12 +14,12 @@ used. It installs per user without administrator rights, or runs portable from a
 - background-tab sleep, to save memory
 
 ## Download and requirements
-- **Installer:** `Krunk-Setup-0.7.0.exe` (about 138 MB), from `https://krunk.209.wf`. It installs for the current user
+- **Installer:** `Krunk-Setup-0.7.1.exe` (about 138 MB), from `https://krunk.209.wf`. It installs for the current user
   only, without administrator rights:
   - to `%LOCALAPPDATA%\Programs\Krunk`, with a Start Menu shortcut and, if you tick it, one on
     the desktop;
   - with an entry in Settings → Apps → Installed apps (per user, `HKCU`).
-  If Krunk is running, the installer asks you to close it. `Krunk-Setup-0.7.0.exe /S` installs
+  If Krunk is running, the installer asks you to close it. `Krunk-Setup-0.7.1.exe /S` installs
   silently; it then closes a running Krunk itself and waits up to 30 s for it.
   **Uninstalling** removes the program and the shortcuts. Your data (`%LOCALAPPDATA%\Krunk`) is
   kept unless you tick "Also delete my Krunk data"; a silent uninstall (`/S`) always keeps it.
@@ -27,7 +27,7 @@ used. It installs per user without administrator rights, or runs portable from a
   run `Krunk.exe`. Keep all files of the folder together; if one is missing, Krunk says so at
   startup. The portable copy uses the same data folder as the installed one.
 - **Verify:** check `SHA256SUMS` (the installer, the zip and the three main binaries):
-  - PowerShell: `Get-FileHash Krunk-Setup-0.7.0.exe`
+  - PowerShell: `Get-FileHash Krunk-Setup-0.7.1.exe`
   - Linux: `sha256sum -c SHA256SUMS`
 - **System:** Windows 10 or 11, 64-bit. No runtime is needed.
 - **Data location:** everything is stored in `%LOCALAPPDATA%\Krunk`:
@@ -222,6 +222,9 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
     is "Paused when Krunk closed"; Resume asks the server again and continues if it is the same
     file. If the file changed or the server stopped sending parts, the entry says so and the
     engine downloads the file again with one connection.
+  - **The download-start animation (0.7.1):** each frame shows where the glyph should be at the
+    display refresh it will be seen at (the compositor's timing), so its pace follows the
+    easing evenly even when Krunk's UI thread is busy.
 - **Cookies and site data:**
   - `krunk://storage` lists every site with cookies or stored data, grouped by site
     (registrable domain), with a search box. Expand a site to see each cookie: name, value
@@ -713,7 +716,12 @@ on any request, in normal and private tabs, and a site's `Accept-CH`/`Critical-C
 them in vain (no retry). The user-agent override then carries no metadata, Krunk's request
 hook removes any hint header that would still appear, and `navigator.userAgentData` is
 removed in pages and their frames and — by attaching to them through DevTools before their
-first line runs — in dedicated and service workers. See Known limitations for shared workers.
+first line runs — in dedicated and service workers. Since 0.7.1 the change reaches tabs that
+are already open (their frames, also those of other sites, lose it at once; every engine
+process started afterwards knows the setting from its first page), and a shared worker's
+script gets one statement in front that removes it before the worker's own code runs (after a
+`'use strict'` prologue, on the first line, so the script behaves the same). See Known
+limitations for what is not reached.
 
 Web pages see nothing of Krunk's page bridge since 0.6.0: the injected scripts (login
 detection, page tokens, the notification shim) get it as a closure argument, and only Krunk's
@@ -1101,19 +1109,22 @@ Testing on Windows:
   tab's window. Theme changes don't reach a page while its DevTools is open (see above).
 - **Background tabs keep running at full speed.** CEF's windowed (Alloy) browsers are never
   told they are hidden (`WasHidden` does nothing for them), so a busy page in a background tab
-  keeps rendering; hiding the engine's widget window directly left the page blank when shown
-  again. Tab sleep (Settings → General) and discard are the remedy. With 5 busy background
+  keeps rendering. 0.7.1 tried CEF's own way (sizing the browser window to 0×0) and hiding the
+  engine's widget window: in both the page still reports itself visible and draws about 60
+  frames a second (the 0×0 size also shows it a resize). Tab sleep (Settings → General) and
+  discard are the remedy. With 5 busy background
   tabs Speedometer lost about 8 % on the test machine, Chrome 2 %.
 - **Speedometer is about 14 % below Chrome 157** on the same machine (Krunk 0.7.0: 27.2 vs
   31.5 on the 4-core test VM; Edge 156 32.9). Krunk's own page scripts were measured and
   trimmed (0.7.0); the remaining gap is engine-wide (plain JavaScript and layout run 10–30 %
   slower in CEF's Alloy runtime than in Chrome or Edge, with Krunk's scripts off and with the
   stock CEF build alike). Closing it needs an engine change.
-- **Client hints off: shared workers.** With "Send client hints" off, a shared worker's
-  script still sees `navigator.userAgentData` (shared workers are not the tab's DevTools
-  targets); its requests carry no hints. In a tab opened before the setting was switched off,
-  frames from other sites keep `navigator.userAgentData` until the tab is reopened (their
-  requests carry no hints either).
+- **Client hints off: what still sees `navigator.userAgentData`.** With "Send client hints"
+  off (0.7.1), the modules a *module* shared worker imports statically run before the worker's
+  own code and still see it (CEF fails a worker's own requests once Krunk handles them, so
+  they cannot be changed); `blob:` and `data:` shared workers are not loaded over the network
+  and keep it too. Their requests carry no hints. A service worker that was already running
+  when the setting is switched back on keeps it removed until the browser restarts it.
 - **The store's "Switch to Chrome" notices stay.** Krunk relabels the store's install button
   and leaves the rest of Google's page as it is.
 - **Unsigned:** the binaries are not code-signed (SmartScreen may warn on first start).

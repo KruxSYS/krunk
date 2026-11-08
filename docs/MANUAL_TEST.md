@@ -963,3 +963,19 @@ Scripted on the VM: `scripts/vm-070-*.ps1` with the pages in `scripts/vm-www/` (
 ### Import (M10)
 15. A Firefox profile whose logins.json has entries without `hostname`: Import says "N imported,
     M skipped (no website address: …, unreadable entry: …)".
+
+## Krunk 0.7.1 (round 8)
+Scripted on the VM: `scripts/vm-071-*.ps1` (evidence in `.pipeline/evidence-0.7.1/m*/`).
+1. `hints.html?poll` (hints-serve.py) open in a tab, Send client hints on; switch it off in
+   another tab: without a reload the page and its cross-site iframe report
+   `navigator.userAgentData` undefined; reload 5 times: still undefined. Switch on again and
+   reload: the brands are back.
+2. Send client hints off: the shared workers on `hints.html` (classic, `'use strict'`, module,
+   `importScripts`) report undefined — the strict one still in strict mode; only the module's
+   statically imported module reports the brands; normal and private tabs alike.
+3. About: "Engine command line" shows one `--disable-features` with CEF's and Krunk's features.
+4. krunk://passwords, locked: a wrong master password says "Wrong master password." during the
+   short delay and after it, until you type again.
+5. Start a download: the glyph flies to the downloads button evenly (`vm-071-flight.ps1`
+   records it; `analyze.py track --ease 450` measures each frame against the curve).
+
