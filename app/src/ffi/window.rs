@@ -1705,6 +1705,23 @@ impl VsyncPump {
     }
 }
 
+/// Milliseconds until the display's next refresh (0.7.1, R10): what an animation frame drawn
+/// now should show (`lb_core::overlay::ms_to_next_refresh`). `None` without compositor timing.
+pub fn ms_to_next_refresh() -> Option<f64> {
+    use windows::Win32::Graphics::Dwm::{DwmGetCompositionTimingInfo, DWM_TIMING_INFO};
+    use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
+    let mut info = DWM_TIMING_INFO { cbSize: std::mem::size_of::<DWM_TIMING_INFO>() as u32, ..Default::default() };
+    let (mut now, mut freq) = (0i64, 0i64);
+    // SAFETY: plain queries into properly sized locals (a null window asks for the desktop's
+    // composition timing, as Windows 8.1+ requires).
+    unsafe {
+        DwmGetCompositionTimingInfo(HWND::default(), &mut info).ok()?;
+        QueryPerformanceFrequency(&mut freq).ok()?;
+        QueryPerformanceCounter(&mut now).ok()?;
+    }
+    lb_core::overlay::ms_to_next_refresh(now as u64, info.qpcVBlank, info.qpcRefreshPeriod, freq as u64)
+}
+
 impl Drop for VsyncPump {
     fn drop(&mut self) {
         self.run.store(false, std::sync::atomic::Ordering::Relaxed);

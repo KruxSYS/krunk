@@ -6,6 +6,7 @@
 //! 0.7.0 (R10): frames come at the display's refresh rate (a vsync thread wakes the UI thread
 //! after each composition, instead of a 16 ms timer that Windows rounds to 15.6 or 31 ms), the
 //! position follows the time actually elapsed, and each frame only moves the drawn glyph.
+//! 0.7.1: the position is the one for the refresh the frame will be seen at.
 
 use super::Browser;
 use crate::ffi::overlay::{Overlay, OverlaySpec};
@@ -98,7 +99,10 @@ impl Browser {
         let Some(win) = self.flight.win.get() else { return self.end_flight() };
         let Some(f) = self.frame(win) else { return self.end_flight() };
         let Some(started) = self.flight.started.get() else { return self.end_flight() };
-        let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+        // The time this frame will be seen (0.7.1): the next display refresh, not the moment
+        // the UI thread got here, so the steps follow the easing however late the wake-up was.
+        let elapsed =
+            started.elapsed().as_secs_f64() * 1000.0 + crate::ffi::window::ms_to_next_refresh().unwrap_or(0.0);
         let t = ease(elapsed / FLIGHT_MS);
         let scale = f.window.scale();
         let slot = self.flight.overlay.borrow();

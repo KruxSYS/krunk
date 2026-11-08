@@ -187,6 +187,23 @@ pub fn fade_alpha(elapsed_ms: u32, total_ms: u32, fade_ms: u32) -> Option<u8> {
     Some((level.clamp(0.0, 1.0) * 255.0).round() as u8)
 }
 
+/// Milliseconds from `now` to the next display refresh, from the compositor's timing: the
+/// last vertical blank and the refresh period, all in performance-counter ticks at `freq` per
+/// second (Krunk 0.7.1, R10). An animation frame drawn now is seen at that refresh, so that is
+/// the time its position should be for: frames then land on the refresh grid, however late
+/// the UI thread got to them. `None` when the timing makes no sense.
+pub fn ms_to_next_refresh(now: u64, vblank: u64, period: u64, freq: u64) -> Option<f64> {
+    if period == 0 || freq == 0 {
+        return None;
+    }
+    // A refresh period longer than a quarter second is no display's.
+    if period.saturating_mul(4) > freq {
+        return None;
+    }
+    let next = if now < vblank { vblank } else { vblank + ((now - vblank) / period + 1) * period };
+    Some((next - now) as f64 * 1000.0 / freq as f64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,5 +277,22 @@ mod tests {
         assert_eq!(fade_alpha(3000, 3000, 150), None);
         assert_eq!(fade_alpha(10, 3000, 0), Some(255), "reduced motion: no fade");
         assert_eq!(fade_alpha(3001, 3000, 0), None);
+    }
+
+    #[test]
+    fn frames_are_drawn_for_the_next_refresh() {
+        // 10 MHz counter, 60 Hz (166,667 ticks), last blank at tick 1,000,000.
+        let (freq, period, vblank) = (10_000_000, 166_667, 1_000_000);
+        let ms = |now| ms_to_next_refresh(now, vblank, period, freq).unwrap();
+        assert!((ms(vblank) - 16.6667).abs() < 0.01, "on a blank: the next one");
+        assert!((ms(vblank + 100_000) - 6.6667).abs() < 0.01);
+        assert!((ms(vblank + 2 * period + 10) - (period - 10) as f64 / 10_000.0).abs() < 0.01, "two missed");
+        assert!((ms(vblank - 50_000) - 5.0).abs() < 0.01, "timing newer than now");
+        // Whatever the wake-up time inside one frame, the target time is the same.
+        let t1 = vblank + 10_000 + ms_to_next_refresh(vblank + 10_000, vblank, period, freq).unwrap() as u64 * 10_000;
+        let t2 = vblank + 150_000 + ms_to_next_refresh(vblank + 150_000, vblank, period, freq).unwrap() as u64 * 10_000;
+        assert!(t1.abs_diff(t2) <= 10_000);
+        assert_eq!(ms_to_next_refresh(1, 0, 0, freq), None);
+        assert_eq!(ms_to_next_refresh(1, 0, freq, freq), None, "1 Hz is no display");
     }
 }

@@ -2,6 +2,8 @@
 """Analyse a framecap recording (tools/framecap): PATH.raw + PATH.csv + PATH.json.
 
   analyze.py flash  PATH [--sheet OUT.png]     tab-switch flashes
+  analyze.py track PATH --color RRGGBB [--ease MS]   an object's path (with --ease: its distance
+                                               from Krunk's eased flight curve, per frame)
   analyze.py motion PATH [--box X,Y,W,H]       a moving object (download flight)
   analyze.py bar    PATH --box X,Y,W,H --color RRGGBB [--tol N]   a growing progress bar
   analyze.py track  PATH --color RRGGBB [--tol N] [--box X,Y,W,H]  an object of one colour
@@ -171,6 +173,42 @@ def cmd_bar(a):
     return 0
 
 
+def ease_curve(t):
+    """Krunk's download flight easing (app/src/browser/flight.rs `ease`): cubic in-out."""
+    t = np.clip(t, 0.0, 1.0)
+    return np.where(t < 0.5, 4 * t**3, 1 - (-2 * t + 2) ** 3 / 2)
+
+
+def ease_fit(rows, duration, step):
+    """How far each captured frame is from where the eased flight should be at that frame's time.
+
+    The horizontal position is x0 + dx * ease((t - start) / duration); start, x0 and dx are fitted
+    (least squares, start on a 0.5 ms grid before the first frame seen). The residuals, in screen
+    pixels, show uneven pacing independently of the frame rate: a frame drawn for the wrong time
+    sits off the curve.
+    """
+    ts = np.array([r[1] for r in rows])
+    xs = np.array([r[2] for r in rows]) * step
+    best = None
+    for start in np.arange(ts[0] - duration, ts[0] + 0.01, 0.5):
+        e = ease_curve((ts - start) / duration)
+        m = np.vstack([np.ones_like(e), e]).T
+        coef, *_ = np.linalg.lstsq(m, xs, rcond=None)
+        r = xs - m @ coef
+        rms = float(np.sqrt(np.mean(r**2)))
+        if best is None or rms < best[0]:
+            best = (rms, start, coef, r)
+    rms, start, coef, r = best
+    return {
+        "duration_ms": duration,
+        "start_ms": round(float(start), 1),
+        "dx_px": round(float(coef[1]), 1),
+        "residual_px": [round(float(v), 1) for v in r],
+        "max_residual_px": round(float(np.max(np.abs(r))), 1),
+        "rms_px": round(rms, 2),
+    }
+
+
 def cmd_track(a):
     meta, frames, times = load(a.path)
     sub = box_of(a, frames).astype(int)
@@ -200,6 +238,8 @@ def cmd_track(a):
         "backward_steps": back,
         "path": [{"frame": r[0], "ms": round(r[1], 1), "x": round(r[2], 1), "y": round(r[3], 1), "px": r[4]} for r in rows],
     }
+    if a.ease and len(rows) >= 4:
+        out["ease_fit"] = ease_fit(rows, a.ease, meta.get("step", 1))
     print(json.dumps(out, indent=1))
     return 0
 
@@ -213,6 +253,7 @@ def main():
     p.add_argument("--color")
     p.add_argument("--tol", type=int, default=24)
     p.add_argument("--flash-frames", type=int, default=2)
+    p.add_argument("--ease", type=float, help="track: fit Krunk's flight easing over this many ms")
     a = p.parse_args()
     return {"flash": cmd_flash, "motion": cmd_motion, "bar": cmd_bar, "track": cmd_track}[a.mode](a)
 
