@@ -285,7 +285,7 @@ wrap_render_process_handler! {
                 }
                 // Switched off while this document is open: it goes now (scripts that read it
                 // already keep what they read; a reload starts clean).
-                if hints_state().off {
+                if hints_state().off && !is_own_page(&document_url(frame)) {
                     if let Some(mut context) = frame.v8_context() {
                         eval(&mut context, NO_USER_AGENT_DATA);
                     }
@@ -322,8 +322,9 @@ fn context_created(scripts: Scripts, frame: &mut Frame, context: &mut V8Context)
         eval(context, assets::inject_script("dnt.js"));
     }
     // No user-agent metadata ("Send client hints" off): no navigator.userAgentData (0.7.0; 0.7.1:
-    // the setting as of now, not as of when the tab was made).
-    if hints_state().off {
+    // the setting as of now, not as of when the tab was made). Not in Krunk's own pages: the
+    // shell reads the engine's hints there at start (extension pages are like web pages).
+    if hints_state().off && !is_own_page(&document_url(frame)) {
         eval(context, NO_USER_AGENT_DATA);
     } else if document_url(frame).starts_with("http") {
         eval(context, assets::inject_script("nohints.js"));
@@ -406,6 +407,15 @@ fn run_scriptlets(browser: &mut Browser, frame: &mut Frame, context: &mut V8Cont
     if let Some(js) = script {
         eval(context, &js);
     }
+}
+
+/// One of Krunk's own pages (`krunk.invalid` and its hosts like `shell.krunk.invalid`; not an
+/// extension's origin, `<id>.ext.krunk.invalid`).
+fn is_own_page(url: &str) -> bool {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string))
+        .is_some_and(|h| (h == "krunk.invalid" || h.ends_with(".krunk.invalid")) && !h.ends_with(".ext.krunk.invalid"))
 }
 
 fn document_url(frame: &Frame) -> String {

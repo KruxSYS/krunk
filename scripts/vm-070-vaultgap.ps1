@@ -1,5 +1,7 @@
 # Krunk 0.7.0 verification: a vault made by the published 0.6.0 survives the in-app update to the
 # live 0.7.0, takes a recovery phrase (format 3), and recovery replaces its 0.6.0 password.
+# 0.7.1: $From/$To pick the versions (0.7.0 -> 0.7.1: the phrase is made before the update and
+# must still recover after it).
 # Runs on the VM's real install and data folder; the earlier data folder is moved aside first and
 # put back by the 'restore' phase. Test password and test phrase only: the phrase is copied into
 # a file in the data folder (deleted by 'restore'), never logged, never photographed.
@@ -13,7 +15,7 @@
 #   recover   0.7.0: lock, recover with the phrase, new password $PWNEW; restart: $PW060 refused,
 #             $PWNEW opens with the entries
 #   restore   delete the test data folder, put the earlier one back
-param([string]$Phase = 'prep', [string]$Asked = '')
+param([string]$Phase = 'prep', [string]$Asked = '', [string]$From = '0.6.0', [string]$To = '0.7.0')
 . C:\pipeline\krunk\lib.ps1
 . C:\pipeline\krunk\vm-windows.ps1
 $P = "vg-$Phase"
@@ -61,11 +63,11 @@ switch ($Phase) {
       for ($i = 0; $i -lt 60 -and (Test-Path "$inst\Krunk.exe"); $i++) { Start-Sleep 1 }
     }
     Log "[$P] uninstalled: $(-not (Test-Path "$inst\Krunk.exe")); registered version: '$(Version)'"
-    $setup = "$K\Krunk-Setup-0.6.0.exe"
-    if (-not (Test-Path $setup)) { Invoke-WebRequest -UseBasicParsing 'https://krunk.209.wf/download/0.6.0/Krunk-Setup-0.6.0.exe' -OutFile $setup }
-    $sums = (Invoke-WebRequest -UseBasicParsing 'https://krunk.209.wf/download/0.6.0/SHA256SUMS').Content
-    $want = ($sums -split "`n" | Where-Object { $_ -match 'Krunk-Setup-0.6.0.exe' }) -split ' ' | Select-Object -First 1
-    Log "[$P] 0.6.0 installer matches the site: $($want -eq (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLower())"
+    $setup = "$K\Krunk-Setup-$From.exe"
+    if (-not (Test-Path $setup)) { Invoke-WebRequest -UseBasicParsing "https://krunk.209.wf/download/$From/Krunk-Setup-$From.exe" -OutFile $setup }
+    $sums = (Invoke-WebRequest -UseBasicParsing "https://krunk.209.wf/download/$From/SHA256SUMS").Content
+    $want = ($sums -split "`n" | Where-Object { $_ -match "Krunk-Setup-$From.exe" }) -split ' ' | Select-Object -First 1
+    Log "[$P] $From installer matches the site: $($want -eq (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLower())"
     $proc = Start-Process -FilePath $setup -ArgumentList '/S' -PassThru; $proc.WaitForExit(300000) | Out-Null
     Log "[$P] installed $(Version) (exit $($proc.ExitCode)); libcef $((Get-FileHash "$inst\libcef.dll").Hash.Substring(0,16))"
     StartKrunk; Win
@@ -118,7 +120,7 @@ switch ($Phase) {
     # The prompt's Update now (its right button); focusing the window first would close it.
     if ($r) { Click ($r.Right - 66) ($r.Top + 103) 3000 } else { Log "[$P] no prompt" }
     $t0 = Get-Date
-    for ($i = 0; $i -lt 240 -and (Version) -ne '0.7.0'; $i++) { Start-Sleep 1 }
+    for ($i = 0; $i -lt 240 -and (Version) -ne $To; $i++) { Start-Sleep 1 }
     for ($i = 0; $i -lt 60 -and (MainWindow) -eq [IntPtr]::Zero; $i++) { Start-Sleep 1 }
     Start-Sleep 10
     Log "[$P] version $(Version) after $([int]((Get-Date) - $t0).TotalSeconds) s; Krunk.dll $((Get-FileHash "$inst\Krunk.dll").Hash.Substring(0,16)); libcef $((Get-FileHash "$inst\libcef.dll").Hash.Substring(0,16))"
@@ -132,7 +134,9 @@ switch ($Phase) {
     TypeSecret $PW060; Keys '{ENTER}' 4000
     Shot "$P-2-opened"
     Log "[$P] $(VaultInfo)"
-    Log "[$P] log: $((Get-Content "$data\krunk.log" | Select-String 'vault|Krunk 0.7.0 starting|release files' | Select-Object -Last 5) -join ' ## ')"
+    Log "[$P] version $(Version)"
+    Log "[$P] log: $((Get-Content "$data\krunk.log" | Select-String 'vault|starting|release files|engine files' | Select-Object -Last 8) -join ' ## ')"
+    Log "[$P] WARN/ERROR: $(@(Get-Content "$data\krunk.log" | Select-String ' WARN | ERROR ').Count) $((Get-Content "$data\krunk.log" | Select-String ' WARN | ERROR ' | Select-Object -Last 5) -join ' ## ')"
   }
   'phrase' {
     Win
