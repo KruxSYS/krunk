@@ -1117,6 +1117,7 @@ async function testNewTabLongTitles(browser) {
     h.getNewTabConfig = () => ({ searchName: 'Google', shortcuts: [['New tab', 'Ctrl+T']], ntp: { background: 'none', backgroundColor: '', image: '', imageDim: 30, imageBlur: 0, tiles: 'mostVisited', columns: 6, rows: 2, showShortcuts: true, showSearch: true, showTiles: true }, imageUrl: null });
   };
   let worst = [];
+  const matrix = [];
   for (const width of [800, 1024, 1280, 1920, 2560]) {
     for (const zoom of [1, 1.25, 1.5]) {
       const { page, errors } = await openPage(browser, 'https://krunk.invalid/newtab.html', { width: Math.round(width / zoom), height: 900 }, zoom, setup, titles);
@@ -1136,11 +1137,13 @@ async function testNewTabLongTitles(browser) {
       });
       const ok = !r.hscroll && r.outside === 0 && r.widths.length === 1 && r.maxLines <= 2 && r.longTip.startsWith('SOLVED New Media Server or New Firefox version causing Error Playing Video');
       if (!ok) worst.push(width + 'px@' + zoom + ': ' + JSON.stringify(r));
-      if (SHOTS && zoom === 1 && [800, 1280, 1920].includes(width)) await shot(page, 'newtab-long-titles-' + width + '.png');
+      matrix.push(Object.assign({ width: width, zoom: zoom, ok: ok }, r));
+      if (SHOTS && [800, 1280, 2560].includes(width)) await shot(page, 'newtab-long-titles-' + width + '-' + Math.round(zoom * 100) + '.png');
       if (errors.length) worst.push('errors: ' + errors.join(' | '));
       await page.context().close();
     }
   }
+  if (SHOTS) fs.writeFileSync(path.join(SHOTS, 'newtab-long-titles.json'), JSON.stringify(matrix, null, 1));
   check(worst.length === 0, 'long titles at 800–2560 px and 100/125/150 %: no horizontal scrollbar, every tile inside the column, one tile width, at most 2 lines, the full title in the tooltip' + (worst.length ? ' (' + worst.join('; ') + ')' : ''));
 }
 
