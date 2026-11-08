@@ -14,12 +14,12 @@ used. It installs per user without administrator rights, or runs portable from a
 - background-tab sleep, to save memory
 
 ## Download and requirements
-- **Installer:** `Krunk-Setup-0.7.1.exe` (about 138 MB), from `https://krunk.209.wf`. It installs for the current user
+- **Installer:** `Krunk-Setup-0.7.2.exe` (about 138 MB), from `https://krunk.209.wf`. It installs for the current user
   only, without administrator rights:
   - to `%LOCALAPPDATA%\Programs\Krunk`, with a Start Menu shortcut and, if you tick it, one on
     the desktop;
   - with an entry in Settings → Apps → Installed apps (per user, `HKCU`).
-  If Krunk is running, the installer asks you to close it. `Krunk-Setup-0.7.1.exe /S` installs
+  If Krunk is running, the installer asks you to close it. `Krunk-Setup-0.7.2.exe /S` installs
   silently; it then closes a running Krunk itself and waits up to 30 s for it.
   **Uninstalling** removes the program and the shortcuts. Your data (`%LOCALAPPDATA%\Krunk`) is
   kept unless you tick "Also delete my Krunk data"; a silent uninstall (`/S`) always keeps it.
@@ -27,7 +27,7 @@ used. It installs per user without administrator rights, or runs portable from a
   run `Krunk.exe`. Keep all files of the folder together; if one is missing, Krunk says so at
   startup. The portable copy uses the same data folder as the installed one.
 - **Verify:** check `SHA256SUMS` (the installer, the zip and the three main binaries):
-  - PowerShell: `Get-FileHash Krunk-Setup-0.7.1.exe`
+  - PowerShell: `Get-FileHash Krunk-Setup-0.7.2.exe`
   - Linux: `sha256sum -c SHA256SUMS`
 - **System:** Windows 10 or 11, 64-bit. No runtime is needed.
 - **Data location:** everything is stored in `%LOCALAPPDATA%\Krunk`:
@@ -131,8 +131,14 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   - The lock (or the "i" on http) opens the site-information popup: whether the connection is
     secure, the protocol, the certificate chain with validity, names, algorithms and SHA-256
     fingerprints, and what is wrong with a bad certificate (the engine reports no cipher).
+  - **Inline completion (0.6.0):** a visited address that starts with what you type is completed
+    after the caret and selected. Since 0.7.2 typing on along it keeps it in place: the bar never
+    shows only the typed letters or empties between keystrokes. Backspace or Delete removes the
+    completion, Esc goes back to what you typed.
   - After a navigation the bar shows the new address even if it had the focus; text you typed
-    is kept only until you navigate.
+    is kept only until you navigate. A new tab's bar is empty with its placeholder from the
+    first frame (0.7.2: also when it starts from `about:blank`, as tabs do with edited request
+    headers or the Blank new-tab setting; `about:blank` shows as the empty bar).
   - Drag the site icon or the (unfocused) address onto the bookmarks bar or into a folder to
     bookmark the page there; selected text dropped on the bar is bookmarked if it is a URL.
   - The ⋮ menu, the shield and the lock toggle: a click on the button closes an open popup.
@@ -141,7 +147,8 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
 - **Window:** there is no title bar. Drag the window by empty space in the tab row, and
   double-click there to maximize or restore. Hovering the maximize button shows the Windows 11
   snap layouts. Right-click the tab row for the window menu.
-- **New tab** (Ctrl+T, "+", the menu) puts the cursor in the address bar, so you can type at once.
+- **New tab** (Ctrl+T, "+", the menu) puts the cursor in the address bar, so you can type at once;
+  the page loading underneath does not take it away (0.7.2).
 - **Windows and tabs:**
   - **Dragging:** drag a tab sideways to reorder it: the tab follows the mouse and the other
     tabs slide aside (with "reduce motion" they jump). Drag it down out of the tab row and it
@@ -180,10 +187,17 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
     (Ctrl+Shift+B toggles; also in Settings → Appearance).
   - **Context menu:** right-click a bookmark to open it (here, in a new tab or a new window),
     edit its name and address, or delete it. Right-click a folder to open all, rename or delete
-    it, and empty space to add the page or make a folder.
-  - **Dragging:** drag bookmarks to reorder them, or onto a folder to put them in it. In a
-    folder's dropdown, drag an item to reorder it, onto a subfolder to move it there, or out
-    of the dropdown onto the bar. Right-click an item there for its menu.
+    it, and empty space to add the page or make a folder. Its items have icons in one column,
+    like Krunk's other menus (0.7.2).
+  - **Folders:** a folder opens a dropdown; long titles stay on one line and end in "…", and the
+    tooltip shows the whole title and the address (0.7.2).
+  - **More than fits (0.7.2):** the bar shows the bookmarks that fit completely and a "»" button
+    at its right end with the rest (folders open inside, like any folder dropdown). It is
+    recalculated when the window is resized and when bookmarks are added, removed or moved.
+  - **Dragging:** drag bookmarks to reorder them, or onto a folder to put them in it; dropped on
+    "»" a bookmark goes to the end of the bar. In a folder's (or "»"'s) dropdown, drag an item
+    to reorder it, onto a subfolder to move it there, or out of the dropdown onto the bar.
+    Right-click an item there for its menu.
 - **Shield:** the shield in the toolbar shows how many ads and trackers were blocked on the
   page, and lists the latest blocked addresses. Click it to allow ads on that site, or to open
   **Cookies and site data** for the site.
@@ -272,7 +286,11 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
     Chrome 127 or newer are "app-bound" (only Chrome can decrypt them): Krunk reports how many
     and offers the CSV route — export them from the browser and import the CSV file (Chrome/Edge
     or Firefox layout). The browser's files are copied to a temporary folder for reading and
-    the copies are removed. Passwords need the vault set up and unlocked.
+    the copies are removed. Passwords need the vault set up and unlocked. Firefox profiles with
+    more than one key in `key4.db` (older ones that went from 3DES to AES) import every login
+    since 0.7.2, each with the key it names; when nothing is imported the result says why (no
+    saved logins, a wrong primary password, or how many could not be decrypted and why), and
+    `krunk.log` has the profile's numbers (logins, keys, whether a primary password is set).
   - Manage logins on `krunk://passwords`. Showing a password asks for the master password again.
 - **Private tabs:** they share an in-memory profile that is discarded when the last private tab
   closes. Nothing from them is written to disk, history, the session or the favicon cache.
@@ -328,7 +346,8 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   completely after a longer time; turn this on in Settings → Performance.
 - **Games (pointer lock and full screen):** `requestPointerLock()` works as in Chrome. The cursor is
   hidden and confined to the page, movement keeps coming at the screen edge (smoothly, also
-  while mouse buttons and keys are held), and
+  while mouse buttons and keys are held; since 0.7.2 the turn per frame is as even as in Chrome
+  when a movement key is held), and
   `{unadjustedMovement: true}` gives raw mouse input. Esc, Alt+Tab, switching tabs or leaving
   the page release the lock; a small "Press Esc to show your cursor" pill appears for 3 s, at
   most three times per tab. A page's
@@ -793,7 +812,7 @@ network traffic it starts itself is the daily filter-list update and the daily u
 (both WinHTTP, see above and "Updates").
 
 ### Updates
-- **What is sent:** a minute after start and then once a day, Krunk fetches two small files
+- **What is sent:** ten seconds after start and then once a day, Krunk fetches two small files
   from its update server: `<server>/updates/win-x64/latest.json` and `latest.json.sig`.
   The request carries the user agent `Krunk-Update/<version> (win-x64)` and nothing else: no
   ID, no settings and nothing about your browsing. The server sees your IP address, as with any
@@ -806,8 +825,11 @@ network traffic it starts itself is the daily filter-list update and the daily u
   its size and SHA-256 must match the signed manifest before it runs. Older or equal versions
   are never offered, so there are no downgrades. Every rejection is written to `krunk.log`
   with its reason.
-- **Installing:** a newer version opens a prompt with **Update now**, **Later** and **Release
-  notes**. Update now downloads the installer to `%TEMP%\Krunk-update`, checks it, starts it
+- **The notice (0.7.2):** a newer version puts a dot on the ⋮ button and "Update available –
+  Krunk X.Y.Z" at the top of its menu; nothing pops up by itself. The menu item (and Settings →
+  About → "Check for updates") opens the prompt. A failed check only writes its reason to
+  `krunk.log`.
+- **Installing:** the prompt has **Update now**, **Later** and **Release notes**. Update now downloads the installer to `%TEMP%\Krunk-update`, checks it, starts it
   silently (`/S /RELAUNCH`) and closes Krunk. The installer waits for Krunk to exit, installs,
   and starts Krunk again, with your tabs restored. A portable copy gets **Download**, which
   opens the website, instead.
@@ -1067,10 +1089,21 @@ Testing on Windows:
   (trusted) mouse events. Their `movementX/Y` and positions come from patched `MouseEvent`
   getters, and while locked a style sheet sends them to the locked element, as Chrome does.
   - Code that inspects those getters can tell the difference.
-  - Movement reaches the page about 2–4 ms later than in Chrome.
+  - A real mouse event carries the engine's own movement of the hidden cursor (0.7.2: it belongs
+    to the frame the event is dispatched in, so a camera turns evenly); only where the browser
+    moved the cursor back to the centre does it carry the browser's raw-input movement, which
+    reaches the page about 2–4 ms later than in Chrome.
   - Movement that no real event carries (sub-pixel motion) arrives as a synthetic event
     (`isTrusted` false).
   - The long-term fix is CEF's Chrome runtime style for tabs, which has native pointer lock.
+- **Resizing on the new-tab page (0.7.2).** While a window is resized, the parts the engine
+  has not drawn yet show the theme's colour (0.7.1 showed white: the window's own surface
+  beneath the engine's views). On the test VM two single frames of white remained on the
+  dark new-tab page, at the edge being dragged (a 12–16 px strip); pages in the theme's colours
+  showed none. Their source is inside the engine's views and was not found.
+- **The bookmarks bar's "»" takes drops only at the end.** Dropping a bookmark on "»" moves it
+  to the end of the bar; to put it at a place inside the overflow, drop it in the "»" dropdown
+  or drag it there within the dropdown.
 - **The vault does not detect rollback.** Replacing `vault.json` with an older copy is not
   detected. See `docs/SECURITY.md` for the full threat model and what is out of scope.
 - **No tab pinning in the UI.** The memory policy supports pinned tabs, but the tab strip

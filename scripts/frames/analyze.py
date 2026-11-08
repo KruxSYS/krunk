@@ -8,6 +8,7 @@
   analyze.py bar    PATH --box X,Y,W,H --color RRGGBB [--tol N]   a growing progress bar
   analyze.py track  PATH --color RRGGBB [--tol N] [--box X,Y,W,H]  an object of one colour
   analyze.py white  PATH [--ymin Y] [--lum L] [--min N] [--sheet OUT.png]   white areas (resize)
+  analyze.py addr   PATH                       the address bar's text and selection per frame
 
 flash: a frame is *white* when >= 98 % of its pixels are within 12 levels of one colour and that
 colour's luminance is >= 245. A run of at most --flash-frames (2) white frames between two
@@ -27,6 +28,11 @@ its luminance is >= --lum (default 235) and its channels differ by at most 12; r
 --ymax on (the taskbar). A frame with at
 least --min (default 96) white samples (at the recording's step) is a white frame; the mouse
 cursor stays below that. Exit code 1 if any.
+
+addr (0.7.2, R1, R3): a recording of the address bar's text area (light theme). Per frame: the
+dark text samples (luminance < 100: typed or page text; the placeholder is lighter) and the
+selection samples (the accent blue behind a selected completion). Reported: frames with text,
+and for a typing run, frames where the selection vanished after it first appeared.
 
 bar: the bar's filled width per frame (columns where most pixels match the colour); reports
 backward moves and the largest jump.
@@ -285,9 +291,24 @@ def cmd_white(a):
     return 1 if bad else 0
 
 
+def cmd_addr(a):
+    meta, frames, times = load(a.path)
+    f = frames.astype(int)
+    lum = 0.2126 * f[..., 0] + 0.7152 * f[..., 1] + 0.0722 * f[..., 2]
+    text = (lum < 100).reshape(len(frames), -1).sum(axis=1)
+    sel = ((f[..., 2] > 170) & (f[..., 0] < 140) & (f[..., 2] - f[..., 0] > 60)).reshape(len(frames), -1).sum(axis=1)
+    rows = [{"frame": i, "ms": round(float(times[i]), 1), "text": int(text[i]), "selection": int(sel[i])} for i in range(len(frames))]
+    first_sel = next((r["frame"] for r in rows if r["selection"] >= a.min), None)
+    lost = [r for r in rows if first_sel is not None and r["frame"] > first_sel and r["selection"] < a.min]
+    out = {"frames": len(rows), "frames_with_text": sum(1 for r in rows if r["text"] >= a.min),
+           "first_selection_frame": first_sel, "selection_lost_frames": len(lost), "lost": lost[:10], "series": rows}
+    print(json.dumps(out, indent=1))
+    return 0
+
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("mode", choices=["flash", "motion", "bar", "track", "white"])
+    p.add_argument("mode", choices=["flash", "motion", "bar", "track", "white", "addr"])
     p.add_argument("path")
     p.add_argument("--sheet")
     p.add_argument("--box")
@@ -300,7 +321,7 @@ def main():
     p.add_argument("--lum", type=float, default=235.0)
     p.add_argument("--min", type=int, default=96)
     a = p.parse_args()
-    return {"flash": cmd_flash, "motion": cmd_motion, "bar": cmd_bar, "track": cmd_track, "white": cmd_white}[a.mode](a)
+    return {"flash": cmd_flash, "motion": cmd_motion, "bar": cmd_bar, "track": cmd_track, "white": cmd_white, "addr": cmd_addr}[a.mode](a)
 
 
 if __name__ == "__main__":

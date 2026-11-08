@@ -979,3 +979,22 @@ Scripted on the VM: `scripts/vm-071-*.ps1` (evidence in `.pipeline/evidence-0.7.
 5. Start a download: the glyph flies to the downloads button evenly (`vm-071-flight.ps1`
    records it; `analyze.py track --ease 450` measures each frame against the curve).
 
+## Krunk 0.7.2 (round 9)
+1. **New tab:** with Settings → Headers → Accept-Language set, press Ctrl+T, click "+", and use
+   the menu's New tab: the address bar never shows `about:blank` or any text, only its
+   placeholder, and typing goes into it at once.
+2. **Typing:** visit `example.com`, then type `exa` slowly in a new tab: the completion stays
+   selected after each letter; Backspace removes it, Esc goes back to the typed text.
+3. **Dialogs:** krunk://passwords → Add and Add card, in the light and the dark theme: labelled
+   fields, a focus ring, an error under the field (empty password, month 13), Esc closes.
+4. **Resizing:** in the dark theme drag a window edge out and back quickly: no white strip.
+5. **Pointer lock:** in a game (or `jitter.html` of the VM scripts) hold W and turn: the turn is
+   as even as without W.
+6. **Bookmarks:** with more bookmarks than fit, "»" at the bar's end lists the rest; a narrower
+   window moves more into it. A folder with a long title shows it on one line with "…" and the
+   whole title in the tooltip; its right-click menu has icons. krunk://bookmarks with a very
+   long address does not scroll sideways.
+7. **Firefox import:** a Firefox profile with saved logins imports all of them; the log line
+   `import: passwords …` names the profile, its logins and keys.
+8. **Update notice:** with a newer version on the server, the ⋮ button shows a dot and the menu
+   starts with "Update available – Krunk X.Y.Z", which opens the update prompt.
