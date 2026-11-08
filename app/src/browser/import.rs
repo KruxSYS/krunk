@@ -64,6 +64,8 @@ struct ParsedLogins {
     /// when nothing was there.
     source: Option<String>,
     empty_because: Option<&'static str>,
+    /// Ciphers and key sizes of the fields that could not be decrypted (0.7.4), shown too.
+    detail: Option<String>,
 }
 
 fn family_id(f: Family) -> &'static str {
@@ -125,6 +127,11 @@ fn parse_profile(profile: &Profile, types: &[String], primary_password: &str, te
                     },
                     if f.primary_password { "set" } else { "not set" }
                 );
+                let detail = Some(got.failure_detail().to_string()).filter(|d| !d.is_empty());
+                let source = match &detail {
+                    Some(d) => format!("{source}; not decrypted: {d}"),
+                    None => source,
+                };
                 let empty_because = (f.entries == 0).then_some("Firefox has no saved logins in this profile");
                 parsed.logins = Some(ParsedLogins {
                     logins: got.logins,
@@ -132,6 +139,7 @@ fn parse_profile(profile: &Profile, types: &[String], primary_password: &str, te
                     skipped,
                     source: Some(source),
                     empty_because,
+                    detail,
                 });
             }
         }
@@ -160,6 +168,7 @@ fn parse_profile(profile: &Profile, types: &[String], primary_password: &str, te
                     skipped,
                     source: None,
                     empty_because: None,
+                    detail: None,
                 });
             }
         }
@@ -329,6 +338,7 @@ impl Browser {
             logins: Some(ParsedLogins {
                 source: None,
                 empty_because: None,
+                detail: None,
                 logins: parsed.logins,
                 app_bound: 0,
                 skipped: if parsed.skipped > 0 {
@@ -373,7 +383,7 @@ impl Browser {
                 }
             }
         }
-        if let Some(ParsedLogins { logins, app_bound, mut skipped, source, empty_because }) = parsed.logins {
+        if let Some(ParsedLogins { logins, app_bound, mut skipped, source, empty_because, detail }) = parsed.logins {
             let merged = match self.vaults.vault.borrow_mut().as_mut() {
                 Some(v) => v.import_logins(logins, now_ms(), &Dpapi).map_err(|e| e.to_string()),
                 None => Err("Krunk passwords are locked".to_string()),
@@ -406,6 +416,7 @@ impl Browser {
                             "skippedReasons": skipped.iter().map(|(r, n)| serde_json::json!({ "reason": r, "count": n })).collect::<Vec<_>>(),
                             "appBound": app_bound,
                             "why": why,
+                            "detail": detail,
                         }),
                     );
                     self.touch_vault();

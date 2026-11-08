@@ -291,6 +291,9 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
     since 0.7.2, each with the key it names; when nothing is imported the result says why (no
     saved logins, a wrong primary password, or how many could not be decrypted and why), and
     `krunk.log` has the profile's numbers (logins, keys, whether a primary password is set).
+    Since 0.7.4 each field is tried with the key it names and then with the others (a profile's
+    3DES and AES keys can share an id), AES-128/192-CBC and AES-GCM fields are read, and fields
+    that still cannot be decrypted are listed with their cipher and key sizes.
   - Manage logins on `krunk://passwords`. Showing a password asks for the master password again.
 - **Private tabs:** they share an in-memory profile that is discarded when the last private tab
   closes. Nothing from them is written to disk, history, the session or the favicon cache.

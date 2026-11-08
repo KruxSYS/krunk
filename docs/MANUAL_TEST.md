@@ -1008,3 +1008,6 @@ Scripted on the VM: `scripts/vm-071-*.ps1` (evidence in `.pipeline/evidence-0.7.
 1. GPU machine, dark theme: switch between several tabs (white pages, dark pages, the new tab
    page) for a minute with Ctrl+Tab and clicks: never a white frame. Resize the window, then
    switch: the page has the new size at once. Drag a tab into a new window and back.
+2. Settings → Passwords & import → Firefox (a long-used profile): the passwords import; if any
+   cannot be decrypted, the result shows the cipher and key sizes in brackets.
+3. The new tab page: space below the keyboard shortcuts box.

@@ -635,6 +635,8 @@
       if (c.appBound) s += ' (' + c.appBound + ' protected by Chrome, export a CSV for those)';
       // 0.7.2 (R12): a 0 always says why.
       if (c.why) s += ' (' + c.why + ')';
+      // 0.7.4: the cipher and key sizes of fields that could not be decrypted (no secrets).
+      if (c.detail) s += ' [' + c.detail + ']';
       parts.push(s);
     });
     p.textContent = parts.length ? parts.join(' · ') : 'Nothing to import.';

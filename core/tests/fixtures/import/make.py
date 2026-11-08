@@ -490,7 +490,41 @@ def make_firefox_twokeys(name):
         c.close()
 
 
+def make_firefox_sameid(name):
+    """Krunk 0.7.4 (R12, the operator's profile: 925 logins "unsupported cipher"): a profile whose
+    old 3DES key and newer AES key carry the *same* key id; the logins are AES-256-CBC. A reader
+    that takes the first key with the id gets the 24-byte 3DES key for an AES-256 field."""
+    d = os.path.join(OUT, name)
+    os.makedirs(d, exist_ok=True)
+    global_salt = det(20, name + "-global")
+    old_key = det(24, name + "-sdr-old")
+    new_key = det(32, name + "-sdr-new")
+    path = os.path.join(d, "key4.db")
+    if os.path.exists(path):
+        os.remove(path)
+    c = sqlite3.connect(path)
+    key4_tables(c)
+    c.execute("INSERT INTO metaData VALUES ('password', ?, ?)", (global_salt, pbes2_blob(global_salt, "", b"password-check", name + "-check")))
+    c.execute("INSERT INTO nssPrivate (id, a11, a102) VALUES (1, ?, ?)", (pbes2_blob(global_salt, "", old_key, name + "-a11-old"), KEY_ID_AES))
+    c.execute("INSERT INTO nssPrivate (id, a11, a102) VALUES (2, ?, ?)", (pbes2_blob(global_salt, "", new_key, name + "-a11-new"), KEY_ID_AES))
+    c.commit()
+    c.close()
+    logins = []
+    for i in (1, 2):
+        logins.append({
+            "id": i, "hostname": "https://same-id.example", "httpRealm": None, "formSubmitURL": "https://same-id.example",
+            "encryptedUsername": sdr_encrypt(new_key, f"fx-same-{i}", f"{name}-u{i}", True),
+            "encryptedPassword": sdr_encrypt(new_key, f"Fx-same-pass-{i}", f"{name}-p{i}", True),
+            "guid": "{%08x-0000-4000-8000-0000000000bb}" % i, "encType": 1, "timeCreated": MS_2024 + i * 1000,
+        })
+    with open(os.path.join(d, "logins.json"), "w") as f:
+        json.dump({"nextId": 3, "logins": logins, "version": 3}, f, indent=1)
+
+
 def main():
+    if sys.argv[1:] == ["firefox-sameid"]:
+        make_firefox_sameid("firefox-sameid")
+        return
     if sys.argv[1:] == ["firefox-nohostname"]:
         make_firefox_nohostname("firefox-nohostname")
         return
@@ -504,6 +538,7 @@ def main():
     make_csv()
     make_firefox_nohostname("firefox-nohostname")
     make_firefox_twokeys("firefox-twokeys")
+    make_firefox_sameid("firefox-sameid")
     print("fixtures written to", OUT)
 
 

@@ -27,12 +27,18 @@ const OID_PBES2: &str = "1.2.840.113549.1.5.13";
 const OID_PBKDF2: &str = "1.2.840.113549.1.5.12";
 const OID_HMAC_SHA256: &str = "1.2.840.113549.2.9";
 const OID_AES256_CBC: &str = "2.16.840.1.101.3.4.1.42";
+const OID_AES128_CBC: &str = "2.16.840.1.101.3.4.1.2";
+const OID_AES192_CBC: &str = "2.16.840.1.101.3.4.1.22";
+const OID_AES128_GCM: &str = "2.16.840.1.101.3.4.1.6";
+const OID_AES256_GCM: &str = "2.16.840.1.101.3.4.1.46";
 const OID_PBE_SHA1_3DES: &str = "1.2.840.113549.1.12.5.1.3";
 const OID_DES_EDE3_CBC: &str = "1.2.840.113549.3.7";
 /// PBKDF2 rounds are bounded: the file is untrusted input.
 const MAX_ITERATIONS: u32 = 5_000_000;
 
 type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
+type Aes192CbcDec = cbc::Decryptor<aes::Aes192>;
+type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
 type Des3CbcDec = cbc::Decryptor<des::TdesEde3>;
 
 /// The parts of `key4.db` the import needs.
@@ -54,6 +60,8 @@ pub struct SdrKeys {
     keys: Vec<SdrKey>,
     /// Keys in `key4.db` that could not be unlocked (an unknown scheme, a damaged entry).
     pub unusable: usize,
+    /// The ciphers and key sizes of the fields that could not be decrypted (for the log).
+    failed: std::cell::RefCell<std::collections::BTreeMap<String, usize>>,
 }
 
 /// Why a login field could not be decrypted (0.7.2: said per reason, never a silent 0).
@@ -121,7 +129,7 @@ impl Key4 {
         if check.as_deref().map(Vec::as_slice) != Ok(b"password-check") {
             return Err(ImportError::WrongPassword);
         }
-        let mut out = SdrKeys { keys: Vec::new(), unusable: 0 };
+        let mut out = SdrKeys { keys: Vec::new(), unusable: 0, failed: Default::default() };
         for (blob, id) in &self.keys {
             match decrypt_pbe(blob, &self.global_salt, primary_password) {
                 Ok(key) if key.len() >= 24 => out.keys.push(SdrKey { key, id: id.clone() }),
@@ -145,8 +153,40 @@ impl SdrKeys {
         let (outer, _) = tlv(&der).map_err(|_| FieldError::Structure)?;
         let parts = children(outer.body).map_err(|_| FieldError::Structure)?;
         let [key_id, algo, ciphertext] = parts.as_slice() else { return Err(FieldError::Structure) };
-        let key = self.keys.iter().find(|k| k.id.as_slice() == key_id.body).ok_or(FieldError::UnknownKey)?;
-        key.decrypt(algo, ciphertext.body)
+        // The key the field names first, then every other one (0.7.4): a profile that went from
+        // 3DES to AES can keep both keys under the same id, so the first key with that id may be
+        // the 24-byte 3DES key while the field is AES-256. A key is right when the padding and
+        // the text check out.
+        let named = self.keys.iter().filter(|k| k.id.as_slice() == key_id.body);
+        let others = self.keys.iter().filter(|k| k.id.as_slice() != key_id.body);
+        let mut first_error = None;
+        for key in named.chain(others) {
+            match key.decrypt(algo, ciphertext.body) {
+                Ok(text) => return Ok(text),
+                Err(e) => {
+                    first_error.get_or_insert(e);
+                }
+            }
+        }
+        // No key with the field's id: that is the reason (the others were a fallback); else what
+        // the named key ran into (it was tried first).
+        let error = match first_error {
+            Some(e) if self.keys.iter().any(|k| k.id.as_slice() == key_id.body) => e,
+            _ => FieldError::UnknownKey,
+        };
+        let oid = children(algo.body).ok().and_then(|a| a.first().map(|o| oid_string(o.body))).unwrap_or_default();
+        let sizes: Vec<String> = self.keys.iter().map(|k| k.key.len().to_string()).collect();
+        *self
+            .failed
+            .borrow_mut()
+            .entry(format!("{} ({oid}; keys of {} bytes)", error.reason(), sizes.join("/")))
+            .or_default() += 1;
+        Err(error)
+    }
+
+    /// Why fields failed, with their cipher and the key sizes (no secrets), for the log.
+    pub fn failure_detail(&self) -> String {
+        self.failed.borrow().iter().map(|(k, n)| format!("{k}: {n}")).collect::<Vec<_>>().join(", ")
     }
 
     /// The unlocked keys (for tests of a single key).
@@ -160,16 +200,43 @@ impl SdrKey {
     fn decrypt(&self, algo: &Tlv<'_>, ciphertext: &[u8]) -> Result<Zeroizing<String>, FieldError> {
         let algo = children(algo.body).map_err(|_| FieldError::Structure)?;
         let [oid, iv] = algo.as_slice() else { return Err(FieldError::Structure) };
+        let key = |n: usize| self.key.get(..n).ok_or(FieldError::UnsupportedCipher);
         let plain = match oid_string(oid.body).as_str() {
-            OID_DES_EDE3_CBC => Des3CbcDec::new_from_slices(&self.key[..24], iv.body)
+            OID_DES_EDE3_CBC => Des3CbcDec::new_from_slices(key(24)?, iv.body)
                 .map_err(|_| FieldError::Structure)?
                 .decrypt_padded_vec::<Pkcs7>(ciphertext)
                 .map_err(|_| FieldError::Damaged)?,
-            OID_AES256_CBC => {
-                Aes256CbcDec::new_from_slices(self.key.get(..32).ok_or(FieldError::UnsupportedCipher)?, iv.body)
-                    .map_err(|_| FieldError::Structure)?
-                    .decrypt_padded_vec::<Pkcs7>(ciphertext)
-                    .map_err(|_| FieldError::Damaged)?
+            OID_AES256_CBC => Aes256CbcDec::new_from_slices(key(32)?, iv.body)
+                .map_err(|_| FieldError::Structure)?
+                .decrypt_padded_vec::<Pkcs7>(ciphertext)
+                .map_err(|_| FieldError::Damaged)?,
+            OID_AES192_CBC => Aes192CbcDec::new_from_slices(key(24)?, iv.body)
+                .map_err(|_| FieldError::Structure)?
+                .decrypt_padded_vec::<Pkcs7>(ciphertext)
+                .map_err(|_| FieldError::Damaged)?,
+            OID_AES128_CBC => Aes128CbcDec::new_from_slices(key(16)?, iv.body)
+                .map_err(|_| FieldError::Structure)?
+                .decrypt_padded_vec::<Pkcs7>(ciphertext)
+                .map_err(|_| FieldError::Damaged)?,
+            o @ (OID_AES256_GCM | OID_AES128_GCM) => {
+                // GCMParameters ::= SEQUENCE { nonce OCTET STRING, icvLen INTEGER DEFAULT 12 };
+                // the tag ends the ciphertext.
+                use aes_gcm::aead::{Aead, KeyInit};
+                let params = children(iv.body).map_err(|_| FieldError::Structure)?;
+                let nonce = params.first().filter(|t| t.tag == 0x04).ok_or(FieldError::Structure)?.body;
+                let nonce = aes_gcm::Nonce::try_from(nonce).map_err(|_| FieldError::UnsupportedCipher)?;
+                let nonce = &nonce;
+                if o == OID_AES256_GCM {
+                    aes_gcm::Aes256Gcm::new_from_slice(key(32)?)
+                        .map_err(|_| FieldError::Structure)?
+                        .decrypt(nonce, ciphertext)
+                        .map_err(|_| FieldError::Damaged)?
+                } else {
+                    aes_gcm::Aes128Gcm::new_from_slice(key(16)?)
+                        .map_err(|_| FieldError::Structure)?
+                        .decrypt(nonce, ciphertext)
+                        .map_err(|_| FieldError::Damaged)?
+                }
             }
             _ => return Err(FieldError::UnsupportedCipher),
         };
@@ -356,7 +423,11 @@ mod tests {
     fn garbage_is_a_format_error_not_a_panic() {
         let k = Key4 { global_salt: vec![1; 20], password_check: vec![0x30, 0x03, 0x02, 0x01, 0x01], keys: vec![] };
         assert!(matches!(k.unlock(""), Err(ImportError::WrongPassword | ImportError::Format(_))));
-        let sdr = SdrKeys { keys: vec![SdrKey { key: Zeroizing::new(vec![0; 24]), id: vec![1] }], unusable: 0 };
+        let sdr = SdrKeys {
+            keys: vec![SdrKey { key: Zeroizing::new(vec![0; 24]), id: vec![1] }],
+            unusable: 0,
+            failed: Default::default(),
+        };
         assert_eq!(sdr.decrypt_field("not base64!").err(), Some(FieldError::NotBase64));
         assert_eq!(sdr.decrypt_field("MAA=").err(), Some(FieldError::Structure));
         assert_eq!(sdr.decrypt_field(" ").err(), Some(FieldError::Missing));

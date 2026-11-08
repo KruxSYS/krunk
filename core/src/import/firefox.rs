@@ -19,6 +19,7 @@ pub struct FirefoxLogins {
     pub reasons: Vec<(&'static str, usize)>,
     /// What the import found, for the log (no secrets).
     pub found: Found,
+    detail: String,
 }
 
 /// The profile's login store, as found (0.7.2, R12).
@@ -30,6 +31,13 @@ pub struct Found {
     pub keys: usize,
     pub unusable_keys: usize,
     pub primary_password: bool,
+}
+
+impl FirefoxLogins {
+    /// The fields that could not be decrypted, by reason, cipher and key sizes (0.7.4).
+    pub fn failure_detail(&self) -> &str {
+        &self.detail
+    }
 }
 
 #[derive(Deserialize)]
@@ -88,7 +96,13 @@ pub fn read_logins(profile: &Path, primary_password: &str) -> Result<FirefoxLogi
     // (A file saved by another tool may start with a byte-order mark.)
     let file: LoginsFile = serde_json::from_str(text.trim_start_matches('\u{feff}'))
         .map_err(|e| ImportError::Format(format!("logins.json: {e}")))?;
-    let mut out = FirefoxLogins { logins: Vec::new(), skipped: 0, reasons: Vec::new(), found: Found::default() };
+    let mut out = FirefoxLogins {
+        logins: Vec::new(),
+        skipped: 0,
+        reasons: Vec::new(),
+        found: Found::default(),
+        detail: String::new(),
+    };
     out.found.entries = file.logins.len();
     if file.logins.is_empty() {
         return Ok(out);
@@ -149,6 +163,7 @@ pub fn read_logins(profile: &Path, primary_password: &str) -> Result<FirefoxLogi
             created_ms: raw.time_created.filter(|t| *t > 0),
         });
     }
+    out.detail = key.failure_detail();
     out.reasons = counts.into_iter().filter(|(_, n)| *n > 0).collect();
     out.skipped = out.reasons.iter().map(|(_, n)| n).sum();
     Ok(out)
@@ -321,6 +336,37 @@ mod tests {
         );
         assert_eq!(got.skipped, 0);
         assert_eq!(got.found, Found { entries: 3, keys: 2, unusable_keys: 0, primary_password: false });
+    }
+
+    #[test]
+    fn same_key_id_for_the_3des_and_the_aes_key() {
+        // 0.7.4: the operator's profile (925 logins "unsupported cipher" in 0.7.2/0.7.3): the
+        // first key with the field's id is the 24-byte 3DES key, the field is AES-256-CBC.
+        let got = read_logins(&fixture("firefox-sameid"), "").unwrap();
+        let names: Vec<(&str, &str)> = got.logins.iter().map(|l| (l.username.as_str(), l.password.as_str())).collect();
+        assert_eq!(names, [("fx-same-1", "Fx-same-pass-1"), ("fx-same-2", "Fx-same-pass-2")]);
+        assert_eq!(got.skipped, 0);
+        assert!(got.failure_detail().is_empty());
+        assert_eq!(got.found.keys, 2);
+    }
+
+    #[test]
+    fn undecryptable_fields_name_cipher_and_key_sizes() {
+        let src = fixture("firefox-sameid");
+        let dir = std::env::temp_dir().join(format!("krunk-detail-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for f in ["key4.db", "logins.json"] {
+            std::fs::copy(src.join(f), dir.join(f)).unwrap();
+        }
+        let c = rusqlite::Connection::open(dir.join("key4.db")).unwrap();
+        c.execute("DELETE FROM nssPrivate WHERE id = 2", []).unwrap();
+        drop(c);
+        let got = read_logins(&dir, "").unwrap();
+        assert!(got.logins.is_empty());
+        assert_eq!(got.reasons, [(FieldError::UnsupportedCipher.reason(), 2)]);
+        assert!(got.failure_detail().contains("2.16.840.1.101.3.4.1.42; keys of 24 bytes"), "{}", got.failure_detail());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

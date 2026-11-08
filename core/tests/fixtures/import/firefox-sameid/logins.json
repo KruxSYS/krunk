@@ -1,0 +1,28 @@
+{
+ "nextId": 3,
+ "logins": [
+  {
+   "id": 1,
+   "hostname": "https://same-id.example",
+   "httpRealm": null,
+   "formSubmitURL": "https://same-id.example",
+   "encryptedUsername": "MEMEEPgAAAAAAAAAAAAAAAAAAAEwHQYJYIZIAWUDBAEqBBADQUqKbnqUUzuNaeg/VefIBBADDcnyy7uSmTZj2m2pAzGz",
+   "encryptedPassword": "MEMEEPgAAAAAAAAAAAAAAAAAAAEwHQYJYIZIAWUDBAEqBBC0jHL3TqPsf0W1tiErg8+dBBBynRCSYleaAujjFEcFR6dI",
+   "guid": "{00000001-0000-4000-8000-0000000000bb}",
+   "encType": 1,
+   "timeCreated": 1700000001000
+  },
+  {
+   "id": 2,
+   "hostname": "https://same-id.example",
+   "httpRealm": null,
+   "formSubmitURL": "https://same-id.example",
+   "encryptedUsername": "MEMEEPgAAAAAAAAAAAAAAAAAAAEwHQYJYIZIAWUDBAEqBBCbZbiuv1iA+TtzvK3VF/v9BBAIiMZX2MwcGSi1fic654vv",
+   "encryptedPassword": "MEMEEPgAAAAAAAAAAAAAAAAAAAEwHQYJYIZIAWUDBAEqBBDYKNQoX410ZZs93lLg/SyRBBD6MDAkZRcio26cEU+B1HP0",
+   "guid": "{00000002-0000-4000-8000-0000000000bb}",
+   "encType": 1,
+   "timeCreated": 1700000002000
+  }
+ ],
+ "version": 3
+}
