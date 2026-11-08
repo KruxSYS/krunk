@@ -42,6 +42,8 @@ SafeGo 'krunk://extensions' 3000
 Shot "$P-1-empty"
 Click (X 236) (Y 207) 2500                                                    # Install from file…
 Keys 'C:\pipeline\krunk\vm-ext\krunk-fixture.zip' 300; Keys '{ENTER}' 6000
+Shot "$P-1b-confirm"                                                           # 0.7.0: every install asks first
+Keys '{ENTER}' 4000
 SafeGo 'krunk://extensions' 3000
 Shot "$P-2-installed"
 LogExt 'after install'
@@ -68,18 +70,20 @@ Shot "$P-7-newtab-untouched"
 # (5) Disable: the button and the banner go; enable again.
 SafeGo 'krunk://extensions' 3000
 Keys '{F5}' 2500
-Click (X 278) (Y 512) 1500                                                    # Enabled checkbox of the first card
+Click (X 590) (Y 379) 1500                                                    # 0.7.0: the first card's on/off switch
 Shot "$P-9-disabled"
 SafeGo 'http://localhost:8094/ext.html' 3500
 Shot "$P-10-disabled-page"
 SafeGo 'krunk://extensions' 3000
 Keys '{F5}' 2500
-Click (X 278) (Y 512) 1500
+Click (X 590) (Y 379) 1500
 Shot "$P-9b-enabled-again"
 # (6) Two Web Store extensions by address.
-Click (X 682) (Y 241) 300; Keys 'https://chromewebstore.google.com/detail/ublock-origin-lite/ddkjiahejlhfcafbddmgiahcphecmpfh' 200; Keys '{ENTER}' 25000
+Click (X 682) (Y 241) 300; Keys 'https://chromewebstore.google.com/detail/ublock-origin-lite/ddkjiahejlhfcafbddmgiahcphecmpfh' 200; Keys '{ENTER}' 20000
+Keys '{ENTER}' 8000                                                            # the confirmation's Add extension
 Shot "$P-11-ubo-lite"
-Click (X 682) (Y 241) 300; Keys '^a' 100; Keys '{DEL}' 100; Keys 'https://chromewebstore.google.com/detail/dark-reader/eimadpbcbfnmbkopoojfekhnkhdbieeh' 200; Keys '{ENTER}' 25000
+Click (X 682) (Y 241) 300; Keys '^a' 100; Keys '{DEL}' 100; Keys 'https://chromewebstore.google.com/detail/dark-reader/eimadpbcbfnmbkopoojfekhnkhdbieeh' 200; Keys '{ENTER}' 20000
+Keys '{ENTER}' 8000
 Shot "$P-12-dark-reader"
 LogExt 'after the store installs'
 SafeGo 'https://en.wikipedia.org/wiki/Web_browser' 8000

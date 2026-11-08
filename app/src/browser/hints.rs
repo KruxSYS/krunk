@@ -36,15 +36,18 @@ impl Browser {
         }
         // Workers only: an out-of-process frame paused this way did not resume in CEF; frames
         // need no help (their requests follow the override, nohints.js runs in them).
-        view.devtools_method(
-            "Target.setAutoAttach",
-            &json!({
-                "autoAttach": off,
-                "waitForDebuggerOnStart": off,
+        let params = if off {
+            json!({
+                "autoAttach": true,
+                "waitForDebuggerOnStart": true,
                 "flatten": true,
                 "filter": [{ "type": "iframe", "exclude": true }, { "type": "page", "exclude": true }, {}],
-            }),
-        );
+            })
+        } else {
+            // (Chromium refuses a filter when auto-attach is switched off.)
+            json!({ "autoAttach": false, "waitForDebuggerOnStart": false })
+        };
+        view.devtools_method("Target.setAutoAttach", &params);
     }
 
     /// A worker or frame of `tab` was attached (paused): fix it up, then let it run.
