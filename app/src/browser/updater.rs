@@ -285,14 +285,25 @@ impl Browser {
             let _ = lb_core::vault::write_atomic(&self.updates.path, s.to_json().as_bytes());
         }
         let waiting = std::mem::take(&mut *self.updates.waiting.borrow_mut());
+        let asked = !waiting.is_empty();
         let status = self.update_status();
         for (tab, req_id) in waiting {
             self.reply(tab, Event::ok(req_id, &status));
         }
-        // Offer it, unless another prompt is open (Settings → About still shows it).
-        if offer.is_some() && matches!(self.popup_kind(), None | Some(PopupKind::Update)) {
+        // 0.7.2: a newer version is announced by a dot on ⋮ and the menu's first item, without
+        // a popup. The prompt still opens by itself for a repair, after a failed install, and
+        // for "Check for updates" (Settings → About) — unless another prompt is open.
+        self.post_shell(&Event::UpdateAvailable { version: self.update_notice() });
+        let prompt = asked || self.updates.failed.borrow().is_some() || self.update_notice().is_none();
+        if offer.is_some() && prompt && matches!(self.popup_kind(), None | Some(PopupKind::Update)) {
             self.show_update_prompt(UpdateProgress::Offered);
         }
+    }
+
+    /// The version the ⋮ menu announces: a newer Krunk the server offers (not a repair).
+    pub(super) fn update_notice(&self) -> Option<String> {
+        let current = current_version();
+        self.updates.offered.borrow().as_ref().filter(|m| m.version > current).map(|m| m.version.to_string())
     }
 
     /// Can this copy install the offered update (or repair) itself?
@@ -364,6 +375,7 @@ impl Browser {
 
     fn update_reply_with(&self, m: Manifest, choice: UpdateChoice) {
         match choice {
+            UpdateChoice::Show => self.show_update_prompt(UpdateProgress::Offered),
             UpdateChoice::Later => self.hide_update_prompt(),
             UpdateChoice::Notes => {
                 self.hide_update_prompt();

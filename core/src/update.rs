@@ -39,8 +39,9 @@ pub const MAX_MANIFEST_BYTES: usize = 16 * 1024;
 pub const MAX_SIGNATURE_BYTES: usize = 256;
 /// The largest installer Krunk downloads.
 pub const MAX_INSTALLER_BYTES: u64 = 1 << 30;
-/// First automatic check after start, then once a day.
-pub const FIRST_CHECK_DELAY_MS: u32 = 60_000;
+/// First automatic check shortly after start (0.7.2: 10 s, for the ⋮ menu's notice), then
+/// once a day.
+pub const FIRST_CHECK_DELAY_MS: u32 = 10_000;
 pub const CHECK_INTERVAL_MS: i64 = 24 * 60 * 60 * 1000;
 
 /// Why an update check or download was rejected. Logged as is.

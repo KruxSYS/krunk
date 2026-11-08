@@ -285,7 +285,7 @@ async function testShell(browser) {
   // Menu popup open/close.
   await page.click('#menu');
   const sp = await lastSent(page, 'showPopup');
-  check(sp && sp.popup === 'menu' && sp.rect.width === 280 && sp.rect.height === 620 && sp.rect.x >= 0 && sp.rect.y > 60, 'menu sends showPopup with a rect below the toolbar (620 is the upper bound; the popup fits itself)');
+  check(sp && sp.popup === 'menu' && sp.rect.width === 280 && sp.rect.height === 670 && sp.rect.x >= 0 && sp.rect.y > 60, 'menu sends showPopup with a rect below the toolbar (670 is the upper bound with the 0.7.2 update item; the popup fits itself)');
   check(await page.locator('#menu.on').count() === 1, 'menu button highlighted while open');
   await page.click('#menu');
   check((await lastSent(page, 'hidePopup')) !== undefined, 'clicking menu again sends hidePopup');
@@ -745,6 +745,16 @@ async function testShellFrame(browser) {
   const before = (await sent(page)).filter((m) => m.cmd === 'newTab').length;
   await page.dblclick('#drag-space');
   check((await sent(page)).filter((m) => m.cmd === 'newTab').length === before, 'double-click on the tab row background opens no tab');
+
+  // 0.7.2 (R13): a newer Krunk puts a dot on ⋮; none removes it.
+  await emit(page, { event: 'updateAvailable', version: '0.7.9' });
+  await page.waitForTimeout(20);
+  const dot = await page.evaluate(() => { const b = document.getElementById('menu'); return [b.classList.contains('has-update'), b.title, getComputedStyle(b, '::after').width]; });
+  check(dot[0] && dot[1].includes('0.7.9') && dot[2] === '8px', 'updateAvailable shows a dot on the menu button (' + JSON.stringify(dot) + ')');
+  await shot(page, 'shell-update-dot.png');
+  await emit(page, { event: 'updateAvailable', version: null });
+  await page.waitForTimeout(20);
+  check(!(await page.evaluate(() => document.getElementById('menu').classList.contains('has-update'))), 'no update: no dot');
 
   // New tab: the host focuses the address bar; the caret is there and typing goes in.
   await page.evaluate(() => { document.getElementById('address').value = 'https://t3.example/'; });
@@ -4807,6 +4817,20 @@ async function testTabWindows(browser) {
   check(await nwItem.count() === 1 && (await nwItem.locator('.kbd').textContent()) === 'Ctrl+N', 'main menu: New window, Ctrl+N');
   await nwItem.click();
   check((await lastSent(page, 'command')).command.command === 'newWindow', 'main menu New window sends command{newWindow}');
+  check(await page.locator('.item.update-item').count() === 0, 'no update item without an update');
+  // 0.7.2 (R13): "Update available – Krunk X.Y.Z" first; it asks for the update prompt.
+  await page.setViewportSize({ width: 280, height: 670 });
+  await emit(page, { event: 'popup', content: { kind: 'menu', zoom: 1, canReopen: false, update: '0.7.9' } });
+  await page.waitForTimeout(30);
+  const firstItem = page.locator('.item').first();
+  check((await firstItem.textContent()).includes('Update available – Krunk 0.7.9') && await page.locator('.item.update-item .update-dot').count() === 1, 'the update item is the first one, with a dot');
+  check(await page.evaluate(() => { const l = document.querySelector('.item.update-item .label'); return l.scrollWidth <= l.clientWidth; }), 'the update item is not shortened');
+  check(await page.evaluate(() => document.getElementById('root').getBoundingClientRect().bottom <= 670), 'the menu with the update item fits 280x670');
+  await shot(page, 'popup-menu-update.png');
+  const hidesBefore = (await sent(page)).filter((x) => x.cmd === 'hidePopup').length;
+  await firstItem.click();
+  const ur = await lastSent(page, 'updateReply');
+  check(ur && ur.choice === 'show' && (await sent(page)).filter((x) => x.cmd === 'hidePopup').length === hidesBefore, 'it sends updateReply{show} (the prompt replaces the menu)');
   check(errors.length === 0, 'popup: no console errors (' + errors.join(' | ') + ')');
 }
 

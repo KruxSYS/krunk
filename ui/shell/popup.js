@@ -39,7 +39,17 @@
   const sep = () => el('div', { class: 'sep' });
 
   function renderMenu(c) {
-    return [
+    // 0.7.2 (R13): a newer Krunk first; it opens the update prompt (the popup shows it next).
+    const update = c.update ? [
+      (function () {
+        const b = item('Update available – Krunk ' + c.update, '', () => LB.post('updateReply', { choice: 'show' }));
+        b.classList.add('update-item');
+        b.insertBefore(el('span', { class: 'update-dot', 'aria-hidden': 'true' }), b.firstChild);
+        return b;
+      })(),
+      sep(),
+    ] : [];
+    return update.concat([
       item('New tab', 'Ctrl+T', () => command('newTab')),
       item('New window', 'Ctrl+N', () => command('newWindow')),
       item('New private tab', 'Ctrl+Shift+N', () => command('newPrivateTab')),
@@ -66,7 +76,7 @@
       item('Settings', '', () => openPage('settings')),
       item('About Krunk', '', () => openPage('about')),
       item('Exit', '', () => { LB.post('quit'); }),
-    ];
+    ]);
   }
 
   // Right-click on a tab.

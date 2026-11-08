@@ -91,6 +91,10 @@ html.fullscreen #caption, html.fullscreen #drag-space { display: none; }
            border-bottom: 1px solid var(--border); color: var(--toolbar-fg, var(--fg)); }
 /* The toolbar's buttons take its readable text colour (0.7.0, R3); the address field keeps the theme's. */
 #toolbar > .tb, #toolbar > #ext-actions .tb, #toolbar > #downloads, #toolbar > #menu { color: inherit; }
+/* 0.7.2 (R13): an update is available. */
+#menu { position: relative; }
+#menu.has-update::after { content: ''; position: absolute; top: 5px; right: 5px; width: 8px; height: 8px; border-radius: 50%;
+                          background: var(--accent); box-shadow: 0 0 0 2px var(--bg-raised); pointer-events: none; }
 .tb { display: flex; align-items: center; justify-content: center; gap: 3px; min-width: 32px; height: 32px; border: 0;
       border-radius: 6px; background: none; padding: 0 6px; cursor: pointer; color: var(--fg); position: relative; }
 .tb:hover:not(:disabled) { background: var(--bg-hover); }

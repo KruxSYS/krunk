@@ -284,6 +284,9 @@ pub enum PopupContent {
         /// The active tab has a video (the Picture-in-Picture item; 0.6.0).
         #[serde(default)]
         has_video: bool,
+        /// A newer Krunk is offered (0.7.2): "Update available – Krunk X.Y.Z" at the top.
+        #[serde(default)]
+        update: Option<String>,
     },
     /// The Picture-in-Picture chooser (0.6.0): the active tab's videos.
     Pip { tab_id: u32, videos: Vec<VideoInfo> },
@@ -454,6 +457,8 @@ pub enum UpdateChoice {
     Install,
     Later,
     Notes,
+    /// The ⋮ menu's "Update available" item (0.7.2): show the prompt.
+    Show,
 }
 
 /// Inline autocomplete for the address bar (Krunk 0.6.0): `text` replaces the typed text
@@ -2020,6 +2025,10 @@ pub enum Event {
     DownloadsChanged {
         active: u32,
     },
+    /// To the shell (0.7.2): a newer Krunk is offered (a dot on ⋮), or none (`None`).
+    UpdateAvailable {
+        version: Option<String>,
+    },
     /// The theme for the shell, popup and built-in pages (`System` follows
     /// the OS through `prefers-color-scheme`).
     Theme {
@@ -3443,6 +3452,22 @@ mod tests {
     }
 
     #[test]
+    fn update_notice_messages() {
+        // The ⋮ menu's item asks for the prompt with the existing reply message.
+        let show = parse_request(Sender::Popup, r#"{"cmd":"updateReply","choice":"show"}"#).map(|e| e.request);
+        assert!(matches!(show, Ok(Request::UpdateReply { choice: UpdateChoice::Show })), "{show:?}");
+        let reply = Request::UpdateReply { choice: UpdateChoice::Show };
+        assert!(!Sender::Shell.permits(&reply), "the shell only shows the dot");
+        for p in Page::ALL {
+            assert_eq!(Sender::Page(p).permits(&reply), p == Page::Settings, "{p:?}");
+        }
+        let ev = Event::UpdateAvailable { version: Some("0.7.9".into()) }.to_json();
+        assert!(ev.contains(r#""event":"updateAvailable""#) && ev.contains(r#""version":"0.7.9""#), "{ev}");
+        let menu: PopupContent = serde_json::from_str(r#"{"kind":"menu","zoom":1,"canReopen":false}"#).unwrap();
+        assert!(matches!(menu, PopupContent::Menu { update: None, .. }), "older menus have no notice");
+    }
+
+    #[test]
     fn bar_overflow_permits() {
         let rect = PopupRect { x: 900.0, y: 0.0, width: 24.0, height: 24.0 };
         let overflow = Request::ShowBookmarkFolder { id: 1, rect: Some(rect), from: Some(4) };
@@ -3717,7 +3742,19 @@ mod tests {
                 appearance: Default::default(),
                 colors: Default::default(),
             },
-            Event::Popup { content: PopupContent::Menu { zoom: 1.0, can_reopen: true, has_video: false } },
+            Event::Popup {
+                content: PopupContent::Menu { zoom: 1.0, can_reopen: true, has_video: false, update: None },
+            },
+            Event::Popup {
+                content: PopupContent::Menu {
+                    zoom: 1.0,
+                    can_reopen: false,
+                    has_video: false,
+                    update: Some("0.7.9".into()),
+                },
+            },
+            Event::UpdateAvailable { version: Some("0.7.9".into()) },
+            Event::UpdateAvailable { version: None },
             Event::Popup {
                 content: PopupContent::Shield {
                     host: "a.example".into(),

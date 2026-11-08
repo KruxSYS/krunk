@@ -197,3 +197,6 @@ body.pv-dark { --bg-raised: #202124; --bg-hover: #3c4043; --fg: #e8eaed; --fg-mu
 .ext-warnings { margin: 0 0 12px; padding-left: 20px; }
 .ext-warnings li { margin: 3px 0; }
 .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+/* 0.7.2 (R13): the ⋮ menu's update item. */
+.item.update-item { color: var(--accent); font-weight: 500; }
+.item .update-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }

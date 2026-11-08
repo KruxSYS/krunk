@@ -1895,6 +1895,7 @@ impl Browser {
                     self.send_nav_to(win);
                     self.send_bookmarks_bar();
                     self.post_shell(&Event::DownloadsChanged { active: self.downloads.borrow().active_count() });
+                    self.post_shell(&Event::UpdateAvailable { version: self.update_notice() });
                     self.ext_send_actions();
                     self.send_window_state();
                     self.pass_shell_hit_tests(win);
@@ -2262,7 +2263,12 @@ impl Browser {
                 self.views.try_borrow().ok().map(|v| v.get(&id).is_some_and(|t| !t.net.videos.borrow().is_empty()))
             })
             .unwrap_or(false);
-        PopupContent::Menu { zoom, can_reopen: self.ws.borrow().closed_count() > 0, has_video }
+        PopupContent::Menu {
+            zoom,
+            can_reopen: self.ws.borrow().closed_count() > 0,
+            has_video,
+            update: self.update_notice(),
+        }
     }
 
     /// Shows `content` in the popup. `rect` is in shell CSS pixels; `None`

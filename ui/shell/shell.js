@@ -778,7 +778,7 @@
     });
   });
 
-  const POPUP_SIZES = { menu: [280, 620], shield: [300, 226], siteInfo: [360, 260], downloads: [380, 420], pip: [340, 300] };
+  const POPUP_SIZES = { menu: [280, 670], shield: [300, 226], siteInfo: [360, 260], downloads: [380, 420], pip: [340, 300] };
   // The press on the button deactivates the open popup, which closes it before the click
   // arrives (the host then says popupClosed). The click must not reopen it: the press
   // remembers what was open. The host has the same guard (lb_core::toggle).
@@ -1135,6 +1135,13 @@
   // focus: select again when it arrives, so typing replaces the text.
   window.addEventListener('focus', function () { if (document.activeElement === address && !state.dirty) address.select(); });
   LB.on('bookmarksBar', function (m) { renderBar(m.items); });
+  // 0.7.2 (R13): a newer Krunk is offered: a dot on ⋮ (the menu's first item leads to it).
+  LB.on('updateAvailable', function (m) {
+    const b = $('menu');
+    b.classList.toggle('has-update', !!m.version);
+    b.title = m.version ? 'Menu – update available: Krunk ' + m.version : 'Menu';
+    b.setAttribute('aria-label', b.title);
+  });
   LB.on('downloadsChanged', function (m) {
     // Shown once something was downloaded in this session; badge while active.
     if (m.active > 0) $('downloads').hidden = false;
