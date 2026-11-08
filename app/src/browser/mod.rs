@@ -127,6 +127,9 @@ struct TabView {
     /// The view has finished loading once (0.7.0, R7): before that it may show a blank frame,
     /// so a tab switch keeps the old page on screen until then.
     loaded_once: Cell<bool>,
+    /// Until the tab reports an address other than `about:blank`: the engine's empty first
+    /// document is not shown in the bar (0.7.2, R1).
+    blank_start: Cell<bool>,
 }
 
 /// The popup view in its popup window, shared by all frames: it is owned by the frame it
@@ -825,6 +828,7 @@ impl Browser {
                 downloads: Rc::new(Cell::new(0)),
                 devtools: Cell::new(false),
                 loaded_once: Cell::new(false),
+                blank_start: Cell::new(!popup && !lb_core::pages::is_blank(&url)),
             },
         );
         if active {
@@ -896,6 +900,16 @@ impl Browser {
         let weak = self.me.clone();
         c.on_address(move |url| {
             if let Some(b) = weak.upgrade() {
+                // The engine's empty first document of a tab on its way to another page (edited
+                // headers start blank) is not the tab's address: the bar never shows it (R1).
+                if b.views.borrow().get(&id).is_some_and(|v| v.blank_start.get()) {
+                    if lb_core::pages::is_blank(&url) {
+                        return;
+                    }
+                    if let Some(v) = b.views.borrow().get(&id) {
+                        v.blank_start.set(false);
+                    }
+                }
                 b.release_address_focus_unless(id, &url);
                 b.with_tab(id, |m, t| m.set_url(t, &url));
                 b.apply_site_mute(id, &url);

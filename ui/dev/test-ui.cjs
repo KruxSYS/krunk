@@ -448,6 +448,53 @@ async function testShell(browser) {
   await page.waitForTimeout(30);
   check(await page.locator('#address').inputValue() === 'rus', 'no completion while the caret is inside the text');
 
+  // 0.7.2 (R3): typing the next letters of the completion keeps it in place in the same frame;
+  // the bar never shows the typed text alone or empties between keystrokes.
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('r');
+  await page.waitForTimeout(120);
+  await emit(page, { event: 'addressSuggestions', text: 'r', entries: rows, inline: inl });
+  await page.waitForTimeout(30);
+  await page.evaluate(() => {
+    const a = document.getElementById('address');
+    window.__barValues = [];
+    a.addEventListener('input', () => window.__barValues.push(a.value));
+    (function frame() { window.__barValues.push(a.value); window.__barRaf = requestAnimationFrame(frame); })();
+  });
+  for (const ch of ['u', 's', 't', '-']) {
+    await page.keyboard.type(ch);
+    const typed = await page.evaluate(() => { const a = document.getElementById('address'); return a.value.slice(0, a.selectionStart); });
+    await page.waitForTimeout(90);
+    await emit(page, { event: 'addressSuggestions', text: typed, entries: rows, inline: inl });
+    await page.waitForTimeout(20);
+  }
+  const seen = await page.evaluate(() => { cancelAnimationFrame(window.__barRaf); return window.__barValues; });
+  selRange = await page.evaluate(() => { const a = document.getElementById('address'); return [a.value, a.selectionStart, a.selectionEnd]; });
+  check(seen.length > 4 && seen.every((v) => v === 'rust-lang.org'), 'five letters typed along the completion: every frame shows the whole completion (' + [...new Set(seen)].join(',') + ')');
+  check(selRange[0] === 'rust-lang.org' && selRange[1] === 5 && selRange[2] === 13, 'the completion after the typed letters stays selected (' + JSON.stringify(selRange) + ')');
+  check((await lastSent(page, 'addressSuggest')).text === 'rust-', 'the host is asked for the typed text, not the completion');
+  // A host request to focus the bar while typing keeps the text and the caret.
+  await emit(page, { event: 'focusAddressBar' });
+  await page.waitForTimeout(20);
+  selRange = await page.evaluate(() => { const a = document.getElementById('address'); return [a.value, a.selectionStart, a.selectionEnd]; });
+  check(selRange[0] === 'rust-lang.org' && selRange[1] === 5, 'focusAddressBar while typing selects nothing new (' + JSON.stringify(selRange) + ')');
+  await page.keyboard.type('l');
+  await page.waitForTimeout(90);
+  // The host no longer offers it: back to the typed text, caret at the end.
+  await emit(page, { event: 'addressSuggestions', text: 'rust-l', entries: rows });
+  await page.waitForTimeout(20);
+  selRange = await page.evaluate(() => { const a = document.getElementById('address'); return [a.value, a.selectionStart, a.selectionEnd]; });
+  check(selRange[0] === 'rust-l' && selRange[1] === 6 && selRange[2] === 6, 'a completion no longer offered goes away (' + JSON.stringify(selRange) + ')');
+  // Paste never predicts; Delete drops the completion.
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('r');
+  await page.waitForTimeout(90);
+  await emit(page, { event: 'addressSuggestions', text: 'r', entries: rows, inline: inl });
+  await page.waitForTimeout(20);
+  await page.keyboard.press('Delete');
+  await page.waitForTimeout(20);
+  check(await page.locator('#address').inputValue() === 'r', 'Delete removes the completion');
+
   // 0.6.0: the address bar's context menu. The shell asks the host with the selection and
   // the edit state; the host's addressEdit events make the edits.
   await page.click('#address');

@@ -560,15 +560,22 @@
   // never takes the focus; the shell keeps the rows and the keyboard selection.
   // `inline`: the completion shown selected after the caret (0.6.0); `noInline`: the last
   // edit was a deletion, so the completion is not put back for that keystroke.
-  const suggest = { text: '', entries: [], selected: null, timer: null, open: false, inline: null, noInline: false };
+  const suggest = { text: '', entries: [], selected: null, timer: null, open: false, inline: null, noInline: false, tail: false };
   function suggestRect() {
     const r = address.getBoundingClientRect();
     return { x: r.left, y: r.bottom + 4, width: r.width, height: 0 };
   }
+  // The text the user typed: the field's value without a selected inline completion
+  // (`tail`: the selection up to the end is a completion the bar put there).
+  function typedText() {
+    const v = address.value;
+    if (suggest.tail && address.selectionEnd === v.length && address.selectionStart < v.length) return v.slice(0, address.selectionStart);
+    return v;
+  }
   function askSuggestions() {
     clearTimeout(suggest.timer);
     suggest.timer = setTimeout(function () {
-      const text = address.value.trim();
+      const text = typedText().trim();
       suggest.text = text;
       suggest.selected = null;
       if (!text) { closeSuggestions(); return; }
@@ -588,6 +595,7 @@
     if (i < 0 || i >= n) i = null;
     suggest.selected = i;
     suggest.inline = null;
+    suggest.tail = false;
     address.value = i === null ? suggest.text : suggest.entries[i].fill;
     address.setSelectionRange(address.value.length, address.value.length);
     LB.post('addressSuggestSelect', { selected: i });
@@ -596,19 +604,32 @@
   LB.on('addressSuggestions', function (e) {
     // Only for what the bar asked last (its value may already carry an inline completion).
     if (document.activeElement !== address || e.text !== suggest.text) return;
+    const typed = typedText();
+    const predicted = typed !== address.value;
     suggest.entries = e.entries || [];
     suggest.selected = null;
     suggest.inline = null;
     suggest.open = suggest.entries.length > 0;
     // Inline autocomplete: the first matching address is completed after the caret and
     // selected, so typing on replaces it and Enter goes there; never after a deletion.
-    const atEnd = address.selectionStart === address.value.length && address.selectionEnd === address.value.length;
-    if (e.inline && !suggest.noInline && atEnd && address.value.trim() === suggest.text && e.inline.text.length > suggest.text.length) {
-      address.value = e.inline.text;
-      address.setSelectionRange(address.value.length - (e.inline.text.length - suggest.text.length), address.value.length);
+    // A completion the bar already shows (kept while typing, 0.7.2) is left as it is, so
+    // the field does not change at all when the answer arrives.
+    const atEnd = address.selectionEnd === address.value.length && (predicted || address.selectionStart === address.value.length);
+    if (e.inline && !suggest.noInline && atEnd && typed.trim() === suggest.text && e.inline.text.length > suggest.text.length) {
+      const full = typed + e.inline.text.slice(typed.length);
+      if (address.value !== full) {
+        address.value = full;
+        address.setSelectionRange(typed.length, full.length);
+      }
       suggest.inline = e.inline;
+      suggest.tail = true;
       suggest.selected = e.inline.index;
       LB.post('addressSuggestSelect', { selected: e.inline.index });
+    } else if (predicted) {
+      // The kept completion is no longer offered: back to what was typed.
+      address.value = typed;
+      address.setSelectionRange(typed.length, typed.length);
+      suggest.tail = false;
     }
   });
   // Focus by keyboard (Ctrl+L, a new tab) selects the whole address. A mouse press lets the field
@@ -626,6 +647,7 @@
   });
   address.addEventListener('focus', function () {
     state.editing = true; state.dirty = false;
+    suggest.inline = null; suggest.tail = false;
     renderAddressDisplay();
     if (!press.pointer) address.select();
   });
@@ -660,6 +682,19 @@
   address.addEventListener('input', function (e) {
     state.dirty = true;
     suggest.noInline = !!(e.inputType && e.inputType.indexOf('delete') === 0);
+    // Typing the next letters of the inline completion keeps it in place in the same frame
+    // (0.7.2, R3): the bar never shows the typed text alone while the host is asked again.
+    const v = address.value;
+    const full = suggest.inline && suggest.inline.text;
+    if (full && e.inputType === 'insertText' && address.selectionStart === v.length && full.length > v.length
+        && full.slice(0, v.length).toLowerCase() === v.toLowerCase()) {
+      address.value = v + full.slice(v.length);
+      address.setSelectionRange(v.length, address.value.length);
+      suggest.tail = true;
+    } else {
+      suggest.inline = null;
+      suggest.tail = false;
+    }
     askSuggestions();
   });
   // Copying the whole, unedited address copies the page's full URL (never a shortened display).
@@ -1048,7 +1083,12 @@
     if (m.searchName) address.placeholder = 'Search with ' + m.searchName + ' or enter address';
     applyAppearance(m.appearance, m.colors);
   });
-  LB.on('focusAddressBar', function () { address.focus(); address.select(); });
+  // A request while the user is typing (the new tab page finished loading, the window got the
+  // focus back) leaves their text and caret alone (0.7.2, R3).
+  LB.on('focusAddressBar', function () {
+    if (document.activeElement === address && state.dirty) return;
+    address.focus(); address.select();
+  });
   LB.on('blurAddressBar', function () {
     state.dirty = false;
     if (document.activeElement === address) address.blur();
@@ -1056,7 +1096,7 @@
   });
   // The address bar may be focused before the shell itself has the keyboard
   // focus: select again when it arrives, so typing replaces the text.
-  window.addEventListener('focus', function () { if (document.activeElement === address) address.select(); });
+  window.addEventListener('focus', function () { if (document.activeElement === address && !state.dirty) address.select(); });
   LB.on('bookmarksBar', function (m) { renderBar(m.items); });
   LB.on('downloadsChanged', function (m) {
     // Shown once something was downloaded in this session; badge while active.

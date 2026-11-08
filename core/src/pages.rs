@@ -150,12 +150,20 @@ impl Page {
     }
 }
 
-/// Address-bar text for a URL: built-in pages get their `krunk://` name.
+/// Address-bar text for a URL: built-in pages get their `krunk://` name; an empty page
+/// (`about:blank`, a new tab with the Blank setting) shows the empty bar with its placeholder
+/// (0.7.2, R1).
 pub fn display_url(url: &str) -> String {
     match Page::from_url(url) {
         Some(p) => p.display(),
+        None if is_blank(url) => String::new(),
         None => url.to_string(),
     }
+}
+
+/// `about:blank` (what a new tab shows before its first page, or with the Blank setting).
+pub fn is_blank(url: &str) -> bool {
+    url.eq_ignore_ascii_case("about:blank")
 }
 
 /// Rewrites a URL stored before the rename (session tabs, bookmarks) to its
@@ -274,5 +282,7 @@ mod tests {
         assert_eq!(display_url(&Page::NewTab.url()), "");
         assert_eq!(display_url(&Page::Settings.url()), "krunk://settings");
         assert_eq!(display_url("https://example.com/"), "https://example.com/");
+        assert_eq!(display_url("about:blank"), "");
+        assert_eq!(display_url("about:blank#x"), "about:blank#x");
     }
 }

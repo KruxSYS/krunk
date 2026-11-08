@@ -97,8 +97,13 @@ impl Browser {
 
     /// Ends the hold when the tab leaves the new-tab page or another tab
     /// becomes active.
+    /// `about:blank` (where a tab with edited headers starts, or the Blank new-tab setting)
+    /// keeps the hold (0.7.2, R2).
     pub(super) fn release_address_focus_unless(&self, id: TabId, url: &str) {
-        if self.address_focus.get() == Some(id) && Page::from_url(url) != Some(Page::NewTab) {
+        if self.address_focus.get() == Some(id)
+            && Page::from_url(url) != Some(Page::NewTab)
+            && !lb_core::pages::is_blank(url)
+        {
             self.address_focus.set(None);
         }
     }
