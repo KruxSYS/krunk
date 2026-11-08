@@ -328,6 +328,11 @@ pub(super) struct ViewInner {
     pub cert_error: RefCell<Option<lb_core::certinfo::SslReport>>,
     /// Frames (by identifier) that report playing audio.
     audible_frames: RefCell<std::collections::HashSet<String>>,
+    /// A tab view out of sight (0.7.4): its window stays shown, outside the frame's client
+    /// area, instead of being hidden (see `set_visible`).
+    parked: Cell<bool>,
+    /// The place the layout gave the view (child-window pixels).
+    bounds: Cell<Option<(i32, i32, i32, i32)>>,
     /// Open permission prompts the host still has to answer, by prompt id: the engine's
     /// callback and the requesting origin.
     pub(super) permission_prompts: RefCell<std::collections::HashMap<u64, (PermissionPromptCallback, String)>>,
@@ -403,6 +408,8 @@ impl View {
             media_prompts: RefCell::new(std::collections::HashMap::new()),
             media_next: Cell::new(0),
             audible_frames: RefCell::new(std::collections::HashSet::new()),
+            parked: Cell::new(false),
+            bounds: Cell::new(None),
             devtools_id: Cell::new(0),
             renderer_pid: Cell::new(0),
             devtools_calls: RefCell::new(HashMap::new()),
@@ -551,9 +558,30 @@ impl View {
 
     pub fn set_bounds(&self, x: i32, y: i32, width: i32, height: i32) {
         let (width, height) = (width.max(0), height.max(0));
+        self.0.bounds.set(Some((x, y, width, height)));
         match self.hwnd() {
+            // A parked tab keeps its size (ready to be shown) but stays out of sight.
+            Some(h) if self.0.parked.get() => move_child(h, PARK_X, 0, width, height),
             Some(h) => move_child(h, x, y, width, height),
             None => self.0.pending.borrow_mut().bounds = Some((x, y, width, height)),
+        }
+    }
+
+    /// A tab view is parked instead of hidden (0.7.4): its window stays shown, moved outside
+    /// the frame's client area. A hidden window can lose what the GPU drew for it, and shown
+    /// again its first frame was empty: the white flash of a tab switch on GPU machines. A
+    /// parked view keeps its last frame, so moving it back shows the page at once.
+    fn park(&self, h: HWND, parked: bool) {
+        self.0.parked.set(parked);
+        let (x, y, w, hh) = self.0.bounds.get().unwrap_or((0, 0, 0, 0));
+        let (x, z, flags) = if parked {
+            (PARK_X, None, SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW)
+        } else {
+            (x, Some(HWND_TOP), SWP_NOACTIVATE | SWP_SHOWWINDOW)
+        };
+        // SAFETY: the browser's own child window.
+        unsafe {
+            let _ = SetWindowPos(h, z, x, if parked { 0 } else { y }, w, hh, flags);
         }
     }
 
@@ -566,6 +594,10 @@ impl View {
     /// either: shown again, it stays blank (tried in 0.7.0).
     pub fn set_visible(&self, visible: bool) {
         match (self.hwnd(), self.host()) {
+            (Some(h), Some(host)) if self.0.role == Role::Tab && (!visible || self.0.bounds.get().is_some()) => {
+                self.park(h, !visible);
+                host.was_hidden(i32::from(!visible));
+            }
             (Some(h), Some(host)) => {
                 // SAFETY: the browser's own child window.
                 unsafe {
@@ -593,7 +625,7 @@ impl View {
     pub fn is_visible(&self) -> bool {
         match self.hwnd() {
             // SAFETY: a plain query on the browser's own window.
-            Some(h) => unsafe { IsWindowVisible(h) }.as_bool(),
+            Some(h) => !self.0.parked.get() && unsafe { IsWindowVisible(h) }.as_bool(),
             None => self.0.pending.borrow().visible == Some(true),
         }
     }
@@ -1318,6 +1350,9 @@ pub(super) fn child_window_info(parent: HWND) -> WindowInfo {
         ..Default::default()
     }
 }
+
+/// Where a parked tab view sits (child-window x): far left of any frame's client area.
+const PARK_X: i32 = -32000;
 
 thread_local! {
     /// The window-position batch of [`with_batched_moves`], while one is open.

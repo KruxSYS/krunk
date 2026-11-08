@@ -1003,3 +1003,8 @@ Scripted on the VM: `scripts/vm-071-*.ps1` (evidence in `.pipeline/evidence-0.7.
 1. Dark theme, a GPU machine: switch quickly between a white page, a dark page and the new tab
    page (Ctrl+Tab, clicks on tabs): no white frame between them. Switch back to a tab within a
    moment: it stays shown.
+
+## Krunk 0.7.4 (round 11)
+1. GPU machine, dark theme: switch between several tabs (white pages, dark pages, the new tab
+   page) for a minute with Ctrl+Tab and clicks: never a white frame. Resize the window, then
+   switch: the page has the new size at once. Drag a tab into a new window and back.

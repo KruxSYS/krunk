@@ -14,12 +14,12 @@ used. It installs per user without administrator rights, or runs portable from a
 - background-tab sleep, to save memory
 
 ## Download and requirements
-- **Installer:** `Krunk-Setup-0.7.3.exe` (about 138 MB), from `https://krunk.209.wf`. It installs for the current user
+- **Installer:** `Krunk-Setup-0.7.4.exe` (about 138 MB), from `https://krunk.209.wf`. It installs for the current user
   only, without administrator rights:
   - to `%LOCALAPPDATA%\Programs\Krunk`, with a Start Menu shortcut and, if you tick it, one on
     the desktop;
   - with an entry in Settings → Apps → Installed apps (per user, `HKCU`).
-  If Krunk is running, the installer asks you to close it. `Krunk-Setup-0.7.3.exe /S` installs
+  If Krunk is running, the installer asks you to close it. `Krunk-Setup-0.7.4.exe /S` installs
   silently; it then closes a running Krunk itself and waits up to 30 s for it.
   **Uninstalling** removes the program and the shortcuts. Your data (`%LOCALAPPDATA%\Krunk`) is
   kept unless you tick "Also delete my Krunk data"; a silent uninstall (`/S`) always keeps it.
@@ -27,7 +27,7 @@ used. It installs per user without administrator rights, or runs portable from a
   run `Krunk.exe`. Keep all files of the folder together; if one is missing, Krunk says so at
   startup. The portable copy uses the same data folder as the installed one.
 - **Verify:** check `SHA256SUMS` (the installer, the zip and the three main binaries):
-  - PowerShell: `Get-FileHash Krunk-Setup-0.7.3.exe`
+  - PowerShell: `Get-FileHash Krunk-Setup-0.7.4.exe`
   - Linux: `sha256sum -c SHA256SUMS`
 - **System:** Windows 10 or 11, 64-bit. No runtime is needed.
 - **Data location:** everything is stored in `%LOCALAPPDATA%\Krunk`:
@@ -424,10 +424,12 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
 - **Tabs:** one browser per *live* tab, laid out below the shell. Restored tabs stay unloaded
   until they are activated. Pages that open windows (`window.open`, `target=_blank`) get a new
   tab next to them; `window.open` keeps its opener.
-- **Switching tabs:** the new tab's view is sized while hidden, shown on top of the old one,
-  and the old one is hidden 100 ms later (0.7.3), so until the engine has presented the new
-  page's first frame the old page shows through instead of the window's background (a white
-  flash on some GPUs). A tab that has never loaded keeps the old page on screen until it has.
+- **Switching tabs:** the views of the other tabs are never hidden: they are parked outside the
+  window's client area, shown and sized (0.7.4). A hidden window could lose what the GPU had
+  drawn for it, and shown again its first frame was empty — an occasional one-frame white flash
+  on tab switches on GPU machines. A switch moves the new tab's view into place on top, and the
+  old one is parked 100 ms later (0.7.3), so the old page shows through until the new one is
+  drawn. A tab that has never loaded keeps the old page on screen until it has.
 - **Moving a tab between windows** re-parents its browser's child window (`SetParent`, then
   CEF's move/resize notifications). The browser, its renderer, its request context (so a
   private tab stays private) and its history are untouched, so nothing reloads.
