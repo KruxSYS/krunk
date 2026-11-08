@@ -1,0 +1,14 @@
+Subject: A new device was linked to your Krunk account
+
+Hello,
+
+A device was just linked to your Krunk account:
+
+  {{label}} ({{platform}}), from {{country}}, {{time}}
+
+If this was you, there is nothing to do.
+
+If it wasn't, remove the device and change your password on your account
+page:
+
+{{site}}/account/

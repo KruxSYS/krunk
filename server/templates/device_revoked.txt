@@ -1,0 +1,10 @@
+Subject: A device was removed from your Krunk account
+
+Hello,
+
+"{{label}}" was just removed from your Krunk account on the website. It is
+signed out and can't use your account any more.
+
+If you didn't do this, change your password now:
+
+{{site}}/account/

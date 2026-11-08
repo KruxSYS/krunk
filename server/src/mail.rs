@@ -25,6 +25,9 @@ pub enum Template {
     PasswordChanged,
     TotpEnabled,
     TotpDisabled,
+    DeviceLinked,
+    DeviceRevoked,
+    TokenReuse,
 }
 
 impl Template {
@@ -36,6 +39,9 @@ impl Template {
             Template::PasswordChanged => "password_changed",
             Template::TotpEnabled => "totp_enabled",
             Template::TotpDisabled => "totp_disabled",
+            Template::DeviceLinked => "device_linked",
+            Template::DeviceRevoked => "device_revoked",
+            Template::TokenReuse => "token_reuse",
         }
     }
 
@@ -43,13 +49,16 @@ impl Template {
         Template::ALL.into_iter().find(|t| t.name() == n)
     }
 
-    pub const ALL: [Template; 6] = [
+    pub const ALL: [Template; 9] = [
         Template::Verify,
         Template::RegisterExists,
         Template::Reset,
         Template::PasswordChanged,
         Template::TotpEnabled,
         Template::TotpDisabled,
+        Template::DeviceLinked,
+        Template::DeviceRevoked,
+        Template::TokenReuse,
     ];
 
     fn source(self) -> &'static str {
@@ -60,6 +69,9 @@ impl Template {
             Template::PasswordChanged => include_str!("../templates/password_changed.txt"),
             Template::TotpEnabled => include_str!("../templates/totp_enabled.txt"),
             Template::TotpDisabled => include_str!("../templates/totp_disabled.txt"),
+            Template::DeviceLinked => include_str!("../templates/device_linked.txt"),
+            Template::DeviceRevoked => include_str!("../templates/device_revoked.txt"),
+            Template::TokenReuse => include_str!("../templates/token_reuse.txt"),
         }
     }
 }
@@ -225,8 +237,12 @@ mod tests {
     #[test]
     fn templates_render() {
         for t in Template::ALL {
-            let (subject, body) =
-                render(t, &serde_json::json!({"link": "https://x/account/verify?token=T"}), "https://krunk.209.wf");
+            let (subject, body) = render(
+                t,
+                &serde_json::json!({"link": "https://x/account/verify?token=T", "label": "Krunk 0.8.0 on Windows 11",
+                                    "platform": "Windows", "country": "DE", "time": "2026-11-08 12:00 UTC"}),
+                "https://krunk.209.wf",
+            );
             assert!(!subject.is_empty() && !subject.contains('\n') && subject.len() < 80, "{t:?}");
             assert!(!body.contains("{{"), "{t:?} leaves a placeholder: {body}");
             assert!(body.contains("https://krunk.209.wf/privacy"));

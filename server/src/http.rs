@@ -4,6 +4,7 @@ use crate::accounts;
 use crate::api::{ApiResult, Client};
 use crate::client_ip::{self, TrustedPeers};
 use crate::config::Config;
+use crate::devices;
 use crate::password::Passwords;
 use crate::ratelimit;
 use crate::sessions;
@@ -64,9 +65,27 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/web/totp/setup", post(accounts::totp_setup))
         .route("/api/v1/web/totp/enable", post(accounts::totp_enable))
         .route("/api/v1/web/totp/disable", post(accounts::totp_disable))
+        // S3: link approval, devices and sessions.
+        .route("/api/v1/web/link/{code}", get(devices::link_view))
+        .route("/api/v1/web/link/{code}/approve", post(devices::link_approve))
+        .route("/api/v1/web/link/{code}/deny", post(devices::link_deny))
+        .route("/api/v1/web/devices", get(devices::devices_list))
+        .route("/api/v1/web/devices/{id}/revoke", post(devices::device_revoke))
+        .route("/api/v1/web/devices/{id}/rename", post(devices::device_rename))
+        .route("/api/v1/web/sessions", get(devices::sessions_list))
+        .route("/api/v1/web/sessions/{id}/revoke", post(devices::session_revoke))
         .route_layer(middleware::from_fn_with_state(state.clone(), sessions::same_origin))
         .route_layer(middleware::from_fn_with_state(state.clone(), sessions::accounts_gate));
-    let api = Router::new().route("/api/v1/web/config", get(web_config)).merge(web).fallback(not_found);
+    // S3: native clients (Krunk). No Origin, no cookies: device codes and bearer tokens.
+    let device = Router::new()
+        .route("/api/v1/link/authorize", post(devices::authorize))
+        .route("/api/v1/link/token", post(devices::token))
+        .route("/api/v1/token/refresh", post(devices::refresh))
+        .route("/api/v1/device/unlink", post(devices::unlink))
+        .route("/api/v1/device/me", get(devices::device_me))
+        .route_layer(middleware::from_fn_with_state(state.clone(), devices::no_foreign_origin))
+        .route_layer(middleware::from_fn_with_state(state.clone(), sessions::accounts_gate));
+    let api = Router::new().route("/api/v1/web/config", get(web_config)).merge(web).merge(device).fallback(not_found);
     Router::new()
         .route("/healthz", get(healthz))
         .merge(api)

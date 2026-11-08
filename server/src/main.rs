@@ -15,6 +15,7 @@ mod client_ip;
 mod config;
 mod crypto;
 mod db;
+mod devices;
 mod http;
 #[cfg(test)]
 mod it;

@@ -4,13 +4,16 @@
 //! - website sessions dead (revoked or expired) for 30 days are deleted;
 //! - unverified accounts older than 7 days are deleted (their links have long expired);
 //! - expired Turnstile hashes, rate-limit windows older than 2 days, idle login throttles,
-//!   email tokens 7 days past expiry, and outbox rows 7 days after sending or giving up.
+//!   email tokens 7 days past expiry, and outbox rows 7 days after sending or giving up;
+//! - S3: link grants 10 minutes past expiry, approved links whose tokens were never collected
+//!   (30 minutes), expired access tokens, device IPs unused for IP_RETENTION_DAYS, devices
+//!   whose refresh tokens went 90 days unused (signed out), and revoked devices after 30 days.
 
 use sqlx::PgPool;
 use std::time::Duration;
 
 pub async fn run_once(db: &PgPool, ip_retention_days: i32) -> Result<(), sqlx::Error> {
-    let steps: [(&str, &str); 9] = [
+    let steps: [(&str, &str); 15] = [
         (
             "session ips",
             "UPDATE web_sessions SET ip = NULL WHERE ip IS NOT NULL AND last_used_at < now() - make_interval(days => $1)",
@@ -37,6 +40,23 @@ pub async fn run_once(db: &PgPool, ip_retention_days: i32) -> Result<(), sqlx::E
             "outbox",
             "DELETE FROM email_outbox WHERE coalesce(sent_at, failed_at) < now() - interval '7 days'",
         ),
+        ("link grants", "DELETE FROM link_grants WHERE expires_at < now() - interval '10 minutes'"),
+        (
+            "uncollected devices",
+            "DELETE FROM devices d WHERE d.created_at < now() - interval '30 minutes'
+             AND NOT EXISTS (SELECT 1 FROM refresh_families f WHERE f.device_id = d.id)",
+        ),
+        ("access tokens", "DELETE FROM access_tokens WHERE expires_at < now()"),
+        (
+            "device ips",
+            "UPDATE devices SET last_ip = NULL WHERE last_ip IS NOT NULL AND last_used_at < now() - make_interval(days => $1)",
+        ),
+        (
+            "idle devices",
+            "UPDATE devices SET revoked_at = now() WHERE revoked_at IS NULL AND id IN (
+               SELECT device_id FROM refresh_families WHERE revoked_at IS NULL AND rotated_at < now() - interval '90 days')",
+        ),
+        ("revoked devices", "DELETE FROM devices WHERE revoked_at < now() - interval '30 days'"),
     ];
     for (name, sql) in steps {
         let mut q = sqlx::query(sql);

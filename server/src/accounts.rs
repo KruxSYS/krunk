@@ -735,7 +735,7 @@ struct SyncSummary {
     bytes: i64,
 }
 
-/// `GET web/me`. Devices and sync data arrive with S3 and later; until then they are zero.
+/// `GET web/me`. Sync data arrives later (S6+); until then it is zero.
 pub async fn me(State(state): State<AppState>, s: WebSession) -> ApiResult {
     hit(&state.db, rl::ME, &rl::id_key(&s.id)).await?;
     let backup_codes_left: i64 =
@@ -743,13 +743,14 @@ pub async fn me(State(state): State<AppState>, s: WebSession) -> ApiResult {
             .bind(s.account_id)
             .fetch_one(&state.db)
             .await?;
+    let devices = crate::devices::active_count(&state.db, s.account_id).await?;
     Ok(Json(Me {
         email: s.email.clone(),
         email_verified: s.email_verified,
         created: s.created_at,
         totp: s.totp_enabled,
         backup_codes_left,
-        devices: 0,
+        devices,
         sync: SyncSummary { has_keyset: false, records: 0, bytes: 0 },
         reauth_valid: s.reauth_valid(),
         csrf: s.csrf.clone(),

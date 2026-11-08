@@ -39,6 +39,22 @@ pub const ME: Limit = l("me/session", 60, MIN);
 pub const TOTP_SETUP: Limit = l("totp-setup/account", 5, HOUR);
 pub const TOTP_ENABLE: Limit = l("totp-enable/account", 10, HOUR);
 pub const TOTP_DISABLE: Limit = l("totp-disable/account", 5, HOUR);
+// S3 (PROTOCOL §6.1, §11.3, §11.4).
+pub const LINK_AUTHORIZE_IP: Limit = l("link-authorize/ip", 10, HOUR);
+/// Polls every 5 s for 10 minutes are 120 per grant; this leaves room for a few grants.
+pub const LINK_TOKEN_IP: Limit = l("link-token/ip", 600, HOUR);
+/// Brute force of user codes: 5 lookups per website session per 10 minutes, 20 per IP per hour.
+pub const LINK_LOOKUP_SESSION: Limit = l("link-lookup/session", 5, 10 * MIN);
+pub const LINK_LOOKUP_IP: Limit = l("link-lookup/ip", 20, HOUR);
+pub const LINK_APPROVE: Limit = l("link-approve/account", 10, HOUR);
+pub const REFRESH_DEVICE: Limit = l("refresh/device", 30, HOUR);
+pub const REFRESH_IP: Limit = l("refresh/ip", 60, HOUR);
+pub const DEVICE_ME: Limit = l("device-me/device", 120, HOUR);
+pub const DEVICES_LIST: Limit = l("devices/session", 60, MIN);
+pub const DEVICE_REVOKE: Limit = l("device-revoke/account", 20, HOUR);
+pub const DEVICE_RENAME: Limit = l("device-rename/account", 30, HOUR);
+pub const SESSIONS_LIST: Limit = l("sessions/session", 60, MIN);
+pub const SESSION_REVOKE: Limit = l("session-revoke/account", 60, HOUR);
 
 pub fn ip_key(keys: &crate::config::Keys, ip: IpAddr) -> [u8; 32] {
     crypto::hmac(&keys.token_hmac, "krunk-rl-ip", &[ip.to_string().as_bytes()])

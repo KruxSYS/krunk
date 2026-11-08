@@ -54,6 +54,8 @@ pub struct Config {
     pub smtp: Option<Smtp>,
     pub keys: Keys,
     pub ip_retention_days: i32,
+    /// Most active devices per account (QUOTA_MAX_DEVICES, default 10).
+    pub quota_max_devices: i32,
     /// `ACCOUNTS_TEST_MODE=1`: allow the Turnstile test secrets, SMTP without TLS and a staging
     /// PUBLIC_BASE_URL.
     pub test_mode: bool,
@@ -75,6 +77,7 @@ impl std::fmt::Debug for Config {
             .field("smtp", &self.smtp.as_ref().map(|s| (&s.host, s.port, s.tls)))
             .field("keys", &"<redacted>")
             .field("ip_retention_days", &self.ip_retention_days)
+            .field("quota_max_devices", &self.quota_max_devices)
             .field("test_mode", &self.test_mode)
             .field("trusted_peer_host", &self.trusted_peer_host)
             .finish()
@@ -263,6 +266,12 @@ impl Config {
             }
             None => 90,
         };
+        let quota_max_devices = match get("QUOTA_MAX_DEVICES") {
+            Some(d) => {
+                d.parse::<i32>().ok().filter(|d| (1..=1000).contains(d)).ok_or("QUOTA_MAX_DEVICES must be 1..1000")?
+            }
+            None => 10,
+        };
         let keys = Keys {
             token_hmac: decode_key("token_hmac_key", secret("token_hmac_key"))?,
             password_pepper: decode_key("password_pepper", secret("password_pepper"))?,
@@ -279,6 +288,7 @@ impl Config {
             smtp,
             keys,
             ip_retention_days,
+            quota_max_devices,
             test_mode,
             base_url_rejected,
             trusted_peer_host,
@@ -345,6 +355,7 @@ mod tests {
         assert_eq!(c.bind.to_string(), "0.0.0.0:8081");
         assert_eq!(c.trusted_peer_host, "web");
         assert_eq!(c.ip_retention_days, 90);
+        assert_eq!(c.quota_max_devices, 10);
         assert!(!c.accounts_enabled(), "fail closed without Turnstile and SMTP");
         let dbg = format!("{c:?}");
         assert!(!dbg.contains("u:p"), "the database password is never printed");

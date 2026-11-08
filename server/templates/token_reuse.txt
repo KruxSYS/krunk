@@ -1,0 +1,11 @@
+Subject: Krunk signed out a device on your account
+
+Hello,
+
+An old sign-in token of "{{label}}" was used again. That can mean someone
+copied it, so the device has been signed out of your Krunk account.
+
+If you still use the device, sign in to Krunk on it again. If anything
+looks unfamiliar, change your password and check your devices:
+
+{{site}}/account/
