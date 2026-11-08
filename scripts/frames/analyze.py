@@ -7,6 +7,7 @@
   analyze.py motion PATH [--box X,Y,W,H]       a moving object (download flight)
   analyze.py bar    PATH --box X,Y,W,H --color RRGGBB [--tol N]   a growing progress bar
   analyze.py track  PATH --color RRGGBB [--tol N] [--box X,Y,W,H]  an object of one colour
+  analyze.py white  PATH [--ymin Y] [--lum L] [--min N] [--sheet OUT.png]   white areas (resize)
 
 flash: a frame is *white* when >= 98 % of its pixels are within 12 levels of one colour and that
 colour's luminance is >= 245. A run of at most --flash-frames (2) white frames between two
@@ -19,6 +20,13 @@ between frames, and how even those steps are.
 
 track: the centroid of the pixels of one colour (the download glyph's disc) per frame, the
 steps between frames, and whether it only moves forward along its path.
+
+white (0.7.2, R6): white areas that appear while a window is resized. A pixel is white when
+its luminance is >= --lum (default 235) and its channels differ by at most 12; rows above --ymin
+(screen px of the recording) are ignored (a light theme's own white toolbar), and rows from
+--ymax on (the taskbar). A frame with at
+least --min (default 96) white samples (at the recording's step) is a white frame; the mouse
+cursor stays below that. Exit code 1 if any.
 
 bar: the bar's filled width per frame (columns where most pixels match the colour); reports
 backward moves and the largest jump.
@@ -244,9 +252,42 @@ def cmd_track(a):
     return 0
 
 
+def cmd_white(a):
+    meta, frames, times = load(a.path)
+    step = meta.get("step", 1)
+    y0 = max(0, int((a.ymin - meta["rect"][1]) / step)) if a.ymin is not None else 0
+    y1 = int((a.ymax - meta["rect"][1]) / step) if a.ymax is not None else frames.shape[1]
+    f = frames[:, y0:y1, :, :].astype(int)
+    lum = 0.2126 * f[..., 0] + 0.7152 * f[..., 1] + 0.0722 * f[..., 2]
+    spread = f.max(axis=-1) - f.min(axis=-1)
+    mask = (lum >= a.lum) & (spread <= 12)
+    counts = mask.reshape(len(frames), -1).sum(axis=1)
+    bad = []
+    for i, n in enumerate(counts):
+        if n >= a.min:
+            ys, xs = np.nonzero(mask[i])
+            bad.append({"frame": i, "ms": round(float(times[i]), 1), "white_samples": int(n),
+                        "box_px": [int(xs.min() * step + meta["rect"][0]), int((ys.min() + y0) * step + meta["rect"][1]),
+                                   int((xs.max() - xs.min() + 1) * step), int((ys.max() - ys.min() + 1) * step)]})
+    gaps = np.diff(times) if len(times) > 1 else np.array([0.0])
+    out = {"frames": int(len(frames)), "white_frames": len(bad), "max_white_samples": int(counts.max()) if len(counts) else 0,
+           "lum": a.lum, "min": a.min, "ymin": a.ymin, "frame_gap_ms": {"median": round(float(np.median(gaps)), 1), "max": round(float(gaps.max()), 1)},
+           "first": bad[:12]}
+    if a.sheet and bad:
+        from PIL import Image
+        tiles = [Image.fromarray(frames[b["frame"]].astype(np.uint8)) for b in bad[:12]]
+        w, h = tiles[0].size
+        sheet = Image.new("RGB", (w * min(4, len(tiles)), h * ((len(tiles) + 3) // 4)))
+        for k, t in enumerate(tiles):
+            sheet.paste(t, ((k % 4) * w, (k // 4) * h))
+        sheet.save(a.sheet)
+    print(json.dumps(out, indent=1))
+    return 1 if bad else 0
+
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("mode", choices=["flash", "motion", "bar", "track"])
+    p.add_argument("mode", choices=["flash", "motion", "bar", "track", "white"])
     p.add_argument("path")
     p.add_argument("--sheet")
     p.add_argument("--box")
@@ -254,8 +295,12 @@ def main():
     p.add_argument("--tol", type=int, default=24)
     p.add_argument("--flash-frames", type=int, default=2)
     p.add_argument("--ease", type=float, help="track: fit Krunk's flight easing over this many ms")
+    p.add_argument("--ymin", type=float, help="white: ignore rows above this screen y")
+    p.add_argument("--ymax", type=float, help="white: ignore rows from this screen y on (the taskbar)")
+    p.add_argument("--lum", type=float, default=235.0)
+    p.add_argument("--min", type=int, default=96)
     a = p.parse_args()
-    return {"flash": cmd_flash, "motion": cmd_motion, "bar": cmd_bar, "track": cmd_track}[a.mode](a)
+    return {"flash": cmd_flash, "motion": cmd_motion, "bar": cmd_bar, "track": cmd_track, "white": cmd_white}[a.mode](a)
 
 
 if __name__ == "__main__":

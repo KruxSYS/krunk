@@ -552,10 +552,7 @@ impl View {
     pub fn set_bounds(&self, x: i32, y: i32, width: i32, height: i32) {
         let (width, height) = (width.max(0), height.max(0));
         match self.hwnd() {
-            // SAFETY: the browser's own child window; no z-order change.
-            Some(h) => unsafe {
-                let _ = SetWindowPos(h, None, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
-            },
+            Some(h) => move_child(h, x, y, width, height),
             None => self.0.pending.borrow_mut().bounds = Some((x, y, width, height)),
         }
     }
@@ -810,10 +807,7 @@ impl View {
         let (_, visible) = self.0.devtools_pending.get();
         self.0.devtools_pending.set((Some((x, y, width, height)), visible));
         if let Some(h) = self.devtools_hwnd() {
-            // SAFETY: the DevTools browser's own child window; no z-order change.
-            unsafe {
-                let _ = SetWindowPos(h, None, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
-            }
+            move_child(h, x, y, width, height);
         }
     }
 
@@ -1322,5 +1316,47 @@ pub(super) fn child_window_info(parent: HWND) -> WindowInfo {
         bounds: Rect { x: 0, y: 0, width: 0, height: 0 },
         runtime_style: RuntimeStyle::ALLOY,
         ..Default::default()
+    }
+}
+
+thread_local! {
+    /// The window-position batch of [`with_batched_moves`], while one is open.
+    static MOVES: Cell<Option<windows::Win32::UI::WindowsAndMessaging::HDWP>> = const { Cell::new(None) };
+}
+
+/// Moves the views laid out in `f` together, in one `DeferWindowPos` batch (0.7.2, R6): the
+/// shell, the page and DevTools of a resized window change size in the same step instead of
+/// one after the other.
+pub fn with_batched_moves<R>(f: impl FnOnce() -> R) -> R {
+    use windows::Win32::UI::WindowsAndMessaging::{BeginDeferWindowPos, EndDeferWindowPos};
+    // SAFETY: a batch for this thread's windows, ended below.
+    let batch = unsafe { BeginDeferWindowPos(4) }.ok();
+    let outer = MOVES.with(|m| m.replace(batch));
+    let r = f();
+    if let Some(h) = MOVES.with(|m| m.replace(outer)) {
+        // SAFETY: the batch begun above (DeferWindowPos may have replaced the handle).
+        let _ = unsafe { EndDeferWindowPos(h) };
+    }
+    r
+}
+
+/// Moves one of the engine's child windows, into the open batch if there is one.
+fn move_child(h: HWND, x: i32, y: i32, width: i32, height: i32) {
+    use windows::Win32::UI::WindowsAndMessaging::DeferWindowPos;
+    let flags = SWP_NOZORDER | SWP_NOACTIVATE;
+    if let Some(batch) = MOVES.with(|m| m.get()) {
+        // SAFETY: the engine's child window of this thread, added to our open batch.
+        match unsafe { DeferWindowPos(batch, h, None, x, y, width, height, flags) } {
+            Ok(next) => {
+                MOVES.with(|m| m.set(Some(next)));
+                return;
+            }
+            // A failed DeferWindowPos ends the batch; the remaining moves go one by one.
+            Err(_) => MOVES.with(|m| m.set(None)),
+        }
+    }
+    // SAFETY: the engine's own child window; no z-order change.
+    unsafe {
+        let _ = SetWindowPos(h, None, x, y, width, height, flags);
     }
 }

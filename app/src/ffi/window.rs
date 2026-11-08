@@ -565,6 +565,13 @@ impl Window {
         }
     }
 
+    /// The theme changed: the colour beneath the views (what a resize shows, R6) and the
+    /// frame's own parts follow.
+    pub fn repaint_background(self) {
+        fill_background(self.0);
+        self.invalidate();
+    }
+
     /// Repaints the window's own client area (the DevTools splitter and strip).
     pub fn invalidate(self) {
         // SAFETY: valid window handle.
@@ -1128,6 +1135,9 @@ extern "system" fn main_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
             LRESULT(0)
         }
         WM_SIZE => {
+            if wparam.0 as u32 != SIZE_MINIMIZED {
+                fill_background(hwnd);
+            }
             let maximized = wparam.0 as u32 == windows::Win32::UI::WindowsAndMessaging::SIZE_MAXIMIZED;
             let key = hwnd.0 as isize;
             let was = MAXIMIZED.with(|m| {
@@ -1324,6 +1334,48 @@ fn track_leave(hwnd: HWND) {
     let _ = unsafe { TrackMouseEvent(&mut t) };
 }
 
+/// The pages' --bg (ui/shared/common.css): what the frame shows between and beneath its views.
+fn frame_bg(hwnd: HWND) -> windows::Win32::Foundation::COLORREF {
+    let ev = events(hwnd);
+    let dark = ev
+        .as_ref()
+        .and_then(|e| e.devtools_chrome())
+        .map_or_else(|| ev.as_ref().is_some_and(|e| e.background_dark()), |c| c.dark);
+    let rgb = |r: u32, g: u32, b: u32| windows::Win32::Foundation::COLORREF(r | (g << 8) | (b << 16));
+    if dark {
+        rgb(31, 32, 35)
+    } else {
+        rgb(243, 244, 246)
+    }
+}
+
+/// Fills the whole client area with the theme colour, beneath the child views too (0.7.2, R6).
+///
+/// The engine draws its views with DirectComposition (`WS_EX_NOREDIRECTIONBITMAP`): while a view
+/// is resized and has no frame at the new size yet, what shows there is the frame's own surface
+/// under it. The frame never painted beneath its children (they clip its `WM_PAINT`), and the
+/// surface made for a new window size is white: that was the white seen while resizing. A
+/// cache DC without `DCX_CLIPCHILDREN` reaches beneath the children; the composed views on top
+/// hide it wherever they have content.
+fn fill_background(hwnd: HWND) {
+    use windows::Win32::Graphics::Gdi::{
+        CreateSolidBrush, DeleteObject, FillRect, GetDCEx, ReleaseDC, DCX_CACHE, HGDIOBJ,
+    };
+    let mut rc = RECT::default();
+    // SAFETY: a cache DC of our own window, released here; the brush is deleted.
+    unsafe {
+        let _ = GetClientRect(hwnd, &mut rc);
+        let dc = GetDCEx(Some(hwnd), None, DCX_CACHE);
+        if dc.is_invalid() {
+            return;
+        }
+        let brush = CreateSolidBrush(frame_bg(hwnd));
+        let _ = FillRect(dc, &rc, brush);
+        let _ = DeleteObject(HGDIOBJ(brush.0));
+        ReleaseDC(Some(hwnd), dc);
+    }
+}
+
 /// Paints the DevTools splitter and strip (`WM_PAINT` of a frame). Everything else in the
 /// client area is covered by child windows.
 fn paint_chrome(hwnd: HWND) {
@@ -1340,9 +1392,7 @@ fn paint_chrome(hwnd: HWND) {
         // The theme, also without DevTools: this is what shows between two views (R7).
         let dark = chrome.map_or_else(|| ev.as_ref().is_some_and(|e| e.background_dark()), |c| c.dark);
         let rgb = |r: u32, g: u32, b: u32| windows::Win32::Foundation::COLORREF(r | (g << 8) | (b << 16));
-        // The pages' --bg (ui/shared/common.css).
-        let bg = if dark { rgb(31, 32, 35) } else { rgb(243, 244, 246) };
-        let bg_brush = CreateSolidBrush(bg);
+        let bg_brush = CreateSolidBrush(frame_bg(hwnd));
         let _ = FillRect(dc, &ps.rcPaint, bg_brush);
         let _ = DeleteObject(HGDIOBJ(bg_brush.0));
         if let Some(c) = chrome {

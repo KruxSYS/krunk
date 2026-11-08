@@ -91,6 +91,8 @@ use blocking::{
 };
 /// Background behind the UI views (matches --bg in common.css).
 const UI_BACKGROUND: u32 = 0xFFF3_F4F6;
+/// The same in the dark theme: the shell view shows it while it is resized (0.7.2, R6).
+const UI_BACKGROUND_DARK: u32 = 0xFF1F_2023;
 /// What a tab view shows before its page has painted (0.7.0, R7): the dark theme's page colour
 /// (`--bg` in ui/shared/common.css) or white. Web pages that set no background of their own
 /// still get white (`Emulation.setDefaultBackgroundColorOverride`, view.rs).
@@ -99,7 +101,10 @@ const TAB_BACKGROUND_DARK: u32 = 0xFF1F_2023;
 /// pause after its load before the swap (R7).
 const REVEAL_TIMEOUT_MS: i64 = 1000;
 const REVEAL_SETTLE_MS: i64 = 50;
-const TAB_BACKGROUND_LIGHT: u32 = 0xFFFF_FFFF;
+/// The light theme's page colour (0.7.2, R6: no white while a window is resized; was white).
+const TAB_BACKGROUND_LIGHT: u32 = 0xFFF3_F4F6;
+/// What a page without a background of its own gets (`Emulation.setDefaultBackgroundColorOverride`).
+const PAGE_DEFAULT_WHITE: u32 = 0xFFFF_FFFF;
 /// What a popup window shows before its page has painted (0.7.2): `--bg-raised` of the theme,
 /// so a menu shown for the first time is never a light box in the dark theme.
 const POPUP_BACKGROUND_DARK: u32 = 0xFF2B_2D31;
@@ -531,7 +536,7 @@ impl Browser {
             role: Role::Shell,
             private: false,
             scripts: Scripts::default(),
-            background: UI_BACKGROUND,
+            background: if self.frame_dark() { UI_BACKGROUND_DARK } else { UI_BACKGROUND },
             policy: None,
         });
         shell.on_before_browse(|nav| assets::allow_navigation(Channel::Shell, "", &nav.url, true));
@@ -983,9 +988,10 @@ impl Browser {
                 if let (Some(dark), Some(v)) = (b.color_scheme(), b.tab_view(id)) {
                     v.set_color_scheme(Some(dark));
                 }
-                // The view was made with the dark theme's colour (what shows before the page has
-                // painted, R7); a page without a background of its own still gets white.
-                if let Some(v) = b.tab_view(id).filter(|v| v.background() != TAB_BACKGROUND_LIGHT) {
+                // The view was made with the theme's colour (what shows before the page has
+                // painted, R7, and while it is resized, R6); a page without a background of its
+                // own still gets white.
+                if let Some(v) = b.tab_view(id).filter(|v| v.background() != PAGE_DEFAULT_WHITE) {
                     v.devtools_method(
                         "Emulation.setDefaultBackgroundColorOverride",
                         &serde_json::json!({ "color": { "r": 255, "g": 255, "b": 255, "a": 1 } }),
@@ -1225,6 +1231,10 @@ impl Browser {
     }
 
     fn layout_frame(&self, f: &Frame) {
+        engine::with_batched_moves(|| self.layout_frame_now(f));
+    }
+
+    fn layout_frame_now(&self, f: &Frame) {
         let (shell, content) = self.frame_areas(f);
         if let (Some(shell), Some(s)) = (shell, f.shell.borrow().as_ref()) {
             s.set_bounds(shell.x, shell.y, shell.width, shell.height);

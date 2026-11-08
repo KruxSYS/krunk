@@ -401,6 +401,7 @@ impl Browser {
         };
         for f in self.all_frames() {
             f.window.set_dark_frame(dark);
+            f.window.repaint_background();
         }
     }
 
