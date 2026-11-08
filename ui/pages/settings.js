@@ -633,6 +633,8 @@
       // 0.7.0 (R25): why entries were skipped.
       if (c.skipped) s += ', ' + c.skipped + ' skipped' + (c.skippedReasons && c.skippedReasons.length ? ' (' + c.skippedReasons.map((x) => x.reason + ': ' + x.count).join(', ') + ')' : '');
       if (c.appBound) s += ' (' + c.appBound + ' protected by Chrome, export a CSV for those)';
+      // 0.7.2 (R12): a 0 always says why.
+      if (c.why) s += ' (' + c.why + ')';
       parts.push(s);
     });
     p.textContent = parts.length ? parts.join(' · ') : 'Nothing to import.';

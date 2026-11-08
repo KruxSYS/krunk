@@ -6,7 +6,7 @@ use std::path::Path;
 use serde::Deserialize;
 use zeroize::Zeroizing;
 
-use super::nss::Key4;
+use super::nss::{FieldError, Key4};
 use super::{is_web_url, open_readonly, us_to_ms, ImportError, Login, Visit};
 use crate::netscape::ImportNode;
 
@@ -14,8 +14,22 @@ use crate::netscape::ImportNode;
 pub struct FirefoxLogins {
     pub logins: Vec<Login>,
     pub skipped: usize,
-    /// Why entries were skipped (reason, count), in a fixed order (0.7.0, R25).
+    /// Why entries were skipped (reason, count), in a fixed order (0.7.0, R25; 0.7.2: each
+    /// reason a field could not be decrypted on its own).
     pub reasons: Vec<(&'static str, usize)>,
+    /// What the import found, for the log (no secrets).
+    pub found: Found,
+}
+
+/// The profile's login store, as found (0.7.2, R12).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Found {
+    /// Entries in `logins.json`.
+    pub entries: usize,
+    /// SDR keys in `key4.db`, and how many could not be unlocked.
+    pub keys: usize,
+    pub unusable_keys: usize,
+    pub primary_password: bool,
 }
 
 #[derive(Deserialize)]
@@ -49,7 +63,6 @@ struct RawLogin {
 }
 
 pub const SKIP_NO_ADDRESS: &str = "no website address";
-pub const SKIP_UNDECRYPTABLE: &str = "could not be decrypted";
 pub const SKIP_NO_PASSWORD: &str = "no password";
 pub const SKIP_UNREADABLE: &str = "unreadable entry";
 
@@ -75,13 +88,32 @@ pub fn read_logins(profile: &Path, primary_password: &str) -> Result<FirefoxLogi
     // (A file saved by another tool may start with a byte-order mark.)
     let file: LoginsFile = serde_json::from_str(text.trim_start_matches('\u{feff}'))
         .map_err(|e| ImportError::Format(format!("logins.json: {e}")))?;
-    let mut out = FirefoxLogins { logins: Vec::new(), skipped: 0, reasons: Vec::new() };
+    let mut out = FirefoxLogins { logins: Vec::new(), skipped: 0, reasons: Vec::new(), found: Found::default() };
+    out.found.entries = file.logins.len();
     if file.logins.is_empty() {
         return Ok(out);
     }
-    let key = Key4::read(&profile.join("key4.db"))?.unlock(primary_password)?;
-    let mut counts: [(&'static str, usize); 4] =
-        [(SKIP_NO_ADDRESS, 0), (SKIP_UNDECRYPTABLE, 0), (SKIP_NO_PASSWORD, 0), (SKIP_UNREADABLE, 0)];
+    let key4 = Key4::read(&profile.join("key4.db"))?;
+    out.found.keys = key4.key_count();
+    out.found.primary_password = key4.has_primary_password();
+    let key = key4.unlock(primary_password)?;
+    out.found.unusable_keys = key.unusable;
+    let undecryptable = [
+        FieldError::Missing,
+        FieldError::NotBase64,
+        FieldError::Structure,
+        FieldError::UnknownKey,
+        FieldError::UnsupportedCipher,
+        FieldError::Damaged,
+        FieldError::NotUtf8,
+    ]
+    .map(FieldError::reason);
+    let mut counts: Vec<(&'static str, usize)> = [SKIP_NO_ADDRESS]
+        .into_iter()
+        .chain(undecryptable)
+        .chain([SKIP_NO_PASSWORD, SKIP_UNREADABLE])
+        .map(|r| (r, 0))
+        .collect();
     let mut skip = |reason: &'static str| {
         if let Some(c) = counts.iter_mut().find(|(r, _)| *r == reason) {
             c.1 += 1;
@@ -97,9 +129,13 @@ pub fn read_logins(profile: &Path, primary_password: &str) -> Result<FirefoxLogi
             continue;
         };
         let decrypt = |f: &Option<String>| key.decrypt_field(f.as_deref().unwrap_or(""));
-        let (Ok(username), Ok(password)) = (decrypt(&raw.encrypted_username), decrypt(&raw.encrypted_password)) else {
-            skip(SKIP_UNDECRYPTABLE);
-            continue;
+        // Each entry on its own: one that does not decrypt never stops the others.
+        let (username, password) = match (decrypt(&raw.encrypted_username), decrypt(&raw.encrypted_password)) {
+            (Ok(u), Ok(p)) => (u, p),
+            (Err(e), _) | (_, Err(e)) => {
+                skip(e.reason());
+                continue;
+            }
         };
         if password.is_empty() {
             skip(SKIP_NO_PASSWORD);
@@ -263,9 +299,61 @@ mod tests {
         assert_eq!(got.logins[1].password.as_str(), "No-host-pass-2");
         assert_eq!(
             got.reasons,
-            [(SKIP_NO_ADDRESS, 1), (SKIP_UNDECRYPTABLE, 1), (SKIP_NO_PASSWORD, 1), (SKIP_UNREADABLE, 2)]
+            [(SKIP_NO_ADDRESS, 1), (FieldError::Structure.reason(), 1), (SKIP_NO_PASSWORD, 1), (SKIP_UNREADABLE, 2)]
         );
         assert_eq!(got.skipped, 5);
+    }
+
+    #[test]
+    fn two_keys_mixed_ciphers_all_logins() {
+        // 0.7.2 (R12): logins under an old 3DES key and under the newer AES key of the same
+        // profile. 0.7.1 read the first key only and imported 1 of these 3.
+        let got = read_logins(&fixture("firefox-twokeys"), "").unwrap();
+        let names: Vec<(&str, &str, &str)> =
+            got.logins.iter().map(|l| (l.url.as_str(), l.username.as_str(), l.password.as_str())).collect();
+        assert_eq!(
+            names,
+            [
+                ("https://new-aes.example", "fx-new-1", "Fx-new-pass-1"),
+                ("https://old-3des.example", "fx-old-2", "Fx-old-pass-2"),
+                ("https://new-aes.example", "fx-new-3", "Fx-new-pass-3"),
+            ]
+        );
+        assert_eq!(got.skipped, 0);
+        assert_eq!(got.found, Found { entries: 3, keys: 2, unusable_keys: 0, primary_password: false });
+    }
+
+    #[test]
+    fn a_login_under_a_key_that_is_gone_says_so() {
+        // The same profile with its AES key row removed: those logins name a key key4.db no
+        // longer has; the reason says so (never a silent 0).
+        let src = fixture("firefox-twokeys");
+        let dir = std::env::temp_dir().join(format!("krunk-gone-key-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for f in ["key4.db", "logins.json"] {
+            std::fs::copy(src.join(f), dir.join(f)).unwrap();
+        }
+        let c = rusqlite::Connection::open(dir.join("key4.db")).unwrap();
+        c.execute("DELETE FROM nssPrivate WHERE id = 2", []).unwrap();
+        drop(c);
+        let got = read_logins(&dir, "").unwrap();
+        assert_eq!(got.logins.len(), 1);
+        assert_eq!(got.reasons, [(FieldError::UnknownKey.reason(), 2)]);
+        assert_eq!(got.found.keys, 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_empty_store_is_found_empty() {
+        let dir = std::env::temp_dir().join(format!("krunk-empty-logins-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("logins.json"), r#"{"nextId":1,"logins":[],"version":3}"#).unwrap();
+        let got = read_logins(&dir, "").unwrap();
+        assert!(got.logins.is_empty() && got.reasons.is_empty());
+        assert_eq!(got.found.entries, 0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -60,6 +60,10 @@ struct ParsedLogins {
     logins: Vec<Login>,
     app_bound: usize,
     skipped: Vec<(String, usize)>,
+    /// What the source holds (0.7.2, R12): for the log line, and the reason a 0 is shown with
+    /// when nothing was there.
+    source: Option<String>,
+    empty_because: Option<&'static str>,
 }
 
 fn family_id(f: Family) -> &'static str {
@@ -108,7 +112,27 @@ fn parse_profile(profile: &Profile, types: &[String], primary_password: &str, te
                     other => other.to_string(),
                 })?;
                 let skipped = got.reasons.iter().map(|(r, n)| (r.to_string(), *n)).collect();
-                parsed.logins = Some(ParsedLogins { logins: got.logins, app_bound: 0, skipped });
+                let f = got.found;
+                let source = format!(
+                    "Firefox profile {}: {} entries in logins.json, {} key(s) in key4.db{}, primary password {}",
+                    profile.path.display(),
+                    f.entries,
+                    f.keys,
+                    if f.unusable_keys > 0 {
+                        format!(" ({} could not be unlocked)", f.unusable_keys)
+                    } else {
+                        String::new()
+                    },
+                    if f.primary_password { "set" } else { "not set" }
+                );
+                let empty_because = (f.entries == 0).then_some("Firefox has no saved logins in this profile");
+                parsed.logins = Some(ParsedLogins {
+                    logins: got.logins,
+                    app_bound: 0,
+                    skipped,
+                    source: Some(source),
+                    empty_because,
+                });
             }
         }
         _ => {
@@ -130,7 +154,13 @@ fn parse_profile(profile: &Profile, types: &[String], primary_password: &str, te
                 let got = chromium::read_logins(&login_data, &keys, &PlainDpapi).map_err(|e| e.to_string())?;
                 let skipped =
                     if got.skipped > 0 { vec![("unreadable rows".to_string(), got.skipped)] } else { Vec::new() };
-                parsed.logins = Some(ParsedLogins { logins: got.logins, app_bound: got.app_bound, skipped });
+                parsed.logins = Some(ParsedLogins {
+                    logins: got.logins,
+                    app_bound: got.app_bound,
+                    skipped,
+                    source: None,
+                    empty_because: None,
+                });
             }
         }
     }
@@ -297,6 +327,8 @@ impl Browser {
             history: None,
             bookmarks: None,
             logins: Some(ParsedLogins {
+                source: None,
+                empty_because: None,
                 logins: parsed.logins,
                 app_bound: 0,
                 skipped: if parsed.skipped > 0 {
@@ -341,7 +373,7 @@ impl Browser {
                 }
             }
         }
-        if let Some(ParsedLogins { logins, app_bound, mut skipped }) = parsed.logins {
+        if let Some(ParsedLogins { logins, app_bound, mut skipped, source, empty_because }) = parsed.logins {
             let merged = match self.vaults.vault.borrow_mut().as_mut() {
                 Some(v) => v.import_logins(logins, now_ms(), &Dpapi).map_err(|e| e.to_string()),
                 None => Err("Krunk passwords are locked".to_string()),
@@ -354,20 +386,26 @@ impl Browser {
                     let total: usize = skipped.iter().map(|(_, n)| n).sum();
                     let reasons: Vec<String> = skipped.iter().map(|(r, n)| format!("{r}: {n}")).collect();
                     info!(
-                        "import: passwords {} added, {} updated, {} already there, {} skipped ({}), {} app-bound",
+                        "import: passwords {} added, {} updated, {} already there, {} skipped ({}), {} app-bound{}",
                         c.added,
                         c.updated,
                         c.merged,
                         total,
                         reasons.join(", "),
-                        app_bound
+                        app_bound,
+                        source.map(|s| format!("; {s}")).unwrap_or_default()
                     );
+                    // Never a silent 0 (0.7.2, R12): nothing there says so; skipped entries
+                    // carry their reasons.
+                    let why = (c.added + c.updated + c.merged == 0 && total == 0 && app_bound == 0)
+                        .then(|| empty_because.unwrap_or("no saved logins were found"));
                     out.insert(
                         "passwords".into(),
                         serde_json::json!({
                             "imported": c.added, "updated": c.updated, "merged": c.merged, "skipped": total,
                             "skippedReasons": skipped.iter().map(|(r, n)| serde_json::json!({ "reason": r, "count": n })).collect::<Vec<_>>(),
                             "appBound": app_bound,
+                            "why": why,
                         }),
                     );
                     self.touch_vault();

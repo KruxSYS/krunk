@@ -3,8 +3,10 @@
 //!
 //! `metaData` holds the global salt (`item1`) and the password check (`item2`): a PKCS#5
 //! blob that decrypts to `password-check` with the right primary password (the empty string
-//! when none is set). `nssPrivate` holds the SDR key (`a11`), encrypted the same way, with its
-//! id (`a102`). Two PBE schemes occur: PBES2 (PBKDF2-HMAC-SHA256 + AES-256-CBC; the PBKDF2
+//! when none is set). `nssPrivate` holds the SDR keys (`a11`), encrypted the same way, each
+//! with its id (`a102`); a profile that went through Firefox's change from 3DES to AES (or was
+//! migrated from key3.db) has more than one, and each login names the key it was encrypted
+//! with (0.7.2, R12: only the first key was read, so every login of such a profile failed). Two PBE schemes occur: PBES2 (PBKDF2-HMAC-SHA256 + AES-256-CBC; the PBKDF2
 //! password is SHA-1(globalSalt + primaryPassword)) in every current profile, and the legacy
 //! PBE-SHA1-3DES in old ones. Each login field is DER `{keyId, {cipher, iv}, ciphertext}`
 //! under the SDR key, DES-EDE3-CBC (or AES-256-CBC) with PKCS#7 padding.
@@ -37,14 +39,49 @@ type Des3CbcDec = cbc::Decryptor<des::TdesEde3>;
 pub struct Key4 {
     global_salt: Vec<u8>,
     password_check: Vec<u8>,
-    key_blob: Vec<u8>,
-    key_id: Vec<u8>,
+    /// Every SDR key: (encrypted key, key id).
+    keys: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
-/// The unlocked SDR key.
+/// One unlocked SDR key.
 pub struct SdrKey {
     key: Zeroizing<Vec<u8>>,
     id: Vec<u8>,
+}
+
+/// The unlocked SDR keys of a profile; a login field is decrypted with the key it names.
+pub struct SdrKeys {
+    keys: Vec<SdrKey>,
+    /// Keys in `key4.db` that could not be unlocked (an unknown scheme, a damaged entry).
+    pub unusable: usize,
+}
+
+/// Why a login field could not be decrypted (0.7.2: said per reason, never a silent 0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldError {
+    Missing,
+    NotBase64,
+    Structure,
+    /// The field names a key that is not in `key4.db`.
+    UnknownKey,
+    UnsupportedCipher,
+    /// Wrong padding after decryption (a damaged field, or the wrong key).
+    Damaged,
+    NotUtf8,
+}
+
+impl FieldError {
+    pub fn reason(self) -> &'static str {
+        match self {
+            FieldError::Missing => "could not be decrypted: no encrypted value",
+            FieldError::NotBase64 => "could not be decrypted: not base64",
+            FieldError::Structure => "could not be decrypted: unexpected format",
+            FieldError::UnknownKey => "could not be decrypted: encrypted with a key that is not in key4.db",
+            FieldError::UnsupportedCipher => "could not be decrypted: unsupported cipher",
+            FieldError::Damaged => "could not be decrypted: damaged",
+            FieldError::NotUtf8 => "could not be decrypted: not text",
+        }
+    }
 }
 
 impl Key4 {
@@ -55,58 +92,89 @@ impl Key4 {
         let (global_salt, password_check): (Vec<u8>, Vec<u8>) = conn
             .query_row("SELECT item1, item2 FROM metaData WHERE id = 'password'", [], |r| Ok((r.get(0)?, r.get(1)?)))
             .map_err(fmt)?;
-        let (key_blob, key_id): (Vec<u8>, Vec<u8>) = conn
-            .query_row("SELECT a11, a102 FROM nssPrivate WHERE a11 IS NOT NULL ORDER BY id LIMIT 1", [], |r| {
-                Ok((r.get(0)?, r.get(1)?))
-            })
-            .map_err(|_| ImportError::Format("key4.db has no SDR key (no logins were ever saved)".into()))?;
-        Ok(Key4 { global_salt, password_check, key_blob, key_id })
+        let mut keys = Vec::new();
+        let mut stmt =
+            conn.prepare("SELECT a11, a102 FROM nssPrivate WHERE a11 IS NOT NULL ORDER BY id").map_err(fmt)?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?))).map_err(fmt)?;
+        for row in rows {
+            keys.push(row.map_err(fmt)?);
+        }
+        if keys.is_empty() {
+            return Err(ImportError::Format("key4.db has no SDR key (no logins were ever saved)".into()));
+        }
+        Ok(Key4 { global_salt, password_check, keys })
     }
 
-    /// Checks the primary password and unlocks the SDR key.
-    pub fn unlock(&self, primary_password: &str) -> Result<SdrKey, ImportError> {
+    /// How many SDR keys the database holds.
+    pub fn key_count(&self) -> usize {
+        self.keys.len()
+    }
+
+    /// Is a primary password set (the empty one does not open the database)?
+    pub fn has_primary_password(&self) -> bool {
+        decrypt_pbe(&self.password_check, &self.global_salt, "").as_deref().map(Vec::as_slice) != Ok(b"password-check")
+    }
+
+    /// Checks the primary password and unlocks every SDR key that can be unlocked.
+    pub fn unlock(&self, primary_password: &str) -> Result<SdrKeys, ImportError> {
         let check = decrypt_pbe(&self.password_check, &self.global_salt, primary_password);
         if check.as_deref().map(Vec::as_slice) != Ok(b"password-check") {
             return Err(ImportError::WrongPassword);
         }
-        let key = decrypt_pbe(&self.key_blob, &self.global_salt, primary_password)?;
-        if key.len() < 24 {
-            return Err(ImportError::Format("the SDR key is too short".into()));
+        let mut out = SdrKeys { keys: Vec::new(), unusable: 0 };
+        for (blob, id) in &self.keys {
+            match decrypt_pbe(blob, &self.global_salt, primary_password) {
+                Ok(key) if key.len() >= 24 => out.keys.push(SdrKey { key, id: id.clone() }),
+                _ => out.unusable += 1,
+            }
         }
-        Ok(SdrKey { key, id: self.key_id.clone() })
+        if out.keys.is_empty() {
+            return Err(ImportError::Format("key4.db: none of its keys could be unlocked".into()));
+        }
+        Ok(out)
+    }
+}
+
+impl SdrKeys {
+    /// Decrypts one base64 SDR blob from `logins.json` to text, with the key it names.
+    pub fn decrypt_field(&self, b64: &str) -> Result<Zeroizing<String>, FieldError> {
+        if b64.trim().is_empty() {
+            return Err(FieldError::Missing);
+        }
+        let der = Base64::decode_vec(b64.trim()).map_err(|_| FieldError::NotBase64)?;
+        let (outer, _) = tlv(&der).map_err(|_| FieldError::Structure)?;
+        let parts = children(outer.body).map_err(|_| FieldError::Structure)?;
+        let [key_id, algo, ciphertext] = parts.as_slice() else { return Err(FieldError::Structure) };
+        let key = self.keys.iter().find(|k| k.id.as_slice() == key_id.body).ok_or(FieldError::UnknownKey)?;
+        key.decrypt(algo, ciphertext.body)
+    }
+
+    /// The unlocked keys (for tests of a single key).
+    #[cfg(test)]
+    fn first(&self) -> &SdrKey {
+        &self.keys[0]
     }
 }
 
 impl SdrKey {
-    /// Decrypts one base64 SDR blob from `logins.json` to text.
-    pub fn decrypt_field(&self, b64: &str) -> Result<Zeroizing<String>, ImportError> {
-        let der =
-            Base64::decode_vec(b64.trim()).map_err(|_| ImportError::Format("login field is not base64".into()))?;
-        let bad = |what: &str| ImportError::Format(format!("login field: {what}"));
-        let (outer, _) = tlv(&der).map_err(|e| bad(&e))?;
-        let parts = children(outer.body).map_err(|e| bad(&e))?;
-        let [key_id, algo, ciphertext] = parts.as_slice() else { return Err(bad("unexpected structure")) };
-        if key_id.body != self.id.as_slice() {
-            return Err(bad("encrypted with another key"));
-        }
-        let algo = children(algo.body).map_err(|e| bad(&e))?;
-        let [oid, iv] = algo.as_slice() else { return Err(bad("unexpected cipher structure")) };
+    fn decrypt(&self, algo: &Tlv<'_>, ciphertext: &[u8]) -> Result<Zeroizing<String>, FieldError> {
+        let algo = children(algo.body).map_err(|_| FieldError::Structure)?;
+        let [oid, iv] = algo.as_slice() else { return Err(FieldError::Structure) };
         let plain = match oid_string(oid.body).as_str() {
             OID_DES_EDE3_CBC => Des3CbcDec::new_from_slices(&self.key[..24], iv.body)
-                .map_err(|_| bad("bad 3DES key or iv"))?
-                .decrypt_padded_vec::<Pkcs7>(ciphertext.body)
-                .map_err(|_| bad("3DES decryption failed"))?,
-            OID_AES256_CBC => Aes256CbcDec::new_from_slices(
-                self.key.get(..32).ok_or_else(|| bad("the key is not an AES key"))?,
-                iv.body,
-            )
-            .map_err(|_| bad("bad AES key or iv"))?
-            .decrypt_padded_vec::<Pkcs7>(ciphertext.body)
-            .map_err(|_| bad("AES decryption failed"))?,
-            other => return Err(bad(&format!("unsupported cipher {other}"))),
+                .map_err(|_| FieldError::Structure)?
+                .decrypt_padded_vec::<Pkcs7>(ciphertext)
+                .map_err(|_| FieldError::Damaged)?,
+            OID_AES256_CBC => {
+                Aes256CbcDec::new_from_slices(self.key.get(..32).ok_or(FieldError::UnsupportedCipher)?, iv.body)
+                    .map_err(|_| FieldError::Structure)?
+                    .decrypt_padded_vec::<Pkcs7>(ciphertext)
+                    .map_err(|_| FieldError::Damaged)?
+            }
+            _ => return Err(FieldError::UnsupportedCipher),
         };
         let plain = Zeroizing::new(plain);
-        String::from_utf8(plain.to_vec()).map(Zeroizing::new).map_err(|_| bad("not UTF-8"))
+        String::from_utf8(plain.to_vec()).map(Zeroizing::new).map_err(|_| FieldError::NotUtf8)
     }
 }
 
@@ -235,7 +303,8 @@ mod tests {
         // The AES-256-CBC SDR variant of current Firefox: a 32-byte key.
         let k = Key4::read(&fixture("firefox-nomaster/key4.db")).unwrap();
         let sdr = k.unlock("").unwrap();
-        assert_eq!(sdr.key.len(), 32);
+        assert_eq!(sdr.first().key.len(), 32);
+        assert!(!k.has_primary_password() && k.key_count() == 1);
         assert!(matches!(k.unlock("anything"), Err(ImportError::WrongPassword)));
     }
 
@@ -245,7 +314,8 @@ mod tests {
         assert!(matches!(k.unlock("not it"), Err(ImportError::WrongPassword)));
         assert!(matches!(k.unlock(""), Err(ImportError::WrongPassword)));
         let sdr = k.unlock("fx-master-pw").unwrap();
-        assert_eq!(sdr.key.len(), 24);
+        assert_eq!(sdr.first().key.len(), 24);
+        assert!(k.has_primary_password());
     }
 
     #[test]
@@ -253,21 +323,43 @@ mod tests {
         let k = Key4::read(&fixture("firefox-legacy/key4.db")).unwrap();
         assert!(matches!(k.unlock("wrong"), Err(ImportError::WrongPassword)));
         let sdr = k.unlock("fx-master-pw").unwrap();
-        assert_eq!(sdr.key.len(), 24);
+        assert_eq!(sdr.first().key.len(), 24);
+    }
+
+    #[test]
+    fn two_keys_each_login_with_its_own() {
+        // 0.7.2 (R12): an old 3DES key first, then the AES key; logins under either.
+        let k = Key4::read(&fixture("firefox-twokeys/key4.db")).unwrap();
+        assert_eq!(k.key_count(), 2);
+        let keys = k.unlock("").unwrap();
+        assert_eq!((keys.keys.len(), keys.unusable), (2, 0));
+    }
+
+    #[test]
+    fn a_key_only_in_the_write_ahead_log_is_read() {
+        // Firefox running: its newest key4.db rows may sit in key4.db-wal. The import copies
+        // the log along; the copy (here a temporary one) is opened with it.
+        let src = fixture("firefox-wal");
+        let dir = std::env::temp_dir().join(format!("krunk-wal-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for f in ["key4.db", "key4.db-wal"] {
+            std::fs::copy(src.join(f), dir.join(f)).unwrap();
+        }
+        let k = Key4::read(&dir.join("key4.db")).unwrap();
+        assert_eq!(k.key_count(), 2, "the second key is only in the log");
+        assert_eq!(k.unlock("").unwrap().keys.len(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn garbage_is_a_format_error_not_a_panic() {
-        let k = Key4 {
-            global_salt: vec![1; 20],
-            password_check: vec![0x30, 0x03, 0x02, 0x01, 0x01],
-            key_blob: vec![],
-            key_id: vec![],
-        };
+        let k = Key4 { global_salt: vec![1; 20], password_check: vec![0x30, 0x03, 0x02, 0x01, 0x01], keys: vec![] };
         assert!(matches!(k.unlock(""), Err(ImportError::WrongPassword | ImportError::Format(_))));
-        let sdr = SdrKey { key: Zeroizing::new(vec![0; 24]), id: vec![1] };
-        assert!(matches!(sdr.decrypt_field("not base64!"), Err(ImportError::Format(_))));
-        assert!(matches!(sdr.decrypt_field("MAA="), Err(ImportError::Format(_))));
+        let sdr = SdrKeys { keys: vec![SdrKey { key: Zeroizing::new(vec![0; 24]), id: vec![1] }], unusable: 0 };
+        assert_eq!(sdr.decrypt_field("not base64!").err(), Some(FieldError::NotBase64));
+        assert_eq!(sdr.decrypt_field("MAA=").err(), Some(FieldError::Structure));
+        assert_eq!(sdr.decrypt_field(" ").err(), Some(FieldError::Missing));
         assert!(matches!(Key4::read(&fixture("firefox-nomaster/logins.json")), Err(ImportError::Format(_))));
     }
 }

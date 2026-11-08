@@ -419,9 +419,83 @@ def make_csv():
         w.writerow(["http://intranet.example", "csv-carol", "Csv-pass-carol-3", "Intranet", "", "{3}", str(MS_2024), str(MS_2024), str(MS_2024)])
 
 
+def key4_tables(c):
+    c.executescript(
+        "CREATE TABLE metaData (id PRIMARY KEY UNIQUE ON CONFLICT REPLACE, item1, item2);"
+        "CREATE TABLE nssPublic (id PRIMARY KEY UNIQUE ON CONFLICT ABORT, a0, a1, a2, a3, a11, a102);"
+        "CREATE TABLE nssPrivate (id PRIMARY KEY UNIQUE ON CONFLICT ABORT, a0, a1, a2, a3, a11, a102);"
+    )
+
+
+def make_firefox_twokeys(name):
+    """Krunk 0.7.2 (R12): a profile that went from 3DES to AES. key4.db holds an old 3DES SDR key
+    (row 1, listed first) and the newer AES key (row 2); logins.json has logins under both. No
+    primary password. Also firefox-wal: the same two keys, the second one only in key4.db-wal
+    (Firefox running, not yet checkpointed)."""
+    d = os.path.join(OUT, name)
+    os.makedirs(d, exist_ok=True)
+    global_salt = det(20, name + "-global")
+    old_key = det(24, name + "-sdr-old")
+    new_key = det(32, name + "-sdr-new")
+    path = os.path.join(d, "key4.db")
+    if os.path.exists(path):
+        os.remove(path)
+    c = sqlite3.connect(path)
+    key4_tables(c)
+    c.execute("INSERT INTO metaData VALUES ('password', ?, ?)", (global_salt, pbes2_blob(global_salt, "", b"password-check", name + "-check")))
+    c.execute("INSERT INTO nssPrivate (id, a11, a102) VALUES (1, ?, ?)", (pbes2_blob(global_salt, "", old_key, name + "-a11-old"), KEY_ID))
+    c.execute("INSERT INTO nssPrivate (id, a11, a102) VALUES (2, ?, ?)", (pbes2_blob(global_salt, "", new_key, name + "-a11-new"), KEY_ID_AES))
+    c.commit()
+    c.close()
+    rows = [
+        ("https://new-aes.example", "fx-new-1", "Fx-new-pass-1", True),
+        ("https://old-3des.example", "fx-old-2", "Fx-old-pass-2", False),
+        ("https://new-aes.example", "fx-new-3", "Fx-new-pass-3", True),
+    ]
+    logins = []
+    for i, (host, user, pw, aes) in enumerate(rows, 1):
+        key = new_key if aes else old_key
+        logins.append({
+            "id": i, "hostname": host, "httpRealm": None, "formSubmitURL": host,
+            "usernameField": "user", "passwordField": "pass",
+            "encryptedUsername": sdr_encrypt(key, user, f"{name}-u{i}", aes),
+            "encryptedPassword": sdr_encrypt(key, pw, f"{name}-p{i}", aes),
+            "guid": "{%08x-0000-4000-8000-0000000000aa}" % i, "encType": 1,
+            "timeCreated": MS_2024 + i * 1000, "timeLastUsed": MS_2024 + i * 2000,
+            "timePasswordChanged": MS_2024 + i * 1000, "timesUsed": i,
+        })
+    with open(os.path.join(d, "logins.json"), "w") as f:
+        json.dump({"nextId": len(logins) + 1, "logins": logins, "version": 3}, f, indent=1)
+
+    # firefox-wal: built in a temporary folder and copied while the connection is still open
+    # (closing the last connection would move the log into the database).
+    import shutil
+    import tempfile
+    w = os.path.join(OUT, "firefox-wal")
+    os.makedirs(w, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        tp = os.path.join(tmp, "key4.db")
+        c = sqlite3.connect(tp)
+        c.execute("PRAGMA journal_mode=WAL")
+        c.execute("PRAGMA wal_autocheckpoint=0")
+        key4_tables(c)
+        c.execute("INSERT INTO metaData VALUES ('password', ?, ?)", (global_salt, pbes2_blob(global_salt, "", b"password-check", name + "-check")))
+        c.execute("INSERT INTO nssPrivate (id, a11, a102) VALUES (1, ?, ?)", (pbes2_blob(global_salt, "", old_key, name + "-a11-old"), KEY_ID))
+        c.commit()
+        c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        c.execute("INSERT INTO nssPrivate (id, a11, a102) VALUES (2, ?, ?)", (pbes2_blob(global_salt, "", new_key, name + "-a11-new"), KEY_ID_AES))
+        c.commit()
+        shutil.copy(tp, os.path.join(w, "key4.db"))
+        shutil.copy(tp + "-wal", os.path.join(w, "key4.db-wal"))
+        c.close()
+
+
 def main():
     if sys.argv[1:] == ["firefox-nohostname"]:
         make_firefox_nohostname("firefox-nohostname")
+        return
+    if sys.argv[1:] == ["firefox-twokeys"]:
+        make_firefox_twokeys("firefox-twokeys")
         return
     make_firefox("firefox-nomaster", "", legacy=False, aes=True)
     make_firefox("firefox-master", "fx-master-pw", legacy=False)
@@ -429,6 +503,7 @@ def main():
     make_chromium("chrome")
     make_csv()
     make_firefox_nohostname("firefox-nohostname")
+    make_firefox_twokeys("firefox-twokeys")
     print("fixtures written to", OUT)
 
 

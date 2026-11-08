@@ -3704,6 +3704,15 @@ async function testSettings(browser) {
   await page.waitForTimeout(60);
   check((await lastSent(page, 'importCsv')) !== undefined && (await page.textContent('#import-result')) === 'passwords: 2 imported, 1 skipped', 'the CSV import asks the host (native file dialog) and shows its counts');
   await shot(page, 'settings-import.png');
+  // 0.7.2 (R12): a 0 always says why.
+  await page.evaluate(() => { window.__host.handlers.importRun = () => ({ passwords: { imported: 0, updated: 0, merged: 0, skipped: 0, skippedReasons: [], appBound: 0, why: 'Firefox has no saved logins in this profile' } }); });
+  await page.click('#import-profiles .row:nth-child(1) button');
+  await page.waitForTimeout(60);
+  check((await page.textContent('#import-result')) === 'passwords: 0 imported (Firefox has no saved logins in this profile)', 'an empty login store is said, not a bare 0 (' + await page.textContent('#import-result') + ')');
+  await page.evaluate(() => { window.__host.handlers.importRun = () => ({ passwords: { imported: 1, updated: 0, merged: 0, skipped: 2, skippedReasons: [{ reason: 'could not be decrypted: encrypted with a key that is not in key4.db', count: 2 }], appBound: 0 } }); });
+  await page.click('#import-profiles .row:nth-child(1) button');
+  await page.waitForTimeout(60);
+  check((await page.textContent('#import-result')).includes('2 skipped (could not be decrypted: encrypted with a key that is not in key4.db: 2)'), 'the decryption reason is shown');
   const deep = await openPage(browser, 'https://krunk.invalid/settings.html#privacy', { width: 1000, height: 1200 }, 1, settingsMock, defaults);
   await deep.page.waitForFunction(() => document.getElementById('lists-summary').textContent !== '');
   check(await deep.page.locator('.panel.active[data-tab=privacy]').count() === 1, 'opened at #privacy: the Privacy tab shows');

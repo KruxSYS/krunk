@@ -1,0 +1,54 @@
+{
+ "nextId": 4,
+ "logins": [
+  {
+   "id": 1,
+   "hostname": "https://new-aes.example",
+   "httpRealm": null,
+   "formSubmitURL": "https://new-aes.example",
+   "usernameField": "user",
+   "passwordField": "pass",
+   "encryptedUsername": "MEMEEPgAAAAAAAAAAAAAAAAAAAEwHQYJYIZIAWUDBAEqBBDLWceTZl4fTzEE44AOp63HBBBSopegQ55l3assDqCbnDk/",
+   "encryptedPassword": "MEMEEPgAAAAAAAAAAAAAAAAAAAEwHQYJYIZIAWUDBAEqBBCJSr2G8s9fJIwmFPU9RHkNBBA6XR8V0w5rdoYkszP1q4Kw",
+   "guid": "{00000001-0000-4000-8000-0000000000aa}",
+   "encType": 1,
+   "timeCreated": 1700000001000,
+   "timeLastUsed": 1700000002000,
+   "timePasswordChanged": 1700000001000,
+   "timesUsed": 1
+  },
+  {
+   "id": 2,
+   "hostname": "https://old-3des.example",
+   "httpRealm": null,
+   "formSubmitURL": "https://old-3des.example",
+   "usernameField": "user",
+   "passwordField": "pass",
+   "encryptedUsername": "MDoEEPgAAAAAAAAAAAAAAAAAAAAwFAYIKoZIhvcNAwcECNEAuJB7J3fFBBAtWJspyk97W/66SOPH035E",
+   "encryptedPassword": "MDoEEPgAAAAAAAAAAAAAAAAAAAAwFAYIKoZIhvcNAwcECCinvaHxETpVBBCpjoH5hyi98zr6yomaZhnc",
+   "guid": "{00000002-0000-4000-8000-0000000000aa}",
+   "encType": 1,
+   "timeCreated": 1700000002000,
+   "timeLastUsed": 1700000004000,
+   "timePasswordChanged": 1700000002000,
+   "timesUsed": 2
+  },
+  {
+   "id": 3,
+   "hostname": "https://new-aes.example",
+   "httpRealm": null,
+   "formSubmitURL": "https://new-aes.example",
+   "usernameField": "user",
+   "passwordField": "pass",
+   "encryptedUsername": "MEMEEPgAAAAAAAAAAAAAAAAAAAEwHQYJYIZIAWUDBAEqBBDhNbVjcsR1yIhVXbbmKqSdBBDymPa2pEfv+cdIlzn5hnXR",
+   "encryptedPassword": "MEMEEPgAAAAAAAAAAAAAAAAAAAEwHQYJYIZIAWUDBAEqBBC4VsTZ6cOmfPirxxIHwNksBBDQ0Bg6TE9BkpJFVWGMB/sJ",
+   "guid": "{00000003-0000-4000-8000-0000000000aa}",
+   "encType": 1,
+   "timeCreated": 1700000003000,
+   "timeLastUsed": 1700000006000,
+   "timePasswordChanged": 1700000003000,
+   "timesUsed": 3
+  }
+ ],
+ "version": 3
+}
