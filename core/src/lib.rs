@@ -49,4 +49,5 @@ pub mod urlclean;
 pub mod useragents;
 pub mod vault;
 pub mod windows;
+pub mod workerfix;
 pub mod zoom;

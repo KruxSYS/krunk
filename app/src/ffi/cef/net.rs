@@ -117,6 +117,21 @@ wrap_resource_request_handler! {
             }))
         }
 
+        // A shared worker's script, loaded for the page that starts it (0.7.1, R12).
+        fn resource_response_filter(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            request: Option<&mut Request>,
+            response: Option<&mut Response>,
+        ) -> Option<ResponseFilter> {
+            let kind = sys::cef_resource_type_t::from(request?.resource_type());
+            if kind != sys::cef_resource_type_t::RT_SHARED_WORKER || !super::hints::current().off {
+                return None;
+            }
+            worker_prefix(response?)
+        }
+
         fn on_resource_redirect(
             &self,
             _browser: Option<&mut Browser>,
@@ -222,6 +237,57 @@ wrap_cookie_access_filter! {
         ) -> ::std::os::raw::c_int {
             let url = request.map(|r| CefString::from(&r.url()).to_string()).unwrap_or_default();
             ::std::os::raw::c_int::from(self.policy.cookie_allowed(&url))
+        }
+    }
+}
+
+/// The filter for a script response (2xx, a JavaScript type), else none.
+fn worker_prefix(response: &mut Response) -> Option<ResponseFilter> {
+    let mime = CefString::from(&response.mime_type()).to_string();
+    if !(200..300).contains(&response.status()) || !lb_core::workerfix::is_script_mime(&mime) {
+        return None;
+    }
+    // The first few in the log.
+    static LOGGED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    if LOGGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 5 {
+        crate::log::info!("client hints off: a worker script gets the userAgentData removal");
+    }
+    Some(WorkerPrefix::new(Arc::new(Mutex::new(lb_core::workerfix::FilterState::new()))))
+}
+
+wrap_response_filter! {
+    struct WorkerPrefix {
+        state: Arc<Mutex<lb_core::workerfix::FilterState>>,
+    }
+    impl ResponseFilter {
+        fn init_filter(&self) -> ::std::os::raw::c_int {
+            1
+        }
+
+        fn filter(
+            &self,
+            data_in: Option<&mut Vec<u8>>,
+            data_in_read: Option<&mut usize>,
+            data_out: Option<&mut Vec<u8>>,
+            data_out_written: Option<&mut usize>,
+        ) -> ResponseFilterStatus {
+            let input: &[u8] = data_in.as_deref().map_or(&[], Vec::as_slice);
+            let mut none: Vec<u8> = Vec::new();
+            let out = data_out.unwrap_or(&mut none);
+            let Ok(mut state) = self.state.lock() else { return ResponseFilterStatus::ERROR };
+            // All input is taken every time (the state holds what it cannot pass on yet).
+            let (written, pending) = state.step(input, out.as_mut_slice());
+            if let Some(r) = data_in_read {
+                *r = input.len();
+            }
+            if let Some(w) = data_out_written {
+                *w = written;
+            }
+            if pending {
+                ResponseFilterStatus::NEED_MORE_DATA
+            } else {
+                ResponseFilterStatus::DONE
+            }
         }
     }
 }

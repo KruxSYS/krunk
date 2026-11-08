@@ -41,9 +41,19 @@ function now() { const d = navigator.userAgentData; return typeof d === 'undefin
 if (poll) { let last = now(); setInterval(() => { const v = now(); if (v !== last) { last = v; say('page later', v); } }, 2000); }
 const w = new Worker('/worker.js');
 w.onmessage = (e) => say('worker', e.data);
-try { const s = new SharedWorker('/shared.js'); s.port.onmessage = (e) => say('shared worker', e.data); s.port.start(); } catch (e) { say('shared worker', 'error ' + e); }
-try { const s = new SharedWorker('/shared-strict.js'); s.port.onmessage = (e) => say('shared strict', e.data); s.port.start(); } catch (e) { say('shared strict', 'error ' + e); }
-try { const s = new SharedWorker('/shared-module.js', { type: 'module' }); s.port.onmessage = (e) => say('shared module', e.data); s.port.start(); } catch (e) { say('shared module', 'error ' + e); }
+function shared(name, url, opts) {
+  try {
+    const s = new SharedWorker(url, opts);
+    s.onerror = () => say(name, 'error event (the script did not load or run)');
+    s.port.onmessage = (e) => say(name, e.data);
+    s.port.start();
+  } catch (e) { say(name, 'error ' + e); }
+}
+shared('shared worker', '/shared.js');
+shared('shared strict', '/shared-strict.js');
+shared('shared module', '/shared-module.js', { type: 'module' });
+shared('shared module plain', '/shared-module-plain.js', { type: 'module' });
+shared('shared importScripts', '/shared-import.js');
 if (navigator.serviceWorker) {
   navigator.serviceWorker.register('/sw.js').then(() => navigator.serviceWorker.ready).then((r) => {
     navigator.serviceWorker.onmessage = (e) => say('service worker', e.data);
@@ -73,10 +83,10 @@ SHARED = "onconnect = (e) => { e.ports[0].postMessage(" + REPORT + "); };"
 # 0.7.1: a strict-mode script keeps its directive (Krunk's insertion goes after it) and a module
 # worker's import runs first, so the imported module reports what it saw too.
 SHARED_STRICT = ("\ufeff/* a comment first */\n'use strict';\n"
-                 "onconnect = (e) => { e.ports[0].postMessage(" + REPORT + " + ' strict=' + (function () { return this === undefined; })()); };")
-DEP = "export const seen = " + REPORT + ";"
+                 "onconnect = (e) => { e.ports[0].postMessage((" + REPORT + ") + ' strict=' + (function () { return this === undefined; })()); };")
+DEP = "export const seen = (" + REPORT + ");"
 SHARED_MODULE = ("import { seen } from '/dep.js';\n"
-                 "onconnect = (e) => { e.ports[0].postMessage(" + REPORT + " + ' import saw ' + seen); };")
+                 "onconnect = (e) => { e.ports[0].postMessage((" + REPORT + ") + ' import saw ' + seen); };")
 SW = ("self.addEventListener('install', () => self.skipWaiting());"
       "self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));"
       "self.addEventListener('message', (e) => e.source.postMessage(" + REPORT + "));")
@@ -111,6 +121,9 @@ class Handler(BaseHTTPRequestHandler):
             "/shared-strict.js": (SHARED_STRICT, "text/javascript; charset=utf-8", {}),
             "/shared-module.js": (SHARED_MODULE, "text/javascript", {}),
             "/dep.js": (DEP, "text/javascript", {}),
+            "/shared-module-plain.js": (SHARED, "text/javascript", {}),
+            "/shared-import.js": ("importScripts('/dep-classic.js');\nonconnect = (e) => { e.ports[0].postMessage((" + REPORT + ") + ' import saw ' + seenClassic); };", "text/javascript", {}),
+            "/dep-classic.js": ("var seenClassic = (" + REPORT + ");", "text/javascript", {}),
             "/sw.js": (SW, "text/javascript", {}),
         }.get(url.path, (None, None, None))
         if body is None:
