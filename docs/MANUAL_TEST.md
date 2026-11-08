@@ -908,3 +908,58 @@ Scripted on the VM: `scripts/vm-060-*.ps1` with the pages in `scripts/vm-www/809
 ### Website (M16)
 17. On the site (`https://krunk.209.wf`) Krunk shows "You're using Krunk 0.6.0 — up to date";
     other browsers get the download box; `view-source:` of another site never has `window.krunk`.
+
+## Krunk 0.7.0 (round 7)
+Scripted on the VM: `scripts/vm-070-*.ps1` with the pages in `scripts/vm-www/` (evidence in
+`.pipeline/evidence-0.7.0/m*/`). By hand, each in a fresh profile unless said otherwise:
+
+### Engine and updates (M1)
+1. krunk://gpu: one `--disable-features` on the engine command line; the media-codecs text says
+   the engine decodes H.264/AAC and the rows agree; "Engine files: 232 checked, libcef.dll
+   c4e38bbf…". Change one byte of `locales\fr.pak`, restart: the Repair prompt appears and Repair
+   reinstalls the release.
+2. Hold `libcef.dll` open (another program) and run the installer `/S`: it stops with exit code
+   3 and changes nothing; Krunk's next start says why.
+### Address bar and tabs (M2)
+3. Drag over the address (focused and not focused) selects text; double click a word, triple
+   click all; drag the site icon onto the bookmarks bar; click the page: the bar shows the
+   formatted address; Ctrl+T, the + button and the menu: typing goes to the address bar.
+4. Dark theme, a dark page and the new tab page: Ctrl+Tab 20 times — never a white frame; the
+   same with a tab still loading and a discarded tab (`scripts/vm-070-flash.ps1` records it).
+### New tab page and appearance (M4)
+5. The new tab page with very long site titles at 800–2560 px wide and 100/125/150 %: no
+   horizontal scrollbar, two lines and an ellipsis, the full title as tooltip.
+6. Customize → a wallpaper (dark and light ones keep text readable); Settings → Appearance:
+   colour pickers for accent, background, toolbar, tab strip, new tab page — live in a second
+   window, kept after a restart, readable text on every colour.
+### Media and downloads (M5–M6)
+7. `pipvol.html`: Alt+P, the volume bar under the floating window; slider, wheel over the
+   window, mute; the page's own controls move the bar; drag the window: the bar follows.
+8. `dl7.html` (rangeserve.py): one slow connection — the download finishes about as fast as the
+   others allow and the segment view shows the pieces moving; close Krunk during a download,
+   start again: Paused; Resume finishes it, the SHA-256 matches; a file that changed on the
+   server is downloaded again with one connection, saying why.
+### Privacy and passwords (M7)
+9. Settings → Advanced → Send client hints off: `hints.html` (hints-serve.py) logs no
+   `Sec-CH-UA*` header and no Critical-CH retry; page, iframe and workers report
+   `navigator.userAgentData` undefined (a shared worker still sees it); the same in a private tab.
+10. krunk://passwords → Create recovery phrase (a test vault only): the words once, three asked
+    back; Lock → Forgot master password? → the words → a new master password opens the vault;
+    after a restart the old password fails; Make a new phrase: the old one is refused. The words
+    appear in no file of the profile.
+11. Change master password: labelled fields, show/hide, strength, an error under each field;
+    light and dark. Menus and settings say "Manage passwords & payments".
+### Polish (M8)
+12. Links on krunk:// pages are never browser-blue and readable with a custom accent; the
+    permissions page's descriptions line up with their headings; the login suggestion popup has
+    room below its footer; the task manager's selected row is readable in dark mode.
+### Extensions (M9)
+13. On a Chrome Web Store page (after Google's consent page) the button says "Add to Krunk";
+    the confirmation names the extension and what it can do, signed by the Chrome Web Store;
+    Add installs it; nothing appears in Downloads. Dark Reader and uBlock Origin Lite this way.
+14. An extension popup closes on Esc, a click on the page, the toolbar, a tab switch, its own
+    button and a click on another program; a click inside keeps it open. krunk://extensions shows
+    cards (light and dark) and an empty state.
+### Import (M10)
+15. A Firefox profile whose logins.json has entries without `hostname`: Import says "N imported,
+    M skipped (no website address: …, unreadable entry: …)".

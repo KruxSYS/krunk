@@ -6,20 +6,20 @@ Framework (**CEF 156.0.15**), bundled in the download. Neither Microsoft Edge no
 used. It installs per user without administrator rights, or runs portable from a zip. It includes:
 - tabs and private tabs, in as many windows as you like (drag tabs between them)
 - history and bookmarks
-- a new-tab page with your most-visited sites
+- a new-tab page with your most-visited sites, built-in wallpapers and your own colours
 - built-in ad and tracker blocking
-- an encrypted password vault
+- an encrypted password vault for logins and payment cards, with an optional recovery phrase
 - downloads, find, zoom, print and DevTools docked next to the page
 - session restore
 - background-tab sleep, to save memory
 
 ## Download and requirements
-- **Installer:** `Krunk-Setup-0.6.0.exe` (about 138 MB), from `https://krunk.209.wf`. It installs for the current user
+- **Installer:** `Krunk-Setup-0.7.0.exe` (about 138 MB), from `https://krunk.209.wf`. It installs for the current user
   only, without administrator rights:
   - to `%LOCALAPPDATA%\Programs\Krunk`, with a Start Menu shortcut and, if you tick it, one on
     the desktop;
   - with an entry in Settings → Apps → Installed apps (per user, `HKCU`).
-  If Krunk is running, the installer asks you to close it. `Krunk-Setup-0.6.0.exe /S` installs
+  If Krunk is running, the installer asks you to close it. `Krunk-Setup-0.7.0.exe /S` installs
   silently; it then closes a running Krunk itself and waits up to 30 s for it.
   **Uninstalling** removes the program and the shortcuts. Your data (`%LOCALAPPDATA%\Krunk`) is
   kept unless you tick "Also delete my Krunk data"; a silent uninstall (`/S`) always keeps it.
@@ -27,7 +27,7 @@ used. It installs per user without administrator rights, or runs portable from a
   run `Krunk.exe`. Keep all files of the folder together; if one is missing, Krunk says so at
   startup. The portable copy uses the same data folder as the installed one.
 - **Verify:** check `SHA256SUMS` (the installer, the zip and the three main binaries):
-  - PowerShell: `Get-FileHash Krunk-Setup-0.6.0.exe`
+  - PowerShell: `Get-FileHash Krunk-Setup-0.7.0.exe`
   - Linux: `sha256sum -c SHA256SUMS`
 - **System:** Windows 10 or 11, 64-bit. No runtime is needed.
 - **Data location:** everything is stored in `%LOCALAPPDATA%\Krunk`:
@@ -113,7 +113,17 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   shows the browser's own string with Copy, and a list of presets (Chrome, Edge, Firefox,
   Safari on Windows, macOS, iPhone, Android; versions as of November 2026) or a custom string;
   the choice applies at once to new navigations.
+- **Appearance (0.7.0):** colour pickers (presets, any colour, a hex field, Reset) for the
+  accent, the window background, the toolbar, the tab strip and the new-tab page; changes show
+  at once in every window, and text on a custom colour switches between dark and light to stay
+  readable (WCAG AA where a colour allows it). The new-tab page has ten built-in wallpapers
+  (made for Krunk, see THIRD-PARTY-NOTICES) besides your own picture or a colour, chosen in its
+  Customize panel or in Settings → Appearance; long site titles on its tiles wrap to two lines.
 - **Address bar:**
+  - **Selecting (0.7.0):** dragging over the address selects text (also when the bar was not
+    focused), a double click selects a word, a triple click everything; the site icon drags the
+    address. A click on the page leaves the bar and shows the formatted address again; new tabs
+    type into the address bar.
   - **Suggestions while you type** (0.5.1): a dropdown under the bar offers the search (or the
     typed address) first, then matching bookmarks and history pages, most visited first. Down
     and Up move through them (the bar shows the row's address), Enter or a click goes there,
@@ -200,7 +210,18 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
     (ETag or Last-Modified), and every part must come from the same version of the file. The
     parts carry the same cookies and referrer as the browser's own request. Anything else
     (and private tabs) uses the engine's normal download. A file that changes on the server
-    during the download fails rather than be stitched together.
+    during the download is never stitched together.
+  - **Rebalancing (0.7.0):** all parts go into one file of the full size
+    (`<name>.krunkpart`, renamed when complete). A connection that finishes takes over a piece
+    of the part that would take longest at its connection's speed (at least 2 MB, and more
+    than a second of that connection's work), so one slow connection no longer holds up the
+    end; the bar on the downloads page and popup shows each piece where it lies in the file,
+    coloured by connection.
+  - **Resume after a restart (0.7.0):** where a download in parts stands is saved with the list
+    (the missing ranges, the validator and the referrer; never cookies). After Krunk closes it
+    is "Paused when Krunk closed"; Resume asks the server again and continues if it is the same
+    file. If the file changed or the server stopped sending parts, the entry says so and the
+    engine downloads the file again with one connection.
 - **Cookies and site data:**
   - `krunk://storage` lists every site with cookies or stored data, grouped by site
     (registrable domain), with a search box. Expand a site to see each cookie: name, value
@@ -258,11 +279,21 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   lists them with their size and state; the same control takes the video back. Settings →
   General → Media → "Automatic Picture-in-Picture" does it when you switch tabs while a video
   plays and reverses it when you return. Videos inside a frame from another site (an embedded
-  player) are not listed: use the player's own control.
+  player) are not listed: use the player's own control. **Volume (0.7.0):** the engine's
+  floating window has a mute button but no volume, so Krunk shows a volume bar flush under it
+  (above it at the bottom of the screen) while the pointer is over either: a slider, mute and
+  the percentage. The mouse wheel over the floating window changes the volume too, and changes
+  the page makes (its own controls, the floating window's mute) show on the bar.
 - **Extensions** (0.6.0; `krunk://extensions`, also in the menu): Krunk runs its own subset of
-  Chrome's Manifest V3, since the engine has no extension system of its own. Install from a
-  `.zip`/`.crx` file, an unpacked folder, or a Chrome Web Store address (the CRX is fetched
-  from Google's download server over HTTPS; its id must match the address). What runs:
+  Chrome's Manifest V3, since the engine has no extension system of its own. On a Chrome Web
+  Store page the store's button says **Add to Krunk** (0.7.0); you can also paste a store
+  address, or install a `.zip`/`.crx` file or an unpacked folder. Store packages are fetched
+  from Google's download server over HTTPS and never land in Downloads. Every CRX must carry a
+  valid signature by its own developer key, and a store package also the Chrome Web Store's
+  signature; then Krunk shows the extension's name, source and what it can do ("Read and
+  change all your data on all websites", …) and installs only after **Add extension**. An
+  extension's popup closes on Esc, a click anywhere outside it, a tab switch or when another
+  program comes to the front. What runs:
   content scripts (in an isolated world of web pages, with `matches`, `exclude_matches`,
   `run_at`, `all_frames`, CSS), a background page built around the service worker,
   the toolbar button with its popup and badge, options pages, and the `chrome.runtime`
@@ -605,6 +636,32 @@ VK  --XChaCha20-Poly1305 (fresh 24-byte nonce, AAD = entry id)--> each login; ma
   on an exact origin match.
 - **Copies:** excluded from clipboard history and cleared after 30 s.
 
+#### Recovery phrase (0.7.0)
+```
+24 BIP39 words = 256 random bits (never stored)
+  --Argon2id (own 16-byte salt, at least the master password's cost: 64 MiB, t=3, p=1)--> seed
+  --HPKE DeriveKeyPair--> X25519 key pair; only the public key is stored
+VK --HPKE base mode (X25519-HKDF-SHA256, HKDF-SHA256, ChaCha20Poly1305, info "krunk-vault-recovery-v1")
+   --> sealed to that public key --DPAPI (CurrentUser)--> "recovery" in vault.json (format 3)
+```
+- **Making one:** `krunk://passwords` → Recovery phrase → Create recovery phrase. After the
+  master password Krunk shows 24 words once (Copy keeps them out of clipboard history and
+  clears them after 30 s; Save to file and Print are offered), then asks for three of them
+  back. Only then is the phrase stored in the vault — as the public key above; the words, and
+  the 256 bits they stand for, are never written anywhere or logged.
+- **Forgot the master password:** "Forgot master password?" on the locked passwords page or in
+  the unlock prompt. Type the 24 words (case, spaces, line breaks and numbering do not matter;
+  the first four letters of each word are enough), choose a new master password: the vault
+  opens and the new password replaces the old one. Wrong phrases count against the same retry
+  delay as wrong passwords.
+- **It stays valid** when you change the master password (each save seals the new vault key to
+  the stored public key); **a new phrase** (Make a new phrase) replaces the old one, which then
+  no longer opens anything; Remove takes it away (the file goes back to the 0.6.0 format).
+- **Threat model:** anyone who has the 24 words *and* your Windows account on this PC (DPAPI)
+  can open your passwords and cards, exactly like someone with the master password. Keep the
+  words offline. The phrase is local: nothing about it leaves the computer (sync would leave the
+  slot out). Vaults without a phrase keep the 0.6.0 format, so 0.6.0 can still read them.
+
 ### Custom DNS
 
 Settings → Privacy → DNS (0.6.0) chooses who resolves names: Windows' resolver (the engine's
@@ -650,6 +707,13 @@ runs before the network stack adds its own headers: `Host`, `Connection`, `Accep
 therefore read-only (the page lists them with the reason). Client hints are only sent on
 https pages, like Chrome. Workers do not see the override (a limitation of the DevTools
 route): their `navigator.userAgentData` is the engine's.
+
+**Send client hints** (0.7.0; on by default, like Chrome): off, no `Sec-CH-UA*` header is sent
+on any request, in normal and private tabs, and a site's `Accept-CH`/`Critical-CH` asks for
+them in vain (no retry). The user-agent override then carries no metadata, Krunk's request
+hook removes any hint header that would still appear, and `navigator.userAgentData` is
+removed in pages and their frames and — by attaching to them through DevTools before their
+first line runs — in dedicated and service workers. See Known limitations for shared workers.
 
 Web pages see nothing of Krunk's page bridge since 0.6.0: the injected scripts (login
 detection, page tokens, the notification shim) get it as a closure argument, and only Krunk's
@@ -739,6 +803,20 @@ network traffic it starts itself is the daily filter-list update and the daily u
   silently (`/S /RELAUNCH`) and closes Krunk. The installer waits for Krunk to exit, installs,
   and starts Krunk again, with your tabs restored. A portable copy gets **Download**, which
   opens the website, instead.
+- **Engine files and Repair (0.7.0):** Krunk knows the SHA-256 of every engine file of its
+  release (built into Krunk.dll from `engine-files.sha256`). Twenty seconds after start it
+  hashes the installed files (cached by size and date in `browser.db`); `krunk://gpu` and About
+  name the engine ("Krunk's engine with proprietary codecs · libcef.dll c4e38bbf…" or "the old
+  engine without H.264/AAC"). A changed or missing file opens a prompt with **Repair**, which
+  reinstalls the current version from the signed manifest (portable copies get the download
+  page). The signed manifest also names the release's full file list (`files.json`, its
+  SHA-256 in the manifest), checked after every update.
+- **The installer no longer skips locked files (0.7.0):** a silent install (the updater's) used
+  to skip a file another program held and still report success, which could leave the old
+  engine under a new Krunk. Now it ends Krunk processes still running from the install folder,
+  moves loaded files aside (`*.old-krunk`, deleted at the next start) and, if a file can still
+  not be replaced, stops before changing anything (exit code 3); Krunk shows the reason at its
+  next start and offers Repair.
 - **The server** is set when Krunk is built (`UPDATE_BASE_URL`). Builds use
   **`https://krunk.209.wf`**, the project's website and update server for now (a temporary
   domain while Krunk is tested). Moving to the final domain takes one release from this server
@@ -999,8 +1077,7 @@ Testing on Windows:
   engine's cookies, user agent and referrer, the HTTP proxy setting, and WinHTTP's certificate
   checks. Sites that need HTTP authentication or a client certificate, SOCKS proxies and private
   tabs always get the engine's own single-connection download. A part download paused and
-  resumed continues where each part stopped; one interrupted by quitting starts again (its part
-  files are removed at the next start).
+  resumed continues where each part stopped, also after Krunk was closed (0.7.0).
 - **Filters with a port** (`||example.com:8080/…`) never match: Brave's `adblock` engine ignores
   the port. Write `||example.com^*/path` instead.
 - **What was blocked** lists requests, not elements hidden by cosmetic filters. When the
@@ -1022,6 +1099,23 @@ Testing on Windows:
   `%TEMP%\Krunk-update` until the next start, which removes it.
 - **DevTools can't be undocked** into its own window; it docks right or at the bottom of its
   tab's window. Theme changes don't reach a page while its DevTools is open (see above).
+- **Background tabs keep running at full speed.** CEF's windowed (Alloy) browsers are never
+  told they are hidden (`WasHidden` does nothing for them), so a busy page in a background tab
+  keeps rendering; hiding the engine's widget window directly left the page blank when shown
+  again. Tab sleep (Settings → General) and discard are the remedy. With 5 busy background
+  tabs Speedometer lost about 8 % on the test machine, Chrome 2 %.
+- **Speedometer is about 14 % below Chrome 157** on the same machine (Krunk 0.7.0: 27.2 vs
+  31.5 on the 4-core test VM; Edge 156 32.9). Krunk's own page scripts were measured and
+  trimmed (0.7.0); the remaining gap is engine-wide (plain JavaScript and layout run 10–30 %
+  slower in CEF's Alloy runtime than in Chrome or Edge, with Krunk's scripts off and with the
+  stock CEF build alike). Closing it needs an engine change.
+- **Client hints off: shared workers.** With "Send client hints" off, a shared worker's
+  script still sees `navigator.userAgentData` (shared workers are not the tab's DevTools
+  targets); its requests carry no hints. In a tab opened before the setting was switched off,
+  frames from other sites keep `navigator.userAgentData` until the tab is reopened (their
+  requests carry no hints either).
+- **The store's "Switch to Chrome" notices stay.** Krunk relabels the store's install button
+  and leaves the rest of Google's page as it is.
 - **Unsigned:** the binaries are not code-signed (SmartScreen may warn on first start).
 
 ## Third-party components
