@@ -91,6 +91,8 @@ fn run() -> Result<i32, String> {
         user_agent: settings.user_agent.clone(),
     };
     info!("browser arguments: {}", settings.browser_arguments());
+    // Before the engine launches any renderer: they get the state on their command line.
+    ffi::cef::set_no_hints(!settings.headers.send_client_hints);
     let window = ffi::window::Window::create_main("Krunk")?;
     let start: ffi::cef::Start =
         Box::new(move || match browser::Browser::start(window, &dirs, store, settings, power) {

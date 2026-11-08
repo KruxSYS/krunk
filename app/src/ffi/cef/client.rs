@@ -102,8 +102,12 @@ wrap_client! {
             let (Some(browser), Some(frame), Some(message)) = (browser, frame, message) else { return 0 };
             let name = CefString::from(&message.name()).to_string();
             if name == super::scriptlets::HELLO {
-                let have = message.argument_list().map(|a| CefString::from(&a.string(0)).to_string()).unwrap_or_default();
+                let args = message.argument_list();
+                let have = args.as_ref().map(|a| CefString::from(&a.string(0)).to_string()).unwrap_or_default();
                 super::scriptlets::hello(frame, &have);
+                // (0.7.1) The client-hints generation the renderer has.
+                let hints = args.filter(|a| a.size() > 1).map(|a| u64::try_from(a.int(1)).unwrap_or(0)).unwrap_or(0);
+                super::hints::hello(frame, hints);
                 return 1;
             }
             if name == POINTER_TO_BROWSER {
@@ -203,6 +207,7 @@ wrap_life_span_handler! {
                 *e = adopted.0.scripts.to_dictionary();
                 if let Some(d) = e.as_mut() {
                     super::scriptlets::add_to_extra_info(d);
+                    super::hints::add_to_extra_info(d);
                 }
             }
             adopted.mark_started();

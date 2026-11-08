@@ -101,6 +101,8 @@ wrap_browser_process_handler! {
             // sends). It cost the pages a measurable share of their time (R24): never in Krunk.
             if let Some(cl) = command_line {
                 cl.remove_switch(Some(&CefString::from(STACK_PROFILER_SWITCH)));
+                // "Send client hints" off as of now (0.7.1).
+                super::hints::add_to_child(cl);
             }
         }
     }

@@ -2,9 +2,12 @@
 
   /hints.html   the test page: Accept-CH and Critical-CH for the high-entropy hints; it shows
                 navigator.userAgentData in the page, a cross-site iframe (the other host name),
-                a dedicated worker, a service worker and a shared worker
+                a dedicated worker, a service worker and shared workers (classic, strict-mode
+                classic, module with an import; 0.7.1)
+  /hints.html?poll   the same; the page and the iframe report again every 2 s while the value
+                changes ("page later", "iframe later": a document open while the setting changed)
   /frame.html   the iframe (its own report)
-  /worker.js, /sw.js, /shared.js   the workers
+  /worker.js, /sw.js, /shared.js, /shared-strict.js, /shared-module.js, /dep.js   the workers
   /report?...   results posted by the pages and workers
 Every request is logged to LOG with its Sec-CH-UA* headers (or "none").
 """
@@ -32,10 +35,15 @@ function say(where, v) { out.push(where + ': ' + v); o.textContent = out.join('\
 const d = navigator.userAgentData;
 try { say('page', typeof d === 'undefined' ? 'undefined' : JSON.stringify({ brands: d.brands.map(b => b.brand), platform: d.platform })); } catch (e) { say('page', 'error ' + e); }
 const other = location.hostname === '127.0.0.1' ? 'localhost' : '127.0.0.1';
-document.getElementById('f').src = 'http://' + other + ':' + location.port + '/frame.html';
+const poll = location.search.indexOf('poll') >= 0;
+document.getElementById('f').src = 'http://' + other + ':' + location.port + '/frame.html' + (poll ? '?poll' : '');
+function now() { const d = navigator.userAgentData; return typeof d === 'undefined' ? 'undefined' : JSON.stringify({ brands: d.brands.map(b => b.brand), platform: d.platform }); }
+if (poll) { let last = now(); setInterval(() => { const v = now(); if (v !== last) { last = v; say('page later', v); } }, 2000); }
 const w = new Worker('/worker.js');
 w.onmessage = (e) => say('worker', e.data);
 try { const s = new SharedWorker('/shared.js'); s.port.onmessage = (e) => say('shared worker', e.data); s.port.start(); } catch (e) { say('shared worker', 'error ' + e); }
+try { const s = new SharedWorker('/shared-strict.js'); s.port.onmessage = (e) => say('shared strict', e.data); s.port.start(); } catch (e) { say('shared strict', 'error ' + e); }
+try { const s = new SharedWorker('/shared-module.js', { type: 'module' }); s.port.onmessage = (e) => say('shared module', e.data); s.port.start(); } catch (e) { say('shared module', 'error ' + e); }
 if (navigator.serviceWorker) {
   navigator.serviceWorker.register('/sw.js').then(() => navigator.serviceWorker.ready).then((r) => {
     navigator.serviceWorker.onmessage = (e) => say('service worker', e.data);
@@ -49,11 +57,26 @@ const d = navigator.userAgentData;
 const v = typeof d === 'undefined' ? 'undefined' : JSON.stringify({ brands: d.brands.map(b => b.brand), platform: d.platform });
 document.body.textContent = 'iframe (' + location.host + '): ' + v;
 fetch('/report?iframe=' + encodeURIComponent(v));
+if (location.search.indexOf('poll') >= 0) {
+  let last = v;
+  setInterval(() => {
+    const d = navigator.userAgentData;
+    const n = typeof d === 'undefined' ? 'undefined' : JSON.stringify({ brands: d.brands.map(b => b.brand), platform: d.platform });
+    if (n !== last) { last = n; fetch('/report?' + encodeURIComponent('iframe later') + '=' + encodeURIComponent(n)); }
+  }, 2000);
+}
 </script>"""
 
 REPORT = "typeof self.navigator.userAgentData === 'undefined' ? 'undefined' : JSON.stringify({ brands: self.navigator.userAgentData.brands.map(b => b.brand), platform: self.navigator.userAgentData.platform })"
 WORKER = "postMessage(" + REPORT + ");"
 SHARED = "onconnect = (e) => { e.ports[0].postMessage(" + REPORT + "); };"
+# 0.7.1: a strict-mode script keeps its directive (Krunk's insertion goes after it) and a module
+# worker's import runs first, so the imported module reports what it saw too.
+SHARED_STRICT = ("\ufeff/* a comment first */\n'use strict';\n"
+                 "onconnect = (e) => { e.ports[0].postMessage(" + REPORT + " + ' strict=' + (function () { return this === undefined; })()); };")
+DEP = "export const seen = " + REPORT + ";"
+SHARED_MODULE = ("import { seen } from '/dep.js';\n"
+                 "onconnect = (e) => { e.ports[0].postMessage(" + REPORT + " + ' import saw ' + seen); };")
 SW = ("self.addEventListener('install', () => self.skipWaiting());"
       "self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));"
       "self.addEventListener('message', (e) => e.source.postMessage(" + REPORT + "));")
@@ -85,6 +108,9 @@ class Handler(BaseHTTPRequestHandler):
             "/frame.html": (FRAME, "text/html; charset=utf-8", {"Accept-CH": "Sec-CH-UA-Arch"}),
             "/worker.js": (WORKER, "text/javascript", {}),
             "/shared.js": (SHARED, "text/javascript", {}),
+            "/shared-strict.js": (SHARED_STRICT, "text/javascript; charset=utf-8", {}),
+            "/shared-module.js": (SHARED_MODULE, "text/javascript", {}),
+            "/dep.js": (DEP, "text/javascript", {}),
             "/sw.js": (SW, "text/javascript", {}),
         }.get(url.path, (None, None, None))
         if body is None:

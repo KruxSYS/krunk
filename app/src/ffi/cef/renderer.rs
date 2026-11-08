@@ -9,12 +9,14 @@
 //! browser process decides what a message may do from the sending frame's
 //! committed URL and main-frame flag, never from its contents.
 
+use super::hints;
 use super::scriptlets;
 use super::view::Scripts;
 use cef::*;
 use lb_core::assets;
 use lb_core::blocker::{Allowlist, ScriptletEngine};
-use std::cell::RefCell;
+use lb_core::headers::HintsState;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 
 /// Process message names.
@@ -165,6 +167,25 @@ thread_local! {
     static DISPATCH: RefCell<HashMap<String, (V8Context, V8Value)>> = RefCell::new(HashMap::new());
     /// The pointer-lock shim of each frame, by frame identifier (same rule).
     static POINTER: RefCell<HashMap<String, (V8Context, V8Value)>> = RefCell::new(HashMap::new());
+    /// "Send client hints" off, the newest this process has heard of (0.7.1; `None` until the
+    /// process's own command line was read).
+    static HINTS: Cell<Option<HintsState>> = const { Cell::new(None) };
+}
+
+fn hints_state() -> HintsState {
+    HINTS.with(|h| {
+        h.get().unwrap_or_else(|| {
+            let s = hints::from_own_command_line();
+            h.set(Some(s));
+            s
+        })
+    })
+}
+
+fn merge_hints(newer: HintsState) {
+    let mut s = hints_state();
+    s.merge(newer);
+    HINTS.with(|h| h.set(Some(s)));
 }
 
 pub(super) fn handler() -> RenderProcessHandler {
@@ -177,6 +198,7 @@ wrap_render_process_handler! {
         fn on_browser_created(&self, browser: Option<&mut Browser>, extra_info: Option<&mut DictionaryValue>) {
             let (Some(browser), Some(info)) = (browser, extra_info) else { return };
             let scripts = Scripts::from_dictionary(info);
+            merge_hints(hints::from_extra_info(info));
             SCRIPTS.with(|s| {
                 let mut s = s.borrow_mut();
                 let e = s.entry(browser.identifier()).or_insert((scripts, 0));
@@ -257,6 +279,19 @@ wrap_render_process_handler! {
                 }
                 return 1;
             }
+            if name == hints::TO_RENDERER {
+                if let Some(args) = message.argument_list() {
+                    merge_hints(hints::from_message(&args));
+                }
+                // Switched off while this document is open: it goes now (scripts that read it
+                // already keep what they read; a reload starts clean).
+                if hints_state().off {
+                    if let Some(mut context) = frame.v8_context() {
+                        eval(&mut context, NO_USER_AGENT_DATA);
+                    }
+                }
+                return 1;
+            }
             if name == POINTER_TO_FRAME {
                 if let Some(args) = message.argument_list() {
                     deliver_to(&POINTER, frame, &CefString::from(&args.string(0)));
@@ -274,7 +309,7 @@ wrap_render_process_handler! {
     }
 }
 
-/// "Send client hints" off for this tab: `navigator.userAgentData` goes in every frame.
+/// "Send client hints" off: `navigator.userAgentData` goes in every frame.
 const NO_USER_AGENT_DATA: &str = "(function(){try{delete Navigator.prototype.userAgentData}catch(e){}})()";
 
 fn context_created(scripts: Scripts, frame: &mut Frame, context: &mut V8Context) {
@@ -286,8 +321,9 @@ fn context_created(scripts: Scripts, frame: &mut Frame, context: &mut V8Context)
     if scripts.dnt {
         eval(context, assets::inject_script("dnt.js"));
     }
-    // No user-agent metadata ("Send client hints" off): no navigator.userAgentData (0.7.0).
-    if scripts.no_hints {
+    // No user-agent metadata ("Send client hints" off): no navigator.userAgentData (0.7.0; 0.7.1:
+    // the setting as of now, not as of when the tab was made).
+    if hints_state().off {
         eval(context, NO_USER_AGENT_DATA);
     } else if document_url(frame).starts_with("http") {
         eval(context, assets::inject_script("nohints.js"));
@@ -386,6 +422,8 @@ fn hello(frame: &mut Frame, version: &str) {
     let Some(mut message) = process_message_create(Some(&CefString::from(scriptlets::HELLO))) else { return };
     if let Some(args) = message.argument_list() {
         args.set_string(0, Some(&CefString::from(version)));
+        // (0.7.1) The client-hints generation: an older one gets the current state back.
+        args.set_int(1, i32::try_from(hints_state().generation).unwrap_or(i32::MAX));
     }
     frame.send_process_message(ProcessId::BROWSER, Some(&mut message));
 }

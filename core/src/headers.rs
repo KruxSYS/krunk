@@ -395,6 +395,63 @@ pub fn user_agent_override(
     params
 }
 
+/// "Send client hints" off as a renderer process knows it (Krunk 0.7.1). The setting is global
+/// and can change while pages are open, but a renderer learns it from several places that
+/// arrive in no fixed order: its own command line (the state when the process started), each
+/// browser's creation data (when that tab was made) and messages sent after a change. Every
+/// change gets a higher generation; a renderer keeps the newest it has heard of.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct HintsState {
+    /// 0 = never heard of (hints on, the engine's default).
+    pub generation: u64,
+    pub off: bool,
+}
+
+impl HintsState {
+    /// Takes `other` when it is newer. True when that changed whether hints are off.
+    pub fn merge(&mut self, other: HintsState) -> bool {
+        if other.generation <= self.generation {
+            return false;
+        }
+        let changed = other.off != self.off;
+        *self = other;
+        changed
+    }
+
+    /// The next state after the setting was set to `off` (the same state when nothing changed).
+    pub fn set(self, off: bool) -> HintsState {
+        if self.generation > 0 && self.off == off {
+            self
+        } else {
+            HintsState { generation: self.generation + 1, off }
+        }
+    }
+
+    /// The value of the renderer switch `--krunk-hints`: `<generation>:<0|1>`.
+    pub fn to_switch(self) -> String {
+        format!("{}:{}", self.generation, u8::from(self.off))
+    }
+
+    pub fn from_switch(value: &str) -> Option<HintsState> {
+        let (generation, off) = value.trim().split_once(':')?;
+        let off = match off {
+            "0" => false,
+            "1" => true,
+            _ => return None,
+        };
+        Some(HintsState { generation: generation.parse().ok()?, off })
+    }
+
+    /// Packed into one word (for an atomic): generation in the high bits, `off` in bit 0.
+    pub fn pack(self) -> u64 {
+        (self.generation << 1) | u64::from(self.off)
+    }
+
+    pub fn unpack(word: u64) -> HintsState {
+        HintsState { generation: word >> 1, off: word & 1 == 1 }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -522,5 +579,32 @@ mod tests {
         assert_eq!(p["userAgentMetadata"]["platform"], "Krunk OS");
         assert_eq!(p["userAgentMetadata"]["fullVersionList"][1]["version"], "156.0.1.2");
         assert_eq!(p["userAgentMetadata"]["mobile"], false);
+    }
+
+    #[test]
+    fn the_newest_hints_state_wins_whatever_the_order() {
+        let start = HintsState::default().set(false);
+        assert_eq!(start, HintsState { generation: 1, off: false });
+        assert_eq!(start.set(false), start, "no change, no new generation");
+        let off = start.set(true);
+        let on_again = off.set(false);
+        assert_eq!((off.generation, on_again.generation), (2, 3));
+        // A renderer started before the switch (command line: generation 1) hears of the tab
+        // made later (generation 3) before an older message (generation 2): it stays at 3.
+        let mut r = HintsState::from_switch(&start.to_switch()).unwrap();
+        assert!(!r.merge(on_again));
+        assert!(!r.merge(off), "an older message changes nothing");
+        assert_eq!(r, on_again);
+        let mut r = HintsState::default();
+        assert!(r.merge(off), "off after nothing heard");
+        assert!(r.off);
+        assert!(!r.merge(off), "the same generation twice");
+        for s in [start, off, on_again, HintsState { generation: 1 << 40, off: true }] {
+            assert_eq!(HintsState::unpack(s.pack()), s);
+            assert_eq!(HintsState::from_switch(&s.to_switch()), Some(s));
+        }
+        for bad in ["", "1", "1:2", "x:1", ":1", "-1:0"] {
+            assert_eq!(HintsState::from_switch(bad), None, "{bad}");
+        }
     }
 }

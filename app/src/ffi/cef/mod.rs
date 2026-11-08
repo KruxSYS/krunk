@@ -13,6 +13,7 @@ mod client;
 mod cookies;
 mod data;
 pub mod entry;
+mod hints;
 mod net;
 mod renderer;
 mod scheme;
@@ -22,6 +23,7 @@ mod view;
 
 pub use cookies::{cookie_header, delete_cookies, list_cookies, set_cookie_value, Profile};
 pub use data::clear_profile_data;
+pub use hints::set_no_hints;
 pub use net::{NetRequest, NetVerdict, RequestPolicy};
 pub use scheme::InternalResponse;
 pub use scriptlets::set_scriptlets;

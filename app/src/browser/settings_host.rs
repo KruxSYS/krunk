@@ -196,6 +196,8 @@ impl Browser {
         }
         if old.user_agent != new.user_agent || old.headers != new.headers {
             self.net.set_headers(&new.headers);
+            // Every renderer, also those of tabs and frames already open (0.7.1).
+            crate::ffi::cef::set_no_hints(!new.headers.send_client_hints);
             let ids: Vec<TabId> = self.views.borrow().keys().copied().collect();
             for id in ids {
                 self.apply_user_agent_to(id);
