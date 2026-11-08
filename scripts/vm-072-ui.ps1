@@ -64,16 +64,20 @@ SetTheme 'light'
 StartKrunk "$K\app"
 SafeGo 'http://localhost:8094/links.html' 2500
 Shot "$P-1-bar-overflow"
+# (060-address) Copying the whole, unedited address gives the full URL.
+Set-Clipboard -Value '(empty)'; SafeKeys '^l' 300; Keys '^c' 400
+Log "[$P] clipboard after Ctrl+C on the address: '$(Get-Clipboard -Raw)'"
+Keys '{ESC}' 300
 # "»": the last button of the bar (28 DIP wide, 8 DIP from the right).
 Click ($c.Right - [int](22 * $c.Scale)) (Y 90) 1200
 Shot "$P-2-overflow-open"
-SafeKeys '{ESC}' 500
+Keys '{ESC}' 500
 [U]::MoveWindow($A, 0, 0, 900, 760, $true) | Out-Null; Start-Sleep 1
 Shot "$P-3-overflow-narrow"
 $c = ClientRect $A
 Click ($c.Right - [int](22 * $c.Scale)) (Y 90) 1200
 Shot "$P-4-overflow-open-narrow"
-SafeKeys '{ESC}' 500
+Keys '{ESC}' 500
 [U]::MoveWindow($A, 0, 0, 1280, 760, $true) | Out-Null; Start-Sleep 1
 $c = ClientRect $A
 # A reorder: "Bookmark number 0" (the second item) dragged right by 300 DIP; then the same item
@@ -91,14 +95,14 @@ Shot "$P-8-folder-tooltip"
 # The bookmark menu on an item inside the dropdown: the second popup window over the first.
 RightClick (X 150) (Y 120) 1200
 Shot "$P-9-item-menu-in-dropdown"
-SafeKeys '{ESC}' 400; SafeKeys '{ESC}' 400
+Keys '{ESC}' 400; Keys '{ESC}' 400
 # The bookmark menu on the bar folder, and the ⋮ menu to compare.
 RightClick (X 40) (Y 90) 1200
 Shot "$P-10-folder-menu-on-bar"
-SafeKeys '{ESC}' 500
+Keys '{ESC}' 500
 Click ($c.Right - 20) (Y 56) 1200
 Shot "$P-11-main-menu"
-SafeKeys '{ESC}' 500
+Keys '{ESC}' 500
 # krunk://bookmarks: "Other bookmarks" (Tab past the search box, the three buttons and the
 # "Bookmarks bar" and "Tools" folders).
 SafeGo 'krunk://bookmarks' 3000
@@ -111,22 +115,24 @@ SafeGo 'krunk://passwords' 3500
 Click 640 371 300; Keys $master 200
 Click 640 438 300; Keys $master 200
 Click 456 551 4000
-function Dialogs([string]$t) {
-  Click (X 1200) (Y 700) 300
-  Keys '{TAB}' 150; Keys '{TAB}' 150; Keys '{ENTER}' 1200
+function Dialogs([string]$t, [bool]$save) {
+  # Add (the toolbar) and Add card (next to "Payment methods" with one saved login), as laid out
+  # at 1280x760 (the same places as in vm-070-vaultgap.ps1).
+  Click 832 145 1200
   Shot "$P-$t-1-add-login"
   Keys 'news.example.com' 200; Keys '{ENTER}' 800
   Shot "$P-$t-2-add-login-error"
-  Keys '{ESC}' 600
-  Click (X 1200) (Y 700) 300
-  foreach ($i in 1..5) { Keys '{TAB}' 150 }
-  Keys '{ENTER}' 1200
+  # The error put the caret in the password field: a password, Enter saves.
+  if ($save) { Keys 'Fx-test-pass-1' 200; Keys '{ENTER}' 1500; Shot "$P-$t-2b-login-saved" } else { Keys '{ESC}' 600 }
+  Click 337 263 1200
   Shot "$P-$t-3-add-card"
   Keys '4111 1111 1111 1111' 200; Keys '{TAB}' 150; Keys '13' 200; Keys '{ENTER}' 800
   Shot "$P-$t-4-add-card-error"
-  Keys '{ESC}' 600
+  # The error focused the month: 7 / 2031, Enter saves.
+  if ($save) { Keys '^a' 100; Keys '7' 150; Keys '{TAB}' 150; Keys '2031' 150; Keys '{ENTER}' 1500; Shot "$P-$t-4b-card-saved" } else { Keys '{ESC}' 600 }
 }
-Dialogs 'light'
+Dialogs 'light' $true
+Log "[$P] vault: $(KLog 'vault|card|login saved')"
 Copy-Item "$profile\Krunk\krunk.log" "$Shots\$P-light-krunk.log" -ErrorAction SilentlyContinue
 StopKrunk
 
@@ -136,7 +142,7 @@ StartKrunk "$K\app"
 SafeGo 'krunk://passwords' 3500
 Keys $master 200; Keys '{ENTER}' 2500
 Shot "$P-dark-0-unlocked"
-Dialogs 'dark'
+Dialogs 'dark' $false
 StopKrunk
 
 # ---------------- the update notice (dev-updates build)
