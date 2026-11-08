@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Jitter</title>
+<style>:root { color-scheme: dark; } html, body { margin: 0; height: 100%; background: #10141c; color: #cbd5e1; font: 14px system-ui; overflow: hidden; }
+#stage { position: absolute; inset: 0; display: grid; place-items: center; font-size: 22px; } #out { position: absolute; left: 8px; bottom: 8px; font: 12px monospace; white-space: pre; }</style></head>
+<body>
+<!-- Krunk 0.7.2 M6 (R7): camera turning while a movement key is held. ?mode=lock: a click locks
+     the pointer and the next ?ms= milliseconds of mousemove events are recorded; ?mode=right: from
+     the right button's press to its release. Per run: the intervals between move events, the
+     movement per event and per animation frame (what a game's camera turns by), the keydown
+     repeats seen, all summarised and sent to /log?jitter=... (the test server logs it). -->
+<div id="stage">click</div><div id="out"></div>
+<script>
+  const q = new URLSearchParams(location.search);
+  const mode = q.get('mode') || 'lock', label = q.get('label') || mode, MS = Number(q.get('ms') || 3000);
+  const stage = document.getElementById('stage'), out = document.getElementById('out');
+  let rec = null;
+  document.addEventListener('contextmenu', (e) => e.preventDefault());
+  function start() {
+    rec = { t0: performance.now(), ev: [], frames: [], fx: 0, keys: 0, keysRepeat: 0 };
+    stage.textContent = 'recording ' + label;
+    requestAnimationFrame(frame);
+  }
+  function frame(ts) {
+    if (!rec) return;
+    rec.frames.push([ts, rec.fx]); rec.fx = 0;
+    if (mode === 'lock' && ts - rec.t0 >= MS) { finish(); return; }
+    requestAnimationFrame(frame);
+  }
+  document.addEventListener('mousemove', (e) => {
+    if (!rec) return;
+    if (mode === 'right' && !(e.buttons & 2)) return;
+    rec.ev.push([e.timeStamp, e.movementX, e.isTrusted ? 1 : 0]);
+    rec.fx += e.movementX;
+  });
+  document.addEventListener('keydown', (e) => { if (rec) { rec.keys++; if (e.repeat) rec.keysRepeat++; } });
+  if (mode === 'lock') {
+    stage.addEventListener('click', () => stage.requestPointerLock());
+    document.addEventListener('pointerlockchange', () => { if (document.pointerLockElement === stage && !rec) start(); });
+  } else {
+    document.addEventListener('mousedown', (e) => { if (e.button === 2 && !rec) start(); });
+    document.addEventListener('mouseup', (e) => { if (e.button === 2 && rec) finish(); });
+  }
+  const pct = (a, p) => { if (!a.length) return 0; const s = a.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p / 100 * s.length))]; };
+  const mean = (a) => a.length ? a.reduce((s, v) => s + v, 0) / a.length : 0;
+  const cv = (a) => { const m = mean(a); if (!a.length || !m) return 0; return Math.sqrt(mean(a.map((v) => (v - m) ** 2))) / Math.abs(m); };
+  const r1 = (v) => Math.round(v * 100) / 100;
+  function finish() {
+    const r = rec; rec = null;
+    if (document.pointerLockElement) document.exitPointerLock();
+    // Only the steady part: from the first movement to the last (the key repeats start after 0.5 s).
+    const moving = r.ev.filter((e) => e[1] !== 0);
+    const times = moving.map((e) => e[0]);
+    const gaps = times.slice(1).map((t, i) => t - times[i]);
+    const dx = moving.map((e) => e[1]);
+    const t1 = times.length ? times[0] : 0, t2 = times.length ? times[times.length - 1] : 0;
+    const fr = r.frames.filter((f) => f[0] > t1 + 20 && f[0] <= t2);
+    const fdx = fr.map((f) => f[1]);
+    const res = { label, mode, ua: navigator.userAgent.includes('Krunk') ? 'krunk' : (navigator.userAgentData && navigator.userAgentData.brands.map((b) => b.brand).join('/')) || 'other',
+      events: moving.length, trusted: moving.filter((e) => e[2]).length, keys: r.keys, keyRepeats: r.keysRepeat,
+      seconds: r1((t2 - t1) / 1000), perSec: r1(moving.length / Math.max(0.001, (t2 - t1) / 1000)),
+      gapP50: r1(pct(gaps, 50)), gapP95: r1(pct(gaps, 95)), gapMax: r1(pct(gaps, 100)),
+      dxMean: r1(mean(dx)), dxCv: r1(cv(dx)), frames: fr.length, frameDxMean: r1(mean(fdx)), frameDxCv: r1(cv(fdx)),
+      framesNoMove: fdx.filter((v) => v === 0).length, sumDx: dx.reduce((s, v) => s + v, 0),
+      dxMin: dx.length ? Math.min.apply(null, dx) : 0, dxMax: dx.length ? Math.max.apply(null, dx) : 0,
+      frameDxMin: fdx.length ? Math.min.apply(null, fdx) : 0, frameDxMax: fdx.length ? Math.max.apply(null, fdx) : 0 };
+    // ?detail=1: the first 60 frames' movement and the first 60 events (time since the frame's
+    // rAF, movement) for a closer look.
+    if (q.get('detail')) {
+      res.fdx = fdx.slice(0, 60);
+      res.ev = moving.slice(0, 60).map((e) => [Math.round(e[0] - t1), e[1]]);
+      res.ft = fr.slice(0, 60).map((f) => Math.round(f[0] - t1));
+    }
+    out.textContent = JSON.stringify(res, null, 1);
+    stage.textContent = 'done ' + label;
+    document.title = 'done ' + label;
+    fetch('/log?jitter=' + encodeURIComponent(JSON.stringify(res))).catch(() => {});
+  }
+</script>
+</body>
+</html>

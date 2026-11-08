@@ -58,7 +58,7 @@
         return fail('NotAllowedError', 'A user gesture is required to request Pointer Lock.');
       }
       if (pending) pending.reject(new DOMExc('A newer request replaced this one.', 'AbortError'));
-      pending = { el: el, resolve: resolve, reject: reject };
+      pending = { el: el, resolve: resolve, reject: reject, raw: !!(options && options.unadjustedMovement) };
       send(stringify({ lb: 'pointerLock', unadjusted: !!(options && options.unadjustedMovement) }));
     });
   }, 'requestPointerLock');
@@ -86,6 +86,25 @@
   // streams then sees the full movement in each.
   var MOVES = { mousemove: 'move', pointermove: 'move', pointerrawupdate: 'raw' };
   function account() { return { x: 0, y: 0, byStamp: new Map() }; }
+  // 0.7.2 (R7): a real mousemove/pointermove reports the engine's own movement (the hidden
+  // cursor's), which belongs to the frame it is dispatched in, as in Chrome. The browser's
+  // movement arrives by message and missed that frame now and then, so the turn per frame went
+  // 3-9-3 px instead of 6-6-6 (three times as uneven as Chrome). The browser's account still
+  // runs alongside: the engine's movement is taken out of it, and where the two disagree (the
+  // browser moved the cursor back to the centre of the page: a jump the engine reports as
+  // movement) the event gets the account instead. A lock with unadjustedMovement keeps the
+  // browser's raw movement only.
+  var nativeMove = null;  // the engine's own movementX/Y getters
+  var lockRaw = false;
+  var AGREE_PX = 8;
+  function engineMovement(e, a) {
+    var s = window.devicePixelRatio || 1;
+    var nx = Math.round(nativeMove.x.call(e) * s), ny = Math.round(nativeMove.y.call(e) * s);
+    var near = function (n, p) { return Math.abs(n - p) <= Math.max(AGREE_PX, Math.abs(p) / 2); };
+    if (!near(nx, a.x) || !near(ny, a.y)) return null;
+    a.x -= nx; a.y -= ny;
+    return { x: nx, y: ny };
+  }
   var acc = { move: account(), raw: account() };  // movement not given out yet, per stream
   var lastReal = 0;  // when a real event last took movement (performance.now())
   var lastRaw = 0;   // … a real pointerrawupdate
@@ -98,8 +117,11 @@
     var a = acc[MOVES[e.type]] || acc.move;
     var m = a.byStamp.get(e.timeStamp);
     if (!m) {
-      m = { x: a.x, y: a.y };
-      a.x = 0; a.y = 0;
+      m = a === acc.move && e.isTrusted && nativeMove && !lockRaw ? engineMovement(e, a) : null;
+      if (!m) {
+        m = { x: a.x, y: a.y };
+        a.x = 0; a.y = 0;
+      }
       a.byStamp.set(e.timeStamp, m);
       if (a.byStamp.size > 32) a.byStamp.delete(a.byStamp.keys().next().value);
     }
@@ -120,6 +142,8 @@
     if (gettersInstalled) return;
     gettersInstalled = true;
     var MP = MouseEv.prototype;
+    var dx = Object.getOwnPropertyDescriptor(MP, 'movementX'), dy = Object.getOwnPropertyDescriptor(MP, 'movementY');
+    if (dx && dx.get && dy && dy.get) nativeMove = { x: dx.get, y: dy.get };
     override(MP, 'movementX', function (e) { return movementOf(e).x; });
     override(MP, 'movementY', function (e) { return movementOf(e).y; });
     override(MP, 'clientX', function () { return frozen.cx; });
@@ -231,7 +255,7 @@
       var before = locked;
       if (before && before !== p.el) before.removeAttribute(markAttr);
       installGetters();
-      locked = p.el; frozen = last;
+      locked = p.el; frozen = last; lockRaw = p.raw;
       captureTargets(true);
       p.resolve();
       if (before !== locked) fire(locked.ownerDocument, 'pointerlockchange');
