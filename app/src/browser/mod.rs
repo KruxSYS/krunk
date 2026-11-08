@@ -101,6 +101,8 @@ const TAB_BACKGROUND_DARK: u32 = 0xFF1F_2023;
 /// pause after its load before the swap (R7).
 const REVEAL_TIMEOUT_MS: i64 = 1000;
 const REVEAL_SETTLE_MS: i64 = 50;
+/// How long the old page stays beneath the new one after a tab switch (0.7.3).
+const HIDE_OLD_VIEW_MS: i64 = 100;
 /// The light theme's page colour (0.7.2, R6: no white while a window is resized; was white).
 const TAB_BACKGROUND_LIGHT: u32 = 0xFFF3_F4F6;
 /// What a page without a background of its own gets (`Emulation.setDefaultBackgroundColorOverride`).
@@ -1072,13 +1074,28 @@ impl Browser {
         if let Some(t) = self.tab_view(to) {
             t.set_visible(!self.frame(win).is_some_and(|f| f.window.is_minimized()));
         }
-        if let Some(f) = from.and_then(|f| self.tab_view(f)) {
-            f.set_visible(false);
-            // Its DevTools waits, hidden, until the tab is shown again.
-            if f.devtools_open() {
-                f.set_devtools_visible(false);
+        let Some(from) = from.filter(|f| *f != to) else { return };
+        // The old page is hidden a moment later (0.7.3): the engine presents the new view's
+        // first frame after it is shown (on a GPU that can be a frame late), and until then
+        // what shows through it must be the old page beneath, not the window's background.
+        let weak = self.me.clone();
+        crate::ffi::cef::post_ui_delayed(HIDE_OLD_VIEW_MS, move || {
+            let Some(b) = weak.upgrade() else { return };
+            // Switched back to it in the meantime: it stays.
+            let active_again = b
+                .window_of(from)
+                .is_some_and(|w| b.ws.borrow().model(w).and_then(|m| m.active().map(|t| t.id)) == Some(from));
+            if active_again {
+                return;
             }
-        }
+            if let Some(f) = b.tab_view(from) {
+                f.set_visible(false);
+                // Its DevTools waits, hidden, until the tab is shown again.
+                if f.devtools_open() {
+                    f.set_devtools_visible(false);
+                }
+            }
+        });
     }
 
     /// The tab a switch waited for has loaded (or waited long enough): swap the views now.

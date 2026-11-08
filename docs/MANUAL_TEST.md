@@ -998,3 +998,8 @@ Scripted on the VM: `scripts/vm-071-*.ps1` (evidence in `.pipeline/evidence-0.7.
    `import: passwords …` names the profile, its logins and keys.
 8. **Update notice:** with a newer version on the server, the ⋮ button shows a dot and the menu
    starts with "Update available – Krunk X.Y.Z", which opens the update prompt.
+
+## Krunk 0.7.3 (round 10)
+1. Dark theme, a GPU machine: switch quickly between a white page, a dark page and the new tab
+   page (Ctrl+Tab, clicks on tabs): no white frame between them. Switch back to a tab within a
+   moment: it stays shown.
