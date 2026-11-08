@@ -107,7 +107,18 @@ switch ($Phase) {
     Log "[$P] $(VaultInfo)"
     Log "[$P] entries in the file: $(python -c "import json,sys; d=json.load(open(sys.argv[1])); print(len(d['entries']), 'sealed entries')" "$data\vault.json")"
     StopKrunk
-    Log "[$P] 0.6.0 closed; vault.json $((Get-Item "$data\vault.json").Length) bytes, sha256 $((Get-FileHash "$data\vault.json").Hash.Substring(0,16))"
+    Log "[$P] $From closed; vault.json $((Get-Item "$data\vault.json").Length) bytes, sha256 $((Get-FileHash "$data\vault.json").Hash.Substring(0,16))"
+  }
+  'filecheck' {
+    # After the update: Krunk checks the installed files against the server's list.
+    for ($i = 0; $i -lt 90 -and -not (Select-String -Path "$data\krunk.log" -Pattern 'release files' -Quiet); $i++) { Start-Sleep 1 }
+    Log "[$P] version $(Version): $((Get-Content "$data\krunk.log" | Select-String 'release files|engine files|starting') -join ' ## ')"
+    Log "[$P] WARN/ERROR: $(@(Get-Content "$data\krunk.log" | Select-String ' WARN | ERROR ').Count)"
+    Copy-Item "$data\krunk.log" "$Shots\$P-krunk.log"
+  }
+  'start' {
+    StartKrunk; Win
+    Log "[$P] running $(Version)"
   }
   'update' {
     StartKrunk
