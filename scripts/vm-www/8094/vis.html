@@ -18,6 +18,8 @@ setInterval(() => {
   document.getElementById('out').textContent = line + '\n' + document.getElementById('out').textContent.slice(0, 2000);
   fetch('/log?' + encodeURIComponent(line)).catch(() => {});
 }, 1000);
+// 0.7.1: a page hidden by a 0x0 size must not see itself resized.
+addEventListener('resize', () => fetch('/log?' + encodeURIComponent(`${tag} resize ${innerWidth}x${innerHeight} ${document.visibilityState}`)).catch(() => {}));
 document.addEventListener('visibilitychange', () => fetch('/log?' + encodeURIComponent(`${tag} visibilitychange ${document.visibilityState}`)).catch(() => {}));
 </script>
 </body>

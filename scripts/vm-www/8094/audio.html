@@ -6,4 +6,7 @@
 const v=document.getElementById('v'),o=document.getElementById('o');
 addEventListener('keydown',e=>{if(e.key==='p'){v.muted=false;v.volume=1;v.play().then(()=>o.textContent+='playing\n',er=>o.textContent+='play error '+er+'\n');}
  if(e.key==='s'){v.pause();o.textContent+='paused\n'} if(e.key==='m'){v.muted=!v.muted;o.textContent+='muted='+v.muted+'\n'}});
+// 0.7.1: with ?report the playing position goes to /log every second (does it keep playing in
+// a background tab?).
+if(location.search.indexOf('report')>=0)setInterval(()=>fetch('/log?'+encodeURIComponent('audio-tab t='+v.currentTime.toFixed(1)+' paused='+v.paused+' '+document.visibilityState)).catch(()=>{}),1000);
 </script></body></html>
