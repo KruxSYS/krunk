@@ -49,3 +49,5 @@ a, a:visited { color: var(--link); text-decoration: none; border-radius: 2px; }
 a:hover { text-decoration: underline; text-underline-offset: 2px; }
 a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; text-decoration: none; }
 .btn:disabled { opacity: .5; cursor: default; }
+/* 0.7.2: a visible keyboard focus ring on every button. */
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

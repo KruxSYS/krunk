@@ -2655,11 +2655,27 @@ async function testPasswords(browser) {
     return def && def.value === 'ok';
   })), 'every passwords dialog has the confirm button as its default (Enter)');
   await page.click('#add');
+  await page.waitForTimeout(30);
+  // 0.7.2 (R5): a labelled form; the website field has the focus; an error under the field.
+  const labelled = (dlg) => page.evaluate((d) => Array.from(document.querySelectorAll(d + ' input')).every((i) =>
+    i.getAttribute('aria-label') || document.querySelector(d + ' label[for="' + i.id + '"]')), dlg);
+  check(await labelled('#entry-dialog') && await page.evaluate(() => document.activeElement.id === 'e-origin'), 'Add login: every field is labelled and the website has the focus');
+  await page.locator('#entry-dialog button[value="ok"]').click();
+  await page.waitForTimeout(30);
+  check((await page.textContent('#e-pw-error')).includes('Enter or generate') && await page.getAttribute('#e-pw', 'aria-invalid') === 'true' &&
+    await page.evaluate(() => document.activeElement.id === 'e-pw'), 'a missing password is shown under the field, marked invalid and focused');
+  await shot(page, 'passwords-add-login-error.png');
+  await page.click('#e-show');
+  check(await page.getAttribute('#e-pw', 'type') === 'text' && await page.getAttribute('#e-show', 'aria-pressed') === 'true', 'the eye button shows the password (aria-pressed)');
+  await page.click('#e-show');
+  check(await page.getAttribute('#e-pw', 'type') === 'password' && await page.getAttribute('#e-show', 'aria-pressed') === 'false', 'and hides it again');
   await page.fill('#e-origin', 'news.example.com');
   await page.fill('#e-user', 'reader');
   await page.click('#e-gen');
   await page.waitForTimeout(50);
   check(await page.inputValue('#e-pw') === 'k7#Vq2!mZp9@Lr4$Wx8e', 'generate fills a strong password');
+  check(await page.getAttribute('#e-show', 'aria-pressed') === 'true' && await page.getAttribute('#e-pw', 'aria-invalid') === null && (await page.textContent('#e-pw-error')) === '', 'the generated password is shown and the error is gone');
+  await shot(page, 'passwords-add-login.png');
   await page.locator('#entry-dialog button[value="ok"]').click();
   await page.waitForTimeout(60);
   const sv = await lastSent(page, 'vaultSave');
@@ -2698,7 +2714,28 @@ async function testPasswords(browser) {
   await page.click('#card-add');
   check((await page.textContent('#card-dialog')).includes('never stored') && (await page.locator('#card-dialog input').count()) === 6, 'the card dialog says the security code is never stored and has no CVC field');
   await page.locator('#card-dialog button[value="ok"]').click();
-  check((await page.textContent('#k-error')).includes('Enter the card number'), 'an empty card number is refused in the page');
+  check((await page.textContent('#k-number-error')).includes('Enter the card number') && await page.getAttribute('#k-number', 'aria-invalid') === 'true', 'an empty card number is refused under the field');
+  check(await labelled('#card-dialog'), 'Add card: every field is labelled');
+  await page.fill('#k-number', '4111');
+  await page.fill('#k-month', '13');
+  await page.locator('#card-dialog button[value="ok"]').click();
+  await page.waitForTimeout(30);
+  check((await page.textContent('#k-exp-error')).includes('1 to 12') && await page.getAttribute('#k-month', 'aria-invalid') === 'true' && (await page.textContent('#k-number-error')) === '', 'a month of 13 is refused under the expiry');
+  await shot(page, 'passwords-add-card-error.png');
+  const cardBox = await page.locator('#card-dialog').boundingBox();
+  check(cardBox && cardBox.width >= 440 && cardBox.width <= 540, 'the card dialog has the form width (' + (cardBox && cardBox.width) + ')');
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(30);
+  check(!(await page.locator('#card-dialog').evaluate((d) => d.open)), 'Esc closes the card dialog');
+  await page.click('#card-add');
+  await page.waitForTimeout(30);
+  check(await page.evaluate(() => document.activeElement.id === 'k-number') && (await page.textContent('#k-exp-error')) === '' && await page.getAttribute('#k-month', 'aria-invalid') === null, 'reopened: the number has the focus, no old errors');
+  // Dark theme: the same dialog on the dark tokens.
+  await emit(page, { event: 'theme', theme: 'dark' });
+  await page.waitForTimeout(30);
+  check(await page.evaluate(() => getComputedStyle(document.getElementById('card-dialog')).backgroundColor) === 'rgb(43, 45, 49)', 'dark theme: the dialog is on the raised dark surface');
+  await shot(page, 'passwords-add-card-dark.png');
+  await emit(page, { event: 'theme', theme: 'light' });
   await page.fill('#k-number', '5555 5555 5555 4444');
   await page.fill('#k-month', '7');
   await page.fill('#k-year', '2031');

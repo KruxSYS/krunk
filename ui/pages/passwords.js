@@ -78,14 +78,19 @@
   });
 
   // ---- password fields (0.7.0, R14): show/hide and the strength meter ----
-  function attachReveal(input) {
+  function setShown(input, shown) {
+    input.type = shown ? 'text' : 'password';
+    const btn = input.parentNode.querySelector('.reveal');
+    if (!btn) return;
+    btn.setAttribute('aria-pressed', String(shown));
+    btn.setAttribute('aria-label', shown ? 'Hide password' : 'Show password');
+    btn.title = btn.getAttribute('aria-label');
+  }
+  function attachReveal(input, id) {
     const btn = el('button', { type: 'button', class: 'reveal', 'aria-label': 'Show password', title: 'Show password', 'aria-pressed': 'false' });
+    if (id) btn.id = id;
     btn.addEventListener('click', function () {
-      const shown = input.type === 'password';
-      input.type = shown ? 'text' : 'password';
-      btn.setAttribute('aria-pressed', String(shown));
-      btn.setAttribute('aria-label', shown ? 'Hide password' : 'Show password');
-      btn.title = btn.getAttribute('aria-label');
+      setShown(input, input.type === 'password');
       input.focus();
     });
     input.parentNode.appendChild(btn);
@@ -100,6 +105,24 @@
     });
   }
   ['c-old', 'c-new', 'c-new2', 'r-new', 'r-new2', 'rd-pw', 'rr-pw'].forEach((id) => attachReveal($(id)));
+  attachReveal($('e-pw'), 'e-show');
+  // An error under a field (0.7.2): the field is marked invalid until it is edited.
+  function fieldError(input, errorId, msg) {
+    $(errorId).textContent = msg;
+    input.setAttribute('aria-invalid', 'true');
+  }
+  function clearErrors(form) {
+    form.querySelectorAll('.field-error, .error').forEach((p) => { p.textContent = ''; });
+    form.querySelectorAll('[aria-invalid]').forEach((i) => i.removeAttribute('aria-invalid'));
+  }
+  ['entry-form', 'card-form'].forEach(function (id) {
+    $(id).addEventListener('input', function (ev) {
+      const t = ev.target;
+      if (!t.hasAttribute('aria-invalid')) return;
+      t.removeAttribute('aria-invalid');
+      (t.getAttribute('aria-describedby') || '').split(' ').forEach((d) => { if (d && $(d)) $(d).textContent = ''; });
+    });
+  });
   const STRENGTH = ['Too short', 'Weak', 'Weak', 'Fair', 'Fair', 'Strong', 'Very strong'];
   function meter(input, bar, hint) {
     input.addEventListener('input', function () {
@@ -408,22 +431,31 @@
     editingCard = c || null;
     $('card-title').textContent = c ? 'Edit card' : 'Add card';
     $('k-number').value = '';
-    $('k-number').placeholder = c ? '•••• •••• •••• ' + c.last4 + ' (unchanged)' : '';
+    $('k-number').placeholder = c ? '•••• •••• •••• ' + c.last4 + ' (unchanged)' : '1234 5678 9012 3456';
     $('k-month').value = c ? c.expMonth : '';
     $('k-year').value = c ? c.expYear : '';
     $('k-name').value = c ? c.name : '';
     $('k-nick').value = c ? c.nickname : '';
     $('k-address').value = '';
-    $('k-address').placeholder = c && c.hasAddress ? '(unchanged)' : '';
-    $('k-error').textContent = '';
+    $('k-address').placeholder = c && c.hasAddress ? '(unchanged)' : 'Optional';
+    clearErrors($('card-form'));
     $('card-dialog').showModal();
+    setTimeout(() => $(c ? 'k-nick' : 'k-number').focus(), 0);
   }
   $('card-add').addEventListener('click', () => editCard(null));
   $('card-form').addEventListener('submit', function (ev) {
     if (ev.submitter && ev.submitter.value === 'cancel') return;
     ev.preventDefault();
+    clearErrors($('card-form'));
     const number = $('k-number').value.trim();
-    if (!editingCard && !number) { $('k-error').textContent = 'Enter the card number.'; return; }
+    const month = $('k-month').value, year = $('k-year').value;
+    let first = null;
+    const fail = (input, errorId, msg) => { fieldError($(input), errorId, msg); first = first || input; };
+    if (!editingCard && !number) fail('k-number', 'k-number-error', 'Enter the card number.');
+    else if (number && !/^[\d -]+$/.test(number)) fail('k-number', 'k-number-error', 'Use digits only.');
+    if (month && !(Number(month) >= 1 && Number(month) <= 12)) fail('k-month', 'k-exp-error', 'The month is 1 to 12.');
+    else if (year && !(Number(year) >= 2000 && Number(year) <= 2100)) fail('k-year', 'k-exp-error', 'Enter the year with four digits.');
+    if (first) { $(first).focus(); return; }
     const card = {
       id: editingCard ? editingCard.id : null,
       number: number || null,
@@ -438,7 +470,12 @@
       $('card-dialog').close();
       Page.toast('Card saved');
       loadCards();
-    }, function (err) { $('k-error').textContent = err.message; });
+    }, function (err) {
+      // The host's reasons name the field ("card number", "expiry").
+      if (/card number/i.test(err.message)) { fieldError($('k-number'), 'k-number-error', err.message); $('k-number').focus(); }
+      else if (/expir/i.test(err.message)) { fieldError($('k-month'), 'k-exp-error', err.message); $('k-month').focus(); }
+      else $('k-error').textContent = err.message;
+    });
   });
 
   function renderNever(list) {
@@ -514,18 +551,19 @@
     $('e-user').value = e ? e.username : '';
     $('e-pw').value = '';
     $('e-pw').placeholder = e ? '(unchanged)' : '';
-    $('e-pw').type = 'password';
+    setShown($('e-pw'), false);
     $('e-note').value = '';
-    $('e-note').placeholder = e && e.hasNote ? '(unchanged)' : '';
-    $('e-error').textContent = '';
+    $('e-note').placeholder = e && e.hasNote ? '(unchanged)' : 'Optional';
+    clearErrors($('entry-form'));
     $('entry-dialog').showModal();
+    setTimeout(() => $(e ? 'e-pw' : 'e-origin').focus(), 0);
   }
   $('add').addEventListener('click', () => edit(null));
-  $('e-show').addEventListener('click', function () { $('e-pw').type = $('e-pw').type === 'password' ? 'text' : 'password'; });
   $('e-gen').addEventListener('click', function () {
     LB.request('generatePassword', { length: 20, symbols: true }).then(function (r) {
       $('e-pw').value = r.password;
-      $('e-pw').type = 'text';
+      setShown($('e-pw'), true);
+      $('e-pw').dispatchEvent(new Event('input', { bubbles: true }));
     });
   });
   $('entry-form').addEventListener('submit', function (ev) {
@@ -534,7 +572,8 @@
     let origin = $('e-origin').value.trim();
     if (origin && !/^https?:\/\//i.test(origin)) origin = 'https://' + origin;
     const pw = $('e-pw').value;
-    if (!editing && !pw) { $('e-error').textContent = 'Enter or generate a password.'; return; }
+    clearErrors($('entry-form'));
+    if (!editing && !pw) { fieldError($('e-pw'), 'e-pw-error', 'Enter or generate a password.'); $('e-pw').focus(); return; }
     // Like the password, an empty note field keeps the stored note when editing.
     const entry = { id: editing ? editing.id : null, origin: origin, username: $('e-user').value, password: pw || null, note: editing && $('e-note').value === '' ? null : $('e-note').value };
     LB.request('vaultSave', { entry: entry }).then(function () {
@@ -542,7 +581,10 @@
       $('entry-dialog').close();
       Page.toast('Saved');
       load();
-    }, function (err) { $('e-error').textContent = err.message; });
+    }, function (err) {
+      if (/address|website|origin/i.test(err.message)) { fieldError($('e-origin'), 'e-origin-error', err.message); $('e-origin').focus(); }
+      else $('e-error').textContent = err.message;
+    });
   });
 
   // ---- change master password (0.7.0, R14: an error under each field; nothing typed is lost) ----
