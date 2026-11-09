@@ -71,6 +71,11 @@ pub const APPROVAL_POLL: Limit = l("approval-poll/device", 30, MIN);
 pub const APPROVAL_STEP: Limit = l("approval-step/device", 60, HOUR);
 pub const DEVICES_LIST_DEVICE: Limit = l("devices/device", 60, MIN);
 pub const SESSIONS_LIST_DEVICE: Limit = l("sessions/device", 60, MIN);
+// S7 (PROTOCOL §11.7): a full first sync pulls and pushes many pages; a running device every
+// 5 minutes uses a few.
+pub const RECORDS_READ: Limit = l("records-read/device", 1200, HOUR);
+pub const RECORDS_WRITE: Limit = l("records-write/device", 600, HOUR);
+pub const REKEY: Limit = l("rekey/device", 600, HOUR);
 
 pub fn ip_key(keys: &crate::config::Keys, ip: IpAddr) -> [u8; 32] {
     crypto::hmac(&keys.token_hmac, "krunk-rl-ip", &[ip.to_string().as_bytes()])

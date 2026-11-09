@@ -363,12 +363,6 @@ async fn active_devices(conn: &mut PgConnection, account_id: Uuid) -> Result<BTr
 
 // ---- sync/state -----------------------------------------------------------------------------
 
-/// Records still under an older epoch than their key kind's current one (the rekey's progress,
-/// PROTOCOL §7 step 5). The records table arrives with S7 (migration 0005).
-pub async fn remaining_old(_conn: &mut PgConnection, _account_id: Uuid) -> Result<i64, sqlx::Error> {
-    Ok(0)
-}
-
 #[derive(sqlx::FromRow)]
 pub struct StateRow {
     pub keyset_gen: Uuid,
@@ -403,7 +397,7 @@ pub async fn sync_state(State(state): State<AppState>, d: DeviceAuth) -> ApiResu
     .bind(d.account_id)
     .fetch_one(&mut *conn)
     .await?;
-    let remaining_old = remaining_old(&mut conn, d.account_id).await?;
+    let remaining_old = crate::records::remaining_old(&mut conn, d.account_id).await?;
     let q = &state.config.quota;
     Ok(Json(json!({
         "keyset_gen": st.as_ref().map(|s| s.keyset_gen),

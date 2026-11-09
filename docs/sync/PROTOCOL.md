@@ -806,6 +806,18 @@ The server enforces the order of steps, allows a single attempt, and deletes the
   (`escrow_fetched`).
 - **Body limits** are per route group: 16 KiB by default, 512 KiB for `keys/commit`, 2 MiB for
   `records/batch` and `rekey/batch`, and 2 MiB as the ceiling for any request.
+- **Records (S7):**
+  - `records` returns each envelope as a JSON object. `since=0` always gets everything; a
+    `since` above 0 but below `purge_horizon_seq` is 410.
+  - `epoch_lt` takes an optional `k=ak|pak` (default `ak`).
+  - In `records/batch`, `if_seq` 0 means "new". Each write gets its own result (`ok` with the
+    new `seq`, or `conflict` with `current` = `{seq, envelope}` or null). The quotas apply to the
+    whole batch: if it would go over, nothing of it is kept (400 `quota_exceeded`).
+  - The server refuses a ciphertext smaller than the smallest bucket (256 + 16 bytes) and
+    answers 413 for one above the largest. A write of a frozen key kind fails the whole batch
+    with 423.
+  - `rekey/batch` takes envelopes of the current epoch of their key kind only (409 for a stale
+    `epoch`). A replacement whose old record is already gone is skipped.
 
 ### 11.7 Records
 | Method | Path | Auth | Request | Response | Errors |

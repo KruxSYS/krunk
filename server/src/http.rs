@@ -9,6 +9,7 @@ use crate::devices;
 use crate::keys;
 use crate::password::Passwords;
 use crate::ratelimit;
+use crate::records;
 use crate::sessions;
 use crate::turnstile::Turnstile;
 use axum::extract::{ConnectInfo, DefaultBodyLimit, MatchedPath, Request, State};
@@ -29,7 +30,7 @@ use tower_http::timeout::TimeoutLayer;
 pub const BODY_LIMIT: usize = 16 * 1024;
 /// `keys/commit` (two directories and the escrow).
 pub const KEYS_BODY_LIMIT: usize = 512 * 1024;
-/// The ceiling for every request (`records/batch` and `rekey/batch`, S7, are the largest).
+/// `records/batch` and `rekey/batch` (S7), the largest; also the ceiling for every request.
 pub const MAX_BODY_LIMIT: usize = 2 * 1024 * 1024;
 
 /// A route group's body limit. A declared `Content-Length` above it is refused with 413 after
@@ -127,6 +128,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/devices/{id}/revoke", post(keys::device_revoke))
         .route("/api/v1/sessions", get(keys::device_sessions))
         .route("/api/v1/sessions/{id}/revoke", post(keys::device_session_revoke))
+        // S7: records.
+        .route("/api/v1/records", get(records::pull))
         .route_layer(middleware::from_fn_with_state(state.clone(), devices::no_foreign_origin))
         .route_layer(middleware::from_fn_with_state(state.clone(), sessions::accounts_gate));
     // Larger bodies, only where the protocol needs them (PROTOCOL §11.1).
@@ -134,11 +137,17 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/keys/commit", post(keys::keys_commit))
         .route_layer(middleware::from_fn_with_state(state.clone(), devices::no_foreign_origin))
         .route_layer(middleware::from_fn_with_state(state.clone(), sessions::accounts_gate));
+    let records_write = Router::new()
+        .route("/api/v1/records/batch", post(records::batch))
+        .route("/api/v1/rekey/batch", post(records::rekey))
+        .route_layer(middleware::from_fn_with_state(state.clone(), devices::no_foreign_origin))
+        .route_layer(middleware::from_fn_with_state(state.clone(), sessions::accounts_gate));
     let api = Router::new()
         .route("/api/v1/web/config", get(web_config))
         .merge(limited(web, BODY_LIMIT))
         .merge(limited(device, BODY_LIMIT))
         .merge(limited(keys_commit, KEYS_BODY_LIMIT))
+        .merge(limited(records_write, MAX_BODY_LIMIT))
         .fallback(not_found);
     Router::new()
         .route("/healthz", get(healthz))

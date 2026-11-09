@@ -29,6 +29,7 @@ use tower::ServiceExt;
 
 mod s3;
 mod s6;
+mod s7;
 
 static N: AtomicU32 = AtomicU32::new(0);
 

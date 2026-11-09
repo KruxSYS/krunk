@@ -25,6 +25,7 @@ mod keys;
 mod mail;
 mod password;
 mod ratelimit;
+mod records;
 mod secrets;
 mod sessions;
 mod totp;
