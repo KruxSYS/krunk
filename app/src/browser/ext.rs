@@ -269,6 +269,15 @@ fn normalize_entries(mut files: Vec<(String, Vec<u8>)>) -> Vec<(String, Vec<u8>)
     files
 }
 
+/// The DevTools events `ext_devtools_event` handles.
+const DEVTOOLS_EVENTS: &[&str] = &[
+    "Target.attachedToTarget",
+    "Runtime.executionContextCreated",
+    "Runtime.executionContextDestroyed",
+    "Runtime.executionContextsCleared",
+    "Runtime.bindingCalled",
+];
+
 impl Browser {
     // ------------------------------------------------------------ start-up and state
 
@@ -525,7 +534,7 @@ impl Browser {
     /// A tab view is being set up: its DevTools events (the binding calls and the worlds).
     pub(super) fn ext_attach_tab(&self, tab: TabId, view: &View) {
         let weak = self.me.clone();
-        view.on_devtools_event(move |method, params| {
+        view.on_devtools_event(DEVTOOLS_EVENTS, move |method, params| {
             if let Some(b) = weak.upgrade() {
                 b.ext_devtools_event(tab, &method, &params);
             }

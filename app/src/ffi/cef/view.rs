@@ -399,6 +399,8 @@ pub(super) struct ViewInner {
     /// DevTools protocol calls in flight: method (for error logs) and the
     /// callback waiting for the result, if any.
     devtools_calls: RefCell<HashMap<i32, (String, Option<DevToolsDone>)>>,
+    /// The DevTools events the listener handles; others are not parsed (0.10.0).
+    devtools_methods: Cell<&'static [&'static str]>,
     devtools_observer: RefCell<Option<Registration>>,
     /// The docked DevTools browser, once it exists, and its place until then.
     devtools: RefCell<Option<Browser>>,
@@ -469,6 +471,7 @@ impl View {
             devtools_id: Cell::new(0),
             renderer_pid: Cell::new(0),
             devtools_calls: RefCell::new(HashMap::new()),
+            devtools_methods: Cell::new(&[]),
             devtools_observer: RefCell::new(None),
             devtools: RefCell::new(None),
             devtools_pending: Cell::new((None, None)),
@@ -1302,8 +1305,15 @@ impl View {
         self.0.ev.audio.set(Box::new(f));
     }
 
-    /// A DevTools protocol event arrived (after a domain was enabled with a method call).
-    pub fn on_devtools_event(&self, f: impl FnMut(String, serde_json::Value) + 'static) {
+    /// A DevTools protocol event arrived (after a domain was enabled with a method call), for
+    /// the `methods` named. An enabled domain sends much more (console messages, frame events)
+    /// and none of that is parsed.
+    pub fn on_devtools_event(
+        &self,
+        methods: &'static [&'static str],
+        f: impl FnMut(String, serde_json::Value) + 'static,
+    ) {
+        self.0.devtools_methods.set(methods);
         self.0.ev.devtools_event.set(Box::new(f));
     }
 
@@ -1348,7 +1358,7 @@ impl ViewInner {
     /// A DevTools protocol call finished: failures are logged, a waiting
     /// callback gets the result.
     pub(super) fn devtools_event(&self, method: &str, params: &[u8]) {
-        if self.ev.devtools_event.is_set() {
+        if self.ev.devtools_event.is_set() && self.devtools_methods.get().contains(&method) {
             let value = serde_json::from_slice(params).unwrap_or(serde_json::Value::Null);
             self.ev.devtools_event.with(|f| f(method.to_string(), value));
         }
