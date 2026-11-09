@@ -34,7 +34,11 @@ impl Browser {
             Request::OpenBookmarkBackground { id } => {
                 let url = self.store.borrow().bookmark(id).ok().flatten().and_then(|b| b.url);
                 if let Some(url) = url {
-                    self.open_in_background(&url);
+                    if sender == Sender::Popup {
+                        self.open_keeping_dropdown(&url);
+                    } else {
+                        self.open_in_background(&url);
+                    }
                 }
             }
             Request::Find { query, backwards } => self.find(&query, backwards),
@@ -413,6 +417,31 @@ impl Browser {
     /// open dropdown (`rect` none, the same folder) keeps its offset; a subfolder has none.
     pub(super) fn show_bookmark_folder(&self, id: i64, rect: Option<PopupRect>, from: Option<u32>) {
         self.show_folder_level(id, rect, from, None);
+    }
+
+    /// Middle-click in a dropdown (0.11.0): the new tab opens behind the current one and the
+    /// dropdown stays open. Creating the tab's view takes the activation from the popup (on
+    /// Windows), which would close it: that loss is ignored for a moment, and the dropdown
+    /// gets the activation back.
+    fn open_keeping_dropdown(&self, url: &str) {
+        self.popup_hold_until.set(now_ms() + 600);
+        self.open_in_background(url);
+        let weak = self.me.clone();
+        crate::ffi::cef::post_ui_delayed(120, move || {
+            let Some(b) = weak.upgrade() else { return };
+            let popup = b
+                .popup
+                .try_borrow()
+                .ok()
+                .and_then(|p| p.as_ref().filter(|p| p.open()).map(|p| (p.window, p.view.clone())));
+            if let Some((w, view)) = popup {
+                let r = w.rect();
+                w.show_at(crate::ffi::window::ScreenRect { x: r.x, y: r.y, width: r.width, height: r.height }, true);
+                if let Some(c) = view {
+                    c.focus();
+                }
+            }
+        });
     }
 
     /// "‹ Back" (or Backspace/Left) in a dropdown: the folder the open subfolder came from,

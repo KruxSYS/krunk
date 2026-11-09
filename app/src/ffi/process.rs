@@ -43,6 +43,23 @@ pub fn wait_for_process(pid: u32, timeout_ms: u32) {
     }
 }
 
+/// Ends process `pid` (a renderer of ours that stopped responding, 0.11.0).
+pub fn terminate(pid: u32) -> bool {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+    // SAFETY: a handle with terminate rights only, closed afterwards.
+    unsafe {
+        match OpenProcess(PROCESS_TERMINATE, false, pid) {
+            Ok(h) => {
+                let ok = TerminateProcess(h, 1).is_ok();
+                let _ = CloseHandle(h);
+                ok
+            }
+            Err(_) => false,
+        }
+    }
+}
+
 /// Starts a new instance of this executable with `args`.
 pub fn relaunch(args: &[String]) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;

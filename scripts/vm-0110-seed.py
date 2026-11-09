@@ -16,8 +16,8 @@ next_id = [100]
 def add(parent, title, url=None, pos=0):
     i = next_id[0]
     next_id[0] += 1
-    db.execute("INSERT INTO bookmarks (id, parent, is_folder, title, url, position, added) VALUES (?,?,?,?,?,?,?)",
-               (i, parent, 0 if url else 1, title, url, pos, now))
+    db.execute("INSERT INTO bookmarks (id, parent, is_folder, title, url, position, added, guid) VALUES (?,?,?,?,?,?,?,?)",
+               (i, parent, 0 if url else 1, title, url, pos, now, os.urandom(16)))
     return i
 
 

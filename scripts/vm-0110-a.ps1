@@ -59,7 +59,16 @@ $rowY0 = Y 126
 
 if ($Phase -eq 'restart') {
   Shot "$P-1-bar-icons-kept"
-  Start-Sleep 40
+  # Item 3 (the dropdown hangs at the bar's right end): » → Later, middle-click Wikipedia.
+  SafeGo 'http://localhost:8094/words.html' 2500
+  Click (X ($wDip - 22)) $barY 900
+  Keys '{END}' 150; Keys '{UP}' 150; Keys '{ENTER}' 900
+  MiddleClick (X ($wDip - 160)) ($rowY0 + [int](32 * $c.Scale)) 1500
+  Log "[$P] after the middle-click: popups visible $(@(Popups).Count), title '$([TW]::Txt($A))'"
+  Shot "$P-3-middle-click-keeps-menu"
+  Keys '{ESC}' 600
+  Shot "$P-3-new-tab-behind"
+  Start-Sleep 30
   $lines = ProbeLines
   Log "[$P] favicon-probe lines in this session (40 s after the start): $($lines.Count)"
   $lines | ForEach-Object { Log "[$P] $_" }
@@ -103,7 +112,7 @@ Focus $A | Out-Null
 SafeKeys '^1' 800
 SafeKeys '^u' 2500
 Shot "$P-15-source"
-Click (X ($wDip - 175)) (Y 92) 1200     # "Beautify" in the viewer's bar (left of Wrap lines)
+Click (X ($wDip - 140)) (Y 92) 1200     # the "Beautify" label in the viewer's bar (left of Wrap lines)
 Shot "$P-15-beautified"
 Log "[$P] notepad processes: $(@(Get-Process notepad -ErrorAction SilentlyContinue).Count)"
 SafeKeys '^1' 800

@@ -151,6 +151,8 @@ struct TabView {
     blank_start: Cell<bool>,
     /// The page does not respond (the engine said so; 0.11.0).
     unresponsive: Cell<bool>,
+    /// "Wait" was chosen: no prompt until then (ms).
+    hang_quiet_until: Cell<i64>,
     /// The last icon handled (its site and a hash of its bytes): an animated or re-announced
     /// icon with the same bytes is not encoded, stored and sent again (0.11.0).
     last_favicon: Cell<u64>,
@@ -262,6 +264,8 @@ pub struct Browser {
     request_from: Cell<PopupSlot>,
     /// Numbers the popup contents that wait for their paint answer.
     popup_seq: Cell<u64>,
+    /// Until then (ms) a lost activation does not close the popup (0.11.0).
+    popup_hold_until: Cell<i64>,
     /// Views the engine is creating for a page's `window.open`, waiting for
     /// their tab's CreateView effect.
     adopted: RefCell<HashMap<TabId, (View, Rc<TabNet>)>>,
@@ -399,6 +403,7 @@ impl Browser {
             menu_closing: Cell::new(false),
             request_from: Cell::new(PopupSlot::Main),
             popup_seq: Cell::new(0),
+            popup_hold_until: Cell::new(0),
             adopted: RefCell::new(HashMap::new()),
             downloads: RefCell::new(Downloads::new()),
             parts_jobs: segmented::PartsJobs::default(),
@@ -483,6 +488,7 @@ impl Browser {
         browser.init_updates();
         browser.init_favicon_probe();
         browser.init_app_identity();
+        browser.start_hang_timer();
         browser.init_integrity();
         browser.start_power_timer();
         browser.init_sync();
@@ -921,6 +927,7 @@ impl Browser {
                 loaded_once: Cell::new(false),
                 blank_start: Cell::new(!popup && !lb_core::pages::is_blank(&url)),
                 unresponsive: Cell::new(false),
+                hang_quiet_until: Cell::new(0),
                 last_favicon: Cell::new(0),
             },
         );
@@ -2762,6 +2769,11 @@ impl Browser {
     /// popup closes, and the toolbar click that may have caused this does
     /// not reopen it (`toggle`).
     fn hide_popup_by_focus_loss(&self) {
+        // A middle-clicked bookmark's new background tab took activation (0.11.0): the
+        // dropdown it came from stays open (it gets activation back).
+        if now_ms() < self.popup_hold_until.get() {
+            return;
+        }
         let anchor = self
             .popup
             .try_borrow()
@@ -3049,6 +3061,7 @@ impl WindowEvents for AppEvents {
             drag::DRAG_TIMER => b.drag_tick(),
             segmented::PARTS_TIMER => b.parts_tick(),
             ZOOM_TIMER => b.zoom_tick(),
+            hang::HANG_TIMER => b.hang_tick(),
             bounce::BOUNCE_TIMER => b.bounce_tick(),
             pip::PIP_TIMER => b.pip_tick(),
             ext::EXT_POPUP_TIMER => b.ext_popup_tick(),

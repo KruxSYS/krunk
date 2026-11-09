@@ -1383,17 +1383,29 @@ impl View {
         self.0.ev.unresponsive.set(Box::new(f));
     }
 
+    /// The engine's own flag (0.11.0): input sent to the page has waited for its renderer longer
+    /// than the hang watcher allows (15 s). The engine sets it even while it does not report the
+    /// hang: it never calls OnRenderProcessUnresponsive while a DevTools session is attached,
+    /// and Krunk keeps one on every tab.
+    pub fn is_unresponsive(&self) -> bool {
+        self.host().is_some_and(|h| h.is_render_process_unresponsive() != 0)
+    }
+
+    /// Ends this view's renderer process (Close page on a hung page; the crash event follows).
+    /// The engine's callback when it has one, else the process by its id.
+    pub fn end_renderer(&self) -> bool {
+        if let Some(cb) = self.0.hang.borrow_mut().take() {
+            cb.terminate();
+            return true;
+        }
+        let pid = self.0.renderer_pid.get();
+        pid != 0 && crate::ffi::process::terminate(pid)
+    }
+
     /// "Wait": the engine asks again if the page still does not respond.
     pub fn hang_wait(&self) {
         if let Some(cb) = self.0.hang.borrow_mut().take() {
             cb.wait();
-        }
-    }
-
-    /// "Close page": the page's renderer process ends (the crash event follows).
-    pub fn hang_terminate(&self) {
-        if let Some(cb) = self.0.hang.borrow_mut().take() {
-            cb.terminate();
         }
     }
 
