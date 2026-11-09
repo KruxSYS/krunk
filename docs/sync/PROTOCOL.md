@@ -772,6 +772,37 @@ The server enforces the order of steps, allows a single attempt, and deletes the
 - Independently, each sync run reads `pending_approvals` from `sync/state` and shows a
   notification on A.
 
+**As built in 0.9.0 (S5–S6), clarifications and additions:**
+- **Directory transport:** a directory version travels as `{seq, bytes, mac, chain?, escrow_mac?}`,
+  every field base64url without padding (`seq` only in answers). `keys/head` answers
+  `{ak_dir, pak_dir}` in that form; `keys/chain` answers `{ak:[…], pak:[…]}` oldest first, at most
+  1000 per answer.
+- **`keys/commit`:** `escrow` is `{rr_gen, rr_wrap_pp:{n, ct, commit}, rr_wrap_rk:{…}, pp_kdf}`
+  (§5.3). The first commit (`if_absent: true`) carries both directories at seq 1, epoch 1 and
+  `rr_gen` 1, and the escrow. Every later commit names the head hash it builds on
+  (`if_ak_prev_hash` / `if_pak_prev_hash`); a mismatch is **409** `{error, message, head:{ak:{seq,
+  hash}, pak:{seq, hash}}}`. The escrow travels only with a `pak_dir` of the same `rr_gen`, and
+  `esc_pk` changes only together with a higher `rr_gen`. Each listed device (and each vault-key
+  device) must be an active device of the account; the revoked list only grows; `created_by` is
+  the caller. While a rotation of a key kind is pending, a commit of that kind at the same epoch
+  is **423** `rotation_pending`; the next epoch clears it (and the lease).
+- **Which removals rotate:** a device that is (or ever was) listed in `ak_dir`. The server keeps
+  `has_keys` (in the current `ak_dir`) and `had_keys` (ever) per device; `web/devices` and
+  `devices` show `has_keys` and `last_sync`. Every removal path rotates: the website, another
+  device, `device/unlink`, refresh-token reuse, "Sign out everywhere else" with devices, and the
+  90-day idle sign-out.
+- **`sync/state`** also returns `rr_gen`.
+- **Approvals:** the JSON names are exactly `commit_n` (create), `epk_A`/`nonce_A` (respond),
+  `epk_N`/`nonce_N`/`box_N` (reveal), `tag_N` (confirm) and `box_A` (keys); 32-byte values and the
+  boxes in base64url. `GET approvals/{id}` shows N `epk_A`, `nonce_A` and `box_A`, and shows A
+  `commit_N`, `epk_N`, `nonce_N`, `box_N` and `tag_N`. A step out of order is 409. When N has
+  collected `box_A` the approval is deleted. **Addition:** `POST approvals/{id}/cancel` (either
+  side) → 204 ends it at once (a wrong SAS, a bad tag, or the user gave up); N must ask again.
+  Creating one is mailed to the account (`approval_requested`), as is every escrow fetch
+  (`escrow_fetched`).
+- **Body limits** are per route group: 16 KiB by default, 512 KiB for `keys/commit`, 2 MiB for
+  `records/batch` and `rekey/batch`, and 2 MiB as the ceiling for any request.
+
 ### 11.7 Records
 | Method | Path | Auth | Request | Response | Errors |
 |---|---|---|---|---|---|

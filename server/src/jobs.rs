@@ -8,12 +8,14 @@
 //! - S3: link grants 10 minutes past expiry, approved links whose tokens were never collected
 //!   (30 minutes), expired access tokens, device IPs unused for IP_RETENTION_DAYS, devices
 //!   whose refresh tokens went 90 days unused (signed out), and revoked devices after 30 days.
+//! - S6: expired approvals and rotation leases. A device signed out for being idle that ever
+//!   held sync keys starts a key rotation, like any other removal (PROTOCOL §7).
 
 use sqlx::PgPool;
 use std::time::Duration;
 
 pub async fn run_once(db: &PgPool, ip_retention_days: i32) -> Result<(), sqlx::Error> {
-    let steps: [(&str, &str); 15] = [
+    let steps: [(&str, &str); 17] = [
         (
             "session ips",
             "UPDATE web_sessions SET ip = NULL WHERE ip IS NOT NULL AND last_used_at < now() - make_interval(days => $1)",
@@ -53,10 +55,26 @@ pub async fn run_once(db: &PgPool, ip_retention_days: i32) -> Result<(), sqlx::E
         ),
         (
             "idle devices",
-            "UPDATE devices SET revoked_at = now() WHERE revoked_at IS NULL AND id IN (
-               SELECT device_id FROM refresh_families WHERE revoked_at IS NULL AND rotated_at < now() - interval '90 days')",
+            "WITH gone AS (
+               UPDATE devices SET revoked_at = now(), has_keys = false WHERE revoked_at IS NULL AND id IN (
+                 SELECT device_id FROM refresh_families WHERE revoked_at IS NULL AND rotated_at < now() - interval '90 days')
+               RETURNING account_id, had_keys),
+             rotate AS (
+               UPDATE sync_state SET rotation_ak = true, rotation_pak = true, updated_at = now()
+               WHERE account_id IN (SELECT account_id FROM gone WHERE had_keys))
+             SELECT 1 FROM gone",
         ),
         ("revoked devices", "DELETE FROM devices WHERE revoked_at < now() - interval '30 days'"),
+        ("approvals", "DELETE FROM approvals WHERE expires_at < now()"),
+        (
+            "rotation leases",
+            "UPDATE sync_state SET
+               lease_ak_device = CASE WHEN lease_ak_until < now() THEN NULL ELSE lease_ak_device END,
+               lease_ak_until = CASE WHEN lease_ak_until < now() THEN NULL ELSE lease_ak_until END,
+               lease_pak_device = CASE WHEN lease_pak_until < now() THEN NULL ELSE lease_pak_device END,
+               lease_pak_until = CASE WHEN lease_pak_until < now() THEN NULL ELSE lease_pak_until END
+             WHERE lease_ak_until < now() OR lease_pak_until < now()",
+        ),
     ];
     for (name, sql) in steps {
         let mut q = sqlx::query(sql);

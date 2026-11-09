@@ -371,6 +371,7 @@ async fn revoking_rename_and_sessions() {
             "id",
             "label",
             "last_country",
+            "last_sync",
             "last_used",
             "platform",
             "revoked_at",

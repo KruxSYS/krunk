@@ -28,6 +28,8 @@ pub enum Template {
     DeviceLinked,
     DeviceRevoked,
     TokenReuse,
+    EscrowFetched,
+    ApprovalRequested,
 }
 
 impl Template {
@@ -42,6 +44,8 @@ impl Template {
             Template::DeviceLinked => "device_linked",
             Template::DeviceRevoked => "device_revoked",
             Template::TokenReuse => "token_reuse",
+            Template::EscrowFetched => "escrow_fetched",
+            Template::ApprovalRequested => "approval_requested",
         }
     }
 
@@ -49,7 +53,7 @@ impl Template {
         Template::ALL.into_iter().find(|t| t.name() == n)
     }
 
-    pub const ALL: [Template; 9] = [
+    pub const ALL: [Template; 11] = [
         Template::Verify,
         Template::RegisterExists,
         Template::Reset,
@@ -59,6 +63,8 @@ impl Template {
         Template::DeviceLinked,
         Template::DeviceRevoked,
         Template::TokenReuse,
+        Template::EscrowFetched,
+        Template::ApprovalRequested,
     ];
 
     fn source(self) -> &'static str {
@@ -72,6 +78,8 @@ impl Template {
             Template::DeviceLinked => include_str!("../templates/device_linked.txt"),
             Template::DeviceRevoked => include_str!("../templates/device_revoked.txt"),
             Template::TokenReuse => include_str!("../templates/token_reuse.txt"),
+            Template::EscrowFetched => include_str!("../templates/escrow_fetched.txt"),
+            Template::ApprovalRequested => include_str!("../templates/approval_requested.txt"),
         }
     }
 }

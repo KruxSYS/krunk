@@ -57,6 +57,20 @@ pub const SESSIONS_LIST: Limit = l("sessions/session", 60, MIN);
 pub const SESSION_REVOKE: Limit = l("session-revoke/account", 60, HOUR);
 // 0.9.0 (PROTOCOL §11.2).
 pub const SESSIONS_REVOKE_ALL: Limit = l("sessions-revoke-all/account", 10, HOUR);
+// S6 (PROTOCOL §11.4–§11.6, §11.8).
+pub const SYNC_STATE: Limit = l("sync-state/device", 120, HOUR);
+pub const KEYS_HEAD: Limit = l("keys-head/device", 120, HOUR);
+pub const KEYS_CHAIN: Limit = l("keys-chain/device", 20, HOUR);
+pub const KEYS_ESCROW: Limit = l("keys-escrow/account", 5, DAY);
+pub const KEYS_COMMIT: Limit = l("keys-commit/device", 60, HOUR);
+pub const ROTATION_CLAIM: Limit = l("rotation-claim/device", 20, HOUR);
+pub const APPROVALS_CREATE: Limit = l("approvals-create/account", 5, DAY);
+pub const APPROVALS_LIST: Limit = l("approvals-list/device", 120, HOUR);
+/// One poll per 2 seconds while an approval runs (PROTOCOL §11.6).
+pub const APPROVAL_POLL: Limit = l("approval-poll/device", 30, MIN);
+pub const APPROVAL_STEP: Limit = l("approval-step/device", 60, HOUR);
+pub const DEVICES_LIST_DEVICE: Limit = l("devices/device", 60, MIN);
+pub const SESSIONS_LIST_DEVICE: Limit = l("sessions/device", 60, MIN);
 
 pub fn ip_key(keys: &crate::config::Keys, ip: IpAddr) -> [u8; 32] {
     crypto::hmac(&keys.token_hmac, "krunk-rl-ip", &[ip.to_string().as_bytes()])

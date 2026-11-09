@@ -733,9 +733,12 @@ struct SyncSummary {
     has_keyset: bool,
     records: i64,
     bytes: i64,
+    /// A device was removed and the keys aren't rotated yet (PROTOCOL §7).
+    rotation_pending: bool,
 }
 
-/// `GET web/me`. Sync data arrives later (S6+); until then it is zero.
+/// `GET web/me`. `sync` says whether sync is set up, how much it stores, and whether the keys
+/// are being rotated; never anything about the data itself.
 pub async fn me(State(state): State<AppState>, s: WebSession) -> ApiResult {
     hit(&state.db, rl::ME, &rl::id_key(&s.id)).await?;
     let backup_codes_left: i64 =
@@ -744,6 +747,13 @@ pub async fn me(State(state): State<AppState>, s: WebSession) -> ApiResult {
             .fetch_one(&state.db)
             .await?;
     let devices = crate::devices::active_count(&state.db, s.account_id).await?;
+    let st = crate::keys::state_row(&mut *state.db.acquire().await?, s.account_id, false).await?;
+    let sync = SyncSummary {
+        has_keyset: st.is_some(),
+        records: st.as_ref().map_or(0, |x| i64::from(x.records)),
+        bytes: st.as_ref().map_or(0, |x| x.bytes),
+        rotation_pending: st.as_ref().is_some_and(|x| x.rotation_ak || x.rotation_pak),
+    };
     Ok(Json(Me {
         email: s.email.clone(),
         email_verified: s.email_verified,
@@ -751,7 +761,7 @@ pub async fn me(State(state): State<AppState>, s: WebSession) -> ApiResult {
         totp: s.totp_enabled,
         backup_codes_left,
         devices,
-        sync: SyncSummary { has_keyset: false, records: 0, bytes: 0 },
+        sync,
         reauth_valid: s.reauth_valid(),
         csrf: s.csrf.clone(),
     })

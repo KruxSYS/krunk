@@ -2,9 +2,11 @@
 
 use crate::accounts;
 use crate::api::{ApiResult, Client};
+use crate::approvals;
 use crate::client_ip::{self, TrustedPeers};
 use crate::config::Config;
 use crate::devices;
+use crate::keys;
 use crate::password::Passwords;
 use crate::ratelimit;
 use crate::sessions;
@@ -23,8 +25,35 @@ use std::time::{Duration, Instant};
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
 
-/// Default request body limit (PROTOCOL §11.1). Larger limits are set per route when needed.
+/// Default request body limit (PROTOCOL §11.1). Larger limits are set per route group.
 pub const BODY_LIMIT: usize = 16 * 1024;
+/// `keys/commit` (two directories and the escrow).
+pub const KEYS_BODY_LIMIT: usize = 512 * 1024;
+/// The ceiling for every request (`records/batch` and `rekey/batch`, S7, are the largest).
+pub const MAX_BODY_LIMIT: usize = 2 * 1024 * 1024;
+
+/// A route group's body limit. A declared `Content-Length` above it is refused with 413 after
+/// the body has been read and dropped (up to the ceiling): answering before reading would make
+/// the proxy in front (Caddy) see a broken connection and report a 502 instead. A body without
+/// a length is cut off at the limit by the extractors (`DefaultBodyLimit`).
+fn limited<S: Clone + Send + Sync + 'static>(r: Router<S>, max: usize) -> Router<S> {
+    r.layer(DefaultBodyLimit::max(max)).layer(middleware::from_fn_with_state(max, refuse_large))
+}
+
+async fn refuse_large(State(max): State<usize>, req: Request, next: Next) -> Response {
+    let declared = req
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<usize>().ok());
+    match declared {
+        Some(n) if n > max => {
+            let _ = axum::body::to_bytes(req.into_body(), MAX_BODY_LIMIT).await;
+            error(StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large", "The request is too large.")
+        }
+        _ => next.run(req).await,
+    }
+}
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 pub const HEALTH_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -84,15 +113,41 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/token/refresh", post(devices::refresh))
         .route("/api/v1/device/unlink", post(devices::unlink))
         .route("/api/v1/device/me", get(devices::device_me))
+        // S6: keys, approvals, sync state, and devices and sessions seen from a device.
+        .route("/api/v1/sync/state", get(keys::sync_state))
+        .route("/api/v1/keys/head", get(keys::keys_head))
+        .route("/api/v1/keys/chain", get(keys::keys_chain))
+        .route("/api/v1/keys/escrow", get(keys::keys_escrow))
+        .route("/api/v1/keys/rotation/claim", post(keys::rotation_claim))
+        .route("/api/v1/approvals", post(approvals::create).get(approvals::list))
+        .route("/api/v1/approvals/{id}", get(approvals::get_one))
+        .route("/api/v1/approvals/{id}/respond", post(approvals::respond))
+        .route("/api/v1/approvals/{id}/reveal", post(approvals::reveal))
+        .route("/api/v1/approvals/{id}/confirm", post(approvals::confirm))
+        .route("/api/v1/approvals/{id}/keys", post(approvals::keys))
+        .route("/api/v1/approvals/{id}/cancel", post(approvals::cancel))
+        .route("/api/v1/devices", get(keys::device_devices))
+        .route("/api/v1/devices/{id}/revoke", post(keys::device_revoke))
+        .route("/api/v1/sessions", get(keys::device_sessions))
+        .route("/api/v1/sessions/{id}/revoke", post(keys::device_session_revoke))
         .route_layer(middleware::from_fn_with_state(state.clone(), devices::no_foreign_origin))
         .route_layer(middleware::from_fn_with_state(state.clone(), sessions::accounts_gate));
-    let api = Router::new().route("/api/v1/web/config", get(web_config)).merge(web).merge(device).fallback(not_found);
+    // Larger bodies, only where the protocol needs them (PROTOCOL §11.1).
+    let keys_commit = Router::new()
+        .route("/api/v1/keys/commit", post(keys::keys_commit))
+        .route_layer(middleware::from_fn_with_state(state.clone(), devices::no_foreign_origin))
+        .route_layer(middleware::from_fn_with_state(state.clone(), sessions::accounts_gate));
+    let api = Router::new()
+        .route("/api/v1/web/config", get(web_config))
+        .merge(limited(web, BODY_LIMIT))
+        .merge(limited(device, BODY_LIMIT))
+        .merge(limited(keys_commit, KEYS_BODY_LIMIT))
+        .fallback(not_found);
     Router::new()
         .route("/healthz", get(healthz))
         .merge(api)
         .fallback(not_found)
-        .layer(DefaultBodyLimit::max(BODY_LIMIT))
-        .layer(RequestBodyLimitLayer::new(BODY_LIMIT))
+        .layer(RequestBodyLimitLayer::new(MAX_BODY_LIMIT))
         .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, REQUEST_TIMEOUT))
         .layer(middleware::from_fn_with_state(state.clone(), log_request))
         .layer(middleware::from_fn(response_headers))
@@ -368,15 +423,32 @@ pub mod tests {
 
     #[tokio::test]
     async fn oversized_bodies_are_refused() {
-        let big = vec![b'a'; BODY_LIMIT + 1];
-        let req = axum::http::Request::post("/api/v1/web/config")
-            .header(header::CONTENT_LENGTH, big.len())
-            .body(Body::from(big))
-            .unwrap();
-        let (status, h, body) = call(req).await;
-        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
-        assert_eq!(h[header::CACHE_CONTROL], "no-store");
-        assert_eq!(json(&body)["error"], "payload_too_large");
+        // Per route group (PROTOCOL §11.1): 16 KiB for the website and device calls, 512 KiB for
+        // keys/commit, and a 2 MiB ceiling for everything.
+        let post = |path: &str, n: usize| {
+            axum::http::Request::post(path)
+                .header(header::CONTENT_LENGTH, n)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(vec![b'a'; n]))
+                .unwrap()
+        };
+        for (path, n, too_big) in [
+            ("/api/v1/web/login", BODY_LIMIT + 1, true),
+            ("/api/v1/approvals", BODY_LIMIT + 1, true),
+            ("/api/v1/keys/commit", BODY_LIMIT + 1, false),
+            ("/api/v1/keys/commit", 300 * 1024, false),
+            ("/api/v1/keys/commit", KEYS_BODY_LIMIT + 1, true),
+            ("/api/v1/nope", MAX_BODY_LIMIT + 1, true),
+        ] {
+            let (status, h, body) = call(post(path, n)).await;
+            if too_big {
+                assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{path} {n}");
+                assert_eq!(h[header::CACHE_CONTROL], "no-store");
+                assert_eq!(json(&body)["error"], "payload_too_large");
+            } else {
+                assert_ne!(status, StatusCode::PAYLOAD_TOO_LARGE, "{path} {n}");
+            }
+        }
     }
 
     #[tokio::test]

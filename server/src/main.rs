@@ -11,6 +11,7 @@
 
 mod accounts;
 mod api;
+mod approvals;
 mod client_ip;
 mod config;
 mod crypto;
@@ -20,6 +21,7 @@ mod http;
 #[cfg(test)]
 mod it;
 mod jobs;
+mod keys;
 mod mail;
 mod password;
 mod ratelimit;

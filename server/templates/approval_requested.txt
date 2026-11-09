@@ -1,0 +1,12 @@
+Subject: A device asks to join your Krunk sync
+
+Hello,
+
+"{{label}}" asks for the keys of your Krunk sync. To let it in, open Krunk on a device
+that already syncs (Settings → Sync → Approve a new device), and type the 6-digit code it
+shows into the new device.
+
+If you didn't ask for this, ignore it: nothing happens without that code. You can remove
+the device on your account page:
+
+{{site}}/account/

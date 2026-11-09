@@ -130,7 +130,7 @@ fn link_not_found() -> ApiError {
     ApiError::new(StatusCode::NOT_FOUND, "not_found", "This code is not valid or has expired.")
 }
 
-fn device_not_found() -> ApiError {
+pub fn device_not_found() -> ApiError {
     ApiError::new(StatusCode::NOT_FOUND, "not_found", "Not found.")
 }
 
@@ -378,12 +378,25 @@ struct ReuseRow {
     already_revoked: bool,
 }
 
-/// Revokes a device: its refresh family and access tokens stop working at once.
+/// Revokes a device: its refresh family and access tokens stop working at once. If the device
+/// ever held sync keys, the account's keys must be rotated (PROTOCOL §7): writes freeze until the
+/// next epoch is committed. Every way of removing a device comes through here.
 pub async fn revoke_device(conn: &mut PgConnection, device_id: Uuid) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE devices SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL")
+    let had_keys: Option<bool> = sqlx::query_scalar(
+        "UPDATE devices SET revoked_at = now(), has_keys = false WHERE id = $1 AND revoked_at IS NULL RETURNING had_keys",
+    )
+    .bind(device_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    if had_keys == Some(true) {
+        sqlx::query(
+            "UPDATE sync_state SET rotation_ak = true, rotation_pak = true, updated_at = now()
+             WHERE account_id = (SELECT account_id FROM devices WHERE id = $1)",
+        )
         .bind(device_id)
         .execute(&mut *conn)
         .await?;
+    }
     sqlx::query("UPDATE refresh_families SET revoked_at = now() WHERE device_id = $1 AND revoked_at IS NULL")
         .bind(device_id)
         .execute(&mut *conn)
@@ -773,34 +786,44 @@ fn platform_name(p: &str) -> &'static str {
 // ---- Website: devices and sessions ----------------------------------------------------------
 
 #[derive(Serialize, sqlx::FromRow)]
-struct DeviceItem {
-    id: Uuid,
+pub struct DeviceItem {
+    pub id: Uuid,
     short: i32,
     platform: String,
     label: String,
     client_version: String,
     created: DateTime<Utc>,
     last_used: DateTime<Utc>,
+    last_sync: Option<DateTime<Utc>>,
     last_country: Option<String>,
     has_keys: bool,
     revoked_at: Option<DateTime<Utc>>,
+    /// Set in the device API's list (PROTOCOL §11.8): the calling device.
+    #[sqlx(skip)]
+    #[serde(rename = "self", skip_serializing_if = "Option::is_none")]
+    pub self_: Option<bool>,
+}
+
+/// The account's devices: linked ones and those revoked in the last 30 days. An approved link
+/// whose tokens were never collected isn't a device yet and isn't listed.
+pub async fn list_devices(db: &sqlx::PgPool, account_id: Uuid) -> Result<Vec<DeviceItem>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT d.id, d.short, d.platform, d.label, d.client_version, d.created_at AS created,
+                d.last_used_at AS last_used, d.last_sync_at AS last_sync, d.last_country, d.has_keys, d.revoked_at
+         FROM devices d WHERE d.account_id = $1
+           AND EXISTS (SELECT 1 FROM refresh_families f WHERE f.device_id = d.id)
+         ORDER BY d.revoked_at IS NOT NULL, d.last_used_at DESC",
+    )
+    .bind(account_id)
+    .fetch_all(db)
+    .await
 }
 
 /// `GET web/devices`: the account's devices (linked ones and those revoked in the last 30 days).
 /// An approved link whose tokens were never collected isn't a device yet and isn't listed.
 pub async fn devices_list(State(state): State<AppState>, s: WebSession) -> ApiResult {
     hit(&state.db, rl::DEVICES_LIST, &rl::id_key(&s.id)).await?;
-    let items: Vec<DeviceItem> = sqlx::query_as(
-        "SELECT d.id, d.short, d.platform, d.label, d.client_version, d.created_at AS created,
-                d.last_used_at AS last_used, d.last_country, false AS has_keys, d.revoked_at
-         FROM devices d WHERE d.account_id = $1
-           AND EXISTS (SELECT 1 FROM refresh_families f WHERE f.device_id = d.id)
-         ORDER BY d.revoked_at IS NOT NULL, d.last_used_at DESC",
-    )
-    .bind(s.account_id)
-    .fetch_all(&state.db)
-    .await?;
-    Ok(Json(items).into_response())
+    Ok(Json(list_devices(&state.db, s.account_id).await?).into_response())
 }
 
 async fn own_device(conn: &mut PgConnection, account_id: Uuid, id: &str) -> Result<(Uuid, String, bool), ApiError> {
@@ -821,23 +844,39 @@ async fn revoke_own_device(state: &AppState, s: &WebSession, client: &Client, id
     if !s.reauth_valid() {
         return Err(reauth_required());
     }
+    let id: Uuid = id.parse().map_err(|_| device_not_found())?;
+    revoke_from(state, s.account_id, id, client, "the website").await
+}
+
+/// Removes device `id` of the account (from the website or from another device): revoked, the
+/// account mailed, the event kept with the remover's IP.
+pub async fn revoke_from(
+    state: &AppState,
+    account_id: Uuid,
+    id: Uuid,
+    client: &Client,
+    by: &str,
+) -> Result<(), ApiError> {
     let mut tx = state.db.begin().await?;
-    let (id, label, revoked) = own_device(&mut tx, s.account_id, id).await?;
+    let (id, label, revoked) = own_device(&mut tx, account_id, &id.to_string()).await?;
     if !revoked {
         revoke_device(&mut tx, id).await?;
-        mail::enqueue(&mut tx, Some(s.account_id), &s.email, Template::DeviceRevoked, json!({ "label": label }))
+        let email: String = sqlx::query_scalar("SELECT email::text FROM accounts WHERE id = $1")
+            .bind(account_id)
+            .fetch_one(&mut *tx)
             .await?;
+        mail::enqueue(&mut tx, Some(account_id), &email, Template::DeviceRevoked, json!({ "label": label })).await?;
         sqlx::query(
             "INSERT INTO ip_events (account_id, kind, ip, country) VALUES ($1, 'device_revoked', $2::inet, $3)",
         )
-        .bind(s.account_id)
+        .bind(account_id)
         .bind(client.ip().to_string())
         .bind(client.info.country.as_deref())
         .execute(&mut *tx)
         .await?;
     }
     tx.commit().await?;
-    tracing::info!(device = %id, "device revoked from the website");
+    tracing::info!(device = %id, "device revoked from {by}");
     Ok(())
 }
 
@@ -881,7 +920,7 @@ pub async fn device_rename(
 }
 
 #[derive(Serialize)]
-struct SessionItem {
+pub struct SessionItem {
     id: Uuid,
     kind: &'static str,
     created: DateTime<Utc>,
@@ -911,16 +950,26 @@ fn mask(ip: Option<String>) -> Option<String> {
 /// `GET web/sessions`: the website sessions and the linked devices of the account.
 pub async fn sessions_list(State(state): State<AppState>, s: WebSession) -> ApiResult {
     hit(&state.db, rl::SESSIONS_LIST, &rl::id_key(&s.id)).await?;
+    Ok(Json(list_sessions(&state.db, s.account_id, Some(s.id)).await?).into_response())
+}
+
+/// The website sessions and the linked devices of an account; `current` marks that website
+/// session.
+pub async fn list_sessions(
+    db: &sqlx::PgPool,
+    account_id: Uuid,
+    current: Option<Uuid>,
+) -> Result<Vec<SessionItem>, sqlx::Error> {
     let web: Vec<SessionRow> = sqlx::query_as(
         "SELECT id, created_at, last_used_at, host(ip) AS ip, country, user_agent, NULL::text AS label
          FROM web_sessions WHERE account_id = $1 AND revoked_at IS NULL
            AND created_at > now() - make_interval(secs => $2) AND last_used_at > now() - make_interval(secs => $3)
          ORDER BY last_used_at DESC",
     )
-    .bind(s.account_id)
+    .bind(account_id)
     .bind(crate::sessions::MAX_AGE_S as f64)
     .bind(crate::sessions::IDLE_S as f64)
-    .fetch_all(&state.db)
+    .fetch_all(db)
     .await?;
     let dev: Vec<SessionRow> = sqlx::query_as(
         "SELECT d.id, d.created_at, d.last_used_at, host(d.last_ip) AS ip, d.last_country AS country, d.user_agent,
@@ -929,15 +978,15 @@ pub async fn sessions_list(State(state): State<AppState>, s: WebSession) -> ApiR
            AND EXISTS (SELECT 1 FROM refresh_families f WHERE f.device_id = d.id)
          ORDER BY d.last_used_at DESC",
     )
-    .bind(s.account_id)
-    .fetch_all(&state.db)
+    .bind(account_id)
+    .fetch_all(db)
     .await?;
-    let items: Vec<SessionItem> = web
+    Ok(web
         .into_iter()
         .map(|r| (r, "web"))
         .chain(dev.into_iter().map(|r| (r, "device")))
         .map(|(r, kind)| SessionItem {
-            current: kind == "web" && r.id == s.id,
+            current: kind == "web" && Some(r.id) == current,
             id: r.id,
             kind,
             created: r.created_at,
@@ -947,8 +996,7 @@ pub async fn sessions_list(State(state): State<AppState>, s: WebSession) -> ApiR
             user_agent: r.user_agent,
             label: r.label,
         })
-        .collect();
-    Ok(Json(items).into_response())
+        .collect())
 }
 
 /// `POST web/sessions/{id}/revoke` → 204. A website session needs no re-auth (so a suspicious

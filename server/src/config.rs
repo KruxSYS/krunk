@@ -56,6 +56,8 @@ pub struct Config {
     pub ip_retention_days: i32,
     /// Most active devices per account (QUOTA_MAX_DEVICES, default 10).
     pub quota_max_devices: i32,
+    /// Sync storage limits per account (OPEN_QUESTIONS Q5).
+    pub quota: Quota,
     /// `ACCOUNTS_TEST_MODE=1`: allow the Turnstile test secrets, SMTP without TLS and a staging
     /// PUBLIC_BASE_URL.
     pub test_mode: bool,
@@ -78,9 +80,28 @@ impl std::fmt::Debug for Config {
             .field("keys", &"<redacted>")
             .field("ip_retention_days", &self.ip_retention_days)
             .field("quota_max_devices", &self.quota_max_devices)
+            .field("quota", &self.quota)
             .field("test_mode", &self.test_mode)
             .field("trusted_peer_host", &self.trusted_peer_host)
             .finish()
+    }
+}
+
+/// Sync storage limits per account (0.9.0; OPEN_QUESTIONS Q5). A single record is at most 64 KiB
+/// of plaintext by the protocol, whatever these say.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Quota {
+    /// QUOTA_MAX_BYTES (default 50 MiB of ciphertext).
+    pub max_bytes: i64,
+    /// QUOTA_MAX_RECORDS (default 100,000).
+    pub max_records: i32,
+    /// QUOTA_MAX_HISTORY (default 25,000 history records; clients evict at 20,000).
+    pub max_history: i32,
+}
+
+impl Default for Quota {
+    fn default() -> Quota {
+        Quota { max_bytes: 50 * 1024 * 1024, max_records: 100_000, max_history: 25_000 }
     }
 }
 
@@ -272,6 +293,33 @@ impl Config {
             }
             None => 10,
         };
+        let d = Quota::default();
+        let quota = Quota {
+            max_bytes: match get("QUOTA_MAX_BYTES") {
+                Some(v) => v
+                    .parse::<i64>()
+                    .ok()
+                    .filter(|v| (1024 * 1024..=10 * 1024 * 1024 * 1024).contains(v))
+                    .ok_or("QUOTA_MAX_BYTES must be 1 MiB..10 GiB")?,
+                None => d.max_bytes,
+            },
+            max_records: match get("QUOTA_MAX_RECORDS") {
+                Some(v) => v
+                    .parse::<i32>()
+                    .ok()
+                    .filter(|v| (1000..=10_000_000).contains(v))
+                    .ok_or("QUOTA_MAX_RECORDS must be 1000..10000000")?,
+                None => d.max_records,
+            },
+            max_history: match get("QUOTA_MAX_HISTORY") {
+                Some(v) => v
+                    .parse::<i32>()
+                    .ok()
+                    .filter(|v| (1000..=10_000_000).contains(v))
+                    .ok_or("QUOTA_MAX_HISTORY must be 1000..10000000")?,
+                None => d.max_history,
+            },
+        };
         let keys = Keys {
             token_hmac: decode_key("token_hmac_key", secret("token_hmac_key"))?,
             password_pepper: decode_key("password_pepper", secret("password_pepper"))?,
@@ -289,6 +337,7 @@ impl Config {
             keys,
             ip_retention_days,
             quota_max_devices,
+            quota,
             test_mode,
             base_url_rejected,
             trusted_peer_host,

@@ -1,0 +1,13 @@
+Subject: Your sync recovery data was downloaded
+
+Hello,
+
+"{{label}}" just downloaded the encrypted recovery data of your Krunk sync, to set up
+sync with your passphrase or recovery key. This happens when you restore sync on a new
+or reinstalled device.
+
+The data is useless without your passphrase or recovery key, and the Krunk website never
+asks for either. If this wasn't you, remove that device on your account page and change
+your sync passphrase in Krunk (Settings → Sync):
+
+{{site}}/account/

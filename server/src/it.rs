@@ -28,6 +28,7 @@ use std::time::{Duration, Instant};
 use tower::ServiceExt;
 
 mod s3;
+mod s6;
 
 static N: AtomicU32 = AtomicU32::new(0);
 
@@ -671,6 +672,7 @@ async fn logs_hold_no_secrets() {
     b.post(&e, "totp/enable", json!({"code": "000000"})).await;
     b.post(&e, "password/change", json!({"current": PW, "new": "fresh passphrase 2"})).await;
     let s3_secrets = s3::s3_flow_secrets(&e).await;
+    let s6_secrets = s6::s6_flow_secrets(&e).await;
     let logs = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
     assert!(logs.contains("\"request\""), "the request lines were captured: {} bytes", logs.len());
     let cookie = b.cookie.clone().unwrap();
@@ -680,10 +682,14 @@ async fn logs_hold_no_secrets() {
     {
         assert!(!logs.contains(secret_value), "the logs contain {secret_value:?}");
     }
-    for secret_value in &s3_secrets {
+    for secret_value in s3_secrets.iter().chain(&s6_secrets) {
         assert!(!logs.contains(secret_value.as_str()), "the logs contain {secret_value:?}");
     }
     assert!(logs.contains("refresh token reuse"), "the S3 flow ran and was logged");
+    assert!(
+        logs.contains("keys committed") && logs.contains("approval keys delivered"),
+        "the S6 flow ran and was logged"
+    );
 }
 
 struct Capture(Arc<std::sync::Mutex<Vec<u8>>>);
