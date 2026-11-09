@@ -238,6 +238,15 @@ impl Store {
         rows.collect()
     }
 
+    /// Every bookmark's address (the favicon probe, 0.11.0), the bar's first.
+    pub fn bookmark_urls(&self) -> DbResult<Vec<String>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT url FROM bookmarks WHERE is_folder = 0 AND url IS NOT NULL ORDER BY parent <> ?1, parent, position",
+        )?;
+        let rows = stmt.query_map([crate::storage::BOOKMARKS_BAR], |r| r.get(0))?;
+        rows.collect()
+    }
+
     /// Ids of bookmarks pointing exactly at `url` (for the star button).
     pub fn bookmarks_for_url(&self, url: &str) -> DbResult<Vec<i64>> {
         let mut stmt = self.conn.prepare_cached("SELECT id FROM bookmarks WHERE is_folder = 0 AND url = ?1")?;
@@ -308,6 +317,19 @@ mod tests {
         assert!(!s.toggle_bookmark("https://rust-lang.org/", "Rust").unwrap());
         assert!(!s.is_bookmarked("https://rust-lang.org/").unwrap());
         assert!(s.add_bookmark(BOOKMARKS_BAR, "x", "javascript:alert(1)").is_err());
+    }
+
+    #[test]
+    fn every_bookmark_address_for_the_favicon_probe() {
+        let s = Store::open_in_memory().unwrap();
+        s.add_bookmark(OTHER_BOOKMARKS, "O", "https://other.example/").unwrap();
+        let dev = s.add_folder(BOOKMARKS_BAR, "Dev").unwrap();
+        s.add_bookmark(dev, "A", "https://a.example/").unwrap();
+        s.add_bookmark(BOOKMARKS_BAR, "C", "https://c.example/").unwrap();
+        let urls = s.bookmark_urls().unwrap();
+        assert_eq!(urls.len(), 3, "{urls:?}");
+        assert_eq!(urls[0], "https://c.example/", "the bar's own bookmarks first: {urls:?}");
+        assert!(urls.contains(&"https://other.example/".to_string()));
     }
 
     #[test]

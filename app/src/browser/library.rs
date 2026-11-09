@@ -113,6 +113,10 @@ impl Browser {
             }
             Request::AddBookmark { parent, title, url } => {
                 let r = self.store.borrow().add_bookmark(parent, &title, &url);
+                if r.is_ok() {
+                    // krunk://bookmarks never runs in a private window.
+                    self.favicon_bookmark_added(&url, false);
+                }
                 self.bookmarks_changed(tab, req_id, r);
             }
             Request::AddFolder { parent, title } => {
@@ -387,9 +391,12 @@ impl Browser {
         if !bookmarkable(&url) {
             return;
         }
+        let private = self.active_tab().is_some_and(|t| t.private);
         let r = self.store.borrow_mut().toggle_bookmark(&url, &title);
-        if let Err(e) = r {
-            warning!("bookmark: {e}");
+        match r {
+            Ok(true) => self.favicon_bookmark_added(&url, private),
+            Ok(false) => {}
+            Err(e) => warning!("bookmark: {e}"),
         }
         self.send_bookmarks_bar();
         self.send_nav();

@@ -6,6 +6,7 @@ pub mod cef;
 pub mod cursor;
 pub mod dialogs;
 pub mod http;
+pub mod icon;
 pub mod overlay;
 pub mod pipwin;
 pub mod process;

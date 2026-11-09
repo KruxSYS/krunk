@@ -51,6 +51,7 @@ mod dns_host;
 mod downloads;
 mod drag;
 mod ext;
+mod favicons;
 mod filter_lists;
 mod find;
 mod flight;
@@ -274,6 +275,8 @@ pub struct Browser {
     folder_offset: Cell<u32>,
     /// The folders (with their offsets) a dropdown went down through, for "‹ Back".
     folder_stack: RefCell<Vec<(i64, u32)>>,
+    /// The bookmark favicon probe's queue and log (0.11.0).
+    favicon_probe: RefCell<favicons::ProbeState>,
     /// Swallows the click that closed a toolbar popup (see `lb_core::toggle`).
     toggle: RefCell<lb_core::toggle::ToggleGuard>,
     /// The link-status label (the address of the link under the mouse).
@@ -396,6 +399,7 @@ impl Browser {
             folder_anchor: Cell::new(None),
             folder_offset: Cell::new(0),
             folder_stack: RefCell::new(Vec::new()),
+            favicon_probe: RefCell::new(favicons::ProbeState::default()),
             toggle: RefCell::new(lb_core::toggle::ToggleGuard::default()),
             status: status::StatusHost::default(),
             suggest: suggest::SuggestHost::default(),
@@ -467,6 +471,7 @@ impl Browser {
             return Err("Cannot create the browser window".into());
         }
         browser.init_updates();
+        browser.init_favicon_probe();
         browser.init_integrity();
         browser.start_power_timer();
         browser.init_sync();

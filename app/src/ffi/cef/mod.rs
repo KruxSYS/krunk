@@ -13,6 +13,7 @@ mod client;
 mod cookies;
 mod data;
 pub mod entry;
+pub mod fetch;
 mod hints;
 mod net;
 mod renderer;

@@ -330,6 +330,10 @@ impl Browser {
             return;
         }
         let r = self.store.borrow_mut().add_bookmark_at_index(parent, url, url, index);
+        if r.is_ok() {
+            let private = self.active_tab().is_some_and(|t| t.private);
+            self.favicon_bookmark_added(url, private);
+        }
         self.bar_changed("drop address", r);
     }
 
