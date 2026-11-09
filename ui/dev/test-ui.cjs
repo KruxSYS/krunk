@@ -413,8 +413,53 @@ async function testShell(browser) {
   await emit(page, { event: 'blurAddressBar' });
   await page.waitForTimeout(20);
   const afterBlur = await page.evaluate(() => ({ active: document.activeElement === document.getElementById('address'), value: document.getElementById('address').value }));
-  check(!afterBlur.active && afterBlur.value === 'https://moved2.example/', 'blurAddressBar leaves the field and shows the page URL');
+  // 0.11.6: unfinished text stays with its tab (as in Chrome) until the tab's page changes.
+  check(!afterBlur.active && afterBlur.value.endsWith('typed text'), 'blurAddressBar leaves the field; the unfinished text stays (' + afterBlur.value + ')');
   void h2;
+  {
+    const val = () => page.locator('#address').inputValue();
+    const ids = await page.$$eval('#tabs .tab', (ns) => ns.map((n) => +n.dataset.id));
+    const here = await page.evaluate(() => window.__host.state.active);
+    const other = ids.find((id) => id !== here);
+    const urlOf = (id) => page.evaluate((id) => window.__host.state.tabs.find((t) => t.id === id).url, id);
+    await page.locator('#tabs .tab[data-id="' + other + '"] .title').click();
+    await page.waitForTimeout(60);
+    check(await val() === await urlOf(other), 'another tab shows its own address (' + await val() + ')');
+    await page.locator('#tabs .tab[data-id="' + here + '"] .title').click();
+    await page.waitForTimeout(60);
+    check((await val()).endsWith('typed text'), 'back on the tab, its unfinished text is there again (' + await val() + ')');
+    // Typing, then switching with the keyboard (the field keeps the focus): the text stays behind.
+    await page.click('#address');
+    await page.keyboard.press('Control+a');
+    await page.keyboard.type('half typed');
+    await page.evaluate((id) => { const h = window.__host; h.state.active = id; h.tabsEvent(); h.navEvent({}); }, other);
+    await page.waitForTimeout(60);
+    check(await val() === await urlOf(other), 'Ctrl+Tab while typing: the other tab shows its address (' + await val() + ')');
+    await page.evaluate((id) => { const h = window.__host; h.state.active = id; h.tabsEvent(); h.navEvent({}); }, here);
+    await page.waitForTimeout(60);
+    check(await val() === 'half typed', 'and the text is back with its tab (' + await val() + ')');
+    // Esc goes back to the page address and forgets the text.
+    await page.click('#address');
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(30);
+    await page.evaluate(() => window.__host.navEvent({}));
+    await page.waitForTimeout(40);
+    check(await val() === await urlOf(here), 'Esc drops the unfinished text (' + await val() + ')');
+    // The tab's page changing drops it too; and addressNavigated (a suggestion, a bookmark opened).
+    await page.click('#address');
+    await page.keyboard.type('again');
+    await emit(page, { event: 'blurAddressBar' });
+    await page.waitForTimeout(30);
+    await page.evaluate(() => { const h = window.__host; h.state.tabs.find((t) => t.id === h.state.active).url = 'https://moved3.example/'; h.navEvent({}); });
+    await page.waitForTimeout(40);
+    check(await val() === 'https://moved3.example/', 'a new page in the tab drops the unfinished text (' + await val() + ')');
+    await page.click('#address');
+    await page.keyboard.type('picked');
+    await emit(page, { event: 'addressNavigated' });
+    await emit(page, { event: 'blurAddressBar' });
+    await page.waitForTimeout(40);
+    check(await val() === 'https://moved3.example/', 'addressNavigated drops it (' + await val() + ')');
+  }
 
   // 0.5.1: suggestions while typing. The host answers addressSuggestions; Down/Up select
   // (the bar shows the row's fill), Enter picks, Esc closes without leaving the field.

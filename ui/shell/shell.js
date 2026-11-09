@@ -15,6 +15,7 @@
   // while the pointer stays on the strip, as in Chrome: the next tab's close button comes to
   // rest under the pointer. They take their new widths when it leaves.
   const tabNodes = new Map();    // tab id -> node
+  const drafts = new Map();      // unfinished address-bar text per tab: id -> { text, url it was typed over }
   let ghost = null;              // a tab dragged from another window, shown in a gap: { id, index, node }
   let renderedOnce = false;
   let widthsFrozen = false;
@@ -652,8 +653,13 @@
   function renderNav() {
     const n = state.nav;
     if (!n) return;
-    if (state.navTab !== undefined && state.navTab !== n.tabId) closeFind(false);
+    if (state.navTab !== undefined && state.navTab !== n.tabId) {
+      closeFind(false);
+      // Ctrl+Tab while typing: the text stays with the tab it was typed in (0.11.6).
+      if (state.editing && state.dirty) { saveDraft(); state.dirty = false; }
+    }
     state.navTab = n.tabId;
+    state.navUrl = n.url;
     const zoomed = Math.abs((n.zoom || 1) - 1) > 0.001;
     $('zoom').hidden = !zoomed;
     $('key').hidden = !n.loginForm;
@@ -673,7 +679,12 @@
     $('reload').title = n.loading ? 'Stop (Esc)' : 'Reload (Ctrl+R)';
     // The user's own text stays while they type; a focused but untouched field
     // follows the page (a bookmark opened while the caret was in the field).
-    if (!(state.editing && state.dirty)) $('address').value = n.url;
+    // 0.11.6: a tab's unfinished text comes back with the tab, until its page changes.
+    if (!(state.editing && state.dirty)) {
+      const d = drafts.get(n.tabId);
+      if (d && d.url !== n.url) drafts.delete(n.tabId);
+      $('address').value = d && d.url === n.url ? d.text : n.url;
+    }
     renderAddressDisplay();
     $('star').classList.toggle('bookmarked', !!n.bookmarked);
     // Built-in pages (krunk://) cannot be bookmarked.
@@ -734,6 +745,15 @@
   }
   // The text the user typed: the field's value without a selected inline completion
   // (`tail`: the selection up to the end is a completion the bar put there).
+  // Unfinished address-bar text per tab (0.11.6), in `drafts`.
+  function saveDraft() {
+    if (state.navTab === undefined) return;
+    // The address of the tab it was typed in (`state.nav` may already be the next tab's).
+    const url = state.navUrl || '';
+    const text = typedText();
+    if (text.trim() && text !== url) drafts.set(state.navTab, { text: text, url: url });
+    else drafts.delete(state.navTab);
+  }
   function typedText() {
     const v = address.value;
     if (suggest.tail && address.selectionEnd === v.length && address.selectionStart < v.length) return v.slice(0, address.selectionStart);
@@ -813,7 +833,8 @@
     }
   });
   address.addEventListener('focus', function () {
-    state.editing = true; state.dirty = false;
+    // A tab's unfinished text (0.11.6) is still the user's: page updates leave it alone.
+    state.editing = true; state.dirty = drafts.has(state.navTab);
     suggest.inline = null; suggest.tail = false;
     renderAddressDisplay();
     if (!press.pointer) address.select();
@@ -836,6 +857,7 @@
   // The address is never dragged out of the field: a press inside a selection starts a new one.
   address.addEventListener('dragstart', function (e) { e.preventDefault(); });
   address.addEventListener('blur', function () {
+    if (state.dirty) saveDraft();
     state.editing = false; state.dirty = false; press.pointer = false;
     // The selection goes with the focus (R5): the unfocused bar shows the formatted address.
     address.setSelectionRange(0, 0);
@@ -911,6 +933,7 @@
       if (suggest.open) { e.preventDefault(); address.value = suggest.text; closeSuggestions(); return; }
       address.value = state.nav ? state.nav.url : '';
       state.dirty = false;
+      drafts.delete(state.navTab);
       address.blur();
     }
   });
@@ -920,6 +943,7 @@
     const input = address.value.trim();
     if (!chosen && !input) return;
     closeSuggestions();
+    drafts.delete(state.navTab);
     if (chosen) LB.post('addressSuggestPick', { url: chosen.url });
     else LB.post('navigate', { input: input });
     state.editing = false;
@@ -1252,6 +1276,8 @@
   LB.on('tabs', function (m) {
     state.tabs = m.tabs;
     state.active = m.active;
+    const live = new Set(m.tabs.map(function (t) { return t.id; }));
+    drafts.forEach(function (_, id) { if (!live.has(id)) drafts.delete(id); });
     renderTabs();
   });
   // One tab changed (title, address, icon, loading, sound): only its node is patched, and the
@@ -1311,7 +1337,14 @@
     if (document.activeElement === address && state.dirty) return;
     address.focus(); address.select();
   });
+  LB.on('addressNavigated', function () {
+    drafts.delete(state.navTab);
+    state.dirty = false;
+  });
   LB.on('blurAddressBar', function () {
+    // The page took the focus (a click into it, or another tab): unfinished text stays with
+    // its tab (0.11.6).
+    if (state.dirty) saveDraft();
     state.dirty = false;
     if (document.activeElement === address) address.blur();
     else { address.setSelectionRange(0, 0); renderNav(); }

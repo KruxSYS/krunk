@@ -2366,6 +2366,9 @@ pub enum Event {
     /// The host moved the focus to the page (a bookmark or link was opened):
     /// the address bar stops editing and shows the page's address.
     BlurAddressBar,
+    /// The host opened what the address bar offered (a suggestion, Paste and go, a bookmark or
+    /// tile): the active tab's unfinished address-bar text is dropped (0.11.6).
+    AddressNavigated,
     /// To the shell: the mouse is over (or pressing) a caption button. The
     /// buttons are hit-tested natively, so the shell never sees the mouse
     /// over them.
@@ -4454,6 +4457,7 @@ mod tests {
             Event::Theme { theme: Theme::Light, accent: String::new(), ui_font_px: 0, colors: Default::default() },
             Event::FocusAddressBar,
             Event::BlurAddressBar,
+            Event::AddressNavigated,
             Event::ShowFind,
             Event::Toast { message: "hi".into() },
             Event::RestartRequired,

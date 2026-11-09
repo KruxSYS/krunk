@@ -109,6 +109,7 @@ impl Browser {
                 if let Some(text) = crate::ffi::secure::clipboard_text(main.hwnd()).filter(|t| !t.trim().is_empty()) {
                     info!("address bar: paste and go");
                     self.navigate_input(&text);
+                    self.post_shell(&Event::AddressNavigated);
                     self.post_shell(&Event::BlurAddressBar);
                     self.focus_page_after_navigation();
                 }
@@ -138,6 +139,7 @@ impl Browser {
         }
         info!("address bar: suggestion chosen");
         self.navigate_active(url);
+        self.post_shell(&Event::AddressNavigated);
         self.post_shell(&Event::BlurAddressBar);
         self.focus_page_after_navigation();
     }

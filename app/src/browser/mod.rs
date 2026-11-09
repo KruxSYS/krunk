@@ -2015,6 +2015,7 @@ impl Browser {
             c.focus();
         }
         if let Some(s) = self.shell() {
+            s.post_json(&Event::AddressNavigated.to_json());
             s.post_json(&Event::BlurAddressBar.to_json());
         }
         let _ = id;
