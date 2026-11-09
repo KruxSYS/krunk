@@ -2407,6 +2407,19 @@ impl Browser {
             );
             popup.window.set_activatable(kind.takes_focus());
             popup.window.show_at(ScreenRect { x: r.x, y: r.y, width: r.width, height: r.height }, kind.takes_focus());
+            // The page stays still under Krunk's menus (0.8.0).
+            if let Some(i) = [PopupSlot::Main, PopupSlot::Menu].iter().position(|s| *s == slot) {
+                let menu = matches!(
+                    kind,
+                    PopupKind::Menu
+                        | PopupKind::NavMenu
+                        | PopupKind::TabMenu
+                        | PopupKind::BookmarkFolder
+                        | PopupKind::BookmarkMenu
+                        | PopupKind::CaptionMenu
+                );
+                crate::ffi::scroll_lock::set_menu(i, menu.then(|| popup.window.hwnd()));
+            }
             if let Some(c) = &popup.view {
                 c.set_bounds(0, 0, r.width, r.height);
                 c.set_visible(true);

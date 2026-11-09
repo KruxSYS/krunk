@@ -1,0 +1,9 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>P?</title>
+<!-- Krunk 0.8.0 history-menu test (vm-080-navmenu.ps1): the title is "P<n>" from ?p=<n>. -->
+<style>body { font: 48px sans-serif; margin: 40px; background: #eef; }</style></head>
+<body><script>
+  const n = new URLSearchParams(location.search).get('p') || '?';
+  document.title = 'P' + n;
+  document.body.textContent = 'Page ' + n;
+</script></body></html>

@@ -199,11 +199,18 @@ pub const DENIED_TEXT: &str = "The sign-in was denied on the website.";
 
 impl Linking {
     /// From a `link/authorize` answer, at `now_ms`. The server's interval is used (5 s), within
-    /// 1..60 s; the code's lifetime as given.
-    pub fn start(a: Authorized, verify_base: &str, now_ms: i64) -> Result<Linking, Failure> {
-        // The page to open must be the build's own site, whatever the answer says.
-        let expected = endpoint(verify_base, "/link?code=");
-        if !a.verification_uri_complete.starts_with(&expected) || a.user_code.len() > 12 {
+    /// 1..60 s; the code's lifetime as given. `verify_base`: the page to open must be on this
+    /// site (the build's own), whatever the answer says; `None` (test builds against a staging
+    /// stack, whose site has another name) accepts any https address.
+    pub fn start(a: Authorized, verify_base: Option<&str>, now_ms: i64) -> Result<Linking, Failure> {
+        let ok = match verify_base {
+            Some(base) => a.verification_uri_complete.starts_with(&endpoint(base, "/link?code=")),
+            None => {
+                a.verification_uri_complete.starts_with("https://")
+                    && a.verification_uri_complete.contains("/link?code=")
+            }
+        };
+        if !ok || a.user_code.len() > 12 {
             return Err(Failure::Server);
         }
         Ok(Linking {
@@ -391,7 +398,7 @@ mod tests {
 
     #[test]
     fn linking_waits_slows_down_and_expires() {
-        let mut l = Linking::start(authorized(), "https://krunk.209.wf", 1_000_000).unwrap();
+        let mut l = Linking::start(authorized(), Some("https://krunk.209.wf"), 1_000_000).unwrap();
         assert_eq!((l.user_code.as_str(), l.interval_s, l.expires_at_ms), ("ABCD-EFGH", 5, 1_600_000));
         assert!(matches!(l.next(Poll::Pending, 1_005_000), Next::Poll(5000)));
         assert!(matches!(l.next(Poll::SlowDown, 1_010_000), Next::Poll(10000)));
@@ -413,10 +420,10 @@ mod tests {
         // A server that asks for silly intervals is clamped.
         let mut a = authorized();
         a.interval = 0;
-        assert_eq!(Linking::start(a, "https://krunk.209.wf", 0).unwrap().interval_s, 1);
+        assert_eq!(Linking::start(a, Some("https://krunk.209.wf"), 0).unwrap().interval_s, 1);
         let mut a = authorized();
         a.interval = 999;
-        let mut l = Linking::start(a, "https://krunk.209.wf", 0).unwrap();
+        let mut l = Linking::start(a, Some("https://krunk.209.wf"), 0).unwrap();
         assert!(matches!(l.next(Poll::SlowDown, 0), Next::Poll(60000)));
     }
 
@@ -424,12 +431,19 @@ mod tests {
     fn the_page_to_open_is_the_builds_own_site() {
         let mut a = authorized();
         a.verification_uri_complete = "https://evil.example/link?code=ABCD-EFGH".into();
-        assert_eq!(Linking::start(a, "https://krunk.209.wf", 0).unwrap_err(), Failure::Server);
+        assert_eq!(Linking::start(a, Some("https://krunk.209.wf"), 0).unwrap_err(), Failure::Server);
         let mut a = authorized();
         a.verification_uri_complete = "https://krunk.209.wf.evil.example/link?code=X".into();
-        assert!(Linking::start(a, "https://krunk.209.wf", 0).is_err());
+        assert!(Linking::start(a, Some("https://krunk.209.wf"), 0).is_err());
         let a = authorized();
-        assert!(Linking::start(a, "https://krunk.209.wf/", 0).is_ok());
+        assert!(Linking::start(a.clone(), Some("https://krunk.209.wf/"), 0).is_ok());
+        // A test build against staging: any https page with a code.
+        let mut staging = a;
+        staging.verification_uri_complete = "https://krunk.test/link?code=ABCD-EFGH".into();
+        assert!(Linking::start(staging.clone(), None, 0).is_ok());
+        assert!(Linking::start(staging.clone(), Some("https://krunk.209.wf"), 0).is_err());
+        staging.verification_uri_complete = "http://krunk.test/link?code=ABCD-EFGH".into();
+        assert!(Linking::start(staging, None, 0).is_err(), "never a plain http page");
     }
 
     #[test]

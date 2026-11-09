@@ -2,8 +2,8 @@
 //! `lb_core::scroll_lock`). A `WH_GETMESSAGE` hook on the UI thread, which also runs the
 //! engine, sees every message before it is dispatched. Anything but a wheel message (or a
 //! touchpad's DirectManipulation hit test) passes at once; for those, the engine's open page
-//! popups are looked up and the message becomes `WM_NULL` when it lands outside all of them, so
-//! the engine neither scrolls the page nor closes the popup.
+//! popups (and Krunk's own open menus) are looked up and the message becomes `WM_NULL` when it
+//! lands outside all of them, so the engine neither scrolls the page nor closes the popup.
 
 use super::pipwin;
 use lb_core::scroll_lock::{self, Rect, TopWindow};
@@ -17,6 +17,36 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 thread_local! {
     static HOOK: Cell<Option<HHOOK>> = const { Cell::new(None) };
+    /// Krunk's open menus (the main popup slot and the item menu over a folder dropdown): the
+    /// page stays still under them too (0.8.0, A item 6; the history menus let it scroll).
+    static MENUS: Cell<[Option<isize>; 2]> = const { Cell::new([None, None]) };
+}
+
+/// Krunk's menu window in `slot` (0: the main popup, 1: the item menu) opened (`Some`) or closed.
+pub fn set_menu(slot: usize, hwnd: Option<HWND>) {
+    MENUS.with(|m| {
+        let mut v = m.get();
+        if let Some(x) = v.get_mut(slot) {
+            *x = hwnd.map(|h| h.0 as isize);
+        }
+        m.set(v);
+    });
+}
+
+/// The open menus' screen rectangles.
+fn open_menus() -> Vec<Rect> {
+    MENUS
+        .with(|m| m.get())
+        .into_iter()
+        .flatten()
+        .filter_map(|h| {
+            let h = HWND(h as *mut std::ffi::c_void);
+            let mut r = windows::Win32::Foundation::RECT::default();
+            // SAFETY: plain queries; a stale handle just fails.
+            let visible = unsafe { IsWindowVisible(h) }.as_bool() && unsafe { GetWindowRect(h, &mut r) }.is_ok();
+            visible.then_some(Rect { left: r.left, top: r.top, right: r.right, bottom: r.bottom })
+        })
+        .collect()
 }
 
 /// Installs the hook on the calling (UI) thread. Without it Krunk works as before, so a failure
@@ -91,7 +121,9 @@ extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESU
             } else {
                 scroll_lock::wheel_point(msg.lParam.0)
             };
-            if scroll_lock::should_drop(x, y, &open_popups()) {
+            let mut targets = open_menus();
+            targets.extend(open_popups());
+            if scroll_lock::should_drop(x, y, &targets) {
                 msg.message = WM_NULL;
             }
         }

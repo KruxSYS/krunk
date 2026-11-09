@@ -237,8 +237,11 @@ impl Browser {
                 if b.account.generation.get() != gen {
                     return;
                 }
-                let linking =
-                    acct::parse::<acct::Authorized>(&answer).and_then(|a| Linking::start(a, base(), now_ms()));
+                let linking = acct::parse::<acct::Authorized>(&answer).and_then(|a| {
+                    // A test build (http allowed) talks to a staging stack with its own site name.
+                    let site = (!cfg!(feature = "dev-updates")).then(base);
+                    Linking::start(a, site, now_ms())
+                });
                 match linking {
                     Ok(l) => {
                         let (url, wait) = (l.verify_url.clone(), l.interval_s * 1000);
