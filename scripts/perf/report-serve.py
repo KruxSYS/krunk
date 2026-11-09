@@ -72,7 +72,8 @@ def outbound_ip():
 
 def stun(port):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(("0.0.0.0", port))
+    # Only the address the pages are told to use (/stun-host): the test machine's own.
+    sock.bind((outbound_ip(), port))
     cookie = 0x2112A442
     while True:
         data, (ip, sport) = sock.recvfrom(2048)
