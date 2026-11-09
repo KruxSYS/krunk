@@ -13,31 +13,116 @@
 <header class="bar">
   <div class="wrap">
     <a class="brand" href="/"><img src="/krunk.svg" width="28" height="28" alt=""> Krunk</a>
-    <nav><a href="/account/">Account</a> <a href="/privacy">Privacy</a></nav>
+    <nav aria-label="Site"><span id="who" class="who" hidden></span> <a href="/privacy">Privacy</a>
+      <button id="logout" class="small" type="button" hidden>Sign out</button></nav>
   </div>
 </header>
-<main class="wrap narrow">
-  <h1>Your account</h1>
+<main class="dash">
+  <div class="dash-title"><h1>Your account</h1></div>
   <p id="closed" class="closed" hidden>Accounts are coming soon. Krunk works fully without one; an account will only be needed for sync.</p>
-  <p id="status" class="status" role="status" aria-live="polite"></p>
-  <div id="overview" hidden>
-    <section class="card">
-      <h2>Account</h2>
-      <dl class="facts">
-        <dt>Email</dt><dd id="me-email"></dd>
-        <dt>Created</dt><dd id="me-created"></dd>
-      </dl>
-      <button id="logout" type="button">Sign out</button>
-    </section>
+  <nav id="secnav" class="secnav" aria-label="Sections" hidden>
+    <ul>
+      <li><a href="#summary">Overview</a></li>
+      <li><a href="#devices-sync">Devices &amp; sync</a></li>
+      <li><a href="#browsers">Signed-in browsers</a></li>
+      <li><a href="#security">Security</a></li>
+    </ul>
+  </nav>
+  <div class="sections">
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+    <div id="overview" hidden>
+      <section id="summary" class="card" aria-labelledby="h-summary">
+        <h2 id="h-summary">Overview</h2>
+        <dl class="facts">
+          <dt>Email</dt><dd><span id="me-email"></span> <span class="badge ok">Verified</span></dd>
+          <dt>Member since</dt><dd id="me-created"></dd>
+        </dl>
+        <div class="tiles">
+          <div class="tile"><span class="k">Devices</span><span class="v" id="tile-devices">–</span><span class="d" id="tile-devices-d"></span></div>
+          <div class="tile"><span class="k">Sync</span><span class="v" id="tile-sync">Off</span><span class="d" id="tile-sync-d"></span></div>
+          <div class="tile"><span class="k">Two-step</span><span class="v" id="tile-totp">–</span><span class="d" id="tile-totp-d"></span></div>
+        </div>
+      </section>
 
-    <section class="card" id="devices-card">
-      <h2>Devices</h2>
-      <p class="hint">Krunk on your devices, signed in to this account. Sync is coming in a later version:
-        until then a device only shows who it is signed in as.</p>
-      <ul id="devices" class="items"></ul>
-      <p id="no-devices" hidden>No devices yet. In Krunk, open <strong>Settings → Account</strong> and click <strong>Sign in</strong>.</p>
-      <form id="reauth" hidden novalidate>
-        <p>Enter your password again to remove the device.</p>
+      <section id="devices-sync" class="card" aria-labelledby="h-devices">
+        <h2 id="h-devices">Devices &amp; sync</h2>
+        <div id="sync-state" class="sync-state"><strong id="sync-title"></strong><span id="sync-text"></span></div>
+        <div id="devices">
+          <ul id="devices-active" class="items" aria-label="Your devices"></ul>
+          <p id="no-devices" hidden>No devices yet. In Krunk, open <strong>Settings → Account</strong> and click <strong>Sign in</strong>.</p>
+          <details id="devices-removed" class="removed" hidden>
+            <summary><span>Removed devices (<span id="removed-count">0</span>)</span></summary>
+            <ul class="items" aria-label="Removed devices"></ul>
+          </details>
+        </div>
+        <p class="never">To add a device, open Krunk → Settings → Account → Sign in. Sync is turned on in Krunk, never here: the Krunk website never asks for your sync passphrase or recovery key.</p>
+      </section>
+
+      <section id="browsers" class="card" aria-labelledby="h-browsers">
+        <div class="card-head">
+          <h2 id="h-browsers">Signed-in browsers</h2>
+          <button id="revoke-all-open" class="small danger" type="button" aria-expanded="false" aria-controls="revoke-all">Sign out everywhere else</button>
+        </div>
+        <p class="hint">Where you are signed in to this website.</p>
+        <form id="revoke-all" class="inline-panel" hidden novalidate>
+          <p><strong>Sign out everywhere else?</strong> Every other browser signed in to this website is signed out at once.</p>
+          <label class="check"><input type="checkbox" name="devices"> <span>Also remove my Krunk browsers (they are signed out and lose access to synced data).</span></label>
+          <div class="row-buttons">
+            <button type="submit" class="danger">Sign out everywhere else</button>
+            <button type="button" class="cancel">Cancel</button>
+          </div>
+        </form>
+        <ul id="sessions" class="items" aria-label="Signed-in browsers"></ul>
+      </section>
+
+      <section id="security" class="card" aria-labelledby="h-security">
+        <h2 id="h-security">Security</h2>
+        <h3>Two-step verification <span id="totp-badge" class="badge off">Off</span></h3>
+        <p id="totp-state"></p>
+        <form id="totp-start" hidden novalidate>
+          <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+          <button type="submit" class="primary">Turn on</button>
+        </form>
+        <form id="totp-confirm" class="inline-panel" hidden novalidate>
+          <div class="totp-setup">
+            <div id="totp-qr" class="qr"></div>
+            <div>
+              <p>Scan this code with an authenticator app, or enter the key by hand.</p>
+              <div class="key"><code id="totp-secret"></code><button type="button" class="small" id="totp-copy">Copy key</button></div>
+              <label>The 6-digit code the app shows <input name="code" autocomplete="one-time-code" inputmode="numeric" maxlength="6" required pattern="[0-9]{6}" data-pattern-error="Enter the 6 digits the app shows."></label>
+              <button type="submit" class="primary">Confirm</button>
+            </div>
+          </div>
+        </form>
+        <div id="totp-codes" class="inline-panel" hidden>
+          <p><strong>Your backup codes.</strong> Each works once if you lose your phone. Store them somewhere safe:
+            they are shown only now.</p>
+          <ul id="totp-code-list" class="codes"></ul>
+          <div class="row-buttons">
+            <button type="button" class="small" id="codes-copy">Copy</button>
+            <button type="button" class="small" id="codes-download">Download .txt</button>
+          </div>
+        </div>
+        <form id="totp-off" hidden novalidate>
+          <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+          <label>Code (or a backup code) <input name="code" autocomplete="one-time-code" maxlength="20" required></label>
+          <button type="submit" class="danger">Turn off</button>
+        </form>
+
+        <h3>Password</h3>
+        <form id="password" novalidate>
+          <label>Current password <input name="current" type="password" autocomplete="current-password" required></label>
+          <label>New password <input name="new" type="password" autocomplete="new-password" required minlength="10" aria-describedby="new-hint">
+            <span class="hint" id="new-hint">At least 10 characters.</span></label>
+          <label>New password again <input name="new2" type="password" autocomplete="new-password" required minlength="10"></label>
+          <label class="needs-totp" hidden>Code (or a backup code) <input name="totp" autocomplete="one-time-code" maxlength="20"></label>
+          <p class="hint">Other places where you are signed in to this website are signed out.</p>
+          <button type="submit">Change password</button>
+        </form>
+      </section>
+
+      <form id="reauth" class="inline-panel" hidden novalidate>
+        <p><strong>Confirm it's you.</strong> <span class="why">Enter your password again to continue.</span></p>
         <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
         <label class="needs-totp" hidden>Code (or a backup code) <input name="totp" autocomplete="one-time-code" maxlength="20"></label>
         <div class="row-buttons">
@@ -45,54 +130,9 @@
           <button type="button" class="cancel">Cancel</button>
         </div>
       </form>
-    </section>
-
-    <section class="card">
-      <h2>Signed-in browsers</h2>
-      <p class="hint">Where you are signed in to this website.</p>
-      <ul id="sessions" class="items"></ul>
-    </section>
-
-    <section class="card">
-      <h2>Two-step verification</h2>
-      <p id="totp-state"></p>
-      <form id="totp-start" hidden novalidate>
-        <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
-        <button type="submit">Turn on</button>
-      </form>
-      <form id="totp-confirm" hidden novalidate>
-        <p>Scan this code with an authenticator app, or enter the key by hand.</p>
-        <div id="totp-qr" class="qr"></div>
-        <p>Key: <code id="totp-secret"></code></p>
-        <label>The 6-digit code the app shows <input name="code" autocomplete="one-time-code" inputmode="numeric" maxlength="6" required></label>
-        <button type="submit" class="primary">Confirm</button>
-      </form>
-      <div id="totp-codes" hidden>
-        <p><strong>Your backup codes.</strong> Each works once if you lose your phone. Store them somewhere safe:
-          they are shown only now.</p>
-        <ul id="totp-code-list" class="codes"></ul>
-      </div>
-      <form id="totp-off" hidden novalidate>
-        <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
-        <label>Code (or a backup code) <input name="code" autocomplete="one-time-code" maxlength="20" required></label>
-        <button type="submit">Turn off</button>
-      </form>
-    </section>
-
-    <section class="card">
-      <h2>Change password</h2>
-      <form id="password" novalidate>
-        <label>Current password <input name="current" type="password" autocomplete="current-password" required></label>
-        <label>New password <input name="new" type="password" autocomplete="new-password" required minlength="10"></label>
-        <label>New password again <input name="new2" type="password" autocomplete="new-password" required minlength="10"></label>
-        <label class="needs-totp" hidden>Code (or a backup code) <input name="totp" autocomplete="one-time-code" maxlength="20"></label>
-        <p class="hint">Other places where you are signed in to this website are signed out.</p>
-        <button type="submit">Change password</button>
-      </form>
-    </section>
+    </div>
   </div>
-  <p class="never">The Krunk website never asks for your sync passphrase or recovery key.</p>
 </main>
-<footer class="wrap narrow"><p><a href="/">Krunk</a> · <a href="/privacy">Privacy</a></p></footer>
+<footer class="wrap dash-foot"><p><a href="/">Krunk</a> · <a href="/privacy">Privacy</a></p></footer>
 </body>
 </html>

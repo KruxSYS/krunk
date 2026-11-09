@@ -976,6 +976,61 @@ pub async fn session_revoke(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RevokeAllReq {
+    #[serde(default)]
+    include_devices: bool,
+}
+
+/// `POST web/sessions/revoke-all` `{include_devices}` (re-auth) → 204 (0.9.0, "Sign out
+/// everywhere else"): every other website session ends; with `include_devices` every linked
+/// device is removed too, as if removed one by one (tokens dead at once, a mail each).
+pub async fn sessions_revoke_all(
+    State(state): State<AppState>,
+    client: Client,
+    s: WebSession,
+    JsonBody(req): JsonBody<RevokeAllReq>,
+) -> ApiResult {
+    hit(&state.db, rl::SESSIONS_REVOKE_ALL, &rl::id_key(&s.account_id)).await?;
+    if !s.reauth_valid() {
+        return Err(reauth_required());
+    }
+    let mut tx = state.db.begin().await?;
+    let web = sqlx::query(
+        "UPDATE web_sessions SET revoked_at = now() WHERE account_id = $1 AND id <> $2 AND revoked_at IS NULL",
+    )
+    .bind(s.account_id)
+    .bind(s.id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    let mut devices = 0;
+    if req.include_devices {
+        let rows: Vec<(Uuid, String)> = sqlx::query_as(
+            "SELECT id, label FROM devices WHERE account_id = $1 AND revoked_at IS NULL ORDER BY created_at FOR UPDATE",
+        )
+        .bind(s.account_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        for (id, label) in rows {
+            revoke_device(&mut tx, id).await?;
+            mail::enqueue(&mut tx, Some(s.account_id), &s.email, Template::DeviceRevoked, json!({ "label": label }))
+                .await?;
+            devices += 1;
+        }
+    }
+    sqlx::query("INSERT INTO ip_events (account_id, kind, ip, country) VALUES ($1, 'sessions_revoked', $2::inet, $3)")
+        .bind(s.account_id)
+        .bind(client.ip().to_string())
+        .bind(client.info.country.as_deref())
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    tracing::info!(web, devices, "signed out everywhere else");
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
 /// Active (linked, not revoked) devices of an account, for `web/me`.
 pub async fn active_count(db: &sqlx::PgPool, account_id: Uuid) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar(

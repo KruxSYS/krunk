@@ -208,7 +208,7 @@ async function pollUntilDone(deviceCode, interval, maxS) {
     const names = await page.$$eval('#devices li .name', (l) => l.map((x) => x.textContent));
     ok(names.length === 2 && names.includes('Krunk 0.8.0 on Windows 10'), `devices listed: ${names.join(' | ')}`);
     ok((await page.$$('#devices li.revoked')).length === 1, 'the reuse-revoked device shows as removed');
-    ok((await page.$$eval('#sessions li .name', (l) => l.map((x) => x.textContent))).some((t) => t.includes('(this browser)')), 'sessions: this browser');
+    ok((await page.$$eval('#sessions li .badge', (l) => l.map((x) => x.textContent))).includes('This browser'), 'sessions: this browser');
     await shot('account-devices');
     await page.click('#devices li:not(.revoked) button:text("Rename")');
     await page.fill('#devices li:not(.revoked) form input', 'Gaming PC');

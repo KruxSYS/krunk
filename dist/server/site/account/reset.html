@@ -9,15 +9,16 @@
 <link rel="stylesheet" href="/style.css">
 <script src="/account/account.js" defer></script>
 </head>
-<body class="account" data-page="reset">
+<body class="account auth" data-page="reset">
 <header class="bar">
   <div class="wrap">
     <a class="brand" href="/"><img src="/krunk.svg" width="28" height="28" alt=""> Krunk</a>
-    <nav><a href="/account/">Account</a> <a href="/privacy">Privacy</a></nav>
+    <nav aria-label="Site"><a href="/account/">Account</a> <a href="/privacy">Privacy</a></nav>
   </div>
 </header>
-<main class="wrap narrow">
+<main>
   <h1>Reset your password</h1>
+  <p class="lead">We send a link to choose a new one.</p>
   <p id="closed" class="closed" hidden>Accounts are coming soon. Krunk works fully without one; an account will only be needed for sync.</p>
   <p id="status" class="status" role="status" aria-live="polite"></p>
   <form id="form" class="card" hidden novalidate>
@@ -27,7 +28,8 @@
     <button type="submit" class="primary">Send the link</button>
   </form>
   <form id="form-new" class="card" hidden novalidate>
-    <label>New password <input name="new_password" type="password" autocomplete="new-password" required minlength="10"></label>
+    <label>New password <input name="new_password" type="password" autocomplete="new-password" required minlength="10" aria-describedby="pw-hint">
+      <span class="hint" id="pw-hint">At least 10 characters.</span></label>
     <label>New password again <input name="new_password2" type="password" autocomplete="new-password" required minlength="10"></label>
     <label id="totp-row" hidden>Code from your authenticator app (or a backup code)
       <input name="totp" autocomplete="one-time-code" inputmode="numeric" maxlength="20"></label>
@@ -35,9 +37,9 @@
     <button type="submit" class="primary">Set the new password</button>
   </form>
   <div id="done" class="card" hidden><p id="done-text"></p></div>
-  <p class="links"><a href="/account/login">Sign in</a></p>
+  <ul class="links"><li><a href="/account/login">Sign in</a></li></ul>
   <p class="never">The Krunk website never asks for your sync passphrase or recovery key.</p>
 </main>
-<footer class="wrap narrow"><p><a href="/">Krunk</a> · <a href="/privacy">Privacy</a></p></footer>
+<footer class="wrap"><p><a href="/">Krunk</a> · <a href="/privacy">Privacy</a></p></footer>
 </body>
 </html>

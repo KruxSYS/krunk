@@ -9,15 +9,16 @@
 <link rel="stylesheet" href="/style.css">
 <script src="/account/account.js" defer></script>
 </head>
-<body class="account" data-page="link">
+<body class="account auth" data-page="link">
 <header class="bar">
   <div class="wrap">
     <a class="brand" href="/"><img src="/krunk.svg" width="28" height="28" alt=""> Krunk</a>
-    <nav><a href="/account/">Account</a> <a href="/privacy">Privacy</a></nav>
+    <nav aria-label="Site"><a href="/account/">Account</a> <a href="/privacy">Privacy</a></nav>
   </div>
 </header>
-<main class="wrap narrow">
+<main>
   <h1>Sign in a device</h1>
+  <p class="lead">A Krunk browser asks to use your account.</p>
   <p id="closed" class="closed" hidden>Accounts are coming soon. Krunk works fully without one; an account will only be needed for sync.</p>
   <p id="status" class="status" role="status" aria-live="polite"></p>
 
@@ -38,10 +39,10 @@
     <p id="d-mismatch" class="mismatch" hidden></p>
     <p class="warn">Only approve if you started this on your own device just now. Approving lets that
       device use your Krunk account. You can remove it at any time on your account page.</p>
-    <p>The code on your device:</p>
-    <p id="d-code" class="usercode"></p>
+    <p id="d-code-label">The code on your device:</p>
+    <p id="d-code" class="usercode" aria-labelledby="d-code-label"></p>
     <label class="check"><input type="checkbox" name="same" required> <span>Krunk on my device shows exactly this code.</span></label>
-    <div class="row-buttons">
+    <div class="decide">
       <button type="submit" class="primary" disabled>Approve this device</button>
       <button type="button" id="deny">Deny</button>
     </div>
@@ -65,6 +66,6 @@
   </div>
   <p class="never">The Krunk website never asks for your sync passphrase or recovery key.</p>
 </main>
-<footer class="wrap narrow"><p><a href="/">Krunk</a> · <a href="/privacy">Privacy</a></p></footer>
+<footer class="wrap"><p><a href="/">Krunk</a> · <a href="/privacy">Privacy</a></p></footer>
 </body>
 </html>

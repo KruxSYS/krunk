@@ -9,15 +9,16 @@
 <link rel="stylesheet" href="/style.css">
 <script src="/account/account.js" defer></script>
 </head>
-<body class="account" data-page="login">
+<body class="account auth" data-page="login">
 <header class="bar">
   <div class="wrap">
     <a class="brand" href="/"><img src="/krunk.svg" width="28" height="28" alt=""> Krunk</a>
-    <nav><a href="/account/">Account</a> <a href="/privacy">Privacy</a></nav>
+    <nav aria-label="Site"><a href="/account/">Account</a> <a href="/privacy">Privacy</a></nav>
   </div>
 </header>
-<main class="wrap narrow">
+<main>
   <h1>Sign in</h1>
+  <p class="lead">to your Krunk account.</p>
   <p id="closed" class="closed" hidden>Accounts are coming soon. Krunk works fully without one; an account will only be needed for sync.</p>
   <p id="status" class="status" role="status" aria-live="polite"></p>
   <form id="form" class="card" hidden novalidate>
@@ -28,9 +29,13 @@
     <div class="turnstile" data-turnstile></div>
     <button type="submit" class="primary">Sign in</button>
   </form>
-  <p class="links"><a href="/account/register">Create an account</a> · <a href="/account/reset">Forgot your password?</a> · <a href="/account/resend">Resend the confirmation email</a></p>
+  <ul class="links">
+    <li><a href="/account/register">Create an account</a></li>
+    <li><a href="/account/reset">Forgot your password?</a></li>
+    <li><a href="/account/resend">Resend the confirmation email</a></li>
+  </ul>
   <p class="never">The Krunk website never asks for your sync passphrase or recovery key.</p>
 </main>
-<footer class="wrap narrow"><p><a href="/">Krunk</a> · <a href="/privacy">Privacy</a></p></footer>
+<footer class="wrap"><p><a href="/">Krunk</a> · <a href="/privacy">Privacy</a></p></footer>
 </body>
 </html>

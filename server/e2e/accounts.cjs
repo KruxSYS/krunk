@@ -96,7 +96,7 @@ function totp(secret, offsetSteps) {
   await page.fill('input[name=password]', PW1);
   await page.fill('input[name=password2]', 'different password!');
   await page.click('button[type=submit]');
-  ok((await status()).includes('different'), 'register: mismatched passwords caught in the page');
+  ok((await page.textContent('#form .field-error')).includes('different'), 'register: mismatched passwords caught in the page (at the field)');
   await page.fill('input[name=password]', 'password123');
   await page.fill('input[name=password2]', 'password123');
   await page.click('button[type=submit]');
@@ -150,10 +150,10 @@ function totp(secret, offsetSteps) {
   await page.click('#totp-start button');
   await page.waitForSelector('#totp-confirm:not([hidden])');
   ok(await page.$('#totp-qr svg'), 'totp: QR code shown (SVG)');
-  const secret = b32decode((await page.textContent('#totp-secret')).trim());
+  const secret = b32decode((await page.textContent('#totp-secret')).replace(/\s/g, ''));
   await shot('totp-setup');
   await page.fill('#totp-confirm input[name=code]', totp(secret));
-  await page.click('#totp-confirm button');
+  await page.click('#totp-confirm button[type=submit]');
   await page.waitForSelector('#totp-codes:not([hidden])');
   const codes = await page.$$eval('#totp-code-list li', (l) => l.map((x) => x.textContent));
   ok(codes.length === 10, 'totp: 10 backup codes shown');

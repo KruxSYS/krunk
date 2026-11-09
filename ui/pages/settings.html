@@ -39,7 +39,7 @@
     <h2 class="panel-title">Account</h2>
     <div class="card group" id="account-card">
       <h3>Krunk account</h3>
-      <div class="row setting" data-keywords="sign in krunk account sign out manage account device" id="account-row">
+      <div class="row setting column" data-keywords="sign in krunk account sign out manage account device" id="account-row">
         <div class="text">
           <span class="label" id="account-title">Sign in to Krunk</span>
           <p class="desc" id="account-desc">Sign in with your Krunk account to see this device on your account page.</p>
@@ -51,14 +51,15 @@
           <p class="desc account-message" id="account-message" role="status" hidden></p>
           <p class="desc">Sync is coming in a later version.</p>
         </div>
-        <div class="control account-actions">
+        <div class="account-actions">
           <button id="account-sign-in" class="btn primary" hidden>Sign in</button>
           <button id="account-copy" class="btn" hidden>Copy code</button>
           <button id="account-reopen" class="btn" hidden>Open the page again</button>
           <button id="account-cancel" class="btn" hidden>Cancel</button>
           <button id="account-manage" class="btn" hidden>Manage account</button>
-          <button id="account-sign-out" class="btn" hidden>Sign out on this device</button>
+          <button id="account-sign-out" class="btn danger" hidden>Sign out on this device</button>
         </div>
+        <p class="desc account-never">The Krunk website never asks for your sync passphrase or recovery key.</p>
       </div>
     </div>
   </section>

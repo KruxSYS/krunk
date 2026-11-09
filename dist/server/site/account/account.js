@@ -10,7 +10,9 @@
 
   function $(sel) { return document.querySelector(sel); }
   function show(el, on) { if (el) el.hidden = !on; }
+  // The banner: role=status, or role=alert for an error (set before the text, so it is read).
   function say(text, kind) {
+    statusEl.setAttribute('role', kind === 'error' ? 'alert' : 'status');
     statusEl.textContent = text || '';
     statusEl.className = 'status' + (kind ? ' ' + kind : '');
   }
@@ -86,14 +88,72 @@
     return true;
   }
 
+  // While a request runs: the form's buttons are disabled and its submit button shows a spinner.
   function busy(form, on) {
-    Array.prototype.forEach.call(form.querySelectorAll('button'), function (b) { b.disabled = on; });
+    Array.prototype.forEach.call(form.querySelectorAll('button'), function (b) {
+      b.disabled = on;
+      if (b.type === 'submit') { if (on) b.setAttribute('aria-busy', 'true'); else b.removeAttribute('aria-busy'); }
+    });
   }
+
+  // ---- Inline validation ---------------------------------------------------------------------
+  // A message under the field (aria-describedby), aria-invalid, and the focus on the first one.
+  var fieldIds = 0;
+  function fieldError(input, text) {
+    var label = input.closest('label') || input.parentNode;
+    var msg = label.querySelector('.field-error');
+    if (!text) {
+      input.removeAttribute('aria-invalid');
+      if (msg) {
+        label.removeChild(msg);
+        var ids = (input.getAttribute('aria-describedby') || '').split(' ').filter(function (x) { return x && x !== msg.id; });
+        if (ids.length) input.setAttribute('aria-describedby', ids.join(' ')); else input.removeAttribute('aria-describedby');
+      }
+      return;
+    }
+    if (!msg) {
+      msg = el('span', 'field-error');
+      msg.id = 'fe-' + (++fieldIds);
+      label.appendChild(msg);
+      var d = input.getAttribute('aria-describedby');
+      input.setAttribute('aria-describedby', (d ? d + ' ' : '') + msg.id);
+    }
+    msg.textContent = text;
+    input.setAttribute('aria-invalid', 'true');
+  }
+  function problem(input) {
+    var v = input.value;
+    if (input.type === 'checkbox') return input.required && !input.checked ? 'Tick this box to continue.' : '';
+    if (input.required && !v.trim()) return 'Please fill this in.';
+    if (!v) return '';
+    if (input.type === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim())) return 'Enter an email address like name@example.org.';
+    if (input.minLength > 0 && v.length < input.minLength) return 'Use at least ' + input.minLength + ' characters.';
+    if (input.maxLength > 0 && v.length > input.maxLength) return 'Use at most ' + input.maxLength + ' characters.';
+    if (input.pattern && !new RegExp('^(?:' + input.pattern + ')$').test(v.trim())) return input.getAttribute('data-pattern-error') || 'This doesn\'t look right.';
+    return '';
+  }
+  // True when every visible field of the form is fine; otherwise the messages are shown.
+  function validate(form, extra) {
+    var first = null;
+    Array.prototype.forEach.call(form.querySelectorAll('input'), function (input) {
+      if (input.closest('[hidden]')) { fieldError(input, ''); return; }
+      var p = problem(input) || (extra ? extra(input) : '');
+      fieldError(input, p);
+      if (p && !first) first = input;
+    });
+    if (first) first.focus();
+    return !first;
+  }
+  document.addEventListener('input', function (ev) {
+    var t = ev.target;
+    if (t && t.getAttribute && t.getAttribute('aria-invalid') === 'true' && !problem(t)) fieldError(t, '');
+  });
 
   // A form whose submit posts `build()` to `path`; `done(r)` on success, `fail(r)` otherwise.
   function onSubmit(form, path, build, done, fail) {
     form.addEventListener('submit', function (ev) {
       ev.preventDefault();
+      if (!validate(form)) return;
       var body = build();
       if (!body) return;
       busy(form, true);
@@ -107,7 +167,8 @@
 
   function samePasswords(form, a, b) {
     if (value(form, a) !== value(form, b)) {
-      say('The two passwords are different.', 'error');
+      fieldError(field(form, b), 'The two passwords are different.');
+      field(form, b).focus();
       return false;
     }
     return true;
@@ -154,17 +215,28 @@
 
   // Sensitive actions answer 403 reauth_required unless the password was entered in the last
   // 10 minutes. Then this form asks for it (and a code, if two-step verification is on) and the
-  // action runs again.
-  function withReauth(form, totpOn, action, done) {
-    action().then(function (r) {
-      if (r.ok) { done(r); return; }
-      if (r.body.error !== 'reauth_required') { say(errorText(r), 'error'); return; }
+  // action runs again. `anchor`: the form is moved right after it, next to the action.
+  // web/me says whether the last re-auth is still fresh, so the form usually comes up before the
+  // action is tried (no 403 on the way); a 403 reauth_required (a race) brings it up too.
+  function withReauth(form, totpOn, action, done, anchor) {
+    api('GET', 'me').then(function (m) {
+      if (m.ok && m.body.reauth_valid === false) { ask(); return; }
+      action().then(function (r) {
+        if (r.ok) { done(r); return; }
+        if (r.body.error !== 'reauth_required') { say(errorText(r), 'error'); return; }
+        ask();
+      });
+    });
+    function ask() {
       form.reset();
+      Array.prototype.forEach.call(form.querySelectorAll('input'), function (i) { fieldError(i, ''); });
+      if (anchor) anchor.insertAdjacentElement('afterend', form);
       show(form.querySelector('.needs-totp'), totpOn);
       show(form, true);
       field(form, 'password').focus();
       form.onsubmit = function (ev) {
         ev.preventDefault();
+        if (!validate(form)) return;
         var b = { password: value(form, 'password') };
         if (value(form, 'totp')) b.totp = value(form, 'totp').trim();
         busy(form, true);
@@ -179,8 +251,12 @@
           action().then(function (r2) { if (r2.ok) done(r2); else say(errorText(r2), 'error'); });
         });
       };
-      form.querySelector('.cancel').onclick = function () { show(form, false); say(''); };
-    });
+      form.querySelector('.cancel').onclick = function () {
+        show(form, false);
+        say('');
+        if (anchor && anchor.focus) anchor.focus();
+      };
+    }
   }
 
   // ---- Pages --------------------------------------------------------------------------------
@@ -321,6 +397,7 @@
     });
     codeForm.addEventListener('submit', function (ev) {
       ev.preventDefault();
+      if (!validate(codeForm)) return;
       var c = value(codeForm, 'code').trim();
       if (c) lookup(c);
     });
@@ -395,73 +472,243 @@
     box.appendChild(document.importNode(root, true));
   }
 
+  // ---- Dashboard helpers --------------------------------------------------------------------
+  var SVG = 'http://www.w3.org/2000/svg';
+  // Platform icons, built as SVG elements (presentation attributes only: no inline style).
+  var ICONS = {
+    windows: [['path', { d: 'M3 5.6 10 4.6v7.1H3zM11 4.4 21 3v8.7H11zM3 12.7h7v7.1l-7-1zM11 12.7h10V21l-10-1.4z', fill: 'currentColor' }]],
+    android: [['path', { d: 'M7 10h10v7.2a1 1 0 0 1-1 1h-1V21h-2v-2.8h-2V21H9v-2.8H8a1 1 0 0 1-1-1zM4.2 10h1.8v5.8H4.2zM18 10h1.8v5.8H18zM7 9a5 5 0 0 1 10 0zM9.7 6.6h.01M14.3 6.6h.01', fill: 'currentColor', stroke: 'currentColor', 'stroke-linecap': 'round' }]],
+    browser: [['circle', { cx: '12', cy: '12', r: '9', fill: 'none', stroke: 'currentColor', 'stroke-width': '2' }],
+      ['path', { d: 'M3 12h18M12 3c2.6 2.6 3.8 5.6 3.8 9s-1.2 6.4-3.8 9M12 3C9.4 5.6 8.2 8.6 8.2 12s1.2 6.4 3.8 9', fill: 'none', stroke: 'currentColor', 'stroke-width': '2' }]],
+    other: [['rect', { x: '3', y: '4', width: '18', height: '12', rx: '2', fill: 'none', stroke: 'currentColor', 'stroke-width': '2' }],
+      ['path', { d: 'M8 20h8M12 16v4', fill: 'none', stroke: 'currentColor', 'stroke-width': '2' }]]
+  };
+  function icon(kind) {
+    var box = el('span', 'icon');
+    box.setAttribute('aria-hidden', 'true');
+    var svg = document.createElementNS(SVG, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('focusable', 'false');
+    (ICONS[kind] || ICONS.other).forEach(function (part) {
+      var n = document.createElementNS(SVG, part[0]);
+      Object.keys(part[1]).forEach(function (k) { n.setAttribute(k, part[1][k]); });
+      svg.appendChild(n);
+    });
+    box.appendChild(svg);
+    return box;
+  }
+  // "3 minutes ago"; the exact time is in the element's title.
+  function ago(iso) {
+    var d = new Date(iso);
+    if (isNaN(d)) return '';
+    var s = (Date.now() - d.getTime()) / 1000;
+    if (s < 90) return 'just now';
+    if (s < 3600) return Math.round(s / 60) + ' minutes ago';
+    if (s < 86400) { var h = Math.round(s / 3600); return h + (h === 1 ? ' hour ago' : ' hours ago'); }
+    if (s < 2 * 86400) return 'yesterday';
+    if (s < 7 * 86400) return Math.floor(s / 86400) + ' days ago';
+    return 'on ' + d.toLocaleDateString(undefined, { dateStyle: 'medium' });
+  }
+  function timeSpan(prefix, iso) {
+    var t = el('span', null, prefix + ago(iso));
+    t.title = when(iso);
+    return t;
+  }
+  function size(bytes) {
+    var n = Number(bytes) || 0;
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' KB';
+    return (n / 1024 / 1024).toFixed(1) + ' MB';
+  }
+  function count(n) { return (Number(n) || 0).toLocaleString('en'); }
+  // A row of a devices or sessions list: icon, title (name + badges), meta, actions.
+  function row(cls, iconKind, name, badges) {
+    var li = el('li', cls || null);
+    li.appendChild(icon(iconKind));
+    var title = el('div', 'title');
+    var n = el('span', 'name', name);
+    n.title = name;
+    title.appendChild(n);
+    (badges || []).forEach(function (b) { title.appendChild(el('span', 'badge ' + b[0], b[1])); });
+    li.appendChild(title);
+    return li;
+  }
+  function meta(parts) {
+    var m = el('p', 'meta');
+    parts.forEach(function (p, i) {
+      if (i) m.appendChild(document.createTextNode(' · '));
+      m.appendChild(typeof p === 'string' ? document.createTextNode(p) : p);
+    });
+    return m;
+  }
+  function button(text, cls) {
+    var b = el('button', cls || 'small', text);
+    b.type = 'button';
+    return b;
+  }
+  // The sync state from web/me (absent before the 0.9.0 server: then sync is off).
+  function syncView(me) {
+    var s = me.sync;
+    if (s && s.rotation_pending) {
+      return { cls: 'pending', title: 'Securing your account…', text: 'A device was removed. Your other Krunk browsers re-encrypt your synced data with new keys; this finishes when one of them is online.', tile: 'Securing', tileD: 'after a device was removed', on: true };
+    }
+    if (s && s.has_keyset) {
+      return { cls: '', title: 'Sync is on', text: count(s.records) + ' encrypted items, ' + size(s.bytes) + '. Only your devices can read them: this website stores and sees encrypted data only.', tile: 'On', tileD: count(s.records) + ' items · ' + size(s.bytes), on: true };
+    }
+    return { cls: '', title: 'Sync is off — turn it on in Krunk (Settings → Sync).', text: 'Until then a device only shows who it is signed in as.', tile: 'Off', tileD: 'Turn it on in Krunk (Settings → Sync)', on: false };
+  }
+  function copyText(text, what) {
+    function done(ok) { say(ok ? what + ' copied to the clipboard.' : 'Copying failed: select the text and copy it yourself.', ok ? 'ok' : 'error'); }
+    function fallback() {
+      var ta = el('textarea', 'offscreen');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      document.body.removeChild(ta);
+      done(ok);
+    }
+    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(function () { done(true); }, fallback);
+    else fallback();
+  }
+  function download(name, text) {
+    var url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+    var a = el('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+  }
+  // The section nav marks the section in view (aria-current) as the page scrolls.
+  function sectionNav() {
+    var links = Array.prototype.slice.call(document.querySelectorAll('#secnav a'));
+    function mark(id) {
+      links.forEach(function (a) {
+        if (a.getAttribute('href') === '#' + id) a.setAttribute('aria-current', 'true'); else a.removeAttribute('aria-current');
+      });
+    }
+    links.forEach(function (a) { a.addEventListener('click', function () { mark(a.getAttribute('href').slice(1)); }); });
+    mark('summary');
+    if (!('IntersectionObserver' in window)) return;
+    var visible = {};
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) { visible[e.target.id] = e.isIntersecting; });
+      var first = links.map(function (a) { return a.getAttribute('href').slice(1); }).filter(function (id) { return visible[id]; })[0];
+      if (first) mark(first);
+    }, { rootMargin: '-10% 0px -60% 0px' });
+    links.forEach(function (a) { var t = document.getElementById(a.getAttribute('href').slice(1)); if (t) io.observe(t); });
+  }
+
   pages.index = function () {
     var overview = $('#overview');
-
     var meCache = null;
     var reauthForm = $('#reauth');
+    statusEl.tabIndex = -1;
+    // Krunk's "Manage account" opens /account/?this=<device id>: that row says "This device".
+    var params = new URLSearchParams(location.search);
+    var thisDevice = params.get('this');
+    if (thisDevice && /^[0-9a-f-]{36}$/.test(thisDevice)) {
+      try { sessionStorage.setItem('krunk-this-device', thisDevice); } catch (e) { /* storage off */ }
+    }
+    if (params.has('this')) history.replaceState(null, '', location.pathname + location.hash);
+    try { thisDevice = sessionStorage.getItem('krunk-this-device'); } catch (e) { thisDevice = null; }
+
+    function afterAction(focusEl) {
+      if (focusEl && document.body.contains(focusEl) && !focusEl.closest('[hidden]')) focusEl.focus();
+      else statusEl.focus();
+    }
+
     function loadDevices() {
       return api('GET', 'devices').then(function (r) {
         if (!r.ok) return;
-        var list = $('#devices');
-        list.textContent = '';
-        show($('#no-devices'), r.body.length === 0);
+        var active = $('#devices-active');
+        var removedBox = $('#devices-removed');
+        var removed = removedBox.querySelector('ul');
+        active.textContent = '';
+        removed.textContent = '';
+        var syncOn = meCache && syncView(meCache).on;
+        var nActive = 0, nRemoved = 0;
         r.body.forEach(function (d) {
-          var li = el('li', d.revoked_at ? 'revoked' : '');
-          li.appendChild(el('div', 'name', d.label));
-          var meta = platformName(d.platform) + ' · Krunk ' + d.client_version + ' · signed in ' + when(d.created);
-          meta += d.revoked_at ? ' · removed ' + when(d.revoked_at) : ' · last seen ' + when(d.last_used) + ' · ' + country(d.last_country);
-          li.appendChild(el('div', 'meta', meta));
-          if (!d.revoked_at) {
-            var row = el('div', 'row-buttons');
-            var rename = el('button', 'small', 'Rename');
-            rename.type = 'button';
-            var remove = el('button', 'small', 'Remove');
-            remove.type = 'button';
-            row.appendChild(rename);
-            row.appendChild(remove);
-            li.appendChild(row);
-            rename.addEventListener('click', function () { renameForm(li, d); });
-            remove.addEventListener('click', function () {
-              withReauth(reauthForm, meCache && meCache.totp, function () {
-                return api('POST', 'devices/' + d.id + '/revoke', {});
-              }, function () {
-                say('"' + d.label + '" is removed and signed out.', 'ok');
-                loadDevices();
-                loadSessions();
-              });
-            });
+          var badges = [];
+          if (!d.revoked_at && d.id === thisDevice) badges.push(['self', 'This device']);
+          if (!d.revoked_at && syncOn && d.has_keys === false) badges.push(['warn', 'Linked, no keys yet']);
+          var li = row(d.revoked_at ? 'revoked' : '', d.platform === 'android' ? 'android' : 'windows', d.label, badges);
+          var parts = [platformName(d.platform), 'Krunk ' + d.client_version];
+          if (d.revoked_at) {
+            parts.push(timeSpan('removed ', d.revoked_at));
+          } else {
+            parts.push(d.last_sync ? timeSpan('last synced ', d.last_sync) : timeSpan('last seen ', d.last_used));
+            parts.push(country(d.last_country));
           }
-          list.appendChild(li);
+          li.appendChild(meta(parts));
+          if (d.revoked_at) {
+            removed.appendChild(li);
+            nRemoved++;
+            return;
+          }
+          nActive++;
+          var actions = el('div', 'actions');
+          var rename = button('Rename');
+          var remove = button('Remove', 'small danger');
+          rename.setAttribute('aria-label', 'Rename ' + d.label);
+          remove.setAttribute('aria-label', 'Remove ' + d.label);
+          actions.appendChild(rename);
+          actions.appendChild(remove);
+          li.appendChild(actions);
+          rename.addEventListener('click', function () { renameForm(li, d, rename); });
+          remove.addEventListener('click', function () {
+            reauthForm.querySelector('.why').textContent = 'Enter your password again to remove "' + d.label + '". It is signed out at once' +
+              (syncOn ? ', and your other devices re-encrypt your synced data with new keys.' : '.');
+            withReauth(reauthForm, meCache && meCache.totp, function () {
+              return api('POST', 'devices/' + d.id + '/revoke', {});
+            }, function () {
+              say('"' + d.label + '" is removed and signed out.', 'ok');
+              Promise.all([loadMe(), loadDevices(), loadSessions()]).then(function () { afterAction($('#devices-removed summary')); });
+            }, li);
+          });
+          active.appendChild(li);
         });
+        show($('#no-devices'), nActive === 0);
+        $('#removed-count').textContent = String(nRemoved);
+        show(removedBox, nRemoved > 0);
       });
     }
-    function renameForm(li, d) {
-      if (li.querySelector('form')) return;
+    function renameForm(li, d, opener) {
+      if (li.querySelector('form')) { li.querySelector('form input').focus(); return; }
       var f = el('form');
       f.noValidate = true;
+      var label = el('label');
+      label.appendChild(el('span', 'sr-label', 'New name'));
       var input = el('input');
       input.name = 'label';
+      input.required = true;
       input.maxLength = 64;
       input.value = d.label;
-      input.setAttribute('aria-label', 'New name');
+      input.autocomplete = 'off';
+      label.appendChild(input);
       var save = el('button', 'small primary', 'Save');
       save.type = 'submit';
-      var cancel = el('button', 'small', 'Cancel');
-      cancel.type = 'button';
-      f.appendChild(input);
+      var cancel = button('Cancel');
+      f.appendChild(label);
       f.appendChild(save);
       f.appendChild(cancel);
       li.appendChild(f);
       input.focus();
       input.select();
-      cancel.addEventListener('click', function () { li.removeChild(f); });
+      cancel.addEventListener('click', function () { li.removeChild(f); opener.focus(); });
       f.addEventListener('submit', function (ev) {
         ev.preventDefault();
+        if (!validate(f, function (i) { return /[\u0000-\u001f\u007f]/.test(i.value) ? 'No line breaks or control characters.' : ''; })) return;
+        busy(f, true);
         api('POST', 'devices/' + d.id + '/rename', { label: input.value }).then(function (r) {
-          if (!r.ok) { say(errorText(r), 'error'); return; }
-          say('Renamed.', 'ok');
-          loadDevices();
+          busy(f, false);
+          if (!r.ok) { fieldError(input, errorText(r)); input.focus(); return; }
+          say('Renamed to "' + r.body.label + '".', 'ok');
+          loadDevices().then(function () { afterAction(null); });
         });
       });
     }
@@ -470,26 +717,33 @@
         if (!r.ok) return;
         var list = $('#sessions');
         list.textContent = '';
+        var others = 0;
         r.body.filter(function (x) { return x.kind === 'web'; }).forEach(function (x) {
-          var li = el('li');
-          li.appendChild(el('div', 'name', uaSummary(x.user_agent) + (x.current ? ' (this browser)' : '')));
-          li.appendChild(el('div', 'meta', 'Signed in ' + when(x.created) + ' · last seen ' + when(x.last_used) +
-            ' · ' + (x.ip_masked || 'address not kept') + ' · ' + country(x.country)));
+          var li = row('', 'browser', uaSummary(x.user_agent), x.current ? [['self', 'This browser']] : []);
+          li.appendChild(meta([timeSpan('signed in ', x.created), x.current ? 'active now' : timeSpan('last seen ', x.last_used),
+            x.ip_masked || 'address not kept', country(x.country)]));
           if (!x.current) {
-            var b = el('button', 'small', 'Sign out');
-            b.type = 'button';
+            others++;
+            var actions = el('div', 'actions');
+            var b = button('Sign out');
+            b.setAttribute('aria-label', 'Sign out ' + uaSummary(x.user_agent));
+            actions.appendChild(b);
+            li.appendChild(actions);
             b.addEventListener('click', function () {
+              b.disabled = true;
+              b.setAttribute('aria-busy', 'true');
               api('POST', 'sessions/' + x.id + '/revoke', {}).then(function (rr) {
-                if (rr.ok) { say('That browser is signed out.', 'ok'); loadSessions(); } else say(errorText(rr), 'error');
+                if (rr.ok) { say('That browser is signed out.', 'ok'); loadSessions().then(function () { afterAction(null); }); }
+                else { b.disabled = false; b.removeAttribute('aria-busy'); say(errorText(rr), 'error'); }
               });
             });
-            li.appendChild(b);
           }
           list.appendChild(li);
         });
+        $('#revoke-all-open').disabled = others === 0 && !(meCache && meCache.devices > 0);
       });
     }
-    function load() {
+    function loadMe() {
       return api('GET', 'me').then(function (r) {
         if (r.status === 401) { location.href = '/account/login'; return; }
         if (!r.ok) { say(errorText(r), 'error'); return; }
@@ -497,20 +751,67 @@
         meCache = me;
         csrf = me.csrf;
         $('#me-email').textContent = me.email;
-        $('#me-created').textContent = new Date(me.created).toLocaleDateString();
+        var who = $('#who');
+        who.textContent = me.email;
+        who.title = me.email;
+        show(who, true);
+        show($('#logout'), true);
+        $('#me-created').textContent = new Date(me.created).toLocaleDateString(undefined, { dateStyle: 'long' });
+        $('#tile-devices').textContent = String(me.devices);
+        $('#tile-devices-d').textContent = me.devices === 1 ? 'Krunk browser signed in' : 'Krunk browsers signed in';
+        var sv = syncView(me);
+        $('#tile-sync').textContent = sv.tile;
+        $('#tile-sync-d').textContent = sv.tileD;
+        $('#sync-state').className = 'sync-state' + (sv.cls ? ' ' + sv.cls : '');
+        $('#sync-title').textContent = sv.title;
+        $('#sync-text').textContent = sv.text;
+        $('#tile-totp').textContent = me.totp ? 'On' : 'Off';
+        $('#tile-totp-d').textContent = me.totp ? me.backup_codes_left + ' backup codes left' : 'Recommended';
+        var badge = $('#totp-badge');
+        badge.textContent = me.totp ? 'On' : 'Off';
+        badge.className = 'badge ' + (me.totp ? 'ok' : 'off');
         $('#totp-state').textContent = me.totp
-          ? 'On. Signing in needs a code from your authenticator app. Backup codes left: ' + me.backup_codes_left + '.'
-          : 'Off. Turn it on to sign in with a code from an authenticator app as well as your password.';
+          ? 'Signing in needs a code from your authenticator app. Backup codes left: ' + me.backup_codes_left + '.'
+          : 'Turn it on to sign in with a code from an authenticator app as well as your password.';
         show($('#totp-start'), !me.totp);
         show($('#totp-off'), me.totp);
         show($('#totp-confirm'), false);
         show($('#password .needs-totp'), me.totp);
         show(overview, true);
+        show($('#secnav'), true);
       });
     }
 
     $('#logout').addEventListener('click', function () {
       api('POST', 'logout', {}).then(function () { location.href = '/account/login'; });
+    });
+
+    var openAll = $('#revoke-all-open');
+    var allForm = $('#revoke-all');
+    openAll.addEventListener('click', function () {
+      var open = allForm.hidden;
+      show(allForm, open);
+      openAll.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (open) allForm.querySelector('button[type=submit]').focus();
+    });
+    allForm.querySelector('.cancel').addEventListener('click', function () {
+      show(allForm, false);
+      openAll.setAttribute('aria-expanded', 'false');
+      openAll.focus();
+    });
+    allForm.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var devices = field(allForm, 'devices').checked;
+      reauthForm.querySelector('.why').textContent = 'Enter your password again to sign out everywhere else.';
+      withReauth(reauthForm, meCache && meCache.totp, function () {
+        return api('POST', 'sessions/revoke-all', { include_devices: devices });
+      }, function () {
+        show(allForm, false);
+        openAll.setAttribute('aria-expanded', 'false');
+        allForm.reset();
+        say(devices ? 'Every other browser is signed out, and your Krunk browsers are removed.' : 'Every other browser is signed out.', 'ok');
+        Promise.all([loadMe(), loadDevices(), loadSessions()]).then(function () { afterAction(null); });
+      }, allForm);
     });
 
     var start = $('#totp-start');
@@ -519,24 +820,41 @@
     }, function (r) {
       start.reset();
       show(start, false);
-      $('#totp-secret').textContent = r.body.secret_b32;
+      // The key in groups of 4 for reading; copied without spaces.
+      $('#totp-secret').textContent = String(r.body.secret_b32).replace(/(.{4})(?=.)/g, '$1 ');
+      $('#totp-secret').setAttribute('data-key', r.body.secret_b32);
       showQr(r.body.qr_svg);
       show($('#totp-confirm'), true);
+      field($('#totp-confirm'), 'code').focus();
+    });
+    $('#totp-copy').addEventListener('click', function () {
+      copyText($('#totp-secret').getAttribute('data-key') || '', 'The key');
     });
 
     var confirmForm = $('#totp-confirm');
+    var codes = [];
     onSubmit(confirmForm, 'totp/enable', function () {
       return { code: value(confirmForm, 'code').trim() };
     }, function (r) {
       confirmForm.reset();
       var list = $('#totp-code-list');
       list.textContent = '';
-      (r.body.backup_codes || []).forEach(function (c) {
-        var li = document.createElement('li');
-        li.textContent = c;
-        list.appendChild(li);
+      codes = r.body.backup_codes || [];
+      codes.forEach(function (c) { list.appendChild(el('li', null, c)); });
+      loadMe().then(function () {
+        show($('#totp-codes'), true);
+        say('Two-step verification is on. Save your backup codes now.', 'ok');
+        $('#codes-copy').focus();
       });
-      load().then(function () { show($('#totp-codes'), true); say('Two-step verification is on.', 'ok'); });
+    });
+    function codesText() {
+      return 'Krunk backup codes for ' + (meCache ? meCache.email : '') + '\n' +
+        'Made ' + new Date().toLocaleString() + '. Each code works once.\n\n' + codes.join('\n') + '\n';
+    }
+    $('#codes-copy').addEventListener('click', function () { copyText(codesText(), 'The backup codes'); });
+    $('#codes-download').addEventListener('click', function () {
+      download('krunk-backup-codes.txt', codesText());
+      say('Saved as krunk-backup-codes.txt.', 'ok');
     });
 
     var off = $('#totp-off');
@@ -545,7 +863,7 @@
     }, function () {
       off.reset();
       show($('#totp-codes'), false);
-      load().then(function () { say('Two-step verification is off.', 'ok'); });
+      loadMe().then(function () { say('Two-step verification is off.', 'ok'); afterAction(null); });
     });
 
     var pw = $('#password');
@@ -557,9 +875,11 @@
     }, function () {
       pw.reset();
       say('Your password is changed. Other places where you were signed in are signed out.', 'ok');
+      loadSessions();
     });
 
-    load().then(function () { if (csrf) { loadDevices(); loadSessions(); } });
+    sectionNav();
+    loadMe().then(function () { if (csrf) { loadDevices(); loadSessions(); } });
   };
 
   api('GET', 'config').then(function (r) {

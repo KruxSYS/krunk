@@ -73,6 +73,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/web/devices/{id}/revoke", post(devices::device_revoke))
         .route("/api/v1/web/devices/{id}/rename", post(devices::device_rename))
         .route("/api/v1/web/sessions", get(devices::sessions_list))
+        .route("/api/v1/web/sessions/revoke-all", post(devices::sessions_revoke_all))
         .route("/api/v1/web/sessions/{id}/revoke", post(devices::session_revoke))
         .route_layer(middleware::from_fn_with_state(state.clone(), sessions::same_origin))
         .route_layer(middleware::from_fn_with_state(state.clone(), sessions::accounts_gate));

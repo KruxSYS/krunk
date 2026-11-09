@@ -580,3 +580,58 @@ pub(super) async fn s3_flow_secrets(e: &Env) -> Vec<String> {
     let norm = |c: &str| c.replace('-', "");
     vec![access, refresh, refresh2, access2, dc, uc.clone(), norm(&uc), uc2.clone(), norm(&uc2), "s3log".into()]
 }
+
+/// 0.9.0: "Sign out everywhere else" (`web/sessions/revoke-all`). Re-auth; the other website
+/// sessions end and this one stays; devices only with `include_devices` (each a mail); the limit.
+#[tokio::test]
+async fn sign_out_everywhere_else() {
+    let Some(e) = env().await else { return };
+    let mut b = signed_in(&e, "owner@example.org").await;
+    let d = Device::new();
+    let (_id, access, _, _) = linked(&e, &mut b, &d).await;
+    let mut second = Browser::new();
+    login(&e, &mut second, "owner@example.org", PW, None).await;
+    let mut third = Browser::new();
+    login(&e, &mut third, "owner@example.org", PW, None).await;
+    // Someone else's session is never touched.
+    let mut other = signed_in(&e, "other@example.org").await;
+
+    sqlx::query("UPDATE web_sessions SET reauth_at = now() - interval '11 minutes'").execute(&e.db).await.unwrap();
+    let r = b.post(&e, "sessions/revoke-all", json!({})).await;
+    assert_eq!((r.status, err(&r)), (StatusCode::FORBIDDEN, "reauth_required"));
+    assert_eq!(second.get(&e, "me").await.status, StatusCode::OK, "nothing ended without re-auth");
+    assert_eq!(b.post(&e, "sessions/revoke-all", json!({"bogus": 1})).await.status, StatusCode::BAD_REQUEST);
+
+    b.post(&e, "reauth", json!({"password": PW})).await;
+    let mails = outbox(&e.db).await.len();
+    let r = b.post(&e, "sessions/revoke-all", json!({})).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.raw);
+    assert_eq!(second.get(&e, "me").await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(third.get(&e, "me").await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(b.get(&e, "me").await.status, StatusCode::OK, "this session stays");
+    assert_eq!(other.get(&e, "me").await.status, StatusCode::OK, "another account is untouched");
+    assert_eq!(d.call(&e, Method::GET, "device/me", None, Some(&access)).await.status, StatusCode::OK, "devices stay");
+    assert_eq!(outbox(&e.db).await.len(), mails, "no mail for website sessions");
+    let s = b.get(&e, "sessions").await;
+    let web: Vec<&Value> = s.body.as_array().unwrap().iter().filter(|x| x["kind"] == "web").collect();
+    assert_eq!((web.len(), web[0]["current"].as_bool()), (1, Some(true)));
+
+    // With the devices: every linked device is removed at once and mailed about.
+    let (_, access2, refresh2, _) = linked(&e, &mut b, &d).await;
+    let r = b.post(&e, "sessions/revoke-all", json!({"include_devices": true})).await;
+    assert_eq!(r.status, StatusCode::NO_CONTENT, "{}", r.raw);
+    for t in [&access, &access2] {
+        assert_eq!(d.call(&e, Method::GET, "device/me", None, Some(t)).await.status, StatusCode::UNAUTHORIZED);
+    }
+    assert_eq!(d.post(&e, "token/refresh", json!({"refresh_token": refresh2})).await.status, StatusCode::UNAUTHORIZED);
+    let ob = outbox(&e.db).await;
+    assert_eq!(ob[mails..].iter().filter(|x| x.1 == "device_revoked").count(), 2);
+    assert_eq!(b.get(&e, "me").await.body["devices"], 0);
+
+    // 10 per hour per account (3 used above: the refused one counts too).
+    for _ in 0..7 {
+        assert_eq!(b.post(&e, "sessions/revoke-all", json!({})).await.status, StatusCode::NO_CONTENT);
+    }
+    let r = b.post(&e, "sessions/revoke-all", json!({})).await;
+    assert_eq!((r.status, err(&r)), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"));
+}
