@@ -419,6 +419,16 @@ impl Browser {
         self.show_folder_level(id, rect, from, None);
     }
 
+    /// The height of the screen's work area below `anchor` (shell CSS px of the current window).
+    pub(super) fn room_below_css(&self, anchor: PopupRect) -> f64 {
+        let Some(main) = self.window() else { return 600.0 };
+        let scale = main.scale().max(0.5);
+        let origin = main.client_to_screen(0, 0);
+        let bottom = origin.1 + ((anchor.y + anchor.height + 2.0) * scale) as i32;
+        let work = crate::ffi::window::Window::work_area_at(origin.0 + (anchor.x * scale) as i32, bottom);
+        f64::from((work.y + work.height - bottom).max(0)) / scale - 8.0
+    }
+
     /// Middle-click in a dropdown (0.11.0): the new tab opens behind the current one and the
     /// dropdown stays open. Creating the tab's view takes the activation from the popup (on
     /// Windows), which would close it: that loss is ignored for a moment, and the dropdown
@@ -495,7 +505,7 @@ impl Browser {
         let back = parent.and_then(|p| self.store.borrow().bookmark(p).ok().flatten()).map(|f| f.title);
         // The Back row is one more row.
         let rows = items.len() + usize::from(back.is_some());
-        let popup_rect = layout::folder_popup_rect(anchor, rows);
+        let popup_rect = layout::folder_popup_rect(anchor, rows, self.room_below_css(anchor));
         self.show_popup(
             PopupContent::BookmarkFolder { id, title: folder.title, items, offset, back },
             Some(popup_rect),

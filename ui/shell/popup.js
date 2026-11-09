@@ -458,7 +458,7 @@
   }
   // The popup asks the host for the height its content needs: #root's height (the body is
   // pinned to the window's height, so it cannot shrink) plus the body's 1px borders.
-  function fit() { LB.post('popupResize', { height: root.offsetHeight + 2 }); }
+  function fit() { LB.post('popupResize', { height: Math.max(root.offsetHeight, root.scrollHeight) + 2 }); }
   // Content whose height depends on its items: the window is opened with an upper bound
   // and fitted right after the render (the ⋮ menu used to leave a gap at the bottom).
   const FITS = { extInstall: true, suggest: true, cardFill: true, menu: true, tabMenu: true, navMenu: true, httpAuth: true, bookmarkMenu: true, siteInfo: true, addressMenu: true, captionMenu: true, downloads: true, permission: true, passwordSaved: true, pip: true, bookmarkFolder: true };
@@ -1034,7 +1034,8 @@
     if (m.seq === undefined || m.seq === null) return false;
     const seq = m.seq;
     requestAnimationFrame(function () {
-      const height = FITS[c.kind] ? root.offsetHeight + 2 : null;
+      // The content's own height, not the scrolling box's (it is capped at the window).
+      const height = FITS[c.kind] ? Math.max(root.offsetHeight, root.scrollHeight) + 2 : null;
       requestAnimationFrame(function () { LB.post('popupShown', { seq: seq, height: height }); });
     });
     return true;

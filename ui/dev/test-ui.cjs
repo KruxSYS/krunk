@@ -4365,6 +4365,16 @@ async function testFolderPopup(browser) {
   await page.keyboard.press('Backspace');
   check((await sent(page)).filter((x) => x.cmd === 'bookmarkFolderBack').length === n1, 'Backspace at the top level sends nothing');
   check(!(await sent(page)).slice(-3).some((m) => m.cmd === 'popupShown' && m.seq == null), 'content without a number gets no popupShown');
+  // 0.11.1: going back to a longer list in a smaller window: the measured height is the whole
+  // list's (the box scrolls in the small window, but its content height is reported).
+  await page.setViewportSize({ width: 360, height: 110 });
+  const many = Array.from({ length: 25 }, (_, i) => ({ id: 200 + i, title: 'Bookmark ' + i, url: 'https://b' + i + '.example/', isFolder: false, favicon: null }));
+  await emit(page, { event: 'popup', seq: 77, content: { kind: 'bookmarkFolder', id: 1, title: 'Bookmarks bar', offset: 3, items: many } });
+  await page.waitForFunction(() => window.__host.sent.some((m) => m.cmd === 'popupShown' && m.seq === 77));
+  const tall = await lastSent(page, 'popupShown');
+  const rowH = await page.evaluate(() => document.querySelector('.item').getBoundingClientRect().height);
+  check(tall.height >= 25 * rowH && rowH === 30, 'a long list reports its full height in a small window (' + tall.height + ' px, rows ' + rowH + ' px)');
+  await page.setViewportSize({ width: 280, height: 110 });
   // Hidden: the content is dropped at once.
   await emit(page, { event: 'popupClear' });
   check(await page.evaluate(() => document.getElementById('root').children.length) === 0, 'popupClear empties the popup');

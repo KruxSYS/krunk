@@ -347,18 +347,24 @@ pub fn pip_slider_rect(pip: Rect, scale: f64) -> Rect {
     Rect { x, y: mute.y, width, height: d(PIP_SLIDER_HEIGHT_DIP) }
 }
 
+/// One row of a folder dropdown (`popup.css` `.item`) and the dropdown's padding and border.
+pub const FOLDER_ROW: f64 = 30.0;
+const FOLDER_CHROME: f64 = 14.0;
+
 fn folder_height(items: usize) -> f64 {
-    (14.0 + 32.0 * items.max(1) as f64).min(600.0)
+    FOLDER_CHROME + FOLDER_ROW * items.max(1) as f64
 }
 
-/// A bookmarks-bar folder dropdown anchored under the folder button
-/// (`anchor` is the button's rect in shell CSS pixels).
-pub fn folder_popup_rect(anchor: PopupRect, items: usize) -> PopupRect {
+/// A bookmarks-bar folder dropdown anchored under the folder button (`anchor` is the button's
+/// rect in shell CSS pixels): as tall as its rows, up to `room` (the screen below the anchor,
+/// CSS px; 0.11.1: it stopped at 600 px before), the rest scrolls.
+pub fn folder_popup_rect(anchor: PopupRect, items: usize, room: f64) -> PopupRect {
+    let y = anchor.y + anchor.height + 2.0;
     PopupRect {
         x: anchor.x,
-        y: anchor.y + anchor.height + 2.0,
+        y,
         width: FOLDER_POPUP_WIDTH,
-        height: folder_height(items),
+        height: folder_height(items).min(room.max(FOLDER_CHROME + FOLDER_ROW * 4.0)),
     }
 }
 
@@ -383,7 +389,7 @@ fn tab_list_height(tabs: usize) -> f64 {
 }
 
 /// Folder dropdowns are this wide (CSS px); longer titles are shortened with "…" (0.7.2, R9).
-pub const FOLDER_POPUP_WIDTH: f64 = 320.0;
+pub const FOLDER_POPUP_WIDTH: f64 = 360.0;
 
 /// Zoom levels offered by Ctrl +/- (like Chromium).
 pub const ZOOM_STEPS: [f64; 17] =
@@ -485,10 +491,13 @@ mod tests {
     #[test]
     fn folder_dropdown() {
         let anchor = PopupRect { x: 120.0, y: 78.0, width: 90.0, height: 24.0 };
-        let r = folder_popup_rect(anchor, 3);
-        assert_eq!((r.x, r.y, r.width, r.height), (120.0, 104.0, 320.0, 110.0));
-        assert_eq!(folder_popup_rect(anchor, 0).height, 46.0, "room for an 'empty' line");
-        assert_eq!(folder_popup_rect(anchor, 500).height, 600.0, "scrolls beyond 600px");
+        let r = folder_popup_rect(anchor, 3, 900.0);
+        assert_eq!((r.x, r.y, r.width, r.height), (120.0, 104.0, 360.0, 104.0));
+        assert_eq!(folder_popup_rect(anchor, 0, 900.0).height, 44.0, "room for an 'empty' line");
+        // 0.11.1: as tall as the screen below the bar allows (it stopped at 600 px), then scrolls.
+        assert_eq!(folder_popup_rect(anchor, 30, 1200.0).height, 914.0);
+        assert_eq!(folder_popup_rect(anchor, 500, 950.0).height, 950.0, "the rest scrolls");
+        assert_eq!(folder_popup_rect(anchor, 10, 50.0).height, 134.0, "at least four rows");
     }
 
     #[test]

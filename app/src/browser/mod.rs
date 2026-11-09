@@ -2656,7 +2656,15 @@ impl Browser {
                 self.popup_seq.set(n);
                 popup.pending = Some(PendingShow { seq: n, rect: target, focus });
                 seq = Some(n);
-                if !popup.window.is_visible() {
+                if popup.window.is_visible() {
+                    // Shown already (a subfolder or Back in a dropdown): it takes the new place
+                    // and size first, so the new content can measure its full height (0.11.1:
+                    // going back to a longer list kept the shorter one's height).
+                    popup.window.place_hidden(target);
+                    if let Some(c) = &popup.view {
+                        c.set_bounds(0, 0, r.width, r.height);
+                    }
+                } else {
                     if popup_gate() == "park" {
                         popup.window.show_at(
                             ScreenRect { x: -32000, y: -32000, width: target.width, height: target.height },
