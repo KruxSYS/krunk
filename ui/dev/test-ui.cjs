@@ -5099,6 +5099,7 @@ async function testSyncPage(browser) {
     // Restore confirm.
     await view({ state: 'restoreConfirm', devices: ['Krunk on DESKTOP', 'Laptop'], revoked: 1 });
     check((await page.$$eval('#restore-devices li', (l) => l.length)) === 2 && (await page.textContent('#restore-revoked')).includes('1 removed'), t('restore lists the devices that keep access'));
+    check(await page.evaluate(() => document.activeElement.id) === 'restore-confirm', t('the confirm button has the focus'));
     await page.click('#restore-confirm');
     check((await lastSent(page, 'syncRestoreConfirm')) !== undefined, t('confirm the devices'));
     // Joining: waiting, then the code.

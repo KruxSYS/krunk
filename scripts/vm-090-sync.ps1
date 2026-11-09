@@ -148,9 +148,9 @@ switch ($Phase) {
     $rk = (Get-Content $secrets)[1]
     PageClick 786 255 300                                     # Recovery key
     PageClick 792 292 300; TypeSecret $rk
-    PageClick 700 337 12000                                   # Restore (Argon2id)
+    Keys '{ENTER}' 12000                                      # Restore (the form; Argon2id)
     Shot "$P-2-devices"
-    PageClick 398 292 12000                                   # These devices keep access
+    Keys '{ENTER}' 12000                                      # These devices keep access (focused)
     Shot "$P-3-on"
     Start-Sleep 10
     Log "[$P] runs: $(KLog 'sync: (run|passwords) done|restored|set up')"

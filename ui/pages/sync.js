@@ -29,6 +29,7 @@
     if (!v) return;
     const state = { private: 'private', noAccount: 'noaccount', off: 'off', working: 'working', setup: 'setup', join: 'join',
       restoreConfirm: 'restore', joining: 'joining', alarm: 'alarm', on: 'on' }[v.state] || 'off';
+    const shown = VIEWS.find(function (x) { return !$('v-' + x).hidden; });
     show(state);
     if (v.state === 'off') {
       const canPw = vault.exists && !vault.locked;
@@ -62,6 +63,8 @@
       list.textContent = '';
       v.devices.forEach(function (d) { list.appendChild(el('li', { text: d })); });
       $('restore-revoked').textContent = v.revoked ? v.revoked + ' removed device(s) no longer have access.' : '';
+      // The next step is this button: focused, so Enter confirms (keyboard users).
+      if (shown !== 'restore') $('restore-confirm').focus();
     }
     if (v.state === 'joining') {
       $('code-form').hidden = !v.enterCode;
