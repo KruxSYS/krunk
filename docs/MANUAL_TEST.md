@@ -1059,9 +1059,14 @@ vault format 4). The VM automation covers 39 of the 43 flows; then:
    sync.
 
 ## Krunk 0.10.0 (round 14)
-The full regression above (rounds 1–13) because the engine changes (`libcef.dll` with
-`krunk-windowed-hidden.patch`). The VM automation covers 43 flows plus the hidden-tab flow
-(`scripts/vm-0100-spike.ps1`, checked by `scripts/perf/spike-cases.py`); then:
+The regression above (rounds 1–13) because the engine changes (`libcef.dll` with
+`krunk-windowed-hidden.patch`): the hidden-tab flow (`scripts/vm-0100-spike.ps1`, checked by
+`scripts/perf/spike-cases.py`), 060-pip, 070-pip, 070-flash and the 39 other flows on the release
+build, and the 0.9.0 → 0.10.0 in-app update through staging. Not run in 0.10.0 because the
+operator asked for time efficiency: 090-upgrade, 090-sync (sync and vault code is unchanged; a
+core test covers the batched history titles with sync tracking) and 050-lna. 072-ui's update
+check drives the 0.8.0 dev build and had no staging tunnel; the staging update path covers 0.10.0.
+Then:
 1. **Many tabs:** open 30 busy tabs (`scripts/vm-0100-tabs.ps1`, or real sites): the PC stays
    responsive, Task Manager shows Krunk at a few percent CPU when idle, typing and scrolling in
    the active tab are smooth, switching tabs is instant.
