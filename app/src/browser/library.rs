@@ -14,6 +14,10 @@ use lb_core::tabs::TabId;
 use lb_core::urlclean;
 use serde::Serialize;
 
+/// Collected page titles are written this often (`Browser::record_title`).
+pub(super) const TITLE_TIMER: usize = 20;
+const TITLE_FLUSH_MS: u32 = 2_000;
+
 impl Browser {
     /// Requests of the built-in pages and the shell's library features.
     pub(super) fn dispatch_library(&self, sender: Sender, tab: Option<TabId>, req_id: Option<u32>, request: Request) {
@@ -237,15 +241,54 @@ impl Browser {
         }
     }
 
-    /// The page title changed: update the stored history title.
+    /// The page title changed: update the stored history title. Titles are collected and
+    /// written every 2 s on a worker (0.10.0): pages that count something in their title
+    /// ("(3) Inbox") wrote to the database on the UI thread with every change.
     pub(super) fn record_title(&self, id: TabId) {
         let (url, title, private) = {
             let Some(t) = self.tab(id) else { return };
             (t.url.clone(), t.title.clone(), t.private)
         };
         if let Some(clean) = history::visit_url(&url, private) {
-            if let Ok(store) = self.store.try_borrow() {
-                let _ = store.set_title(&clean, &title);
+            let mut pending = self.pending_titles.borrow_mut();
+            if pending.is_empty() {
+                if let Some(w) = self.app() {
+                    w.set_timer(TITLE_TIMER, TITLE_FLUSH_MS);
+                }
+            }
+            pending.insert(clean, title);
+        }
+    }
+
+    /// `TITLE_TIMER`: the collected titles go to the database on a worker connection.
+    pub(super) fn flush_titles(&self) {
+        if let Some(w) = self.app() {
+            w.kill_timer(TITLE_TIMER);
+        }
+        let titles: Vec<(String, String)> =
+            std::mem::take(&mut *self.pending_titles.borrow_mut()).into_iter().collect();
+        if titles.is_empty() {
+            return;
+        }
+        let db = self.dirs.database();
+        self.spawn_job(
+            "history-titles",
+            move || lb_core::storage::Store::open(&db).and_then(|mut s| s.set_titles(&titles)),
+            |_, r| {
+                if let Err(e) = r {
+                    warning!("history titles: {e}");
+                }
+            },
+        );
+    }
+
+    /// At exit: what is still waiting, on this thread.
+    pub(super) fn flush_titles_now(&self) {
+        let titles: Vec<(String, String)> =
+            std::mem::take(&mut *self.pending_titles.borrow_mut()).into_iter().collect();
+        if let (false, Ok(mut store)) = (titles.is_empty(), self.store.try_borrow_mut()) {
+            if let Err(e) = store.set_titles(&titles) {
+                warning!("history titles: {e}");
             }
         }
     }

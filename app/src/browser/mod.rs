@@ -272,6 +272,8 @@ pub struct Browser {
     power: PowerOptions,
     vaults: VaultHost,
     jobs: Jobs,
+    /// Page titles waiting to be written to history (`library::TITLE_TIMER`), by URL.
+    pending_titles: RefCell<std::collections::BTreeMap<String, String>>,
     /// Settings the browser was started with (for "restart required").
     running_settings: Settings,
     restart_after_exit: Cell<bool>,
@@ -374,6 +376,7 @@ impl Browser {
             power,
             vaults: VaultHost::default(),
             jobs: Jobs::new(),
+            pending_titles: RefCell::default(),
             running_settings,
             restart_after_exit: Cell::new(false),
             exit_clearing: Cell::new(false),
@@ -2698,6 +2701,7 @@ impl Browser {
             w.kill_timer(SESSION_TIMER);
         }
         self.save_session();
+        self.flush_titles_now();
         self.save_downloads();
         self.shutdown_vault();
         self.relaunch_if_requested();
@@ -2809,6 +2813,7 @@ impl WindowEvents for AppEvents {
                 b.save_session();
             }
             SHIELD_TIMER => b.shield_timer(),
+            library::TITLE_TIMER => b.flush_titles(),
             POWER_TIMER => b.power_tick(),
             MEMREPORT_TIMER => b.mem_report_line("tick"),
             pointer::HINT_TIMER => b.hint_tick(),

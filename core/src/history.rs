@@ -66,6 +66,20 @@ impl Store {
         Ok(())
     }
 
+    /// Several pages' titles in one transaction (0.10.0: the browser collects title changes and
+    /// writes them every few seconds on a worker).
+    pub fn set_titles(&mut self, titles: &[(String, String)]) -> DbResult<()> {
+        let tx = self.conn.transaction()?;
+        {
+            let mut stmt = tx.prepare_cached("UPDATE urls SET title = ?2 WHERE url = ?1")?;
+            for (url, title) in titles.iter().filter(|(_, t)| !t.is_empty()) {
+                stmt.execute(params![url, title])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Visits matching `text` in URL or title, newest first. `before` pages
     /// through results (exclusive upper bound on the timestamp).
     pub fn query_history(&self, text: &str, before: Option<i64>, limit: u32) -> DbResult<Vec<HistoryEntry>> {
@@ -219,6 +233,24 @@ mod tests {
         s.record_visit("https://rust-lang.org/", "Rust", 3000).unwrap();
         s.record_visit("https://example.com/100%_off", "Sale", 4000).unwrap();
         s
+    }
+
+    #[test]
+    fn titles_in_one_batch() {
+        let mut s = seeded();
+        let titles = vec![
+            ("https://rust-lang.org/".to_string(), "(3) Rust".to_string()),
+            ("https://docs.rs/serde".to_string(), String::new()),
+            ("https://never.visited/".to_string(), "Not recorded".to_string()),
+        ];
+        s.set_titles(&titles).unwrap();
+        let all = s.query_history("", None, 100).unwrap();
+        assert!(all.iter().filter(|e| e.url == "https://rust-lang.org/").all(|e| e.title == "(3) Rust"));
+        assert!(
+            all.iter().any(|e| e.url == "https://docs.rs/serde" && e.title == "serde - Docs.rs"),
+            "empty titles are skipped"
+        );
+        assert!(all.iter().all(|e| e.url != "https://never.visited/"), "no new rows");
     }
 
     #[test]
