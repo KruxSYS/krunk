@@ -423,6 +423,7 @@ impl Browser {
         browser.init_updates();
         browser.init_integrity();
         browser.start_power_timer();
+        browser.init_sync();
         if let Some(w) = browser.app() {
             w.set_timer(ZOOM_TIMER, ZOOM_WATCH_MS);
         }
@@ -2233,7 +2234,8 @@ impl Browser {
             | Request::SyncRemoveDevice { .. }
             | Request::SyncTurnOff { .. }
             | Request::SyncNow
-            | Request::SyncSetCollection { .. }) => self.dispatch_sync(tab, r, req_id),
+            | Request::SyncSetCollection { .. }
+            | Request::SyncRenameDevice { .. }) => self.dispatch_sync(tab, r, req_id),
             Request::GetUpdateStatus => self.reply(tab, Event::ok(req_id, self.update_status())),
             Request::CheckForUpdates => self.check_for_updates(Some((tab, req_id))),
             Request::UpdateReply { choice } => self.update_reply(choice),

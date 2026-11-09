@@ -5089,7 +5089,9 @@ async function testSyncPage(browser) {
     await shot(page, 'sync-joining-' + theme + '.png');
     // On: devices, a request to join, the approval in progress, remove, turn off.
     const onView = {
-      state: 'on', status: 'Sync is on.', lastSyncMs: null, passwords: true, passwordsLocked: false, rotationPending: false, collections: [], message: null,
+      state: 'on', status: 'Up to date', lastSyncMs: Date.now() - 120000, passwords: true, passwordsLocked: false, rotationPending: false, message: null, syncing: false,
+      collections: [{ name: 'bookmarks', label: 'Bookmarks', on: true }, { name: 'history', label: 'History', on: false }, { name: 'tabs', label: 'Open tabs', on: true }],
+      remoteTabs: [{ device: 'Old laptop', updatedMs: Date.now() - 60000, tabs: [['Example', 'https://example.org/'], ['', 'https://rust-lang.org/']] }],
       devices: [{ id: 'd1', name: 'Krunk on DESKTOP', platform: 'windows', keys: true, me: true, lastSync: null }, { id: 'd2', name: 'Old laptop', platform: 'windows', keys: true, me: false, lastSync: null }],
       approvals: [{ id: 'ap1', label: 'New PC', platform: 'windows', country: 'NL' }], approving: null,
     };
@@ -5107,7 +5109,28 @@ async function testSyncPage(browser) {
     await shot(page, 'sync-approving-' + theme + '.png');
     await view(Object.assign({}, onView, { approvals: [], approving: { id: '', label: 'New PC', code: null, done: true } }));
     check((await page.textContent('#approving-title')).includes('approved'), t('approved'));
-    await page.click('#device-list li:nth-child(2) button');
+    check((await page.textContent('#on-last')).startsWith('Last synced 2 minutes ago'), t('last sync time'));
+    await page.click('#sync-now');
+    check((await lastSent(page, 'syncNow')) !== undefined, t('Sync now'));
+    check(await page.isChecked('#coll-bookmarks') && !(await page.isChecked('#coll-history')), t('collections show their state'));
+    await page.check('#coll-history');
+    const sc = await lastSent(page, 'syncSetCollection');
+    check(sc && sc.name === 'history' && sc.on === true, t('a collection is switched on'));
+    check(await vis('remote') && (await page.$$eval('#remote-list li a', (l) => l.map((a) => a.textContent))).join('|') === 'Example|https://rust-lang.org/', t('open tabs of the other device (titles, or the address)'));
+    await page.click('#remote-list li a');
+    const ou = await lastSent(page, 'openUrl');
+    check(ou && ou.url === 'https://example.org/' && ou.newTab === true, t('an open tab opens in a new tab here'));
+    await page.click('#device-list li:nth-child(1) button:text("Rename")');
+    await page.waitForSelector('#lb-dialog-input');
+    await page.fill('#lb-dialog-input', '  Desk PC  ');
+    await acceptInPage(page);
+    const rn = await lastSent(page, 'syncRenameDevice');
+    check(rn && rn.id === 'd1' && rn.name === 'Desk PC', t('Rename (in-page prompt, trimmed)'));
+    await view(Object.assign({}, onView, { syncing: true, status: 'Syncing…' }));
+    check(!(await page.isEnabled('#sync-now')) && (await page.getAttribute('#sync-now', 'aria-busy')) === 'true', t('Sync now is busy while syncing'));
+    await view(Object.assign({}, onView, { remoteTabs: [] }));
+    check(!(await vis('remote')), t('no other devices\' tabs: no section'));
+    await page.click('#device-list li:nth-child(2) button:text("Remove")');
     await acceptInPage(page);
     const rm = await lastSent(page, 'syncRemoveDevice');
     check(rm && rm.id === 'd2', t('Remove (after the in-page confirmation)'));
@@ -5146,8 +5169,15 @@ async function testSyncCard(browser) {
     await shot(page, 'settings-sync-off-' + theme + '.png');
     await page.click('#sync-open');
     check((await lastSent(page, 'syncOpen')) !== undefined, t('opens krunk://sync'));
-    await view({ state: 'on', status: 'Sync is on.', lastSyncMs: null, passwords: false, passwordsLocked: false, devices: [], approvals: [], approving: null, rotationPending: false, collections: [], message: null });
+    await view({ state: 'on', status: 'Up to date', lastSyncMs: Date.now() - 60000, passwords: false, passwordsLocked: false, devices: [], approvals: [], approving: null, rotationPending: false, message: null, syncing: false, remoteTabs: [],
+      collections: [{ name: 'bookmarks', label: 'Bookmarks', on: true }, { name: 'history', label: 'History', on: true }] });
     check((await page.textContent('#sync-title')) === 'Sync is on' && await page.isVisible('#sync-manage'), t('on: Manage sync'));
+    check((await page.textContent('#sync-desc')) === 'Up to date' && (await page.textContent('#sync-last')).startsWith('Last synced'), t('on: the status and the last sync'));
+    await page.click('#sync-now');
+    check((await lastSent(page, 'syncNow')) !== undefined, t('Sync now from Settings'));
+    await page.uncheck('#sync-coll-history');
+    const sc = await lastSent(page, 'syncSetCollection');
+    check(sc && sc.name === 'history' && sc.on === false, t('a collection is switched off from Settings'));
     await shot(page, 'settings-sync-on-' + theme + '.png');
     await view({ state: 'private' });
     check(!(await page.isVisible('#sync-card')), t('private window: no sync card'));

@@ -21,6 +21,10 @@ pub enum SyncFail {
     Keys(KeyError),
     /// The server answered something that doesn't parse.
     BadAnswer(&'static str),
+    /// The local database failed.
+    Local(String),
+    /// Sync was reset on the website (a new `keyset_gen`, PROTOCOL §4.4 rule 4a): ask the user.
+    Reset,
 }
 
 impl std::fmt::Display for SyncFail {
@@ -29,6 +33,8 @@ impl std::fmt::Display for SyncFail {
             SyncFail::Api(e) => write!(f, "{e}"),
             SyncFail::Keys(e) => write!(f, "{e}"),
             SyncFail::BadAnswer(w) => write!(f, "unexpected answer ({w})"),
+            SyncFail::Local(e) => write!(f, "local database: {e}"),
+            SyncFail::Reset => f.write_str("sync was reset on the website"),
         }
     }
 }
@@ -50,6 +56,12 @@ impl From<KeyError> for SyncFail {
 impl From<dir::DirError> for SyncFail {
     fn from(e: dir::DirError) -> SyncFail {
         SyncFail::Keys(KeyError::Dir(e))
+    }
+}
+
+impl From<rusqlite::Error> for SyncFail {
+    fn from(e: rusqlite::Error) -> SyncFail {
+        SyncFail::Local(e.to_string())
     }
 }
 

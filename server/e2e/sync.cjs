@@ -1,7 +1,8 @@
 // End-to-end sync tests on a staging stack (0.9.0), with the Linux test client
 // (tools/sync-cli, Krunk's own core::sync) as the devices and the website API as the user.
 //   node server/e2e/sync.cjs http://dind:10017 stage-browser <krunk-sync-cli> <work dir> [part ...]
-// Parts: keys (S6). Later milestones add records, passwords and rotation.
+// Parts: keys (S6), records (S7: CLI ↔ CLI bookmarks, history, settings, pins, allowlist, tabs,
+// device names). Later milestones add passwords and rotation.
 // Staging only: Turnstile test keys, Mailpit, and direct database edits that play a malicious
 // server (tampered directories, a lowered KDF).
 'use strict';
@@ -248,12 +249,108 @@ async function partKeys(ctx) {
   ctx.acc = acc;
 }
 
+// CLI ↔ CLI records (S7): P sets up with data; Q has data of its own (one bookmark the same) and
+// joins; both sync. Then edits on both sides, a conflict, a collection off, a rename. The server
+// sees only ciphertext.
+async function partRecords(ctx) {
+  say('== records (S7)');
+  const web = await account(`records-${Date.now()}@example.org`);
+  const P = 'P', Q = 'Q';
+  await link(web, P);
+  await link(web, Q);
+  const must = async (name, ...args) => {
+    const r = await cli(name, ...args);
+    if (r.code !== 0) throw new Error(`${name} ${args.join(' ')}: exit ${r.code} ${r.err}`);
+    return r;
+  };
+  const list = async (name, what, sub = 'list') => (await must(name, what, sub)).lines.filter((l) => /^[a-z_]+: /.test(l)).sort();
+  // P's data before sync is on.
+  await must(P, 'bookmark', 'add', '--title', 'Rust', '--url', 'https://www.rust-lang.org/');
+  await must(P, 'bookmark', 'add', '--folder', 'Work', '--title', 'Work site', '--url', 'https://example.org/work');
+  await must(P, 'history', 'add', '--url', 'https://example.org/visited-on-p', '--title', 'Visited on P');
+  await must(P, 'settings', 'set', '--key', 'theme', '--value', '"dark"');
+  await must(P, 'settings', 'set', '--key', 'tabSleepMinutes', '--value', '45');
+  await must(P, 'pin', 'add', '--url', 'https://news.example/', '--title', 'News');
+  await must(P, 'allow', 'add', '--host', 'shop.example');
+  await must(P, 'tabs', 'set', 'https://example.org/tab-1', 'https://example.org/tab-2');
+  const setup = await must(P, 'setup');
+  ok(setup.one('passphrase'), 'P sets up sync');
+  const s1 = await must(P, 'sync', '--name', 'Laptop P');
+  ok(Number(s1.one('pushed')) >= 7 && s1.one('queue_left') === '0', `P's first sync pushes its data: pushed ${s1.one('pushed')}, left ${s1.one('queue_left')}`);
+  // The server holds ciphertext only.
+  const acc = psql(`SELECT id FROM accounts WHERE email = '${web.email}'`);
+  const leaks = psql(`SELECT count(*) FROM records WHERE account_id = '${acc}' AND (envelope::text ILIKE '%rust-lang%' OR envelope::text ILIKE '%example.org%' OR envelope::text ILIKE '%shop.example%' OR envelope::text ILIKE '%dark%')`);
+  const n = psql(`SELECT count(*) FROM records WHERE account_id = '${acc}'`);
+  ok(leaks === '0' && Number(n) >= 7, `the server stores ${n} records, none with a URL, host or setting in clear`);
+  // Q's own data: the same Rust bookmark (adopted, not duplicated) and one of its own.
+  await must(Q, 'bookmark', 'add', '--title', 'Rust', '--url', 'https://www.rust-lang.org/');
+  await must(Q, 'bookmark', 'add', '--title', 'Only on Q', '--url', 'https://q.example/');
+  await must(Q, 'history', 'add', '--url', 'https://example.org/visited-on-q', '--title', 'Visited on Q');
+  await must(Q, 'tabs', 'set', 'https://example.org/q-tab');
+  const ap = await approval(P, Q);
+  ok(ap.j.code === 0 && ap.ap.code === 0, `Q joins (SAS ${ap.sas}) ${ap.j.err} ${ap.ap.err}`);
+  const q1 = await must(Q, 'sync', '--name', 'Desktop Q');
+  ok(Number(q1.one('pulled')) >= 7, `Q's first sync pulls P's records (${q1.one('pulled')}) and pushes its own (${q1.one('pushed')})`);
+  const p2 = await must(P, 'sync');
+  ok(Number(p2.one('pulled')) >= 1, `P pulls Q's records (${p2.one('pulled')})`);
+  await must(Q, 'sync');
+  const bp = await list(P, 'bookmark'), bq = await list(Q, 'bookmark');
+  ok(JSON.stringify(bp) === JSON.stringify(bq), `bookmarks equal on P and Q:\n    ${bp.join('\n    ')}`);
+  ok(bp.filter((l) => l.includes('rust-lang')).length === 1, 'the bookmark both had is there once (first sync adopts, no duplicate)');
+  ok(bq.some((l) => l.includes('Work/Work site')) && bp.some((l) => l.includes('q.example')), 'P\'s folder reached Q, Q\'s bookmark reached P');
+  const hq = await list(Q, 'history'), hp = await list(P, 'history');
+  ok(hq.some((l) => l.includes('visited-on-p')) && hp.some((l) => l.includes('visited-on-q')), 'history: the union on both');
+  ok((await must(Q, 'settings', 'get', '--key', 'theme')).lines[0] === '"dark"', 'a synced setting (theme) reached Q');
+  ok((await must(Q, 'settings', 'get', '--key', 'tabSleepMinutes')).lines[0] !== '45', 'a device-local setting (tabSleepMinutes) did not');
+  ok((await list(Q, 'pin')).some((l) => l.includes('news.example')), 'the pin reached Q');
+  ok((await list(Q, 'allow')).includes('allow: shop.example'), 'the ad-blocker exception reached Q');
+  const rq = await list(Q, 'tabs', 'remote');
+  ok(rq.some((l) => l.includes('tab-1')) && !rq.some((l) => l.includes('q-tab')), `Q sees P's open tabs (read-only), not its own as remote: ${rq.join(', ')}`);
+  ok((await list(P, 'tabs', 'remote')).some((l) => l.includes('q-tab')), 'P sees Q\'s open tabs');
+
+  // Edits on both sides, then a conflict on the same bookmark.
+  await must(P, 'bookmark', 'edit', '--url', 'https://www.rust-lang.org/', '--title', 'Rust (P)');
+  await must(Q, 'bookmark', 'delete', '--url', 'https://q.example/');
+  await must(Q, 'bookmark', 'add', '--folder', 'Work', '--title', 'Added on Q', '--url', 'https://example.org/q-added');
+  await must(P, 'sync'); await must(Q, 'sync'); await must(P, 'sync');
+  const ep = await list(P, 'bookmark'), eq = await list(Q, 'bookmark');
+  ok(JSON.stringify(ep) === JSON.stringify(eq) && ep.some((l) => l.includes('Rust (P)')) && !ep.some((l) => l.includes('q.example'))
+    && ep.some((l) => l.includes('Work/Added on Q')), 'edits on both sides merged (rename, delete, add to a folder)');
+  await must(P, 'bookmark', 'edit', '--url', 'https://example.org/work', '--title', 'Work from P');
+  await sleep(20);
+  await must(Q, 'bookmark', 'edit', '--url', 'https://example.org/work', '--title', 'Work from Q');
+  await must(P, 'sync');
+  const cq = await must(Q, 'sync');
+  await must(P, 'sync');
+  const fp = await list(P, 'bookmark'), fq = await list(Q, 'bookmark');
+  ok(JSON.stringify(fp) === JSON.stringify(fq) && fp.filter((l) => /Work from [PQ]/.test(l)).length === 1,
+    `the same bookmark edited on both: one title wins on both (conflicts ${cq.one('conflicts')}): ${fp.find((l) => /Work from/.test(l))}`);
+
+  // A collection off on Q: P's new history stays away from Q; Q's other collections still sync.
+  await must(P, 'history', 'add', '--url', 'https://example.org/while-q-off', '--title', 'x');
+  await must(P, 'bookmark', 'add', '--title', 'After off', '--url', 'https://after.example/');
+  await must(P, 'sync');
+  await must(Q, 'sync', '--off', 'history');
+  ok(!(await list(Q, 'history')).some((l) => l.includes('while-q-off')) && (await list(Q, 'bookmark')).some((l) => l.includes('after.example')),
+    'history switched off on Q: not pulled; bookmarks still sync');
+  // A rename through device_meta.
+  const qid = JSON.parse(fs.readFileSync(path.join(dirOf(Q), 'cli.json'), 'utf8')).device_id;
+  await must(P, 'rename', qid, '--name', 'Living room PC');
+  await must(P, 'sync'); await must(Q, 'sync');
+  ok((await list(Q, 'names')).some((l) => l.includes(`${qid} | Living room PC`)), 'a rename on P reaches Q (encrypted device_meta)');
+  // Nothing left queued, and a run with nothing to do sends nothing.
+  const idle = await must(P, 'sync');
+  ok(idle.one('pushed') === '0' && idle.one('queue_left') === '0', `an idle run pushes nothing (pulled ${idle.one('pulled')})`);
+  ctx.records = { acc };
+}
+
 (async () => {
   fs.mkdirSync(WORK, { recursive: true });
   psql('DELETE FROM rate_limits');
   const ctx = {};
   try {
     if (parts.includes('keys')) await partKeys(ctx);
+    if (parts.includes('records')) await partRecords(ctx);
   } catch (e) {
     problems.push(String(e.stack || e));
     say('FAIL ' + (e.stack || e));

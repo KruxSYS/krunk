@@ -796,6 +796,11 @@ pub enum Request {
         name: String,
         on: bool,
     },
+    /// Rename a device (an encrypted `device_meta` record).
+    SyncRenameDevice {
+        id: String,
+        name: String,
+    },
     /// Settings → Passwords & import: the browser profiles found on this computer.
     ImportDetect,
     /// Import `types` ("history", "bookmarks", "passwords") from the profile `profile`
@@ -1767,6 +1772,8 @@ impl Sender {
                     | R::AccountReopen
                     | R::SyncState
                     | R::SyncOpen
+                    | R::SyncNow
+                    | R::SyncSetCollection { .. }
             ),
             Sender::Page(Page::Sync) => matches!(
                 req,
@@ -1786,6 +1793,7 @@ impl Sender {
                     | R::SyncTurnOff { .. }
                     | R::SyncNow
                     | R::SyncSetCollection { .. }
+                    | R::SyncRenameDevice { .. }
                     | R::VaultStatus
             ),
             Sender::Page(Page::Downloads) => {
@@ -2903,6 +2911,7 @@ mod tests {
             Request::SyncTurnOff { delete_data: false },
             Request::SyncNow,
             Request::SyncSetCollection { name: "history".into(), on: false },
+            Request::SyncRenameDevice { id: "d1".into(), name: "Laptop".into() },
             Request::OpenBlockedPage {},
             Request::GetBlocked {},
             Request::GetFilterLists {},
@@ -3926,11 +3935,15 @@ mod tests {
             Request::SyncTurnOff { delete_data: false },
             Request::SyncNow,
             Request::SyncSetCollection { name: "history".into(), on: false },
+            Request::SyncRenameDevice { id: "d1".into(), name: "Laptop".into() },
         ];
         for r in &all {
             assert_eq!(Sender::Page(Page::Sync).permits(r), !matches!(r, Request::SyncOpen), "{r:?}");
             assert!(!Sender::Shell.permits(r) && !Sender::Popup.permits(r) && !Sender::Ext.permits(r), "{r:?}");
-            let settings = matches!(r, Request::SyncState | Request::SyncOpen);
+            let settings = matches!(
+                r,
+                Request::SyncState | Request::SyncOpen | Request::SyncNow | Request::SyncSetCollection { .. }
+            );
             assert_eq!(Sender::Page(Page::Settings).permits(r), settings, "{r:?}");
             for page in Page::ALL.into_iter().filter(|p| *p != Page::Sync && *p != Page::Settings) {
                 assert!(!Sender::Page(page).permits(r), "{page:?} {r:?}");

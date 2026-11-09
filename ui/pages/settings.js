@@ -473,10 +473,26 @@
     $('sync-desc').textContent = texts[1];
     $('sync-open').hidden = v.state !== 'off';
     $('sync-manage').hidden = !['on', 'alarm', 'join', 'restoreConfirm', 'joining', 'working'].includes(v.state);
+    const on = v.state === 'on';
+    $('sync-now').hidden = !on;
+    $('sync-now').disabled = on && !!v.syncing;
+    $('sync-now').setAttribute('aria-busy', on && v.syncing ? 'true' : 'false');
+    $('sync-last').hidden = !(on && v.lastSyncMs);
+    $('sync-last').textContent = on && v.lastSyncMs ? 'Last synced ' + new Date(v.lastSyncMs).toLocaleString() : '';
+    const cl = $('sync-collections');
+    cl.hidden = !on;
+    cl.textContent = '';
+    (on ? v.collections : []).forEach(function (c) {
+      const box = LB.el('input', { type: 'checkbox', id: 'sync-coll-' + c.name });
+      box.checked = c.on;
+      box.addEventListener('change', function () { LB.post('syncSetCollection', { name: c.name, on: box.checked }); });
+      cl.appendChild(LB.el('label', { class: 'sync-coll' }, [box, LB.el('span', { text: c.label })]));
+    });
   }
   LB.on('sync', function (m) { renderSync(m.view); });
   $('sync-open').addEventListener('click', function () { LB.post('syncOpen'); });
   $('sync-manage').addEventListener('click', function () { LB.post('syncOpen'); });
+  $('sync-now').addEventListener('click', function () { LB.post('syncNow'); });
   $('account-sign-in').addEventListener('click', function () { LB.post('accountSignIn'); });
   $('account-cancel').addEventListener('click', function () { LB.post('accountCancel'); });
   $('account-reopen').addEventListener('click', function () { LB.post('accountReopen'); });

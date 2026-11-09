@@ -156,42 +156,47 @@ CREATE TABLE sync_meta (
 );
 ";
 
-/// The change triggers of v6 (`@TRACK` is replaced by [`TRACKING`]). Each queues the natural key
+/// The change triggers of v6 (`@TRACK` is replaced by [`TRACKING`]). They insert only when the
+/// row isn't queued yet (never `OR REPLACE`: inside an upsert such as `record_visit`'s, SQLite
+/// applies the outer statement's conflict policy to the trigger, and a replace would abort it).
+/// Each queues the natural key
 /// the engine needs: a bookmark's guid (hex), a history URL (as stored; the engine normalizes it),
 /// a pinned or hidden tile's URL, an allowlisted host, a never-save origin, and the settings and
 /// session records as a whole.
 const SYNC_TRIGGERS: &str = "
 CREATE TRIGGER sync_q_bookmarks_ins AFTER INSERT ON bookmarks WHEN @TRACK
-BEGIN INSERT OR REPLACE INTO sync_queue VALUES ('bookmarks', lower(hex(NEW.guid)), @NOW); END;
+BEGIN INSERT INTO sync_queue SELECT 'bookmarks', lower(hex(NEW.guid)), @NOW WHERE NOT EXISTS (SELECT 1 FROM sync_queue WHERE collection = 'bookmarks' AND natural_key = lower(hex(NEW.guid))); END;
 CREATE TRIGGER sync_q_bookmarks_upd AFTER UPDATE OF parent, position, title, url ON bookmarks WHEN @TRACK
-BEGIN INSERT OR REPLACE INTO sync_queue VALUES ('bookmarks', lower(hex(NEW.guid)), @NOW); END;
+BEGIN INSERT INTO sync_queue SELECT 'bookmarks', lower(hex(NEW.guid)), @NOW WHERE NOT EXISTS (SELECT 1 FROM sync_queue WHERE collection = 'bookmarks' AND natural_key = lower(hex(NEW.guid))); END;
 CREATE TRIGGER sync_q_bookmarks_del AFTER DELETE ON bookmarks WHEN @TRACK
-BEGIN INSERT OR REPLACE INTO sync_queue VALUES ('bookmarks', lower(hex(OLD.guid)), @NOW); END;
+BEGIN INSERT INTO sync_queue SELECT 'bookmarks', lower(hex(OLD.guid)), @NOW WHERE NOT EXISTS (SELECT 1 FROM sync_queue WHERE collection = 'bookmarks' AND natural_key = lower(hex(OLD.guid))); END;
 CREATE TRIGGER sync_q_visits_ins AFTER INSERT ON visits WHEN @TRACK
-BEGIN INSERT OR REPLACE INTO sync_queue SELECT 'history', url, @NOW FROM urls WHERE id = NEW.url_id; END;
+BEGIN INSERT INTO sync_queue SELECT 'history', u.url, @NOW FROM urls u WHERE u.id = NEW.url_id
+      AND NOT EXISTS (SELECT 1 FROM sync_queue q WHERE q.collection = 'history' AND q.natural_key = u.url); END;
 CREATE TRIGGER sync_q_urls_upd AFTER UPDATE OF title ON urls WHEN @TRACK
-BEGIN INSERT OR REPLACE INTO sync_queue VALUES ('history', NEW.url, @NOW); END;
+BEGIN INSERT INTO sync_queue SELECT 'history', NEW.url, @NOW WHERE NOT EXISTS (SELECT 1 FROM sync_queue WHERE collection = 'history' AND natural_key = NEW.url); END;
 CREATE TRIGGER sync_q_urls_del AFTER DELETE ON urls WHEN @TRACK
-BEGIN INSERT OR REPLACE INTO sync_queue VALUES ('history', OLD.url, @NOW); END;
+BEGIN INSERT INTO sync_queue SELECT 'history', OLD.url, @NOW WHERE NOT EXISTS (SELECT 1 FROM sync_queue WHERE collection = 'history' AND natural_key = OLD.url); END;
 CREATE TRIGGER sync_q_tiles_ins AFTER INSERT ON tiles WHEN @TRACK
-BEGIN INSERT OR REPLACE INTO sync_queue VALUES ('pins', NEW.url, @NOW); END;
+BEGIN INSERT INTO sync_queue SELECT 'pins', NEW.url, @NOW WHERE NOT EXISTS (SELECT 1 FROM sync_queue WHERE collection = 'pins' AND natural_key = NEW.url); END;
 CREATE TRIGGER sync_q_tiles_upd AFTER UPDATE ON tiles WHEN @TRACK
-BEGIN INSERT OR REPLACE INTO sync_queue VALUES ('pins', NEW.url, @NOW);
-      INSERT OR REPLACE INTO sync_queue SELECT 'pins', OLD.url, @NOW WHERE OLD.url <> NEW.url; END;
+BEGIN INSERT INTO sync_queue SELECT 'pins', NEW.url, @NOW WHERE NOT EXISTS (SELECT 1 FROM sync_queue WHERE collection = 'pins' AND natural_key = NEW.url);
+      INSERT INTO sync_queue SELECT 'pins', OLD.url, @NOW WHERE OLD.url <> NEW.url
+      AND NOT EXISTS (SELECT 1 FROM sync_queue WHERE collection = 'pins' AND natural_key = OLD.url); END;
 CREATE TRIGGER sync_q_tiles_del AFTER DELETE ON tiles WHEN @TRACK
-BEGIN INSERT OR REPLACE INTO sync_queue VALUES ('pins', OLD.url, @NOW); END;
+BEGIN INSERT INTO sync_queue SELECT 'pins', OLD.url, @NOW WHERE NOT EXISTS (SELECT 1 FROM sync_queue WHERE collection = 'pins' AND natural_key = OLD.url); END;
 CREATE TRIGGER sync_q_allow_ins AFTER INSERT ON adblock_allowlist WHEN @TRACK
-BEGIN INSERT OR REPLACE INTO sync_queue VALUES ('allowlist', NEW.host, @NOW); END;
+BEGIN INSERT INTO sync_queue SELECT 'allowlist', NEW.host, @NOW WHERE NOT EXISTS (SELECT 1 FROM sync_queue WHERE collection = 'allowlist' AND natural_key = NEW.host); END;
 CREATE TRIGGER sync_q_allow_del AFTER DELETE ON adblock_allowlist WHEN @TRACK
-BEGIN INSERT OR REPLACE INTO sync_queue VALUES ('allowlist', OLD.host, @NOW); END;
+BEGIN INSERT INTO sync_queue SELECT 'allowlist', OLD.host, @NOW WHERE NOT EXISTS (SELECT 1 FROM sync_queue WHERE collection = 'allowlist' AND natural_key = OLD.host); END;
 CREATE TRIGGER sync_q_never_ins AFTER INSERT ON vault_never WHEN @TRACK
-BEGIN INSERT OR REPLACE INTO sync_queue VALUES ('never_save', NEW.origin, @NOW); END;
+BEGIN INSERT INTO sync_queue SELECT 'never_save', NEW.origin, @NOW WHERE NOT EXISTS (SELECT 1 FROM sync_queue WHERE collection = 'never_save' AND natural_key = NEW.origin); END;
 CREATE TRIGGER sync_q_never_del AFTER DELETE ON vault_never WHEN @TRACK
-BEGIN INSERT OR REPLACE INTO sync_queue VALUES ('never_save', OLD.origin, @NOW); END;
+BEGIN INSERT INTO sync_queue SELECT 'never_save', OLD.origin, @NOW WHERE NOT EXISTS (SELECT 1 FROM sync_queue WHERE collection = 'never_save' AND natural_key = OLD.origin); END;
 CREATE TRIGGER sync_q_kv_ins AFTER INSERT ON kv WHEN NEW.key IN ('settings', 'session') AND @TRACK
-BEGIN INSERT OR REPLACE INTO sync_queue VALUES (CASE NEW.key WHEN 'settings' THEN 'settings' ELSE 'tabs' END, '*', @NOW); END;
+BEGIN INSERT INTO sync_queue SELECT CASE NEW.key WHEN 'settings' THEN 'settings' ELSE 'tabs' END, '*', @NOW WHERE NOT EXISTS (SELECT 1 FROM sync_queue WHERE collection = CASE NEW.key WHEN 'settings' THEN 'settings' ELSE 'tabs' END AND natural_key = '*'); END;
 CREATE TRIGGER sync_q_kv_upd AFTER UPDATE ON kv WHEN NEW.key IN ('settings', 'session') AND NEW.value <> OLD.value AND @TRACK
-BEGIN INSERT OR REPLACE INTO sync_queue VALUES (CASE NEW.key WHEN 'settings' THEN 'settings' ELSE 'tabs' END, '*', @NOW); END;
+BEGIN INSERT INTO sync_queue SELECT CASE NEW.key WHEN 'settings' THEN 'settings' ELSE 'tabs' END, '*', @NOW WHERE NOT EXISTS (SELECT 1 FROM sync_queue WHERE collection = CASE NEW.key WHEN 'settings' THEN 'settings' ELSE 'tabs' END AND natural_key = '*'); END;
 ";
 
 /// The triggers' condition: sync is on and the engine isn't applying remote changes.
@@ -242,6 +247,8 @@ impl Store {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         // Deleted history should really be gone from the file.
         conn.pragma_update(None, "secure_delete", "ON")?;
+        // 0.9.0: sync runs on its own connection on a worker thread; wait for the other one.
+        conn.busy_timeout(std::time::Duration::from_secs(10))?;
         let mut store = Store { conn };
         store.migrate()?;
         Ok(store)

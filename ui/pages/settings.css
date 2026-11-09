@@ -140,3 +140,6 @@ table.exceptions th:last-child, table.exceptions td:last-child { padding-right: 
 #sync-row { gap: 12px; padding-top: 14px; padding-bottom: 14px; }
 #sync-row .label { font-size: 1.077rem; }
 #sync-card h3 .beta { font-size: 0.7rem; padding: 1px 6px; border-radius: 999px; background: var(--bg-hover); vertical-align: middle; }
+.sync-collections { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px; }
+.row.setting .text label.sync-coll { display: inline-flex; gap: 6px; align-items: center; font-weight: 400; }
+.row.setting .sync-coll input { width: 16px; height: 16px; margin: 0; }

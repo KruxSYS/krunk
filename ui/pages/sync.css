@@ -44,7 +44,7 @@
 .device:first-child { border-top: 0; }
 .device .name { font-weight: 600; overflow-wrap: anywhere; }
 .device .meta { grid-column: 1; color: var(--fg-muted); font-size: 0.923rem; }
-.device .btn { grid-column: 2; grid-row: 1 / span 2; }
+.device .device-acts { grid-column: 2; grid-row: 1 / span 2; display: flex; gap: 6px; }
 .badge { margin-left: 8px; font-size: 0.8rem; font-weight: 700; padding: 1px 8px; border-radius: 999px; background: var(--bg-hover); color: var(--link); }
 .working { display: flex; align-items: center; gap: 10px; margin: 0; }
 .spinner { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--fg-muted); border-right-color: transparent; animation: spin .8s linear infinite; }
@@ -52,3 +52,9 @@
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
 .card.alarm { border-color: var(--danger); }
 .card.alarm h2 { color: var(--danger); }
+.collections { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0 16px; }
+.collections .check { margin: 6px 0; }
+#remote-list h3 { margin-top: 12px; }
+#remote-list h3:first-child { margin-top: 0; }
+.tabs a { color: var(--link); text-decoration: none; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tabs a:hover { text-decoration: underline; }

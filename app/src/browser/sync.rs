@@ -18,13 +18,16 @@ use lb_core::account::Failure;
 use lb_core::pages::Page;
 use lb_core::protocol::{Event, Request};
 use lb_core::storage::now_ms;
-use lb_core::sync::api::{HttpClient, HttpResponse};
+use lb_core::sync::api::{self as sapi, ApiError, Backoff, HttpClient, HttpResponse};
 use lb_core::sync::client::{
     self, AApproval, AStep, Api, ApprovalItem, DeviceWire, NApproval, NStep, Refresh, SyncFail,
 };
+use lb_core::sync::coll;
+use lb_core::sync::engine::{self, Report, RunOpts};
 use lb_core::sync::keys::{self, KeyError, Me, PakState, RestorePlan, Secret as SyncSecret, SetupPlan};
+use lb_core::sync::local;
 use lb_core::sync::state::{self, parse_account_id, SyncState};
-use lb_core::sync::view::{ApprovalRow, Approving, DeviceRow, OnView, SyncView};
+use lb_core::sync::view::{ApprovalRow, Approving, CollectionRow, DeviceRow, OnView, RemoteTabs, SyncView};
 use lb_core::tabs::TabId;
 use lb_core::vault::VaultSync;
 use std::cell::{Cell, RefCell};
@@ -35,6 +38,21 @@ const MAX_RESPONSE: usize = 8 * 1024 * 1024;
 /// While krunk://sync is open: approvals every 3 s (PROTOCOL §11.6), the rest every 30 s.
 const POLL_MS: i64 = 3_000;
 const REFRESH_EVERY_MS: i64 = 30_000;
+/// The schedule (PLAN §5.3): a run a minute after start, every 5 minutes, and 30 s after a
+/// local change (open tabs wait for the 5-minute run); a 30 s tick checks.
+const START_DELAY_MS: i64 = 60_000;
+const EVERY_MS: i64 = 5 * 60_000;
+const AFTER_CHANGE_MS: i64 = 30_000;
+const TICK_MS: i64 = 30_000;
+/// The collections a device can switch off, with their labels.
+const COLLECTIONS: [(&str, &str); 6] = [
+    ("bookmarks", "Bookmarks"),
+    ("history", "History"),
+    ("settings", "Settings"),
+    ("pins", "New tab pins"),
+    ("allowlist", "Ad-blocker exceptions"),
+    ("tabs", "Open tabs"),
+];
 const SOCKS_TEXT: &str = "Sync can't work through a SOCKS proxy. Change the proxy in Settings → Advanced.";
 const OFFLINE_TEXT: &str = "Krunk couldn't reach krunk.209.wf. Check your connection and try again.";
 
@@ -117,6 +135,14 @@ pub(super) struct SyncHost {
     last_refresh_ms: Cell<i64>,
     polling: Cell<bool>,
     busy: Cell<bool>,
+    // The schedule (S7).
+    ticking: Cell<bool>,
+    running: Cell<bool>,
+    next_run_ms: Cell<i64>,
+    wait_until_ms: Cell<i64>,
+    backoff: Cell<Backoff>,
+    last_ok_ms: Cell<Option<i64>>,
+    status: RefCell<Option<String>>,
 }
 
 impl Default for SyncHost {
@@ -137,6 +163,13 @@ impl Default for SyncHost {
             last_refresh_ms: Cell::new(0),
             polling: Cell::new(false),
             busy: Cell::new(false),
+            ticking: Cell::new(false),
+            running: Cell::new(false),
+            next_run_ms: Cell::new(0),
+            wait_until_ms: Cell::new(0),
+            backoff: Cell::new(Backoff::default()),
+            last_ok_ms: Cell::new(None),
+            status: RefCell::new(None),
         }
     }
 }
@@ -255,7 +288,16 @@ impl Browser {
             Stage::On(message) => {
                 let st = self.sync.state.borrow();
                 let me = st.as_ref().map(|s| s.device_id.clone()).unwrap_or_default();
-                let devices = self
+                let (off, names, remote) = {
+                    let store = self.store.borrow();
+                    let c = store.sync_conn();
+                    (
+                        local::off_collections(c),
+                        coll::device_names(c).unwrap_or_default(),
+                        coll::remote_tabs(c).unwrap_or_default(),
+                    )
+                };
+                let devices: Vec<DeviceRow> = self
                     .sync
                     .devices
                     .borrow()
@@ -263,7 +305,7 @@ impl Browser {
                     .filter(|d| d.revoked_at.is_none())
                     .map(|d| DeviceRow {
                         id: d.id.clone(),
-                        name: d.label.clone(),
+                        name: names.get(&d.id).cloned().unwrap_or_else(|| d.label.clone()),
                         platform: d.platform.clone(),
                         keys: d.has_keys,
                         me: d.id == me,
@@ -295,20 +337,55 @@ impl Browser {
                     }
                     _ => None,
                 };
+                let remote_tabs = remote
+                    .iter()
+                    .filter(|(id, _)| **id != me && devices.iter().any(|d| d.id == **id))
+                    .map(|(id, v)| RemoteTabs {
+                        device: devices.iter().find(|d| d.id == *id).map(|d| d.name.clone()).unwrap_or_default(),
+                        updated_ms: v["updated"].as_i64().unwrap_or(0),
+                        tabs: v["windows"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .flat_map(|w| w["tabs"].as_array().cloned().unwrap_or_default())
+                            .map(|t| {
+                                (
+                                    t["title"].as_str().unwrap_or_default().to_string(),
+                                    t["url"].as_str().unwrap_or_default().to_string(),
+                                )
+                            })
+                            .filter(|(_, u)| u.starts_with("https://") || u.starts_with("http://"))
+                            .collect(),
+                    })
+                    .collect();
+                let syncing = self.sync.running.get();
+                let status = match (syncing, self.sync.status.borrow().clone(), self.sync.last_ok_ms.get()) {
+                    (true, _, _) => "Syncing…".to_string(),
+                    (false, Some(s), _) => s,
+                    (false, None, Some(_)) => "Up to date".into(),
+                    (false, None, None) => "Sync is on. The first sync starts shortly.".into(),
+                };
                 let vault_open = self.vault_unlocked();
                 SyncView::On(OnView {
-                    status:
-                        "Sync is on. Your bookmarks, history and settings start syncing in a later step of this beta."
-                            .into(),
-                    last_sync_ms: None,
+                    status,
+                    last_sync_ms: self.sync.last_ok_ms.get(),
                     passwords: vault_open && self.sync_pak().is_some(),
                     passwords_locked: self.vault_exists() && !vault_open,
                     devices,
                     approvals,
                     approving,
                     rotation_pending: self.sync.rotation_pending.get(),
-                    collections: vec![],
+                    collections: COLLECTIONS
+                        .iter()
+                        .map(|(n, l)| CollectionRow {
+                            name: n.to_string(),
+                            label: l.to_string(),
+                            on: !off.iter().any(|o| o == n),
+                        })
+                        .collect(),
                     message: message.clone(),
+                    syncing,
+                    remote_tabs,
                 })
             }
         }
@@ -387,7 +464,14 @@ impl Browser {
             Request::SyncApproveCancel => self.sync_approve_cancel(),
             Request::SyncRemoveDevice { id } => self.sync_remove_device(id),
             Request::SyncTurnOff { delete_data } => self.sync_turn_off(delete_data),
-            Request::SyncNow | Request::SyncSetCollection { .. } => self.push_sync(),
+            Request::SyncNow => {
+                if self.sync_is_on() {
+                    self.sync.wait_until_ms.set(0);
+                    self.sync_run();
+                }
+            }
+            Request::SyncSetCollection { name, on } => self.sync_set_collection(&name, on),
+            Request::SyncRenameDevice { id, name } => self.sync_rename_device(&id, &name),
             _ => {}
         }
     }
@@ -522,6 +606,7 @@ impl Browser {
                         b.sync_set_pak(Some(p));
                     }
                     info!("sync: set up (passwords: {})", joined.pak.is_some());
+                    b.sync_started();
                     b.set_sync_stage(Stage::On(Some(
                         "Sync is set up. Keep your passphrase and recovery key safe.".into(),
                     )));
@@ -656,6 +741,7 @@ impl Browser {
                         b.sync_set_pak(Some(p));
                     }
                     info!("sync: restored (passwords: {})", joined.pak.is_some());
+                    b.sync_started();
                     b.set_sync_stage(Stage::On(Some("Sync is restored on this device.".into())));
                     b.sync_poll_start();
                 }
@@ -793,6 +879,20 @@ impl Browser {
         if self.vault_unlocked() {
             self.sync_set_pak(None);
         }
+        let forgot = self.store.borrow_mut().sync_forget(delete_data);
+        match forgot {
+            Ok(n) if delete_data => {
+                info!("sync: removed {n} synced items from this device");
+                self.send_bookmarks_bar();
+                self.send_nav();
+                self.push_ntp_config();
+            }
+            Ok(_) => {}
+            Err(e) => warning!("sync: sync's records could not be cleared: {e}"),
+        }
+        self.sync.last_ok_ms.set(None);
+        *self.sync.status.borrow_mut() = None;
+        self.sync.backoff.set(Backoff::default());
         *self.sync.joining.borrow_mut() = None;
         *self.sync.approving.borrow_mut() = None;
         self.sync.devices.borrow_mut().clear();
@@ -835,7 +935,7 @@ impl Browser {
             self.sync.polling.set(false);
             return;
         }
-        if self.sync.busy.get() {
+        if self.sync.busy.get() || self.sync.running.get() {
             self.sync_poll_later();
             return;
         }
@@ -881,6 +981,7 @@ impl Browser {
                             b.sync_set_pak(Some(p));
                         }
                         info!("sync: this device got the keys (passwords: {})", joined.pak.is_some());
+                        b.sync_started();
                         b.set_sync_stage(Stage::On(Some("This device is approved and syncs now.".into())));
                     }
                     (_, Some(Err(e))) => {
@@ -1027,5 +1128,262 @@ impl Browser {
                 }
             },
         );
+    }
+}
+
+impl Browser {
+    // ---- the schedule (S7) ------------------------------------------------------------------------
+
+    /// At start: if sync is on here (sync.json exists), the first run is a minute away. Nothing
+    /// is sent otherwise.
+    pub(super) fn init_sync(&self) {
+        if self.sync_is_on() {
+            if let Err(e) = self.store.borrow().sync_set_tracking(true) {
+                warning!("sync: tracking could not start: {e}");
+            }
+            self.sync.next_run_ms.set(now_ms() + START_DELAY_MS);
+            self.sync_tick_start();
+        }
+    }
+
+    /// This device just got the keys: local changes are tracked from now on, and the first
+    /// sync runs at once.
+    fn sync_started(&self) {
+        if let Err(e) = self.store.borrow().sync_set_tracking(true) {
+            warning!("sync: tracking could not start: {e}");
+        }
+        self.sync.next_run_ms.set(now_ms());
+        self.sync_tick_start();
+        self.sync_run();
+    }
+
+    fn sync_tick_start(&self) {
+        if !self.sync.ticking.replace(true) {
+            self.sync_tick_later();
+        }
+    }
+
+    fn sync_tick_later(&self) {
+        let weak = self.me.clone();
+        crate::ffi::cef::post_ui_delayed(TICK_MS, move || {
+            if let Some(b) = weak.upgrade() {
+                b.sync_tick();
+            }
+        });
+    }
+
+    fn sync_tick(&self) {
+        if !self.sync_is_on() {
+            self.sync.ticking.set(false);
+            return;
+        }
+        let now = now_ms();
+        let changed: Option<i64> = self
+            .store
+            .borrow()
+            .sync_conn()
+            .query_row("SELECT min(enqueued_at) FROM sync_queue WHERE collection <> 'tabs'", [], |r| r.get(0))
+            .ok()
+            .flatten();
+        let due = now >= self.sync.next_run_ms.get() || changed.is_some_and(|t| now - t >= AFTER_CHANGE_MS);
+        if due && now >= self.sync.wait_until_ms.get() {
+            self.sync_run();
+        }
+        self.sync_tick_later();
+    }
+
+    fn sync_set_collection(&self, name: &str, on: bool) {
+        if !self.sync_is_on() || !COLLECTIONS.iter().any(|(n, _)| *n == name) {
+            return;
+        }
+        let r = {
+            let store = self.store.borrow();
+            let c = store.sync_conn();
+            let mut off = local::off_collections(c);
+            off.retain(|n| n != name);
+            if !on {
+                off.push(name.to_string());
+            }
+            // Switched back on: everything again (what changed meanwhile merges in).
+            local::meta_set(c, "off", &serde_json::to_string(&off).unwrap_or_default()).and_then(|()| {
+                if on {
+                    local::meta_set(c, "reconcile", "1")
+                } else {
+                    Ok(())
+                }
+            })
+        };
+        if let Err(e) = r {
+            warning!("sync: the collection setting could not be saved: {e}");
+        }
+        info!("sync: {name} {}", if on { "on" } else { "off" });
+        self.sync.next_run_ms.set(now_ms());
+        self.push_sync();
+    }
+
+    fn sync_rename_device(&self, id: &str, name: &str) {
+        let name = name.trim();
+        if !self.sync_is_on() || name.is_empty() || name.chars().any(char::is_control) {
+            self.push_sync();
+            return;
+        }
+        let known = self.sync.devices.borrow().iter().any(|d| d.id == id && d.revoked_at.is_none());
+        if known {
+            if let Err(e) = coll::rename_device(self.store.borrow().sync_conn(), id, name, now_ms()) {
+                warning!("sync: the device could not be renamed: {e}");
+            }
+            self.sync.next_run_ms.set(now_ms());
+        }
+        self.push_sync();
+    }
+
+    /// One sync run on a worker thread, with its own connection to browser.db. Runs never
+    /// overlap with each other or with the keys polling of krunk://sync.
+    fn sync_run(&self) {
+        if self.sync.running.get() || self.sync.busy.get() || !matches!(&*self.sync.stage.borrow(), Stage::On(_)) {
+            return;
+        }
+        let Some(mut st) = self.sync.state.borrow().clone() else { return };
+        let Some(proxy) = self.sync_proxy() else {
+            *self.sync.status.borrow_mut() = Some(SOCKS_TEXT.into());
+            self.push_sync();
+            return;
+        };
+        let off = local::off_collections(self.store.borrow().sync_conn());
+        let db = self.dirs.database();
+        let name = format!("Krunk on Windows ({})", crate::ffi::window::windows_build());
+        self.sync.running.set(true);
+        self.sync.next_run_ms.set(now_ms() + EVERY_MS);
+        self.push_sync();
+        self.refresh_access(false, move |b, token| match token {
+            Err(f) => {
+                let e = match f {
+                    Failure::SignedOut => SyncFail::Api(ApiError::Unauthorized),
+                    _ => SyncFail::Api(ApiError::Offline("no token".into())),
+                };
+                b.sync_ran(Err(e), None);
+            }
+            Ok(t) => b.spawn_job(
+                "sync-run",
+                move || {
+                    let http = WinHttp { proxy };
+                    let api = Api { http: &http, token: &t, now_ms: now_ms() };
+                    let opts = RunOpts { device_name: &name, off: &off, max_rounds: 20 };
+                    let r = lb_core::storage::Store::open(&db)
+                        .map_err(|e| SyncFail::Local(e.to_string()))
+                        .and_then(|mut store| engine::run(&api, &mut store, &mut st, &opts));
+                    (r, st)
+                },
+                |b, (r, st)| b.sync_ran(r, Some(st)),
+            ),
+        });
+    }
+
+    fn sync_ran(&self, r: Result<Report, SyncFail>, after: Option<SyncState>) {
+        self.sync.running.set(false);
+        let now = now_ms();
+        // Sync was turned off (or on anew) meanwhile: the answer belongs to nobody.
+        let same = matches!((&*self.sync.state.borrow(), &after), (Some(a), Some(b)) if a.device_id == b.device_id && a.account_id == b.account_id);
+        if after.is_some() && !same {
+            self.push_sync();
+            return;
+        }
+        if let (Some(after), true) = (after, r.is_ok()) {
+            *self.sync.state.borrow_mut() = Some(after);
+            self.sync_save();
+        }
+        match r {
+            Ok(report) => {
+                self.sync.backoff.set(Backoff::default());
+                self.sync.wait_until_ms.set(0);
+                self.sync.last_ok_ms.set(Some(now));
+                self.sync.rotation_pending.set(report.frozen);
+                *self.sync.status.borrow_mut() =
+                    report.frozen.then(|| "Securing your account after a device was removed…".to_string());
+                info!(
+                    "sync: run done (pulled {}, pushed {}, conflicts {}, full {}, frozen {}, left {})",
+                    report.pulled, report.pushed, report.conflicts, report.full, report.frozen, report.queue_left
+                );
+                self.sync_apply_changes(&report);
+            }
+            Err(e) => {
+                info!("sync: run failed ({e})");
+                let text = self.sync_run_failed(&e, now);
+                *self.sync.status.borrow_mut() = Some(text);
+            }
+        }
+        self.push_sync();
+    }
+
+    /// What the schedule does after a failed run, and the status line for it.
+    fn sync_run_failed(&self, e: &SyncFail, now: i64) -> String {
+        let mut b = self.sync.backoff.get();
+        let next = match e {
+            SyncFail::Api(api) => sapi::next_step(api, &mut b),
+            SyncFail::Local(_) | SyncFail::BadAnswer(_) => sapi::Next::RetryIn(b.fail()),
+            SyncFail::Keys(k) if !k.is_alarm() => sapi::Next::RetryIn(b.fail()),
+            SyncFail::Keys(_) | SyncFail::Reset => sapi::Next::Stop,
+        };
+        self.sync.backoff.set(b);
+        match (e, next) {
+            (SyncFail::Keys(k), _) if k.is_alarm() => {
+                let text = fail_text(e);
+                warning!("sync: security alarm during a run ({e}); writes stopped");
+                if let Some(s) = self.sync.state.borrow_mut().as_mut() {
+                    s.alarm = Some(text.clone());
+                }
+                self.sync_save();
+                *self.sync.stage.borrow_mut() = Stage::Alarm(text.clone());
+                text
+            }
+            (SyncFail::Reset, _) => {
+                "Sync was reset from another device. Turn sync off and on again on this device.".into()
+            }
+            (SyncFail::Api(ApiError::Offline(_)), sapi::Next::RetryIn(ms)) => {
+                self.sync.wait_until_ms.set(now + ms);
+                format!("Offline — will retry in {} min", (ms + 59_999) / 60_000)
+            }
+            (_, sapi::Next::RetryIn(ms)) => {
+                self.sync.wait_until_ms.set(now + ms);
+                self.sync.next_run_ms.set(now + ms);
+                format!("Sync will try again in {} min", (ms + 59_999) / 60_000)
+            }
+            (_, sapi::Next::SignedOut) => {
+                "This device is signed out of the Krunk account. Sign in again in Settings → Account.".into()
+            }
+            (_, sapi::Next::Frozen) => {
+                self.sync.rotation_pending.set(true);
+                "Securing your account after a device was removed…".into()
+            }
+            (_, sapi::Next::Reconcile) => {
+                self.sync.next_run_ms.set(now);
+                "Catching up…".into()
+            }
+            (_, sapi::Next::Stop) => fail_text(e),
+        }
+    }
+
+    /// What a run changed here reaches the open windows and pages.
+    fn sync_apply_changes(&self, r: &Report) {
+        let ch = r.changed;
+        if ch.settings {
+            let loaded = self.store.borrow().load_settings();
+            match loaded {
+                Ok(mut new) if new.validate().is_ok() => {
+                    new.sync_protection();
+                    let old = std::mem::replace(&mut *self.settings.borrow_mut(), new.clone());
+                    self.apply_settings(&old, &new);
+                }
+                Ok(_) => warning!("sync: synced settings did not validate; they apply after a restart"),
+                Err(e) => warning!("sync: settings could not be read: {e}"),
+            }
+        }
+        if ch.bookmarks {
+            self.send_bookmarks_bar();
+            self.send_nav();
+        }
+        if ch.pins {
+            self.push_ntp_config();
+        }
     }
 }

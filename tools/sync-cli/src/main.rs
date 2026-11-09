@@ -6,11 +6,14 @@
 //!
 //! The folder holds `cli.json` (server, ids, the refresh token and a cached access token — in
 //! clear: a test tool), `sync.json` (sealed, without a platform wrapper), `vault.json` and, from
-//! S7 on, `browser.db`. Output lines are `key: value` for the test scripts. Exit codes: 0 ok,
+//! S7 on, `browser.db` (a real Krunk profile database: the record commands edit it with
+//! Krunk's own storage code, `sync` runs Krunk's engine over it). Output lines are `key: value` for the test scripts. Exit codes: 0 ok,
 //! 2 usage, 3 failed, 4 security alarm (a fork or a tampered directory).
 
+use lb_core::storage::Store;
 use lb_core::sync::api::{HttpClient, HttpResponse};
 use lb_core::sync::client::{self, AApproval, AStep, Api, NApproval, NStep, Refresh, SyncFail};
+use lb_core::sync::engine::{self, RunOpts};
 use lb_core::sync::keys::{self, Me, PakState, Secret};
 use lb_core::sync::state::{self, parse_account_id, SyncState};
 use lb_core::vault::{KdfParams, NoWrap, Vault, VaultSync};
@@ -190,6 +193,15 @@ impl Device {
         vault
             .set_sync_part(Some(VaultSync { state: pak.to_bytes(), dirty }), &NoWrap)
             .unwrap_or_else(|e| fail(3, format!("vault: {e}")));
+    }
+
+    /// The profile database; local changes are tracked once sync is on (sync.json exists).
+    fn store(&self) -> Store {
+        let store = Store::open(&self.dir.join("browser.db")).unwrap_or_else(|e| fail(3, format!("browser.db: {e}")));
+        if self.state_path().exists() {
+            store.sync_set_tracking(true).unwrap_or_else(|e| fail(3, e));
+        }
+        store
     }
 
     fn me(&mut self, api_token: &str) -> Me {
@@ -522,6 +534,209 @@ fn main() {
                 .unwrap_or_else(|e| fail(3, e));
             out("revoke", r.status);
         }
-        _ => fail(2, "commands: link state setup restore join approve refresh devices revoke"),
+        "sync" => {
+            let mut d = Device::open(&dir);
+            let t = d.token();
+            let api = Api { http: &d.http, token: &t, now_ms: now_ms() };
+            let mut st = d.sync_state();
+            let mut store = d.store();
+            let off: Vec<String> = a.get("off").map(|o| o.split(',').map(str::to_string).collect()).unwrap_or_default();
+            let name = a.get("name").unwrap_or("Linux test client").to_string();
+            let opts = RunOpts { device_name: &name, off: &off, max_rounds: 20 };
+            let r = engine::run(&api, &mut store, &mut st, &opts);
+            match r {
+                Ok(rep) => {
+                    d.save_state(&st);
+                    out("pulled", rep.pulled);
+                    out("pushed", rep.pushed);
+                    out("conflicts", rep.conflicts);
+                    out("full", rep.full);
+                    out("frozen", rep.frozen);
+                    out("pak_waiting", rep.pak_waiting);
+                    out("queue_left", rep.queue_left);
+                    out("changed", format!("{:?}", rep.changed));
+                }
+                Err(e) => sfail(e),
+            }
+        }
+        "bookmark" => {
+            let d = Device::open(&dir);
+            let mut store = d.store();
+            match a.pos.first().map(String::as_str) {
+                Some("add") => {
+                    let parent = match a.get("folder") {
+                        Some(f) => folder(&store, f),
+                        None => 1,
+                    };
+                    let id = store.add_bookmark(parent, a.need("title"), a.need("url")).unwrap_or_else(|e| fail(3, e));
+                    out("bookmark", id);
+                }
+                Some("folder") => {
+                    let id = folder(&store, a.need("title"));
+                    out("folder", id);
+                }
+                Some("edit") => {
+                    let id = find_bookmark(&store, a.need("url"));
+                    store.edit_bookmark(id, a.need("title"), None).unwrap_or_else(|e| fail(3, e));
+                    out("edited", id);
+                }
+                Some("delete") => {
+                    let id = find_bookmark(&store, a.need("url"));
+                    store.delete_bookmark(id).unwrap_or_else(|e| fail(3, e));
+                    out("deleted", id);
+                }
+                Some("list") => {
+                    fn walk(nodes: &[lb_core::bookmarks::BookmarkNode], path: &str) {
+                        for n in nodes {
+                            let p = format!("{path}/{}", n.item.title);
+                            match &n.item.url {
+                                Some(u) => println!("bookmark: {p} | {u}"),
+                                None => {
+                                    println!("folder: {p}");
+                                    walk(&n.children, &p);
+                                }
+                            }
+                        }
+                    }
+                    walk(&store.bookmark_tree().unwrap_or_else(|e| fail(3, e)), "");
+                }
+                _ => fail(2, "bookmark add|folder|edit|delete|list"),
+            }
+        }
+        "history" => {
+            let d = Device::open(&dir);
+            let store = d.store();
+            match a.pos.first().map(String::as_str) {
+                Some("add") => {
+                    let ts = a.get("at").and_then(|x| x.parse().ok()).unwrap_or_else(now_ms);
+                    store.record_visit(a.need("url"), a.get("title").unwrap_or(""), ts).unwrap_or_else(|e| fail(3, e));
+                    out("visit", a.need("url"));
+                }
+                Some("delete") => {
+                    store.delete_url(a.need("url")).unwrap_or_else(|e| fail(3, e));
+                    out("deleted", a.need("url"));
+                }
+                Some("list") => {
+                    for h in store.query_history("", None, 1000).unwrap_or_else(|e| fail(3, e)) {
+                        println!("visit: {} | {} | {}", h.url, h.title, h.ts);
+                    }
+                }
+                _ => fail(2, "history add|delete|list"),
+            }
+        }
+        "settings" => {
+            let d = Device::open(&dir);
+            let store = d.store();
+            let s = store.load_settings().unwrap_or_else(|e| fail(3, e));
+            let mut v = serde_json::to_value(&s).unwrap_or_default();
+            match a.pos.first().map(String::as_str) {
+                Some("get") => println!("{}", v[a.need("key")]),
+                Some("set") => {
+                    let raw = a.need("value");
+                    v[a.need("key")] = serde_json::from_str(raw).unwrap_or_else(|_| Value::String(raw.into()));
+                    let new: lb_core::settings::Settings = serde_json::from_value(v).unwrap_or_else(|e| fail(2, e));
+                    if let Err(e) = new.validate() {
+                        fail(2, format!("{e:?}"));
+                    }
+                    store.save_settings(&new).unwrap_or_else(|e| fail(3, e));
+                    out("set", a.need("key"));
+                }
+                _ => fail(2, "settings get|set --key K [--value JSON]"),
+            }
+        }
+        "pin" => {
+            let d = Device::open(&dir);
+            let store = d.store();
+            match a.pos.first().map(String::as_str) {
+                Some("add") => store.pin_site(a.need("url"), a.get("title").unwrap_or("")).unwrap_or_else(|e| fail(3, e)),
+                Some("remove") => store.unpin_site(a.need("url")).unwrap_or_else(|e| fail(3, e)),
+                Some("list") => {
+                    for t in store.pinned_tiles(100).unwrap_or_else(|e| fail(3, e)) {
+                        println!("pin: {} | {}", t.url, t.title);
+                    }
+                }
+                _ => fail(2, "pin add|remove|list"),
+            }
+        }
+        "allow" => {
+            let d = Device::open(&dir);
+            let store = d.store();
+            match a.pos.first().map(String::as_str) {
+                Some("add") => {
+                    store.allowlist_add(a.need("host"), now_ms()).unwrap_or_else(|e| fail(3, e));
+                }
+                Some("remove") => {
+                    store.allowlist_remove(a.need("host")).unwrap_or_else(|e| fail(3, e));
+                }
+                Some("list") => {
+                    for h in store.allowlist().unwrap_or_else(|e| fail(3, e)) {
+                        println!("allow: {h}");
+                    }
+                }
+                _ => fail(2, "allow add|remove|list"),
+            }
+        }
+        "tabs" => {
+            let d = Device::open(&dir);
+            let store = d.store();
+            match a.pos.first().map(String::as_str) {
+                // tabs set <url> [<url>…]: one window with these tabs (titles = urls).
+                Some("set") => {
+                    let tabs: Vec<Value> = a.pos[1..].iter().map(|u| json!({"url": u, "title": u})).collect();
+                    let s = json!({"version": 2, "tabs": tabs, "active": 0, "windows": [{"tabs": tabs, "active": 0}], "focused": 0});
+                    store.kv_set("session", &s.to_string()).unwrap_or_else(|e| fail(3, e));
+                    out("tabs", a.pos.len() - 1);
+                }
+                Some("remote") => {
+                    for (dev, v) in lb_core::sync::coll::remote_tabs(store.sync_conn()).unwrap_or_else(|e| fail(3, e)) {
+                        for w in v["windows"].as_array().into_iter().flatten() {
+                            for t in w["tabs"].as_array().into_iter().flatten() {
+                                println!("remote_tab: {dev} | {}", t["url"].as_str().unwrap_or_default());
+                            }
+                        }
+                    }
+                }
+                _ => fail(2, "tabs set <url>…|remote"),
+            }
+        }
+        "rename" => {
+            let d = Device::open(&dir);
+            let store = d.store();
+            let id = a.pos.first().unwrap_or_else(|| fail(2, "rename <device id> --name N"));
+            lb_core::sync::coll::rename_device(store.sync_conn(), id, a.need("name"), now_ms()).unwrap_or_else(|e| fail(3, e));
+            out("renamed", id);
+        }
+        "names" => {
+            let d = Device::open(&dir);
+            let store = d.store();
+            for (id, n) in lb_core::sync::coll::device_names(store.sync_conn()).unwrap_or_else(|e| fail(3, e)) {
+                println!("name: {id} | {n}");
+            }
+        }
+        "queue" => {
+            let d = Device::open(&dir);
+            let store = d.store();
+            for (c, k) in lb_core::sync::local::queue(store.sync_conn(), 10_000).unwrap_or_else(|e| fail(3, e)) {
+                println!("queued: {c} | {k}");
+            }
+        }
+        _ => fail(
+            2,
+            "commands: link state setup restore join approve refresh devices revoke sync bookmark history settings pin \
+             allow tabs rename names queue",
+        ),
     }
+}
+
+/// A folder on the bookmarks bar with this title (created if missing).
+fn folder(store: &Store, title: &str) -> i64 {
+    let found = store.children(1).unwrap_or_else(|e| fail(3, e)).into_iter().find(|b| b.is_folder && b.title == title);
+    match found {
+        Some(b) => b.id,
+        None => store.add_folder(1, title).unwrap_or_else(|e| fail(3, e)),
+    }
+}
+
+fn find_bookmark(store: &Store, url: &str) -> i64 {
+    *store.bookmarks_for_url(url).unwrap_or_else(|e| fail(3, e)).first().unwrap_or_else(|| fail(3, "no such bookmark"))
 }

@@ -75,6 +75,34 @@
     $('on-passwords').textContent = v.passwords ? 'Passwords sync while your password vault is unlocked.'
       : v.passwordsLocked ? 'Passwords: unlock your password vault to include them.' : 'Passwords are not synced on this device.';
     $('on-rotation').hidden = !v.rotationPending;
+    $('on-last').textContent = v.lastSyncMs ? 'Last synced ' + ago(v.lastSyncMs) : '';
+    $('sync-now').disabled = !!v.syncing;
+    $('sync-now').setAttribute('aria-busy', v.syncing ? 'true' : 'false');
+    $('sync-now').textContent = v.syncing ? 'Syncing…' : 'Sync now';
+    // Collections.
+    const cl = $('collections');
+    cl.textContent = '';
+    v.collections.forEach(function (c) {
+      const box = el('input', { type: 'checkbox', id: 'coll-' + c.name });
+      box.checked = c.on;
+      box.addEventListener('change', function () { LB.post('syncSetCollection', { name: c.name, on: box.checked }); });
+      cl.appendChild(el('label', { class: 'check' }, [box, el('span', { text: c.label })]));
+    });
+    // Other devices' open tabs (read-only).
+    const rl = $('remote-list');
+    rl.textContent = '';
+    $('remote').hidden = !v.remoteTabs.length;
+    v.remoteTabs.forEach(function (d) {
+      rl.appendChild(el('h3', { text: d.device + (d.updatedMs ? ' · ' + ago(d.updatedMs) : '') }));
+      const ul = el('ul', { class: 'plain tabs' });
+      d.tabs.forEach(function (t) {
+        const a = el('a', { href: t[1], text: t[0] || t[1], title: t[1] });
+        a.addEventListener('click', function (e) { e.preventDefault(); LB.post('openUrl', { url: t[1], newTab: true }); });
+        ul.appendChild(el('li', null, [a]));
+      });
+      if (!d.tabs.length) ul.appendChild(el('li', { class: 'hint', text: 'No open tabs.' }));
+      rl.appendChild(ul);
+    });
     // Requests to join.
     const list = $('approval-list');
     list.textContent = '';
@@ -115,10 +143,17 @@
       dl.appendChild(el('li', { class: 'device' }, [
         el('div', { class: 'name' }, [d.name, d.me ? el('span', { class: 'badge', text: 'This device' }) : null]),
         el('div', { class: 'meta', text: meta.join(' · ') }),
-        d.me ? null : el('button', { class: 'btn danger small', text: 'Remove', 'aria-label': 'Remove ' + d.name, onclick: function () {
-          Page.confirm('Remove ' + d.name + '? It is signed out at once and loses access to your synced data.', { ok: 'Remove', danger: true })
-            .then(function (ok) { if (ok) LB.post('syncRemoveDevice', { id: d.id }); });
-        } }),
+        el('div', { class: 'device-acts' }, [
+          el('button', { class: 'btn small', text: 'Rename', 'aria-label': 'Rename ' + d.name, onclick: function () {
+            Page.prompt('Device name', d.name, { ok: 'Rename' }).then(function (name) {
+              if (name && name.trim()) LB.post('syncRenameDevice', { id: d.id, name: name.trim().slice(0, 64) });
+            });
+          } }),
+          d.me ? null : el('button', { class: 'btn danger small', text: 'Remove', 'aria-label': 'Remove ' + d.name, onclick: function () {
+            Page.confirm('Remove ' + d.name + '? It is signed out at once and loses access to your synced data.', { ok: 'Remove', danger: true })
+              .then(function (ok) { if (ok) LB.post('syncRemoveDevice', { id: d.id }); });
+          } }),
+        ]),
       ]));
     });
   }
@@ -161,6 +196,7 @@
   });
   $('joining-cancel').addEventListener('click', function () { LB.post('syncCancel'); });
   $('approving-cancel').addEventListener('click', function () { LB.post('syncApproveCancel'); });
+  $('sync-now').addEventListener('click', function () { LB.post('syncNow'); });
   $('alarm-off').addEventListener('click', function () { LB.post('syncTurnOff', { deleteData: false }); });
   $('turn-off').addEventListener('click', function () {
     const del = $('off-delete').checked;

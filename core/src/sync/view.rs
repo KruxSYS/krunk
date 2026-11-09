@@ -49,6 +49,16 @@ pub struct CollectionRow {
     pub on: bool,
 }
 
+/// The open tabs of another device (read-only).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteTabs {
+    pub device: String,
+    pub updated_ms: i64,
+    /// (title, url)
+    pub tabs: Vec<(String, String)>,
+}
+
 /// Sync is on: the status and what the user can do.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -67,6 +77,8 @@ pub struct OnView {
     pub rotation_pending: bool,
     pub collections: Vec<CollectionRow>,
     pub message: Option<String>,
+    pub syncing: bool,
+    pub remote_tabs: Vec<RemoteTabs>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,6 +131,8 @@ impl SyncView {
             SyncView::Setup { passwords, .. } => SyncView::Working {
                 message: format!("Setting up sync{} in krunk://sync…", if *passwords { " with passwords" } else { "" }),
             },
+            // Other devices' open tabs stay on krunk://sync.
+            SyncView::On(on) => SyncView::On(OnView { remote_tabs: Vec::new(), ..on.clone() }),
             v => v.clone(),
         }
     }

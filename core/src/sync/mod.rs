@@ -7,12 +7,16 @@
 pub mod api;
 pub mod client;
 pub mod codes;
+pub mod coll;
 pub mod crypto;
 pub mod dir;
+pub mod engine;
 pub mod envelope;
+pub mod fracidx;
 pub mod hlc;
 pub mod keys;
 pub mod labels;
+pub mod local;
 pub mod normalize;
 pub mod sas;
 pub mod state;
@@ -55,3 +59,8 @@ impl std::fmt::Display for SyncError {
 }
 
 impl std::error::Error for SyncError {}
+
+#[cfg(test)]
+mod engine_tests;
+#[cfg(test)]
+mod memserver;

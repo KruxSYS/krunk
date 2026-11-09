@@ -139,6 +139,8 @@
       <p class="status" id="on-message" role="status"></p>
       <p class="hint" id="on-passwords"></p>
       <p class="warn" id="on-rotation" hidden>A device was removed. Krunk is re-securing your sync with new keys.</p>
+      <p class="hint" id="on-last"></p>
+      <div class="acts"><button class="btn" id="sync-now">Sync now</button></div>
     </section>
 
     <section class="card" id="approvals" hidden>
@@ -158,6 +160,17 @@
     <section class="card">
       <h2>Your devices</h2>
       <ul id="device-list" class="devices"></ul>
+    </section>
+
+    <section class="card">
+      <h2>What this device syncs</h2>
+      <p class="hint">Switching something off keeps it on this device as it is; your other devices keep syncing it.</p>
+      <div id="collections" class="collections"></div>
+    </section>
+
+    <section class="card" id="remote" hidden>
+      <h2>Open tabs on your other devices</h2>
+      <div id="remote-list"></div>
     </section>
 
     <section class="card">
