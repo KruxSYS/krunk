@@ -1171,3 +1171,19 @@ from 0.11.0 (staging and live). Not rerun: the other flows (their code did not c
    new tab and two pages: right-click Back lists the pages and "New tab", never about:blank.
 8. **Extensions page:** krunk://extensions has space around the header, the Web Store box (with
    its code chips) and the cards, in light and dark.
+
+## Krunk 0.11.2 and 0.11.3 (round 19)
+0.11.2 was published without testing (operator). 0.11.3 on the VM: `scripts/vm-0113-pdf-mail.ps1`
+(after `scripts/vm-0112-probe.ps1` showed PDFs downloading and email links refused).
+1. **Single tab:** in a window with one tab, drag the tab: the window moves at once.
+2. **Save prompt:** "Save password?" and "Update saved password?" show the username in a field;
+   edit it and save: krunk://passwords has the login under the edited name.
+3. **Logins in steps:** on a site that asks for the email first, then the password: the email
+   field offers the saved logins; after signing in, the saved login has the email as username.
+4. **Many logins:** with 12 logins for one site, the suggestion list shows all, scrolling past 8.
+5. **PDFs:** open a PDF link and a link the site sends as a download: both open in the viewer
+   (nothing in Downloads); the viewer's Download button saves the file. With Settings → Downloads
+   → Open PDFs in Krunk off, they download.
+6. **Email links:** click a mailto: link: Windows' email app opens (or its "choose an app"
+   dialog). Choose Gmail in Settings → General: the link opens Gmail's compose in a new tab.
+

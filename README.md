@@ -271,6 +271,14 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   - **My filters:** your own rules in Adblock Plus / uBlock Origin syntax, with a report of lines
     it cannot read. Ctrl+S saves.
   - Every change takes effect without a restart, once the engine is rebuilt (a few seconds).
+- **PDFs (0.11.3)** open in the engine's PDF viewer, also when a site sends them as a download
+  (`application/pdf`, or a `.pdf` name with a generic type). Krunk fetches the file into its data
+  folder (`pdf-view`, private tabs' in `pdf-view\private`, deleted with the last private tab;
+  others after 3 days) and opens it in a new tab next to the page. The viewer's Download button
+  saves it. Settings → Downloads → Open PDFs in Krunk turns this off.
+- **Email links (0.11.3):** `mailto:` links open in the app Windows uses for them, or in Gmail,
+  Outlook.com, Yahoo Mail, Proton Mail or a web address with `%s` (Settings → General → Email
+  links open in). A page can open at most one a second.
 - **Downloads:**
   - **History:** `krunk://downloads` shows each download's full address, the page it came from,
     and when it started and finished. Right-click a row (or press Shift+F10 or the Menu key) for Open, Show in folder,
