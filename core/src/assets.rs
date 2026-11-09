@@ -268,7 +268,20 @@ pub fn internal_request_allowed(url: &str, initiator: &str, top_level_navigation
 /// * A web page may not navigate a tab to a built-in page by itself; only
 ///   the host (address bar, menu, new tab) may (`host_initiated`). Built-in
 ///   pages may link to each other and to the web.
-pub fn allow_navigation(channel: Channel, current: &str, target: &str, host_initiated: bool) -> bool {
+///
+/// `committed` is the address of the document the tab shows now (the engine's last address
+/// change), not the address the tab was opened for. Since 0.11.7 (audit C3) a built-in page
+/// is reached without the host only from a committed built-in page and never by a server
+/// redirect: a popup (`window.open`) or a fresh `about:blank` used to count as the page it
+/// was opened for, and a redirect from a site typed on the new-tab page counted as the
+/// new-tab page.
+pub fn allow_navigation(
+    channel: Channel,
+    committed: &str,
+    target: &str,
+    host_initiated: bool,
+    redirected: bool,
+) -> bool {
     let target_url = match Url::parse(target) {
         Ok(u) => u,
         Err(_) => return false,
@@ -286,10 +299,7 @@ pub fn allow_navigation(channel: Channel, current: &str, target: &str, host_init
             }
             if target_origin == pages::PAGES_ORIGIN {
                 return Page::from_url(target).is_some()
-                    && (host_initiated
-                        || Page::from_url(current).is_some()
-                        || current.is_empty()
-                        || current == "about:blank");
+                    && (host_initiated || (!redirected && Page::from_url(committed).is_some()));
             }
             // Chromium's own chrome://gpu (from krunk://gpu's button) is the only chrome:// page,
             // and only when the host navigates there.
@@ -479,28 +489,48 @@ mod tests {
         let shell = "https://shell.krunk.invalid/shell.html";
         let popup = "https://shell.krunk.invalid/popup.html";
         let settings = Page::Settings.url();
-        assert!(allow_navigation(Channel::Shell, "", shell, true));
-        assert!(!allow_navigation(Channel::Shell, shell, "https://evil.example/", false));
-        assert!(!allow_navigation(Channel::Shell, shell, popup, false));
-        assert!(allow_navigation(Channel::Popup, "", popup, true));
-        assert!(!allow_navigation(Channel::Popup, popup, shell, false));
+        assert!(allow_navigation(Channel::Shell, "", shell, true, false));
+        assert!(!allow_navigation(Channel::Shell, shell, "https://evil.example/", false, false));
+        assert!(!allow_navigation(Channel::Shell, shell, popup, false, false));
+        assert!(allow_navigation(Channel::Popup, "", popup, true, false));
+        assert!(!allow_navigation(Channel::Popup, popup, shell, false, false));
 
-        assert!(!allow_navigation(Channel::Tab, "https://a.example/", shell, true), "never the shell in a tab");
-        assert!(allow_navigation(Channel::Tab, "https://a.example/", &settings, true), "address bar");
-        assert!(!allow_navigation(Channel::Tab, "https://a.example/", &settings, false), "page-initiated");
-        assert!(allow_navigation(Channel::Tab, &Page::NewTab.url(), &settings, false), "built-in links");
-        assert!(allow_navigation(Channel::Tab, "", &Page::NewTab.url(), false));
-        assert!(!allow_navigation(Channel::Tab, "", "https://krunk.invalid/evil.html", true));
-        assert!(allow_navigation(Channel::Tab, &settings, "https://a.example/", false));
-        assert!(!allow_navigation(Channel::Tab, "https://a.example/", "file:///C:/Windows/win.ini", false));
-        assert!(allow_navigation(Channel::Tab, "", "file:///C:/x.html", true));
-        assert!(!allow_navigation(Channel::Tab, "", "javascript:alert(1)", true));
-        assert!(!allow_navigation(Channel::Tab, "", "ms-settings:privacy", false));
+        assert!(!allow_navigation(Channel::Tab, "https://a.example/", shell, true, false), "never the shell in a tab");
+        assert!(allow_navigation(Channel::Tab, "https://a.example/", &settings, true, false), "address bar");
+        assert!(!allow_navigation(Channel::Tab, "https://a.example/", &settings, false, false), "page-initiated");
+        assert!(allow_navigation(Channel::Tab, &Page::NewTab.url(), &settings, false, false), "built-in links");
+        // 0.11.7 (audit C3): only the host opens a built-in page in a tab that shows nothing
+        // yet or about:blank (a popup from window.open), and never through a redirect.
+        assert!(!allow_navigation(Channel::Tab, "", &Page::NewTab.url(), false, false), "popup");
+        assert!(!allow_navigation(Channel::Tab, "about:blank", &settings, false, false), "about:blank popup");
+        assert!(
+            !allow_navigation(
+                Channel::Tab,
+                &Page::NewTab.url(),
+                "https://krunk.invalid/source.html?url=x",
+                false,
+                true
+            ),
+            "a site typed on the new-tab page redirects to a built-in page"
+        );
+        // The host's flag is used up by its own navigation: a redirect after it is the server's.
+        assert!(!allow_navigation(Channel::Tab, "https://a.example/", &settings, false, true), "a server redirect");
+        assert!(allow_navigation(Channel::Tab, "", &Page::NewTab.url(), true, false), "a new tab");
+        assert!(
+            allow_navigation(Channel::Tab, &settings, "https://a.example/", false, true),
+            "built-in page to the web, redirected"
+        );
+        assert!(!allow_navigation(Channel::Tab, "", "https://krunk.invalid/evil.html", true, false));
+        assert!(allow_navigation(Channel::Tab, &settings, "https://a.example/", false, false));
+        assert!(!allow_navigation(Channel::Tab, "https://a.example/", "file:///C:/Windows/win.ini", false, false));
+        assert!(allow_navigation(Channel::Tab, "", "file:///C:/x.html", true, false));
+        assert!(!allow_navigation(Channel::Tab, "", "javascript:alert(1)", true, false));
+        assert!(!allow_navigation(Channel::Tab, "", "ms-settings:privacy", false, false));
         // chrome://gpu only, only from the host.
-        assert!(allow_navigation(Channel::Tab, &Page::Gpu.url(), "chrome://gpu/", true));
-        assert!(!allow_navigation(Channel::Tab, &Page::Gpu.url(), "chrome://gpu/", false));
-        assert!(!allow_navigation(Channel::Tab, "", "chrome://settings/", true));
-        assert!(!allow_navigation(Channel::Tab, "", "chrome://gpu/../settings", true));
-        assert!(!allow_navigation(Channel::Shell, "", "chrome://gpu/", true));
+        assert!(allow_navigation(Channel::Tab, &Page::Gpu.url(), "chrome://gpu/", true, false));
+        assert!(!allow_navigation(Channel::Tab, &Page::Gpu.url(), "chrome://gpu/", false, false));
+        assert!(!allow_navigation(Channel::Tab, "", "chrome://settings/", true, false));
+        assert!(!allow_navigation(Channel::Tab, "", "chrome://gpu/../settings", true, false));
+        assert!(!allow_navigation(Channel::Shell, "", "chrome://gpu/", true, false));
     }
 }

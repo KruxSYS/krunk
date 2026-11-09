@@ -854,7 +854,7 @@ impl Browser {
             if !ok {
                 // A link in a popup: a new tab, like target=_blank.
                 if let Some(b) = weak.upgrade() {
-                    if assets::allow_navigation(Channel::Tab, "", &nav.url, false) {
+                    if assets::allow_navigation(Channel::Tab, "", &nav.url, false, nav.redirected) {
                         b.open_url(&nav.url, true, false);
                     }
                 }
@@ -1177,7 +1177,7 @@ impl Browser {
             "tabs.create" => {
                 let url = get_str("url").unwrap_or_else(|| lb_core::pages::Page::NewTab.url());
                 let url = self.ext_resolve_url(ext_id, &url);
-                if !assets::allow_navigation(Channel::Tab, "", &url, true) {
+                if !assets::allow_navigation(Channel::Tab, "", &url, true, false) {
                     return Some(Err("That address cannot be opened.".into()));
                 }
                 let active = data.get("active").and_then(|a| a.as_bool()).unwrap_or(true);
@@ -1193,7 +1193,7 @@ impl Browser {
                 let Some(id) = id else { return Some(Err("No active tab.".into())) };
                 if let Some(url) = data.pointer("/props/url").and_then(|u| u.as_str()) {
                     let url = self.ext_resolve_url(ext_id, url);
-                    if !assets::allow_navigation(Channel::Tab, "", &url, true) {
+                    if !assets::allow_navigation(Channel::Tab, "", &url, true, false) {
                         return Some(Err("That address cannot be opened.".into()));
                     }
                     if let Some(v) = self.tab_view(id) {

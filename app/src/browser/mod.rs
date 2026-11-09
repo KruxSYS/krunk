@@ -663,7 +663,7 @@ impl Browser {
             background: if self.frame_dark() { UI_BACKGROUND_DARK } else { UI_BACKGROUND },
             policy: None,
         });
-        shell.on_before_browse(|nav| assets::allow_navigation(Channel::Shell, "", &nav.url, true));
+        shell.on_before_browse(|nav| assets::allow_navigation(Channel::Shell, "", &nav.url, true, nav.redirected));
         let weak = self.me.clone();
         shell.on_load_finished(move |_| {
             if let Some(b) = weak.upgrade() {
@@ -1051,6 +1051,11 @@ impl Browser {
         self.hook_focus(c, Some(id));
         self.hook_tab_keys(id, c);
         self.hook_permissions(id, c);
+        // The address of the document the view shows (the engine's last address change). A
+        // popup's tab is recorded with its target before anything is shown there; the
+        // navigation policy needs what is really there (0.11.7, audit C3).
+        let committed: Rc<RefCell<String>> = Rc::default();
+        let committed_nav = committed.clone();
 
         let weak = self.me.clone();
         let net_start = net.clone();
@@ -1063,8 +1068,8 @@ impl Browser {
                 b.defer(move |b| b.open_mailto(id, &url));
                 return false;
             }
-            let current = b.tab(id).map(|t| t.url.clone()).unwrap_or_default();
-            let allow = assets::allow_navigation(Channel::Tab, &current, &nav.url, host);
+            let current = committed_nav.borrow().clone();
+            let allow = assets::allow_navigation(Channel::Tab, &current, &nav.url, host, nav.redirected);
             if !allow {
                 info!("tab {id}: blocked navigation to an internal or unsupported URL");
                 return false;
@@ -1112,6 +1117,7 @@ impl Browser {
         });
         let weak = self.me.clone();
         c.on_address(move |url| {
+            committed.replace(url.clone());
             if let Some(b) = weak.upgrade() {
                 // The engine's empty first document of a tab on its way to another page (edited
                 // headers start blank) is not the tab's address: the bar never shows it (R1).
@@ -2927,7 +2933,7 @@ impl Browser {
             background: self.popup_background(),
             policy: None,
         });
-        c.on_before_browse(|nav| assets::allow_navigation(Channel::Popup, "", &nav.url, true));
+        c.on_before_browse(|nav| assets::allow_navigation(Channel::Popup, "", &nav.url, true, nav.redirected));
         let weak = self.me.clone();
         c.on_message(move |source, json| {
             if let Some(b) = weak.upgrade() {
