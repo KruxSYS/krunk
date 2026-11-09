@@ -502,8 +502,9 @@
     return [el('div', { class: 'panel-title', text: 'Which video?' })].concat(rows);
   }
 
-  // The volume bar next to the floating video window (0.7.0, R8). The host shows and places it;
-  // it never takes the keyboard. A change goes to the page at most every 50 ms; the page's own
+  // The volume slider of the floating video window (0.7.0, R8; 0.11.0: inside the player, next
+  // to the engine's own mute button, which stays the mute). The host shows and places it; it
+  // never takes the keyboard. A change goes to the page at most every 50 ms; the page's own
   // changes come back as a new `pipVolume` content, applied unless the slider is being dragged.
   const pv = { tabId: 0, volume: 100, muted: false, dragging: false, timer: null, sentAt: 0 };
   function pvSend() {
@@ -519,12 +520,8 @@
     if (!slider) return;
     slider.value = String(pv.muted ? 0 : pv.volume);
     slider.style.setProperty('--fill', (pv.muted ? 0 : pv.volume) + '%');
-    const mute = document.getElementById('pv-mute');
-    const silent = pv.muted || pv.volume === 0;
-    mute.dataset.level = silent ? 'off' : pv.volume < 50 ? 'low' : 'high';
-    mute.setAttribute('aria-pressed', String(pv.muted));
-    mute.title = pv.muted ? 'Unmute' : 'Mute';
-    document.getElementById('pv-pct').textContent = pv.muted ? 'Muted' : pv.volume + '%';
+    slider.setAttribute('aria-valuetext', pv.muted ? 'Muted' : pv.volume + '%');
+    document.getElementById('pv-pct').textContent = pv.muted ? '—' : String(pv.volume);
   }
   function pvSet(volume, muted) {
     pv.volume = Math.max(0, Math.min(100, Math.round(volume)));
@@ -540,12 +537,7 @@
     const done = function () { pv.dragging = false; };
     slider.addEventListener('pointerup', done);
     slider.addEventListener('pointercancel', done);
-    const mute = el('button', { type: 'button', id: 'pv-mute', class: 'pv-mute', tabindex: '-1', 'aria-label': 'Mute', onclick: function () {
-      // Unmuting at 0 % would stay silent: back to a quarter.
-      if (pv.muted || pv.volume === 0) pvSet(pv.volume === 0 ? 25 : pv.volume, false);
-      else pvSet(pv.volume, true);
-    } }, [el('span', { class: 'pv-icon', 'aria-hidden': 'true' })]);
-    const bar = el('div', { class: 'pv-bar' }, [mute, slider, el('span', { id: 'pv-pct', class: 'pv-pct' })]);
+    const bar = el('div', { class: 'pv-bar' }, [slider, el('span', { id: 'pv-pct', class: 'pv-pct', 'aria-hidden': 'true' })]);
     bar.addEventListener('wheel', function (e) {
       e.preventDefault();
       pvSet((pv.muted ? 0 : pv.volume) + (e.deltaY < 0 ? 5 : -5), false);

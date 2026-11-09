@@ -4,15 +4,18 @@
 //! lists the videos and does the request on a `krunk-pip` DOM event fired by the evaluate
 //! call, so nothing is added to the page's globals.
 //!
-//! The volume bar (0.7.0, R8): the engine's floating window has mute but no volume. Krunk finds
-//! that window (`ffi::pipwin`), follows it, takes the mouse wheel over it, and shows its own
-//! popup view with a volume slider flush under it while the pointer is over either (and for a
-//! moment after a change). The slider sets the video's volume through the same DOM event; the
-//! page's own changes come back with the media script's report.
+//! The volume slider (0.7.0, R8; inside the player since 0.11.0): the engine's floating window
+//! has mute but no volume. Krunk finds that window (`ffi::pipwin`), follows it and takes the
+//! mouse wheel over it. While the pointer is on the engine's mute button (or on the slider), and
+//! for a moment after a change, Krunk's own small popup view with a volume slider opens inside
+//! the window, next to that button. (Until 0.10 it was a separate bar under the window, shown
+//! whenever the pointer was over the video.) The slider sets the video's volume through the
+//! same DOM event; the page's own changes (the engine's mute button too) come back with the
+//! media script's report.
 
 use super::{Browser, PopupSlot, TabId};
 use crate::ffi::pipwin::{self, PipEvents, PipWindow};
-use crate::ffi::window::{ScreenRect, Window, WindowEvents};
+use crate::ffi::window::{ScreenRect, WindowEvents};
 use crate::log::{info, warning};
 use lb_core::layout;
 use lb_core::protocol::{Event, PopupContent, PopupRect, VideoInfo};
@@ -291,11 +294,6 @@ impl Browser {
         };
         if let Some(w) = found {
             w.watch(std::rc::Rc::new(PipHook(self.me.clone())));
-            // Shown at first, so the bar is discovered; it hides once the pointer is elsewhere.
-            if let Some(p) = self.pip_bar.borrow_mut().as_mut() {
-                p.hold_until = now_ms() as u64 + CHANGE_HOLD_MS;
-            }
-            self.pip_bar_show();
         }
     }
 
@@ -334,17 +332,26 @@ impl Browser {
         }
     }
 
-    /// Is the pointer over the floating window or the bar?
+    /// Is the pointer on the engine's mute button (a little around it) or on the slider?
     fn pip_pointer_over(&self, w: PipWindow) -> bool {
         let (x, y) = crate::ffi::cursor::position();
         let inside = |r: ScreenRect| x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
-        let bar = self.pip_popup.borrow().as_ref().filter(|p| p.window.is_visible()).map(|p| p.window.rect());
-        w.is_visible() && inside(w.rect()) || bar.is_some_and(inside)
+        let slider = self.pip_popup.borrow().as_ref().filter(|p| p.window.is_visible()).map(|p| p.window.rect());
+        w.is_visible() && inside(Self::pip_mute_area(w)) || slider.is_some_and(inside)
+    }
+
+    /// The engine's mute button, with a margin, and the gap to the slider.
+    fn pip_mute_area(w: PipWindow) -> ScreenRect {
+        let r = w.rect();
+        let m = layout::pip_mute_rect(layout::Rect { x: r.x, y: r.y, width: r.width, height: r.height }, w.scale());
+        let pad = (6.0 * w.scale()).round() as i32;
+        ScreenRect { x: m.x - pad, y: m.y - pad, width: m.width + 2 * pad, height: m.height + 2 * pad }
     }
 
     fn pip_hovered(&self) {
         let shown = self.pip_bar.borrow().as_ref().map(|p| p.shown);
-        if shown == Some(false) {
+        let over = self.pip_bar.borrow().as_ref().and_then(|p| p.window).is_some_and(|w| self.pip_pointer_over(w));
+        if shown == Some(false) && over {
             if let Some(p) = self.pip_bar.borrow_mut().as_mut() {
                 p.hold_until = now_ms() as u64 + HOVER_GRACE_MS;
             }
@@ -352,15 +359,11 @@ impl Browser {
         }
     }
 
-    /// The bar's rectangle next to the floating window (screen pixels).
+    /// The slider's rectangle inside the floating window, next to its mute button (screen
+    /// pixels).
     fn pip_bar_rect(w: PipWindow) -> ScreenRect {
         let r = w.rect();
-        let work = Window::work_area_at(r.x + r.width / 2, r.y + r.height / 2);
-        let b = layout::pip_bar_rect(
-            layout::Rect { x: r.x, y: r.y, width: r.width, height: r.height },
-            layout::Rect { x: work.x, y: work.y, width: work.width, height: work.height },
-            w.scale(),
-        );
+        let b = layout::pip_slider_rect(layout::Rect { x: r.x, y: r.y, width: r.width, height: r.height }, w.scale());
         ScreenRect { x: b.x, y: b.y, width: b.width, height: b.height }
     }
 

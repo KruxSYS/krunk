@@ -312,7 +312,7 @@ pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> Pop
         PopupKind::CaptionMenu => (250.0, 352.0),
         PopupKind::Downloads => (380.0, 420.0),
         PopupKind::Pip => (340.0, 300.0),
-        PopupKind::PipVolume => (PIP_BAR_MIN_WIDTH_DIP, PIP_BAR_HEIGHT_DIP),
+        PopupKind::PipVolume => (PIP_SLIDER_WIDTH_DIP, PIP_SLIDER_HEIGHT_DIP),
         PopupKind::ExtInstall => (400.0, 120.0 + 24.0 * entries.clamp(1, 8) as f64),
         PopupKind::BookmarkEdit => (340.0, 214.0),
         PopupKind::TabList => (TAB_LIST_WIDTH, tab_list_height(entries)),
@@ -321,29 +321,29 @@ pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> Pop
     PopupRect { x, y: SHELL_HEIGHT_DIP - 4.0, width: w, height: h }
 }
 
-/// The volume bar next to the floating video window (0.7.0, R8), in DIP.
-pub const PIP_BAR_HEIGHT_DIP: f64 = 40.0;
-pub const PIP_BAR_MIN_WIDTH_DIP: f64 = 240.0;
-const PIP_BAR_GAP_DIP: f64 = 4.0;
+/// The volume slider of the floating video window (0.11.0), in DIP. It replaced the separate
+/// bar under the window (0.7.0, R8): it opens inside the window, next to the engine's own mute
+/// button, while the pointer is on that button or on the slider.
+pub const PIP_SLIDER_WIDTH_DIP: f64 = 116.0;
+pub const PIP_SLIDER_HEIGHT_DIP: f64 = 28.0;
+const PIP_SLIDER_GAP_DIP: f64 = 4.0;
 
-/// Where the volume bar goes (screen pixels): as wide as the floating window (at least
-/// [`PIP_BAR_MIN_WIDTH_DIP`]), flush under it; above it when the work area ends there; over
-/// its bottom edge when neither fits. Always inside the work area.
-pub fn pip_bar_rect(pip: Rect, work: Rect, scale: f64) -> Rect {
-    let h = (PIP_BAR_HEIGHT_DIP * scale).round() as i32;
-    let gap = (PIP_BAR_GAP_DIP * scale).round() as i32;
-    let width = pip.width.max((PIP_BAR_MIN_WIDTH_DIP * scale).round() as i32).min(work.width);
-    let below = pip.y + pip.height + gap;
-    let above = pip.y - gap - h;
-    let y = if below + h <= work.y + work.height {
-        below
-    } else if above >= work.y {
-        above
-    } else {
-        pip.y + pip.height - h
-    };
-    let x = pip.x.clamp(work.x, (work.x + work.width - width).max(work.x));
-    Rect { x, y: y.clamp(work.y, (work.y + work.height - h).max(work.y)), width, height: h }
+/// The engine's mute button in the floating video window (screen pixels): 28×28 DIP, bottom
+/// right, left of the live-caption button (Chromium `video_overlay_window_views.cc`: right edge
+/// − 12 − 28 − 4 − 28, bottom − 4 − 28).
+pub fn pip_mute_rect(pip: Rect, scale: f64) -> Rect {
+    let d = |v: f64| (v * scale).round() as i32;
+    Rect { x: pip.x + pip.width - d(72.0), y: pip.y + pip.height - d(32.0), width: d(28.0), height: d(28.0) }
+}
+
+/// Where the slider goes (screen pixels): left of the mute button, on its row, inside the
+/// floating window.
+pub fn pip_slider_rect(pip: Rect, scale: f64) -> Rect {
+    let mute = pip_mute_rect(pip, scale);
+    let d = |v: f64| (v * scale).round() as i32;
+    let width = d(PIP_SLIDER_WIDTH_DIP).min((pip.width - d(8.0) - (pip.x + pip.width - mute.x)).max(d(48.0)));
+    let x = (mute.x - d(PIP_SLIDER_GAP_DIP) - width).max(pip.x + d(4.0));
+    Rect { x, y: mute.y, width, height: d(PIP_SLIDER_HEIGHT_DIP) }
 }
 
 fn folder_height(items: usize) -> f64 {
@@ -413,22 +413,18 @@ mod tests {
     }
 
     #[test]
-    fn the_pip_volume_bar_stays_next_to_the_floating_window() {
-        let work = Rect { x: 0, y: 0, width: 1920, height: 1040 };
+    fn the_pip_volume_slider_sits_next_to_the_mute_button_inside_the_window() {
         let r = |x, y, width, height| Rect { x, y, width, height };
-        // Room below: flush under it, as wide as it.
-        assert_eq!(pip_bar_rect(r(1400, 600, 400, 225), work, 1.0), r(1400, 829, 400, 40));
-        // At the bottom of the work area: above it.
-        assert_eq!(pip_bar_rect(r(1400, 800, 400, 225), work, 1.0), r(1400, 756, 400, 40));
-        // A small window: the bar keeps its minimum width, inside the screen.
-        assert_eq!(pip_bar_rect(r(1800, 100, 160, 90), work, 1.0), r(1680, 194, 240, 40));
+        // A 400×225 window at 100 %: the mute button at the bottom right, the slider left of it.
+        assert_eq!(pip_mute_rect(r(1400, 600, 400, 225), 1.0), r(1728, 793, 28, 28));
+        assert_eq!(pip_slider_rect(r(1400, 600, 400, 225), 1.0), r(1608, 793, 116, 28));
         // 150 %: sizes scale.
-        assert_eq!(pip_bar_rect(r(100, 100, 600, 338), work, 1.5), r(100, 444, 600, 60));
-        // A window filling the height: over its bottom edge.
-        assert_eq!(pip_bar_rect(r(0, 0, 1920, 1040), work, 1.0), r(0, 1000, 1920, 40));
-        // A second monitor left of the primary.
-        let left = Rect { x: -1280, y: 0, width: 1280, height: 984 };
-        assert_eq!(pip_bar_rect(r(-1290, 50, 300, 170), left, 1.0), r(-1280, 224, 300, 40));
+        assert_eq!(pip_mute_rect(r(100, 100, 600, 338), 1.5), r(592, 390, 42, 42));
+        assert_eq!(pip_slider_rect(r(100, 100, 600, 338), 1.5), r(412, 390, 174, 42));
+        // A very small window: the slider shrinks and stays inside it.
+        let small = r(0, 0, 160, 90);
+        let s = pip_slider_rect(small, 1.0);
+        assert!(s.x >= 4 && s.x + s.width <= pip_mute_rect(small, 1.0).x, "{s:?}");
     }
 
     #[test]

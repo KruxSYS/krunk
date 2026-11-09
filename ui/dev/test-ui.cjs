@@ -3111,37 +3111,40 @@ async function testPasswords(browser) {
     const r = await lastSent(page, 'extInstallReply');
     check(r.requestId === 8 && r.accept === true, 'Update sends extInstallReply{requestId, accept:true}');
   }
-  // 0.7.0 (R8): the volume bar next to the floating window.
-  await page.setViewportSize({ width: 400, height: 40 });
+  // 0.11.0: the volume slider inside the floating window, next to its own mute button: a
+  // compact slider and the level, no mute of its own (the engine's button mutes).
+  await page.setViewportSize({ width: 116, height: 28 });
   await emit(page, { event: 'popup', content: { kind: 'pipVolume', tabId: 4, volume: 60, muted: false } });
   await page.waitForSelector('#pv-slider');
   await page.waitForTimeout(40);
-  const pvState = () => page.evaluate(() => ({ v: document.getElementById('pv-slider').value, pct: document.getElementById('pv-pct').textContent, level: document.getElementById('pv-mute').dataset.level, focused: document.activeElement && document.activeElement.id }));
+  const pvState = () => page.evaluate(() => ({ v: document.getElementById('pv-slider').value, pct: document.getElementById('pv-pct').textContent,
+    label: document.getElementById('pv-slider').getAttribute('aria-valuetext'), mute: !!document.getElementById('pv-mute'), focused: document.activeElement && document.activeElement.id }));
   let pvs = await pvState();
-  check(pvs.v === '60' && pvs.pct === '60%' && pvs.level === 'high' && pvs.focused !== 'pv-slider' && pvs.focused !== 'pv-mute', 'the volume bar shows the video\'s volume and takes no focus (' + JSON.stringify(pvs) + ')');
-  check(await page.evaluate(() => document.body.classList.contains('pv-dark') && getComputedStyle(document.body).backgroundColor === 'rgb(32, 33, 36)'), 'the bar is dark like the floating window');
+  check(pvs.v === '60' && pvs.pct === '60' && pvs.label === '60%' && !pvs.mute && pvs.focused !== 'pv-slider', 'the slider shows the video\'s volume, has no mute of its own and takes no focus (' + JSON.stringify(pvs) + ')');
+  check(await page.evaluate(() => document.body.classList.contains('pv-dark') && getComputedStyle(document.body).backgroundColor === 'rgba(32, 33, 36, 0.92)'), 'the slider is dark like the floating window');
+  check(await page.evaluate(() => { const s = document.getElementById('pv-slider').getBoundingClientRect(); return s.width >= 60 && s.right <= 116 && s.bottom <= 28; }), 'it fits its 116×28 popup');
   await shot(page, 'popup-pip-volume.png');
   const box = await page.locator('#pv-slider').boundingBox();
   await page.mouse.click(box.x + box.width * 0.25, box.y + box.height / 2);
   await page.waitForTimeout(120);
   let pvSent = await lastSent(page, 'pipVolume');
-  check(pvSent && pvSent.tabId === 4 && pvSent.volume >= 20 && pvSent.volume <= 30 && pvSent.muted === false, 'a click on the slider sends pipVolume (' + JSON.stringify(pvSent) + ')');
+  check(pvSent && pvSent.tabId === 4 && pvSent.volume >= 15 && pvSent.volume <= 35 && pvSent.muted === false, 'a click on the slider sends pipVolume (' + JSON.stringify(pvSent) + ')');
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.wheel(0, -100);
   await page.waitForTimeout(120);
   const afterWheel = (await lastSent(page, 'pipVolume')).volume;
-  check(afterWheel === pvSent.volume + 5, 'the wheel over the bar raises it by 5 (' + afterWheel + ')');
-  await page.click('#pv-mute');
-  await page.waitForTimeout(120);
-  pvSent = await lastSent(page, 'pipVolume');
-  pvs = await pvState();
-  check(pvSent.muted === true && pvSent.volume === afterWheel && pvs.pct === 'Muted' && pvs.level === 'off', 'mute keeps the volume and says Muted (' + JSON.stringify(pvs) + ')');
-  // The page's own change comes back (after the bar's own change has settled).
+  check(afterWheel === pvSent.volume + 5, 'the wheel over the slider raises it by 5 (' + afterWheel + ')');
+  // The engine's mute button muted the video: the page reports it and the slider follows.
   await page.waitForTimeout(320);
+  await emit(page, { event: 'popup', content: { kind: 'pipVolume', tabId: 4, volume: afterWheel, muted: true } });
+  await page.waitForTimeout(40);
+  pvs = await pvState();
+  check(pvs.v === '0' && pvs.label === 'Muted' && pvs.pct === '—', 'muted by the player\'s button: the slider shows it (' + JSON.stringify(pvs) + ')');
+  // The page's own change comes back (after the slider's own change has settled).
   await emit(page, { event: 'popup', content: { kind: 'pipVolume', tabId: 4, volume: 10, muted: false } });
   await page.waitForTimeout(40);
   pvs = await pvState();
-  check(pvs.v === '10' && pvs.pct === '10%' && pvs.level === 'low', 'the page\'s volume change moves the slider (' + JSON.stringify(pvs) + ')');
+  check(pvs.v === '10' && pvs.pct === '10', 'the page\'s volume change moves the slider (' + JSON.stringify(pvs) + ')');
   check(await page.evaluate(() => !!document.getElementById('pv-slider') && document.getElementById('root').dataset.kind === 'pipVolume'), 'updated in place');
   check(errors.length === 0, 'popup: no console errors (' + errors.join(' | ') + ')');
 
