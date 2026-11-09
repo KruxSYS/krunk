@@ -1,6 +1,6 @@
 # Krunk account sync: plan (design; implementation needs operator approval)
 
-Status: proposal, 2026-11-05. Nothing in this document is implemented yet.
+Status: S1–S9 implemented and live (2026-11-09, Krunk 0.9.0, sync in beta); S10–S11 open. See §9 "Status".
 Companion documents:
 - `PROTOCOL.md`: the exact cryptography, flows, record format and API;
 - `THREAT_MODEL.md`: attackers, guarantees and residual risks;
@@ -711,6 +711,31 @@ Playwright, hadolint, yamllint and `docker compose config -q`.
   envelopes, SAS, HLC, URL normalisation), frozen vectors, the RFC 9180 A.2 interop test and the
   mutation tests. See `core/src/sync/README.md`. It isn't wired into the app until S6.
 - Evidence: `.pipeline/krunk-sync-s1-s4.md`.
+- **S5–S9:** implemented in Krunk 0.9.0; the server part live since 2026-11-09 (`1fda56e`,
+  migrations `0004_keys` and `0005_records`, additive; backups before the deploy). As built
+  (numbers differ from the table above, which predates 0.5–0.8):
+  - **S5:** `browser.db` **v6** (v5 was taken by site permissions) with bookmark guids, `modified`
+    and the sync tables; vault **format 4** (formats 2 and 3 were taken), written only once sync
+    keeps state there; `sync.json` with `DpapiSync`; `ffi::http` returns `Retry-After` and `Date`.
+  - **S6:** keys end to end (setup with a 7-word passphrase and a recovery key, escrow, restore,
+    SAS approval in krunk://sync itself, directory refresh with fork alarms), the server's
+    `keys/*` and `approvals/*`, krunk://sync and Settings → Sync (beta), the Linux test client
+    `tools/sync-cli`. Tamper tests edit the staging DB directly (no fault flag in any build).
+  - **S7:** the engine and the AK collections (bookmarks, history, settings, pins, ad-blocker
+    exceptions, open tabs, device names), the schedule and back-off, first-sync merging,
+    `records`/`records/batch`/`rekey/batch`; convergence property-tested (500 seeds).
+  - **S8:** passwords and the never-save list under PAK, only with the vault unlocked, their
+    bookkeeping inside the vault (G4 unit test and written review). Payments stay unsynced.
+  - **S9:** revocation and rotation of both keys (rekey, `min_record_epoch`, removed devices'
+    tabs and names tombstoned), a restorer that rotates when no device is online, R3
+    confirmation, Finish securing; PLAN §12 item 13 scenarios in memory and on staging.
+  - **Found on the VM and fixed before release:** krunk://sync's approvals polling exceeded the
+    server's 120/h limit; a fresh device's first sync could reset another device's settings to
+    defaults (PROTOCOL "As built" notes).
+  - **Not built:** "choose my own passphrase", change passphrase / new recovery key, history
+    eviction beyond the first-sync limit, a UI for the kept previous versions of passwords, and
+    everything in S10 (delete, export, sync reset) and S11.
+  Evidence: `.pipeline/evidence-0.9.0/` and `.pipeline/krunk-0.9.0-report.md`.
 
 The live rollout is S1–S3 first (accounts with no sync yet; since 0.8.0 Krunk can sign in to
 one). The client sync ships

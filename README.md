@@ -665,9 +665,9 @@ and screen sharing shows no window chooser: the whole screen is shared).
 
 ### Krunk account (0.8.0)
 Settings → Account signs this browser in to a Krunk account (made on
-[krunk.209.wf](https://krunk.209.wf/account/register)). There is no sync yet: a signed-in
-browser only shows who it is signed in as, and appears in the account's device list on the
-website, where it can be renamed or removed.
+[krunk.209.wf](https://krunk.209.wf/account/register)). A signed-in browser shows who it is
+signed in as and appears in the account's device list on the website, where it can be renamed or
+removed. Since 0.9.0 the account can also sync your data (below, opt-in).
 
 - **Signing in** works like signing in a TV: **Sign in** asks krunk.209.wf for a code, shows it
   and opens `https://krunk.209.wf/link?code=…` in a new tab. There you sign in to the website,
@@ -691,6 +691,45 @@ website, where it can be renamed or removed.
 - **Private windows** show nothing of the account (the card says so; the ⋮ item is hidden).
 - **The server side** (sign-in by code after RFC 8628, rotating tokens whose reuse signs the
   device out and sends a mail) is described in `docs/sync/PROTOCOL.md` §6.1 and §11.3–11.4.
+
+### Sync (beta, 0.9.0)
+Sync keeps bookmarks, history, settings, new tab pins, ad-blocker exceptions, open tabs and
+(with the password vault unlocked) passwords and the never-save list the same on your devices.
+It is **off until you turn it on**, and everything is **encrypted on the device** before it
+leaves: the server stores ciphertext it can't read. The website never asks for your sync
+passphrase or recovery key.
+
+- **Turn it on:** sign in (Settings → Account), then Settings → Sync (beta) → **Turn on sync…**.
+  On the first device Krunk makes a **passphrase** (7 words) and a **recovery key**
+  (`KRNK-…`). Copy them or save them to a file, keep them safe and private, type the asked group
+  of the recovery key and confirm. With the vault unlocked, passwords take part too.
+- **Another device:** sign in, Turn on sync. Then either **ask a device that already syncs**: it
+  shows "A device asks to join" in krunk://sync; Approve shows 6 digits that you type on the new
+  device (a wrong code ends the request), optionally sharing passwords. Or **restore** with the
+  passphrase or the recovery key (a `KRNK-` key is recognised as one). Krunk lists the devices
+  that keep access before it joins. Passwords come only into an unlocked vault.
+- **When it runs:** a minute after start, every 5 minutes, 30 s after a change, and with **Sync
+  now**; offline it waits and tries again (1 → 60 minutes). Settings → Sync shows the state and
+  the last sync and lets you switch each kind of data off on this device.
+- **krunk://sync** lists your devices (this one first), lets you rename them, shows other
+  devices' open tabs (read-only), and **Remove**s a device: its access ends at once and Krunk
+  re-secures your sync with new keys, which the removed device never gets. Afterwards **Finish
+  securing** asks for the passphrase or recovery key once.
+- **Conflicts:** bookmarks merge per field (place and name separately) and keep one tree; history
+  is the union of visits; settings and logins take the later change. A login that lost a conflict
+  is kept inside the vault for 30 days. The same login saved on two devices becomes one.
+- **Turn off** on a device: keep what it has, or remove what came from sync. The account and the
+  other devices are unaffected.
+- **What stays on this device:** proxy, DNS, user agent, downloads folder, update and window
+  settings, and the tab sleep options (a test lists every setting as synced or device-local).
+  Payment cards aren't synced. Private windows sync nothing.
+- **Stored where:** `%LOCALAPPDATA%\Krunk\sync.json` (the sync keys, sealed and DPAPI-wrapped
+  for your Windows user), sync bookkeeping in `browser.db`, and the passwords key plus its
+  bookkeeping only inside the vault, so synced passwords are never weaker than the vault.
+- **Losing everything:** if you lose all devices, the passphrase and the recovery key, the
+  synced data can't be recovered by anyone (Krunk can't either). The website's data and backups
+  hold only ciphertext.
+- Design and protocol: `docs/sync/PLAN.md`, `PROTOCOL.md`, `THREAT_MODEL.md`.
 
 ### Password vault
 ```
@@ -1076,6 +1115,11 @@ Testing on Windows:
 - The Windows checklist is `docs/MANUAL_TEST.md`.
 
 ## Known limitations
+- **Sync is a beta (0.9.0).** Not yet: choosing your own passphrase, changing the passphrase
+  or making a new recovery key, deleting or exporting the synced data, a sync reset, payment
+  cards, a way to see the kept previous versions of passwords, and trimming synced history beyond
+  the first sync's 90 days / 20,000 pages (the server's quota stops pushes with a message instead).
+  Tested on Windows with the Linux test client as the other devices; there is no other client yet.
 - **The engine is bundled.** Chromium security fixes reach users only with a new Krunk
   release with a newer CEF. Krunk checks for one daily and offers it, but installs only when you
   choose Update now. Releases should follow CEF security releases promptly.

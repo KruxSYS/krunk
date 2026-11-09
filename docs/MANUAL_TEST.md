@@ -1031,3 +1031,29 @@ Scripted on the VM: `scripts/vm-071-*.ps1` (evidence in `.pipeline/evidence-0.7.
    secure" on http), Esc shows the site's 401 page, a wrong password says "not accepted", the
    right one opens the site and offers to save it; next time (after a restart) the dialog fills
    the saved login (after unlocking) and one click signs in.
+
+## Krunk 0.9.0 (round 13)
+The full regression above (rounds 1–12) because the profile formats change (`browser.db` v6,
+vault format 4). The VM automation covers 39 of the 43 flows; then:
+1. **Upgrade:** a profile used with 0.8.0 (bookmarks, history, a vault with logins and a card,
+   signed in) opened by 0.9.0: everything is there, the vault opens with the same password and is
+   rewritten only after sync is turned on with passwords.
+2. **Sync stays off:** signed in, Settings → Sync (beta) says "Sync is off"; with nothing clicked,
+   Krunk sends no sync request (Settings → Account's check is the only traffic).
+3. **Set up:** Turn on sync… → the passphrase and the recovery key, Copy both / Save to a file,
+   type the asked group, tick, Set up sync. Settings shows "Sync is on", the last sync, the
+   kinds of data with switches, Sync now.
+4. **Second device:** sign in, Turn on sync. (a) Ask my other devices → on the first device
+   krunk://sync shows the request at the top; Approve (optionally sharing passwords) shows 6
+   digits; type them → "approved", the bookmarks/history/settings arrive. A wrong code ends the
+   request on both sides. (b) Restore with the recovery key (the field has the focus; Enter) →
+   the list of devices that keep access (Enter confirms) → on; passwords arrive only into an
+   unlocked vault, and only after it is unlocked.
+5. **Changes both ways:** add, rename, move and delete bookmarks on either device; visit pages;
+   change the theme; pin a site; add an ad-blocker exception: the other device shows them after
+   Sync now. The same login changed on both: the later wins.
+6. **Remove a device** in krunk://sync: confirm; "Securing…", then the removed device is signed
+   out and can't read anything new; the remaining devices keep syncing; Finish securing with the
+   passphrase.
+7. **Turn off** on a device (keep data / remove synced data); private windows show nothing of
+   sync.
