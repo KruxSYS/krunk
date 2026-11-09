@@ -191,9 +191,7 @@ fn attr<'a>(a: &'a [(String, String)], name: &str) -> Option<&'a str> {
 /// Text up to the closing tag `</name>` (case-insensitive), with any nested
 /// tags removed. Returns the text and the remaining input.
 fn text_until<'a>(input: &'a str, name: &str) -> (String, &'a str) {
-    let upper = input.to_ascii_uppercase();
-    let close = format!("</{name}");
-    let end = upper.find(&close).unwrap_or(input.len());
+    let end = find_close(input, name).unwrap_or(input.len());
     let raw = &input[..end];
     let rest = &input[end..];
     let rest = rest.find('>').map_or("", |i| &rest[i + 1..]);
@@ -208,6 +206,21 @@ fn text_until<'a>(input: &'a str, name: &str) -> (String, &'a str) {
         }
     }
     (unescape(text.trim()), rest)
+}
+
+/// Where `</name` starts (ASCII case-insensitive), without copying the input: the copy in
+/// upper case was made for every link, which made a large file quadratic (0.11.7, audit P2).
+fn find_close(input: &str, name: &str) -> Option<usize> {
+    let (b, n) = (input.as_bytes(), name.as_bytes());
+    let mut from = 0;
+    while let Some(i) = input[from..].find("</") {
+        let at = from + i;
+        if b[at + 2..].get(..n.len()).is_some_and(|t| t.eq_ignore_ascii_case(n)) {
+            return Some(at);
+        }
+        from = at + 2;
+    }
+    None
 }
 
 /// Parses a Netscape bookmark file into a tree.
@@ -421,6 +434,37 @@ mod tests {
         }
         dst.bookmark_tree().unwrap().iter().for_each(|n| walk(n, &mut titles));
         assert!(titles.iter().any(|t| t == "&Новости &Новости Н"), "{titles:?}");
+    }
+
+    /// 0.11.7, audit P2: time to parse a large export (run with --release --ignored).
+    #[test]
+    #[ignore]
+    fn large_file_timing() {
+        let mut html = String::from("<!DOCTYPE NETSCAPE-Bookmark-file-1>\n<DL><p>\n");
+        for f in 0..100 {
+            html.push_str(&format!("<DT><H3 ADD_DATE=\"1\">Folder {f}</H3>\n<DL><p>\n"));
+            for i in 0..200 {
+                html.push_str(&format!(
+                    "<DT><A HREF=\"https://site{f}.example/page/{i}\" ADD_DATE=\"1\">Page {i} &amp; more</a>\n"
+                ));
+            }
+            html.push_str("</DL><p>\n");
+        }
+        html.push_str("</DL><p>\n");
+        let t = std::time::Instant::now();
+        let tree = parse(&html).unwrap();
+        let ms = t.elapsed().as_millis();
+        println!("parse: {} KB, 20000 links, {ms} ms", html.len() / 1024);
+        assert_eq!(tree.len(), 100);
+    }
+
+    #[test]
+    fn close_tags_any_case() {
+        assert_eq!(find_close("abc</a>", "A"), Some(3));
+        assert_eq!(find_close("x</H3 >", "H3"), Some(1));
+        assert_eq!(find_close("x</b></A", "A"), Some(5));
+        assert_eq!(find_close("x</", "A"), None);
+        assert_eq!(find_close("é</á</a", "A"), Some(6), "byte offsets");
     }
 
     #[test]
