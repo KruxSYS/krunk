@@ -719,6 +719,22 @@ impl Window {
         };
     }
 
+    /// Windows' own show and hide animations (the fade-in of a new window) on or off. A window
+    /// torn off by a tab drag appears at once without them (0.11.1).
+    pub fn set_transitions(self, on: bool) {
+        use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_TRANSITIONS_FORCEDISABLED};
+        let value = windows::core::BOOL::from(!on);
+        // SAFETY: valid window handle; the attribute value is a BOOL on the stack.
+        let _ = unsafe {
+            DwmSetWindowAttribute(
+                self.0,
+                DWMWA_TRANSITIONS_FORCEDISABLED,
+                &value as *const _ as *const std::ffi::c_void,
+                std::mem::size_of::<windows::core::BOOL>() as u32,
+            )
+        };
+    }
+
     /// Delivers `session_locked` notifications for this window.
     pub fn watch_session_lock(self) {
         use windows::Win32::System::RemoteDesktop::{WTSRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION};

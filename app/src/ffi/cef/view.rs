@@ -496,10 +496,38 @@ impl View {
 
     /// Creates the browser as a hidden child of `parent`, loading `url`.
     pub fn start(&self, parent: HWND, url: &str) -> Result<(), String> {
+        self.start_with(parent, url, true)
+    }
+
+    /// [`View::start`] without activating `parent` (the engine shows a new browser's widget
+    /// with activation; 0.11.1: a hidden spare frame took the keyboard from the user's
+    /// window). The host window keeps `WS_EX_NOACTIVATE` until [`View::allow_activation`].
+    pub fn start_inactive(&self, parent: HWND, url: &str) -> Result<(), String> {
+        self.start_with(parent, url, false)
+    }
+
+    /// Clicks into the view activate its window again (after [`View::start_inactive`]).
+    pub fn allow_activation(&self) {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE,
+        };
+        if let Some(h) = self.hwnd() {
+            // SAFETY: reading and writing the extended style of our own browser's host window.
+            unsafe {
+                let ex = GetWindowLongPtrW(h, GWL_EXSTYLE);
+                SetWindowLongPtrW(h, GWL_EXSTYLE, ex & !(WS_EX_NOACTIVATE.0 as isize));
+            }
+        }
+    }
+
+    fn start_with(&self, parent: HWND, url: &str, activate: bool) -> Result<(), String> {
         if self.0.started.replace(true) {
             return Ok(());
         }
-        let window_info = child_window_info(parent);
+        let mut window_info = child_window_info(parent);
+        if !activate {
+            window_info.ex_style = windows::Win32::UI::WindowsAndMessaging::WS_EX_NOACTIVATE.0;
+        }
         let mut client = client::for_view(&self.0);
         let settings = self.browser_settings();
         let context = if self.0.private {

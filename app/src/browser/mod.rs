@@ -364,6 +364,9 @@ pub struct Browser {
     /// the dragged tab as their strips show it.
     drop_windows: RefCell<Vec<lb_core::frame::DropWindow>>,
     drag_ghost: RefCell<Option<lb_core::protocol::TabGhost>>,
+    /// A tab drag is creating the window that follows the mouse: it shows without Windows'
+    /// fade-in.
+    tearing: Cell<bool>,
     /// A hidden frame with its shell loaded, for the next new window (0.11.1).
     spare: RefCell<Option<spare::SpareFrame>>,
     /// `post_shell` goes to the spare's shell only (it has just loaded).
@@ -467,6 +470,7 @@ impl Browser {
             drag: Cell::new(None),
             drop_windows: RefCell::new(Vec::new()),
             drag_ghost: RefCell::new(None),
+            tearing: Cell::new(false),
             spare: RefCell::new(None),
             spare_only: Cell::new(false),
             bar_drag: Cell::new(None),
@@ -606,6 +610,9 @@ impl Browser {
                 let rect = bounds.map(|b| ScreenRect { x: b.x, y: b.y, width: b.width, height: b.height });
                 match Window::create_frame("Krunk", rect, false) {
                     Ok(w) => {
+                        if self.tearing.get() {
+                            w.set_transitions(false);
+                        }
                         w.show(maximized);
                         w
                     }
@@ -691,15 +698,21 @@ impl Browser {
             }
         });
         let weak = self.me.clone();
-        let win = id;
+        let win = id.clone();
         shell.on_key(move |key| {
             weak.upgrade().zip(win.get()).is_some_and(|(b, win)| {
                 b.make_current(win);
                 b.on_key(key)
             })
         });
+        // The spare frame's shell never takes the focus: its window is hidden, and the engine
+        // focuses a browser that has loaded (0.11.1: the keyboard went to the hidden window).
+        let spare = id.get().is_none();
+        shell.on_set_focus(move |_| id.get().is_some());
         self.hook_focus(&shell, None);
-        shell.start(window.hwnd(), SHELL_URL).map_err(|e| format!("Cannot create the browser window: {e}"))?;
+        let started =
+            if spare { shell.start_inactive(window.hwnd(), SHELL_URL) } else { shell.start(window.hwnd(), SHELL_URL) };
+        started.map_err(|e| format!("Cannot create the browser window: {e}"))?;
         Ok(shell)
     }
 

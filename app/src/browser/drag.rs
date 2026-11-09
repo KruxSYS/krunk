@@ -154,7 +154,10 @@ impl Browser {
             let bounds = Bounds { x: cx - grab.0, y: cy - grab.1, width: normal.width, height: normal.height };
             let detached = self.ws.borrow_mut().detach(tab, Some(bounds), false, now_ms());
             let Some((new_win, ops)) = detached else { return };
+            // The new window appears at once (no fade-in) under the cursor.
+            self.tearing.set(true);
             self.apply(ops);
+            self.tearing.set(false);
             info!("tab {tab}: dragged out of window {win} into a new window {new_win}");
             TabDrag {
                 tab,
@@ -418,6 +421,11 @@ impl Browser {
                 self.focus_window(target);
             }
             None => {
+                // A torn-off window that stays gets Windows' animations back (minimize,
+                // restore); one that goes closes at once.
+                if let Some(f) = self.frame(d.dragged).filter(|_| d.torn) {
+                    f.window.set_transitions(true);
+                }
                 // What the window's moves skipped while it followed the mouse.
                 self.frame_moved(d.dragged);
                 self.focus_window(d.dragged);

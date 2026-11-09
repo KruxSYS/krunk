@@ -7,6 +7,8 @@ public static class U {
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] public static extern void mouse_event(uint f, int x, int y, uint d, UIntPtr e);
   [DllImport("user32.dll")] public static extern IntPtr FindWindow(string c, string t);
+  [DllImport("user32.dll")] public static extern IntPtr FindWindowEx(IntPtr p, IntPtr after, string c, string t);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
@@ -90,7 +92,12 @@ function Drag([int]$x1, [int]$y1, [int]$x2, [int]$y2, [int]$steps = 20) {
   for ($i = 1; $i -le $steps; $i++) { AbsMove ($x1 + ($x2 - $x1) * $i / $steps) ($y1 + ($y2 - $y1) * $i / $steps); Start-Sleep -Milliseconds 30 }
   Start-Sleep -Milliseconds 300; [SI]::Mouse(4, 0, 0) | Out-Null; Start-Sleep -Milliseconds 400
 }
-function MainWindow([string]$class = 'KrunkWindow') { [U]::FindWindow($class, [NullString]::Value) }
+# The first visible window of the class (0.11.1: Krunk keeps a hidden spare frame of its own class).
+function MainWindow([string]$class = 'KrunkWindow') {
+  $h = [IntPtr]::Zero
+  do { $h = [U]::FindWindowEx([IntPtr]::Zero, $h, $class, [NullString]::Value) } while ($h -ne [IntPtr]::Zero -and -not [U]::IsWindowVisible($h))
+  $h
+}
 function WindowRect([IntPtr]$h) { $r = New-Object U+RECT; [U]::GetWindowRect($h, [ref]$r) | Out-Null; $r }
 # Client area of a window in screen coordinates, and its DPI scale.
 function ClientRect([IntPtr]$h) {

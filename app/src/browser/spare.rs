@@ -7,12 +7,14 @@
 
 use super::engine::View;
 use super::{Browser, Frame, FrameEvents};
+use crate::ffi::window::WindowEvents;
 use crate::ffi::window::{ScreenRect, Window};
 use crate::log::{info, warning};
 use lb_core::layout;
+use lb_core::protocol::WindowAction;
 use lb_core::windows::{Bounds, WindowId};
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 /// Timer (on the app window): prepares the spare when Krunk has been idle a moment.
 pub(super) const SPARE_TIMER: usize = 27;
@@ -56,6 +58,7 @@ impl Browser {
             Ok(w) => w,
             Err(e) => return warning!("spare frame: {e}"),
         };
+        window.set_events(Rc::new(SpareEvents { b: self.me.clone() }));
         let id = Rc::new(Cell::new(None));
         let shell = match self.new_shell(window, id.clone()) {
             Ok(s) => s,
@@ -125,6 +128,7 @@ impl Browser {
         }
         let window = sp.window;
         sp.id.set(Some(win));
+        sp.shell.allow_activation();
         let frame = Rc::new(Frame {
             id: win,
             window,
@@ -151,9 +155,43 @@ impl Browser {
                 }
             });
         }
+        if self.tearing.get() {
+            window.set_transitions(false);
+        }
         window.show(maximized);
         info!("window {win}: opened with the spare frame (shell ready: {})", sp.ready);
         self.schedule_spare();
         true
+    }
+}
+
+/// The spare's window while it is the spare (a window that takes it gets `FrameEvents`).
+struct SpareEvents {
+    b: Weak<Browser>,
+}
+
+impl WindowEvents for SpareEvents {
+    /// The hidden spare must not keep the activation (the keyboard would type into it): the
+    /// current window gets it back.
+    fn activated(&self, active: bool) {
+        if active {
+            if let Some(b) = self.b.upgrade() {
+                warning!("spare frame: it was activated; the current window gets the activation back");
+                b.defer(|b| {
+                    if let Some(w) = b.window() {
+                        w.bring_to_front();
+                    }
+                });
+            }
+        }
+    }
+
+    /// A close request for "the Krunk window" (the installer's update finds a window by its
+    /// class, and may find this one): it goes to the current window, as it would have.
+    fn close_requested(&self) -> bool {
+        if let Some(w) = self.b.upgrade().and_then(|b| b.window()) {
+            w.control(WindowAction::Close);
+        }
+        false
     }
 }

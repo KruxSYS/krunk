@@ -99,6 +99,7 @@ if ($Full -eq 0) {
 # ---- 2: a menu in the torn window, then its only tab over the first window's strip (ghost).
 $B = FrameByTitle 'Marker*'
 Log "[$P] torn window: '$([TW]::Txt($B))'"
+[U]::MoveWindow($B, 360, 200, 900, 560, $true) | Out-Null; Start-Sleep -Milliseconds 500   # its ⋮ on screen
 Focus $B | Out-Null
 $cb = ClientRect $B
 Click ($cb.Right - 20) ($cb.Top + [int](56 * $cb.Scale)) 900
