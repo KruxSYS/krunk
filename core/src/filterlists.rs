@@ -327,7 +327,9 @@ pub fn validate_download(bytes: &[u8]) -> Result<String, String> {
     let text = std::str::from_utf8(bytes).map_err(|_| "not UTF-8 text".to_string())?;
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let first = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
-    if first.starts_with('<') || text[..text.len().min(512)].to_ascii_lowercase().contains("<html") {
+    // The first 512 characters (a byte cut could fall inside one, 0.11.7, audit C9).
+    let head = text.char_indices().nth(512).map_or(text, |(i, _)| &text[..i]);
+    if first.starts_with('<') || head.to_ascii_lowercase().contains("<html") {
         return Err("looks like an HTML page".into());
     }
     if !(first.starts_with('[') || first.starts_with('!')) {
@@ -523,6 +525,17 @@ mod tests {
 
     fn all() -> Vec<String> {
         FILTER_LISTS.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// 0.11.7, audit C9: a list whose byte 512 is inside a character aborted the browser.
+    #[test]
+    fn multibyte_text_across_byte_512() {
+        for pad in 0..4 {
+            let rules: String = (0..MIN_LIST_RULES).map(|i| format!("||ads{i}.example^\n")).collect();
+            let list =
+                format!("[Adblock Plus 2.0]\n! Title: Ünïcödé{}\n! {}\n{rules}", "x".repeat(pad), "é".repeat(1200));
+            assert!(validate_download(list.as_bytes()).is_ok(), "pad {pad}");
+        }
     }
 
     #[test]

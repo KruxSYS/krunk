@@ -47,7 +47,8 @@ fn unescape(s: &str) -> String {
     while let Some(i) = rest.find('&') {
         out.push_str(&rest[..i]);
         rest = &rest[i..];
-        let end = rest[..rest.len().min(12)].find(';');
+        // Bytes, not a string slice: byte 12 may be inside a character (0.11.7, audit C8).
+        let end = rest.bytes().take(12).position(|b| b == b';');
         let decoded = end.and_then(|e| {
             let ent = &rest[1..e];
             let c = match ent {
@@ -404,6 +405,22 @@ mod tests {
         assert_eq!(again.bookmarks, 0);
         assert_eq!(again.skipped, 4);
         assert_eq!(shape(&src), shape(&dst));
+    }
+
+    /// 0.11.7, audit C8: an `&` followed by Cyrillic (byte 12 inside a character) aborted the
+    /// browser during an import.
+    #[test]
+    fn entities_before_multibyte_text() {
+        let html = "<DL><p>\n<DT><A HREF=\"https://a.example/\">&amp;Новости &Новости &#1053;</A>\n</DL><p>\n";
+        let dst = Store::open_in_memory().unwrap();
+        assert_eq!(dst.import_bookmarks(html).unwrap().bookmarks, 1);
+        let mut titles = Vec::new();
+        fn walk(n: &crate::bookmarks::BookmarkNode, out: &mut Vec<String>) {
+            out.push(n.item.title.clone());
+            n.children.iter().for_each(|c| walk(c, out));
+        }
+        dst.bookmark_tree().unwrap().iter().for_each(|n| walk(n, &mut titles));
+        assert!(titles.iter().any(|t| t == "&Новости &Новости Н"), "{titles:?}");
     }
 
     #[test]

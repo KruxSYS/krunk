@@ -203,7 +203,8 @@ pub fn validate_include(bytes: &[u8]) -> Result<String, String> {
     }
     let text = std::str::from_utf8(bytes).map_err(|_| "not UTF-8 text".to_string())?;
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-    let head = text[..text.len().min(512)].to_ascii_lowercase();
+    // The first 512 characters (a byte cut could fall inside one, 0.11.7, audit C9).
+    let head = text.char_indices().nth(512).map_or(text, |(i, _)| &text[..i]).to_ascii_lowercase();
     if head.trim_start().starts_with('<') || head.contains("<html") {
         return Err("looks like an HTML page".into());
     }
@@ -231,6 +232,15 @@ mod tests {
         assert!(!condition_holds("env_chromium &&"), "malformed is false");
         assert!(!condition_holds("(env_chromium"));
         assert!(!condition_holds("env_chromium $ x"));
+    }
+
+    /// 0.11.7, audit C9: an included list whose byte 512 is inside a character.
+    #[test]
+    fn include_multibyte_text_across_byte_512() {
+        for pad in 0..4 {
+            let list = format!("! {}{}\n||ads.example^\n", "x".repeat(pad), "é".repeat(600));
+            assert!(validate_include(list.as_bytes()).is_ok(), "pad {pad}");
+        }
     }
 
     #[test]
