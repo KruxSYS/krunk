@@ -135,6 +135,21 @@
 
   <!-- On -->
   <div id="v-on" hidden>
+    <!-- A device asking to join comes first: it is what the user opened the page for. -->
+    <section class="card" id="approvals" hidden>
+      <h2>A device asks to join</h2>
+      <ul id="approval-list" class="plain"></ul>
+      <label class="check" id="share-row"><input type="checkbox" id="share-passwords"> <span>Also share my passwords
+        with it</span></label>
+    </section>
+
+    <section class="card" id="approving" hidden>
+      <h2 id="approving-title"></h2>
+      <p id="approving-text"></p>
+      <p class="sas" id="approving-code" aria-live="polite"></p>
+      <div class="acts"><button class="btn" id="approving-cancel">Cancel</button></div>
+    </section>
+
     <section class="card">
       <div class="status-line"><span class="dot" aria-hidden="true"></span> <strong id="on-status"></strong></div>
       <p class="status" id="on-message" role="status"></p>
@@ -164,20 +179,6 @@
         <input type="password" id="secure-secret" spellcheck="false" autocomplete="off" aria-label="Passphrase or recovery key">
         <div class="acts"><button class="btn primary" type="submit" id="secure-go">Finish securing</button></div>
       </form>
-    </section>
-
-    <section class="card" id="approvals" hidden>
-      <h2>A device asks to join</h2>
-      <ul id="approval-list" class="plain"></ul>
-      <label class="check" id="share-row"><input type="checkbox" id="share-passwords"> <span>Also share my passwords
-        with it</span></label>
-    </section>
-
-    <section class="card" id="approving" hidden>
-      <h2 id="approving-title"></h2>
-      <p id="approving-text"></p>
-      <p class="sas" id="approving-code" aria-live="polite"></p>
-      <div class="acts"><button class="btn" id="approving-cancel">Cancel</button></div>
     </section>
 
     <section class="card">

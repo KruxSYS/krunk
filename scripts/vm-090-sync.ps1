@@ -35,6 +35,8 @@ function StartKrunk {
 }
 function PageClick([int]$x, [int]$y, [int]$wait = 1500) { Click ([int]($c.Left + $x * $c.Scale)) ([int]($c.Top + (104 + $y) * $c.Scale)) $wait }
 function KLog([string]$pattern) { (Get-Content "$profile\Krunk\krunk.log" -ErrorAction SilentlyContinue | Select-String $pattern | ForEach-Object { $_.Line }) -join ' ## ' }
+# The page's text without touching the selection afterwards (a dialog may be open).
+function PageTextOnly { Set-Clipboard -Value 'empty'; SafeKeys '^a' 300; SafeKeys '^c' 400; $t = (Get-Clipboard) -join "`n"; Set-Clipboard -Value 'cleared'; $t }
 function PageText { Set-Clipboard -Value 'empty'; SafeKeys '^a' 300; SafeKeys '^c' 400; $t = (Get-Clipboard) -join "`n"; Set-Clipboard -Value 'cleared'; Click ([int]($c.Left + 40 * $c.Scale)) ([int]($c.Top + 640 * $c.Scale)) 200; $t }
 function Logins {
   python -c "import json,sys; v=json.load(open(sys.argv[1])); print('vault format', v.get('format'), '| sealed logins', len(v.get('entries') or []), '| sync part', 'sync' in v)" "$profile\Krunk\vault.json"
@@ -43,6 +45,8 @@ function Bookmarks {
   python -c "import sqlite3,sys; d=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro', uri=True); print([r[0] for r in d.execute('SELECT title FROM bookmarks WHERE url IS NOT NULL ORDER BY id')])" "$profile\Krunk\browser.db"
 }
 
+# The p090u phases continue a running Krunk; start it if a deploy stopped it.
+if ($Phase -in 'confirm', 'back', 'approve', 'approvewrong' -and (MainWindow) -eq [IntPtr]::Zero) { StartKrunk; Log "[$P] started Krunk" }
 switch ($Phase) {
   'setup' {
     Win
@@ -92,10 +96,11 @@ switch ($Phase) {
     SafeGo 'krunk://passwords' 3000
     TypeSecret $master; Keys '{ENTER}' 3000                   # unlocked: passwords can be shared
     SafeGo 'krunk://sync' 3000
-    Start-Sleep 8                                             # the approvals poll (3 s)
+    for ($i = 0; $i -lt 10 -and -not ((PageTextOnly) -match 'asks to join'); $i++) { Start-Sleep 3 }
+    Log "[$P] the request shows after $i reads"
     Shot "$P-1-request"
-    PageClick 286 434 300                                     # Also share my passwords
-    PageClick 965 393 5000                                    # Approve
+    PageClick 286 233 300                                     # Also share my passwords
+    PageClick 965 191 5000                                    # Approve
     $m = $null
     for ($i = 0; $i -lt 8 -and -not ($m -and $m.Success); $i++) {
       $m = [regex]::Match((PageText), '\b(\d{3}) (\d{3})\b')
@@ -175,7 +180,14 @@ switch ($Phase) {
     Shot "$P-1-devices"
     PageClick 970 515 1500                                    # Remove (the 3rd row: CLI R)
     Shot "$P-2-confirm"
-    PageClick 838 357 15000                                   # Remove (in-page confirmation)
+    $dlg = PageTextOnly
+    if ($dlg -match 'Remove CLI R\?') {
+      PageClick 838 357 15000                                 # Remove (in-page confirmation)
+      Log "[$P] confirmed the removal of CLI R"
+    } else {
+      SafeKeys '{ESC}' 500
+      Log "[$P] the dialog didn't name CLI R: cancelled ($(($dlg -split "`n" | Select-String 'Remove ') -join ' | '))"
+    }
     Shot "$P-3-removed"
     Log "[$P] $(KLog 'removed|rotated|passwords key|run done|passwords done')"
     Log "[$P] WARN/ERROR: $((Get-Content "$profile\Krunk\krunk.log" | Select-String ' WARN | ERROR ' | Measure-Object).Count) $(KLog ' WARN | ERROR ')"
