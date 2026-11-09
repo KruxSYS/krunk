@@ -146,6 +146,10 @@ pub(super) struct SyncHost {
     backoff: Cell<Backoff>,
     last_ok_ms: Cell<Option<i64>>,
     status: RefCell<Option<String>>,
+    // Rotation (S9): the user confirmed the devices that stay (or removed one here), and the
+    // devices waiting for that confirmation.
+    confirm_rotation: Cell<bool>,
+    confirm_devices: RefCell<Vec<String>>,
 }
 
 impl Default for SyncHost {
@@ -173,6 +177,8 @@ impl Default for SyncHost {
             backoff: Cell::new(Backoff::default()),
             last_ok_ms: Cell::new(None),
             status: RefCell::new(None),
+            confirm_rotation: Cell::new(false),
+            confirm_devices: RefCell::new(Vec::new()),
         }
     }
 }
@@ -368,6 +374,13 @@ impl Browser {
                     (false, None, Some(_)) => "Up to date".into(),
                     (false, None, None) => "Sync is on. The first sync starts shortly.".into(),
                 };
+                let confirm_devices = self
+                    .sync
+                    .confirm_devices
+                    .borrow()
+                    .iter()
+                    .map(|id| devices.iter().find(|d| d.id == *id).map_or_else(|| id.clone(), |d| d.name.clone()))
+                    .collect();
                 let vault_open = self.vault_unlocked();
                 SyncView::On(OnView {
                     status,
@@ -389,6 +402,8 @@ impl Browser {
                     message: message.clone(),
                     syncing,
                     remote_tabs,
+                    confirm_devices,
+                    secure_needed: st.as_ref().is_some_and(|s| s.secure_needed) && !self.sync.rotation_pending.get(),
                 })
             }
         }
@@ -474,6 +489,15 @@ impl Browser {
                 }
             }
             Request::SyncSetCollection { name, on } => self.sync_set_collection(&name, on),
+            Request::SyncConfirmRotation => {
+                if self.sync_is_on() {
+                    self.sync.confirm_rotation.set(true);
+                    self.sync.confirm_devices.borrow_mut().clear();
+                    self.sync.wait_until_ms.set(0);
+                    self.sync_run();
+                }
+            }
+            Request::SyncFinishSecuring { secret, recovery } => self.sync_finish_securing(secret, recovery),
             Request::SyncRenameDevice { id, name } => self.sync_rename_device(&id, &name),
             _ => {}
         }
@@ -487,6 +511,7 @@ impl Browser {
         done: impl FnOnce(&Browser, R) + 'static,
     ) {
         let Some(proxy) = self.sync_proxy() else {
+            self.sync.busy.set(false);
             self.sync_failed(SOCKS_TEXT.into());
             return;
         };
@@ -858,9 +883,13 @@ impl Browser {
                     Ok(()) => {
                         info!("sync: a device was removed");
                         b.sync.rotation_pending.set(true);
+                        // Started here: the rotation needs no second confirmation, and runs now.
+                        b.sync.confirm_rotation.set(true);
+                        b.sync.next_run_ms.set(now_ms());
                         b.set_sync_stage(Stage::On(Some(
                             "The device is removed. Krunk re-secures your sync with new keys.".into(),
                         )));
+                        b.sync_run();
                     }
                     Err(e) => b.set_sync_stage(Stage::On(Some(fail_text(&e)))),
                 }
@@ -873,6 +902,11 @@ impl Browser {
     /// other devices are unaffected; this device stays listed until removed.
     fn sync_turn_off(&self, delete_data: bool) {
         self.sync.generation.set(self.sync.generation.get().wrapping_add(1));
+        // Answers to jobs still running are dropped (generation), so their flags go now.
+        self.sync.busy.set(false);
+        self.sync.running.set(false);
+        self.sync.confirm_rotation.set(false);
+        self.sync.confirm_devices.borrow_mut().clear();
         *self.sync.state.borrow_mut() = None;
         if let Err(e) = std::fs::remove_file(self.dirs.sync()) {
             if e.kind() != std::io::ErrorKind::NotFound {
@@ -1263,6 +1297,10 @@ impl Browser {
         let off = local::off_collections(self.store.borrow().sync_conn());
         let db = self.dirs.database();
         let name = format!("Krunk on Windows ({})", crate::ffi::window::windows_build());
+        let confirm_rotation = self.sync.confirm_rotation.get();
+        // With the vault open, a pending passwords-key rotation (or a rekey left) runs too.
+        let mut pak_state =
+            if off.iter().any(|c| c == "passwords") || !self.vault_unlocked() { None } else { self.sync_pak() };
         self.sync.running.set(true);
         self.sync.next_run_ms.set(now_ms() + EVERY_MS);
         self.push_sync();
@@ -1272,25 +1310,35 @@ impl Browser {
                     Failure::SignedOut => SyncFail::Api(ApiError::Unauthorized),
                     _ => SyncFail::Api(ApiError::Offline("no token".into())),
                 };
-                b.sync_ran(Err(e), None);
+                b.sync_ran(Err(e), None, None);
             }
             Ok(t) => b.spawn_job(
                 "sync-run",
                 move || {
                     let http = WinHttp { proxy };
                     let api = Api { http: &http, token: &t, now_ms: now_ms() };
-                    let opts = RunOpts { device_name: &name, off: &off, max_rounds: 20 };
+                    let opts = RunOpts { device_name: &name, off: &off, max_rounds: 20, confirm_rotation };
                     let r = lb_core::storage::Store::open(&db)
                         .map_err(|e| SyncFail::Local(e.to_string()))
                         .and_then(|mut store| engine::run(&api, &mut store, &mut st, &opts));
-                    (r, st)
+                    let pak_changed = match (&r, pak_state.as_mut()) {
+                        (Ok(_), Some(p)) => match lb_core::sync::rotate::pak_maintenance(&api, &mut st, p) {
+                            Ok(changed) => changed,
+                            Err(e) => {
+                                info!("sync: passwords key maintenance skipped ({e})");
+                                false
+                            }
+                        },
+                        _ => false,
+                    };
+                    (r, st, pak_state.filter(|_| pak_changed))
                 },
-                |b, (r, st)| b.sync_ran(r, Some(st)),
+                |b, (r, st, pak)| b.sync_ran(r, Some(st), pak),
             ),
         });
     }
 
-    fn sync_ran(&self, r: Result<Report, SyncFail>, after: Option<SyncState>) {
+    fn sync_ran(&self, r: Result<Report, SyncFail>, after: Option<SyncState>, pak: Option<PakState>) {
         self.sync.running.set(false);
         let now = now_ms();
         // Sync was turned off (or on anew) meanwhile: the answer belongs to nobody.
@@ -1299,9 +1347,16 @@ impl Browser {
             self.push_sync();
             return;
         }
-        if let (Some(after), true) = (after, r.is_ok()) {
+        // The state is consistent after each step of a run (a rotation's new key, a cursor), so
+        // it is kept even when a later step failed.
+        if let Some(after) = after {
             *self.sync.state.borrow_mut() = Some(after);
             self.sync_save();
+        }
+        if let Some(p) = &pak {
+            if self.vault_unlocked() {
+                self.sync_set_pak(Some(p));
+            }
         }
         match r {
             Ok(report) => {
@@ -1311,6 +1366,15 @@ impl Browser {
                 self.sync.rotation_pending.set(report.frozen);
                 *self.sync.status.borrow_mut() =
                     report.frozen.then(|| "Securing your account after a device was removed…".to_string());
+                if let Some(e) = report.rotated {
+                    info!("sync: rotated the account key to epoch {e}");
+                    self.sync.confirm_rotation.set(false);
+                }
+                *self.sync.confirm_devices.borrow_mut() = report.confirm.clone();
+                if !report.confirm.is_empty() {
+                    *self.sync.status.borrow_mut() =
+                        Some("A removed device had added another device. Check the list below.".into());
+                }
                 info!(
                     "sync: run done (pulled {}, pushed {}, conflicts {}, full {}, frozen {}, left {})",
                     report.pulled, report.pushed, report.conflicts, report.full, report.frozen, report.queue_left
@@ -1506,5 +1570,56 @@ impl Browser {
         if ch.pins {
             self.push_ntp_config();
         }
+    }
+}
+
+impl Browser {
+    /// "Finish securing" (S9): a new escrow anchor at the rotated heads, with the passphrase or
+    /// the recovery key (Argon2id on a worker).
+    fn sync_finish_securing(&self, secret: lb_core::secret::Secret, recovery: bool) {
+        if !matches!(&*self.sync.stage.borrow(), Stage::On(_)) || self.sync.running.get() || self.sync.busy.get() {
+            return;
+        }
+        let Some(mut st) = self.sync.state.borrow().clone() else { return };
+        let mut pak = if self.vault_unlocked() { self.sync_pak() } else { None };
+        let secret = Zeroizing::new(secret.to_string());
+        let secret = if recovery { SyncSecret::RecoveryKey(secret) } else { SyncSecret::Passphrase(secret) };
+        // `busy` keeps runs and the keys polling away while the directories change.
+        self.sync.busy.set(true);
+        *self.sync.status.borrow_mut() = Some("Checking your passphrase or recovery key…".into());
+        self.push_sync();
+        self.sync_call(
+            "sync-finish-securing",
+            move |api| {
+                let r = client::finish_securing(api, &mut st, pak.as_mut(), &secret);
+                (r, st, pak)
+            },
+            |b, (r, st, pak)| {
+                b.sync.busy.set(false);
+                match r {
+                    Ok(()) => {
+                        *b.sync.state.borrow_mut() = Some(st);
+                        b.sync_save();
+                        if let Some(p) = &pak {
+                            b.sync_set_pak(Some(p));
+                        }
+                        info!("sync: finished securing (new anchor)");
+                        *b.sync.status.borrow_mut() = None;
+                        b.set_sync_stage(Stage::On(Some("Your account is secured with the new keys.".into())));
+                    }
+                    Err(e) => {
+                        info!("sync: finish securing failed ({e})");
+                        *b.sync.status.borrow_mut() = None;
+                        if matches!(&e, SyncFail::Keys(k) if k.is_alarm()) {
+                            let text = b.sync_run_failed(&e, now_ms());
+                            *b.sync.status.borrow_mut() = Some(text);
+                            b.push_sync();
+                        } else {
+                            b.set_sync_stage(Stage::On(Some(fail_text(&e))));
+                        }
+                    }
+                }
+            },
+        );
     }
 }

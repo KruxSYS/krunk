@@ -41,7 +41,7 @@ fn dev(id: &str, short: u16) -> Dev {
 
 fn try_sync(d: &mut Dev, mem: &Mem) -> Result<Report, SyncFail> {
     let api = Api { http: mem, token: "t", now_ms: now_ms() };
-    let opts = RunOpts { device_name: &d.name, off: &[], max_rounds: 20 };
+    let opts = RunOpts { device_name: &d.name, ..Default::default() };
     engine::run(&api, &mut d.store, &mut d.st, &opts)
 }
 

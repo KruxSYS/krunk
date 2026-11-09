@@ -126,6 +126,14 @@ pub struct SyncState {
     /// A fork or tamper alarm: writes stop until it is cleared (PLAN §5.6).
     #[serde(default)]
     pub alarm: Option<String>,
+    /// The pinned escrow public key (see `keys::Joined::esc_pk`); `None` in files written before
+    /// it existed (0.9.0 development builds).
+    #[serde(default, with = "opt_b64_32")]
+    pub esc_pk: Option<[u8; 32]>,
+    /// The keys changed epoch since the last escrow anchor: "Finish securing" asks for the
+    /// passphrase to write a new one (PROTOCOL §7 step 8, THREAT_MODEL R1).
+    #[serde(default)]
+    pub secure_needed: bool,
 }
 
 impl std::fmt::Debug for SyncState {
@@ -246,6 +254,28 @@ mod b64_32 {
     }
 }
 
+mod opt_b64_32 {
+    use base64ct::{Base64, Encoding};
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(v: &Option<[u8; 32]>, s: S) -> Result<S::Ok, S::Error> {
+        match v {
+            Some(v) => s.serialize_some(&Base64::encode_string(v)),
+            None => s.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<[u8; 32]>, D::Error> {
+        match Option::<String>::deserialize(d)? {
+            None => Ok(None),
+            Some(t) => {
+                let raw = Base64::decode_vec(&t).map_err(serde::de::Error::custom)?;
+                Ok(Some(raw.as_slice().try_into().map_err(|_| serde::de::Error::custom("length"))?))
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,6 +312,8 @@ mod tests {
             last_pull_seq: 42,
             hlc: 1 << 20,
             alarm: None,
+            esc_pk: Some([8; 32]),
+            secure_needed: true,
         }
     }
 

@@ -79,6 +79,11 @@ pub struct OnView {
     pub message: Option<String>,
     pub syncing: bool,
     pub remote_tabs: Vec<RemoteTabs>,
+    /// A removal waits for the user: these devices stay and one of them was added by the removed
+    /// device [R3] (names).
+    pub confirm_devices: Vec<String>,
+    /// After a rotation: "Finish securing" asks for the passphrase or recovery key.
+    pub secure_needed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -3,7 +3,8 @@
 //   node server/e2e/sync.cjs http://dind:10017 stage-browser <krunk-sync-cli> <work dir> [part ...]
 // Parts: keys (S6), records (S7: CLI ↔ CLI bookmarks, history, settings, pins, allowlist, tabs,
 // device names), passwords (S8: logins and never-save, restore into a vault, a vault key without a
-// PAK MAC). Later milestones add rotation.
+// PAK MAC), rotation (S9: removal, R3 confirmation, AK/PAK rotation and rekey, a removed device
+// opens nothing new, Finish securing, a restorer that rotates).
 // Staging only: Turnstile test keys, Mailpit, and direct database edits that play a malicious
 // server (tampered directories, a lowered KDF).
 'use strict';
@@ -424,6 +425,92 @@ async function partPasswords(ctx) {
   ctx.passwords = { acc };
 }
 
+// Revocation and rotation (S9) with three CLIs: X sets up, Y restores, Z joins by Y's approval
+// (so Z was added by Y). Y is removed: writes freeze, a rotation waits for the device list to be
+// confirmed (R3), X rotates AK (rekey, min_record_epoch) and PAK; Y's keys open nothing of the
+// new epoch; Z's queued change goes up after the freeze. Then "Finish securing", and a restorer
+// that rotates when no other device is online.
+async function partRotation(ctx) {
+  say('== rotation (S9)');
+  const web = await account(`rotation-${Date.now()}@example.org`);
+  const must = async (name, ...args) => {
+    const r = await cli(name, ...args);
+    if (r.code !== 0) throw new Error(`${name} ${args.join(' ')}: exit ${r.code} ${r.err}`);
+    return r;
+  };
+  const list = async (name, what, sub = 'list') => (await must(name, what, sub)).lines.filter((l) => /^[a-z_]+: /.test(l)).sort();
+  const idOf = (n) => JSON.parse(fs.readFileSync(path.join(dirOf(n), 'cli.json'), 'utf8')).device_id;
+  for (const n of ['X', 'Y', 'Z']) await link(web, n);
+  const setup = await must('X', 'setup', '--vault');
+  const pass = setup.one('passphrase');
+  await must('Y', 'restore', '--passphrase', pass, '--vault');
+  const ap = await approval('Y', 'Z', { share: true, nVault: true });
+  ok(ap.j.code === 0 && ap.ap.code === 0, `Z joins by Y's approval (added by Y) ${ap.j.err} ${ap.ap.err}`);
+  await must('X', 'bookmark', 'add', '--title', 'Before', '--url', 'https://before.example/');
+  await must('X', 'password', 'add', '--origin', 'https://mail.example', '--user', 'ann', '--password', 'pw-1');
+  for (const n of ['X', 'Y', 'Z', 'X', 'Y', 'Z']) await must(n, 'sync', '--vault', '--yes');
+  ok((await list('Z', 'bookmark')).some((l) => l.includes('before.example')) && (await list('Z', 'password')).length === 1, 'all three sync bookmarks and passwords');
+  const acc = psql(`SELECT id FROM accounts WHERE email = '${web.email}'`);
+  // Y is removed (from X): its tokens die, the writes freeze.
+  const rv = await must('X', 'revoke', idOf('Y'));
+  ok(rv.one('revoke') === '204' || rv.one('revoke') === '200', `X removes Y (${rv.one('revoke')})`);
+  ok(psql(`SELECT rotation_ak || ',' || rotation_pak FROM sync_state WHERE account_id = '${acc}'`) === 'true,true', 'the server flags both keys for rotation');
+  ok((await cli('Y', 'sync')).code !== 0, 'Y can no longer reach the account');
+  // Z (added by Y) adds a bookmark; its run asks for the device list first and keeps the change.
+  await must('Z', 'bookmark', 'add', '--title', 'While frozen', '--url', 'https://frozen.example/');
+  const z1 = await must('Z', 'sync');
+  ok(z1.one('frozen') === 'true' && (z1.kv.confirm || []).includes(idOf('Z')) && Number(z1.one('queue_left')) > 0,
+    `Z's run waits: Z was added by the removed Y, so the list needs confirming (R3); the change stays queued (${z1.one('queue_left')})`);
+  // X confirms (it removed Y) and rotates.
+  const x1 = await must('X', 'sync', '--vault', '--yes');
+  ok(x1.one('rotated') === '2' && x1.one('epoch') === '2' && x1.one('min_record_epoch') === '2', `X rotates AK to epoch 2, rekeys, and raises min_record_epoch (${x1.one('epoch')}/${x1.one('min_record_epoch')})`);
+  const stRow = psql(`SELECT current_epoch || ',' || pak_epoch || ',' || rotation_ak || ',' || rotation_pak FROM sync_state WHERE account_id = '${acc}'`);
+  ok(stRow === '2,2,false,false', `both keys rotated on the server (epoch, pak_epoch, flags: ${stRow})`);
+  const old = psql(`SELECT count(*) FROM records r JOIN sync_state s USING (account_id) WHERE r.account_id = '${acc}' AND ((r.k = 'ak' AND r.e < s.current_epoch) OR (r.k = 'pak' AND r.e < s.pak_epoch))`);
+  ok(old === '0', 'no record of the old epochs is left (rekeyed)');
+  const head = psql(`SELECT encode(bytes, 'escape') FROM ak_dirs WHERE account_id = '${acc}' ORDER BY seq DESC LIMIT 1`);
+  const hd = JSON.parse(head);
+  ok(hd.revoked.includes(idOf('Y')) && !hd.devices.some((d) => d.id === idOf('Y')) && !hd.seals.some((x) => x.to === idOf('Y')) && !hd.hist,
+    'the head directory lists Y as revoked, seals nothing to it, and has no hist any more');
+  // Y's keys (every AK and PAK it held) open none of the records now on the server.
+  const dump = path.join(WORK, 'records-after-rotation.json');
+  await must('X', 'dump-records', '--out', dump);
+  const ty = await must('Y', 'try-decrypt', '--file', dump, '--vault');
+  ok(Number(ty.one('records')) > 0 && ty.one('opened') === '0', `the removed Y opens ${ty.one('opened')} of ${ty.one('records')} records`);
+  const tx = await must('X', 'try-decrypt', '--file', dump, '--vault');
+  ok(tx.one('opened') === tx.one('records'), `X opens all ${tx.one('opened')} (control)`);
+  // Z follows the new epoch (sealed to it) and its queued change goes up.
+  const z2 = await must('Z', 'sync', '--vault');
+  ok(z2.one('epoch') === '2' && Number(z2.one('pushed')) >= 1, `Z follows epoch 2 and pushes its queued bookmark (${z2.one('pushed')})`);
+  await must('X', 'sync', '--vault');
+  ok((await list('X', 'bookmark')).some((l) => l.includes('frozen.example')), 'X has the bookmark Z made while frozen');
+  await must('X', 'password', 'edit', '--origin', 'https://mail.example', '--user', 'ann', '--password', 'pw-2');
+  await must('X', 'sync', '--vault'); await must('Z', 'sync', '--vault');
+  ok((await list('Z', 'password')).some((l) => l.includes('pw-2')), 'passwords keep syncing under the new passwords key');
+  // Finish securing: a new anchor at the rotated heads.
+  ok(x1.one('secure_needed') === 'true', 'X asks to finish securing');
+  await must('X', 'secure', '--passphrase', pass, '--vault');
+  const anchor = psql(`SELECT epoch FROM ak_dirs WHERE account_id = '${acc}' AND escrow_mac IS NOT NULL ORDER BY seq DESC LIMIT 1`);
+  ok(anchor === '2', `the newest escrow anchor is at epoch ${anchor}`);
+  const z3 = await must('Z', 'sync', '--vault');
+  ok(z3.one('secure_needed') === 'false', 'Z sees the new anchor (no securing needed there)');
+  // Z is removed too and nobody runs: W restores with the passphrase and rotates in one commit.
+  await must('X', 'revoke', idOf('Z'));
+  await link(web, 'W');
+  const rw = await must('W', 'restore', '--passphrase', pass, '--vault');
+  ok(rw.one('passwords') === 'on', 'W restores while a rotation is pending');
+  const st3 = psql(`SELECT current_epoch || ',' || pak_epoch || ',' || rotation_ak || ',' || rotation_pak FROM sync_state WHERE account_id = '${acc}'`);
+  ok(st3 === '3,3,false,false', `the restorer rotated both keys while joining (${st3})`);
+  await must('W', 'sync', '--vault'); await must('W', 'sync', '--vault');
+  const x3 = await must('X', 'sync', '--vault');
+  ok(x3.one('epoch') === '3' && JSON.stringify(await list('X', 'bookmark')) === JSON.stringify(await list('W', 'bookmark')), `X follows epoch 3; X and W agree`);
+  ok(JSON.stringify(await list('W', 'password')) === JSON.stringify(await list('X', 'password')), 'and the passwords too');
+  await must('X', 'dump-records', '--out', dump);
+  const tz = await must('Z', 'try-decrypt', '--file', dump, '--vault');
+  ok(tz.one('opened') === '0', `the removed Z opens ${tz.one('opened')} of ${tz.one('records')}`);
+  ctx.rotation = { acc };
+}
+
 (async () => {
   fs.mkdirSync(WORK, { recursive: true });
   psql('DELETE FROM rate_limits');
@@ -432,6 +519,7 @@ async function partPasswords(ctx) {
     if (parts.includes('keys')) await partKeys(ctx);
     if (parts.includes('records')) await partRecords(ctx);
     if (parts.includes('passwords')) await partPasswords(ctx);
+    if (parts.includes('rotation')) await partRotation(ctx);
   } catch (e) {
     problems.push(String(e.stack || e));
     say('FAIL ' + (e.stack || e));

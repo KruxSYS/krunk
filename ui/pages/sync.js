@@ -80,6 +80,12 @@
       : v.passwordsLocked ? 'Passwords: unlock your password vault to include them.' : 'Passwords are not synced on this device.';
     $('on-rotation').hidden = !v.rotationPending;
     $('on-last').textContent = v.lastSyncMs ? 'Last synced ' + ago(v.lastSyncMs) : '';
+    // A rotation waiting for the user, and "Finish securing" after one.
+    $('confirm-rotation').hidden = !v.confirmDevices.length;
+    const cl0 = $('confirm-list');
+    cl0.textContent = '';
+    v.confirmDevices.forEach(function (n) { cl0.appendChild(el('li', { text: n })); });
+    $('secure').hidden = !v.secureNeeded;
     $('sync-now').disabled = !!v.syncing;
     $('sync-now').setAttribute('aria-busy', v.syncing ? 'true' : 'false');
     $('sync-now').textContent = v.syncing ? 'Syncing…' : 'Sync now';
@@ -201,6 +207,15 @@
   $('joining-cancel').addEventListener('click', function () { LB.post('syncCancel'); });
   $('approving-cancel').addEventListener('click', function () { LB.post('syncApproveCancel'); });
   $('sync-now').addEventListener('click', function () { LB.post('syncNow'); });
+  $('confirm-go').addEventListener('click', function () { LB.post('syncConfirmRotation'); });
+  $('secure-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    const secret = $('secure-secret').value.trim();
+    if (!secret) { $('secure-secret').focus(); return; }
+    const recovery = document.querySelector('input[name=secure-kind]:checked').value === 'recovery';
+    LB.post('syncFinishSecuring', { secret: secret, recovery: recovery });
+    $('secure-secret').value = '';
+  });
   $('alarm-off').addEventListener('click', function () { LB.post('syncTurnOff', { deleteData: false }); });
   $('turn-off').addEventListener('click', function () {
     const del = $('off-delete').checked;

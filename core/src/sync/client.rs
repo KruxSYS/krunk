@@ -314,6 +314,7 @@ pub fn new_state(account_id: &str, me: &Me, j: &Joined, keyset_gen: String) -> S
         ak: Some(j.ak.clone()),
         ak_old: j.ak_old.clone(),
         keyset_gen,
+        esc_pk: Some(j.esc_pk),
         ..Default::default()
     }
 }
@@ -350,10 +351,59 @@ pub fn restore_begin(api: &Api, secret: &Secret, account_id: AccountId) -> SResu
 }
 
 pub fn restore_finish(api: &Api, plan: &RestorePlan, me: &Me, with_vault: bool) -> SResult<(Joined, String)> {
-    let (c, j) = keys::restore_commit(plan, me, with_vault, api.now_ms as u64)?;
-    commit(api, &c)?;
+    let st = state(api)?;
+    let j = if st.rotation.ak {
+        // A removal waits for its rotation: this device joins and rotates in one commit
+        // (PROTOCOL §7 step 8); the records are rekeyed by its first sync run.
+        let active: Vec<String> = devices(api)?.into_iter().filter(|d| d.revoked_at.is_none()).map(|d| d.id).collect();
+        let (c, j, _removed) =
+            keys::restore_rotate_commit(plan, me, with_vault, &active, st.rotation.pak, api.now_ms as u64)?;
+        commit(api, &c)?;
+        j
+    } else {
+        let (c, j) = keys::restore_commit(plan, me, with_vault, api.now_ms as u64)?;
+        commit(api, &c)?;
+        j
+    };
     let gen = state(api)?.keyset_gen.ok_or(SyncFail::BadAnswer("keyset_gen"))?;
     Ok((j, gen))
+}
+
+/// "Finish securing" after a rotation: the passphrase or recovery key gives RR, the chain from
+/// the last anchor must arrive at the heads this device pinned (anything else is a fork), and
+/// both heads are committed again as a new anchor.
+pub fn finish_securing(
+    api: &Api,
+    st: &mut SyncState,
+    pak: Option<&mut keys::PakState>,
+    secret: &Secret,
+) -> SResult<()> {
+    if refresh(api, st, None)? == Refresh::SelfRevoked {
+        return Err(SyncFail::Api(ApiError::Unauthorized));
+    }
+    let acc = st.account_bytes().map_err(|_| SyncFail::BadAnswer("account id"))?;
+    let plan = restore_begin(api, secret, acc)?;
+    let pin = st.ak.clone().ok_or(SyncFail::BadAnswer("no keys"))?;
+    if plan.ak_head.hash != pin.hash || plan.ak_head.epoch != pin.epoch {
+        return Err(dir::DirError::Fork.into());
+    }
+    if let Some(p) = &pak {
+        if plan.pak_head.hash != p.pak.hash {
+            return Err(dir::DirError::Fork.into());
+        }
+    }
+    let (c, (ak_seq, ak_hash), (pak_seq, pak_hash)) = keys::reanchor_commit(&plan, &st.device_id, api.now_ms as u64)?;
+    commit(api, &c)?;
+    if let Some(a) = st.ak.as_mut() {
+        a.seq = ak_seq;
+        a.hash = ak_hash;
+    }
+    if let Some(p) = pak {
+        p.pak.seq = pak_seq;
+        p.pak.hash = pak_hash;
+    }
+    st.secure_needed = false;
+    Ok(())
 }
 
 // ---- Following the directories ------------------------------------------------------------------
@@ -375,6 +425,10 @@ pub fn refresh(api: &Api, st: &mut SyncState, pak: Option<&mut PakState>) -> SRe
     let ak_same = dir::hash(&ak_head.bytes) == pin.hash;
     let pak_same = pak.as_ref().is_none_or(|p| dir::hash(&pak_head.bytes) == p.pak.hash);
     if ak_same && pak_same {
+        if ak_head.escrow_mac.is_some() {
+            // Some device wrote a new anchor at this head ("Finish securing").
+            st.secure_needed = false;
+        }
         return Ok(Refresh::Unchanged);
     }
     let pak_seq = pak.as_ref().map_or(u64::MAX >> 1, |p| p.pak.seq);
@@ -389,6 +443,12 @@ pub fn refresh(api: &Api, st: &mut SyncState, pak: Option<&mut PakState>) -> SRe
             // or a chain that doesn't reach the head, is a fork).
             if h.hash != dir::hash(&ak_head.bytes) {
                 return Err(dir::DirError::Fork.into());
+            }
+            if h.epoch > pin.epoch {
+                st.secure_needed = true;
+            }
+            if ak_head.escrow_mac.is_some() {
+                st.secure_needed = false;
             }
             st.ak = Some(AkPin::from_head(&h));
             st.ak_old = old;

@@ -764,6 +764,16 @@ pub enum Request {
     },
     /// The user confirmed the device list a restore found.
     SyncRestoreConfirm,
+    /// The devices that keep access after a removal are confirmed (one was added by the removed
+    /// device), so the keys can be rotated (0.9.0, S9).
+    SyncConfirmRotation,
+    /// "Finish securing": a new escrow anchor with the passphrase (`recovery`: false) or the
+    /// recovery key.
+    SyncFinishSecuring {
+        secret: Secret,
+        #[serde(default)]
+        recovery: bool,
+    },
     /// Ask a device that already syncs for the keys.
     SyncJoin {
         #[serde(default)]
@@ -1784,6 +1794,8 @@ impl Sender {
                     | R::SyncSetupSave
                     | R::SyncRestore { .. }
                     | R::SyncRestoreConfirm
+                    | R::SyncConfirmRotation
+                    | R::SyncFinishSecuring { .. }
                     | R::SyncJoin { .. }
                     | R::SyncJoinCode { .. }
                     | R::SyncCancel
@@ -2902,6 +2914,8 @@ mod tests {
             Request::SyncSetupSave,
             Request::SyncRestore { secret: Secret::from("words"), recovery: false },
             Request::SyncRestoreConfirm,
+            Request::SyncConfirmRotation,
+            Request::SyncFinishSecuring { secret: Secret::from("words"), recovery: false },
             Request::SyncJoin { passwords: false },
             Request::SyncJoinCode { code: "123456".into() },
             Request::SyncCancel,
@@ -3926,6 +3940,8 @@ mod tests {
             Request::SyncSetupSave,
             Request::SyncRestore { secret: Secret::from("words"), recovery: false },
             Request::SyncRestoreConfirm,
+            Request::SyncConfirmRotation,
+            Request::SyncFinishSecuring { secret: Secret::from("words"), recovery: false },
             Request::SyncJoin { passwords: false },
             Request::SyncJoinCode { code: "123456".into() },
             Request::SyncCancel,

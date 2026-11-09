@@ -840,6 +840,33 @@ The server enforces the order of steps, allows a single attempt, and deletes the
   - A tombstone's natural key is found from the bookkeeping, or by computing the record id of
     the logins and origins held locally.
 
+- **Revocation and rotation (S9), as built:**
+  - **Tombstones name their natural key** inside the ciphertext (`data: {"nk": …}`), checked
+    against the record id like any other record. A rotator re-encrypts a deletion it never saw
+    under the next epoch's id; receivers no longer need a local record of it.
+  - **The escrow key is pinned** in `sync.json` (`esc_pk`) from an authenticated source: the
+    first device's own, the one derived from RR on a restore, or the approver's `box_A`. An
+    AK-only rotator seals the next AK to that pin, never to an `esc_pk` the server shows in a
+    `pak_dir` it can't verify. PAK rotators use the PAK-verified pin.
+  - **Rekey window:** while `min_record_epoch < epoch` (a rekey not finished), devices pull but
+    don't push; their changes stay queued. Any device of the new epoch resumes the rekey and makes
+    the final commit (no `hist`, `min_record_epoch` = the epoch), then drops the older keys.
+    Rekeyed records get new `seq`s, so the others take them by their normal incremental pull
+    (no full reconcile needed). The removed devices' `tabs` and `device_meta` become tombstones
+    during the rekey (a resuming device takes them from the directory's `revoked` list).
+  - **PAK:** rotated by a device whose vault is unlocked (no extra master-password prompt: the
+    open vault is the proof), resumable the same way. When no PAK record of an older epoch is left
+    the old PAKs are dropped, so a record replayed under an old PAK epoch is never opened.
+  - **R3:** when a device that stays was `added_by` a removed one, the rotation waits until the
+    user confirms the list ("These devices keep access"); a removal started on this device needs
+    no second confirmation. To leave a device out, the user removes it first.
+  - **A restorer during a pending rotation** (step 8) joins and rotates in one commit: the next
+    epoch of `ak_dir` (and of `pak_dir` when PAK rotation is pending) with itself in, the devices
+    the server no longer lists out, anchored under RR (a same-epoch join would be 423).
+  - **"Finish securing"** re-commits both heads with `escrow_mac` (a new anchor) after checking
+    that the chain from the last anchor ends at the heads this device pinned (else: fork alarm).
+    A device shows it after it saw an epoch change, until a head with `escrow_mac` appears.
+
 ### 11.7 Records
 | Method | Path | Auth | Request | Response | Errors |
 |---|---|---|---|---|---|

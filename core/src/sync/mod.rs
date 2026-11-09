@@ -19,6 +19,7 @@ pub mod labels;
 pub mod local;
 pub mod normalize;
 pub mod pak;
+pub mod rotate;
 pub mod sas;
 pub mod state;
 pub mod view;
@@ -67,3 +68,5 @@ mod engine_tests;
 mod memserver;
 #[cfg(test)]
 mod pak_tests;
+#[cfg(test)]
+mod rotate_tests;

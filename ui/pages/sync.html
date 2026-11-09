@@ -144,6 +144,28 @@
       <div class="acts"><button class="btn" id="sync-now">Sync now</button></div>
     </section>
 
+    <section class="card warn-card" id="confirm-rotation" hidden>
+      <h2>Check the devices that keep access</h2>
+      <p>A device was removed, and it had added one of the devices below. Make sure you know every one of them:
+        they get the new keys. Remove any you don't recognise first.</p>
+      <ul id="confirm-list" class="plain"></ul>
+      <div class="acts"><button class="btn primary" id="confirm-go">These devices keep access</button></div>
+    </section>
+
+    <section class="card" id="secure" hidden>
+      <h2>Finish securing your account</h2>
+      <p>Sync has new keys since a device was removed. Enter your passphrase or recovery key once, so that a
+        restore can never be steered to the old keys.</p>
+      <form id="secure-form" autocomplete="off" novalidate>
+        <div class="radios" role="radiogroup">
+          <label><input type="radio" name="secure-kind" value="passphrase" checked> Passphrase</label>
+          <label><input type="radio" name="secure-kind" value="recovery"> Recovery key</label>
+        </div>
+        <input type="password" id="secure-secret" spellcheck="false" autocomplete="off" aria-label="Passphrase or recovery key">
+        <div class="acts"><button class="btn primary" type="submit" id="secure-go">Finish securing</button></div>
+      </form>
+    </section>
+
     <section class="card" id="approvals" hidden>
       <h2>A device asks to join</h2>
       <ul id="approval-list" class="plain"></ul>

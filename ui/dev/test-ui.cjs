@@ -5093,6 +5093,7 @@ async function testSyncPage(browser) {
       state: 'on', status: 'Up to date', lastSyncMs: Date.now() - 120000, passwords: true, passwordsLocked: false, rotationPending: false, message: null, syncing: false,
       collections: [{ name: 'bookmarks', label: 'Bookmarks', on: true }, { name: 'history', label: 'History', on: false }, { name: 'tabs', label: 'Open tabs', on: true }],
       remoteTabs: [{ device: 'Old laptop', updatedMs: Date.now() - 60000, tabs: [['Example', 'https://example.org/'], ['', 'https://rust-lang.org/']] }],
+      confirmDevices: [], secureNeeded: false,
       devices: [{ id: 'd1', name: 'Krunk on DESKTOP', platform: 'windows', keys: true, me: true, lastSync: null }, { id: 'd2', name: 'Old laptop', platform: 'windows', keys: true, me: false, lastSync: null }],
       approvals: [{ id: 'ap1', label: 'New PC', platform: 'windows', country: 'NL' }], approving: null,
     };
@@ -5131,6 +5132,22 @@ async function testSyncPage(browser) {
     check(!(await page.isEnabled('#sync-now')) && (await page.getAttribute('#sync-now', 'aria-busy')) === 'true', t('Sync now is busy while syncing'));
     await view(Object.assign({}, onView, { remoteTabs: [] }));
     check(!(await vis('remote')), t('no other devices\' tabs: no section'));
+    check(!(await vis('confirm-rotation')) && !(await vis('secure')), t('no rotation card, no securing card by default'));
+    await view(Object.assign({}, onView, { confirmDevices: ['Laptop (added by the removed PC)'] }));
+    check(await vis('confirm-rotation') && (await page.textContent('#confirm-list')).includes('Laptop'), t('a rotation waits for the device list to be confirmed'));
+    await shot(page, 'sync-confirm-rotation-' + theme + '.png');
+    await page.click('#confirm-go');
+    check((await lastSent(page, 'syncConfirmRotation')) !== undefined, t('confirm posts syncConfirmRotation'));
+    await view(Object.assign({}, onView, { secureNeeded: true }));
+    check(await vis('secure'), t('Finish securing is offered after a rotation'));
+    await shot(page, 'sync-secure-' + theme + '.png');
+    await page.click('#secure-go');
+    check((await lastSent(page, 'syncFinishSecuring')) === undefined, t('an empty secret is not sent'));
+    await page.check('input[name=secure-kind][value=recovery]');
+    await page.fill('#secure-secret', ' KRNK-AAAA-BBBB ');
+    await page.click('#secure-go');
+    const fs1 = await lastSent(page, 'syncFinishSecuring');
+    check(fs1 && fs1.secret === 'KRNK-AAAA-BBBB' && fs1.recovery === true && (await page.inputValue('#secure-secret')) === '', t('Finish securing posts the secret once and clears the field'));
     await page.click('#device-list li:nth-child(2) button:text("Remove")');
     await acceptInPage(page);
     const rm = await lastSent(page, 'syncRemoveDevice');

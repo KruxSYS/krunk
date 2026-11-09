@@ -322,6 +322,9 @@ pub struct Joined {
     pub ak: AkPin,
     pub ak_old: Vec<EpochKey>,
     pub pak: Option<PakState>,
+    /// The escrow public key from an authenticated source (this setup, RR, or the approver's
+    /// box): a rotation seals the next AK to it, never to one the server names [R1].
+    pub esc_pk: [u8; 32],
 }
 
 fn seal(
@@ -441,6 +444,7 @@ pub fn setup_commit(plan: &SetupPlan, now_ms: u64) -> KResult<(Commit, Joined)> 
             pak_old: vec![],
             book: Default::default(),
         }),
+        esc_pk: esc.pk,
     };
     Ok((
         Commit {
@@ -619,8 +623,172 @@ pub fn restore_commit(plan: &RestorePlan, me: &Me, with_vault: bool, now_ms: u64
         },
         ak_old: plan.ak_old.clone(),
         pak,
+        esc_pk: plan.pak_head.esc_pk,
     };
     Ok((commit, joined))
+}
+
+/// A restore while a removal waits for its rotation and no device is online to do it (PROTOCOL
+/// §7 step 8): the restorer joins *and* rotates in one commit — the next `ak_dir` epoch with this
+/// device in and the devices the server no longer lists out, and with `rotate_pak` the next PAK
+/// epoch too. Both are anchored under RR. The caller rekeys the records afterwards (as any
+/// rotator does). Returns the removed device ids too.
+pub fn restore_rotate_commit(
+    plan: &RestorePlan,
+    me: &Me,
+    with_vault: bool,
+    active: &[String],
+    rotate_pak: bool,
+    now_ms: u64,
+) -> KResult<(Commit, Joined, Vec<String>)> {
+    let acc = plan.account_id;
+    let device = KeyPair::generate()?;
+    let esc = crypto::escrow_keypair(&plan.rr, &acc);
+    let head = &plan.ak_head;
+    let e = head.epoch + 1;
+    let new_ak = Zeroizing::new(crypto::random::<32>()?);
+    let mut next = plan.ak_dir.clone();
+    let removed: Vec<String> =
+        next.devices.iter().filter(|d| !active.contains(&d.id) && d.id != me.device_id).map(|d| d.id.clone()).collect();
+    next.devices.retain(|d| active.contains(&d.id) && d.id != me.device_id);
+    next.devices.push(DeviceEntry {
+        id: me.device_id.clone(),
+        short: me.short,
+        pk: b64(&device.pk),
+        added_by: me.device_id.clone(),
+        added_seq: head.seq + 1,
+    });
+    for r in &removed {
+        if !next.revoked.contains(r) {
+            next.revoked.push(r.clone());
+        }
+    }
+    next.epoch = e;
+    next.seq = head.seq + 1;
+    next.prev_hash = b64(&head.hash);
+    next.min_record_epoch = head.epoch;
+    let active_refs: Vec<&str> = active.iter().map(String::as_str).collect();
+    let mut seals = Vec::new();
+    for (id, pk) in dir::seal_targets(&next, &active_refs)? {
+        seals.push(seal(SealKind::Ak, &new_ak, &acc, e, &id, &pk)?);
+    }
+    seals.push(seal(SealKind::Ak, &new_ak, &acc, e, "escrow", &esc.pk)?);
+    next.seals = seals;
+    let (n, ct) = dir::hist_seal(SealKind::Ak, &new_ak, &head.ak, &acc, e)?;
+    next.hist = Some(dir::AkHist { epoch: head.epoch, n, ct });
+    next.created_ms = now_ms;
+    next.created_by = me.device_id.clone();
+    let ak_blob = dir::sign_ak(&next, &new_ak, Some(&head.ak), Some(&plan.rr), &acc)?;
+    let mut commit = Commit { ak_dir: Some(ak_blob.clone()), if_ak_prev_hash: Some(head.hash), ..Default::default() };
+    let mut ak_old = plan.ak_old.clone();
+    ak_old.push(EpochKey { epoch: head.epoch, key: head.ak.clone() });
+    let vault = if with_vault { Some(KeyPair::generate()?) } else { None };
+    let ph = &plan.pak_head;
+    let pak = if rotate_pak {
+        let p = ph.pak_epoch + 1;
+        let new_pak = Zeroizing::new(crypto::random::<32>()?);
+        let mut np = plan.pak_dir.clone();
+        let mut targets = dir::vault_seal_targets(&plan.pak_dir, &next, &active_refs)?;
+        targets.retain(|(id, _)| *id != me.device_id);
+        np.vault_keys.retain(|v| targets.iter().any(|(id, _)| *id == v.device));
+        if let Some(v) = &vault {
+            np.vault_keys.push(VaultKey { device: me.device_id.clone(), pk: b64(&v.pk) });
+            targets.push((me.device_id.clone(), v.pk));
+        }
+        let mut seals = Vec::new();
+        for (id, pk) in &targets {
+            seals.push(seal(SealKind::Pak, &new_pak, &acc, p, id, pk)?);
+        }
+        seals.push(seal(SealKind::Pak, &new_pak, &acc, p, "escrow", &esc.pk)?);
+        np.seals = seals;
+        np.pak_epoch = p;
+        np.seq = ph.seq + 1;
+        np.prev_hash = b64(&ph.hash);
+        let (n, ct) = dir::hist_seal(SealKind::Pak, &new_pak, &ph.pak, &acc, p)?;
+        np.hist = Some(dir::PakHist { pak_epoch: ph.pak_epoch, n, ct });
+        np.created_ms = now_ms;
+        np.created_by = me.device_id.clone();
+        let pak_blob = dir::sign_pak(&np, &new_pak, Some(&ph.pak), Some(&plan.rr), &acc)?;
+        commit.pak_dir = Some(pak_blob.clone());
+        commit.if_pak_prev_hash = Some(ph.hash);
+        vault.as_ref().map(|v| {
+            let mut pak_old = plan.pak_old.clone();
+            pak_old.push(EpochKey { epoch: ph.pak_epoch, key: ph.pak.clone() });
+            PakState {
+                vault_sk: v.sk.clone(),
+                pak: PakPin {
+                    pak_epoch: p,
+                    pak: new_pak.clone(),
+                    seq: np.seq,
+                    hash: dir::hash(&pak_blob.bytes),
+                    esc_pk: esc.pk,
+                    rr_gen: ph.rr_gen,
+                },
+                pak_old,
+                book: Default::default(),
+            }
+        })
+    } else if let Some(v) = &vault {
+        let pak_dir = with_vault_key(&plan.pak_dir, ph, &me.device_id, &me.device_id, &v.pk, now_ms)?;
+        let pak_blob = dir::sign_pak(&pak_dir, &ph.pak, None, Some(&plan.rr), &acc)?;
+        let mut pin = PakPin::from_head(ph);
+        pin.seq = pak_dir.seq;
+        pin.hash = dir::hash(&pak_blob.bytes);
+        commit.pak_dir = Some(pak_blob);
+        commit.if_pak_prev_hash = Some(ph.hash);
+        Some(PakState { vault_sk: v.sk.clone(), pak: pin, pak_old: plan.pak_old.clone(), book: Default::default() })
+    } else {
+        None
+    };
+    let joined = Joined {
+        device_sk: device.sk.clone(),
+        ak: AkPin {
+            epoch: e,
+            ak: new_ak,
+            seq: next.seq,
+            hash: dir::hash(&ak_blob.bytes),
+            min_record_epoch: head.epoch,
+        },
+        ak_old,
+        pak,
+        esc_pk: esc.pk,
+    };
+    Ok((commit, joined, removed))
+}
+
+/// A directory head after a commit: (seq, hash).
+pub type HeadAt = (u64, [u8; 32]);
+
+/// "Finish securing" (PROTOCOL §7 step 8, THREAT_MODEL R1): with RR from the passphrase or the
+/// recovery key, the current heads once more, carrying `escrow_mac` — a new anchor a revoked
+/// device can't forge (it never had RR). Returns the commit and the new (seq, hash) of both.
+pub fn reanchor_commit(plan: &RestorePlan, me: &str, now_ms: u64) -> KResult<(Commit, HeadAt, HeadAt)> {
+    let acc = plan.account_id;
+    let mut a = plan.ak_dir.clone();
+    a.seq = plan.ak_head.seq + 1;
+    a.prev_hash = b64(&plan.ak_head.hash);
+    a.created_ms = now_ms;
+    a.created_by = me.into();
+    let ak_blob = dir::sign_ak(&a, &plan.ak_head.ak, None, Some(&plan.rr), &acc)?;
+    let mut p = plan.pak_dir.clone();
+    p.seq = plan.pak_head.seq + 1;
+    p.prev_hash = b64(&plan.pak_head.hash);
+    p.created_ms = now_ms;
+    p.created_by = me.into();
+    let pak_blob = dir::sign_pak(&p, &plan.pak_head.pak, None, Some(&plan.rr), &acc)?;
+    let out_ak = (a.seq, dir::hash(&ak_blob.bytes));
+    let out_pak = (p.seq, dir::hash(&pak_blob.bytes));
+    Ok((
+        Commit {
+            ak_dir: Some(ak_blob),
+            pak_dir: Some(pak_blob),
+            if_ak_prev_hash: Some(plan.ak_head.hash),
+            if_pak_prev_hash: Some(plan.pak_head.hash),
+            ..Default::default()
+        },
+        out_ak,
+        out_pak,
+    ))
 }
 
 // ---- Device approval (PROTOCOL §6.2) ------------------------------------------------------------
@@ -896,6 +1064,7 @@ pub fn n_accept(
         },
         ak_old: vec![],
         pak,
+        esc_pk: unb64(&p.esc_pk)?.try_into().map_err(|_| KeyError::Protocol("esc_pk"))?,
     };
     Ok((joined, p))
 }

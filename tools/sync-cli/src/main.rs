@@ -230,7 +230,7 @@ fn args() -> Args {
         let x = &rest[i];
         if let Some(name) = x.strip_prefix("--") {
             let takes_value = i + 1 < rest.len() && !rest[i + 1].starts_with("--");
-            if ["vault", "share-passwords", "json"].contains(&name) || !takes_value {
+            if ["vault", "share-passwords", "json", "yes"].contains(&name) || !takes_value {
                 a.flags.push(name.into());
             } else {
                 a.opt.insert(name.into(), rest[i + 1].clone());
@@ -542,7 +542,8 @@ fn main() {
             let mut store = d.store();
             let off: Vec<String> = a.get("off").map(|o| o.split(',').map(str::to_string).collect()).unwrap_or_default();
             let name = a.get("name").unwrap_or("Linux test client").to_string();
-            let opts = RunOpts { device_name: &name, off: &off, max_rounds: 20 };
+            let confirm_rotation = a.flag("yes");
+            let opts = RunOpts { device_name: &name, off: &off, max_rounds: 20, confirm_rotation };
             let r = engine::run(&api, &mut store, &mut st, &opts);
             match r {
                 Ok(rep) => {
@@ -572,6 +573,17 @@ fn main() {
                     out("pak_waiting", rep.pak_waiting);
                     out("queue_left", rep.queue_left);
                     out("changed", format!("{:?}", rep.changed));
+                    if let Some(e) = rep.rotated {
+                        out("rotated", e);
+                    }
+                    for id in &rep.confirm {
+                        out("confirm", id);
+                    }
+                    if let Some(p) = &st.ak {
+                        out("epoch", p.epoch);
+                        out("min_record_epoch", p.min_record_epoch);
+                    }
+                    out("secure_needed", st.secure_needed);
                 }
                 Err(e) => sfail(e),
             }
@@ -782,6 +794,77 @@ fn main() {
                 _ => fail(2, "never add|remove|list --origin O"),
             }
         }
+        "secure" => {
+            let mut d = Device::open(&dir);
+            let t = d.token();
+            let api = Api { http: &d.http, token: &t, now_ms: now_ms() };
+            let mut st = d.sync_state();
+            let secret = match (a.get("passphrase"), a.get("recovery")) {
+                (Some(p), _) => Secret::Passphrase(Zeroizing::new(p.into())),
+                (None, Some(k)) => Secret::RecoveryKey(Zeroizing::new(k.into())),
+                _ => fail(2, "--passphrase or --recovery is needed"),
+            };
+            let mut pak = a.flag("vault").then(|| d.pak_state(&a.vault_pw())).flatten();
+            client::finish_securing(&api, &mut st, pak.as_mut().map(|(_, p)| p), &secret).unwrap_or_else(|e| sfail(e));
+            d.save_state(&st);
+            if let Some((mut v, p)) = pak {
+                d.save_pak(&mut v, &p);
+            }
+            out("secured", "yes");
+        }
+        // The records as the server holds them (envelopes only), for try-decrypt.
+        "dump-records" => {
+            let mut d = Device::open(&dir);
+            let t = d.token();
+            let api = Api { http: &d.http, token: &t, now_ms: now_ms() };
+            let mut all: Vec<Value> = Vec::new();
+            let mut since = 0i64;
+            loop {
+                let page: Value = api.get(&format!("records?since={since}&limit=500")).unwrap_or_else(|e| sfail(e));
+                for r in page["records"].as_array().into_iter().flatten() {
+                    since = since.max(r["seq"].as_i64().unwrap_or(0));
+                    all.push(r["envelope"].clone());
+                }
+                if page["has_more"] != true {
+                    break;
+                }
+            }
+            std::fs::write(a.need("out"), serde_json::to_vec(&all).unwrap_or_default()).unwrap_or_else(|e| fail(3, e));
+            out("dumped", all.len());
+        }
+        // How many of the dumped records this device's keys (every AK it holds, and the vault's PAK
+        // with --vault) can open: a removed device must open none of the new epoch's.
+        "try-decrypt" => {
+            let d = Device::open(&dir);
+            let st = d.sync_state();
+            let acc = d.account();
+            let list: Vec<lb_core::sync::envelope::Envelope> =
+                serde_json::from_slice(&std::fs::read(a.need("file")).unwrap_or_else(|e| fail(3, e))).unwrap_or_else(|e| fail(3, e));
+            let mut roots: Vec<[u8; 32]> = st.ak_old.iter().map(|k| *k.key).collect();
+            if let Some(p) = &st.ak {
+                roots.push(*p.ak);
+            }
+            if a.flag("vault") {
+                if let Some((_, p)) = d.pak_state(&a.vault_pw()) {
+                    roots.push(*p.pak.pak);
+                    roots.extend(p.pak_old.iter().map(|k| *k.key));
+                }
+            }
+            let (mut opened, mut max_epoch) = (0, 0);
+            for env in &list {
+                let ok = roots.iter().any(|r| {
+                    let k = lb_core::sync::envelope::collection_keys(r, &acc, &env.c, env.e);
+                    lb_core::sync::envelope::open_record(&k.ck, &acc, env).is_ok()
+                });
+                if ok {
+                    opened += 1;
+                    max_epoch = max_epoch.max(env.e);
+                }
+            }
+            out("records", list.len());
+            out("opened", opened);
+            out("newest_epoch_opened", max_epoch);
+        }
         "rename" => {
             let d = Device::open(&dir);
             let store = d.store();
@@ -806,7 +889,7 @@ fn main() {
         _ => fail(
             2,
             "commands: link state setup restore join approve refresh devices revoke sync bookmark history settings pin \
-             allow tabs password never rename names queue",
+             allow tabs password never secure dump-records try-decrypt rename names queue",
         ),
     }
 }

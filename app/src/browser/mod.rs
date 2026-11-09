@@ -2226,6 +2226,8 @@ impl Browser {
             | Request::SyncSetupSave
             | Request::SyncRestore { .. }
             | Request::SyncRestoreConfirm
+            | Request::SyncConfirmRotation
+            | Request::SyncFinishSecuring { .. }
             | Request::SyncJoin { .. }
             | Request::SyncJoinCode { .. }
             | Request::SyncCancel

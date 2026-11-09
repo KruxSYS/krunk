@@ -105,7 +105,7 @@ fn key(c: &str, nk: &str) -> String {
 }
 
 /// Overwrites every string inside `v` (record plaintext with a password in it).
-fn wipe(v: &mut Value) {
+pub(crate) fn wipe(v: &mut Value) {
     match v {
         Value::String(s) => s.zeroize(),
         Value::Array(a) => a.iter_mut().for_each(wipe),
@@ -271,7 +271,7 @@ pub fn prepare(
             _ => None,
         };
         if let Some((c, nk)) = gone {
-            seal_one(&mut out, pak, acc, c, nk, json!({}), true, 0, Some(item), dev, hlc, now_ms)?;
+            seal_one(&mut out, pak, acc, c, nk, json!({ "nk": nk }), true, 0, Some(item), dev, hlc, now_ms)?;
         }
     }
     for o in never {
@@ -511,6 +511,10 @@ fn merge_one(
     let env = &r.envelope;
     let Some(c) = COLLECTIONS.iter().copied().find(|c| *c == env.c) else { return Ok(false) };
     let Some(root) = pak_for(pak, env.e) else {
+        if env.e < pak.pak.pak_epoch {
+            // An epoch whose rekey is finished: never opened again (a replay of an old key).
+            return Ok(false);
+        }
         // A newer passwords key than ours: the directories must be followed first.
         return Err(SyncFail::Keys(KeyError::Dir(DirError::Gap)));
     };
@@ -519,21 +523,30 @@ fn merge_one(
     let rid = unb64(&env.id)?;
     let bucket = unb64(&env.ct).map(|ct| ct.len().saturating_sub(16)).unwrap_or(0);
     let nk = if plain.deleted {
-        // A tombstone has no data: its natural key is one sync knows, or one held here.
+        // A tombstone names its natural key; one from an older client is found by its record id.
         let known = pak.book.items.iter().find(|(k, i)| k.starts_with(&format!("{c}/")) && i.rid == env.id);
         let local: Vec<String> = match c {
             "passwords" => vault.entries().iter().chain(ch.puts.iter()).map(|e| e.id.clone()).collect(),
             _ => never.clone(),
         };
-        match known {
-            Some((k, _)) => k[c.len() + 1..].to_string(),
-            None => match local
-                .into_iter()
-                .find(|n| envelope::record_id(&keys.ik, n.as_bytes()).as_slice() == rid.as_slice())
-            {
-                Some(n) => n,
-                None => return Ok(false),
-            },
+        let named = plain.data.get("nk").and_then(Value::as_str).map(str::to_string);
+        match (named, known) {
+            (Some(n), _) => {
+                if envelope::record_id(&keys.ik, n.as_bytes()).as_slice() != rid.as_slice() {
+                    return Err(alarm());
+                }
+                n
+            }
+            (None, Some((k, _))) => k[c.len() + 1..].to_string(),
+            (None, None) => {
+                match local
+                    .into_iter()
+                    .find(|n| envelope::record_id(&keys.ik, n.as_bytes()).as_slice() == rid.as_slice())
+                {
+                    Some(n) => n,
+                    None => return Ok(false),
+                }
+            }
         }
     } else {
         let nk = match c {
@@ -558,7 +571,11 @@ fn merge_one(
             // This device's own write coming back, or an older version (a replay): nothing to do.
             wipe(&mut plain.data);
             if let Some(i) = pak.book.items.get_mut(&k) {
-                i.seq = i.seq.max(r.seq);
+                if r.seq > i.seq {
+                    // The same version under a new id (a rekey): follow it.
+                    i.seq = r.seq;
+                    i.rid = env.id.clone();
+                }
             }
             return Ok(false);
         }
@@ -690,6 +707,12 @@ pub fn run(
 ) -> SResult<PakReport> {
     if off.iter().any(|c| c == "passwords") {
         return Ok(PakReport::default());
+    }
+    // A pending passwords-key rotation, or a rekey left over, comes first.
+    if super::rotate::pak_maintenance(api, st, pak)? {
+        let part =
+            VaultSync { state: pak.to_bytes(), dirty: vault.sync_part().map(|p| p.dirty.clone()).unwrap_or_default() };
+        vault.set_sync_part(Some(part), wrapper).map_err(|e| SyncFail::Local(e.to_string()))?;
     }
     let acc = st.account_bytes().map_err(|_| SyncFail::BadAnswer("account id"))?;
     let mut hlc = Hlc::new(st.hlc);

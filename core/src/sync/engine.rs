@@ -15,6 +15,7 @@ use super::envelope::{self, unb64, Envelope, KeyKind, RecordPlain};
 use super::hlc::Hlc;
 use super::keys::KeyError;
 use super::local::{self, SyncItem};
+use super::rotate;
 use super::state::SyncState;
 use super::AccountId;
 use crate::storage::Store;
@@ -31,11 +32,14 @@ pub struct RunOpts<'a> {
     /// Collections switched off on this device.
     pub off: &'a [String],
     pub max_rounds: usize,
+    /// The user confirmed the devices that keep access (or removed the device here): a rotation
+    /// may go ahead even if one of them was added by the removed device [R3].
+    pub confirm_rotation: bool,
 }
 
 impl Default for RunOpts<'_> {
     fn default() -> Self {
-        RunOpts { device_name: "Krunk", off: &[], max_rounds: 20 }
+        RunOpts { device_name: "Krunk", off: &[], max_rounds: 20, confirm_rotation: false }
     }
 }
 
@@ -52,6 +56,10 @@ pub struct Report {
     /// Writes are frozen until the keys are rotated (423).
     pub frozen: bool,
     pub queue_left: i64,
+    /// This run rotated the account key to this epoch (S9).
+    pub rotated: Option<u32>,
+    /// A rotation waits for the user to confirm these devices (added by a removed one).
+    pub confirm: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -72,7 +80,7 @@ fn alarm() -> SyncFail {
 }
 
 /// The key of `epoch` for AK collections (the head's, or an older one still kept).
-fn ak_for(st: &SyncState, epoch: u32) -> Option<[u8; 32]> {
+pub(crate) fn ak_for(st: &SyncState, epoch: u32) -> Option<[u8; 32]> {
     let pin = st.ak.as_ref()?;
     if epoch == pin.epoch {
         return Some(*pin.ak);
@@ -95,6 +103,23 @@ pub fn run(api: &Api, store: &mut Store, st: &mut SyncState, opts: &RunOpts) -> 
     {
         return Err(SyncFail::Api(ApiError::Unauthorized));
     }
+    // A removal waits for its rotation: this device does it (PROTOCOL §7), or finishes a rekey
+    // another rotator left. Until both are done, local changes stay queued.
+    if server.rotation.ak {
+        match rotate::rotate_ak(api, st, store.sync_conn(), opts.confirm_rotation)? {
+            rotate::AkRotation::Rotated(e) => report.rotated = Some(e),
+            rotate::AkRotation::Confirm(ids) => report.confirm = ids,
+            _ => {}
+        }
+    } else if st.ak.as_ref().is_some_and(|a| a.min_record_epoch < a.epoch) {
+        rotate::rekey_ak(api, st, store.sync_conn(), &[])?;
+        rotate::finish_ak(api, st)?;
+    }
+    if let Some(min) = st.ak.as_ref().map(|a| a.min_record_epoch) {
+        st.ak_old.retain(|k| k.epoch >= min);
+    }
+    let writes_frozen = (server.rotation.ak && report.rotated.is_none())
+        || st.ak.as_ref().is_some_and(|a| a.min_record_epoch < a.epoch);
     let acc = st.account_bytes().map_err(|_| SyncFail::BadAnswer("account id"))?;
     let mut hlc = Hlc::new(st.hlc);
     let device_id = st.device_id.clone();
@@ -117,7 +142,7 @@ pub fn run(api: &Api, store: &mut Store, st: &mut SyncState, opts: &RunOpts) -> 
         coll::enqueue_all(store.sync_conn(), &ctx)?;
         local::meta_del(store.sync_conn(), "reconcile")?;
     }
-    if server.rotation.ak {
+    if writes_frozen {
         report.frozen = true;
     } else {
         push(api, store, st, &acc, &mut hlc, &ctx, opts, &mut report)?;
@@ -171,6 +196,10 @@ fn open_one(
         return Ok(None);
     }
     let Some(key) = ak_for(st, env.e) else {
+        if st.ak.as_ref().is_some_and(|a| env.e < a.epoch) {
+            // An epoch whose rekey is finished: never opened again.
+            return Ok(None);
+        }
         // A newer epoch than ours: the keys must be refreshed first (the next run does).
         return Err(SyncFail::Keys(KeyError::Dir(DirError::Gap)));
     };
@@ -178,9 +207,17 @@ fn open_one(
     let plain = envelope::open_record(&keys.ck, acc, env).map_err(|_| alarm())?;
     let rid = unb64(&env.id)?;
     let nk = if plain.deleted {
-        match local::item_by_record(conn, &env.c, &rid)? {
-            Some((nk, _)) => nk,
-            None => return Ok(None),
+        match plain.data.get("nk").and_then(Value::as_str) {
+            Some(nk) => {
+                if envelope::record_id(&keys.ik, nk.as_bytes()).as_slice() != rid.as_slice() {
+                    return Err(alarm());
+                }
+                nk.to_string()
+            }
+            None => match local::item_by_record(conn, &env.c, &rid)? {
+                Some((nk, _)) => nk,
+                None => return Ok(None),
+            },
         }
     } else {
         let nk = coll::natural_key(&env.c, &plain.data).ok_or(SyncFail::BadAnswer("record data"))?;
@@ -360,7 +397,9 @@ fn push(
                 let (deleted, d, bucket) = match (&data, &item) {
                     (None, None) => continue,
                     (None, Some(it)) if it.deleted || it.server_seq == 0 => continue,
-                    (None, Some(it)) => (true, json!({}), Some(it.bucket as usize)),
+                    // A tombstone names its natural key (inside the ciphertext), so a rotator can
+                    // re-encrypt it under the next epoch's record id.
+                    (None, Some(it)) => (true, json!({"nk": nk}), Some(it.bucket as usize)),
                     (Some(d), Some(it))
                         if !it.deleted
                             && it.server_seq > 0

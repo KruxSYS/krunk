@@ -58,3 +58,5 @@
 #remote-list h3:first-child { margin-top: 0; }
 .tabs a { color: var(--link); text-decoration: none; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tabs a:hover { text-decoration: underline; }
+.card.warn-card { border-color: color-mix(in srgb, #d97706 60%, var(--border)); }
+#secure-secret { margin-top: 4px; }
