@@ -16,7 +16,11 @@ pub const BOOKMARKS_BAR: i64 = 1;
 /// Id of the "Other bookmarks" root folder.
 pub const OTHER_BOOKMARKS: i64 = 2;
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
+
+/// Fixed sync guids of the two root folders (PROTOCOL §9.5): "bar" and "other".
+pub const ROOT_GUID_BAR: [u8; 16] = [0x01; 16];
+pub const ROOT_GUID_OTHER: [u8; 16] = [0x02; 16];
 
 const SCHEMA_V1: &str = "
 CREATE TABLE urls (
@@ -107,6 +111,97 @@ CREATE TABLE site_permissions (
 );
 ";
 
+// Krunk 0.9.0 (sync S5; PROTOCOL §8 calls it "v5", but v5 was taken by 0.5.0): bookmark guids
+// and modification times, and the sync bookkeeping (the single definition, PLAN §5.2):
+// - `sync_items`: per synced item, its record id, server seq, version, padding bucket, flags and
+//   collection-specific state (`extra`, JSON);
+// - `sync_queue`: local changes waiting to be pushed, filled by the triggers below;
+// - `sync_meta`: small state. The triggers only queue while `track` = '1' (sync on) and not while
+//   the engine applies remote changes (`applying` present, set inside its own transaction). With
+//   sync off they write nothing at all.
+const SCHEMA_V6: &str = "
+ALTER TABLE bookmarks ADD COLUMN guid BLOB;
+ALTER TABLE bookmarks ADD COLUMN modified INTEGER NOT NULL DEFAULT 0;
+UPDATE bookmarks SET guid = CASE id WHEN 1 THEN x'01010101010101010101010101010101'
+                                    WHEN 2 THEN x'02020202020202020202020202020202'
+                                    ELSE randomblob(16) END,
+                     modified = added;
+CREATE UNIQUE INDEX bookmarks_guid ON bookmarks(guid);
+CREATE TRIGGER bookmarks_need_guid BEFORE INSERT ON bookmarks WHEN NEW.guid IS NULL OR length(NEW.guid) <> 16
+BEGIN SELECT RAISE(ABORT, 'a bookmark needs a 16-byte guid'); END;
+
+CREATE TABLE sync_items (
+    collection  TEXT NOT NULL,
+    natural_key TEXT NOT NULL,
+    record_id   BLOB,
+    server_seq  INTEGER NOT NULL DEFAULT 0,
+    ver         INTEGER NOT NULL DEFAULT 0,
+    bucket      INTEGER NOT NULL DEFAULT 0,
+    dirty       INTEGER NOT NULL DEFAULT 0,
+    deleted     INTEGER NOT NULL DEFAULT 0,
+    origin_sync INTEGER NOT NULL DEFAULT 0,
+    extra       TEXT,
+    PRIMARY KEY (collection, natural_key)
+);
+CREATE INDEX sync_items_record ON sync_items(collection, record_id);
+CREATE TABLE sync_queue (
+    collection  TEXT NOT NULL,
+    natural_key TEXT NOT NULL,
+    enqueued_at INTEGER NOT NULL,
+    PRIMARY KEY (collection, natural_key)
+);
+CREATE TABLE sync_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+";
+
+/// The change triggers of v6 (`@TRACK` is replaced by [`TRACKING`]). Each queues the natural key
+/// the engine needs: a bookmark's guid (hex), a history URL (as stored; the engine normalizes it),
+/// a pinned or hidden tile's URL, an allowlisted host, a never-save origin, and the settings and
+/// session records as a whole.
+const SYNC_TRIGGERS: &str = "
+CREATE TRIGGER sync_q_bookmarks_ins AFTER INSERT ON bookmarks WHEN @TRACK
+BEGIN INSERT OR REPLACE INTO sync_queue VALUES ('bookmarks', lower(hex(NEW.guid)), @NOW); END;
+CREATE TRIGGER sync_q_bookmarks_upd AFTER UPDATE OF parent, position, title, url ON bookmarks WHEN @TRACK
+BEGIN INSERT OR REPLACE INTO sync_queue VALUES ('bookmarks', lower(hex(NEW.guid)), @NOW); END;
+CREATE TRIGGER sync_q_bookmarks_del AFTER DELETE ON bookmarks WHEN @TRACK
+BEGIN INSERT OR REPLACE INTO sync_queue VALUES ('bookmarks', lower(hex(OLD.guid)), @NOW); END;
+CREATE TRIGGER sync_q_visits_ins AFTER INSERT ON visits WHEN @TRACK
+BEGIN INSERT OR REPLACE INTO sync_queue SELECT 'history', url, @NOW FROM urls WHERE id = NEW.url_id; END;
+CREATE TRIGGER sync_q_urls_upd AFTER UPDATE OF title ON urls WHEN @TRACK
+BEGIN INSERT OR REPLACE INTO sync_queue VALUES ('history', NEW.url, @NOW); END;
+CREATE TRIGGER sync_q_urls_del AFTER DELETE ON urls WHEN @TRACK
+BEGIN INSERT OR REPLACE INTO sync_queue VALUES ('history', OLD.url, @NOW); END;
+CREATE TRIGGER sync_q_tiles_ins AFTER INSERT ON tiles WHEN @TRACK
+BEGIN INSERT OR REPLACE INTO sync_queue VALUES ('pins', NEW.url, @NOW); END;
+CREATE TRIGGER sync_q_tiles_upd AFTER UPDATE ON tiles WHEN @TRACK
+BEGIN INSERT OR REPLACE INTO sync_queue VALUES ('pins', NEW.url, @NOW);
+      INSERT OR REPLACE INTO sync_queue SELECT 'pins', OLD.url, @NOW WHERE OLD.url <> NEW.url; END;
+CREATE TRIGGER sync_q_tiles_del AFTER DELETE ON tiles WHEN @TRACK
+BEGIN INSERT OR REPLACE INTO sync_queue VALUES ('pins', OLD.url, @NOW); END;
+CREATE TRIGGER sync_q_allow_ins AFTER INSERT ON adblock_allowlist WHEN @TRACK
+BEGIN INSERT OR REPLACE INTO sync_queue VALUES ('allowlist', NEW.host, @NOW); END;
+CREATE TRIGGER sync_q_allow_del AFTER DELETE ON adblock_allowlist WHEN @TRACK
+BEGIN INSERT OR REPLACE INTO sync_queue VALUES ('allowlist', OLD.host, @NOW); END;
+CREATE TRIGGER sync_q_never_ins AFTER INSERT ON vault_never WHEN @TRACK
+BEGIN INSERT OR REPLACE INTO sync_queue VALUES ('never_save', NEW.origin, @NOW); END;
+CREATE TRIGGER sync_q_never_del AFTER DELETE ON vault_never WHEN @TRACK
+BEGIN INSERT OR REPLACE INTO sync_queue VALUES ('never_save', OLD.origin, @NOW); END;
+CREATE TRIGGER sync_q_kv_ins AFTER INSERT ON kv WHEN NEW.key IN ('settings', 'session') AND @TRACK
+BEGIN INSERT OR REPLACE INTO sync_queue VALUES (CASE NEW.key WHEN 'settings' THEN 'settings' ELSE 'tabs' END, '*', @NOW); END;
+CREATE TRIGGER sync_q_kv_upd AFTER UPDATE ON kv WHEN NEW.key IN ('settings', 'session') AND NEW.value <> OLD.value AND @TRACK
+BEGIN INSERT OR REPLACE INTO sync_queue VALUES (CASE NEW.key WHEN 'settings' THEN 'settings' ELSE 'tabs' END, '*', @NOW); END;
+";
+
+/// The triggers' condition: sync is on and the engine isn't applying remote changes.
+const TRACKING: &str = "(EXISTS (SELECT 1 FROM sync_meta WHERE key = 'track' AND value = '1') \
+     AND NOT EXISTS (SELECT 1 FROM sync_meta WHERE key = 'applying'))";
+
+fn sync_triggers() -> String {
+    SYNC_TRIGGERS.replace("@TRACK", TRACKING).replace("@NOW", "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)")
+}
+
 /// `YYYY-MM-DD` of a Unix-millisecond time (UTC; folder names, not display).
 pub fn date_ymd(ms: i64) -> String {
     // Howard Hinnant's civil-from-days.
@@ -194,6 +289,13 @@ impl Store {
         if version < 5 {
             let tx = self.conn.transaction()?;
             tx.execute_batch(SCHEMA_V5)?;
+            tx.pragma_update(None, "user_version", 5)?;
+            tx.commit()?;
+        }
+        if version < 6 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(SCHEMA_V6)?;
+            tx.execute_batch(&sync_triggers())?;
             tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
             tx.commit()?;
         }
@@ -315,6 +417,13 @@ impl Store {
     /// Reclaims space after large deletions.
     pub fn vacuum(&self) -> DbResult<()> {
         self.conn.execute_batch("VACUUM")
+    }
+}
+
+#[cfg(test)]
+impl Store {
+    pub(crate) fn kv_set_meta(&self, key: &str, value: &str) {
+        self.conn.execute("INSERT OR REPLACE INTO sync_meta(key, value) VALUES (?1, ?2)", params![key, value]).unwrap();
     }
 }
 
@@ -465,5 +574,174 @@ mod tests {
         assert_eq!(v, SCHEMA_VERSION);
         drop(s);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // ---------------------------------------------------------------- v6 (0.9.0, sync S5)
+
+    /// A copy of a frozen fixture in a fresh temporary folder.
+    fn fixture_copy(name: &str, tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("lb-fixture-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/storage").join(name);
+        let path = dir.join("browser.db");
+        std::fs::copy(src, &path).unwrap();
+        (dir, path)
+    }
+
+    fn count(s: &Store, sql: &str) -> i64 {
+        s.conn.query_row(sql, [], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn a_0_8_0_database_migrates_to_v6_without_losing_anything() {
+        let (dir, path) = fixture_copy("browser-v5-0.8.0.db", "v5");
+        {
+            let c = Connection::open(&path).unwrap();
+            let v: i64 = c.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+            assert_eq!(v, 5, "the fixture is a 0.8.0 (v5) database");
+        }
+        let s = Store::open(&path).unwrap();
+        assert_eq!(count(&s, "PRAGMA user_version"), 6);
+        // Every row is still there.
+        assert_eq!(count(&s, "SELECT count(*) FROM bookmarks"), 11);
+        assert_eq!(count(&s, "SELECT count(*) FROM urls"), 3);
+        assert_eq!(count(&s, "SELECT count(*) FROM visits"), 6);
+        assert_eq!(count(&s, "SELECT count(*) FROM tiles"), 3);
+        assert_eq!(s.allowlist().unwrap(), vec!["example.org".to_string()]);
+        assert_eq!(s.never_save_list().unwrap(), vec!["https://never.example".to_string()]);
+        assert_eq!(s.permission("http://localhost:8094", "lna").unwrap(), Some(true));
+        assert!(s.favicon("example.com").unwrap().is_some());
+        assert_eq!(s.load_settings().unwrap().homepage, "https://start.example/");
+        assert!(s.kv_get("session").unwrap().unwrap().contains("https://example.com/"));
+        let tree = s.bookmark_tree().unwrap();
+        assert_eq!(tree.len(), 2);
+        // Guids: the roots fixed, every other one 16 random bytes, all unique; modified = added.
+        let root = |id: i64| -> Vec<u8> {
+            s.conn.query_row("SELECT guid FROM bookmarks WHERE id = ?1", [id], |r| r.get(0)).unwrap()
+        };
+        assert_eq!(root(BOOKMARKS_BAR), ROOT_GUID_BAR.to_vec());
+        assert_eq!(root(OTHER_BOOKMARKS), ROOT_GUID_OTHER.to_vec());
+        assert_eq!(count(&s, "SELECT count(DISTINCT guid) FROM bookmarks WHERE length(guid) = 16"), 11);
+        assert_eq!(count(&s, "SELECT count(*) FROM bookmarks WHERE modified <> added"), 0);
+        // The sync tables exist and are empty; nothing was queued (sync is off).
+        for t in ["sync_items", "sync_queue", "sync_meta"] {
+            assert_eq!(count(&s, &format!("SELECT count(*) FROM {t}")), 0, "{t}");
+        }
+        // Reopening is a no-op.
+        drop(s);
+        let s = Store::open(&path).unwrap();
+        assert_eq!(count(&s, "SELECT count(DISTINCT guid) FROM bookmarks"), 11);
+        drop(s);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn new_bookmarks_get_guids_and_raw_inserts_without_one_fail() {
+        let mut s = Store::open_in_memory().unwrap();
+        let a = s.add_bookmark(BOOKMARKS_BAR, "A", "https://a.example/").unwrap();
+        let f = s.add_folder(OTHER_BOOKMARKS, "F").unwrap();
+        let g = |id: i64| -> Vec<u8> {
+            s.conn.query_row("SELECT guid FROM bookmarks WHERE id = ?1", [id], |r| r.get(0)).unwrap()
+        };
+        assert_eq!(g(a).len(), 16);
+        assert_ne!(g(a), g(f));
+        assert_eq!(g(BOOKMARKS_BAR), ROOT_GUID_BAR.to_vec(), "a new database gets the fixed root guids too");
+        let raw = s.conn.execute(
+            "INSERT INTO bookmarks(parent, is_folder, title, url, position, added) VALUES (1, 0, 'x', 'https://x.example/', 9, 0)",
+            [],
+        );
+        assert!(raw.is_err(), "an insert without a guid is refused");
+        // An edit and a move update `modified`.
+        s.conn.execute("UPDATE bookmarks SET modified = 0", []).unwrap();
+        s.edit_bookmark(a, "A2", None).unwrap();
+        s.move_bookmark(f, BOOKMARKS_BAR, 0).unwrap();
+        assert_eq!(count(&s, "SELECT count(*) FROM bookmarks WHERE modified > 0"), 2);
+    }
+
+    fn queue(s: &Store) -> Vec<(String, String)> {
+        let mut st =
+            s.conn.prepare("SELECT collection, natural_key FROM sync_queue ORDER BY collection, natural_key").unwrap();
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        rows.collect::<DbResult<_>>().unwrap()
+    }
+
+    fn guid_hex(s: &Store, id: i64) -> String {
+        s.conn.query_row("SELECT lower(hex(guid)) FROM bookmarks WHERE id = ?1", [id], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn changes_are_queued_only_while_sync_tracks_them() {
+        let mut s = Store::open_in_memory().unwrap();
+        // Sync off: nothing is queued, whatever changes.
+        let a = s.add_bookmark(BOOKMARKS_BAR, "A", "https://a.example/").unwrap();
+        s.record_visit("https://h.example/", "H", 5).unwrap();
+        s.pin_site("https://p.example/", "P").unwrap();
+        s.allowlist_add("allow.example", 1).unwrap();
+        s.never_save_add("https://n.example/", 1).unwrap();
+        s.save_settings(&Settings::default()).unwrap();
+        s.kv_set("session", "{}").unwrap();
+        assert!(queue(&s).is_empty(), "sync off: no queue");
+
+        s.kv_set_meta("track", "1");
+        let folder = s.add_folder(BOOKMARKS_BAR, "F").unwrap();
+        let child = s.add_bookmark(folder, "C", "https://c.example/").unwrap();
+        s.edit_bookmark(a, "A renamed", None).unwrap();
+        s.record_visit("https://h.example/", "H", 6).unwrap();
+        s.pin_site("https://p2.example/", "P2").unwrap();
+        s.allowlist_add("allow2.example", 2).unwrap();
+        s.never_save_add("https://n2.example/", 2).unwrap();
+        let st = Settings { homepage: "https://home.example/".into(), ..Default::default() };
+        s.save_settings(&st).unwrap();
+        s.kv_set("session", r#"{"tabs":[]}"#).unwrap();
+        let (fa, fc, ff) = (guid_hex(&s, a), guid_hex(&s, child), guid_hex(&s, folder));
+        let mut want = vec![
+            ("allowlist".to_string(), "allow2.example".to_string()),
+            ("bookmarks".into(), fa.clone()),
+            ("bookmarks".into(), fc.clone()),
+            ("bookmarks".into(), ff.clone()),
+            ("history".into(), "https://h.example/".into()),
+            ("never_save".into(), "https://n2.example".into()),
+            ("pins".into(), "https://p2.example/".into()),
+            ("settings".into(), "*".into()),
+            ("tabs".into(), "*".into()),
+        ];
+        want.sort();
+        assert_eq!(queue(&s), want);
+
+        // Deleting a folder queues it and its children (the foreign-key cascade fires the trigger).
+        s.conn.execute("DELETE FROM sync_queue", []).unwrap();
+        s.delete_bookmark(folder).unwrap();
+        let mut got: Vec<String> = queue(&s).into_iter().map(|q| q.1).collect();
+        got.sort();
+        let mut both = vec![fc.clone(), ff.clone()];
+        both.sort();
+        assert_eq!(got, both);
+
+        // A move queues the moved item and only the siblings whose place changed.
+        s.conn.execute("DELETE FROM sync_queue", []).unwrap();
+        let b = s.add_bookmark(BOOKMARKS_BAR, "B", "https://b.example/").unwrap();
+        let c = s.add_bookmark(BOOKMARKS_BAR, "C", "https://c2.example/").unwrap();
+        s.conn.execute("DELETE FROM sync_queue", []).unwrap();
+        s.move_bookmark(c, BOOKMARKS_BAR, 1).unwrap();
+        let mut got: Vec<String> = queue(&s).into_iter().map(|q| q.1).collect();
+        got.sort();
+        let mut moved = vec![guid_hex(&s, b), guid_hex(&s, c)];
+        moved.sort();
+        assert_eq!(got, moved, "a ({}) kept its place and isn't queued", fa);
+
+        // History deletion queues the URL; clearing the queue, then applying remote changes
+        // (`applying`) queues nothing.
+        s.conn.execute("DELETE FROM sync_queue", []).unwrap();
+        s.delete_url("https://h.example/").unwrap();
+        assert_eq!(queue(&s), vec![("history".to_string(), "https://h.example/".to_string())]);
+        s.conn.execute("DELETE FROM sync_queue", []).unwrap();
+        s.kv_set_meta("applying", "1");
+        s.add_bookmark(OTHER_BOOKMARKS, "Remote", "https://r.example/").unwrap();
+        s.allowlist_remove("allow2.example").unwrap();
+        assert!(queue(&s).is_empty(), "remote changes are not queued again");
+        s.conn.execute("DELETE FROM sync_meta WHERE key = 'applying'", []).unwrap();
+        s.allowlist_remove("allow.example").unwrap();
+        assert_eq!(queue(&s), vec![("allowlist".to_string(), "allow.example".to_string())]);
     }
 }

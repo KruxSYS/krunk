@@ -1,0 +1,51 @@
+{
+  "format": 3,
+  "kdf": {
+    "alg": "argon2id",
+    "m_kib": 64,
+    "t": 1,
+    "p": 1,
+    "salt": "OBzpK8zsHlOqeNoPFME+hA=="
+  },
+  "wrap": "none",
+  "check": {
+    "nonce": "BngYYYbFZX2+wlCNtHp7v/0k5IE4yUBM",
+    "ct": "PELpPYSPRzi+9PI8VQ27sJQyEqWNbvdBGABAAF+6xwPRCbNYKIroP7AUaCGD0oA="
+  },
+  "vaultKey": "OBGkI6lHPxXYcJC7bQE5e5KNIQc9q3wp8dMQMhWHoSB/l9JoDkxmx7+pztdVIqDnAwJGiBepIXK7QzKDFYNUzbPbf7SPJ3YK",
+  "manifest": {
+    "nonce": "xctsGqtDQ8ANMKfTM4pu+LB7DyESAu6f",
+    "ct": "TGmKehMMOgvMJVdcB/juSN1kJV2l0B6OgjsHPI8EHvm8HVRPMB9qdT5zAgHPoqxD3ynO2Sr4+nCoS8T7zNt9AB/ykmQW/kItMgRPK4o4E1JIWkdjWCbxP5p7PyM1w4GZA9vPGNjIxNF+p4nEDKiRw5ScHtbreDnI/5ZRUdAq+vwyEmG+0YThUCJWO6sxKRkxec4kuYVUA/BXf7Q6Dw=="
+  },
+  "entries": [
+    {
+      "id": "6113571224438d3195129efa12b90b3f",
+      "nonce": "DxqQwcgPH8vVy+hJ2PEMtPfmDuEIqBm0",
+      "ct": "EXnwADdYf8d/CG8kSpoJ4IIYPItRMfjuHpd/B1pKO2DmDayzCSYuVz17NwGIrixvsoc2KTL5vJ4ooPuDPneUyOYqELbP/z/ID7S5PVZatEemyVQwgIw38F9CcGpJ3U4RuG38Cs1z4QTdMNaO7yig0PF5SB47LJ2MEy37QMoa+Ev+OuiZSTsf3RFMshM6ywbZEyNv/eoM"
+    },
+    {
+      "id": "9b16ca17dc4bf6115b6d1c863f39a02a",
+      "nonce": "bSd4tfVRIahXH1BZFF1lHMK6SmJJ+cpj",
+      "ct": "3DgT/difQbCCsd5L9VsqCjWnLCekAhuoo6low/paVon3Rj4RzJKIjSXK8aFlE+RFJw0paWwj4BOegkI2fPJFcJD41/8d+bVl3XhFezxREd1xKfci2jUaSEsIND0z0QLWOPBSr8UdltlufwI0MzspXDsKvEsIg3QFW1WfoWEDLPXsx9tma6XpgYsAcPHon6E2JrbrAPzkVgMS"
+    }
+  ],
+  "cards": [
+    {
+      "id": "6b32f9a5b5a163e766b363e7e487450b",
+      "nonce": "UvmcznnQKUC0l80OZ3dcgzxVSTEIcUv8",
+      "ct": "0g7IC67U3vl1pCoFRTIZKPMAp11gVNPQwmV90OeRgmcuP2KHS1lBvtz89P0yOOnR9h+yQTUJu+wFDRVDyRwAI1vulca842aI/4Xp4AQ+WtPpKW6R2vN7si4nBT06sc+axzSDSGsiXz+QUoblnVTNaMB5Ucc1qadftLElLY9QoJn4GhKE8b52Phs7pM53C0QhafkMhl8ZFXd9SDbYp865gNjVlpYA4Cb1aM9yEl2PJg8ETw=="
+    }
+  ],
+  "recovery": {
+    "kdf": {
+      "alg": "argon2id",
+      "m_kib": 65536,
+      "t": 3,
+      "p": 1,
+      "salt": "/XdZKrj+9QqwrM584IGWPQ=="
+    },
+    "public": "wIW4Hm8OxvINZGNpiA4jI6tKGEBcu40JlbGND9pHlms=",
+    "sealed": "dxUET4SNdr3SYWbAj9dOENkV1lIMYI6zjfVlnKJywmdQCV7iMssSlFJZmCaSsjX0/e6py8z+w1/ZRrxQp6+mH6xWgPY6y+mmSD6zJef8++E=",
+    "created": 1793000300000
+  }
+}

@@ -124,6 +124,46 @@ impl KeyWrapper for DpapiAccount {
     }
 }
 
+/// DPAPI for the sync state key in `sync.json` (0.9.0, PROTOCOL §8): its own entropy and
+/// description, so it can't be swapped with the vault key or the account token.
+// TODO(0.9.0 M7): used by the sync host; until then only by the DPAPI test below.
+#[cfg_attr(not(test), allow(dead_code))]
+pub struct DpapiSync;
+
+#[cfg_attr(not(test), allow(dead_code))]
+const SYNC_ENTROPY: &[u8] = b"Krunk sync state v1";
+
+impl KeyWrapper for DpapiSync {
+    fn name(&self) -> &'static str {
+        "dpapi-sync"
+    }
+
+    fn protect(&self, data: &[u8]) -> Result<Vec<u8>, String> {
+        let input = blob(data);
+        let entropy = blob(SYNC_ENTROPY);
+        let mut out = CRYPT_INTEGER_BLOB::default();
+        // SAFETY: input/entropy point to live slices for the call; DPAPI allocates `out`, which
+        // `take_blob` frees.
+        unsafe {
+            CryptProtectData(&input, w!("Krunk sync"), Some(&entropy), None, None, CRYPTPROTECT_UI_FORBIDDEN, &mut out)
+                .map_err(|e| format!("CryptProtectData: {e}"))?;
+        }
+        Ok(take_blob(&out).to_vec())
+    }
+
+    fn unprotect(&self, data: &[u8]) -> Result<Zeroizing<Vec<u8>>, String> {
+        let input = blob(data);
+        let entropy = blob(SYNC_ENTROPY);
+        let mut out = CRYPT_INTEGER_BLOB::default();
+        // SAFETY: as above.
+        unsafe {
+            CryptUnprotectData(&input, None, Some(&entropy), None, None, CRYPTPROTECT_UI_FORBIDDEN, &mut out)
+                .map_err(|e| format!("CryptUnprotectData: {e}"))?;
+        }
+        Ok(take_blob(&out))
+    }
+}
+
 /// Decrypts a DPAPI blob made without extra entropy by another program of this user
 /// (Chromium's `os_crypt` key and its legacy password blobs).
 pub fn unprotect_plain(data: &[u8]) -> Result<Zeroizing<Vec<u8>>, String> {
@@ -289,5 +329,37 @@ mod tests {
         assert_eq!(v.for_origin("https://a.example/")[0].password.as_str(), "s3cret");
         assert_eq!(Vault::open(&path, "wrong password!", &Dpapi).unwrap_err(), VaultError::WrongPassword);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod sync_tests {
+    use super::*;
+    use lb_core::sync::state;
+
+    /// The Windows test exe of S5 (run on the VM): `sync.json` round-trips through DPAPI, and a
+    /// blob of one entropy can't be opened with another.
+    #[test]
+    fn sync_state_round_trips_through_dpapi() {
+        let dir = std::env::temp_dir().join(format!("krunk-dpapi-sync-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sync.json");
+        let st = state::SyncState {
+            account_id: "0b1c2d3e-4f50-6172-8394-a5b6c7d8e9f0".into(),
+            device_id: "7d4012d9-f415-4a68-9b92-e029ffd1db29".into(),
+            dev_short: 2,
+            device_sk: Zeroizing::new([7; 32]),
+            last_pull_seq: 99,
+            ..Default::default()
+        };
+        state::save(&path, &st, &DpapiSync).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("\"wrap\": \"dpapi-sync\"") && !text.contains("7d4012d9"));
+        assert!(state::load(&path, &DpapiSync).unwrap().unwrap() == st);
+        let blob = DpapiSync.protect(b"state key").unwrap();
+        assert_eq!(&*DpapiSync.unprotect(&blob).unwrap(), b"state key");
+        assert!(DpapiAccount.unprotect(&blob).is_err(), "the account entropy can't open it");
+        assert!(Dpapi.unprotect(&blob).is_err(), "nor the vault's");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

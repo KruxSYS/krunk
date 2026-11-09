@@ -61,6 +61,14 @@ fn row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Bookmark> {
 
 const COLS: &str = "id, parent, is_folder, title, url, position, added";
 
+/// A new bookmark's sync guid: 16 random bytes (PROTOCOL §9.5).
+fn new_guid() -> DbResult<[u8; 16]> {
+    let mut g = [0u8; 16];
+    getrandom::fill(&mut g)
+        .map_err(|e| DbError::ToSqlConversionFailure(Box::new(std::io::Error::other(e.to_string()))))?;
+    Ok(g)
+}
+
 impl Store {
     pub fn bookmark(&self, id: i64) -> DbResult<Option<Bookmark>> {
         self.conn.query_row(&format!("SELECT {COLS} FROM bookmarks WHERE id = ?1"), [id], row).optional()
@@ -83,8 +91,9 @@ impl Store {
         self.require_folder(parent)?;
         let pos = self.next_position(parent)?;
         self.conn.execute(
-            "INSERT INTO bookmarks(parent, is_folder, title, url, position, added) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![parent, is_folder, clean_title(title), url, pos, added],
+            "INSERT INTO bookmarks(parent, is_folder, title, url, position, added, guid, modified)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?6)",
+            params![parent, is_folder, clean_title(title), url, pos, added, new_guid()?.to_vec()],
         )?;
         Ok(self.conn.last_insert_rowid())
     }
@@ -131,8 +140,10 @@ impl Store {
             (false, Some(u)) => Some(u.to_string()),
             (_, None) => b.url,
         };
-        self.conn
-            .execute("UPDATE bookmarks SET title = ?2, url = ?3 WHERE id = ?1", params![id, clean_title(title), url])?;
+        self.conn.execute(
+            "UPDATE bookmarks SET title = ?2, url = ?3, modified = ?4 WHERE id = ?1",
+            params![id, clean_title(title), url, now_ms()],
+        )?;
         Ok(())
     }
 
@@ -160,9 +171,13 @@ impl Store {
         };
         let mut order = siblings;
         order.insert((index as usize).min(order.len()), id);
-        tx.execute("UPDATE bookmarks SET parent = ?2 WHERE id = ?1", params![id, parent])?;
+        tx.execute("UPDATE bookmarks SET parent = ?2, modified = ?3 WHERE id = ?1", params![id, parent, now_ms()])?;
         for (pos, bid) in order.iter().enumerate() {
-            tx.execute("UPDATE bookmarks SET position = ?2 WHERE id = ?1", params![bid, pos as i64])?;
+            // Only rows whose place changes are written (each write is a change for sync).
+            tx.execute(
+                "UPDATE bookmarks SET position = ?2 WHERE id = ?1 AND position <> ?2",
+                params![bid, pos as i64],
+            )?;
         }
         if b.parent != Some(parent) {
             if let Some(old) = b.parent {
@@ -271,7 +286,7 @@ fn renumber(tx: &rusqlite::Transaction<'_>, parent: i64) -> DbResult<()> {
         rows.collect::<DbResult<_>>()?
     };
     for (pos, id) in ids.iter().enumerate() {
-        tx.execute("UPDATE bookmarks SET position = ?2 WHERE id = ?1", params![id, pos as i64])?;
+        tx.execute("UPDATE bookmarks SET position = ?2 WHERE id = ?1 AND position <> ?2", params![id, pos as i64])?;
     }
     Ok(())
 }

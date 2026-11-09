@@ -299,6 +299,40 @@ pub fn get_range(
 pub struct Response {
     pub status: u32,
     pub body: Vec<u8>,
+    /// `Retry-After` (sync, 0.9.0: 429 and 503 answers) and `Date` (the clock-skew warning).
+    // TODO(0.9.0 M7): read by the sync host.
+    #[allow(dead_code)]
+    pub retry_after: Option<String>,
+    #[allow(dead_code)]
+    pub date: Option<String>,
+}
+
+/// One response header as text (`level`: a `WINHTTP_QUERY_*` value); `None` if absent.
+///
+/// # Safety
+/// `request` must be a live request handle after `WinHttpReceiveResponse`.
+unsafe fn header_text(request: *mut c_void, level: u32) -> Option<String> {
+    let mut len = 0u32;
+    let mut index = 0u32;
+    // SAFETY: the size query writes only `len`; the buffer below has `len` bytes.
+    unsafe {
+        let _ = WinHttpQueryHeaders(request, level, PCWSTR::null(), None, &mut len, &mut index);
+        if len == 0 || len > 4096 {
+            return None;
+        }
+        let mut buf = vec![0u16; (len as usize).div_ceil(2) + 1];
+        let mut index = 0u32;
+        WinHttpQueryHeaders(
+            request,
+            level,
+            PCWSTR::null(),
+            Some(buf.as_mut_ptr() as *mut c_void),
+            &mut len,
+            &mut index,
+        )
+        .ok()?;
+        Some(String::from_utf16_lossy(&buf[..(len as usize / 2).min(buf.len())]).trim().to_string())
+    }
 }
 
 /// One JSON API call (the account, 0.8.0): `method` (GET or POST) `url` with the extra request
@@ -412,6 +446,8 @@ pub fn request(
             }
             out.extend_from_slice(&buf[..read as usize]);
         }
-        Ok(Response { status, body: out })
+        let retry_after = header_text(request.0, WINHTTP_QUERY_RETRY_AFTER);
+        let date = header_text(request.0, WINHTTP_QUERY_DATE);
+        Ok(Response { status, body: out, retry_after, date })
     }
 }

@@ -4,6 +4,7 @@
 //! and Android uses the same code through UniFFI. Every label is in [`labels`]; every format
 //! is pinned by the frozen test vectors in `core/tests/fixtures/sync/`.
 
+pub mod api;
 pub mod codes;
 pub mod crypto;
 pub mod dir;
@@ -12,6 +13,7 @@ pub mod hlc;
 pub mod labels;
 pub mod normalize;
 pub mod sas;
+pub mod state;
 
 #[cfg(test)]
 mod vectors;

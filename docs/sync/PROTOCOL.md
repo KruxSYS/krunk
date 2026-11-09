@@ -458,23 +458,34 @@ sequenceDiagram
      depend on the chain MAC under the revoked epoch (THREAT_MODEL R1).
 
 ## 8. Local state (clients)
-- **`sync.json`** (`%LOCALAPPDATA%\Krunk\`; app-private storage on Android) holds:
-  - `{v, account_id, device_id, dev_short, server}`;
-  - the refresh token (the access token stays in memory only);
-  - the general X25519 private key;
-  - `AK` for each epoch still needed (head + hist);
-  - AK-level high-water marks: `ak_dir` seq and head hash, epoch, last pull `seq`.
+**Clarified in 0.9.0 (S5).** The numbers first planned here were used by other features before
+sync shipped, and the account identity arrived first (0.8.0):
+- the sync schema of `browser.db` is **v6**, not v5 (v5 is 0.5.0's site permissions);
+- the vault's sync field is **format 4**, not 2 (2 and 3 are 0.6.0's cards and 0.7.0's recovery
+  slot);
+- the account and device ids and the rotating refresh token stay in **`account.json`** (0.8.0,
+  DPAPI with its own entropy). `sync.json` holds only the sync key material below, so a token
+  rotation never has two copies to keep in step.
 
-  Everything except `v` is sealed with XChaCha20-Poly1305 under a random 32-byte state key. That
-  key is wrapped with **DPAPI** (CurrentUser, entropy `"Krunk sync state v1"`) on Windows, or
-  with an **Android Keystore** AES-256-GCM key on Android [R19].
-- **`vault.json`**, format 2 (a migration from format 1, see PLAN S5): a new optional sealed
-  field `sync`, `AEAD(VK, …, aad="lb-vault:sync")`, holding:
+- **`sync.json`** (`%LOCALAPPDATA%\Krunk\`; app-private storage on Android) holds:
+  - `account_id`, `device_id`, `dev_short` (copies, for the AAD and MACs);
+  - the general X25519 private key;
+  - `AK` for each epoch still needed (head + older ones while records are re-encrypted);
+  - AK-level high-water marks: `ak_dir` seq and head hash, epoch, `min_record_epoch`, last pull
+    `seq`, the HLC, and a fork or tamper alarm.
+
+  Everything except `v` is sealed with XChaCha20-Poly1305 (AAD `krunk-sync-state/v1`) under a
+  fresh random 32-byte state key at every save. That key is wrapped with **DPAPI** (CurrentUser,
+  entropy `"Krunk sync state v1"`) on Windows, or with an **Android Keystore** AES-256-GCM key on
+  Android [R19]. The file is `{v, wrap, key, n, ct}`.
+- **`vault.json`**, format 4: a new optional sealed field `sync`, `AEAD(VK, …, aad="lb-vault:sync")`,
+  whose hash is in the sealed manifest (an older `sync` can't be put back), holding:
   - the vault X25519 private key;
   - `PAK` (head + hist);
   - PAK-level pins: the `pak_dir` head hash and seq, `pak_epoch`, `esc_pk` and `rr_gen` [R10];
-  - the queue of pending changes to the PAK collections, so it never sits outside the vault.
-- **`browser.db`** schema v5 adds bookmark GUIDs and the sync bookkeeping tables. Their single
+  - the queue of pending changes to the passwords (the ids of the entries changed since the last
+    push), so it never sits outside the vault.
+- **`browser.db`** schema v6 adds bookmark GUIDs and the sync bookkeeping tables. Their single
   definition is in PLAN §5.2.
 
 ## 9. Records

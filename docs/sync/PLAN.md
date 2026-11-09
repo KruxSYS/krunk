@@ -476,26 +476,38 @@ URL settings come from `.env`, which the operator provides.
   §2).
 
 ### 5.2 Local storage and migrations (S5)
-- **`browser.db` schema v5:**
-  - `bookmarks` gains `guid BLOB UNIQUE NOT NULL` (16 random bytes, backfilled; the roots get
-    fixed guids) and `modified INTEGER`;
+**As built in 0.9.0** (the numbers below were taken by other features in the meantime, see the
+PROTOCOL §8 note):
+- **`browser.db` schema v6** (0.5.0's `site_permissions` already used v5):
+  - `bookmarks` gains `guid BLOB` (16 random bytes, backfilled; the roots get the fixed guids
+    `0x01…` and `0x02…`; a unique index, and a trigger refuses an insert without a 16-byte guid)
+    and `modified INTEGER` (backfilled from `added`; set on edits and moves);
   - new tables, the **single definition** (PROTOCOL §8 refers here):
-    - `sync_items(collection, natural_key, record_id, server_seq, ver, bucket, dirty, deleted, origin_sync)`:
+    - `sync_items(collection, natural_key, record_id, server_seq, ver, bucket, dirty, deleted, origin_sync, extra)`:
       `bucket` is the padding bucket of the last version (needed for tombstones, PROTOCOL §9.4);
-      `origin_sync` marks items that arrived from sync (needed for unlinking with "delete synced
-      data", §2);
-    - `sync_queue(collection, natural_key, enqueued_at)`, for the AK collections only (the PAK
-      collections queue inside the vault);
+      `origin_sync` marks items that arrived from sync (needed for turning sync off with "delete
+      synced data", §2); `extra` (JSON) is the collection's own state, e.g. a bookmark's `sort`;
+    - `sync_queue(collection, natural_key, enqueued_at)`, filled by **triggers** on the synced
+      tables (bookmarks, visits/urls, tiles, the allowlist, `vault_never`, and the `settings` and
+      `session` records). They queue only while `sync_meta.track = '1'` (sync on) and never while
+      the engine applies remote changes (`sync_meta.applying`, set inside its transaction), so
+      with sync off nothing is ever written. The never-save origins queue here too: the table they
+      come from is already in `browser.db` in clear. Passwords queue inside the vault;
     - `sync_meta(key, value)`;
   - history keeps its existing tables; `sync_items` tracks which URLs have synced.
-  - It is a forward-only migration in `Store::migrate`. Krunk ≤ 0.2 can't open a v5 database;
-    release notes say so.
-- **`vault.json` format 2:** an optional sealed field `sync` (PROTOCOL §8). Format-1 files load
-  unchanged and are written as format 2 only once sync is set up.
-- **`sync.json`:** new, created only at linking. It is DPAPI-wrapped (PROTOCOL §8) and deleted on
-  unlink.
-- **Where tokens live:** the refresh token in `sync.json` (DPAPI); the access token in memory;
-  never in `browser.db`, logs or settings.
+  - It is a forward-only migration in `Store::migrate`, tested from a frozen database written by
+    0.8.0 (`core/tests/fixtures/storage/`). Going back to Krunk ≤ 0.8 on a v6 database is not
+    supported (it could no longer add bookmarks there).
+- **`vault.json` format 4** (formats 2 and 3 are 0.6.0's cards and 0.7.0's recovery slot): an
+  optional sealed field `sync` (`VaultSync`: sync's own state plus the list of entries changed
+  since the last push), bound to the manifest by its hash. Formats 1–3 load unchanged and stay as
+  they are; format 4 is written only while sync keeps state in the vault, and turning sync off
+  goes back to 1–3. Frozen 0.8.0 fixtures of formats 1, 2 and 3 are in `core/tests/fixtures/vault/`.
+- **`sync.json`:** new, created only when sync is turned on, deleted when it is turned off. It holds
+  only sync key material (PROTOCOL §8); the account identity and the refresh token stay in
+  0.8.0's `account.json`.
+- **Where tokens live:** the refresh token in `account.json` (DPAPI, 0.8.0); the access token in
+  memory; never in `browser.db`, `sync.json`, logs or settings.
 
 ### 5.3 Engine and scheduling
 - **Cadence (after linking):**

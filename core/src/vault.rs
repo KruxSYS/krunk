@@ -54,6 +54,11 @@ const AAD_CARD_PREFIX: &[u8] = b"lb-vault:card:";
 const FORMAT_RECOVERY: u32 = 3;
 /// HPKE `info` of the recovery seal.
 const RECOVERY_INFO: &[u8] = b"krunk-vault-recovery-v1";
+/// Format 4 (Krunk 0.9.0, sync S5; PROTOCOL §8 says "format 2", which 0.6.0's cards had taken):
+/// formats 1–3 plus the sealed sync part. Written only while sync keeps state in the vault, so
+/// vaults without it stay readable by 0.8.0.
+const FORMAT_SYNC: u32 = 4;
+const AAD_SYNC: &[u8] = b"lb-vault:sync";
 
 /// Minimum master-password length accepted by `create` and `change_password`.
 pub const MIN_MASTER_LEN: usize = 8;
@@ -199,6 +204,9 @@ struct VaultFile {
     /// The recovery slot (format 3); absent without a recovery phrase.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     recovery: Option<RecoverySlot>,
+    /// The sealed sync part (format 4); absent while sync keeps nothing in the vault.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sync: Option<Sealed>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -256,6 +264,49 @@ struct Manifest {
     /// The card ids, in file order (format 2); absent without cards.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     card_ids: Vec<String>,
+    /// SHA-256 of the sealed sync part (format 4), so an older one can't be put back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sync: Option<String>,
+}
+
+/// What sync keeps inside the vault (PROTOCOL §8), sealed under the vault key: `state` is owned
+/// by `core::sync` (the vault X25519 key, PAK by epoch, the PAK pins), `dirty` lists the entries
+/// changed since sync last pushed them (the PAK queue, so it never sits outside the vault).
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct VaultSync {
+    #[serde(with = "zeroizing_b64")]
+    pub state: Zeroizing<Vec<u8>>,
+    #[serde(default)]
+    pub dirty: Vec<String>,
+}
+
+impl std::fmt::Debug for VaultSync {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VaultSync")
+            .field("state", &format_args!("<{} bytes>", self.state.len()))
+            .field("dirty", &self.dirty.len())
+            .finish()
+    }
+}
+
+mod zeroizing_b64 {
+    use base64ct::{Base64, Encoding};
+    use serde::{Deserialize, Deserializer, Serializer};
+    use zeroize::Zeroizing;
+
+    pub fn serialize<S: Serializer>(v: &Zeroizing<Vec<u8>>, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&Zeroizing::new(Base64::encode_string(v)))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Zeroizing<Vec<u8>>, D::Error> {
+        let text = Zeroizing::new(String::deserialize(d)?);
+        Base64::decode_vec(&text).map(Zeroizing::new).map_err(serde::de::Error::custom)
+    }
+}
+
+fn sync_hash(sealed: &Sealed) -> String {
+    b64(&crate::sync::crypto::sha256(&[sealed.nonce.as_bytes(), b".", sealed.ct.as_bytes()]))
 }
 
 /// A decrypted payment card (Krunk 0.6.0). The security code is never stored.
@@ -718,6 +769,7 @@ pub struct Vault {
     pub(crate) entries: Vec<Entry>,
     cards: Vec<Card>,
     recovery: Option<RecoveryKey>,
+    sync: Option<VaultSync>,
 }
 
 impl std::fmt::Debug for Vault {
@@ -746,6 +798,7 @@ impl Vault {
             entries: Vec::new(),
             cards: Vec::new(),
             recovery: None,
+            sync: None,
         };
         vault.save(wrapper)?;
         Ok(vault)
@@ -760,7 +813,7 @@ impl Vault {
     /// The file, checked for what this version reads, and its KDF parameters and salt.
     fn parse_file(text: &str, wrapper: &dyn KeyWrapper) -> VResult<(VaultFile, KdfParams, [u8; SALT_LEN])> {
         let file: VaultFile = serde_json::from_str(text).map_err(json_err)?;
-        if ![FORMAT, FORMAT_CARDS, FORMAT_RECOVERY].contains(&file.format) || file.kdf.alg != "argon2id" {
+        if ![FORMAT, FORMAT_CARDS, FORMAT_RECOVERY, FORMAT_SYNC].contains(&file.format) || file.kdf.alg != "argon2id" {
             return Err(VaultError::Corrupt("unsupported format".into()));
         }
         if file.wrap != wrapper.name() {
@@ -858,6 +911,15 @@ impl Vault {
             Some(r) => Some(Self::recovery_key(r)?),
             None => None,
         };
+        let sync = match (&file.sync, &manifest.sync) {
+            (None, None) => None,
+            (Some(sealed), Some(hash)) if sync_hash(sealed) == *hash => {
+                let pt = open_sealed(&vk, sealed, AAD_SYNC)
+                    .ok_or_else(|| VaultError::Corrupt("sync part failed authentication".into()))?;
+                Some(serde_json::from_slice::<VaultSync>(&pt).map_err(json_err)?)
+            }
+            _ => return Err(VaultError::Corrupt("the sync part doesn't match the manifest".into())),
+        };
         Ok(Vault {
             path: path.to_path_buf(),
             params,
@@ -868,6 +930,7 @@ impl Vault {
             entries,
             cards,
             recovery,
+            sync,
         })
     }
 
@@ -1041,6 +1104,7 @@ impl Vault {
                 id
             }
         };
+        self.touched(&id);
         self.save(wrapper)?;
         Ok(id)
     }
@@ -1089,6 +1153,7 @@ impl Vault {
                 id
             }
         };
+        self.touched(&id);
         self.save(wrapper)?;
         Ok(id)
     }
@@ -1190,7 +1255,35 @@ impl Vault {
     pub fn delete(&mut self, id: &str, wrapper: &dyn KeyWrapper) -> VResult<()> {
         let i = self.entries.iter().position(|e| e.id == id).ok_or(VaultError::NotFound)?;
         self.entries.remove(i);
+        self.touched(id);
         self.save(wrapper)
+    }
+
+    // ---- Sync (0.9.0) ----------------------------------------------------------------------
+
+    /// While sync keeps state here, an entry change is remembered for the next push.
+    fn touched(&mut self, id: &str) {
+        if let Some(s) = self.sync.as_mut() {
+            if !s.dirty.iter().any(|d| d == id) {
+                s.dirty.push(id.to_string());
+            }
+        }
+    }
+
+    /// Sync's part of the vault, if sync keeps state here.
+    pub fn sync_part(&self) -> Option<&VaultSync> {
+        self.sync.as_ref()
+    }
+
+    /// Replaces sync's part (or removes it with `None`: the file goes back to format 1–3) and
+    /// writes the vault.
+    pub fn set_sync_part(&mut self, part: Option<VaultSync>, wrapper: &dyn KeyWrapper) -> VResult<()> {
+        let before = std::mem::replace(&mut self.sync, part);
+        if let Err(e) = self.save(wrapper) {
+            self.sync = before;
+            return Err(e);
+        }
+        Ok(())
     }
 
     /// Changes the master password: new salt, new KEK *and* a new vault key,
@@ -1266,10 +1359,19 @@ impl Vault {
             let s = seal(&self.vk, &pt, &card_aad(&c.id))?;
             cards.push(SealedEntry { id: c.id.clone(), nonce: s.nonce, ct: s.ct });
         }
+        let sync = match &self.sync {
+            Some(v) => {
+                let pt =
+                    Zeroizing::new(serde_json::to_vec(v).map_err(|_| VaultError::Corrupt("encoding failed".into()))?);
+                Some(seal(&self.vk, &pt, AAD_SYNC)?)
+            }
+            None => None,
+        };
         let manifest = Manifest {
             generation,
             ids: self.entries.iter().map(|e| e.id.clone()).collect(),
             card_ids: self.cards.iter().map(|c| c.id.clone()).collect(),
+            sync: sync.as_ref().map(sync_hash),
         };
         let manifest = seal(
             &self.vk,
@@ -1292,7 +1394,9 @@ impl Vault {
             None => None,
         };
         let file = VaultFile {
-            format: if recovery.is_some() {
+            format: if sync.is_some() {
+                FORMAT_SYNC
+            } else if recovery.is_some() {
                 FORMAT_RECOVERY
             } else if cards.is_empty() {
                 FORMAT
@@ -1307,6 +1411,7 @@ impl Vault {
             entries,
             cards,
             recovery,
+            sync,
         };
         let json = serde_json::to_vec_pretty(&file).map_err(|_| VaultError::Corrupt("encoding failed".into()))?;
         write_atomic(&self.path, &json).map_err(|e| VaultError::Io(e.to_string()))?;
@@ -2037,5 +2142,112 @@ mod tests {
         // Strictly increasing up to the cap.
         let delays: Vec<u64> = (1..=8).map(RateLimiter::delay_after).collect();
         assert!(delays.windows(2).all(|w| w[0] < w[1] || w[1] == RateLimiter::MAX_DELAY_MS));
+    }
+
+    // ---------------------------------------------------------------- format 4 (0.9.0, S5)
+
+    fn fixture(f: u32, dir: &TestDir) -> PathBuf {
+        let src =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/fixtures/vault/vault-format{f}.json"));
+        std::fs::copy(src, dir.file()).unwrap();
+        dir.file()
+    }
+    const FIXTURE_PW: &str = "fixture password";
+
+    fn format_of(path: &Path) -> u64 {
+        let v: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        v["format"].as_u64().unwrap()
+    }
+
+    fn part(bytes: &[u8]) -> VaultSync {
+        VaultSync { state: Zeroizing::new(bytes.to_vec()), dirty: Vec::new() }
+    }
+
+    #[test]
+    fn frozen_0_8_0_vaults_open_and_keep_their_format() {
+        for f in [1u32, 2, 3] {
+            let dir = TestDir::new(&format!("fixture-f{f}"));
+            let path = fixture(f, &dir);
+            let mut v = Vault::open(&path, FIXTURE_PW, &NoWrap).unwrap();
+            let users: Vec<&str> = v.entries().iter().map(|e| e.username.as_str()).collect();
+            assert_eq!(users, ["alice", "bob"], "format {f}");
+            assert_eq!(&*v.entries()[0].password, "s3cret-one");
+            assert_eq!(v.cards().len(), usize::from(f >= 2));
+            assert_eq!(v.recovery_created().is_some(), f >= 3);
+            assert!(v.sync_part().is_none());
+            // A change without sync keeps the format (0.8.0 still reads the file).
+            v.save_login("https://new.example/", "carol", z("x-pass-1"), 5, &NoWrap).unwrap();
+            assert_eq!(format_of(&path), u64::from(f));
+            assert!(!std::fs::read_to_string(&path).unwrap().contains("\"sync\""));
+        }
+    }
+
+    #[test]
+    fn the_sync_part_round_trips_tracks_changes_and_goes_away() {
+        let dir = TestDir::new("sync-part");
+        let path = fixture(3, &dir);
+        let mut v = Vault::open(&path, FIXTURE_PW, &NoWrap).unwrap();
+        v.set_sync_part(Some(part(b"pak state")), &NoWrap).unwrap();
+        assert_eq!(format_of(&path), 4);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("pak state") && !text.contains(&Base64::encode_string(b"pak state")), "sealed");
+        // Changes while sync keeps state are remembered (the PAK queue lives in the vault).
+        let alice = v.entries()[0].id.clone();
+        v.save_login("https://bank.example/", "alice", z("changed"), 9, &NoWrap).unwrap();
+        let new = v.upsert(None, "https://shop.example/", "dave", Some(z("dave-pass")), None, 10, &NoWrap).unwrap();
+        let bob = v.entries()[1].id.clone();
+        v.delete(&bob, &NoWrap).unwrap();
+        v.save_login("https://bank.example/", "alice", z("changed again"), 11, &NoWrap).unwrap();
+        drop(v);
+        let mut v = Vault::open(&path, FIXTURE_PW, &NoWrap).unwrap();
+        let p = v.sync_part().unwrap().clone();
+        assert_eq!(&*p.state, b"pak state");
+        assert_eq!(p.dirty, vec![alice.clone(), new.clone(), bob.clone()], "each id once, in order");
+        assert_eq!(v.recovery_created(), Some(1_793_000_300_000), "the recovery slot stays");
+        // Turning sync off removes the part: back to format 3.
+        v.set_sync_part(None, &NoWrap).unwrap();
+        assert_eq!(format_of(&path), 3);
+        drop(v);
+        let mut v = Vault::open(&path, FIXTURE_PW, &NoWrap).unwrap();
+        assert!(v.sync_part().is_none());
+        v.save_login("https://x.example/", "x", z("x-pass-1"), 12, &NoWrap).unwrap();
+        assert!(v.sync_part().is_none(), "no tracking without sync");
+        assert_eq!(format_of(&path), 3);
+    }
+
+    #[test]
+    fn a_swapped_or_missing_sync_part_is_refused() {
+        let dir = TestDir::new("sync-swap");
+        let path = fixture(1, &dir);
+        let mut v = Vault::open(&path, FIXTURE_PW, &NoWrap).unwrap();
+        v.set_sync_part(Some(part(b"old")), &NoWrap).unwrap();
+        let old: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        v.set_sync_part(Some(part(b"new")), &NoWrap).unwrap();
+        drop(v);
+        let good = std::fs::read(&path).unwrap();
+        // An older sync part put back into the newer file.
+        tamper(&dir, |f| f["sync"] = old["sync"].clone());
+        assert!(matches!(Vault::open(&path, FIXTURE_PW, &NoWrap), Err(VaultError::Corrupt(_))));
+        // The part removed (the manifest still names it).
+        std::fs::write(&path, &good).unwrap();
+        tamper(&dir, |f| {
+            f.as_object_mut().unwrap().remove("sync");
+            f["format"] = 1.into();
+        });
+        assert!(matches!(Vault::open(&path, FIXTURE_PW, &NoWrap), Err(VaultError::Corrupt(_))));
+        // Its ciphertext changed.
+        std::fs::write(&path, &good).unwrap();
+        tamper(&dir, |f| {
+            let ct = f["sync"]["ct"].as_str().unwrap().to_string();
+            f["sync"]["ct"] = flip_b64(&ct).into();
+        });
+        assert!(matches!(Vault::open(&path, FIXTURE_PW, &NoWrap), Err(VaultError::Corrupt(_))));
+        // A part added to a file whose manifest has none.
+        let dir2 = TestDir::new("sync-add");
+        let p2 = fixture(1, &dir2);
+        tamper(&dir2, |f| f["sync"] = old["sync"].clone());
+        assert!(matches!(Vault::open(&p2, FIXTURE_PW, &NoWrap), Err(VaultError::Corrupt(_))));
+        std::fs::write(&path, &good).unwrap();
+        assert_eq!(&*Vault::open(&path, FIXTURE_PW, &NoWrap).unwrap().sync_part().unwrap().state, b"new");
     }
 }
