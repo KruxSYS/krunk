@@ -257,25 +257,25 @@ async function keyboard(seed) {
   log('       Tab order: ' + order.join(' → '));
   fs.writeFileSync(path.join(OUT, 'keyboard-tab-order.txt'), order.join('\n') + '\n');
   ok(invisible.length === 0, `keyboard: every stop shows a focus ring (${order.length} stops) ${invisible.join(' | ')}`);
-  const want = ['"Krunk"', '"Privacy"', '#logout', '"Overview"', '"Devices & sync"', '"Signed-in browsers"', '"Security"',
-    'Rename', 'Remove', 'Removed devices', '#revoke-all-open', 'Change password'];
+  const want = ['"Krunk"', '"Privacy"', '#logout', '"Profile & email"', '"Password"', '"Two-step verification"', '"Devices & sync"',
+    '"Signed-in browsers"', 'Change password', 'Turn off', 'Rename', 'Remove', 'Removed devices', '#revoke-all-open'];
   let at = -1;
   const missing = [];
   for (const w of want) {
     const j = order.findIndex((d, k) => k > at && d.includes(w));
     if (j < 0) missing.push(w); else at = j;
   }
-  ok(missing.length === 0, `keyboard: logical order header → section nav → devices → browsers → security ${missing.join(', ')}`);
+  ok(missing.length === 0, `keyboard: logical order header → section nav → password → two-step → devices → browsers ${missing.join(', ')}`);
 
   // The section nav by keyboard.
   await page.goto(BASE + '/account/', { waitUntil: 'networkidle' });
   await page.waitForSelector('#devices-active li');
-  ok(!!(await tabTo(page, /"Security"/)), 'keyboard: reach the "Security" section link');
+  ok(!!(await tabTo(page, /"Two-step verification"/)), 'keyboard: reach the "Two-step verification" section link');
   await page.keyboard.press('Enter');
   await sleep(700);
-  const sec = await page.evaluate(() => ({ hash: location.hash, top: document.getElementById('security').getBoundingClientRect().top,
+  const sec = await page.evaluate(() => ({ hash: location.hash, top: document.getElementById('two-step').getBoundingClientRect().top,
     current: (document.querySelector('#secnav a[aria-current="true"]') || {}).textContent }));
-  ok(sec.hash === '#security' && sec.top < 300 && sec.current === 'Security', `keyboard: Enter on "Security" scrolls there and marks it (${JSON.stringify(sec)})`);
+  ok(sec.hash === '#two-step' && sec.top < 300 && sec.current === 'Two-step verification', `keyboard: Enter on "Two-step verification" scrolls there and marks it (${JSON.stringify(sec)})`);
 
   // Rename by keyboard (and back).
   for (const name of ['Seed PC (keyboard)', 'Seed PC renamed']) {
@@ -327,6 +327,27 @@ async function keyboard(seed) {
 
 // ---- D: the rest -------------------------------------------------------------------------------
 async function features(seed) {
+  // 0.11.0: a name the app generated before 0.11.0 is shown without its stale version, and the
+  // device's current version is shown on its own; a typed name stays as it is. Display only.
+  {
+    const acct = `(SELECT id FROM accounts WHERE email = '${seed.email}')`;
+    const dev = psql(`SELECT id FROM devices WHERE account_id = ${acct} AND revoked_at IS NULL ORDER BY created_at LIMIT 1`);
+    const before = psql(`SELECT label || '|' || client_version FROM devices WHERE id = '${dev}'`).split('|');
+    const cookie = await loginCookie(seed);
+    for (const [label, shown] of [['Krunk 0.9.0 on Windows 11', 'Krunk on Windows 11'], ['Krunk 0.9.0 on Windows 11 (work)', 'Krunk 0.9.0 on Windows 11 (work)']]) {
+      psql(`UPDATE devices SET label = '${label}', client_version = '0.11.0' WHERE id = '${dev}'`);
+      const ctx = await context(cookie);
+      const page = await watched(ctx, 'device-name');
+      await page.goto(BASE + '/account/', { waitUntil: 'networkidle' });
+      await page.waitForSelector('#devices-active li');
+      const row = await page.$eval('#devices-active li', (li) => ({ name: li.querySelector('.name').textContent, meta: li.querySelector('.meta').textContent }));
+      ok(row.name === shown && row.meta.includes('version 0.11.0') && !row.meta.includes('Krunk 0.'), `device name "${label}" shows as "${row.name}" · ${row.meta}`);
+      ok(psql(`SELECT label FROM devices WHERE id = '${dev}'`) === label, 'the stored name is unchanged');
+      if (label === 'Krunk 0.9.0 on Windows 11') await page.screenshot({ path: path.join(OUT, 'device-name.png'), fullPage: false, clip: { x: 0, y: 0, width: 1280, height: 900 } });
+      await ctx.close();
+    }
+    psql(`UPDATE devices SET label = '${before[0].replace(/'/g, "''")}', client_version = '${before[1]}' WHERE id = '${dev}'`);
+  }
   // Inline validation: nothing is sent while a field is wrong.
   {
     const ctx = await context(null);

@@ -22,17 +22,19 @@
   <p id="closed" class="closed" hidden>Accounts are coming soon. Krunk works fully without one; an account will only be needed for sync.</p>
   <nav id="secnav" class="secnav" aria-label="Sections" hidden>
     <ul>
-      <li><a href="#summary">Overview</a></li>
+      <li><a href="#profile">Profile &amp; email</a></li>
+      <li><a href="#password-card">Password</a></li>
+      <li><a href="#two-step">Two-step verification</a></li>
       <li><a href="#devices-sync">Devices &amp; sync</a></li>
       <li><a href="#browsers">Signed-in browsers</a></li>
-      <li><a href="#security">Security</a></li>
     </ul>
   </nav>
   <div class="sections">
     <p id="status" class="status" role="status" aria-live="polite"></p>
     <div id="overview" hidden>
-      <section id="summary" class="card" aria-labelledby="h-summary">
-        <h2 id="h-summary">Overview</h2>
+      <section id="profile" class="card" aria-labelledby="h-profile">
+        <h2 id="h-profile">Profile &amp; email</h2>
+        <p class="lead">The address you sign in with. Security notices, such as a new device, are sent there.</p>
         <dl class="facts">
           <dt>Email</dt><dd><span id="me-email"></span> <span class="badge ok">Verified</span></dd>
           <dt>Member since</dt><dd id="me-created"></dd>
@@ -44,42 +46,28 @@
         </div>
       </section>
 
-      <section id="devices-sync" class="card" aria-labelledby="h-devices">
-        <h2 id="h-devices">Devices &amp; sync</h2>
-        <div id="sync-state" class="sync-state"><strong id="sync-title"></strong><span id="sync-text"></span></div>
-        <div id="devices">
-          <ul id="devices-active" class="items" aria-label="Your devices"></ul>
-          <p id="no-devices" hidden>No devices yet. In Krunk, open <strong>Settings → Account</strong> and click <strong>Sign in</strong>.</p>
-          <details id="devices-removed" class="removed" hidden>
-            <summary><span>Removed devices (<span id="removed-count">0</span>)</span></summary>
-            <ul class="items" aria-label="Removed devices"></ul>
-          </details>
-        </div>
-        <p class="never">To add a device, open Krunk → Settings → Account → Sign in. Sync is turned on in Krunk, never here: the Krunk website never asks for your sync passphrase or recovery key.</p>
-      </section>
-
-      <section id="browsers" class="card" aria-labelledby="h-browsers">
-        <div class="card-head">
-          <h2 id="h-browsers">Signed-in browsers</h2>
-          <button id="revoke-all-open" class="small danger" type="button" aria-expanded="false" aria-controls="revoke-all">Sign out everywhere else</button>
-        </div>
-        <p class="hint">Where you are signed in to this website.</p>
-        <form id="revoke-all" class="inline-panel" hidden novalidate>
-          <p><strong>Sign out everywhere else?</strong> Every other browser signed in to this website is signed out at once.</p>
-          <label class="check"><input type="checkbox" name="devices"> <span>Also remove my Krunk browsers (they are signed out and lose access to synced data).</span></label>
-          <div class="row-buttons">
-            <button type="submit" class="danger">Sign out everywhere else</button>
-            <button type="button" class="cancel">Cancel</button>
-          </div>
+      <section id="password-card" class="card" aria-labelledby="h-password">
+        <h2 id="h-password">Password</h2>
+        <p class="lead">Change the password you sign in to this website with. Your sync passphrase is separate and stays in Krunk.</p>
+        <form id="password" class="stack" novalidate>
+          <label>Current password <input name="current" type="password" autocomplete="current-password" required></label>
+          <label>New password <input name="new" type="password" autocomplete="new-password" required minlength="10" aria-describedby="new-hint">
+            <span class="hint" id="new-hint">At least 10 characters.</span></label>
+          <label>New password again <input name="new2" type="password" autocomplete="new-password" required minlength="10"></label>
+          <label class="needs-totp" hidden>Code (or a backup code) <input name="totp" autocomplete="one-time-code" maxlength="20"></label>
+          <p class="hint">Other places where you are signed in to this website are signed out.</p>
+          <button type="submit">Change password</button>
         </form>
-        <ul id="sessions" class="items" aria-label="Signed-in browsers"></ul>
       </section>
 
-      <section id="security" class="card" aria-labelledby="h-security">
-        <h2 id="h-security">Security</h2>
-        <h3>Two-step verification <span id="totp-badge" class="badge off">Off</span></h3>
-        <p id="totp-state"></p>
-        <form id="totp-start" hidden novalidate>
+      <section id="two-step" class="card" aria-labelledby="h-totp">
+        <div class="card-head">
+          <h2 id="h-totp">Two-step verification</h2>
+          <span id="totp-badge" class="badge off">Off</span>
+        </div>
+        <p class="lead">A code from an authenticator app on your phone, asked for after your password.</p>
+        <p id="totp-state" class="state-line"></p>
+        <form id="totp-start" class="stack" hidden novalidate>
           <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
           <button type="submit" class="primary">Turn on</button>
         </form>
@@ -103,22 +91,43 @@
             <button type="button" class="small" id="codes-download">Download .txt</button>
           </div>
         </div>
-        <form id="totp-off" hidden novalidate>
+        <form id="totp-off" class="stack" hidden novalidate>
           <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
           <label>Code (or a backup code) <input name="code" autocomplete="one-time-code" maxlength="20" required></label>
           <button type="submit" class="danger">Turn off</button>
         </form>
+      </section>
 
-        <h3>Password</h3>
-        <form id="password" novalidate>
-          <label>Current password <input name="current" type="password" autocomplete="current-password" required></label>
-          <label>New password <input name="new" type="password" autocomplete="new-password" required minlength="10" aria-describedby="new-hint">
-            <span class="hint" id="new-hint">At least 10 characters.</span></label>
-          <label>New password again <input name="new2" type="password" autocomplete="new-password" required minlength="10"></label>
-          <label class="needs-totp" hidden>Code (or a backup code) <input name="totp" autocomplete="one-time-code" maxlength="20"></label>
-          <p class="hint">Other places where you are signed in to this website are signed out.</p>
-          <button type="submit">Change password</button>
+      <section id="devices-sync" class="card" aria-labelledby="h-devices">
+        <h2 id="h-devices">Devices &amp; sync</h2>
+        <p class="lead">The Krunk browsers signed in to your account, and whether they sync.</p>
+        <div id="sync-state" class="sync-state"><strong id="sync-title"></strong><span id="sync-text"></span></div>
+        <div id="devices">
+          <ul id="devices-active" class="items" aria-label="Your devices"></ul>
+          <p id="no-devices" hidden>No devices yet. In Krunk, open <strong>Settings → Account</strong> and click <strong>Sign in</strong>.</p>
+          <details id="devices-removed" class="removed" hidden>
+            <summary><span>Removed devices (<span id="removed-count">0</span>)</span></summary>
+            <ul class="items" aria-label="Removed devices"></ul>
+          </details>
+        </div>
+        <p class="never">To add a device, open Krunk → Settings → Account → Sign in. Sync is turned on in Krunk, never here: the Krunk website never asks for your sync passphrase or recovery key.</p>
+      </section>
+
+      <section id="browsers" class="card" aria-labelledby="h-browsers">
+        <div class="card-head">
+          <h2 id="h-browsers">Signed-in browsers</h2>
+          <button id="revoke-all-open" class="small danger" type="button" aria-expanded="false" aria-controls="revoke-all">Sign out everywhere else</button>
+        </div>
+        <p class="lead">Where you are signed in to this website, including your Krunk browsers.</p>
+        <form id="revoke-all" class="inline-panel" hidden novalidate>
+          <p><strong>Sign out everywhere else?</strong> Every other browser signed in to this website is signed out at once.</p>
+          <label class="check"><input type="checkbox" name="devices"> <span>Also remove my Krunk browsers (they are signed out and lose access to synced data).</span></label>
+          <div class="row-buttons">
+            <button type="submit" class="danger">Sign out everywhere else</button>
+            <button type="button" class="cancel">Cancel</button>
+          </div>
         </form>
+        <ul id="sessions" class="items" aria-label="Signed-in browsers"></ul>
       </section>
 
       <form id="reauth" class="inline-panel" hidden novalidate>

@@ -238,6 +238,13 @@ body.account { background: var(--page); }
 .card h2 { font-size: var(--t-lg); margin: 0 0 var(--s3); }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); flex-wrap: wrap; margin-bottom: var(--s3); }
 .card-head h2 { margin: 0; }
+/* 0.11.0: one card per topic, each with a heading and a one-line explanation (.lead). */
+.card > .lead { color: var(--muted); margin: calc(-1 * var(--s1)) 0 var(--s4); max-width: 68ch; }
+.card .state-line { margin: 0 0 var(--s4); }
+.card form.stack { display: grid; gap: var(--s1); max-width: 460px; }
+.card form.stack > button { justify-self: start; margin-top: var(--s2); }
+.card-head .badge { font-size: var(--t-sm); padding: 2px 12px; }
+@media (min-width: 900px) { .dash .sections .card { padding: var(--s6); } }
 .card h3 { font-size: var(--t-base); margin: var(--s5) 0 var(--s2); display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
 .card h3:first-of-type { margin-top: var(--s2); }
 .facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--s1) var(--s4); margin: 0 0 var(--s4); }

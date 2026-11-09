@@ -592,7 +592,7 @@
       });
     }
     links.forEach(function (a) { a.addEventListener('click', function () { mark(a.getAttribute('href').slice(1)); }); });
-    mark('summary');
+    mark('profile');
     if (!('IntersectionObserver' in window)) return;
     var visible = {};
     var io = new IntersectionObserver(function (entries) {
@@ -637,7 +637,7 @@
           if (!d.revoked_at && d.id === thisDevice) badges.push(['self', 'This device']);
           if (!d.revoked_at && syncOn && d.has_keys === false) badges.push(['warn', 'Linked, no keys yet']);
           var li = row(d.revoked_at ? 'revoked' : '', d.platform === 'android' ? 'android' : 'windows', d.label, badges);
-          var parts = [platformName(d.platform), 'Krunk ' + d.client_version];
+          var parts = [platformName(d.platform), 'version ' + d.client_version];
           if (d.revoked_at) {
             parts.push(timeSpan('removed ', d.revoked_at));
           } else {
