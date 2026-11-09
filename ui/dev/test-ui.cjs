@@ -4188,6 +4188,73 @@ async function testHangAndCrash(browser) {
   check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
 }
 
+// 0.11.0: the source viewer (krunk://source).
+async function testSourceViewer(browser) {
+  console.log('source viewer');
+  const html = '<!DOCTYPE html>\n<html><head><title>T &amp; U</title><style>body{color:red;margin:0}</style>' +
+    '<script>function f(a){if(a){return "x";}else{return 1;}} // done\n</script></head><body><div class="a"><p>Hello <b>you</b></p>' +
+    '<a href="/next?x=1&amp;y=2">next</a><pre>  keep\n    this</pre><!-- note --></div></body></html>';
+  const data = { url: 'https://site.example/dir/page.html', from: 'cache', status: 200, mime: 'text/html', text: html };
+  let { page, errors } = await openPage(browser, 'https://krunk.invalid/source.html?url=' + encodeURIComponent(data.url), { width: 1000, height: 600 }, 1, (d) => {
+    window.__host.handlers.sourceGet = () => d;
+  }, data);
+  await page.waitForSelector('.ln');
+  await page.waitForTimeout(100);
+  check((await page.textContent('#src-url')) === data.url && (await page.textContent('#src-info')).includes('from the cache'), 'the address and where the source came from');
+  check(await page.locator('.ln').count() === 4, 'the original has its own 4 lines (' + await page.locator('.ln').count() + ')');
+  const colours = await page.evaluate(() => ['h-tag', 'h-attr', 'h-val', 'h-com', 'h-doc', 'h-ent', 'h-kw', 'h-str', 'h-prop'].filter((c) => !document.querySelector('.' + c)));
+  check(colours.length === 0, 'tags, attributes, values, comments, doctype, entities, script keywords and strings, style properties are coloured (missing: ' + colours.join(', ') + ')');
+  check(await page.evaluate(() => getComputedStyle(document.querySelector('.ln'), '::before').content) === '"1"', 'line numbers');
+  const link = await page.getAttribute('.h-val a', 'href');
+  check(link === 'source.html?url=' + encodeURIComponent('https://site.example/next?x=1&y=2'), 'a link opens its own source (' + link + ')');
+  await shot(page, 'source-plain.png');
+  // Beautify: one element per line, indented; <pre> as it is; the script formatted.
+  await page.check('#opt-beautify');
+  await page.waitForTimeout(100);
+  const lines = await page.$$eval('.ln .t', (l) => l.map((x) => x.textContent));
+  check(lines.length > 15, 'beautified: many lines (' + lines.length + ')');
+  check(lines.includes('    <div class="a">') || lines.some((l) => /^ +<div class="a">$/.test(l)), 'nested tags are indented');
+  check(lines.some((l) => /^ +<p>Hello <b>you<\/b><\/p>$/.test(l)) || lines.some((l) => l.trim() === '<p>') , 'inline tags stay in their text');
+  check(lines.some((l) => l.includes('<pre>  keep')) && lines.includes('    this</pre>'), '<pre> keeps its spaces and lines');
+  check(lines.some((l) => l.trim() === 'if(a){' || l.trim() === 'if (a) {' || l.trim() === 'if(a) {') && lines.some((l) => l.trim().startsWith('return "x";')), 'the script is formatted a statement per line (' + lines.filter((l) => /return|if/.test(l)).join(' | ') + ')');
+  check(lines.some((l) => l.trim() === 'color:red;'), 'the style is formatted a declaration per line');
+  await shot(page, 'source-beautified.png');
+  // Wrap lines; both choices are remembered.
+  await page.check('#opt-wrap');
+  check(await page.evaluate(() => document.getElementById('src').classList.contains('wrap')), 'wrap lines');
+  await page.reload();
+  await page.waitForSelector('.ln');
+  check(await page.isChecked('#opt-wrap') && await page.isChecked('#opt-beautify'), 'Beautify and Wrap lines are remembered');
+  check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
+  await page.context().close();
+
+  // The fallback: the tab's own document, said so; an HTTP error says its status.
+  ({ page, errors } = await openPage(browser, 'https://krunk.invalid/source.html?url=x', { width: 900, height: 400 }, 1, () => {
+    window.__host.handlers.sourceGet = () => ({ url: 'https://shop.example/checkout', from: 'page', status: null, mime: 'text/html', text: '<p>done</p>' });
+  }));
+  await page.waitForSelector('.ln');
+  check(!(await page.isHidden('#src-note')) && (await page.textContent('#src-note')).includes('could not be loaded again'), 'the fallback says what is shown');
+  await page.context().close();
+
+  // 60,000 lines: shown at once without colouring everything; the end is reachable.
+  const big = Array.from({ length: 60000 }, (_, i) => '<div class="row' + i + '"><span>line ' + i + '</span></div>').join('\n');
+  ({ page, errors } = await openPage(browser, 'https://krunk.invalid/source.html?url=x', { width: 900, height: 500 }, 1, (b) => {
+    try { localStorage.clear(); } catch (e) { /* none */ }
+    window.__host.handlers.sourceGet = () => ({ url: 'https://big.example/', from: 'network', status: 200, mime: 'text/html', text: b });
+  }, big));
+  const t0 = Date.now();
+  await page.waitForSelector('.chunk');
+  await page.waitForTimeout(50);
+  const ms = Date.now() - t0;
+  const r = await page.evaluate(() => ({ chunks: document.querySelectorAll('.chunk').length, lit: document.querySelectorAll('.h-tag').length, info: document.getElementById('src-info').textContent }));
+  check(r.chunks === 300 && r.lit < 20000 && ms < 4000, '60,000 lines: 300 chunks, colours only near the screen, shown in ' + ms + ' ms (' + JSON.stringify(r) + ')');
+  await page.evaluate(() => { const b = document.getElementById('src'); b.scrollTop = b.scrollHeight; });
+  await page.waitForTimeout(300);
+  check(await page.evaluate(() => [...document.querySelectorAll('.chunk')].pop().querySelector('.h-tag') !== null), 'the last chunk is coloured when it comes into view');
+  check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
+  await page.context().close();
+}
+
 async function testFolderPopup(browser) {
   console.log('popup: bookmark folder');
   const { page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 280, height: 110 }, 1);
@@ -5756,6 +5823,7 @@ async function testHttpAuth(browser) {
     if (!ONLY || ONLY.includes('TabOverflow')) await testTabOverflow(browser);
     if (!ONLY || ONLY.includes('TabList')) await testTabList(browser);
     if (!ONLY || ONLY.includes('HangAndCrash')) await testHangAndCrash(browser);
+    if (!ONLY || ONLY.includes('SourceViewer')) await testSourceViewer(browser);
     if (!ONLY || ONLY.includes('ShieldAndHttpsOnly')) await testShieldAndHttpsOnly(browser);
     if (!ONLY || ONLY.includes('BlockedList')) await testBlockedList(browser);
     if (!ONLY || ONLY.includes('FilterLists')) await testFilterLists(browser);
