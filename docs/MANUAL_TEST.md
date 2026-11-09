@@ -1113,3 +1113,34 @@ rows and the completion; the shell is unchanged). On the VM: `scripts/vm-0102-om
 2. **Pages:** type `youtube.com/w`: the bar completes the most visited video's address with its
    own upper and lower case; Enter opens that video.
 3. **Words:** `yo yo` is a search: nothing is completed.
+
+## Krunk 0.11.0 (round 17)
+The operator's batch: bookmarks bar, favicons, media/PiP, unlock, tab overflow, settings, the account
+page, plus pages that hang, the source viewer and search for a selection. The engine is 0.10.0's
+(libcef d9f4549b). On the VM: `scripts/vm-0110-a.ps1` (main, restart), `vm-0110-b.ps1`,
+`vm-0110-c.ps1`, `vm-060-shell.ps1`, `vm-070-engine.ps1`, `vm-0110-update2.ps1` (staging) and
+`vm-0110-update-live.ps1`. Not rerun: the other flows (their code did not change; see
+`.pipeline/evidence-0.11.0/vm-minutes.md`).
+1. **Folder dropdowns:** click two bar folders in turn, quickly: each dropdown shows its own folder
+   from the first frame. In "»", open a folder: its first row is "‹ <parent>"; Backspace and Left go
+   back. Middle-click a bookmark in a dropdown: a tab opens behind, the dropdown stays open.
+2. **Icons of never-visited bookmarks:** bookmark (or import) sites you never opened: about 30 s
+   after the start they get their icons; `krunk.log` has one `favicon-probe` line per site, and
+   after a restart none (a site without an icon is tried again only after 7 days).
+3. **60 tabs:** ‹ › and ▾ appear; the wheel scrolls the row; ▾ lists and filters every tab;
+   middle-click closes a tab in the scrolled row (no scroll cursor).
+4. **Pages that hang:** open a page that busy-loops, click into it, wait ~16 s: "This page isn't
+   responding" (Wait / Close page); Close page shows "This page stopped" with Reload. Other tabs and
+   the address bar stay smooth meanwhile, also while a page takes 30 s to load.
+5. **Source and search:** Ctrl+U opens Krunk's viewer (not Notepad); Beautify and Wrap lines are
+   remembered. Select a word, right-click: "Search <engine> for “…”".
+6. **Unlock:** "Remain unlocked this session" is checked by default; checked, the vault stays open
+   past the auto-lock time; unchecked, it locks; the choice is remembered.
+7. **PiP volume:** in the floating video, point at its mute button: a small slider opens next to it
+   inside the window; nothing shows over the rest of the video.
+8. **Installed copy:** after the update, Start menu → Krunk.lnk carries the app ID `Krunk.Browser`
+   (and the registry has `HKCU\Software\Classes\AppUserModelId\Krunk.Browser`); the media overlay
+   names Krunk where the machine shows media controls (not visible on the VM, which has no audio
+   device). Krunk starts normally after the update (0.11.0 before release crashed here).
+9. **Cookies and site data, account:** large lists page in as you scroll, search and sort cover
+   all; Settings → Account shows "This device: Krunk on Windows 11 · version 0.11.0".
