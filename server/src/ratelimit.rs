@@ -77,8 +77,24 @@ pub const RECORDS_READ: Limit = l("records-read/device", 1200, HOUR);
 pub const RECORDS_WRITE: Limit = l("records-write/device", 600, HOUR);
 pub const REKEY: Limit = l("rekey/device", 600, HOUR);
 
+/// The per-IP key: an IPv4 address, or the /64 network of an IPv6 address. One IPv6
+/// customer usually has a whole /64 (or more), so a key per address gave everyone an
+/// endless supply of fresh buckets (0.11.7, audit S1). IPv4-mapped addresses count as IPv4.
 pub fn ip_key(keys: &crate::config::Keys, ip: IpAddr) -> [u8; 32] {
-    crypto::hmac(&keys.token_hmac, "krunk-rl-ip", &[ip.to_string().as_bytes()])
+    crypto::hmac(&keys.token_hmac, "krunk-rl-ip", &[limited_network(ip).as_bytes()])
+}
+
+fn limited_network(ip: IpAddr) -> String {
+    match ip {
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => v4.to_string(),
+            None => {
+                let s = v6.segments();
+                format!("{}/64", std::net::Ipv6Addr::new(s[0], s[1], s[2], s[3], 0, 0, 0, 0))
+            }
+        },
+        v4 => v4.to_string(),
+    }
 }
 
 pub fn email_key(keys: &crate::config::Keys, normalized_email: &str) -> [u8; 32] {
@@ -155,5 +171,16 @@ mod tests {
         let a = ip_key(&keys, "203.0.113.9".parse().unwrap());
         assert_ne!(a, ip_key(&keys, "203.0.113.10".parse().unwrap()));
         assert_ne!(email_key(&keys, "203.0.113.9"), a, "domain-separated");
+    }
+
+    /// 0.11.7, audit S1: every address of one IPv6 /64 shares one bucket.
+    #[test]
+    fn ipv6_counts_per_64() {
+        let keys = crate::config::Keys { token_hmac: [1; 32], password_pepper: [2; 32], totp_enc: [3; 32] };
+        let k = |s: &str| ip_key(&keys, s.parse().unwrap());
+        assert_eq!(k("2001:db8:1:2::1"), k("2001:db8:1:2:ffff:eeee:dddd:cccc"));
+        assert_ne!(k("2001:db8:1:2::1"), k("2001:db8:1:3::1"));
+        assert_eq!(k("::ffff:203.0.113.9"), k("203.0.113.9"), "mapped IPv4 is IPv4");
+        assert_ne!(k("203.0.113.9"), k("203.0.113.10"), "IPv4 stays per address");
     }
 }
