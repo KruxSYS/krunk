@@ -403,6 +403,14 @@ pub struct Settings {
     /// Connections a large download may use when its server sends parts (1 = the engine's
     /// own single download; see `segdl`).
     pub download_connections: u32,
+    /// PDFs open in Krunk's viewer, also those a site sends as a download (0.11.3); the viewer
+    /// has a Download button. Off: they are saved like any download.
+    pub pdf_in_browser: bool,
+
+    // Email links (0.11.3)
+    pub mail_handler: crate::mailto::MailHandler,
+    /// The address `MailHandler::Custom` opens, with `%s` where the link goes.
+    pub mail_custom_url: String,
 
     // Advanced
     /// Empty = the engine's default user agent.
@@ -483,6 +491,9 @@ impl Default for Settings {
             download_dir: String::new(),
             ask_where_to_save: false,
             download_connections: 4,
+            pdf_in_browser: true,
+            mail_handler: crate::mailto::MailHandler::System,
+            mail_custom_url: String::new(),
             user_agent: String::new(),
             proxy: String::new(),
             extra_flags: String::new(),
@@ -671,6 +682,11 @@ impl Settings {
         }
         if self.ntp.background == NtpBackground::Wallpaper && crate::assets::wallpaper(&self.ntp.wallpaper).is_none() {
             err("ntp.wallpaper", "Choose one of the built-in wallpapers");
+        }
+        if self.mail_handler == crate::mailto::MailHandler::Custom
+            && !crate::mailto::valid_template(&self.mail_custom_url)
+        {
+            err("mailCustomUrl", "Enter a web address with %s where the email link goes");
         }
         if !self.ntp_search_url.trim().is_empty() {
             let t = self.ntp_search_url.trim();

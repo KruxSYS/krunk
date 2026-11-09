@@ -318,6 +318,7 @@
     document.querySelectorAll('input[name=theme]').forEach((r) => { r.checked = r.value === settings.theme; });
     stateHidden('custom-row', settings.searchEngine !== 'custom');
     stateHidden('new-tab-url-row', settings.newTabPage !== 'custom');
+    stateHidden('mail-custom-row', settings.mailHandler !== 'custom');
     pickers.forEach((p) => p.sync());
     renderWallpapers();
     stateHidden('discard-row', !settings.tabDiscardEnabled);
@@ -388,6 +389,7 @@
         // Keep what the user typed so they can fix it; nothing was stored.
         stateHidden('custom-row', candidate.searchEngine !== 'custom');
         stateHidden('new-tab-url-row', candidate.newTabPage !== 'custom');
+        stateHidden('mail-custom-row', candidate.mailHandler !== 'custom');
       } else {
         $('save-error').textContent = err.message;
         $('save-error').hidden = false;

@@ -149,6 +149,7 @@ body.pv-dark { --bg-raised: #202124; --bg-hover: #3c4043; --fg: #e8eaed; --fg-mu
 #cert-chain[hidden] { display: none; }
 /* Login suggestions under a field (no focus: the field keeps it). */
 .suggest-list { padding: 4px 4px 6px; }
+.suggest-rows { max-height: calc(100vh - 52px); overflow-y: auto; }
 .suggest { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 10px; border: 0; border-radius: 6px;
            background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
 .suggest:hover { background: var(--bg-hover); }

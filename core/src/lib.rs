@@ -26,6 +26,7 @@ pub mod import;
 pub mod integrity;
 pub mod keys;
 pub mod layout;
+pub mod mailto;
 pub mod memory;
 pub mod migrate;
 pub mod navmenu;

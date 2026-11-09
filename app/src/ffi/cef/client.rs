@@ -860,6 +860,7 @@ wrap_download_handler! {
                 id: item.id(),
                 url: CefString::from(&item.url()).to_string(),
                 suggested_name: text(suggested_name),
+                mime: CefString::from(&item.mime_type()).to_string(),
                 total: (total > 0).then_some(total),
                 // A download starts with nothing received; one the engine continues from an
                 // earlier session has its bytes (and may keep its old start time).

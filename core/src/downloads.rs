@@ -377,6 +377,20 @@ pub fn interrupt_reason_text(code: i32) -> Option<String> {
     })
 }
 
+/// A PDF the viewer can show (0.11.3): by its MIME type, or by its name when the server
+/// only says "a file" (`application/octet-stream`, `binary/octet-stream`, none).
+pub fn is_pdf(mime: &str, name: &str) -> bool {
+    let mime = mime.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+    let pdf_name = name.to_ascii_lowercase().ends_with(".pdf");
+    mime == "application/pdf"
+        || mime == "application/x-pdf"
+        || (pdf_name
+            && matches!(
+                mime.as_str(),
+                "" | "application/octet-stream" | "binary/octet-stream" | "application/force-download"
+            ))
+}
+
 pub fn sanitize_file_name(name: &str) -> String {
     const RESERVED: &[&str] = &[
         "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1",
@@ -620,6 +634,13 @@ mod tests {
         assert_eq!(unique_path(Path::new("C:/dl"), "b.zip", exists), Path::new("C:/dl/b.zip"));
         assert_eq!(unique_path(Path::new("C:/dl"), "a.zip", exists), Path::new("C:/dl/a (2).zip"));
         assert_eq!(unique_path(Path::new("C:/dl"), "README", exists), Path::new("C:/dl/README (1)"));
+    }
+
+    #[test]
+    fn pdfs_by_type_or_name() {
+        assert!(is_pdf("application/pdf", "x.bin") && is_pdf("Application/PDF; charset=binary", ""));
+        assert!(is_pdf("application/octet-stream", "Report.PDF") && is_pdf("", "a.pdf"));
+        assert!(!is_pdf("application/zip", "a.pdf") && !is_pdf("application/octet-stream", "a.zip"));
     }
 
     #[test]

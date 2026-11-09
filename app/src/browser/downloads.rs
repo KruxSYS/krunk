@@ -76,6 +76,14 @@ impl Browser {
             }
             return;
         }
+        // A PDF (0.11.3): shown in the viewer instead of saved, also when the site sends it as
+        // a download; the viewer's own Download button saves it (a file: download, not this).
+        let pdf = self.settings.borrow().pdf_in_browser
+            && !start.url.starts_with("file:")
+            && lb_core::downloads::is_pdf(&start.mime, &start.suggested_name);
+        if let Some(tab) = tab.filter(|_| pdf) {
+            return self.view_pdf(start, tab);
+        }
         let ask = self.settings.borrow().ask_where_to_save;
         let name = sanitize_file_name(&start.suggested_name);
         let Some(folder) = self.download_folder() else {
@@ -97,6 +105,77 @@ impl Browser {
         // Large files from servers that send parts: several connections (see segmented.rs).
         if let Some((start, path)) = self.try_parts(start, path, private, tab) {
             self.accept_download(start, path, private, tab);
+        }
+    }
+
+    /// Fetches PDF `start` into Krunk's viewer folder; when it is complete it opens in the
+    /// viewer (`pdf_fetched`). It is not in the downloads list.
+    fn view_pdf(&self, start: DownloadStart, tab: TabId) {
+        let mut name = sanitize_file_name(&start.suggested_name);
+        if !name.to_ascii_lowercase().ends_with(".pdf") {
+            name.push_str(".pdf");
+        }
+        // pdf-view/<n>/<name>: the viewer shows (and its Download button offers) the real name.
+        // A private tab's PDFs go to pdf-view/private, deleted with its last private tab.
+        let private = self.tab(tab).is_some_and(|t| t.private);
+        let base = self.dirs.root().join("pdf-view");
+        let base = if private { base.join("private") } else { base };
+        let dir = base.join(format!("{}-{}", now_ms(), start.id));
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            warning!("pdf {}: no viewer folder ({e}); downloading it instead", start.id);
+            let Some(folder) = self.download_folder() else { return self.abandon_download(start) };
+            let path = unique_path(&folder, &name, |p| p.exists());
+            return self.accept_download(start, path, false, Some(tab));
+        }
+        let path = dir.join(&name);
+        info!("pdf {}: fetching for the viewer", start.id);
+        self.pdf_views.borrow_mut().insert(start.id, (tab, path.clone()));
+        start.accept(&path);
+    }
+
+    /// A PDF for the viewer is complete (or failed): it opens in the tab that asked for it
+    /// when that tab shows nothing yet, else in a new tab next to it.
+    fn pdf_fetched(&self, engine_id: u32, status: DownloadStatus) {
+        let Some((tab, path)) = self.pdf_views.borrow_mut().remove(&engine_id) else { return };
+        if status != DownloadStatus::Completed {
+            info!("pdf {engine_id}: not fetched ({status:?})");
+            let _ = path.parent().map(std::fs::remove_dir_all);
+            return;
+        }
+        let Ok(url) = url::Url::from_file_path(&path) else { return };
+        info!("pdf {engine_id}: opened in the viewer");
+        let blank = self.tab(tab).is_none_or(|t| t.url.is_empty() || t.url == "about:blank");
+        if blank && self.tab(tab).is_some() {
+            self.navigate_tab(tab, url.as_str());
+        } else {
+            self.open_tab_after(tab, url.as_str());
+        }
+    }
+
+    /// Deletes the viewer's PDFs older than a few days (at start; a restored tab may still
+    /// show a recent one).
+    pub(super) fn clear_pdf_views(&self) {
+        const KEEP: std::time::Duration = std::time::Duration::from_secs(3 * 24 * 3600);
+        self.clear_private_pdfs();
+        let Ok(dirs) = std::fs::read_dir(self.dirs.root().join("pdf-view")) else { return };
+        for d in dirs.flatten() {
+            let old = d
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age > KEEP);
+            if old {
+                let _ = std::fs::remove_dir_all(d.path());
+            }
+        }
+    }
+
+    /// Deletes the private tabs' PDFs (their last tab closed, or at start).
+    pub(super) fn clear_private_pdfs(&self) {
+        let dir = self.dirs.root().join("pdf-view").join("private");
+        if dir.is_dir() {
+            let _ = std::fs::remove_dir_all(&dir);
         }
     }
 
@@ -147,6 +226,12 @@ impl Browser {
                 _ => {
                     self.abandoned_downloads.borrow_mut().remove(&update.id);
                 }
+            }
+            return;
+        }
+        if self.pdf_views.borrow().contains_key(&update.id) {
+            if !matches!(update.status, DownloadStatus::InProgress | DownloadStatus::Paused) {
+                self.pdf_fetched(update.id, update.status);
             }
             return;
         }

@@ -957,6 +957,10 @@ mod tests {
             "userAgent",
             // 0.11.0: how this device's unlock lasts is this device's choice.
             "vaultRemainUnlocked",
+            // 0.11.3: PDFs and email links depend on this device's apps.
+            "pdfInBrowser",
+            "mailHandler",
+            "mailCustomUrl",
         ];
         let v = serde_json::to_value(Settings::default()).unwrap();
         let unsorted: Vec<&String> = v

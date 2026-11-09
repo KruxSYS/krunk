@@ -143,6 +143,24 @@
           </select>
         </div>
       </div>
+      <div class="row setting" data-keywords="email mail mailto links gmail outlook yahoo proton client default">
+        <div class="text"><label for="mailHandler">Email links open in</label><p class="desc">Links that start an email (mailto:).</p></div>
+        <div class="control">
+          <select id="mailHandler" data-key="mailHandler">
+            <option value="system">Your email app (Windows' default)</option>
+            <option value="gmail">Gmail</option>
+            <option value="outlook">Outlook.com</option>
+            <option value="yahoo">Yahoo Mail</option>
+            <option value="proton">Proton Mail</option>
+            <option value="custom">Another website…</option>
+          </select>
+        </div>
+      </div>
+      <div class="row setting" id="mail-custom-row" data-keywords="email mail custom webmail address">
+        <div class="text"><label for="mailCustomUrl">Email website address</label><p class="desc">Put %s where the email link goes.</p>
+          <p class="field-error" data-error-for="mailCustomUrl"></p></div>
+        <div class="control wide"><input type="text" id="mailCustomUrl" data-key="mailCustomUrl" placeholder="https://mail.example/compose?to=%s" spellcheck="false"></div>
+      </div>
       <div class="row setting" data-keywords="new tab page search box engine">
         <div class="text"><label for="ntpSearchUrl">New tab page search</label><p class="desc">Empty: the search engine above. Else a search URL with <code>%s</code>.</p>
           <p class="field-error" data-error-for="ntpSearchUrl"></p></div>
@@ -409,6 +427,10 @@
       <div class="row setting" data-keywords="ask where to save each file">
         <div class="text"><label for="askWhereToSave">Ask where to save each file</label></div>
         <div class="control"><input type="checkbox" id="askWhereToSave" data-key="askWhereToSave"></div>
+      </div>
+      <div class="row setting" data-keywords="pdf viewer open documents in browser">
+        <div class="text"><label for="pdfInBrowser">Open PDFs in Krunk</label><p class="desc">PDFs open in a tab, also those a site sends as a download. The viewer's Download button saves them.</p></div>
+        <div class="control"><input type="checkbox" id="pdfInBrowser" data-key="pdfInBrowser"></div>
       </div>
     </div>
     <div class="card group">

@@ -143,6 +143,13 @@ pub fn open_path(path: &Path) {
     unsafe { ShellExecuteW(None, w!("open"), &HSTRING::from(path.as_os_str()), None, None, SW_SHOWNORMAL) };
 }
 
+/// Hands an email link to the app Windows opens `mailto:` with (0.11.3). The caller checked
+/// that it is a `mailto:` address.
+pub fn open_mailto(mailto: &str) {
+    // SAFETY: ShellExecute "open" on a mailto: URL (Windows starts its registered handler).
+    unsafe { ShellExecuteW(None, w!("open"), &HSTRING::from(mailto), None, None, SW_SHOWNORMAL) };
+}
+
 /// Opens Explorer with the file selected.
 pub fn show_in_folder(path: &Path) {
     let args = format!("/select,\"{}\"", path.display());

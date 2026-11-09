@@ -983,6 +983,17 @@ async function testPopup(browser) {
   await page.locator('button', { hasText: /^Save$/ }).click();
   r = await lastSent(page, 'savePasswordReply');
   check(r && r.accept === true && r.tabId === 7 && r.origin === 'https://bank.example' && !('password' in r), 'Save sends accept with tab id/origin and no password');
+  // 0.11.2: the username is shown in a field and can be corrected before saving.
+  ({ page, errors } = await make(360, 196));
+  await emit(page, { event: 'popup', content: Object.assign({}, save, { update: true }) });
+  await page.waitForSelector('#save-username');
+  check(await page.inputValue('#save-username') === 'alice', 'the prompt shows the username in a field');
+  await page.fill('#save-username', 'alice@bank.example');
+  await shot(page, 'popup-update-password-username.png');
+  await page.locator('button', { hasText: /^Update$/ }).click();
+  r = await lastSent(page, 'savePasswordReply');
+  check(r && r.accept === true && r.username === 'alice@bank.example', 'Update sends the edited username (' + JSON.stringify(r) + ')');
+  check(errors.length === 0, 'save prompt: no console errors (' + errors.join(' | ') + ')');
 
   // 0.5: the local network access prompt (host-opened; Allow/Block, remembered unless private).
   ({ page, errors } = await make(380, 196));
@@ -1065,6 +1076,21 @@ async function testPopup(browser) {
     const fit = await lastSent(page, 'popupResize');
     const need = await page.evaluate(() => document.getElementById('root').offsetHeight);
     check(gap >= 6 && fit && fit.height >= need, 'the suggestion list has room below its footer (' + gap + ' px) and fits its content (' + (fit && fit.height) + ' >= ' + need + ')');
+  }
+  {
+    // 0.11.3: every login of the site, not only 8; past 8 rows the list scrolls (the host sizes
+    // the window to 8.5 rows and the footer).
+    const many = Array.from({ length: 14 }, (_, i) => ({ id: 'm' + i, username: 'user' + i + '@mail.example' }));
+    await page.setViewportSize({ width: 320, height: Math.round(8.5 * 38 + 42) });
+    await emit(page, { event: 'popup', content: { kind: 'suggest', tabId: 9, frameId: 'frame-7', origin: 'https://mail.example', locked: false, entries: many } });
+    await page.waitForTimeout(60);
+    const box = await page.evaluate(() => { const r = document.querySelector('.suggest-rows'); const f = document.querySelector('.suggest-foot').getBoundingClientRect(); return { n: r.querySelectorAll('.suggest').length, scrolls: r.scrollHeight > r.clientHeight + 4, footIn: f.bottom <= innerHeight + 1 }; });
+    check(box.n === 14 && box.scrolls && box.footIn, 'all 14 logins listed, the rows scroll, the footer stays in view (' + JSON.stringify(box) + ')');
+    await shot(page, 'popup-suggest-many.png');
+    await emit(page, { event: 'popup', content: { kind: 'suggest', tabId: 9, frameId: 'frame-7', origin: 'https://mail.example', locked: false, entries: [
+      { id: 'e1', username: 'alice@mail.example' }, { id: 'e3', username: 'bob', host: 'accounts.mail.example' },
+    ] } });
+    await page.waitForTimeout(40);
   }
   await page.locator('.suggest').first().click();
   const sp = await lastSent(page, 'suggestPick');

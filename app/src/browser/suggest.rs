@@ -22,6 +22,17 @@ use zeroize::Zeroizing;
 const MIN_INTERVAL_MS: i64 = 250;
 const ROW_CSS: f64 = 38.0;
 const FOOT_CSS: f64 = 42.0;
+/// Rows the dropdown shows before it scrolls (half a row more hints at the rest).
+const VISIBLE_ROWS: usize = 8;
+/// A sanity limit on the rows sent to the popup.
+const MAX_CHOICES: usize = 500;
+
+/// The dropdown's height for `rows` rows (CSS px): at most `VISIBLE_ROWS` and a half, then it
+/// scrolls.
+fn list_height(rows: usize) -> f64 {
+    let shown = if rows > VISIBLE_ROWS { VISIBLE_ROWS as f64 + 0.5 } else { rows as f64 };
+    shown * ROW_CSS + FOOT_CSS
+}
 const WIDTH_CSS: f64 = 300.0;
 const KEY_KV: &str = "vault_hint_key";
 const TAGS_KV: &str = "vault_hint_tags";
@@ -112,7 +123,7 @@ impl Browser {
             x: anchor.x,
             y: anchor.y,
             width: WIDTH_CSS.max(anchor.width.min(420.0)),
-            height: rows as f64 * ROW_CSS + FOOT_CSS,
+            height: list_height(rows),
         };
         info!(
             "tab {tab}: login suggestions for a {} field ({}{})",
@@ -174,7 +185,7 @@ impl Browser {
             x: anchor.x,
             y: anchor.y,
             width: WIDTH_CSS.max(anchor.width.min(420.0)),
-            height: rows as f64 * ROW_CSS + FOOT_CSS,
+            height: list_height(rows),
         };
         info!("tab {tab}: saved cards for a card field ({})", if locked { "vault locked" } else { "choices" });
         self.suggest.shown_at.set(now);
@@ -430,7 +441,7 @@ impl Browser {
                 self.hide_popup();
                 return;
             }
-            let rect = PopupRect { height: cards.len() as f64 * ROW_CSS + FOOT_CSS, ..o.rect };
+            let rect = PopupRect { height: list_height(cards.len()), ..o.rect };
             *self.suggest.open.borrow_mut() = Some(Open { rect, ..o.clone() });
             self.show_popup(
                 PopupContent::CardFill {
@@ -453,7 +464,7 @@ impl Browser {
                 self.fill_into_frame(&o, &entries[0].id);
             }
             _ => {
-                let rect = PopupRect { height: entries.len() as f64 * ROW_CSS + FOOT_CSS, ..o.rect };
+                let rect = PopupRect { height: list_height(entries.len()), ..o.rect };
                 *self.suggest.open.borrow_mut() = Some(Open { rect, ..o.clone() });
                 self.show_popup(
                     PopupContent::Suggest {
@@ -482,7 +493,8 @@ impl Browser {
                 username: e.username.clone(),
                 host: (k == MatchKind::Domain).then(|| lb_core::urlclean::host_of(&e.origin).unwrap_or_default()),
             })
-            .take(8)
+            // Every login of the site (0.11.3: it used to stop at 8); the list scrolls.
+            .take(MAX_CHOICES)
             .collect()
     }
 

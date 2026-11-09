@@ -360,6 +360,10 @@ pub struct Browser {
     integrity: integrity::IntegrityHost,
     /// A tab being dragged between windows.
     drag: Cell<Option<drag::TabDrag>>,
+    /// When the last email link was opened (ms; 0.11.3).
+    last_mailto: Cell<i64>,
+    /// PDFs being fetched for the viewer (0.11.3): engine download id → tab, file.
+    pdf_views: RefCell<HashMap<u32, (TabId, std::path::PathBuf)>>,
     /// During a tab drag: the other windows (topmost first) as they were at its start, and
     /// the dragged tab as their strips show it.
     drop_windows: RefCell<Vec<lb_core::frame::DropWindow>>,
@@ -468,6 +472,8 @@ impl Browser {
             updates: updater::UpdateHost::new(dirs.update_status()),
             integrity: integrity::IntegrityHost::default(),
             drag: Cell::new(None),
+            last_mailto: Cell::new(0),
+            pdf_views: RefCell::new(HashMap::new()),
             drop_windows: RefCell::new(Vec::new()),
             drag_ghost: RefCell::new(None),
             tearing: Cell::new(false),
@@ -769,6 +775,7 @@ impl Browser {
             *self.stopped_by_close.borrow_mut() = (now_ms(), self.downloads.borrow().stopped_by_close());
             self.remove_leftover_parts();
         }
+        self.clear_pdf_views();
         let (startup, homepage) = {
             let s = self.settings.borrow();
             (s.startup, s.homepage.clone())
@@ -1050,6 +1057,12 @@ impl Browser {
         c.on_before_browse(move |nav| {
             let Some(b) = weak.upgrade() else { return false };
             let host = host_navigation.replace(false);
+            // An email link (0.11.3): the page stays; the user's email app or site opens.
+            if lb_core::mailto::is_mailto(&nav.url) {
+                let url = nav.url.clone();
+                b.defer(move |b| b.open_mailto(id, &url));
+                return false;
+            }
             let current = b.tab(id).map(|t| t.url.clone()).unwrap_or_default();
             let allow = assets::allow_navigation(Channel::Tab, &current, &nav.url, host);
             if !allow {
@@ -1268,6 +1281,13 @@ impl Browser {
     }
 
     fn destroy_view(&self, id: TabId) {
+        // The last private tab: its PDFs go with it (0.11.3). (The model may have dropped the
+        // tab already; the views know which are private.)
+        let private_views =
+            |b: &Self| b.views.borrow().iter().filter(|(t, v)| **t != id && v.view.is_private()).count();
+        if self.views.borrow().get(&id).is_some_and(|v| v.view.is_private()) && private_views(self) == 0 {
+            self.clear_private_pdfs();
+        }
         self.ext_detach_tab(id);
         self.hints_attached.borrow_mut().remove(&id);
         self.pointer.hints.borrow_mut().forget(id);
@@ -1911,7 +1931,34 @@ impl Browser {
     }
 
     /// A link opened "in a new tab" (middle click, Ctrl+click) from tab `opener`.
+    /// An email link in tab `tab`: opened where Settings says (the system's email app, or a
+    /// webmail site in a new tab). At most one a second: a page can't open a stream of them.
+    fn open_mailto(&self, tab: TabId, url: &str) {
+        let now = now_ms();
+        if now - self.last_mailto.replace(now) < 1000 {
+            info!("tab {tab}: email link ignored (another one just now)");
+            return;
+        }
+        let (handler, custom) = {
+            let s = self.settings.borrow();
+            (s.mail_handler, s.mail_custom_url.clone())
+        };
+        match lb_core::mailto::target(handler, &custom, url) {
+            lb_core::mailto::MailTarget::System(m) => {
+                info!("tab {tab}: email link to the system's email app");
+                crate::ffi::dialogs::open_mailto(&m);
+            }
+            lb_core::mailto::MailTarget::Web(w) => {
+                info!("tab {tab}: email link to {handler:?}");
+                self.open_link_in_tab(tab, &w, true);
+            }
+        }
+    }
+
     fn open_link_in_tab(&self, opener: TabId, url: &str, foreground: bool) {
+        if lb_core::mailto::is_mailto(url) {
+            return self.open_mailto(opener, url);
+        }
         let ok = url.starts_with("https://") || url.starts_with("http://");
         if !ok {
             return;
@@ -1929,6 +1976,17 @@ impl Browser {
             return;
         };
         self.apply(effects);
+    }
+
+    /// Opens `url` (any URL the host may load, e.g. a viewer's file:) in a new tab in front,
+    /// next to tab `opener`.
+    fn open_tab_after(&self, opener: TabId, url: &str) {
+        let Some(win) = self.window_of(opener) else { return };
+        let private = self.tab(opener).is_some_and(|t| t.private);
+        let opened = self.ws.borrow_mut().open(win, url, private, Position::AfterOpener(opener), true, now_ms());
+        if let Some((_, effects)) = opened {
+            self.apply(effects);
+        }
     }
 
     /// Opens an http(s) or built-in URL, in the active tab or a new one.

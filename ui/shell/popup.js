@@ -487,8 +487,11 @@
         ]));
       }
     }
-    rows.push(el('div', { class: 'suggest-foot', text: 'Krunk passwords · ' + c.origin.replace(/^https?:\/\//, '') }));
-    return [el('div', { class: 'suggest-list' }, rows)];
+    // 0.11.3: every login of the site; past 8 rows the list scrolls above the footer.
+    return [el('div', { class: 'suggest-list' }, [
+      el('div', { class: 'suggest-rows' }, rows),
+      el('div', { class: 'suggest-foot', text: 'Krunk passwords · ' + c.origin.replace(/^https?:\/\//, '') }),
+    ])];
   }
 
   // The Picture-in-Picture chooser (0.6.0): the page's videos; the host asks the page.
