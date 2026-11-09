@@ -778,9 +778,12 @@ async function testShellFrame(browser) {
   await setTabs(20, 20);
   await page.waitForFunction(() => document.querySelectorAll('.tab').length === 20);
   await settleTabs(page);
-  const widths20 = await page.$$eval('.tab', (ns) => ns.map((n) => n.getBoundingClientRect().width));
+  await page.waitForTimeout(400);
+  const widths20 = await page.$$eval('.tab:not(.active)', (ns) => ns.map((n) => n.getBoundingClientRect().width));
   const minW = Math.min(...widths20), maxW = Math.max(...widths20);
-  check(maxW - minW < 0.5, 'with 20 tabs all have the same width (' + minW.toFixed(1) + '–' + maxW.toFixed(1) + ')');
+  check(maxW - minW < 0.5, 'with 20 tabs the inactive ones have the same width (' + minW.toFixed(1) + '–' + maxW.toFixed(1) + ')');
+  const activeW = await page.locator('.tab.active').evaluate((n) => n.getBoundingClientRect().width);
+  check(activeW >= 119.5, '0.11.0: the active narrow tab keeps 120 DIP (' + activeW.toFixed(1) + ')');
   check(minW >= 72 - 0.01, 'tabs never get narrower than 72 DIP (' + minW.toFixed(1) + ')');
   check(await page.locator('#tabs').evaluate((n) => n.classList.contains('narrow')), 'narrow tabs mode');
   check(await page.locator('.tab.active .close').isVisible(), 'the active tab keeps its close button');
@@ -793,7 +796,8 @@ async function testShellFrame(browser) {
   await shot(page, 'shell-frame-20-tabs.png');
   await setTabs(12, 3);
   await settleTabs(page);
-  const widths12 = await page.$$eval('.tab', (ns) => ns.map((n) => n.getBoundingClientRect().width));
+  await page.waitForTimeout(300);
+  const widths12 = await page.$$eval('.tab:not(.active)', (ns) => ns.map((n) => n.getBoundingClientRect().width));
   check(Math.max(...widths12) - Math.min(...widths12) < 0.5 && widths12[0] < 256 && widths12[0] > 72, '12 tabs shrink evenly between 72 and 256 (' + widths12[0].toFixed(1) + ')');
   await shot(page, 'shell-frame-12-tabs.png');
 
@@ -3908,6 +3912,150 @@ async function testBarOverflow(browser) {
   check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
 }
 
+// 0.11.0: many tabs. Tabs shrink to 72 px (the active one keeps 120 and its ×), then the row
+// scrolls: the wheel and ‹ › scroll it, the edges fade, "▾" lists every tab; none of it shows
+// while the tabs fit. A middle press starts no autoscroll and a middle click closes the tab
+// (also when the row is scrolled); widths stay as they were until the pointer leaves.
+async function testTabOverflow(browser) {
+  console.log('shell: tab overflow (60 tabs)');
+  const { page, errors } = await openPage(browser, 'https://shell.krunk.invalid/shell.html', { width: 1280, height: 76 }, 1);
+  const setTabs = (n, active) => page.evaluate(([n, active]) => {
+    const h = window.__host;
+    h.state.tabs = Array.from({ length: n }, (_, i) => ({ id: i + 1, title: 'Tab number ' + (i + 1) + ' with a long title', url: 'https://site' + (i + 1) + '.example/', favicon: null, loading: false, private: false, sleeping: false }));
+    h.state.nextId = n + 1;
+    h.state.active = active;
+    h.tabsEvent(); h.navEvent();
+  }, [n, active]);
+  await setTabs(4, 1);
+  await page.waitForTimeout(250);
+  check(await page.locator('#tabs-left').isHidden() && await page.locator('#tabs-right').isHidden() && await page.locator('#tablist').isHidden(),
+    'four tabs fit: no arrows, no tab list button');
+  await setTabs(60, 30);
+  await page.waitForTimeout(1000);
+  const m = await page.evaluate(() => {
+    const box = document.getElementById('tabs');
+    const tabs = [...box.querySelectorAll('.tab')];
+    const w = tabs.map((t) => t.getBoundingClientRect().width);
+    const act = box.querySelector('.tab.active').getBoundingClientRect(), row = box.getBoundingClientRect();
+    return { n: tabs.length, min: Math.min(...w.filter((_, i) => i !== 29)), active: w[29], over: box.scrollWidth > box.clientWidth,
+      inView: act.left >= row.left && act.right <= row.right, fades: [box.classList.contains('fade-left'), box.classList.contains('fade-right')],
+      close: getComputedStyle(box.querySelector('.tab.active .close')).display };
+  });
+  check(m.n === 60 && m.over, '60 tabs overflow the row (' + JSON.stringify(m) + ')');
+  check(Math.round(m.min) === 72 && m.active >= 119.5, 'tabs shrink to 72 px, the active one keeps 120 (' + Math.round(m.min) + ', ' + Math.round(m.active) + ')');
+  check(m.close !== 'none', 'the active tab keeps its close button');
+  check(m.inView, 'the active tab (30 of 60) is scrolled into view (' + JSON.stringify(await page.evaluate(() => { const b = document.getElementById('tabs'); const a = b.querySelector('.tab.active').getBoundingClientRect(); const r = b.getBoundingClientRect(); return { sl: b.scrollLeft, sw: b.scrollWidth, cw: b.clientWidth, al: a.left, ar: a.right, rl: r.left, rr: r.right }; })) + ')');
+  check(m.fades[0] && m.fades[1], 'both edges fade while there are tabs on both sides');
+  check(await page.locator('#tabs-left').isVisible() && await page.locator('#tabs-right').isVisible() && await page.locator('#tablist').isVisible(),
+    'overflowing: ‹ › and ▾ show');
+  await shot(page, 'shell-tab-overflow.png');
+  const hm = await lastSent(page, 'hitMap');
+  check(hm && hm.map.interactive.length >= 5, 'the hit map has the arrows and the list button (no window drag there)');
+  // The wheel scrolls smoothly (several frames, not one jump).
+  const s0 = await page.evaluate(() => document.getElementById('tabs').scrollLeft);
+  await page.mouse.move(400, 18);
+  await page.mouse.wheel(0, 300);
+  await page.waitForTimeout(16);
+  const s1 = await page.evaluate(() => document.getElementById('tabs').scrollLeft);
+  await page.waitForTimeout(500);
+  const s2 = await page.evaluate(() => document.getElementById('tabs').scrollLeft);
+  check(s2 - s0 > 250 && s1 < s2, 'the wheel scrolls the row smoothly (' + [s0, s1, s2].map(Math.round).join(' → ') + ')');
+  await page.click('#tabs-left');
+  await page.waitForTimeout(500);
+  const s3 = await page.evaluate(() => document.getElementById('tabs').scrollLeft);
+  check(s3 < s2 - 200, '‹ scrolls most of a row back (' + Math.round(s2) + ' → ' + Math.round(s3) + ')');
+  // A title change does not scroll back to the active tab.
+  await page.evaluate(() => { const h = window.__host; h.state.tabs[29].title = 'Changed'; h.tabsEvent(); });
+  await page.waitForTimeout(300);
+  const s4 = await page.evaluate(() => document.getElementById('tabs').scrollLeft);
+  check(Math.abs(s4 - s3) < 2, 'a title change leaves the scroll position alone');
+  // Dragging a tab still reorders on the scrolled strip.
+  {
+    const ids = await page.evaluate(() => {
+      const row = document.getElementById('tabs').getBoundingClientRect();
+      const vis = [...document.querySelectorAll('#tabs .tab')].filter((n) => { const r = n.getBoundingClientRect(); return r.left > row.left + 40 && r.right < row.right - 40; });
+      const a = vis[1].getBoundingClientRect(), b = vis[4].getBoundingClientRect();
+      return { id: Number(vis[1].dataset.id), ax: a.left + a.width / 2, ay: a.top + a.height / 2, bx: b.right - 4 };
+    });
+    await page.mouse.move(ids.ax, ids.ay);
+    await page.mouse.down();
+    await page.mouse.move(ids.bx, ids.ay, { steps: 6 });
+    await page.mouse.up();
+    await page.waitForTimeout(300);
+    const mt = await lastSent(page, 'moveTab');
+    check(mt && mt.id === ids.id, 'dragging a tab on the scrolled strip reorders it (' + JSON.stringify(mt) + ')');
+  }
+  // Middle press: no autoscroll; middle click closes the tab under the pointer.
+  const target = await page.evaluate(() => {
+    const row = document.getElementById('tabs').getBoundingClientRect();
+    const t = [...document.querySelectorAll('#tabs .tab')].find((n) => { const r = n.getBoundingClientRect(); return r.left > row.left + 60 && r.right < row.right - 60; });
+    const r = t.getBoundingClientRect();
+    const ev = new MouseEvent('mousedown', { button: 1, bubbles: true, cancelable: true });
+    t.dispatchEvent(ev);
+    return { id: Number(t.dataset.id), x: r.left + r.width / 2, y: r.top + r.height / 2, prevented: ev.defaultPrevented };
+  });
+  check(target.prevented, 'a middle press on the scrolled strip is prevented (no autoscroll)');
+  const before = await page.evaluate(() => [...document.querySelectorAll('#tabs .tab:not(.closing)')].map((t) => t.getBoundingClientRect().width));
+  await page.mouse.click(target.x, target.y, { button: 'middle' });
+  await page.waitForTimeout(60);
+  const ct = await lastSent(page, 'closeTab');
+  check(ct && ct.id === target.id, 'middle click closes the overflowed tab under the pointer (' + JSON.stringify(ct) + ' vs ' + target.id + ')');
+  await page.waitForTimeout(300);
+  const after = await page.evaluate(() => [...document.querySelectorAll('#tabs .tab:not(.closing)')].map((t) => t.getBoundingClientRect().width));
+  check(after.length === 59 && Math.abs(after[0] - before[0]) < 0.5, 'the other tabs keep their widths while the pointer stays');
+  // ▾ asks the host for the tab list under the button.
+  await page.click('#tablist');
+  const sp = await lastSent(page, 'showPopup');
+  const lb = await page.locator('#tablist').boundingBox();
+  check(sp && sp.popup === 'tabList' && Math.abs(sp.rect.x - lb.x) < 1 && sp.rect.width > 0, '▾ opens the tab list at its button (' + JSON.stringify(sp) + ')');
+  check(await page.locator('#tablist.on').count() === 1, '▾ is highlighted while its list is open');
+  // Back to a few tabs: everything goes away again.
+  await page.mouse.move(600, 60);
+  await setTabs(3, 1);
+  await page.waitForTimeout(300);
+  check(await page.locator('#tablist').isHidden() && await page.evaluate(() => !document.getElementById('tabs').classList.contains('fade-left')), 'fitting again: no list button, no fade');
+  check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
+}
+
+async function testTabList(browser) {
+  console.log('popup: tab list');
+  const { page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 380, height: 532 }, 1);
+  const tabs = Array.from({ length: 300 }, (_, i) => ({ id: i + 1, title: (i % 3 ? 'News story ' : 'Rust docs ') + (i + 1), url: 'https://s' + (i + 1) + '.example/', favicon: null, loading: false, private: i === 4, sleeping: false, audible: i === 2 }));
+  await emit(page, { event: 'popup', seq: 9, content: { kind: 'tabList', tabs, active: 150 } });
+  await page.waitForFunction(() => window.__host.sent.some((m) => m.cmd === 'popupShown' && m.seq === 9));
+  await page.waitForTimeout(50);
+  const r = await page.evaluate(() => ({ rows: document.querySelectorAll('.tl-row').length, focus: document.activeElement && document.activeElement.id,
+    current: document.querySelector('.tl-row.current') && document.querySelector('.tl-row.current').textContent }));
+  check(r.rows > 10 && r.rows < 40, '300 tabs: only the rows in view exist (' + r.rows + ')');
+  check(r.focus === 'tl-search', 'the search field has the focus');
+  check(r.current && r.current.startsWith('Rust docs 150') === false && r.current.includes('150'), 'the current tab is in view and marked (' + r.current + ')');
+  await shot(page, 'popup-tab-list.png');
+  await page.keyboard.type('rust');
+  await page.waitForTimeout(50);
+  const f = await page.$$eval('.tl-row .label', (l) => l.map((x) => x.textContent));
+  check(f.length > 0 && f.every((t) => t.startsWith('Rust docs')), 'typing filters by title (' + f.slice(0, 3).join(' | ') + ')');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Enter');
+  const act = await lastSent(page, 'activateTab');
+  check(act && act.id === 4, 'Down + Enter switches to the second match (' + JSON.stringify(act) + ')');
+  // × closes without switching; the list follows the host's update in place, keeping the search.
+  await emit(page, { event: 'popup', content: { kind: 'tabList', tabs, active: 150 } });
+  await page.waitForTimeout(50);
+  const n0 = (await sent(page)).filter((m) => m.cmd === 'activateTab').length;
+  await page.locator('.tl-row', { hasText: 'Rust docs 7' }).first().locator('.tl-close').click();
+  const cl = await lastSent(page, 'closeTab');
+  check(cl && cl.id === 7 && (await sent(page)).filter((m) => m.cmd === 'activateTab').length === n0, '× closes that tab and switches to nothing');
+  await emit(page, { event: 'popup', content: { kind: 'tabList', tabs: tabs.filter((t) => t.id !== 7), active: 150 } });
+  await page.waitForTimeout(50);
+  check(await page.inputValue('#tl-search') === 'rust' && (await page.locator('.tl-row', { hasText: 'Rust docs 7' }).count()) === 0, 'the update keeps the search; the closed tab is gone');
+  await page.locator('.tl-row', { hasText: 'Rust docs 10' }).first().click({ button: 'middle' });
+  check((await lastSent(page, 'closeTab')).id === 10, 'middle click closes from the list too');
+  await page.fill('#tl-search', 'zzz');
+  await page.waitForTimeout(30);
+  check(await page.locator('.tl-empty').count() === 1, 'no match: "No tab matches."');
+  check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
+}
+
 async function testFolderPopup(browser) {
   console.log('popup: bookmark folder');
   const { page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 280, height: 110 }, 1);
@@ -5472,6 +5620,8 @@ async function testHttpAuth(browser) {
     if (!ONLY || ONLY.includes('FolderPopup')) await testFolderPopup(browser);
     if (!ONLY || ONLY.includes('FolderPopup')) await testFolderPopupLong(browser);
     if (!ONLY || ONLY.includes('BarOverflow')) await testBarOverflow(browser);
+    if (!ONLY || ONLY.includes('TabOverflow')) await testTabOverflow(browser);
+    if (!ONLY || ONLY.includes('TabList')) await testTabList(browser);
     if (!ONLY || ONLY.includes('ShieldAndHttpsOnly')) await testShieldAndHttpsOnly(browser);
     if (!ONLY || ONLY.includes('BlockedList')) await testBlockedList(browser);
     if (!ONLY || ONLY.includes('FilterLists')) await testFilterLists(browser);

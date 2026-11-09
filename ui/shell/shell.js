@@ -189,13 +189,18 @@
       }
     }
     renderedOnce = true;
-    layoutTabs();
+    // The active tab comes into view when it changes or a tab opens (not on every title
+    // change: a scrolled strip stays where the user put it).
+    const revealActive = added || state.active !== lastRevealed;
+    lastRevealed = state.active;
+    layoutTabs(revealActive);
   }
+  let lastRevealed = null, revealPending = false;
 
   // Narrow tabs hide inactive close buttons; the active tab stays in view
   // when the row scrolls; the host gets the new hit-test map.
   const TAB_WIDTH = 256, TAB_GAP = 2;
-  function layoutTabs() {
+  function layoutTabs(revealActive) {
     const box = $('tabs');
     // The row asks for every tab at full width and shrinks (evenly, through
     // the tabs' own flex-shrink) when the window is narrower.
@@ -204,10 +209,92 @@
     box.style.flexBasis = widthsFrozen ? 'auto' : n ? (n * TAB_WIDTH + (n - 1) * TAB_GAP) + 'px' : '0px';
     const first = box.querySelector('.tab:not(.closing)');
     box.classList.toggle('narrow', !!first && first.getBoundingClientRect().width < 100);
-    const active = box.querySelector('.tab.active');
-    if (active) active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    updateOverflow();
+    // Opening and closing tabs still change the widths: the reveal waits for them to settle.
+    if (revealActive) revealPending = true;
+    if (revealPending && !box.querySelector('.tab.opening, .tab.closing')) { revealPending = false; revealActiveTab(); }
     reportHitMap();
   }
+
+  // ---------- overflow (0.11.0) ----------
+  // Past the minimum width the row scrolls: smoothly with the wheel and the ‹ › buttons, with
+  // fading edges where more tabs are; "▾" lists every tab. All of it only while overflowing.
+  const FADE = 28;
+  function updateOverflow() {
+    const box = $('tabs');
+    const over = box.scrollWidth > box.clientWidth + 1;
+    if (over !== document.documentElement.classList.contains('tabs-overflow')) {
+      document.documentElement.classList.toggle('tabs-overflow', over);
+      $('tabs-left').hidden = !over;
+      $('tabs-right').hidden = !over;
+      $('tablist').hidden = !over;
+      if (!over && state.popup === 'tabList') { LB.post('hidePopup'); setPopup(null); }
+    }
+    const max = box.scrollWidth - box.clientWidth;
+    const left = over && box.scrollLeft > 1, right = over && box.scrollLeft < max - 1;
+    box.classList.toggle('fade-left', left);
+    box.classList.toggle('fade-right', right);
+    $('tabs-left').disabled = !left;
+    $('tabs-right').disabled = !right;
+  }
+  let scrollGoal = null, scrollRaf = 0;
+  function scrollTabsTo(x) {
+    const box = $('tabs');
+    const max = Math.max(0, box.scrollWidth - box.clientWidth);
+    scrollGoal = Math.max(0, Math.min(max, x));
+    if (reduceMotion.matches) { box.scrollLeft = scrollGoal; scrollGoal = null; return; }
+    if (!scrollRaf) scrollRaf = requestAnimationFrame(stepScroll);
+  }
+  function scrollTabsBy(dx) {
+    scrollTabsTo((scrollGoal === null ? $('tabs').scrollLeft : scrollGoal) + dx);
+  }
+  function stepScroll() {
+    scrollRaf = 0;
+    const box = $('tabs');
+    if (scrollGoal === null) return;
+    const d = scrollGoal - box.scrollLeft;
+    const before = box.scrollLeft;
+    if (Math.abs(d) < 1) { box.scrollLeft = scrollGoal; scrollGoal = null; return; }
+    box.scrollLeft = before + (Math.abs(d) < 4 ? d : d * 0.3);
+    if (box.scrollLeft === before) { scrollGoal = null; return; }
+    scrollRaf = requestAnimationFrame(stepScroll);
+  }
+  // The active tab fully in view, clear of the fading edges.
+  function revealActiveTab() {
+    const box = $('tabs');
+    const active = box.querySelector('.tab.active');
+    if (!active || box.scrollWidth <= box.clientWidth + 1) return;
+    const row = box.getBoundingClientRect(), r = active.getBoundingClientRect();
+    // Measured at the current position (not where a running scroll is going).
+    if (r.left < row.left + FADE) scrollTabsTo(box.scrollLeft + r.left - row.left - FADE);
+    else if (r.right > row.right - FADE) scrollTabsTo(box.scrollLeft + r.right - row.right + FADE);
+  }
+  // ‹ ›: a click scrolls most of a row; held down, it keeps going.
+  ['tabs-left', 'tabs-right'].forEach(function (id, i) {
+    const dir = i ? 1 : -1;
+    let hold = 0;
+    const stop = function () { clearTimeout(hold); clearInterval(hold); hold = 0; };
+    const btn = $(id);
+    btn.addEventListener('pointerdown', function (e) {
+      if (e.button !== 0) return;
+      stop();
+      scrollTabsBy(dir * Math.max(120, $('tabs').clientWidth * 0.8));
+      hold = setTimeout(function () { hold = setInterval(function () { scrollTabsBy(dir * 160); }, 120); }, 400);
+    });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach(function (t) { btn.addEventListener(t, stop); });
+    // The keyboard (and tests) click without a press.
+    btn.addEventListener('click', function (e) { if (e.detail === 0) scrollTabsBy(dir * Math.max(120, $('tabs').clientWidth * 0.8)); });
+  });
+  $('tablist').addEventListener('pointerdown', function () { rememberOpen('tabList'); });
+  $('tablist').addEventListener('click', function () {
+    if (state.popup === 'tabList' || downWhileOpen === 'tabList') { downWhileOpen = null; LB.post('hidePopup'); setPopup(null); return; }
+    const r = $('tablist').getBoundingClientRect();
+    LB.post('showPopup', { popup: 'tabList', rect: { x: r.left, y: r.top, width: r.width, height: r.height } });
+    setPopup('tabList');
+  });
+  // A middle press never starts the engine's autoscroll on the strip (0.11.0): on an
+  // overflowing (scrollable) row it took the release, so middle-click did not close the tab.
+  $('tabstrip').addEventListener('mousedown', function (e) { if (e.button === 1) e.preventDefault(); });
 
   // ---------- frameless window ----------
   // The host hit-tests the window: everything in the tab row that is not a
@@ -221,6 +308,7 @@
     const box = $('tabs');
     const tabs = liveTabs();
     const interactive = [rectOf($('newtab'))];
+    ['tabs-left', 'tabs-right', 'tablist'].forEach(function (id) { if (!$(id).hidden) interactive.push(rectOf($(id))); });
     if (tabs.length) {
       // The tabs as one band: the visible part of the scrolling row.
       const row = box.getBoundingClientRect();
@@ -247,21 +335,21 @@
     lastMap = json;
     LB.post('hitMap', { map: map });
   }
-  new ResizeObserver(function () { layoutTabs(); }).observe($('tabstrip'));
-  $('tabs').addEventListener('scroll', reportHitMap);
+  new ResizeObserver(function () { layoutTabs(true); }).observe($('tabstrip'));
+  $('tabs').addEventListener('scroll', function () { updateOverflow(); reportHitMap(); });
   // Tabs slide while they animate: the layout (narrow mode, scrolling) and the host's hit map
   // follow when they settle.
   $('tabs').addEventListener('transitionend', function (e) {
     if (e.propertyName === 'flex-basis' && !e.target.classList.contains('closing')) layoutTabs();
+    // The active tab grows to its minimum (narrow tabs): it comes into view at its new width.
+    else if (e.propertyName === 'min-width' && e.target.classList.contains('active')) { revealActiveTab(); reportHitMap(); }
   });
-  // A middle press never starts the engine's autoscroll on the strip (0.11.0): on an
-  // overflowing (scrollable) row it took the release, so middle-click did not close the tab.
-  $('tabstrip').addEventListener('mousedown', function (e) { if (e.button === 1) e.preventDefault(); });
   $('tabs').addEventListener('wheel', function (e) {
     const box = $('tabs');
     if (box.scrollWidth <= box.clientWidth) return;
     e.preventDefault();
-    box.scrollLeft += Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+    const d = Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+    scrollTabsBy(e.deltaMode === 1 ? d * 40 : e.deltaMode === 2 ? d * box.clientWidth : d);
   }, { passive: false });
 
   // Mouse clicks on these are handled natively (they are hit-tested as
@@ -835,6 +923,7 @@
     $('pip').classList.toggle('on', kind === 'pip');
     $('shield').classList.toggle('on', kind === 'shield');
     $('site-icon').classList.toggle('on', kind === 'siteInfo');
+    $('tablist').classList.toggle('on', kind === 'tabList');
     document.documentElement.classList.toggle('tab-menu', kind === 'tabMenu');
     document.querySelectorAll('.bm[data-folder]').forEach(function (b) {
       b.classList.toggle('on', kind === 'folder:' + b.dataset.folder);

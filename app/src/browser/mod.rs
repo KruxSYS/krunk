@@ -77,6 +77,7 @@ mod status;
 mod storage;
 mod suggest;
 mod sync;
+mod tablist;
 mod tasks;
 mod updater;
 
@@ -1405,6 +1406,7 @@ impl Browser {
                 tab.muted = v.view.audio_muted();
             }
             self.post_shell_to(win, &Event::TabUpdate { tab });
+            self.refresh_tab_list(win);
         }
     }
 
@@ -1421,6 +1423,7 @@ impl Browser {
                 }
             }
             self.post_shell_to(win, &Event::Tabs { tabs, active });
+            self.refresh_tab_list(win);
         }
     }
 
@@ -2163,6 +2166,7 @@ impl Browser {
                     PopupKind::SiteInfo => "siteInfo",
                     PopupKind::Downloads => "downloads",
                     PopupKind::Pip => "pip",
+                    PopupKind::TabList => "tabList",
                     _ => "shield",
                 };
                 if self.toggle_suppressed(anchor) {
@@ -2173,6 +2177,7 @@ impl Browser {
                         PopupKind::Downloads => self.show_popup(self.downloads_content(), Some(rect)),
                         PopupKind::Pip => self.pip_command(Some(rect)),
                         PopupKind::SiteInfo => self.show_site_info(rect),
+                        PopupKind::TabList => self.show_tab_list(rect),
                         _ => {
                             self.shield_anchor.set(Some(rect));
                             self.show_shield();

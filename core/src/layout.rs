@@ -315,6 +315,7 @@ pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> Pop
         PopupKind::PipVolume => (PIP_BAR_MIN_WIDTH_DIP, PIP_BAR_HEIGHT_DIP),
         PopupKind::ExtInstall => (400.0, 120.0 + 24.0 * entries.clamp(1, 8) as f64),
         PopupKind::BookmarkEdit => (340.0, 214.0),
+        PopupKind::TabList => (TAB_LIST_WIDTH, tab_list_height(entries)),
     };
     let x = (shell_width_css - w - 8.0).max(0.0);
     PopupRect { x, y: SHELL_HEIGHT_DIP - 4.0, width: w, height: h }
@@ -360,6 +361,26 @@ pub fn folder_popup_rect(anchor: PopupRect, items: usize) -> PopupRect {
     }
 }
 
+/// The tab list (0.11.0): under its "▾" button (`anchor`, shell CSS px), its right edge at the
+/// button's, as tall as `tabs` rows need (with the search field) up to a limit; the rest scrolls.
+pub fn tab_list_rect(anchor: PopupRect, tabs: usize) -> PopupRect {
+    PopupRect {
+        x: (anchor.x + anchor.width - TAB_LIST_WIDTH).max(0.0),
+        y: anchor.y + anchor.height + 2.0,
+        width: TAB_LIST_WIDTH,
+        height: tab_list_height(tabs),
+    }
+}
+
+pub const TAB_LIST_WIDTH: f64 = 380.0;
+/// One row of the tab list (CSS px; `popup.css` uses the same).
+pub const TAB_LIST_ROW: f64 = 34.0;
+
+fn tab_list_height(tabs: usize) -> f64 {
+    // The search field (48) and padding, then the rows, at most 14 at once.
+    56.0 + TAB_LIST_ROW * tabs.clamp(1, 14) as f64
+}
+
 /// Folder dropdowns are this wide (CSS px); longer titles are shortened with "…" (0.7.2, R9).
 pub const FOLDER_POPUP_WIDTH: f64 = 320.0;
 
@@ -380,6 +401,16 @@ pub fn next_zoom(current: f64, zoom_in: bool) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_tab_list_hangs_under_its_button() {
+        let anchor = PopupRect { x: 900.0, y: 4.0, width: 28.0, height: 28.0 };
+        let r = tab_list_rect(anchor, 3);
+        assert_eq!((r.x, r.y, r.width), (548.0, 34.0, TAB_LIST_WIDTH));
+        assert_eq!(r.height, 56.0 + 3.0 * TAB_LIST_ROW);
+        assert_eq!(tab_list_rect(anchor, 200).height, 56.0 + 14.0 * TAB_LIST_ROW, "the rest scrolls");
+        assert_eq!(tab_list_rect(PopupRect { x: 10.0, ..anchor }, 1).x, 0.0, "never left of the window");
+    }
 
     #[test]
     fn the_pip_volume_bar_stays_next_to_the_floating_window() {

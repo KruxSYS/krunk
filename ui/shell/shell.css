@@ -10,7 +10,20 @@ body { display: flex; flex-direction: column; background: var(--bg); }
 #tabs { display: flex; flex: 0 1 0; min-width: 0; height: 100%; align-items: flex-end; gap: 2px;
         overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
 #tabs::-webkit-scrollbar { display: none; }
-/* Tabs prefer 256 DIP and shrink evenly to 72; past that the row scrolls. */
+/* 0.11.0 overflow: the row fades at an edge that has more tabs behind it; ‹ › scroll it and ▾
+   lists every tab. They show only while the tabs do not fit. */
+#tabs.fade-left { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 28px); mask-image: linear-gradient(to right, transparent 0, #000 28px); }
+#tabs.fade-right { -webkit-mask-image: linear-gradient(to left, transparent 0, #000 28px); mask-image: linear-gradient(to left, transparent 0, #000 28px); }
+#tabs.fade-left.fade-right { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%); }
+#tabstrip > .tabs-scroll { width: 24px; min-width: 24px; flex: none; align-self: center; padding: 0; }
+#tabstrip > .tabs-scroll:disabled { opacity: .35; }
+#tabstrip > #tablist { flex: none; align-self: center; }
+#tabstrip > #tablist.on { background: var(--bg-hover); }
+#tabstrip > .tb[hidden] { display: none; }
+/* Tabs prefer 256 DIP and shrink evenly to 72 (the active one to 120, with its close button);
+   past that the row scrolls. */
+#tabs.narrow .tab.active { min-width: 120px; }
 .tab {
   position: relative; display: flex; align-items: center; gap: 6px;
   flex: 0 1 256px; min-width: 72px; height: 30px; padding: 0 6px 0 10px;

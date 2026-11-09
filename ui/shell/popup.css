@@ -221,3 +221,21 @@ body.pv-dark { --bg-raised: #202124; --bg-hover: #3c4043; --fg: #e8eaed; --fg-mu
 .http-auth .auth-saved { margin: 0 0 6px; }
 .http-auth .auth-pick.chosen { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
 .http-auth .error { margin: 0 0 8px; }
+/* The tab list (0.11.0). Rows are TL_ROW (34px) high, positioned by popup.js. */
+#root[data-kind="tabList"] { height: 100vh; }
+.tl { display: flex; flex-direction: column; height: 100%; }
+.tl-search { flex: none; margin: 8px; height: 32px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg); color: var(--fg); font: inherit; outline: none; }
+.tl-search:focus { border-color: var(--accent); }
+.tl-list { flex: 1; min-height: 0; overflow-y: auto; position: relative; }
+.tl-space { position: relative; }
+.tl-row, .tl-row[data-id] { position: absolute; left: 0; right: 0; height: 34px; cursor: default; }
+.tl-row.current .label { font-weight: 600; }
+.tl-row.current::before { content: ""; position: absolute; left: 0; top: 7px; bottom: 7px; width: 3px; border-radius: 2px; background: var(--accent); }
+.tl-row.sel { background: var(--bg-hover); }
+.tl-row.private .label { color: var(--private, inherit); }
+.tl-audio { flex: none; font-size: 12px; }
+.tl-close { flex: none; display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: 0; border-radius: 4px;
+  background: none; color: var(--fg-muted); font-size: 16px; line-height: 1; padding: 0; }
+.tl-close:hover { background: var(--bg-hover); color: var(--fg); }
+.tl-empty { padding: 10px 12px; color: var(--fg-muted); }

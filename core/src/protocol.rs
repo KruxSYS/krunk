@@ -176,6 +176,9 @@ pub enum PopupKind {
     BookmarkMenu,
     /// Name (and address) of a bookmark or folder: edit, rename, new folder.
     BookmarkEdit,
+    /// Every tab of the window, searchable, with close buttons (0.11.0): the "▾" button the
+    /// tab strip shows while its tabs do not fit.
+    TabList,
 }
 
 impl PopupKind {
@@ -183,7 +186,12 @@ impl PopupKind {
     pub fn shell_may_open(self) -> bool {
         matches!(
             self,
-            PopupKind::Menu | PopupKind::Shield | PopupKind::SiteInfo | PopupKind::Downloads | PopupKind::Pip
+            PopupKind::Menu
+                | PopupKind::Shield
+                | PopupKind::SiteInfo
+                | PopupKind::Downloads
+                | PopupKind::Pip
+                | PopupKind::TabList
         )
     }
 
@@ -405,6 +413,13 @@ pub enum PopupContent {
         /// A subfolder opened in place (0.11.0): the title of the folder "‹ Back" returns to.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         back: Option<String>,
+    },
+    /// The window's tabs (0.11.0): a click switches, × closes (the list stays open and is
+    /// updated in place).
+    TabList {
+        tabs: Vec<TabInfo>,
+        #[serde(default)]
+        active: Option<u32>,
     },
     /// A newer Krunk: Update now (or Download) / Later / Release notes.
     Update {
@@ -659,6 +674,7 @@ impl PopupContent {
             PopupContent::ExtInstall { .. } => PopupKind::ExtInstall,
             PopupContent::BookmarkMenu { .. } => PopupKind::BookmarkMenu,
             PopupContent::BookmarkEdit { .. } => PopupKind::BookmarkEdit,
+            PopupContent::TabList { .. } => PopupKind::TabList,
         }
     }
 
@@ -671,6 +687,7 @@ impl PopupContent {
             PopupContent::SiteInfo { .. } => Some("siteInfo".into()),
             PopupContent::Downloads { .. } => Some("downloads".into()),
             PopupContent::Pip { .. } => Some("pip".into()),
+            PopupContent::TabList { .. } => Some("tabList".into()),
             PopupContent::BookmarkFolder { id, .. } => Some(format!("folder:{id}")),
             _ => None,
         }
@@ -1658,6 +1675,8 @@ impl Sender {
             Sender::Popup => matches!(
                 req,
                 R::Command { .. }
+                    | R::ActivateTab { .. }
+                    | R::CloseTab { .. }
                     | R::TabMenuAction { .. }
                     | R::NavToEntry { .. }
                     | R::HttpAuthReply { .. }
@@ -2567,7 +2586,9 @@ mod tests {
         assert_eq!(parse_request(Sender::Shell, reply), Err(ProtocolError::Forbidden));
         assert_eq!(parse_request(newtab, reply), Err(ProtocolError::Forbidden));
         assert_eq!(parse_request(Sender::Popup, r#"{"cmd":"vaultList"}"#), Err(ProtocolError::Forbidden));
-        assert_eq!(parse_request(Sender::Popup, r#"{"cmd":"closeTab","id":1}"#), Err(ProtocolError::Forbidden));
+        // 0.11.0: the tab list (popup) switches and closes tabs.
+        assert!(parse_request(Sender::Popup, r#"{"cmd":"closeTab","id":1}"#).is_ok());
+        assert!(parse_request(Sender::Popup, r#"{"cmd":"activateTab","id":1}"#).is_ok());
     }
 
     /// The storage page's commands belong to it alone; the site-data page has

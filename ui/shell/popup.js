@@ -919,6 +919,72 @@
   root.addEventListener('pointerup', function (e) { endFolderDrag(e, true); });
   root.addEventListener('pointercancel', function (e) { endFolderDrag(e, false); });
 
+  // The tab list (0.11.0): every tab of the window, filtered by the search field, with ×.
+  // Only the rows in view exist (a window can have hundreds of tabs).
+  const TL_ROW = 34;
+  const tl = { tabs: [], active: null, shown: [], sel: 0 };
+  function renderTabList(c) {
+    tl.tabs = c.tabs; tl.active = c.active; tl.sel = -1;
+    const search = el('input', { id: 'tl-search', class: 'tl-search', type: 'search', placeholder: 'Search tabs', 'aria-label': 'Search tabs', spellcheck: 'false', autocomplete: 'off' });
+    const space = el('div', { id: 'tl-space', class: 'tl-space' });
+    const list = el('div', { id: 'tl-list', class: 'tl-list', role: 'listbox', 'aria-label': 'Tabs' }, [space]);
+    search.addEventListener('input', function () { tl.sel = 0; tlFilter(); list.scrollTop = 0; });
+    search.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (!tl.shown.length) return;
+        tl.sel = (tl.sel + (e.key === 'ArrowDown' ? 1 : -1) + tl.shown.length) % tl.shown.length;
+        const top = tl.sel * TL_ROW;
+        if (top < list.scrollTop) list.scrollTop = top;
+        else if (top + TL_ROW > list.scrollTop + list.clientHeight) list.scrollTop = top + TL_ROW - list.clientHeight;
+        tlRows();
+      } else if (e.key === 'Enter') {
+        const t = tl.shown[Math.max(0, tl.sel)];
+        if (t) { LB.post('activateTab', { id: t.id }); close(); }
+      }
+    });
+    list.addEventListener('scroll', tlRows);
+    // After the first layout: the list's height is known, the current tab in view.
+    requestAnimationFrame(function () {
+      tlFilter();
+      const at = tl.shown.findIndex(function (t) { return t.id === tl.active; });
+      if (at >= 0) { list.scrollTop = Math.max(0, at * TL_ROW - list.clientHeight / 2 + TL_ROW / 2); tlRows(); }
+    });
+    return [el('div', { class: 'tl' }, [search, list])];
+  }
+  function tlFilter() {
+    const search = document.getElementById('tl-search');
+    const q = search ? search.value.trim().toLowerCase() : '';
+    tl.shown = tl.tabs.filter(function (t) { return !q || (t.title || '').toLowerCase().indexOf(q) >= 0 || (t.url || '').toLowerCase().indexOf(q) >= 0; });
+    if (tl.sel >= tl.shown.length) tl.sel = tl.shown.length - 1;
+    const space = document.getElementById('tl-space');
+    if (space) space.style.height = Math.max(TL_ROW, tl.shown.length * TL_ROW) + 'px';
+    tlRows();
+  }
+  function tlRows() {
+    const list = document.getElementById('tl-list'), space = document.getElementById('tl-space');
+    if (!list || !space) return;
+    if (!tl.shown.length) { space.replaceChildren(el('div', { class: 'tl-empty', text: 'No tab matches.' })); return; }
+    const first = Math.max(0, Math.floor(list.scrollTop / TL_ROW) - 4);
+    const last = Math.min(tl.shown.length, Math.ceil((list.scrollTop + (list.clientHeight || 480)) / TL_ROW) + 4);
+    const rows = [];
+    for (let i = first; i < last; i++) rows.push(tlRow(tl.shown[i], i));
+    space.replaceChildren.apply(space, rows);
+  }
+  function tlRow(t, i) {
+    const icon = t.favicon ? el('img', { class: 'fav', src: t.favicon, alt: '' }) : el('span', { class: 'fav dot' });
+    const x = el('button', { class: 'tl-close', title: 'Close tab', 'aria-label': 'Close ' + (t.title || 'tab'), tabindex: '-1',
+      onclick: function (e) { e.stopPropagation(); LB.post('closeTab', { id: t.id }); } }, [el('span', { text: '×', 'aria-hidden': 'true' })]);
+    const row = el('div', { class: 'item tl-row' + (t.id === tl.active ? ' current' : '') + (i === tl.sel ? ' sel' : '') + (t.private ? ' private' : ''),
+      role: 'option', 'aria-selected': i === tl.sel ? 'true' : 'false', title: (t.title || '') + (t.url ? '\n' + t.url : ''), 'data-id': t.id },
+      [icon, el('span', { class: 'label', text: t.title || t.url || 'New tab' }), t.audible ? el('span', { class: 'tl-audio', text: t.muted ? '🔇' : '🔊', 'aria-hidden': 'true' }) : null, x]);
+    row.style.top = (i * TL_ROW) + 'px';
+    row.addEventListener('click', function () { LB.post('activateTab', { id: t.id }); close(); });
+    // Middle-click closes, as on the strip.
+    row.addEventListener('auxclick', function (e) { if (e.button === 1) { e.preventDefault(); LB.post('closeTab', { id: t.id }); } });
+    return row;
+  }
+
   // "Krunk X is available" and the download that follows "Update now".
   function renderUpdate(c) {
     const reply = (choice) => LB.post('updateReply', { choice: choice });
@@ -951,6 +1017,17 @@
 
 
   let current = null;
+  // The host shows the window once content numbered `seq` is painted (0.11.0): two frames,
+  // so the first one with it is on screen when the window opens. The height comes with it.
+  function answerShown(m, c) {
+    if (m.seq === undefined || m.seq === null) return false;
+    const seq = m.seq;
+    requestAnimationFrame(function () {
+      const height = FITS[c.kind] ? root.offsetHeight + 2 : null;
+      requestAnimationFrame(function () { LB.post('popupShown', { seq: seq, height: height }); });
+    });
+    return true;
+  }
   LB.on('popup', function (m) {
     const c = m.content;
     // The downloads list is updated in place (the bars keep moving; hover stays).
@@ -958,7 +1035,7 @@
       const before = dlRows.size;
       current = c;
       fillDownloads(document.getElementById('dl-list'), c.items);
-      if (dlRows.size !== before) requestAnimationFrame(fit);
+      if (!answerShown(m, c) && dlRows.size !== before) requestAnimationFrame(fit);
       return;
     }
     // The volume bar is updated in place (a re-render would drop a drag in progress).
@@ -966,10 +1043,20 @@
       current = c;
       pv.tabId = c.tabId;
       if (!pv.dragging && !pv.timer && Date.now() - pv.sentAt > 300) { pv.volume = c.volume; pv.muted = c.muted; pvPaint(); }
+      answerShown(m, c);
+      return;
+    }
+    // The tab list keeps its search and scroll position (0.11.0).
+    if (c.kind === 'tabList' && current && current.kind === 'tabList' && document.getElementById('tl-list')) {
+      current = c;
+      tl.tabs = c.tabs;
+      tl.active = c.active;
+      tlFilter();
+      answerShown(m, c);
       return;
     }
     current = m.content;
-    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, cardFill: renderCardFill, saveCard: renderSaveCard, pip: renderPip, pipVolume: renderPipVolume, extInstall: renderExtInstall, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, navMenu: renderNavMenu, httpAuth: renderHttpAuth, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
+    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, cardFill: renderCardFill, saveCard: renderSaveCard, pip: renderPip, pipVolume: renderPipVolume, extInstall: renderExtInstall, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, navMenu: renderNavMenu, httpAuth: renderHttpAuth, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit, tabList: renderTabList }[c.kind];
     root.textContent = '';
     root.dataset.kind = c.kind;
     // The volume bar matches the engine's floating window, which is always dark.
@@ -979,15 +1066,8 @@
     // The first item, never "‹ Back" (Enter would leave the folder just opened).
     const firstItem = c.kind === 'bookmarkFolder' && first && first.id === 'folder-back' ? (root.querySelector('button.item:not(#folder-back)') || first) : first;
     if (firstItem && c.kind !== 'suggest' && c.kind !== 'cardFill' && c.kind !== 'addressMenu' && c.kind !== 'addressSuggest' && c.kind !== 'pipVolume') firstItem.focus();
-    if (m.seq !== undefined && m.seq !== null) {
-      // The host shows the window once this content is painted (0.11.0): two frames, so the
-      // first one with it is on screen when the window opens. The height comes with it.
-      const seq = m.seq;
-      requestAnimationFrame(function () {
-        const height = FITS[c.kind] ? root.offsetHeight + 2 : null;
-        requestAnimationFrame(function () { LB.post('popupShown', { seq: seq, height: height }); });
-      });
-    } else if (FITS[c.kind]) requestAnimationFrame(fit);
+    if (!answerShown(m, c) && FITS[c.kind]) requestAnimationFrame(fit);
+    if (c.kind === 'tabList') document.getElementById('tl-search').focus();
   });
   // The window was hidden: nothing of this content may show with the next one.
   LB.on('popupClear', function () {
