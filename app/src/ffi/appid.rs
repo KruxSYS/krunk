@@ -8,10 +8,10 @@ use std::path::{Path, PathBuf};
 use windows::core::{w, Interface, HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Foundation::PROPERTYKEY;
 use windows::Win32::Storage::EnhancedStorage::PKEY_AppUserModel_ID;
-use windows::Win32::System::Com::StructuredStorage::{PropVariantClear, PropVariantToStringAlloc, PROPVARIANT};
+use windows::Win32::System::Com::StructuredStorage::{PropVariantToStringAlloc, PROPVARIANT};
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER,
-    COINIT_APARTMENTTHREADED, STGM_READWRITE,
+    CoCreateInstance, CoInitializeEx, CoTaskMemAlloc, CoTaskMemFree, CoUninitialize, IPersistFile,
+    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, STGM_READWRITE,
 };
 use windows::Win32::System::Registry::{
     RegCloseKey, RegCreateKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ,
@@ -143,27 +143,39 @@ unsafe fn stamp(lnk: &Path, exe: &Path) -> bool {
     if current_id(&store, &PKEY_AppUserModel_ID).as_deref() == Some(APP_ID) {
         return false;
     }
-    let mut id: Vec<u16> = APP_ID.encode_utf16().chain(std::iter::once(0)).collect();
+    // windows-rs frees a PROPVARIANT when it is dropped (PropVariantClear → CoTaskMemFree of
+    // the string), so the string must come from CoTaskMemAlloc. (0.11.0 before release pointed
+    // it at Rust memory: heap corruption on the first start that stamped a shortcut.)
+    let Some(value) = lpwstr_variant(APP_ID) else { return false };
+    store.SetValue(&PKEY_AppUserModel_ID, &value).is_ok()
+        && store.Commit().is_ok()
+        && file.Save(PCWSTR::null(), true).is_ok()
+}
+
+/// A VT_LPWSTR PROPVARIANT owning a CoTaskMemAlloc copy of `s` (freed when it is dropped).
+/// SAFETY: COM is initialised on this thread.
+unsafe fn lpwstr_variant(s: &str) -> Option<PROPVARIANT> {
+    let wide: Vec<u16> = s.encode_utf16().chain(std::iter::once(0)).collect();
+    let mem = CoTaskMemAlloc(wide.len() * 2) as *mut u16;
+    if mem.is_null() {
+        return None;
+    }
+    std::ptr::copy_nonoverlapping(wide.as_ptr(), mem, wide.len());
     let mut value = PROPVARIANT::default();
     (*value.Anonymous.Anonymous).vt = VT_LPWSTR;
-    (*value.Anonymous.Anonymous).Anonymous.pwszVal = PWSTR(id.as_mut_ptr());
-    let ok = store.SetValue(&PKEY_AppUserModel_ID, &value).is_ok()
-        && store.Commit().is_ok()
-        && file.Save(PCWSTR::null(), true).is_ok();
-    // `value` borrows `id` (not allocated by COM): never PropVariantClear'd.
-    drop(id);
-    ok
+    (*value.Anonymous.Anonymous).Anonymous.pwszVal = PWSTR(mem);
+    Some(value)
 }
 
 /// SAFETY: COM is initialised on this thread.
 unsafe fn current_id(store: &IPropertyStore, key: &PROPERTYKEY) -> Option<String> {
-    let mut v = store.GetValue(key).ok()?;
+    // The value is cleared when it is dropped (windows-rs), never by hand as well.
+    let v = store.GetValue(key).ok()?;
     let s = PropVariantToStringAlloc(&v).ok().map(|p| {
         let s = p.to_string().unwrap_or_default();
         CoTaskMemFree(Some(p.0 as *const _));
         s
     });
-    let _ = PropVariantClear(&mut v);
     s.filter(|s| !s.is_empty())
 }
 
