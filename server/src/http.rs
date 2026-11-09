@@ -41,11 +41,8 @@ fn limited<S: Clone + Send + Sync + 'static>(r: Router<S>, max: usize) -> Router
 }
 
 async fn refuse_large(State(max): State<usize>, req: Request, next: Next) -> Response {
-    let declared = req
-        .headers()
-        .get(header::CONTENT_LENGTH)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<usize>().ok());
+    let declared =
+        req.headers().get(header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<usize>().ok());
     match declared {
         Some(n) if n > max => {
             let _ = axum::body::to_bytes(req.into_body(), MAX_BODY_LIMIT).await;
