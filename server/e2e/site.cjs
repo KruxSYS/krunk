@@ -306,6 +306,8 @@ async function keyboard(seed) {
   ok(true, `keyboard: re-auth by keyboard, then "${(await page.textContent('#status')).trim()}"`);
   const role = await page.getAttribute('#status', 'role');
   ok(role === 'status', `banner role=${role} for a success`);
+  // The list is rebuilt right after the banner (me, devices and sessions reload together).
+  await page.waitForFunction(() => document.querySelectorAll('#sessions li').length === 1, null, { timeout: 10000 }).catch(() => {});
   const webCount = await page.$$eval('#sessions li', (l) => l.length);
   ok(webCount === 1, `keyboard: one website session left (this one): ${webCount}`);
   ok(page.krunk.errors.length === 0, 'keyboard walkthrough: 0 console errors ' + page.krunk.errors.join(' | '));
