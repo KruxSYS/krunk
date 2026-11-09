@@ -809,7 +809,10 @@ The server enforces the order of steps, allows a single attempt, and deletes the
 - **Records (S7):**
   - `records` returns each envelope as a JSON object. `since=0` always gets everything; a
     `since` above 0 but below `purge_horizon_seq` is 410.
-  - `epoch_lt` takes an optional `k=ak|pak` (default `ak`).
+  - `epoch_lt` takes an optional `k=ak|pak` (default `ak`). **Addition (S8):** `k` also works
+    without `epoch_lt` and then returns only records of that key kind, so a device whose vault
+    was locked for a while catches up on the passwords records alone (its PAK cursor is separate
+    from the AK cursor).
   - In `records/batch`, `if_seq` 0 means "new". Each write gets its own result (`ok` with the
     new `seq`, or `conflict` with `current` = `{seq, envelope}` or null). The quotas apply to the
     whole batch: if it would go over, nothing of it is kept (400 `quota_exceeded`).
@@ -819,10 +822,28 @@ The server enforces the order of steps, allows a single attempt, and deletes the
   - `rekey/batch` takes envelopes of the current epoch of their key kind only (409 for a stale
     `epoch`). A replacement whose old record is already gone is skipped.
 
+- **Passwords and never-save (S8), as built:**
+  - The `passwords` payload also carries the entry `id` (the natural key), as `bookmarks`
+    carries `guid`: a receiver can't get it back from the record id.
+  - The PAK collections' bookkeeping (pull cursor, per record `{rid, seq, ver, deleted, stamp,
+    bucket}`, the previous versions) lives inside the vault's sealed sync part, next to PAK —
+    nothing about logins or never-save origins goes into `browser.db`'s sync tables.
+  - A local change is found by comparing each login's `updated` time (`stamp`) and the
+    never-save list with that bookkeeping, not by a queue: a crash between the steps of a run
+    loses nothing. The vault's `dirty` list only tells the scheduler that a login changed.
+  - Merge: per login, the later `updated` wins (equal times: decided by the content, the same on
+    every device); the loser is kept 30 days in the vault. A deletion loses to a concurrent
+    edit. Two logins for the same site and user name (saved on two devices before they synced)
+    become one on every device, under the smaller id, with the newer content; the other id gets
+    a tombstone.
+  - A vault's first PAK run only pulls and merges (§10.5), then pushes in the next one.
+  - A tombstone's natural key is found from the bookkeeping, or by computing the record id of
+    the logins and origins held locally.
+
 ### 11.7 Records
 | Method | Path | Auth | Request | Response | Errors |
 |---|---|---|---|---|---|
-| GET | `records` | device | `?since=<seq>&limit≤500[&epoch_lt=<e>]` | `{records:[{seq, envelope}], has_more, head_seq}` | `gone` (410) beyond the horizon |
+| GET | `records` | device | `?since=<seq>&limit≤500[&k=ak\|pak][&epoch_lt=<e>]` | `{records:[{seq, envelope}], has_more, head_seq}` | `gone` (410) beyond the horizon |
 | POST | `records/batch` | device | `{writes:[{c, id, if_seq, envelope} \| {c, id, if_seq, purge:true}]}` (≤ 500 or 1 MiB) | `{results:[{id, status:"ok", seq} \| {id, status:"conflict", current:{seq, envelope}}]}` | `rotation_pending` (423), `quota_exceeded`, `bad_request` (wrong epoch, envelope invalid) |
 | POST | `rekey/batch` | device (epoch e+1) | `{epoch, replaces:[{old_id, c, envelope}]}` (≤ 500 or 1 MiB) | `{done, remaining_old}` | `conflict` |
 

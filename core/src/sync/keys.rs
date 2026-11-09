@@ -131,6 +131,9 @@ pub struct PakState {
     pub pak: PakPin,
     #[serde(default)]
     pub pak_old: Vec<EpochKey>,
+    /// The PAK collections' bookkeeping (S8): kept here, under the vault key, never in browser.db.
+    #[serde(default)]
+    pub book: super::pak::PakBook,
 }
 
 impl std::fmt::Debug for PakState {
@@ -436,6 +439,7 @@ pub fn setup_commit(plan: &SetupPlan, now_ms: u64) -> KResult<(Commit, Joined)> 
                 rr_gen: 1,
             },
             pak_old: vec![],
+            book: Default::default(),
         }),
     };
     Ok((
@@ -600,7 +604,7 @@ pub fn restore_commit(plan: &RestorePlan, me: &Me, with_vault: bool, now_ms: u64
         pin.hash = dir::hash(&pak_blob.bytes);
         commit.pak_dir = Some(pak_blob);
         commit.if_pak_prev_hash = Some(plan.pak_head.hash);
-        Some(PakState { vault_sk: vault.sk.clone(), pak: pin, pak_old: plan.pak_old.clone() })
+        Some(PakState { vault_sk: vault.sk.clone(), pak: pin, pak_old: plan.pak_old.clone(), book: Default::default() })
     } else {
         None
     };
@@ -876,6 +880,7 @@ pub fn n_accept(
                     rr_gen: pd.rr_gen,
                 },
                 pak_old: vec![],
+                book: Default::default(),
             })
         }
         _ => None,

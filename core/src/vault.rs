@@ -1270,6 +1270,44 @@ impl Vault {
         }
     }
 
+    /// Sync (0.9.0): what other devices changed, in one write: entries put by id (created or
+    /// replaced, keeping their own times), entries removed, and sync's new part. These changes
+    /// are not remembered for a push. An entry that fails the usual checks is skipped; the ids
+    /// of the skipped ones are returned.
+    pub fn sync_apply(
+        &mut self,
+        puts: Vec<Entry>,
+        removes: &[String],
+        part: VaultSync,
+        wrapper: &dyn KeyWrapper,
+    ) -> VResult<Vec<String>> {
+        let entries_before = self.entries.clone();
+        let sync_before = self.sync.clone();
+        let mut skipped = Vec::new();
+        for e in puts {
+            let id_ok = e.id.len() == 32 && e.id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+            let ok = id_ok
+                && origin_of(&e.origin).as_deref() == Some(e.origin.as_str())
+                && validate(&e.username, Some(&e.password), &e.note).is_ok();
+            if !ok {
+                skipped.push(e.id.clone());
+                continue;
+            }
+            match self.entries.iter_mut().find(|x| x.id == e.id) {
+                Some(x) => *x = e,
+                None => self.entries.push(e),
+            }
+        }
+        self.entries.retain(|x| !removes.contains(&x.id));
+        self.sync = Some(part);
+        if let Err(err) = self.save(wrapper) {
+            self.entries = entries_before;
+            self.sync = sync_before;
+            return Err(err);
+        }
+        Ok(skipped)
+    }
+
     /// Sync's part of the vault, if sync keeps state here.
     pub fn sync_part(&self) -> Option<&VaultSync> {
         self.sync.as_ref()

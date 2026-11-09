@@ -145,9 +145,10 @@ struct Row {
     envelope: Value,
 }
 
-/// `GET records?since=<seq>&limit≤500[&epoch_lt=<e>&k=ak|pak]` → `{records:[{seq, envelope}],
-/// has_more, head_seq}`. With `epoch_lt`, only records of key kind `k` (default `ak`) under an
-/// older epoch: what a rotator still has to re-encrypt.
+/// `GET records?since=<seq>&limit≤500[&k=ak|pak][&epoch_lt=<e>]` → `{records:[{seq, envelope}],
+/// has_more, head_seq}`. With `k`, only records of that key kind (a device whose vault was locked
+/// catches up on the passwords alone). With `epoch_lt`, only records of key kind `k` (default
+/// `ak`) under an older epoch: what a rotator still has to re-encrypt.
 pub async fn pull(State(state): State<AppState>, d: DeviceAuth, Query(q): Query<PullQuery>) -> ApiResult {
     hit(&state.db, rl::RECORDS_READ, &rl::id_key(&d.device_id)).await?;
     let limit = q.limit.unwrap_or(BATCH_MAX as i64).clamp(1, BATCH_MAX as i64);
@@ -161,8 +162,14 @@ pub async fn pull(State(state): State<AppState>, d: DeviceAuth, Query(q): Query<
     if q.since > 0 && q.since < horizon {
         return Err(ApiError::new(StatusCode::GONE, "gone", "Too old: fetch everything again."));
     }
-    let rows: Vec<Row> = match q.epoch_lt {
-        None => {
+    let kind = match q.k.as_deref() {
+        None => None,
+        Some("ak") => Some("ak"),
+        Some("pak") => Some("pak"),
+        _ => return Err(bad("k")),
+    };
+    let rows: Vec<Row> = match (q.epoch_lt, kind) {
+        (None, None) => {
             sqlx::query_as("SELECT seq, envelope FROM records WHERE account_id = $1 AND seq > $2 ORDER BY seq LIMIT $3")
                 .bind(d.account_id)
                 .bind(q.since)
@@ -170,12 +177,19 @@ pub async fn pull(State(state): State<AppState>, d: DeviceAuth, Query(q): Query<
                 .fetch_all(&mut *conn)
                 .await?
         }
-        Some(e) => {
-            let k = match q.k.as_deref() {
-                None | Some("ak") => "ak",
-                Some("pak") => "pak",
-                _ => return Err(bad("k")),
-            };
+        (None, Some(k)) => {
+            sqlx::query_as(
+                "SELECT seq, envelope FROM records WHERE account_id = $1 AND seq > $2 AND k = $3 ORDER BY seq LIMIT $4",
+            )
+            .bind(d.account_id)
+            .bind(q.since)
+            .bind(k)
+            .bind(limit + 1)
+            .fetch_all(&mut *conn)
+            .await?
+        }
+        (Some(e), k) => {
+            let k = k.unwrap_or("ak");
             sqlx::query_as(
                 "SELECT seq, envelope FROM records WHERE account_id = $1 AND seq > $2 AND k = $3 AND e < $4
                  ORDER BY seq LIMIT $5",

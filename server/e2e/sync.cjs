@@ -2,7 +2,8 @@
 // (tools/sync-cli, Krunk's own core::sync) as the devices and the website API as the user.
 //   node server/e2e/sync.cjs http://dind:10017 stage-browser <krunk-sync-cli> <work dir> [part ...]
 // Parts: keys (S6), records (S7: CLI ↔ CLI bookmarks, history, settings, pins, allowlist, tabs,
-// device names). Later milestones add passwords and rotation.
+// device names), passwords (S8: logins and never-save, restore into a vault, a vault key without a
+// PAK MAC). Later milestones add rotation.
 // Staging only: Turnstile test keys, Mailpit, and direct database edits that play a malicious
 // server (tampered directories, a lowered KDF).
 'use strict';
@@ -279,7 +280,7 @@ async function partRecords(ctx) {
   ok(Number(s1.one('pushed')) >= 7 && s1.one('queue_left') === '0', `P's first sync pushes its data: pushed ${s1.one('pushed')}, left ${s1.one('queue_left')}`);
   // The server holds ciphertext only.
   const acc = psql(`SELECT id FROM accounts WHERE email = '${web.email}'`);
-  const leaks = psql(`SELECT count(*) FROM records WHERE account_id = '${acc}' AND (envelope::text ILIKE '%rust-lang%' OR envelope::text ILIKE '%example.org%' OR envelope::text ILIKE '%shop.example%' OR envelope::text ILIKE '%dark%')`);
+  const leaks = psql(`SELECT count(*) FROM records WHERE account_id = '${acc}' AND (envelope::text ILIKE '%rust-lang%' OR envelope::text ILIKE '%example.org%' OR envelope::text ILIKE '%shop.example%' OR envelope::text LIKE '%"dark"%')`);
   const n = psql(`SELECT count(*) FROM records WHERE account_id = '${acc}'`);
   ok(leaks === '0' && Number(n) >= 7, `the server stores ${n} records, none with a URL, host or setting in clear`);
   // Q's own data: the same Rust bookmark (adopted, not duplicated) and one of its own.
@@ -344,6 +345,85 @@ async function partRecords(ctx) {
   ctx.records = { acc };
 }
 
+// Passwords and the never-save list (S8): R sets up with its vault; S restores with the recovery
+// key into a vault; T restores with the passphrase but no vault (its passwords wait). Edits,
+// deletions and a conflict between R and S; the server sees ciphertext only; a vault key added
+// to pak_dir without a PAK MAC is refused.
+async function partPasswords(ctx) {
+  say('== passwords (S8)');
+  const web = await account(`passwords-${Date.now()}@example.org`);
+  const must = async (name, ...args) => {
+    const r = await cli(name, ...args);
+    if (r.code !== 0) throw new Error(`${name} ${args.join(' ')}: exit ${r.code} ${r.err}`);
+    return r;
+  };
+  const list = async (name, what, sub = 'list') => (await must(name, what, sub)).lines.filter((l) => /^[a-z_]+: /.test(l)).sort();
+  const logins = async (name) => (await list(name, 'password')).map((l) => l.replace(/ \| [0-9a-f]{32}$/, ''));
+  for (const n of ['R', 'S', 'T']) await link(web, n);
+  await must('R', 'password', 'add', '--origin', 'https://mail.example', '--user', 'ann', '--password', 'mail-secret-1');
+  await must('R', 'password', 'add', '--origin', 'https://bank.example', '--user', 'ann@x', '--password', 'bank-secret-1');
+  await must('R', 'never', 'add', '--origin', 'https://never.example');
+  const setup = await must('R', 'setup', '--vault');
+  ok(setup.one('passphrase') && setup.one('recovery_key'), 'R sets up sync with its vault');
+  const r1 = await must('R', 'sync', '--vault');
+  const r2 = await must('R', 'sync', '--vault');
+  ok(Number(r1.one('pw_pushed')) + Number(r2.one('pw_pushed')) === 3, `R pushes 2 logins and 1 never-save origin (first run pulls only: ${r1.one('pw_pushed')} + ${r2.one('pw_pushed')})`);
+  const acc = psql(`SELECT id FROM accounts WHERE email = '${web.email}'`);
+  const pakRows = psql(`SELECT count(*) FROM records WHERE account_id = '${acc}' AND k = 'pak'`);
+  const leaks = psql(`SELECT count(*) FROM records WHERE account_id = '${acc}' AND (envelope::text ILIKE '%secret%' OR envelope::text ILIKE '%mail.example%' OR envelope::text ILIKE '%never.example%' OR envelope::text LIKE '%"ann"%')`);
+  ok(pakRows === '3' && leaks === '0', `the server holds ${pakRows} records under the passwords key, none in clear`);
+  // S: recovery key → vault.
+  const rs = await must('S', 'restore', '--recovery', setup.one('recovery_key'), '--vault');
+  ok(rs.one('passwords') === 'on', 'S restores with the recovery key and gets the passwords key into its vault');
+  const s1 = await must('S', 'sync', '--vault');
+  ok(Number(s1.one('pw_pulled')) === 3, `S pulls the passwords records (${s1.one('pw_pulled')})`);
+  ok(JSON.stringify(await logins('S')) === JSON.stringify(await logins('R')), `S has R's logins: ${(await logins('S')).join('; ')}`);
+  ok((await list('S', 'never')).includes('never: https://never.example'), 'and the never-save list');
+  // T: passphrase, no vault: the AK collections sync, the passwords wait (and stay unreadable).
+  const rt = await must('T', 'restore', '--passphrase', setup.one('passphrase'));
+  ok(rt.one('passwords') !== 'on', 'T restores without a vault: no passwords key');
+  const t1 = await must('T', 'sync');
+  ok(Number(t1.one('pak_waiting')) >= 3 && !fs.existsSync(path.join(dirOf('T'), 'vault.json')), `T's run leaves ${t1.one('pak_waiting')} passwords records waiting, no vault written`);
+  // Edits on both sides, a delete, and a conflict (S's later edit wins; R keeps its version as previous).
+  await must('S', 'password', 'edit', '--origin', 'https://mail.example', '--user', 'ann', '--password', 'mail-secret-2');
+  await must('R', 'password', 'delete', '--origin', 'https://bank.example', '--user', 'ann@x');
+  await must('S', 'never', 'remove', '--origin', 'https://never.example');
+  await must('S', 'sync', '--vault'); await must('R', 'sync', '--vault'); await must('S', 'sync', '--vault');
+  const lr = await logins('R'), ls = await logins('S');
+  ok(JSON.stringify(lr) === JSON.stringify(ls) && lr.length === 1 && lr[0].includes('mail-secret-2'), `edit and delete merged: ${lr.join('; ')}`);
+  ok((await list('R', 'never')).length === 0, 'the never-save removal reached R');
+  await must('R', 'password', 'edit', '--origin', 'https://mail.example', '--user', 'ann', '--password', 'from-r');
+  await sleep(30);
+  await must('S', 'password', 'edit', '--origin', 'https://mail.example', '--user', 'ann', '--password', 'from-s');
+  await must('R', 'sync', '--vault');
+  const cs = await must('S', 'sync', '--vault');
+  await must('R', 'sync', '--vault'); await must('S', 'sync', '--vault');
+  const fr = await logins('R'), fs2 = await logins('S');
+  ok(JSON.stringify(fr) === JSON.stringify(fs2) && fr[0].includes('from-s'), `a conflict: the later edit wins on both (conflicts ${cs.one('pw_conflicts')}): ${fr[0]}`);
+  const prev = [...await list('R', 'password', 'previous'), ...await list('S', 'password', 'previous')];
+  ok(prev.some((l) => l.includes('from-r')), 'the losing version is kept in a vault (previous)');
+  // The same login saved on R and S before they synced: one login afterwards.
+  await must('R', 'password', 'add', '--origin', 'https://dup.example', '--user', 'zed', '--password', 'one');
+  await must('S', 'password', 'add', '--origin', 'https://dup.example', '--user', 'zed', '--password', 'two');
+  for (let i = 0; i < 3; i++) { await must('R', 'sync', '--vault'); await must('S', 'sync', '--vault'); }
+  const dr = (await logins('R')).filter((l) => l.includes('dup.example'));
+  ok(dr.length === 1 && JSON.stringify(await logins('R')) === JSON.stringify(await logins('S')), `saved on both: one login on both (${dr.join('; ')})`);
+  // A vault key added to pak_dir by the server (or by AK-only malware) without a PAK MAC.
+  const ph = psql(`SELECT seq || '|' || encode(bytes, 'hex') || '|' || encode(hash, 'hex') FROM pak_dirs WHERE account_id = '${acc}' ORDER BY seq DESC LIMIT 1`).split('|');
+  const pd = JSON.parse(Buffer.from(ph[1], 'hex').toString());
+  pd.seq = Number(ph[0]) + 1;
+  pd.prev_hash = Buffer.from(ph[2], 'hex').toString('base64url');
+  const tid = JSON.parse(fs.readFileSync(path.join(dirOf('T'), 'cli.json'), 'utf8')).device_id;
+  pd.vault_keys.push({ device: tid, pk: crypto.randomBytes(32).toString('base64url') });
+  const pb = Buffer.from(JSON.stringify(pd));
+  psql(`INSERT INTO pak_dirs (account_id, seq, epoch, bytes, hash, mac, created_by) VALUES ('${acc}', ${pd.seq}, ${pd.pak_epoch}, decode('${pb.toString('hex')}', 'hex'), decode('${crypto.createHash('sha256').update(pb).digest('hex')}', 'hex'), decode('${crypto.randomBytes(32).toString('hex')}', 'hex'), '${tid}')`);
+  const ra = await cli('R', 'refresh', '--vault');
+  ok(ra.code === 4, `a vault key added without a PAK MAC is refused by a PAK holder: ${ra.one('alarm')}`);
+  psql(`DELETE FROM pak_dirs WHERE account_id = '${acc}' AND seq = ${pd.seq}`);
+  ok((await cli('R', 'refresh', '--vault')).code === 0, 'with the row gone, R is fine again');
+  ctx.passwords = { acc };
+}
+
 (async () => {
   fs.mkdirSync(WORK, { recursive: true });
   psql('DELETE FROM rate_limits');
@@ -351,6 +431,7 @@ async function partRecords(ctx) {
   try {
     if (parts.includes('keys')) await partKeys(ctx);
     if (parts.includes('records')) await partRecords(ctx);
+    if (parts.includes('passwords')) await partPasswords(ctx);
   } catch (e) {
     problems.push(String(e.stack || e));
     say('FAIL ' + (e.stack || e));

@@ -547,6 +547,23 @@ fn main() {
             match r {
                 Ok(rep) => {
                     d.save_state(&st);
+                    // The passwords: only with the vault open (--vault).
+                    if a.flag("vault") {
+                        match d.pak_state(&a.vault_pw()) {
+                            Some((mut vault, mut pak)) => {
+                                let api = Api { http: &d.http, token: &t, now_ms: now_ms() };
+                                let pr = lb_core::sync::pak::run(&api, &mut vault, &mut pak, &store, &mut st, &off, &NoWrap)
+                                    .unwrap_or_else(|e| sfail(e));
+                                d.save_state(&st);
+                                out("pw_pulled", pr.pulled);
+                                out("pw_pushed", pr.pushed);
+                                out("pw_conflicts", pr.conflicts);
+                                out("pw_skipped", pr.skipped);
+                                out("pw_frozen", pr.frozen);
+                            }
+                            None => out("pw", "this vault holds no passwords key"),
+                        }
+                    }
                     out("pulled", rep.pulled);
                     out("pushed", rep.pushed);
                     out("conflicts", rep.conflicts);
@@ -699,6 +716,72 @@ fn main() {
                 _ => fail(2, "tabs set <url>…|remote"),
             }
         }
+        "password" => {
+            let d = Device::open(&dir);
+            let mut vault = d.vault(&a.vault_pw());
+            let find = |v: &Vault| {
+                v.entries()
+                    .iter()
+                    .find(|e| e.origin == a.need("origin") && e.username == a.need("user"))
+                    .map(|e| e.id.clone())
+                    .unwrap_or_else(|| fail(3, "no such login"))
+            };
+            match a.pos.first().map(String::as_str) {
+                Some("add") => {
+                    let id = vault
+                        .save_login(a.need("origin"), a.need("user"), Zeroizing::new(a.need("password").into()), now_ms(), &NoWrap)
+                        .unwrap_or_else(|e| fail(3, e));
+                    out("login", id);
+                }
+                Some("edit") => {
+                    let id = find(&vault);
+                    vault
+                        .upsert(
+                            Some(&id),
+                            a.need("origin"),
+                            a.need("user"),
+                            Some(Zeroizing::new(a.need("password").into())),
+                            None,
+                            now_ms(),
+                            &NoWrap,
+                        )
+                        .unwrap_or_else(|e| fail(3, e));
+                    out("edited", id);
+                }
+                Some("delete") => {
+                    let id = find(&vault);
+                    vault.delete(&id, &NoWrap).unwrap_or_else(|e| fail(3, e));
+                    out("deleted", id);
+                }
+                Some("list") => {
+                    for e in vault.entries() {
+                        println!("login: {} | {} | {} | {}", e.origin, e.username, *e.password, e.id);
+                    }
+                }
+                Some("previous") => {
+                    if let Some(p) = vault.sync_part().and_then(|p| PakState::from_bytes(&p.state).ok()) {
+                        for x in &p.book.previous {
+                            println!("previous: {} | {} | {}", x.origin, x.username, *x.password);
+                        }
+                    }
+                }
+                _ => fail(2, "password add|edit|delete|list|previous --origin O --user U [--password P]"),
+            }
+        }
+        "never" => {
+            let d = Device::open(&dir);
+            let store = d.store();
+            match a.pos.first().map(String::as_str) {
+                Some("add") => store.never_save_add(a.need("origin"), now_ms()).unwrap_or_else(|e| fail(3, e)),
+                Some("remove") => store.never_save_remove(a.need("origin")).unwrap_or_else(|e| fail(3, e)),
+                Some("list") => {
+                    for o in store.never_save_list().unwrap_or_else(|e| fail(3, e)) {
+                        println!("never: {o}");
+                    }
+                }
+                _ => fail(2, "never add|remove|list --origin O"),
+            }
+        }
         "rename" => {
             let d = Device::open(&dir);
             let store = d.store();
@@ -723,7 +806,7 @@ fn main() {
         _ => fail(
             2,
             "commands: link state setup restore join approve refresh devices revoke sync bookmark history settings pin \
-             allow tabs rename names queue",
+             allow tabs password never rename names queue",
         ),
     }
 }

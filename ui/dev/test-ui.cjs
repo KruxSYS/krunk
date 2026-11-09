@@ -5070,6 +5070,7 @@ async function testSyncPage(browser) {
     check(rs && rs.secret === 'KRNK-1234-5678' && rs.recovery === true && (await page.inputValue('#restore-secret')) === '', t('restore posts the secret once and clears the field'));
     await page.click('#join-ask');
     check((await lastSent(page, 'syncJoin')) !== undefined, t('ask my other devices'));
+    check((await page.textContent('#restore-vault-hint')).includes('unlocked password vault'), t('restore: passwords go into the unlocked vault'));
     await view({ state: 'join', message: "That passphrase or recovery key doesn't open your sync data.", passwords: false });
     check((await page.textContent('#join-error')).includes("doesn't open"), t('a wrong secret is said'));
     // Restore confirm.

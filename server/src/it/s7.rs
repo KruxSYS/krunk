@@ -119,6 +119,22 @@ async fn records_round_trip_in_write_order_with_conflicts() {
 }
 
 #[tokio::test]
+async fn a_pull_can_ask_for_one_key_kind() {
+    let Some(e) = env().await else { return };
+    let (_o, a, _b, _) = account(&e, "records-kinds@example.org").await;
+    let writes = json!({"writes": [put("bookmarks", &rid(1), 0), put("passwords", &rid(2), 0), put("history", &rid(3), 0),
+        put("never_save", &rid(4), 0)]});
+    assert_eq!(a.post(&e, "records/batch", writes).await.status, StatusCode::OK);
+    let seqs =
+        |v: &Value| v["records"].as_array().unwrap().iter().map(|x| x["seq"].as_i64().unwrap()).collect::<Vec<_>>();
+    assert_eq!(seqs(&a.get(&e, "records?since=0&k=pak").await.body), [2, 4]);
+    assert_eq!(seqs(&a.get(&e, "records?since=2&k=pak").await.body), [4]);
+    assert_eq!(seqs(&a.get(&e, "records?since=0&k=ak").await.body), [1, 3]);
+    assert_eq!(seqs(&a.get(&e, "records?since=0").await.body), [1, 2, 3, 4]);
+    assert_eq!(a.get(&e, "records?since=0&k=x").await.status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn seq_is_strictly_increasing_under_concurrent_batches() {
     let Some(e) = env().await else { return };
     let (_o, a, b, acc) = account(&e, "concurrent@example.org").await;

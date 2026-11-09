@@ -24,8 +24,10 @@ use lb_core::sync::client::{
 };
 use lb_core::sync::coll;
 use lb_core::sync::engine::{self, Report, RunOpts};
+use lb_core::sync::hlc::Hlc;
 use lb_core::sync::keys::{self, KeyError, Me, PakState, RestorePlan, Secret as SyncSecret, SetupPlan};
 use lb_core::sync::local;
+use lb_core::sync::pak::{self, Outgoing};
 use lb_core::sync::state::{self, parse_account_id, SyncState};
 use lb_core::sync::view::{ApprovalRow, Approving, CollectionRow, DeviceRow, OnView, RemoteTabs, SyncView};
 use lb_core::tabs::TabId;
@@ -45,8 +47,9 @@ const EVERY_MS: i64 = 5 * 60_000;
 const AFTER_CHANGE_MS: i64 = 30_000;
 const TICK_MS: i64 = 30_000;
 /// The collections a device can switch off, with their labels.
-const COLLECTIONS: [(&str, &str); 6] = [
+const COLLECTIONS: [(&str, &str); 7] = [
     ("bookmarks", "Bookmarks"),
+    ("passwords", "Passwords (while the vault is unlocked)"),
     ("history", "History"),
     ("settings", "Settings"),
     ("pins", "New tab pins"),
@@ -906,6 +909,10 @@ impl Browser {
         if !self.sync_is_on() && self.sync_pak().is_some() {
             self.sync_set_pak(None);
         }
+        // Passwords that waited for the vault come with the next tick.
+        if self.sync_is_on() && self.sync_pak().is_some() {
+            self.sync.next_run_ms.set(now_ms());
+        }
         self.push_sync();
     }
 
@@ -1185,7 +1192,11 @@ impl Browser {
             .query_row("SELECT min(enqueued_at) FROM sync_queue WHERE collection <> 'tabs'", [], |r| r.get(0))
             .ok()
             .flatten();
-        let due = now >= self.sync.next_run_ms.get() || changed.is_some_and(|t| now - t >= AFTER_CHANGE_MS);
+        // A login changed in the open vault counts as a change too.
+        let vault_changed =
+            self.vaults.vault.borrow().as_ref().and_then(|v| v.sync_part()).is_some_and(|p| !p.dirty.is_empty());
+        let due =
+            now >= self.sync.next_run_ms.get() || changed.is_some_and(|t| now - t >= AFTER_CHANGE_MS) || vault_changed;
         if due && now >= self.sync.wait_until_ms.get() {
             self.sync_run();
         }
@@ -1305,11 +1316,121 @@ impl Browser {
                     report.pulled, report.pushed, report.conflicts, report.full, report.frozen, report.queue_left
                 );
                 self.sync_apply_changes(&report);
+                self.sync_pak_run();
             }
             Err(e) => {
                 info!("sync: run failed ({e})");
                 let text = self.sync_run_failed(&e, now);
                 *self.sync.status.borrow_mut() = Some(text);
+            }
+        }
+        self.push_sync();
+    }
+
+    // ---- passwords (S8): only while the vault is unlocked -------------------------------------------
+
+    /// After an AK run: the PAK collections, in three steps — encrypt what changed (here, the
+    /// vault is open on this thread), exchange on a worker, merge into the vault (here).
+    fn sync_pak_run(&self) {
+        let off = local::off_collections(self.store.borrow().sync_conn());
+        if off.iter().any(|c| c == "passwords") || !self.vault_unlocked() {
+            return;
+        }
+        let Some(pak_state) = self.sync_pak() else { return };
+        let Some(st) = self.sync.state.borrow().clone() else { return };
+        let Ok(acc) = st.account_bytes() else { return };
+        let never = self.store.borrow().never_save_list().unwrap_or_default();
+        let mut hlc = Hlc::new(st.hlc);
+        let now = now_ms();
+        let prepared = {
+            let v = self.vaults.vault.borrow();
+            let Some(vault) = v.as_ref() else { return };
+            pak::prepare(vault, &pak_state, &never, &acc, st.dev_short, &mut hlc, now)
+        };
+        let out: Outgoing = match prepared {
+            Ok(o) => o,
+            Err(e) => {
+                warning!("sync: passwords could not be prepared ({e})");
+                return;
+            }
+        };
+        let Some(proxy) = self.sync_proxy() else { return };
+        let since = pak_state.book.pull_seq;
+        let writes = out.writes.clone();
+        self.sync.running.set(true);
+        self.refresh_access(false, move |b, token| match token {
+            Err(_) => {
+                b.sync.running.set(false);
+                b.push_sync();
+            }
+            Ok(t) => b.spawn_job(
+                "sync-passwords",
+                move || {
+                    let http = WinHttp { proxy };
+                    let api = Api { http: &http, token: &t, now_ms: now_ms() };
+                    pak::exchange(&api, since, &writes)
+                },
+                move |b, r| b.sync_pak_ran(r, out, hlc, acc),
+            ),
+        });
+    }
+
+    fn sync_pak_ran(
+        &self,
+        r: Result<pak::Exchanged, SyncFail>,
+        out: Outgoing,
+        mut hlc: Hlc,
+        acc: lb_core::sync::AccountId,
+    ) {
+        self.sync.running.set(false);
+        let ex = match r {
+            Ok(ex) => ex,
+            Err(e) => {
+                info!("sync: passwords run failed ({e})");
+                if matches!(&e, SyncFail::Keys(k) if k.is_alarm()) {
+                    let text = self.sync_run_failed(&e, now_ms());
+                    *self.sync.status.borrow_mut() = Some(text);
+                }
+                self.push_sync();
+                return;
+            }
+        };
+        // Locked or turned off meanwhile: nothing is merged (the next run catches up).
+        let (Some(mut pak_state), true) = (self.sync_pak(), self.sync_is_on()) else {
+            self.push_sync();
+            return;
+        };
+        let primed = pak_state.book.primed;
+        let finished = {
+            let store = self.store.borrow();
+            let mut v = self.vaults.vault.borrow_mut();
+            let Some(vault) = v.as_mut() else { return };
+            pak::finish(vault, &mut pak_state, &store, &acc, out, ex, &mut hlc, now_ms(), &Dpapi)
+        };
+        match finished {
+            Ok(rep) => {
+                if let Some(st) = self.sync.state.borrow_mut().as_mut() {
+                    st.hlc = st.hlc.max(hlc.last());
+                }
+                self.sync_save();
+                info!(
+                    "sync: passwords done (pulled {}, pushed {}, conflicts {}, skipped {}, frozen {})",
+                    rep.pulled, rep.pushed, rep.conflicts, rep.skipped, rep.frozen
+                );
+                if rep.passwords {
+                    self.push_vault_state();
+                }
+                // The first run only pulled: what is left here goes up soon.
+                if !primed || rep.conflicts > 0 {
+                    self.sync.next_run_ms.set(now_ms());
+                }
+            }
+            Err(e) => {
+                warning!("sync: passwords could not be merged ({e})");
+                if matches!(&e, SyncFail::Keys(k) if k.is_alarm()) {
+                    let text = self.sync_run_failed(&e, now_ms());
+                    *self.sync.status.borrow_mut() = Some(text);
+                }
             }
         }
         self.push_sync();

@@ -21,7 +21,7 @@ psl = "2"
 rusqlite = { version = "0.41", features = ["bundled"] }
 argon2 = { version = "0.6", default-features = false, features = ["alloc", "zeroize"] }
 chacha20poly1305 = { version = "0.11", default-features = false, features = ["alloc", "zeroize"] }
-zeroize = { version = "1.8", features = ["std"] }
+zeroize = { version = "1.8", features = ["std", "serde"] }
 getrandom = "0.4"
 base64ct = { version = "1.8", features = ["alloc"] }
 # Update check: verify-only Ed25519, download hash, version order.

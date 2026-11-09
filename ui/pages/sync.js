@@ -52,6 +52,10 @@
       $('join-passwords').disabled = !canPw;
       $('join-passwords').checked = canPw && v.passwords;
       $('restore-secret').value = '';
+      $('restore-vault-hint').textContent = !vault.exists
+        ? 'Your passwords are restored only into a password vault: set one up first (Passwords page) if you want them.'
+        : vault.locked ? 'Unlock your password vault first if you want your passwords restored too.'
+          : 'Your passwords are restored into your unlocked password vault.';
     }
     if (v.state === 'restoreConfirm') {
       const list = $('restore-devices');

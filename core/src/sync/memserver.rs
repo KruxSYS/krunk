@@ -64,7 +64,9 @@ impl HttpClient for Mem {
                 if since > 0 && since < s.horizon {
                     return err(410, "gone");
                 }
-                let mut all: Vec<&(i64, Value)> = s.records.values().filter(|(seq, _)| *seq > since).collect();
+                let k = q.get("k").copied();
+                let mut all: Vec<&(i64, Value)> =
+                    s.records.values().filter(|(seq, env)| *seq > since && k.is_none_or(|k| env["k"] == k)).collect();
                 all.sort_by_key(|(seq, _)| *seq);
                 let page: Vec<Value> =
                     all.iter().take(limit).map(|(seq, env)| json!({"seq": seq, "envelope": env})).collect();

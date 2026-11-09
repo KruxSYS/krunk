@@ -18,6 +18,7 @@ pub mod keys;
 pub mod labels;
 pub mod local;
 pub mod normalize;
+pub mod pak;
 pub mod sas;
 pub mod state;
 pub mod view;
@@ -64,3 +65,5 @@ impl std::error::Error for SyncError {}
 mod engine_tests;
 #[cfg(test)]
 mod memserver;
+#[cfg(test)]
+mod pak_tests;
