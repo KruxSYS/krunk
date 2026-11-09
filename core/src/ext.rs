@@ -124,6 +124,14 @@ pub fn content_context_allowed(origin: &str) -> bool {
     }
 }
 
+/// May a package replace the installed extension with the same id? Not a Web Store
+/// extension by a package the store didn't sign (0.11.7, audit C11: an unsigned zip can claim
+/// any id through its manifest `key`, and would inherit the store extension's storage and
+/// settings). The user can remove the store extension first.
+pub fn replacement_allowed(installed_source: &str, new_store_signed: bool) -> bool {
+    new_store_signed || !installed_source.starts_with("webstore:")
+}
+
 /// `scripting.executeScript` and `scripting.insertCSS` need the `scripting` permission, as in
 /// Chrome (0.11.7, audit C1).
 pub fn may_use_scripting(m: &Manifest) -> bool {
@@ -1383,6 +1391,14 @@ mod tests {
         };
         let b = content_bundle("function () {}", std::slice::from_ref(&e));
         assert!(b.contains(&format!("\"{id}\"")));
+    }
+
+    #[test]
+    fn store_extensions_are_replaced_only_by_store_packages() {
+        assert!(!replacement_allowed("webstore:abcdefghijklmnopabcdefghijklmnop", false));
+        assert!(replacement_allowed("webstore:abcdefghijklmnopabcdefghijklmnop", true));
+        assert!(replacement_allowed("file", false));
+        assert!(replacement_allowed("folder:C:\\dev\\ext", false));
     }
 
     #[test]

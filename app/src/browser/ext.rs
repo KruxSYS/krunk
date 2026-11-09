@@ -2047,8 +2047,26 @@ impl Browser {
             .and_then(|(_, b)| serde_json::from_slice(b).ok())
             .unwrap_or(json!({}));
         let name = ext::localize(&manifest.name, &messages);
-        let previous =
-            self.ext.exts.borrow().iter().find(|e| e.installed.id == id).map(|e| e.installed.version.clone());
+        let installed = self
+            .ext
+            .exts
+            .borrow()
+            .iter()
+            .find(|e| e.installed.id == id)
+            .map(|e| (e.installed.version.clone(), e.installed.source.clone(), e.installed.name.clone()));
+        if let Some((_, installed_source, installed_name)) = &installed {
+            if !ext::replacement_allowed(installed_source, store_signed) {
+                let e = format!(
+                    "{installed_name} from the Chrome Web Store is installed with the same id. This package is not \
+                     signed by the Web Store, so it can't replace it. Remove {installed_name} first to install it."
+                );
+                warning!("extension install refused: {id} would replace a Web Store extension");
+                self.ext_install_reply(tab, req_id, Err(e.clone()));
+                self.ext_store_notice(store_tab, &format!("Krunk could not add this extension: {e}"));
+                return;
+            }
+        }
+        let previous = installed.map(|(version, _, _)| version);
         let request_id = self.ext.next_id.get() as u32;
         self.ext.next_id.set(self.ext.next_id.get() + 1);
         let src = if store_signed {
