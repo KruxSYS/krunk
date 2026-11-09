@@ -736,6 +736,66 @@ pub enum Request {
     AccountManage,
     /// Opens the sign-in page with the code again.
     AccountReopen,
+    // ---- sync (krunk://sync and Settings → Sync (beta), 0.9.0) ----
+    /// The view (answered with a `sync` event). Never a network request by itself.
+    SyncState,
+    /// Settings: opens krunk://sync.
+    SyncOpen,
+    /// The user turns sync on (the first network request of sync): the account is asked
+    /// whether it already syncs. `passwords`: include the password vault.
+    SyncTurnOn {
+        #[serde(default)]
+        passwords: bool,
+    },
+    /// The first device: the user typed the recovery key's last group and ticked "I understand".
+    SyncSetupConfirm {
+        group: String,
+        #[serde(default)]
+        understood: bool,
+    },
+    /// The recovery key (and passphrase) to the private clipboard, or into a file.
+    SyncSetupCopy,
+    SyncSetupSave,
+    /// Restore with the passphrase (`recovery`: false) or the recovery key.
+    SyncRestore {
+        secret: Secret,
+        #[serde(default)]
+        recovery: bool,
+    },
+    /// The user confirmed the device list a restore found.
+    SyncRestoreConfirm,
+    /// Ask a device that already syncs for the keys.
+    SyncJoin {
+        #[serde(default)]
+        passwords: bool,
+    },
+    /// The 6 digits shown on the other device (one attempt).
+    SyncJoinCode {
+        code: String,
+    },
+    /// Back out of setup, restore or joining.
+    SyncCancel,
+    /// Answer a device that asks to join; `share_passwords` hands it the passwords key too.
+    SyncApprove {
+        id: String,
+        #[serde(default)]
+        share_passwords: bool,
+    },
+    SyncApproveCancel,
+    /// Remove another device (it is signed out; the keys are rotated).
+    SyncRemoveDevice {
+        id: String,
+    },
+    /// Turn sync off on this device; `delete_data` also removes what sync brought here.
+    SyncTurnOff {
+        #[serde(default)]
+        delete_data: bool,
+    },
+    SyncNow,
+    SyncSetCollection {
+        name: String,
+        on: bool,
+    },
     /// Settings → Passwords & import: the browser profiles found on this computer.
     ImportDetect,
     /// Import `types` ("history", "bookmarks", "passwords") from the profile `profile`
@@ -1705,6 +1765,28 @@ impl Sender {
                     | R::AccountSignOut
                     | R::AccountManage
                     | R::AccountReopen
+                    | R::SyncState
+                    | R::SyncOpen
+            ),
+            Sender::Page(Page::Sync) => matches!(
+                req,
+                R::SyncState
+                    | R::SyncTurnOn { .. }
+                    | R::SyncSetupConfirm { .. }
+                    | R::SyncSetupCopy
+                    | R::SyncSetupSave
+                    | R::SyncRestore { .. }
+                    | R::SyncRestoreConfirm
+                    | R::SyncJoin { .. }
+                    | R::SyncJoinCode { .. }
+                    | R::SyncCancel
+                    | R::SyncApprove { .. }
+                    | R::SyncApproveCancel
+                    | R::SyncRemoveDevice { .. }
+                    | R::SyncTurnOff { .. }
+                    | R::SyncNow
+                    | R::SyncSetCollection { .. }
+                    | R::VaultStatus
             ),
             Sender::Page(Page::Downloads) => {
                 matches!(req, R::GetDownloads | R::ClearDownloads | R::DownloadAction { .. })
@@ -2106,6 +2188,10 @@ pub enum Event {
     /// The Account card's state (0.8.0), to Settings pages.
     Account {
         card: crate::account::CardState,
+    },
+    /// Sync's state (0.9.0), to krunk://sync and Settings pages.
+    Sync {
+        view: crate::sync::view::SyncView,
     },
     FindResult {
         active: i32,
@@ -2800,6 +2886,23 @@ mod tests {
             Request::AccountSignOut,
             Request::AccountManage,
             Request::AccountReopen,
+            Request::SyncState,
+            Request::SyncOpen,
+            Request::SyncTurnOn { passwords: true },
+            Request::SyncSetupConfirm { group: "ABCD".into(), understood: true },
+            Request::SyncSetupCopy,
+            Request::SyncSetupSave,
+            Request::SyncRestore { secret: Secret::from("words"), recovery: false },
+            Request::SyncRestoreConfirm,
+            Request::SyncJoin { passwords: false },
+            Request::SyncJoinCode { code: "123456".into() },
+            Request::SyncCancel,
+            Request::SyncApprove { id: "a1".into(), share_passwords: false },
+            Request::SyncApproveCancel,
+            Request::SyncRemoveDevice { id: "d1".into() },
+            Request::SyncTurnOff { delete_data: false },
+            Request::SyncNow,
+            Request::SyncSetCollection { name: "history".into(), on: false },
             Request::OpenBlockedPage {},
             Request::GetBlocked {},
             Request::GetFilterLists {},
@@ -3801,6 +3904,53 @@ mod tests {
                 .is_err());
         }
         assert!(!PopupKind::TabMenu.shell_may_open(), "the shell asks with showTabMenu, not showPopup");
+    }
+
+    #[test]
+    fn sync_requests_come_from_krunk_sync_and_settings_only_asks_or_opens() {
+        let all = [
+            Request::SyncState,
+            Request::SyncOpen,
+            Request::SyncTurnOn { passwords: true },
+            Request::SyncSetupConfirm { group: "ABCD".into(), understood: true },
+            Request::SyncSetupCopy,
+            Request::SyncSetupSave,
+            Request::SyncRestore { secret: Secret::from("words"), recovery: false },
+            Request::SyncRestoreConfirm,
+            Request::SyncJoin { passwords: false },
+            Request::SyncJoinCode { code: "123456".into() },
+            Request::SyncCancel,
+            Request::SyncApprove { id: "a1".into(), share_passwords: false },
+            Request::SyncApproveCancel,
+            Request::SyncRemoveDevice { id: "d1".into() },
+            Request::SyncTurnOff { delete_data: false },
+            Request::SyncNow,
+            Request::SyncSetCollection { name: "history".into(), on: false },
+        ];
+        for r in &all {
+            assert_eq!(Sender::Page(Page::Sync).permits(r), !matches!(r, Request::SyncOpen), "{r:?}");
+            assert!(!Sender::Shell.permits(r) && !Sender::Popup.permits(r) && !Sender::Ext.permits(r), "{r:?}");
+            let settings = matches!(r, Request::SyncState | Request::SyncOpen);
+            assert_eq!(Sender::Page(Page::Settings).permits(r), settings, "{r:?}");
+            for page in Page::ALL.into_iter().filter(|p| *p != Page::Sync && *p != Page::Settings) {
+                assert!(!Sender::Page(page).permits(r), "{page:?} {r:?}");
+            }
+        }
+        // krunk://sync can ask for nothing else of the vault than its status.
+        assert!(!Sender::Page(Page::Sync).permits(&Request::VaultList));
+        assert!(
+            !Sender::Page(Page::Sync).permits(&Request::VaultReveal { id: "x".into(), password: Secret::default() })
+        );
+        // The passphrase is a Secret: never in a debug line.
+        let r = parse_request(
+            Sender::Page(Page::Sync),
+            r#"{"cmd":"syncRestore","secret":"apple-banana","recovery":false}"#,
+        )
+        .unwrap();
+        assert!(!format!("{:?}", r.request).contains("apple"));
+        assert!(parse_request(Sender::Page(Page::Sync), r#"{"cmd":"syncRestore","secret":"x","extra":1}"#).is_err());
+        let v = crate::sync::view::SyncView::Off { message: None };
+        assert_eq!(Event::Sync { view: v }.to_json(), r#"{"event":"sync","view":{"state":"off","message":null}}"#);
     }
 
     #[test]

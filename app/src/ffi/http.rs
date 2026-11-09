@@ -300,10 +300,7 @@ pub struct Response {
     pub status: u32,
     pub body: Vec<u8>,
     /// `Retry-After` (sync, 0.9.0: 429 and 503 answers) and `Date` (the clock-skew warning).
-    // TODO(0.9.0 M7): read by the sync host.
-    #[allow(dead_code)]
     pub retry_after: Option<String>,
-    #[allow(dead_code)]
     pub date: Option<String>,
 }
 

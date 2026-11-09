@@ -75,6 +75,11 @@ impl DataDirs {
         self.root.join("account.json")
     }
 
+    /// Sync's keys on this device (0.9.0; `core::sync::state`, DPAPI-wrapped).
+    pub fn sync(&self) -> PathBuf {
+        self.root.join("sync.json")
+    }
+
     /// The last update check (`core::update::Status`).
     pub fn update_status(&self) -> PathBuf {
         self.root.join("update.json")

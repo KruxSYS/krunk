@@ -173,7 +173,7 @@ impl Browser {
             .ws
             .borrow()
             .tabs()
-            .filter(|(_, t)| Page::from_url(&t.url) == Some(Page::Passwords))
+            .filter(|(_, t)| matches!(Page::from_url(&t.url), Some(Page::Passwords | Page::Sync)))
             .map(|(_, t)| t.id)
             .collect();
         for id in tabs {
@@ -184,6 +184,8 @@ impl Browser {
         if let Some(s) = self.shell() {
             s.post_json(&e);
         }
+        // Sync's view says whether passwords take part (0.9.0).
+        self.push_sync();
     }
 
     pub(super) fn vault_opened(&self, v: Vault) {
@@ -194,6 +196,7 @@ impl Browser {
             w.set_timer(VAULT_TIMER, VAULT_CHECK_MS);
         }
         self.push_vault_state();
+        self.sync_vault_unlocked();
     }
 
     /// Locks the vault: key material and decrypted entries are dropped

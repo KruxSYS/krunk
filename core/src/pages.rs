@@ -48,10 +48,12 @@ pub enum Page {
     Tasks,
     /// Installed extensions (Krunk 0.6.0).
     Extensions,
+    /// Sync (beta, Krunk 0.9.0): setup, restore, approvals, devices.
+    Sync,
 }
 
 impl Page {
-    pub const ALL: [Page; 14] = [
+    pub const ALL: [Page; 15] = [
         Page::NewTab,
         Page::History,
         Page::Bookmarks,
@@ -66,6 +68,7 @@ impl Page {
         Page::Gpu,
         Page::Tasks,
         Page::Extensions,
+        Page::Sync,
     ];
 
     /// Short name used in the display URL (`krunk://<name>`) and file name.
@@ -85,6 +88,7 @@ impl Page {
             Page::Gpu => "gpu",
             Page::Tasks => "tasks",
             Page::Extensions => "extensions",
+            Page::Sync => "sync",
         }
     }
 

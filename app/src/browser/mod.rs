@@ -75,6 +75,7 @@ mod siteinfo;
 mod status;
 mod storage;
 mod suggest;
+mod sync;
 mod tasks;
 mod updater;
 
@@ -206,6 +207,7 @@ pub struct Browser {
     nav_offer: RefCell<Option<(TabId, Vec<i64>)>>,
     /// Settings → Account (0.8.0).
     account: account::AccountHost,
+    sync: sync::SyncHost,
     /// A site's HTTP sign-in dialog (0.8.0).
     http_auth: http_auth::HttpAuthHost,
     /// The floating video's volume bar (created when first needed) and its state.
@@ -335,6 +337,7 @@ impl Browser {
             menu_popup: RefCell::new(None),
             nav_offer: RefCell::new(None),
             account: account::AccountHost::default(),
+            sync: sync::SyncHost::default(),
             http_auth: http_auth::HttpAuthHost::default(),
             pip_popup: RefCell::new(None),
             pip_bar: RefCell::new(None),
@@ -2214,6 +2217,23 @@ impl Browser {
             | Request::AccountSignOut
             | Request::AccountManage
             | Request::AccountReopen) => self.dispatch_account(tab, r),
+            r @ (Request::SyncState
+            | Request::SyncOpen
+            | Request::SyncTurnOn { .. }
+            | Request::SyncSetupConfirm { .. }
+            | Request::SyncSetupCopy
+            | Request::SyncSetupSave
+            | Request::SyncRestore { .. }
+            | Request::SyncRestoreConfirm
+            | Request::SyncJoin { .. }
+            | Request::SyncJoinCode { .. }
+            | Request::SyncCancel
+            | Request::SyncApprove { .. }
+            | Request::SyncApproveCancel
+            | Request::SyncRemoveDevice { .. }
+            | Request::SyncTurnOff { .. }
+            | Request::SyncNow
+            | Request::SyncSetCollection { .. }) => self.dispatch_sync(tab, r, req_id),
             Request::GetUpdateStatus => self.reply(tab, Event::ok(req_id, self.update_status())),
             Request::CheckForUpdates => self.check_for_updates(Some((tab, req_id))),
             Request::UpdateReply { choice } => self.update_reply(choice),

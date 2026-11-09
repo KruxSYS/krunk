@@ -126,11 +126,8 @@ impl KeyWrapper for DpapiAccount {
 
 /// DPAPI for the sync state key in `sync.json` (0.9.0, PROTOCOL §8): its own entropy and
 /// description, so it can't be swapped with the vault key or the account token.
-// TODO(0.9.0 M7): used by the sync host; until then only by the DPAPI test below.
-#[cfg_attr(not(test), allow(dead_code))]
 pub struct DpapiSync;
 
-#[cfg_attr(not(test), allow(dead_code))]
 const SYNC_ENTROPY: &[u8] = b"Krunk sync state v1";
 
 impl KeyWrapper for DpapiSync {

@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sync</title>
+<link rel="stylesheet" href="/shared/common.css">
+<link rel="stylesheet" href="/shared/page.css">
+<link rel="stylesheet" href="sync.css">
+</head>
+<body>
+<main class="page sync">
+  <header class="head">
+    <h1>Sync <span class="beta">beta</span></h1>
+  </header>
+  <p class="never">The Krunk website never asks for your sync passphrase or recovery key. Enter them only here, in Krunk.</p>
+
+  <!-- A private window -->
+  <section class="card" id="v-private" hidden>
+    <h2>Not available in private windows</h2>
+    <p>Sync isn't shown in private windows, and nothing you do in them is synced.</p>
+  </section>
+
+  <!-- Not signed in -->
+  <section class="card" id="v-noaccount" hidden>
+    <h2>Sign in first</h2>
+    <p>Sync uses your Krunk account. Sign in on this device first.</p>
+    <div class="acts"><button class="btn primary" id="go-account">Open Settings → Account</button></div>
+  </section>
+
+  <!-- Off -->
+  <section class="card" id="v-off" hidden>
+    <h2>Sync your browsing on all your devices</h2>
+    <p>Bookmarks, history, settings, pins and lists — and your passwords if you want — are encrypted on this device
+      before they leave it. Only your devices can read them: the Krunk server stores encrypted data it can't read.</p>
+    <p class="hint">Nothing is sent for sync until you turn it on.</p>
+    <label class="check"><input type="checkbox" id="off-passwords"> <span>Include my passwords <span class="hint" id="off-passwords-hint"></span></span></label>
+    <div class="acts"><button class="btn primary" id="turn-on">Turn on sync</button></div>
+  </section>
+
+  <!-- Working -->
+  <section class="card" id="v-working" hidden>
+    <p class="working"><span class="spinner" aria-hidden="true"></span> <span id="working-text"></span></p>
+  </section>
+
+  <!-- First device: passphrase and recovery key -->
+  <section class="card" id="v-setup" hidden>
+    <h2>Save your passphrase and recovery key</h2>
+    <p>These two keep your synced data private. With either one, you can restore your data on a new device if you lose
+      all the others. <strong>Write them down or save them somewhere safe now: they are shown only once.</strong></p>
+    <dl class="secrets">
+      <dt>Passphrase</dt><dd><code id="setup-passphrase" class="secret"></code></dd>
+      <dt>Recovery key</dt><dd><code id="setup-recovery" class="secret"></code></dd>
+    </dl>
+    <div class="acts">
+      <button class="btn" id="setup-copy">Copy both</button>
+      <button class="btn" id="setup-save">Save to a file…</button>
+      <span class="status" id="setup-saved" role="status"></span>
+    </div>
+    <form id="setup-form" autocomplete="off" novalidate>
+      <label for="setup-group">To confirm you saved the recovery key, type its last group of 4 characters (before the
+        last dash):</label>
+      <input type="text" id="setup-group" maxlength="4" spellcheck="false" autocapitalize="characters">
+      <label class="check"><input type="checkbox" id="setup-understood"> <span>I understand: if I lose my passphrase, my
+        recovery key and all my devices, my synced data can't be recovered.</span></label>
+      <p class="error" id="setup-error" role="alert" hidden></p>
+      <div class="acts">
+        <button class="btn primary" type="submit" id="setup-confirm">Set up sync</button>
+        <button class="btn" type="button" id="setup-cancel">Cancel</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- The account already syncs -->
+  <section class="card" id="v-join" hidden>
+    <h2>Your account already uses sync</h2>
+    <p>Get your sync keys onto this device in one of two ways.</p>
+    <p class="error" id="join-error" role="alert" hidden></p>
+    <div class="ways">
+      <div class="way">
+        <h3>Approve from another device</h3>
+        <p>On a device that already syncs, open <strong>krunk://sync</strong>. It shows this request: compare the
+          6 digits it shows, and type them here.</p>
+        <label class="check"><input type="checkbox" id="join-passwords"> <span>Also ask for my passwords</span></label>
+        <div class="acts"><button class="btn primary" id="join-ask">Ask my other devices</button></div>
+      </div>
+      <div class="way">
+        <h3>Enter your passphrase or recovery key</h3>
+        <form id="restore-form" autocomplete="off" novalidate>
+          <div class="radios" role="radiogroup">
+            <label><input type="radio" name="kind" value="passphrase" checked> Passphrase</label>
+            <label><input type="radio" name="kind" value="recovery"> Recovery key</label>
+          </div>
+          <input type="password" id="restore-secret" spellcheck="false" autocomplete="off" aria-label="Passphrase or recovery key">
+          <div class="acts"><button class="btn" type="submit" id="restore-go">Restore</button></div>
+        </form>
+      </div>
+    </div>
+    <div class="acts"><button class="btn" id="join-cancel">Cancel</button></div>
+  </section>
+
+  <!-- A restore found the devices -->
+  <section class="card" id="v-restore" hidden>
+    <h2>These devices keep access to your sync</h2>
+    <ul id="restore-devices" class="plain"></ul>
+    <p class="hint" id="restore-revoked"></p>
+    <p>If you don't recognize a device, remove it after this step.</p>
+    <div class="acts">
+      <button class="btn primary" id="restore-confirm">These are my devices — continue</button>
+      <button class="btn" id="restore-cancel">Cancel</button>
+    </div>
+  </section>
+
+  <!-- Waiting to be approved -->
+  <section class="card" id="v-joining" hidden>
+    <h2>Waiting for your other device</h2>
+    <p id="joining-wait">Open <strong>krunk://sync</strong> on a device that already syncs, and choose
+      <strong>Approve</strong> for this device. It then shows 6 digits.</p>
+    <form id="code-form" autocomplete="off" hidden novalidate>
+      <label for="code">Type the 6 digits shown on your other device (one try only):</label>
+      <input type="text" id="code" inputmode="numeric" maxlength="7" spellcheck="false">
+      <div class="acts"><button class="btn primary" type="submit" id="code-go">Continue</button></div>
+    </form>
+    <p class="status" id="joining-message" role="status"></p>
+    <div class="acts"><button class="btn" id="joining-cancel">Cancel</button></div>
+  </section>
+
+  <!-- Alarm -->
+  <section class="card alarm" id="v-alarm" hidden>
+    <h2>Sync stopped to protect your data</h2>
+    <p id="alarm-text"></p>
+    <p>Nothing was deleted. Turn sync off on this device and set it up again by approving it from another device.</p>
+    <div class="acts"><button class="btn danger" id="alarm-off">Turn off sync on this device</button></div>
+  </section>
+
+  <!-- On -->
+  <div id="v-on" hidden>
+    <section class="card">
+      <div class="status-line"><span class="dot" aria-hidden="true"></span> <strong id="on-status"></strong></div>
+      <p class="status" id="on-message" role="status"></p>
+      <p class="hint" id="on-passwords"></p>
+      <p class="warn" id="on-rotation" hidden>A device was removed. Krunk is re-securing your sync with new keys.</p>
+    </section>
+
+    <section class="card" id="approvals" hidden>
+      <h2>A device asks to join</h2>
+      <ul id="approval-list" class="plain"></ul>
+      <label class="check" id="share-row"><input type="checkbox" id="share-passwords"> <span>Also share my passwords
+        with it</span></label>
+    </section>
+
+    <section class="card" id="approving" hidden>
+      <h2 id="approving-title"></h2>
+      <p id="approving-text"></p>
+      <p class="sas" id="approving-code" aria-live="polite"></p>
+      <div class="acts"><button class="btn" id="approving-cancel">Cancel</button></div>
+    </section>
+
+    <section class="card">
+      <h2>Your devices</h2>
+      <ul id="device-list" class="devices"></ul>
+    </section>
+
+    <section class="card">
+      <h2>Turn off sync on this device</h2>
+      <p>Your other devices keep syncing. This device keeps its data unless you choose to remove what sync brought.</p>
+      <label class="check"><input type="checkbox" id="off-delete"> <span>Also remove the synced data from this device</span></label>
+      <div class="acts"><button class="btn danger" id="turn-off">Turn off sync</button></div>
+    </section>
+  </div>
+</main>
+<script src="/shared/bridge.js"></script>
+<script src="/shared/page.js"></script>
+<script src="sync.js"></script>
+</body>
+</html>

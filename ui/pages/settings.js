@@ -455,6 +455,28 @@
     }
   }
   LB.on('account', function (m) { accountCard = m.card; renderAccount(); });
+  // Settings → Sync (beta) (0.9.0): the status; everything else is in krunk://sync.
+  function renderSync(v) {
+    const card = $('sync-card');
+    card.hidden = v.state === 'private';
+    const texts = {
+      noAccount: ['Sync', 'Sign in to your Krunk account above first. Then you can sync bookmarks, history, settings and passwords between your devices, end-to-end encrypted.'],
+      off: ['Sync is off', (v.message ? v.message + ' ' : '') + 'Sync your bookmarks, history, settings and passwords between your devices. They are encrypted on this device before they leave it.'],
+      working: ['Sync', v.message || ''],
+      join: ['Finishing sync setup', 'Continue in krunk://sync.'],
+      restoreConfirm: ['Finishing sync setup', 'Continue in krunk://sync.'],
+      joining: ['Waiting for your other device', 'Continue in krunk://sync.'],
+      alarm: ['Sync stopped', v.message || ''],
+      on: ['Sync is on', (v.message || v.status || '')],
+    }[v.state] || ['Sync', ''];
+    $('sync-title').textContent = texts[0];
+    $('sync-desc').textContent = texts[1];
+    $('sync-open').hidden = v.state !== 'off';
+    $('sync-manage').hidden = !['on', 'alarm', 'join', 'restoreConfirm', 'joining', 'working'].includes(v.state);
+  }
+  LB.on('sync', function (m) { renderSync(m.view); });
+  $('sync-open').addEventListener('click', function () { LB.post('syncOpen'); });
+  $('sync-manage').addEventListener('click', function () { LB.post('syncOpen'); });
   $('account-sign-in').addEventListener('click', function () { LB.post('accountSignIn'); });
   $('account-cancel').addEventListener('click', function () { LB.post('accountCancel'); });
   $('account-reopen').addEventListener('click', function () { LB.post('accountReopen'); });
@@ -468,6 +490,7 @@
     else done();
   });
   LB.post('accountState', { check: tabFromHash() === 'account' });
+  LB.post('syncState');
 
   $('copy-ua').addEventListener('click', function () {
     const text = defaultUserAgent;

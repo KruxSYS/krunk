@@ -38,10 +38,17 @@ enum Stage {
     SignedIn { file: AccountFile, message: Option<String> },
 }
 
+/// Who waits for an access token.
+type TokenWaiter = Box<dyn FnOnce(&Browser, Result<Secret, Failure>)>;
+
 pub(super) struct AccountHost {
     stage: RefCell<Option<Stage>>,
     /// The access token and when it expires (ms).
     access: RefCell<Option<(Secret, i64)>>,
+    /// A token refresh is running; these wait for its result (0.9.0: the card and sync share
+    /// one refresh at a time, since presenting a rotated refresh token twice revokes the device).
+    refreshing: Cell<bool>,
+    waiting: RefCell<Vec<TokenWaiter>>,
     /// Bumped by every new action, so answers to an abandoned one are ignored.
     generation: Cell<u32>,
     last_check_ms: Cell<i64>,
@@ -52,6 +59,8 @@ impl Default for AccountHost {
         AccountHost {
             stage: RefCell::new(None),
             access: RefCell::new(None),
+            refreshing: Cell::new(false),
+            waiting: RefCell::new(Vec::new()),
             generation: Cell::new(0),
             last_check_ms: Cell::new(0),
         }
@@ -85,9 +94,6 @@ fn refresh(proxy: &ProxyMode, file: &AccountFile) -> Result<Refreshed, Failure> 
     let body = Zeroizing::new(serde_json::json!({ "refresh_token": &*token }).to_string());
     acct::parse(&call(proxy, "POST", acct::REFRESH, None, Some(&body)))
 }
-
-/// A check's result: the new wrapped refresh token, the access token and who this is.
-type Checked = Result<(Vec<u8>, Secret, Result<acct::DeviceMe, Failure>), Failure>;
 
 fn wrap(token: &Secret) -> Result<Vec<u8>, String> {
     DpapiAccount.protect(token.as_bytes())
@@ -203,7 +209,14 @@ impl Browser {
                 }
             }
             R::AccountSignOut => self.account_sign_out(),
-            R::AccountManage => self.new_tab(Some(&acct::endpoint(base(), acct::ACCOUNT_PAGE)), false),
+            R::AccountManage => {
+                // 0.9.0: the website marks this device's row ("This device"); the id isn't secret.
+                let mut url = acct::endpoint(base(), acct::ACCOUNT_PAGE);
+                if let Some((_, device, _)) = self.account_ids() {
+                    url.push_str(&format!("?this={device}"));
+                }
+                self.new_tab(Some(&url), false)
+            }
             R::AccountReopen => {
                 if let Some(url) =
                     self.with_account_stage(
@@ -349,59 +362,127 @@ impl Browser {
     /// The card is on screen for a signed-in device: rotate the refresh token and ask who this
     /// is (the name may have changed on the website, or the device was removed there).
     fn account_check(&self) {
+        if !self.with_account_stage(|s| matches!(s, Stage::SignedIn { .. })) {
+            return;
+        }
+        let Some(proxy) = self.account_proxy() else { return };
+        self.account.last_check_ms.set(now_ms());
+        let gen = self.account.generation.get();
+        self.refresh_access(true, move |b, token| {
+            let Ok(access) = token else { return };
+            if b.account.generation.get() != gen {
+                return;
+            }
+            b.spawn_job(
+                "account-me",
+                move || acct::parse::<acct::DeviceMe>(&call(&proxy, "GET", acct::ME, Some(&access), None)),
+                move |b, me: Result<acct::DeviceMe, Failure>| {
+                    let Ok(me) = me else { return };
+                    let Some(mut file) = b.with_account_stage(|s| {
+                        if let Stage::SignedIn { file, .. } = s {
+                            Some(file.clone())
+                        } else {
+                            None
+                        }
+                    }) else {
+                        return;
+                    };
+                    if file.email != me.email || file.label != me.label {
+                        file.email = me.email;
+                        file.label = me.label;
+                        if let Err(e) = lb_core::vault::write_atomic(&b.dirs.account(), &file.to_bytes()) {
+                            warning!("account: account.json could not be written: {e}");
+                        }
+                        b.set_account_stage(Stage::SignedIn { file, message: None });
+                    }
+                },
+            );
+        });
+    }
+
+    /// A valid access token for `f` (0.9.0: the card and sync). A cached one is used while it
+    /// has more than a minute left (unless `force`); otherwise one refresh runs (the refresh
+    /// token rotates and `account.json` is rewritten) and everyone waiting gets its result.
+    /// "Signed out" (the device was removed) signs this device out.
+    pub(super) fn refresh_access(&self, force: bool, f: impl FnOnce(&Browser, Result<Secret, Failure>) + 'static) {
+        let cached = self.account.access.borrow().clone().filter(|(_, exp)| *exp - ACCESS_MARGIN_MS > now_ms());
+        if let (false, Some((t, _))) = (force, cached) {
+            f(self, Ok(t));
+            return;
+        }
         let Some(file) =
             self.with_account_stage(|s| if let Stage::SignedIn { file, .. } = s { Some(file.clone()) } else { None })
         else {
+            f(self, Err(Failure::SignedOut));
             return;
         };
-        let Some(proxy) = self.account_proxy() else { return };
-        self.account.last_check_ms.set(now_ms());
-        let gen = self.next_generation();
+        let Some(proxy) = self.account_proxy() else {
+            f(self, Err(Failure::Offline));
+            return;
+        };
+        self.account.waiting.borrow_mut().push(Box::new(f));
+        if self.account.refreshing.replace(true) {
+            return;
+        }
         self.spawn_job(
-            "account-check",
+            "account-refresh",
             move || {
                 let r = refresh(&proxy, &file)?;
                 let wrapped = wrap(&r.refresh_token).map_err(|_| Failure::Server)?;
-                let me = acct::parse::<acct::DeviceMe>(&call(&proxy, "GET", acct::ME, Some(&r.access_token), None));
-                Ok::<_, Failure>((wrapped, r.access_token, me))
+                Ok::<_, Failure>((wrapped, r.access_token))
             },
-            move |b, r: Checked| {
-                if b.account.generation.get() != gen {
-                    return;
-                }
-                match r {
-                    Ok((wrapped, access, me)) => {
-                        let Some(mut file) = b.with_account_stage(|s| {
+            move |b, r: Result<(Vec<u8>, Secret), Failure>| {
+                b.account.refreshing.set(false);
+                let result = match r {
+                    Ok((wrapped, access)) => {
+                        if let Some(mut file) = b.with_account_stage(|s| {
                             if let Stage::SignedIn { file, .. } = s {
                                 Some(file.clone())
                             } else {
                                 None
                             }
-                        }) else {
-                            return;
-                        };
-                        file.set_wrapped_refresh(&wrapped);
-                        if let Ok(me) = me {
-                            file.email = me.email;
-                            file.label = me.label;
+                        }) {
+                            file.set_wrapped_refresh(&wrapped);
+                            if let Err(e) = lb_core::vault::write_atomic(&b.dirs.account(), &file.to_bytes()) {
+                                warning!("account: account.json could not be written: {e}");
+                            }
+                            b.set_account_stage(Stage::SignedIn { file, message: None });
                         }
-                        if let Err(e) = lb_core::vault::write_atomic(&b.dirs.account(), &file.to_bytes()) {
-                            warning!("account: account.json could not be written: {e}");
-                        }
-                        *b.account.access.borrow_mut() = Some((access, now_ms() + 900_000));
-                        b.set_account_stage(Stage::SignedIn { file, message: None });
+                        *b.account.access.borrow_mut() = Some((access.clone(), now_ms() + 900_000));
+                        Ok(access)
                     }
                     Err(Failure::SignedOut) => {
                         info!("account: the server says this device is signed out");
                         let _ = std::fs::remove_file(b.dirs.account());
                         *b.account.access.borrow_mut() = None;
                         b.set_account_stage(Stage::SignedOut(Some(Failure::SignedOut.text().into())));
+                        b.sync_signed_out();
+                        Err(Failure::SignedOut)
                     }
-                    // Offline or a server hiccup: still signed in; the card says nothing.
-                    Err(f) => info!("account: check skipped ({f:?})"),
+                    Err(f) => {
+                        info!("account: token refresh skipped ({f:?})");
+                        Err(f)
+                    }
+                };
+                let waiting = std::mem::take(&mut *b.account.waiting.borrow_mut());
+                for w in waiting {
+                    w(b, result.clone());
                 }
             },
         );
+    }
+
+    /// The account and device ids of a signed-in device (sync needs them; no network).
+    pub(super) fn account_ids(&self) -> Option<(String, String, String)> {
+        self.with_account_stage(|s| match s {
+            Stage::SignedIn { file, .. } => Some((file.account_id.clone(), file.device_id.clone(), file.email.clone())),
+            _ => None,
+        })
+    }
+
+    /// The account and its proxy setting, for sync's own calls.
+    pub(super) fn sync_proxy(&self) -> Option<ProxyMode> {
+        self.account_proxy()
     }
 
     /// Sign out on this device: the local sign-in is deleted at once, then the server is told

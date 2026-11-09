@@ -601,6 +601,7 @@ fn page_title(p: Page) -> &'static str {
         Page::Gpu => "Graphics",
         Page::Tasks => "Task manager",
         Page::Extensions => "Extensions",
+        Page::Sync => "Sync",
     }
 }
 

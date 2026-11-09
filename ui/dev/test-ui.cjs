@@ -4935,7 +4935,7 @@ async function testAccountCard(browser) {
     await emit(page, { event: 'account', card: { state: 'signedOut' } });
     await page.waitForTimeout(40);
     check((await page.textContent('#account-title')) === 'Sign in to Krunk' && await vis('account-sign-in') && !(await vis('account-sign-out')) && !(await vis('account-message')), theme + ': signed out: Sign in');
-    check((await page.textContent('#account-row')).includes('Sync is coming in a later version.'), theme + ': "Sync is coming in a later version."');
+    check(!(await page.textContent('#account-row')).includes('Sync is coming'), theme + ': no "Sync is coming" line any more (0.9.0)');
     await shot(page, 'account-signed-out-' + theme + '.png');
     await page.click('#account-sign-in');
     check((await lastSent(page, 'accountSignIn')) !== undefined, theme + ': Sign in posts accountSignIn');
@@ -4997,6 +4997,163 @@ async function testAccountCard(browser) {
   await page.waitForTimeout(60);
   check(await page.locator('.item.account-item').count() === 0, 'menu: no account item in a private window');
   check(errors.length === 0, 'menu: no console errors (' + errors.join(' | ') + ')');
+}
+
+// 0.9.0: krunk://sync. Every view the host sends, in both themes; each control posts what the
+// host expects; the page itself never sends anything but syncState (and the vault status) on its
+// own; no native dialog, no network.
+function syncMock() {
+  const h = window.__host.handlers;
+  h.vaultStatus = () => ({ exists: true, locked: false, busy: false, waitMs: 0 });
+  h.syncSetupCopy = () => ({});
+  h.syncSetupSave = () => ({ saved: true });
+}
+
+async function testSyncPage(browser) {
+  console.log('sync page');
+  for (const theme of ['light', 'dark']) {
+    const { page, errors, external } = await openPage(browser, 'https://krunk.invalid/sync.html', { width: 900, height: 900 }, 1, syncMock);
+    await page.waitForTimeout(80);
+    await emit(page, { event: 'theme', theme: theme });
+    const t = (x) => theme + ': ' + x;
+    const cmds = (await sent(page)).map((m) => m.cmd).filter((c) => c !== 'ready');
+    check(JSON.stringify(cmds.sort()) === JSON.stringify(['syncState', 'vaultStatus']), t('on load only syncState and vaultStatus (' + cmds + ')'));
+    const vis = (id) => page.isVisible('#' + id);
+    const view = async (v) => { await emit(page, { event: 'sync', view: v }); await page.waitForTimeout(40); };
+    // Off: turn on (with passwords: the vault is unlocked).
+    await view({ state: 'off', message: null });
+    check(await vis('v-off') && !(await vis('v-on')), t('off view'));
+    check(await page.isChecked('#off-passwords') && await page.isEnabled('#off-passwords'), t('passwords can be included (vault unlocked)'));
+    await shot(page, 'sync-off-' + theme + '.png');
+    const before = (await sent(page)).length;
+    await page.waitForTimeout(300);
+    check((await sent(page)).length === before, t('nothing is sent while the user does nothing'));
+    await page.click('#turn-on');
+    const on = await lastSent(page, 'syncTurnOn');
+    check(on && on.passwords === true, t('Turn on sync posts syncTurnOn {passwords: true}'));
+    // No account.
+    await view({ state: 'noAccount' });
+    check(await vis('v-noaccount'), t('no account: sign in first'));
+    await page.click('#go-account');
+    const op = await lastSent(page, 'openPage');
+    check(op && op.page === 'settings' && op.section === 'account', t('opens Settings → Account'));
+    // Working.
+    await view({ state: 'working', message: 'Checking your Krunk account…' });
+    check((await page.textContent('#working-text')) === 'Checking your Krunk account…', t('working message'));
+    // Setup: the secrets, copy, save, confirm.
+    await view({ state: 'setup', passphrase: 'apple-banana-cherry-dog-egg-fig-grape', recoveryKey: 'KRNK-AAAA-BBBB-CCCC-DDDD-EEEE-FFFF-GGGG-HHHH-Z', passwords: true, message: null });
+    check((await page.textContent('#setup-passphrase')) === 'apple-banana-cherry-dog-egg-fig-grape' && (await page.textContent('#setup-recovery')).startsWith('KRNK-'), t('setup shows the passphrase and the recovery key'));
+    await shot(page, 'sync-setup-' + theme + '.png');
+    await page.click('#setup-copy');
+    await page.waitForTimeout(60);
+    check((await page.textContent('#setup-saved')).includes('Copied'), t('Copy both'));
+    await page.click('#setup-save');
+    await page.waitForTimeout(60);
+    check((await page.textContent('#setup-saved')) === 'Saved.', t('Save to a file'));
+    await page.fill('#setup-group', 'hhhh');
+    await page.check('#setup-understood');
+    await page.click('#setup-confirm');
+    const conf = await lastSent(page, 'syncSetupConfirm');
+    check(conf && conf.group === 'hhhh' && conf.understood === true, t('confirm posts the typed group and the tick'));
+    await view({ state: 'setup', passphrase: 'a', recoveryKey: 'KRNK-X', passwords: true, message: 'Type the last group of 4 characters.' });
+    check(await vis('setup-error') && (await page.textContent('#setup-error')).includes('last group'), t('a wrong group is explained'));
+    await page.click('#setup-cancel');
+    check((await lastSent(page, 'syncCancel')) !== undefined, t('cancel'));
+    // Join: restore by recovery key; ask another device.
+    await view({ state: 'join', message: null, passwords: true });
+    check(await vis('v-join'), t('join view'));
+    await shot(page, 'sync-join-' + theme + '.png');
+    await page.check('input[name=kind][value=recovery]');
+    await page.fill('#restore-secret', 'KRNK-1234-5678');
+    await page.click('#restore-go');
+    const rs = await lastSent(page, 'syncRestore');
+    check(rs && rs.secret === 'KRNK-1234-5678' && rs.recovery === true && (await page.inputValue('#restore-secret')) === '', t('restore posts the secret once and clears the field'));
+    await page.click('#join-ask');
+    check((await lastSent(page, 'syncJoin')) !== undefined, t('ask my other devices'));
+    await view({ state: 'join', message: "That passphrase or recovery key doesn't open your sync data.", passwords: false });
+    check((await page.textContent('#join-error')).includes("doesn't open"), t('a wrong secret is said'));
+    // Restore confirm.
+    await view({ state: 'restoreConfirm', devices: ['Krunk on DESKTOP', 'Laptop'], revoked: 1 });
+    check((await page.$$eval('#restore-devices li', (l) => l.length)) === 2 && (await page.textContent('#restore-revoked')).includes('1 removed'), t('restore lists the devices that keep access'));
+    await page.click('#restore-confirm');
+    check((await lastSent(page, 'syncRestoreConfirm')) !== undefined, t('confirm the devices'));
+    // Joining: waiting, then the code.
+    await view({ state: 'joining', enterCode: false, message: null });
+    check(!(await vis('code-form')) && await vis('joining-wait'), t('joining: waiting'));
+    await view({ state: 'joining', enterCode: true, message: null });
+    check(await vis('code-form'), t('joining: the code field'));
+    await page.fill('#code', '482 917');
+    await page.click('#code-go');
+    const code = await lastSent(page, 'syncJoinCode');
+    check(code && code.code === '482917', t('the 6 digits are sent without the space'));
+    await shot(page, 'sync-joining-' + theme + '.png');
+    // On: devices, a request to join, the approval in progress, remove, turn off.
+    const onView = {
+      state: 'on', status: 'Sync is on.', lastSyncMs: null, passwords: true, passwordsLocked: false, rotationPending: false, collections: [], message: null,
+      devices: [{ id: 'd1', name: 'Krunk on DESKTOP', platform: 'windows', keys: true, me: true, lastSync: null }, { id: 'd2', name: 'Old laptop', platform: 'windows', keys: true, me: false, lastSync: null }],
+      approvals: [{ id: 'ap1', label: 'New PC', platform: 'windows', country: 'NL' }], approving: null,
+    };
+    await view(onView);
+    check(await vis('v-on') && (await page.$$eval('#device-list li', (l) => l.length)) === 2, t('on: the devices'));
+    check((await page.textContent('#device-list')).includes('This device'), t('this device is marked'));
+    check(await vis('approvals') && await vis('share-row'), t('a device asks to join; passwords can be shared'));
+    await shot(page, 'sync-on-' + theme + '.png');
+    await page.check('#share-passwords');
+    await page.click('#approval-list button');
+    const ap = await lastSent(page, 'syncApprove');
+    check(ap && ap.id === 'ap1' && ap.sharePasswords === true, t('Approve posts the id and the share choice'));
+    await view(Object.assign({}, onView, { approving: { id: 'ap1', label: 'New PC', code: '482 917', done: false } }));
+    check((await page.textContent('#approving-code')) === '482 917' && !(await vis('approvals')), t('the code to type on the new device'));
+    await shot(page, 'sync-approving-' + theme + '.png');
+    await view(Object.assign({}, onView, { approvals: [], approving: { id: '', label: 'New PC', code: null, done: true } }));
+    check((await page.textContent('#approving-title')).includes('approved'), t('approved'));
+    await page.click('#device-list li:nth-child(2) button');
+    await acceptInPage(page);
+    const rm = await lastSent(page, 'syncRemoveDevice');
+    check(rm && rm.id === 'd2', t('Remove (after the in-page confirmation)'));
+    await view(Object.assign({}, onView, { rotationPending: true, approvals: [] }));
+    check(await vis('on-rotation'), t('re-securing after a removal'));
+    await page.click('#turn-off');
+    await acceptInPage(page);
+    const off = await lastSent(page, 'syncTurnOff');
+    check(off && off.deleteData === false, t('Turn off (keeps data)'));
+    // Alarm and private.
+    await view({ state: 'alarm', message: "Sync's keys on the server don't check out." });
+    check(await vis('v-alarm'), t('alarm view'));
+    await shot(page, 'sync-alarm-' + theme + '.png');
+    await view({ state: 'private' });
+    check(await vis('v-private') && !(await vis('v-on')), t('private window: nothing of sync'));
+    check(external.length === 0, t('no network requests (' + external.join(', ') + ')'));
+    check(errors.length === 0, t('no console errors, no native dialogs (' + errors.join(' | ') + ')'));
+  }
+}
+
+async function testSyncCard(browser) {
+  console.log('settings sync card');
+  const defaults = JSON.parse(fs.readFileSync(path.join(__dirname, 'default-settings.json'), 'utf8'));
+  for (const theme of ['light', 'dark']) {
+    const { page, errors, external } = await openPage(browser, 'https://krunk.invalid/settings.html#account', { width: 1000, height: 900 }, 1, settingsMock, defaults);
+    await page.waitForFunction(() => document.getElementById('lists-summary').textContent !== '');
+    await emit(page, { event: 'theme', theme: theme });
+    const t = (x) => theme + ': ' + x;
+    check((await sent(page)).some((m) => m.cmd === 'syncState'), t('Settings asks for the sync view'));
+    check(!(await sent(page)).some((m) => m.cmd.startsWith('sync') && m.cmd !== 'syncState'), t('and nothing else of sync on its own'));
+    const view = async (v) => { await emit(page, { event: 'sync', view: v }); await page.waitForTimeout(40); };
+    await view({ state: 'noAccount' });
+    check((await page.textContent('#sync-desc')).includes('Sign in') && !(await page.isVisible('#sync-open')), t('no account: sign in first'));
+    await view({ state: 'off', message: null });
+    check((await page.textContent('#sync-title')) === 'Sync is off' && await page.isVisible('#sync-open'), t('off: Turn on sync…'));
+    await shot(page, 'settings-sync-off-' + theme + '.png');
+    await page.click('#sync-open');
+    check((await lastSent(page, 'syncOpen')) !== undefined, t('opens krunk://sync'));
+    await view({ state: 'on', status: 'Sync is on.', lastSyncMs: null, passwords: false, passwordsLocked: false, devices: [], approvals: [], approving: null, rotationPending: false, collections: [], message: null });
+    check((await page.textContent('#sync-title')) === 'Sync is on' && await page.isVisible('#sync-manage'), t('on: Manage sync'));
+    await shot(page, 'settings-sync-on-' + theme + '.png');
+    await view({ state: 'private' });
+    check(!(await page.isVisible('#sync-card')), t('private window: no sync card'));
+    check(external.length === 0, t('no network requests'));
+    check(errors.length === 0, t('no console errors (' + errors.join(' | ') + ')'));
+  }
 }
 
 // 0.8.0: a site's HTTP sign-in dialog. Typed credentials, a saved login (the password stays in
@@ -5105,6 +5262,8 @@ async function testHttpAuth(browser) {
     if (!ONLY || ONLY.includes('Passwords')) await testPasswords(browser);
     if (!ONLY || ONLY.includes('Settings')) await testSettings(browser);
     if (!ONLY || ONLY.includes('AccountCard')) await testAccountCard(browser);
+    if (!ONLY || ONLY.includes('SyncPage')) await testSyncPage(browser);
+    if (!ONLY || ONLY.includes('SyncCard')) await testSyncCard(browser);
     if (!ONLY || ONLY.includes('LoginScript')) await testLoginScript(browser);
     if (!ONLY || ONLY.includes('MediaScript')) await testMediaScript(browser);
     if (!ONLY || ONLY.includes('Gpu')) await testGpu(browser);

@@ -49,7 +49,6 @@
             <p class="desc" id="account-wait">Waiting for the approval…</p>
           </div>
           <p class="desc account-message" id="account-message" role="status" hidden></p>
-          <p class="desc">Sync is coming in a later version.</p>
         </div>
         <div class="account-actions">
           <button id="account-sign-in" class="btn primary" hidden>Sign in</button>
@@ -60,6 +59,20 @@
           <button id="account-sign-out" class="btn danger" hidden>Sign out on this device</button>
         </div>
         <p class="desc account-never">The Krunk website never asks for your sync passphrase or recovery key.</p>
+      </div>
+    </div>
+    <!-- Sync (beta, 0.9.0): its status here; setup and everything else in krunk://sync. -->
+    <div class="card group" id="sync-card">
+      <h3>Sync <span class="beta">beta</span></h3>
+      <div class="row setting column" data-keywords="sync devices passphrase recovery key bookmarks history passwords encrypted" id="sync-row">
+        <div class="text">
+          <span class="label" id="sync-title">Sync</span>
+          <p class="desc" id="sync-desc"></p>
+        </div>
+        <div class="account-actions">
+          <button id="sync-open" class="btn primary" hidden>Turn on sync…</button>
+          <button id="sync-manage" class="btn" hidden>Manage sync</button>
+        </div>
       </div>
     </div>
   </section>

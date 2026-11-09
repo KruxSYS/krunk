@@ -16,6 +16,7 @@ pub mod labels;
 pub mod normalize;
 pub mod sas;
 pub mod state;
+pub mod view;
 
 #[cfg(test)]
 mod vectors;
