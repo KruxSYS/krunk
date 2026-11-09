@@ -43,7 +43,7 @@
 	encode zstd gzip
 
 	handle /healthz {
-		header Cache-Control "no-store"
+		header Cache-Control "no-store, no-transform"
 		respond "ok" 200
 	}
 
@@ -144,7 +144,7 @@
 	# Error responses start with fresh headers, so they need the security headers again.
 	handle_errors {
 		import security_headers
-		header Cache-Control "no-store"
+		header Cache-Control "no-store, no-transform"
 		@api_too_large {
 			path /api/*
 			expression {err.status_code} == 413
