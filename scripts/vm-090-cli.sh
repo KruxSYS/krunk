@@ -41,7 +41,8 @@ case "$step" in
   join-r)
     link R
     rm -f "$work/sas.txt"; vm "Remove-Item C:/pipeline/krunk/sas.txt -ErrorAction SilentlyContinue" >/dev/null
-    ( "$cli" join --dir "$work/R" --code-file "$work/sas.txt" --vault --name "CLI R" --timeout 180 </dev/null > "$work/R-join.log" 2>&1; echo "exit $?" >> "$work/R-join.log" ) &
+    # (Background jobs keep no handle on the caller's stdout: a pipe would wait for them.)
+    ( "$cli" join --dir "$work/R" --code-file "$work/sas.txt" --vault --name "CLI R" --timeout 540 </dev/null > "$work/R-join.log" 2>&1; echo "exit $?" >> "$work/R-join.log" ) >/dev/null 2>&1 &
     ( for _ in $(seq 1 90); do
         s=$(vm "Get-Content C:/pipeline/krunk/sas.txt -ErrorAction SilentlyContinue" | tr -d ' \n')
         if [ -n "$s" ]; then
@@ -49,7 +50,7 @@ case "$step" in
           [ "${WRONG:-0}" = 1 ] && s=$(printf '%06d' $(( (10#$s + 1) % 1000000 )))
           echo "$s" > "$work/sas.txt"; exit 0
         fi; sleep 2
-      done ) &
+      done ) >/dev/null 2>&1 </dev/null &
     echo "join started" ;;
   after-r)
     cat "$work/R-join.log"

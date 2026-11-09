@@ -5085,12 +5085,18 @@ async function testSyncPage(browser) {
     // Join: restore by recovery key; ask another device.
     await view({ state: 'join', message: null, passwords: true });
     check(await vis('v-join'), t('join view'));
+    check(await page.evaluate(() => document.activeElement.id) === 'restore-secret', t('the restore field has the focus'));
     await shot(page, 'sync-join-' + theme + '.png');
     await page.check('input[name=kind][value=recovery]');
     await page.fill('#restore-secret', 'KRNK-1234-5678');
     await page.click('#restore-go');
     const rs = await lastSent(page, 'syncRestore');
     check(rs && rs.secret === 'KRNK-1234-5678' && rs.recovery === true && (await page.inputValue('#restore-secret')) === '', t('restore posts the secret once and clears the field'));
+    await page.check('input[name=kind][value=passphrase]');
+    await page.fill('#restore-secret', ' krnk-abcd-efgh');
+    await page.keyboard.press('Enter');
+    const rs2 = await lastSent(page, 'syncRestore');
+    check(rs2 && rs2.recovery === true, t('a recovery key is recognised by its prefix'));
     await page.click('#join-ask');
     check((await lastSent(page, 'syncJoin')) !== undefined, t('ask my other devices'));
     check((await page.textContent('#restore-vault-hint')).includes('unlocked password vault'), t('restore: passwords go into the unlocked vault'));

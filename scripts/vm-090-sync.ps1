@@ -132,11 +132,9 @@ switch ($Phase) {
     SafeGo 'krunk://passwords' 3000
     TypeSecret $master; Keys '{TAB}' 200; TypeSecret $master; Keys '{ENTER}' 4000   # a new vault
     SafeGo 'krunk://settings#account' 3000
-    PageClick 417 260 5000                                    # Sign in
+    PageClick 411 242 5000                                    # Sign in (measured on the VM)
     SafeKeys '^1' 1200                                       # Settings (the link page may be in front)
-    Set-Clipboard -Value 'empty'
-    PageClick 430 350 800                                     # Copy code
-    $code = ([regex]::Match(((Get-Clipboard) -join ' '), '\b([0-9A-Z]{4}-[0-9A-Z]{4})\b')).Groups[1].Value
+    $code = ([regex]::Match((PageTextOnly), '\b([0-9A-Z]{4}-[0-9A-Z]{4})\b')).Groups[1].Value
     Set-Content -Encoding ascii "$K\code.txt" $code
     Log "[$P] link code read: $([bool]$code)"
     for ($i = 0; $i -lt 120 -and -not (Test-Path "$K\approved"); $i++) { Start-Sleep 1 }
@@ -146,9 +144,8 @@ switch ($Phase) {
     PageClick 329 303 5000                                    # Turn on → this account already syncs
     Shot "$P-1-join"
     $rk = (Get-Content $secrets)[1]
-    PageClick 786 255 300                                     # Recovery key
-    PageClick 792 292 300; TypeSecret $rk
-    Keys '{ENTER}' 12000                                      # Restore (the form; Argon2id)
+    TypeSecret $rk                                            # the restore field has the focus
+    Keys '{ENTER}' 12000                                      # Restore (a KRNK- key is a recovery key)
     Shot "$P-2-devices"
     Keys '{ENTER}' 12000                                      # These devices keep access (focused)
     Shot "$P-3-on"

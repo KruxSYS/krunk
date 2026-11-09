@@ -53,6 +53,8 @@
       $('join-passwords').disabled = !canPw;
       $('join-passwords').checked = canPw && v.passwords;
       $('restore-secret').value = '';
+      // Typing the passphrase or recovery key is the usual next step.
+      if (shown !== 'join') $('restore-secret').focus();
       $('restore-vault-hint').textContent = !vault.exists
         ? 'Your passwords are restored only into a password vault: set one up first (Passwords page) if you want them.'
         : vault.locked ? 'Unlock your password vault first if you want your passwords restored too.'
@@ -194,7 +196,8 @@
     e.preventDefault();
     const secret = $('restore-secret').value;
     if (!secret.trim()) { $('restore-secret').focus(); return; }
-    const recovery = document.querySelector('input[name=kind]:checked').value === 'recovery';
+    // A recovery key is recognised by its prefix, whichever kind is ticked.
+    const recovery = document.querySelector('input[name=kind]:checked').value === 'recovery' || /^\s*KRNK-/i.test(secret);
     $('restore-secret').value = '';
     LB.post('syncRestore', { secret: secret, recovery: recovery });
   });
