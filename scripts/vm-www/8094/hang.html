@@ -1,0 +1,3 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Busy loop</title></head>
+<body><h1>This page hangs</h1><p>About a second after it loads, its script never returns (Krunk 0.11.0 test).</p>
+<script>setTimeout(function () { document.title = 'Busy loop (hung)'; for (;;) { /* never returns */ } }, 1000);</script></body></html>

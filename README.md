@@ -87,6 +87,7 @@ changed in Settings. Built-in pages:
 - `krunk://adblock`: what the ad blocker blocked on a page, the filter lists, and your own filters
 - `krunk://gpu`: whether pages are hardware accelerated (WebGL/WebGPU adapter, the engine's
   switches, the GPU process), with a link to Chromium's `chrome://gpu`
+- `view-source:<address>` (0.11.0): the page's source in Krunk's viewer (see below)
 
 Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
 
@@ -100,6 +101,7 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
 | F5 / Ctrl+R, Ctrl+F5 / Ctrl+Shift+R | Reload, reload bypassing the cache |
 | Alt+Left / Alt+Right, Alt+Home | Back / forward, home page (there is no Home button) |
 | Ctrl+D | Bookmark this page |
+| Ctrl+U | View page source (0.11.0) |
 | Ctrl+H, Ctrl+Shift+O, Ctrl+J | History, bookmarks, downloads (switches to the page if it is already open) |
 | Ctrl+Shift+B | Show or hide the bookmarks bar |
 | Ctrl+F, F3 / Shift+F3 (Ctrl+G / Ctrl+Shift+G) | Find, next / previous match |
@@ -191,6 +193,17 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   - **Closing animation:** a closed tab shrinks away. While the mouse stays on the tab row the
     other tabs keep their width, so the next close button is under the mouse; they spread out
     when the mouse leaves. With "reduce motion" set in Windows there is no animation.
+  - **Many tabs (0.11.0):** tabs shrink to 72 DIP (the active one keeps 120 with its close
+    button); past that the row scrolls: the mouse wheel and the ‹ › buttons at its ends
+    (click for most of a row, hold to keep going) scroll it smoothly, and its edges fade where
+    more tabs are. **▾** lists every tab of the window: type to filter by title or address,
+    Up/Down and Enter or a click to switch, × or a middle-click to close; the list stays open
+    and follows. The arrows and ▾ show only while the tabs do not fit. The active tab comes
+    into view when it changes; a title change never scrolls the row.
+  - **Middle-click** closes a tab also when the row is scrolled (0.11.0: on an overflowing row
+    the press used to start the engine's autoscroll, which took the click); a middle press on
+    the tab row, the bookmarks bar or Krunk's menus never starts autoscroll. Web pages keep
+    their middle-click autoscroll.
   - **Merging:** a tab dropped on another window's tab row lands in that window, which comes to
     the front.
   - **Closing:** closing a window's last tab closes the window, and closing the last window
@@ -220,6 +233,24 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   - **More than fits (0.7.2):** the bar shows the bookmarks that fit completely and a "»" button
     at its right end with the rest (folders open inside, like any folder dropdown). It is
     recalculated when the window is resized and when bookmarks are added, removed or moved.
+  - **Back (0.11.0):** a subfolder opened inside a dropdown (or "»") has "‹ <folder>" as its
+    first row to go back up; Backspace and Left do the same, Right opens a subfolder, Up/Down
+    move, Esc closes the whole dropdown.
+  - **Middle-click** on a bookmark (on the bar or in a dropdown) opens it in a new tab behind
+    the current one; a dropdown stays open (0.11.0; the bar opened it in front before). Folders
+    have no middle-click.
+  - **Dropdowns open with their own content (0.11.0):** a dropdown (and every other Krunk
+    popup) opens once its content is drawn, so it never shows the previously opened folder for
+    a moment.
+  - **Icons of bookmarks you never visited (0.11.0):** Krunk stores a site's icon when a tab
+    shows it, so imported bookmarks used to keep a plain dot. Now, 30 s after the start and
+    right after you add a bookmark, Krunk fetches each such site's icon once in the background:
+    its `/favicon.ico`, else the icon its home page names (`<link rel="icon">`). The request goes
+    through the engine's network settings (proxy and secure DNS as for pages), sends no cookies
+    or credentials and no referrer, gives up after 8 s and 256 KB (512 KB of HTML), and at most
+    4 run at once. A site without an icon is tried again only after 7 days, or when you bookmark
+    it again; a bookmark saved in a private window is never probed. Each probe is one line in
+    `krunk.log` (`favicon-probe host=… result=…`).
   - **Dragging:** drag bookmarks to reorder them, or onto a folder to put them in it; dropped on
     "»" a bookmark goes to the end of the bar. In a folder's (or "»"'s) dropdown, drag an item
     to reorder it, onto a subfolder to move it there, or out of the dropdown onto the bar.
@@ -269,6 +300,11 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   - `krunk://storage` lists every site with cookies or stored data, grouped by site
     (registrable domain), with a search box. Expand a site to see each cookie: name, value
     (shortened, "Show" reveals it), domain, path, expiry, Secure, HttpOnly and SameSite.
+  - **Large lists (0.11.0):** each row says how many subdomains the site groups (they are
+    listed when you expand it). The list shows 150 sites at a time and the next ones as you
+    scroll; search and sort (name, size, cookies, last used) cover all of them. Sizes are
+    measured for the sites on screen first and fill in as they come. While a search is active,
+    "Clear all shown (N)" clears exactly the sites it found, after asking.
   - You can delete one cookie, all of a site's cookies, or all cookies. "Clear site data"
     removes an origin's local storage, IndexedDB, Cache Storage, service workers and cookies.
   - The shield's **Cookies and site data** opens `krunk://sitedata` for the current tab's site.
@@ -322,6 +358,12 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
     3DES and AES keys can share an id), AES-128/192-CBC and AES-GCM fields are read, and fields
     that still cannot be decrypted are listed with their cipher and key sizes.
   - Manage logins on `krunk://passwords`. Showing a password asks for the master password again.
+  - **Remain unlocked this session (0.11.0):** the unlock dialog (and the passwords page) has
+    this checkbox, checked by default. Checked, the vault stays open until Krunk quits; the
+    inactivity lock (Settings → Passwords, 15 minutes by default) does not apply. Locking
+    Windows, sleep, quitting and "Lock now" still lock it. Unchecked, the vault locks after the
+    set time as before. Krunk remembers your last choice (on this device only). Nothing about
+    it is stored in the vault.
 - **Private tabs:** they share an in-memory profile that is discarded when the last private tab
   closes. Nothing from them is written to disk, history, the session or the favicon cache.
 - **Picture-in-Picture** (0.6.0): when a page has a video, a small window icon appears in the
@@ -330,11 +372,36 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   lists them with their size and state; the same control takes the video back. Settings →
   General → Media → "Automatic Picture-in-Picture" does it when you switch tabs while a video
   plays and reverses it when you return. Videos inside a frame from another site (an embedded
-  player) are not listed: use the player's own control. **Volume (0.7.0):** the engine's
-  floating window has a mute button but no volume, so Krunk shows a volume bar flush under it
-  (above it at the bottom of the screen) while the pointer is over either: a slider, mute and
-  the percentage. The mouse wheel over the floating window changes the volume too, and changes
-  the page makes (its own controls, the floating window's mute) show on the bar.
+  player) are not listed: use the player's own control. **Volume (0.7.0, inside the player since
+  0.11.0):** the engine's floating window has a mute button but no volume. Point at that mute
+  button and a small volume slider opens right next to it, inside the window (it closes a
+  moment after the pointer leaves both); the mute button still mutes. The mouse wheel over the
+  floating window changes the volume, and changes the page makes (its own controls, the mute
+  button) move the slider. (Until 0.10 a separate bar showed under the window whenever the
+  pointer was over the video.)
+- **Media overlay name (0.11.0):** Windows' media overlay (the volume flyout, the lock screen)
+  names Krunk with its icon for media a page plays; it showed Chromium before. Krunk sets its
+  own Windows app ID (`Krunk.Browser`), registers its name and icon for it, and puts it on its
+  own shortcuts (Start menu, desktop, taskbar pins), so a pinned Krunk still groups its windows.
+  A portable copy sets the ID but changes nothing on the system.
+- **View page source (0.11.0):** the page's context menu, Ctrl+U or typing
+  `view-source:<address>` opens the source in a new tab next to the page (a private tab for a
+  private page): line numbers and colours for HTML and for the page's scripts and styles; links
+  open their own source. **Beautify** re-indents the HTML by its nesting (and formats inline
+  scripts and styles a statement per line); **Wrap lines** wraps long lines; both are
+  remembered. The source is loaded again the way the tab loaded it (its cookies), from the cache
+  when it is there. A page that cannot be loaded again (the result of a form) shows the tab's
+  current document, after its scripts changed it, and says so. Very large sources (60,000 lines
+  and more) stay smooth; up to 20,000 lines Ctrl+F finds anything in them.
+- **Search for selected text (0.11.0):** right-click selected text for "Search <your search
+  engine> for “…”" (after Copy); it opens the search in a new tab next to the page (private for a
+  private page). Selections in password fields offer nothing.
+- **A page that stops responding (0.11.0):** pages run in their own processes, so a stuck or
+  slowly loading page does not hold up tabs, the tab strip or the address bar. After about
+  15 s without reacting, Krunk asks "This page isn't responding": **Wait**, or **Close page**,
+  which ends it; the tab then shows that the page stopped, with **Reload** (the address stays in
+  the bar). Tabs of one site can share a process: each of them asks, and Close page ends all of
+  them. A page that crashes shows the same page with Reload.
 - **Extensions** (0.6.0; `krunk://extensions`, also in the menu): Krunk runs its own subset of
   Chrome's Manifest V3, since the engine has no extension system of its own. On a Chrome Web
   Store page the store's button says **Add to Krunk** (0.7.0); you can also paste a store
@@ -679,7 +746,11 @@ and screen sharing shows no window chooser: the whole screen is shared).
 Settings → Account signs this browser in to a Krunk account (made on
 [krunk.209.wf](https://krunk.209.wf/account/register)). A signed-in browser shows who it is
 signed in as and appears in the account's device list on the website, where it can be renamed or
-removed. Since 0.9.0 the account can also sync your data (below, opt-in).
+removed. Since 0.9.0 the account can also sync your data (below, opt-in). Since 0.11.0 a new
+browser's name is "Krunk on Windows 11" (it carried the version at sign-in, which went stale
+with the first update); Settings → Account and the website show the version it runs now next to
+the name ("Krunk on Windows 11 · version 0.11.0"). Names made before 0.11.0 are shown without
+their old version; a name you typed yourself is never changed.
 
 - **Signing in** works like signing in a TV: **Sign in** asks krunk.209.wf for a code, shows it
   and opens `https://krunk.209.wf/link?code=…` in a new tab. There you sign in to the website,
