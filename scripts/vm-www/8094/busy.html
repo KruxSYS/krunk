@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Busy tab</title>
+<style>
+body { font: 15px system-ui; margin: 24px; background: #f8fafc; color: #0f172a; }
+.spin { width: 40px; height: 40px; border: 6px solid #cbd5e1; border-top-color: #e11d48; border-radius: 50%; animation: s 1s linear infinite; display: inline-block; }
+@keyframes s { to { transform: rotate(360deg); } }
+canvas, video, iframe { display: block; margin: 8px 0; border: 1px solid #cbd5e1; }
+</style></head>
+<body>
+<h1>Busy tab</h1>
+<p>Krunk 0.10.0 (P1): a page that keeps a browser busy the way news, video and app pages do — an animation
+loop on a canvas, four 16-ms timers, a CSS animation, a muted looping video and a cross-site frame doing the
+same (the video only with <code>?video=1</code>). Every 5 s it reports to <code>/m</code> how many animation frames and timer ticks it got per second,
+and whether the browser treats it as visible. A hidden (background) tab should get ~0 frames and ~1 tick/s.</p>
+<div class="spin"></div>
+<canvas id="c" width="320" height="120"></canvas>
+<iframe src="http://127.0.0.1:8097/busy-frame.html" width="320" height="80" title="cross-site busy frame"></iframe>
+<script>
+'use strict';
+const q = new URLSearchParams(location.search);
+const tag = q.get('tag') || 'busy';
+// Work per animation frame and per timer tick, in ms (?f= and ?t=).
+const frameMs = Number(q.get('f') || 0.4), tickMs = Number(q.get('t') || 0.05);
+if (q.get('video') === '1') {
+  const v = Object.assign(document.createElement('video'), { src: 'test-vp9-opus.webm', muted: true, autoplay: true, loop: true, playsInline: true, width: 320 });
+  document.querySelector('canvas').after(v);
+}
+const ctx = document.getElementById('c').getContext('2d');
+let frames = 0, ticks = 0, x = 0;
+// Work is time-based (spin for a budget), so every machine gets the same load per frame and tick:
+// by default 0.4 ms per animation frame and 0.05 ms per timer tick, like an ordinary news or app page
+// with a few animations (P1's first version used 1.5 and 0.25 and saturated the VM at 30 tabs).
+const spin = (ms) => { const end = performance.now() + ms; let s = 0; while (performance.now() < end) s += Math.random(); return s; };
+(function draw() {
+  frames++;
+  spin(frameMs);
+  x = (x + 3) % 320;
+  ctx.fillStyle = '#f1f5f9'; ctx.fillRect(0, 0, 320, 120);
+  for (let i = 0; i < 40; i++) { ctx.fillStyle = `hsl(${(i * 9 + x) % 360} 70% 55%)`; ctx.fillRect((x + i * 8) % 320, (i * 3) % 110, 6, 10); }
+  requestAnimationFrame(draw);
+})();
+// Four timers doing a little work each, like analytics, carousels and polling.
+for (let t = 0; t < 4; t++) setInterval(() => { ticks++; return spin(tickMs); }, 16);
+let last = performance.now();
+setInterval(() => {
+  const now = performance.now(), secs = (now - last) / 1000; last = now;
+  const line = `${tag} st=${document.visibilityState} raf=${(frames / secs).toFixed(1)} tim=${(ticks / 4 / secs).toFixed(1)}`;
+  frames = 0; ticks = 0;
+  fetch('/m?' + encodeURIComponent(line)).catch(() => {});
+}, 5000);
+// Tab-switch latency: the harness logs its own clock before the key; this logs when the tab got focus.
+addEventListener('focus', () => fetch('/m?' + encodeURIComponent(`${tag} focus at=${Date.now()}`)).catch(() => {}));
+document.addEventListener('visibilitychange', () => fetch('/m?' + encodeURIComponent(`${tag} visibility=${document.visibilityState} at=${Date.now()}`)).catch(() => {}));
+</script>
+</body>
+</html>

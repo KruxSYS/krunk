@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Busy frame</title>
+<style>body { margin: 0; font: 12px system-ui; } .bar { height: 20px; background: linear-gradient(90deg, #0ea5e9, #e11d48); animation: w 2s ease-in-out infinite alternate; } @keyframes w { from { width: 10%; } to { width: 100%; } }</style></head>
+<body>
+<div class="bar"></div>
+<span id="n">0</span>
+<script>
+'use strict';
+// Krunk 0.10.0 (P1): a cross-site frame (its own renderer) with an animation loop and a timer, like an ad slot.
+const spin = (ms) => { const end = performance.now() + ms; let s = 0; while (performance.now() < end) s += Math.random(); return s; };
+let n = 0;
+(function tick() { n++; spin(0.1); if (n % 30 === 0) document.getElementById('n').textContent = n; requestAnimationFrame(tick); })();
+setInterval(() => spin(0.05), 16);
+</script>
+</body>
+</html>

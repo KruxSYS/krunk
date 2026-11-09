@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Foreground responsiveness</title>
+<style>body { font: 15px system-ui; margin: 24px; } #box { width: 120px; height: 40px; background: #e11d48; }</style></head>
+<body>
+<h1>Foreground responsiveness</h1>
+<p>Krunk 0.10.0 (P1): measures the active tab while other tabs are open. Every 5 s it reports the animation
+frame rate, how late a 16-ms timer fires (median and 95th percentile) and, for each key the harness presses,
+the time from the key event to the next painted frame.</p>
+<div id="box"></div>
+<pre id="out"></pre>
+<script>
+'use strict';
+const tag = new URLSearchParams(location.search).get('tag') || 'fg';
+const send = (line) => fetch('/m?' + encodeURIComponent(`${tag} ${line}`)).catch(() => {});
+let frames = 0, lates = [];
+(function f() { frames++; document.getElementById('box').style.width = (60 + frames % 120) + 'px'; requestAnimationFrame(f); })();
+let expect = performance.now() + 16;
+setInterval(() => { const now = performance.now(); lates.push(Math.max(0, now - expect)); expect = now + 16; }, 16);
+const pct = (a, p) => { if (!a.length) return 0; const s = a.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; };
+let last = performance.now();
+setInterval(() => {
+  const now = performance.now(), secs = (now - last) / 1000; last = now;
+  send(`raf=${(frames / secs).toFixed(1)} late50=${pct(lates, 0.5).toFixed(1)} late95=${pct(lates, 0.95).toFixed(1)}`);
+  frames = 0; lates = [];
+}, 5000);
+// Key → next frame: the harness presses keys; each is timed from the event's own timestamp (ms), and
+// at= is the wall clock after the frame, for the harness's key → frame time including input queuing.
+addEventListener('keydown', (e) => {
+  if (e.key !== 'a') return;   // not the harness's tab-switch keys
+  const t0 = e.timeStamp;
+  requestAnimationFrame(() => requestAnimationFrame((t1) => send(`key ms=${(t1 - t0).toFixed(1)} at=${Date.now()}`)));
+});
+addEventListener('focus', () => send(`focus at=${Date.now()}`));
+</script>
+</body>
+</html>
