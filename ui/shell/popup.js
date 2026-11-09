@@ -98,6 +98,45 @@
     ];
   }
 
+  // Right-click on Back or Forward (0.8.0): the tab's earlier pages (newest first) or later ones,
+  // then "Show full history". A click jumps to exactly that page; arrows, Home/End, Enter and
+  // Esc work from the keyboard.
+  function renderNavMenu(c) {
+    const rows = c.items.map(function (it) {
+      const b = el('button', { class: 'item with-icon', role: 'menuitem', title: it.label === it.url ? it.url : it.label + '\n' + it.url }, [
+        el('span', { class: 'label', text: it.label }),
+      ]);
+      if (it.icon) {
+        b.insertBefore(el('img', { class: 'fav', src: it.icon, alt: '' }), b.firstChild);
+      } else {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('class', 'icon micon');
+        svg.setAttribute('aria-hidden', 'true');
+        const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+        use.setAttribute('href', '#m-globe');
+        svg.appendChild(use);
+        b.insertBefore(svg, b.firstChild);
+      }
+      b.addEventListener('click', function () { LB.post('navToEntry', { tabId: c.tabId, entryId: it.entryId }); close(); });
+      return b;
+    });
+    return [el('div', { class: 'nav-menu', role: 'menu', 'aria-label': c.forward ? 'Forward history' : 'Back history' },
+      rows.concat([sep(), iconItem('m-history', 'Show full history', 'Ctrl+H', () => command('history'))]))];
+  }
+  // Up/Down (wrapping), Home and End move between a menu's items.
+  function menuKeys(e) {
+    if (!current || current.kind !== 'navMenu') return;
+    const items = Array.prototype.slice.call(root.querySelectorAll('button.item:not([disabled])'));
+    if (!items.length) return;
+    const at = items.indexOf(document.activeElement);
+    let next = -1;
+    if (e.key === 'ArrowDown') next = at < 0 ? 0 : (at + 1) % items.length;
+    else if (e.key === 'ArrowUp') next = at < 0 ? items.length - 1 : (at - 1 + items.length) % items.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = items.length - 1;
+    if (next >= 0) { e.preventDefault(); items[next].focus(); }
+  }
+
   // The downloads button's popup (0.6.0): the newest downloads with speed, time left and their
   // progress. 0.7.0 (R10, R11): file-type icons, actions as icon buttons (on hover for finished
   // ones; a click on a finished row opens the file), rows updated in place so the bars move
@@ -405,7 +444,7 @@
   function fit() { LB.post('popupResize', { height: root.offsetHeight + 2 }); }
   // Content whose height depends on its items: the window is opened with an upper bound
   // and fitted right after the render (the ⋮ menu used to leave a gap at the bottom).
-  const FITS = { extInstall: true, suggest: true, cardFill: true, menu: true, tabMenu: true, bookmarkMenu: true, siteInfo: true, addressMenu: true, captionMenu: true, downloads: true, permission: true, passwordSaved: true, pip: true, bookmarkFolder: true };
+  const FITS = { extInstall: true, suggest: true, cardFill: true, menu: true, tabMenu: true, navMenu: true, bookmarkMenu: true, siteInfo: true, addressMenu: true, captionMenu: true, downloads: true, permission: true, passwordSaved: true, pip: true, bookmarkFolder: true };
 
 
   // Login suggestions under a focused field: the matching usernames (with the host for a
@@ -847,7 +886,7 @@
       return;
     }
     current = m.content;
-    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, cardFill: renderCardFill, saveCard: renderSaveCard, pip: renderPip, pipVolume: renderPipVolume, extInstall: renderExtInstall, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
+    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, cardFill: renderCardFill, saveCard: renderSaveCard, pip: renderPip, pipVolume: renderPipVolume, extInstall: renderExtInstall, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, navMenu: renderNavMenu, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
     root.textContent = '';
     root.dataset.kind = c.kind;
     // The volume bar matches the engine's floating window, which is always dark.
@@ -858,6 +897,7 @@
     if (FITS[c.kind]) requestAnimationFrame(fit);
   });
 
+  document.addEventListener('keydown', menuKeys);
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') {
       // Dismissing a prompt is never a confirmation.

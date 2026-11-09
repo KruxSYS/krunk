@@ -167,6 +167,8 @@ pub enum PopupKind {
     PipVolume,
     /// A tab's context menu (right-click on the tab).
     TabMenu,
+    /// The back or forward button's history menu (right-click, 0.8.0).
+    NavMenu,
     /// The bookmarks bar's context menu (right-click on an item, a folder or the bar).
     BookmarkMenu,
     /// Name (and address) of a bookmark or folder: edit, rename, new folder.
@@ -415,6 +417,8 @@ pub enum PopupContent {
     },
     /// The downloads button's popup: the most recent downloads first.
     Downloads { items: Vec<crate::downloads::DownloadItem> },
+    /// Back's (`forward: false`) or Forward's history menu of tab `tab_id` (0.8.0).
+    NavMenu { tab_id: u32, forward: bool, items: Vec<crate::navmenu::Item> },
     /// Right-click on the window's title bar or the empty tab strip (Krunk 0.6.0).
     CaptionMenu { maximized: bool, can_reopen: bool, can_bookmark_all: bool },
     /// The bookmarks bar's context menu: on bookmark or folder `id`, or on the bar itself
@@ -613,6 +617,7 @@ impl PopupContent {
             PopupContent::Unlock { .. } => PopupKind::Unlock,
             PopupContent::Update { .. } => PopupKind::Update,
             PopupContent::TabMenu { .. } => PopupKind::TabMenu,
+            PopupContent::NavMenu { .. } => PopupKind::NavMenu,
             PopupContent::CaptionMenu { .. } => PopupKind::CaptionMenu,
             PopupContent::Downloads { .. } => PopupKind::Downloads,
             PopupContent::Pip { .. } => PopupKind::Pip,
@@ -737,6 +742,17 @@ pub enum Request {
     TabMenuAction {
         id: u32,
         action: TabAction,
+    },
+    /// Right-click on Back (`forward: false`) or Forward: its history menu at `rect` (shell CSS
+    /// px, under the button; 0.8.0).
+    ShowNavMenu {
+        forward: bool,
+        rect: PopupRect,
+    },
+    /// A choice in a history menu (popup): jump tab `tab_id` to navigation entry `entry_id`.
+    NavToEntry {
+        tab_id: u32,
+        entry_id: i64,
     },
     /// Opens the popup view at `rect` (shell: menu and shield only).
     ShowPopup {
@@ -1441,6 +1457,7 @@ impl Sender {
                     | R::DuplicateTab { .. }
                     | R::TabDragOut { .. }
                     | R::ShowTabMenu { .. }
+                    | R::ShowNavMenu { .. }
                     | R::DevToolsDock { .. }
                     | R::DevToolsClose
                     | R::ReopenClosedTab
@@ -1483,6 +1500,7 @@ impl Sender {
                 req,
                 R::Command { .. }
                     | R::TabMenuAction { .. }
+                    | R::NavToEntry { .. }
                     | R::BookmarkMenuAction { .. }
                     | R::SaveBookmark { .. }
                     | R::HidePopup
@@ -2688,6 +2706,8 @@ mod tests {
             Request::ShowPopup { popup: PopupKind::Shield, rect },
             Request::TabDragOut { id: 3, offset_x: 40.5, offset_y: 18.0 },
             Request::ShowTabMenu { id: 3, rect },
+            Request::ShowNavMenu { forward: true, rect },
+            Request::NavToEntry { tab_id: 3, entry_id: 17 },
             Request::OpenBlockedPage {},
             Request::GetBlocked {},
             Request::GetFilterLists {},
@@ -3689,6 +3709,41 @@ mod tests {
                 .is_err());
         }
         assert!(!PopupKind::TabMenu.shell_may_open(), "the shell asks with showTabMenu, not showPopup");
+    }
+
+    #[test]
+    fn history_menus_are_shell_and_popup_only() {
+        let show =
+            Request::ShowNavMenu { forward: false, rect: PopupRect { x: 4.0, y: 70.0, width: 320.0, height: 300.0 } };
+        let jump = Request::NavToEntry { tab_id: 2, entry_id: 5 };
+        assert!(Sender::Shell.permits(&show) && !Sender::Shell.permits(&jump), "the shell asks, the popup answers");
+        assert!(Sender::Popup.permits(&jump) && !Sender::Popup.permits(&show));
+        for page in Page::ALL {
+            assert!(!Sender::Page(page).permits(&show) && !Sender::Page(page).permits(&jump), "{page:?}");
+        }
+        assert!(!Sender::Ext.permits(&show) && !Sender::Ext.permits(&jump));
+        let parsed = parse_request(
+            Sender::Shell,
+            r#"{"cmd":"showNavMenu","forward":true,"rect":{"x":40,"y":70,"width":320,"height":300}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            parsed.request,
+            Request::ShowNavMenu { forward: true, rect: PopupRect { x: 40.0, y: 70.0, width: 320.0, height: 300.0 } }
+        );
+        let parsed = parse_request(Sender::Popup, r#"{"cmd":"navToEntry","tabId":2,"entryId":9}"#).unwrap();
+        assert_eq!(parsed.request, Request::NavToEntry { tab_id: 2, entry_id: 9 });
+        assert!(parse_request(Sender::Popup, r#"{"cmd":"navToEntry","tabId":2,"entryId":9,"url":"x"}"#).is_err());
+        let menu = PopupContent::NavMenu {
+            tab_id: 2,
+            forward: false,
+            items: vec![crate::navmenu::Item { entry_id: 9, label: "P1".into(), url: "http://a/".into(), icon: None }],
+        };
+        assert_eq!(menu.kind(), PopupKind::NavMenu);
+        assert!(PopupKind::NavMenu.takes_focus(), "arrows and Enter work in it");
+        assert!(!PopupKind::NavMenu.shell_may_open(), "the shell asks with showNavMenu, not showPopup");
+        let json = serde_json::to_string(&menu).unwrap();
+        assert!(json.contains(r#""kind":"navMenu""#) && json.contains(r#""entryId":9"#), "{json}");
     }
 
     #[test]

@@ -274,6 +274,16 @@ pub fn bookmark_menu_rect(x: f64, y: f64, on_item: bool, is_folder: bool) -> Pop
     PopupRect { x, y, width: 240.0, height: items * 30.0 + seps * 11.0 + 20.0 }
 }
 
+/// The back/forward history menu (CSS px, 0.8.0): under the button at (`x`, `y`), one 30 px
+/// row per entry, a separator and "Show full history".
+pub const NAV_MENU_WIDTH: f64 = 340.0;
+pub fn nav_menu_rect(x: f64, y: f64, items: usize) -> PopupRect {
+    PopupRect { x, y, width: NAV_MENU_WIDTH, height: nav_menu_height(items) }
+}
+fn nav_menu_height(items: usize) -> f64 {
+    (items.min(crate::navmenu::MAX_ITEMS) + 1) as f64 * 30.0 + 11.0 + 12.0
+}
+
 /// The bookmark editor (CSS px): a name, and an address for bookmarks.
 pub fn bookmark_edit_rect(x: f64, y: f64, is_folder: bool) -> PopupRect {
     PopupRect { x, y, width: 340.0, height: if is_folder { 150.0 } else { 214.0 } }
@@ -296,6 +306,7 @@ pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> Pop
         PopupKind::AddressMenu => (230.0, 260.0),
         PopupKind::Update => (360.0, 150.0),
         PopupKind::TabMenu => TAB_MENU_SIZE,
+        PopupKind::NavMenu => (NAV_MENU_WIDTH, nav_menu_height(entries)),
         PopupKind::BookmarkMenu => (240.0, 352.0),
         PopupKind::CaptionMenu => (250.0, 352.0),
         PopupKind::Downloads => (380.0, 420.0),
@@ -402,6 +413,8 @@ mod tests {
     #[test]
     fn shell_scales_with_dpi() {
         assert_eq!(shell_height(1.0, false), 76);
+        assert_eq!(nav_menu_rect(4.0, 72.0, 3).height, 4.0 * 30.0 + 23.0);
+        assert_eq!(nav_menu_rect(4.0, 72.0, 40).height, nav_menu_rect(4.0, 72.0, 15).height, "15 entries at most");
         assert_eq!(shell_height(1.5, false), 114);
         assert_eq!(shell_height(2.0, true), 208);
         assert_eq!(shell_height(f64::NAN, false), 76);

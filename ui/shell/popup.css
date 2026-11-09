@@ -81,6 +81,10 @@ body.pv-dark { --bg-raised: #202124; --bg-hover: #3c4043; --fg: #e8eaed; --fg-mu
 .choice:hover, .choice:focus-visible { border-color: var(--accent); outline: none; }
 .item .fav { width: 16px; height: 16px; flex: none; }
 .item .fav.dot { border-radius: 50%; background: var(--border); }
+/* The back/forward history menu (0.8.0): one line per page, shortened with "…". */
+#root[data-kind="navMenu"] .item .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#root[data-kind="navMenu"] .item .micon { width: 16px; height: 16px; flex: none; }
+#root[data-kind="navMenu"] .item:focus-visible { background: var(--bg-hover); outline: none; }
 .item .folder-glyph { width: 16px; text-align: center; color: #d97706; }
 #root[data-kind="bookmarkFolder"] { max-height: 100vh; overflow-y: auto; }
 /* Dragging inside a folder dropdown: the same marks as on the bookmarks bar. */

@@ -538,6 +538,16 @@
 
   $('back').addEventListener('click', function () { LB.post('back'); });
   $('forward').addEventListener('click', function () { LB.post('forward'); });
+  // Right-click: the history menu under the button (0.8.0). A disabled button shows none.
+  ['back', 'forward'].forEach(function (id) {
+    $(id).addEventListener('contextmenu', function (e) {
+      e.preventDefault();
+      if ($(id).disabled) return;
+      const r = $(id).getBoundingClientRect();
+      LB.post('showNavMenu', { forward: id === 'forward', rect: { x: Math.max(0, r.left), y: r.bottom + 2, width: 340, height: 300 } });
+      setPopup('navMenu');
+    });
+  });
   $('reload').addEventListener('click', function () {
     LB.post(state.nav && state.nav.loading ? 'stop' : 'reload');
   });

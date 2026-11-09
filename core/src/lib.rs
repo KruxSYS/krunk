@@ -25,6 +25,7 @@ pub mod keys;
 pub mod layout;
 pub mod memory;
 pub mod migrate;
+pub mod navmenu;
 pub mod netscape;
 pub mod omnibox;
 pub mod overlay;

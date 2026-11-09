@@ -59,6 +59,7 @@ mod import;
 mod integrity;
 mod jobs;
 mod library;
+mod navmenu;
 mod omnibox;
 #[cfg(feature = "perf-probe")]
 mod perf_probe;
@@ -198,6 +199,9 @@ pub struct Browser {
     /// A second popup window for a menu opened from inside the first one (an item of a
     /// bookmark folder dropdown): the dropdown stays open underneath, as in Chrome.
     menu_popup: RefCell<Option<Popup>>,
+    /// The entries the open history menu offers, with its tab (0.8.0): a click can jump to
+    /// these only.
+    nav_offer: RefCell<Option<(TabId, Vec<i64>)>>,
     /// The floating video's volume bar (created when first needed) and its state.
     pip_popup: RefCell<Option<Popup>>,
     pip_bar: RefCell<Option<pip::PipBar>>,
@@ -323,6 +327,7 @@ impl Browser {
             task_samples: tasks::TaskSamples::default(),
             flight: flight::FlightHost::default(),
             menu_popup: RefCell::new(None),
+            nav_offer: RefCell::new(None),
             pip_popup: RefCell::new(None),
             pip_bar: RefCell::new(None),
             menu_closing: Cell::new(false),
@@ -2127,6 +2132,8 @@ impl Browser {
                     );
                 }
             }
+            Request::ShowNavMenu { forward, rect } => self.show_nav_menu(forward, rect),
+            Request::NavToEntry { tab_id, entry_id } => self.nav_to_entry(tab_id, entry_id),
             Request::TabMenuAction { id, action } => {
                 self.hide_popup();
                 match action {

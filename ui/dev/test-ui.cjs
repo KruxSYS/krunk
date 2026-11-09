@@ -4843,6 +4843,81 @@ async function testTabWindows(browser) {
   check(errors.length === 0, 'popup: no console errors (' + errors.join(' | ') + ')');
 }
 
+// 0.8.0 (B): the back/forward history menus. The shell asks with showNavMenu (never for a
+// disabled button); the popup lists the entries, jumps by entry id and works from the keyboard.
+async function testNavMenu(browser) {
+  console.log('navMenu');
+  {
+    const { page, errors } = await openPage(browser, 'https://shell.krunk.invalid/shell.html', { width: 1100, height: 120 }, 1);
+    await page.evaluate(() => { window.__host.autoSimulate = false; window.__host.navEvent({ tabId: 7, canGoBack: false, canGoForward: true }); });
+    await page.waitForTimeout(80);
+    check(await page.isDisabled('#back') && !(await page.isDisabled('#forward')), 'nav state: Back disabled, Forward enabled');
+    await page.click('#back', { button: 'right', force: true });
+    await page.waitForTimeout(40);
+    check((await lastSent(page, 'showNavMenu')) === undefined, 'a disabled Back shows no menu');
+    await page.click('#forward', { button: 'right' });
+    const m = await lastSent(page, 'showNavMenu');
+    const r = await page.evaluate(() => document.getElementById('forward').getBoundingClientRect().toJSON());
+    check(m && m.forward === true && Math.abs(m.rect.x - r.left) < 1 && Math.abs(m.rect.y - (r.bottom + 2)) < 1, 'right-click Forward: showNavMenu{forward:true} under the button');
+    await page.evaluate(() => window.__host.navEvent({ tabId: 7, canGoBack: true, canGoForward: false }));
+    await page.waitForTimeout(80);
+    await page.click('#back', { button: 'right' });
+    check((await lastSent(page, 'showNavMenu')).forward === false, 'right-click Back: showNavMenu{forward:false}');
+    check((await sent(page)).filter((x) => x.cmd === 'back').length === 0, 'a right-click does not go back');
+    check(errors.length === 0, 'shell: no console errors (' + errors.join(' | ') + ')');
+  }
+  const longTitle = 'A very long page title '.repeat(13);
+  const items = [];
+  for (let i = 14; i >= 0; i--) items.push({ entryId: 100 + i, label: i === 3 ? longTitle : 'Page ' + i, url: 'http://localhost:8094/p' + i + '.html', icon: i % 2 ? '/favicon?host=localhost' : null });
+  items[5].label = items[5].url; // no title: the address
+  for (const theme of ['light', 'dark']) {
+    const { page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 340, height: 520 }, 1);
+    await page.evaluate(() => { window.__host.autoSimulate = false; });
+    await emit(page, { event: 'theme', theme: theme });
+    await emit(page, { event: 'popup', content: { kind: 'navMenu', tabId: 7, forward: false, items: items } });
+    await page.waitForSelector('#root[data-kind="navMenu"] .item');
+    const labels = await page.$$eval('#root .item .label', (l) => l.map((x) => x.textContent));
+    check(labels.length === 16 && labels[0] === 'Page 14' && labels[14] === 'Page 0' && labels[15] === 'Show full history', theme + ': 15 entries as given (newest first), then Show full history');
+    check(await page.$$eval('#root .item img.fav', (l) => l.length) === 7 && await page.$$eval('#root .item svg use[href="#m-globe"]', (l) => l.length) === 8, theme + ': favicons, and a globe without one');
+    const longRow = await page.$eval('#root .item:nth-child(12) .label', (x) => ({ sw: x.scrollWidth, cw: x.clientWidth, ws: getComputedStyle(x).whiteSpace, to: getComputedStyle(x).textOverflow }));
+    check(longRow.sw > longRow.cw && longRow.ws === 'nowrap' && longRow.to === 'ellipsis', theme + ': a 300-character title stays on one line with "…"');
+    const width = await page.evaluate(() => document.documentElement.scrollWidth);
+    check(width <= 340, theme + ': no horizontal scroll (' + width + ')');
+    const fit = await lastSent(page, 'popupResize');
+    check(fit && fit.height > 16 * 28 && fit.height < 520, theme + ': fitted to its rows (' + (fit && fit.height) + ')');
+    check(await page.evaluate(() => document.activeElement && document.activeElement.textContent) === 'Page 14', theme + ': the first entry has the focus');
+    await shot(page, 'navmenu-' + theme + '.png');
+    // Keyboard: down, up (wraps to the end), home, end, Enter.
+    await page.keyboard.press('ArrowDown');
+    check(await page.evaluate(() => document.activeElement.textContent) === 'Page 13', theme + ': ArrowDown moves down');
+    await page.keyboard.press('Home');
+    await page.keyboard.press('ArrowUp');
+    check(await page.evaluate(() => document.activeElement.textContent).then((t) => t.includes('Show full history')), theme + ': ArrowUp from the first wraps to the last');
+    await page.keyboard.press('Home');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    const j = await lastSent(page, 'navToEntry');
+    check(j && j.tabId === 7 && j.entryId === 112 && (await lastSent(page, 'hidePopup')) !== undefined, theme + ': Enter jumps to that entry (navToEntry{tabId:7, entryId:112}) and closes');
+    await emit(page, { event: 'popup', content: { kind: 'navMenu', tabId: 7, forward: true, items: items.slice(0, 2) } });
+    await page.waitForTimeout(60);
+    await page.click('#root .item:first-child');
+    check((await lastSent(page, 'navToEntry')).entryId === 114, theme + ': a click jumps too');
+    await emit(page, { event: 'popup', content: { kind: 'navMenu', tabId: 7, forward: true, items: items.slice(0, 2) } });
+    await page.waitForTimeout(60);
+    await page.keyboard.press('End');
+    await page.keyboard.press('Enter');
+    const h = await lastSent(page, 'command');
+    check(h && h.command.command === 'history', theme + ': Show full history opens krunk://history');
+    const hides = (await sent(page)).filter((x) => x.cmd === 'hidePopup').length;
+    await emit(page, { event: 'popup', content: { kind: 'navMenu', tabId: 7, forward: true, items: items.slice(0, 2) } });
+    await page.waitForTimeout(60);
+    await page.keyboard.press('Escape');
+    check((await sent(page)).filter((x) => x.cmd === 'hidePopup').length === hides + 1, theme + ': Esc closes');
+    check(errors.length === 0, theme + ': no console errors (' + errors.join(' | ') + ')');
+  }
+}
+
 (async () => {
   if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
   const browser = await chromium.launch();
@@ -4855,6 +4930,7 @@ async function testTabWindows(browser) {
     if (!ONLY || ONLY.includes('TabWindows')) await testTabWindows(browser);
     if (!ONLY || ONLY.includes('ShellHiDpi')) await testShellHiDpi(browser);
     if (!ONLY || ONLY.includes('Popup')) await testPopup(browser);
+    if (!ONLY || ONLY.includes('NavMenu')) await testNavMenu(browser);
     if (!ONLY || ONLY.includes('NewTab')) await testNewTab(browser);
     if (!ONLY || ONLY.includes('NewTabLongTitles')) await testNewTabLongTitles(browser);
     if (!ONLY || ONLY.includes('NewTabBackgrounds')) await testNewTabBackgrounds(browser);
