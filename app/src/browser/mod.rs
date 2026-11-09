@@ -16,7 +16,7 @@ use lb_core::layout;
 use lb_core::pages::{self, Page};
 use lb_core::protocol::{
     self, Channel, ContentMessage, Envelope, Event, NavState, PopupContent, PopupKind, PopupRect, Request, Sender,
-    Source, TabAction, ZoomAction,
+    Source, TabAction, UnlockPurpose, ZoomAction,
 };
 use lb_core::settings::{Settings, Startup};
 use lb_core::storage::{now_ms, Store};
@@ -56,6 +56,7 @@ mod find;
 mod flight;
 mod frame;
 mod hints;
+mod http_auth;
 mod import;
 mod integrity;
 mod jobs;
@@ -205,6 +206,8 @@ pub struct Browser {
     nav_offer: RefCell<Option<(TabId, Vec<i64>)>>,
     /// Settings → Account (0.8.0).
     account: account::AccountHost,
+    /// A site's HTTP sign-in dialog (0.8.0).
+    http_auth: http_auth::HttpAuthHost,
     /// The floating video's volume bar (created when first needed) and its state.
     pip_popup: RefCell<Option<Popup>>,
     pip_bar: RefCell<Option<pip::PipBar>>,
@@ -332,6 +335,7 @@ impl Browser {
             menu_popup: RefCell::new(None),
             nav_offer: RefCell::new(None),
             account: account::AccountHost::default(),
+            http_auth: http_auth::HttpAuthHost::default(),
             pip_popup: RefCell::new(None),
             pip_bar: RefCell::new(None),
             menu_closing: Cell::new(false),
@@ -1008,6 +1012,18 @@ impl Browser {
                         &serde_json::json!({ "color": { "r": 255, "g": 255, "b": 255, "a": 1 } }),
                     );
                 }
+            }
+        });
+        let weak = self.me.clone();
+        c.on_auth(move |challenge, responder| {
+            if let Some(b) = weak.upgrade() {
+                b.http_auth_challenge(id, challenge, responder);
+            }
+        });
+        let weak = self.me.clone();
+        c.on_load_end(move |status| {
+            if let Some(b) = weak.upgrade() {
+                b.http_auth_load_end(id, status);
             }
         });
         let weak = self.me.clone();
@@ -2137,6 +2153,11 @@ impl Browser {
                 }
             }
             Request::ShowNavMenu { forward, rect } => self.show_nav_menu(forward, rect),
+            Request::HttpAuthReply { tab_id, username, password, entry_id } => {
+                self.http_auth_reply(tab_id, username, password, entry_id)
+            }
+            Request::HttpAuthCancel { tab_id } => self.http_auth_cancel(tab_id),
+            Request::HttpAuthUnlock { tab_id } => self.http_auth_unlock(tab_id),
             Request::NavToEntry { tab_id, entry_id } => self.nav_to_entry(tab_id, entry_id),
             Request::TabMenuAction { id, action } => {
                 self.hide_popup();
@@ -2352,7 +2373,22 @@ impl Browser {
         let mut guard = self.popup_slot(slot).borrow_mut();
         let Some(popup) = guard.as_mut() else { return };
         let kind = content.kind();
-        popup.content = Some(content.clone());
+        let replaced = popup.content.replace(content.clone());
+        // An open HTTP sign-in dialog replaced by anything but its own unlock prompt: its request
+        // is cancelled (later, outside this borrow; the engine may call back synchronously).
+        let auth_gone = matches!(replaced, Some(PopupContent::HttpAuth { .. }))
+            && !matches!(
+                &content,
+                PopupContent::HttpAuth { .. } | PopupContent::Unlock { purpose: UnlockPurpose::HttpAuth, .. }
+            );
+        if auth_gone {
+            let weak = self.me.clone();
+            crate::ffi::cef::post_ui(move || {
+                if let Some(b) = weak.upgrade() {
+                    b.http_auth_dismissed();
+                }
+            });
+        }
         if let Some(rect) = rect {
             // Shown for the current window: it belongs to that frame now.
             let owner = self.cur_id();

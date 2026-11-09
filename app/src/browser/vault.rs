@@ -931,6 +931,7 @@ impl Browser {
             }
             PopupContent::Permission { prompt_id, .. } => self.permission_dismissed(*prompt_id),
             PopupContent::ExtInstall { request_id, .. } => self.ext_install_dismissed(*request_id),
+            PopupContent::HttpAuth { .. } => self.http_auth_dismissed(),
             PopupContent::Unlock { purpose, .. } => {
                 self.vaults.unlock_for.borrow_mut().take();
                 match purpose {
@@ -941,6 +942,7 @@ impl Browser {
                         self.vaults.pending_card.borrow_mut().take();
                     }
                     UnlockPurpose::Import => self.import_unlock_dismissed(),
+                    UnlockPurpose::HttpAuth => self.http_auth_dismissed(),
                     _ => {}
                 }
             }
@@ -993,6 +995,7 @@ impl Browser {
             }
             UnlockPurpose::Suggest | UnlockPurpose::CardFill => self.after_unlock_suggest(tab_id, &origin),
             UnlockPurpose::Import => self.after_unlock_import(),
+            UnlockPurpose::HttpAuth => self.after_unlock_http_auth(tab_id),
         }
     }
 }

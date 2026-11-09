@@ -169,6 +169,9 @@ pub enum PopupKind {
     TabMenu,
     /// The back or forward button's history menu (right-click, 0.8.0).
     NavMenu,
+    /// A site's HTTP sign-in (Basic/Digest, 0.8.0): user name and password, the vault's logins
+    /// for that origin. Opened by the host only.
+    HttpAuth,
     /// The bookmarks bar's context menu (right-click on an item, a folder or the bar).
     BookmarkMenu,
     /// Name (and address) of a bookmark or folder: edit, rename, new folder.
@@ -199,6 +202,14 @@ impl PopupKind {
                 | PopupKind::PipVolume
         )
     }
+}
+
+/// A saved login offered in the HTTP sign-in dialog: its id and user name, never the password.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthLogin {
+    pub entry_id: String,
+    pub username: String,
 }
 
 /// What a tab's context menu can do.
@@ -423,6 +434,19 @@ pub enum PopupContent {
     Downloads { items: Vec<crate::downloads::DownloadItem> },
     /// Back's (`forward: false`) or Forward's history menu of tab `tab_id` (0.8.0).
     NavMenu { tab_id: u32, forward: bool, items: Vec<crate::navmenu::Item> },
+    /// A site asks tab `tab_id` for HTTP authentication (0.8.0). `realm` is the server's text
+    /// (shortened, no control characters); `insecure`: the credentials go over plain http.
+    /// `logins`: the vault's logins for exactly this origin (user names only); `locked`: the
+    /// vault is locked (it may have some); `failed`: the last answer was not accepted.
+    HttpAuth {
+        tab_id: u32,
+        origin: String,
+        realm: String,
+        insecure: bool,
+        logins: Vec<AuthLogin>,
+        locked: bool,
+        failed: bool,
+    },
     /// Right-click on the window's title bar or the empty tab strip (Krunk 0.6.0).
     CaptionMenu { maximized: bool, can_reopen: bool, can_bookmark_all: bool },
     /// The bookmarks bar's context menu: on bookmark or folder `id`, or on the bar itself
@@ -545,6 +569,8 @@ pub enum UnlockPurpose {
     CardFill,
     /// Settings → import passwords from another browser or a CSV file (Krunk 0.5.0).
     Import,
+    /// A site's HTTP sign-in dialog (0.8.0).
+    HttpAuth,
 }
 
 /// Which login field has the focus (the suggestion dropdown).
@@ -622,6 +648,7 @@ impl PopupContent {
             PopupContent::Update { .. } => PopupKind::Update,
             PopupContent::TabMenu { .. } => PopupKind::TabMenu,
             PopupContent::NavMenu { .. } => PopupKind::NavMenu,
+            PopupContent::HttpAuth { .. } => PopupKind::HttpAuth,
             PopupContent::CaptionMenu { .. } => PopupKind::CaptionMenu,
             PopupContent::Downloads { .. } => PopupKind::Downloads,
             PopupContent::Pip { .. } => PopupKind::Pip,
@@ -772,6 +799,24 @@ pub enum Request {
     NavToEntry {
         tab_id: u32,
         entry_id: i64,
+    },
+    /// The HTTP sign-in dialog's answer (popup, 0.8.0): typed credentials, or a saved login
+    /// (`entry_id`; the host then takes its user name and password from the vault).
+    HttpAuthReply {
+        tab_id: u32,
+        #[serde(default)]
+        username: String,
+        #[serde(default)]
+        password: Secret,
+        #[serde(default)]
+        entry_id: Option<String>,
+    },
+    HttpAuthCancel {
+        tab_id: u32,
+    },
+    /// "Unlock to use saved passwords" in the HTTP sign-in dialog.
+    HttpAuthUnlock {
+        tab_id: u32,
     },
     /// Opens the popup view at `rect` (shell: menu and shield only).
     ShowPopup {
@@ -1520,6 +1565,9 @@ impl Sender {
                 R::Command { .. }
                     | R::TabMenuAction { .. }
                     | R::NavToEntry { .. }
+                    | R::HttpAuthReply { .. }
+                    | R::HttpAuthCancel { .. }
+                    | R::HttpAuthUnlock { .. }
                     | R::BookmarkMenuAction { .. }
                     | R::SaveBookmark { .. }
                     | R::HidePopup
@@ -2737,6 +2785,15 @@ mod tests {
             Request::ShowTabMenu { id: 3, rect },
             Request::ShowNavMenu { forward: true, rect },
             Request::NavToEntry { tab_id: 3, entry_id: 17 },
+            Request::HttpAuthReply { tab_id: 3, username: "u".into(), password: "p".into(), entry_id: None },
+            Request::HttpAuthReply {
+                tab_id: 3,
+                username: String::new(),
+                password: Secret::default(),
+                entry_id: Some("e1".into()),
+            },
+            Request::HttpAuthCancel { tab_id: 3 },
+            Request::HttpAuthUnlock { tab_id: 3 },
             Request::AccountState { check: true },
             Request::AccountSignIn,
             Request::AccountCancel,
@@ -3783,6 +3840,52 @@ mod tests {
         };
         let menu_json = serde_json::to_value(&menu).unwrap();
         assert_eq!(menu_json["account"], "");
+    }
+
+    #[test]
+    fn http_auth_answers_come_from_the_popup_only() {
+        let reply = Request::HttpAuthReply { tab_id: 1, username: "u".into(), password: "p".into(), entry_id: None };
+        let cancel = Request::HttpAuthCancel { tab_id: 1 };
+        let unlock = Request::HttpAuthUnlock { tab_id: 1 };
+        for r in [&reply, &cancel, &unlock] {
+            assert!(Sender::Popup.permits(r), "{r:?}");
+            assert!(!Sender::Shell.permits(r) && !Sender::Ext.permits(r), "{r:?}");
+            for page in Page::ALL {
+                assert!(!Sender::Page(page).permits(r), "{page:?} {r:?}");
+            }
+        }
+        assert!(!PopupKind::HttpAuth.shell_may_open() && PopupKind::HttpAuth.takes_focus());
+        let parsed =
+            parse_request(Sender::Popup, r#"{"cmd":"httpAuthReply","tabId":4,"username":"tester","password":"pw"}"#)
+                .unwrap();
+        assert_eq!(
+            parsed.request,
+            Request::HttpAuthReply { tab_id: 4, username: "tester".into(), password: "pw".into(), entry_id: None }
+        );
+        assert!(!format!("{:?}", parsed.request).contains("pw\""), "the password is never printed");
+        let parsed = parse_request(Sender::Popup, r#"{"cmd":"httpAuthReply","tabId":4,"entryId":"e9"}"#).unwrap();
+        assert_eq!(
+            parsed.request,
+            Request::HttpAuthReply {
+                tab_id: 4,
+                username: String::new(),
+                password: Secret::default(),
+                entry_id: Some("e9".into())
+            }
+        );
+        let c = PopupContent::HttpAuth {
+            tab_id: 4,
+            origin: "http://localhost:8094".into(),
+            realm: "Krunk test area".into(),
+            insecure: true,
+            logins: vec![AuthLogin { entry_id: "e9".into(), username: "tester".into() }],
+            locked: false,
+            failed: false,
+        };
+        assert_eq!(c.kind(), PopupKind::HttpAuth);
+        let v = serde_json::to_value(&c).unwrap();
+        assert_eq!(v["kind"], "httpAuth");
+        assert_eq!(v["logins"][0]["entryId"], "e9");
     }
 
     #[test]

@@ -4999,6 +4999,76 @@ async function testAccountCard(browser) {
   check(errors.length === 0, 'menu: no console errors (' + errors.join(' | ') + ')');
 }
 
+// 0.8.0: a site's HTTP sign-in dialog. Typed credentials, a saved login (the password stays in
+// the host), several saved logins, a locked vault, a refused answer, Cancel and Esc.
+async function testHttpAuth(browser) {
+  console.log('http auth dialog');
+  const base = { kind: 'httpAuth', tabId: 5, origin: 'http://localhost:8094', realm: 'Krunk test area', insecure: true, logins: [], locked: false, failed: false };
+  for (const theme of ['light', 'dark']) {
+    const { page, errors, external } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 380, height: 420 }, 1);
+    await page.evaluate(() => { window.__host.autoSimulate = false; });
+    await emit(page, { event: 'theme', theme: theme });
+    // Typed.
+    await emit(page, { event: 'popup', content: Object.assign({}, base, { realm: '<b>Admin</b> area' }) });
+    await page.waitForSelector('#auth-user');
+    check((await page.textContent('.http-auth .origin')) === 'http://localhost:8094' && (await page.textContent('.auth-realm')) === 'The site says: <b>Admin</b> area' && await page.$('.auth-realm b') === null, theme + ': origin, and the realm as plain text');
+    check((await page.textContent('.auth-insecure')).startsWith('Not secure'), theme + ': "Not secure" over http');
+    check(await page.evaluate(() => document.activeElement.id) === 'auth-user', theme + ': the user name field has the focus');
+    await shot(page, 'httpauth-typed-' + theme + '.png');
+    await page.fill('#auth-user', 'tester');
+    await page.fill('#auth-pass', 's3cret-pass');
+    await page.keyboard.press('Enter');
+    const r1 = await lastSent(page, 'httpAuthReply');
+    check(r1 && r1.tabId === 5 && r1.username === 'tester' && r1.password === 's3cret-pass' && !r1.entryId, theme + ': Enter sends the typed user name and password');
+    check(await page.inputValue('#auth-pass') === '', theme + ': the password field is cleared after sending');
+    // One saved login: filled, its password stays in the vault.
+    await emit(page, { event: 'popup', content: Object.assign({}, base, { insecure: false, origin: 'https://intranet.example', logins: [{ entryId: 'e1', username: 'alice' }] }) });
+    await page.waitForTimeout(60);
+    check(await page.inputValue('#auth-user') === 'alice' && (await page.getAttribute('#auth-pass', 'placeholder')) === 'Saved password' && await page.$('.auth-insecure') === null, theme + ': one saved login fills the fields (https: no warning)');
+    check(await page.evaluate(() => document.activeElement.id) === 'auth-ok', theme + ': Sign in has the focus, nothing was sent yet');
+    const before = (await sent(page)).filter((m) => m.cmd === 'httpAuthReply').length;
+    check(before === 1, theme + ': no answer without a click');
+    await shot(page, 'httpauth-saved-' + theme + '.png');
+    await page.click('#auth-ok');
+    const r2 = await lastSent(page, 'httpAuthReply');
+    check(r2.entryId === 'e1' && !r2.password, theme + ': Sign in sends only the saved login\'s id');
+    // Typing a password instead uses what was typed.
+    await emit(page, { event: 'popup', content: Object.assign({}, base, { logins: [{ entryId: 'e1', username: 'alice' }] }) });
+    await page.waitForTimeout(60);
+    await page.fill('#auth-pass', 'other');
+    await page.click('#auth-ok');
+    const r3 = await lastSent(page, 'httpAuthReply');
+    check(!r3.entryId && r3.username === 'alice' && r3.password === 'other', theme + ': a typed password overrides the saved one');
+    // Several saved logins.
+    await emit(page, { event: 'popup', content: Object.assign({}, base, { logins: [{ entryId: 'e1', username: 'alice' }, { entryId: 'e2', username: 'bob' }] }) });
+    await page.waitForTimeout(60);
+    check(await page.locator('.auth-pick').count() === 2 && await page.inputValue('#auth-user') === '', theme + ': several saved logins are listed, none chosen');
+    await page.locator('.auth-pick', { hasText: 'bob' }).click();
+    check(await page.inputValue('#auth-user') === 'bob', theme + ': a click chooses one');
+    await shot(page, 'httpauth-several-' + theme + '.png');
+    await page.click('#auth-ok');
+    check((await lastSent(page, 'httpAuthReply')).entryId === 'e2', theme + ': and Sign in uses it');
+    // Locked vault, refused answer.
+    await emit(page, { event: 'popup', content: Object.assign({}, base, { locked: true, failed: true }) });
+    await page.waitForTimeout(60);
+    check((await page.textContent('.http-auth .error')).includes('not accepted'), theme + ': a refused answer says so');
+    await page.click('#auth-unlock');
+    check((await lastSent(page, 'httpAuthUnlock')).tabId === 5, theme + ': Unlock asks for the vault');
+    const fit = await lastSent(page, 'popupResize');
+    check(fit && fit.height > 200 && fit.height < 420, theme + ': fitted (' + (fit && fit.height) + ')');
+    // Cancel and Esc.
+    await page.click('#auth-cancel');
+    check((await lastSent(page, 'httpAuthCancel')).tabId === 5, theme + ': Cancel');
+    const cancels = (await sent(page)).filter((m) => m.cmd === 'httpAuthCancel').length;
+    await emit(page, { event: 'popup', content: base });
+    await page.waitForTimeout(60);
+    await page.keyboard.press('Escape');
+    check((await sent(page)).filter((m) => m.cmd === 'httpAuthCancel').length === cancels + 1, theme + ': Esc cancels');
+    check(external.length === 0, theme + ': no network requests');
+    check(errors.length === 0, theme + ': no console errors (' + errors.join(' | ') + ')');
+  }
+}
+
 (async () => {
   if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
   const browser = await chromium.launch();
@@ -5012,6 +5082,7 @@ async function testAccountCard(browser) {
     if (!ONLY || ONLY.includes('ShellHiDpi')) await testShellHiDpi(browser);
     if (!ONLY || ONLY.includes('Popup')) await testPopup(browser);
     if (!ONLY || ONLY.includes('NavMenu')) await testNavMenu(browser);
+    if (!ONLY || ONLY.includes('HttpAuth')) await testHttpAuth(browser);
     if (!ONLY || ONLY.includes('NewTab')) await testNewTab(browser);
     if (!ONLY || ONLY.includes('NewTabLongTitles')) await testNewTabLongTitles(browser);
     if (!ONLY || ONLY.includes('NewTabBackgrounds')) await testNewTabBackgrounds(browser);

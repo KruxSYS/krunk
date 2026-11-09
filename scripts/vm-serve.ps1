@@ -26,6 +26,18 @@ while ($l.IsListening) {
     $h = @{}; foreach ($k in $req.Headers.AllKeys) { $h[$k] = $req.Headers[$k] }
     $res.AddHeader('Cache-Control', 'no-store'); $res.ContentType = 'application/json'
     $bytes = [Text.Encoding]::UTF8.GetBytes(($h | ConvertTo-Json -Compress))
+  } elseif ($path -like 'auth/*') {
+    # HTTP Basic authentication (Krunk 0.8.0): user "tester", password "s3cret-pass".
+    $want = 'Basic ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('tester:s3cret-pass'))
+    $res.AddHeader('Cache-Control', 'no-store'); $res.ContentType = 'text/html; charset=utf-8'
+    if ($req.Headers['Authorization'] -ne $want) {
+      "$(Get-Date -Format o) auth $(if ($req.Headers['Authorization']) { 'wrong' } else { 'none' }) $path" | Add-Content "$root\access.log"
+      $res.StatusCode = 401; $res.AddHeader('WWW-Authenticate', 'Basic realm="Krunk test area"')
+      $bytes = [Text.Encoding]::UTF8.GetBytes('<!doctype html><title>401 Unauthorized</title><h1>401 Unauthorized</h1><p>This page needs a user name and password.</p>')
+    } else {
+      "$(Get-Date -Format o) auth ok $path" | Add-Content "$root\access.log"
+      $bytes = [Text.Encoding]::UTF8.GetBytes('<!doctype html><title>Welcome tester</title><h1>Signed in</h1><p>Basic authentication worked.</p>')
+    }
   } elseif ($path -eq 'bounce') {
     # A redirect hop (bounce-tracker test): /bounce?to=<url> answers 302 there.
     $res.StatusCode = 302; $res.AddHeader('Location', $req.QueryString['to']); $res.AddHeader('Cache-Control', 'no-store')

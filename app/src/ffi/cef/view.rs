@@ -296,6 +296,62 @@ pub(super) struct Events {
     pub media_use: Slot<dyn FnMut(bool, bool)>,
     /// A DevTools protocol event (method, params); the extensions' binding and contexts.
     pub devtools_event: Slot<dyn FnMut(String, serde_json::Value)>,
+    /// A site asks for HTTP authentication (0.8.0); the responder answers it once.
+    pub auth: Slot<dyn FnMut(AuthChallenge, AuthResponder)>,
+    /// The main frame finished loading with this HTTP status (0.8.0).
+    pub load_end: Slot<dyn FnMut(i32)>,
+}
+
+/// An HTTP authentication challenge of a site (0.8.0): Basic or Digest from a server, never a
+/// proxy (those are refused as before). `realm` is the server's text, untrusted.
+#[derive(Debug, Clone)]
+pub struct AuthChallenge {
+    pub origin_url: String,
+    pub realm: String,
+    pub scheme: String,
+}
+
+/// Answers an HTTP authentication challenge exactly once. Dropped without an answer, it
+/// cancels (the page then shows the server's 401 page).
+pub struct AuthResponder(Option<cef::AuthCallback>);
+
+// SAFETY: CEF's auth callback is a reference-counted object whose Continue and Cancel may be
+// called on any thread; the wrapper only moves it from the IO thread to the UI thread.
+unsafe impl Send for AuthResponder {}
+
+impl AuthResponder {
+    pub(super) fn new(cb: cef::AuthCallback) -> AuthResponder {
+        AuthResponder(Some(cb))
+    }
+
+    pub fn answer(mut self, username: &str, password: &str) {
+        use cef::ImplAuthCallback;
+        if let Some(cb) = self.0.take() {
+            cb.cont(Some(&cef::CefString::from(username)), Some(&cef::CefString::from(password)));
+        }
+    }
+
+    pub fn cancel(mut self) {
+        use cef::ImplAuthCallback;
+        if let Some(cb) = self.0.take() {
+            cb.cancel();
+        }
+    }
+}
+
+impl Drop for AuthResponder {
+    fn drop(&mut self) {
+        use cef::ImplAuthCallback;
+        if let Some(cb) = self.0.take() {
+            cb.cancel();
+        }
+    }
+}
+
+impl std::fmt::Debug for AuthResponder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AuthResponder")
+    }
 }
 
 /// Remembered until the browser exists.
@@ -1277,6 +1333,14 @@ impl View {
 
     pub fn on_crashed(&self, f: impl FnMut(String) + 'static) {
         self.0.ev.crashed.set(Box::new(f));
+    }
+
+    pub fn on_auth(&self, f: impl FnMut(AuthChallenge, AuthResponder) + 'static) {
+        self.0.ev.auth.set(Box::new(f));
+    }
+
+    pub fn on_load_end(&self, f: impl FnMut(i32) + 'static) {
+        self.0.ev.load_end.set(Box::new(f));
     }
 }
 

@@ -454,7 +454,7 @@
   function fit() { LB.post('popupResize', { height: root.offsetHeight + 2 }); }
   // Content whose height depends on its items: the window is opened with an upper bound
   // and fitted right after the render (the ⋮ menu used to leave a gap at the bottom).
-  const FITS = { extInstall: true, suggest: true, cardFill: true, menu: true, tabMenu: true, navMenu: true, bookmarkMenu: true, siteInfo: true, addressMenu: true, captionMenu: true, downloads: true, permission: true, passwordSaved: true, pip: true, bookmarkFolder: true };
+  const FITS = { extInstall: true, suggest: true, cardFill: true, menu: true, tabMenu: true, navMenu: true, httpAuth: true, bookmarkMenu: true, siteInfo: true, addressMenu: true, captionMenu: true, downloads: true, permission: true, passwordSaved: true, pip: true, bookmarkFolder: true };
 
 
   // Login suggestions under a focused field: the matching usernames (with the host for a
@@ -738,12 +738,72 @@
     }
     setTimeout(() => input.focus(), 0);
     return [el('div', { class: 'panel' }, [
-      el('h2', { text: c.purpose === 'save' ? 'Unlock to save this password' : c.purpose === 'saveCard' ? 'Unlock to save this card' : c.purpose === 'cardFill' ? 'Unlock to fill this card' : c.purpose === 'import' ? 'Unlock to import passwords' : 'Unlock to fill this login' }),
+      el('h2', { text: c.purpose === 'save' ? 'Unlock to save this password' : c.purpose === 'saveCard' ? 'Unlock to save this card' : c.purpose === 'cardFill' ? 'Unlock to fill this card' : c.purpose === 'import' ? 'Unlock to import passwords' : c.purpose === 'httpAuth' ? 'Unlock to use a saved login' : 'Unlock to fill this login' }),
       el('p', { class: 'origin', text: c.origin }),
       form,
       err,
       // 0.7.0 (R13): the passwords page opens the vault with the recovery phrase.
       el('button', { type: 'button', class: 'link forgot', id: 'forgot', text: 'Forgot master password?', onclick: () => { LB.post('openPage', { page: 'passwords', section: 'recover' }); close(); } }),
+    ])];
+  }
+
+  // A site's HTTP sign-in (0.8.0). One saved login of this origin fills the fields (its
+  // password stays in the vault: the host sends it after the click), several are offered as a
+  // list, a locked vault offers to unlock. Nothing is sent without a click on Sign in.
+  function renderHttpAuth(c) {
+    let chosen = null;
+    const user = el('input', { type: 'text', id: 'auth-user', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'User name', placeholder: 'User name' });
+    const pass = el('input', { type: 'password', id: 'auth-pass', autocomplete: 'off', 'aria-label': 'Password', placeholder: 'Password' });
+    const picks = [];
+    function choose(l, btn) {
+      chosen = l.entryId;
+      user.value = l.username;
+      pass.value = '';
+      pass.placeholder = 'Saved password';
+      picks.forEach((b) => b.classList.toggle('chosen', b === btn));
+    }
+    function typed() {
+      if (!chosen) return;
+      chosen = null;
+      pass.placeholder = 'Password';
+      picks.forEach((b) => b.classList.remove('chosen'));
+    }
+    user.addEventListener('input', typed);
+    pass.addEventListener('input', typed);
+    const form = el('form', {
+      class: 'auth-form',
+      onsubmit: (e) => {
+        e.preventDefault();
+        if (chosen) LB.post('httpAuthReply', { tabId: c.tabId, entryId: chosen });
+        else LB.post('httpAuthReply', { tabId: c.tabId, username: user.value, password: pass.value });
+        pass.value = '';
+      },
+    }, [
+      el('label', { class: 'auth-label', for: 'auth-user', text: 'User name' }), user,
+      el('label', { class: 'auth-label', for: 'auth-pass', text: 'Password' }), pass,
+      el('div', { class: 'row' }, [
+        el('button', { class: 'btn', type: 'button', id: 'auth-cancel', text: 'Cancel', onclick: () => LB.post('httpAuthCancel', { tabId: c.tabId }) }),
+        el('button', { class: 'btn primary', type: 'submit', id: 'auth-ok', text: 'Sign in' }),
+      ]),
+    ]);
+    const saved = c.logins.length > 1 ? el('div', { class: 'auth-saved', role: 'group', 'aria-label': 'Saved logins' },
+      [el('p', { class: 'muted', text: 'Saved logins for this site:' })].concat(c.logins.map(function (l) {
+        const b = el('button', { type: 'button', class: 'choice auth-pick', text: l.username || '(no user name)' });
+        b.addEventListener('click', () => { choose(l, b); document.getElementById('auth-ok').focus(); });
+        picks.push(b);
+        return b;
+      }))) : null;
+    if (c.logins.length === 1) choose(c.logins[0], null);
+    setTimeout(() => (chosen ? document.getElementById('auth-ok') : user).focus(), 0);
+    return [el('div', { class: 'panel http-auth' }, [
+      el('h2', { text: 'Sign in' }),
+      el('p', { class: 'origin', text: c.origin }),
+      c.realm ? el('p', { class: 'muted auth-realm', text: 'The site says: ' + c.realm }) : null,
+      c.insecure ? el('p', { class: 'auth-insecure', text: 'Not secure: this site uses http, so the password is sent unencrypted.' }) : null,
+      c.failed ? el('p', { class: 'error', role: 'alert', text: 'The user name or password was not accepted. Try again.' }) : null,
+      saved,
+      c.locked && !c.logins.length ? el('button', { type: 'button', class: 'link', id: 'auth-unlock', text: 'Unlock Krunk passwords to use a saved login', onclick: () => LB.post('httpAuthUnlock', { tabId: c.tabId }) }) : null,
+      form,
     ])];
   }
 
@@ -896,7 +956,7 @@
       return;
     }
     current = m.content;
-    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, cardFill: renderCardFill, saveCard: renderSaveCard, pip: renderPip, pipVolume: renderPipVolume, extInstall: renderExtInstall, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, navMenu: renderNavMenu, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
+    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, cardFill: renderCardFill, saveCard: renderSaveCard, pip: renderPip, pipVolume: renderPipVolume, extInstall: renderExtInstall, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, navMenu: renderNavMenu, httpAuth: renderHttpAuth, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit }[c.kind];
     root.textContent = '';
     root.dataset.kind = c.kind;
     // The volume bar matches the engine's floating window, which is always dark.
@@ -915,6 +975,8 @@
         LB.post('savePasswordReply', { tabId: current.tabId, origin: current.origin, accept: false, never: false });
       } else if (current && current.kind === 'extInstall') {
         LB.post('extInstallReply', { requestId: current.requestId, accept: false });
+      } else if (current && current.kind === 'httpAuth') {
+        LB.post('httpAuthCancel', { tabId: current.tabId });
       } else if (current && current.kind === 'fill') {
         LB.post('fillReply', { tabId: current.tabId, origin: current.origin, entryId: null });
       }

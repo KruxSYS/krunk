@@ -6,8 +6,8 @@
 use super::net::{self, RequestPolicy};
 use super::renderer::{AUDIO_TO_BROWSER, DEBUG_TO_BROWSER, PID_TO_BROWSER, POINTER_TO_BROWSER, TO_BROWSER};
 use super::view::{
-    child_window_info, lookup, DownloadControl, DownloadStart, DownloadStatus, DownloadUpdate, KeyPress, LoadingState,
-    MessageSource, NavigationStart, NewWindow, Role, View, ViewInner,
+    child_window_info, lookup, AuthChallenge, AuthResponder, DownloadControl, DownloadStart, DownloadStatus,
+    DownloadUpdate, KeyPress, LoadingState, MessageSource, NavigationStart, NewWindow, Role, View, ViewInner,
 };
 use super::{browser_closed, browser_created, post_ui};
 use cef::*;
@@ -274,6 +274,15 @@ wrap_load_handler! {
             if !loading {
                 let error = view.load_error.take();
                 view.ev.load_finished.with(|f| f(error));
+            }
+        }
+
+        fn on_load_end(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, http_status_code: c_int) {
+            if !is_main(&frame) {
+                return;
+            }
+            if let Some(view) = lookup(self.key) {
+                view.ev.load_end.with(|f| f(http_status_code));
             }
         }
 
@@ -605,6 +614,40 @@ wrap_request_handler! {
             if let Some(view) = lookup(self.key) {
                 view.ev.open_tab.with(|f| f(text(target_url), foreground));
             }
+            1
+        }
+
+        /// IO thread (0.8.0): a server asks for HTTP authentication. The challenge goes to the
+        /// UI thread, where the tab's dialog answers it; a proxy's is refused as before (the
+        /// engine then cancels the request).
+        fn auth_credentials(
+            &self,
+            _browser: Option<&mut Browser>,
+            origin_url: Option<&CefString>,
+            is_proxy: c_int,
+            _host: Option<&CefString>,
+            _port: c_int,
+            realm: Option<&CefString>,
+            scheme: Option<&CefString>,
+            callback: Option<&mut AuthCallback>,
+        ) -> c_int {
+            let Some(cb) = callback else { return 0 };
+            if is_proxy != 0 {
+                return 0;
+            }
+            let challenge = AuthChallenge {
+                origin_url: text(origin_url),
+                realm: text(realm),
+                scheme: text(scheme),
+            };
+            let responder = AuthResponder::new(cb.clone());
+            let key = self.key;
+            super::post_ui_from_any(move || {
+                // Without a view or a handler the responder is dropped, which cancels.
+                if let Some(view) = lookup(key) {
+                    view.ev.auth.with(move |f| f(challenge, responder));
+                }
+            });
             1
         }
 

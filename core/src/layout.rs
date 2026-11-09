@@ -307,6 +307,7 @@ pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> Pop
         PopupKind::Update => (360.0, 150.0),
         PopupKind::TabMenu => TAB_MENU_SIZE,
         PopupKind::NavMenu => (NAV_MENU_WIDTH, nav_menu_height(entries)),
+        PopupKind::HttpAuth => (380.0, 286.0 + 38.0 * entries.min(5) as f64),
         PopupKind::BookmarkMenu => (240.0, 352.0),
         PopupKind::CaptionMenu => (250.0, 352.0),
         PopupKind::Downloads => (380.0, 420.0),

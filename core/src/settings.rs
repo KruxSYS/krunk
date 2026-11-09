@@ -573,8 +573,11 @@ pub fn merge_switch_list(existing: &str, ours: &str) -> String {
     items.join(",")
 }
 
-/// Switches we always pass (documented in the README).
-pub const BASE_SWITCHES: &[&str] = &["--no-pings", "--disable-domain-reliability", "--disable-background-networking"];
+/// Switches we always pass (documented in the README). 0.8.0: the engine's own HTTP sign-in
+/// dialog is off, so a site's Basic/Digest challenge reaches Krunk, whose dialog can fill logins
+/// from the vault (`browser::http_auth`).
+pub const BASE_SWITCHES: &[&str] =
+    &["--no-pings", "--disable-domain-reliability", "--disable-background-networking", "--disable-chrome-login-prompt"];
 
 /// No component updater: no contact with Google's update servers. Left out
 /// when the user opts in to the engine's security components.

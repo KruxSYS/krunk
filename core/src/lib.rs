@@ -20,6 +20,7 @@ pub mod frame;
 pub mod frecency;
 pub mod headers;
 pub mod history;
+pub mod http_auth;
 pub mod import;
 pub mod integrity;
 pub mod keys;
