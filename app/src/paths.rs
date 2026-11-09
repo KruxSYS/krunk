@@ -70,6 +70,11 @@ impl DataDirs {
         self.root.join("vault.json")
     }
 
+    /// The Krunk account this device is signed in to (0.8.0; `core::account::AccountFile`).
+    pub fn account(&self) -> PathBuf {
+        self.root.join("account.json")
+    }
+
     /// The last update check (`core::update::Status`).
     pub fn update_status(&self) -> PathBuf {
         self.root.join("update.json")

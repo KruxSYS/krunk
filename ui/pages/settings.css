@@ -123,3 +123,9 @@ table.exceptions th { color: var(--fg-muted); font-weight: 600; border-top: 0; }
 .card.group > table.exceptions { width: calc(100% - 32px); margin: 0 16px 10px; }
 table.exceptions th:first-child, table.exceptions td:first-child { padding-left: 0; }
 table.exceptions th:last-child, table.exceptions td:last-child { padding-right: 0; text-align: right; }
+
+/* Settings → Account (0.8.0) */
+.account-code { margin: 8px 0 4px; font: 600 1.85rem/1.2 ui-monospace, Consolas, monospace; letter-spacing: .12em; }
+.account-message { color: var(--fg); }
+.account-actions { display: flex; flex-direction: column; align-items: stretch; gap: 8px; min-width: 190px; }
+#account-row .label { overflow-wrap: anywhere; }

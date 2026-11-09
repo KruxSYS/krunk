@@ -289,6 +289,10 @@ pub enum PopupContent {
         /// A newer Krunk is offered (0.7.2): "Update available – Krunk X.Y.Z" at the top.
         #[serde(default)]
         update: Option<String>,
+        /// The account item (0.8.0): `None` hides it (private windows), `""` is "Sign in to
+        /// Krunk", an address is "Signed in as …". Both open Settings → Account.
+        #[serde(default)]
+        account: Option<String>,
     },
     /// The Picture-in-Picture chooser (0.6.0): the active tab's videos.
     Pip { tab_id: u32, videos: Vec<VideoInfo> },
@@ -690,6 +694,21 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         section: Option<String>,
     },
+    // ---- the Krunk account (Settings → Account, 0.8.0) ----
+    /// The card's state (answered with an `account` event). `check`: the card is on screen, so
+    /// a signed-in device may ask the server who it is (the only request besides sign-in and
+    /// sign-out).
+    AccountState {
+        #[serde(default)]
+        check: bool,
+    },
+    AccountSignIn,
+    AccountCancel,
+    AccountSignOut,
+    /// Opens the account page on the website in a new tab.
+    AccountManage,
+    /// Opens the sign-in page with the code again.
+    AccountReopen,
     /// Settings → Passwords & import: the browser profiles found on this computer.
     ImportDetect,
     /// Import `types` ("history", "bookmarks", "passwords") from the profile `profile`
@@ -1632,6 +1651,12 @@ impl Sender {
                     | R::ImportDetect
                     | R::ImportRun { .. }
                     | R::ImportCsv
+                    | R::AccountState { .. }
+                    | R::AccountSignIn
+                    | R::AccountCancel
+                    | R::AccountSignOut
+                    | R::AccountManage
+                    | R::AccountReopen
             ),
             Sender::Page(Page::Downloads) => {
                 matches!(req, R::GetDownloads | R::ClearDownloads | R::DownloadAction { .. })
@@ -2029,6 +2054,10 @@ pub enum Event {
     VaultState {
         exists: bool,
         locked: bool,
+    },
+    /// The Account card's state (0.8.0), to Settings pages.
+    Account {
+        card: crate::account::CardState,
     },
     FindResult {
         active: i32,
@@ -2708,6 +2737,12 @@ mod tests {
             Request::ShowTabMenu { id: 3, rect },
             Request::ShowNavMenu { forward: true, rect },
             Request::NavToEntry { tab_id: 3, entry_id: 17 },
+            Request::AccountState { check: true },
+            Request::AccountSignIn,
+            Request::AccountCancel,
+            Request::AccountSignOut,
+            Request::AccountManage,
+            Request::AccountReopen,
             Request::OpenBlockedPage {},
             Request::GetBlocked {},
             Request::GetFilterLists {},
@@ -3712,6 +3747,45 @@ mod tests {
     }
 
     #[test]
+    fn the_account_is_settings_only() {
+        let all = [
+            Request::AccountState { check: false },
+            Request::AccountSignIn,
+            Request::AccountCancel,
+            Request::AccountSignOut,
+            Request::AccountManage,
+            Request::AccountReopen,
+        ];
+        for r in &all {
+            assert!(Sender::Page(Page::Settings).permits(r), "{r:?}");
+            assert!(!Sender::Shell.permits(r) && !Sender::Popup.permits(r) && !Sender::Ext.permits(r), "{r:?}");
+            for page in Page::ALL.into_iter().filter(|p| *p != Page::Settings) {
+                assert!(!Sender::Page(page).permits(r), "{page:?} {r:?}");
+            }
+        }
+        let parsed = parse_request(Sender::Page(Page::Settings), r#"{"cmd":"accountState","check":true}"#).unwrap();
+        assert_eq!(parsed.request, Request::AccountState { check: true });
+        let parsed = parse_request(Sender::Page(Page::Settings), r#"{"cmd":"accountState"}"#).unwrap();
+        assert_eq!(parsed.request, Request::AccountState { check: false });
+        assert!(
+            parse_request(Sender::Page(Page::Settings), r#"{"cmd":"accountState","check":true,"token":"x"}"#).is_err()
+        );
+        let card =
+            crate::account::CardState::SignedIn { email: "a@b.c".into(), device_name: "PC".into(), message: None };
+        let json = Event::Account { card }.to_json();
+        assert_eq!(json, r#"{"event":"account","card":{"state":"signedIn","email":"a@b.c","deviceName":"PC"}}"#);
+        let menu = PopupContent::Menu {
+            zoom: 1.0,
+            can_reopen: false,
+            has_video: false,
+            update: None,
+            account: Some(String::new()),
+        };
+        let menu_json = serde_json::to_value(&menu).unwrap();
+        assert_eq!(menu_json["account"], "");
+    }
+
+    #[test]
     fn history_menus_are_shell_and_popup_only() {
         let show =
             Request::ShowNavMenu { forward: false, rect: PopupRect { x: 4.0, y: 70.0, width: 320.0, height: 300.0 } };
@@ -3798,7 +3872,13 @@ mod tests {
                 colors: Default::default(),
             },
             Event::Popup {
-                content: PopupContent::Menu { zoom: 1.0, can_reopen: true, has_video: false, update: None },
+                content: PopupContent::Menu {
+                    zoom: 1.0,
+                    can_reopen: true,
+                    has_video: false,
+                    update: None,
+                    account: None,
+                },
             },
             Event::Popup {
                 content: PopupContent::Menu {
@@ -3806,6 +3886,7 @@ mod tests {
                     can_reopen: false,
                     has_video: false,
                     update: Some("0.7.9".into()),
+                    account: Some("a@b.c".into()),
                 },
             },
             Event::UpdateAvailable { version: Some("0.7.9".into()) },

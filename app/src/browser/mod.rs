@@ -42,6 +42,7 @@ const ZOOM_TIMER: usize = 15;
 const ZOOM_WATCH_MS: u32 = 100;
 const SESSION_DEBOUNCE_MS: u32 = 2000;
 
+mod account;
 mod blocking;
 mod bookmarks_bar;
 mod bounce;
@@ -202,6 +203,8 @@ pub struct Browser {
     /// The entries the open history menu offers, with its tab (0.8.0): a click can jump to
     /// these only.
     nav_offer: RefCell<Option<(TabId, Vec<i64>)>>,
+    /// Settings → Account (0.8.0).
+    account: account::AccountHost,
     /// The floating video's volume bar (created when first needed) and its state.
     pip_popup: RefCell<Option<Popup>>,
     pip_bar: RefCell<Option<pip::PipBar>>,
@@ -328,6 +331,7 @@ impl Browser {
             flight: flight::FlightHost::default(),
             menu_popup: RefCell::new(None),
             nav_offer: RefCell::new(None),
+            account: account::AccountHost::default(),
             pip_popup: RefCell::new(None),
             pip_bar: RefCell::new(None),
             menu_closing: Cell::new(false),
@@ -2183,6 +2187,12 @@ impl Browser {
             | Request::ImportDetect
             | Request::ImportRun { .. }
             | Request::ImportCsv) => self.dispatch_settings(tab, req_id, r),
+            r @ (Request::AccountState { .. }
+            | Request::AccountSignIn
+            | Request::AccountCancel
+            | Request::AccountSignOut
+            | Request::AccountManage
+            | Request::AccountReopen) => self.dispatch_account(tab, r),
             Request::GetUpdateStatus => self.reply(tab, Event::ok(req_id, self.update_status())),
             Request::CheckForUpdates => self.check_for_updates(Some((tab, req_id))),
             Request::UpdateReply { choice } => self.update_reply(choice),
@@ -2302,6 +2312,7 @@ impl Browser {
             can_reopen: self.ws.borrow().closed_count() > 0,
             has_video,
             update: self.update_notice(),
+            account: self.account_menu_label(),
         }
     }
 

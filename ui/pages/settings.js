@@ -12,7 +12,7 @@
   let defaultUserAgent = '';
 
   // ---------- tabs and deep links ----------
-  const TABS = ['general', 'privacy', 'permissions', 'passwords', 'downloads', 'appearance', 'advanced'];
+  const TABS = ['account', 'general', 'privacy', 'permissions', 'passwords', 'downloads', 'appearance', 'advanced'];
   function tabFromHash() {
     const h = (location.hash || '').replace(/^#/, '').toLowerCase();
     return TABS.includes(h) ? h : 'general';
@@ -26,6 +26,8 @@
     window.scrollTo(0, 0);
     // The per-site answers change while the page is open (prompts in other tabs).
     if (name === 'permissions' && typeof loadPermissions === 'function') loadPermissions();
+    // The Account card on screen: a signed-in device may check with the server (0.8.0).
+    if (name === 'account') LB.post('accountState', { check: true });
   }
   window.addEventListener('hashchange', function () { if (!$('filter').value.trim()) showTab(tabFromHash()); });
   showTab(tabFromHash());
@@ -406,6 +408,67 @@
     stateHidden('custom-ua-row', true);
     save(s);
   });
+  // ---------- Account (0.8.0) ----------
+  // Nothing here talks to the network: the host does, and only after Sign in (and while this
+  // card is shown for a signed-in device). The page shows what the host says.
+  let accountCard = null;
+  let accountTimer = 0;
+  function accountShow(id, on) { $(id).hidden = !on; }
+  function renderAccount() {
+    const c = accountCard;
+    if (!c) return;
+    clearInterval(accountTimer);
+    const st = c.state;
+    accountShow('account-linking', st === 'linking');
+    accountShow('account-sign-in', st === 'signedOut');
+    accountShow('account-copy', st === 'linking');
+    accountShow('account-reopen', st === 'linking');
+    accountShow('account-cancel', st === 'linking');
+    accountShow('account-manage', st === 'signedIn');
+    accountShow('account-sign-out', st === 'signedIn');
+    const msg = c.message || '';
+    $('account-message').textContent = msg;
+    accountShow('account-message', !!msg);
+    if (st === 'private') {
+      $('account-title').textContent = 'Not available in private windows';
+      $('account-desc').textContent = "Your account isn't shown in private windows. Open Settings in a normal window to sign in or out.";
+    } else if (st === 'signedIn') {
+      $('account-title').textContent = 'Signed in as ' + c.email;
+      $('account-desc').textContent = 'This device: ' + c.deviceName + '. You can rename or remove it on your account page.';
+    } else if (st === 'linking') {
+      $('account-title').textContent = 'Signing in…';
+      $('account-desc').textContent = 'Approve this device on krunk.209.wf. Only approve a code that you see here.';
+      $('account-code').textContent = c.userCode;
+      const tick = function () {
+        const left = Math.max(0, Math.round((c.expiresAtMs - Date.now()) / 1000));
+        $('account-wait').textContent = 'Waiting for the approval… The code works for ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') + ' more.';
+      };
+      tick();
+      accountTimer = setInterval(tick, 1000);
+    } else if (st === 'working') {
+      $('account-title').textContent = c.message;
+      $('account-desc').textContent = '';
+      accountShow('account-message', false);
+    } else {
+      $('account-title').textContent = 'Sign in to Krunk';
+      $('account-desc').textContent = 'Sign in with your Krunk account to see this device on your account page. Signing in opens krunk.209.wf, where you approve this device.';
+    }
+  }
+  LB.on('account', function (m) { accountCard = m.card; renderAccount(); });
+  $('account-sign-in').addEventListener('click', function () { LB.post('accountSignIn'); });
+  $('account-cancel').addEventListener('click', function () { LB.post('accountCancel'); });
+  $('account-reopen').addEventListener('click', function () { LB.post('accountReopen'); });
+  $('account-manage').addEventListener('click', function () { LB.post('accountManage'); });
+  $('account-sign-out').addEventListener('click', function () { LB.post('accountSignOut'); });
+  $('account-copy').addEventListener('click', function () {
+    const text = accountCard && accountCard.userCode;
+    if (!text) return;
+    const done = () => Page.toast('Code copied');
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, done);
+    else done();
+  });
+  LB.post('accountState', { check: tabFromHash() === 'account' });
+
   $('copy-ua').addEventListener('click', function () {
     const text = defaultUserAgent;
     const done = () => Page.toast('User agent copied');

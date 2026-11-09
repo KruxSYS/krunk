@@ -4,6 +4,7 @@
 //! (`app`) only adds the CEF/Win32 glue on top.
 #![forbid(unsafe_code)]
 
+pub mod account;
 pub mod assets;
 pub mod blocker;
 pub mod blocklog;

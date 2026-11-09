@@ -3191,7 +3191,7 @@ async function testSettings(browser) {
   // 0.5: the page is tabbed; a control must be on the shown tab before it is used.
   const tab = async (name) => { await page.click('#tabs a[data-tab="' + name + '"]'); await page.waitForTimeout(20); };
   check(await page.locator('.panel.active[data-tab=general]').count() === 1 && await page.locator('#tabs a.active[data-tab=general]').count() === 1, 'the General tab is shown first');
-  check(await page.locator('.panel').count() === 7 && await page.locator('.panel.active').count() === 1, 'seven tabs, one shown');
+  check(await page.locator('.panel').count() === 8 && await page.locator('.panel.active').count() === 1, 'eight tabs (Account since 0.8.0), one shown');
   check(await page.inputValue('#searchEngine') === 'duckDuckGo', 'defaults: DuckDuckGo');
   // 0.6.0: new-tab behaviour (defaults keep the 0.5 behaviour).
   check(await page.inputValue('#newTabPage') === 'krunk' && await page.inputValue('#newTabPosition') === 'end' && await page.inputValue('#linkTabs') === 'auto' && await page.inputValue('#ntpSearchUrl') === '', 'new-tab defaults: Krunk page, at the end, links as asked, default search');
@@ -4918,6 +4918,87 @@ async function testNavMenu(browser) {
   }
 }
 
+// 0.8.0 (C): Settings → Account. The page only shows what the host says (the `account` event)
+// and asks with posts; it never talks to the network itself.
+async function testAccountCard(browser) {
+  console.log('account card');
+  const defaults = JSON.parse(fs.readFileSync(path.join(__dirname, 'default-settings.json'), 'utf8'));
+  for (const theme of ['light', 'dark']) {
+    const { page, errors, external } = await openPage(browser, 'https://krunk.invalid/settings.html#account', { width: 1000, height: 700 }, 1, settingsMock, defaults);
+    await page.waitForFunction(() => document.getElementById('lists-summary').textContent !== '');
+    await emit(page, { event: 'theme', theme: theme });
+    check(await page.locator('.panel.active[data-tab=account]').count() === 1, theme + ': #account opens the Account tab');
+    const st = (await sent(page)).filter((m) => m.cmd === 'accountState');
+    check(st.length >= 1 && st.some((m) => m.check === true), theme + ': the shown card asks for the state (check: true)');
+    const vis = (id) => page.isVisible('#' + id);
+    // Signed out.
+    await emit(page, { event: 'account', card: { state: 'signedOut' } });
+    await page.waitForTimeout(40);
+    check((await page.textContent('#account-title')) === 'Sign in to Krunk' && await vis('account-sign-in') && !(await vis('account-sign-out')) && !(await vis('account-message')), theme + ': signed out: Sign in');
+    check((await page.textContent('#account-row')).includes('Sync is coming in a later version.'), theme + ': "Sync is coming in a later version."');
+    await shot(page, 'account-signed-out-' + theme + '.png');
+    await page.click('#account-sign-in');
+    check((await lastSent(page, 'accountSignIn')) !== undefined, theme + ': Sign in posts accountSignIn');
+    // Working, then the code.
+    await emit(page, { event: 'account', card: { state: 'working', message: 'Asking krunk.209.wf for a code…' } });
+    await page.waitForTimeout(40);
+    check((await page.textContent('#account-title')).startsWith('Asking') && !(await vis('account-sign-in')), theme + ': working: no buttons');
+    await emit(page, { event: 'account', card: { state: 'linking', userCode: 'ABCD-EFGH', verifyUrl: 'https://krunk.209.wf/link?code=ABCD-EFGH', expiresAtMs: Date.now() + 9 * 60000 + 30000 } });
+    await page.waitForTimeout(60);
+    check((await page.textContent('#account-code')) === 'ABCD-EFGH' && await vis('account-copy') && await vis('account-cancel') && await vis('account-reopen'), theme + ': linking: the code, Copy, Open again, Cancel');
+    check(/9:(2|3)\d more/.test(await page.textContent('#account-wait')), theme + ': a countdown (' + (await page.textContent('#account-wait')) + ')');
+    await shot(page, 'account-linking-' + theme + '.png');
+    await page.click('#account-reopen');
+    check((await lastSent(page, 'accountReopen')) !== undefined, theme + ': Open the page again');
+    await page.click('#account-cancel');
+    check((await lastSent(page, 'accountCancel')) !== undefined, theme + ': Cancel posts accountCancel');
+    // An error, then signed in.
+    await emit(page, { event: 'account', card: { state: 'signedOut', message: "Krunk couldn't reach krunk.209.wf. Check your connection and try again." } });
+    await page.waitForTimeout(40);
+    check(await vis('account-message') && (await page.textContent('#account-message')).includes("couldn't reach"), theme + ': an error is one clear sentence');
+    await shot(page, 'account-error-' + theme + '.png');
+    await emit(page, { event: 'account', card: { state: 'signedIn', email: 'someone@example.org', deviceName: 'Krunk 0.8.0 on Windows 11' } });
+    await page.waitForTimeout(40);
+    check((await page.textContent('#account-title')) === 'Signed in as someone@example.org' && (await page.textContent('#account-desc')).includes('Krunk 0.8.0 on Windows 11'), theme + ': signed in: the address and the device name');
+    check(await vis('account-manage') && await vis('account-sign-out') && !(await vis('account-sign-in')), theme + ': Manage account and Sign out on this device');
+    await shot(page, 'account-signed-in-' + theme + '.png');
+    await page.click('#account-manage');
+    check((await lastSent(page, 'accountManage')) !== undefined, theme + ': Manage account');
+    await page.click('#account-sign-out');
+    check((await lastSent(page, 'accountSignOut')) !== undefined, theme + ': Sign out on this device');
+    // A private window.
+    await emit(page, { event: 'account', card: { state: 'private' } });
+    await page.waitForTimeout(40);
+    check((await page.textContent('#account-row')).includes("isn't shown in private windows") && !(await vis('account-sign-in')) && !(await vis('account-sign-out')), theme + ': private: nothing of the account');
+    // Search finds it.
+    await page.fill('#filter', 'sign out');
+    await page.waitForTimeout(80);
+    check(await page.isVisible('#account-row'), theme + ': settings search finds the account row');
+    check(external.length === 0, theme + ': no network requests from the page (' + external.join(', ') + ')');
+    check(errors.length === 0, theme + ': no console errors (' + errors.join(' | ') + ')');
+  }
+  // The ⋮ menu's account item.
+  const { page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 280, height: 700 }, 1);
+  await page.evaluate(() => { window.__host.autoSimulate = false; });
+  await emit(page, { event: 'popup', content: { kind: 'menu', zoom: 1, canReopen: false, account: '' } });
+  await page.waitForSelector('.item');
+  check((await page.locator('.item').first().textContent()) === 'Sign in to Krunk', 'menu: "Sign in to Krunk" first');
+  await page.locator('.item', { hasText: 'Sign in to Krunk' }).click();
+  const op = await lastSent(page, 'openPage');
+  check(op && op.page === 'settings' && op.section === 'account', 'menu: it opens Settings → Account');
+  await emit(page, { event: 'popup', content: { kind: 'menu', zoom: 1, canReopen: false, account: 'a-rather-long-address.for.testing@example.org' } });
+  await page.waitForTimeout(60);
+  const label = await page.$eval('.item.account-item .label', (x) => ({ t: x.textContent, sw: x.scrollWidth, cw: x.clientWidth }));
+  check(label.t === 'Signed in as a-rather-long-address.for.testing@example.org' && label.sw >= label.cw, 'menu: "Signed in as …", shortened if long');
+  await shot(page, 'menu-account.png');
+  const fit = await lastSent(page, 'popupResize');
+  check(fit && fit.height < 700, 'menu: still fits (' + (fit && fit.height) + ')');
+  await emit(page, { event: 'popup', content: { kind: 'menu', zoom: 1, canReopen: false } });
+  await page.waitForTimeout(60);
+  check(await page.locator('.item.account-item').count() === 0, 'menu: no account item in a private window');
+  check(errors.length === 0, 'menu: no console errors (' + errors.join(' | ') + ')');
+}
+
 (async () => {
   if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
   const browser = await chromium.launch();
@@ -4952,6 +5033,7 @@ async function testNavMenu(browser) {
     if (!ONLY || ONLY.includes('FilterLists')) await testFilterLists(browser);
     if (!ONLY || ONLY.includes('Passwords')) await testPasswords(browser);
     if (!ONLY || ONLY.includes('Settings')) await testSettings(browser);
+    if (!ONLY || ONLY.includes('AccountCard')) await testAccountCard(browser);
     if (!ONLY || ONLY.includes('LoginScript')) await testLoginScript(browser);
     if (!ONLY || ONLY.includes('MediaScript')) await testMediaScript(browser);
     if (!ONLY || ONLY.includes('Gpu')) await testGpu(browser);

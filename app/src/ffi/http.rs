@@ -294,3 +294,124 @@ pub fn get_range(
         Ok(total)
     }
 }
+
+/// A response of [`request`]: any status, with its body.
+pub struct Response {
+    pub status: u32,
+    pub body: Vec<u8>,
+}
+
+/// One JSON API call (the account, 0.8.0): `method` (GET or POST) `url` with the extra request
+/// `headers` and an optional `body`; every status comes back with its body (at most
+/// `max_bytes`). Redirects, cookies and automatic Windows logon are off. Error texts never
+/// contain the headers or the body (they may hold tokens).
+pub fn request(
+    method: &str,
+    url: &str,
+    headers: &[(&str, &str)],
+    body: Option<&[u8]>,
+    max_bytes: usize,
+    opts: &Options,
+) -> Result<Response, String> {
+    let u = url::Url::parse(url).map_err(|_| "invalid address".to_string())?;
+    let secure = match u.scheme() {
+        "https" => true,
+        "http" if opts.allow_http => false,
+        _ => return Err("only https:// URLs are fetched".into()),
+    };
+    if method != "GET" && method != "POST" {
+        return Err("unsupported method".into());
+    }
+    let host = u.host_str().ok_or("no host")?.to_string();
+    let port = u.port_or_known_default().unwrap_or(if secure { 443 } else { 80 });
+    let path = match u.query() {
+        Some(q) => format!("{}?{q}", u.path()),
+        None => u.path().to_string(),
+    };
+    let mut extra = String::new();
+    for (name, value) in headers {
+        if name.contains(['\r', '\n', ':']) || value.contains(['\r', '\n']) {
+            return Err("invalid header".into());
+        }
+        extra.push_str(&format!("{name}: {value}\r\n"));
+    }
+    let extra: Vec<u16> = extra.encode_utf16().collect();
+    let body = body.unwrap_or(&[]);
+    // SAFETY: as in `fetch`: every handle is owned by a `Handle` and closed on all paths; the
+    // body slice outlives the synchronous send, and buffers are sized correctly.
+    unsafe {
+        let agent = HSTRING::from(opts.user_agent);
+        let session = match opts.proxy {
+            ProxyMode::System => {
+                check(WinHttpOpen(&agent, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, None, None, 0), "WinHttpOpen")?
+            }
+            ProxyMode::Named(p) => check(
+                WinHttpOpen(&agent, WINHTTP_ACCESS_TYPE_NAMED_PROXY, &HSTRING::from(p.as_str()), w!("<local>"), 0),
+                "WinHttpOpen",
+            )?,
+        };
+        let t = opts.timeout_ms;
+        WinHttpSetTimeouts(session.0, t, t, t, t).map_err(|e| e.to_string())?;
+        let tls12 = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2 | 0x2000; // | TLS 1.3
+        let _ = WinHttpSetOption(Some(session.0), WINHTTP_OPTION_SECURE_PROTOCOLS, Some(&tls12.to_le_bytes()));
+        let connect = check(WinHttpConnect(session.0, &HSTRING::from(host.as_str()), port, 0), "WinHttpConnect")?;
+        let request = check(
+            WinHttpOpenRequest(
+                connect.0,
+                &HSTRING::from(method),
+                &HSTRING::from(path.as_str()),
+                PCWSTR::null(),
+                PCWSTR::null(),
+                std::ptr::null(),
+                if secure { WINHTTP_FLAG_SECURE } else { WINHTTP_OPEN_REQUEST_FLAGS(0) },
+            ),
+            "WinHttpOpenRequest",
+        )?;
+        let off = WINHTTP_DISABLE_COOKIES | WINHTTP_DISABLE_REDIRECTS | WINHTTP_DISABLE_AUTHENTICATION;
+        WinHttpSetOption(Some(request.0), WINHTTP_OPTION_DISABLE_FEATURE, Some(&off.to_le_bytes()))
+            .map_err(|e| failure("options", &e))?;
+        let logon = WINHTTP_AUTOLOGON_SECURITY_LEVEL_HIGH;
+        let _ = WinHttpSetOption(Some(request.0), WINHTTP_OPTION_AUTOLOGON_POLICY, Some(&logon.to_le_bytes()));
+        if !extra.is_empty() {
+            WinHttpAddRequestHeaders(request.0, &extra, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE)
+                .map_err(|e| failure("headers", &e))?;
+        }
+        let len = body.len() as u32;
+        let ptr = (!body.is_empty()).then_some(body.as_ptr() as *const c_void);
+        WinHttpSendRequest(request.0, None, ptr, len, len, 0).map_err(|e| failure("send", &e))?;
+        WinHttpReceiveResponse(request.0, std::ptr::null_mut()).map_err(|e| failure("receive", &e))?;
+        let mut status: u32 = 0;
+        let mut slen = std::mem::size_of::<u32>() as u32;
+        let mut index = 0u32;
+        WinHttpQueryHeaders(
+            request.0,
+            WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+            PCWSTR::null(),
+            Some(&mut status as *mut u32 as *mut c_void),
+            &mut slen,
+            &mut index,
+        )
+        .map_err(|e| failure("status", &e))?;
+        let mut out = Vec::new();
+        let mut buf = vec![0u8; 16 * 1024];
+        loop {
+            let mut avail = 0u32;
+            WinHttpQueryDataAvailable(request.0, &mut avail).map_err(|e| failure("read", &e))?;
+            if avail == 0 {
+                break;
+            }
+            let n = (avail as usize).min(buf.len());
+            let mut read = 0u32;
+            WinHttpReadData(request.0, buf.as_mut_ptr() as *mut c_void, n as u32, &mut read)
+                .map_err(|e| failure("read", &e))?;
+            if read == 0 {
+                break;
+            }
+            if out.len() + read as usize > max_bytes {
+                return Err(format!("response larger than {max_bytes} bytes"));
+            }
+            out.extend_from_slice(&buf[..read as usize]);
+        }
+        Ok(Response { status, body: out })
+    }
+}

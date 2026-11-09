@@ -79,6 +79,51 @@ impl KeyWrapper for Dpapi {
     }
 }
 
+/// DPAPI for the account's refresh token in `account.json` (0.8.0): its own entropy and
+/// description, so the vault key and the token can't be swapped for each other.
+pub struct DpapiAccount;
+
+const ACCOUNT_ENTROPY: &[u8] = b"Krunk account refresh token v1";
+
+impl KeyWrapper for DpapiAccount {
+    fn name(&self) -> &'static str {
+        "dpapi-account"
+    }
+
+    fn protect(&self, data: &[u8]) -> Result<Vec<u8>, String> {
+        let input = blob(data);
+        let entropy = blob(ACCOUNT_ENTROPY);
+        let mut out = CRYPT_INTEGER_BLOB::default();
+        // SAFETY: input/entropy point to live slices for the call; DPAPI allocates `out`, which
+        // `take_blob` frees.
+        unsafe {
+            CryptProtectData(
+                &input,
+                w!("Krunk account"),
+                Some(&entropy),
+                None,
+                None,
+                CRYPTPROTECT_UI_FORBIDDEN,
+                &mut out,
+            )
+            .map_err(|e| format!("CryptProtectData: {e}"))?;
+        }
+        Ok(take_blob(&out).to_vec())
+    }
+
+    fn unprotect(&self, data: &[u8]) -> Result<Zeroizing<Vec<u8>>, String> {
+        let input = blob(data);
+        let entropy = blob(ACCOUNT_ENTROPY);
+        let mut out = CRYPT_INTEGER_BLOB::default();
+        // SAFETY: as above.
+        unsafe {
+            CryptUnprotectData(&input, None, Some(&entropy), None, None, CRYPTPROTECT_UI_FORBIDDEN, &mut out)
+                .map_err(|e| format!("CryptUnprotectData: {e}"))?;
+        }
+        Ok(take_blob(&out))
+    }
+}
+
 /// Decrypts a DPAPI blob made without extra entropy by another program of this user
 /// (Chromium's `os_crypt` key and its legacy password blobs).
 pub fn unprotect_plain(data: &[u8]) -> Result<Zeroizing<Vec<u8>>, String> {

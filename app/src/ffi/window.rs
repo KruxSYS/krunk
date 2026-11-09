@@ -1778,6 +1778,30 @@ impl Drop for VsyncPump {
     }
 }
 
+/// The Windows build number (`CurrentBuildNumber`; 22000 and later is Windows 11), 0 if unknown.
+pub fn windows_build() -> u32 {
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ};
+    let mut buf = [0u16; 32];
+    let mut size = std::mem::size_of_val(&buf) as u32;
+    // SAFETY: reading a short string into a properly sized local buffer.
+    let r = unsafe {
+        RegGetValueW(
+            HKEY_LOCAL_MACHINE,
+            w!("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion"),
+            w!("CurrentBuildNumber"),
+            RRF_RT_REG_SZ,
+            None,
+            Some(buf.as_mut_ptr() as *mut std::ffi::c_void),
+            Some(&mut size),
+        )
+    };
+    if r.is_err() {
+        return 0;
+    }
+    let n = (size as usize / 2).saturating_sub(1).min(buf.len());
+    String::from_utf16_lossy(&buf[..n]).trim_end_matches('\0').parse().unwrap_or(0)
+}
+
 /// Does Windows use dark mode for apps? (`AppsUseLightTheme` = 0)
 pub fn system_prefers_dark() -> bool {
     use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};

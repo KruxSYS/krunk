@@ -22,6 +22,7 @@
 
   <div class="layout">
   <nav id="tabs" class="tabs" aria-label="Settings sections">
+    <a href="#account" data-tab="account">Account</a>
     <a href="#general" data-tab="general">General</a>
     <a href="#privacy" data-tab="privacy">Privacy &amp; security</a>
     <a href="#permissions" data-tab="permissions">Permissions</a>
@@ -32,6 +33,35 @@
   </nav>
   <div class="panels">
   <p id="no-matches" class="empty" hidden>No settings match.</p>
+
+  <!-- ================================================================ Account (0.8.0) -->
+  <section class="panel" data-tab="account" data-section="account sign in krunk account sign out device sync">
+    <h2 class="panel-title">Account</h2>
+    <div class="card group" id="account-card">
+      <h3>Krunk account</h3>
+      <div class="row setting" data-keywords="sign in krunk account sign out manage account device" id="account-row">
+        <div class="text">
+          <span class="label" id="account-title">Sign in to Krunk</span>
+          <p class="desc" id="account-desc">Sign in with your Krunk account to see this device on your account page.</p>
+          <div id="account-linking" hidden>
+            <p class="desc">Enter or confirm this code on krunk.209.wf (the page opened in a new tab):</p>
+            <p class="account-code" id="account-code"></p>
+            <p class="desc" id="account-wait">Waiting for the approval…</p>
+          </div>
+          <p class="desc account-message" id="account-message" role="status" hidden></p>
+          <p class="desc">Sync is coming in a later version.</p>
+        </div>
+        <div class="control account-actions">
+          <button id="account-sign-in" class="btn primary" hidden>Sign in</button>
+          <button id="account-copy" class="btn" hidden>Copy code</button>
+          <button id="account-reopen" class="btn" hidden>Open the page again</button>
+          <button id="account-cancel" class="btn" hidden>Cancel</button>
+          <button id="account-manage" class="btn" hidden>Manage account</button>
+          <button id="account-sign-out" class="btn" hidden>Sign out on this device</button>
+        </div>
+      </div>
+    </div>
+  </section>
 
   <!-- ================================================================ General -->
   <section class="panel" data-tab="general" data-section="general search startup home page bookmarks bar tabs memory performance sleep">

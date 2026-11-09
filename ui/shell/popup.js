@@ -49,7 +49,17 @@
       })(),
       sep(),
     ] : [];
-    return update.concat([
+    // 0.8.0: the Krunk account (none in a private window): Settings → Account.
+    const account = typeof c.account === 'string' ? [
+      (function () {
+        const b = item(c.account ? 'Signed in as ' + c.account : 'Sign in to Krunk', '', () => { LB.post('openPage', { page: 'settings', section: 'account' }); close(); });
+        b.classList.add('account-item');
+        b.title = c.account ? 'Signed in as ' + c.account : 'Sign in to Krunk';
+        return b;
+      })(),
+      sep(),
+    ] : [];
+    return update.concat(account, [
       item('New tab', 'Ctrl+T', () => command('newTab')),
       item('New window', 'Ctrl+N', () => command('newWindow')),
       item('New private tab', 'Ctrl+Shift+N', () => command('newPrivateTab')),
