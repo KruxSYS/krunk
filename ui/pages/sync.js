@@ -20,7 +20,7 @@
     const s = Math.max(0, (Date.now() - ms) / 1000);
     if (s < 90) return 'just now';
     if (s < 3600) return Math.round(s / 60) + ' minutes ago';
-    if (s < 86400) return Math.round(s / 3600) + ' hours ago';
+    if (s < 86400) { const h = Math.round(s / 3600); return h === 1 ? '1 hour ago' : h + ' hours ago'; }
     return new Date(ms).toLocaleDateString();
   }
 

@@ -5124,12 +5124,13 @@ async function testSyncPage(browser) {
       collections: [{ name: 'bookmarks', label: 'Bookmarks', on: true }, { name: 'history', label: 'History', on: false }, { name: 'tabs', label: 'Open tabs', on: true }],
       remoteTabs: [{ device: 'Old laptop', updatedMs: Date.now() - 60000, tabs: [['Example', 'https://example.org/'], ['', 'https://rust-lang.org/']] }],
       confirmDevices: [], secureNeeded: false,
-      devices: [{ id: 'd1', name: 'Krunk on DESKTOP', platform: 'windows', keys: true, me: true, lastSync: null }, { id: 'd2', name: 'Old laptop', platform: 'windows', keys: true, me: false, lastSync: null }],
+      devices: [{ id: 'd1', name: 'Krunk on DESKTOP', platform: 'windows', keys: true, me: true, lastSync: null }, { id: 'd2', name: 'Old laptop', platform: 'windows', keys: true, me: false, lastSync: new Date(Date.now() - 3700000).toISOString() }],
       approvals: [{ id: 'ap1', label: 'New PC', platform: 'windows', country: 'NL' }], approving: null,
     };
     await view(onView);
     check(await vis('v-on') && (await page.$$eval('#device-list li', (l) => l.length)) === 2, t('on: the devices'));
     check((await page.textContent('#device-list')).includes('This device'), t('this device is marked'));
+    check((await page.textContent('#device-list')).includes('last synced 1 hour ago'), t('"1 hour ago", not "1 hours"'));
     check(await vis('approvals') && await vis('share-row'), t('a device asks to join; passwords can be shared'));
     await shot(page, 'sync-on-' + theme + '.png');
     await page.check('#share-passwords');
