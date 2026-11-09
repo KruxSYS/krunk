@@ -272,6 +272,8 @@ pub struct Browser {
     power: PowerOptions,
     vaults: VaultHost,
     jobs: Jobs,
+    /// The last toolbar state sent to each window (`send_nav_changed`).
+    last_nav: RefCell<HashMap<WindowId, String>>,
     /// Page titles waiting to be written to history (`library::TITLE_TIMER`), by URL.
     pending_titles: RefCell<std::collections::BTreeMap<String, String>>,
     /// Settings the browser was started with (for "restart required").
@@ -376,6 +378,7 @@ impl Browser {
             power,
             vaults: VaultHost::default(),
             jobs: Jobs::new(),
+            last_nav: RefCell::default(),
             pending_titles: RefCell::default(),
             running_settings,
             restart_after_exit: Cell::new(false),
@@ -1515,12 +1518,37 @@ impl Browser {
         if let Some(state) = self.nav_state(win) {
             // "Only on the new-tab page": the bar comes or goes with the active tab.
             let relayout = self.frame(win).filter(|f| f.bar.get() != state.bookmarks_bar);
-            self.post_shell_to(win, &Event::Nav { state });
+            let json = Event::Nav { state }.to_json();
+            if let Some(s) = self.frame(win).and_then(|f| f.shell.borrow().clone()) {
+                s.post_json(&json);
+            }
+            self.last_nav.borrow_mut().insert(win, json);
             if let Some(f) = relayout {
                 self.layout_frame(&f);
             }
         }
         self.send_devtools_state(win);
+    }
+
+    /// The toolbars whose state changed (0.10.0): blocked-request counts arrive for every tab,
+    /// background ones too, and refreshed every window's toolbar several times a second.
+    fn send_nav_changed(&self) {
+        self.show_next_permission_prompt();
+        for f in self.all_frames() {
+            let Some(state) = self.nav_state(f.id) else { continue };
+            let json = Event::Nav { state }.to_json();
+            if self.last_nav.borrow().get(&f.id) != Some(&json) {
+                self.send_nav_to(f.id);
+            }
+        }
+    }
+
+    /// The toolbar of `tab`'s window, if `tab` is the tab it shows.
+    fn send_nav_if_active(&self, tab: TabId) {
+        let Some(win) = self.window_of(tab) else { return };
+        if self.ws.borrow().model(win).is_some_and(|m| m.active_id() == Some(tab)) {
+            self.send_nav_to(win);
+        }
     }
 
     fn send_shell_config(&self) {
@@ -1903,7 +1931,7 @@ impl Browser {
                         // Only for the page currently shown in the tab.
                         if urlclean::origin_of(&net.top_url()).as_deref() == Some(origin.as_str()) {
                             net.login_form.set(true);
-                            self.send_nav();
+                            self.send_nav_if_active(id);
                         }
                     }
                 }

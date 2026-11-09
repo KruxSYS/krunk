@@ -117,7 +117,7 @@ impl Browser {
             None if self.pip_bar.borrow().as_ref().is_some_and(|p| p.tab == tab) => self.pip_bar_stop(),
             None => {}
         }
-        self.send_nav();
+        self.send_nav_if_active(tab);
     }
 
     /// "Back to tab" in the floating window (CEF does not implement `ActivateContents`, so

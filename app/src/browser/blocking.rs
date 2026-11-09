@@ -875,7 +875,7 @@ impl Browser {
             w.kill_timer(SHIELD_TIMER);
         }
         self.shield_pending.set(false);
-        self.send_nav();
+        self.send_nav_changed();
         let shield_open =
             self.popup.borrow().as_ref().is_some_and(|p| matches!(p.content, Some(PopupContent::Shield { .. })));
         if shield_open {
