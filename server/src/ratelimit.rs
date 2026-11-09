@@ -95,6 +95,24 @@ pub async fn hit(db: &PgPool, limit: Limit, key: &[u8; 32]) -> Result<(), ApiErr
     Ok(())
 }
 
+/// `rate_limited` if the window for `key` is already over the limit (a request was refused in
+/// it), without counting this request: for requests that count only when they fail.
+pub async fn check(db: &PgPool, limit: Limit, key: &[u8; 32]) -> Result<(), ApiError> {
+    let (start, remaining) = window_start(Utc::now(), limit.window_s);
+    let count: Option<i32> =
+        sqlx::query_scalar("SELECT count FROM rate_limits WHERE bucket = $1 AND key = $2 AND window_start = $3")
+            .bind(limit.bucket)
+            .bind(key.as_slice())
+            .bind(start)
+            .fetch_optional(db)
+            .await?;
+    if count.unwrap_or(0) > limit.max {
+        tracing::info!(bucket = limit.bucket, "rate limited");
+        return Err(ApiError::rate_limited(remaining as u64));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

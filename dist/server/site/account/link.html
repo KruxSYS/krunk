@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Sign in a device · Krunk</title>
+<link rel="icon" type="image/png" href="/krunk-64.png">
+<link rel="stylesheet" href="/style.css">
+<script src="/account/account.js" defer></script>
+</head>
+<body class="account" data-page="link">
+<header class="bar">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="/krunk.svg" width="28" height="28" alt=""> Krunk</a>
+    <nav><a href="/account/">Account</a> <a href="/privacy">Privacy</a></nav>
+  </div>
+</header>
+<main class="wrap narrow">
+  <h1>Sign in a device</h1>
+  <p id="closed" class="closed" hidden>Accounts are coming soon. Krunk works fully without one; an account will only be needed for sync.</p>
+  <p id="status" class="status" role="status" aria-live="polite"></p>
+
+  <form id="code-form" class="card" hidden novalidate>
+    <p>Enter the code that Krunk shows in <strong>Settings → Account</strong>.</p>
+    <label>Code <input name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="12" required placeholder="XXXX-XXXX"></label>
+    <button type="submit" class="primary">Continue</button>
+  </form>
+
+  <form id="approve-form" class="card" hidden novalidate>
+    <h2>Sign in this device to your account?</h2>
+    <dl class="facts">
+      <dt>Device</dt><dd id="d-label"></dd>
+      <dt>System</dt><dd id="d-platform"></dd>
+      <dt>Location</dt><dd id="d-country"></dd>
+      <dt>Asked</dt><dd id="d-age"></dd>
+    </dl>
+    <p id="d-mismatch" class="mismatch" hidden></p>
+    <p class="warn">Only approve if you started this on your own device just now. Approving lets that
+      device use your Krunk account. You can remove it at any time on your account page.</p>
+    <p>The code on your device:</p>
+    <p id="d-code" class="usercode"></p>
+    <label class="check"><input type="checkbox" name="same" required> <span>Krunk on my device shows exactly this code.</span></label>
+    <div class="row-buttons">
+      <button type="submit" class="primary" disabled>Approve this device</button>
+      <button type="button" id="deny">Deny</button>
+    </div>
+  </form>
+
+  <form id="reauth" class="card" hidden novalidate>
+    <h2>Confirm it's you</h2>
+    <p>Enter your password again to approve the device.</p>
+    <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+    <label class="needs-totp" hidden>Code from your authenticator app (or a backup code)
+      <input name="totp" autocomplete="one-time-code" inputmode="numeric" maxlength="20"></label>
+    <div class="row-buttons">
+      <button type="submit" class="primary">Confirm</button>
+      <button type="button" class="cancel">Cancel</button>
+    </div>
+  </form>
+
+  <div id="done" class="card" hidden>
+    <p id="done-text"></p>
+    <p><a href="/account/">Your devices</a></p>
+  </div>
+  <p class="never">The Krunk website never asks for your sync passphrase or recovery key.</p>
+</main>
+<footer class="wrap narrow"><p><a href="/">Krunk</a> · <a href="/privacy">Privacy</a></p></footer>
+</body>
+</html>

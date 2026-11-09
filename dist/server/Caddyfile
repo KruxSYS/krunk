@@ -116,6 +116,15 @@
 		}
 	}
 
+	# The device approval page (S3, PROTOCOL §6.1): Krunk opens /link?code=XXXX-XXXX. It needs a
+	# website session already, so it never loads Turnstile: the default CSP applies.
+	handle /link {
+		root * /srv/site
+		header Cache-Control "no-store, no-transform"
+		rewrite * /account/link.html
+		file_server
+	}
+
 	handle /privacy {
 		root * /srv/site
 		header Cache-Control "no-cache, no-transform"

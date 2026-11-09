@@ -47,6 +47,9 @@ h2 { margin: 0 0 10px; font-size: 24px; }
 .note { color: var(--muted); font-size: 15px; }
 footer { border-top: 1px solid var(--border); color: var(--muted); font-size: 14px; padding-top: 12px; padding-bottom: 30px; }
 
+/* The hidden attribute wins over every display rule below (form labels are display: block). */
+[hidden] { display: none !important; }
+
 /* Account pages and the privacy page */
 .bar { background: linear-gradient(135deg, #ff6a3d, var(--accent-dark)); color: #fff; }
 .bar .wrap { display: flex; align-items: center; justify-content: space-between; padding-top: 10px; padding-bottom: 10px; }
@@ -85,3 +88,19 @@ button:disabled { opacity: .6; cursor: progress; }
 .codes { columns: 2; font: 15px ui-monospace, Consolas, monospace; }
 .doc h2 { margin-top: 26px; }
 .doc li { margin: 4px 0; }
+.usercode { font: 700 30px ui-monospace, Consolas, monospace; letter-spacing: 3px; margin: 6px 0 12px; }
+.warn { border-left: 4px solid #e65100; padding: 6px 12px; background: rgba(230, 81, 0, .08); border-radius: 4px; }
+.mismatch { color: #c62828; font-weight: 600; }
+@media (prefers-color-scheme: dark) { .mismatch { color: #ff8a80; } }
+form label.check { display: flex; gap: 10px; align-items: flex-start; font-weight: 400; }
+form label.check input { width: auto; margin-top: 4px; }
+.row-buttons { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+.items { list-style: none; padding: 0; margin: 0; }
+.items li { border-top: 1px solid var(--border); padding: 12px 0; }
+.items li:first-child { border-top: 0; padding-top: 4px; }
+.items .name { font-weight: 600; overflow-wrap: anywhere; }
+.items .meta { color: var(--muted); font-size: 14px; margin: 2px 0 6px; overflow-wrap: anywhere; }
+.items li.revoked .name { text-decoration: line-through; color: var(--muted); }
+.items form { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+.items form input { margin: 0; }
+button.small { padding: 5px 12px; font-size: 14px; }

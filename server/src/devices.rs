@@ -569,11 +569,26 @@ struct GrantView {
     hash: Vec<u8>,
 }
 
-/// Counts one code lookup (view, approve or deny) against the brute-force limits: 5 per
-/// session per 10 minutes, 20 per IP per hour (PROTOCOL §6.1).
+/// Counts one code lookup against the brute-force limits: 5 per session per 10 minutes, 20 per
+/// IP per hour (PROTOCOL §6.1). Viewing a code always counts.
 async fn lookup_limits(state: &AppState, s: &WebSession, client: &Client) -> Result<(), ApiError> {
     hit(&state.db, rl::LINK_LOOKUP_SESSION, &rl::id_key(&s.id)).await?;
     hit(&state.db, rl::LINK_LOOKUP_IP, &ip_key(state, client)).await
+}
+
+/// Approving or denying needs the limits not to be used up, but counts only when the code isn't
+/// found: acting on the code just viewed (and retrying after a re-auth) costs nothing more, while
+/// guessing through these endpoints costs the same as through the view.
+async fn act_limits_check(state: &AppState, s: &WebSession, client: &Client) -> Result<(), ApiError> {
+    rl::check(&state.db, rl::LINK_LOOKUP_SESSION, &rl::id_key(&s.id)).await?;
+    rl::check(&state.db, rl::LINK_LOOKUP_IP, &ip_key(state, client)).await
+}
+
+async fn act_not_found(state: &AppState, s: &WebSession, client: &Client) -> ApiError {
+    match lookup_limits(state, s, client).await {
+        Err(e) => e,
+        Ok(()) => link_not_found(),
+    }
 }
 
 async fn pending_grant(
@@ -642,20 +657,23 @@ pub async fn link_approve(
     Path(code): Path<String>,
     JsonBody(req): JsonBody<ApproveReq>,
 ) -> ApiResult {
-    lookup_limits(&state, &s, &client).await?;
+    act_limits_check(&state, &s, &client).await?;
     hit(&state.db, rl::LINK_APPROVE, &rl::id_key(&s.account_id)).await?;
     if !s.reauth_valid() {
         return Err(reauth_required());
     }
     let (Some(a), Some(b)) = (normalize_user_code(&code), normalize_user_code(&req.confirm_code)) else {
-        return Err(link_not_found());
+        return Err(act_not_found(&state, &s, &client).await);
     };
     if !crypto::ct_eq(a.as_bytes(), b.as_bytes()) {
         return Err(ApiError::bad_request("bad_request", "The code you confirmed is not the one on this page."));
     }
     let keys = &state.config.keys;
     let mut tx = state.db.begin().await?;
-    let g = pending_grant(&mut tx, keys, &code, true).await?.ok_or_else(link_not_found)?;
+    let Some(g) = pending_grant(&mut tx, keys, &code, true).await? else {
+        drop(tx);
+        return Err(act_not_found(&state, &s, &client).await);
+    };
     let active: i64 =
         sqlx::query_scalar("SELECT count(*) FROM devices d WHERE d.account_id = $1 AND d.revoked_at IS NULL")
             .bind(s.account_id)
@@ -730,9 +748,12 @@ pub async fn link_deny(
     Path(code): Path<String>,
     JsonBody(_): JsonBody<Empty>,
 ) -> ApiResult {
-    lookup_limits(&state, &s, &client).await?;
+    act_limits_check(&state, &s, &client).await?;
     let mut tx = state.db.begin().await?;
-    let g = pending_grant(&mut tx, &state.config.keys, &code, true).await?.ok_or_else(link_not_found)?;
+    let Some(g) = pending_grant(&mut tx, &state.config.keys, &code, true).await? else {
+        drop(tx);
+        return Err(act_not_found(&state, &s, &client).await);
+    };
     sqlx::query("UPDATE link_grants SET status = 'denied' WHERE device_code_hash = $1")
         .bind(&g.hash)
         .execute(&mut *tx)

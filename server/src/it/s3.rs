@@ -241,9 +241,37 @@ async fn code_lookups_are_limited() {
     let r = b.get(&e, "link/AAAA-AAA9").await;
     assert_eq!((r.status, err(&r)), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"), "6th lookup in a session");
     assert!(r.headers.contains_key(header::RETRY_AFTER));
-    // Approve and deny count as lookups too.
+    // Approve and deny with an unknown code count as lookups too, and are refused once the
+    // limit is used up.
     let r = b.post(&e, "link/AAAA-AAAA/deny", json!({})).await;
     assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
+    let mut fresh = Browser { ip: "203.0.113.200".parse().unwrap(), cookie: None, csrf: None };
+    login(&e, &mut fresh, "guess@example.org", PW, None).await;
+    fresh.post(&e, "reauth", json!({"password": PW})).await;
+    for i in 0..5 {
+        let r =
+            fresh.post(&e, &format!("link/CCCC-CCC{i}/approve"), json!({"confirm_code": format!("CCCC-CCC{i}")})).await;
+        assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.raw);
+    }
+    assert_eq!(fresh.get(&e, "link/CCCC-CCC9").await.status, StatusCode::TOO_MANY_REQUESTS);
+    // Acting on a code that exists costs nothing more: view it, approve after a re-auth, view
+    // and approve more codes in the same session.
+    // (Another account: approvals are also limited to 10 an hour per account.)
+    let mut owner = registered_and_verified(&e, "owner2@example.org", PW).await;
+    login(&e, &mut owner, "owner2@example.org", PW, None).await;
+    let d = Device::new();
+    // Five views fill the session's window; the fifth code can still be approved.
+    for i in 0..5 {
+        let (_, uc) = d.authorize(&e).await;
+        assert_eq!(owner.get(&e, &format!("link/{uc}")).await.status, StatusCode::OK);
+        if i == 0 {
+            let r = owner.post(&e, &format!("link/{uc}/approve"), json!({"confirm_code": uc})).await;
+            assert_eq!(err(&r), "reauth_required");
+            owner.post(&e, "reauth", json!({"password": PW})).await;
+        }
+        let r = owner.post(&e, &format!("link/{uc}/approve"), json!({"confirm_code": uc})).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.raw);
+    }
     // Per IP: 20 an hour across sessions. A lookup refused by the session limit doesn't count.
     let ip = b.ip;
     let mut answered = 5;

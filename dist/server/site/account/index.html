@@ -30,10 +30,27 @@
       <button id="logout" type="button">Sign out</button>
     </section>
 
+    <section class="card" id="devices-card">
+      <h2>Devices</h2>
+      <p class="hint">Krunk on your devices, signed in to this account. Sync is coming in a later version:
+        until then a device only shows who it is signed in as.</p>
+      <ul id="devices" class="items"></ul>
+      <p id="no-devices" hidden>No devices yet. In Krunk, open <strong>Settings → Account</strong> and click <strong>Sign in</strong>.</p>
+      <form id="reauth" hidden novalidate>
+        <p>Enter your password again to remove the device.</p>
+        <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+        <label class="needs-totp" hidden>Code (or a backup code) <input name="totp" autocomplete="one-time-code" maxlength="20"></label>
+        <div class="row-buttons">
+          <button type="submit" class="primary">Confirm</button>
+          <button type="button" class="cancel">Cancel</button>
+        </div>
+      </form>
+    </section>
+
     <section class="card">
-      <h2>Devices and sync</h2>
-      <p>No devices are linked yet. Linking Krunk to your account arrives with sync, in a later release.
-        Your bookmarks, history and passwords will then be encrypted on your devices before they are uploaded.</p>
+      <h2>Signed-in browsers</h2>
+      <p class="hint">Where you are signed in to this website.</p>
+      <ul id="sessions" class="items"></ul>
     </section>
 
     <section class="card">
