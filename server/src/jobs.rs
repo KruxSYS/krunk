@@ -10,12 +10,14 @@
 //!   whose refresh tokens went 90 days unused (signed out), and revoked devices after 30 days.
 //! - S6: expired approvals and rotation leases. A device signed out for being idle that ever
 //!   held sync keys starts a key rotation, like any other removal (PROTOCOL §7).
+//! - 0.11.7 (audit P1): spent refresh tokens after 120 days, the longest refresh-token life
+//!   (90 days idle) plus 30 days, so reuse detection still sees every token that could be live.
 
 use sqlx::PgPool;
 use std::time::Duration;
 
 pub async fn run_once(db: &PgPool, ip_retention_days: i32) -> Result<(), sqlx::Error> {
-    let steps: [(&str, &str); 17] = [
+    let steps: [(&str, &str); 18] = [
         (
             "session ips",
             "UPDATE web_sessions SET ip = NULL WHERE ip IS NOT NULL AND last_used_at < now() - make_interval(days => $1)",
@@ -66,6 +68,7 @@ pub async fn run_once(db: &PgPool, ip_retention_days: i32) -> Result<(), sqlx::E
         ),
         ("revoked devices", "DELETE FROM devices WHERE revoked_at < now() - interval '30 days'"),
         ("approvals", "DELETE FROM approvals WHERE expires_at < now()"),
+        ("spent refresh tokens", "DELETE FROM refresh_used WHERE used_at < now() - interval '120 days'"),
         (
             "rotation leases",
             "UPDATE sync_state SET

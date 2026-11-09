@@ -586,6 +586,50 @@ async fn s3_housekeeping() {
     assert_eq!(tokens, 0);
 }
 
+/// 0.11.7 (audit P1): spent refresh tokens are kept for reuse detection for 120 days (the
+/// longest refresh-token life, 90 days idle, plus 30), then deleted; a younger spent token
+/// presented again still revokes the device.
+#[tokio::test]
+async fn spent_refresh_tokens_are_kept_for_120_days() {
+    let Some(e) = env().await else { return };
+    let mut b = signed_in(&e, "spent@example.org").await;
+    let d = Device::new();
+    let (_, _, r1, _) = linked(&e, &mut b, &d).await;
+    let r2 = d.post(&e, "token/refresh", json!({"refresh_token": r1})).await.body["refresh_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let r3 = d.post(&e, "token/refresh", json!({"refresh_token": r2})).await.body["refresh_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    // r1 was spent 121 days ago, r2 100 days ago.
+    let used: Vec<Vec<u8>> =
+        sqlx::query_scalar("SELECT hash FROM refresh_used ORDER BY used_at").fetch_all(&e.db).await.unwrap();
+    assert_eq!(used.len(), 2);
+    sqlx::query("UPDATE refresh_used SET used_at = now() - interval '121 days' WHERE hash = $1")
+        .bind(&used[0])
+        .execute(&e.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE refresh_used SET used_at = now() - interval '100 days' WHERE hash = $1")
+        .bind(&used[1])
+        .execute(&e.db)
+        .await
+        .unwrap();
+    jobs::run_once(&e.db, 90).await.unwrap();
+    jobs::run_once(&e.db, 90).await.unwrap(); // idempotent
+    let left: Vec<Vec<u8>> = sqlx::query_scalar("SELECT hash FROM refresh_used").fetch_all(&e.db).await.unwrap();
+    assert_eq!(left, vec![used[1].clone()], "only the 121-day-old row is gone");
+    // r2 (spent 100 days ago) is still recognised: presenting it revokes the device.
+    assert_eq!(d.post(&e, "token/refresh", json!({"refresh_token": r2})).await.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        d.post(&e, "token/refresh", json!({"refresh_token": r3})).await.status,
+        StatusCode::UNAUTHORIZED,
+        "revoked"
+    );
+}
+
 /// Migration 0003 is additive: an S2 database (0001–0002) with accounts, sessions, codes and
 /// mail migrates, and its users still sign in.
 #[tokio::test]
