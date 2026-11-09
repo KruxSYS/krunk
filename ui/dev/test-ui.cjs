@@ -4920,6 +4920,26 @@ async function testNavMenu(browser) {
 
 // 0.8.0 (C): Settings → Account. The page only shows what the host says (the `account` event)
 // and asks with posts; it never talks to the network itself.
+// For the VM scripts (ONLY=MeasureAccount): where Settings → Account's buttons are at the VM's
+// page size (1280 × 656 under the shell and the bookmarks bar; 1280 × 684 without the bar).
+async function measureAccountCard(browser) {
+  const defaults = JSON.parse(fs.readFileSync(path.join(__dirname, 'default-settings.json'), 'utf8'));
+  for (const h of [656, 684]) {
+    const { page } = await openPage(browser, 'https://krunk.invalid/settings.html#account', { width: 1280, height: h }, 1, settingsMock, defaults);
+    await page.waitForFunction(() => document.getElementById('lists-summary').textContent !== '');
+    const at = async (id) => { const b = await page.locator('#' + id).boundingBox(); return b && [Math.round(b.x + b.width / 2), Math.round(b.y + b.height / 2)]; };
+    await emit(page, { event: 'account', card: { state: 'signedOut' } });
+    await emit(page, { event: 'sync', view: { state: 'noAccount' } });
+    await page.waitForTimeout(60);
+    const signIn = await at('account-sign-in');
+    await emit(page, { event: 'account', card: { state: 'signedIn', email: 'vm090@example.org', device: 'Krunk on Windows', lastCheckedMs: Date.now() } });
+    await emit(page, { event: 'sync', view: { state: 'off', message: null } });
+    await page.waitForTimeout(60);
+    console.log(JSON.stringify({ height: h, signIn: signIn, signOut: await at('account-sign-out'), syncOpen: await at('sync-open') }));
+    await page.context().close();
+  }
+}
+
 async function testAccountCard(browser) {
   console.log('account card');
   const defaults = JSON.parse(fs.readFileSync(path.join(__dirname, 'default-settings.json'), 'utf8'));
@@ -5312,6 +5332,7 @@ async function testHttpAuth(browser) {
     if (!ONLY || ONLY.includes('AccountCard')) await testAccountCard(browser);
     if (!ONLY || ONLY.includes('SyncPage')) await testSyncPage(browser);
     if (!ONLY || ONLY.includes('SyncCard')) await testSyncCard(browser);
+    if (ONLY && ONLY.includes('MeasureAccount')) await measureAccountCard(browser);
     if (!ONLY || ONLY.includes('LoginScript')) await testLoginScript(browser);
     if (!ONLY || ONLY.includes('MediaScript')) await testMediaScript(browser);
     if (!ONLY || ONLY.includes('Gpu')) await testGpu(browser);

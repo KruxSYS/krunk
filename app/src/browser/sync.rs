@@ -306,7 +306,7 @@ impl Browser {
                         coll::remote_tabs(c).unwrap_or_default(),
                     )
                 };
-                let devices: Vec<DeviceRow> = self
+                let mut devices: Vec<DeviceRow> = self
                     .sync
                     .devices
                     .borrow()
@@ -346,6 +346,9 @@ impl Browser {
                     }
                     _ => None,
                 };
+                // This device first, then by name: the order doesn't jump between refreshes.
+                devices
+                    .sort_by(|a, b| (!a.me, a.name.to_lowercase(), &a.id).cmp(&(!b.me, b.name.to_lowercase(), &b.id)));
                 let remote_tabs = remote
                     .iter()
                     .filter(|(id, _)| **id != me && devices.iter().any(|d| d.id == **id))
@@ -1376,8 +1379,14 @@ impl Browser {
                         Some("A removed device had added another device. Check the list below.".into());
                 }
                 info!(
-                    "sync: run done (pulled {}, pushed {}, conflicts {}, full {}, frozen {}, left {})",
-                    report.pulled, report.pushed, report.conflicts, report.full, report.frozen, report.queue_left
+                    "sync: run done (pulled {}, pushed {}, conflicts {}, full {}, frozen {}, left {}, passwords waiting {})",
+                    report.pulled,
+                    report.pushed,
+                    report.conflicts,
+                    report.full,
+                    report.frozen,
+                    report.queue_left,
+                    report.pak_waiting
                 );
                 self.sync_apply_changes(&report);
                 self.sync_pak_run();
