@@ -454,6 +454,12 @@ pub async fn rekey(State(state): State<AppState>, d: DeviceAuth, JsonBody(req): 
         bytes += if inserted == 1 { i64::from(c.size - old_size) } else { -i64::from(old_size) };
         done += 1;
     }
+    // The storage quota, as for writes: re-encryptions may not grow the account past it
+    // (0.11.7, audit S3: rekey had no check, so an account could grow without limit). An
+    // account already over it (a lowered quota) can still rekey without growing.
+    if bytes > state.config.quota.max_bytes && bytes > st.bytes {
+        return Err(quota_exceeded());
+    }
     sqlx::query(
         "UPDATE sync_state SET head_seq = $2, bytes = $3,
                 records = (SELECT count(*) FROM records WHERE account_id = $1),

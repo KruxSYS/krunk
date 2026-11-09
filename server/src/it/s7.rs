@@ -355,6 +355,37 @@ async fn writes_freeze_on_removal_and_the_rekey_swaps_old_records() {
     assert_eq!(max, head);
 }
 
+/// 0.11.7, audit S3: a rekey may not grow the account past the storage quota; a rekey that
+/// keeps the size goes through.
+#[tokio::test]
+async fn rekey_keeps_to_the_quota() {
+    let Some(e) = env().await else { return };
+    let (_o, a, _, acc) = account(&e, "rekeyquota@example.org").await;
+    for i in 1..=3u16 {
+        a.post(&e, "records/batch", json!({"writes": [put("bookmarks", &rid(i), 0)]})).await;
+    }
+    sqlx::query("UPDATE sync_state SET current_epoch = 2 WHERE account_id = $1")
+        .bind(acc)
+        .execute(&e.db)
+        .await
+        .unwrap();
+    let mut state = e.state.clone();
+    let mut cfg = (*state.config).clone();
+    cfg.quota = crate::config::Quota { max_bytes: 50_000, max_records: 1000, max_history: 1000 };
+    state.config = Arc::new(cfg);
+    let small = Env { state, db: e.db.clone() };
+    let swap = |old: u16, new: u16, len: usize| json!({"epoch": 2, "replaces": [{"old_id": rid(old), "c": "bookmarks", "envelope": env_of("bookmarks", &rid(new), 2, len)}]});
+    let r = a.post(&small, "rekey/batch", swap(1, 301, 65536 + 16)).await;
+    assert_eq!(
+        (r.status, err(&r)),
+        (StatusCode::BAD_REQUEST, "quota_exceeded"),
+        "a 64 KiB re-encryption of a small record"
+    );
+    assert_eq!(a.get(&e, "sync/state").await.body["rekey"]["remaining_old"], 3, "nothing of the batch is kept");
+    let r = a.post(&small, "rekey/batch", swap(1, 301, 272)).await;
+    assert_eq!((r.status, r.body["done"].as_i64()), (StatusCode::OK, Some(1)), "{}", r.raw);
+}
+
 /// Migration 0005 is additive: an S6 database (keys, escrow, approvals) migrates intact.
 #[tokio::test]
 async fn s6_data_survives_migration_0005() {
