@@ -2028,6 +2028,9 @@ pub enum ContentMessage {
     LoginForm {},
     /// A login form was submitted; the host may offer to save it.
     Submit { username: String, password: Secret },
+    /// The first step of a login in steps (0.11.2: the username or email alone, the password
+    /// on the next step or page) was sent: the host remembers it for that password's save.
+    Identifier { username: String },
     /// The user clicked the key badge in a login field. The host shows a
     /// trusted confirmation in the shell before anything is filled.
     RequestFill {},
@@ -2914,6 +2917,11 @@ mod tests {
     #[test]
     fn content_messages_are_strict() {
         assert_eq!(parse_content(r#"{"lb":"loginForm"}"#), Ok(ContentMessage::LoginForm {}));
+        assert_eq!(
+            parse_content(r#"{"lb":"identifier","username":"a@b.example"}"#),
+            Ok(ContentMessage::Identifier { username: "a@b.example".into() })
+        );
+        assert!(parse_content_frame(r#"{"lb":"identifier","username":"a"}"#).is_err(), "top frame only");
         assert_eq!(
             parse_content(r#"{"lb":"submit","username":"a","password":"b"}"#),
             Ok(ContentMessage::Submit { username: "a".into(), password: Secret::from("b") })

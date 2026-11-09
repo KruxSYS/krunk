@@ -2183,6 +2183,7 @@ impl Browser {
                 Ok(ContentMessage::Submit { username, password }) => {
                     self.login_submitted(id, &origin, username, password)
                 }
+                Ok(ContentMessage::Identifier { username }) => self.login_identifier(id, &origin, username),
                 Ok(ContentMessage::RequestFill {}) => self.request_fill(id, Some(&origin)),
                 Ok(ContentMessage::NotificationPermission {}) => self.notification_permission_requested(id, &origin),
                 Ok(ContentMessage::Media { videos }) => self.media_changed(id, &origin, videos),

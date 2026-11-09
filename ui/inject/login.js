@@ -37,6 +37,26 @@
     }
     return found;
   }
+  // A username or email field on a login's first step (0.11.2): no password field in its form
+  // (the password comes on the next step), and it says it is one.
+  var ID_RE = /(user|e-?mail|login|identifier|account|signin)/i;
+  function identifierField(el) {
+    if (!el || el.tagName !== 'INPUT' || !visible(el)) return false;
+    var type = (el.getAttribute('type') || 'text').toLowerCase();
+    if (type !== 'text' && type !== 'email' && type !== 'tel') return false;
+    if (passwordFields(el.form || document).length) return false;
+    var ac = (el.getAttribute('autocomplete') || '').toLowerCase();
+    if (/\b(username|webauthn)\b/.test(ac)) return true;
+    if (ac && ac !== 'on' && ac !== 'off' && !/\bemail\b/.test(ac)) return false;
+    var hint = (el.name || '') + ' ' + (el.id || '') + ' ' + (el.getAttribute('placeholder') || '') + ' ' + (el.getAttribute('aria-label') || '');
+    return ID_RE.test(hint) && (el.form ? el.form.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], input:not([type])').length <= 2 : true);
+  }
+  // The username of a password step whose page shows none: a hidden username field the site
+  // keeps for password managers.
+  function hiddenUsername(scope) {
+    var el = (scope || document).querySelector('input[autocomplete~="username"]') || document.querySelector('input[autocomplete~="username"]');
+    return el && el.value ? el : null;
+  }
   // The password field a username field belongs to (the first one after it in its form).
   function passwordFor(user) {
     var scope = user.form || document;
@@ -58,7 +78,7 @@
     var now = Date.now();
     if (lastSubmit.value === pw.value && now - lastSubmit.time < 3000) return;
     lastSubmit = { value: pw.value, time: now };
-    var user = usernameFor(pw);
+    var user = usernameFor(pw) || hiddenUsername(pw.form);
     host.postMessage({
       lb: 'submit',
       username: user ? String(user.value).slice(0, 512) : '',
@@ -90,18 +110,32 @@
     host.postMessage(m);
   }
 
+  // A login's first step was sent (0.11.2): its username goes to the browser, which uses it
+  // when the password step has no username field.
+  var lastIdentifier = null;
+  function captureIdentifier(scope) {
+    var fields = Array.prototype.filter.call((scope && scope.querySelectorAll ? scope : document).querySelectorAll('input'), identifierField);
+    var f = fields[0];
+    var v = f ? String(f.value || '').trim() : '';
+    if (!v || v === lastIdentifier) return;
+    lastIdentifier = v;
+    host.postMessage({ lb: 'identifier', username: v.slice(0, 256) });
+  }
+
   if (isTop) {
     // Form submissions, Enter in a password field, and clicks on submit-like
     // buttons (for script-driven login forms without a real submit).
-    document.addEventListener('submit', function (e) { capture(e.target); captureCard(e.target); }, true);
+    document.addEventListener('submit', function (e) { capture(e.target); captureCard(e.target); captureIdentifier(e.target); }, true);
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && e.target && e.target.type === 'password') capture(e.target.form);
+      else if (e.key === 'Enter' && identifierField(e.target)) captureIdentifier(e.target.form || null);
     }, true);
     document.addEventListener('click', function (e) {
       var b = e.target && e.target.closest && e.target.closest('button, input[type="submit"], [role="button"]');
       if (!b) return;
       var form = b.form || b.closest('form');
       if (form ? passwordFields(form).length : passwordFields().length) capture(form);
+      else captureIdentifier(form);
       if (form ? cardFields(form).length : cardFields().length) captureCard(form);
     }, true);
   }
@@ -130,7 +164,7 @@
       var ac = (el.getAttribute('autocomplete') || '').toLowerCase();
       return ac === 'new-password' || passwordFields(el.form || document).length >= 2 ? 'newPassword' : 'password';
     }
-    if ((type === 'text' || type === 'email' || type === 'tel') && passwordFor(el)) return 'username';
+    if ((type === 'text' || type === 'email' || type === 'tel') && (passwordFor(el) || identifierField(el))) return 'username';
     return null;
   }
   // What the browser needs to decide whether this is a sign-up or change-password form.
@@ -208,7 +242,15 @@
     var kind = fieldKind(target);
     if (kind === 'password' || kind === 'newPassword') { pw = target; user = usernameFor(pw); }
     else if (kind === 'username') { user = target; pw = passwordFor(user); }
-    if (!pw) { pw = passwordFields()[0]; user = pw ? usernameFor(pw) : null; }
+    if (!pw && user && kind === 'username') {
+      // A login's first step: only the username (the password comes on the next step).
+      if (d.lbFill.username) setValue(user, d.lbFill.username);
+      focused = null;
+      quietUntil = Date.now() + 1000;
+      user.focus();
+      return;
+    }
+    if (!pw) { pw = passwordFields()[0]; user = pw ? usernameFor(pw) || hiddenUsername(pw.form) : null; }
     if (!pw) return;
     if (d.lbFill.generated) {
       // A generated password: every password field of the form (the confirm field too),

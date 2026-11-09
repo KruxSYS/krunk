@@ -80,7 +80,13 @@ pub(super) struct VaultHost {
     pub(super) clipboard_seq: Cell<Option<u32>>,
     /// Unlocked with "Remain unlocked this session" (0.11.0): no inactivity lock until quit.
     remain_this_session: Cell<bool>,
+    /// The username sent on the first step of a login in steps (0.11.2): tab, origin, name,
+    /// when. The password step's save uses it when its page has no username field.
+    identifier: RefCell<Option<(TabId, String, String, i64)>>,
 }
+
+/// How long a login's first step (the username) counts for its password step.
+const IDENTIFIER_MS: i64 = 10 * 60 * 1000;
 
 pub(super) fn wrong_password_message(wait_ms: u64) -> String {
     if wait_ms > 0 {
@@ -702,9 +708,32 @@ impl Browser {
 
     // ------------------------------------------------------------ save prompt
 
+    /// The first step of a login in steps was sent on `origin` in tab `tab_id`: the username,
+    /// for the password step that follows (on this page or the next one of the same site).
+    pub(super) fn login_identifier(&self, tab_id: TabId, origin: &str, username: String) {
+        let name = username.trim().to_string();
+        if name.is_empty() || name.chars().count() > 256 || name.chars().any(char::is_control) {
+            return;
+        }
+        *self.vaults.identifier.borrow_mut() = Some((tab_id, origin.to_string(), name, now_ms()));
+    }
+
     /// A login form was submitted on `origin` (the browser-reported origin
     /// of the top-level document of tab `tab_id`).
     pub(super) fn login_submitted(&self, tab_id: TabId, origin: &str, username: String, password: Secret) {
+        // A password step without a username field: the name from the login's first step
+        // (same tab, same site, recent).
+        let username = if username.trim().is_empty() {
+            let remembered = self.vaults.identifier.borrow().as_ref().and_then(|(t, o, name, when)| {
+                let same_site = o == origin
+                    || core_vault::registrable_domain(o)
+                        .is_some_and(|d| core_vault::registrable_domain(origin) == Some(d));
+                (*t == tab_id && same_site && now_ms() - when < IDENTIFIER_MS).then(|| name.clone())
+            });
+            remembered.unwrap_or(username)
+        } else {
+            username
+        };
         if !self.settings.borrow().offer_save_passwords
             || self.active_id() != Some(tab_id)
             || self.tab(tab_id).is_some_and(|t| t.private)
