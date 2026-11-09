@@ -445,6 +445,27 @@ async fn revoking_rename_and_sessions() {
 }
 
 #[tokio::test]
+async fn the_device_version_follows_updates() {
+    let Some(e) = env().await else { return };
+    let mut b = signed_in(&e, "version@example.com").await;
+    let d = Device::new();
+    let (id, access, _, _) = linked(&e, &mut b, &d).await;
+    // Linked as 0.7.0 a while ago; the app (user agent Krunk/0.8.0) has updated since.
+    sqlx::query(
+        "UPDATE devices SET client_version = '0.7.0', last_used_at = now() - interval '2 minutes' WHERE id = $1::uuid",
+    )
+    .bind(&id)
+    .execute(&e.db)
+    .await
+    .unwrap();
+    assert_eq!(d.call(&e, Method::GET, "device/me", None, Some(&access)).await.status, StatusCode::OK);
+    let r = b.get(&e, "devices").await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.raw);
+    let v: Vec<&str> = r.body.as_array().unwrap().iter().filter_map(|d| d["client_version"].as_str()).collect();
+    assert_eq!(v, ["0.8.0"], "the account page shows the version the device runs now");
+}
+
+#[tokio::test]
 async fn device_quota() {
     let Some(e) = env().await else { return };
     let mut b = signed_in(&e, "many@example.org").await;

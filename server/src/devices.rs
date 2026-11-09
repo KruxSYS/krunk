@@ -46,6 +46,16 @@ pub const LABEL_MAX: usize = 64;
 const VERSION_MAX: usize = 32;
 const TOKEN_MAX: usize = 64;
 
+/// The app version in a Krunk user agent (`Krunk/0.10.1`), if it is one.
+fn agent_version(user_agent: Option<&str>) -> Option<&str> {
+    let v = user_agent?.strip_prefix("Krunk/")?.split_whitespace().next()?;
+    let ok = !v.is_empty()
+        && v.len() <= VERSION_MAX
+        && v.starts_with(|c: char| c.is_ascii_digit())
+        && v.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+'));
+    ok.then_some(v)
+}
+
 // ---- Codes ----------------------------------------------------------------------------------
 
 /// Crockford base32 (PROTOCOL §3.2).
@@ -519,14 +529,17 @@ impl FromRequestParts<AppState> for DeviceAuth {
         let row = row.ok_or_else(token_unauthorized)?;
         if (Utc::now() - row.last_used_at).num_seconds() >= 60 {
             let client = Client::from_request_parts(parts, state).await?;
+            // The version follows the app's updates (it was the one at link time only).
             sqlx::query(
                 "UPDATE devices SET last_used_at = now(), last_ip = $2::inet, last_country = $3,
-                        user_agent = coalesce($4, user_agent) WHERE id = $1",
+                        user_agent = coalesce($4, user_agent), client_version = coalesce($5, client_version)
+                 WHERE id = $1",
             )
             .bind(row.device_id)
             .bind(client.ip().to_string())
             .bind(client.info.country.as_deref())
             .bind(client.user_agent.as_deref())
+            .bind(agent_version(client.user_agent.as_deref()))
             .execute(&state.db)
             .await?;
         }
@@ -1093,6 +1106,17 @@ pub async fn active_count(db: &sqlx::PgPool, account_id: Uuid) -> Result<i64, sq
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_versions() {
+        assert_eq!(agent_version(Some("Krunk/0.10.1")), Some("0.10.1"));
+        assert_eq!(agent_version(Some("Krunk/1.2.3-beta+4 (Windows)")), Some("1.2.3-beta+4"));
+        for ua in [None, Some(""), Some("Krunk/"), Some("Mozilla/5.0"), Some("krunk/0.10.1"), Some("Krunk/x1")] {
+            assert_eq!(agent_version(ua), None, "{ua:?}");
+        }
+        assert_eq!(agent_version(Some(&format!("Krunk/1.{}", "0".repeat(40)))), None, "too long for the column");
+        assert_eq!(agent_version(Some("Krunk/1.0<script>")), None);
+    }
 
     #[test]
     fn user_codes() {
