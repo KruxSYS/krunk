@@ -118,6 +118,32 @@ pub fn clean_label(s: &str) -> Option<String> {
     ok.then(|| s.to_string())
 }
 
+/// A label as shown: one the app generated before 0.11.0 ("Krunk 0.8.0 on Windows 11", that exact
+/// pattern) is shown without its version, which went stale with the first update (the version is
+/// shown from `client_version`). Display only: the stored label is never rewritten, and anything
+/// else (a name the user typed) is returned as it is. The app does the same
+/// (`core/src/account.rs::display_label`).
+pub fn display_label(label: &str) -> String {
+    fn version(v: &str) -> bool {
+        let (core, pre) = match v.split_once('-') {
+            Some((c, p)) => (c, Some(p)),
+            None => (v, None),
+        };
+        !core.is_empty()
+            && core.split('.').all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+            && pre
+                .is_none_or(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_'))
+    }
+    let generated = label
+        .strip_prefix("Krunk ")
+        .and_then(|rest| rest.split_once(" on "))
+        .filter(|(v, os)| version(v) && matches!(*os, "Windows 10" | "Windows 11" | "Android"));
+    match generated {
+        Some((_, os)) => format!("Krunk on {os}"),
+        None => label.to_string(),
+    }
+}
+
 fn bad() -> ApiError {
     ApiError::bad_request("bad_request", "The request is not valid.")
 }
@@ -581,6 +607,7 @@ pub async fn device_me(State(state): State<AppState>, d: DeviceAuth) -> ApiResul
     .bind(d.account_id)
     .fetch_one(&state.db)
     .await?;
+    let me = DeviceMe { label: display_label(&me.label), ..me };
     Ok(Json(me).into_response())
 }
 
@@ -820,7 +847,7 @@ pub struct DeviceItem {
 /// The account's devices: linked ones and those revoked in the last 30 days. An approved link
 /// whose tokens were never collected isn't a device yet and isn't listed.
 pub async fn list_devices(db: &sqlx::PgPool, account_id: Uuid) -> Result<Vec<DeviceItem>, sqlx::Error> {
-    sqlx::query_as(
+    let rows: Vec<DeviceItem> = sqlx::query_as(
         "SELECT d.id, d.short, d.platform, d.label, d.client_version, d.created_at AS created,
                 d.last_used_at AS last_used, d.last_sync_at AS last_sync, d.last_country, d.has_keys, d.revoked_at
          FROM devices d WHERE d.account_id = $1
@@ -829,7 +856,8 @@ pub async fn list_devices(db: &sqlx::PgPool, account_id: Uuid) -> Result<Vec<Dev
     )
     .bind(account_id)
     .fetch_all(db)
-    .await
+    .await?;
+    Ok(rows.into_iter().map(|d| DeviceItem { label: display_label(&d.label), ..d }).collect())
 }
 
 /// `GET web/devices`: the account's devices (linked ones and those revoked in the last 30 days).
@@ -1007,7 +1035,7 @@ pub async fn list_sessions(
             ip_masked: mask(r.ip),
             country: r.country,
             user_agent: r.user_agent,
-            label: r.label,
+            label: r.label.as_deref().map(display_label),
         })
         .collect())
 }
@@ -1147,8 +1175,25 @@ mod tests {
     }
 
     #[test]
+    fn shown_labels() {
+        for (label, shown) in [
+            ("Krunk 0.8.0 on Windows 11", "Krunk on Windows 11"),
+            ("Krunk 0.10.2 on Windows 10", "Krunk on Windows 10"),
+            ("Krunk 1.0.0-rc.1 on Android", "Krunk on Android"),
+            ("Krunk on Windows 11", "Krunk on Windows 11"),
+            ("Krunk 0.8.0 on Windows 11 (work)", "Krunk 0.8.0 on Windows 11 (work)"),
+            ("My Krunk 0.8.0 on Windows 11", "My Krunk 0.8.0 on Windows 11"),
+            ("Krunk 0.8 beta on Windows 11", "Krunk 0.8 beta on Windows 11"),
+            ("Krunk 0.8.0 on Linux", "Krunk 0.8.0 on Linux"),
+            ("Living room PC", "Living room PC"),
+        ] {
+            assert_eq!(display_label(label), shown, "{label}");
+        }
+    }
+
+    #[test]
     fn labels() {
-        assert_eq!(clean_label("  Krunk 0.8.0 on Windows 11 ").as_deref(), Some("Krunk 0.8.0 on Windows 11"));
+        assert_eq!(clean_label("  Krunk on Windows 11 ").as_deref(), Some("Krunk on Windows 11"));
         assert_eq!(clean_label(&"é".repeat(64)).map(|s| s.chars().count()), Some(64));
         for bad in ["", "   ", "two\nlines", "tab\there", &"x".repeat(65)] {
             assert_eq!(clean_label(bad), None, "{bad:?}");

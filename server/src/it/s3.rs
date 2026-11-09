@@ -466,6 +466,56 @@ async fn the_device_version_follows_updates() {
 }
 
 #[tokio::test]
+async fn generated_names_are_shown_without_their_stale_version() {
+    let Some(e) = env().await else { return };
+    let mut b = signed_in(&e, "names@example.com").await;
+    let d = Device::new();
+    let mut ids = Vec::new();
+    for _ in 0..3 {
+        ids.push(linked(&e, &mut b, &d).await);
+    }
+    // Names from before 0.11.0: one the app made, one the user typed in the same shape with
+    // more text, and one the user typed freely.
+    let stored = ["Krunk 0.8.0 on Windows 11", "Krunk 0.8.0 on Windows 11 (work)", "Living room PC"];
+    for ((id, ..), label) in ids.iter().zip(stored) {
+        sqlx::query("UPDATE devices SET label = $2, client_version = '0.11.0' WHERE id = $1::uuid")
+            .bind(id)
+            .bind(label)
+            .execute(&e.db)
+            .await
+            .unwrap();
+    }
+    let r = b.get(&e, "devices").await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.raw);
+    let shown = |id: &str| {
+        let d = r.body.as_array().unwrap().iter().find(|d| d["id"] == id).unwrap();
+        (d["label"].as_str().unwrap().to_string(), d["client_version"].as_str().unwrap().to_string())
+    };
+    assert_eq!(shown(&ids[0].0), ("Krunk on Windows 11".into(), "0.11.0".into()));
+    assert_eq!(shown(&ids[1].0).0, "Krunk 0.8.0 on Windows 11 (work)", "a typed name stays");
+    assert_eq!(shown(&ids[2].0).0, "Living room PC");
+    // The app learns its name from device/me: the same rule.
+    let me = d.call(&e, Method::GET, "device/me", None, Some(&ids[0].1)).await;
+    assert_eq!(me.body["label"], "Krunk on Windows 11");
+    let me = d.call(&e, Method::GET, "device/me", None, Some(&ids[1].1)).await;
+    assert_eq!(me.body["label"], "Krunk 0.8.0 on Windows 11 (work)");
+    // The signed-in browsers list too.
+    let r = b.get(&e, "sessions").await;
+    assert!(r.raw.contains("\"Krunk on Windows 11\"") && !r.raw.contains("\"Krunk 0.8.0 on Windows 11\""), "{}", r.raw);
+    // Display only: nothing was rewritten.
+    let mut rows: Vec<String> = sqlx::query_scalar(
+        "SELECT label FROM devices d JOIN accounts a ON a.id = d.account_id WHERE a.email = 'names@example.com'",
+    )
+    .fetch_all(&e.db)
+    .await
+    .unwrap();
+    rows.sort();
+    let mut want: Vec<String> = stored.iter().map(|s| s.to_string()).collect();
+    want.sort();
+    assert_eq!(rows, want);
+}
+
+#[tokio::test]
 async fn device_quota() {
     let Some(e) = env().await else { return };
     let mut b = signed_in(&e, "many@example.org").await;

@@ -5054,9 +5054,9 @@ async function testAccountCard(browser) {
     await page.waitForTimeout(40);
     check(await vis('account-message') && (await page.textContent('#account-message')).includes("couldn't reach"), theme + ': an error is one clear sentence');
     await shot(page, 'account-error-' + theme + '.png');
-    await emit(page, { event: 'account', card: { state: 'signedIn', email: 'someone@example.org', deviceName: 'Krunk 0.8.0 on Windows 11' } });
+    await emit(page, { event: 'account', card: { state: 'signedIn', email: 'someone@example.org', deviceName: 'Krunk on Windows 11', version: '0.11.0' } });
     await page.waitForTimeout(40);
-    check((await page.textContent('#account-title')) === 'Signed in as someone@example.org' && (await page.textContent('#account-desc')).includes('Krunk 0.8.0 on Windows 11'), theme + ': signed in: the address and the device name');
+    check((await page.textContent('#account-title')) === 'Signed in as someone@example.org' && (await page.textContent('#account-desc')).includes('This device: Krunk on Windows 11 · version 0.11.0.'), theme + ': signed in: the address, the device name and the running version');
     check(await vis('account-manage') && await vis('account-sign-out') && !(await vis('account-sign-in')), theme + ': Manage account and Sign out on this device');
     await shot(page, 'account-signed-in-' + theme + '.png');
     await page.click('#account-manage');

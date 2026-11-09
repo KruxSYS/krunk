@@ -434,7 +434,7 @@
       $('account-desc').textContent = "Your account isn't shown in private windows. Open Settings in a normal window to sign in or out.";
     } else if (st === 'signedIn') {
       $('account-title').textContent = 'Signed in as ' + c.email;
-      $('account-desc').textContent = 'This device: ' + c.deviceName + '. You can rename or remove it on your account page.';
+      $('account-desc').textContent = 'This device: ' + c.deviceName + (c.version ? ' · version ' + c.version : '') + '. You can rename or remove it on your account page.';
     } else if (st === 'linking') {
       $('account-title').textContent = 'Signing in…';
       $('account-desc').textContent = 'Approve this device on krunk.209.wf. Only approve a code that you see here.';

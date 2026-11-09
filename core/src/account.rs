@@ -37,11 +37,37 @@ pub fn endpoint(base: &str, path: &str) -> String {
     format!("{}{path}", base.trim_end_matches('/'))
 }
 
-/// The device's name until the user renames it on the website: "Krunk 0.8.0 on Windows 11".
+/// The device's name until the user renames it on the website: "Krunk on Windows 11". It has no
+/// version (0.11.0): the name is made once at sign-in, so a version in it went stale with the
+/// first update. The card and the website show the current version next to it.
 /// Windows 11 reports itself as 10.0 with build 22000 or later.
-pub fn device_label(version: &str, windows_build: u32) -> String {
+pub fn device_label(windows_build: u32) -> String {
     let os = if windows_build >= 22000 { "Windows 11" } else { "Windows 10" };
-    format!("Krunk {version} on {os}")
+    format!("Krunk on {os}")
+}
+
+/// A name as shown: one generated before 0.11.0 ("Krunk 0.8.0 on Windows 11", exactly that
+/// pattern) loses its stale version; anything else, such as a name the user typed, stays as it
+/// is. The server does the same (`server/src/devices.rs::display_label`).
+pub fn display_label(label: &str) -> String {
+    fn version(v: &str) -> bool {
+        let (core, pre) = match v.split_once('-') {
+            Some((c, p)) => (c, Some(p)),
+            None => (v, None),
+        };
+        !core.is_empty()
+            && core.split('.').all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+            && pre
+                .is_none_or(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_'))
+    }
+    let generated = label
+        .strip_prefix("Krunk ")
+        .and_then(|rest| rest.split_once(" on "))
+        .filter(|(v, os)| version(v) && matches!(*os, "Windows 10" | "Windows 11" | "Android"));
+    match generated {
+        Some((_, os)) => format!("Krunk on {os}"),
+        None => label.to_string(),
+    }
 }
 
 /// The body of `link/authorize`.
@@ -324,6 +350,8 @@ pub enum CardState {
     SignedIn {
         email: String,
         device_name: String,
+        /// The running app's version, shown next to the name (0.11.0).
+        version: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
     },
@@ -345,14 +373,32 @@ mod tests {
 
     #[test]
     fn labels_and_endpoints() {
-        assert_eq!(device_label("0.8.0", 26100), "Krunk 0.8.0 on Windows 11");
-        assert_eq!(device_label("0.8.0", 19045), "Krunk 0.8.0 on Windows 10");
+        assert_eq!(device_label(26100), "Krunk on Windows 11");
+        assert_eq!(device_label(19045), "Krunk on Windows 10");
         assert_eq!(endpoint("https://krunk.209.wf/", TOKEN), "https://krunk.209.wf/api/v1/link/token");
-        let b: serde_json::Value = serde_json::from_str(&authorize_body("Krunk 0.8.0 on Windows 11", "0.8.0")).unwrap();
+        let b: serde_json::Value = serde_json::from_str(&authorize_body("Krunk on Windows 11", "0.11.0")).unwrap();
         assert_eq!(
             b,
-            serde_json::json!({"platform": "windows", "label": "Krunk 0.8.0 on Windows 11", "client_version": "0.8.0"})
+            serde_json::json!({"platform": "windows", "label": "Krunk on Windows 11", "client_version": "0.11.0"})
         );
+    }
+
+    #[test]
+    fn old_generated_names_lose_their_version_and_typed_ones_stay() {
+        for (label, shown) in [
+            ("Krunk 0.8.0 on Windows 11", "Krunk on Windows 11"),
+            ("Krunk 0.10.2 on Windows 10", "Krunk on Windows 10"),
+            ("Krunk 1.0.0-rc.1 on Windows 11", "Krunk on Windows 11"),
+            ("Krunk on Windows 11", "Krunk on Windows 11"),
+            ("Krunk 0.8.0 on Windows 11 (work)", "Krunk 0.8.0 on Windows 11 (work)"),
+            ("My Krunk 0.8.0 on Windows 11", "My Krunk 0.8.0 on Windows 11"),
+            ("Krunk 0.8.x on Windows 11", "Krunk 0.8.x on Windows 11"),
+            ("Krunk 0.8.0 on Linux", "Krunk 0.8.0 on Linux"),
+            ("Living room PC", "Living room PC"),
+            ("Krunk  on Windows 11", "Krunk  on Windows 11"),
+        ] {
+            assert_eq!(display_label(label), shown, "{label}");
+        }
     }
 
     #[test]
@@ -477,10 +523,15 @@ mod tests {
             serde_json::to_value(&s).unwrap(),
             serde_json::json!({"state": "linking", "userCode": "ABCD-EFGH", "verifyUrl": "https://krunk.209.wf/link?code=ABCD-EFGH", "expiresAtMs": 5})
         );
-        let s = CardState::SignedIn { email: "a@b.c".into(), device_name: "PC".into(), message: None };
+        let s = CardState::SignedIn {
+            email: "a@b.c".into(),
+            device_name: "PC".into(),
+            version: "0.11.0".into(),
+            message: None,
+        };
         assert_eq!(
             serde_json::to_value(&s).unwrap(),
-            serde_json::json!({"state": "signedIn", "email": "a@b.c", "deviceName": "PC"})
+            serde_json::json!({"state": "signedIn", "email": "a@b.c", "deviceName": "PC", "version": "0.11.0"})
         );
         assert_eq!(serde_json::to_value(CardState::Private).unwrap(), serde_json::json!({"state": "private"}));
     }

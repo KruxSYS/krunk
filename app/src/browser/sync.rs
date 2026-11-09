@@ -315,7 +315,7 @@ impl Browser {
                     .filter(|d| d.revoked_at.is_none())
                     .map(|d| DeviceRow {
                         id: d.id.clone(),
-                        name: names.get(&d.id).cloned().unwrap_or_else(|| d.label.clone()),
+                        name: names.get(&d.id).cloned().unwrap_or_else(|| lb_core::account::display_label(&d.label)),
                         platform: d.platform.clone(),
                         keys: d.has_keys,
                         me: d.id == me,
@@ -330,7 +330,7 @@ impl Browser {
                     .filter(|a| a.state == "requested")
                     .map(|a| ApprovalRow {
                         id: a.approval_id.clone(),
-                        label: a.device.label.clone(),
+                        label: lb_core::account::display_label(&a.device.label),
                         platform: a.device.platform.clone(),
                         country: a.device.country.clone(),
                     })

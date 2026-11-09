@@ -142,7 +142,8 @@ impl Browser {
             },
             Stage::SignedIn { file, message } => CardState::SignedIn {
                 email: file.email.clone(),
-                device_name: file.label.clone(),
+                device_name: acct::display_label(&file.label),
+                version: env!("CARGO_PKG_VERSION").to_string(),
                 message: message.clone(),
             },
         })
@@ -241,7 +242,7 @@ impl Browser {
         let gen = self.next_generation();
         info!("account: sign-in started");
         self.set_account_stage(Stage::Working("Asking krunk.209.wf for a code…".into()));
-        let label = acct::device_label(env!("CARGO_PKG_VERSION"), crate::ffi::window::windows_build());
+        let label = acct::device_label(crate::ffi::window::windows_build());
         let body = acct::authorize_body(&label, env!("CARGO_PKG_VERSION"));
         self.spawn_job(
             "account-authorize",

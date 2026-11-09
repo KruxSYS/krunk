@@ -4011,10 +4011,17 @@ mod tests {
         assert!(
             parse_request(Sender::Page(Page::Settings), r#"{"cmd":"accountState","check":true,"token":"x"}"#).is_err()
         );
-        let card =
-            crate::account::CardState::SignedIn { email: "a@b.c".into(), device_name: "PC".into(), message: None };
+        let card = crate::account::CardState::SignedIn {
+            email: "a@b.c".into(),
+            device_name: "PC".into(),
+            version: "0.11.0".into(),
+            message: None,
+        };
         let json = Event::Account { card }.to_json();
-        assert_eq!(json, r#"{"event":"account","card":{"state":"signedIn","email":"a@b.c","deviceName":"PC"}}"#);
+        assert_eq!(
+            json,
+            r#"{"event":"account","card":{"state":"signedIn","email":"a@b.c","deviceName":"PC","version":"0.11.0"}}"#
+        );
         let menu = PopupContent::Menu {
             zoom: 1.0,
             can_reopen: false,
