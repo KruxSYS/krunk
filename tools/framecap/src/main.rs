@@ -89,6 +89,10 @@ impl Sink {
     }
 }
 
+/// The QPC value the frame times count from (in PATH.json: other tools on the machine can put
+/// their own QPC timestamps on the recording's time line).
+static START_QPC: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
 fn qpc() -> i64 {
     let mut v = 0;
     unsafe { QueryPerformanceCounter(&mut v).ok() };
@@ -157,6 +161,7 @@ fn capture_dxgi(a: &Args, sink: &mut Sink) -> windows::core::Result<()> {
     let dup: IDXGIOutputDuplication = unsafe { output.DuplicateOutput(&device)? };
     let freq = qpf();
     let start = qpc();
+    START_QPC.store(start, std::sync::atomic::Ordering::Relaxed);
     let deadline = Instant::now() + Duration::from_secs_f64(a.seconds);
     let mut staging: Option<ID3D11Texture2D> = None;
     let mut rgb = Vec::new();
@@ -206,6 +211,7 @@ fn capture_gdi(a: &Args, sink: &mut Sink) -> std::io::Result<()> {
     let (x, y, w, h) = a.rect;
     let freq = qpf();
     let start = qpc();
+    START_QPC.store(start, std::sync::atomic::Ordering::Relaxed);
     let deadline = Instant::now() + Duration::from_secs_f64(a.seconds);
     let mut rgb = Vec::new();
     unsafe {
@@ -277,8 +283,16 @@ fn main() {
     sink.csv.flush().unwrap();
     let (sw, sh) = ((a.rect.2 + a.step - 1) / a.step, (a.rect.3 + a.step - 1) / a.step);
     let meta = format!(
-        "{{\"rect\":[{},{},{},{}],\"step\":{},\"width\":{sw},\"height\":{sh},\"frames\":{},\"method\":\"{method}\",\"seconds\":{}}}\n",
-        a.rect.0, a.rect.1, a.rect.2, a.rect.3, a.step, sink.frames, a.seconds
+        "{{\"rect\":[{},{},{},{}],\"step\":{},\"width\":{sw},\"height\":{sh},\"frames\":{},\"method\":\"{method}\",\"seconds\":{},\"startQpc\":{},\"qpf\":{}}}\n",
+        a.rect.0,
+        a.rect.1,
+        a.rect.2,
+        a.rect.3,
+        a.step,
+        sink.frames,
+        a.seconds,
+        START_QPC.load(std::sync::atomic::Ordering::Relaxed),
+        qpf()
     );
     std::fs::write(format!("{}.json", a.out), meta).unwrap();
     println!("framecap: {} frames ({method})", sink.frames);
