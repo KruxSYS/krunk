@@ -738,8 +738,9 @@ selected, Enter searches or opens the typed address as before (`vm-051-omnibox.p
 
 ### Passwords
 1. With logins saved for a site, click into its password field: the dropdown with the usernames;
-   the username field shows it too. The site's exact origin first, then same-domain https logins
-   (with their host); an http page is never offered https logins and vice versa.
+   the username field shows it too. Only the site's own logins (exact origin); a site with none
+   gets same-domain https logins (with their host); an http page is never offered https logins
+   and vice versa.
 2. Choose one: both fields fill, the page gets input and change events; before the choice the
    page's own script sees empty fields.
 3. Restart (vault locked): the dropdown says "Unlock Krunk passwords"; the click opens Krunk's
@@ -1084,3 +1085,20 @@ Then:
 6. **Update from 0.9.0:** the in-app update downloads the larger package (new engine) and
    installs it; krunk://gpu shows the engine files as this release's after the restart.
 
+
+## Krunk 0.10.1 (round 15)
+The operator reported that the first unlock from a login form listed every saved password. The
+dropdown offered every login of the registrable domain (a vault with many subdomains of one
+domain got all of them on each site), and the list after the unlock had no host labels and no
+limit. Now a site with logins of its own gets only those, and the list after the unlock is the
+same as on a later focus. Only the login suggestions changed: core tests cover the matching;
+on the VM `scripts/vm-0101-unlock.ps1` (one unlock from the dropdown with logins on several
+subdomains). Nothing else was rerun (the engine and the rest of the host are 0.10.0's).
+1. **Unlock from a login form:** save logins on two subdomains of one domain and one other site,
+   restart, click into the first subdomain's password field, unlock: it fills its own login (or
+   lists only its own logins), never the other subdomain's or the other site's.
+2. **Sister subdomain:** on a third subdomain without logins, the dropdown lists the domain's
+   logins, each with its host.
+3. **Account page (server):** after an update, krunk.209.wf → Account → Devices shows the new
+   version for the device once it has synced (the server takes it from the `Krunk/<version>`
+   user agent at most once a minute; it used to keep the version from the time of linking).

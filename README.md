@@ -292,8 +292,9 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   - When you sign in to a site, Krunk asks "Save password?". The first save asks you to
     create the vault with a master password.
   - **Filling:** click into a username or password field and Krunk's dropdown offers the
-    matching logins: the site's exact origin first, then logins saved for the same domain
-    (https pages only; an http page gets only its own http logins). Choosing one fills the
+    matching logins: the site's own (exact origin); only when it has none, the logins saved
+    for other sites of the same domain, with their host (https pages only; an http page gets
+    only its own http logins). Choosing one fills the
     form. A login form inside a cross-origin iframe gets only that origin's logins. With the
     vault locked the dropdown offers **Unlock Krunk passwords**, which opens Krunk's own
     master-password prompt (never page content) and fills afterwards; the next time in the

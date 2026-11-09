@@ -9,9 +9,9 @@
 # focusing the password field shows "Unlock Krunk passwords", the click opens Krunk's
 # master-password prompt, a wrong password fails cleanly, the right one fills the form (one
 # match). The next focus shows the username with no prompt. The iframe's field shows only the
-# iframe's own login. On https://login.krunk-test.test the exact entry comes first, then the
-# domain match (with its host); the http entry is never offered to https, and http gets only
-# its own. A private tab gets suggestions and fills, but never offers to save. The pages print
+# iframe's own login. On https://login.krunk-test.test only the exact entry (since 0.10.1 a
+# site's own logins hide its sister subdomain's); the http entry is never offered to https,
+# and http gets only its own. A private tab gets suggestions and fills, but never offers to save. The pages print
 # their fields and every input/change event, so the screenshots show when the password
 # arrived. Needs serve.ps1 on :8094, :8095 and https :8443 (started here; the https setup is
 # scripts/vm-050-https-setup.ps1). Screenshots "af-*".
@@ -98,12 +98,12 @@ Click 175 667 1200
 Shot "$P-11-iframe-suggestion"
 Click 305 702 1500
 Shot "$P-12-iframe-filled"
-# (7) https: the exact origin first, then the registrable-domain match; never the http entry.
+# (7) https: only the exact origin's login (0.10.1); never the domain's or the http entry.
 SafeGo 'https://login.krunk-test.test:8443/origin-login.html' 3500
 Click 170 315 1200
-Shot "$P-13-https-exact-then-domain"
-Click 190 391 1500
-Shot "$P-14-https-domain-entry-filled"
+Shot "$P-13-https-exact-only"
+Click 190 353 1500
+Shot "$P-14-https-exact-entry-filled"
 # (8) http on the same host: only the http entry.
 SafeGo 'http://login.krunk-test.test:8094/origin-login.html' 3500
 Click 170 237 1200

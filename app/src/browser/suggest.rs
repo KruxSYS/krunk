@@ -1,7 +1,7 @@
 //! Login suggestions under a focused password or username field (Krunk 0.5.0). When a page
 //! (or an http(s) iframe) reports that a login field got the focus, the host shows a small
-//! dropdown of the vault's matching usernames (exact origin first, then the same
-//! registrable domain, see `lb_core::vault::match_kind`). Choosing one fills that frame's
+//! dropdown of the vault's matching usernames (the exact origin's, else the same
+//! registrable domain's, see `lb_core::vault::Vault::matches_for`). Choosing one fills that frame's
 //! form. The dropdown is a popup that never takes the focus from the field. While the vault
 //! is locked, a keyed index of the sites that have logins (`HintIndex`, in the database with
 //! a DPAPI-wrapped key) decides whether to offer "Unlock Krunk passwords"; the unlock prompt
@@ -84,26 +84,7 @@ impl Browser {
         }
         drop(just_filled);
         let url = format!("{origin}/");
-        let entries: Vec<SuggestChoice> = if self.vault_unlocked() {
-            let vault = self.vaults.vault.borrow();
-            vault
-                .as_ref()
-                .map(|v| {
-                    v.matches_for(&url)
-                        .into_iter()
-                        .map(|(e, k)| SuggestChoice {
-                            id: e.id.clone(),
-                            username: e.username.clone(),
-                            host: (k == MatchKind::Domain)
-                                .then(|| lb_core::urlclean::host_of(&e.origin).unwrap_or_default()),
-                        })
-                        .take(8)
-                        .collect()
-                })
-                .unwrap_or_default()
-        } else {
-            Vec::new()
-        };
+        let entries = if self.vault_unlocked() { self.suggest_choices(&url) } else { Vec::new() };
         let locked = !self.vault_unlocked() && self.vault_exists() && self.site_has_logins(&url);
         // A new password is being chosen: offer a generated one (never in private tabs; the
         // page gets it only when the user picks it).
@@ -463,29 +444,15 @@ impl Browser {
             );
             return;
         }
-        let url = format!("{origin}/");
-        let matches: Vec<(String, String, MatchKind)> = self
-            .vaults
-            .vault
-            .borrow()
-            .as_ref()
-            .map(|v| v.matches_for(&url).into_iter().map(|(e, k)| (e.id.clone(), e.username.clone(), k)).collect())
-            .unwrap_or_default();
-        match matches.len() {
+        // The same list as on a focus of the field (it used to have no limit and no hosts).
+        let entries = self.suggest_choices(&format!("{origin}/"));
+        match entries.len() {
             0 => self.hide_popup(),
             1 => {
                 self.hide_popup();
-                self.fill_into_frame(&o, &matches[0].0);
+                self.fill_into_frame(&o, &entries[0].id);
             }
             _ => {
-                let entries: Vec<SuggestChoice> = matches
-                    .into_iter()
-                    .map(|(id, username, k)| SuggestChoice {
-                        id,
-                        username,
-                        host: (k == MatchKind::Domain).then(String::new),
-                    })
-                    .collect();
                 let rect = PopupRect { height: entries.len() as f64 * ROW_CSS + FOOT_CSS, ..o.rect };
                 *self.suggest.open.borrow_mut() = Some(Open { rect, ..o.clone() });
                 self.show_popup(
@@ -501,6 +468,22 @@ impl Browser {
                 );
             }
         }
+    }
+
+    /// The dropdown's rows for a page at `url` (see `Vault::matches_for`): logins of a sister
+    /// subdomain show their host.
+    fn suggest_choices(&self, url: &str) -> Vec<SuggestChoice> {
+        let vault = self.vaults.vault.borrow();
+        let Some(v) = vault.as_ref() else { return Vec::new() };
+        v.matches_for(url)
+            .into_iter()
+            .map(|(e, k)| SuggestChoice {
+                id: e.id.clone(),
+                username: e.username.clone(),
+                host: (k == MatchKind::Domain).then(|| lb_core::urlclean::host_of(&e.origin).unwrap_or_default()),
+            })
+            .take(8)
+            .collect()
     }
 
     /// The tab whose suggestion dropdown is open.

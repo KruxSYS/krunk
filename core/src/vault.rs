@@ -617,8 +617,8 @@ impl Verifier {
     }
 }
 
-/// How a stored login relates to a page (Krunk 0.5.0: exact origin first, then the same
-/// registrable domain).
+/// How a stored login relates to a page (Krunk 0.5.0; since 0.10.1 the same registrable
+/// domain only when the page's origin has no logins, see [`Vault::matches_for`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MatchKind {
     /// Same scheme, host and port.
@@ -1060,14 +1060,16 @@ impl Vault {
         }
     }
 
-    /// Logins for a page: exact-origin matches first, then the same registrable domain
-    /// (https only), each group sorted by username.
+    /// Logins for a page, sorted by username: the page's own origin's, or (only when it has
+    /// none) the same registrable domain's (https only). A vault with logins for many
+    /// subdomains of one domain must not offer all of them on each of those sites (0.10.1).
     pub fn matches_for(&self, url: &str) -> Vec<(&Entry, MatchKind)> {
         let mut v: Vec<(&Entry, MatchKind)> =
             self.entries.iter().filter_map(|e| match_kind(&e.origin, url).map(|k| (e, k))).collect();
-        v.sort_by(|a, b| {
-            a.1.cmp(&b.1).then_with(|| a.0.username.cmp(&b.0.username)).then_with(|| a.0.origin.cmp(&b.0.origin))
-        });
+        if v.iter().any(|(_, k)| *k == MatchKind::Exact) {
+            v.retain(|(_, k)| *k == MatchKind::Exact);
+        }
+        v.sort_by(|a, b| a.0.username.cmp(&b.0.username).then_with(|| a.0.origin.cmp(&b.0.origin)));
         v
     }
 
@@ -2043,7 +2045,7 @@ mod tests {
     }
 
     #[test]
-    fn matches_are_exact_first_then_domain() {
+    fn matches_are_exact_else_domain() {
         let dir = TestDir::new("matches");
         let mut v = Vault::create(&dir.file(), PW, KdfParams::insecure_for_tests(), &NoWrap).unwrap();
         v.save_login("https://accounts.example.com/", "sub-user", z("p"), 1, &NoWrap).unwrap();
@@ -2055,12 +2057,23 @@ mod tests {
             v.matches_for("https://example.com/").into_iter().map(|(e, k)| (e.username.clone(), k)).collect();
         assert_eq!(
             m,
+            vec![("alice".into(), MatchKind::Exact), ("bob".into(), MatchKind::Exact)],
+            "the page's own logins hide the sister subdomains'"
+        );
+        // A sister subdomain without logins of its own gets the domain's, never other domains'.
+        let sister: Vec<(String, MatchKind)> =
+            v.matches_for("https://mail.example.com/").into_iter().map(|(e, k)| (e.username.clone(), k)).collect();
+        assert_eq!(
+            sister,
             vec![
-                ("alice".into(), MatchKind::Exact),
-                ("bob".into(), MatchKind::Exact),
+                ("alice".into(), MatchKind::Domain),
+                ("bob".into(), MatchKind::Domain),
                 ("sub-user".into(), MatchKind::Domain)
             ]
         );
+        let sub: Vec<String> =
+            v.matches_for("https://accounts.example.com/").into_iter().map(|(e, _)| e.username.clone()).collect();
+        assert_eq!(sub, vec!["sub-user"]);
         let http: Vec<String> =
             v.matches_for("http://example.com/").into_iter().map(|(e, _)| e.username.clone()).collect();
         assert_eq!(http, vec!["plain"], "an http page gets only its exact http entry");
