@@ -374,7 +374,8 @@ impl Browser {
             candidates.push(d.clone());
         }
         candidates.push("en".into());
-        for c in candidates {
+        // Locale names only: they become a path (0.11.7, audit C5).
+        for c in candidates.into_iter().filter(|c| ext::valid_locale(c)) {
             let p = root.join("_locales").join(&c).join("messages.json");
             if let Ok(t) = std::fs::read_to_string(&p) {
                 if serde_json::from_str::<Value>(&t).is_ok() {

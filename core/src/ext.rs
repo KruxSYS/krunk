@@ -936,21 +936,37 @@ pub fn file_path(root: &Path, rel: &str) -> PathBuf {
 // ------------------------------------------------------------------ locales
 
 /// `__MSG_name__` placeholders in manifest strings, from `_locales/<locale>/messages.json`.
+/// One pass over `text`: a message's own text is never searched again (0.11.7, audit C6: a
+/// message containing its own placeholder looped forever, or doubled until memory ran out,
+/// before the install prompt).
 pub fn localize(text: &str, messages: &serde_json::Value) -> String {
-    let mut out = text.to_string();
-    while let Some(start) = out.find("__MSG_") {
-        let Some(len) = out[start + 6..].find("__") else { break };
-        let name = out[start + 6..start + 6 + len].to_string();
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("__MSG_") {
+        let Some(len) = rest[start + 6..].find("__") else { break };
+        let name = &rest[start + 6..start + 6 + len];
         let value = messages
-            .get(&name)
+            .get(name)
             .or_else(|| messages.get(name.to_ascii_lowercase()))
             .and_then(|m| m.get("message"))
             .and_then(|m| m.as_str())
-            .unwrap_or("")
-            .to_string();
-        out.replace_range(start..start + 6 + len + 2, &value);
+            .unwrap_or("");
+        out.push_str(&rest[..start]);
+        out.push_str(value);
+        rest = &rest[start + 6 + len + 2..];
     }
+    out.push_str(rest);
     out
+}
+
+/// A locale folder name (`en`, `pt_BR`, `zh_Hant`): `default_locale` and the user's languages
+/// become a path under `_locales`, so nothing else may (0.11.7, audit C5: an absolute or UNC
+/// path replaced the folder, `..` left it).
+pub fn valid_locale(name: &str) -> bool {
+    let (lang, region) = name.split_once('_').map_or((name, None), |(l, r)| (l, Some(r)));
+    (2..=3).contains(&lang.len())
+        && lang.bytes().all(|b| b.is_ascii_alphabetic())
+        && region.is_none_or(|r| (1..=8).contains(&r.len()) && r.bytes().all(|b| b.is_ascii_alphanumeric()))
 }
 
 // ------------------------------------------------------------------ API survey
@@ -1633,6 +1649,41 @@ mod tests {
         assert_eq!(mime_for("x.bin"), "application/octet-stream");
         assert_eq!(version_cmp("1.2", "1.2.0"), std::cmp::Ordering::Equal);
         assert_eq!(version_cmp("1.10", "1.9"), std::cmp::Ordering::Greater);
+    }
+
+    /// 0.11.7, audit C6: messages that name themselves are inserted once, not searched again.
+    #[test]
+    fn localize_is_one_pass() {
+        let msgs = serde_json::json!({"a": {"message": "__MSG_a__"}, "b": {"message": "__MSG_a____MSG_a__"}, "c": {"message": "C"}});
+        assert_eq!(localize("__MSG_a__", &msgs), "__MSG_a__");
+        assert_eq!(localize("x __MSG_b__ y", &msgs), "x __MSG_a____MSG_a__ y");
+        assert_eq!(localize("__MSG_c__-__MSG_C__-__MSG_open", &msgs), "C-C-__MSG_open");
+        assert_eq!(localize("plain", &msgs), "plain");
+    }
+
+    /// 0.11.7, audit C5: only locale names become a path under `_locales`.
+    #[test]
+    fn locale_names() {
+        for ok in ["en", "de", "pt_BR", "zh_Hant", "es_419", "fil"] {
+            assert!(valid_locale(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "e",
+            "english",
+            "\\\\evil\\share",
+            "//evil/share",
+            "C:\\x",
+            "../..",
+            "en/../..",
+            "en_",
+            "en_US_x",
+            "en-US",
+            "en_..",
+            "ab\u{0}",
+        ] {
+            assert!(!valid_locale(bad), "{bad:?}");
+        }
     }
 
     #[test]
