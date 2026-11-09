@@ -644,7 +644,14 @@
         el('span', { class: 'title', text: (label[s.kind] ? label[s.kind] + ' ' : '') + s.title }),
         el('span', { class: 'url', text: s.kind === 'search' || s.kind === 'url' ? '' : s.url }),
       ]);
-      btn.addEventListener('click', function () { LB.post('addressSuggestPick', { url: s.url }); });
+      // Chosen on the press (0.11.4): the press takes the focus from the address bar, whose
+      // blur closes this list before a click (on the release) could arrive.
+      btn.addEventListener('mousedown', function (e) {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        LB.post('addressSuggestPick', { url: s.url });
+      });
+      btn.addEventListener('click', function (e) { if (e.detail === 0) LB.post('addressSuggestPick', { url: s.url }); });
       return btn;
     });
     return [el('div', { class: 'suggest-list addr-list' }, rows)];

@@ -840,7 +840,11 @@
     // The selection goes with the focus (R5): the unfocused bar shows the formatted address.
     address.setSelectionRange(0, 0);
     address.scrollLeft = 0;
-    closeSuggestions(); renderNav();
+    // A press on a suggestion takes the focus from the bar: the list stays a moment, so the
+    // press reaches it (0.11.4).
+    clearTimeout(suggest.blurTimer);
+    suggest.blurTimer = setTimeout(function () { if (document.activeElement !== address) closeSuggestions(); }, 150);
+    renderNav();
   });
   // A press anywhere else in the shell (toolbar, tabs, bookmarks bar) takes the focus from the bar.
   document.addEventListener('pointerdown', function (e) {

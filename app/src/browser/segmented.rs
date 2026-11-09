@@ -423,7 +423,15 @@ impl Browser {
                 self.downloads.borrow_mut().set_state(id, DownloadState::InProgress, None, now_ms());
                 self.run_parts(id);
             }
-            A::Cancel if running => shared.stop.store(CANCEL, Ordering::SeqCst),
+            A::Cancel if running => {
+                // The list says so at once (0.11.4): the connections stop on their next piece of
+                // data, and the end (`parts_ended`) removes the partial file.
+                shared.stop.store(CANCEL, Ordering::SeqCst);
+                self.downloads.borrow_mut().set_state(id, DownloadState::Cancelled, None, now_ms());
+                info!("download {id}: cancelled (its connections are stopping)");
+                self.save_downloads();
+                self.push_downloads();
+            }
             A::Cancel => {
                 // Paused: nothing runs, so it ends here.
                 shared.stop.store(CANCEL, Ordering::SeqCst);
