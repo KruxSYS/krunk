@@ -2,6 +2,9 @@
 // with sizes, and deleting a cookie, a site's cookies, all cookies or an origin's data.
 // 0.6.0: sort by name, usage or last used; a usage breakdown and the last use per site;
 // select sites and clear them, or clear everything shown; the totals at the top.
+// 0.11.0: thousands of sites stay smooth: the list is shown a page at a time (more as it
+// scrolls), sizes are measured for the rows in view first and patched into them (one update per
+// frame, never a rebuild of an open row), and each site says how many subdomains it groups.
 (function () {
   'use strict';
   const el = LB.el;
@@ -13,6 +16,12 @@
   const open = new Set();
   const selected = new Set();
   const usage = new Map(); // origin -> {usage, breakdown}
+  // Rows are added a page at a time; the rows shown so far, by site.
+  const PAGE = 150;
+  let shownCount = PAGE;
+  let shownList = [];
+  const rowNodes = new Map();
+  let measured = 0, toMeasure = 0;
 
   function size(n) {
     if (n === null || n === undefined) return '';
@@ -39,19 +48,53 @@
     return new Date(ms).toLocaleDateString();
   }
 
+  let loadSeq = 0;
   function load() {
+    const seq = ++loadSeq;
     return LB.request('storageList').then(function (r) {
       sites = r.sites;
       render();
-      const origins = [];
-      sites.forEach(function (s) { s.origins.forEach(function (o) { if (!usage.has(o)) origins.push(o); }); });
-      for (let i = 0; i < origins.length; i += 200) {
-        LB.request('storageUsage', { origins: origins.slice(i, i + 200) }).then(function (u) {
-          u.usage.forEach(function (x) { usage.set(x.origin, x); });
-          render();
-        });
-      }
+      measure(seq);
     }).catch(function (e) { Page.toast(e.message); });
+  }
+  // Sizes, 200 origins per request, one request at a time: the sites on screen first.
+  function measure(seq) {
+    const seen = new Set();
+    const origins = [];
+    const add = function (s) { s.origins.forEach(function (o) { if (!usage.has(o) && !seen.has(o)) { seen.add(o); origins.push(o); } }); };
+    shownList.slice(0, shownCount).forEach(add);
+    sites.forEach(add);
+    measured = 0;
+    toMeasure = origins.length;
+    let i = 0;
+    const next = function () {
+      if (seq !== loadSeq || i >= origins.length) { toMeasure = 0; scheduleUpdate(); return; }
+      const batch = origins.slice(i, i + 200);
+      i += batch.length;
+      LB.request('storageUsage', { origins: batch }).then(function (u) {
+        u.usage.forEach(function (x) { usage.set(x.origin, x); });
+        measured += batch.length;
+        scheduleUpdate();
+        next();
+      }).catch(function () { toMeasure = 0; scheduleUpdate(); });
+    };
+    next();
+  }
+  // New sizes: the rows shown and the totals follow, at most once a frame. Sorted by size, the
+  // order follows too (at most once a second while measuring).
+  let updatePending = false, lastResort = 0;
+  function scheduleUpdate() {
+    if (updatePending) return;
+    updatePending = true;
+    requestAnimationFrame(function () {
+      updatePending = false;
+      if (sortSel.value === 'usage' && (toMeasure === 0 || Date.now() - lastResort > 1000)) { lastResort = Date.now(); render(true); return; }
+      rowNodes.forEach(function (node, site) {
+        const s = sites.find(function (x) { return x.site === site; });
+        if (s) node.querySelector('.count').textContent = countText(s);
+      });
+      summary();
+    });
   }
 
   function siteUsage(s) {
@@ -76,6 +119,8 @@
     const by = sortSel.value;
     if (by === 'usage') {
       shown.sort(function (a, b) { return (siteUsage(b) || 0) - (siteUsage(a) || 0) || b.cookies - a.cookies || a.site.localeCompare(b.site); });
+    } else if (by === 'cookies') {
+      shown.sort(function (a, b) { return b.cookies - a.cookies || a.site.localeCompare(b.site); });
     } else if (by === 'lastUsed') {
       shown.sort(function (a, b) { return (b.lastUsed || 0) - (a.lastUsed || 0) || a.site.localeCompare(b.site); });
     } else {
@@ -89,29 +134,80 @@
     const selBtn = document.getElementById('clear-selected');
     selBtn.hidden = !selected.size;
     selBtn.textContent = 'Clear selected (' + selected.size + ')';
-    document.getElementById('clear-shown').disabled = !(shown || shownSites()).length;
+    const n = (shown || shownSites()).length;
+    const all = document.getElementById('clear-shown');
+    all.disabled = !n;
+    all.textContent = search.value.trim() ? 'Clear all shown (' + n + ')' : 'Clear all shown';
   }
 
-  function render() {
-    const q = search.value.trim().toLowerCase();
-    const shown = shownSites();
+  function summary() {
+    const q = search.value.trim();
     const cookieTotal = sites.reduce(function (n, s) { return n + s.cookies; }, 0);
     let bytes = 0;
     sites.forEach(function (s) { bytes += siteUsage(s) || 0; });
     document.getElementById('summary').textContent = sites.length + ' sites, ' + cookieTotal + ' cookies' +
-      (bytes ? ', ' + size(bytes) + ' of site data' : '') + (q ? ' · ' + shown.length + ' shown' : '');
-    updateHeader(shown);
+      (bytes ? ', ' + size(bytes) + ' of site data' : '') + (q ? ' · ' + shownList.length + ' shown' : '') +
+      (toMeasure ? ' · measuring sizes… ' + Math.min(measured, toMeasure) + ' of ' + toMeasure : '');
+  }
+
+  // `keep`: the same list again (new sizes, sorted by size): as many rows as before.
+  function render(keep) {
+    const q = search.value.trim().toLowerCase();
+    shownList = shownSites();
+    if (!keep) shownCount = PAGE;
+    summary();
+    updateHeader(shownList);
     list.textContent = '';
-    if (!shown.length) {
+    rowNodes.clear();
+    if (!shownList.length) {
       list.appendChild(el('div', { class: 'empty', text: q ? 'No site matches.' : 'No cookies or site data.' }));
       return;
     }
-    shown.forEach(function (s) { list.appendChild(siteNode(s)); });
+    appendRows(0, Math.min(shownCount, shownList.length));
+  }
+  // Rows `from`..`to` of the shown list, and the marker that brings the next page into view.
+  const moreObserver = 'IntersectionObserver' in window ? new IntersectionObserver(function (entries) {
+    if (entries.some(function (e) { return e.isIntersecting; })) showMore();
+  }, { rootMargin: '600px' }) : null;
+  function appendRows(from, to) {
+    const old = list.querySelector('.more');
+    if (old) { if (moreObserver) moreObserver.unobserve(old); old.remove(); }
+    const frag = document.createDocumentFragment();
+    for (let i = from; i < to; i++) {
+      const node = siteNode(shownList[i]);
+      rowNodes.set(shownList[i].site, node);
+      frag.appendChild(node);
+    }
+    list.appendChild(frag);
+    if (to < shownList.length) {
+      const more = el('button', { class: 'more link-btn', type: 'button', text: 'Show more (' + (shownList.length - to) + ' more sites)', onclick: showMore });
+      list.appendChild(more);
+      if (moreObserver) moreObserver.observe(more);
+    }
+  }
+  function showMore() {
+    const from = Math.min(shownCount, shownList.length);
+    if (from >= shownList.length) return;
+    shownCount += PAGE;
+    appendRows(from, Math.min(shownCount, shownList.length));
+  }
+
+  // "2 cookies · 3 subdomains · local 2.0 KB · 50.8 KB"
+  function subdomains(s) {
+    const hosts = new Set();
+    s.origins.forEach(function (o) { try { const h = new URL(o).hostname; if (h !== s.site) hosts.add(h); } catch (e) { /* not a URL */ } });
+    return hosts.size;
+  }
+  function countText(s) {
+    const used = siteUsage(s);
+    const sub = subdomains(s);
+    const parts = [s.cookies + (s.cookies === 1 ? ' cookie' : ' cookies')]
+      .concat(sub ? [sub + (sub === 1 ? ' subdomain' : ' subdomains')] : [])
+      .concat(siteBreakdown(s));
+    return parts.join(' · ') + (used ? ' · ' + size(used) : '');
   }
 
   function siteNode(s) {
-    const used = siteUsage(s);
-    const parts = [s.cookies + (s.cookies === 1 ? ' cookie' : ' cookies')].concat(siteBreakdown(s));
     const check = el('input', { type: 'checkbox', class: 'pick', 'aria-label': 'Select ' + s.site });
     check.checked = selected.has(s.site);
     check.addEventListener('click', function (e) { e.stopPropagation(); });
@@ -122,7 +218,7 @@
         el('span', { class: 'chev', text: '›' }),
         Page.favicon('https://' + s.site + '/'),
         el('div', { class: 'main' }, [el('span', { class: 'name', text: s.site })]),
-        el('span', { class: 'count', text: parts.join(' · ') + (used ? ' · ' + size(used) : '') }),
+        el('span', { class: 'count', text: countText(s) }),
         el('span', { class: 'last', title: s.lastUsed ? new Date(s.lastUsed).toLocaleString() : '', text: ago(s.lastUsed) }),
         Page.iconButton('trash', 'Clear ' + s.site, function (e) { e.stopPropagation(); clearSites([s]); }),
       ]),
@@ -239,7 +335,7 @@
     clearSites(sites.filter(function (s) { return selected.has(s.site); }));
   });
   document.getElementById('clear-shown').addEventListener('click', function () { clearSites(shownSites()); });
-  sortSel.addEventListener('change', render);
+  sortSel.addEventListener('change', function () { render(); });
 
   document.getElementById('delete-all').addEventListener('click', function () {
     Page.confirm('Delete all cookies? You will be signed out of most sites.', { ok: 'Delete all', danger: true }).then(function (yes) {
@@ -248,7 +344,7 @@
         .catch(function (e) { Page.toast(e.message); });
     });
   });
-  search.addEventListener('input', Page.debounce(render, 100));
+  search.addEventListener('input', Page.debounce(function () { render(); }, 100));
 
   LB.post('ready');
   load();

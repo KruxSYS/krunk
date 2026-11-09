@@ -1783,6 +1783,78 @@ async function testTasks(browser) {
   await page.context().close();
 }
 
+// 0.11.0: a large cookie list (2,500 sites, 6,000 origins) stays usable: a page of rows at a
+// time, sizes measured on-screen first and patched in, search and sort over all of it, and
+// clearing what a search shows (after a confirmation).
+async function testStorageLarge(browser) {
+  console.log('storage page: 2,500 sites');
+  const data = { sites: [] };
+  for (let i = 0; i < 2500; i++) {
+    const site = 'site' + String(i).padStart(4, '0') + (i % 10 === 0 ? '.news' : '.example');
+    const origins = ['https://' + site];
+    if (i % 2 === 0) origins.push('https://www.' + site);
+    if (i % 5 === 0) origins.push('https://cdn.' + site);
+    data.sites.push({ site, cookies: i % 7, origins, lastUsed: i % 3 ? Date.now() - i * 60000 : null });
+  }
+  const { page, errors } = await openPage(browser, 'https://krunk.invalid/storage.html', { width: 1000, height: 700 }, 1, (d) => {
+    const h = window.__host.handlers;
+    window.__usageCalls = [];
+    h.storageList = () => ({ sites: d.sites });
+    h.storageUsage = (m) => { window.__usageCalls.push(m.origins.length); return { usage: m.origins.map((o) => ({ origin: o, usage: o.length * 100, breakdown: [['local_storage', o.length * 100]] })) }; };
+    h.storageCookies = () => ({ cookies: [] });
+    h.storageDeleteSite = () => ({ deleted: 1 });
+    h.storageClearOrigin = () => null;
+  }, data);
+  const t0 = Date.now();
+  await page.waitForSelector('.site');
+  const firstMs = Date.now() - t0;
+  const rows = await page.locator('.site').count();
+  check(rows === 150 && firstMs < 3000, 'the first page: 150 of 2,500 rows (' + rows + ', ' + firstMs + ' ms)');
+  await page.waitForFunction(() => !document.getElementById('summary').textContent.includes('measuring'), null, { timeout: 15000 });
+  const calls = await page.evaluate(() => window.__usageCalls);
+  check(calls.length >= 20 && Math.max(...calls) <= 200, 'sizes measured 200 origins per request, one after another (' + calls.length + ' requests)');
+  check((await page.locator('.site').count()) === 150, 'measuring does not add or rebuild rows');
+  check((await page.locator('#summary').textContent()).startsWith('2500 sites'), 'the summary counts every site (' + await page.locator('#summary').textContent() + ')');
+  check((await page.locator('.site[data-site="site0000.news"] .count').textContent()).includes('2 subdomains'), 'a site groups its subdomains (' + await page.locator('.site[data-site="site0000.news"] .count').textContent() + ')');
+  // Scrolling to the end of the page of rows brings the next page.
+  await page.locator('#list > .more').scrollIntoViewIfNeeded();
+  await page.waitForFunction(() => document.querySelectorAll('.site').length === 300);
+  check(true, 'scrolling on shows the next 150');
+  // Search runs over all 2,500, not only the rows shown.
+  await page.fill('#search', '.news');
+  await page.waitForTimeout(250);
+  const news = await page.locator('.site').count();
+  check(news === 150 && (await page.locator('#summary').textContent()).includes('250 shown'), 'search ".news": 250 matches, a page shown (' + news + ')');
+  check((await page.locator('#clear-shown').textContent()) === 'Clear all shown (250)', 'the button says how many it clears');
+  await page.fill('#search', 'site2499');
+  await page.waitForTimeout(250);
+  check((await page.locator('.site').count()) === 1, 'a site far down the list is found');
+  await page.fill('#search', '');
+  await page.waitForTimeout(250);
+  // Sort by cookies, then by size.
+  await page.selectOption('#sort', 'cookies');
+  const firstCookies = await page.locator('.site .count').first().textContent();
+  check(firstCookies.startsWith('6 cookies'), 'sort by cookies: most first (' + firstCookies + ')');
+  await page.selectOption('#sort', 'usage');
+  await page.waitForTimeout(100);
+  const top = await page.locator('.site').first().getAttribute('data-site');
+  check(top && top.endsWith('.news') && top.length > 0, 'sort by size: the sites with the most data first (' + top + ')');
+  await page.selectOption('#sort', 'name');
+  // Clearing what a search shows asks first.
+  await page.fill('#search', 'site000');
+  await page.waitForTimeout(250);
+  await page.click('#clear-shown');
+  await page.waitForSelector('dialog[open]');
+  check((await page.locator('dialog[open]').textContent()).includes('10 sites'), 'the confirmation names how many sites');
+  await page.locator('dialog[open] button', { hasText: 'Clear' }).click();
+  await page.waitForFunction(() => window.__host.sent.filter((m) => m.cmd === 'storageDeleteSite').length >= 1);
+  await page.waitForTimeout(400);
+  const del = await page.evaluate(() => window.__host.sent.filter((m) => m.cmd === 'storageDeleteSite').map((m) => m.site));
+  check(del.length >= 8 && del.every((s) => s.startsWith('site000')), 'it clears only the shown sites (' + del.length + ')');
+  await shot(page, 'storage-large.png');
+  check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
+}
+
 async function testStorage(browser) {
   console.log('storage page');
   const long = 'x'.repeat(120);
@@ -1813,7 +1885,7 @@ async function testStorage(browser) {
   check((await page.locator('.site').count()) === 3, 'lists 3 sites');
   check((await page.locator('#summary').textContent()).includes('3 sites, 3 cookies'), 'summary counts sites and cookies');
   await page.waitForFunction(() => document.querySelector('.site[data-site="example.com"] .count').textContent.includes('KB'));
-  check((await page.locator('.site[data-site="example.com"] .count').textContent()) === '2 cookies · local 2.0 KB · IndexedDB 48.8 KB · 50.8 KB', 'site row shows cookies, the breakdown and the storage size (' + await page.locator('.site[data-site="example.com"] .count').textContent() + ')');
+  check((await page.locator('.site[data-site="example.com"] .count').textContent()) === '2 cookies · 1 subdomain · local 2.0 KB · IndexedDB 48.8 KB · 50.8 KB', 'site row shows cookies, its subdomains, the breakdown and the storage size (' + await page.locator('.site[data-site="example.com"] .count').textContent() + ')');
   check((await page.locator('#summary').textContent()).includes('3 sites, 3 cookies, 50.8 KB of site data'), 'the total at the top (' + await page.locator('#summary').textContent() + ')');
   check((await page.locator('.site[data-site="example.com"] .last').textContent()) === '3 h ago' && (await page.locator('.site[data-site="news.example"] .last').textContent()) === 'just now' && (await page.locator('.site[data-site="tracker.example"] .last').textContent()) === 'never used', 'last used per site');
   const order = async () => (await page.locator('.site').evaluateAll((l) => l.map((n) => n.dataset.site))).join(',');
@@ -5630,6 +5702,7 @@ async function testHttpAuth(browser) {
     if (!ONLY || ONLY.includes('Bookmarks')) await testBookmarks(browser);
     if (!ONLY || ONLY.includes('Downloads')) await testDownloads(browser);
     if (!ONLY || ONLY.includes('Storage')) await testStorage(browser);
+    if (!ONLY || ONLY.includes('StorageLarge')) await testStorageLarge(browser);
     if (!ONLY || ONLY.includes('Tasks')) await testTasks(browser);
     if (!ONLY || ONLY.includes('Extensions')) await testExtensions(browser);
     if (!ONLY || ONLY.includes('ExtShim')) await testExtShim(browser);

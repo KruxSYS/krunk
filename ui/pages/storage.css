@@ -32,4 +32,5 @@ table.cookies .flags { color: var(--fg-muted); }
 .link-btn { border: 0; background: none; padding: 0; color: var(--link); cursor: pointer; font: inherit; font-size: 0.923rem; }
 .link-btn.danger { color: var(--danger); }
 .site-actions { display: flex; gap: 14px; margin-top: 10px; }
+#list > .more { display: block; width: 100%; padding: 12px 16px; text-align: center; border-top: 1px solid var(--border); }
 .page-header #search { flex: 1 1 140px; min-width: 120px; width: auto; }
