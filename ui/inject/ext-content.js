@@ -1,9 +1,10 @@
 // Krunk 0.6.0 extensions (R26): the content-script shim. Installed by the host into the
-// isolated world "krunk-ext" of every web tab together with the enabled extensions' content
-// scripts (`core::ext::content_bundle`). Each extension gets its own `chrome` object; calls
-// that need the browser go through the DevTools binding `__krunkExt(json)` and the host
-// answers with `__krunkExtDeliver(json)` evaluated in this world. Nothing here is visible to
-// the page's own scripts (the isolated world has its own globals).
+// isolated world of every web tab together with the enabled extensions' content scripts
+// (`core::ext::content_bundle`). Since 0.11.7 (audit C4) each extension has its own world,
+// "krunk-ext-<id>", and its own DevTools binding `__krunkExt_<id>(json)`: the host knows the
+// caller from the binding, and one extension can't reach another's globals. The host answers
+// with `__krunkExtDeliver(json)` evaluated in this world. Nothing here is visible to the
+// page's own scripts (the isolated world has its own globals).
 function (extId, manifest, messages) {
   'use strict';
   var pending = {}, nextId = 1, listeners = { message: [], storage: [] };
@@ -28,12 +29,14 @@ function (extId, manifest, messages) {
       listeners.storage.forEach(function (l) { try { l(m.changes, m.area); } catch (e) { report(e); } });
     }
   });
-  function send(cmd, data) { try { window.__krunkExt(JSON.stringify({ ext: extId, cmd: cmd, data: data })); } catch (e) { /* no binding */ } }
+  var bindingName = '__krunkExt_' + extId;
+  function host(json) { return window[bindingName](json); }
+  function send(cmd, data) { try { host(JSON.stringify({ ext: extId, cmd: cmd, data: data })); } catch (e) { /* no binding */ } }
   function call(cmd, data) {
     return new Promise(function (resolve, reject) {
       var id = nextId++;
       pending[id] = { resolve: resolve, reject: reject };
-      try { window.__krunkExt(JSON.stringify({ ext: extId, id: id, cmd: cmd, data: data })); }
+      try { host(JSON.stringify({ ext: extId, id: id, cmd: cmd, data: data })); }
       catch (e) { delete pending[id]; reject(new Error('Krunk: the extension binding is not available')); }
     });
   }

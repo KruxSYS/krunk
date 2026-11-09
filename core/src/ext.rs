@@ -22,10 +22,32 @@ pub const MAX_MANIFEST_BYTES: usize = 256 * 1024;
 pub const ID_LEN: usize = 32;
 /// Extension pages live on this host suffix, one origin per extension.
 pub const HOST_SUFFIX: &str = ".ext.krunk.invalid";
-/// The isolated world the content scripts run in (one for all extensions; the bundle keeps
-/// them apart by closure) and the binding the shim calls into.
+/// The isolated worlds the content scripts run in and the bindings the shim calls into: one
+/// of each per extension, `krunk-ext-<id>` and `__krunkExt_<id>` (0.11.7, audit C4: with one
+/// shared world, an extension could act as another one). The host takes the extension from
+/// the binding's name, never from the message.
 pub const WORLD_NAME: &str = "krunk-ext";
 pub const BINDING_NAME: &str = "__krunkExt";
+
+/// The isolated world of extension `id`'s content scripts.
+pub fn world_name(id: &str) -> String {
+    format!("{WORLD_NAME}-{id}")
+}
+
+/// The extension whose world this is.
+pub fn ext_of_world(name: &str) -> Option<&str> {
+    name.strip_prefix(WORLD_NAME)?.strip_prefix('-').filter(|id| valid_id(id))
+}
+
+/// The binding of extension `id`'s world.
+pub fn binding_name(id: &str) -> String {
+    format!("{BINDING_NAME}_{id}")
+}
+
+/// The extension whose binding this is.
+pub fn ext_of_binding(name: &str) -> Option<&str> {
+    name.strip_prefix(BINDING_NAME)?.strip_prefix('_').filter(|id| valid_id(id))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExtError {
@@ -1174,8 +1196,9 @@ pub struct BundledExtension {
     pub scripts: Vec<BundledScript>,
 }
 
-/// Builds the script that `Page.addScriptToEvaluateOnNewDocument` installs in the isolated
-/// world of every tab: the shim, then every content script wrapped with its match test.
+/// Builds the script that `Page.addScriptToEvaluateOnNewDocument` installs in an isolated
+/// world of every tab: the shim, then every content script wrapped with its match test. Since
+/// 0.11.7 the host builds one bundle per extension, for that extension's own world.
 /// Krunk's own origins are refused inside (`injectableUrl`), the host never registers the
 /// bundle for its UI views anyway.
 pub fn content_bundle(shim: &str, exts: &[BundledExtension]) -> String {
@@ -1319,6 +1342,31 @@ mod tests {
         ] {
             assert!(content_context_allowed(allowed), "{allowed}");
         }
+    }
+
+    /// 0.11.7, audit C4: worlds and bindings name their extension, and nothing else matches.
+    #[test]
+    fn worlds_and_bindings_per_extension() {
+        let id = "abcdefghijklmnopabcdefghijklmnop";
+        assert_eq!(world_name(id), format!("krunk-ext-{id}"));
+        assert_eq!(binding_name(id), format!("__krunkExt_{id}"));
+        assert_eq!(ext_of_world(&world_name(id)), Some(id));
+        assert_eq!(ext_of_binding(&binding_name(id)), Some(id));
+        for bad in ["krunk-ext", "krunk-ext-", "krunk-extabcdefghijklmnopabcdefghijklmnop", "krunk-ext-ABC", "other"] {
+            assert_eq!(ext_of_world(bad), None, "{bad}");
+        }
+        for bad in ["__krunkExt", "__krunkExt_", "__krunkExt_zzzz", "__krunkExtabcdefghijklmnopabcdefghijklmnop"] {
+            assert_eq!(ext_of_binding(bad), None, "{bad}");
+        }
+        // A bundle carries one extension: its own id goes to the shim.
+        let e = BundledExtension {
+            id: id.into(),
+            manifest_json: "{}".into(),
+            messages_json: String::new(),
+            scripts: vec![],
+        };
+        let b = content_bundle("function () {}", std::slice::from_ref(&e));
+        assert!(b.contains(&format!("\"{id}\"")));
     }
 
     #[test]

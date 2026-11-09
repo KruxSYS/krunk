@@ -4925,10 +4925,12 @@ async function testExtShim(browser) {
   await context.route('https://site.example/**', (r) => r.fulfill({ status: 200, headers: { 'content-type': 'text/html' }, body: '<!doctype html><title>Site</title><body><h1>page</h1></body>' }));
   const shim = fs.readFileSync(path.join(__dirname, '..', 'inject', 'ext-content.js'), 'utf8');
   const id = 'e'.repeat(32);
-  await context.addInitScript(() => {
+  await context.addInitScript((bid) => {
     window.__calls = [];
-    window.__krunkExt = (json) => { window.__calls.push(JSON.parse(json)); };
-  });
+    // 0.11.7: the extension's own binding, __krunkExt_<id>; the old shared name stays unused.
+    window['__krunkExt_' + bid] = (json) => { window.__calls.push(JSON.parse(json)); };
+    window.__krunkExt = () => { window.__shared = true; };
+  }, id);
   await context.addInitScript({ content: '(function(){ var __krunkShim = ' + shim.trim() + ';\n' +
     'var ext = __krunkShim(' + JSON.stringify(id) + ', {name: "Fixture", version: "1"}, {greet: {message: "Hi $who$", placeholders: {who: {content: "$1"}}}});\n' +
     'ext.run(["https://site.example/*"], [], false, "document_start", ["cs.css"], function (chrome) { window.__ran = (window.__ran||0)+1; window.__id = chrome.runtime.id; window.__url = chrome.runtime.getURL("a/b.png"); window.__msg = chrome.i18n.getMessage("greet", ["Bob"]); window.__manifest = chrome.runtime.getManifest().name; chrome.storage.local.get("k", function (v) { window.__got = v; }); chrome.runtime.sendMessage({ping: 1}).then(function (r) { window.__reply = r; }); chrome.runtime.onMessage.addListener(function (m, s, send) { window.__in = m; send({pong: m.x}); }); void chrome.notifications; });\n' +
@@ -4946,6 +4948,7 @@ async function testExtShim(browser) {
   const get = v.calls.find((c) => c.cmd === 'storage.get'), send = v.calls.find((c) => c.cmd === 'runtime.sendMessage'), unsupported = v.calls.find((c) => c.cmd === 'unsupported');
   check(get && get.ext === id && get.data.area === 'local' && get.data.keys === 'k' && typeof get.id === 'number', 'storage.get goes through the binding with the area and keys');
   check(send && send.data.message.ping === 1, 'runtime.sendMessage goes through the binding');
+  check(!(await page.evaluate(() => window.__shared)), 'the shim calls its own extension\'s binding, not a shared one (0.11.7)');
   check(unsupported && unsupported.data.api === 'notifications', 'an API Krunk does not provide is reported once');
   await page.evaluate(([gid, sid, xid]) => {
     window.__krunkExtDeliver(JSON.stringify({ ext: xid, reply: gid, data: { k: 42 } }));

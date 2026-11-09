@@ -97,13 +97,17 @@ impl LoadedExt {
     }
 }
 
-/// A content-script world of a tab's frame.
+/// A content-script world of a tab's frame: extension `ext`'s own world (0.11.7, audit C4).
 #[derive(Debug, Clone)]
 struct ExtContext {
     id: i64,
     unique: String,
     main: bool,
+    ext: String,
 }
+
+/// Content-script bundles: (extension id, script).
+type Bundles = Vec<(String, String)>;
 
 /// Who asked, so the answer finds its way back.
 #[derive(Clone)]
@@ -137,20 +141,23 @@ struct Background {
 
 pub(super) struct ExtHost {
     pub(super) exts: RefCell<Vec<LoadedExt>>,
-    /// Bundles for normal and private tabs (empty: nothing to install).
-    bundles: RefCell<(String, String)>,
+    /// Per-extension bundles (id, script) for normal and private tabs (empty: nothing to
+    /// install). Each goes into the extension's own world (0.11.7, audit C4).
+    bundles: RefCell<(Bundles, Bundles)>,
     storage: RefCell<HashMap<String, serde_json::Map<String, Value>>>,
     backgrounds: RefCell<HashMap<String, Background>>,
     popup: RefCell<Option<ExtPopup>>,
-    /// Messages waiting for `respond`.
-    pending: RefCell<HashMap<u64, Caller>>,
+    /// Messages waiting for `respond`, with the extension that may answer them.
+    pending: RefCell<HashMap<u64, (String, Caller)>>,
     next_id: Cell<u64>,
     /// Alarm generations (a cleared alarm's timer finds a newer generation and stops).
     alarms: RefCell<HashMap<String, (u64, Value)>>,
     /// The extension id of the page whose request is being dispatched.
     pub(super) request_origin: RefCell<Option<String>>,
-    /// Per tab: the identifier of the installed bundle script.
-    scripts: RefCell<HashMap<TabId, String>>,
+    /// Per tab: the identifiers of the installed bundle scripts, and the extensions whose
+    /// bindings are added.
+    scripts: RefCell<HashMap<TabId, Vec<String>>>,
+    bindings: RefCell<HashMap<TabId, std::collections::HashSet<String>>>,
     contexts: RefCell<HashMap<TabId, Vec<ExtContext>>>,
     /// Tabs whose Page and Runtime DevTools domains are on (0.7.0, R24: only while an enabled
     /// extension has content scripts for them; every event of an enabled domain crosses to the
@@ -190,7 +197,7 @@ impl ExtHost {
     pub(super) fn new() -> ExtHost {
         ExtHost {
             exts: RefCell::new(Vec::new()),
-            bundles: RefCell::new((String::new(), String::new())),
+            bundles: RefCell::new((Vec::new(), Vec::new())),
             storage: RefCell::new(HashMap::new()),
             backgrounds: RefCell::new(HashMap::new()),
             popup: RefCell::new(None),
@@ -202,6 +209,7 @@ impl ExtHost {
             pending_install: RefCell::new(None),
             popup_closed: RefCell::new((String::new(), 0)),
             scripts: RefCell::new(HashMap::new()),
+            bindings: RefCell::new(HashMap::new()),
             contexts: RefCell::new(HashMap::new()),
         }
     }
@@ -429,12 +437,14 @@ impl Browser {
 
     fn ext_rebuild_bundles(&self) {
         let shim = assets::inject_script("ext-content.js");
-        let build = |private: bool| -> String {
+        // One bundle per extension, for its own world (0.11.7, audit C4). An extension with
+        // the `scripting` permission gets a world even without content scripts, for
+        // `scripting.executeScript` (it used to borrow the shared world).
+        let build = |private: bool| -> Bundles {
             let exts = self.ext.exts.borrow();
-            let list: Vec<ext::BundledExtension> = exts
-                .iter()
+            exts.iter()
                 .filter(|e| e.installed.enabled && (!private || e.installed.allowed_in_private))
-                .filter(|e| !e.manifest.content_scripts.is_empty())
+                .filter(|e| !e.manifest.content_scripts.is_empty() || ext::may_use_scripting(&e.manifest))
                 .map(|e| ext::BundledExtension {
                     id: e.installed.id.clone(),
                     manifest_json: serde_json::to_string(&e.manifest).unwrap_or_else(|_| "{}".into()),
@@ -460,12 +470,8 @@ impl Browser {
                         })
                         .collect(),
                 })
-                .collect();
-            if list.is_empty() {
-                String::new()
-            } else {
-                ext::content_bundle(shim, &list)
-            }
+                .map(|b| (b.id.clone(), ext::content_bundle(shim, std::slice::from_ref(&b))))
+                .collect()
         };
         let bundles = (build(false), build(true));
         let same = *self.ext.bundles.borrow() == bundles;
@@ -479,9 +485,10 @@ impl Browser {
         }
     }
 
-    /// Installs (or replaces) the bundle in a tab's isolated world.
+    /// Installs (or replaces) the bundles in a tab: each extension's in its own isolated world,
+    /// with its own binding.
     fn ext_install_bundle(&self, tab: TabId, view: &View, private: bool) {
-        let bundle = {
+        let bundles = {
             let b = self.ext.bundles.borrow();
             if private {
                 b.1.clone()
@@ -489,15 +496,24 @@ impl Browser {
                 b.0.clone()
             }
         };
-        if let Some(old) = self.ext.scripts.borrow_mut().remove(&tab) {
+        for old in self.ext.scripts.borrow_mut().remove(&tab).unwrap_or_default() {
             view.devtools_method("Page.removeScriptToEvaluateOnNewDocument", &json!({ "identifier": old }));
         }
-        if bundle.is_empty() {
+        // Bindings of extensions that have no bundle here any more.
+        let wanted: std::collections::HashSet<String> = bundles.iter().map(|(id, _)| id.clone()).collect();
+        if let Some(bound) = self.ext.bindings.borrow_mut().get_mut(&tab) {
+            for id in bound.iter().filter(|id| !wanted.contains(*id)) {
+                view.devtools_method("Runtime.removeBinding", &json!({ "name": ext::binding_name(id) }));
+            }
+            bound.retain(|id| wanted.contains(id));
+        }
+        if bundles.is_empty() {
             // No content scripts for this tab (any more): the domains go off again.
             if self.ext.domains.borrow_mut().remove(&tab) {
                 view.devtools_method("Runtime.disable", &json!({}));
                 view.devtools_method("Page.disable", &json!({}));
                 self.ext.contexts.borrow_mut().remove(&tab);
+                self.ext.bindings.borrow_mut().remove(&tab);
             }
             return;
         }
@@ -505,30 +521,35 @@ impl Browser {
         if super::perf_probe::off("cdp") {
             return;
         }
-        // The Page domain (the scripts added below run on new documents only while it is on),
-        // the Runtime domain (contexts, binding calls) and the binding.
+        // The Page domain (the scripts added below run on new documents only while it is on)
+        // and the Runtime domain (contexts, binding calls).
         if self.ext.domains.borrow_mut().insert(tab) {
             view.devtools_method("Page.enable", &json!({}));
             view.devtools_method("Runtime.enable", &json!({}));
-            view.devtools_method(
-                "Runtime.addBinding",
-                &json!({ "name": ext::BINDING_NAME, "executionContextName": ext::WORLD_NAME }),
-            );
         }
-        let weak = self.me.clone();
-        let params = json!({ "source": bundle, "worldName": ext::WORLD_NAME, "runImmediately": true });
-        view.devtools_call("Page.addScriptToEvaluateOnNewDocument", &params, move |r| {
-            let Some(b) = weak.upgrade() else { return };
-            match r {
-                Ok(v) => {
-                    if let Some(id) = v.get("identifier").and_then(|i| i.as_str()) {
-                        info!("tab {tab}: extension scripts installed ({id})");
-                        b.ext.scripts.borrow_mut().insert(tab, id.to_string());
-                    }
-                }
-                Err(e) => warning!("tab {tab}: extension scripts not installed: {e}"),
+        for (id, bundle) in bundles {
+            let world = ext::world_name(&id);
+            if self.ext.bindings.borrow_mut().entry(tab).or_default().insert(id.clone()) {
+                view.devtools_method(
+                    "Runtime.addBinding",
+                    &json!({ "name": ext::binding_name(&id), "executionContextName": world }),
+                );
             }
-        });
+            let weak = self.me.clone();
+            let params = json!({ "source": bundle, "worldName": world, "runImmediately": true });
+            view.devtools_call("Page.addScriptToEvaluateOnNewDocument", &params, move |r| {
+                let Some(b) = weak.upgrade() else { return };
+                match r {
+                    Ok(v) => {
+                        if let Some(script) = v.get("identifier").and_then(|i| i.as_str()) {
+                            info!("tab {tab}: extension {} scripts installed ({script})", b.ext_name(&id));
+                            b.ext.scripts.borrow_mut().entry(tab).or_default().push(script.to_string());
+                        }
+                    }
+                    Err(e) => warning!("tab {tab}: extension {} scripts not installed: {e}", b.ext_name(&id)),
+                }
+            });
+        }
     }
 
     /// A tab view is being set up: its DevTools events (the binding calls and the worlds).
@@ -546,12 +567,14 @@ impl Browser {
     pub(super) fn ext_tab_created(&self, tab: TabId) {
         let Some(view) = self.tab_view(tab) else { return };
         self.ext.domains.borrow_mut().remove(&tab);
+        self.ext.bindings.borrow_mut().remove(&tab);
         self.ext_install_bundle(tab, &view, view.is_private());
     }
 
     pub(super) fn ext_detach_tab(&self, tab: TabId) {
         self.ext.domains.borrow_mut().remove(&tab);
         self.ext.scripts.borrow_mut().remove(&tab);
+        self.ext.bindings.borrow_mut().remove(&tab);
         self.ext.contexts.borrow_mut().remove(&tab);
         self.ext_tab_event("tabRemoved", json!({ "tabId": tab, "windowId": self.window_of(tab) }));
     }
@@ -562,9 +585,10 @@ impl Browser {
             "Target.attachedToTarget" => self.hints_target_attached(tab, params),
             "Runtime.executionContextCreated" => {
                 let Some(ctx) = params.get("context") else { return };
-                if ctx.get("name").and_then(|n| n.as_str()) != Some(ext::WORLD_NAME) {
+                let Some(ext_id) = ctx.get("name").and_then(|n| n.as_str()).and_then(ext::ext_of_world) else {
                     return;
-                }
+                };
+                let ext_id = ext_id.to_string();
                 let id = ctx.get("id").and_then(|i| i.as_i64()).unwrap_or(0);
                 // The world exists in every document of the tab; on Krunk's own pages it is
                 // never used (0.11.7, audit C1).
@@ -574,8 +598,13 @@ impl Browser {
                     return;
                 }
                 let unique = ctx.get("uniqueId").and_then(|u| u.as_str()).unwrap_or("").to_string();
-                info!("tab {tab}: extension world {id} created");
-                self.ext.contexts.borrow_mut().entry(tab).or_default().push(ExtContext { id, unique, main: false });
+                info!("tab {tab}: extension {} world {id} created", self.ext_name(&ext_id));
+                self.ext.contexts.borrow_mut().entry(tab).or_default().push(ExtContext {
+                    id,
+                    unique,
+                    main: false,
+                    ext: ext_id,
+                });
                 // Which frame: the main one gets tabs.sendMessage.
                 if let Some(view) = self.tab_view(tab) {
                     let weak = self.me.clone();
@@ -604,19 +633,26 @@ impl Browser {
                 self.ext.contexts.borrow_mut().remove(&tab);
             }
             "Runtime.bindingCalled" => {
-                if params.get("name").and_then(|n| n.as_str()) != Some(ext::BINDING_NAME) {
+                // The extension is the binding's: each extension's world has only its own
+                // (0.11.7, audit C4). The message's own "ext" field is not trusted.
+                let Some(ext_id) = params.get("name").and_then(|n| n.as_str()).and_then(ext::ext_of_binding) else {
                     return;
-                }
+                };
+                let ext_id = ext_id.to_string();
                 let context = params.get("executionContextId").and_then(|i| i.as_i64()).unwrap_or(0);
-                // Only from a world that was recorded (not one on an internal page, C1).
-                let known = self.ext.contexts.borrow().get(&tab).is_some_and(|l| l.iter().any(|c| c.id == context));
+                // Only from that extension's recorded world (not one on an internal page, C1).
+                let known = self
+                    .ext
+                    .contexts
+                    .borrow()
+                    .get(&tab)
+                    .is_some_and(|l| l.iter().any(|c| c.id == context && c.ext == ext_id));
                 if !known {
                     warning!("tab {tab}: extension call from an unknown world {context}: ignored");
                     return;
                 }
                 let payload = params.get("payload").and_then(|p| p.as_str()).unwrap_or("");
                 let Ok(msg) = serde_json::from_str::<Value>(payload) else { return };
-                let ext_id = msg.get("ext").and_then(|e| e.as_str()).unwrap_or("").to_string();
                 let cmd = msg.get("cmd").and_then(|c| c.as_str()).unwrap_or("").to_string();
                 info!("tab {tab}: extension {} call {cmd}", self.ext_name(&ext_id));
                 let data = msg.get("data").cloned().unwrap_or(Value::Null);
@@ -633,6 +669,13 @@ impl Browser {
             }
             _ => {}
         }
+    }
+
+    /// Extension `ext_id`'s content world in a tab: the main frame's, else any.
+    fn ext_context(&self, tab: TabId, ext_id: &str) -> Option<i64> {
+        let contexts = self.ext.contexts.borrow();
+        let mine: Vec<&ExtContext> = contexts.get(&tab)?.iter().filter(|c| c.ext == ext_id).collect();
+        mine.iter().find(|c| c.main).or(mine.first()).map(|c| c.id)
     }
 
     /// Delivers JSON to the content world of a tab (a reply or an event).
@@ -1098,7 +1141,15 @@ impl Browser {
             }
             "respond" => {
                 let id = data.get("id").and_then(|i| i.as_u64()).unwrap_or(0);
-                if let Some(target) = self.ext.pending.borrow_mut().remove(&id) {
+                // Only the extension the message went to may answer it (0.11.7, audit C4).
+                let target = {
+                    let mut pending = self.ext.pending.borrow_mut();
+                    match pending.get(&id) {
+                        Some((owner, _)) if owner == ext_id => pending.remove(&id).map(|(_, c)| c),
+                        _ => None,
+                    }
+                };
+                if let Some(target) = target {
                     let reply = data.get("data").cloned().unwrap_or(Value::Null);
                     self.ext_reply(&target, ext_id, Ok(reply));
                 }
@@ -1473,16 +1524,10 @@ impl Browser {
         };
         match to_tab {
             Some(tab) => {
-                let context = self
-                    .ext
-                    .contexts
-                    .borrow()
-                    .get(&tab)
-                    .and_then(|l| l.iter().find(|c| c.main).or(l.first()).map(|c| c.id));
-                let Some(context) = context else {
+                let Some(context) = self.ext_context(tab, ext_id) else {
                     return Some(Err("Could not establish connection. Receiving end does not exist.".into()));
                 };
-                self.ext.pending.borrow_mut().insert(id, caller.clone());
+                self.ext.pending.borrow_mut().insert(id, (ext_id.to_string(), caller.clone()));
                 let msg = json!({ "ext": ext_id, "event": "message", "id": id, "data": message, "from": ext::origin(ext_id) });
                 self.ext_deliver_content(tab, context, &msg);
             }
@@ -1492,7 +1537,7 @@ impl Browser {
                 if !has_pages {
                     return Some(Err("Could not establish connection. Receiving end does not exist.".into()));
                 }
-                self.ext.pending.borrow_mut().insert(id, caller.clone());
+                self.ext.pending.borrow_mut().insert(id, (ext_id.to_string(), caller.clone()));
                 self.ext_send_pages(ext_id, "message", json!({ "id": id, "data": message, "sender": sender }));
             }
         }
@@ -1501,7 +1546,8 @@ impl Browser {
         let ext_owned = ext_id.to_string();
         crate::ffi::cef::post_ui_delayed(MESSAGE_TIMEOUT_MS, move || {
             if let Some(b) = weak.upgrade() {
-                if let Some(target) = b.ext.pending.borrow_mut().remove(&id) {
+                let target = b.ext.pending.borrow_mut().remove(&id);
+                if let Some((_, target)) = target {
                     b.ext_reply(&target, &ext_owned, Ok(Value::Null));
                 }
             }
@@ -1637,9 +1683,14 @@ impl Browser {
             }
             let data = json!({ "changes": changes, "area": area });
             self.ext_send_pages(ext_id, "storageChanged", data.clone());
-            // Content worlds of every tab.
-            let targets: Vec<(TabId, i64)> =
-                self.ext.contexts.borrow().iter().flat_map(|(t, l)| l.iter().map(move |c| (*t, c.id))).collect();
+            // The extension's content worlds in every tab (only its own, C4).
+            let targets: Vec<(TabId, i64)> = self
+                .ext
+                .contexts
+                .borrow()
+                .iter()
+                .flat_map(|(t, l)| l.iter().filter(|c| c.ext == ext_id).map(move |c| (*t, c.id)))
+                .collect();
             let msg = json!({ "ext": ext_id, "event": "storageChanged", "changes": data["changes"], "area": area });
             for (tab, ctx) in targets {
                 self.ext_deliver_content(tab, ctx, &msg);
@@ -1701,9 +1752,7 @@ impl Browser {
         else {
             return Err("no tab".into());
         };
-        let context =
-            self.ext.contexts.borrow().get(&tab).and_then(|l| l.iter().find(|c| c.main).or(l.first()).map(|c| c.id));
-        let Some(context) = context else {
+        let Some(context) = self.ext_context(tab, ext_id) else {
             return Err("The tab has no extension world (not a web page, or not allowed there).".into());
         };
         let found = self
