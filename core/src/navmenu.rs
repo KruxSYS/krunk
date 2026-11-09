@@ -50,11 +50,14 @@ pub struct Item {
 
 /// The entries of one menu: before `current` newest first (Back), or after it in order
 /// (Forward); at most `MAX_ITEMS`.
+/// A tab's first entry `about:blank` (a tab that started blank before its page, 0.11.1) is
+/// never offered: the user never saw it.
 pub fn entries_for(current: usize, entries: &[Entry], forward: bool) -> Vec<&Entry> {
+    let skip_first = entries.first().is_some_and(|e| crate::pages::is_blank(&e.url));
     if forward {
         entries.iter().skip(current + 1).take(MAX_ITEMS).collect()
     } else {
-        entries[..current.min(entries.len())].iter().rev().take(MAX_ITEMS).collect()
+        entries[usize::from(skip_first).min(current)..current.min(entries.len())].iter().rev().take(MAX_ITEMS).collect()
     }
 }
 
@@ -81,6 +84,18 @@ mod tests {
             .map(|i| json!({"id": 100 + i, "url": format!("http://localhost:8094/p{i}.html"), "title": format!("P{i}"), "userTypedURL": "", "transitionType": "link"}))
             .collect();
         json!({"currentIndex": current, "entries": entries})
+    }
+
+    #[test]
+    fn a_blank_first_entry_is_never_offered() {
+        let e = |id, url: &str| Entry { id, url: url.into(), title: String::new() };
+        let list = [e(1, "about:blank"), e(2, "https://a.example/"), e(3, "https://b.example/")];
+        let back: Vec<i64> = entries_for(2, &list, false).iter().map(|x| x.id).collect();
+        assert_eq!(back, [2], "about:blank (the start of a tab with edited headers) is left out");
+        assert!(entries_for(1, &list, false).is_empty(), "nothing to go back to");
+        // A blank page the user went to later stays.
+        let later = [e(1, "https://a.example/"), e(2, "about:blank"), e(3, "https://b.example/")];
+        assert_eq!(entries_for(2, &later, false).len(), 2);
     }
 
     #[test]

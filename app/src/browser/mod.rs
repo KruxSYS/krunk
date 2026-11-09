@@ -151,6 +151,9 @@ struct TabView {
     blank_start: Cell<bool>,
     /// The page does not respond (the engine said so; 0.11.0).
     unresponsive: Cell<bool>,
+    /// The view started at `about:blank` before its first page (edited headers): that entry
+    /// leaves the tab's history once the page is there (0.11.1; Back offered about:blank).
+    started_blank: Cell<bool>,
     /// "Wait" was chosen: no prompt until then (ms).
     hang_quiet_until: Cell<i64>,
     /// The last icon handled (its site and a hash of its bytes): an animated or re-announced
@@ -865,6 +868,19 @@ impl Browser {
         }
     }
 
+    /// The first page of a tab that started blank is there: the blank entry before it goes from
+    /// the tab's history (Back is not offered for it, as in Chrome).
+    fn forget_blank_start(&self, id: TabId) {
+        let view = self.views.borrow().get(&id).filter(|v| v.started_blank.replace(false)).map(|v| v.view.clone());
+        if let Some(v) = view {
+            v.devtools_call("Page.resetNavigationHistory", &serde_json::json!({}), move |r| {
+                if r.is_err() {
+                    warning!("tab {id}: the blank first entry could not be removed from its history");
+                }
+            });
+        }
+    }
+
     /// A new (not started) tab view, with its network state.
     fn new_tab_view(&self, private: bool) -> (View, Rc<TabNet>) {
         let net = Rc::new(TabNet::new(self.net.clone()));
@@ -962,6 +978,7 @@ impl Browser {
                 loaded_once: Cell::new(false),
                 blank_start: Cell::new(!popup && !lb_core::pages::is_blank(&url)),
                 unresponsive: Cell::new(false),
+                started_blank: Cell::new(self.first_url.borrow().contains_key(&id)),
                 hang_quiet_until: Cell::new(0),
                 last_favicon: Cell::new(0),
             },
@@ -1044,6 +1061,7 @@ impl Browser {
                     if let Some(v) = b.views.borrow().get(&id) {
                         v.blank_start.set(false);
                     }
+                    b.forget_blank_start(id);
                 }
                 b.release_address_focus_unless(id, &url);
                 b.hang_navigated(id);
