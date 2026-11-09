@@ -1,0 +1,73 @@
+diff --git a/libcef/browser/alloy/alloy_browser_host_impl.cc b/libcef/browser/alloy/alloy_browser_host_impl.cc
+index 248604ecd..f4a72d795 100644
+--- a/libcef/browser/alloy/alloy_browser_host_impl.cc
++++ b/libcef/browser/alloy/alloy_browser_host_impl.cc
+@@ -358,11 +358,9 @@ void AlloyBrowserHostImpl::WasResized() {
+ }
+ 
+ void AlloyBrowserHostImpl::WasHidden(bool hidden) {
+-  if (!IsWindowless()) {
+-    DCHECK(false) << "Window rendering is not disabled";
+-    return;
+-  }
+-
++  // Krunk: windowed browsers can be hidden too; the native Aura delegate hides
++  // the WebContents' window (see CefBrowserPlatformDelegateNativeAura::WasHidden).
++  // Windowless browsers are handled by the OSR delegate as before.
+   if (!CEF_CURRENTLY_ON_UIT()) {
+     CEF_POST_TASK(CEF_UIT,
+                   base::BindOnce(&CefBrowserHost::WasHidden, this, hidden));
+diff --git a/libcef/browser/native/browser_platform_delegate_native_aura.cc b/libcef/browser/native/browser_platform_delegate_native_aura.cc
+index a9637b8d7..f68a0114e 100644
+--- a/libcef/browser/native/browser_platform_delegate_native_aura.cc
++++ b/libcef/browser/native/browser_platform_delegate_native_aura.cc
+@@ -12,6 +12,7 @@
+ #include "content/browser/renderer_host/render_widget_host_view_aura.h"
+ #include "content/public/browser/render_view_host.h"
+ #include "content/public/browser/render_widget_host.h"
++#include "ui/aura/window.h"
+ #include "ui/events/blink/blink_event_util.h"
+ #include "ui/events/blink/web_input_event.h"
+ #include "ui/gfx/geometry/vector2d.h"
+@@ -58,6 +59,29 @@ void CefBrowserPlatformDelegateNativeAura::RenderViewReady() {
+   InstallRootWindowBoundsCallback();
+ }
+ 
++// Krunk: a windowed browser can be hidden (a background tab). Its visibility
++// follows the occlusion state of the WebContents' aura window
++// (WebContentsViewAura::GetVisibility), which stays VISIBLE for a child window
++// that the embedder only moves out of sight. Hiding that aura window makes the
++// occlusion tracker report HIDDEN, so WebContentsViewAura calls WasHidden()
++// itself (timers and animation frames throttled like a background tab in
++// Chrome) and keeps it hidden through later occlusion updates, such as the
++// top-level window being minimised and restored. Showing it reverses this.
++void CefBrowserPlatformDelegateNativeAura::WasHidden(bool hidden) {
++  if (!web_contents_) {
++    return;
++  }
++  aura::Window* window = web_contents_->GetNativeView();
++  if (!window) {
++    return;
++  }
++  if (hidden) {
++    window->Hide();
++  } else {
++    window->Show();
++  }
++}
++
+ void CefBrowserPlatformDelegateNativeAura::SendKeyEvent(
+     const CefKeyEvent& event) {
+   auto view = GetHostView();
+diff --git a/libcef/browser/native/browser_platform_delegate_native_aura.h b/libcef/browser/native/browser_platform_delegate_native_aura.h
+index 1c7eb8bd5..abbad99b3 100644
+--- a/libcef/browser/native/browser_platform_delegate_native_aura.h
++++ b/libcef/browser/native/browser_platform_delegate_native_aura.h
+@@ -30,6 +30,7 @@ class CefBrowserPlatformDelegateNativeAura
+ 
+   // CefBrowserPlatformDelegate methods:
+   void RenderViewReady() override;
++  void WasHidden(bool hidden) override;
+   void SendKeyEvent(const CefKeyEvent& event) override;
+   void SendMouseClickEvent(const CefMouseEvent& event,
+                            CefBrowserHost::MouseButtonType type,

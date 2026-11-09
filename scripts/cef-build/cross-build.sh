@@ -4,7 +4,7 @@
 #   scripts/cef-build/cross-build.sh checkout     depot_tools + CEF/Chromium checkout (pinned)
 #   scripts/cef-build/cross-build.sh toolchain    register the Windows toolchain package, win deps
 #   scripts/cef-build/cross-build.sh configure    patch CEF's platform detection, gn gen
-#   scripts/cef-build/cross-build.sh build        ninja
+#   scripts/cef-build/cross-build.sh build        Krunk's CEF patches (patches/*.patch), ninja
 #   scripts/cef-build/cross-build.sh distrib      minimal distribution archive
 #
 # Everything lives under $CEF_BUILD_ROOT (default /work/cef-build), outside the repository. No
@@ -17,6 +17,9 @@ CEF_COMMIT=cf671c0                 # CEF 156.0.15
 CEF_VERSION=156.0.15
 CHROMIUM_VERSION=156.0.8078.80
 TOOLCHAIN_HASH_KEY=3bfcb536c8      # TOOLCHAIN_HASH in src/build/vs_toolchain.py at this Chromium
+# The archive's flavour: krunk-codecs (0.5.2–0.9.0); -hidden since 0.10.0 (patches/).
+CEF_FLAVOR=krunk-codecs-hidden
+PATCHES=$(cd "$(dirname "$0")" && pwd)/patches
 SRC=$ROOT/chromium_git/chromium/src
 export PATH=$ROOT/chromium_git/depot_tools:$ROOT/depot_tools:$PATH
 export DEPOT_TOOLS_UPDATE=0
@@ -31,6 +34,22 @@ toolchain_env() {
   export "GYP_MSVS_HASH_${TOOLCHAIN_HASH_KEY}=$(basename "$pkg" .zip)"
   export CEF_CROSS_TARGET=windows
   export KRUNK_NO_CIOPFS=1
+}
+
+# Krunk's own CEF patches (0.10.0): applied to the CEF checkout once, idempotently.
+apply_patches() {
+  local p
+  for p in "$PATCHES"/*.patch; do
+    if git -C "$SRC/cef" apply --check "$p" 2>/dev/null; then
+      git -C "$SRC/cef" apply "$p"
+      echo "applied $(basename "$p") ($(sha256sum "$p" | cut -c1-16))"
+    elif git -C "$SRC/cef" apply -R --check "$p" 2>/dev/null; then
+      echo "already applied: $(basename "$p")"
+    else
+      echo "error: $(basename "$p") does not apply to $SRC/cef" >&2
+      exit 1
+    fi
+  done
 }
 
 case "${1:-}" in
@@ -132,6 +151,7 @@ EOF2
     ;;
   build)
     toolchain_env
+    apply_patches
     cd "$SRC"
     autoninja -C out/Release_GN_x64 cefsimple bootstrap bootstrapc
     ls -la out/Release_GN_x64/libcef.dll out/Release_GN_x64/bootstrap.exe
@@ -143,7 +163,7 @@ EOF2
     python3 tools/make_distrib.py --output-dir="$ROOT/distrib" --allow-partial --ninja-build --x64-build --minimal --no-archive --no-docs
     # The folder inside the archive must carry the archive's own name: the cef crate's
     # export-cef-dir derives one from the other.
-    name="cef_binary_${CEF_VERSION}+g${CEF_COMMIT}+chromium-${CHROMIUM_VERSION}_windows64_minimal_krunk-codecs"
+    name="cef_binary_${CEF_VERSION}+g${CEF_COMMIT}+chromium-${CHROMIUM_VERSION}_windows64_minimal_${CEF_FLAVOR}"
     cd "$ROOT/distrib" && dir=$(ls -d cef_binary_* | head -1) && { [ "$dir" = "$name" ] || mv "$dir" "$name"; }
     # No V8 context snapshot in a cross build (see README.md): ship V8's plain snapshot (the
     # patched make_distrib.py copies it; this is the fallback).

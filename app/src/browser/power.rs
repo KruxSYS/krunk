@@ -108,8 +108,9 @@ impl Browser {
             Action::Suspend => {
                 // The second stage does not freeze the page: in CEF 156 a
                 // windowed browser never repaints after an unfreeze
-                // (Page.setWebLifecycleState). It collects garbage again;
-                // Chromium throttles the hidden page's timers meanwhile.
+                // (Page.setWebLifecycleState). It collects garbage again; the
+                // engine throttles the hidden page meanwhile (since 0.10.0:
+                // background tabs are hidden from it, see view.rs set_visible).
                 c.set_memory_low(true);
                 self.set_stage(id, Stage::Suspended, now);
                 info!("tab {id}: asleep (second stage)");

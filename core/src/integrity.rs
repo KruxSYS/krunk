@@ -290,8 +290,8 @@ mod tests {
         assert!(files.len() > 30, "{}", files.len());
         assert_eq!(
             to_hex(&files["libcef.dll"]),
-            "c4e38bbf9f09701640956ea4adb9c28ed740d3348555f37e2de686f4721e7135",
-            "libcef.dll must be the self-built CEF 156.0.15 with codecs (cef.lock)"
+            "d9f4549be3fc0ecace086b345c63e4f3ef822d5bc80d923c73674c05948e5eb9",
+            "libcef.dll must be the self-built CEF 156.0.15 with codecs and Krunk's patches (cef.lock)"
         );
         assert!(files.contains_key("locales/en-US.pak") && files.contains_key("snapshot_blob.bin"));
         // Krunk's own files are not engine files (they change with every build).

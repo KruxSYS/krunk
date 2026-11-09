@@ -961,7 +961,8 @@ network traffic it starts itself is the daily filter-list update and the daily u
   browser (and so no renderer process) until they are first activated.
 - **Background sleep:** after `tab_sleep_minutes` (default 5) without activation, a background
   tab's JavaScript heap is garbage-collected (DevTools protocol `HeapProfiler.collectGarbage`).
-  The tab is already hidden, so Chromium throttles its timers. A second stage 60 s later
+  The tab is already hidden, so the engine throttles it (since 0.10.0, see "Background tabs"
+  below). A second stage 60 s later
   repeats the collection. Activating the tab shows it again, with no reload. Pages are not
   frozen; see "Known limitations".
 - **Discard** (optional, off by default): after `tab_discard_minutes` the tab's browser is
@@ -1247,13 +1248,14 @@ Testing on Windows:
   `%TEMP%\Krunk-update` until the next start, which removes it.
 - **DevTools can't be undocked** into its own window; it docks right or at the bottom of its
   tab's window. Theme changes don't reach a page while its DevTools is open (see above).
-- **Background tabs keep running at full speed.** CEF's windowed (Alloy) browsers are never
-  told they are hidden (`WasHidden` does nothing for them), so a busy page in a background tab
-  keeps rendering. 0.7.1 tried CEF's own way (sizing the browser window to 0×0) and hiding the
-  engine's widget window: in both the page still reports itself visible and draws about 60
-  frames a second (the 0×0 size also shows it a resize). Tab sleep (Settings → General) and
-  discard are the remedy. With 5 busy background
-  tabs Speedometer lost about 8 % on the test machine, Chrome 2 %.
+- **Background tabs** (fixed in 0.10.0). Up to 0.9.0 CEF's windowed (Alloy) browsers were never
+  told they were hidden (`WasHidden` did nothing for them), so every background tab kept
+  rendering at about 60 frames a second at foreground priority: 30 busy tabs used 90 % of a
+  4-core machine and Speedometer fell to 5 % of its score. Since 0.10.0 Krunk's engine carries
+  one patch (`scripts/cef-build/patches/krunk-windowed-hidden.patch`, recorded in `cef.lock`):
+  a background tab's content window is hidden from the engine, which throttles it like Chrome
+  does (no animation frames, timers once a second; pages playing sound, calls and downloads go
+  on). Not tested on a second monitor.
 - **Speedometer is about 14 % below Chrome 157** on the same machine (Krunk 0.7.0: 27.2 vs
   31.5 on the 4-core test VM; Edge 156 32.9). Krunk's own page scripts were measured and
   trimmed (0.7.0); the remaining gap is engine-wide (plain JavaScript and layout run 10–30 %

@@ -647,10 +647,11 @@ impl View {
     /// Shows or hides the view. A shown view goes on top of its siblings: the tab switch shows
     /// the new page over the old one before hiding that (0.7.0, R7).
     ///
-    /// Hiding CEF's window hides nothing from the engine (`was_hidden` only works without a
-    /// window, and the engine's widget inside never hears that its parent was hidden), so the
-    /// page keeps running as a visible one. Hiding that widget window directly does not work
-    /// either: shown again, it stays blank (tried in 0.7.0).
+    /// Moving or hiding CEF's window hides nothing from the engine; `was_hidden` does, since
+    /// 0.10.0 (scripts/cef-build/patches/krunk-windowed-hidden.patch): the engine hides the
+    /// page's own content window, and the page is throttled like a background tab in Chrome
+    /// (no animation frames, timers once a second, lower priority) until it is shown again.
+    /// Hiding the widget window instead does not work: shown again, it stays blank (0.7.0).
     pub fn set_visible(&self, visible: bool) {
         match (self.hwnd(), self.host()) {
             (Some(h), Some(host)) if self.0.role == Role::Tab && (!visible || self.0.bounds.get().is_some()) => {

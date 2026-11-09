@@ -66,12 +66,16 @@ Steps (`cross-build.sh` does them; every step is idempotent, all paths under `/w
    remote execution), `enable_platform_dolby_vision=true` (Chromium's default for
    `proprietary_codecs && is_win`), `use_v8_context_snapshot=false` (see below). The generated
    `args.gn` is kept with the evidence.
-4. `build`: `autoninja -C out/Release_GN_x64 cefsimple bootstrap bootstrapc` (libcef.dll and
-   the bootstraps are what Krunk packages).
+4. `build`: applies Krunk's own CEF patches (`patches/*.patch`, with `git apply` in the CEF
+   checkout; skipped when already applied, an error when one doesn't apply), then
+   `autoninja -C out/Release_GN_x64 cefsimple bootstrap bootstrapc` (libcef.dll and the
+   bootstraps are what Krunk packages). After a patch change on a kept tree this is an
+   incremental build: about 2 minutes on the build host (0.10.0).
 5. `distrib`: `make_distrib.py --minimal --allow-partial --ninja-build --x64-build --no-archive`,
    plus `snapshot_blob.bin` copied into `Release/` (CEF's file list does not know it), then
-   `tar.bz2` named like the Spotify archive with the suffix `_krunk-codecs`.
-6. Re-pin in Krunk: copy the archive into the CEF cache (`~/.cache/krunk-cef/downloads/`), set
+   `tar.bz2` named like the Spotify archive with the suffix `_krunk-codecs` (0.5.2–0.9.0) or,
+   with the patches, `_krunk-codecs-hidden` (`CEF_FLAVOR`, since 0.10.0).
+6. Re-pin in Krunk (and record each patch's SHA-256 in `cef.lock`, `CEF_PATCHES`): copy the archive into the CEF cache (`~/.cache/krunk-cef/downloads/`), set
    `CEF_SOURCE=self-built`, `CEF_ARCHIVE`, `CEF_SHA256` and `CEF_ARTIFACT` in `cef.lock`
    (`scripts/fetch-cef.sh` then skips CEF's index and checks the SHA-256 only), run
    `scripts/build-dist.sh`, then the VM regression and the media matrix.
@@ -85,3 +89,11 @@ whichever the archive contains.
 
 Everything under `/work/cef-build` (checkout, build tree, toolchain package, archive) stays
 outside git; the archive is kept with the release artifacts (`CEF_ARTIFACT` in `cef.lock`).
+
+**Krunk's patches** (`patches/`, since 0.10.0):
+- `krunk-windowed-hidden.patch`: `CefBrowserHost::WasHidden` works for windowed (Alloy)
+  browsers. The native Aura delegate hides or shows the WebContents' own aura window; the
+  occlusion tracker then reports it HIDDEN and `WebContentsViewAura` calls `WasHidden()` itself,
+  so a background tab is throttled as in Chrome (Krunk's tabs were parked shown, at 64 frames a
+  second). Windowless (OSR) browsers are unchanged. Measured: 30 busy tabs 90 % → 1.2 % CPU on
+  the 4-core VM; `.pipeline/evidence-0.10.0/p3/`.
