@@ -813,9 +813,7 @@ impl Browser {
             info!("tab {id}: audio {}", if playing { "playing" } else { "stopped" });
             audio2.set(playing);
             if let Some(b) = weak_audio.upgrade() {
-                if let Some(win) = b.window_of(id) {
-                    b.send_tabs_to(win);
-                }
+                b.send_tab_update(id);
             }
         });
         self.hook_tab(id, &view, host_navigation.clone(), net.clone());
@@ -967,7 +965,7 @@ impl Browser {
             if let Some(b) = weak.upgrade() {
                 b.with_tab(id, |m, t| m.set_favicon(t, assets::png_data_url(&png)));
                 b.cache_favicon(id, &png);
-                b.send_tabs();
+                b.send_tab_update(id);
             }
         });
         let weak = self.me.clone();
@@ -1306,7 +1304,7 @@ impl Browser {
     fn tab_changed(&self, id: TabId) {
         self.schedule_session_save();
         let Some(win) = self.window_of(id) else { return };
-        self.send_tabs_to(win);
+        self.send_tab_update(id);
         if self.ws.borrow().model(win).is_some_and(|m| m.active_id() == Some(id)) {
             self.send_nav_to(win);
             self.update_title();
@@ -1343,6 +1341,19 @@ impl Browser {
     fn send_tabs(&self) {
         for f in self.all_frames() {
             self.send_tabs_to(f.id);
+        }
+    }
+
+    /// One tab's entry in its window's strip (title, address, icon, loading, sound).
+    fn send_tab_update(&self, id: TabId) {
+        let Some(win) = self.window_of(id) else { return };
+        let info = self.ws.try_borrow().ok().and_then(|ws| ws.model(win).and_then(|m| m.info(id)));
+        if let Some(mut tab) = info {
+            if let Some(v) = self.views.try_borrow().ok().as_ref().and_then(|v| v.get(&id)) {
+                tab.audible = v.audio.get();
+                tab.muted = v.view.audio_muted();
+            }
+            self.post_shell_to(win, &Event::TabUpdate { tab });
         }
     }
 
@@ -2023,9 +2034,7 @@ impl Browser {
                     v.set_audio_muted(muted);
                     info!("tab {id}: {}", if muted { "muted" } else { "unmuted" });
                 }
-                if let Some(win) = self.window_of(id) {
-                    self.send_tabs_to(win);
-                }
+                self.send_tab_update(id);
             }
             Request::BookmarkAllTabs => {
                 self.hide_popup();
@@ -2638,6 +2647,21 @@ impl Browser {
             }
             if lb_core::ext::id_of_url(uri).is_some() {
                 return weak.upgrade().and_then(|b| b.ext_response(uri)).unwrap_or_else(InternalResponse::not_found);
+            }
+            // A tab's favicon for the strip (the model keeps it as a data: URL).
+            if let Some(id) = assets::tab_icon_request(uri) {
+                let png = weak
+                    .upgrade()
+                    .and_then(|b| assets::png_of_data_url(b.ws.try_borrow().ok()?.tab(id)?.favicon.as_deref()?));
+                return match png {
+                    Some(png) => InternalResponse {
+                        status: 200,
+                        reason: "OK",
+                        headers: assets::favicon_headers().to_string(),
+                        body: Cow::Owned(png),
+                    },
+                    None => InternalResponse::not_found(),
+                };
             }
             if let Some(host) = assets::favicon_request(uri) {
                 let png = weak.upgrade().and_then(|b| b.store.try_borrow().ok()?.favicon(&host).ok()?);

@@ -528,20 +528,12 @@ impl TabModel {
 
     /// Tab strip state for the shell.
     pub fn infos(&self) -> Vec<TabInfo> {
-        self.tabs
-            .iter()
-            .map(|t| TabInfo {
-                id: t.id,
-                title: t.title.clone(),
-                url: pages::display_url(&t.url),
-                favicon: t.favicon.clone(),
-                loading: t.loading,
-                private: t.private,
-                sleeping: !t.is_live() || t.asleep,
-                audible: false,
-                muted: false,
-            })
-            .collect()
+        self.tabs.iter().map(info_of).collect()
+    }
+
+    /// One tab's strip entry (a per-tab update, 0.10.0).
+    pub fn info(&self, id: TabId) -> Option<TabInfo> {
+        self.get(id).map(info_of)
     }
 
     /// Non-private tabs for session restore.
@@ -609,6 +601,22 @@ fn initial_title(url: &str) -> String {
     match Page::from_url(url) {
         Some(p) => page_title(p).to_string(),
         None => crate::urlclean::host_of(url).unwrap_or_else(|| url.chars().take(100).collect()),
+    }
+}
+
+/// The favicon goes by address (`/tab-icon?…`), not inlined: 0.9.0 sent every tab's favicon
+/// with every change of any tab.
+fn info_of(t: &Tab) -> TabInfo {
+    TabInfo {
+        id: t.id,
+        title: t.title.clone(),
+        url: pages::display_url(&t.url),
+        favicon: t.favicon.as_deref().map(|f| crate::assets::tab_icon_url(t.id, f)),
+        loading: t.loading,
+        private: t.private,
+        sleeping: !t.is_live() || t.asleep,
+        audible: false,
+        muted: false,
     }
 }
 
@@ -965,11 +973,36 @@ mod tests {
         let info = &m.infos()[0];
         assert_eq!(info.url, "krunk://settings");
         assert_eq!(info.title, "Settings");
-        assert_eq!(info.favicon.as_deref(), Some("data:image/png;base64,AA"));
+        assert_eq!(info.favicon, Some(crate::assets::tab_icon_url(id, "data:image/png;base64,AA")), "by address");
+        assert_eq!(m.info(id).as_ref(), Some(info));
+        assert_eq!(m.info(999), None);
         assert!(!info.loading);
         m.set_title(id, "   ");
         assert_eq!(m.get(id).unwrap().title, "Settings");
         m.set_favicon(id, Some("https://evil.example/x.png".into()));
         assert_eq!(m.get(id).unwrap().favicon, None, "only data: images");
+    }
+
+    /// Krunk 0.10.0: what one tab's title change costs the shell. 0.9.0 sent the whole strip
+    /// with every favicon inlined (60 tabs with 1.5-KB icons: 103 KB per event); now one tab's
+    /// entry goes, and icons go by address. Printed for the evidence (`--nocapture`).
+    #[test]
+    fn tab_strip_bytes_per_event() {
+        use crate::protocol::Event;
+        let typical = format!("data:image/png;base64,{}", "A".repeat(1500));
+        for n in [1usize, 10, 30, 60] {
+            let mut m = TabModel::new();
+            for i in 0..n {
+                let (id, _) = m.open(&format!("https://site{i}.example/page"), false, Position::End, true, true, 0);
+                m.set_title(id, &format!("A page title of ordinary length, number {i}"));
+                m.set_favicon(id, Some(typical.clone()));
+            }
+            let full = Event::Tabs { tabs: m.infos(), active: m.active_id() }.to_json().len();
+            let id = m.infos()[n / 2].id;
+            let one = Event::TabUpdate { tab: m.info(id).unwrap() }.to_json().len();
+            eprintln!("tab strip: {n} tabs -> {one} bytes per tab event (full list {full})");
+            assert!(one < 400, "{one}");
+            assert!(full < n * 300, "{full}");
+        }
     }
 }

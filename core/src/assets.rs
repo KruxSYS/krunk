@@ -124,6 +124,33 @@ pub fn favicon_request(url: &str) -> Option<String> {
     crate::settings::is_hostname(&host).then_some(host)
 }
 
+/// Path of the tab-icon endpoint on the shell origin (0.10.0).
+pub const TAB_ICON_PATH: &str = "/tab-icon";
+
+/// The tab strip's address for a tab's favicon (`data:` URL in the model): the shell loads it by
+/// URL instead of getting every favicon inlined in every tab-strip message. `v` changes with the
+/// icon, so the image is cached until it does.
+pub fn tab_icon_url(id: u32, data_url: &str) -> String {
+    // FNV-1a: a short, stable fingerprint of the icon.
+    let v = data_url.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3));
+    format!("{TAB_ICON_PATH}?id={id}&v={v:016x}")
+}
+
+/// If `url` asks the shell origin for a tab's icon, the tab id.
+pub fn tab_icon_request(url: &str) -> Option<u32> {
+    let u = Url::parse(url).ok()?;
+    if u.origin().ascii_serialization() != pages::SHELL_ORIGIN || u.path() != TAB_ICON_PATH {
+        return None;
+    }
+    u.query_pairs().find(|(k, _)| k == "id").and_then(|(_, v)| v.parse().ok())
+}
+
+/// The PNG inside a `data:image/png;base64,` URL (the tab model's favicons).
+pub fn png_of_data_url(data_url: &str) -> Option<Vec<u8>> {
+    use base64ct::Encoding;
+    base64ct::Base64::decode_vec(data_url.strip_prefix("data:image/png;base64,")?).ok()
+}
+
 /// Headers for a favicon response.
 pub fn favicon_headers() -> &'static str {
     "Content-Type: image/png\r\nX-Content-Type-Options: nosniff\r\nCross-Origin-Resource-Policy: same-origin\r\n\
@@ -408,6 +435,23 @@ mod tests {
         // CSS is passed as a JSON string literal, so it cannot break out.
         let js = style_injection_script("a{}</script>\"); alert(1); (\"");
         assert!(js.contains(r#"("a{}</script>\"); alert(1); (\"")"#), "{js}");
+    }
+
+    #[test]
+    fn tab_icon_endpoint() {
+        let a = tab_icon_url(7, "data:image/png;base64,AAAA");
+        assert!(a.starts_with("/tab-icon?id=7&v="), "{a}");
+        assert_ne!(a, tab_icon_url(7, "data:image/png;base64,AAAB"), "a new icon, a new address");
+        assert_eq!(a, tab_icon_url(7, "data:image/png;base64,AAAA"));
+        assert_eq!(tab_icon_request(&format!("https://shell.krunk.invalid{a}")), Some(7));
+        assert_eq!(tab_icon_request(&format!("https://krunk.invalid{a}")), None, "the shell's only");
+        assert_eq!(tab_icon_request("https://evil.example/tab-icon?id=7"), None);
+        assert_eq!(tab_icon_request("https://shell.krunk.invalid/tab-icon?id=x"), None);
+        assert_eq!(tab_icon_request("https://shell.krunk.invalid/tab-icon"), None);
+        let png = b"\x89PNG\r\n\x1a\nrest";
+        assert_eq!(png_of_data_url(&png_data_url(png).unwrap()).as_deref(), Some(&png[..]));
+        assert_eq!(png_of_data_url("data:image/svg+xml;base64,PHN2Zz4="), None);
+        assert_eq!(png_of_data_url("data:image/png;base64,!!"), None);
     }
 
     #[test]

@@ -2132,6 +2132,11 @@ pub enum Event {
         tabs: Vec<TabInfo>,
         active: Option<u32>,
     },
+    /// One tab's title, address, icon, loading or sound changed (0.10.0): the shell patches
+    /// that tab; `tabs` stays the full list for opening, closing, moving and switching.
+    TabUpdate {
+        tab: TabInfo,
+    },
     Nav {
         state: NavState,
     },

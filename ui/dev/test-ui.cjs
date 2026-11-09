@@ -74,6 +74,9 @@ async function route(context, external) {
       if (url.searchParams.get('host') === '192.168.1.1') return r.fulfill({ status: 404, body: '' });
       return r.fulfill({ status: 200, headers: { 'content-type': 'image/png' }, body: faviconPng(url.searchParams.get('host') || '') });
     }
+    if (url.pathname === '/tab-icon') {
+      return r.fulfill({ status: 200, headers: { 'content-type': 'image/png' }, body: faviconPng('tab' + url.searchParams.get('id')) });
+    }
     let p = url.pathname.replace(/^\//, '');
     const file = p.startsWith('shared/') ? path.join(UI, p) : path.join(UI, dir, p);
     if (!file.startsWith(UI) || !fs.existsSync(file)) return r.fulfill({ status: 404, body: 'not found' });
@@ -117,6 +120,77 @@ const sent = (page) => page.evaluate(() => window.__host.sent);
 const lastSent = async (page, cmd) => (await sent(page)).filter((m) => m.cmd === cmd).pop();
 const emit = (page, ev) => page.evaluate((e) => window.__host.emit(e), ev);
 const shot = async (page, name) => { if (SHOTS) await page.screenshot({ path: path.join(SHOTS, name) }); };
+
+// Krunk 0.10.0: what one background tab's title change costs the tab strip with 60 tabs: nodes
+// added (MutationObserver) and main-thread time over 50 such changes, sent as the full list
+// (`tabs`) and as a per-tab `tabUpdate`. 0.9.0 (P1 baseline): 180 nodes and 11.3 ms per event.
+async function testTabStripCost(browser) {
+  console.log('tab strip cost');
+  const { page, errors } = await openPage(browser, 'https://shell.krunk.invalid/shell.html', { width: 1100, height: 76 }, 1);
+  await page.evaluate(() => {
+    const h = window.__host;
+    h.state.tabs = Array.from({ length: 60 }, (_, i) => ({ id: i + 1, title: 'A page title of ordinary length ' + i, url: 'https://site' + i + '.example/', favicon: '/tab-icon?id=' + (i + 1) + '&v=1', loading: false, private: false, sleeping: false }));
+    h.state.active = 1;
+    h.tabsEvent();
+    h.navEvent();
+  });
+  await page.waitForFunction(() => document.querySelectorAll('.tab').length === 60);
+  await settleTabs(page);
+  const measure = (kind) => page.evaluate(async (kind) => {
+    const h = window.__host;
+    let added = 0;
+    const mo = new MutationObserver((recs) => recs.forEach((m) => { added += m.addedNodes.length; }));
+    mo.observe(document.getElementById('tabs'), { childList: true, subtree: true });
+    const t0 = performance.now();
+    for (let k = 0; k < 50; k++) {
+      h.state.tabs[30].title = kind + ' title ' + k;
+      if (kind === 'none') h.emit({ event: 'noSuchEvent' });
+      else if (kind === 'update') h.emit({ event: 'tabUpdate', tab: h.state.tabs[30] }); else h.tabsEvent();
+      await new Promise((res) => setTimeout(res, 0));
+      await new Promise((res) => setTimeout(res, 0));
+    }
+    await new Promise((res) => requestAnimationFrame(() => res()));
+    const ms = performance.now() - t0;
+    mo.disconnect();
+    return { added: added / 50, ms: ms / 50, title: document.querySelector('.tab[data-id="31"] .title').textContent };
+  }, kind);
+  // The loop's own waits (timer clamping) are measured alone and taken off.
+  const none = await measure('none');
+  const full = await measure('full');
+  const one = await measure('update');
+  const net = (r) => Math.max(0, r.ms - none.ms).toFixed(2);
+  console.log(`  info 60 tabs, one title change: full list ${full.added.toFixed(1)} nodes, ${net(full)} ms; tabUpdate ${one.added.toFixed(1)} nodes, ${net(one)} ms per event (loop ${none.ms.toFixed(2)} ms)`);
+  check(full.title === 'full title 49' && one.title === 'update title 49', 'the changed tab shows its new title');
+  check(full.added <= 2 && one.added <= 2, 'a title change replaces no tab contents (' + full.added + ', ' + one.added + ' nodes)');
+  // An icon change replaces that tab's icon only; loading shows the spinner and back.
+  const icon = await page.evaluate(async () => {
+    const h = window.__host;
+    const t = h.state.tabs[30];
+    const node = document.querySelector('.tab[data-id="31"]');
+    const close = node.querySelector('.close');
+    t.favicon = '/tab-icon?id=31&v=2';
+    h.emit({ event: 'tabUpdate', tab: t });
+    await new Promise((res) => setTimeout(res, 20));
+    const src = node.querySelector('img.favicon').getAttribute('src');
+    t.loading = true;
+    h.emit({ event: 'tabUpdate', tab: t });
+    await new Promise((res) => setTimeout(res, 20));
+    const spinner = !!node.querySelector('.spinner') && !node.querySelector('img.favicon');
+    t.loading = false;
+    t.audible = true;
+    h.emit({ event: 'tabUpdate', tab: t });
+    await new Promise((res) => setTimeout(res, 20));
+    return { src, spinner, back: !!node.querySelector('img.favicon'), audio: !!node.querySelector('.audio'), sameClose: node.querySelector('.close') === close,
+      others: document.querySelectorAll('.tab .favicon').length };
+  });
+  check(icon.src === '/tab-icon?id=31&v=2', 'a new icon address replaces the image');
+  check(icon.spinner && icon.back, 'loading shows the spinner, then the icon again');
+  check(icon.audio, 'a sound update shows the speaker');
+  check(icon.sameClose, 'the close button is kept across updates');
+  check(icon.others === 60, 'the other tabs keep their icons');
+  check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
+  await page.context().close();
+}
 
 async function testShell(browser) {
   console.log('shell');
@@ -5310,6 +5384,7 @@ async function testHttpAuth(browser) {
   const browser = await chromium.launch();
   try {
     if (!ONLY || ONLY.includes('Shell')) await testShell(browser);
+    if (!ONLY || ONLY.includes('TabStripCost')) await testTabStripCost(browser);
     if (!ONLY || ONLY.includes('ScriptletInjection')) await testScriptletInjection(browser);
     if (!ONLY || ONLY.includes('PointerLockShim')) await testPointerLockShim(browser);
     if (!ONLY || ONLY.includes('ShellFrame')) await testShellFrame(browser);

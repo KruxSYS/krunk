@@ -58,28 +58,45 @@
     node.setAttribute('aria-selected', active ? 'true' : 'false');
     node.setAttribute('title', (t.private ? '[Private] ' : '') + t.title + (t.url ? '\n' + t.url : ''));
     node.dataset.index = index;
-    const icon = t.loading
-      ? el('span', { class: 'spinner', 'aria-label': 'Loading' })
-      : t.favicon
-        ? el('img', { class: 'favicon', src: t.favicon, alt: '' })
-        : svgIcon('i-globe', 'favicon');
-    // A speaker while the page plays sound (crossed out when the tab is muted); a click
-    // toggles the mute (0.6.0).
-    const speaker = (t.audible || t.muted) ? el('button', {
-      class: 'audio' + (t.muted ? ' muted' : ''), title: t.muted ? 'Unmute tab' : 'Mute tab', 'aria-label': t.muted ? 'Unmute tab' : 'Mute tab',
-      onclick: function (e) { e.stopPropagation(); LB.post('tabMute', { id: t.id, muted: !t.muted }); },
-      onmousedown: function (e) { e.stopPropagation(); },
-    }, [svgIcon(t.muted ? 'i-audio-off' : 'i-audio')]) : null;
-    node.replaceChildren.apply(node, [
-      t.private ? el('span', { class: 'private-mark', title: 'Private tab' }, [svgIcon('i-mask')]) : null,
-      icon,
-      el('span', { class: 'title', text: t.title || 'New tab' }),
-      speaker,
-      el('button', {
+    // Only what changed is rebuilt (0.10.0): 0.9.0 rebuilt every tab's contents on every
+    // change of any tab. The parts are kept on the node with the state they show.
+    const p = node._parts || (node._parts = {
+      title: el('span', { class: 'title' }),
+      close: el('button', {
         class: 'close', title: 'Close tab (Ctrl+W)', 'aria-label': 'Close tab',
         onclick: function (e) { e.stopPropagation(); closeWithMouse(t.id); },
       }, [svgIcon('i-close')]),
-    ].filter(Boolean));
+    });
+    const iconKey = t.loading ? 'loading' : (t.favicon || '');
+    if (p.iconKey !== iconKey || !p.icon) {
+      p.iconKey = iconKey;
+      p.icon = t.loading
+        ? el('span', { class: 'spinner', 'aria-label': 'Loading' })
+        : t.favicon
+          ? el('img', { class: 'favicon', src: t.favicon, alt: '' })
+          : svgIcon('i-globe', 'favicon');
+    }
+    // A speaker while the page plays sound (crossed out when the tab is muted); a click
+    // toggles the mute (0.6.0).
+    const speakerKey = (t.audible || t.muted) ? (t.muted ? 'muted' : 'audible') : '';
+    if (p.speakerKey !== speakerKey) {
+      p.speakerKey = speakerKey;
+      p.speaker = speakerKey ? el('button', {
+        class: 'audio' + (t.muted ? ' muted' : ''), title: t.muted ? 'Unmute tab' : 'Mute tab', 'aria-label': t.muted ? 'Unmute tab' : 'Mute tab',
+        onclick: function (e) { e.stopPropagation(); LB.post('tabMute', { id: t.id, muted: !t.muted }); },
+        onmousedown: function (e) { e.stopPropagation(); },
+      }, [svgIcon(t.muted ? 'i-audio-off' : 'i-audio')]) : null;
+    }
+    if (!!p.mark !== !!t.private) {
+      p.mark = t.private ? el('span', { class: 'private-mark', title: 'Private tab' }, [svgIcon('i-mask')]) : null;
+    }
+    const title = t.title || 'New tab';
+    if (p.title.textContent !== title) p.title.textContent = title;
+    const want = [p.mark, p.icon, p.title, p.speaker, p.close].filter(Boolean);
+    const have = node.childNodes;
+    if (have.length !== want.length || want.some(function (n, i) { return have[i] !== n; })) {
+      node.replaceChildren.apply(node, want);
+    }
   }
 
   // Close button or middle click: the other tabs keep their widths for now.
@@ -1088,6 +1105,16 @@
     state.tabs = m.tabs;
     state.active = m.active;
     renderTabs();
+  });
+  // One tab changed (title, address, icon, loading, sound): only its node is patched, and the
+  // strip's layout stays as it is (0.10.0).
+  LB.on('tabUpdate', function (m) {
+    const i = state.tabs.findIndex(function (t) { return t.id === m.tab.id; });
+    if (i < 0) return;
+    state.tabs[i] = m.tab;
+    const node = tabNodes.get(m.tab.id);
+    if (node && !settling) fillTabNode(node, m.tab, i);
+    else renderTabs();
   });
   LB.on('nav', function (m) {
     state.nav = m.state;

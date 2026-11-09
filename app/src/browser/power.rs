@@ -102,7 +102,7 @@ impl Browser {
                 c.set_memory_low(true);
                 self.set_stage(id, Stage::LowMemory, now);
                 self.with_tab(id, |m, t| m.set_asleep(t, true));
-                self.send_tabs();
+                self.send_tab_update(id);
                 info!("tab {id}: low memory");
             }
             Action::Suspend => {
