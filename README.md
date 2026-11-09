@@ -292,6 +292,11 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
     parts carry the same cookies and referrer as the browser's own request. Anything else
     (and private tabs) uses the engine's normal download. A file that changes on the server
     during the download is never stitched together.
+  - **Disk space and Mark-of-the-Web (0.11.7):** a download in parts starts only if the size
+    the server names fits on the disk with 512 MB to spare. Every finished download carries
+    the Mark-of-the-Web (its `Zone.Identifier` stream: zone Internet, the file's and the page's
+    address, without addresses for private downloads), so SmartScreen and Office's Protected
+    View apply to downloads in parts as they do to the engine's own.
   - **Rebalancing (0.7.0):** all parts go into one file of the full size
     (`<name>.krunkpart`, renamed when complete). A connection that finishes takes over a piece
     of the part that would take longest at its connection's speed (at least 2 MB, and more
@@ -438,7 +443,14 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   missing. **Isolation:** extensions never run on Krunk's own pages or the shell, not in
   private tabs unless "Allow in private tabs" is on, and their pages live on their own
   origin `https://<id>.ext.krunk.invalid`; the scope list on `krunk://extensions` shows
-  which sites each one may read and change. Extensions are stored under
+  which sites each one may read and change. Since 0.11.7:
+  - each extension's content scripts run in their own isolated world with their own binding,
+    so one extension can't use another's storage or messages;
+  - `scripting.executeScript`/`insertCSS` need the `scripting` permission, as in Chrome, and
+    never reach Krunk's own pages;
+  - a package the Web Store didn't sign can't replace an installed Web Store extension with
+    the same id (remove that one first);
+  - `default_locale` must be a locale name. Extensions are stored under
   `%LOCALAPPDATA%\Krunk\extensions`; Remove deletes the files and the stored data.
 - **Protected content (Widevine)** (0.6.0; Settings → Privacy & security, off by default,
   restart): lets sites play DRM media with Google's Widevine module. Krunk does not bundle
@@ -614,6 +626,11 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
 - Tabs may load internal files only from a built-in page of the same origin; web pages cannot
   embed, frame or fetch them (`core::assets::internal_request_allowed`). The shell origin is
   not reachable from tabs at all.
+- A tab reaches a built-in page only when the browser itself navigates it there (address bar,
+  menus, new tab), or by a link on a built-in page it already shows. Since 0.11.7 the check
+  uses the address the tab really shows (`core::assets::allow_navigation`): a popup opened
+  with `window.open`, a fresh `about:blank` and a server redirect never count as a built-in
+  page.
 - Both origins also serve `/favicon?host=<host>`: PNG favicons captured from pages, cached in
   SQLite (never from private tabs).
 
