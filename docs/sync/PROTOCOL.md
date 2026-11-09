@@ -772,7 +772,12 @@ The server enforces the order of steps, allows a single attempt, and deletes the
 
 **How A notices a request:**
 - N tells the user: "On a linked device, open Settings → Sync → *Approve a new device*." That
-  screen polls `GET approvals` every 3 s while it is open (within the 120/h limit).
+  screen asks `GET approvals` when it opens and then every 40 s while it stays open (90 an
+  hour, within the 120/h limit; **clarified in 0.9.0** — this line said "every 3 s", which the
+  limit doesn't allow: found on the VM, where an open page ran into 429s after a few minutes).
+  An approval in progress is polled through its own `GET approvals/{id}` every 3 s (limit 30
+  a minute). Directories, devices and state are refreshed every 60 s. A 429 pauses the page's
+  polling for its `Retry-After`.
 - Independently, each sync run reads `pending_approvals` from `sync/state` and shows a
   notification on A.
 
@@ -840,6 +845,10 @@ The server enforces the order of steps, allows a single attempt, and deletes the
   - A tombstone's natural key is found from the bookkeeping, or by computing the record id of
     the logins and origins held locally.
 
+- **Settings, as built (0.9.0):** a setting that no device has a record of yet and that holds
+  the built-in default is not pushed. Otherwise a fresh device that syncs first would push
+  its defaults with new versions and reset another device's choices (found on the VM). A
+  setting changed back to the default later is pushed like any change.
 - **Revocation and rotation (S9), as built:**
   - **Tombstones name their natural key** inside the ciphertext (`data: {"nk": …}`), checked
     against the record id like any other record. A rotator re-encrypts a deletion it never saw

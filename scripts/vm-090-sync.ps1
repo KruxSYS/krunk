@@ -6,6 +6,7 @@
 #   back     (CLI Q restored and added "From CLI") Sync now → the bookmark is on the bar.
 #   approve  (CLI R asks to join) the request shows; share passwords; Approve; the 6 digits are
 #            read from the page into sas.txt for the CLI; done.
+#   approvewrong  the same, but the Linux side hands the CLI a wrong code: the request ends.
 #   restore  a fresh profile p090r: a vault, signed in (code.txt → approved), krunk://sync →
 #            Turn on → restore with the recovery key → the devices → on; the logins arrive.
 #            Then the vault is locked (locked flag), CLI Q adds a login (cli-added flag): a run
@@ -45,6 +46,15 @@ function Bookmarks {
 switch ($Phase) {
   'setup' {
     Win
+    # The positive control after 090-upgrade's idle window: Turn on sync… (Settings card), then
+    # Turn on in krunk://sync: the first sync request (the Linux side reads the staging log).
+    SafeGo 'krunk://settings#account' 3000
+    Log "[$P] positive control start $(Get-Date -Format o)"
+    PageClick 435 454 3000                                    # Turn on sync…
+    PageClick 329 303 7000                                    # Turn on
+    Log "[$P] positive control end $(Get-Date -Format o)"
+    Shot "$P-0-setup-step"
+    Log "[$P] $(KLog 'sync:')"
     PageClick 321 342 1500                                    # Copy both
     $text = (Get-Clipboard) -join "`n"
     Set-Clipboard -Value 'cleared'
@@ -55,7 +65,15 @@ switch ($Phase) {
     Log "[$P] copied: passphrase of $(($pass -split '-').Count) words, recovery key of $($g.Length) groups (kept in the test file only)"
     PageClick 306 414 300; TypeSecret $group
     PageClick 286 450 300                                     # I understand
-    PageClick 326 505 9000                                    # Turn on sync
+    PageClick 320 488 9000                                    # Set up sync
+    Shot "$P-1-on"
+    Start-Sleep 6
+    Log "[$P] $(KLog 'sync:')"
+    Log "[$P] $(Logins)"
+  }
+  'confirm' {
+    Win
+    PageClick 320 488 9000                                    # Set up sync
     Shot "$P-1-on"
     Start-Sleep 6
     Log "[$P] $(KLog 'sync:')"
@@ -69,21 +87,33 @@ switch ($Phase) {
     Log "[$P] bookmarks: $(Bookmarks)"
     Log "[$P] runs: $(KLog 'sync: run done' )"
   }
-  'approve' {
+  { $_ -in 'approve', 'approvewrong' } {
     Win
+    SafeGo 'krunk://passwords' 3000
+    TypeSecret $master; Keys '{ENTER}' 3000                   # unlocked: passwords can be shared
     SafeGo 'krunk://sync' 3000
     Start-Sleep 8                                             # the approvals poll (3 s)
     Shot "$P-1-request"
     PageClick 286 434 300                                     # Also share my passwords
     PageClick 965 393 5000                                    # Approve
-    $t = PageText
-    $m = [regex]::Match($t, '\b(\d{3}) (\d{3})\b')
+    $m = $null
+    for ($i = 0; $i -lt 8 -and -not ($m -and $m.Success); $i++) {
+      $m = [regex]::Match((PageText), '\b(\d{3}) (\d{3})\b')
+      if (-not $m.Success) { Start-Sleep 3 }
+    }
     if ($m.Success) { Set-Content -Encoding ascii "$K\sas.txt" ($m.Groups[1].Value + $m.Groups[2].Value) }
-    Log "[$P] code shown: $($m.Success)"
+    Log "[$P] code shown: $($m.Success) (after $i reads)"
     Shot "$P-2-code"
-    for ($i = 0; $i -lt 40 -and -not ((Get-Content "$profile\Krunk\krunk.log" -Raw) -match 'a new device was approved'); $i++) { Start-Sleep 1 }
-    Start-Sleep 2
-    Shot "$P-3-approved"
+    if ($Phase -eq 'approvewrong') {
+      # The CLI was given a wrong code: it cancels; this side says so and approves nothing.
+      Start-Sleep 12
+      Shot "$P-3-cancelled"
+      Log "[$P] page says cancelled: $((PageText) -match 'cancelled')"
+    } else {
+      for ($i = 0; $i -lt 40 -and -not ((Get-Content "$profile\Krunk\krunk.log" -Raw) -match 'a new device was approved'); $i++) { Start-Sleep 1 }
+      Start-Sleep 2
+      Shot "$P-3-approved"
+    }
     Log "[$P] $(KLog 'answering|approved|approval')"
   }
   'restore' {
@@ -98,10 +128,12 @@ switch ($Phase) {
     TypeSecret $master; Keys '{TAB}' 200; TypeSecret $master; Keys '{ENTER}' 4000   # a new vault
     SafeGo 'krunk://settings#account' 3000
     PageClick 417 260 5000                                    # Sign in
-    SafeKeys '^l' 300; SafeKeys '^c' 300
-    $code = ([regex]::Match((Get-Clipboard), 'code=([0-9A-Z-]{9})')).Groups[1].Value
+    SafeKeys '^1' 1200                                       # Settings (the link page may be in front)
+    Set-Clipboard -Value 'empty'
+    PageClick 430 350 800                                     # Copy code
+    $code = ([regex]::Match(((Get-Clipboard) -join ' '), '\b([0-9A-Z]{4}-[0-9A-Z]{4})\b')).Groups[1].Value
     Set-Content -Encoding ascii "$K\code.txt" $code
-    SafeKeys '{ESC}' 200; SafeKeys '^1' 1200
+    Log "[$P] link code read: $([bool]$code)"
     for ($i = 0; $i -lt 120 -and -not (Test-Path "$K\approved"); $i++) { Start-Sleep 1 }
     Start-Sleep 8
     Log "[$P] signed in: $(KLog 'account: signed in|account:')"

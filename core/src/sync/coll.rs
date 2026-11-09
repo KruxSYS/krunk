@@ -219,6 +219,18 @@ pub fn remote_tabs(conn: &Connection) -> DbResult<BTreeMap<String, Value>> {
     Ok(meta_map(conn, "remote_tabs")?.into_iter().collect())
 }
 
+/// A setting's record data (`{key, value}`) that holds the built-in default. One that no device
+/// has a record of yet is not pushed in that state: it says nothing the user chose, and a fresh
+/// device syncing first would otherwise reset another device's choices (found on the VM, 0.9.0).
+pub fn is_default_setting(data: &Value) -> bool {
+    thread_local! {
+        static DEFAULTS: serde_json::Map<String, Value> =
+            serde_json::to_value(Settings::default()).ok().and_then(|v| v.as_object().cloned()).unwrap_or_default();
+    }
+    let (Some(k), Some(v)) = (data.get("key").and_then(Value::as_str), data.get("value")) else { return false };
+    DEFAULTS.with(|d| d.get(k) == Some(v))
+}
+
 fn settings_json(conn: &Connection) -> DbResult<serde_json::Map<String, Value>> {
     let raw: Option<String> =
         conn.query_row("SELECT value FROM kv WHERE key = 'settings'", [], |r| r.get(0)).optional()?;

@@ -28,6 +28,7 @@ use lb_core::sync::hlc::Hlc;
 use lb_core::sync::keys::{self, KeyError, Me, PakState, RestorePlan, Secret as SyncSecret, SetupPlan};
 use lb_core::sync::local;
 use lb_core::sync::pak::{self, Outgoing};
+use lb_core::sync::poll::{self as spoll, Poll, PollState};
 use lb_core::sync::state::{self, parse_account_id, SyncState};
 use lb_core::sync::view::{ApprovalRow, Approving, CollectionRow, DeviceRow, OnView, RemoteTabs, SyncView};
 use lb_core::tabs::TabId;
@@ -37,9 +38,8 @@ use zeroize::Zeroizing;
 
 const TIMEOUT_MS: i32 = 30_000;
 const MAX_RESPONSE: usize = 8 * 1024 * 1024;
-/// While krunk://sync is open: approvals every 3 s (PROTOCOL §11.6), the rest every 30 s.
-const POLL_MS: i64 = 3_000;
-const REFRESH_EVERY_MS: i64 = 30_000;
+/// While krunk://sync is open: a tick every 3 s; what it asks is core::sync::poll's schedule.
+const POLL_MS: i64 = spoll::TICK_MS;
 /// The schedule (PLAN §5.3): a run a minute after start, every 5 minutes, and 30 s after a
 /// local change (open tabs wait for the 5-minute run); a 30 s tick checks.
 const START_DELAY_MS: i64 = 60_000;
@@ -135,7 +135,8 @@ pub(super) struct SyncHost {
     devices: RefCell<Vec<DeviceWire>>,
     approvals: RefCell<Vec<ApprovalItem>>,
     rotation_pending: Cell<bool>,
-    last_refresh_ms: Cell<i64>,
+    /// What krunk://sync polls when (core::sync::poll).
+    poll_state: Cell<PollState>,
     polling: Cell<bool>,
     busy: Cell<bool>,
     // The schedule (S7).
@@ -167,7 +168,7 @@ impl Default for SyncHost {
             devices: RefCell::new(Vec::new()),
             approvals: RefCell::new(Vec::new()),
             rotation_pending: Cell::new(false),
-            last_refresh_ms: Cell::new(0),
+            poll_state: Cell::new(PollState::default()),
             polling: Cell::new(false),
             busy: Cell::new(false),
             ticking: Cell::new(false),
@@ -466,6 +467,10 @@ impl Browser {
         }
         match request {
             Request::SyncState => {
+                // A page (re)opened: the list of devices asking to join comes at once.
+                let mut ps = self.sync.poll_state.get();
+                ps.opened();
+                self.sync.poll_state.set(ps);
                 self.push_sync();
                 if self.sync_is_on() && self.sync_open_tabs() {
                     self.sync_poll_start();
@@ -861,7 +866,11 @@ impl Browser {
                     *b.sync.approving.borrow_mut() = Some((a, None, share));
                     b.push_sync();
                 }
-                Err(e) => b.set_sync_stage(Stage::On(Some(fail_text(&e)))),
+                Err(e) => {
+                    info!("sync: answering the request failed ({e})");
+                    b.sync_poll_failed(&e);
+                    b.set_sync_stage(Stage::On(Some(fail_text(&e))));
+                }
             },
         );
     }
@@ -896,7 +905,7 @@ impl Browser {
                     }
                     Err(e) => b.set_sync_stage(Stage::On(Some(fail_text(&e)))),
                 }
-                b.sync.last_refresh_ms.set(0);
+                b.sync_refresh_soon();
             },
         );
     }
@@ -983,16 +992,35 @@ impl Browser {
             self.sync_poll_later();
             return;
         }
-        if joining {
-            self.sync_poll_join();
-        } else if self.sync.approving.borrow().is_some() {
-            self.sync_poll_approving();
-        } else if now_ms() - self.sync.last_refresh_ms.get() > REFRESH_EVERY_MS {
-            self.sync_poll_refresh();
-        } else {
-            self.sync_poll_approvals();
+        let approving = self.sync.approving.borrow().is_some();
+        let mut ps = self.sync.poll_state.get();
+        let what = spoll::next(&mut ps, now_ms(), joining, approving);
+        self.sync.poll_state.set(ps);
+        match what {
+            Poll::Join => self.sync_poll_join(),
+            Poll::Approving => self.sync_poll_approving(),
+            Poll::Refresh => self.sync_poll_refresh(),
+            Poll::Approvals => self.sync_poll_approvals(),
+            Poll::Wait => {}
         }
         self.sync_poll_later();
+    }
+
+    /// The next tick refreshes the directories and devices.
+    fn sync_refresh_soon(&self) {
+        let mut ps = self.sync.poll_state.get();
+        ps.last_refresh_ms = 0;
+        self.sync.poll_state.set(ps);
+    }
+
+    /// A poll's error: a 429 pauses the page's polling for its Retry-After.
+    fn sync_poll_failed(&self, e: &SyncFail) {
+        if let SyncFail::Api(ApiError::RateLimited(s)) = e {
+            let mut ps = self.sync.poll_state.get();
+            ps.rate_limited(now_ms(), *s);
+            self.sync.poll_state.set(ps);
+            info!("sync: the server asks to wait {s} s");
+        }
     }
 
     fn sync_poll_join(&self) {
@@ -1046,6 +1074,7 @@ impl Browser {
                     }
                     (Ok(_), None) => *b.sync.joining.borrow_mut() = Some(n),
                     (Err(e), None) => {
+                        b.sync_poll_failed(&e);
                         *b.sync.joining.borrow_mut() = Some(n);
                         info!("sync: waiting for the approval ({e})");
                     }
@@ -1080,8 +1109,13 @@ impl Browser {
                         b.sync_save();
                         info!("sync: a new device was approved (passwords shared: {share})");
                         *b.sync.approving_done.borrow_mut() = Some(a.device.label.clone());
-                        b.sync.last_refresh_ms.set(0);
+                        b.sync_refresh_soon();
                         b.push_sync();
+                    }
+                    // A 429 while polling: the approval goes on after the wait.
+                    (Err(SyncFail::Api(ApiError::RateLimited(sec))), None) => {
+                        b.sync_poll_failed(&SyncFail::Api(ApiError::RateLimited(sec)));
+                        *b.sync.approving.borrow_mut() = Some((a, code, share));
                     }
                     (_, Some(Err(e))) | (Err(e), None) => {
                         info!("sync: the approval failed ({e})");
@@ -1109,6 +1143,9 @@ impl Browser {
         self.sync.busy.set(true);
         self.sync_call("sync-approvals", client::approvals, |b, r| {
             b.sync.busy.set(false);
+            if let Err(e) = &r {
+                b.sync_poll_failed(e);
+            }
             if let Ok(list) = r {
                 let changed =
                     list.iter().map(|a| &a.approval_id).ne(b.sync.approvals.borrow().iter().map(|a| &a.approval_id));
@@ -1125,7 +1162,6 @@ impl Browser {
         let Some(mut st) = self.sync.state.borrow().clone() else { return };
         let mut pak = self.sync_pak();
         self.sync.busy.set(true);
-        self.sync.last_refresh_ms.set(now_ms());
         self.sync_call(
             "sync-refresh",
             move |api| {
@@ -1168,7 +1204,10 @@ impl Browser {
                         b.sync_save();
                         b.set_sync_stage(Stage::Alarm(text));
                     }
-                    Err(e) => info!("sync: refresh skipped ({e})"),
+                    Err(e) => {
+                        b.sync_poll_failed(&e);
+                        info!("sync: refresh skipped ({e})");
+                    }
                 }
             },
         );

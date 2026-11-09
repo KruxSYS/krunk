@@ -392,7 +392,16 @@ fn main() {
             loop {
                 let t = d.token();
                 let api = Api { http: &d.http, token: &t, now_ms: now_ms() };
-                match n.poll(&api, &d.account(), &me.device_id, &name).unwrap_or_else(|e| sfail(e)) {
+                let step = match n.poll(&api, &d.account(), &me.device_id, &name) {
+                    Ok(s) => s,
+                    // The approvals poll is rate limited: wait as the server says.
+                    Err(SyncFail::Api(lb_core::sync::api::ApiError::RateLimited(sec))) => {
+                        std::thread::sleep(Duration::from_secs(sec.max(1)));
+                        continue;
+                    }
+                    Err(e) => sfail(e),
+                };
+                match step {
                     NStep::EnterCode => {
                         out("enter_code", "waiting");
                         let code = match a.get("code") {
@@ -427,7 +436,7 @@ fn main() {
                     n.cancel(&api);
                     fail(3, "join timed out");
                 }
-                std::thread::sleep(Duration::from_millis(1500));
+                std::thread::sleep(Duration::from_millis(3000));
             }
         }
         "approve" => {
@@ -457,7 +466,15 @@ fn main() {
             loop {
                 let t = d.token();
                 let api = Api { http: &d.http, token: &t, now_ms: now_ms() };
-                match ap.poll(&api, &d.account(), &st.device_id).unwrap_or_else(|e| sfail(e)) {
+                let step = match ap.poll(&api, &d.account(), &st.device_id) {
+                    Ok(s) => s,
+                    Err(SyncFail::Api(lb_core::sync::api::ApiError::RateLimited(sec))) => {
+                        std::thread::sleep(Duration::from_secs(sec.max(1)));
+                        continue;
+                    }
+                    Err(e) => sfail(e),
+                };
+                match step {
                     AStep::ShowCode(sas) if !shown => {
                         out("sas", &sas);
                         if let Some(f) = a.get("sas-file") {
@@ -481,7 +498,7 @@ fn main() {
                     ap.cancel(&api);
                     fail(3, "approve timed out");
                 }
-                std::thread::sleep(Duration::from_millis(1500));
+                std::thread::sleep(Duration::from_millis(3000));
             }
         }
         "refresh" => {

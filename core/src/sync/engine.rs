@@ -408,6 +408,8 @@ fn push(
                     {
                         continue
                     }
+                    // Never recorded and still the default: nothing to tell the other devices.
+                    (Some(d), None) if c == "settings" && coll::is_default_setting(d) => continue,
                     (Some(d), _) => (false, d.clone(), None),
                 };
                 let plain =

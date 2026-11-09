@@ -82,11 +82,13 @@ if ($Phase -eq 'prep080') {
   # Sign in to the staging account (0.8.0's card: Sign in at 1016,208 of the page).
   SafeGo 'krunk://settings#account' 3000
   PageClick 1016 208 5000
-  SafeKeys '^l' 300; SafeKeys '^c' 300
-  $code = ([regex]::Match((Get-Clipboard), 'code=([0-9A-Z-]{9})')).Groups[1].Value
+  # The card's Copy code (the link page opens in a background tab).
+  SafeKeys '^1' 1200                                       # Settings (the link page may be in front)
+  Set-Clipboard -Value 'empty'
+  PageClick 1024 199 800
+  $code = ([regex]::Match(((Get-Clipboard) -join ' '), '\b([0-9A-Z]{4}-[0-9A-Z]{4})\b')).Groups[1].Value
   Set-Content -Encoding ascii "$K\code.txt" $code
   Log "[$P] link code read: $([bool]$code)"
-  SafeKeys '{ESC}' 200; SafeKeys '^1' 1200
   for ($i = 0; $i -lt 120 -and -not (Test-Path "$K\approved"); $i++) { Start-Sleep 1 }
   Log "[$P] approved after $i s"
   Start-Sleep 10

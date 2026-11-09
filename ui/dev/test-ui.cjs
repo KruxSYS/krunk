@@ -4932,10 +4932,13 @@ async function measureAccountCard(browser) {
     await emit(page, { event: 'sync', view: { state: 'noAccount' } });
     await page.waitForTimeout(60);
     const signIn = await at('account-sign-in');
+    await emit(page, { event: 'account', card: { state: 'linking', userCode: 'ABCD-EFGH', expiresInS: 600 } });
+    await page.waitForTimeout(60);
+    const copy = await at('account-copy');
     await emit(page, { event: 'account', card: { state: 'signedIn', email: 'vm090@example.org', device: 'Krunk on Windows', lastCheckedMs: Date.now() } });
     await emit(page, { event: 'sync', view: { state: 'off', message: null } });
     await page.waitForTimeout(60);
-    console.log(JSON.stringify({ height: h, signIn: signIn, signOut: await at('account-sign-out'), syncOpen: await at('sync-open') }));
+    console.log(JSON.stringify({ height: h, signIn: signIn, copyCode: copy, signOut: await at('account-sign-out'), syncOpen: await at('sync-open') }));
     await page.context().close();
   }
 }

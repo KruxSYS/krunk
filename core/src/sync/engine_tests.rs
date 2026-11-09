@@ -478,3 +478,29 @@ fn random_concurrent_edits_converge() {
         }
     }
 }
+
+/// Found on the VM (0.9.0): a fresh device that syncs first must not reset the settings an
+/// existing device customised — its defaults are never pushed while nobody has a record of them.
+#[test]
+fn a_fresh_device_syncing_first_keeps_the_other_devices_settings() {
+    let mem = Mem::new();
+    let mut a = dev("dev-a", 1);
+    let mut s = a.store.load_settings().unwrap();
+    s.homepage = "https://custom.example/".into();
+    a.store.save_settings(&s).unwrap();
+    let mut b = dev("dev-b", 2);
+    // B (defaults) syncs before A's first sync: it pushes no setting.
+    sync(&mut b, &mem);
+    assert!(server_plaintexts(&mem).iter().all(|p| p["data"]["key"].is_null()), "B pushed no default setting");
+    sync(&mut a, &mem);
+    sync(&mut b, &mem);
+    assert_eq!(a.store.load_settings().unwrap().homepage, "https://custom.example/", "A keeps its choice");
+    assert_eq!(b.store.load_settings().unwrap().homepage, "https://custom.example/", "and B takes it");
+    // A setting changed back to the default later is a real change: it syncs.
+    let mut s = a.store.load_settings().unwrap();
+    s.homepage = crate::settings::Settings::default().homepage;
+    a.store.save_settings(&s).unwrap();
+    sync(&mut a, &mem);
+    sync(&mut b, &mem);
+    assert_eq!(b.store.load_settings().unwrap().homepage, crate::settings::Settings::default().homepage);
+}
