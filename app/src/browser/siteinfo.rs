@@ -32,7 +32,7 @@ impl Browser {
         let Some(main) = self.window() else { return };
         let scale = main.scale();
         let guard = self.popup_slot(self.request_slot()).borrow();
-        let Some(p) = guard.as_ref().filter(|p| p.window.is_visible()) else { return };
+        let Some(p) = guard.as_ref().filter(|p| p.window.is_visible() && p.pending.is_none()) else { return };
         let r = p.window.rect();
         let work = crate::ffi::window::Window::work_area_at(r.x, r.y);
         let max = (work.y + work.height - r.y).max(40);

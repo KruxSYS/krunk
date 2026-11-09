@@ -30,6 +30,13 @@ impl Browser {
                     self.show_bookmark_folder(id, rect, from);
                 }
             }
+            Request::BookmarkFolderBack => self.bookmark_folder_back(),
+            Request::OpenBookmarkBackground { id } => {
+                let url = self.store.borrow().bookmark(id).ok().flatten().and_then(|b| b.url);
+                if let Some(url) = url {
+                    self.open_in_background(&url);
+                }
+            }
             Request::Find { query, backwards } => self.find(&query, backwards),
             Request::FindClose => {
                 let active = self.active_id();
@@ -398,16 +405,42 @@ impl Browser {
     /// `from`: the bar's overflow (0.7.2, R10), its items from that index on. A refresh of the
     /// open dropdown (`rect` none, the same folder) keeps its offset; a subfolder has none.
     pub(super) fn show_bookmark_folder(&self, id: i64, rect: Option<PopupRect>, from: Option<u32>) {
+        self.show_folder_level(id, rect, from, None);
+    }
+
+    /// "‹ Back" (or Backspace/Left) in a dropdown: the folder the open subfolder came from,
+    /// with the overflow offset it had (0.11.0).
+    fn bookmark_folder_back(&self) {
+        if self.open_folder().is_none() {
+            return;
+        }
+        let Some((id, offset)) = self.folder_stack.borrow_mut().pop() else { return };
+        self.show_folder_level(id, None, None, Some(offset));
+    }
+
+    /// `back`: going up to a folder of the stack, with its offset.
+    fn show_folder_level(&self, id: i64, rect: Option<PopupRect>, from: Option<u32>, back: Option<u32>) {
         let Ok(Some(folder)) = self.store.borrow().bookmark(id) else { return };
         if !folder.is_folder {
             return;
         }
-        let offset = match (rect, from) {
-            (Some(_), Some(from)) if id == lb_core::storage::BOOKMARKS_BAR => from,
-            (Some(_), _) => 0,
-            (None, _) if self.open_folder() == Some(id) => self.folder_offset.get(),
-            (None, _) => 0,
+        let open = self.open_folder();
+        let offset = match (rect, from, back) {
+            (_, _, Some(offset)) => offset,
+            (Some(_), Some(from), _) if id == lb_core::storage::BOOKMARKS_BAR => from,
+            (Some(_), _, _) => 0,
+            (None, _, _) if open == Some(id) => self.folder_offset.get(),
+            (None, _, _) => 0,
         };
+        // The levels a dropdown went down through: a new dropdown starts over, a subfolder
+        // opened in place remembers where it came from.
+        match (rect, open) {
+            (Some(_), _) => self.folder_stack.borrow_mut().clear(),
+            (None, Some(parent)) if back.is_none() && parent != id => {
+                self.folder_stack.borrow_mut().push((parent, self.folder_offset.get()));
+            }
+            _ => {}
+        }
         let mut items = self.store.borrow().bar_items(id).unwrap_or_default();
         items.drain(..(offset as usize).min(items.len()));
         let anchor = match rect {
@@ -422,8 +455,15 @@ impl Browser {
             },
         };
         self.folder_offset.set(offset);
-        let popup_rect = layout::folder_popup_rect(anchor, items.len());
-        self.show_popup(PopupContent::BookmarkFolder { id, title: folder.title, items, offset }, Some(popup_rect));
+        let parent = self.folder_stack.borrow().last().map(|&(p, _)| p);
+        let back = parent.and_then(|p| self.store.borrow().bookmark(p).ok().flatten()).map(|f| f.title);
+        // The Back row is one more row.
+        let rows = items.len() + usize::from(back.is_some());
+        let popup_rect = layout::folder_popup_rect(anchor, rows);
+        self.show_popup(
+            PopupContent::BookmarkFolder { id, title: folder.title, items, offset, back },
+            Some(popup_rect),
+        );
     }
 
     fn import_bookmarks(&self, tab: Option<TabId>, req_id: Option<u32>) {

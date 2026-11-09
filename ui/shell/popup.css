@@ -86,6 +86,8 @@ body.pv-dark { --bg-raised: #202124; --bg-hover: #3c4043; --fg: #e8eaed; --fg-mu
 #root[data-kind="navMenu"] .item .micon { width: 16px; height: 16px; flex: none; }
 #root[data-kind="navMenu"] .item:focus-visible { background: var(--bg-hover); outline: none; }
 .item .folder-glyph { width: 16px; text-align: center; color: #d97706; }
+.item.folder-back { color: var(--fg-muted); border-bottom: 1px solid var(--border, rgba(127,127,127,.25)); border-radius: 0; }
+.item.folder-back .folder-glyph { color: inherit; font-size: 1.15em; }
 #root[data-kind="bookmarkFolder"] { max-height: 100vh; overflow-y: auto; }
 /* Dragging inside a folder dropdown: the same marks as on the bookmarks bar. */
 .item[data-id] { position: relative; }

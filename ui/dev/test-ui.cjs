@@ -2341,8 +2341,16 @@ async function testShellM4(browser) {
   await page.locator('.bm', { hasText: 'Rust' }).click();
   const ou = await lastSent(page, 'openUrl');
   check(ou && ou.url === 'https://www.rust-lang.org/' && ou.newTab === false, 'bar bookmark sends openUrl');
+  const wikiPress = await page.evaluate(() => {
+    const b = [...document.querySelectorAll('.bm')].find((x) => x.textContent.includes('Wikipedia'));
+    const ev = new MouseEvent('mousedown', { button: 1, bubbles: true, cancelable: true });
+    b.dispatchEvent(ev);
+    return { prevented: ev.defaultPrevented, id: Number(b.dataset.id) };
+  });
+  check(wikiPress.prevented, '0.11.0: a middle press on the bar starts no autoscroll (mousedown defaultPrevented)');
   await page.locator('.bm', { hasText: 'Wikipedia' }).click({ button: 'middle' });
-  check((await lastSent(page, 'openUrl')).newTab === true, 'middle click opens in a new tab');
+  const bg = await lastSent(page, 'openBookmarkBackground');
+  check(bg && bg.id === wikiPress.id, '0.11.0: middle click opens the bookmark in a background tab (openBookmarkBackground{id})');
   await page.locator('.bm', { hasText: 'News' }).click();
   const sf = await lastSent(page, 'showBookmarkFolder');
   check(sf && sf.id === 11 && sf.rect.y >= 76 && sf.rect.width > 10, 'folder sends showBookmarkFolder{id, rect under the button}');
@@ -3959,6 +3967,60 @@ async function testFolderPopup(browser) {
   check(out && out.id === 13, 'dragged out of the dropdown: folderItemDragOut{id:13}');
   check(await page.locator('.item.dragging, .item.drop-before, .item.drop-after, .item.drop-into').count() === 0, 'no marks left after the hand-over');
   await page.mouse.up();
+
+  // 0.11.0: middle-click on a bookmark opens it behind the current tab and the dropdown stays
+  // open; on a folder it does nothing (as on the bar); a middle press starts no autoscroll.
+  const before = (await sent(page)).length;
+  await page.locator('.item', { hasText: 'BBC News' }).click({ button: 'middle' });
+  await page.locator('.item', { hasText: 'Tech' }).click({ button: 'middle' });
+  await page.waitForTimeout(30);
+  const after = (await sent(page)).slice(before);
+  check(after.length === 1 && after[0].cmd === 'openBookmarkBackground' && after[0].id === 12,
+    'middle-click: openBookmarkBackground{id:12} only, no hidePopup, nothing for the folder (' + JSON.stringify(after) + ')');
+  check(await page.evaluate(() => { const ev = new MouseEvent('mousedown', { button: 1, bubbles: true, cancelable: true }); document.querySelector('.item').dispatchEvent(ev); return ev.defaultPrevented; }),
+    'a middle press in the dropdown starts no autoscroll');
+
+  // 0.11.0: content with a number is answered with popupShown after it is painted, with the
+  // fitted height; the host opens the window then.
+  await emit(page, { event: 'popup', seq: 41, content: { kind: 'bookmarkFolder', id: 14, title: 'Tech', back: 'News', items: [
+    { id: 15, title: 'Rust', url: 'https://www.rust-lang.org/', isFolder: false, favicon: null },
+    { id: 16, title: 'Deep', url: null, isFolder: true, favicon: null },
+  ] } });
+  await page.waitForFunction(() => window.__host.sent.some((m) => m.cmd === 'popupShown' && m.seq === 41));
+  const shown = await lastSent(page, 'popupShown');
+  const rootH = await page.evaluate(() => document.getElementById('root').offsetHeight + 2);
+  check(shown.seq === 41 && shown.height === rootH, 'popupShown{seq:41, height} once painted (' + JSON.stringify(shown) + ')');
+  check((await page.locator('.item', { hasText: 'BBC News' }).count()) === 0, 'nothing of the previous folder is left');
+  // "‹ Back" row first; the focus starts on the first item, not on Back.
+  const rows = await page.$$eval('.item', (l) => l.map((x) => x.textContent));
+  check(rows[0] === '‹News' && rows[1] === 'Rust', 'a subfolder has "‹ News" as its first row (' + rows.join(' | ') + ')');
+  check(await page.evaluate(() => document.activeElement && document.activeElement.textContent === 'Rust'), 'the focus is on the first item, not on Back');
+  await shot(page, 'popup-folder-back.png');
+  await page.click('#folder-back');
+  check(!!(await lastSent(page, 'bookmarkFolderBack')), 'Back sends bookmarkFolderBack');
+  const n0 = (await sent(page)).filter((x) => x.cmd === 'bookmarkFolderBack').length;
+  await page.focus('.item:not(#folder-back)');
+  await page.keyboard.press('Backspace');
+  await page.keyboard.press('ArrowLeft');
+  check((await sent(page)).filter((x) => x.cmd === 'bookmarkFolderBack').length === n0 + 2, 'Backspace and Left go back up too');
+  await page.keyboard.press('ArrowDown');
+  const downAt = await page.evaluate(() => document.activeElement.textContent);
+  check(downAt === '▸Deep', 'Down moves to the next item (' + downAt + ')');
+  await page.keyboard.press('ArrowRight');
+  const deeper = await lastSent(page, 'showBookmarkFolder');
+  check(deeper && deeper.id === 16, 'Right opens the focused subfolder');
+  // A dropdown at the top level has no Back, and Backspace does nothing there.
+  await emit(page, { event: 'popup', content: { kind: 'bookmarkFolder', id: 1, title: 'Bookmarks bar', offset: 4, items: [
+    { id: 17, title: 'Docs', url: 'https://docs.rs/', isFolder: false, favicon: null }] } });
+  await page.waitForTimeout(30);
+  check(await page.locator('#folder-back').count() === 0, 'the top level has no Back row');
+  const n1 = (await sent(page)).filter((x) => x.cmd === 'bookmarkFolderBack').length;
+  await page.keyboard.press('Backspace');
+  check((await sent(page)).filter((x) => x.cmd === 'bookmarkFolderBack').length === n1, 'Backspace at the top level sends nothing');
+  check(!(await sent(page)).slice(-3).some((m) => m.cmd === 'popupShown' && m.seq == null), 'content without a number gets no popupShown');
+  // Hidden: the content is dropped at once.
+  await emit(page, { event: 'popupClear' });
+  check(await page.evaluate(() => document.getElementById('root').children.length) === 0, 'popupClear empties the popup');
   check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
 }
 

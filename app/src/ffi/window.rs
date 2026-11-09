@@ -581,6 +581,14 @@ impl Window {
     }
 
     /// Shows the window at `rect` (screen coordinates), on top.
+    /// Moves and sizes a hidden window without showing it (a popup waiting for its paint).
+    pub fn place_hidden(self, rect: ScreenRect) {
+        // SAFETY: valid window handle.
+        unsafe {
+            let _ = SetWindowPos(self.0, None, rect.x, rect.y, rect.width, rect.height, SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+    }
+
     pub fn show_at(self, rect: ScreenRect, activate: bool) {
         let flags = if activate { SWP_SHOWWINDOW } else { SWP_SHOWWINDOW | SWP_NOACTIVATE };
         // SAFETY: valid window handle.

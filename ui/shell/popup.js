@@ -135,7 +135,14 @@
   }
   // Up/Down (wrapping), Home and End move between a menu's items.
   function menuKeys(e) {
-    if (!current || current.kind !== 'navMenu') return;
+    if (!current || (current.kind !== 'navMenu' && current.kind !== 'bookmarkFolder')) return;
+    // A subfolder opened in place goes back up with Backspace or Left (0.11.0); Right opens
+    // the focused subfolder.
+    if (current.kind === 'bookmarkFolder') {
+      if ((e.key === 'Backspace' || e.key === 'ArrowLeft') && current.back) { e.preventDefault(); LB.post('bookmarkFolderBack'); return; }
+      const f = document.activeElement;
+      if (e.key === 'ArrowRight' && f && f.classList.contains('folder') && f.dataset.id) { e.preventDefault(); LB.post('showBookmarkFolder', { id: Number(f.dataset.id) }); return; }
+    }
     const items = Array.prototype.slice.call(root.querySelectorAll('button.item:not([disabled])'));
     if (!items.length) return;
     const at = items.indexOf(document.activeElement);
@@ -814,7 +821,11 @@
   const DRAG_THRESHOLD = 5;
   const folderDrag = { item: null, id: 0, pointerId: null, startX: 0, startY: 0, moved: false, target: null, suppressClick: false };
   function renderFolder(c) {
-    if (!c.items.length) return [el('div', { class: 'panel muted', text: '(empty)' })];
+    // A subfolder opened in place has a way back up (0.11.0): "‹ <parent>" as the first row.
+    const back = c.back ? el('button', { class: 'item folder-back', id: 'folder-back', title: 'Back to ' + c.back, onclick: () => LB.post('bookmarkFolderBack') }, [
+      el('span', { class: 'folder-glyph', text: '‹' }), el('span', { class: 'label', text: c.back }),
+    ]) : null;
+    if (!c.items.length) return [back, el('div', { class: 'panel muted', text: '(empty)' })];
     const rows = c.items.map(function (b) {
       const icon = b.isFolder ? el('span', { class: 'folder-glyph', text: '▸' })
         : b.favicon ? el('img', { class: 'fav', src: b.favicon, alt: '' }) : el('span', { class: 'fav dot' });
@@ -827,8 +838,10 @@
         LB.post('openUrl', { url: b.url, newTab: e.ctrlKey });
         close();
       });
+      // Middle-click: a new tab behind this one, and the dropdown stays open (0.11.0), as on
+      // the bar. A folder has no middle-click (the bar has none either).
       btn.addEventListener('auxclick', function (e) {
-        if (e.button === 1 && b.url) { LB.post('openUrl', { url: b.url, newTab: true }); close(); }
+        if (e.button === 1) { e.preventDefault(); if (b.url) LB.post('openBookmarkBackground', { id: b.id }); }
       });
       btn.addEventListener('contextmenu', function (e) {
         e.preventDefault();
@@ -841,7 +854,7 @@
       });
       return btn;
     });
-    return rows;
+    return back ? [back].concat(rows) : rows;
   }
   function folderRows() { return Array.prototype.slice.call(root.querySelectorAll('.item[data-id]')); }
   function clearFolderMarks() {
@@ -963,9 +976,27 @@
     document.body.classList.toggle('pv-dark', c.kind === 'pipVolume');
     (render ? render(c) : []).forEach((n) => n && root.appendChild(n));
     const first = document.getElementById('master') || document.getElementById('bm-name') || document.getElementById('default') || root.querySelector('button:not([disabled])');
-    if (first && c.kind !== 'suggest' && c.kind !== 'cardFill' && c.kind !== 'addressMenu' && c.kind !== 'addressSuggest' && c.kind !== 'pipVolume') first.focus();
-    if (FITS[c.kind]) requestAnimationFrame(fit);
+    // The first item, never "‹ Back" (Enter would leave the folder just opened).
+    const firstItem = c.kind === 'bookmarkFolder' && first && first.id === 'folder-back' ? (root.querySelector('button.item:not(#folder-back)') || first) : first;
+    if (firstItem && c.kind !== 'suggest' && c.kind !== 'cardFill' && c.kind !== 'addressMenu' && c.kind !== 'addressSuggest' && c.kind !== 'pipVolume') firstItem.focus();
+    if (m.seq !== undefined && m.seq !== null) {
+      // The host shows the window once this content is painted (0.11.0): two frames, so the
+      // first one with it is on screen when the window opens. The height comes with it.
+      const seq = m.seq;
+      requestAnimationFrame(function () {
+        const height = FITS[c.kind] ? root.offsetHeight + 2 : null;
+        requestAnimationFrame(function () { LB.post('popupShown', { seq: seq, height: height }); });
+      });
+    } else if (FITS[c.kind]) requestAnimationFrame(fit);
   });
+  // The window was hidden: nothing of this content may show with the next one.
+  LB.on('popupClear', function () {
+    current = null;
+    root.textContent = '';
+    delete root.dataset.kind;
+  });
+  // A middle press never starts the engine's autoscroll in a popup (0.11.0).
+  document.addEventListener('mousedown', function (e) { if (e.button === 1) e.preventDefault(); });
 
   document.addEventListener('keydown', menuKeys);
   document.addEventListener('keydown', function (e) {

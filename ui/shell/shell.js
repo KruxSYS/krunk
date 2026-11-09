@@ -841,6 +841,9 @@
 
   // ---------- bookmarks bar ----------
   const BAR_ROOT = 1; // the "Bookmarks bar" folder
+  // A middle press never starts the engine's autoscroll on the bar (0.11.0): it would take the
+  // release that opens the bookmark.
+  $('bookmarks-bar').addEventListener('mousedown', function (e) { if (e.button === 1) e.preventDefault(); });
   function renderBar(items) {
     const bar = $('bookmarks-bar');
     bar.textContent = '';
@@ -872,7 +875,8 @@
           if (barDrag.suppressClick) return;
           LB.post('openUrl', { url: b.url, newTab: e.ctrlKey });
         });
-        btn.addEventListener('auxclick', function (e) { if (e.button === 1) LB.post('openUrl', { url: b.url, newTab: true }); });
+        // Middle-click: a new tab behind this one (0.11.0; it used to come to the front).
+        btn.addEventListener('auxclick', function (e) { if (e.button === 1) { e.preventDefault(); LB.post('openBookmarkBackground', { id: b.id }); } });
         bar.appendChild(btn);
       }
     });

@@ -157,6 +157,40 @@ pub(super) struct Popup {
     content: Option<PopupContent>,
     /// The frame the popup belongs to now.
     owner: Option<WindowId>,
+    /// Content posted and not painted yet: the window shows (or moves) once the popup
+    /// answers `PopupShown` for it (0.11.0).
+    pending: Option<PendingShow>,
+}
+
+impl Popup {
+    /// Open, or about to open for content being painted.
+    pub(super) fn open(&self) -> bool {
+        self.pending.is_some() || self.window.is_visible()
+    }
+}
+
+/// Where a popup goes once its new content is painted.
+#[derive(Clone, Copy)]
+pub(super) struct PendingShow {
+    seq: u64,
+    rect: ScreenRect,
+    focus: bool,
+}
+
+/// How long a popup waits for its paint answer before it shows anyway (a stuck popup
+/// renderer must not leave a click without a popup).
+const POPUP_PAINT_WAIT_MS: i64 = 250;
+
+/// How a popup opens (0.11.0; `KRUNK_POPUP_GATE`, for the VM check only): `hidden` (default:
+/// the window stays hidden until its content is painted), `park` (shown off-screen until
+/// then) or `off` (shown at once, as before 0.11.0).
+fn popup_gate() -> &'static str {
+    static GATE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| match std::env::var("KRUNK_POPUP_GATE").as_deref() {
+        Ok("park") => "park".into(),
+        Ok("off") => "off".into(),
+        _ => "hidden".into(),
+    })
 }
 
 /// One browser window (frame): its native window, its shell view (tab strip and toolbar)
@@ -217,6 +251,8 @@ pub struct Browser {
     menu_closing: Cell<bool>,
     /// The request being dispatched came from the menu popup's view.
     request_from: Cell<PopupSlot>,
+    /// Numbers the popup contents that wait for their paint answer.
+    popup_seq: Cell<u64>,
     /// Views the engine is creating for a page's `window.open`, waiting for
     /// their tab's CreateView effect.
     adopted: RefCell<HashMap<TabId, (View, Rc<TabNet>)>>,
@@ -236,6 +272,8 @@ pub struct Browser {
     folder_anchor: Cell<Option<PopupRect>>,
     /// The open folder dropdown's first item in its folder (the bar's overflow, R10).
     folder_offset: Cell<u32>,
+    /// The folders (with their offsets) a dropdown went down through, for "‹ Back".
+    folder_stack: RefCell<Vec<(i64, u32)>>,
     /// Swallows the click that closed a toolbar popup (see `lb_core::toggle`).
     toggle: RefCell<lb_core::toggle::ToggleGuard>,
     /// The link-status label (the address of the link under the mouse).
@@ -347,6 +385,7 @@ impl Browser {
             pip_bar: RefCell::new(None),
             menu_closing: Cell::new(false),
             request_from: Cell::new(PopupSlot::Main),
+            popup_seq: Cell::new(0),
             adopted: RefCell::new(HashMap::new()),
             downloads: RefCell::new(Downloads::new()),
             parts_jobs: segmented::PartsJobs::default(),
@@ -356,6 +395,7 @@ impl Browser {
             download_ops: RefCell::new(HashMap::new()),
             folder_anchor: Cell::new(None),
             folder_offset: Cell::new(0),
+            folder_stack: RefCell::new(Vec::new()),
             toggle: RefCell::new(lb_core::toggle::ToggleGuard::default()),
             status: status::StatusHost::default(),
             suggest: suggest::SuggestHost::default(),
@@ -2145,6 +2185,7 @@ impl Browser {
             }
             Request::HidePopup => self.hide_popup(),
             Request::PopupResize { height } => self.popup_resize(height),
+            Request::PopupShown { seq, height } => self.popup_shown(self.request_slot(), seq, height, false),
             Request::ShowFolderItemMenu { id, x, y } => self.show_folder_item_menu(id, x, y),
             Request::MoveBookmarkInFolder { id, parent, index } => self.move_bookmark_in_folder(id, parent, index),
             Request::FolderItemDragOut { id } => {
@@ -2453,6 +2494,7 @@ impl Browser {
                 }
             });
         }
+        let mut seq = None;
         if let Some(rect) = rect {
             // Shown for the current window: it belongs to that frame now.
             let owner = self.cur_id();
@@ -2469,8 +2511,41 @@ impl Browser {
                 origin,
                 layout::Rect { x: work.x, y: work.y, width: work.width, height: work.height },
             );
-            popup.window.set_activatable(kind.takes_focus());
-            popup.window.show_at(ScreenRect { x: r.x, y: r.y, width: r.width, height: r.height }, kind.takes_focus());
+            let target = ScreenRect { x: r.x, y: r.y, width: r.width, height: r.height };
+            let focus = kind.takes_focus();
+            popup.window.set_activatable(focus);
+            // The window shows the new content from its first frame (0.11.0): it opens (or
+            // moves, when it is open already) once the popup has painted it. A folder dropdown
+            // used to show the previously opened folder for a frame or two.
+            let gate = slot != PopupSlot::Pip && popup_gate() != "off";
+            if gate {
+                let n = self.popup_seq.get() + 1;
+                self.popup_seq.set(n);
+                popup.pending = Some(PendingShow { seq: n, rect: target, focus });
+                seq = Some(n);
+                if !popup.window.is_visible() {
+                    if popup_gate() == "park" {
+                        popup.window.show_at(
+                            ScreenRect { x: -32000, y: -32000, width: target.width, height: target.height },
+                            focus,
+                        );
+                    } else {
+                        popup.window.place_hidden(target);
+                    }
+                    if let Some(c) = &popup.view {
+                        c.set_bounds(0, 0, r.width, r.height);
+                        c.set_visible(true);
+                    }
+                }
+                let weak = self.me.clone();
+                crate::ffi::cef::post_ui_delayed(POPUP_PAINT_WAIT_MS, move || {
+                    if let Some(b) = weak.upgrade() {
+                        b.popup_shown(slot, n, None, true);
+                    }
+                });
+            } else {
+                popup.window.show_at(target, focus);
+            }
             // The page stays still under Krunk's menus (0.8.0).
             if let Some(i) = [PopupSlot::Main, PopupSlot::Menu].iter().position(|s| *s == slot) {
                 let menu = matches!(
@@ -2484,17 +2559,46 @@ impl Browser {
                 );
                 crate::ffi::scroll_lock::set_menu(i, menu.then(|| popup.window.hwnd()));
             }
-            if let Some(c) = &popup.view {
-                c.set_bounds(0, 0, r.width, r.height);
-                c.set_visible(true);
-                if kind.takes_focus() {
-                    c.focus();
+            if !gate {
+                if let Some(c) = &popup.view {
+                    c.set_bounds(0, 0, r.width, r.height);
+                    c.set_visible(true);
+                    if focus {
+                        c.focus();
+                    }
                 }
             }
         }
         if popup.ready {
             if let Some(c) = &popup.view {
-                c.post_json(&Event::Popup { content }.to_json());
+                c.post_json(&Event::Popup { content, seq }.to_json());
+            }
+        }
+    }
+
+    /// The popup painted the content numbered `seq` (or it did not answer in time,
+    /// `late`): its window goes in place, `height_css` fitted when the content asks for it.
+    pub(super) fn popup_shown(&self, slot: PopupSlot, seq: u64, height_css: Option<f64>, late: bool) {
+        let Some(main) = self.window() else { return };
+        let Ok(mut guard) = self.popup_slot(slot).try_borrow_mut() else { return };
+        let Some(p) = guard.as_mut() else { return };
+        let Some(pending) = p.pending.filter(|x| x.seq == seq) else { return };
+        p.pending = None;
+        if late {
+            warning!("popup: shown without its paint answer ({} ms)", POPUP_PAINT_WAIT_MS);
+        }
+        let mut r = pending.rect;
+        if let Some(h) = height_css.filter(|h| h.is_finite()) {
+            let work = Window::work_area_at(r.x, r.y);
+            let max = (work.y + work.height - r.y).max(40);
+            r.height = ((h.clamp(40.0, 4096.0) * main.scale()).round() as i32).min(max);
+        }
+        p.window.show_at(r, pending.focus);
+        if let Some(c) = &p.view {
+            c.set_bounds(0, 0, r.width, r.height);
+            c.set_visible(true);
+            if pending.focus {
+                c.focus();
             }
         }
     }
@@ -2549,7 +2653,7 @@ impl Browser {
         c.set_bounds(0, 0, w, h);
         c.set_visible(window.is_visible());
         *self.popup_slot(slot).borrow_mut() =
-            Some(Popup { window, view: Some(c), ready: false, content: None, owner: None });
+            Some(Popup { window, view: Some(c), ready: false, content: None, owner: None, pending: None });
         true
     }
 
@@ -2558,16 +2662,16 @@ impl Browser {
             let mut guard = self.popup_slot(slot).borrow_mut();
             let Some(p) = guard.as_mut() else { return };
             p.ready = true;
-            if p.window.is_visible() {
-                p.content.clone().zip(p.view.clone())
+            if p.open() {
+                p.content.clone().zip(p.view.clone()).map(|(content, c)| (content, c, p.pending.map(|x| x.seq)))
             } else {
                 None
             }
         };
-        if let Some((content, c)) = pending {
+        if let Some((content, c, seq)) = pending {
             let focus = content.kind().takes_focus();
-            c.post_json(&Event::Popup { content }.to_json());
-            if focus {
+            c.post_json(&Event::Popup { content, seq }.to_json());
+            if focus && seq.is_none() {
                 c.focus();
             }
         }
@@ -2577,9 +2681,11 @@ impl Browser {
     /// popup closes, and the toolbar click that may have caused this does
     /// not reopen it (`toggle`).
     fn hide_popup_by_focus_loss(&self) {
-        let anchor = self.popup.try_borrow().ok().and_then(|p| {
-            p.as_ref().filter(|p| p.window.is_visible()).and_then(|p| p.content.as_ref()?.toggle_anchor())
-        });
+        let anchor = self
+            .popup
+            .try_borrow()
+            .ok()
+            .and_then(|p| p.as_ref().filter(|p| p.open()).and_then(|p| p.content.as_ref()?.toggle_anchor()));
         if let Some(a) = anchor {
             self.toggle.borrow_mut().closed_by_focus_loss(&a, now_ms() as u64);
         }
@@ -2603,13 +2709,17 @@ impl Browser {
         let hidden = {
             let Ok(mut guard) = self.menu_popup.try_borrow_mut() else { return };
             let Some(p) = guard.as_mut() else { return };
-            let visible = p.window.is_visible();
+            let visible = p.open();
             if visible {
                 self.menu_closing.set(true);
                 p.window.hide();
                 self.menu_closing.set(false);
+                if let Some(c) = &p.view {
+                    c.post_json(&Event::PopupClear.to_json());
+                }
             }
             p.content = None;
+            p.pending = None;
             visible
         };
         if hidden && reactivate {
@@ -2636,10 +2746,14 @@ impl Browser {
         let (was_visible, content, owner) = {
             let Ok(mut guard) = self.popup.try_borrow_mut() else { return };
             let Some(p) = guard.as_mut() else { return };
-            let visible = p.window.is_visible();
+            let visible = p.open();
             if visible {
                 p.window.hide();
+                if let Some(c) = &p.view {
+                    c.post_json(&Event::PopupClear.to_json());
+                }
             }
+            p.pending = None;
             (visible, p.content.take(), p.owner)
         };
         if let Some(c) = &content {
@@ -2962,7 +3076,7 @@ impl WindowEvents for FrameEvents {
         // While the popup is being shown (borrowed by show_popup, which
         // activates it on purpose) this is not a stray activation.
         let Ok(popup) = b.popup.try_borrow() else { return };
-        let showing = popup.as_ref().is_some_and(|p| p.window.is_visible());
+        let showing = popup.as_ref().is_some_and(|p| p.open());
         drop(popup);
         let passive = !showing;
         if passive {

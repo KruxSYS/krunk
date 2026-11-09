@@ -402,6 +402,9 @@ pub enum PopupContent {
         items: Vec<BarItem>,
         #[serde(default)]
         offset: u32,
+        /// A subfolder opened in place (0.11.0): the title of the folder "‹ Back" returns to.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        back: Option<String>,
     },
     /// A newer Krunk: Update now (or Download) / Later / Release notes.
     Update {
@@ -903,6 +906,22 @@ pub enum Request {
     /// "Certificate details" opens. The host clamps it to the work area.
     PopupResize {
         height: f64,
+    },
+    /// The popup has rendered the content numbered `seq` (and painted it twice): the host
+    /// puts its window in place now, `height` (CSS px) fitted for content that asks for it.
+    /// Until then a popup window opens parked off-screen, so it never shows the previous
+    /// content (0.11.0, a folder dropdown showed the last folder for a frame).
+    PopupShown {
+        seq: u64,
+        #[serde(default)]
+        height: Option<f64>,
+    },
+    /// "‹ Back" in a folder dropdown: the folder that was open before this subfolder.
+    BookmarkFolderBack,
+    /// Middle-click on a bookmark of the bar or of a folder dropdown: it opens in a new tab
+    /// behind the current one, and a dropdown stays open (0.11.0).
+    OpenBookmarkBackground {
+        id: i64,
     },
     /// Opens a bookmarks-bar folder in the popup. The shell passes the
     /// rect under the folder button; the popup passes `None` to show a
@@ -1617,6 +1636,7 @@ impl Sender {
                     | R::TabMute { .. }
                     | R::HidePopup
                     | R::ShowBookmarkFolder { .. }
+                    | R::OpenBookmarkBackground { .. }
                     | R::ShowBookmarkMenu { .. }
                     | R::MoveBookmark { .. }
                     | R::BookmarkActivePage { .. }
@@ -1647,7 +1667,10 @@ impl Sender {
                     | R::SaveBookmark { .. }
                     | R::HidePopup
                     | R::ShowBookmarkFolder { rect: None, from: None, .. }
+                    | R::BookmarkFolderBack
+                    | R::OpenBookmarkBackground { .. }
                     | R::PopupResize { .. }
+                    | R::PopupShown { .. }
                     | R::ShowFolderItemMenu { .. }
                     | R::MoveBookmarkInFolder { .. }
                     | R::FolderItemDragOut { .. }
@@ -2167,10 +2190,16 @@ pub enum Event {
     ExtChanged {
         extensions: serde_json::Value,
     },
-    /// To the popup view: render this content.
+    /// To the popup view: render this content. With `seq`, the popup answers `PopupShown`
+    /// once it is painted (its window opened or moved for it).
     Popup {
         content: PopupContent,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        seq: Option<u64>,
     },
+    /// To the popup view: its window was hidden; drop the content so that it can never show
+    /// again with the next one.
+    PopupClear,
     /// To the shell: the popup was hidden (un-highlight its button).
     PopupClosed,
     /// The active tab's docked DevTools (the shell shows its dock and close control).
@@ -3027,6 +3056,10 @@ mod tests {
             Request::ShowBookmarkFolder { id: 4, rect: Some(rect), from: None },
             Request::ShowBookmarkFolder { id: 4, rect: None, from: None },
             Request::ShowBookmarkFolder { id: 1, rect: Some(rect), from: Some(3) },
+            Request::BookmarkFolderBack,
+            Request::OpenBookmarkBackground { id: 9 },
+            Request::PopupShown { seq: 3, height: Some(212.0) },
+            Request::PopupShown { seq: 4, height: None },
             Request::ClearBrowsingData {
                 data: ClearData { cookies: true, cache: true, site_data: true, since: Some(1), ..ClearData::default() },
             },
@@ -3718,6 +3751,15 @@ mod tests {
         // The dropdown opens subfolders in place, never an overflow of its own.
         assert!(Sender::Popup.permits(&Request::ShowBookmarkFolder { id: 7, rect: None, from: None }));
         assert!(!Sender::Popup.permits(&Request::ShowBookmarkFolder { id: 1, rect: None, from: Some(4) }));
+        // 0.11.0: Back, middle-click and the painted answer; pages get none of them.
+        for r in [Request::BookmarkFolderBack, Request::PopupShown { seq: 1, height: None }] {
+            assert!(Sender::Popup.permits(&r) && !Sender::Shell.permits(&r), "{r:?}");
+        }
+        let bg = Request::OpenBookmarkBackground { id: 3 };
+        assert!(Sender::Popup.permits(&bg) && Sender::Shell.permits(&bg));
+        for p in Page::ALL {
+            assert!(!Sender::Page(p).permits(&bg) && !Sender::Page(p).permits(&Request::BookmarkFolderBack), "{p:?}");
+        }
         for p in Page::ALL {
             assert!(!Sender::Page(p).permits(&overflow), "{p:?}");
         }
@@ -3726,7 +3768,7 @@ mod tests {
             r#"{"cmd":"showBookmarkFolder","id":1,"rect":{"x":1,"y":2,"width":3,"height":4},"from":2}"#,
         );
         assert!(matches!(parsed.map(|e| e.request), Ok(Request::ShowBookmarkFolder { from: Some(2), .. })));
-        let old = PopupContent::BookmarkFolder { id: 1, title: String::new(), items: vec![], offset: 3 };
+        let old = PopupContent::BookmarkFolder { id: 1, title: String::new(), items: vec![], offset: 3, back: None };
         assert!(serde_json::to_string(&old).unwrap().contains(r#""offset":3"#));
     }
 
@@ -4166,6 +4208,7 @@ mod tests {
                 colors: Default::default(),
             },
             Event::Popup {
+                seq: None,
                 content: PopupContent::Menu {
                     zoom: 1.0,
                     can_reopen: true,
@@ -4175,6 +4218,7 @@ mod tests {
                 },
             },
             Event::Popup {
+                seq: None,
                 content: PopupContent::Menu {
                     zoom: 1.0,
                     can_reopen: false,
@@ -4186,6 +4230,7 @@ mod tests {
             Event::UpdateAvailable { version: Some("0.7.9".into()) },
             Event::UpdateAvailable { version: None },
             Event::Popup {
+                seq: None,
                 content: PopupContent::Shield {
                     host: "a.example".into(),
                     blocked: 3,
@@ -4204,6 +4249,7 @@ mod tests {
                 },
             },
             Event::Popup {
+                seq: None,
                 content: PopupContent::SavePassword {
                     tab_id: 2,
                     origin: "https://a.example".into(),
@@ -4212,6 +4258,7 @@ mod tests {
                 },
             },
             Event::Popup {
+                seq: None,
                 content: PopupContent::Fill {
                     tab_id: 2,
                     origin: "https://a.example".into(),
@@ -4229,6 +4276,7 @@ mod tests {
             Event::CaptionState { hover: None, pressed: false },
             Event::WindowState { maximized: true, active: false, fullscreen: false },
             Event::Popup {
+                seq: None,
                 content: PopupContent::Unlock {
                     tab_id: 1,
                     origin: "https://a.example".into(),
@@ -4238,6 +4286,7 @@ mod tests {
                 },
             },
             Event::Popup {
+                seq: None,
                 content: PopupContent::BookmarkFolder {
                     id: 3,
                     title: "News".into(),
@@ -4249,8 +4298,20 @@ mod tests {
                         favicon: Some("/favicon?host=www.bbc.co.uk".into()),
                     }],
                     offset: 0,
+                    back: Some("Bookmarks bar".into()),
                 },
             },
+            Event::Popup {
+                seq: Some(7),
+                content: PopupContent::BookmarkFolder {
+                    id: 1,
+                    title: "Bookmarks bar".into(),
+                    items: vec![],
+                    offset: 2,
+                    back: None,
+                },
+            },
+            Event::PopupClear,
             Event::BookmarksBar {
                 items: vec![BarItem { id: 5, title: "Dev".into(), url: None, is_folder: true, favicon: None }],
             },
@@ -4292,6 +4353,7 @@ mod tests {
         }
         // The save prompt never carries a password.
         let j = Event::Popup {
+            seq: None,
             content: PopupContent::SavePassword { tab_id: 1, origin: "o".into(), username: "u".into(), update: true },
         }
         .to_json();

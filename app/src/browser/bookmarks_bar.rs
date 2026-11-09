@@ -256,7 +256,7 @@ impl Browser {
     pub(super) fn folder_dropdown_has(&self, id: i64, folders_too: bool) -> bool {
         let Ok(popup) = self.popup.try_borrow() else { return false };
         let Some(PopupContent::BookmarkFolder { items, .. }) =
-            popup.as_ref().filter(|p| p.window.is_visible()).and_then(|p| p.content.as_ref())
+            popup.as_ref().filter(|p| p.open()).and_then(|p| p.content.as_ref())
         else {
             return false;
         };
@@ -266,7 +266,7 @@ impl Browser {
     /// The open folder dropdown's folder id.
     pub(super) fn open_folder(&self) -> Option<i64> {
         let popup = self.popup.try_borrow().ok()?;
-        match popup.as_ref().filter(|p| p.window.is_visible())?.content.as_ref()? {
+        match popup.as_ref().filter(|p| p.open())?.content.as_ref()? {
             PopupContent::BookmarkFolder { id, .. } => Some(*id),
             _ => None,
         }
@@ -348,7 +348,7 @@ impl Browser {
     }
 
     /// A new tab behind the current one ("Open in new tab", "Open all").
-    fn open_in_background(&self, url: &str) {
+    pub(super) fn open_in_background(&self, url: &str) {
         let Some(win) = self.cur_id() else { return };
         let opened = self.ws.borrow_mut().open(win, url, false, Position::End, false, now_ms());
         if let Some((_, ops)) = opened {

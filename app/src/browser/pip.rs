@@ -423,7 +423,7 @@ impl Browser {
         popup.content = Some(content.clone());
         if popup.ready {
             if let Some(c) = &popup.view {
-                c.post_json(&Event::Popup { content }.to_json());
+                c.post_json(&Event::Popup { content, seq: None }.to_json());
             }
         }
     }
