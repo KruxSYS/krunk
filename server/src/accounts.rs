@@ -612,12 +612,23 @@ pub async fn reset_confirm(
     ])?;
     let row = lookup_token(&state, &req.token, "reset").await?;
     policy(&req.new_password, &row.email)?;
-    second_factor(&state, row.account_id, req.totp.as_deref()).await?;
+    // The second factor counts like a login's: wrong codes lock the address out, for
+    // logins and resets alike (0.11.7, audit S2: a reset link allowed unlimited guesses).
+    let keys = &state.config.keys;
+    let ekey = email_key(keys, &row.email);
+    if let Some(left) = lockout(&state, &ekey).await? {
+        return Err(ApiError::rate_limited(left));
+    }
+    if let Err(e) = second_factor(&state, row.account_id, req.totp.as_deref()).await {
+        if e.code == "totp_invalid" {
+            login_failed(&state, &ekey).await?;
+        }
+        return Err(e);
+    }
     let phc = state.passwords.hash(&req.new_password).await.map_err(|e| {
         tracing::error!(error = %e, "password hash");
         ApiError::server_error()
     })?;
-    let keys = &state.config.keys;
     let mut tx = state.db.begin().await?;
     let n = sqlx::query("UPDATE email_tokens SET used_at = now() WHERE hash = $1 AND used_at IS NULL")
         .bind(email_token_hash(keys, &req.token).as_slice())

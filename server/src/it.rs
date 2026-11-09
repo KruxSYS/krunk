@@ -511,6 +511,42 @@ async fn password_reset() {
     assert_eq!(r.status, StatusCode::BAD_REQUEST);
 }
 
+/// 0.11.7, audit S2: wrong TOTP codes on a reset link count toward the address's lockout,
+/// so a reset link no longer allows unlimited guesses; the right code works before that.
+#[tokio::test]
+async fn reset_totp_guesses_lock_out() {
+    let Some(e) = env().await else { return };
+    let mut a = registered_and_verified(&e, "rt@example.org", PW).await;
+    login(&e, &mut a, "rt@example.org", PW, None).await;
+    let r = a.post(&e, "totp/setup", json!({"password": PW})).await;
+    let secret = decode_b32(r.body["secret_b32"].as_str().unwrap());
+    let code = |step: u64| format!("{:06}", totp::code_at(&secret, step));
+    let step = chrono::Utc::now().timestamp() as u64 / 30;
+    assert_eq!(a.post(&e, "totp/enable", json!({"code": code(step)})).await.status, StatusCode::OK);
+    let mut anon = Browser::new();
+    anon.post(&e, "password-reset/request", json!({"email": "rt@example.org", "turnstile": ts("reset")})).await;
+    let token = link_token(&e.db, "rt@example.org", "reset").await;
+    let confirm = |totp: String| json!({"token": token, "new_password": "a brand new passphrase", "totp": totp});
+    // The legitimate path: a wrong code, then the right one.
+    let r = anon.post(&e, "password-reset/confirm", confirm("000000".into())).await;
+    assert_eq!((r.status, err(&r)), (StatusCode::UNAUTHORIZED, "totp_invalid"));
+    let r = anon.post(&e, "password-reset/confirm", confirm(code(step + 1))).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.raw);
+    // The guessing path: a new link, five wrong codes, then even the right code is refused.
+    anon.post(&e, "password-reset/request", json!({"email": "rt@example.org", "turnstile": ts("reset")})).await;
+    let token = link_token(&e.db, "rt@example.org", "reset").await;
+    let confirm = |totp: String| json!({"token": token, "new_password": "yet another passphrase", "totp": totp});
+    for guess in ["111111", "222222", "333333", "444444", "555555"] {
+        let r = anon.post(&e, "password-reset/confirm", confirm(guess.into())).await;
+        assert_eq!(err(&r), "totp_invalid", "{guess}");
+    }
+    let r = anon.post(&e, "password-reset/confirm", confirm(code(step + 2))).await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS, "locked out after five wrong codes: {}", r.raw);
+    let mut b = Browser::new();
+    let r = login(&e, &mut b, "rt@example.org", "a brand new passphrase", Some(&code(step + 2))).await;
+    assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS, "the same lockout as for logins");
+}
+
 #[tokio::test]
 async fn password_change_and_reauth() {
     let Some(e) = env().await else { return };
