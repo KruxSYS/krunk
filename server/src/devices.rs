@@ -454,6 +454,16 @@ pub async fn refresh(State(state): State<AppState>, client: Client, JsonBody(req
     }
     let keys = &state.config.keys;
     let h = refresh_hash(keys, &req.refresh_token);
+    // The device's limit is counted before the row lock (0.11.7, audit S8): counting it inside
+    // took a second connection while holding the lock, and parallel refreshes of one token
+    // could use up the pool and stall every request.
+    let device: Option<Uuid> = sqlx::query_scalar("SELECT device_id FROM refresh_families WHERE current_hash = $1")
+        .bind(h.as_slice())
+        .fetch_optional(&state.db)
+        .await?;
+    if let Some(device) = device {
+        hit(&state.db, rl::REFRESH_DEVICE, &rl::id_key(&device)).await?;
+    }
     let mut tx = state.db.begin().await?;
     let fam: Option<FamilyRow> = sqlx::query_as(
         "SELECT f.id, f.device_id,
@@ -470,7 +480,6 @@ pub async fn refresh(State(state): State<AppState>, client: Client, JsonBody(req
         if !f.usable {
             return Err(token_unauthorized());
         }
-        hit(&state.db, rl::REFRESH_DEVICE, &rl::id_key(&f.device_id)).await?;
         let new_refresh = crypto::new_token();
         sqlx::query("INSERT INTO refresh_used (hash, family_id) VALUES ($1, $2)")
             .bind(h.as_slice())

@@ -329,6 +329,9 @@ fn b(x: &Option<Vec<u8>>) -> Option<String> {
 /// collects `box_A`, the approval is deleted (it is complete).
 pub async fn get_one(State(state): State<AppState>, d: DeviceAuth, Path(id): Path<String>) -> ApiResult {
     hit(&state.db, rl::APPROVAL_POLL, &rl::id_key(&d.device_id)).await?;
+    // Asked before the row lock: inside it, a second connection could wait on a pool that the
+    // waiting lock holders have used up (0.11.7, audit S8).
+    let caller_has_keys = has_keys(&state.db, d.device_id).await?;
     let mut tx = state.db.begin().await?;
     let r = load(&mut tx, d.account_id, &id, true).await?;
     let device = json!({"id": r.new_device_id, "label": r.label, "platform": r.platform, "country": r.country});
@@ -338,9 +341,7 @@ pub async fn get_one(State(state): State<AppState>, d: DeviceAuth, Path(id): Pat
             "approver": r.approver_device_id,
             "epk_A": b(&r.epk_a), "nonce_A": b(&r.nonce_a), "box_A": b(&r.box_a),
         })
-    } else if r.approver_device_id == Some(d.device_id)
-        || (r.approver_device_id.is_none() && has_keys(&state.db, d.device_id).await?)
-    {
+    } else if r.approver_device_id == Some(d.device_id) || (r.approver_device_id.is_none() && caller_has_keys) {
         json!({
             "approval_id": id, "state": r.step, "device": device, "expires_in": r.expires_in.max(0.0) as i64,
             "commit_N": crypto::b64url(&r.commit_n), "epk_N": b(&r.epk_n), "nonce_N": b(&r.nonce_n),

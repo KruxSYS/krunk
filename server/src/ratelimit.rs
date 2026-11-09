@@ -63,6 +63,9 @@ pub const KEYS_HEAD: Limit = l("keys-head/device", 120, HOUR);
 pub const KEYS_CHAIN: Limit = l("keys-chain/device", 20, HOUR);
 pub const KEYS_ESCROW: Limit = l("keys-escrow/account", 5, DAY);
 pub const KEYS_COMMIT: Limit = l("keys-commit/device", 60, HOUR);
+/// Every commit keeps a directory version for good: a cap per account too (0.11.7, audit S6).
+/// Linking, approvals and rotations need a handful a day.
+pub const KEYS_COMMIT_ACCOUNT: Limit = l("keys-commit/account", 200, DAY);
 pub const ROTATION_CLAIM: Limit = l("rotation-claim/device", 20, HOUR);
 pub const APPROVALS_CREATE: Limit = l("approvals-create/account", 5, DAY);
 pub const APPROVALS_LIST: Limit = l("approvals-list/device", 120, HOUR);

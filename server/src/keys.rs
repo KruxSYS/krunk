@@ -565,6 +565,7 @@ pub async fn keys_commit(
     JsonBody(req): JsonBody<CommitReq>,
 ) -> ApiResult {
     hit(&state.db, rl::KEYS_COMMIT, &rl::id_key(&d.device_id)).await?;
+    hit(&state.db, rl::KEYS_COMMIT_ACCOUNT, &rl::id_key(&d.account_id)).await?;
     if req.ak_dir.is_none() && req.pak_dir.is_none() {
         return Err(bad("Nothing to commit."));
     }
