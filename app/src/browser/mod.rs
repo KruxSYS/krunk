@@ -2547,8 +2547,8 @@ impl Browser {
             Request::UpdateReply { choice } => self.update_reply(choice),
             // Prompts and the remaining features arrive in later milestones;
             // the popup still treats a reply as "dismissed" by hiding.
-            Request::SavePasswordReply { tab_id, origin, accept, never } => {
-                self.save_password_reply(tab_id, &origin, accept, never)
+            Request::SavePasswordReply { tab_id, origin, accept, never, username } => {
+                self.save_password_reply(tab_id, &origin, accept, never, username)
             }
             Request::FillReply { tab_id, origin, entry_id } => self.fill_reply(tab_id, &origin, entry_id),
             Request::SuggestPick { tab_id, frame_id, entry_id } => self.suggest_pick(tab_id, &frame_id, &entry_id),

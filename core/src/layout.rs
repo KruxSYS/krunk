@@ -291,7 +291,7 @@ pub fn bookmark_edit_rect(x: f64, y: f64, is_folder: bool) -> PopupRect {
 
 pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> PopupRect {
     let (w, h) = match kind {
-        PopupKind::SavePassword => (360.0, 150.0),
+        PopupKind::SavePassword => (360.0, 196.0),
         PopupKind::Fill => (340.0, 110.0 + 42.0 * entries.clamp(1, 6) as f64),
         PopupKind::Menu => (280.0, 670.0),
         PopupKind::Shield => (300.0, 226.0),

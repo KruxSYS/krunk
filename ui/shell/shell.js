@@ -499,7 +499,10 @@
     const node = dragNode();
     if (node) node.classList.add('dragging');
     const strip = $('tabstrip').getBoundingClientRect();
-    if (e.clientY < strip.top - DETACH_DISTANCE || e.clientY > strip.bottom + DETACH_DISTANCE) {
+    // A window's only tab has nothing to reorder against: it drags the whole window at once
+    // (0.11.2; it used to slide in the strip until the pointer left it).
+    const alone = state.tabs.length === 1;
+    if (alone || e.clientY < strip.top - DETACH_DISTANCE || e.clientY > strip.bottom + DETACH_DISTANCE) {
       // Out of the strip: the host follows the mouse from here.
       const d = drag;
       drag = null;

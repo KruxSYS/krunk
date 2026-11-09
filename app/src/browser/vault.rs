@@ -754,7 +754,14 @@ impl Browser {
 
     /// Answer to "Save password?". The prompt must still be valid: same tab,
     /// still active, still on the same origin.
-    pub(super) fn save_password_reply(&self, tab_id: TabId, origin: &str, accept: bool, never: bool) {
+    pub(super) fn save_password_reply(
+        &self,
+        tab_id: TabId,
+        origin: &str,
+        accept: bool,
+        never: bool,
+        username: Option<String>,
+    ) {
         // Take the pending login before hiding (hiding counts as dismissal).
         let pending = self.vaults.pending_save.borrow_mut().take();
         self.hide_popup();
@@ -774,6 +781,13 @@ impl Browser {
         }
         if !accept {
             return;
+        }
+        // The username as the user left it in the prompt (0.11.2: it can be corrected there).
+        let mut p = p;
+        if let Some(name) = username.map(|u| u.trim().to_string()) {
+            if name.chars().count() <= 256 && !name.chars().any(char::is_control) {
+                p.username = name;
+            }
         }
         if !self.vault_exists() {
             // Keep the login until the vault is set up on the passwords page.

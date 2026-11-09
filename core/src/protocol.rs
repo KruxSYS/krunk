@@ -1158,6 +1158,9 @@ pub enum Request {
         accept: bool,
         #[serde(default)]
         never: bool,
+        /// The username as the prompt shows it, possibly edited (0.11.2); none from older popups.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        username: Option<String>,
     },
     /// Key icon in the address bar: offer to fill the active page's login.
     RequestFill,
@@ -3059,7 +3062,20 @@ mod tests {
             Request::Print,
             Request::DevTools,
             Request::ShieldAllowSite { allow: true },
-            Request::SavePasswordReply { tab_id: 1, origin: "https://a.example".into(), accept: true, never: false },
+            Request::SavePasswordReply {
+                tab_id: 1,
+                origin: "https://a.example".into(),
+                accept: true,
+                never: false,
+                username: None,
+            },
+            Request::SavePasswordReply {
+                tab_id: 1,
+                origin: "https://a.example".into(),
+                accept: true,
+                never: false,
+                username: Some("bob@a.example".into()),
+            },
             Request::PermissionReply { prompt_id: 7, allow: true, remember: true },
             Request::AddressSuggest { text: "ru".into(), rect },
             Request::ShowAddressMenu { x: 10.0, y: 40.0, selection: "ab".into(), has_text: true, dirty: false },

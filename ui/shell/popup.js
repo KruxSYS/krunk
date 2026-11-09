@@ -610,14 +610,18 @@
   }
 
   function renderSave(c) {
+    // 0.11.2: the account the password is for, shown and editable before saving.
+    const user = el('input', { id: 'save-username', type: 'text', value: c.username || '', placeholder: 'Username or email',
+      autocomplete: 'off', spellcheck: 'false', maxlength: '256', 'aria-label': 'Username' });
     const reply = (accept, never) => {
-      LB.post('savePasswordReply', { tabId: c.tabId, origin: c.origin, accept: accept, never: never });
+      LB.post('savePasswordReply', { tabId: c.tabId, origin: c.origin, accept: accept, never: never, username: user.value });
       close();
     };
-    return [el('div', { class: 'panel' }, [
+    user.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); reply(true, false); } });
+    return [el('div', { class: 'panel save-login' }, [
       el('h2', { text: c.update ? 'Update saved password?' : 'Save password?' }),
-      el('p', {}, [c.username ? el('strong', { text: c.username }) : 'This login', ' on ',
-        el('span', { class: 'origin', text: c.origin })]),
+      el('p', {}, ['On ', el('span', { class: 'origin', text: c.origin })]),
+      el('label', { class: 'field' }, [el('span', { text: 'Username' }), user]),
       el('div', { class: 'row' }, [
         el('button', { class: 'btn', onclick: () => reply(false, true), text: 'Never for this site' }),
         el('button', { class: 'btn', onclick: () => reply(false, false), text: 'Not now' }),
