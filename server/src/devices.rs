@@ -532,12 +532,15 @@ pub async fn refresh(State(state): State<AppState>, client: Client, JsonBody(req
 pub struct DeviceAuth {
     pub device_id: Uuid,
     pub account_id: Uuid,
+    /// The device is in the current account directory (only logged for now, audit S4/C19).
+    pub has_keys: bool,
 }
 
 #[derive(sqlx::FromRow)]
 struct AuthRow {
     device_id: Uuid,
     account_id: Uuid,
+    has_keys: bool,
     last_used_at: DateTime<Utc>,
 }
 
@@ -554,7 +557,7 @@ impl FromRequestParts<AppState> for DeviceAuth {
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
         let token = bearer(parts).ok_or_else(token_unauthorized)?;
         let row: Option<AuthRow> = sqlx::query_as(
-            "SELECT d.id AS device_id, d.account_id, d.last_used_at
+            "SELECT d.id AS device_id, d.account_id, d.has_keys, d.last_used_at
              FROM access_tokens t JOIN devices d ON d.id = t.device_id
              WHERE t.hash = $1 AND t.expires_at > now() AND d.revoked_at IS NULL",
         )
@@ -578,7 +581,7 @@ impl FromRequestParts<AppState> for DeviceAuth {
             .execute(&state.db)
             .await?;
         }
-        Ok(DeviceAuth { device_id: row.device_id, account_id: row.account_id })
+        Ok(DeviceAuth { device_id: row.device_id, account_id: row.account_id, has_keys: row.has_keys })
     }
 }
 

@@ -237,10 +237,21 @@ struct Counters {
     history: i64,
 }
 
+/// A write from a device that isn't in the account directory is logged, not refused: shipped
+/// clients reach this after a sign-out and sign-in with sync.json left over (audit C19), so
+/// refusing it (audit S4) waits for a client that handles that (0.12.0). The log shows how
+/// many there are.
+fn keyless_write(d: &DeviceAuth, route: &'static str) {
+    if !d.has_keys {
+        tracing::warn!(device = %d.device_id, route, "write from a device without keys (audit S4/C19)");
+    }
+}
+
 /// `POST records/batch {writes}` → `{results:[{id, status:"ok", seq} | {id, status:"conflict",
 /// current:{seq, envelope}}], head_seq}`.
 pub async fn batch(State(state): State<AppState>, d: DeviceAuth, JsonBody(req): JsonBody<BatchReq>) -> ApiResult {
     hit(&state.db, rl::RECORDS_WRITE, &rl::id_key(&d.device_id)).await?;
+    keyless_write(&d, "records/batch");
     if req.writes.is_empty() || req.writes.len() > BATCH_MAX {
         return Err(bad("A batch has 1 to 500 writes."));
     }
@@ -407,6 +418,7 @@ pub struct RekeyReq {
 /// step 5), atomically. One that another rotator already swapped is skipped.
 pub async fn rekey(State(state): State<AppState>, d: DeviceAuth, JsonBody(req): JsonBody<RekeyReq>) -> ApiResult {
     hit(&state.db, rl::REKEY, &rl::id_key(&d.device_id)).await?;
+    keyless_write(&d, "rekey/batch");
     if req.replaces.is_empty() || req.replaces.len() > BATCH_MAX {
         return Err(bad("A batch has 1 to 500 replacements."));
     }
