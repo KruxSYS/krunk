@@ -566,6 +566,13 @@ impl Browser {
                     return;
                 }
                 let id = ctx.get("id").and_then(|i| i.as_i64()).unwrap_or(0);
+                // The world exists in every document of the tab; on Krunk's own pages it is
+                // never used (0.11.7, audit C1).
+                let origin = ctx.get("origin").and_then(|o| o.as_str()).unwrap_or("");
+                if !ext::content_context_allowed(origin) {
+                    info!("tab {tab}: extension world {id} on an internal page: not used");
+                    return;
+                }
                 let unique = ctx.get("uniqueId").and_then(|u| u.as_str()).unwrap_or("").to_string();
                 info!("tab {tab}: extension world {id} created");
                 self.ext.contexts.borrow_mut().entry(tab).or_default().push(ExtContext { id, unique, main: false });
@@ -601,6 +608,12 @@ impl Browser {
                     return;
                 }
                 let context = params.get("executionContextId").and_then(|i| i.as_i64()).unwrap_or(0);
+                // Only from a world that was recorded (not one on an internal page, C1).
+                let known = self.ext.contexts.borrow().get(&tab).is_some_and(|l| l.iter().any(|c| c.id == context));
+                if !known {
+                    warning!("tab {tab}: extension call from an unknown world {context}: ignored");
+                    return;
+                }
                 let payload = params.get("payload").and_then(|p| p.as_str()).unwrap_or("");
                 let Ok(msg) = serde_json::from_str::<Value>(payload) else { return };
                 let ext_id = msg.get("ext").and_then(|e| e.as_str()).unwrap_or("").to_string();
@@ -1693,8 +1706,18 @@ impl Browser {
         let Some(context) = context else {
             return Err("The tab has no extension world (not a web page, or not allowed there).".into());
         };
-        let root = self.ext.exts.borrow().iter().find(|e| e.installed.id == ext_id).map(|e| e.root.clone());
-        let Some(root) = root else { return Err("unknown extension".into()) };
+        let found = self
+            .ext
+            .exts
+            .borrow()
+            .iter()
+            .find(|e| e.installed.id == ext_id)
+            .map(|e| (e.root.clone(), ext::may_use_scripting(&e.manifest)));
+        let Some((root, permitted)) = found else { return Err("unknown extension".into()) };
+        // As in Chrome: the `scripting` permission (0.11.7, audit C1).
+        if !permitted {
+            return Err("The extension doesn't have the \"scripting\" permission.".into());
+        }
         let Some(view) = self.tab_view(tab) else { return Err("no such tab".into()) };
         let files: Vec<String> = data
             .get("files")

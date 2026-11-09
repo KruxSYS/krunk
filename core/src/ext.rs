@@ -79,6 +79,35 @@ pub fn id_of_url(url: &str) -> Option<String> {
     valid_id(id).then(|| id.to_string())
 }
 
+/// May an extension's content world in a document of `origin` (CDP's
+/// `ExecutionContextDescription.origin`) be used: messages, deliveries, `scripting.*`
+/// (0.11.7, audit C1)? The world is created in every document of a tab, Krunk's own pages
+/// included. Those, extension pages and the engine's own pages are refused; anything else is
+/// as before (web pages, `file:`, opaque origins).
+pub fn content_context_allowed(origin: &str) -> bool {
+    let origin = origin.trim();
+    let Ok(u) = url::Url::parse(origin) else {
+        // "null", "" or "://": an opaque origin (a data: or sandboxed document).
+        return true;
+    };
+    if matches!(u.scheme(), "chrome" | "chrome-extension" | "chrome-untrusted" | "devtools") {
+        return false;
+    }
+    match u.host_str() {
+        Some(h) => {
+            let h = h.trim_end_matches('.').to_ascii_lowercase();
+            h != "krunk.invalid" && !h.ends_with(".krunk.invalid")
+        }
+        None => true,
+    }
+}
+
+/// `scripting.executeScript` and `scripting.insertCSS` need the `scripting` permission, as in
+/// Chrome (0.11.7, audit C1).
+pub fn may_use_scripting(m: &Manifest) -> bool {
+    m.permissions.iter().any(|p| p == "scripting")
+}
+
 // ------------------------------------------------------------------ manifest
 
 /// The parts of a Manifest V3 manifest Krunk uses.
@@ -1263,6 +1292,46 @@ mod tests {
         "options_ui": {"page": "options.html", "open_in_tab": true},
         "declarative_net_request": {"rule_resources": [{"id": "r", "enabled": true, "path": "rules.json"}]}
     }"#;
+
+    /// 0.11.7, audit C1: an extension's world on Krunk's own pages is never used.
+    #[test]
+    fn content_worlds_only_outside_krunk() {
+        for refused in [
+            "https://krunk.invalid",
+            "https://KRUNK.invalid.",
+            "https://shell.krunk.invalid",
+            "https://abcdefghijklmnopabcdefghijklmnop.ext.krunk.invalid",
+            "chrome://gpu",
+            "devtools://devtools",
+            "chrome-extension://abc",
+        ] {
+            assert!(!content_context_allowed(refused), "{refused}");
+        }
+        for allowed in [
+            "https://example.com",
+            "http://localhost:8094",
+            "https://krunk.invalid.example.com",
+            "https://notkrunk.invalid.test",
+            "file://",
+            "null",
+            "",
+            "://",
+        ] {
+            assert!(content_context_allowed(allowed), "{allowed}");
+        }
+    }
+
+    #[test]
+    fn scripting_needs_its_permission() {
+        let m = |perms: &str| {
+            Manifest::parse(&format!(r#"{{"manifest_version":3,"name":"x","version":"1","permissions":{perms}}}"#))
+                .unwrap()
+        };
+        assert!(may_use_scripting(&m(r#"["storage","scripting"]"#)));
+        assert!(!may_use_scripting(&m(r#"["storage","tabs","activeTab"]"#)));
+        assert!(!may_use_scripting(&m(r#"[]"#)));
+        assert!(!may_use_scripting(&Manifest::parse(MANIFEST).unwrap()));
+    }
 
     #[test]
     fn manifest_parses_and_derives() {
