@@ -408,7 +408,11 @@ pub fn sanitize_file_name(name: &str) -> String {
         out = format!("download{}", if out.is_empty() { String::new() } else { format!("_{out}") });
     }
     if out.chars().count() > 200 {
-        let ext: String = out.rsplit_once('.').map(|(_, e)| format!(".{}", &e[..e.len().min(16)])).unwrap_or_default();
+        // Characters, not bytes: a site's name may put a multi-byte character across byte 16.
+        let ext: String = out
+            .rsplit_once('.')
+            .map(|(_, e)| format!(".{}", e.chars().take(16).collect::<String>()))
+            .unwrap_or_default();
         out = out.chars().take(200 - ext.chars().count()).collect::<String>() + &ext;
     }
     out
@@ -625,6 +629,22 @@ mod tests {
         let long = format!("{}.tar.gz", "x".repeat(300));
         let s = sanitize_file_name(&long);
         assert!(s.chars().count() <= 200 && s.ends_with(".gz"));
+    }
+
+    /// 0.11.7 (audit C2): a site's long name whose extension has a multi-byte character across
+    /// byte 16 aborted the browser (a byte slice in the middle of a character).
+    #[test]
+    fn long_names_with_multibyte_extensions() {
+        for ext in ["aaaaaaaaaaaaaaaé", "€€€€€€", "ab😀😀😀😀😀😀😀", "ééééééééééééééééééé"]
+        {
+            let s = sanitize_file_name(&format!("{}.{ext}", "a".repeat(250)));
+            assert!(s.chars().count() <= 200, "{s}");
+            let kept = s.rsplit_once('.').map(|(_, e)| e).unwrap_or_default();
+            assert!(kept.chars().count() <= 16 && ext.starts_with(kept), "{ext} -> {kept}");
+        }
+        // A legitimate long name keeps its extension.
+        let s = sanitize_file_name(&format!("{}.pdf", "Ü".repeat(250)));
+        assert!(s.ends_with(".pdf") && s.chars().count() == 200);
     }
 
     #[test]
