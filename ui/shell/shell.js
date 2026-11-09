@@ -254,6 +254,9 @@
   $('tabs').addEventListener('transitionend', function (e) {
     if (e.propertyName === 'flex-basis' && !e.target.classList.contains('closing')) layoutTabs();
   });
+  // A middle press never starts the engine's autoscroll on the strip (0.11.0): on an
+  // overflowing (scrollable) row it took the release, so middle-click did not close the tab.
+  $('tabstrip').addEventListener('mousedown', function (e) { if (e.button === 1) e.preventDefault(); });
   $('tabs').addEventListener('wheel', function (e) {
     const box = $('tabs');
     if (box.scrollWidth <= box.clientWidth) return;
