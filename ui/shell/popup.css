@@ -66,6 +66,7 @@ body.pv-dark { --bg-raised: #202124; --bg-hover: #3c4043; --fg: #e8eaed; --fg-mu
 .panel p { margin: 0 0 10px; }
 .origin { font-weight: 600; word-break: break-all; }
 .panel label.check { display: flex; align-items: center; gap: 6px; margin: 0 0 10px; }
+.panel label.check.remain { margin: 10px 0 2px; font-size: 0.923rem; }
 .panel p.muted { color: var(--muted); }
 .big { font-size: 2.154rem; font-weight: 600; line-height: 1.1; }
 .row { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }

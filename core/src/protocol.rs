@@ -401,6 +401,9 @@ pub enum PopupContent {
         error: Option<String>,
         /// Milliseconds before the next attempt is accepted.
         wait_ms: u64,
+        /// "Remain unlocked this session" starts checked (the user's last choice, 0.11.0).
+        #[serde(default = "yes")]
+        remain: bool,
     },
     /// Contents of a bookmarks-bar folder. The bar's overflow ("»", 0.7.2) is the bar's own
     /// folder from item `offset` on (the items that did not fit).
@@ -1271,6 +1274,9 @@ pub enum Request {
     },
     VaultUnlock {
         password: Secret,
+        /// "Remain unlocked this session" (0.11.0); absent: the remembered choice.
+        #[serde(default)]
+        remain: Option<bool>,
     },
     VaultLock,
     VaultList,
@@ -3089,7 +3095,8 @@ mod tests {
             Request::RequestFill,
             Request::GetNeverSave,
             Request::NeverSaveRemove { origin: "https://a.example".into() },
-            Request::VaultUnlock { password: Secret::from("pw") },
+            Request::VaultUnlock { password: Secret::from("pw"), remain: None },
+            Request::VaultUnlock { password: Secret::from("pw"), remain: Some(false) },
             Request::VaultChangePassword { old: Secret::from("a"), new: Secret::from("b") },
             Request::GetAllowlist,
             Request::AllowlistAdd { host: "a.example".into() },
@@ -4304,6 +4311,7 @@ mod tests {
                     purpose: UnlockPurpose::Fill,
                     error: Some("Wrong master password".into()),
                     wait_ms: 2000,
+                    remain: false,
                 },
             },
             Event::Popup {

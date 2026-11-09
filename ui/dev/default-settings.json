@@ -64,6 +64,7 @@
     "resolvers": []
   },
   "vaultAutolockMinutes": 15,
+  "vaultRemainUnlocked": true,
   "offerSavePasswords": true,
   "offerSaveCards": true,
   "passgen": {

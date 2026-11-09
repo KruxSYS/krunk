@@ -387,6 +387,9 @@ pub struct Settings {
 
     // Passwords
     pub vault_autolock_minutes: u32,
+    /// "Remain unlocked this session" in the unlock dialog (0.11.0): the user's last choice,
+    /// the dialog's default. Checked, an unlock lasts until Krunk quits (no inactivity lock).
+    pub vault_remain_unlocked: bool,
     pub offer_save_passwords: bool,
     /// Offer to save a payment card after a checkout (Krunk 0.6.0).
     pub offer_save_cards: bool,
@@ -473,6 +476,7 @@ impl Default for Settings {
             clear_on_exit: ClearOnExit::default(),
             permissions: PermissionDefaults::default(),
             vault_autolock_minutes: 15,
+            vault_remain_unlocked: true,
             offer_save_passwords: true,
             offer_save_cards: true,
             passgen: crate::passgen::Passgen::default(),

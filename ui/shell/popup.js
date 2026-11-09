@@ -712,16 +712,21 @@
     const input = el('input', { type: 'password', id: 'master', autocomplete: 'off', 'aria-label': 'Master password', placeholder: 'Master password' });
     const button = el('button', { class: 'btn primary', id: 'unlock', type: 'submit', text: 'Unlock' });
     const err = el('p', { class: 'error', role: 'alert', text: c.error || '' });
+    // 0.11.0: checked (the remembered default), the vault stays open until Krunk quits.
+    const remain = el('input', { type: 'checkbox', id: 'remain' });
+    remain.checked = c.remain !== false;
+    const remainRow = el('label', { class: 'check remain', title: 'Unchecked, the vault locks itself after the time set in Settings → Passwords' },
+      [remain, el('span', { text: 'Remain unlocked this session' })]);
     const form = el('form', {
       onsubmit: (e) => {
         e.preventDefault();
         if (!input.value || button.disabled) return;
         button.disabled = true;
         button.textContent = 'Unlocking…';
-        LB.post('vaultUnlock', { password: input.value });
+        LB.post('vaultUnlock', { password: input.value, remain: remain.checked });
         input.value = '';
       },
-    }, [input, el('div', { class: 'row' }, [
+    }, [input, remainRow, el('div', { class: 'row' }, [
       el('button', { class: 'btn', type: 'button', onclick: close, text: 'Cancel' }),
       button,
     ])]);

@@ -955,6 +955,8 @@ mod tests {
             "tabDiscardMinutes",
             "tabSleepMinutes",
             "userAgent",
+            // 0.11.0: how this device's unlock lasts is this device's choice.
+            "vaultRemainUnlocked",
         ];
         let v = serde_json::to_value(Settings::default()).unwrap();
         let unsorted: Vec<&String> = v

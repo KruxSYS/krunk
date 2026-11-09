@@ -298,7 +298,7 @@ pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> Pop
         PopupKind::SiteInfo => (360.0, 260.0),
         PopupKind::Suggest | PopupKind::CardFill => (300.0, 160.0),
         PopupKind::BookmarkFolder => (FOLDER_POPUP_WIDTH, folder_height(entries)),
-        PopupKind::Unlock => (360.0, 230.0),
+        PopupKind::Unlock => (360.0, 262.0),
         PopupKind::Permission => (380.0, 196.0),
         PopupKind::PasswordSaved => (360.0, 92.0),
         PopupKind::SaveCard => (360.0, 150.0),

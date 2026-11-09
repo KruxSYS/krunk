@@ -78,6 +78,8 @@ pub(super) struct VaultHost {
     /// (`None`: the entry was new and is deleted).
     auto_saved: RefCell<Option<(String, Option<Zeroizing<String>>)>>,
     pub(super) clipboard_seq: Cell<Option<u32>>,
+    /// Unlocked with "Remain unlocked this session" (0.11.0): no inactivity lock until quit.
+    remain_this_session: Cell<bool>,
 }
 
 pub(super) fn wrong_password_message(wait_ms: u64) -> String {
@@ -163,6 +165,8 @@ impl Browser {
             "waitMs": self.vaults.rate.borrow().wait_ms(now_ms()),
             // 0.7.0: a recovery phrase exists (when it was made), readable while locked.
             "recovery": core_vault::recovery_in_file(&self.dirs.vault()),
+            // 0.11.0: the unlock form's "Remain unlocked this session" default.
+            "remain": self.settings.borrow().vault_remain_unlocked,
         })
     }
 
@@ -203,6 +207,7 @@ impl Browser {
     /// (and wiped), pending prompts are discarded.
     pub(super) fn lock_vault(&self, reason: &str) {
         let had = self.vaults.vault.borrow_mut().take().is_some();
+        self.vaults.remain_this_session.set(false);
         self.vaults.pending_save.borrow_mut().take();
         self.vaults.unlock_for.borrow_mut().take();
         if let Some(w) = self.app() {
@@ -222,8 +227,9 @@ impl Browser {
 
     /// Periodic auto-lock check (VAULT_TIMER).
     pub(super) fn vault_timer(&self) {
-        let minutes = i64::from(self.settings.borrow().vault_autolock_minutes.max(1));
-        if self.vault_unlocked() && now_ms() - self.vaults.last_activity.get() >= minutes * 60_000 {
+        let minutes = self.settings.borrow().vault_autolock_minutes;
+        let idle = now_ms() - self.vaults.last_activity.get();
+        if core_vault::autolock_due(self.vault_unlocked(), self.vaults.remain_this_session.get(), idle, minutes) {
             self.lock_vault("inactivity");
         }
     }
@@ -252,7 +258,7 @@ impl Browser {
         match request {
             Request::VaultStatus => self.reply(tab, Event::ok(req_id, self.vault_status())),
             Request::VaultSetup { password } => self.vault_setup(tab, req_id, password),
-            Request::VaultUnlock { password } => self.vault_unlock(tab, req_id, password),
+            Request::VaultUnlock { password, remain } => self.vault_unlock(tab, req_id, password, remain),
             Request::VaultLock => {
                 self.lock_vault("user");
                 self.reply(tab, Event::ok(req_id, ()));
@@ -390,8 +396,20 @@ impl Browser {
 
     /// Unlock from the passwords page (`tab`) or the unlock popup (`None`).
     /// The rate limit is enforced here, not in the UI.
-    fn vault_unlock(&self, tab: Option<TabId>, req_id: Option<u32>, password: Secret) {
+    fn vault_unlock(&self, tab: Option<TabId>, req_id: Option<u32>, password: Secret, remain: Option<bool>) {
+        // "Remain unlocked this session" (0.11.0): the dialog's choice, remembered as the next
+        // default; a caller without the checkbox uses the remembered one.
+        let remembered = self.settings.borrow().vault_remain_unlocked;
+        let remain = remain.unwrap_or(remembered);
+        if remain != remembered {
+            self.settings.borrow_mut().vault_remain_unlocked = remain;
+            let saved = self.store.borrow().save_settings(&self.settings.borrow());
+            if let Err(e) = saved {
+                warning!("vault: the unlock choice could not be saved: {e}");
+            }
+        }
         if self.vault_unlocked() {
+            self.vaults.remain_this_session.set(remain);
             self.reply(tab, Event::ok(req_id, ()));
             self.after_unlock();
             return;
@@ -423,7 +441,8 @@ impl Browser {
                     Ok(v) => {
                         b.vaults.rate.borrow_mut().record_success();
                         let _ = b.store.borrow().save_rate_limiter(&b.vaults.rate.borrow());
-                        info!("vault unlocked");
+                        info!("vault unlocked{}", if remain { " for this session" } else { "" });
+                        b.vaults.remain_this_session.set(remain);
                         b.vault_opened(v);
                         b.reply(tab, Event::ok(req_id, ()));
                         b.after_unlock();
@@ -958,7 +977,8 @@ impl Browser {
     pub(super) fn show_unlock_prompt(&self, error: Option<String>) {
         let Some((tab_id, origin, purpose)) = self.vaults.unlock_for.borrow().clone() else { return };
         let wait_ms = self.vaults.rate.borrow().wait_ms(now_ms());
-        self.show_prompt(PopupContent::Unlock { tab_id, origin, purpose, error, wait_ms }, 0);
+        let remain = self.settings.borrow().vault_remain_unlocked;
+        self.show_prompt(PopupContent::Unlock { tab_id, origin, purpose, error, wait_ms, remain }, 0);
     }
 
     /// Refreshes an open unlock prompt with an error message.

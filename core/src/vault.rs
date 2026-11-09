@@ -737,6 +737,12 @@ pub fn prompt_still_valid(prompt_tab: u32, prompt_origin: &str, active_tab: Opti
 }
 
 /// Is there a vault at `path`?
+/// Does the inactivity lock apply now (0.11.0)? Not while the vault was unlocked with "Remain
+/// unlocked this session": then only quitting, locking Windows, sleep and "Lock now" lock it.
+pub fn autolock_due(unlocked: bool, remain_this_session: bool, idle_ms: i64, minutes: u32) -> bool {
+    unlocked && !remain_this_session && idle_ms >= i64::from(minutes.max(1)) * 60_000
+}
+
 pub fn exists(path: &Path) -> bool {
     path.is_file()
 }
@@ -1500,6 +1506,19 @@ pub fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remain_unlocked_this_session_skips_the_inactivity_lock() {
+        let min = 60_000;
+        // Unchecked: today's auto-lock after the set minutes.
+        assert!(!autolock_due(true, false, 14 * min, 15));
+        assert!(autolock_due(true, false, 15 * min, 15));
+        // Checked: never by inactivity, however long.
+        assert!(!autolock_due(true, true, 24 * 60 * min, 15));
+        // Locked already: nothing to do; a zero setting counts as one minute.
+        assert!(!autolock_due(false, false, 99 * min, 15));
+        assert!(autolock_due(true, false, min, 0));
+    }
 
     struct TestDir(PathBuf);
     impl TestDir {

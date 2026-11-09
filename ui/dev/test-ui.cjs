@@ -2735,8 +2735,13 @@ async function testPasswords(browser) {
   check((await page.textContent('#unlock-error')).includes('Wrong master password'), 'the reason is still there after the second delay');
   await page.type('#unlock-pw', 'x');
   check((await page.textContent('#unlock-error')) === '', 'typing a new attempt clears it');
+  check(await page.isChecked('#unlock-remain'), '0.11.0: the page\'s "Remain unlocked this session" starts checked');
   await page.fill('#unlock-pw', 'correct horse battery');
   await page.click('#unlock-btn');
+  {
+    const u = await lastSent(page, 'vaultUnlock');
+    check(u && u.remain === true, 'the page sends remain with the unlock (' + JSON.stringify(u && { remain: u.remain }) + ')');
+  }
   await page.waitForSelector('#list-section:not([hidden])');
   check(true, 'correct password unlocks');
 
@@ -3021,7 +3026,7 @@ async function testPasswords(browser) {
   await page.context().close();
 
   // Popup unlock prompt + save prompt.
-  ({ page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 360, height: 230 }, 1));
+  ({ page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 360, height: 262 }, 1));
   await emit(page, { event: 'popup', content: { kind: 'unlock', tabId: 4, origin: 'https://bank.example', purpose: 'fill', error: null, waitMs: 0 } });
   await page.waitForSelector('#master');
   check(await page.evaluate(() => document.activeElement.id) === 'master', 'unlock prompt focuses the password field');
@@ -3038,7 +3043,18 @@ async function testPasswords(browser) {
   await page.click('#unlock');
   await page.waitForTimeout(30);
   const un = await lastSent(page, 'vaultUnlock');
-  check(un && un.password === 'correct horse battery', 'unlock prompt sends vaultUnlock');
+  check(un && un.password === 'correct horse battery' && un.remain === true, 'unlock prompt sends vaultUnlock, "Remain unlocked this session" checked by default (' + JSON.stringify(un) + ')');
+  check(await page.evaluate(() => { const r = document.getElementById('remain').closest('label').getBoundingClientRect(); return r.bottom <= window.innerHeight && r.height > 0; }), 'the checkbox fits the prompt');
+  // 0.11.0: the remembered choice is the default; unchecked, the unlock says so.
+  await emit(page, { event: 'popup', content: { kind: 'unlock', tabId: 4, origin: 'https://bank.example', purpose: 'fill', error: null, waitMs: 0, remain: false } });
+  await page.waitForTimeout(60);
+  check(!(await page.isChecked('#remain')), 'remembered "unchecked" shows unchecked');
+  await page.click('#remain');
+  await page.click('#remain');
+  await page.fill('#master', 'pw');
+  await page.click('#unlock');
+  await page.waitForTimeout(30);
+  check((await lastSent(page, 'vaultUnlock')).remain === false, 'unchecked: vaultUnlock{remain:false}');
   await emit(page, { event: 'popup', content: { kind: 'unlock', tabId: 4, origin: 'https://bank.example', purpose: 'fill', error: 'Wrong master password. Try again in 4 s.', waitMs: 4000 } });
   await page.waitForTimeout(60);
   check(await page.locator('#unlock').isDisabled(), 'unlock prompt disabled during the host-side delay');

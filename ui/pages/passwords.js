@@ -25,7 +25,7 @@
         // From the unlock popup's "Forgot master password?".
         history.replaceState(null, '', location.pathname);
         showRecover();
-      } else if (s.locked) { show('unlock'); rateLimit(s.waitMs, ''); }
+      } else if (s.locked) { show('unlock'); $('unlock-remain').checked = s.remain !== false; rateLimit(s.waitMs, ''); }
       else {
         show('list-section');
         renderRecovery();
@@ -173,7 +173,7 @@
     $('unlock-btn').textContent = 'Unlocking…';
     $('unlock-pw').value = '';
     lastError = '';
-    LB.request('vaultUnlock', { password: pw }).then(function () {
+    LB.request('vaultUnlock', { password: pw, remain: $('unlock-remain').checked }).then(function () {
       $('unlock-error').textContent = '';
       status();
     }, function (err) {
