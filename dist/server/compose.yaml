@@ -136,6 +136,10 @@ services:
         condition: service_healthy
     networks:
       - backend
+    # The image starts as root and drops to postgres with su-exec (a setuid call, not a setuid
+    # binary), so this costs nothing (0.11.7).
+    security_opt:
+      - no-new-privileges:true
     shm_size: 128m
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U krunk -d krunk"]

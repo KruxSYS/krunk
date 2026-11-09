@@ -157,6 +157,12 @@ NODE_PATH=/usr/lib/node_modules/@playwright/mcp/node_modules node server/e2e/acc
 - It forwards the result to `api` as `X-Krunk-Client-IP`, and strips `CF-IPCountry` from
   untrusted peers.
 - `api` believes those headers only when the TCP peer is the `web` container.
+- **Deployment requirement (0.11.7):** the hop in `TRUSTED_PROXIES_EXTRA` must overwrite or
+  strip a `CF-Connecting-IP` header sent by the client. It must be reachable only through
+  Cloudflare, or set the header itself. Otherwise anyone who reaches the hop directly picks
+  their own client IP, and the per-IP rate limits and the IPs in the account's activity can be
+  spoofed. The operator checks this for ai-pipe's proxy (audit S10).
+- Per-IP rate limits count an IPv6 /64 as one client (0.11.7), and each IPv4 address on its own.
 
 **Backups** (OPEN_QUESTIONS Q4):
 - The `backup` service runs `pg_dump -Fc` at start and then every 24 hours into the volume
@@ -168,7 +174,10 @@ NODE_PATH=/usr/lib/node_modules/@playwright/mcp/node_modules node server/e2e/acc
   dist/server/backup-db.sh  --project <compose project> --out <dir> --age-recipient <age public key>
   dist/server/restore-db.sh --project <compose project> --dump <file.dump.age> --age-identity <key file>
   ```
-- `restore-db.sh` stops `api`, runs `pg_restore --clean --if-exists` and starts `api` again.
+- `restore-db.sh` stops `api`, runs `pg_restore --clean --if-exists --single-transaction` and
+  starts `api` again. Since 0.11.7, a failed restore leaves the database as it was and still
+  starts `api`. `backup-db.sh` writes to `.part` and renames only a complete dump, and creates
+  the output folder private (umask 077).
 - Drills on throwaway stacks, 2026-11-05: with `backup-db.sh` (insert a marker, back up,
   `down -v`, `up`, restore, the marker is back), and with `--latest` from the `backup` volume.
   The first was unencrypted, because `age` isn't installed on the build machine.

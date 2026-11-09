@@ -18,14 +18,19 @@ done
 [ -n "$project" ] && [ -n "$out" ] || { sed -n '2,7p' "$0" >&2; exit 2; }
 db=$(docker ps -q --filter "label=com.docker.compose.project=$project" --filter "label=com.docker.compose.service=db")
 [ -n "$db" ] || { echo "no running db container in project $project" >&2; exit 1; }
-mkdir -p "$out"
+# Private from the start: the folder too (0.11.7). A dump is written to .part and renamed only
+# when complete, so a failed dump never looks like a backup.
 umask 077
+mkdir -p "$out"
 name="$out/krunk-$project-$(date -u +%Y%m%dT%H%M%SZ).dump"
+trap 'rm -f "$name.part"' EXIT
 if [ -n "$recipient" ]; then
   command -v age >/dev/null || { echo "age is not installed" >&2; exit 1; }
-  docker exec "$db" pg_dump -U krunk -d krunk -Fc | age -r "$recipient" > "$name.age"
+  docker exec "$db" pg_dump -U krunk -d krunk -Fc | age -r "$recipient" > "$name.part"
+  mv "$name.part" "$name.age"
   echo "wrote $name.age ($(stat -c %s "$name.age") bytes, encrypted)"
 else
-  docker exec "$db" pg_dump -U krunk -d krunk -Fc > "$name"
+  docker exec "$db" pg_dump -U krunk -d krunk -Fc > "$name.part"
+  mv "$name.part" "$name"
   echo "wrote $name ($(stat -c %s "$name") bytes, NOT encrypted: pass --age-recipient for real backups)"
 fi

@@ -5,6 +5,8 @@
 # --latest takes the newest daily dump from the stack's own krunk-backups volume; --dump a file
 # from backup-db.sh. Stops api, replaces the database contents (pg_restore --clean --if-exists),
 # starts api. Afterwards re-apply account deletions newer than the dump (deletions.log, from S10).
+# The restore is one transaction (0.11.7): if it fails, the database is as it was and api starts
+# again.
 set -euo pipefail
 project="" dump="" identity="" latest=""
 usage() { sed -n '2,7p' "$0" >&2; exit 2; }
@@ -32,15 +34,19 @@ if [ -n "$latest" ]; then
   [ -n "$file" ] || { echo "no dump in the backup volume of $project" >&2; exit 1; }
   echo "restoring ${file##*/}"
 fi
+if [[ "$dump" == *.age ]] && [ -z "$identity" ]; then
+  echo "--age-identity is required for .age dumps" >&2
+  exit 1
+fi
 [ -z "$api" ] || docker stop "$api" >/dev/null
+trap '[ -z "$api" ] || docker start "$api" >/dev/null' EXIT
+restore() { docker exec -i "$db" pg_restore -U krunk -d krunk --clean --if-exists --no-owner --single-transaction; }
 if [ -n "$latest" ]; then
-  docker exec "$backup" cat "$file" | docker exec -i "$db" pg_restore -U krunk -d krunk --clean --if-exists --no-owner
+  docker exec "$backup" cat "$file" | restore
   dump=${file##*/}
 elif [[ "$dump" == *.age ]]; then
-  [ -n "$identity" ] || { echo "--age-identity is required for .age dumps" >&2; exit 1; }
-  age -d -i "$identity" "$dump" | docker exec -i "$db" pg_restore -U krunk -d krunk --clean --if-exists --no-owner
+  age -d -i "$identity" "$dump" | restore
 else
-  docker exec -i "$db" pg_restore -U krunk -d krunk --clean --if-exists --no-owner < "$dump"
+  restore < "$dump"
 fi
-[ -z "$api" ] || docker start "$api" >/dev/null
 echo "restored $dump into $project"
