@@ -13,8 +13,24 @@
     return n;
   }
 
+  // An arrow into a tray (inline SVG: the CSP allows no data: images).
+  function downloadIcon() {
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('class', 'dl-icon');
+    svg.setAttribute('aria-hidden', 'true');
+    ['M12 3v12', 'm7 10 5 5 5-5', 'M4 17v3h16v-3'].forEach(function (d) {
+      const p = document.createElementNS(NS, 'path');
+      p.setAttribute('d', d);
+      svg.appendChild(p);
+    });
+    return svg;
+  }
+
+  // '' when the release data has no usable size.
   function size(bytes) {
-    return (bytes / (1024 * 1024)).toFixed(0) + ' MB';
+    return typeof bytes === 'number' && bytes > 0 ? (bytes / (1024 * 1024)).toFixed(0) + ' MB' : '';
   }
 
   // Only our own relative /download/ paths become links.
@@ -33,32 +49,30 @@
     const portable = files.find(function (f) { return f.kind === 'portable' && safePath(f.url); });
     if (!installer && !portable) return none();
     box.textContent = '';
-    box.appendChild(el('p', { class: 'version' }, [
-      'Version ', el('strong', { text: String(r.version) }),
-      r.released ? ' · released ' + String(r.released) : '',
-      safePath(r.notes) ? ' · ' : '',
-      safePath(r.notes) ? el('a', { href: safePath(r.notes), text: 'release notes' }) : null,
+    const main = installer || portable;
+    box.appendChild(el('a', { class: 'btn primary big', href: safePath(main.url), download: '' }, [
+      downloadIcon(),
+      el('span', {}, [
+        el('span', { class: 'dl-main', text: installer ? 'Download for Windows' : 'Download the portable zip' }),
+        el('span', { class: 'sub', text: [installer ? 'Installer' : 'Zip', size(main.size), '64-bit'].filter(Boolean).join(' · ') }),
+      ]),
     ]));
-    const buttons = el('div', { class: 'buttons' });
-    if (installer) {
-      buttons.appendChild(el('a', { class: 'button primary', href: safePath(installer.url), download: '' }, [
-        'Download for Windows', el('span', { class: 'sub', text: 'Installer · ' + size(installer.size) }),
-      ]));
-    }
-    if (portable) {
-      buttons.appendChild(el('a', { class: 'button', href: safePath(portable.url), download: '' }, [
-        'Portable zip', el('span', { class: 'sub', text: size(portable.size) }),
-      ]));
-    }
-    box.appendChild(buttons);
-    box.appendChild(el('p', { class: 'req', text: 'Windows 10 or 11, 64-bit.' }));
+    const meta = el('p', { class: 'version' }, [
+      'Version ', el('strong', { text: String(r.version) }),
+      r.released ? ' · ' + String(r.released) : '',
+      safePath(r.notes) ? ' · ' : '',
+      safePath(r.notes) ? el('a', { href: safePath(r.notes), text: 'What\u2019s new' }) : null,
+      installer && portable ? ' · ' : '',
+      installer && portable ? el('a', { href: safePath(portable.url), download: '', text: 'Portable zip' + (size(portable.size) ? ' (' + size(portable.size) + ')' : '') }) : null,
+    ]);
+    box.appendChild(meta);
     const sums = el('dl', { class: 'sums' });
     [installer, portable].forEach(function (f) {
       if (!f) return;
       sums.appendChild(el('dt', { text: String(f.name) }));
-      sums.appendChild(el('dd', {}, [el('code', { text: 'SHA-256 ' + String(f.sha256) })]));
+      sums.appendChild(el('dd', {}, [el('code', { text: String(f.sha256) })]));
     });
-    box.appendChild(sums);
+    box.appendChild(el('details', { class: 'checksums' }, [el('summary', { text: 'SHA-256 checksums' }), sums]));
   }
 
   // A visitor using Krunk: the browser leaves `window.krunk = { version }` on this site only

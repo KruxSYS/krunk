@@ -3,69 +3,171 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Krunk: a lightweight, privacy-minded browser for Windows</title>
-<meta name="description" content="Krunk is a lightweight, privacy-minded web browser for Windows 10 and 11 with built-in ad blocking, an encrypted password vault and no telemetry.">
-<link rel="icon" type="image/png" href="krunk-64.png">
-<link rel="stylesheet" href="style.css">
-<script src="app.js" defer></script>
+<title>Krunk: a fast, private browser for Windows</title>
+<meta name="description" content="Krunk is a fast, privacy-minded web browser for Windows 10 and 11 with built-in ad blocking, an encrypted password vault, end-to-end encrypted sync and no telemetry.">
+<meta name="theme-color" content="#c2185b">
+<link rel="icon" type="image/png" href="/krunk-64.png">
+<link rel="apple-touch-icon" href="/krunk-180.png">
+<link rel="stylesheet" href="/style.css">
+<script src="/app.js" defer></script>
 </head>
-<body>
-<header class="hero">
-  <nav class="topnav"><a href="/account/">Account</a> <a href="/privacy">Privacy</a></nav>
+<body class="site">
+<a class="skip" href="#main">Skip to content</a>
+<header class="bar site-bar">
   <div class="wrap">
-    <img class="logo" src="krunk.svg" width="96" height="96" alt="">
-    <h1>Krunk</h1>
-    <p class="tagline">A lightweight, privacy-minded web browser for Windows 10 and 11.</p>
-
-    <section id="download" class="download" aria-live="polite">
-      <p class="loading">Looking for the latest release…</p>
-    </section>
+    <a class="brand" href="/"><img src="/krunk.svg" width="28" height="28" alt=""> Krunk</a>
+    <nav aria-label="Site">
+      <a class="opt" href="#features">Features</a>
+      <a class="opt" href="#install">Install</a>
+      <a href="/privacy">Privacy</a>
+      <a class="btn small" href="/account/">Account</a>
+    </nav>
   </div>
 </header>
 
-<main class="wrap">
-  <section>
-    <h2>What you get</h2>
-    <ul class="features">
-      <li><strong>Ad and tracker blocking built in</strong>, with uBlock Origin's lists and scriptlets (YouTube included).</li>
-      <li><strong>No telemetry.</strong> Krunk talks to no server of its own except the daily filter-list and update checks.</li>
-      <li><strong>Encrypted password vault</strong> protected by your master password.</li>
-      <li><strong>Third-party cookies blocked</strong>, tracking parameters stripped, Do Not Track and Global Privacy Control sent.</li>
-      <li><strong>Cookie and site-data manager</strong>, and "Inspect" for developers.</li>
-      <li><strong>Games work:</strong> pointer lock and full screen (F11).</li>
-      <li><strong>Light on memory:</strong> background tabs go to sleep.</li>
-      <li>Chromium engine (through CEF), bundled: no Edge, no WebView2.</li>
+<main id="main">
+  <section class="hero2">
+    <div class="wrap hero-grid">
+      <div class="hero-copy">
+        <p class="eyebrow">For Windows 10 and 11</p>
+        <h1>The fast, private browser that stays out of your way.</h1>
+        <p class="lead">Ads and trackers blocked out of the box, an encrypted password vault, end-to-end
+          encrypted sync and no telemetry. Chromium inside, nothing phoning home.</p>
+        <section id="download" class="dlcard" aria-live="polite" aria-label="Download">
+          <p class="loading">Looking for the latest release…</p>
+        </section>
+      </div>
+      <figure class="shot">
+        <picture>
+          <source srcset="/img/krunk-dark.webp" media="(prefers-color-scheme: dark)">
+          <img src="/img/krunk-light.webp" width="964" height="652" alt="Krunk showing a Wikipedia article, with its tab strip, address bar and the shield that counts blocked requests.">
+        </picture>
+      </figure>
+    </div>
+  </section>
+
+  <section id="features" class="wrap section">
+    <h2 class="section-title">Everything you need, nothing you don't</h2>
+    <ul class="features-grid">
+      <li class="feature">
+        <svg class="ficon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3Z"/><path d="m9 12 2 2 4-4"/></svg>
+        <h3>Ads and trackers blocked</h3>
+        <p>uBlock Origin's filter lists and scriptlets are built in, YouTube included. The shield shows what was stopped.</p>
+      </li>
+      <li class="feature">
+        <svg class="ficon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6 18.4 18.4"/></svg>
+        <h3>No telemetry</h3>
+        <p>Krunk talks to no server of its own except the daily filter-list and update checks. Nothing about your browsing leaves your PC.</p>
+      </li>
+      <li class="feature">
+        <svg class="ficon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+        <h3>A vault for your passwords</h3>
+        <p>Logins and cards encrypted behind your master password, with a password generator and autofill.</p>
+      </li>
+      <li class="feature">
+        <svg class="ficon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 0 1-14 5.3"/><path d="M4 12a8 8 0 0 1 14-5.3"/><path d="M18 3v4h-4"/><path d="M6 21v-4h4"/></svg>
+        <h3>Sync you can't be read from</h3>
+        <p>Bookmarks, history, tabs, settings and passwords, encrypted on your devices before upload. Optional, with a free account (beta).</p>
+      </li>
+      <li class="feature">
+        <svg class="ficon" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/></svg>
+        <h3>Light on memory</h3>
+        <p>Tabs you're not using go to sleep to save memory, and wake up where you left them.</p>
+      </li>
+      <li class="feature">
+        <svg class="ficon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8"/><path d="m10 9 3 2-3 2Z"/></svg>
+        <h3>Video and games work</h3>
+        <p>A bundled Chromium engine with H.264 and AAC, picture-in-picture, pointer lock and full screen. No Edge, no WebView2.</p>
+      </li>
     </ul>
   </section>
 
-  <section>
-    <h2>Install</h2>
-    <p><strong>Installer:</strong> installs for your user only, without administrator rights, to
-      <code>%LOCALAPPDATA%\Programs\Krunk</code>. It adds a Start Menu entry and an entry under
-      Settings → Apps for uninstalling. Your data stays when you uninstall, unless you choose otherwise.</p>
-    <p><strong>Portable:</strong> unzip anywhere and run <code>Krunk.exe</code>.</p>
-    <p class="note">The files are not code-signed yet, so Windows SmartScreen may warn the first time.
-      Check the SHA-256 shown above before running them:
-      <code>Get-FileHash Krunk-Setup-….exe</code> in PowerShell.</p>
+  <section class="band">
+    <div class="wrap band-grid">
+      <div>
+        <h2>Private by default</h2>
+        <p>The settings that protect you are already on. You can change them, but you don't have to.</p>
+      </div>
+      <ul class="checks">
+        <li>Third-party cookies blocked</li>
+        <li>Tracking parameters stripped from links</li>
+        <li>Do Not Track and Global Privacy Control sent</li>
+        <li>Cookie and site-data manager</li>
+        <li>Private windows that leave nothing behind</li>
+        <li>Updates checked with signatures, installed only when you say so</li>
+      </ul>
+    </div>
   </section>
 
-  <section>
-    <h2>Updates and privacy</h2>
-    <p>Krunk checks for a new version a minute after it starts and once a day. It fetches a small
-      file from this site, <code>/updates/win-x64/latest.json</code>, with its version in the request
-      and nothing else: no ID and nothing about your browsing. A new version is installed only when
-      you choose <em>Update now</em>. Before it runs, Krunk checks the release's Ed25519 signature and the
-      installer's SHA-256. You can turn the check off in Settings → About.</p>
-    <p>This site sets no cookies and loads nothing from other sites (the optional account pages
-      use a sign-in cookie and Cloudflare's bot check). Our server keeps no access log; the site is
-      delivered through Cloudflare, which handles the connection under its own privacy policy.
-      Details: <a href="/privacy">Privacy</a>.</p>
+  <section id="install" class="wrap section two-col">
+    <div>
+      <h2>Install in a minute</h2>
+      <ol class="steps">
+        <li><strong>Installer:</strong> installs for your user only, without administrator rights, to
+          <code>%LOCALAPPDATA%\Programs\Krunk</code>, with a Start menu entry and an uninstaller in
+          Settings → Apps. Your data stays when you uninstall, unless you choose otherwise.</li>
+        <li><strong>Portable:</strong> unzip anywhere and run <code>Krunk.exe</code>.</li>
+        <li><strong>Check the file:</strong> the files aren't code-signed yet, so SmartScreen may warn
+          the first time. Compare the SHA-256 in the download box with
+          <code>Get-FileHash Krunk-Setup-….exe</code> in PowerShell.</li>
+      </ol>
+    </div>
+    <div>
+      <h2>Updates, quietly</h2>
+      <p>Krunk checks for a new version a minute after it starts and once a day, by fetching
+        <code>/updates/win-x64/latest.json</code> from this site with its version and nothing else.
+        A new version is installed only when you choose <em>Update now</em>, after Krunk has checked
+        its Ed25519 signature and SHA-256. You can turn the check off in Settings → About.</p>
+      <p>This site sets no cookies and loads nothing from other sites (the account pages use a
+        sign-in cookie and Cloudflare's bot check). <a href="/privacy">Read the privacy notice</a>.</p>
+    </div>
+  </section>
+
+  <section class="wrap section faq">
+    <h2 class="section-title">Questions</h2>
+    <details>
+      <summary>Is Krunk free?</summary>
+      <p>Yes. Krunk is open source under the MIT licence, with no ads and nothing to buy.</p>
+    </details>
+    <details>
+      <summary>Do I need an account?</summary>
+      <p>No. Krunk works fully without one. An account is only needed to sync between your devices.</p>
+    </details>
+    <details>
+      <summary>What does it need?</summary>
+      <p>Windows 10 or 11, 64-bit, and about 450 MB of disk space once installed.</p>
+    </details>
+    <details>
+      <summary>Where is my data?</summary>
+      <p>On your PC, in <code>%LOCALAPPDATA%\Krunk</code>. Passwords are encrypted with your master
+        password; with sync on, your data is encrypted before it leaves the PC.</p>
+    </details>
   </section>
 </main>
 
-<footer class="wrap">
-  <p>Krunk is open source (MIT). It bundles Chromium through the Chromium Embedded Framework and
-    filter lists by EasyList and uBlock Origin; see the notices in the download.</p>
+<footer class="site-foot">
+  <div class="wrap foot-grid">
+    <div>
+      <a class="brand" href="/"><img src="/krunk.svg" width="24" height="24" alt=""> Krunk</a>
+      <p>Open source (MIT). Bundles Chromium through the Chromium Embedded Framework, and filter
+        lists by EasyList and uBlock Origin; see the notices in the download.</p>
+    </div>
+    <nav aria-label="Footer">
+      <h2>Krunk</h2>
+      <a href="#install">Download</a>
+      <a class="opt" href="#features">Features</a>
+    </nav>
+    <nav aria-label="Account">
+      <h2>Account</h2>
+      <a href="/account/login">Sign in</a>
+      <a href="/account/register">Create an account</a>
+    </nav>
+    <nav aria-label="About">
+      <h2>About</h2>
+      <a href="/privacy">Privacy</a>
+      <a href="mailto:privacy@209.wf">Contact</a>
+    </nav>
+  </div>
 </footer>
 </body>
 </html>

@@ -1,4 +1,4 @@
-// Screenshots of every account page in both colour schemes at 360, 900 and 1280 px (0.9.0: the
+// Screenshots of the public pages (0.10.0) and every account page in both colour schemes at 360, 900 and 1280 px (0.9.0: the
 // before/after evidence of the restyle). Signed-in pages use a seeded account (seed.cjs).
 //   NODE_PATH=/usr/lib/node_modules/@playwright/mcp/node_modules \
 //     node server/e2e/shots.cjs http://dind:10017 <state.json> <out dir>
@@ -71,7 +71,7 @@ async function newCode() {
   }
   async function shoot(ctx, name, url, ready) {
     const page = await ctx.newPage();
-    page.on('console', (m) => { if (m.type() === 'error') problems.push(`${name}: console: ${m.text()}`); });
+    page.on('console', (m) => { if (m.type() === 'error' && !(name === '404' && /status of 404/.test(m.text()))) problems.push(`${name}: console: ${m.text()}`); });
     page.on('pageerror', (e) => problems.push(`${name}: pageerror: ${e.message}`));
     await page.addInitScript(() => {
       document.addEventListener('securitypolicyviolation', (e) => console.error(`CSP violation: ${e.violatedDirective} ${e.blockedURI}`));
@@ -90,6 +90,10 @@ async function newCode() {
     await page.close();
   }
   const out = await context(false);
+  // 0.10.0: the public pages and the HTML 404.
+  await shoot(out, 'home', '/', (p) => p.waitForSelector('#download .btn.big, #download .none'));
+  await shoot(out, 'privacy', '/privacy');
+  await shoot(out, '404', '/no-such-page');
   await shoot(out, 'login', '/account/login');
   await shoot(out, 'register', '/account/register');
   await shoot(out, 'resend', '/account/resend');

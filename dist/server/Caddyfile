@@ -158,6 +158,30 @@
 			header Content-Type "application/json"
 			respond `{"error":"server_error","message":"The service is unavailable."}` {err.status_code}
 		}
+		# Downloads and the update feed answer as before: Krunk's updater and the download box
+		# only look at the status.
+		@feeds path /download/* /updates/* /healthz
+		handle @feeds {
+			respond "{err.status_code} {err.status_text}"
+		}
+		# The site's own pages (0.10.0): the same status, an HTML body in the site's look. They
+		# are static files, so they work while api is down.
+		@site_404 expression {err.status_code} == 404
+		handle @site_404 {
+			root * /srv/site
+			rewrite * /404.html
+			file_server {
+				status 404
+			}
+		}
+		@site_5xx expression {err.status_code} >= 500
+		handle @site_5xx {
+			root * /srv/site
+			rewrite * /50x.html
+			file_server {
+				status {err.status_code}
+			}
+		}
 		respond "{err.status_code} {err.status_text}"
 	}
 }

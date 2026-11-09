@@ -1,4 +1,5 @@
-// The account website's acceptance test (0.9.0 restyle) on a staging stack:
+// The website's acceptance test (account pages: 0.9.0 restyle; home, /privacy, error pages: 0.10.0)
+// on a staging stack:
 //  A. every page × light/dark × 360/900/1280 under the real CSP: 0 console errors, 0 CSP
 //     violations, [hidden] is never displayed, no sideways scrolling, 44 px tap targets at 360 px,
 //     Cloudflare's Turnstile script loads on exactly the 4 Turnstile pages;
@@ -8,7 +9,10 @@
 //     "Sign out everywhere else" with the re-auth form);
 //  D. inline validation, two-step setup with Copy key, backup codes Copy and Download .txt, the
 //     sync state with web/me.sync absent and present, reduced motion, long names at 360 px and
-//     "This device".
+//     "This device";
+//  E. (0.10.0) the public site: HTML 404 for site paths while /api, /updates and /download answer
+//     as before; the download box with a release, without sizes, with none, with unsafe links and
+//     for a Krunk visitor that is outdated, current or ahead.
 //   NODE_PATH=/usr/lib/node_modules/@playwright/mcp/node_modules \
 //     node server/e2e/site.cjs http://dind:10017 stage-browser <seed state.json> <out dir>
 // AXE_JS: axe.min.js (default: .pipeline/tools/axe, axe-core 4.14.0 from npm). Staging only.
@@ -116,7 +120,10 @@ async function context(cookie, extra) {
 async function watched(ctx, label) {
   const page = await ctx.newPage();
   page.krunk = { errors: [], turnstile: 0 };
-  page.on('console', (m) => { if (m.type() === 'error') page.krunk.errors.push(`${label}: ${m.text()}`); });
+  page.on('console', (m) => {
+    // The 404 page's own status is reported as a failed load; that is the point of the page.
+    if (m.type() === 'error' && !(label.startsWith('404') && /status of 404/.test(m.text()))) page.krunk.errors.push(`${label}: ${m.text()}`);
+  });
   page.on('pageerror', (e) => page.krunk.errors.push(`${label}: pageerror ${e.message}`));
   page.on('request', (r) => { if (new URL(r.url()).host === 'challenges.cloudflare.com') page.krunk.turnstile++; });
   await page.addInitScript(() => {
@@ -128,7 +135,7 @@ async function layoutChecks(page, label, width) {
   const r = await page.evaluate((w) => {
     const hiddenShown = [...document.querySelectorAll('[hidden]')].filter((e) => getComputedStyle(e).display !== 'none').map((e) => e.id || e.className || e.tagName);
     const overflow = document.documentElement.scrollWidth - window.innerWidth;
-    const small = w <= 360 ? [...document.querySelectorAll('.secnav a, .items .actions button, details.removed summary')]
+    const small = w <= 360 ? [...document.querySelectorAll('.secnav a, .items .actions button, details.removed summary, .site-bar nav a, .site-foot nav a, .toc a, .faq summary, .btn, .checksums summary')]
       .filter((e) => e.offsetParent !== null && e.getBoundingClientRect().height < 44).map((e) => e.textContent.trim()) : [];
     return { hiddenShown, overflow, small };
   }, width);
@@ -152,6 +159,10 @@ async function axe(page, label) {
 
 // ---- A + B: every page -------------------------------------------------------------------------
 const PAGES = [
+  // 0.10.0: the public pages (restyled) and the HTML 404.
+  { name: 'home', url: '/', ready: '#download .btn.big, #download .none' },
+  { name: 'privacy', url: '/privacy', ready: '.toc a' },
+  { name: '404', url: '/no-such-page', ready: '.errcode' },
   { name: 'login', url: '/account/login', ready: '#form:not([hidden])' },
   { name: 'register', url: '/account/register', ready: '#form:not([hidden])' },
   { name: 'resend', url: '/account/resend', ready: '#form:not([hidden])' },
@@ -505,6 +516,63 @@ async function features(seed) {
   }
 }
 
+// ---- E: the public site (0.10.0): error statuses and the download box --------------------------
+async function publicSite() {
+  const get = async (p) => { const r = await fetch(UPSTREAM + p, { redirect: 'manual' }); return { status: r.status, type: r.headers.get('content-type') || '', body: await r.text() }; };
+  let r = await get('/no-such-page');
+  ok(r.status === 404 && r.type.startsWith('text/html') && r.body.includes("This page doesn't exist"), `unknown site path: 404 with the HTML page (${r.status} ${r.type})`);
+  r = await get('/api/v1/no-such-thing');
+  ok(r.status === 404 && r.type.startsWith('application/json'), `unknown /api path: 404 JSON (${r.status} ${r.type} ${r.body.slice(0, 60)})`);
+  r = await get('/updates/win-x64/no-such-file.json');
+  ok(r.status === 404 && r.body.trim() === '404 Not Found', `missing update file: 404 plain as before (${r.status} "${r.body.trim().slice(0, 40)}")`);
+  r = await get('/download/0.0.0/no-such-file.exe');
+  ok(r.status === 404 && r.body.trim() === '404 Not Found', `missing download: 404 plain as before (${r.status} "${r.body.trim().slice(0, 40)}")`);
+  r = await get('/healthz');
+  ok(r.status === 200 && r.body === 'ok', 'healthz unchanged');
+
+  const release = { version: '0.10.0', released: '2026-11-10', notes: '/download/0.10.0/NOTES.md', files: [
+    { kind: 'installer', name: 'Krunk-Setup-0.10.0.exe', url: '/download/0.10.0/Krunk-Setup-0.10.0.exe', size: 146898835, sha256: 'a'.repeat(64) },
+    { kind: 'portable', name: 'Krunk-win-x64.zip', url: '/download/0.10.0/Krunk-win-x64.zip', size: 196187572, sha256: 'b'.repeat(64) }] };
+  const noSizes = JSON.parse(JSON.stringify(release)); noSizes.files.forEach((f) => { delete f.size; });
+  const evil = JSON.parse(JSON.stringify(release)); evil.files[0].url = 'https://evil.example/x.exe'; evil.files[1].url = '/download/../x';
+  const cases = [
+    { name: 'release', body: release, krunk: null, expect: { main: 'Download for Windows', sub: 'Installer · 140 MB · 64-bit', using: null } },
+    { name: 'no sizes', body: noSizes, krunk: null, expect: { main: 'Download for Windows', sub: 'Installer · 64-bit', using: null } },
+    { name: 'none published', status: 404, krunk: null, expect: { none: true } },
+    { name: 'unsafe links', body: evil, krunk: null, expect: { none: true } },
+    { name: 'krunk outdated', body: release, krunk: '0.9.0', expect: { main: 'Download for Windows', using: 'outdated' } },
+    { name: 'krunk current', body: release, krunk: '0.10.0', expect: { main: 'Download for Windows', using: 'up to date' } },
+    { name: 'krunk ahead', body: release, krunk: '0.11.0', expect: { using: 'ahead' } },
+  ];
+  for (const c of cases) {
+    const ctx = await context(null, { viewport: { width: 1280, height: 900 } });
+    await ctx.route(`${BASE}/download/release.json`, (route) => c.status
+      ? route.fulfill({ status: c.status, body: '404 Not Found' })
+      : route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(c.body) }));
+    if (c.krunk) await ctx.addInitScript((v) => { Object.defineProperty(window, 'krunk', { value: Object.freeze({ version: v }) }); }, c.krunk);
+    const page = await watched(ctx, `home ${c.name}`);
+    await page.goto(BASE + '/', { waitUntil: 'networkidle' });
+    await page.waitForSelector('#download .btn.big, #download .none');
+    const got = await page.evaluate(() => {
+      const q = (s) => document.querySelector(s);
+      const using = q('#using-krunk');
+      return { main: q('#download .dl-main') && q('#download .dl-main').textContent, sub: q('#download .btn.big .sub') && q('#download .btn.big .sub').textContent,
+        none: !!q('#download .none'), using: using ? using.className + ' ' + using.textContent : null,
+        hrefs: [...document.querySelectorAll('#download a')].map((a) => a.getAttribute('href')) };
+    });
+    const e = c.expect;
+    const fine = (e.none ? got.none : !got.none)
+      && (!e.main || got.main === e.main) && (!e.sub || got.sub === e.sub)
+      && (e.using === undefined || (e.using === null ? got.using === null : (got.using || '').includes(e.using)))
+      && got.hrefs.every((h) => h.startsWith('/download/'));
+    ok(fine, `download box, ${c.name}: ${JSON.stringify(got).slice(0, 220)}`);
+    // With no release the browser itself reports release.json's 404; nothing else may appear.
+    const errors = page.krunk.errors.filter((e) => !(c.status === 404 && /status of 404/.test(e)));
+    ok(errors.length === 0, `download box, ${c.name}: 0 console errors ${errors.join(' | ')}`);
+    await ctx.close();
+  }
+}
+
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
   // Staging only: start from empty rate-limit windows (this run signs in and registers several
@@ -513,6 +581,8 @@ async function features(seed) {
   const seed = JSON.parse(fs.readFileSync(STATE, 'utf8'));
   browser = await chromium.launch();
   try {
+    log('== E: public site statuses and download box');
+    await publicSite();
     log('== A/B: pages, CSP, layout, axe');
     await allPages(seed);
     log('== C: keyboard');
