@@ -303,6 +303,7 @@ impl Browser {
         let finished = match outcome {
             Outcome::Done => {
                 self.downloads.borrow_mut().set_state(id, DownloadState::Completed, None, now);
+                self.mark_of_the_web(id);
                 info!("download {id} finished: Completed (in parts)");
                 true
             }

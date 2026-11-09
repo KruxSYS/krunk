@@ -200,6 +200,28 @@ impl Browser {
         self.download_flight(tab);
     }
 
+    /// A finished download is marked as from the Internet (its `Zone.Identifier` stream), so
+    /// SmartScreen and Office's Protected View see it, unless the engine marked it already
+    /// (0.11.7, audit C7: downloads fetched in parts had no mark).
+    pub(super) fn mark_of_the_web(&self, id: u32) {
+        let Some((path, text)) = self.downloads.borrow().get(id).map(|item| {
+            (item.path.clone(), lb_core::downloads::zone_identifier(&item.url, item.page_url.as_deref(), item.private))
+        }) else {
+            return;
+        };
+        if !std::path::Path::new(&path).is_absolute() || !std::path::Path::new(&path).is_file() {
+            return;
+        }
+        let stream = format!("{path}:Zone.Identifier");
+        if std::path::Path::new(&stream).exists() {
+            return;
+        }
+        // Not every file system has streams (FAT on a USB stick): then there is no mark, as in Chrome.
+        if let Err(e) = std::fs::write(&stream, text) {
+            warning!("download {id}: no mark of the web ({e})");
+        }
+    }
+
     /// The downloads button's popup: the list, newest first.
     pub(super) fn downloads_content(&self) -> PopupContent {
         // `items()` is newest first already (0.11.5: a second reverse put the oldest on top and
@@ -261,6 +283,9 @@ impl Browser {
             d.set_state(id, state, reason, now_ms());
             before != Some(state)
         };
+        if state == DownloadState::Completed && changed {
+            self.mark_of_the_web(id);
+        }
         if state.is_finished() {
             if let Some(v) = tab.and_then(|t| self.views.borrow().get(&t).map(|v| v.downloads.clone())) {
                 v.set(v.get().saturating_sub(1));

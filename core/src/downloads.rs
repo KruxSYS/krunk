@@ -391,6 +391,28 @@ pub fn is_pdf(mime: &str, name: &str) -> bool {
             ))
 }
 
+/// The Mark-of-the-Web for a downloaded file: the text of its `Zone.Identifier` stream, as
+/// Chrome writes it (zone 3, Internet; the addresses without credentials, http(s) only; none
+/// for a private download). SmartScreen and Office's Protected View read it (0.11.7, audit
+/// C7: files fetched in parts had none).
+pub fn zone_identifier(url: &str, page_url: Option<&str>, private: bool) -> String {
+    let clean = |u: &str| -> Option<String> {
+        let u = crate::urlclean::strip_credentials(u);
+        let parsed = url::Url::parse(&u).ok()?;
+        (matches!(parsed.scheme(), "http" | "https") && !u.contains(['\r', '\n'])).then_some(u)
+    };
+    let mut out = String::from("[ZoneTransfer]\r\nZoneId=3\r\n");
+    if !private {
+        if let Some(r) = page_url.and_then(clean) {
+            out.push_str(&format!("ReferrerUrl={r}\r\n"));
+        }
+        if let Some(h) = clean(url) {
+            out.push_str(&format!("HostUrl={h}\r\n"));
+        }
+    }
+    out
+}
+
 pub fn sanitize_file_name(name: &str) -> String {
     const RESERVED: &[&str] = &[
         "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1",
@@ -629,6 +651,17 @@ mod tests {
         let long = format!("{}.tar.gz", "x".repeat(300));
         let s = sanitize_file_name(&long);
         assert!(s.chars().count() <= 200 && s.ends_with(".gz"));
+    }
+
+    #[test]
+    fn mark_of_the_web() {
+        assert_eq!(
+            zone_identifier("https://u:p@dl.example/a.exe", Some("https://site.example/page"), false),
+            "[ZoneTransfer]\r\nZoneId=3\r\nReferrerUrl=https://site.example/page\r\nHostUrl=https://dl.example/a.exe\r\n"
+        );
+        assert_eq!(zone_identifier("https://dl.example/a.exe", None, true), "[ZoneTransfer]\r\nZoneId=3\r\n");
+        // Other schemes are left out, but the file is still marked.
+        assert_eq!(zone_identifier("data:text/plain,x", Some("file:///C:/x"), false), "[ZoneTransfer]\r\nZoneId=3\r\n");
     }
 
     /// 0.11.7 (audit C2): a site's long name whose extension has a multi-byte character across
