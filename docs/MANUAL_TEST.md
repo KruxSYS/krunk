@@ -1011,3 +1011,23 @@ Scripted on the VM: `scripts/vm-071-*.ps1` (evidence in `.pipeline/evidence-0.7.
 2. Settings → Passwords & import → Firefox (a long-used profile): the passwords import; if any
    cannot be decrypted, the result shows the cipher and key sizes in brackets.
 3. The new tab page: space below the keyboard shortcuts box.
+
+## Krunk 0.8.0 (round 12)
+1. **Dropdowns:** on a long page open a `<select>`, then turn the mouse wheel over the page: the
+   list stays open where it is and the page doesn't move; the wheel over the list scrolls the list;
+   Esc, a choice or a click elsewhere closes it and the next wheel scrolls the page. The same under
+   a datalist's suggestions, the ⋮ menu and the history menus. With a precision touchpad too.
+2. **History menus:** visit five pages, right-click Back: the four earlier pages and the first
+   one, newest first; click the third: the third page back opens, Back and Forward are both
+   enabled and right-click Forward lists the later pages in order. Arrows and Enter work; on a new
+   tab a right-click on the disabled Back shows nothing. In a private window the same, and
+   krunk://history shows none of those pages. Dark theme at 125 %: the menu fits.
+3. **Account:** Settings → Account → Sign in: a code and a new tab with krunk.209.wf/link; sign in
+   there, approve (password again): within seconds the card says "Signed in as …" and the ⋮ menu
+   too; the device is in the website's device list. Sign out on this device: the card offers Sign
+   in again and the website lists the device as removed. Without a network: one clear sentence.
+   A private window's Settings shows nothing of the account.
+4. **HTTP authentication:** a site behind nginx `auth_basic`: Krunk's sign-in dialog (realm, "Not
+   secure" on http), Esc shows the site's 401 page, a wrong password says "not accepted", the
+   right one opens the site and offers to save it; next time (after a restart) the dialog fills
+   the saved login (after unlocking) and one click signs in.

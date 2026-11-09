@@ -1,6 +1,6 @@
-# Krunk sync protocol, v1 (design, not implemented)
+# Krunk sync protocol, v1 (design; accounts and device linking are live)
 
-Status: proposal for operator review (2026-11-05). See also `PLAN.md` for architecture and milestones, `THREAT_MODEL.md` for attackers, guarantees and residuals, and `OPEN_QUESTIONS.md`.
+Status: proposal for operator review (2026-11-05). Implemented and live: §11.2 (S2, accounts) and §6.1, §11.3, §11.4 without `sync/state` (S3, 2026-11-09, Krunk 0.8.0). See also `PLAN.md` for architecture and milestones, `THREAT_MODEL.md` for attackers, guarantees and residuals, and `OPEN_QUESTIONS.md`.
 The design was hardened by an adversarial review; its 20 findings and their resolutions are listed in the pipeline workspace (`.pipeline/sync-design-review.md`) and referenced below as **[R#]**.
 
 Conventions: "MUST" etc. as in RFC 2119. `‖` is concatenation. `lp(x)` = 2-byte big-endian length ‖ x.
@@ -682,6 +682,7 @@ The test vectors include 30 tricky URLs, and both desktop and Android must produ
 | GET | `web/link/{user_code}` | web | – | `{label, platform, country, age_s}` | 5 lookups/10 min/session, 20/h/IP | `not_found` (generic) |
 | POST | `web/link/{user_code}/approve` | web + re-auth | `{confirm_code}` | 200 `{device_id, short}` (the server allocates `short`, the next free u16 of the account); email | 10/h/account | `not_found`, `gone`, `quota_exceeded` (more than `QUOTA_MAX_DEVICES` active devices) |
 | POST | `web/link/{user_code}/deny` | web | `{}` | 204 | – | – |
+| POST | `web/devices/{id}/rename` (S3 addition) | web | `{label}` (1–64 characters, no control characters) | 200 `{label}`: the server-held label until S6's encrypted `device_meta` name | 30/h | `not_found`, `bad_request` |
 | GET | `web/devices` | web | – | `[{id, short, platform, label, created, last_sync, last_country, has_keys:bool, revoked_at?}]` | 60/min | – |
 | POST | `web/devices/{id}/revoke` | web (+ re-auth) | `{}` | 200 → starts §7; email | 20/h | `not_found` |
 | GET | `web/sessions` | web | – | `[{id, kind:"web"\|"device", created, last_used, ip_masked, country, user_agent, current:bool}]` | 60/min | – |
@@ -698,8 +699,12 @@ pre-registration hijacking: someone who registers your address first can't end u
 account you confirmed.
 
 **Re-auth** means a successful `web/reauth` (password + TOTP if enabled) within the last 10
-minutes (`web_sessions.reauth_at`). Otherwise the endpoint answers 401 `reauth_required`, and the
-page asks for the password and retries.
+minutes (`web_sessions.reauth_at`). Otherwise the endpoint answers **403** `reauth_required` (as
+built in S3), and the page asks for the password and retries.
+
+**Code lookups (S3):** `GET web/link/{code}` always counts against the 5-per-session and
+20-per-IP limits; `approve` and `deny` are refused once a limit is exceeded and count only when
+the code is not found, so acting on the code just viewed (also after a re-auth) costs nothing more.
 
 **Rate-limit keys:** a limit without a stated key is per account for web endpoints (per session
 before login), and per device for device endpoints. Per-IP limits always use the trusted client
@@ -716,6 +721,7 @@ IP (PLAN §4.4).
 |---|---|---|---|---|---|---|
 | POST | `token/refresh` | none | `{refresh_token}` | `{access_token, expires_in:900, refresh_token}` (rotated). Refresh tokens expire after 90 days without use; there is no absolute limit while in use | 30/h/device | 401 `unauthorized`. **Reuse** of an old refresh token revokes the whole family (the device is unlinked, §7 starts) and emails the user |
 | POST | `device/unlink` | device | `{}` | 204: the device revokes itself, §7 starts | – | – |
+| GET | `device/me` (S3 addition) | device | – | `{email, account_id, device_id, label, platform, created}` | 120/h | 401 |
 | GET | `sync/state` | device | – | `{keyset_gen, current_epoch, pak_epoch, rotation:{ak,pak}, rekey:{remaining_old}, head_seq, pending_approvals:n, quota:{records, bytes, max_records, max_bytes, history, max_history}}` | 120/h | – |
 
 ### 11.5 Keys

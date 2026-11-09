@@ -677,12 +677,31 @@ Playwright, hadolint, yamllint and `docker compose config -q`.
   test keys, Mailpit). Live since 2026-11-05 (`b0ae786`) with accounts **closed**
   (`503 accounts_disabled`) until the operator provisions Turnstile, SMTP and mail DNS
   (OPEN_QUESTIONS, "Operator provisioning"). Evidence: `.pipeline/krunk-sync-decisions-s2.md`.
+- **S3:** live since 2026-11-09 (commit `c695254`, with Krunk 0.8.0): device linking by code
+  (`link/authorize`, `link/token` with every RFC 8628 answer, single use, 10 minutes), the
+  `/link` approval page (signed in, re-auth, the code confirmed, country shown), opaque device
+  tokens stored as HMACs (access 15 minutes; refresh rotated, reuse revokes the family and the
+  device and mails the account), `device/me` and `device/unlink`, the devices and sessions lists
+  on `/account/` with revoke (re-auth) and rename, mails for a new, a removed and a reuse-revoked
+  device, and the S3 housekeeping. Migration `0003_devices` (one migration instead of 0005–0006;
+  additive: S2 data verified to survive on staging and live). Deliberate changes:
+  - **Rename on the website:** the brief asked for it on `/account/`, so until S6 brings the
+    encrypted `device_meta` name, the website renames the server-held label (already non-secret).
+  - **Code lookups:** viewing a code always counts against the 5-per-session / 20-per-IP limits;
+    approving or denying counts only when the code is not found (an approval after a re-auth costs
+    nothing more).
+  - **`device/me`** (new) answers a linked device who it is (address, label).
+  - **No `krunk-sync-cli`:** the test clients are `server/e2e/link.cjs` (device side + the pages
+    in Playwright) and `server/e2e/approve.cjs`; Krunk 0.8.0 itself is the real client
+    (Settings → Account, no sync).
+  Evidence: `.pipeline/evidence-0.8.0/` (m2, m3, m7, m8) and `.pipeline/krunk-0.8.0-report.md`.
 - **S4:** implemented. `core::sync` (crypto, codes, directories with the §4.4 acceptance rules,
   envelopes, SAS, HLC, URL normalisation), frozen vectors, the RFC 9180 A.2 interop test and the
   mutation tests. See `core/src/sync/README.md`. It isn't wired into the app until S6.
 - Evidence: `.pipeline/krunk-sync-s1-s4.md`.
 
-The live rollout is S1–S3 server-only first (accounts with no sync yet). The client sync ships
+The live rollout is S1–S3 first (accounts with no sync yet; since 0.8.0 Krunk can sign in to
+one). The client sync ships
 from S6 on, behind *Settings → Sync (beta)*.
 
 ## 10. Requirements checklist (brief items → where they are answered)

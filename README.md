@@ -12,14 +12,15 @@ used. It installs per user without administrator rights, or runs portable from a
 - downloads, find, zoom, print and DevTools docked next to the page
 - session restore
 - background-tab sleep, to save memory
+- a Krunk account to sign the browser in (0.8.0; sync comes in a later version)
 
 ## Download and requirements
-- **Installer:** `Krunk-Setup-0.7.4.exe` (about 138 MB), from `https://krunk.209.wf`. It installs for the current user
+- **Installer:** `Krunk-Setup-0.8.0.exe` (about 138 MB), from `https://krunk.209.wf`. It installs for the current user
   only, without administrator rights:
   - to `%LOCALAPPDATA%\Programs\Krunk`, with a Start Menu shortcut and, if you tick it, one on
     the desktop;
   - with an entry in Settings → Apps → Installed apps (per user, `HKCU`).
-  If Krunk is running, the installer asks you to close it. `Krunk-Setup-0.7.4.exe /S` installs
+  If Krunk is running, the installer asks you to close it. `Krunk-Setup-0.8.0.exe /S` installs
   silently; it then closes a running Krunk itself and waits up to 30 s for it.
   **Uninstalling** removes the program and the shortcuts. Your data (`%LOCALAPPDATA%\Krunk`) is
   kept unless you tick "Also delete my Krunk data"; a silent uninstall (`/S`) always keeps it.
@@ -27,12 +28,13 @@ used. It installs per user without administrator rights, or runs portable from a
   run `Krunk.exe`. Keep all files of the folder together; if one is missing, Krunk says so at
   startup. The portable copy uses the same data folder as the installed one.
 - **Verify:** check `SHA256SUMS` (the installer, the zip and the three main binaries):
-  - PowerShell: `Get-FileHash Krunk-Setup-0.7.4.exe`
+  - PowerShell: `Get-FileHash Krunk-Setup-0.8.0.exe`
   - Linux: `sha256sum -c SHA256SUMS`
 - **System:** Windows 10 or 11, 64-bit. No runtime is needed.
 - **Data location:** everything is stored in `%LOCALAPPDATA%\Krunk`:
   - `browser.db` (history, bookmarks, settings, session)
   - `vault.json` (encrypted passwords)
+  - `account.json` (0.8.0, only while signed in to a Krunk account: the refresh token is DPAPI-wrapped)
   - `engine.dat` (the compiled filter engine)
   - `profile\` (the engine's profile: cookies, cache and site data in `profile\default`)
   - `krunk.log` (this session; the previous one is `krunk.old.log`), and `cef.log` (engine
@@ -107,12 +109,33 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
 | Ctrl+Shift+C, right-click → Inspect | DevTools with the element under the mouse selected |
 | Alt+Space | Window menu (move, size, minimize, maximize, close) |
 
-- **Settings** (`krunk://settings`) has tabs: General, Privacy & security, Passwords & import,
-  Downloads, Appearance, Advanced. The search box finds a setting on any tab;
+- **Settings** (`krunk://settings`) has tabs: Account (0.8.0), General, Privacy & security,
+  Passwords & import, Downloads, Appearance, Advanced. The search box finds a setting on any tab;
   `krunk://settings#privacy` (and the other tab names) opens that tab. Advanced → User agent
   shows the browser's own string with Copy, and a list of presets (Chrome, Edge, Firefox,
   Safari on Windows, macOS, iPhone, Android; versions as of November 2026) or a custom string;
   the choice applies at once to new navigations.
+- **Back and forward history (0.8.0):** right-click Back for the tab's earlier pages, newest
+  first, or Forward for the later ones, at most 15 each, with the site's icon (a globe without
+  one) and the title (or the address). A click jumps to exactly that page, the same as pressing
+  Back or Forward that many times; "Show full history" opens `krunk://history`. Up/Down, Home/End,
+  Enter and Esc work in the menu. A disabled button shows no menu. The list is read from the
+  engine each time and is never stored (also not in private windows).
+- **Dropdowns keep the page still (0.8.0):** while a `<select>` list, a datalist's suggestions or
+  one of Krunk's menus (⋮, the history menus, tab and bookmark menus) is open, the mouse wheel
+  over the page does nothing, so the list stays where its field is; the wheel over the list
+  scrolls the list, and keys go to it. Choosing, Esc or a click elsewhere closes it and the next
+  wheel scrolls the page again. Chrome 157 and Edge close the dropdown on the first wheel notch
+  instead (measured on Windows 11). Precision touchpads (DirectManipulation) are handled the same
+  way in code but could not be tested here.
+- **Sites that ask for a password (HTTP authentication, 0.8.0):** a site protected with Basic or
+  Digest authentication (for example nginx `auth_basic`) gets Krunk's sign-in dialog: the site's
+  address, its realm as plain text, "Not secure" over http, and your saved logins for exactly
+  that address (one fills the fields, several are listed, a locked vault offers to unlock).
+  Nothing is sent before you click Sign in; the saved password stays inside Krunk. Esc or Cancel
+  shows the site's own 401 page. A user name and password that work are offered for saving with
+  the usual "Save password?" (not in private windows). Proxy authentication is not supported yet
+  (0.8.1), and a background tab that asks is refused (reload it to sign in).
 - **Appearance (0.7.0):** colour pickers (presets, any colour, a hex field, Reset) for the
   accent, the window background, the toolbar, the tab strip and the new-tab page; changes show
   at once in every window, and text on a custom colour switches between dark and light to stay
@@ -638,8 +661,36 @@ the camera chip (the engine reports it as a video capture).
 
 Once allowed, `new Notification()` shows a normal Windows toast (the engine's own notification
 UI). What stays missing: a device picker (the engine uses the default camera and microphone,
-and screen sharing shows no window chooser: the whole screen is shared) and HTTP authentication
-dialogs.
+and screen sharing shows no window chooser: the whole screen is shared).
+
+### Krunk account (0.8.0)
+Settings → Account signs this browser in to a Krunk account (made on
+[krunk.209.wf](https://krunk.209.wf/account/register)). There is no sync yet: a signed-in
+browser only shows who it is signed in as, and appears in the account's device list on the
+website, where it can be renamed or removed.
+
+- **Signing in** works like signing in a TV: **Sign in** asks krunk.209.wf for a code, shows it
+  and opens `https://krunk.209.wf/link?code=…` in a new tab. There you sign in to the website,
+  check the device and the code, enter your password again and click **Approve this device**
+  (or **Deny**). Krunk asks every 5 seconds whether the code was approved; the code works for 10
+  minutes and only once. **Cancel** stops it. The ⋮ menu shows "Sign in to Krunk" or "Signed in
+  as …", both open the card.
+- **Signed in**, the card shows the address and the device's name, **Manage account** (the
+  website's account page) and **Sign out on this device**. Signing out deletes the sign-in on
+  this computer at once and then tells the server, which revokes the device; if the server can't
+  be reached, the card says the device may still be listed on the account page.
+- **What talks to the network:** nothing until you click Sign in. After that, only signing in,
+  the Account card while it is on screen (at most every 10 minutes: Krunk renews its token and
+  asks who it is, which notices a device removed on the website) and signing out. There is no
+  background traffic. A device unused for 90 days must sign in again.
+- **What is stored where:** `%LOCALAPPDATA%\Krunk\account.json` holds the account and device
+  ids, the address, the device name and the refresh token, the token wrapped with DPAPI for your
+  Windows user (like the vault key, with its own entropy). The access token (15 minutes) and the
+  sign-in code live only in memory. No token or code is ever written to `krunk.log`.
+  `browser.db` and the vault are unchanged.
+- **Private windows** show nothing of the account (the card says so; the ⋮ item is hidden).
+- **The server side** (sign-in by code after RFC 8628, rotating tokens whose reuse signs the
+  device out and sends a mail) is described in `docs/sync/PROTOCOL.md` §6.1 and §11.3–11.4.
 
 ### Password vault
 ```
@@ -793,6 +844,8 @@ Built by `core::settings::Settings::browser_switches` and added in
 - `--disable-domain-reliability` disables Chromium's domain reliability telemetry.
 - `--disable-background-networking` stops Safe Browsing updates, variations and other
   background downloads.
+- `--disable-chrome-login-prompt` (0.8.0) hands a site's HTTP authentication to Krunk's own
+  sign-in dialog (with the vault) instead of the engine's.
 - `--host-resolver-rules=MAP krunk.invalid ~NOTFOUND, MAP *.krunk.invalid ~NOTFOUND`
   (see "Internal origins").
 - `--disable-features=AutofillServerCommunication,MediaRouter,OptimizationHints,InterestFeedContentSuggestions,NetworkTimeServiceQuerying,AimEnabled,AimServerEligibilityEnabled,AimServerRequestOnStartupEnabled`
@@ -818,7 +871,8 @@ and WebRTC on the default public interface only.
 
 Krunk runs no telemetry, update service or background process of its own. The only
 network traffic it starts itself is the daily filter-list update and the daily update check
-(both WinHTTP, see above and "Updates").
+(both WinHTTP, see above and "Updates"), and, only after you click Sign in, the account calls
+(see "Krunk account").
 
 ### Updates
 - **What is sent:** ten seconds after start and then once a day, Krunk fetches two small files
@@ -1058,8 +1112,8 @@ Testing on Windows:
 - **WebSocket connections are not filtered** by the ad blocker: CEF does not pass them to the
   request handler. Theme changes reach pages through DevTools emulation, so a page that has
   DevTools open shows the system theme.
-- **HTTP authentication dialogs** are not shown (the engine's Alloy runtime denies them).
-  Site permissions are asked since 0.6.0 (see "Site permissions"), but there is no device
+- **HTTP authentication** (0.8.0) works for sites, not for proxies; a background tab's request
+  is refused. Site permissions are asked since 0.6.0 (see "Site permissions"), but there is no device
   picker and no window chooser for screen sharing.
 - **DNSCrypt is not implemented.** A DNSCrypt `sdns://` stamp in the custom DNS list is
   parsed and kept, shown as "not supported", and skipped: the next resolver in the list
