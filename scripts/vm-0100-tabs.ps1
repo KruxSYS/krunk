@@ -1,4 +1,4 @@
-param([string]$Browser = 'krunk', [int]$N = 10, [string]$Tag = 'k10', [string]$App = 'C:\pipeline\krunk\app', [int]$Real = 0, [string]$Fg = 'latency', [string]$Mode = '')
+param([string]$Browser = 'krunk', [int]$N = 10, [string]$Tag = 'k10', [string]$App = 'C:\pipeline\krunk\app', [int]$Real = 0, [string]$Fg = 'latency', [string]$Mode = '', [string]$Bg = '')
 # Krunk 0.10.0 (P1): many busy tabs. Opens the foreground probe (latency.html) and N-1 busy
 # background tabs (busy.html, each with a cross-site busy frame; with -Real the first ones are real
 # sites) in Krunk, Chrome or Edge, lets them settle, then measures for 30 s:
@@ -41,7 +41,7 @@ if ($Fg -eq 'speedometer') {
   $urls = @('http://127.0.0.1:8096/index.html?startAutomatically=true&iterationCount=3')
 }
 for ($i = 1; $i -lt $N; $i++) {
-  if ($i -le $Real) { $urls += $real[($i - 1) % $real.Count] } else { $urls += "http://localhost:8097/busy.html?tag=$Tag-bg$i$(if ($i % 3 -eq 0) { '&video=1' })" }
+  if ($i -le $Real) { $urls += $real[($i - 1) % $real.Count] } else { $urls += "http://localhost:8097/busy.html?tag=$Tag-bg$i$(if ($i % 3 -eq 0) { '&video=1' })$Bg" }
 }
 $mark = (Get-Item $log -ErrorAction SilentlyContinue).Length
 if (-not $mark) { $mark = 0 }
