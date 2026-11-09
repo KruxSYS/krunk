@@ -820,14 +820,49 @@ impl Browser {
             i.map(|i| frames.remove(i))
         };
         let Some(frame) = frame else { return };
-        if self.popup.borrow().as_ref().is_some_and(|p| p.owner == Some(win)) {
-            self.hide_popup();
-        }
+        // Krunk's popups (menus, dropdowns, prompts) are owned by the window that last showed
+        // them, and Windows destroys owned windows with their owner. Before 0.11.1 a window
+        // closed by a tab merge took the popup with it, and from then on no menu opened in any
+        // window (the operator saw ⋮ and every context menu go dead while moving tabs). They
+        // go to a window that stays first.
+        self.rehome_popups(frame.window);
         if let Some(s) = frame.shell.borrow_mut().take() {
             s.close();
         }
         frame.window.destroy();
         info!("window {win} closed");
+    }
+
+    /// The popups owned by `closing` (a frame about to be destroyed) are hidden and owned by
+    /// another frame, or by the hidden application window when none is left.
+    fn rehome_popups(&self, _closing: Window) {
+        self.hide_menu_popup(false);
+        self.hide_popup();
+        let heir = self.all_frames().into_iter().map(|f| (Some(f.id), f.window)).next();
+        let Some((owner, window)) = heir.or_else(|| self.app().map(|a| (None, a))) else { return };
+        for slot in [PopupSlot::Main, PopupSlot::Menu] {
+            if let Ok(mut guard) = self.popup_slot(slot).try_borrow_mut() {
+                if let Some(p) = guard.as_mut().filter(|p| p.window.exists()) {
+                    p.window.set_owner(window);
+                    p.owner = owner;
+                }
+            }
+        }
+    }
+
+    /// A popup window was destroyed: unless Krunk is closing, its slot empties (the window and
+    /// its view are gone) and the next popup creates a new one.
+    fn popup_window_gone(&self, slot: PopupSlot) {
+        let gone =
+            self.popup_slot(slot).try_borrow().ok().is_some_and(|p| p.as_ref().is_some_and(|p| !p.window.exists()));
+        if gone && !self.session_final.get() {
+            warning!("popup: its window was destroyed; a new one is made for the next popup");
+            if let Some(p) = self.popup_slot(slot).borrow_mut().take() {
+                if let Some(c) = p.view {
+                    c.close();
+                }
+            }
+        }
     }
 
     /// A new (not started) tab view, with its network state.
@@ -2560,6 +2595,16 @@ impl Browser {
         if rect.is_some() && slot != PopupSlot::Pip {
             self.close_ext_popup_because("another popup opened");
         }
+        // A popup window that is gone (destroyed with a window, 0.11.1) is made anew.
+        let dead = self.popup_slot(slot).borrow().as_ref().is_some_and(|p| !p.window.exists());
+        if dead {
+            warning!("popup: its window was gone; making a new one");
+            if let Some(p) = self.popup_slot(slot).borrow_mut().take() {
+                if let Some(c) = p.view {
+                    c.close();
+                }
+            }
+        }
         if self.popup_slot(slot).borrow().is_none() && !self.create_popup(main, slot) {
             return;
         }
@@ -2731,6 +2776,24 @@ impl Browser {
                 }
                 b.on_key(key)
             })
+        });
+        // A popup whose renderer ended loads again (as the shell does), so menus keep working.
+        let weak = self.me.clone();
+        c.on_crashed(move |reason| {
+            warning!("popup: its renderer ended ({reason}); reloading it");
+            let weak = weak.clone();
+            crate::ffi::cef::post_ui(move || {
+                let Some(b) = weak.upgrade() else { return };
+                let view = b.popup_slot(slot).try_borrow_mut().ok().and_then(|mut guard| {
+                    let p = guard.as_mut()?;
+                    p.ready = false;
+                    p.pending = None;
+                    p.view.clone()
+                });
+                if let Some(c) = view {
+                    c.navigate(POPUP_URL);
+                }
+            });
         });
         if let Err(e) = c.start(window.hwnd(), POPUP_URL) {
             warning!("popup: {e}");
@@ -2987,6 +3050,14 @@ impl WindowEvents for PopupEvents {
     }
     // Activation moving to the menu popup (an item menu over this dropdown) is not the user
     // leaving: the default no-op keeps the dropdown open.
+
+    /// The popup window was destroyed anyway (0.11.1): its slot empties, so the next popup is
+    /// made anew instead of being shown in a window that is gone.
+    fn destroyed(&self) {
+        if let Some(b) = self.0.upgrade() {
+            b.defer(|b| b.popup_window_gone(PopupSlot::Main));
+        }
+    }
 }
 
 /// The menu popup: losing activation to the dropdown underneath just closes the menu;
@@ -3011,6 +3082,12 @@ impl WindowEvents for MenuPopupEvents {
             if !b.menu_closing.get() {
                 b.hide_menu_popup(false);
             }
+        }
+    }
+
+    fn destroyed(&self) {
+        if let Some(b) = self.0.upgrade() {
+            b.defer(|b| b.popup_window_gone(PopupSlot::Menu));
         }
     }
 }
