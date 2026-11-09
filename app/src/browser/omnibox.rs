@@ -33,11 +33,10 @@ impl Browser {
             self.address_suggest_close();
             return;
         }
-        let entries = {
+        let (entries, inline) = {
             let template = self.settings.borrow().search_template().to_string();
-            omnibox::suggestions(&self.store.borrow(), &text, &template)
+            omnibox::query(&self.store.borrow(), &text, &template)
         };
-        let inline = omnibox::inline_completion(&text, &entries);
         let selected = inline.as_ref().map(|i| i.index);
         self.post_shell(&Event::AddressSuggestions { text, entries: entries.clone(), inline });
         if entries.is_empty() {

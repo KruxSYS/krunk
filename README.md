@@ -157,7 +157,10 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   - **Inline completion (0.6.0):** a visited address that starts with what you type is completed
     after the caret and selected. Since 0.7.2 typing on along it keeps it in place: the bar never
     shows only the typed letters or empties between keystrokes. Backspace or Delete removes the
-    completion, Esc goes back to what you typed.
+    completion, Esc goes back to what you typed. Since 0.10.2 it starts at the first letter, and
+    while you type a site's name it completes the site itself (`yo` → `youtube.com`, the visited
+    site with the most visits), never one of its pages; that site is the top row with its most
+    visited pages under it. Type on past the host (`youtube.com/w`) to complete a page.
   - After a navigation the bar shows the new address even if it had the focus; text you typed
     is kept only until you navigate. A new tab's bar is empty with its placeholder from the
     first frame (0.7.2: also when it starts from `about:blank`, as tabs do with edited request

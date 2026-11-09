@@ -1102,3 +1102,14 @@ subdomains). Nothing else was rerun (the engine and the rest of the host are 0.1
 3. **Account page (server):** after an update, krunk.209.wf → Account → Devices shows the new
    version for the device once it has synced (the server takes it from the `Krunk/<version>`
    user agent at most once a minute; it used to keep the version from the time of linking).
+
+## Krunk 0.10.2 (round 16)
+The operator asked for address-bar suggestions from the first letter, with the site first:
+"yo" offered a YouTube video, not youtube.com. Only the suggestions changed (core tests cover the
+rows and the completion; the shell is unchanged). On the VM: `scripts/vm-0102-omnibox.ps1`.
+1. **Site first:** with a few YouTube videos in history, type `y`: the bar completes `youtube.com`
+   (selected after the caret), the top row is YouTube's home page, the search for "y" next, then
+   the most visited videos. Enter opens https://www.youtube.com/.
+2. **Pages:** type `youtube.com/w`: the bar completes the most visited video's address with its
+   own upper and lower case; Enter opens that video.
+3. **Words:** `yo yo` is a search: nothing is completed.

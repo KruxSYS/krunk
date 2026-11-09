@@ -192,6 +192,31 @@ impl Store {
         rows.collect()
     }
 
+    /// History pages whose address starts with `start` once its scheme and `www.` are ignored
+    /// (`start`: lowercase, no scheme), most visited first: `(url, title, visit_count)`. The
+    /// address bar finds the site the user is typing with it (0.10.2).
+    pub fn pages_starting_with(&self, start: &str, limit: u32) -> DbResult<Vec<(String, String, i64)>> {
+        if start.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut esc = String::with_capacity(start.len() + 1);
+        for c in start.chars() {
+            if matches!(c, '%' | '_' | '\\') {
+                esc.push('\\');
+            }
+            esc.push(c);
+        }
+        esc.push('%');
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT url, title, visit_count FROM urls
+             WHERE url LIKE 'https://' || ?1 ESCAPE '\\' OR url LIKE 'http://' || ?1 ESCAPE '\\'
+                OR url LIKE 'https://www.' || ?1 ESCAPE '\\' OR url LIKE 'http://www.' || ?1 ESCAPE '\\'
+             ORDER BY visit_count DESC, last_visit DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![esc, limit.min(500)], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        rows.collect()
+    }
+
     /// Up to `per_url` most recent visit timestamps per URL, for frecency.
     pub(crate) fn recent_visits(&self, url_ids: &[i64], per_url: u32) -> DbResult<Vec<Vec<i64>>> {
         let mut stmt = self.conn.prepare_cached("SELECT ts FROM visits WHERE url_id = ?1 ORDER BY ts DESC LIMIT ?2")?;
