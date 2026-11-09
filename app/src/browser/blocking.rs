@@ -318,7 +318,9 @@ impl RequestPolicy for TabPolicy {
             Decision::Redirect { content_type, body } => NetVerdict::Respond { content_type, body },
         };
         if LOG_BLOCKED.load(Relaxed) {
-            let url = req.url.split(['?', '#']).next().unwrap_or("");
+            // No query, no fragment, no `user:password@` (0.11.7, audit C15).
+            let clean = urlclean::strip_credentials(req.url);
+            let url = clean.split(['?', '#']).next().unwrap_or("");
             let how = if matches!(verdict, NetVerdict::Block) { "blocked" } else { "redirected" };
             crate::log::info!("{how} {kind:?} {url} (page {})", urlclean::host_of(&top).unwrap_or_default());
         }

@@ -176,6 +176,26 @@ fn parse_profile(profile: &Profile, types: &[String], primary_password: &str, te
     Ok(parsed)
 }
 
+/// Copies of other browsers' files (`key4.db`, `logins.json`, `Login Data`) left in the temp
+/// folder by an import that never finished (the browser ended during it) are removed at start
+/// once they are an hour old (0.11.7, audit C14). A running import's folder is younger.
+pub(super) fn remove_stale_import_copies() {
+    std::thread::spawn(|| {
+        let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else { return };
+        let hour_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        for e in entries.flatten() {
+            let name = e.file_name();
+            if !name.to_string_lossy().starts_with("Krunk-import-") {
+                continue;
+            }
+            let old = e.metadata().and_then(|m| m.modified()).is_ok_and(|t| t < hour_ago);
+            if old && e.file_type().is_ok_and(|t| t.is_dir()) && std::fs::remove_dir_all(e.path()).is_ok() {
+                info!("removed a left-over import copy ({})", name.to_string_lossy());
+            }
+        }
+    });
+}
+
 impl Browser {
     fn import_profiles(&self) -> Vec<Profile> {
         let roaming = paths::roaming_app_data().unwrap_or_default();

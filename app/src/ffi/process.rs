@@ -81,6 +81,18 @@ pub fn start_installer(path: &std::path::Path, args: &[&str]) -> Result<(), Stri
     std::process::Command::new(path).args(args).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// Bytes free for this user on the disk holding `dir` (0.11.7: a download in parts checks it
+/// before it allocates its file).
+pub fn disk_free_bytes(dir: &std::path::Path) -> Option<u64> {
+    use windows::core::HSTRING;
+    use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    let mut free = 0u64;
+    // SAFETY: the path string outlives the call; `free` is a valid out pointer, the other
+    // outputs are not requested.
+    unsafe { GetDiskFreeSpaceExW(&HSTRING::from(dir.as_os_str()), Some(&mut free), None, None) }.ok()?;
+    Some(free)
+}
+
 /// Is this copy installed (by the installer, which leaves its uninstaller
 /// next to Krunk.exe), rather than a portable copy from the zip?
 pub fn is_installed() -> bool {

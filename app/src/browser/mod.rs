@@ -512,6 +512,7 @@ impl Browser {
             return Err("Cannot create the browser window".into());
         }
         browser.init_updates();
+        import::remove_stale_import_copies();
         browser.init_favicon_probe();
         browser.init_app_identity();
         browser.start_hang_timer();

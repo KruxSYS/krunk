@@ -196,6 +196,16 @@ impl Part {
 
 /// Splits `total` bytes into `connections` parts of about the same size, none smaller than
 /// [`MIN_PART`] (so a smaller file uses fewer connections).
+/// Space left free on the disk when a download in parts allocates its file.
+pub const DISK_RESERVE: u64 = 512 * 1024 * 1024;
+
+/// May a download in parts allocate `total` bytes for its file (`have` already allocated)
+/// with `free` bytes free on the disk? The file is allocated at once, at the size the server
+/// claims, so a server could fill the disk without sending a byte (0.11.7, audit C12).
+pub fn fits_on_disk(total: u64, have: u64, free: u64) -> bool {
+    total.saturating_sub(have).saturating_add(DISK_RESERVE) <= free
+}
+
 pub fn plan(total: u64, connections: u32) -> Vec<Part> {
     if total == 0 {
         return Vec::new();
@@ -314,6 +324,15 @@ pub fn restore(segments: &[Segment], total: u64) -> Option<Vec<Part>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disk_space_for_the_whole_file() {
+        let gib = 1024 * 1024 * 1024;
+        assert!(fits_on_disk(gib, 0, 2 * gib));
+        assert!(!fits_on_disk(2 * gib, 0, 2 * gib), "the reserve stays free");
+        assert!(fits_on_disk(2 * gib, gib, 2 * gib), "a resumed file has its bytes already");
+        assert!(!fits_on_disk(u64::MAX, 0, u64::MAX - 1), "a server's huge claim");
+    }
 
     const PROBE: &str = "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 0-0/67108864\r\nContent-Length: 1\r\nETag: \"abc123\"\r\nLast-Modified: Wed, 05 Nov 2026 10:00:00 GMT\r\nAccept-Ranges: bytes\r\n\r\n";
 

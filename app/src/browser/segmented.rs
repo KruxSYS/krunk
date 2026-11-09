@@ -610,7 +610,17 @@ fn probe(url: &str, headers: &[(String, String)], proxy: &ProxyMode, agent: &str
 /// paused or cancelled; each connection takes the next piece of work when its part is done.
 /// Done: the file gets the download's name.
 fn run_workers(id: u32, fetch: &Fetch, temp: &Path, path: &Path, shared: &Arc<Shared>) -> Outcome {
-    // The whole file, allocated once (a resumed download keeps its bytes).
+    // The whole file, allocated once (a resumed download keeps its bytes), if the disk has the
+    // room the server claims (0.11.7, audit C12).
+    let have = std::fs::metadata(temp).map(|m| m.len()).unwrap_or(0);
+    let free = temp.parent().and_then(crate::ffi::process::disk_free_bytes);
+    if let Some(free) = free.filter(|f| !lb_core::segdl::fits_on_disk(fetch.total, have, *f)) {
+        return Outcome::Failed(format!(
+            "not enough disk space: the file needs {} MB, {} MB are free",
+            fetch.total / 1_000_000,
+            free / 1_000_000
+        ));
+    }
     let prepared = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(temp).and_then(|f| {
         if f.metadata()?.len() != fetch.total {
             f.set_len(fetch.total)
