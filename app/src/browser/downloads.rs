@@ -202,8 +202,9 @@ impl Browser {
 
     /// The downloads button's popup: the list, newest first.
     pub(super) fn downloads_content(&self) -> PopupContent {
+        // `items()` is newest first already (0.11.5: a second reverse put the oldest on top and
+        // kept the oldest when cut).
         let mut items = self.downloads.borrow().items();
-        items.reverse();
         items.truncate(DOWNLOADS_POPUP_MAX);
         PopupContent::Downloads { items }
     }
