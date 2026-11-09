@@ -473,6 +473,7 @@ impl Browser {
         }
         browser.init_updates();
         browser.init_favicon_probe();
+        browser.init_app_identity();
         browser.init_integrity();
         browser.start_power_timer();
         browser.init_sync();
@@ -1425,6 +1426,24 @@ impl Browser {
             self.post_shell_to(win, &Event::Tabs { tabs, active });
             self.refresh_tab_list(win);
         }
+    }
+
+    /// The installed copy keeps its app identity registered (0.11.0, the media overlay's name
+    /// and icon) and its shortcuts on the same ID; a portable copy changes nothing.
+    fn init_app_identity(&self) {
+        if !crate::ffi::process::is_installed() {
+            return;
+        }
+        let Ok(exe) = std::env::current_exe() else { return };
+        self.spawn_job(
+            "app-identity",
+            move || crate::ffi::appid::register_installed(&exe),
+            |_, done: Vec<String>| {
+                if !done.is_empty() {
+                    info!("app identity: {} set on {}", crate::ffi::appid::APP_ID, done.join(", "));
+                }
+            },
+        );
     }
 
     /// Is `origin` muted ("Mute site": kind `sound` in the site permissions)?

@@ -14,6 +14,8 @@ pub fn init_process() {
         let _ = SetDllDirectoryW(w!(""));
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
+    // Krunk's own identity for the taskbar and the media overlay (0.11.0).
+    super::appid::set_process_app_id();
 }
 
 /// COM single-threaded apartment for the UI thread (file dialogs).

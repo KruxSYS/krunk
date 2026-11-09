@@ -2,6 +2,7 @@
 //! here wraps Win32 and CEF calls in safe functions for the rest of the app.
 #![allow(unsafe_code)]
 
+pub mod appid;
 pub mod cef;
 pub mod cursor;
 pub mod dialogs;

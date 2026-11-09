@@ -241,6 +241,10 @@ Section "Krunk" SecMain
   SetShellVarContext current
   CreateShortCut "$SMPROGRAMS\Krunk.lnk" "$INSTDIR\Krunk.exe" "" "$INSTDIR\Krunk.exe" 0
 
+  ; Krunk's app identity (0.11.0): the name and icon Windows shows for it, e.g. in the media
+  ; overlay. Krunk.exe sets this ID and puts it on its shortcuts.
+  WriteRegStr HKCU "Software\Classes\AppUserModelId\Krunk.Browser" "DisplayName" "${APP}"
+  WriteRegStr HKCU "Software\Classes\AppUserModelId\Krunk.Browser" "IconUri" "$INSTDIR\Krunk.exe,0"
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "${APP}"
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayVersion" "${VERSION}"
   WriteRegStr HKCU "${UNINST_KEY}" "Publisher" "${APP}"
@@ -299,6 +303,7 @@ Section "un.Krunk" UnSecMain
   Delete "$SMPROGRAMS\Krunk.lnk"
   Delete "$DESKTOP\Krunk.lnk"
   DeleteRegKey HKCU "${UNINST_KEY}"
+  DeleteRegKey HKCU "Software\Classes\AppUserModelId\Krunk.Browser"
   ; Only a folder that holds Krunk is removed.
   ${If} ${FileExists} "$INSTDIR\Krunk.exe"
     RMDir /r "$INSTDIR"
