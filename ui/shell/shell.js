@@ -15,11 +15,12 @@
   // while the pointer stays on the strip, as in Chrome: the next tab's close button comes to
   // rest under the pointer. They take their new widths when it leaves.
   const tabNodes = new Map();    // tab id -> node
+  let ghost = null;              // a tab dragged from another window, shown in a gap: { id, index, node }
   let renderedOnce = false;
   let widthsFrozen = false;
   const CLOSE_MS = 160;
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-  const liveTabs = () => document.querySelectorAll('#tabs .tab:not(.closing)');
+  const liveTabs = () => document.querySelectorAll('#tabs .tab:not(.closing):not(.ghost)');
   function tabById(id) { return state.tabs.find(function (t) { return t.id === id; }); }
 
   function newTabNode(id) {
@@ -163,7 +164,14 @@
     let after = null;
     state.tabs.forEach(function (t, index) {
       let node = tabNodes.get(t.id);
-      if (!node) {
+      if (!node && ghost && ghost.id === t.id) {
+        // A tab dropped from another window takes the place of its ghost, already open.
+        node = newTabNode(t.id);
+        tabNodes.set(t.id, node);
+        ghost.node.replaceWith(node);
+        ghost = null;
+        added = true;
+      } else if (!node) {
         node = newTabNode(t.id);
         tabNodes.set(t.id, node);
         if (animate) node.classList.add('opening');
@@ -173,7 +181,7 @@
       // In state order; closing tabs stay where they were meanwhile.
       const slot = after ? after.nextSibling : box.firstChild;
       let next = slot;
-      while (next && next.classList.contains('closing')) next = next.nextSibling;
+      while (next && (next.classList.contains('closing') || next.classList.contains('ghost'))) next = next.nextSibling;
       if (next !== node) box.insertBefore(node, slot);
       after = node;
     });
@@ -305,6 +313,9 @@
   }
   let lastMap = '';
   function reportHitMap() {
+    // While a ghost holds a gap the host keeps the centres from before it opened (its drop
+    // places would move with the gap).
+    if (ghost) return;
     const box = $('tabs');
     const tabs = liveTabs();
     const interactive = [rectOf($('newtab'))];
@@ -495,7 +506,10 @@
       clearSlides();
       clearDropMarks();
       try { $('tabs').releasePointerCapture(d.pointerId); } catch (err) { /* already released */ }
-      LB.post('tabDragOut', { id: d.id, offsetX: d.offsetX, offsetY: d.startY });
+      // Where a row that does not scroll starts: the tab's place in its new window.
+      const strip = $('tabstrip');
+      const firstX = strip.getBoundingClientRect().left + (parseFloat(getComputedStyle(strip).paddingLeft) || 0);
+      LB.post('tabDragOut', { id: d.id, offsetX: d.offsetX, offsetY: d.startY, firstX: firstX });
       return;
     }
     if (!node) return;
@@ -590,14 +604,45 @@
     }
   });
 
-  // A tab dragged from another window is over this strip: where it would land.
+  // A tab dragged from another window is over this strip (0.11.1): the strip opens a gap where
+  // it would land and shows the tab there (a "ghost"); the gap moves with the cursor, sliding
+  // like a tab that opens and one that closes. Dropped, the tab takes the ghost's place.
+  function ghostNode(g) {
+    const icon = g.favicon ? el('img', { class: 'favicon', src: g.favicon, alt: '' }) : svgIcon('i-globe', 'favicon');
+    return el('div', { class: 'tab ghost' + (g.private ? ' private' : ''), 'aria-hidden': 'true' },
+      [icon, el('span', { class: 'title' }, [g.title || 'New tab'])]);
+  }
+  function dropGhost(animate) {
+    if (!ghost) return;
+    const node = ghost.node;
+    ghost = null;
+    if (animate && !reduceMotion.matches) closeOut(node);
+    else { node.remove(); layoutTabs(); }
+  }
   LB.on('tabDropHint', function (m) {
     clearDropMarks();
-    if (m.index === null || m.index === undefined) return;
+    if (m.index === null || m.index === undefined || !m.ghost) { dropGhost(true); reportHitMap(); return; }
+    if (ghost && ghost.id === m.ghost.id && ghost.index === m.index) return;
+    const animate = !reduceMotion.matches;
+    // The new gap opens as the old one closes.
+    if (ghost) {
+      const old = ghost.node;
+      ghost = null;
+      if (animate) closeOut(old); else old.remove();
+    }
+    const node = ghostNode(m.ghost);
     const tabs = liveTabs();
-    if (!tabs.length) return;
-    if (m.index < tabs.length) tabs[m.index].classList.add('drop-before');
-    else tabs[tabs.length - 1].classList.add('drop-after');
+    const before = m.index < tabs.length ? tabs[m.index] : (tabs.length ? tabs[tabs.length - 1].nextSibling : null);
+    $('tabs').insertBefore(node, before);
+    ghost = { id: m.ghost.id, index: m.index, node: node };
+    if (animate) {
+      node.classList.add('opening');
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { node.classList.remove('opening'); });
+      });
+    }
+    layoutTabs();
+    if (node.scrollIntoView) node.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   });
 
   // ---------- toolbar ----------

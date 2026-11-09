@@ -75,6 +75,7 @@ mod segmented;
 mod settings_host;
 mod siteinfo;
 mod source;
+mod spare;
 mod status;
 mod storage;
 mod suggest;
@@ -359,6 +360,14 @@ pub struct Browser {
     integrity: integrity::IntegrityHost,
     /// A tab being dragged between windows.
     drag: Cell<Option<drag::TabDrag>>,
+    /// During a tab drag: the other windows (topmost first) as they were at its start, and
+    /// the dragged tab as their strips show it.
+    drop_windows: RefCell<Vec<lb_core::frame::DropWindow>>,
+    drag_ghost: RefCell<Option<lb_core::protocol::TabGhost>>,
+    /// A hidden frame with its shell loaded, for the next new window (0.11.1).
+    spare: RefCell<Option<spare::SpareFrame>>,
+    /// `post_shell` goes to the spare's shell only (it has just loaded).
+    spare_only: Cell<bool>,
     /// A bookmark dragged out of a folder dropdown (host-driven, like a torn-off tab).
     bar_drag: Cell<Option<drag::BarDrag>>,
     /// The folder dropdown a bookmark menu was opened from (Esc goes back to it).
@@ -456,6 +465,10 @@ impl Browser {
             updates: updater::UpdateHost::new(dirs.update_status()),
             integrity: integrity::IntegrityHost::default(),
             drag: Cell::new(None),
+            drop_windows: RefCell::new(Vec::new()),
+            drag_ghost: RefCell::new(None),
+            spare: RefCell::new(None),
+            spare_only: Cell::new(false),
             bar_drag: Cell::new(None),
             menu_from_folder: Cell::new(None),
             session_final: Cell::new(false),
@@ -588,6 +601,7 @@ impl Browser {
                 }
                 w
             }
+            None if self.adopt_spare(win, bounds, maximized) => return,
             None => {
                 let rect = bounds.map(|b| ScreenRect { x: b.x, y: b.y, width: b.width, height: b.height });
                 match Window::create_frame("Krunk", rect, false) {
@@ -620,8 +634,15 @@ impl Browser {
     }
 
     fn create_shell(&self, frame: &Frame) -> Result<(), String> {
-        let window = frame.window;
-        let win = frame.id;
+        let shell = self.new_shell(frame.window, Rc::new(Cell::new(Some(frame.id))))?;
+        shell.set_visible(true);
+        *frame.shell.borrow_mut() = Some(shell);
+        self.layout();
+        Ok(())
+    }
+
+    /// A shell view in `window`, for the frame whose id `id` holds (none yet: the spare frame).
+    fn new_shell(&self, window: Window, id: Rc<Cell<Option<WindowId>>>) -> Result<View, String> {
         let shell = View::new(ViewOptions {
             role: Role::Shell,
             private: false,
@@ -637,39 +658,49 @@ impl Browser {
             }
         });
         let weak = self.me.clone();
+        let win = id.clone();
         shell.on_open_tab(move |url, _| {
             // Links in the shell never open windows; open them as tabs instead.
-            if let Some(b) = weak.upgrade() {
+            if let (Some(b), Some(win)) = (weak.upgrade(), win.get()) {
                 b.make_current(win);
                 b.open_url(&url, true, false);
             }
         });
         let weak = self.me.clone();
+        let win = id.clone();
         shell.on_message(move |source, json| {
             if let Some(b) = weak.upgrade() {
-                b.on_ui_message(Channel::Shell, Some(win), source, json);
+                match win.get() {
+                    Some(win) => b.on_ui_message(Channel::Shell, Some(win), source, json),
+                    None => b.spare_message(json),
+                }
             }
         });
         let weak = self.me.clone();
+        let win = id.clone();
         shell.on_crashed(move |reason| {
-            warning!("window {win}: the shell's renderer ended ({reason}); reloading it");
-            if let Some(s) = weak.upgrade().and_then(|b| b.frame(win)).and_then(|f| f.shell.borrow().clone()) {
-                s.navigate(SHELL_URL);
+            let Some(b) = weak.upgrade() else { return };
+            match win.get() {
+                Some(win) => {
+                    warning!("window {win}: the shell's renderer ended ({reason}); reloading it");
+                    if let Some(s) = b.frame(win).and_then(|f| f.shell.borrow().clone()) {
+                        s.navigate(SHELL_URL);
+                    }
+                }
+                None => b.spare_crashed(),
             }
         });
         let weak = self.me.clone();
+        let win = id;
         shell.on_key(move |key| {
-            weak.upgrade().is_some_and(|b| {
+            weak.upgrade().zip(win.get()).is_some_and(|(b, win)| {
                 b.make_current(win);
                 b.on_key(key)
             })
         });
         self.hook_focus(&shell, None);
         shell.start(window.hwnd(), SHELL_URL).map_err(|e| format!("Cannot create the browser window: {e}"))?;
-        shell.set_visible(true);
-        *frame.shell.borrow_mut() = Some(shell);
-        self.layout();
-        Ok(())
+        Ok(shell)
     }
 
     /// A view getting the focus closes the popup. The exception is the suggestion dropdown
@@ -792,9 +823,13 @@ impl Browser {
         }
         self.send_tabs();
         self.send_nav();
-        self.save_session();
+        // Saved a moment later (0.11.1): a tear-off or a drop doesn't wait for the database.
+        // Exit saves right away.
         if exit {
+            self.save_session();
             self.begin_exit();
+        } else {
+            self.schedule_session_save();
         }
     }
 
@@ -1481,11 +1516,15 @@ impl Browser {
     /// Sends an event to every frame's shell (settings, bookmarks bar, downloads …).
     fn post_shell(&self, e: &Event) {
         let json = e.to_json();
-        for f in self.all_frames() {
-            if let Some(s) = f.shell.borrow().as_ref() {
-                s.post_json(&json);
+        if !self.spare_only.get() {
+            for f in self.all_frames() {
+                if let Some(s) = f.shell.borrow().as_ref() {
+                    s.post_json(&json);
+                }
             }
         }
+        // The spare frame's shell keeps up, so that it is complete when a window takes it.
+        self.post_spare(&json);
     }
 
     /// Sends an event to one frame's shell.
@@ -1734,6 +1773,22 @@ impl Browser {
             }
         };
         self.post_shell(&e);
+    }
+
+    /// Window `win` moved: popups and hints close, its views learn their new place, and the
+    /// session saves later.
+    fn frame_moved(&self, win: WindowId) {
+        self.hide_popup();
+        self.hide_status();
+        self.hide_hint();
+        self.reapply_pointer();
+        if let Some(s) = self.frame(win).and_then(|f| f.shell.borrow().clone()) {
+            s.notify_moved();
+        }
+        if let Some(c) = self.active_view_of(win) {
+            c.notify_moved();
+        }
+        self.schedule_session_save();
     }
 
     /// Saves the session shortly after the last change (titles and URLs
@@ -2156,6 +2211,36 @@ impl Browser {
         }
     }
 
+    /// Everything a shell shows, to the shell of window `win` that has loaded (and what all
+    /// shells share, to all of them).
+    fn shell_loaded(&self, win: WindowId) {
+        self.send_shell_config();
+        self.send_tabs_to(win);
+        self.send_nav_to(win);
+        self.send_shell_shared();
+        self.send_window_state();
+        self.pass_shell_hit_tests(win);
+    }
+
+    /// What every shell shows alike, besides the config: the bookmarks bar, downloads,
+    /// update and extension buttons.
+    fn send_shell_shared(&self) {
+        self.send_bookmarks_bar();
+        self.post_shell(&Event::DownloadsChanged { active: self.downloads.borrow().active_count() });
+        self.post_shell(&Event::UpdateAvailable { version: self.update_notice() });
+        self.ext_send_actions();
+    }
+
+    /// The current window is new: a new-tab page activated before its shell finished loading
+    /// could not focus the address bar yet.
+    fn focus_new_window(&self) {
+        let start_tab = self.active_tab().filter(|t| Page::from_url(&t.url) == Some(Page::NewTab)).map(|t| t.id);
+        match start_tab {
+            Some(id) => self.hold_address_focus(id),
+            None => self.focus_active(),
+        }
+    }
+
     fn dispatch(&self, sender: Sender, tab: Option<TabId>, env: Envelope) {
         let now = now_ms();
         let Envelope { req_id, request } = env;
@@ -2165,23 +2250,9 @@ impl Browser {
                 Sender::Shell => {
                     // The shell that just loaded is the current window's (its message made it so).
                     let Some(win) = self.cur_id() else { return };
-                    self.send_shell_config();
-                    self.send_tabs_to(win);
-                    self.send_nav_to(win);
-                    self.send_bookmarks_bar();
-                    self.post_shell(&Event::DownloadsChanged { active: self.downloads.borrow().active_count() });
-                    self.post_shell(&Event::UpdateAvailable { version: self.update_notice() });
-                    self.ext_send_actions();
-                    self.send_window_state();
-                    self.pass_shell_hit_tests(win);
-                    // A new-tab page activated before the shell finished
-                    // loading (a new window) could not focus the address bar yet.
-                    let start_tab =
-                        self.active_tab().filter(|t| Page::from_url(&t.url) == Some(Page::NewTab)).map(|t| t.id);
-                    match start_tab {
-                        Some(id) => self.hold_address_focus(id),
-                        None => self.focus_active(),
-                    }
+                    self.shell_loaded(win);
+                    self.focus_new_window();
+                    self.schedule_spare();
                 }
                 Sender::Popup => {
                     let slot = self.request_slot();
@@ -2334,9 +2405,9 @@ impl Browser {
             }
             Request::BookmarkActivePage { parent, index } => self.bookmark_active_page(parent, index),
             Request::AddBookmarkAt { url, parent, index } => self.add_bookmark_at(&url, parent, index),
-            Request::TabDragOut { id, offset_x, offset_y } => {
+            Request::TabDragOut { id, offset_x, offset_y, first_x } => {
                 if let Some(win) = self.cur_id() {
-                    self.start_tab_drag(win, id, offset_x, offset_y);
+                    self.start_tab_drag(win, id, offset_x, offset_y, first_x);
                 }
             }
             Request::OpenBlockedPage {} => self.open_blocked_page(),
@@ -3048,6 +3119,7 @@ impl Browser {
                 s.close();
             }
         }
+        self.drop_spare();
         // The message loop ends when the engine has closed every browser.
         engine::quit_when_closed();
     }
@@ -3162,6 +3234,8 @@ impl WindowEvents for AppEvents {
             EXIT_TIMER => b.finish_exit(),
             CLIPBOARD_TIMER => b.clipboard_timer(),
             drag::DRAG_TIMER => b.drag_tick(),
+            drag::BAR_DRAG_TIMER => b.bar_drag_timer(),
+            spare::SPARE_TIMER => b.spare_timer(),
             segmented::PARTS_TIMER => b.parts_tick(),
             ZOOM_TIMER => b.zoom_tick(),
             hang::HANG_TIMER => b.hang_tick(),
@@ -3343,17 +3417,17 @@ impl WindowEvents for FrameEvents {
 
     fn moved(&self) {
         let Some(b) = self.b.upgrade() else { return };
-        b.hide_popup();
-        b.hide_status();
-        b.hide_hint();
-        b.reapply_pointer();
-        if let Some(s) = b.frame(self.win).and_then(|f| f.shell.borrow().clone()) {
-            s.notify_moved();
+        // A window following a tab drag moves on every mouse move: the drop does this once.
+        if b.drag.get().is_some_and(|d| d.dragged() == self.win) {
+            return;
         }
-        if let Some(c) = b.active_view_of(self.win) {
-            c.notify_moved();
+        b.frame_moved(self.win);
+    }
+
+    fn follow_mouse(&self, released: bool) {
+        if let Some(b) = self.b.upgrade() {
+            b.drag_mouse(released);
         }
-        b.schedule_session_save();
     }
 
     fn got_focus(&self) {

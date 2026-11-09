@@ -48,6 +48,10 @@ body { display: flex; flex-direction: column; background: var(--bg); }
 /* The dragged tab follows the cursor at once (no transform transition), raised above the others. */
 .tab.dragging { z-index: 2; transition: flex-basis .16s ease, min-width .16s ease, padding .16s ease, opacity .16s ease, transform 0s; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
 .tab.settling { z-index: 2; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+/* A tab dragged from another window, in the gap where it would land (0.11.1). */
+.tab.ghost { pointer-events: none; background: var(--bg-raised); color: var(--fg);
+  box-shadow: inset 0 0 0 2px var(--accent), 0 2px 8px rgba(0,0,0,.25); }
+.tab.ghost.private { color: var(--private); }
 .tab.drop-before::before, .tab.drop-after::after {
   content: ""; position: absolute; top: 4px; bottom: 4px; width: 2px; background: var(--accent);
 }

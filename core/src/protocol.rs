@@ -874,11 +874,15 @@ pub enum Request {
     },
     /// A tab was dragged out of its strip (the pointer left the tab row): the host follows
     /// the mouse from here, in a new window. `offset_x`/`offset_y`: where the tab was grabbed
-    /// (CSS px from the tab's left edge, and from the top of the shell).
+    /// (CSS px from the tab's left edge, and from the top of the shell). `first_x`: where a
+    /// window's first tab starts when its row does not scroll (0.11.1: the grab point in the
+    /// new window; the host guesses without it).
     TabDragOut {
         id: u32,
         offset_x: f64,
         offset_y: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        first_x: Option<f64>,
     },
     /// Dock DevTools right or at the bottom (all tabs).
     DevToolsDock {
@@ -2132,6 +2136,16 @@ pub struct TabInfo {
     pub muted: bool,
 }
 
+/// The tab a drag from another window would drop: the target strip shows it in its gap.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TabGhost {
+    pub id: u32,
+    pub title: String,
+    pub favicon: Option<String>,
+    pub private: bool,
+}
+
 /// Navigation state of the active tab.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2272,8 +2286,12 @@ pub enum Event {
     },
     /// The drag left the bar or ended elsewhere: the shell clears its marks.
     BarDragEnd,
+    /// A tab dragged from another window is over this strip at `index` (`None`: it left, or
+    /// the drag ended). `ghost`: what the strip shows in the gap it opens there (0.11.1).
     TabDropHint {
         index: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ghost: Option<TabGhost>,
     },
     /// To the shell: the bookmarks bar contents.
     BookmarksBar {
@@ -2972,7 +2990,7 @@ mod tests {
             },
             Request::OpenSiteData,
             Request::ShowPopup { popup: PopupKind::Shield, rect },
-            Request::TabDragOut { id: 3, offset_x: 40.5, offset_y: 18.0 },
+            Request::TabDragOut { id: 3, offset_x: 40.5, offset_y: 18.0, first_x: Some(6.0) },
             Request::ShowTabMenu { id: 3, rect },
             Request::ShowNavMenu { forward: true, rect },
             Request::NavToEntry { tab_id: 3, entry_id: 17 },
@@ -3990,7 +4008,7 @@ mod tests {
 
     #[test]
     fn tab_moves_are_shell_and_popup_only() {
-        let drag = Request::TabDragOut { id: 1, offset_x: 1.0, offset_y: 1.0 };
+        let drag = Request::TabDragOut { id: 1, offset_x: 1.0, offset_y: 1.0, first_x: None };
         let menu = Request::ShowTabMenu { id: 1, rect: PopupRect { x: 1.0, y: 1.0, width: 240.0, height: 196.0 } };
         let action = Request::TabMenuAction { id: 1, action: TabAction::Close };
         assert!(Sender::Shell.permits(&drag) && Sender::Shell.permits(&menu));
@@ -4001,13 +4019,25 @@ mod tests {
             assert!(!Sender::Page(page).permits(&drag) && !Sender::Page(page).permits(&action), "{page:?}");
         }
         let parsed = parse_request(Sender::Shell, r#"{"cmd":"tabDragOut","id":4,"offsetX":12,"offsetY":20}"#).unwrap();
-        assert_eq!(parsed.request, Request::TabDragOut { id: 4, offset_x: 12.0, offset_y: 20.0 });
+        assert_eq!(parsed.request, Request::TabDragOut { id: 4, offset_x: 12.0, offset_y: 20.0, first_x: None });
+        let parsed =
+            parse_request(Sender::Shell, r#"{"cmd":"tabDragOut","id":4,"offsetX":12,"offsetY":20,"firstX":6}"#)
+                .unwrap();
+        assert_eq!(parsed.request, Request::TabDragOut { id: 4, offset_x: 12.0, offset_y: 20.0, first_x: Some(6.0) });
         let parsed =
             parse_request(Sender::Popup, r#"{"cmd":"tabMenuAction","id":4,"action":"moveToNewWindow"}"#).unwrap();
         assert_eq!(parsed.request, Request::TabMenuAction { id: 4, action: TabAction::MoveToNewWindow });
         let parsed = parse_request(Sender::Popup, r#"{"cmd":"command","command":{"command":"newWindow"}}"#).unwrap();
         assert_eq!(parsed.request, Request::Command { command: Command::NewWindow });
-        assert_eq!(Event::TabDropHint { index: Some(1) }.to_json(), r#"{"event":"tabDropHint","index":1}"#);
+        assert_eq!(
+            Event::TabDropHint { index: Some(1), ghost: None }.to_json(),
+            r#"{"event":"tabDropHint","index":1}"#
+        );
+        let ghost = TabGhost { id: 7, title: "T".into(), favicon: None, private: false };
+        assert_eq!(
+            Event::TabDropHint { index: Some(1), ghost: Some(ghost) }.to_json(),
+            r#"{"event":"tabDropHint","index":1,"ghost":{"id":7,"title":"T","favicon":null,"private":false}}"#
+        );
         let menu = PopupContent::TabMenu {
             tab_id: 2,
             can_move: false,
@@ -4319,11 +4349,15 @@ mod tests {
                 },
             },
             Event::PopupClosed,
-            Event::TabDropHint { index: Some(2) },
+            Event::TabDropHint { index: Some(2), ghost: None },
+            Event::TabDropHint {
+                index: Some(0),
+                ghost: Some(TabGhost { id: 3, title: "t".into(), favicon: Some("data:,".into()), private: true }),
+            },
             Event::BarDragAt { x: 1.0, y: 2.0 },
             Event::BarDragDrop { id: 4, x: 1.0, y: 2.0 },
             Event::BarDragEnd,
-            Event::TabDropHint { index: None },
+            Event::TabDropHint { index: None, ghost: None },
             Event::DevTools { open: true, dock: crate::settings::DevToolsDock::Right },
             Event::CaptionState { hover: Some(CaptionButton::Maximize), pressed: false },
             Event::CaptionState { hover: None, pressed: false },

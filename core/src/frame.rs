@@ -65,6 +65,34 @@ pub fn drop_index(tab_centers: &[f64], x: f64) -> usize {
     tab_centers.iter().filter(|c| **c < x).count()
 }
 
+/// Another window a dragged tab may be dropped on, as it was when the drag started (0.11.1:
+/// windows don't move while the mouse is held, so the desktop is not searched on every move):
+/// its window rectangle `(x, y, width, height)` and client origin in screen px, and its scale.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DropWindow {
+    pub win: crate::windows::WindowId,
+    pub rect: (i32, i32, i32, i32),
+    pub origin: (i32, i32),
+    pub scale: f64,
+}
+
+/// The topmost of `windows` (topmost first) containing the screen point, with the point in
+/// CSS px of its shell. A window under another one there is covered and does not count.
+pub fn point_in_topmost(windows: &[DropWindow], x: i32, y: i32) -> Option<(crate::windows::WindowId, f64, f64)> {
+    let w = windows.iter().find(|w| {
+        let (rx, ry, width, height) = w.rect;
+        x >= rx && x < rx + width && y >= ry && y < ry + height
+    })?;
+    let scale = if w.scale > 0.0 { w.scale } else { 1.0 };
+    Some((w.win, f64::from(x - w.origin.0) / scale, f64::from(y - w.origin.1) / scale))
+}
+
+/// Is a point `css_y` px below the top of a shell over its tab strip (this much `slack` above
+/// and below still counts)?
+pub fn over_strip(strip_height: f64, css_y: f64, slack: f64) -> bool {
+    css_y >= -slack && css_y <= strip_height + slack
+}
+
 /// Where a point is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hit {
@@ -166,6 +194,28 @@ mod tests {
         let with: HitMap =
             serde_json::from_str(&json.replace("\"interactive\"", "\"tabCenters\":[1.5,9],\"interactive\"")).unwrap();
         assert_eq!(with.tab_centers, vec![1.5, 9.0]);
+    }
+
+    #[test]
+    fn drop_windows_taken_at_the_start() {
+        let w = |win, x, y, scale| DropWindow { win, rect: (x, y, 800, 600), origin: (x + 8, y), scale };
+        // Window 2 lies over window 1 where they overlap (topmost first).
+        let windows = [w(2, 400, 100, 2.0), w(1, 0, 0, 1.0)];
+        assert_eq!(point_in_topmost(&windows, 100, 20), Some((1, 92.0, 20.0)));
+        assert_eq!(
+            point_in_topmost(&windows, 500, 130),
+            Some((2, 46.0, 15.0)),
+            "the covering window, in its own scale"
+        );
+        assert_eq!(point_in_topmost(&windows, 1300, 20), None, "outside every window");
+        assert_eq!(point_in_topmost(&windows, 800, 20), None, "the right edge is outside");
+        assert_eq!(point_in_topmost(&[], 0, 0), None);
+        assert!(over_strip(36.0, -8.0, 8.0) && over_strip(36.0, 44.0, 8.0) && over_strip(36.0, 10.0, 8.0));
+        assert!(!over_strip(36.0, -8.5, 8.0) && !over_strip(36.0, 44.5, 8.0));
+        // With the drop place from the centres the shell reported before the gap opened.
+        let (_, x, y) = point_in_topmost(&windows, 230, 20).unwrap();
+        assert!(over_strip(36.0, y, 8.0));
+        assert_eq!(drop_index(&[50.0, 150.0, 250.0], x), 2);
     }
 
     #[test]

@@ -87,6 +87,9 @@ pub trait WindowEvents {
     }
     /// A strip button was clicked.
     fn strip_clicked(&self, _button: StripButton) {}
+    /// The mouse moved (or, `released`, the left button went up) while this frame holds the
+    /// capture for a tab drag ([`Window::follow_mouse`]).
+    fn follow_mouse(&self, _released: bool) {}
 }
 
 /// What the frame paints itself between its child views: the DevTools splitter and the
@@ -325,6 +328,22 @@ impl Window {
         let _ = unsafe {
             SetWindowPos(self.0, None, rect.x, rect.y, rect.width, rect.height, SWP_NOZORDER | SWP_NOACTIVATE)
         };
+    }
+
+    /// Moves a top-level window, keeping its size (a tab drag: the size Windows gave it after
+    /// a DPI change stays), without activating it.
+    pub fn move_pos(self, x: i32, y: i32) {
+        // SAFETY: our own window.
+        let _ = unsafe { SetWindowPos(self.0, None, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE) };
+    }
+
+    /// Takes the mouse for a tab drag: every move and the release come to this frame's
+    /// [`WindowEvents::follow_mouse`] until [`stop_following`] (or the capture is lost).
+    pub fn follow_mouse(self) {
+        stop_following();
+        FOLLOWING.with(|f| f.set(self.0 .0 as isize));
+        // SAFETY: capturing the mouse for our own window while the button is held.
+        unsafe { windows::Win32::UI::Input::KeyboardAndMouse::SetCapture(self.0) };
     }
 
     /// The window rectangle in screen pixels.
@@ -955,6 +974,33 @@ extern "system" fn main_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
             sizing_cursor(hwnd);
             LRESULT(1)
         }
+        // A tab drag (0.11.1): this frame holds the mouse capture, and every move is passed on
+        // as it comes (the drag's timer only backs it up).
+        windows::Win32::UI::WindowsAndMessaging::WM_MOUSEMOVE if following(hwnd) => {
+            if let Some(ev) = events(hwnd) {
+                ev.follow_mouse(false);
+            }
+            LRESULT(0)
+        }
+        windows::Win32::UI::WindowsAndMessaging::WM_LBUTTONUP if following(hwnd) => {
+            stop_following();
+            if let Some(ev) = events(hwnd) {
+                ev.follow_mouse(true);
+            }
+            LRESULT(0)
+        }
+        windows::Win32::UI::WindowsAndMessaging::WM_CAPTURECHANGED if following(hwnd) => {
+            FOLLOWING.with(|f| f.set(0));
+            LRESULT(0)
+        }
+        windows::Win32::UI::WindowsAndMessaging::WM_SETCURSOR if following(hwnd) => {
+            use windows::Win32::UI::WindowsAndMessaging::SetCursor;
+            // SAFETY: a stock cursor.
+            unsafe {
+                let _ = SetCursor(LoadCursorW(None, IDC_ARROW).ok());
+            }
+            LRESULT(1)
+        }
         windows::Win32::UI::WindowsAndMessaging::WM_TIMER if wparam.0 == SIZING_TIMER => {
             use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_ESCAPE};
             // SAFETY: a plain key-state query.
@@ -1167,6 +1213,33 @@ extern "system" fn main_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
             r
         }
         _ => wndproc(hwnd, msg, wparam, lparam),
+    }
+}
+
+thread_local! {
+    /// The frame that holds the mouse capture for a tab drag (0 = none).
+    static FOLLOWING: std::cell::Cell<isize> = const { std::cell::Cell::new(0) };
+}
+
+fn following(hwnd: HWND) -> bool {
+    FOLLOWING.with(|f| f.get()) == hwnd.0 as isize
+}
+
+/// A place for a window of this width entirely left of every monitor (the dragged window
+/// steps aside there while the tab is shown in another window's strip).
+pub fn offscreen_point(width: i32) -> (i32, i32) {
+    use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN};
+    // SAFETY: plain metric queries.
+    let (x, y) = unsafe { (GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN)) };
+    (x - width.max(0) - 200, y)
+}
+
+/// Ends a tab drag's mouse capture (if it still has it).
+pub fn stop_following() {
+    let had = FOLLOWING.with(|f| f.replace(0));
+    if had != 0 {
+        // SAFETY: releasing this thread's capture.
+        let _ = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture() };
     }
 }
 

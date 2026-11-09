@@ -5048,6 +5048,10 @@ async function testTabWindows(browser) {
   const out = await lastSent(page, 'tabDragOut');
   check(out && out.id === ids[1] && Math.abs(out.offsetX - 30) < 2 && Math.abs(out.offsetY - (b.y + 12)) < 2,
     'dragging out of the strip sends tabDragOut{id, offsetX, offsetY} (got ' + JSON.stringify(out) + ')');
+  // 0.11.1: and where a window's first tab starts (the strip's left padding), for the grab point
+  // in the new window (it used to come from the hit map, whose second rect is ‹ on an overflowing row).
+  const firstLeft = await page.$eval('.tab', (n) => n.getBoundingClientRect().left);
+  check(out && typeof out.firstX === 'number' && Math.abs(out.firstX - firstLeft) < 1, 'tabDragOut.firstX is where the first tab starts (' + (out && out.firstX) + ' vs ' + firstLeft + ')');
   check((await sent(page)).filter((m) => m.cmd === 'moveTab').length === before, 'a drag-out is not also a reorder');
   check(await page.locator('.tab.dragging, .tab.drop-before, .tab.drop-after').count() === 0, 'no drag marks left after the hand-over');
 
@@ -5100,18 +5104,51 @@ async function testTabWindows(browser) {
   await page.waitForTimeout(20);
   check(await page.locator('#devtools-ctl').isHidden(), 'hidden again when DevTools closes');
 
-  // A tab from another window hovering this strip: the host says where it would land.
-  await emit(page, { event: 'tabDropHint', index: 1 });
-  await page.waitForTimeout(20);
-  const marks = await page.$$eval('.tab', (ns) => ns.map((n) => (n.classList.contains('drop-before') ? 'B' : '') + (n.classList.contains('drop-after') ? 'A' : '')));
-  check(marks[1] === 'B' && marks.filter((m) => m).length === 1, 'tabDropHint{index:1} marks before the second tab (' + marks.join(',') + ')');
-  await shot(page, 'shell-drop-hint.png');
-  await emit(page, { event: 'tabDropHint', index: 99 });
-  await page.waitForTimeout(20);
-  check(await page.locator('.tab').last().evaluate((n) => n.classList.contains('drop-after')), 'an index past the end marks after the last tab');
+  // A tab from another window hovering this strip (0.11.1): a gap opens where it would land,
+  // with the tab in it (a ghost); the gap follows the drop place; leaving closes it.
+  const g = { id: 9, title: 'Dragged here', favicon: null, private: false };
+  const order = () => page.$$eval('#tabs > .tab:not(.closing)', (ns) => ns.map((n) => (n.classList.contains('ghost') ? 'G' : n.dataset.id)).join(','));
+  const maps = async () => (await sent(page)).filter((m) => m.cmd === 'hitMap').length;
+  const mapsBefore = await maps();
+  const now = (await order()).split(','); // after the reorder above
+  await emit(page, { event: 'tabDropHint', index: 1, ghost: g });
+  await page.waitForTimeout(350);
+  check(await order() === [now[0], 'G', now[1], now[2], now[3]].join(','), 'tabDropHint{index:1, ghost} opens a gap before the second tab (' + await order() + ')');
+  const gb = await page.locator('.tab.ghost').boundingBox();
+  check(gb && gb.width > 60 && (await page.locator('.tab.ghost .title').textContent()) === 'Dragged here', 'the ghost shows the dragged tab at tab width (' + JSON.stringify(gb) + ')');
+  check(await page.locator('.tab.drop-before, .tab.drop-after').count() === 0, 'no 2-px marks any more');
+  await shot(page, 'shell-drop-ghost.png');
+  await emit(page, { event: 'tabDropHint', index: 3, ghost: g });
+  await page.waitForTimeout(350);
+  check(await order() === [now[0], now[1], now[2], 'G', now[3]].join(','), 'the gap moves with the drop place (' + await order() + ')');
+  check(await page.locator('.tab.ghost').count() === 1, 'one ghost (the old gap closed)');
+  check(await maps() === mapsBefore, 'no hit map while the gap is open (the host keeps the drop places from before it)');
   await emit(page, { event: 'tabDropHint', index: null });
-  await page.waitForTimeout(20);
-  check(await page.locator('.tab.drop-before, .tab.drop-after').count() === 0, 'tabDropHint{index:null} clears the mark');
+  await page.waitForTimeout(400);
+  check(await page.locator('.tab.ghost').count() === 0 && await order() === now.join(','), 'tabDropHint{index:null} closes the gap (' + await order() + ')');
+  const back = (await lastSent(page, 'hitMap')).map.tabCenters;
+  check(JSON.stringify(back) === JSON.stringify(hmAfter.tabCenters), 'the hit map is the same as before the gap');
+  // Dropped: the tab takes the ghost's place, already open (no opening animation).
+  await emit(page, { event: 'tabDropHint', index: 2, ghost: g });
+  await page.waitForTimeout(350);
+  const ghostBox = await page.locator('.tab.ghost').boundingBox();
+  await page.evaluate((id) => {
+    const h = window.__host;
+    h.state.tabs.splice(2, 0, { id: id, title: 'Dragged here', url: 'https://g.example/', favicon: null, loading: false, private: false, sleeping: false });
+    h.tabsEvent();
+  }, g.id);
+  await page.waitForTimeout(30);
+  const dropped = page.locator('.tab[data-id="9"]');
+  const db = await dropped.boundingBox();
+  check(await page.locator('.tab.ghost').count() === 0 && !(await dropped.evaluate((n) => n.classList.contains('opening'))) &&
+    db && ghostBox && Math.abs(db.x - ghostBox.x) < 2, 'the dropped tab takes the ghost\'s place without opening again (' + JSON.stringify(db) + ' vs ' + JSON.stringify(ghostBox) + ')');
+  await emit(page, { event: 'tabDropHint', index: null });
+  await page.evaluate(() => {
+    const h = window.__host;
+    h.state.tabs = h.state.tabs.filter((t) => t.id !== 9);
+    h.tabsEvent();
+  });
+  await page.waitForTimeout(400);
 
   // Right-click on a tab asks for its context menu at the click.
   const t3 = page.locator('.tab[data-id="' + ids[2] + '"] .title');

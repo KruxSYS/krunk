@@ -48,11 +48,12 @@ pub fn move_to(x: i32, y: i32) {
     let _ = unsafe { SetCursorPos(x, y) };
 }
 
-/// Is Esc held down right now (cancels a tab drag)?
+/// Is Esc held down, or was it tapped since the last call (cancels a drag)? A quick tap
+/// between two checks counts too (bit 0).
 pub fn escape_down() -> bool {
     use windows::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE;
     // SAFETY: plain call.
-    (unsafe { GetAsyncKeyState(i32::from(VK_ESCAPE.0)) } as u16 & 0x8000) != 0
+    (unsafe { GetAsyncKeyState(i32::from(VK_ESCAPE.0)) } as u16 & 0x8001) != 0
 }
 
 /// Ends any mouse capture of this thread (a view that captured the mouse on a press lets go
