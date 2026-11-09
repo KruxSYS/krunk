@@ -1,0 +1,21 @@
+[package]
+name = "krunk-sync-cli"
+description = "Test tool: a Linux sync client (the second device of the sync tests), using Krunk's own core::sync"
+version = "0.9.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+# A test tool for staging and the VM sessions (server/e2e/sync.cjs), not part of the browser
+# workspace and never shipped.
+[workspace]
+
+[dependencies]
+lb_core = { path = "../../core", package = "core" }
+ureq = "3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+zeroize = "1.8"
+
+[profile.dev.package."*"]
+opt-level = 2

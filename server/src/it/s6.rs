@@ -482,6 +482,7 @@ async fn approvals_relay_in_order_once() {
     assert_eq!(c.get(&e, &format!("approvals/{id}")).await.status, StatusCode::NOT_FOUND);
     assert!(c.get(&e, "approvals").await.body.as_array().unwrap().is_empty());
     let mine = n.get(&e, &format!("approvals/{id}")).await.body;
+    assert_eq!(mine["approver"], a.id, "N learns A's device id (part of the transcript)");
     assert_eq!(
         (mine["epk_A"].as_str(), mine["nonce_A"].as_str(), mine.get("commit_N")),
         (Some(k32(5).as_str()), Some(k32(6).as_str()), None)

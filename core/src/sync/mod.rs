@@ -5,11 +5,13 @@
 //! is pinned by the frozen test vectors in `core/tests/fixtures/sync/`.
 
 pub mod api;
+pub mod client;
 pub mod codes;
 pub mod crypto;
 pub mod dir;
 pub mod envelope;
 pub mod hlc;
+pub mod keys;
 pub mod labels;
 pub mod normalize;
 pub mod sas;

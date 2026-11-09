@@ -178,6 +178,10 @@ protect *local* files (§8).
 ### 5.1 Passphrase
 - **Default:** Krunk generates 6 words from the EFF large wordlist (7776 words, 77.5 bits),
   lowercase ASCII, separated by `-` [R9].
+  **As built in 0.9.0:** 7 words from the BIP-39 English list (2048 words, 77 bits), the list
+  Krunk already ships for the vault's recovery phrase. A typed passphrase is normalized before the
+  KDF: trimmed, lowercase, spaces and dashes both separate words. Choosing one's own passphrase
+  (below) is not offered yet: it needs a strength estimate that 0.9.0 doesn't ship.
 - **Custom passphrases:** allowed only if they are ASCII, at least 16 characters, and the
   `zxcvbn` estimate is ≥ 10^17 guesses (about 2^56). The UI warns if one equals the account
   password; the website can't check that.
@@ -794,7 +798,7 @@ The server enforces the order of steps, allows a single attempt, and deletes the
 - **`sync/state`** also returns `rr_gen`.
 - **Approvals:** the JSON names are exactly `commit_n` (create), `epk_A`/`nonce_A` (respond),
   `epk_N`/`nonce_N`/`box_N` (reveal), `tag_N` (confirm) and `box_A` (keys); 32-byte values and the
-  boxes in base64url. `GET approvals/{id}` shows N `epk_A`, `nonce_A` and `box_A`, and shows A
+  boxes in base64url. `GET approvals/{id}` shows N `approver` (A's device id, part of the transcript), `epk_A`, `nonce_A` and `box_A`, and shows A
   `commit_N`, `epk_N`, `nonce_N`, `box_N` and `tag_N`. A step out of order is 409. When N has
   collected `box_A` the approval is deleted. **Addition:** `POST approvals/{id}/cancel` (either
   side) → 204 ends it at once (a wrong SAS, a bad tag, or the user gave up); N must ask again.

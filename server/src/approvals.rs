@@ -335,6 +335,7 @@ pub async fn get_one(State(state): State<AppState>, d: DeviceAuth, Path(id): Pat
     let out = if r.new_device_id == d.device_id {
         json!({
             "approval_id": id, "state": r.step, "device": device, "expires_in": r.expires_in.max(0.0) as i64,
+            "approver": r.approver_device_id,
             "epk_A": b(&r.epk_a), "nonce_A": b(&r.nonce_a), "box_A": b(&r.box_a),
         })
     } else if r.approver_device_id == Some(d.device_id)
