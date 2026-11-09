@@ -1,11 +1,19 @@
-#url-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+/* 0.11.1: the page's own spacing (the common header, a padded "add" card, page-wide rules). */
+.page-header .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+#webstore { padding: 18px 20px 16px; }
+#url-form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+#url-form input { height: 34px; padding: 0 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--fg); font: inherit; }
+#url-form input:focus { border-color: var(--accent); outline: none; }
+.help code, .ext code { font-family: ui-monospace, Consolas, monospace; font-size: 0.846rem; padding: 1px 5px; border-radius: 4px; background: var(--bg-hover); }
+.error { color: var(--danger); margin: 10px 0 0; }
+.btn.small { padding: 4px 10px; font-size: 0.923rem; }
 #url-form label { font-weight: 600; }
 #url-form input { flex: 1; min-width: 280px; }
-.help { color: var(--fg-muted); font-size: 0.9rem; margin: 10px 0 0; }
+.help { color: var(--fg-muted); font-size: 0.9rem; line-height: 1.5; margin: 12px 0 0; }
 .status { color: var(--fg-muted); margin: 8px 0 0; }
 /* 0.7.0 (R22): cards in a grid. */
-.ext-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; margin-top: 16px; }
-.card.ext { display: flex; flex-direction: column; gap: 8px; padding: 16px; margin: 0; }
+.ext-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; margin-top: 20px; }
+.card.ext { display: flex; flex-direction: column; gap: 10px; padding: 18px 20px; margin: 0; }
 .ext .top { display: flex; align-items: center; gap: 12px; }
 .ext .icon { width: 40px; height: 40px; flex: none; display: grid; place-items: center; border-radius: 10px; background: var(--bg-hover); overflow: hidden; }
 .ext .icon img { width: 40px; height: 40px; object-fit: contain; }
@@ -21,7 +29,7 @@
 .ext .reach.none { color: var(--fg-muted); }
 .ext .partial-note { margin: 0; font-size: 0.923rem; color: color-mix(in srgb, #d97706 75%, var(--fg)); }
 .ext.disabled .icon, .ext.disabled .title, .ext.disabled .desc, .ext.disabled .reach { opacity: 0.55; }
-.ext .more { text-align: left; }
+.ext .more { text-align: left; margin: 0; }
 .ext .more summary { cursor: pointer; color: var(--fg-muted); font-size: 0.923rem; display: list-item; width: fit-content; }
 .ext .more summary:hover { color: var(--fg); }
 .ext .more dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 12px; margin: 8px 0 0; font-size: 0.923rem; }
@@ -33,7 +41,7 @@
 .tag { font-size: 0.846rem; padding: 1px 8px; border-radius: 999px; background: var(--bg-hover); }
 .tag.off { opacity: 0.6; }
 .tag.warn { background: color-mix(in srgb, var(--danger) 16%, var(--bg-raised)); color: var(--fg); }
-.ext .foot { display: flex; align-items: center; gap: 8px; margin-top: auto; padding-top: 8px; border-top: 1px solid var(--border); }
+.ext .foot { display: flex; align-items: center; gap: 8px; margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border); }
 .ext .foot .spacer { flex: 1; }
 .ext label.check { display: inline-flex; align-items: center; gap: 6px; font-size: 0.923rem; }
 .btn.danger { color: var(--danger); }
@@ -46,6 +54,6 @@
 .switch input:checked + .track::after { transform: translateX(16px); }
 .switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { .switch .track, .switch .track::after { transition: none; } }
-.empty-state { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 36px 24px; margin-top: 16px; text-align: center; }
+.empty-state { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 36px 24px; margin-top: 20px; text-align: center; }
 .empty-state h2 { margin: 6px 0 0; font-size: 1.154rem; }
 .empty-state p { margin: 0; color: var(--fg-muted); max-width: 460px; }
