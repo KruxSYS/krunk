@@ -10,5 +10,6 @@ pub mod overlay;
 pub mod pipwin;
 pub mod process;
 pub mod procmem;
+pub mod scroll_lock;
 pub mod secure;
 pub mod window;

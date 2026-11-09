@@ -94,6 +94,10 @@ fn run() -> Result<i32, String> {
     // Before the engine launches any renderer: they get the state on their command line.
     ffi::cef::set_no_hints(!settings.headers.send_client_hints);
     let window = ffi::window::Window::create_main("Krunk")?;
+    // The page stays still under an open dropdown (0.8.0): a message hook on this (UI) thread.
+    if let Err(e) = ffi::scroll_lock::install() {
+        log::write("WARN", &e);
+    }
     let start: ffi::cef::Start =
         Box::new(move || match browser::Browser::start(window, &dirs, store, settings, power) {
             Ok(b) => Some(Box::new(b) as Box<dyn std::any::Any>),

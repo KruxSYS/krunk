@@ -32,6 +32,12 @@ thread_local! {
     static WATCHED: RefCell<HashMap<isize, Rc<dyn PipEvents>>> = RefCell::new(HashMap::new());
 }
 
+/// Is this window the engine's floating video window Krunk is following? (The scroll lock leaves
+/// it alone.)
+pub fn is_watched(hwnd: HWND) -> bool {
+    WATCHED.with(|w| w.try_borrow().map(|m| m.contains_key(&(hwnd.0 as isize))).unwrap_or(false))
+}
+
 /// A Picture-in-Picture window of the engine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PipWindow(HWND);

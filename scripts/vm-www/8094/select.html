@@ -1,0 +1,40 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>sy=0</title>
+<!-- Krunk 0.8.0 scroll-lock test (vm-080-select.ps1): a tall page with a big <select>, a datalist
+     and a date input. The title reports the page state (scroll position, value, last page key)
+     so the flow can read it from the window title; scroll ends are also sent to serve.ps1. -->
+<style>
+  body { margin: 0; height: 4000px; font: 16px sans-serif; background: linear-gradient(#fafafa, #c8d8ff); }
+  #s { position: absolute; top: 60px; left: 40px; width: 400px; height: 120px; font-size: 22px; }
+  #dl { position: absolute; top: 60px; left: 520px; width: 300px; height: 40px; font-size: 18px; }
+  #dt { position: absolute; top: 130px; left: 520px; width: 300px; height: 40px; font-size: 18px; }
+  .mark { position: absolute; left: 880px; font: bold 22px monospace; color: #345; }
+  #hud { position: fixed; right: 12px; bottom: 12px; background: #222; color: #fff; padding: 6px 10px; font: 18px monospace; }
+</style></head>
+<body>
+<select id="s"></select>
+<input id="dl" list="fruits" placeholder="datalist">
+<datalist id="fruits"></datalist>
+<input id="dt" type="date">
+<div id="hud"></div>
+<script>
+  const s = document.getElementById('s');
+  for (let i = 1; i <= 40; i++) s.add(new Option('Option ' + i + (i % 5 ? '' : ' (five)'), 'o' + i));
+  const dl = document.getElementById('fruits');
+  ['apple', 'apricot', 'avocado', 'banana', 'blueberry', 'cherry', 'grape', 'lemon', 'mango', 'orange', 'peach', 'pear', 'plum'].forEach((f) => dl.appendChild(new Option(f)));
+  for (let y = 200; y < 4000; y += 100) {
+    const m = document.createElement('div'); m.className = 'mark'; m.style.top = y + 'px'; m.textContent = 'y = ' + y; document.body.appendChild(m);
+  }
+  let lastKey = '-';
+  function t() {
+    const v = 'sy=' + Math.round(scrollY) + ' v=' + s.value + ' k=' + lastKey + ' f=' + (document.activeElement && document.activeElement.id || '-');
+    document.title = v; document.getElementById('hud').textContent = v;
+  }
+  let timer = 0;
+  addEventListener('scroll', () => { t(); clearTimeout(timer); timer = setTimeout(() => fetch('/log?sel=' + encodeURIComponent(document.title)), 250); });
+  s.addEventListener('change', () => { t(); fetch('/log?sel=change+' + encodeURIComponent(document.title)); });
+  document.addEventListener('keydown', (e) => { lastKey = e.key; t(); }, true);
+  document.addEventListener('focusin', t);
+  t();
+</script>
+</body></html>
