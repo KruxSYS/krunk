@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Page source</title>
+<link rel="stylesheet" href="shared/common.css">
+<link rel="stylesheet" href="shared/page.css">
+<link rel="stylesheet" href="source.css">
+</head>
+<body>
+<header class="src-bar">
+  <span id="src-url" class="src-url"></span>
+  <span id="src-info" class="src-info"></span>
+  <span class="src-opts">
+    <label class="check"><input type="checkbox" id="opt-beautify"> Beautify</label>
+    <label class="check"><input type="checkbox" id="opt-wrap"> Wrap lines</label>
+  </span>
+</header>
+<p id="src-note" class="src-note" hidden></p>
+<p id="src-error" class="src-error" role="alert" hidden></p>
+<main id="src" class="src" aria-label="Page source" tabindex="0"></main>
+<script src="shared/bridge.js"></script>
+<script src="shared/page.js"></script>
+<script src="source.js"></script>
+</body>
+</html>

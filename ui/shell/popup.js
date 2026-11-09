@@ -982,6 +982,20 @@
     return row;
   }
 
+  // A page that stopped responding (0.11.0): wait for it, or end it (the tab then shows the
+  // crash page with Reload). Esc and a click elsewhere just close the prompt (waiting).
+  function renderUnresponsive(c) {
+    const reply = (wait) => { LB.post('hangReply', { tabId: c.tabId, wait: wait }); close(); };
+    return [el('div', { class: 'panel hang' }, [
+      el('h2', { text: 'This page isn\'t responding' }),
+      el('p', { text: (c.host ? c.host + ' is' : 'The page is') + ' busy or stuck. The rest of Krunk keeps working. You can wait for it, or close the page; you can reload it afterwards.' }),
+      el('div', { class: 'row' }, [
+        el('button', { class: 'btn', id: 'hang-close', onclick: () => reply(false), text: 'Close page' }),
+        el('button', { class: 'btn primary', id: 'default', onclick: () => reply(true), text: 'Wait' }),
+      ]),
+    ])];
+  }
+
   // "Krunk X is available" and the download that follows "Update now".
   function renderUpdate(c) {
     const reply = (choice) => LB.post('updateReply', { choice: choice });
@@ -1053,7 +1067,7 @@
       return;
     }
     current = m.content;
-    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, cardFill: renderCardFill, saveCard: renderSaveCard, pip: renderPip, pipVolume: renderPipVolume, extInstall: renderExtInstall, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, navMenu: renderNavMenu, httpAuth: renderHttpAuth, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit, tabList: renderTabList }[c.kind];
+    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, cardFill: renderCardFill, saveCard: renderSaveCard, pip: renderPip, pipVolume: renderPipVolume, extInstall: renderExtInstall, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, navMenu: renderNavMenu, httpAuth: renderHttpAuth, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit, tabList: renderTabList, unresponsive: renderUnresponsive }[c.kind];
     root.textContent = '';
     root.dataset.kind = c.kind;
     // The volume bar matches the engine's floating window, which is always dark.

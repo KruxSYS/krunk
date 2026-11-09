@@ -604,6 +604,17 @@ pub const MAX_AUTOLOCK_MINUTES: u32 = 24 * 60;
 
 impl Settings {
     /// The search URL template in effect.
+    /// The search engine's name for menus ("Search DuckDuckGo for …"); a custom engine is
+    /// named by its host.
+    pub fn search_engine_label(&self) -> String {
+        match self.search_engine.name() {
+            Some(n) => n.to_string(),
+            None => crate::urlclean::host_of(&self.custom_search_url.replace("{searchTerms}", "x").replace("%s", "x"))
+                .map(|h| h.trim_start_matches("www.").to_string())
+                .unwrap_or_else(|| "the web".into()),
+        }
+    }
+
     pub fn search_template(&self) -> &str {
         self.search_engine.template().unwrap_or(&self.custom_search_url)
     }

@@ -50,10 +50,15 @@ pub enum Page {
     Extensions,
     /// Sync (beta, Krunk 0.9.0): setup, restore, approvals, devices.
     Sync,
+    /// A page's source, formatted (0.11.0; "View page source", Ctrl+U, `view-source:`).
+    Source,
+    /// A tab whose page crashed or was ended ("Close page" on a page that stopped
+    /// responding, 0.11.0): what happened, and Reload.
+    Crashed,
 }
 
 impl Page {
-    pub const ALL: [Page; 15] = [
+    pub const ALL: [Page; 17] = [
         Page::NewTab,
         Page::History,
         Page::Bookmarks,
@@ -69,6 +74,8 @@ impl Page {
         Page::Tasks,
         Page::Extensions,
         Page::Sync,
+        Page::Source,
+        Page::Crashed,
     ];
 
     /// Short name used in the display URL (`krunk://<name>`) and file name.
@@ -89,6 +96,8 @@ impl Page {
             Page::Tasks => "tasks",
             Page::Extensions => "extensions",
             Page::Sync => "sync",
+            Page::Source => "source",
+            Page::Crashed => "crashed",
         }
     }
 
@@ -141,7 +150,7 @@ impl Page {
     /// Pages that are only ever needed once: opening one again switches to the open tab
     /// (Chrome does the same for its settings, downloads and history pages).
     pub fn single_instance(self) -> bool {
-        !matches!(self, Page::NewTab | Page::HttpsOnly | Page::SiteData)
+        !matches!(self, Page::NewTab | Page::HttpsOnly | Page::SiteData | Page::Source | Page::Crashed)
     }
 
     pub fn from_url(url: &str) -> Option<Page> {
@@ -158,11 +167,64 @@ impl Page {
 /// (`about:blank`, a new tab with the Blank setting) shows the empty bar with its placeholder
 /// (0.7.2, R1).
 pub fn display_url(url: &str) -> String {
+    if let Some((target, _)) = source_target(url) {
+        return format!("{VIEW_SOURCE}{target}");
+    }
+    // A crashed page keeps its address in the bar (Reload goes back there).
+    if let Some(target) = crashed_target(url) {
+        return target;
+    }
     match Page::from_url(url) {
         Some(p) => p.display(),
         None if is_blank(url) => String::new(),
         None => url.to_string(),
     }
+}
+
+/// The address-bar form of a page's source (as in Chrome).
+pub const VIEW_SOURCE: &str = "view-source:";
+
+/// The source viewer for `target` (an http(s) address). `from`: the tab that shows it, whose
+/// own copy is the fallback when the address cannot be loaded again (a POST result).
+pub fn source_url(target: &str, from: Option<u32>) -> String {
+    let mut u = Url::parse(&Page::Source.url()).expect("pages URL");
+    {
+        let mut q = u.query_pairs_mut();
+        q.append_pair("url", target);
+        if let Some(t) = from {
+            q.append_pair("tab", &t.to_string());
+        }
+    }
+    u.into()
+}
+
+/// The address a source-viewer URL shows (http or https only) and its tab.
+pub fn source_target(url: &str) -> Option<(String, Option<u32>)> {
+    if Page::from_url(url) != Some(Page::Source) {
+        return None;
+    }
+    let u = Url::parse(url).ok()?;
+    let target = u.query_pairs().find(|(k, _)| k == "url").map(|(_, v)| v.into_owned())?;
+    let t = Url::parse(&target).ok().filter(|t| matches!(t.scheme(), "http" | "https"))?;
+    let tab = u.query_pairs().find(|(k, _)| k == "tab").and_then(|(_, v)| v.parse().ok());
+    Some((t.into(), tab))
+}
+
+/// The crash page for a tab that showed `target` (0.11.0).
+pub fn crashed_url(target: &str) -> String {
+    let mut u = Url::parse(&Page::Crashed.url()).expect("pages URL");
+    u.query_pairs_mut().append_pair("url", target);
+    u.into()
+}
+
+/// The address a crash page offers to reload (http or https only).
+pub fn crashed_target(url: &str) -> Option<String> {
+    if Page::from_url(url) != Some(Page::Crashed) {
+        return None;
+    }
+    let u = Url::parse(url).ok()?;
+    let target = u.query_pairs().find(|(k, _)| k == "url").map(|(_, v)| v.into_owned())?;
+    Url::parse(&target).ok().filter(|t| matches!(t.scheme(), "http" | "https")).map(String::from)
 }
 
 /// `about:blank` (what a new tab shows before its first page, or with the Blank setting).

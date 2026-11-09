@@ -594,6 +594,8 @@ fn page_title(p: Page) -> &'static str {
         Page::Tasks => "Task manager",
         Page::Extensions => "Extensions",
         Page::Sync => "Sync",
+        Page::Source => "Page source",
+        Page::Crashed => "Page stopped",
     }
 }
 

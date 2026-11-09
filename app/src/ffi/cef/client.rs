@@ -674,7 +674,30 @@ wrap_request_handler! {
         ) {
             let reason = format!("status {}, code {error_code}", sys::cef_termination_status_t::from(status) as i32);
             if let Some(view) = lookup(self.key) {
+                view.hang.borrow_mut().take();
+                view.ev.unresponsive.with(|f| f(false));
                 view.ev.crashed.with(|f| f(reason));
+            }
+        }
+
+        // 0.11.0: a page that stopped handling input for about 15 s. The host asks the user
+        // (Wait / Close page) and answers through the kept callback; without a host answer
+        // the engine just keeps waiting.
+        fn on_render_process_unresponsive(
+            &self,
+            _browser: Option<&mut Browser>,
+            callback: Option<&mut UnresponsiveProcessCallback>,
+        ) -> c_int {
+            let (Some(view), Some(cb)) = (lookup(self.key), callback) else { return 0 };
+            *view.hang.borrow_mut() = Some(cb.clone());
+            view.ev.unresponsive.with(|f| f(true));
+            1
+        }
+
+        fn on_render_process_responsive(&self, _browser: Option<&mut Browser>) {
+            if let Some(view) = lookup(self.key) {
+                view.hang.borrow_mut().take();
+                view.ev.unresponsive.with(|f| f(false));
             }
         }
     }
@@ -699,6 +722,31 @@ wrap_context_menu_handler! {
 
 /// "Inspect" in the page context menu (CEF's `MENU_ID_USER_FIRST` + 1).
 const MENU_INSPECT: c_int = 26501;
+/// "Search <engine> for …" with selected text (0.11.0).
+const MENU_SEARCH: c_int = 26502;
+/// CEF's own ids: Copy, and "View page source" (which opened the system text editor).
+const MENU_ID_COPY: c_int = 113;
+const MENU_ID_VIEW_SOURCE: c_int = 132;
+
+/// Hands a frame's HTML (`Frame::source`) to `done` once.
+pub(super) fn source_visitor(done: Box<dyn FnOnce(Option<String>)>) -> CefStringVisitor {
+    SourceVisitor::new(std::rc::Rc::new(std::cell::RefCell::new(Some(done))))
+}
+
+type SourceDone = std::rc::Rc<std::cell::RefCell<Option<Box<dyn FnOnce(Option<String>)>>>>;
+
+wrap_string_visitor! {
+    struct SourceVisitor {
+        done: SourceDone,
+    }
+    impl CefStringVisitor {
+        fn visit(&self, string: Option<&CefString>) {
+            if let Some(done) = self.done.borrow_mut().take() {
+                done(string.map(|s| s.to_string()));
+            }
+        }
+    }
+}
 
 wrap_context_menu_handler! {
     struct TabMenu {
@@ -709,15 +757,27 @@ wrap_context_menu_handler! {
             &self,
             _browser: Option<&mut Browser>,
             _frame: Option<&mut Frame>,
-            _params: Option<&mut ContextMenuParams>,
+            params: Option<&mut ContextMenuParams>,
             model: Option<&mut MenuModel>,
         ) {
-            if let Some(m) = model {
-                if m.count() > 0 {
-                    m.add_separator();
+            let Some(m) = model else { return };
+            // Selected text (never a password field's: the engine gives none): "Search … for"
+            // after Copy, as in Chrome (0.11.0).
+            let selection = params.map(|p| CefString::from(&p.selection_text()).to_string()).unwrap_or_default();
+            let label = lookup(self.key).and_then(|v| v.ev.search_label.with(|f| f(&selection)).flatten());
+            if let Some(label) = label {
+                let at = m.index_of(MENU_ID_COPY);
+                if at >= 0 {
+                    m.insert_item_at((at + 1) as usize, MENU_SEARCH, Some(&CefString::from(label.as_str())));
+                } else {
+                    m.insert_item_at(0, MENU_SEARCH, Some(&CefString::from(label.as_str())));
+                    m.insert_separator_at(1);
                 }
-                m.add_item(MENU_INSPECT, Some(&CefString::from("Inspect")));
             }
+            if m.count() > 0 {
+                m.add_separator();
+            }
+            m.add_item(MENU_INSPECT, Some(&CefString::from("Inspect")));
         }
 
         fn on_context_menu_command(
@@ -728,6 +788,21 @@ wrap_context_menu_handler! {
             command_id: c_int,
             _event_flags: EventFlags,
         ) -> c_int {
+            if command_id == MENU_ID_VIEW_SOURCE {
+                // Krunk's own viewer, not the engine's temp file in the system text editor.
+                let url = _browser.and_then(|b| b.main_frame()).map(|f| CefString::from(&f.url()).to_string());
+                if let (Some(url), Some(view)) = (url, lookup(self.key)) {
+                    view.ev.view_source.with(|f| f(url));
+                }
+                return 1;
+            }
+            if command_id == MENU_SEARCH {
+                let text = params.map(|p| CefString::from(&p.selection_text()).to_string()).unwrap_or_default();
+                if let Some(view) = lookup(self.key) {
+                    view.ev.search_selection.with(|f| f(text));
+                }
+                return 1;
+            }
             if command_id != MENU_INSPECT {
                 return 0;
             }

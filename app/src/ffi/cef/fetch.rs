@@ -3,7 +3,7 @@
 //! No cookies or credentials are sent or stored (no `UR_FLAG_ALLOW_STORED_CREDENTIALS`), and
 //! there is no referrer. A body over `max_bytes` and a request over `timeout_ms` are cancelled.
 
-use super::{post_ui_delayed, request_context_get_global_context};
+use super::{post_ui_delayed, request_context_get_global_context, PRIVATE_CONTEXT};
 use cef::*;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -39,8 +39,30 @@ thread_local! {
     static NEXT: Cell<u64> = const { Cell::new(1) };
 }
 
-/// Starts a GET of `url` on the UI thread; `done` runs there once, with the result.
+/// How a GET is made.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Opts {
+    /// The private profile's context (it must be open), not the default one.
+    pub private: bool,
+    /// Send and store cookies (the source viewer loads a page as the tab did).
+    pub credentials: bool,
+    /// From the cache only (fails if it is not there).
+    pub cache_only: bool,
+}
+
+/// Starts a GET of `url` on the UI thread; `done` runs there once, with the result. No
+/// cookies, the default profile.
 pub fn get(url: &str, max_bytes: usize, timeout_ms: i64, done: impl FnOnce(Result<Fetched, FetchError>) + 'static) {
+    get_with(url, max_bytes, timeout_ms, Opts::default(), done);
+}
+
+pub fn get_with(
+    url: &str,
+    max_bytes: usize,
+    timeout_ms: i64,
+    opts: Opts,
+    done: impl FnOnce(Result<Fetched, FetchError>) + 'static,
+) {
     let Some(request) = request_create() else {
         done(Err(FetchError::Failed));
         return;
@@ -48,8 +70,9 @@ pub fn get(url: &str, max_bytes: usize, timeout_ms: i64, done: impl FnOnce(Resul
     request.set_url(Some(&CefString::from(url)));
     request.set_method(Some(&CefString::from("GET")));
     request.set_referrer(None, ReferrerPolicy::NO_REFERRER);
-    // No stored credentials: no cookies, no HTTP auth, nothing saved from the response.
-    request.set_flags(0);
+    // Without UR_FLAG_ALLOW_STORED_CREDENTIALS (8): no cookies, no HTTP auth, nothing saved
+    // from the response. UR_FLAG_ONLY_FROM_CACHE is 2.
+    request.set_flags(if opts.credentials { 8 } else { 0 } | if opts.cache_only { 2 } else { 0 });
     let id = NEXT.with(|n| {
         let id = n.get();
         n.set(id + 1);
@@ -63,7 +86,17 @@ pub fn get(url: &str, max_bytes: usize, timeout_ms: i64, done: impl FnOnce(Resul
     });
     let mut client = Client::new(id);
     let mut request = request;
-    let mut ctx = request_context_get_global_context();
+    let mut ctx = if opts.private {
+        match PRIVATE_CONTEXT.with(|c| c.borrow().clone()) {
+            Some(c) => Some(c),
+            None => {
+                finish(id, None);
+                return;
+            }
+        }
+    } else {
+        request_context_get_global_context()
+    };
     let started = urlrequest_create(Some(&mut request), Some(&mut client), ctx.as_mut());
     match started {
         Some(r) => JOBS.with(|j| {

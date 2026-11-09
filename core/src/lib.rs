@@ -40,6 +40,7 @@ pub mod preprocess;
 pub mod protection;
 pub mod protocol;
 pub mod recovery;
+pub mod reveal;
 pub mod scroll_lock;
 pub mod secret;
 pub mod segdl;

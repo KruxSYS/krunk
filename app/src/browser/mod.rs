@@ -56,6 +56,7 @@ mod filter_lists;
 mod find;
 mod flight;
 mod frame;
+mod hang;
 mod hints;
 mod http_auth;
 mod import;
@@ -73,6 +74,7 @@ mod power;
 mod segmented;
 mod settings_host;
 mod siteinfo;
+mod source;
 mod status;
 mod storage;
 mod suggest;
@@ -147,6 +149,11 @@ struct TabView {
     /// Until the tab reports an address other than `about:blank`: the engine's empty first
     /// document is not shown in the bar (0.7.2, R1).
     blank_start: Cell<bool>,
+    /// The page does not respond (the engine said so; 0.11.0).
+    unresponsive: Cell<bool>,
+    /// The last icon handled (its site and a hash of its bytes): an animated or re-announced
+    /// icon with the same bytes is not encoded, stored and sent again (0.11.0).
+    last_favicon: Cell<u64>,
 }
 
 /// The popup view in its popup window, shared by all frames: it is owned by the frame it
@@ -295,7 +302,9 @@ pub struct Browser {
     /// metadata of an override that changes only the user agent or the language.
     engine_hints: RefCell<Option<lb_core::headers::ClientHints>>,
     /// A tab switch waiting for the new view's first load: (window, old tab, new tab).
-    pending_reveal: Cell<Option<(WindowId, TabId, TabId)>>,
+    /// Per window (0.11.0; one shared slot let a switch in another window cancel this one's):
+    /// the tab still on screen and the tab waiting to be revealed.
+    pending_reveal: RefCell<lb_core::reveal::Reveals<WindowId, TabId>>,
     /// The custom-DNS stub, once the settings asked for it.
     dns: RefCell<Option<crate::dns::Engine>>,
     /// Where the shell asked for the shield panel (it grows with its list from there).
@@ -410,7 +419,7 @@ impl Browser {
             ua_overridden: Cell::new(false),
             first_url: RefCell::new(HashMap::new()),
             engine_hints: RefCell::new(None),
-            pending_reveal: Cell::new(None),
+            pending_reveal: RefCell::new(lb_core::reveal::Reveals::default()),
             dns: RefCell::new(None),
             bookmark_menu_at: Cell::new(None),
             adblock_source: Cell::new(None),
@@ -911,6 +920,8 @@ impl Browser {
                 devtools: Cell::new(false),
                 loaded_once: Cell::new(false),
                 blank_start: Cell::new(!popup && !lb_core::pages::is_blank(&url)),
+                unresponsive: Cell::new(false),
+                last_favicon: Cell::new(0),
             },
         );
         if active {
@@ -993,6 +1004,7 @@ impl Browser {
                     }
                 }
                 b.release_address_focus_unless(id, &url);
+                b.hang_navigated(id);
                 b.with_tab(id, |m, t| m.set_url(t, &url));
                 b.apply_site_mute(id, &url);
                 b.apply_notification_setting(id, &url);
@@ -1016,6 +1028,16 @@ impl Browser {
         let weak = self.me.clone();
         c.on_favicon(move |png| {
             if let Some(b) = weak.upgrade() {
+                let key = {
+                    use std::hash::{Hash, Hasher};
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    b.tab(id).and_then(|t| urlclean::host_of(&t.url)).hash(&mut h);
+                    png.hash(&mut h);
+                    h.finish()
+                };
+                if b.views.borrow().get(&id).is_some_and(|v| v.last_favicon.replace(key) == key) {
+                    return;
+                }
                 b.with_tab(id, |m, t| m.set_favicon(t, assets::png_data_url(&png)));
                 b.cache_favicon(id, &png);
                 b.send_tab_update(id);
@@ -1087,12 +1109,34 @@ impl Browser {
             if let Some(b) = weak.upgrade() {
                 b.release_pointer_of(id, lb_core::pointer_lock::Release::RendererGone);
                 b.fullscreen_tab_gone(id);
+                // Not inside the engine's callback: the crash page is a new navigation.
+                b.defer(move |b| b.show_crashed_page(id));
+            }
+        });
+        let weak = self.me.clone();
+        c.on_unresponsive(move |hung| {
+            if let Some(b) = weak.upgrade() {
+                b.defer(move |b| b.tab_unresponsive(id, hung));
             }
         });
         let weak = self.me.clone();
         c.on_pointer_lock(move |frame, json| {
             if let Some(b) = weak.upgrade() {
                 b.pointer_message(id, frame, &json);
+            }
+        });
+        let weak = self.me.clone();
+        c.on_view_source(move |url| {
+            if let Some(b) = weak.upgrade() {
+                b.view_source(id, Some(url));
+            }
+        });
+        let weak = self.me.clone();
+        c.on_search_label(move |sel| weak.upgrade().and_then(|b| b.search_selection_label(sel)));
+        let weak = self.me.clone();
+        c.on_search_selection(move |sel| {
+            if let Some(b) = weak.upgrade() {
+                b.search_selection(id, &sel);
             }
         });
         let weak = self.me.clone();
@@ -1180,11 +1224,8 @@ impl Browser {
 
     /// The tab a switch waited for has loaded (or waited long enough): swap the views now.
     fn reveal(&self, to: TabId) {
-        let Some((win, from, pending)) = self.pending_reveal.get() else { return };
-        if pending != to {
-            return;
-        }
-        self.pending_reveal.set(None);
+        let found = self.pending_reveal.borrow_mut().take(to);
+        let Some((win, from)) = found else { return };
         // Still the window's active tab (else a later switch has taken over).
         if self.ws.borrow().model(win).and_then(|m| m.active().map(|t| t.id)) == Some(to) {
             let from = Some(from).filter(|f| self.window_of(*f) == Some(win));
@@ -1195,7 +1236,7 @@ impl Browser {
     /// A tab's view painted its first content, or finished a load: ready to be shown.
     fn first_load_done(&self, id: TabId) {
         let first = self.views.borrow().get(&id).is_some_and(|v| !v.loaded_once.replace(true));
-        if first && self.pending_reveal.get().is_some_and(|(_, _, to)| to == id) {
+        if first && self.pending_reveal.borrow().is_waiting(id) {
             // A frame for the compositor to present the page's first paint.
             let weak = self.me.clone();
             crate::ffi::cef::post_ui_delayed(REVEAL_SETTLE_MS, move || {
@@ -1231,10 +1272,12 @@ impl Browser {
         let old = from.filter(|f| *f != to && self.window_of(*f) == Some(win));
         let minimized = self.frame(win).is_some_and(|f| f.window.is_minimized());
         let ready = self.views.borrow().get(&to).is_some_and(|v| v.loaded_once.get());
-        self.pending_reveal.set(None);
+        // A reveal this window was still waiting for: the page on screen is its old one.
+        let shown = self.pending_reveal.borrow_mut().begin(win, old, to);
+        let old = shown.filter(|f| *f != to && self.window_of(*f) == Some(win)).or(old);
         match old {
             Some(f) if !ready && !minimized && self.tab_view(f).is_some() => {
-                self.pending_reveal.set(Some((win, f, to)));
+                self.pending_reveal.borrow_mut().wait(win, f, to);
                 let weak = self.me.clone();
                 crate::ffi::cef::post_ui_delayed(REVEAL_TIMEOUT_MS, move || {
                     if let Some(b) = weak.upgrade() {
@@ -1246,6 +1289,8 @@ impl Browser {
         }
         // Wake after showing: a frozen page resumes as a visible one.
         self.wake_tab(to);
+        // A page that does not respond says so when its tab comes to the front (0.11.0).
+        self.defer(move |b| b.show_hang_prompt(to));
         self.layout();
         if self.cur_id() == Some(win) {
             self.focus_active();
@@ -1920,6 +1965,11 @@ impl Browser {
                 }
             }
             Command::History => self.open_page(Page::History),
+            Command::ViewSource => {
+                if let Some(id) = self.active_id() {
+                    self.view_source(id, None);
+                }
+            }
             Command::Bookmarks => self.open_page(Page::Bookmarks),
             Command::ToggleBookmarksBar => self.toggle_bookmarks_bar(),
             Command::Downloads => self.open_page(Page::Downloads),
@@ -2442,6 +2492,8 @@ impl Browser {
             | Request::SiteCookieSet { .. }
             | Request::SiteCookiesDelete { .. }) => self.dispatch_site_data(tab, req_id, r),
             Request::OpenSiteData => self.open_site_data(),
+            Request::HangReply { tab_id, wait } => self.hang_reply(tab_id, wait),
+            Request::SourceGet {} => self.source_get(tab, req_id),
             other => self.dispatch_library(sender, tab, req_id, other),
         }
     }

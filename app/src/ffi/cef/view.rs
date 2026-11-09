@@ -253,6 +253,7 @@ type DevToolsPlace = (Option<(i32, i32, i32, i32)>, Option<bool>);
 /// A DevTools call that gets no answer in this time fails.
 const DEVTOOLS_TIMEOUT_MS: i64 = 10_000;
 type MessageFn = dyn FnMut(&MessageSource, &str);
+type SearchLabelFn = dyn FnMut(&str) -> Option<String>;
 
 #[derive(Default)]
 pub(super) struct Events {
@@ -300,6 +301,15 @@ pub(super) struct Events {
     pub auth: Slot<dyn FnMut(AuthChallenge, AuthResponder)>,
     /// The main frame finished loading with this HTTP status (0.8.0).
     pub load_end: Slot<dyn FnMut(i32)>,
+    /// The page stopped responding (true, after about 15 s without handling input) or
+    /// recovered / ended (false) (0.11.0).
+    pub unresponsive: Slot<dyn FnMut(bool)>,
+    /// "View page source" in the page's context menu (0.11.0): the page's address.
+    pub view_source: Slot<dyn FnMut(String)>,
+    /// The label of "Search <engine> for …" for a selection (0.11.0), `None` for none.
+    pub search_label: Slot<SearchLabelFn>,
+    /// That item was chosen: the selected text.
+    pub search_selection: Slot<dyn FnMut(String)>,
 }
 
 /// An HTTP authentication challenge of a site (0.8.0): Basic or Digest from a server, never a
@@ -367,6 +377,8 @@ struct Pending {
 pub(super) struct ViewInner {
     /// The renderer's process id (reported by the renderer; 0 until then).
     pub(super) renderer_pid: Cell<u32>,
+    /// The engine's answer to "this page isn't responding" (0.11.0): wait or end the page.
+    pub(super) hang: RefCell<Option<cef::UnresponsiveProcessCallback>>,
     pub key: u64,
     pub role: Role,
     pub private: bool,
@@ -470,6 +482,7 @@ impl View {
             bounds: Cell::new(None),
             devtools_id: Cell::new(0),
             renderer_pid: Cell::new(0),
+            hang: RefCell::new(None),
             devtools_calls: RefCell::new(HashMap::new()),
             devtools_methods: Cell::new(&[]),
             devtools_observer: RefCell::new(None),
@@ -1334,12 +1347,54 @@ impl View {
     }
 
     /// The renderer process of this view ended unexpectedly.
+    pub fn on_view_source(&self, f: impl FnMut(String) + 'static) {
+        self.0.ev.view_source.set(Box::new(f));
+    }
+
+    pub fn on_search_label(&self, f: impl FnMut(&str) -> Option<String> + 'static) {
+        self.0.ev.search_label.set(Box::new(f));
+    }
+
+    pub fn on_search_selection(&self, f: impl FnMut(String) + 'static) {
+        self.0.ev.search_selection.set(Box::new(f));
+    }
+
+    /// The main frame's current document as HTML (the source viewer's fallback when the
+    /// address cannot be loaded again, 0.11.0). `None` without a page.
+    pub fn main_frame_source(&self, done: impl FnOnce(Option<String>) + 'static) {
+        match self.browser().and_then(|b| b.main_frame()) {
+            Some(f) => {
+                let mut v = super::client::source_visitor(Box::new(done));
+                f.source(Some(&mut v));
+            }
+            None => done(None),
+        }
+    }
+
     pub fn on_inspect(&self, f: impl FnMut(Option<(i32, i32)>) + 'static) {
         self.0.ev.inspect.set(Box::new(f));
     }
 
     pub fn on_devtools(&self, f: impl FnMut(bool) + 'static) {
         self.0.ev.devtools.set(Box::new(f));
+    }
+
+    pub fn on_unresponsive(&self, f: impl FnMut(bool) + 'static) {
+        self.0.ev.unresponsive.set(Box::new(f));
+    }
+
+    /// "Wait": the engine asks again if the page still does not respond.
+    pub fn hang_wait(&self) {
+        if let Some(cb) = self.0.hang.borrow_mut().take() {
+            cb.wait();
+        }
+    }
+
+    /// "Close page": the page's renderer process ends (the crash event follows).
+    pub fn hang_terminate(&self) {
+        if let Some(cb) = self.0.hang.borrow_mut().take() {
+            cb.terminate();
+        }
     }
 
     pub fn on_crashed(&self, f: impl FnMut(String) + 'static) {

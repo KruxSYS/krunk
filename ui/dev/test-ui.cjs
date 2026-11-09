@@ -4147,6 +4147,47 @@ async function testTabList(browser) {
   check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
 }
 
+// 0.11.0: a page that stops responding: the prompt (Wait / Close page) and the crash page.
+async function testHangAndCrash(browser) {
+  console.log('popup: page not responding; crash page');
+  let { page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 380, height: 150 }, 1);
+  await emit(page, { event: 'popup', seq: 5, content: { kind: 'unresponsive', tabId: 7, host: 'busy.example' } });
+  await page.waitForSelector('#hang-close');
+  await page.waitForFunction(() => window.__host.sent.some((m) => m.cmd === 'popupShown' && m.seq === 5));
+  check((await page.textContent('h2')) === 'This page isn\'t responding' && (await page.textContent('.hang p')).includes('busy.example'), 'the prompt names the site');
+  check(await page.evaluate(() => document.activeElement.id) === 'default' && (await page.textContent('#default')) === 'Wait', 'Wait is the default button');
+  check(await page.evaluate(() => { const r = document.querySelector('.hang .row').getBoundingClientRect(); return r.bottom <= 150; }), 'it fits its 380×150 popup');
+  await shot(page, 'popup-unresponsive.png');
+  await page.click('#default');
+  let r = await lastSent(page, 'hangReply');
+  check(r && r.tabId === 7 && r.wait === true && (await lastSent(page, 'hidePopup')), 'Wait answers wait:true and closes the prompt');
+  await emit(page, { event: 'popup', content: { kind: 'unresponsive', tabId: 7, host: 'busy.example' } });
+  await page.waitForSelector('#hang-close');
+  await page.click('#hang-close');
+  r = await lastSent(page, 'hangReply');
+  check(r && r.tabId === 7 && r.wait === false, 'Close page answers wait:false');
+  // The page recovered: the host clears the prompt.
+  await emit(page, { event: 'popupClear' });
+  await page.waitForTimeout(30);
+  const left = await page.evaluate(() => document.getElementById('root').innerHTML.slice(0, 80));
+  check(left === '', 'the prompt goes when the page responds again (' + left + ')');
+  check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
+  await page.context().close();
+
+  ({ page, errors } = await openPage(browser, 'https://krunk.invalid/crashed.html?url=' + encodeURIComponent('https://busy.example/app?x=1'), { width: 900, height: 500 }, 1));
+  await page.waitForSelector('#reload');
+  check((await page.textContent('#where')) === 'busy.example' && !(await page.isDisabled('#reload')), 'the crash page names the site and offers Reload');
+  await shot(page, 'crashed.png');
+  const nav = page.waitForRequest((req) => req.url().startsWith('https://busy.example/app'), { timeout: 3000 }).catch(() => null);
+  await page.click('#reload');
+  check(!!(await nav), 'Reload loads the page\'s address again');
+  await page.context().close();
+  ({ page, errors } = await openPage(browser, 'https://krunk.invalid/crashed.html?url=' + encodeURIComponent('javascript:alert(1)'), { width: 900, height: 500 }, 1));
+  await page.waitForSelector('#reload');
+  check(await page.isDisabled('#reload'), 'a non-web address cannot be reloaded from it');
+  check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
+}
+
 async function testFolderPopup(browser) {
   console.log('popup: bookmark folder');
   const { page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 280, height: 110 }, 1);
@@ -5714,6 +5755,7 @@ async function testHttpAuth(browser) {
     if (!ONLY || ONLY.includes('BarOverflow')) await testBarOverflow(browser);
     if (!ONLY || ONLY.includes('TabOverflow')) await testTabOverflow(browser);
     if (!ONLY || ONLY.includes('TabList')) await testTabList(browser);
+    if (!ONLY || ONLY.includes('HangAndCrash')) await testHangAndCrash(browser);
     if (!ONLY || ONLY.includes('ShieldAndHttpsOnly')) await testShieldAndHttpsOnly(browser);
     if (!ONLY || ONLY.includes('BlockedList')) await testBlockedList(browser);
     if (!ONLY || ONLY.includes('FilterLists')) await testFilterLists(browser);

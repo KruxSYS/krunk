@@ -179,6 +179,8 @@ pub enum PopupKind {
     /// Every tab of the window, searchable, with close buttons (0.11.0): the "▾" button the
     /// tab strip shows while its tabs do not fit.
     TabList,
+    /// "This page isn't responding" (0.11.0): Wait / Close page. Opened by the host only.
+    Unresponsive,
 }
 
 impl PopupKind {
@@ -423,6 +425,12 @@ pub enum PopupContent {
         tabs: Vec<TabInfo>,
         #[serde(default)]
         active: Option<u32>,
+    },
+    /// The active tab's page stopped responding (0.11.0).
+    Unresponsive {
+        tab_id: u32,
+        /// The page's host, for the text.
+        host: String,
     },
     /// A newer Krunk: Update now (or Download) / Later / Release notes.
     Update {
@@ -678,6 +686,7 @@ impl PopupContent {
             PopupContent::BookmarkMenu { .. } => PopupKind::BookmarkMenu,
             PopupContent::BookmarkEdit { .. } => PopupKind::BookmarkEdit,
             PopupContent::TabList { .. } => PopupKind::TabList,
+            PopupContent::Unresponsive { .. } => PopupKind::Unresponsive,
         }
     }
 
@@ -938,6 +947,11 @@ pub enum Request {
     },
     /// "‹ Back" in a folder dropdown: the folder that was open before this subfolder.
     BookmarkFolderBack,
+    /// The answer to "This page isn't responding" (0.11.0): wait, or end the page.
+    HangReply {
+        tab_id: u32,
+        wait: bool,
+    },
     /// Middle-click on a bookmark of the bar or of a folder dropdown: it opens in a new tab
     /// behind the current one, and a dropdown stays open (0.11.0).
     OpenBookmarkBackground {
@@ -1403,6 +1417,9 @@ pub enum Request {
         origin: String,
     },
 
+    // ---- a page's source (krunk://source, 0.11.0): the address in the tab's own URL ----
+    SourceGet {},
+
     // ---- one site's data (krunk://sitedata, bound by the host to the tab
     // it was opened from; requests name no tab or origin) ----
     SiteDataGet {},
@@ -1693,6 +1710,7 @@ impl Sender {
                     | R::HidePopup
                     | R::ShowBookmarkFolder { rect: None, from: None, .. }
                     | R::BookmarkFolderBack
+                    | R::HangReply { .. }
                     | R::OpenBookmarkBackground { .. }
                     | R::PopupResize { .. }
                     | R::PopupShown { .. }
@@ -1883,6 +1901,11 @@ impl Sender {
                     | R::StorageDeleteAllCookies
                     | R::StorageClearOrigin { .. }
             ),
+            // 0.11.0: the source viewer asks for the source of the address it shows (its own URL
+            // names it; the host checks that).
+            Sender::Page(Page::Source) => matches!(req, R::SourceGet {}),
+            // The crash page only reloads its address (an ordinary navigation).
+            Sender::Page(Page::Crashed) => false,
             Sender::Page(Page::SiteData) => matches!(
                 req,
                 R::SiteDataGet {}
@@ -2938,6 +2961,7 @@ mod tests {
             Request::StorageDeleteAllCookies,
             Request::StorageClearOrigin { origin: "https://a.example".into() },
             Request::SiteDataGet {},
+            Request::SourceGet {},
             Request::SiteDataSet { area: crate::sitedata::StorageArea::Local, key: "k".into(), value: "v".into() },
             Request::SiteDataRemove { area: crate::sitedata::StorageArea::Session, key: "k".into() },
             Request::SiteDataClear { area: crate::sitedata::StorageArea::Local },
@@ -3084,6 +3108,7 @@ mod tests {
             Request::ShowBookmarkFolder { id: 4, rect: None, from: None },
             Request::ShowBookmarkFolder { id: 1, rect: Some(rect), from: Some(3) },
             Request::BookmarkFolderBack,
+            Request::HangReply { tab_id: 3, wait: false },
             Request::OpenBookmarkBackground { id: 9 },
             Request::PopupShown { seq: 3, height: Some(212.0) },
             Request::PopupShown { seq: 4, height: None },

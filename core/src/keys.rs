@@ -52,6 +52,8 @@ pub enum Command {
     TaskManager,
     /// Alt+P: the active tab's video in a floating window (0.6.0).
     PictureInPicture,
+    /// Ctrl+U: the page's source in Krunk's viewer (0.11.0).
+    ViewSource,
 }
 
 /// Virtual-key codes (winuser.h).
@@ -141,6 +143,7 @@ pub fn command_for(vk: u32, ctrl: bool, shift: bool, alt: bool) -> Option<Comman
         (false, false, true, vk::HOME) | (false, false, false, vk::BROWSER_HOME) => Home,
         (true, false, false, k) if k == vk::letter('D') => Bookmark,
         (true, false, false, k) if k == vk::letter('H') => History,
+        (true, false, false, k) if k == vk::letter('U') => ViewSource,
         (true, true, false, k) if k == vk::letter('O') => Bookmarks,
         (true, true, false, k) if k == vk::letter('B') => ToggleBookmarksBar,
         (true, false, false, k) if k == vk::letter('J') => Downloads,

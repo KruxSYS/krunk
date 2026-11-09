@@ -316,6 +316,7 @@ pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> Pop
         PopupKind::ExtInstall => (400.0, 120.0 + 24.0 * entries.clamp(1, 8) as f64),
         PopupKind::BookmarkEdit => (340.0, 214.0),
         PopupKind::TabList => (TAB_LIST_WIDTH, tab_list_height(entries)),
+        PopupKind::Unresponsive => (380.0, 150.0),
     };
     let x = (shell_width_css - w - 8.0).max(0.0);
     PopupRect { x, y: SHELL_HEIGHT_DIP - 4.0, width: w, height: h }

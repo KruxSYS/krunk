@@ -107,12 +107,33 @@ pub fn input_to_url(input: &str, search_template: &str) -> String {
     if let Some((page, section)) = pages::Page::from_display_with_section(input) {
         return page.url_with_section(section.as_deref());
     }
+    // `view-source:example.com` (0.11.0): Krunk's source viewer for that address.
+    if let Some(rest) = input.get(..pages::VIEW_SOURCE.len()).filter(|p| p.eq_ignore_ascii_case(pages::VIEW_SOURCE)) {
+        let target = input[rest.len()..].trim();
+        if let Some(url) = as_url(target).filter(|u| u.starts_with("http://") || u.starts_with("https://")) {
+            return pages::source_url(&url, None);
+        }
+    }
     if !input.contains(char::is_whitespace) {
         if let Some(url) = as_url(input) {
             return url;
         }
     }
     search_url(input, search_template)
+}
+
+/// The page context menu's search (0.11.0): the selected text, whitespace collapsed to single
+/// spaces, at most 1,000 characters; `None` for an empty or blank selection.
+pub fn selection_query(selection: &str) -> Option<String> {
+    let q: String = selection.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!q.is_empty()).then(|| q.chars().take(1000).collect())
+}
+
+/// "Search Google for “krunk browser”", the query shortened to 32 characters with "…".
+pub fn selection_label(engine: &str, query: &str) -> String {
+    let shown: String = query.chars().take(32).collect();
+    let cut = if query.chars().count() > 32 { "…" } else { "" };
+    format!("Search {engine} for “{shown}{cut}”")
 }
 
 /// Builds a search URL from a template.
@@ -333,6 +354,33 @@ fn https_only_interstitial(http: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn searching_the_selection_and_view_source() {
+        assert_eq!(selection_query("  krunk\n\t browser  "), Some("krunk browser".into()));
+        assert_eq!(selection_query(" \n\t "), None);
+        assert_eq!(selection_query(&"é".repeat(1500)).unwrap().chars().count(), 1000);
+        assert_eq!(selection_label("Google", "krunk browser"), "Search Google for “krunk browser”");
+        let long = "a".repeat(31) + "éxyz";
+        assert_eq!(selection_label("Bing", &long), format!("Search Bing for “{}é…”", "a".repeat(31)));
+        assert_eq!(
+            search_url("rust & wasm", "https://duckduckgo.com/?q={searchTerms}"),
+            "https://duckduckgo.com/?q=rust+%26+wasm"
+        );
+        // view-source: in the address bar opens Krunk's viewer.
+        let v = input_to_url("view-source:example.com", "https://s/?q={searchTerms}");
+        assert_eq!(crate::pages::source_target(&v), Some(("https://example.com/".into(), None)));
+        let v = input_to_url("VIEW-SOURCE:https://a.example/x?y=1", "https://s/?q={searchTerms}");
+        assert_eq!(crate::pages::source_target(&v).unwrap().0, "https://a.example/x?y=1");
+        assert_eq!(crate::pages::display_url(&v), "view-source:https://a.example/x?y=1");
+        // Not an address: a search for the words.
+        assert!(input_to_url("view-source:not a url", "https://s/?q={searchTerms}").starts_with("https://s/?q="));
+        assert!(crate::pages::source_target(&crate::pages::source_url("javascript:alert(1)", None)).is_none());
+        assert_eq!(
+            crate::pages::source_target(&crate::pages::source_url("https://a.example/", Some(7))).unwrap().1,
+            Some(7)
+        );
+    }
 
     const DDG: &str = "https://duckduckgo.com/?q={searchTerms}";
 
