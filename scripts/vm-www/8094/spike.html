@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Hidden-tab spike</title>
+<style>
+body { font: 15px system-ui; margin: 24px; background: #f8fafc; color: #0f172a; }
+input { font: inherit; padding: 6px 8px; width: 300px; position: fixed; top: 10px; right: 10px; }
+.tall { height: 4000px; background: linear-gradient(#e0f2fe, #fde68a); }
+#marker { position: absolute; top: 1500px; left: 24px; font-size: 32px; font-weight: 700; }
+video { display: block; width: 320px; border: 1px solid #94a3b8; margin: 8px 0; }
+</style></head>
+<body>
+<h1 id="h">Hidden-tab spike</h1>
+<p>Krunk 0.10.0 (P3): what a tab keeps while it is hidden. Every 5 s the page reports its visibility,
+frames and timer ticks per second to <code>/m</code>, plus what its case checks:
+<b>state</b> (the text typed in the field and the scroll position), <b>audio</b> (the playing
+position; <kbd>p</kbd> plays), <b>rtc</b> (frames a local WebRTC call received), <b>notify</b>
+(<kbd>n</kbd>: a notification 8 s later) and <b>dl</b> (<kbd>d</kbd>: a slow 20-MB download).</p>
+<input id="field" placeholder="Type here" autocomplete="off" aria-label="Type here">
+<div id="extra"></div>
+<div id="marker">MARKER 1500</div>
+<div class="tall"></div>
+<script src="spike.js"></script>
+</body>
+</html>

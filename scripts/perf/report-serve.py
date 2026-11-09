@@ -6,9 +6,14 @@
 Serves the test pages in ROOT (threaded, keep-alive) and appends every `/m?<report>` request to
 LOGFILE as `<unix ms> <decoded report>`, opening and closing the file per line so it can be read
 while the server runs. Reports answer 204 with no-store. `/slow?mb=N&secs=S` sends N MB of
-zeros spread over S seconds (a download that takes a while; P3).
+zeros spread over S seconds (a download that takes a while; P3). A minimal STUN server on UDP
+PORT (binding requests only) gives WebRTC a candidate: Krunk's WebRTC policy gathers none without
+one. `/stun-host` names the address to reach it at.
 """
 import functools
+import socket
+import struct
+import threading
 import sys
 import time
 import urllib.parse
@@ -29,6 +34,14 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", "0")
             self.end_headers()
+            return
+        if self.path == "/stun-host":
+            body = outbound_ip().encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
             return
         if self.path.startswith("/slow?"):
             q = urllib.parse.parse_qs(self.path[6:])
@@ -51,5 +64,26 @@ class Handler(SimpleHTTPRequestHandler):
         pass
 
 
+def outbound_ip():
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.connect(("8.8.8.8", 53))
+        return s.getsockname()[0]
+
+
+def stun(port):
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("0.0.0.0", port))
+    cookie = 0x2112A442
+    while True:
+        data, (ip, sport) = sock.recvfrom(2048)
+        if len(data) < 20 or struct.unpack("!HHI", data[:8])[0] != 0x0001 or struct.unpack("!I", data[4:8])[0] != cookie:
+            continue
+        xaddr = struct.pack("!BBH4s", 0, 1, sport ^ (cookie >> 16),
+                            bytes(a ^ b for a, b in zip(socket.inet_aton(ip), struct.pack("!I", cookie))))
+        attr = struct.pack("!HH", 0x0020, len(xaddr)) + xaddr
+        sock.sendto(struct.pack("!HHI", 0x0101, len(attr), cookie) + data[8:20] + attr, (ip, sport))
+
+
+threading.Thread(target=stun, args=(PORT,), daemon=True).start()
 ThreadingHTTPServer.daemon_threads = True
 ThreadingHTTPServer(("0.0.0.0", PORT), functools.partial(Handler, directory=ROOT)).serve_forever()
