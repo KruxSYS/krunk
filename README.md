@@ -180,8 +180,10 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
 - **Windows and tabs:**
   - **Dragging:** drag a tab sideways to reorder it: the tab follows the mouse and the other
     tabs slide aside (with "reduce motion" they jump). Drag it down out of the tab row and it
-    becomes a new window that follows the mouse; drop it on another window's tab row (a marker
-    shows where it will land) to move it there. Esc while dragging puts it back.
+    becomes a new window that follows the mouse; over another window's tab row the window steps
+    aside and the row opens a gap with the tab in it where it will land (0.11.1); let go to move
+    it there, or move away and the window comes back under the mouse. Esc while dragging puts it
+    back.
   - **A window's only tab** drags the whole window; dropping it on another window's tab row
     merges it into that window and closes the empty one.
   - **No reload:** a moved tab keeps its page as it is: scroll position, typed text, history,
@@ -540,10 +542,28 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
   private tab stays private) and its history are untouched, so nothing reloads.
 - **Dragging tabs:** the shell reorders tabs within its strip with pointer events. When the
   pointer leaves the strip, the shell hands the drag to the host (`tabDragOut`), because a view
-  can't see other windows. The host then polls the cursor and the mouse button on a 15 ms
-  timer, moves the dragged window, finds the topmost other Krunk window under the cursor
-  (z-order) and, over its tab strip, tells its shell where the tab would land
-  (`frame::drop_index` over the tab centres the shell reports in its hit map).
+  can't see other windows. 0.11.1: the source frame then holds the mouse capture and the host
+  moves the dragged window on every `WM_MOUSEMOVE` (`SetWindowPos` without a size; a 15 ms
+  timer only backs up a lost capture and Esc). The other windows' places, client origins,
+  scales and z-order are taken once at the start (`frame::DropWindow`); over the topmost one's
+  tab strip the host tells its shell where the tab would land (`frame::drop_index` over the
+  tab centres the shell reported before the gap opened; it reports none while a gap is open),
+  with the tab's title and icon (`tabDropHint{index, ghost}`). The dragged window then steps
+  aside (off-screen, keeping the capture) and the shell shows a ghost tab in a gap; the dropped
+  tab takes the ghost's place. While a window follows the mouse its move handling (popups, the
+  engine's move notifications, the session timer) waits for the drop, and Windows' fade-in is
+  off for a torn-off window.
+- **Spare frame (0.11.1):** a hidden frame whose shell has loaded, prepared 3 s after a shell
+  loads or a window took the last one. The next new window (a tear-off, "Move to new window",
+  Ctrl+N) takes it and is complete at once. Its shell gets what all shells share (config,
+  bookmarks bar, downloads, update and extension buttons). It is created with
+  `WS_EX_NOACTIVATE` (the engine shows a new browser with activation, and the hidden window took
+  the keyboard) and refuses focus; a close request to it goes to the current window. It costs
+  one more shell browser.
+- **Popups and closing windows (0.11.1):** popup windows are owned by a frame (so they stay
+  above it). Before a frame is destroyed they are re-owned to another frame (or the app window):
+  Windows destroys owned windows with their owner, and a destroyed menu window made every later
+  menu fail. A popup whose window or renderer is gone is recreated.
 - **Session:** the kv entry `session`, version 2: every window's tabs, active tab, restored
   bounds (physical pixels, `rcNormalPosition`) and maximized state, plus which window was in
   front. It also keeps 0.2.x's `tabs`/`active` fields for the most recently used window, and a

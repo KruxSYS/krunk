@@ -1144,3 +1144,30 @@ page, plus pages that hang, the source viewer and search for a selection. The en
    device). Krunk starts normally after the update (0.11.0 before release crashed here).
 9. **Cookies and site data, account:** large lists page in as you scroll, search and sort cover
    all; Settings → Account shows "This device: Krunk on Windows 11 · version 0.11.0".
+
+## Krunk 0.11.1 (round 18)
+The operator's follow-ups: smoother tab dragging, menus that stopped responding after moving
+tabs, the » height after Back, about:blank in the Back menu, krunk://extensions spacing. The
+engine is 0.10.0's (libcef d9f4549b). On the VM: `scripts/vm-0111-drag.ps1` (with
+`scripts/frames/draglag.py` for the numbers), `vm-0111-small.ps1`, `vm-060-shell.ps1`,
+`vm-070-engine.ps1`, `vm-030-windows.ps1`, `vm-040-merge.ps1`, `vm-050-reorder.ps1` and the update
+from 0.11.0 (staging and live). Not rerun: the other flows (their code did not change; see
+`.pipeline/evidence-0.11.1/vm-minutes.md`).
+1. **Tear-off:** drag a tab down out of a window with several tabs: a complete window (tabs,
+   toolbar, page) appears under the mouse at once, with no fade-in, and follows every move.
+2. **Merge feedback:** drag it over another window's tab row: the dragged window disappears and
+   the row opens a gap with the tab (outlined) where it will land; the gap moves with the mouse.
+   Move down off the row: the window is back under the mouse. Release over the row: the tab is in
+   the gap, and that window is in front.
+3. **Esc** while a torn-off tab is held: it goes back where it was.
+4. **Menus after merging:** open ⋮ in a torn-off window, then drag its tab back into the first
+   window. ⋮, the tab menu, the Back history menu and a page's right-click menu all still open.
+   Also after closing a window that showed a menu last.
+5. **Typing after a new window:** press Ctrl+N and type at once, and again 3–4 s later: nothing
+   is lost (Krunk prepares its spare window then; it must not take the keyboard).
+6. **» height:** with many bookmarks in », open a folder in it, then Back: the list has its first
+   height again. A long » list fills the space below the bar.
+7. **Back menu:** with an Accept-Language override (Settings → Privacy → Request headers), open a
+   new tab and two pages: right-click Back lists the pages and "New tab", never about:blank.
+8. **Extensions page:** krunk://extensions has space around the header, the Web Store box (with
+   its code chips) and the cards, in light and dark.
