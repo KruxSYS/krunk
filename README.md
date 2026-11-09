@@ -434,6 +434,14 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
   `snapshot_blob.bin` instead of `v8_context_snapshot.bin` (the startup check accepts either);
   the only cost is a few milliseconds slower page-context creation. The engine is about
   2 MB bigger than the stock build; package and update sizes are unchanged.
+- **Engine patch (0.10.0):** one Krunk patch on top of CEF,
+  `scripts/cef-build/patches/krunk-windowed-hidden.patch` (its SHA-256 is in `cef.lock`):
+  `CefBrowserHost::WasHidden` also works for windowed browsers. A background tab's content
+  window is hidden from the engine, which then throttles the page like Chrome does (no animation
+  frames, timers once a second, background priority); a tab playing sound, a call, a download or
+  a picture-in-picture video goes on. Shown again, the tab repaints at once. Measured on the
+  4-core test VM with 30 busy tabs: 90 % → 1.2 % CPU; Speedometer with 29 busy background tabs
+  1.5 → 27.5 (27.9 with one tab).
 
 ### Windows and views
 - **Windows:** any number of top-level Win32 frames. Every view is a CEF browser (Alloy style)
@@ -1087,7 +1095,10 @@ limitations"). To move to a newer CEF:
    store, set `CEF_VERSION`, `CHROMIUM_VERSION`, `CEF_ARCHIVE` and `CEF_ARTIFACT` in
    `cef.lock` (`CEF_SOURCE=self-built`) and run `scripts/fetch-cef.sh --pin` once to record
    the archive's SHA-256. (A stock Spotify "minimal" build, without H.264/AAC, works too:
-   `CEF_SOURCE=spotify` plus `CEF_SHA1` from `https://cef-builds.spotifycdn.com/index.json`.)
+   `CEF_SOURCE=spotify` plus `CEF_SHA1` from `https://cef-builds.spotifycdn.com/index.json`,
+   but it lacks Krunk's patch: background tabs would run at full speed again.) Krunk's patches
+   in `scripts/cef-build/patches/` must still apply (`cross-build.sh build` stops if one
+   doesn't); re-record their SHA-256 in `cef.lock`.
 3. `scripts/build-dist.sh`, then run the checks below and `docs/MANUAL_TEST.md` (including
    the media matrix: `scripts/vm-050-media.ps1`, `scripts/vm-052-engine.ps1`).
 

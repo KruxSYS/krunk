@@ -677,6 +677,48 @@ mod tests {
         s.conn.query_row("SELECT lower(hex(guid)) FROM bookmarks WHERE id = ?1", [id], |r| r.get(0)).unwrap()
     }
 
+    /// 0.10.0: page titles are collected by URL and written in one batch on a worker's own
+    /// connection (`Store::set_titles`). With sync on, each changed URL is queued once for the
+    /// history collection, however often its title changed; private pages never reach the batch.
+    #[test]
+    fn batched_titles_on_a_second_connection_queue_history_once_per_url() {
+        let path = std::env::temp_dir().join(format!("krunk-titles-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let ui = Store::open(&path).unwrap();
+        ui.sync_set_tracking(true).unwrap();
+        ui.record_visit("https://a.example/", "A", 1).unwrap();
+        ui.record_visit("https://b.example/", "B", 2).unwrap();
+        ui.conn.execute("DELETE FROM sync_queue", []).unwrap();
+        // What the app's collector hands over: one entry per URL (a BTreeMap), the latest title.
+        let mut collected = std::collections::BTreeMap::new();
+        for (u, t) in
+            [("https://a.example/", "(1) A"), ("https://a.example/", "(2) A"), ("https://b.example/", "(1) B")]
+        {
+            if let Some(clean) = crate::history::visit_url(u, false) {
+                collected.insert(clean, t.to_string());
+            }
+        }
+        assert!(
+            crate::history::visit_url("https://private.example/", true).is_none(),
+            "private pages are never collected"
+        );
+        let titles: Vec<(String, String)> = collected.into_iter().collect();
+        let mut worker = Store::open(&path).unwrap();
+        worker.set_titles(&titles).unwrap();
+        worker.set_titles(&titles).unwrap();
+        assert_eq!(
+            queue(&ui),
+            vec![
+                ("history".to_string(), "https://a.example/".to_string()),
+                ("history".into(), "https://b.example/".into())
+            ]
+        );
+        let all = ui.query_history("", None, 10).unwrap();
+        assert!(all.iter().any(|e| e.url == "https://a.example/" && e.title == "(2) A"));
+        drop((ui, worker));
+        let _ = std::fs::remove_file(&path);
+    }
+
     #[test]
     fn changes_are_queued_only_while_sync_tracks_them() {
         let mut s = Store::open_in_memory().unwrap();

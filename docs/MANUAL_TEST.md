@@ -1057,3 +1057,25 @@ vault format 4). The VM automation covers 39 of the 43 flows; then:
    passphrase.
 7. **Turn off** on a device (keep data / remove synced data); private windows show nothing of
    sync.
+
+## Krunk 0.10.0 (round 14)
+The full regression above (rounds 1–13) because the engine changes (`libcef.dll` with
+`krunk-windowed-hidden.patch`). The VM automation covers 43 flows plus the hidden-tab flow
+(`scripts/vm-0100-spike.ps1`, checked by `scripts/perf/spike-cases.py`); then:
+1. **Many tabs:** open 30 busy tabs (`scripts/vm-0100-tabs.ps1`, or real sites): the PC stays
+   responsive, Task Manager shows Krunk at a few percent CPU when idle, typing and scrolling in
+   the active tab are smooth, switching tabs is instant.
+2. **Background tabs are hidden:** a page reporting `document.visibilityState` says `hidden`
+   behind another tab and `visible` in front; its animation stops and its timers tick once a
+   second; minimising hides the active tab too, restoring shows it at full speed again.
+3. **What goes on in a background tab:** music keeps playing; a video call keeps sending and
+   receiving; a download finishes; a site's notification appears; a picture-in-picture video
+   keeps playing.
+4. **Coming back:** every tab shows its page at once, with no white or blank frame (dark theme
+   too), the text typed into a form and the scroll position kept; a discarded or sleeping tab
+   reloads or wakes as before; DevTools of a tab is still there after switching away and back.
+5. **Tab strip with busy titles:** pages that change their title or icon every second (mail,
+   chat) don't make the tab strip or the toolbar flicker or lag.
+6. **Update from 0.9.0:** the in-app update downloads the larger package (new engine) and
+   installs it; krunk://gpu shows the engine files as this release's after the restart.
+
