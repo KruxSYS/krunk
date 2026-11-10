@@ -54,11 +54,9 @@ fn too_big(bytes: usize) -> String {
 
 impl Drafts {
     fn find(&mut self, kind: ScriptKind, id: &str) -> Result<usize, String> {
-        let i = self
-            .list
-            .iter()
-            .position(|d| d.id == id)
-            .ok_or_else(|| "there is no such draft (drafts end when they are saved); start again without draft".to_string())?;
+        let i = self.list.iter().position(|d| d.id == id).ok_or_else(|| {
+            "there is no such draft (drafts end when they are saved); start again without draft".to_string()
+        })?;
         if self.list[i].kind != kind {
             return Err(format!("that draft is a {} draft", kind_name(self.list[i].kind)));
         }

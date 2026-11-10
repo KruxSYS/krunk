@@ -11,10 +11,11 @@
 
 use super::super::cdp::CdpUser;
 use super::super::Browser;
+use crate::ffi::cef::fetch::{self, FetchError};
 use crate::ffi::cef::{list_cookies, post_ui_delayed, Profile, View};
 use crate::log::warning;
 use lb_core::agent::tools::{self as agent_tools, args, Group, RESULT_CAP, TOOL_TIMEOUT_MS};
-use lb_core::agent::{pages as agent_pages, redact, settings_allow, Category, ToolOutcome};
+use lb_core::agent::{ntp_image, pages as agent_pages, redact, settings_allow, Category, ToolOutcome};
 use lb_core::pages::{self, Page};
 use lb_core::storage::now_ms;
 use lb_core::tabs::{Position, TabId};
@@ -147,6 +148,7 @@ impl Browser {
             // AI may have gone off since the call was made.
             _ if !self.ai_enabled() => done(ToolOutcome::refused("AI features are turned off")),
             Group::Browser => self.agent_browser_tool(win, tool.name, &args, done),
+            Group::Settings if tool.name == "set_new_tab_background_url" => self.agent_ntp_background(win, &args, done),
             Group::Settings => done(self.agent_settings_tool(tool.name, &args)),
             Group::Userscripts => done(self.agent_userscript_tool(win, tool.name, &args)),
             Group::Macros => self.agent_macro_tool(win, tool.name, &args, done),
@@ -405,6 +407,51 @@ impl Browser {
             }
             _ => ToolOutcome::error(format!("{name} is not available")),
         }
+    }
+
+    /// `set_new_tab_background_url` (0.15.0): downloads the picture on the normal profile (its
+    /// proxy or VPN apply; no cookies are sent), checks it (`lb_core::agent::ntp_image`) and
+    /// stores it like an image the user chose. Like every settings change of the agent there
+    /// is no confirmation step. A tool stopped meanwhile changes nothing.
+    fn agent_ntp_background(&self, win: WindowId, a: &Value, done: Done) {
+        let a = match args::parse::<args::SetBackgroundUrl>(a) {
+            Ok(a) => a,
+            Err(e) => return done(ToolOutcome::error(e)),
+        };
+        let url = match ntp_image::check_url(&a.url) {
+            Ok(u) => u,
+            Err(e) => return done(ToolOutcome::error(e)),
+        };
+        let host = url.host_str().unwrap_or_default().to_string();
+        let gen = self.agent_running_tool(win).map(|(g, _)| g);
+        let weak = self.me.clone();
+        fetch::get_with(url.as_str(), ntp_image::MAX_BYTES, ntp_image::TIMEOUT_MS, fetch::Opts::default(), move |r| {
+            let Some(b) = weak.upgrade() else { return done(ToolOutcome::error("Krunk is closing")) };
+            if gen.is_some_and(|g| !b.agent_tool_live(win, g)) {
+                return done(ToolOutcome::error("stopped: the background was not changed"));
+            }
+            let f = match r {
+                Ok(f) => f,
+                Err(FetchError::TooBig) => return done(ToolOutcome::error(ntp_image::too_large())),
+                Err(FetchError::Timeout) => return done(ToolOutcome::error("the download took too long")),
+                Err(e) => {
+                    warning!("agent: new tab background download failed: {e:?}");
+                    return done(ToolOutcome::error("the picture could not be downloaded"));
+                }
+            };
+            let ext = match ntp_image::check_download(&f.url, f.status, &f.mime, &f.body) {
+                Ok(ext) => ext,
+                Err(e) => return done(ToolOutcome::error(e)),
+            };
+            if let Err(e) = b.store_ntp_image(&f.body, ext) {
+                return done(ToolOutcome::error(format!("the background was not changed: {e}")));
+            }
+            let kb = f.body.len().div_ceil(1024);
+            let v = json!({ "ok": true, "background": "image", "type": ext, "bytes": f.body.len() });
+            let summary =
+                format!("Set the new tab background from {} ({}, {kb} KB)", shorten(&host, 60), ext.to_uppercase());
+            done(ok_json(v, summary));
+        });
     }
 
     // ------------------------------------------------------------ userscripts

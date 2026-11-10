@@ -11,7 +11,6 @@ use serde_json::{json, Map, Value};
 /// The `anthropic-version` header value.
 pub const VERSION: &str = "2023-06-01";
 
-
 pub fn chat_request(base: &str, req: &ChatRequest) -> HttpRequest {
     HttpRequest {
         method: "POST",

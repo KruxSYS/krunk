@@ -640,7 +640,13 @@ impl Session {
     /// A `save_userscript` / `save_macro` call: a part of a long script is kept here (`None`);
     /// the last part makes the whole script the call's `source`. `draft` and `more` are taken
     /// out of what the host gets.
-    fn script_part(&mut self, call_id: &str, name: &'static str, mut args: Value, out: &mut Vec<Action>) -> Option<Value> {
+    fn script_part(
+        &mut self,
+        call_id: &str,
+        name: &'static str,
+        mut args: Value,
+        out: &mut Vec<Action>,
+    ) -> Option<Value> {
         let more = args.get("more").and_then(Value::as_bool).unwrap_or(false);
         let draft = args.get("draft").and_then(Value::as_str).map(str::to_string);
         if let Some(o) = args.as_object_mut() {
@@ -1803,10 +1809,16 @@ mod tests {
         let a = feed(&mut s, calls(&[("p1", "save_userscript", &part1)]), 1);
         assert!(runs(&a).is_empty());
         let st = steps_of(&a);
-        assert_eq!((st[0].n, st[0].status, st[0].label.as_str()), (1, StepStatus::Ok, "Keep a part of a long userscript"));
+        assert_eq!(
+            (st[0].n, st[0].status, st[0].label.as_str()),
+            (1, StepStatus::Ok, "Keep a part of a long userscript")
+        );
         let r = sends(&a);
         let res: Value = serde_json::from_str(&tool_texts(&r[0].messages)[0]).unwrap();
-        assert_eq!((res["draft"].as_str(), res["part"].as_u64(), res["saved"].as_bool()), (Some("draft-1"), Some(1), Some(false)));
+        assert_eq!(
+            (res["draft"].as_str(), res["part"].as_u64(), res["saved"].as_bool()),
+            (Some("draft-1"), Some(1), Some(false))
+        );
         assert_eq!(res["bytes"].as_u64(), Some(head.len() as u64));
         // Part 2 (a wrong draft id first: an error, nothing lost).
         let bad = json!({ "source": "x", "draft": "draft-7", "more": true }).to_string();
@@ -1814,7 +1826,8 @@ mod tests {
         assert!(runs(&a).is_empty());
         assert!(tool_texts(&sends(&a)[0].messages).last().unwrap().contains("no such draft"));
         let part2 = json!({ "source": "const a = 1;
-", "draft": "draft-1", "more": true }).to_string();
+", "draft": "draft-1", "more": true })
+        .to_string();
         let a = feed(&mut s, calls(&[("p2", "save_userscript", &part2)]), 3);
         assert!(runs(&a).is_empty());
         assert_eq!(steps_of(&a)[0].summary, format!("Part 2 kept ({} bytes so far)", head.len() + 13));
@@ -1827,8 +1840,11 @@ mod tests {
         let a = feed(&mut s, calls(&[("p3", "save_userscript", &part3)]), 5);
         let r = runs(&a);
         assert_eq!(r.len(), 1);
-        assert_eq!(r[0].2, json!({ "source": format!("{head}const a = 1;
-console.log(a);") }));
+        assert_eq!(
+            r[0].2,
+            json!({ "source": format!("{head}const a = 1;
+console.log(a);") })
+        );
         // The draft is gone once finished.
         s.handle(done("p3", r#"{"id":"u1"}"#), 6);
         let again = json!({ "source": "y", "draft": "draft-1" }).to_string();

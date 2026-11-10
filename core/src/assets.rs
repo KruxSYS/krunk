@@ -194,6 +194,8 @@ pub fn ntp_image_headers(name: &str) -> String {
         "jpg" | "jpeg" => "image/jpeg",
         "webp" => "image/webp",
         "gif" => "image/gif",
+        // 0.15.0: the agent's set_new_tab_background_url takes AVIF too.
+        "avif" => "image/avif",
         _ => "application/octet-stream",
     };
     format!("Content-Type: {mime}\r\nX-Content-Type-Options: nosniff\r\nCross-Origin-Resource-Policy: same-origin\r\nCache-Control: max-age=86400")
@@ -382,6 +384,7 @@ mod tests {
         assert!(ntp_image_request("https://krunk.invalid/ntp-image/vault.json").is_none());
         assert!(ntp_image_request("https://shell.krunk.invalid/ntp-image/ntp-background-1.png").is_none());
         assert!(ntp_image_headers("ntp-background-1.jpg").starts_with("Content-Type: image/jpeg"));
+        assert!(ntp_image_headers("ntp-background-1.avif").starts_with("Content-Type: image/avif"));
     }
 
     #[test]
