@@ -605,6 +605,8 @@ pub enum AddressSuggestionKind {
     Url,
     History,
     Bookmark,
+    /// A completion from the search engine's suggest endpoint (0.15.0): searches `title`.
+    SearchSuggestion,
 }
 
 /// Why the vault must be unlocked.
@@ -2651,6 +2653,13 @@ pub enum Event {
         #[serde(skip_serializing_if = "Option::is_none")]
         inline: Option<InlineCompletion>,
     },
+    /// To the shell (0.15.0): the search engine's suggestions for `text` arrived; `entries`
+    /// are the rows shown now (the same rows, then the suggestions). The selection and the
+    /// inline completion stay.
+    AddressSearchSuggestions {
+        text: String,
+        entries: Vec<AddressSuggestion>,
+    },
     /// To the shell: apply this edit to the address bar (its context menu's choice).
     AddressEdit {
         edit: AddressEdit,
@@ -4520,6 +4529,18 @@ mod tests {
         assert!(matches!(parsed.request, Request::AddressSuggest { ref text, .. } if text == "ru"));
         let ev = Event::AddressSuggestions { text: "ru".into(), entries: vec![], inline: None }.to_json();
         assert!(ev.contains(r#""event":"addressSuggestions""#), "{ev}");
+        // 0.15.0: the engine's suggestions follow in their own event.
+        let row = AddressSuggestion {
+            url: "https://duckduckgo.com/?q=why+do+we+yawn".into(),
+            title: "why do we yawn".into(),
+            kind: AddressSuggestionKind::SearchSuggestion,
+            fill: "why do we yawn".into(),
+        };
+        let ev = Event::AddressSearchSuggestions { text: "why do".into(), entries: vec![row] }.to_json();
+        assert!(
+            ev.contains(r#""event":"addressSearchSuggestions""#) && ev.contains(r#""kind":"searchSuggestion""#),
+            "{ev}"
+        );
     }
 
     #[test]
