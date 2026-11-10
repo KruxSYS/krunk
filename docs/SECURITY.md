@@ -238,6 +238,33 @@ Checks, in order:
   and the start of the installer can swap the file. Such an attacker can already change Krunk's
   own files in `%LOCALAPPDATA%\Programs\Krunk`, so this adds no new access.
 
+## Krunk account: pairing, data download, deletion (0.13.0)
+The full treatment is in `docs/sync/THREAT_MODEL.md` (attacker 11) and `PROTOCOL.md` §6.5 and
+§11.2. In short:
+- **"Add a device" by QR:** the code holds a 32-byte token in the URL fragment, so it is in no
+  request log; the server stores only its HMAC. It works once, for 5 minutes, one per account.
+  Claims are limited to 20 per hour per IP. The signed-in browser approves only after a re-auth
+  and after checking that its 6-digit confirm code matches the phone's; it sees the claimant's
+  IP and country. Every approval is mailed. A paired device gets **no sync keys**, like a link.
+- **The sign-in QR in Krunk** (Settings → Account) is the server's SVG. Krunk accepts it only
+  after `core::account::qr_data_url` checked it (size, an `<svg>` root, no script, links,
+  styles, entities) and shows it as a `data:` image, never as markup.
+- **Data download:** re-auth, 5 per hour, recorded in Activity. Metadata and ciphertext only, no
+  key material; only downloaded in the browser, never mailed.
+- **Full IPs on the account page:** Activity, devices and signed-in browsers show the full IPs of
+  the last 90 days to the signed-in owner. Accepted: it is the owner's own data, but a stolen
+  session sees it too.
+- **Deletion** is immediate and irreversible: the password, the TOTP if on, Turnstile and the
+  typed address; one transaction; a receipt mail. Backups keep the account for up to 14 days; a
+  restore deletes it again (`account_deletions`, `deletions.log`).
+- **Sync reset:** re-auth and a typed confirmation, 3 per day, mailed. It deletes the server's
+  copy only; no key is exposed.
+- **Rollback:** the api before 0.13.0 refuses to start against a database whose sqlx migration
+  list has a version it doesn't know. 0.13.0's schema change is therefore an additive "expand
+  step" outside that list (`krunk_schema_steps`), and the previous api was shown to start against
+  the migrated database. From 0.13.0 on, the api ignores unknown applied migrations, so later
+  migrations stay rollback-safe (PLAN §4.9).
+
 ## Password vault: design and threat model
 
 ### Assets

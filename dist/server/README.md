@@ -5,6 +5,8 @@ A single Caddy container (`caddy:2.11.8-alpine`, pinned by digest) that serves:
 | Path | What | Caching |
 |---|---|---|
 | `/` | the website (`site/`, baked into the image) | `no-cache` |
+| `/changelog` (0.13.0) | every release's notes, generated from the repository's `CHANGELOG.md` when the image is built | `no-cache` |
+| `/pair` (0.13.0) | the phone's page for "Add a device" (`site/account/pair.html`); the token stays in the URL fragment | `no-store` |
 | `/download/release.json` | the website's download box | `no-cache` |
 | `/download/<version>/…` | `Krunk-Setup-<version>.exe`, `Krunk-win-x64.zip` (as attachments), `NOTES.md`, `SHA256SUMS` | 1 year, `immutable` |
 | `/updates/win-x64/latest.json`, `latest.json.sig` | Krunk's update check (`core/src/update.rs`) | `no-cache` |
@@ -31,7 +33,14 @@ The container:
 ## Files
 - `compose.yaml`: the service. It publishes **no host ports**; ai-pipe or a reverse proxy does that. The repository root's `compose.yaml` includes it, and `service.json` names the entry for ai-pipe.
 - `compose.ports.yaml`: publishes ports for standalone use.
-- `Dockerfile`, `Caddyfile`, `site/`: the image.
+- `Dockerfile`, `Caddyfile`, `site/`: the image. Since 0.13.0 its build context is the
+  **repository root** (compose: `context: ../..`, `dockerfile: dist/server/Dockerfile`), for
+  `CHANGELOG.md`. `Dockerfile.dockerignore` is a whitelist: only `CHANGELOG.md`, `changelog.py`,
+  the Caddy files and `site/` are sent, never `target/`. By hand, from the root:
+  `docker build -f dist/server/Dockerfile .`
+- `changelog.py`: the one `CHANGELOG.md` parser (standard library only). A pinned
+  `python:3.13-alpine` build stage runs `check` (a malformed file fails the build) and `render`
+  (`/changelog`); `publish-release.sh` uses `section` and `date`.
 - `.env.example`: settings. Copy it to `.env`; it contains no secrets.
 - `gen-signing-key.sh`: makes the release key pair.
 - `backup-db.sh`, `restore-db.sh`, `update-cloudflare-ips.sh` (+ the generated
@@ -103,6 +112,13 @@ database are defined here too. Design: `docs/sync/PLAN.md`; decisions:
   out of the database** (the password is set only when the database is created).
 - `api` runs its migrations at start; the migrator holds a Postgres advisory lock, so two
   instances can't migrate at once.
+- **Rollback safety (0.13.0):** an `api` before 0.13.0 refuses to start when `_sqlx_migrations`
+  lists a version it doesn't know. So 0.13.0's schema change is an **expand step**
+  (`server/expand/0007_account_section.sql`: additive, idempotent), applied after the sqlx
+  migrations under an advisory lock and recorded in `krunk_schema_steps`; `_sqlx_migrations` still
+  ends at 6. The previous `api` image starts against the migrated database (shown on staging).
+  From 0.13.0 on the migrator ignores unknown applied versions, so later sqlx migrations roll back
+  too (docs/sync/PLAN.md §4.9).
 - `web` doesn't depend on `api`: if the API is down, `/api/*` answers a JSON 502, and the
   site, downloads and updates are unaffected.
 - The only operator settings are in `.env` (see `.env.example`): the Turnstile keys and SMTP.
@@ -121,9 +137,14 @@ database are defined here too. Design: `docs/sync/PLAN.md`; decisions:
 
 **Accounts (milestone S2).** Register, confirm by email, sign in, sign out, reset or change the
 password, two-step verification (TOTP plus backup codes). The pages are static
-(`site/account/`, `site/privacy.html`, one `account.js`); only the four form pages may load
-Cloudflare Turnstile, and only when accounts are open. Mail goes through an outbox in Postgres,
-sent by a worker in `api`; templates are in `server/templates/`.
+(`site/account/`, `site/privacy.html`, one `account.js`); only the form pages (sign-in,
+registration, reset, resend and, since 0.13.0, `/account/delete`) may load Cloudflare Turnstile,
+and only when accounts are open. Mail goes through an outbox in Postgres, sent by a worker in
+`api`; templates are in `server/templates/`.
+
+**The account section (0.13.0).** "Add a device" by QR (`/pair`, docs/sync/PROTOCOL.md §6.5),
+Usage, Activity with full IPs, the data download, sync reset and account deletion
+(PROTOCOL §11.2). New mails: `qr_sign_in`, `sync_reset`, `account_deleted`.
 
 **Testing accounts** (staging or a local stack). The test values go into `staging.env` at the
 repository root: gitignored, so never in a commit and never in a live deploy, which is a copy of a
@@ -147,7 +168,12 @@ KRUNK_TEST_DATABASE_URL=postgres://postgres:itpass@localhost:55432/postgres carg
 cargo test --release it::timing -- --ignored --nocapture                                  # timing, alone
 # Every page in a browser (see the script's header):
 NODE_PATH=/usr/lib/node_modules/@playwright/mcp/node_modules node server/e2e/accounts.cjs http://<host:port> <project> <shots dir>
+# 0.13.0's flows only: changelog, Add a device, QR sign-in, usage, activity, export, deletion:
+NODE_PATH=/usr/lib/node_modules/@playwright/mcp/node_modules node server/e2e/s10.cjs http://<host:port> <project> <krunk-sync-cli> <shots dir>
 ```
+`s10.cjs` plays the Android app with the test client: `krunk-sync-cli pair <link or token>
+--server <url> --dir <folder>` claims a QR code through `link/pair/claim`, prints the confirm code
+and then waits for the approval like `link`.
 
 **Client IP.**
 - Caddy trusts `CF-Connecting-IP` only from Cloudflare's ranges (`cloudflare-trusted.caddy`,
@@ -178,6 +204,17 @@ NODE_PATH=/usr/lib/node_modules/@playwright/mcp/node_modules node server/e2e/acc
   starts `api` again. Since 0.11.7, a failed restore leaves the database as it was and still
   starts `api`. `backup-db.sh` writes to `.part` and renames only a complete dump, and creates
   the output folder private (umask 077).
+- **Deleted accounts stay deleted (0.13.0):**
+  - The `backup` service also exports the ids of deleted accounts (`account_deletions`) every
+    hour into `deletions.log` in `krunk-backups` (merged, `<id> <unix time>` per line, 45 days).
+  - `backup-db.sh` writes the same list next to the dump, `krunk-<project>-<time>.deletions`
+    (`.age` when the dump is encrypted).
+  - `restore-db.sh` first merges the live database's list (and `--deletions FILE[.age]`, the list
+    saved with an off-host dump) into `deletions.log`, restores, then deletes those accounts again
+    ("accounts deleted again: n"). Restore an off-host copy with its list:
+    `restore-db.sh --project <p> --dump <file.dump.age> --deletions <file.deletions.age> --age-identity <key file>`.
+  - Drill on staging, 2026-11-10: an account deleted after the dump stayed deleted after
+    `--latest`.
 - Drills on throwaway stacks, 2026-11-05: with `backup-db.sh` (insert a marker, back up,
   `down -v`, `up`, restore, the marker is back), and with `--latest` from the `backup` volume.
   The first was unencrypted, because `age` isn't installed on the build machine.
@@ -198,9 +235,17 @@ See `docs/SECURITY.md`, "Update check".
 ## Publish a release
 ```sh
 scripts/build-dist.sh
-dist/server/publish-release.sh dist/Krunk-Setup-0.2.1.exe dist/Krunk-win-x64.zip 0.2.1 \
-    --volume krunk_krunk-releases --notes NOTES-0.2.1.md
+dist/server/publish-release.sh dist/Krunk-Setup-0.13.0.exe dist/Krunk-win-x64.zip 0.13.0 \
+    --volume krunk_krunk-releases
 ```
+**Release notes (0.13.0):** without `--notes`, the script takes the version's
+`## <version> — <YYYY-MM-DD>` section of the repository's `CHANGELOG.md` as `NOTES.md`, and its
+date as the release date (unless `--released` is given). It **fails** when the section is
+missing or malformed, so add it before publishing. `--changelog FILE` reads another file;
+`--notes FILE` uses a Markdown file as before. Needs `python3` (`changelog.py section`/`date`,
+the parser the `/changelog` page is built with). The page itself changes only with the next
+build of the `web` image.
+
 1. The script computes sizes and SHA-256s and writes `release.json` and `latest.json`.
 2. It signs `latest.json` **on this machine** (`openssl pkeyutl -sign -rawin`, Ed25519) and checks the signature again with the public key.
 3. It copies everything in, in this order:
@@ -213,7 +258,8 @@ A client never sees a manifest for files that are not there yet.
 Options:
 - `--key PATH`: another private key.
 - `--min-supported VERSION`: the oldest version the installer updates in place (default 0.2.0). Older copies are sent to the website instead.
-- `--released YYYY-MM-DD`: the release date.
+- `--released YYYY-MM-DD`: the release date (default: the changelog section's date, else today, UTC).
+- `--changelog FILE` / `--notes FILE`: where `NOTES.md` comes from (above).
 
 Old versions stay under `/download/<version>/` until you remove them from the volume.
 
@@ -228,6 +274,7 @@ The manifest format:
 ## Checks
 ```sh
 hadolint dist/server/Dockerfile
+python3 -I dist/server/changelog.py check CHANGELOG.md
 yamllint compose.yaml dist/server/compose.yaml dist/server/compose.ports.yaml
 docker compose config -q
 ```

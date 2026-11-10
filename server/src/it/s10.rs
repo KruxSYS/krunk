@@ -568,3 +568,31 @@ async fn pre_0007_data_survives_the_expand_step() {
     assert_eq!(login(&env7, &mut fresh, "old@example.org", PW, None).await.status, StatusCode::OK);
     assert_eq!(fresh.get(&env7, "usage").await.body["records"]["total"], 1);
 }
+
+/// The 0.13.0 part of the log-redaction flow (called from `logs_hold_no_secrets`): pairing in a
+/// browser and natively, and the data download; returns every secret value it used.
+pub(super) async fn s10_flow_secrets(e: &Env) -> Vec<String> {
+    let mut b = signed_in(e, "s10log@example.org").await;
+    let start = b.post(e, "pair/start", json!({})).await;
+    let token = token_of(&start);
+    let mut phone = Browser::new();
+    let c = phone.post(e, "pair/claim", json!({"token": token})).await;
+    let poll = c.body["poll_token"].as_str().unwrap().to_string();
+    let code = c.body["confirm_code"].as_str().unwrap().to_string();
+    b.post(e, "pair/approve", json!({"confirm_code": code})).await;
+    phone.post(e, "pair/poll", json!({"poll_token": poll})).await;
+    let token2 = token_of(&b.post(e, "pair/start", json!({})).await);
+    let d = Device::new();
+    let nc = native_claim(e, &d, &token2).await;
+    let dc = nc.body["device_code"].as_str().unwrap().to_string();
+    let code2 = nc.body["confirm_code"].as_str().unwrap().to_string();
+    b.post(e, "pair/approve", json!({"confirm_code": code2})).await;
+    let t = d.poll(e, &dc).await;
+    let export = b.post(e, "export", json!({})).await;
+    assert_eq!(export.status, StatusCode::OK);
+    let mut out = vec![token, token2, poll, dc, phone.cookie.clone().unwrap_or_default(), "s10log".into()];
+    out.extend(["access_token", "refresh_token"].iter().filter_map(|k| t.body[*k].as_str().map(String::from)));
+    // A 6-digit code could match a number elsewhere in a log line: only check it in context.
+    out.push(format!("\"confirm_code\":\"{code}\""));
+    out
+}

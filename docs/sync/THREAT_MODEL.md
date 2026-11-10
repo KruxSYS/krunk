@@ -40,6 +40,9 @@ in `PROTOCOL.md` (§ references below); architecture is in `PLAN.md`.
 9. **Malicious web page** in Krunk: script on any site the user visits.
 10. **Rollback or forking server:** serves older states, or different states to different
     devices.
+11. **Website session thief or onlooker (0.13.0):** someone with a signed-in website session (a
+    stolen cookie, an unlocked computer) or a view of the owner's screen, for example of an
+    "Add a device" QR code.
 
 ## 3. Mitigations, attacker by attacker
 | # | Attack | Mitigation | Spec |
@@ -65,6 +68,14 @@ in `PROTOCOL.md` (§ references below); architecture is in `PLAN.md`.
 | 8 | Same-user malware, vault unlocked | Out of scope, as for the local vault (it can read process memory). | SECURITY.md |
 | 9 | Malicious web page | Sync runs in the browser process. Web content can't send sync or vault commands: the `Sender::permits` allowlist covers built-in pages only, and `krunk://sync` is a new allowlisted page. | PLAN §5.4 |
 | 10 | Rollback or fork | Clients persist high-water marks (directory `seq` and head hash, epochs, per-record `ver`) and refuse older states. `prev_hash` chains expose forks, which trigger an alarm and stop writes. **A first restore can't detect** a rollback to an older consistent state (residual R4). | §4.4, §9.1 |
+| 6, 11 | QR pairing: a shoulder-surfed or photographed "Add a device" code, or one relayed in a phishing page ("scan to sign in") | The code lives 5 minutes and is single use; one pairing per account. The attacker's claim shows on the approving screen with its kind, name or browser, IP and country, and its 6-digit confirm code doesn't match the one on the owner's phone. Approval needs a re-auth and the matching code, and is mailed (`device_linked` or `qr_sign_in`). An approved attacker device gets **no keys** (as a link); an approved attacker browser gets a session without re-auth. | PROTOCOL §6.5 |
+| 2, 3 | Pairing token leaked through logs or a DB copy | The token travels in the URL fragment (`/pair#<token>`), which browsers never send, so it is in no request log (Caddy keeps none anyway); the page posts it in a body. Only its HMAC is stored, as for the poll token. | §6.5 |
+| 7 | Guess a pairing token | 256 random bits, 20 claims per hour per IP (counted whether or not the token exists), 5 minutes. Lookups are equality lookups of an HMAC, so timing reveals nothing about stored tokens. | §6.5 |
+| 6 | Approval fatigue: the owner approves whatever shows up | The owner must confirm the code the phone shows (a mismatch is refused), sees the claimant's details and its age, re-enters the password, and gets a mail for every approval. Nothing is approved by scanning alone. | §6.5 |
+| 11 | Download the account's data with a stolen session | Needs a re-auth (password, plus TOTP if on) within 10 minutes; 5 per hour; an `export` event in Activity. The file holds metadata and ciphertext only, **no key material**, and is only downloaded, never mailed. | §11.2, §11.2.1 |
+| 11 | Read the owner's IP history | **Accepted.** The account page shows the full IPs of the last 90 days (Activity, devices, signed-in browsers): it is the owner's own data, the same as in the export, so a session thief sees where the owner signed in from. Limits: sessions last 7 days (12 hours idle), can be signed out from the list or "everywhere else", and IPs are purged after 90 days. | §11.2 |
+| 4, 11 | Delete the account | **Irreversible** and immediate. Needs the password typed again, the TOTP if on, Turnstile (action `delete`) and the account's address typed out; 5 per day per account and 5 per hour per IP; a receipt is mailed. Backups hold the account for up to 14 days; its id goes to `account_deletions` (30 days) and `deletions.log` beside the backups (45 days), and a restore deletes it again. | §11.2, PLAN §4.9, §7 |
+| 4, 11 | Reset sync | Needs a re-auth and the typed `DELETE SYNC DATA`; 3 per day; mailed. It deletes the server's copy (records, directories, escrow, approvals); no key is exposed. The devices keep their local data and report that sync was reset, so the damage is a denial of service that the owner can recover from by setting sync up again. | §11.2 |
 
 ## 4. Guarantees
 - **G1 (confidentiality):** without the cooperation of a key holder (a linked device, or the
@@ -109,6 +120,10 @@ in `PROTOCOL.md` (§ references below); architecture is in `PLAN.md`.
 - **R8, total loss:** if the passphrase, the recovery key and every device are all lost, the
   synced data is **unrecoverable**, by design. The setup UI states this before the keyset is
   created, and again when the recovery key is shown.
+- **R9, a stolen website session (0.13.0)** shows the account's IP history of 90 days; the data
+  download needs the password as well (re-auth). Accepted as the owner's own data (§3, attacker 11).
+  A pairing approved in error gives a session or a device without keys; it is visible in the
+  lists and in the mails, and is signed out like any other.
 - **Out of scope:**
   - **Same-user malware while the vault is unlocked**, and **keyloggers**.
   - **A compromised Krunk binary.** Updates are signed separately; see SECURITY.md "Update check".
@@ -129,3 +144,5 @@ in `PROTOCOL.md` (§ references below); architecture is in `PLAN.md`.
 | Revocation while no other device is online | Writes are frozen and the revoked device is locked out. Local queues persist. Rotation runs on the next remaining device or restorer. |
 | Two devices rotate at the same time | CAS on `prev_hash`: one commit wins, the loser discards its key and adopts the winner. |
 | A website password reset | Web sessions revoked, devices stay linked, keys and data untouched, email sent. |
+| A pairing QR code is claimed by someone else first (0.13.0) | The owner's phone gets `pair_used`; the approving screen shows the other claimant and a code that doesn't match. The owner denies it and starts a new one. |
+| A database restore after an account deletion (0.13.0) | `restore-db.sh` deletes every account in `account_deletions` and `deletions.log` again ("accounts deleted again: n"). |

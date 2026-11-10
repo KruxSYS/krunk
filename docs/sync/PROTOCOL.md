@@ -380,6 +380,83 @@ If Krunk exits before step 4, PAK is dropped. The user enters the passphrase aga
 5. It uploads everything in one `POST /api/v1/keys/commit` with `if_absent: true`, together with the `rr_wrap`s. PAK goes into the vault; if there is no vault yet, the user is asked to create one, or to skip password sync.
 6. It runs the first sync (§10.5).
 
+### 6.5 "Add a device" by QR (0.13.0)
+The reverse of §6.1: the signed-in browser shows a code and the new device (a phone) scans it.
+The phone is either the native app (`link/pair/claim`; `krunk-sync-cli pair` until the Android
+app exists) or a phone browser, which gets an ordinary website session.
+
+```mermaid
+sequenceDiagram
+    participant W as Website (signed-in browser)
+    participant S as API (krunk.209.wf/api)
+    participant P as Phone (native app or browser)
+    W->>S: POST /api/v1/web/pair/start {} (re-auth within 10 min required)
+    S-->>W: {pair_id, url "https://krunk.209.wf/pair#TOKEN", qr_svg, expires_in 300}
+    W-->>P: shows the QR code · P scans it (the token stays in the URL fragment)
+    alt native app
+        P->>S: POST /api/v1/link/pair/claim {token, platform, label, client_version}
+        S-->>P: {device_code, interval 5, expires_in, confirm_code}
+    else phone browser (/pair)
+        P->>S: POST /api/v1/web/pair/claim {token}
+        S-->>P: {confirm_code, poll_token, interval 2, expires_in}
+    end
+    P-->>P: shows the 6-digit confirm_code
+    loop every 2 s
+        W->>S: GET /api/v1/web/pair
+        S-->>W: {state "claimed", confirm_code, claimant:{kind, label or browser, platform, client_version, ip, country, age_s}}
+    end
+    W->>S: POST /api/v1/web/pair/approve {confirm_code} (the user checked both screens, re-auth) · or POST web/pair/deny {}
+    S-->>W: 200 {kind, device_id?} (device: device_linked mail · browser: qr_sign_in mail)
+    alt native app
+        P->>S: POST /api/v1/link/token {device_code} (as in §6.1)
+        S-->>P: 200 {device_id, access_token, refresh_token, account_id} · 400 access_denied | expired_token
+    else phone browser
+        P->>S: POST /api/v1/web/pair/poll {poll_token}
+        S-->>P: 200 + Set-Cookie, {csrf} (once) · 400 authorization_pending | slow_down | access_denied | expired_token
+    end
+```
+- **Token:** 32 random bytes, base64url. The server stores only
+  `HMAC(token_hmac, "krunk-pair-token", token)` and finds a claim by an equality lookup of that
+  HMAC. It travels in the URL fragment (`/pair#<token>`), which browsers never send, so it
+  reaches no server or request log; the `/pair` page posts it to `web/pair/claim`. The browser's
+  poll token is another 32 bytes, stored the same way (`"krunk-pair-poll"`).
+- **Lifetime:** 5 minutes from the start, single use. A claim leaves at least 2 minutes for the
+  approval (the expiry moves out if needed). Only a `waiting` pairing can be claimed; a second
+  claim gets `pair_used` (409).
+- **One pairing per account:** a new start replaces the earlier one and deletes the pending link
+  grant of its native claim; `cancel` does the same without a new one. Otherwise a pairing (used
+  or not) is deleted by the hourly housekeeping once it is 10 minutes past its expiry.
+- **Confirm code:** 6 digits from the OS random source, uniform (rejection sampling). The phone
+  shows it after the claim; `web/pair` shows it to the signed-in browser only while the state is
+  `claimed`. Approval compares it in constant time; a wrong code is `bad_request` and the pairing
+  stays claimed.
+- **Native claim:** creates an ordinary pending `link_grants` row tied to the pairing (`pair_id`),
+  expiring with it. Its user code is random and never shown, so `/link` can't reach it; the app
+  then polls the unchanged `link/token`. Approval runs the same steps as `/link` (§11.2): the
+  device quota (`QUOTA_MAX_DEVICES`, default 10), the next free `short`, the `device_linked` mail and the
+  `device_linked` event. Denial marks the grant denied (`access_denied` at the next poll).
+- **Browser claim:** an approval mails `qr_sign_in` (the browser and country of the phone, and the
+  time). The phone's next poll gets an ordinary website session with `web_sessions.via = 'qr'`
+  and no re-auth (`reauth_at` empty), so sensitive actions on the phone ask for the password as
+  usual. The poll token is spent by that answer, and by `access_denied` or `expired_token`.
+  Polls faster than every 2 s get `slow_down`.
+- **Answers:** an unknown or malformed token is `not_found`; an expired one `expired_token`
+  (410); a claimed, approved or denied one `pair_used` (409). Approving a pairing nobody claimed
+  yet is `pair_not_claimed` (409).
+- **Events** (`ip_events`, Activity): `pair_started`, `pair_claimed` (the phone's IP and
+  country), `pair_approved`, `pair_denied`, and `qr_sign_in` when the phone's session starts
+  (plus `device_linked` for a device).
+- **Limits:** start 10/h/account; `web/pair` 300/10 min/session; approve, deny and cancel together
+  30/h/account; claims (`web/pair/claim` and `link/pair/claim`) 20/h/IP, counted whether or not
+  the token is known; `web/pair/poll` 600/h/IP.
+- **Threats:**
+  - A shoulder-surfed or relayed QR code: the attacker's claim shows on the approving screen with
+    its kind, name or browser, IP and country, and with a confirm code that doesn't match the one
+    on the owner's phone. Approval needs a re-auth, and every approval is mailed.
+  - Guessing a token: 256 bits against 20 claims per hour per IP.
+  - As with §6.1, a pairing gives **no keys**: an approved attacker device gets ciphertext and
+    metadata only, and shows as "no keys" in the device list.
+
 ## 7. Revocation and key rotation [R3][R11][R14]
 ```mermaid
 sequenceDiagram
@@ -698,14 +775,23 @@ The test vectors include 30 tricky URLs, and both desktop and Android must produ
 | POST | `web/link/{user_code}/approve` | web + re-auth | `{confirm_code}` | 200 `{device_id, short}` (the server allocates `short`, the next free u16 of the account); email | 10/h/account | `not_found`, `gone`, `quota_exceeded` (more than `QUOTA_MAX_DEVICES` active devices) |
 | POST | `web/link/{user_code}/deny` | web | `{}` | 204 | – | – |
 | POST | `web/devices/{id}/rename` (S3 addition) | web | `{label}` (1–64 characters, no control characters) | 200 `{label}`: the server-held label until S6's encrypted `device_meta` name | 30/h | `not_found`, `bad_request` |
-| GET | `web/devices` | web | – | `[{id, short, platform, label, created, last_sync, last_country, has_keys:bool, revoked_at?}]` | 60/min | – |
+| GET | `web/devices` | web | – | `[{id, short, platform, label, created, last_sync, last_country, last_ip, has_keys:bool, revoked_at?}]` (`last_ip`, the full address: 0.13.0) | 60/min | – |
 | POST | `web/devices/{id}/revoke` | web (+ re-auth) | `{}` | 200 → starts §7; email | 20/h | `not_found` |
-| GET | `web/sessions` | web | – | `[{id, kind:"web"\|"device", created, last_used, ip_masked, country, user_agent, current:bool}]` | 60/min | – |
+| GET | `web/sessions` | web | – | `[{id, kind:"web"\|"device", created, last_used, ip_masked, ip, country, user_agent, via?, current:bool}]` (0.13.0: `ip`, the full address; `via:"password"\|"qr"` for web sessions only) | 60/min | – |
 | POST | `web/sessions/{id}/revoke` | web | `{}` | 204 | 60/h | `not_found` |
 | POST | `web/sessions/revoke-all` | web (+ re-auth) | `{include_devices:bool}` | 204 (devices → §7 for each) | 10/h | – |
-| GET | `web/export` | web (+ re-auth) | – | `application/json` download: account metadata, devices, sessions and all record envelopes (ciphertext only). **No** directories, seals or `rr_wrap`s: those are served only to authenticated devices (§11.5) | 3/day/account | – |
-| POST | `web/sync/reset` | web (+ re-auth + TOTP if enabled) | `{confirm:"DELETE SYNC DATA"}` | 200: deletes keysets, escrow, records and approvals; devices stay linked without keys | 3/day | – |
-| POST | `web/account/delete` | web + T `delete` + re-auth | `{password, totp?, confirm:"DELETE"}` | 200: everything deleted immediately (PLAN §7); cookie cleared; email receipt | 3/day | `unauthorized`, `turnstile_failed` |
+| POST | `web/pair/start` (0.13.0) | web + re-auth | `{}` | `{pair_id, url:"<base>/pair#<token>", qr_svg, expires_in:300}`; replaces the account's earlier pairing (§6.5) | 10/h/account | `reauth_required` |
+| GET | `web/pair` (0.13.0) | web | – | `{state:"none"\|"waiting"\|"claimed"\|"approved"\|"denied"\|"expired", pair_id?, expires_in?, confirm_code? (only while claimed), claimant?:{kind:"device"\|"web", platform, label, client_version, browser, ip, country, age_s}}` | 300/10 min/session | – |
+| POST | `web/pair/approve` (0.13.0) | web + re-auth | `{confirm_code}` | 200 `{kind, device_id?}`. A device: the steps of `web/link/…/approve`, `device_linked` email. A browser: `qr_sign_in` email; its next poll gets a session | 30/h/account (approve, deny and cancel together) | `not_found`, `pair_not_claimed` (409), `expired_token` (410), `pair_used` (409), `bad_request` (wrong code), `quota_exceeded`, `reauth_required` |
+| POST | `web/pair/deny` (0.13.0) | web | `{}` | 204; the phone's next poll gets `access_denied` | as approve | `not_found`, `expired_token`, `pair_used` |
+| POST | `web/pair/cancel` (0.13.0) | web | `{}` | 204; the pairing and a native claim's pending link grant are deleted | as approve | – |
+| POST | `web/pair/claim` (0.13.0) | none (same-origin) | `{token}` | `{confirm_code, poll_token, interval:2, expires_in}` | 20/h/IP with `link/pair/claim`, every attempt counted | `not_found`, `expired_token` (410), `pair_used` (409) |
+| POST | `web/pair/poll` (0.13.0) | none (same-origin) | `{poll_token}` | 200 + Set-Cookie, `{csrf}`, once: a session with `via:"qr"` and no re-auth · 400 `{error: authorization_pending\|slow_down\|access_denied\|expired_token}` | 600/h/IP; one per 2 s per pairing (`slow_down`) | as listed |
+| GET | `web/usage` (0.13.0) | web | – | `{records:{total, max, bytes, max_bytes, history, max_history, max_record_bytes:65536, collections:[{c, records, bytes}]}, devices:{active, max, items:[{id, label, platform, last_sync, last_used, last_ip, last_country}]}, account:{created, last_sign_in, password_changed, totp, backup_codes_left, email_verified}}` | 60/min/session | – |
+| GET | `web/activity` (0.13.0) | web | `?before=<id>&limit=` (1–100, default 50) | `{events:[{id, kind, at, ip, country, source:{kind:"web"\|"device"\|null, id, label, removed, current}}], next_before, retention_days:90}`, newest first; `current` marks the calling session | 60/min/session | – |
+| POST | `web/export` (0.13.0: POST, was planned as GET) | web + re-auth | `{}` | 200 `application/json`, an attachment `krunk-account-YYYY-MM-DD.json`, streamed (§11.2.1). **No** directories, seals, escrow or `rr_wrap`s: those are served only to authenticated devices (§11.5). An `export` event; no mail | 5/h/account | `reauth_required` |
+| POST | `web/sync/reset` (0.13.0) | web + re-auth | `{confirm:"DELETE SYNC DATA"}` (exactly) | 200 `{deleted:{records:n, keys:true}}`: deletes the account's `records`, `approvals`, `ak_dirs`, `pak_dirs`, `escrow` and `sync_state`; the devices stay linked, `has_keys`/`had_keys` false; `sync_reset` email and event | 3/day/account | `reauth_required`, `bad_request` |
+| POST | `web/account/delete` (0.13.0) | web + T `delete` (no re-auth: the password is in the request) | `{password, totp?, turnstile, confirm_email}`: the password, the TOTP or a backup code if two-step is on, and the account's address typed (compared case-insensitively) | 200 `{deleted:true, remaining:{records:0, devices:0, sessions:0, keys:0}}`, cookie cleared. One transaction: count, insert into `account_deletions`, queue the `account_deleted` receipt (without an account id), `DELETE FROM accounts`, count again (PLAN §7). Every cookie and token is 401 afterwards | 5/h/IP, 5/day/account | `turnstile_failed`, `bad_request` (address), `unauthorized`, `totp_required`, `totp_invalid` |
 
 **Verification needs the password (S2).** `web/verify-email` takes the account's password
 with the token, registering an address that is still unverified replaces its password and voids
@@ -725,11 +811,39 @@ the code is not found, so acting on the code just viewed (also after a re-auth) 
 before login), and per device for device endpoints. Per-IP limits always use the trusted client
 IP (PLAN §4.4).
 
+**The account section (0.13.0):** the account page shows full IP addresses (Activity, devices,
+signed-in browsers) to the signed-in owner; they are purged after 90 days like every stored IP.
+Every `ip_events` row now names its source (`source_kind` `web` or `device`, `source_id`), shown
+as `source` in `web/activity`; a source deleted since shows as `removed`. New event kinds:
+`pair_started`, `pair_claimed`, `pair_approved`, `pair_denied`, `qr_sign_in`, `export`,
+`sync_reset`. New mails: `qr_sign_in`, `sync_reset` and the `account_deleted` receipt.
+
+#### 11.2.1 Export format (0.13.0)
+- **Schema:** `krunk-account-export/1`, a JSON Schema in
+  [`docs/sync/export-schema-1.json`](export-schema-1.json). Unknown members are not allowed, so
+  an addition means `/2`.
+- **Top level:** `schema`, `generated_at`, `account` (metadata; backup codes as `{total, unused}`
+  counts), `devices`, `web_sessions` (with `via` and `current`), `activity` (the `ip_events`
+  rows), `pending:{link_grants, pair_grants}` (without their hashes), `emails` (`email_log`:
+  template and time only), `sync` (`has_keyset`, the `sync_state` counters and epochs,
+  `record_count`) and `records` (every envelope as stored, with its `c`, `id`, `seq`, `e`, `k`,
+  `size` and `updated_at`).
+- **No key material:** no directories, seals, escrow or `rr_wrap`s; the records stay
+  ciphertext that only the account's devices can open.
+- **Delivery:** streamed (the records in pages of 500 by `seq`, so a record written meanwhile
+  may or may not be in it), as the download `krunk-account-YYYY-MM-DD.json`. Only to the
+  browser: it is never mailed.
+
 ### 11.3 Link (device grant)
 | Method | Path | Auth | Request | Response | Rate limit | Errors |
 |---|---|---|---|---|---|---|
-| POST | `link/authorize` | none | `{platform:"windows"\|"android", label (≤ 64, e.g. "Krunk 0.3 on Windows 11"), client_version}` | `{device_code, user_code, verification_uri, verification_uri_complete, expires_in:600, interval:5}` | 10/h/IP | `bad_request` |
+| POST | `link/authorize` | none | `{platform:"windows"\|"android", label (≤ 64, e.g. "Krunk 0.3 on Windows 11"), client_version}` | `{device_code, user_code, verification_uri, verification_uri_complete, expires_in:600, interval:5, qr_svg?}` (0.13.0: `qr_svg`, an SVG QR code of `verification_uri_complete`, so a signed-in phone can scan it; additive, clients without it show the code alone) | 10/h/IP | `bad_request` |
 | POST | `link/token` | none | `{device_code}` | 200 `{device_id, account_id, access_token, expires_in:900, refresh_token}` · 400 `{error: authorization_pending\|slow_down\|expired_token\|access_denied}` | one per 5 s per code | as listed |
+| POST | `link/pair/claim` (0.13.0, §6.5) | none | `{token, platform:"windows"\|"android", label, client_version}` | `{device_code, interval:5, expires_in, confirm_code}`: a pending link grant tied to the pairing, polled with `link/token` as above | 20/h/IP with `web/pair/claim`, every attempt counted | `bad_request`, `not_found`, `expired_token` (410), `pair_used` (409) |
+
+Krunk 0.13.0 shows `qr_svg` only after checking it (`core::account::qr_data_url`: at most 64 KiB,
+an `<svg>` root, no script, event attributes, links, styles, external images, `<use>`, entities
+or DOCTYPE), as a `data:image/svg+xml;base64,…` image, never as markup.
 
 ### 11.4 Tokens and device session
 | Method | Path | Auth | Request | Response | Rate limit | Errors |
@@ -947,3 +1061,9 @@ Each case lists its inputs (hex) and outputs (hex or bytes):
   and the server accepts both versions during the transition.
 - Crypto parameters are fixed per `v`. Raising Argon2 floors needs a new `v` or an RR rotation
   with the new constants.
+- **0.13.0 (additive, `v = 1`):** §6.5 ("Add a device" by QR), the `web/pair/*`, `web/usage`,
+  `web/activity`, `web/export`, `web/sync/reset` and `web/account/delete` endpoints, and
+  `link/pair/claim`; new optional fields `qr_svg` (`link/authorize`), `last_ip` (`web/devices`),
+  `ip` and `via` (`web/sessions`). Older clients ignore them. Records, envelopes and directories
+  are unchanged. The export has its own schema name (§11.2.1). Built and staged; live once the
+  operator applies the 0.13.0 service update.

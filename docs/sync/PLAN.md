@@ -405,12 +405,34 @@ deletes everything in one statement (§7).
 - `turnstile_seen(hash pk, expires_at)`
 - `ip_events(account_id, kind, ip, country, at)`, purged after 90 days
 
+**0.13.0 (expand step `server/expand/0007_account_section.sql`, §4.9; additive only):**
+- `pair_grants(id uuid pk, account_id unique, token_hash bytea unique, started_session, created_at, expires_at, status waiting|claimed|approved|denied, claim_kind device|web, claimed_at, confirm_code (6 digits), platform, label, client_version, ip inet, country, user_agent, poll_hash bytea unique, last_poll_at)`: "Add a device" (PROTOCOL §6.5), one per account; deleted 10 minutes past expiry
+- `link_grants.pair_id uuid null` (FK to `pair_grants`, `ON DELETE SET NULL`): the pending link grant of a native claim
+- `web_sessions.via text null` (`password` or `qr`; null for sessions from before 0.13.0, shown as `password`)
+- `ip_events.source_kind text null` (`web` or `device`) and `ip_events.source_id uuid null` (no FK: an event outlives its session or device)
+- `email_log(id bigserial, account_id, template, queued_at)`: which mails an account was sent (template name and time only, for the export); written by `mail::enqueue`, kept 90 days
+- `account_deletions(account_id uuid pk, deleted_at)`: no FK and no address; kept 30 days, exported to `deletions.log` (§4.9, §7)
+- `krunk_schema_steps(step text pk, applied_at)`: the expand steps applied (§4.9)
+
 ### 4.9 Migrations, backup and restore (requirement 10)
 - **Migrations:**
   - `sqlx migrate` with embedded SQL files, applied by `api` at start inside a transaction
     holding `pg_advisory_lock(0x4b52554e4b)`, so only one instance migrates.
   - Migrations are forward-only and backward-compatible for one release (expand, then
     contract), so a rolled-back `api` still runs against the migrated schema.
+  - **Corrected in 0.13.0:** that held only while no newer `api` had applied a sqlx migration.
+    Before 0.13.0 the migrator ran with sqlx's `ignore_missing` off, so an `api` refuses to
+    start when `_sqlx_migrations` lists a version it doesn't know ("previously applied but
+    missing"), however additive that migration is. A rollback after a new sqlx migration would
+    take the accounts down.
+  - **Expand steps (0.13.0):** the 0007 schema change is applied outside `_sqlx_migrations`:
+    idempotent, additive DDL (`IF NOT EXISTS`) from `server/expand/`, run after the sqlx
+    migrations in one transaction under an advisory lock and recorded in `krunk_schema_steps`,
+    which earlier `api`s never read. On staging the pre-0.13.0 `api` image started healthy against
+    the migrated database, and the existing rows were unchanged
+    (`.pipeline/evidence-0.13.0/m5-upgrade-rollback.txt`).
+  - **From 0.13.0 on** the migrator ignores unknown applied versions, so later migrations (0008
+    on) can be ordinary sqlx migrations and a rollback to 0.13.0 or newer still starts.
   - A migration failure makes the `api` health check fail, and ai-pipe rolls the deploy back.
 - **Backups:**
   - The `backup` service writes a daily `pg_dump -Fc` into the volume `krunk-backups` on the
@@ -420,12 +442,19 @@ deletes everything in one statement (§7).
     the operator's `age` public key.
   - Backups contain only ciphertext, hashes and metadata, never keys. They still hold emails
     and IPs, hence the encryption off-host and the retention limit.
+  - **`deletions.log` (0.13.0):** the `backup` service exports `account_deletions` every hour,
+    merges it into `deletions.log` in `krunk-backups` (`sort -u`, lines `<account id> <unix
+    time>`) and keeps 45 days, longer than the 14 days of dumps. `backup-db.sh` writes the same
+    list as `<dump name>.deletions` (`.age`-encrypted with the dump) next to an off-host copy.
 - **Restore:**
   1. `docker compose stop api`.
   2. `pg_restore --clean --if-exists -d krunk` from a decrypted dump
-     (`dist/server/restore-db.sh --latest` does steps 1, 2 and 4 from the `backup` volume).
-  3. Re-apply account deletions newer than the dump from the `deletions.log` export (a daily
-     list of deleted account ids, kept with the backups).
+     (`dist/server/restore-db.sh` does steps 1 to 4, `--latest` from the `backup` volume).
+  3. Re-apply the account deletions (0.13.0, as built): before restoring, `restore-db.sh`
+     merges the live database's `account_deletions` and a `--deletions FILE[.age]` list into
+     `deletions.log`; after `pg_restore` it deletes every account in it again and re-inserts the
+     ids into `account_deletions`, in one transaction (a dump from before 0.13.0 gets the table
+     created). It prints "accounts deleted again: n".
   4. Start `api`.
   5. Smoke-test `GET /api/v1/web/config` and a test login.
 
@@ -639,6 +668,25 @@ PROTOCOL §8 note):
   sync for `INACTIVITY_DELETE_DAYS` (suggested 730) are warned by email at 30 and 7 days, then
   deleted as above.
 
+**As built in 0.13.0 (server and site; `server/src/lifecycle.rs`, PROTOCOL §11.2):**
+- **Delete:** its own page `/account/delete` (with the Turnstile CSP). `web/account/delete`
+  takes the password again, the TOTP or a backup code if on, Turnstile (action `delete`) and the
+  typed address; there is no separate re-auth or `confirm:"DELETE"`. One transaction: count,
+  insert the id into `account_deletions` (not a file: the `backup` service writes
+  `deletions.log`, §4.9), delete the account's outbox mails, queue the `account_deleted`
+  receipt without an account id, `DELETE FROM accounts`, count again. The answer reports the
+  remaining counts (all 0) and clears the cookie; every cookie and token is 401 afterwards.
+  Limits: 5 per day per account, 5 per hour per IP.
+- **Export:** `POST web/export` (re-auth, 5 per hour), the schema `krunk-account-export/1`
+  (`docs/sync/export-schema-1.json`, PROTOCOL §11.2.1): account metadata, devices, web sessions,
+  activity, pending link and pair grants, the email log, the sync counters and every record
+  envelope, streamed. No key material; never mailed; an `export` event. The `krunk://sync`
+  decrypted export is not built yet.
+- **Sync reset:** `web/sync/reset` (re-auth, the typed `DELETE SYNC DATA`, 3 per day) deletes
+  the records, directories, escrow, approvals and `sync_state`; devices stay linked without keys
+  and report "sync was reset on the website". Mailed (`sync_reset`).
+- **Inactivity:** not built; it stays off.
+
 ## 8. Cloudflare and site integration details
 - **Caddyfile additions (S1):**
   - `handle /api/* { reverse_proxy api:8081 { header_up X-Krunk-Client-IP {client_ip} } }`
@@ -736,6 +784,20 @@ Playwright, hadolint, yamllint and `docker compose config -q`.
     eviction beyond the first-sync limit, a UI for the kept previous versions of passwords, and
     everything in S10 (delete, export, sync reset) and S11.
   Evidence: `.pipeline/evidence-0.9.0/` and `.pipeline/krunk-0.9.0-report.md`.
+- **S10:** done in 0.13.0 (server and site, with Krunk 0.13.0); live only once the operator
+  applies the proposed service update.
+  - **Built:** account deletion, the data download (`krunk-account-export/1`), sync reset, the
+    notifications `qr_sign_in`, `account_deleted` and `sync_reset`, and the privacy docs (the
+    site's `/privacy`, README, SECURITY.md, THREAT_MODEL attacker 11). As built: §7.
+  - **Not built:** the inactivity job (stays off).
+  - **Additions:** "Add a device" by QR (PROTOCOL §6.5: `web/pair/*`, `link/pair/claim`, the
+    `/pair` page, `krunk-sync-cli pair`), the sign-in QR in `link/authorize`, and the open account
+    section (Usage, Activity with full IPs and each event's source, `last_ip`, `via`).
+  - **Schema:** expand step 0007 outside `_sqlx_migrations` (§4.8, §4.9), not sqlx migration
+    0010 as the table says; `deletions.log` and the restore re-apply as in §4.9.
+  - Tests: `server/e2e/s10.cjs` (44 checks on staging), 9 database tests in `it/s10.rs`, the
+    upgrade-and-rollback and restore drills on staging, and a Windows VM smoke run of Krunk 0.13.0.
+  Evidence: `.pipeline/evidence-0.13.0/`.
 
 The live rollout is S1–S3 first (accounts with no sync yet; since 0.8.0 Krunk can sign in to
 one). The client sync ships

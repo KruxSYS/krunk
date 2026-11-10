@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://krunk.209.wf/schema/krunk-account-export-1.json",
+  "$id": "urn:krunk:schema:krunk-account-export:1",
   "title": "krunk-account-export/1",
   "description": "The personal-data download of a Krunk account (POST /api/v1/web/export, PROTOCOL §11.2). Times are RFC 3339 in UTC; IPs are as stored (purged after 90 days). Records are end-to-end encrypted envelopes (PROTOCOL §9.1): the server can't read them and the download holds no key material (no directories, seals or escrow).",
   "type": "object",

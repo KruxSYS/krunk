@@ -1,0 +1,6 @@
+[workspace]
+resolver = "3"
+members = ["ovpn-probe", "wg-probe"]
+
+[profile.release]
+strip = "debuginfo"

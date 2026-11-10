@@ -1036,6 +1036,21 @@ their old version; a name you typed yourself is never changed.
   sign-in code live only in memory. No token or code is ever written to `krunk.log`.
   `browser.db` and the vault are unchanged.
 - **Private windows** show nothing of the account (the card says so; the ⋮ item is hidden).
+- **Sign-in QR and Add a device (0.13.0):** while signing in, the card shows the sign-in link as
+  a QR code next to the code, so a phone that is signed in to the account can approve this
+  device by scanning it (without one from the server, the code alone, as before). Signed in,
+  **Add a device** next to Manage account opens the account page's "Add a device" part in a new
+  tab.
+- **The account page** (`https://krunk.209.wf/account/`, 0.13.0) also has:
+  - **Add a device:** a QR code a phone scans (in its browser, later in the Android app). It
+    works once for 5 minutes; you approve after checking that both screens show the same
+    6-digit code (`docs/sync/PROTOCOL.md` §6.5).
+  - **Usage** against the quotas, and **Activity & IP addresses** (the security events of the
+    last 90 days with full IP, country and the device or browser).
+  - **Download your data:** one JSON file (`krunk-account-export/1`,
+    `docs/sync/export-schema-1.json`) with no keys, only to the browser, never by mail.
+  - **Reset sync** and **Delete account** (`/account/delete`: password, two-step code, the
+    address typed out; immediate, with a receipt by mail).
 - **The server side** (sign-in by code after RFC 8628, rotating tokens whose reuse signs the
   device out and sends a mail) is described in `docs/sync/PROTOCOL.md` §6.1 and §11.3–11.4.
 
@@ -1302,6 +1317,10 @@ network traffic it starts itself is the daily filter-list update and the daily u
   whose build points at the new one. Krunk 0.2.0 builds pointed at the placeholder
   `https://krunk.example` and can't update themselves; reinstall them from the website. The
   server itself (Docker, Caddy, behind Cloudflare) is in `dist/server/`; see its README.
+- **Release notes:** `CHANGELOG.md` is their one source. The website's
+  [/changelog](https://krunk.209.wf/changelog) page is generated from it when the site is built,
+  and `publish-release.sh` takes a release's `NOTES.md` (what **Release notes** shows) and date
+  from its section.
 
 ### Memory
 - **Lazy restore:** restored tabs show their saved title and the cached favicon. They get no
@@ -1489,7 +1508,8 @@ Testing on Windows:
   regular-expression `@include` (the editor warns). Only one macro runs at a time: starting
   another stops the first.
 - **Sync is a beta (0.9.0).** Not yet: choosing your own passphrase, changing the passphrase
-  or making a new recovery key, deleting or exporting the synced data, a sync reset, payment
+  or making a new recovery key, a decrypted export of the synced data from Krunk (the website's
+  data download, sync reset and account deletion came in 0.13.0), payment
   cards, a way to see the kept previous versions of passwords, and trimming synced history beyond
   the first sync's 90 days / 20,000 pages (the server's quota stops pushes with a message instead).
   Tested on Windows with the Linux test client as the other devices; there is no other client yet.
