@@ -399,8 +399,22 @@ impl Browser {
         let tabs: Vec<(TabId, TabInput)> = self.input.tabs.borrow_mut().drain().collect();
         for (tab, t) in tabs {
             let Some(view) = self.tab_view(tab) else { continue };
+            if !t.keys.is_empty() || t.buttons != 0 {
+                crate::log::info!("tab {tab}: input released ({} keys, buttons {:#x})", t.keys.len(), t.buttons);
+            }
             let mods = t.held_mods();
             for k in t.keys.values() {
+                // The engine drops key-ups after a key-down the browser handled itself (the
+                // macro's hotkey, Ctrl+Shift+. pressed in this page) until the next key-down: one
+                // more auto-repeat key-down of the held key (no character) comes first, so the
+                // page always sees the key go up.
+                let mut repeat = key_params(&k.spec, mods, true, true);
+                repeat["type"] = Value::from("rawKeyDown");
+                if let Some(o) = repeat.as_object_mut() {
+                    o.remove("text");
+                    o.remove("unmodifiedText");
+                }
+                view.devtools_method("Input.dispatchKeyEvent", &repeat);
                 view.devtools_method("Input.dispatchKeyEvent", &key_params(&k.spec, mods, false, false));
             }
             for b in [MouseButton::Left, MouseButton::Right, MouseButton::Middle] {

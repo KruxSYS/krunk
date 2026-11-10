@@ -327,3 +327,24 @@ if ($Phase -eq 'scripts') {
   KLog 'userscript'
   StopKrunk
 }
+
+if ($Phase -eq 'hotkey') {
+  # A macro "Hold A" with the hotkey Ctrl+Alt+K, seeded into the closed profile.
+  FreshProfile $mock
+  $q = & $py C:\pipeline\krunk\seed-macro.py $profile 2>&1
+  Log "[$P] seeded: $q"
+  StartKrunk
+  Page 'http://127.0.0.1:8094/agent.html'
+  Click 200 640 300
+  SafeKeys '^%k' 3000
+  Shot "$P-1-started"
+  SafeKeys '^%k' 2000
+  Shot "$P-2-stopped-by-hotkey"
+  Click 200 640 300
+  SafeKeys '^%k' 3000
+  SafeKeys '^+.' 2000
+  Shot "$P-3-stopped-by-shortcut"
+  Get-Content "$www\access.log" -ErrorAction SilentlyContinue | Where-Object { $_ -match 'agent-key=' } | ForEach-Object { Log "[$P] key $(($_ -split 'agent-key=')[1] -split ' ' | Select-Object -First 1)" }
+  KLog 'macro|input'
+  StopKrunk
+}
