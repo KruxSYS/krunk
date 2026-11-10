@@ -300,6 +300,8 @@ mod tests {
         "sync",
         "account",
         "proxy",
+        // 0.14.0: the VPN (whether Krunk's traffic goes through it is the user's choice alone).
+        "vpn",
         "dns",
         "extraflags",
         "useragent",
@@ -392,12 +394,27 @@ mod tests {
             assert_eq!(s, before);
         }
         assert!(n > 30, "{n} excluded leaves");
-        for word in ["vault", "proxy", "useragent", "extraflags", "providers", "systempromptextra", "customsearchurl"] {
+        for word in
+            ["vault", "proxy", "vpn", "useragent", "extraflags", "providers", "systempromptextra", "customsearchurl"]
+        {
             assert!(!text.contains(word), "{word} in get_all");
         }
         // Also the whole objects and odd forms of the keys.
-        for k in ["ai", "ai.enabled", "ai.providers", "dns", "headers", "passgen", "permissions", "Theme", "theme ", ""]
-        {
+        for k in [
+            "ai",
+            "ai.enabled",
+            "ai.providers",
+            "vpn",
+            "vpn.autoConnect",
+            "vpn.showButton",
+            "dns",
+            "headers",
+            "passgen",
+            "permissions",
+            "Theme",
+            "theme ",
+            "",
+        ] {
             assert!(set(&mut s, k, json!(false)).is_err(), "{k}");
         }
         // Keys that are not allowed even though they look harmless.

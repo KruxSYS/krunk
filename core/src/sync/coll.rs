@@ -966,6 +966,8 @@ mod tests {
             "pdfInBrowser",
             "mailHandler",
             "mailCustomUrl",
+            // 0.14.0: the VPN (its profiles are in this device's database only).
+            "vpn",
         ];
         let v = serde_json::to_value(Settings::default()).unwrap();
         let unsorted: Vec<&String> = v

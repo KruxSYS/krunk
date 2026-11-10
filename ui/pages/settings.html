@@ -243,7 +243,7 @@
   </section>
 
   <!-- ================================================================ Privacy & security -->
-  <section class="panel" data-tab="privacy" data-section="privacy security tracking https cookies ads ad blocking filters allowlist trackers site data clear vault">
+  <section class="panel" data-tab="privacy" data-section="privacy security tracking https cookies ads ad blocking filters allowlist trackers site data clear vault vpn">
     <h2 class="panel-title">Privacy &amp; security</h2>
     <div class="card group">
       <h3>Ad and tracker blocking</h3>
@@ -336,6 +336,35 @@
           <button class="btn" type="submit">Add</button>
           <p class="field-error" id="dns-error"></p>
         </form>
+      </div>
+    </div>
+
+    <div class="card group" id="vpn-card">
+      <h3>VPN</h3>
+      <div class="row setting column" data-keywords="vpn wireguard openvpn tunnel only krunk other apps fail closed private windows">
+        <div class="text"><span class="label">Only Krunk's connections</span>
+          <p class="desc" id="vpn-explain">The VPN carries Krunk's connections only: normal and private windows, and Krunk's own updates, sync, filter lists and extensions. Other apps on this computer are not affected and nothing is installed in Windows. While the VPN is on but not connected, Krunk's connections stop: nothing goes around it.</p></div>
+      </div>
+      <div class="row setting" data-keywords="vpn toolbar button show icon">
+        <div class="text"><label for="vpn.showButton">Show the VPN button in the toolbar</label><p class="desc">Next to the shield: the VPN's state, with Connect and Disconnect.</p></div>
+        <div class="control"><input type="checkbox" id="vpn.showButton" data-key="vpn.showButton"></div>
+      </div>
+      <div class="row setting column" id="vpn-profiles-row" data-keywords="vpn profiles wireguard openvpn import conf ovpn file connect disconnect rename remove user name password credentials">
+        <div class="text"><span class="label">Profiles</span>
+          <p class="desc">WireGuard (.conf) or OpenVPN (.ovpn) files from your VPN provider. They are stored encrypted for your Windows account; scripts in them never run.</p>
+          <p class="desc vpn-status" id="vpn-status" role="status" aria-live="polite"></p></div>
+        <div id="vpn-profiles" class="sublist"></div>
+        <div class="inline-form">
+          <button class="btn" type="button" id="vpn-import">Import file…</button>
+          <p class="field-error" id="vpn-error" role="alert"></p>
+        </div>
+        <ul id="vpn-warnings" class="desc vpn-warnings" hidden></ul>
+      </div>
+      <div class="row setting" data-keywords="vpn auto connect automatically start startup launch">
+        <div class="text"><label for="vpn.autoConnect">Connect when Krunk starts</label>
+          <p class="desc" id="vpn-auto-desc">To the profile used last, before any page loads.</p>
+          <p class="field-error" data-error-for="vpn.autoConnect"></p></div>
+        <div class="control"><input type="checkbox" id="vpn.autoConnect" data-key="vpn.autoConnect"></div>
       </div>
     </div>
 

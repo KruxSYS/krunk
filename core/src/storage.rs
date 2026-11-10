@@ -16,7 +16,7 @@ pub const BOOKMARKS_BAR: i64 = 1;
 /// Id of the "Other bookmarks" root folder.
 pub const OTHER_BOOKMARKS: i64 = 2;
 
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 /// Fixed sync guids of the two root folders (PROTOCOL §9.5): "bar" and "other".
 pub const ROOT_GUID_BAR: [u8; 16] = [0x01; 16];
@@ -325,6 +325,13 @@ impl Store {
             let tx = self.conn.transaction()?;
             tx.execute_batch(crate::scripts_store::SCHEMA_V7)?;
             tx.pragma_update(None, "user_version", 7)?;
+            tx.commit()?;
+        }
+        // 0.14.0: the VPN profiles (local only, no sync triggers).
+        if version < 8 && max >= 8 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(crate::vpn::SCHEMA_V8)?;
+            tx.pragma_update(None, "user_version", 8)?;
             tx.commit()?;
         }
         Ok(())

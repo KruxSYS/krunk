@@ -4,6 +4,25 @@
 use super::renderer;
 use crate::log::{info, warning};
 use cef::*;
+use std::cell::RefCell;
+
+/// WebRTC's interfaces: the default public one only (no local addresses, no mDNS responder)…
+const WEBRTC_NORMAL: &str = "default_public_interface_only";
+/// …and while the VPN runs (0.14.0) no UDP that doesn't go through the proxy: WebRTC can't
+/// reveal the real address (the proxy carries no UDP, so peer-to-peer media relay over TCP or stop).
+const WEBRTC_VPN: &str = "disable_non_proxied_udp";
+
+/// The engine's proxy while the VPN runs: the `server` (`http://127.0.0.1:<port>`) and the
+/// `bypass_list`. Kept so a private context created later gets it too.
+#[derive(Clone, PartialEq, Eq)]
+pub(super) struct VpnProxy {
+    pub server: String,
+    pub bypass: String,
+}
+
+thread_local! {
+    static VPN_PROXY: RefCell<Option<VpnProxy>> = const { RefCell::new(None) };
+}
 
 wrap_app! {
     struct LbApp {
@@ -145,11 +164,48 @@ pub(super) fn apply_profile_prefs(ctx: &mut RequestContext) {
         // WebRTC uses only the default public interface: no local IP
         // addresses are gathered, so no mDNS responder listens on the LAN
         // (which also triggered a Windows Firewall prompt).
-        ("webrtc.ip_handling_policy", Pref::Str("default_public_interface_only")),
+        ("webrtc.ip_handling_policy", Pref::Str(WEBRTC_NORMAL)),
     ];
     let applied = prefs.iter().filter(|(name, value)| set_pref(ctx, name, *value)).count();
     let scope = if ctx.is_global() != 0 { "default" } else { "private" };
     info!("engine preferences applied ({scope} profile): {applied}/{}", prefs.len());
+    // 0.14.0: a context created while the VPN runs (the private one) uses it from the start.
+    if let Some(p) = VPN_PROXY.with(|v| v.borrow().clone()) {
+        apply_vpn(ctx, Some(&p));
+    }
+}
+
+/// Points the context at the VPN's proxy (`Some`) or back at the system's (`None`): the
+/// `proxy` dictionary and WebRTC's UDP policy. False when the engine refused or kept another
+/// value.
+fn apply_vpn(ctx: &mut RequestContext, proxy: Option<&VpnProxy>) -> bool {
+    let scope = if ctx.is_global() != 0 { "default" } else { "private" };
+    let ok = match proxy {
+        Some(p) => {
+            let dict = [("mode", "fixed_servers"), ("server", p.server.as_str()), ("bypass_list", p.bypass.as_str())];
+            set_pref(ctx, "proxy", Pref::Dict(&dict))
+                & set_pref(ctx, "webrtc.ip_handling_policy", Pref::Str(WEBRTC_VPN))
+        }
+        None => reset_pref(ctx, "proxy") & set_pref(ctx, "webrtc.ip_handling_policy", Pref::Str(WEBRTC_NORMAL)),
+    };
+    match (proxy, ok) {
+        (Some(p), true) => info!("vpn: the {scope} profile uses the proxy {}", p.server),
+        (Some(_), false) => warning!("vpn: the {scope} profile did not take the proxy"),
+        (None, true) => info!("vpn: the {scope} profile is back on the system's proxy settings"),
+        (None, false) => warning!("vpn: the {scope} profile's proxy could not be reset"),
+    }
+    ok
+}
+
+/// The VPN's proxy for every context: the global one now, the private one now (when it exists)
+/// and whenever it is created. True when the engine took it everywhere.
+pub(super) fn set_vpn_proxy(proxy: Option<VpnProxy>, contexts: &mut [RequestContext]) -> bool {
+    VPN_PROXY.with(|v| *v.borrow_mut() = proxy.clone());
+    let mut ok = true;
+    for ctx in contexts {
+        ok &= apply_vpn(ctx, proxy.as_ref());
+    }
+    ok
 }
 
 /// Chromium's own DNS-over-HTTPS client (0.6.0 custom DNS): `mode` is `automatic` (the
@@ -176,10 +232,12 @@ pub(super) fn set_doh(mode: &str, templates: &str) -> bool {
 }
 
 #[derive(Clone, Copy)]
-enum Pref {
+enum Pref<'a> {
     Bool(bool),
     Int(i32),
-    Str(&'static str),
+    Str(&'a str),
+    /// A dictionary of strings (0.14.0: the `proxy` preference).
+    Dict(&'a [(&'a str, &'a str)]),
 }
 
 /// Sets one preference and reads it back; false (with a warning) when the
@@ -190,6 +248,13 @@ fn set_pref(ctx: &mut RequestContext, name: &str, pref: Pref) -> bool {
         Pref::Bool(b) => value.set_bool(i32::from(b)),
         Pref::Int(i) => value.set_int(i),
         Pref::Str(v) => value.set_string(Some(&CefString::from(v))),
+        Pref::Dict(items) => {
+            let Some(mut dict) = dictionary_value_create() else { return false };
+            for (k, v) in items {
+                dict.set_string(Some(&CefString::from(*k)), Some(&CefString::from(*v)));
+            }
+            value.set_dictionary(Some(&mut dict))
+        }
     };
     let name = CefString::from(name);
     if ctx.can_set_preference(Some(&name)) == 0 {
@@ -205,9 +270,35 @@ fn set_pref(ctx: &mut RequestContext, name: &str, pref: Pref) -> bool {
         Pref::Bool(b) => (v.bool() != 0) == b,
         Pref::Int(i) => v.int() == i,
         Pref::Str(s) => CefString::from(&v.string()).to_string() == s,
+        Pref::Dict(items) => v.dictionary().is_some_and(|d| {
+            items.iter().all(|(k, want)| CefString::from(&d.string(Some(&CefString::from(*k)))).to_string() == *want)
+        }),
     });
     if !kept {
         warning!("engine preference {name} was not kept");
     }
     kept
+}
+
+/// Resets a preference to its default (0.14.0: the `proxy` dictionary, back to the system's
+/// settings) and checks that no value of Krunk's is left.
+fn reset_pref(ctx: &mut RequestContext, name: &str) -> bool {
+    let name = CefString::from(name);
+    if ctx.can_set_preference(Some(&name)) == 0 {
+        warning!("engine preference {name} cannot be set");
+        return false;
+    }
+    let mut error = CefString::from("");
+    if ctx.set_preference(Some(&name), None, Some(&mut error)) == 0 {
+        warning!("engine preference {name}: {error}");
+        return false;
+    }
+    let left = ctx
+        .preference(Some(&name))
+        .and_then(|v| v.dictionary())
+        .is_some_and(|d| CefString::from(&d.string(Some(&CefString::from("mode")))).to_string() == "fixed_servers");
+    if left {
+        warning!("engine preference {name} was not reset");
+    }
+    !left
 }

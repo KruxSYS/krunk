@@ -1,0 +1,72 @@
+# Krunk VPN testbed (test only; never deployed). Used by the `vpn` crate's integration tests
+# (KRUNK_VPN_TESTBED=1 cargo test -p vpn). Bring up on the dind daemon:
+#   docker compose -p vpn-testbed -f tools/vpn-testbed/compose.yaml up -d --build
+#   docker compose -p vpn-testbed -f tools/vpn-testbed/compose.yaml exec -T wg cat /state/wg/client.conf
+#   docker compose -p vpn-testbed -f tools/vpn-testbed/compose.yaml exec -T ovpn cat /state/ovpn/client-udp.ovpn
+#     (user krunk / krunk-test; also client-tcp.ovpn and client-tcp-badca.ovpn, signed by another CA)
+#   docker compose -p vpn-testbed -f tools/vpn-testbed/compose.yaml down -v --rmi local
+# Published (outside the ports reserved on this host, 9000-9019 and 10000+):
+#   8551/udp WireGuard, 8194/udp + 8194/tcp OpenVPN. Reach them at dind:<port>.
+#   Override with WG_PORT / OVPN_PORT (and WG_ENDPOINT_HOST / OVPN_REMOTE for the generated
+#   client configs, default "dind") before the first start: the configs are generated once
+#   into the state volume.
+# Inside network (internal, no egress): echo 10.77.0.10:80 ("client=<tunnel IP>"), DNS 10.77.0.53
+# (inside.test). Tunnel subnets: WG 10.66.0.0/24, OpenVPN UDP 10.88.0.0/24, TCP 10.89.0.0/24.
+name: vpn-testbed
+
+x-servers: &servers
+  build: { context: ., target: servers }
+  image: krunk-vpn-testbed-servers:0.14
+  cap_add: [NET_ADMIN]
+  sysctls: { net.ipv4.ip_forward: "1" }
+  volumes: [state:/state]
+  restart: unless-stopped
+
+services:
+  wg:
+    <<: *servers
+    command: wg-entry.sh
+    environment:
+      WG_ENDPOINT: "${WG_ENDPOINT_HOST:-dind}:${WG_PORT:-8551}"
+    ports: ["${WG_PORT:-8551}:51820/udp"]
+    networks:
+      outer: {}
+      inside: { ipv4_address: 10.77.0.2 }
+  ovpn:
+    <<: *servers
+    command: ovpn-entry.sh
+    environment:
+      OVPN_REMOTE: "${OVPN_REMOTE:-dind}"
+      OVPN_REMOTE_PORT: "${OVPN_PORT:-8194}"
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    ports: ["${OVPN_PORT:-8194}:1194/udp", "${OVPN_PORT:-8194}:1194/tcp"]
+    networks:
+      outer: {}
+      inside: { ipv4_address: 10.77.0.3 }
+  inside:
+    build: { context: ., target: inside }
+    image: krunk-vpn-testbed-inside:0.14
+    command: [inside-entry.sh, echo]
+    cap_add: [NET_ADMIN]
+    networks: { inside: { ipv4_address: 10.77.0.10 } }
+    restart: unless-stopped
+  dns:
+    image: krunk-vpn-testbed-inside:0.14
+    command: [inside-entry.sh, dns]
+    cap_add: [NET_ADMIN]
+    depends_on: [inside]
+    networks: { inside: { ipv4_address: 10.77.0.53 } }
+    restart: unless-stopped
+
+networks:
+  outer: {}
+  inside:
+    internal: true
+    # Docker drops forwarded traffic on internal networks whose source is outside the network's
+    # subnet (DOCKER-INTERNAL chain). The subnet therefore spans the tunnel ranges (10.64/11
+    # covers 10.66, 10.77, 10.88, 10.89) while containers get addresses from 10.77.0.0/24 only;
+    # the /24 routes to the tunnel subnets win over the /11 on-link route.
+    ipam: { config: [{ subnet: 10.64.0.0/11, ip_range: 10.77.0.0/24 }] }
+
+volumes:
+  state: {}

@@ -23,7 +23,7 @@ use lb_core::ext::{self, Installed, Manifest};
 use lb_core::pages::Page;
 use lb_core::protocol::Channel;
 use lb_core::protocol::{Event, ExtAction, PopupRect};
-use lb_core::settings::{updater_proxy, UpdaterProxy};
+use lb_core::settings::UpdaterProxy;
 use lb_core::storage::now_ms;
 use lb_core::{assets, layout};
 use serde_json::{json, Value};
@@ -888,10 +888,14 @@ impl Browser {
         self.ext_open_options(id);
     }
 
-    fn ext_proxy(&self) -> http::ProxyMode {
-        match updater_proxy(&self.settings.borrow().proxy) {
-            UpdaterProxy::Named(p) => http::ProxyMode::Named(p),
-            _ => http::ProxyMode::System,
+    /// How an extension download reaches the store: through the VPN while it runs, else as the
+    /// proxy setting says. `None` with a SOCKS proxy, which WinHTTP can't use: going around it
+    /// would reveal the user's address (0.14.0; it used to fall back to the system's settings).
+    fn ext_proxy(&self) -> Option<http::ProxyMode> {
+        match self.own_proxy() {
+            UpdaterProxy::Named(p) => Some(http::ProxyMode::Named(p)),
+            UpdaterProxy::System => Some(http::ProxyMode::System),
+            UpdaterProxy::Skip => None,
         }
     }
 
@@ -2168,7 +2172,12 @@ impl Browser {
         store_tab: Option<TabId>,
     ) {
         let Some(download) = ext::webstore_download_url(id) else { return };
-        let proxy = self.ext_proxy();
+        let Some(proxy) = self.ext_proxy() else {
+            warning!("extension: {id} not downloaded: a SOCKS proxy is set");
+            let e = "Extensions can't be downloaded while a SOCKS proxy is set (it would be bypassed)".to_string();
+            self.ext_confirm_install(Err(e), format!("webstore:{id}"), "Chrome Web Store", tab, req_id, store_tab);
+            return;
+        };
         info!("extension: downloading {id} from the Web Store");
         let id2 = id.to_string();
         self.spawn_job(

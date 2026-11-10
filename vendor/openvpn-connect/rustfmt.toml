@@ -1,0 +1,2 @@
+# Krunk: the vendored crate keeps its upstream formatting (rustfmt defaults), not the
+# workspace's max_width 120, so `cargo fmt --all -- --check` passes without touching it.

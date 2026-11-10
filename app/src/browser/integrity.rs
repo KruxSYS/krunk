@@ -11,7 +11,7 @@ use super::Browser;
 use crate::ffi::http::{self, ProxyMode};
 use crate::log::{info, warning};
 use lb_core::integrity::{self, HashCache, Report};
-use lb_core::settings::{updater_proxy, UpdaterProxy};
+use lb_core::settings::UpdaterProxy;
 use lb_core::update::Manifest;
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
@@ -114,7 +114,7 @@ impl Browser {
             return;
         }
         let Some(dir) = install_dir() else { return };
-        let proxy = match updater_proxy(&self.settings.borrow().proxy) {
+        let proxy = match self.own_proxy() {
             UpdaterProxy::Skip => return,
             UpdaterProxy::Named(p) => ProxyMode::Named(p),
             UpdaterProxy::System => ProxyMode::System,

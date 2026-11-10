@@ -132,5 +132,10 @@
   },
   "macros": {
     "enabled": true
+  },
+  "vpn": {
+    "showButton": false,
+    "autoConnect": false,
+    "activeProfile": ""
   }
 }

@@ -12,6 +12,7 @@ pub mod icon;
 pub mod image;
 pub mod keyboard;
 pub mod overlay;
+pub mod peer;
 pub mod pipwin;
 pub mod process;
 pub mod procmem;

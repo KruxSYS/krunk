@@ -193,3 +193,29 @@ table.exceptions th:last-child, table.exceptions td:last-child { padding-right: 
 .ai-model .cap { flex: none; padding: 0 6px; border-radius: 8px; font-size: 0.846rem; background: var(--bg-hover); color: var(--fg-muted); }
 #ai-models-status:empty { display: none; }
 .ai-count { white-space: nowrap; }
+
+/* The VPN (0.14.0). */
+#vpn-profiles .vpn-profile { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-top: 1px solid var(--border); flex-wrap: wrap; }
+#vpn-profiles .vpn-profile:first-child { border-top: 0; }
+#vpn-profiles .vpn-profile.running { background: var(--accent-soft); border-radius: 6px; }
+#vpn-profiles .main { display: flex; flex-direction: column; align-items: stretch; gap: 1px; flex: 1 1 200px; min-width: 0; }
+#vpn-profiles .name { font-weight: 600; white-space: normal; overflow-wrap: anywhere; }
+#vpn-profiles .sub { color: var(--fg-muted); font-size: 0.923rem; white-space: normal; overflow-wrap: anywhere; }
+#vpn-profiles .btn { white-space: nowrap; }
+.vpn-badge { flex: none; padding: 1px 8px; border-radius: 999px; font-size: 0.846rem; font-weight: 600; border: 1px solid var(--border); color: var(--fg-muted); }
+.vpn-badge.connected { color: #15803d; border-color: #15803d; }
+.vpn-badge.connecting, .vpn-badge.reconnecting { color: #b45309; border-color: #b45309; }
+.vpn-badge.failed { color: var(--danger); border-color: var(--danger); }
+:root.dark .vpn-badge.connected { color: #4ade80; border-color: #4ade80; }
+:root.dark .vpn-badge.connecting, :root.dark .vpn-badge.reconnecting { color: #fbbf24; border-color: #fbbf24; }
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) .vpn-badge.connected { color: #4ade80; border-color: #4ade80; }
+  :root:not(.light) .vpn-badge.connecting, :root:not(.light) .vpn-badge.reconnecting { color: #fbbf24; border-color: #fbbf24; }
+}
+.vpn-form { margin: 0 0 8px 8px; align-items: flex-start; }
+.vpn-form input { height: 32px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; flex: 1 1 160px; min-width: 0; }
+.vpn-form .field-error { flex-basis: 100%; }
+.vpn-status:empty { display: none; }
+.vpn-status.bad { color: var(--danger); }
+.vpn-warnings { margin: 6px 0 0; padding-left: 20px; }
+.vpn-warnings[hidden] { display: none; }

@@ -42,6 +42,8 @@ hyper = { version = "1", features = ["server", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["server-auto", "tokio", "http1", "http2"] }
 http-body-util = "0.1"
 webpki-roots = "0.26"
+# 0.14.0: the in-browser VPN (WireGuard, OpenVPN; a local proxy for Krunk's traffic only).
+vpn = { path = "../vpn" }
 
 [target.'cfg(windows)'.dependencies]
 # Pinned exactly: the binary distribution in cef.lock must match this crate.
@@ -51,7 +53,9 @@ windows = { version = "0.62", features = [
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Imaging",
+    "Win32_NetworkManagement_IpHelper",
     "Win32_Networking_WinHttp",
+    "Win32_Networking_WinSock",
     "Win32_Security_Cryptography",
     "Win32_Storage_EnhancedStorage",
     "Win32_Storage_FileSystem",

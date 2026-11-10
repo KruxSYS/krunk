@@ -21,7 +21,7 @@ use crate::ffi::http::{self, ProxyMode};
 use crate::log::{info, warning};
 use lb_core::downloads::{DownloadState, Resume};
 use lb_core::segdl::{self, Part, Probed, Validator};
-use lb_core::settings::{updater_proxy, UpdaterProxy};
+use lb_core::settings::{krunk_proxy, UpdaterProxy};
 use lb_core::storage::now_ms;
 use lb_core::tabs::TabId;
 use std::cell::{Cell, RefCell};
@@ -187,10 +187,12 @@ impl Browser {
     fn parts_settings(&self) -> (u32, Option<ProxyMode>, String) {
         let s = self.settings.borrow();
         let agent = if s.user_agent.is_empty() { crate::ffi::cef::default_user_agent() } else { s.user_agent.clone() };
-        let proxy = match updater_proxy(&s.proxy) {
+        // 0.14.0: through the VPN while it runs, like every other request of Krunk's.
+        let vpn = self.vpn_proxy_addr();
+        let proxy = match krunk_proxy(&s.proxy, vpn.as_deref()) {
+            UpdaterProxy::Named(p) => Some(ProxyMode::Named(p)),
             _ if s.proxy.trim() == "direct://" => None,
             UpdaterProxy::System => Some(ProxyMode::System),
-            UpdaterProxy::Named(p) => Some(ProxyMode::Named(p)),
             UpdaterProxy::Skip => None,
         };
         (s.download_connections, proxy, agent)

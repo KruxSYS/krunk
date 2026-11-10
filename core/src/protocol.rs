@@ -184,6 +184,8 @@ pub enum PopupKind {
     Unresponsive,
     /// A page's alert / confirm / prompt or "Leave site?" (0.12.4). Opened by the host only.
     JsDialog,
+    /// The VPN button's popup (0.14.0): state, profile picker, Connect / Disconnect.
+    Vpn,
 }
 
 impl PopupKind {
@@ -197,6 +199,7 @@ impl PopupKind {
                 | PopupKind::Downloads
                 | PopupKind::Pip
                 | PopupKind::TabList
+                | PopupKind::Vpn
         )
     }
 
@@ -333,6 +336,11 @@ pub enum PopupContent {
         /// It replaces an installed version (`previous`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         previous: Option<String>,
+    },
+    /// The VPN popup (0.14.0): the same view the `vpn` event carries.
+    Vpn {
+        #[serde(flatten)]
+        view: crate::vpn::VpnView,
     },
     Shield {
         host: String,
@@ -703,6 +711,7 @@ impl PopupContent {
             PopupContent::TabList { .. } => PopupKind::TabList,
             PopupContent::Unresponsive { .. } => PopupKind::Unresponsive,
             PopupContent::JsDialog { .. } => PopupKind::JsDialog,
+            PopupContent::Vpn { .. } => PopupKind::Vpn,
         }
     }
 
@@ -716,6 +725,7 @@ impl PopupContent {
             PopupContent::Downloads { .. } => Some("downloads".into()),
             PopupContent::Pip { .. } => Some("pip".into()),
             PopupContent::TabList { .. } => Some("tabList".into()),
+            PopupContent::Vpn { .. } => Some("vpn".into()),
             PopupContent::BookmarkFolder { id, .. } => Some(format!("folder:{id}")),
             _ => None,
         }
@@ -1657,6 +1667,30 @@ pub enum Request {
     },
     /// Which providers have a key stored.
     AiStatus,
+    // ---- the VPN (0.14.0; Settings, and the popup's connect and disconnect) ----
+    /// The card's state (answered with the view; the `vpn` event follows each change).
+    VpnState,
+    /// The host opens the file dialog (`*.conf;*.ovpn`), reads the file itself and answers
+    /// with the new profile and its warnings, or an error. Nothing of the file comes from the page.
+    VpnImport {},
+    VpnRename {
+        id: String,
+        name: String,
+    },
+    VpnRemove {
+        id: String,
+    },
+    /// An OpenVPN profile's user name and password (DPAPI-protected with the profile; never
+    /// sent back).
+    VpnCredentials {
+        id: String,
+        username: String,
+        password: Secret,
+    },
+    VpnConnect {
+        id: String,
+    },
+    VpnDisconnect {},
     /// krunk://scripts (0.12.0).
     ScriptsList,
     ScriptGet {
@@ -1960,6 +1994,8 @@ impl Sender {
                     | R::UpdateReply { .. }
                     | R::OpenBlockedPage {}
                     | R::Quit
+                    | R::VpnConnect { .. }
+                    | R::VpnDisconnect {}
             ),
             Sender::Page(Page::NewTab) => matches!(
                 req,
@@ -2074,6 +2110,13 @@ impl Sender {
                     | R::AiTest { .. }
                     | R::AiModels { .. }
                     | R::AiStatus
+                    | R::VpnState
+                    | R::VpnImport {}
+                    | R::VpnRename { .. }
+                    | R::VpnRemove { .. }
+                    | R::VpnCredentials { .. }
+                    | R::VpnConnect { .. }
+                    | R::VpnDisconnect {}
             ),
             Sender::Page(Page::Sync) => matches!(
                 req,
@@ -2711,6 +2754,12 @@ pub enum Event {
     MacroState {
         running: Option<String>,
     },
+    /// The VPN's state and profiles (0.14.0), to Settings pages, the shells (the button) and
+    /// the VPN popup; again every ~2 s while connected (the byte counters).
+    Vpn {
+        #[serde(flatten)]
+        view: crate::vpn::VpnView,
+    },
 }
 
 /// A saved card as the fill dropdown shows it (0.6.0).
@@ -3050,6 +3099,60 @@ mod tests {
             classify(Channel::Tab, "https://krunk.invalid/scripts.html", true),
             Ok(Source::Privileged(Sender::Page(Page::Scripts)))
         );
+    }
+
+    /// 0.14.0: the VPN's commands belong to Settings (and connect / disconnect to the popup
+    /// too); the shell only opens the popup; web content and the rest get none of them.
+    #[test]
+    fn vpn_commands_are_least_privilege() {
+        let settings = Sender::Page(Page::Settings);
+        let cases: &[(&str, &[Sender])] = &[
+            (r#"{"cmd":"vpnState"}"#, &[settings]),
+            (r#"{"cmd":"vpnImport"}"#, &[settings]),
+            (r#"{"cmd":"vpnRename","id":"ab","name":"Office"}"#, &[settings]),
+            (r#"{"cmd":"vpnRemove","id":"ab"}"#, &[settings]),
+            (r#"{"cmd":"vpnCredentials","id":"ab","username":"alice","password":"pw-SECRET"}"#, &[settings]),
+            (r#"{"cmd":"vpnConnect","id":"ab"}"#, &[settings, Sender::Popup]),
+            (r#"{"cmd":"vpnDisconnect"}"#, &[settings, Sender::Popup]),
+        ];
+        for (msg, allowed) in cases {
+            for s in every_sender() {
+                let r = parse_request(s, msg);
+                if allowed.contains(&s) {
+                    assert!(r.is_ok(), "{s:?} {msg}: {r:?}");
+                } else {
+                    assert_eq!(r, Err(ProtocolError::Forbidden), "{s:?} {msg}");
+                }
+            }
+            assert!(parse_content(msg).is_err(), "{msg}");
+        }
+        // The import takes nothing from the page (the host reads the file).
+        assert!(matches!(
+            parse_request(settings, r#"{"cmd":"vpnImport","text":"[Interface]"}"#),
+            Err(ProtocolError::Malformed(_))
+        ));
+        let env =
+            parse_request(settings, r#"{"cmd":"vpnCredentials","id":"ab","username":"alice","password":"pw-SECRET"}"#)
+                .unwrap();
+        assert!(!format!("{env:?}").contains("SECRET"));
+        // The shell opens the popup; the popup goes to Settings → VPN with openPage.
+        let rect = r#"{"x":900,"y":40,"width":320,"height":300}"#;
+        let open = format!(r#"{{"cmd":"showPopup","popup":"vpn","rect":{rect}}}"#);
+        assert!(parse_request(Sender::Shell, &open).is_ok());
+        assert!(PopupKind::Vpn.shell_may_open() && PopupKind::Vpn.takes_focus());
+        assert!(parse_request(Sender::Popup, r#"{"cmd":"openPage","page":"settings","section":"vpn"}"#).is_ok());
+        // The event and the popup carry the same view.
+        let view = crate::vpn::VpnView { show_button: true, active: "ab".into(), ..Default::default() };
+        let j = Event::Vpn { view: view.clone() }.to_json();
+        assert!(j.starts_with(r#"{"event":"vpn","status":{"state":"stopped""#), "{j}");
+        assert!(j.contains(r#""active":"ab","showButton":true"#), "{j}");
+        let c = PopupContent::Vpn { view };
+        assert_eq!(c.kind(), PopupKind::Vpn);
+        assert_eq!(c.toggle_anchor().as_deref(), Some("vpn"));
+        let v = serde_json::to_value(&c).unwrap();
+        assert_eq!(v["kind"], "vpn");
+        assert_eq!(v["profiles"], serde_json::json!([]));
+        assert_eq!(serde_json::from_value::<PopupContent>(v).unwrap(), c);
     }
 
     /// An API key is parsed into a `Secret` and never shown by `Debug`.

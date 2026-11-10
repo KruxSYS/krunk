@@ -259,6 +259,16 @@ pub fn set_doh(mode: &str, templates: &str) -> bool {
     app::set_doh(mode, templates)
 }
 
+/// The VPN's local proxy for all of the engine's traffic (0.14.0): `Some((server, bypass))`
+/// sets the `proxy` preference to `fixed_servers` with `server` (`http://127.0.0.1:<port>`) on
+/// the default and the private profile (also one created later) and keeps WebRTC from sending
+/// UDP outside it; `None` goes back to the system's settings. True when every profile took it.
+pub fn set_vpn_proxy(proxy: Option<(String, String)>) -> bool {
+    let mut contexts: Vec<RequestContext> = request_context_get_global_context().into_iter().collect();
+    contexts.extend(PRIVATE_CONTEXT.with(|c| c.borrow().clone()));
+    app::set_vpn_proxy(proxy.map(|(server, bypass)| app::VpnProxy { server, bypass }), &mut contexts)
+}
+
 fn private_context() -> Option<RequestContext> {
     if let Some(c) = PRIVATE_CONTEXT.with(|c| c.borrow().clone()) {
         return Some(c);

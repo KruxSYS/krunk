@@ -972,7 +972,7 @@
     });
   });
 
-  const POPUP_SIZES = { menu: [280, 670], shield: [300, 226], siteInfo: [360, 260], downloads: [380, 420], pip: [340, 300] };
+  const POPUP_SIZES = { menu: [280, 670], shield: [300, 226], siteInfo: [360, 260], downloads: [380, 420], pip: [340, 300], vpn: [320, 330] };
   // The press on the button deactivates the open popup, which closes it before the click
   // arrives (the host then says popupClosed). The click must not reopen it: the press
   // remembers what was open. The host has the same guard (lb_core::toggle).
@@ -998,6 +998,9 @@
     $('downloads').classList.toggle('on', kind === 'downloads');
     $('pip').classList.toggle('on', kind === 'pip');
     $('shield').classList.toggle('on', kind === 'shield');
+    // The VPN button's `.on` is its state (connected); open is `.open`.
+    $('vpn').classList.toggle('open', kind === 'vpn');
+    $('vpn').setAttribute('aria-expanded', kind === 'vpn' ? 'true' : 'false');
     $('site-icon').classList.toggle('on', kind === 'siteInfo');
     $('tablist').classList.toggle('on', kind === 'tabList');
     document.documentElement.classList.toggle('tab-menu', kind === 'tabMenu');
@@ -1269,6 +1272,26 @@
   $('zoom').addEventListener('click', function () { LB.post('zoom', { action: 'reset' }); });
   $('menu').addEventListener('pointerdown', function () { rememberOpen('menu'); });
   $('menu').addEventListener('click', function () { togglePopup('menu', $('menu')); });
+  // 0.14.0: the VPN (shown only when turned on in Settings → Privacy & security → VPN).
+  $('vpn').addEventListener('pointerdown', function () { rememberOpen('vpn'); });
+  $('vpn').addEventListener('click', function () { togglePopup('vpn', $('vpn')); });
+  LB.on('vpn', function (m) {
+    const b = $('vpn');
+    const st = (m.status && m.status.state) || 'stopped';
+    const look = st === 'connected' ? 'on' : (st === 'connecting' || st === 'reconnecting') ? 'connecting' : st === 'failed' ? 'error' : 'off';
+    ['off', 'connecting', 'on', 'error'].forEach(function (c) { b.classList.toggle(c, c === look); });
+    const p = (m.profiles || []).find(function (x) { return x.id === m.active; });
+    const text = { on: 'VPN connected', connecting: st === 'reconnecting' ? 'VPN reconnecting' : 'VPN connecting', error: 'VPN error: connections are stopped', off: 'VPN off' }[look] +
+      (p && look !== 'off' ? ' (' + p.name + ')' : '');
+    b.title = text;
+    b.setAttribute('aria-label', text);
+    const hide = !m.showButton;
+    if (b.hidden !== hide) {
+      b.hidden = hide;
+      if (hide && state.popup === 'vpn') { LB.post('hidePopup'); setPopup(null); }
+      reportHitMap();
+    }
+  });
   $('shield').addEventListener('pointerdown', function () { rememberOpen('shield'); });
   $('shield').addEventListener('click', function () { togglePopup('shield', $('shield')); });
   // 0.12.0: the AI agent's panel (the button shows only while AI is on) and a running macro.

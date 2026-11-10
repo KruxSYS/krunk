@@ -147,6 +147,23 @@ pub fn descendants(root: u32, procs: &[(u32, u32)]) -> Vec<u32> {
     out
 }
 
+/// The parent chain from `pid` up to `root` (0.14.0, the VPN proxy's owner check): `pid`, its
+/// parent, … up to but without `root`; `None` when `root` is not an ancestor (or the chain loops
+/// or is longer than 32).
+pub fn chain_to(pid: u32, root: u32, procs: &[(u32, u32)]) -> Option<Vec<u32>> {
+    let parent_of = |p: u32| procs.iter().find(|(x, _)| *x == p).map(|(_, parent)| *parent);
+    let mut chain = Vec::new();
+    let mut cur = pid;
+    while cur != root {
+        if chain.len() >= 32 || chain.contains(&cur) {
+            return None;
+        }
+        chain.push(cur);
+        cur = parent_of(cur).filter(|p| *p != 0)?;
+    }
+    (!chain.is_empty()).then_some(chain)
+}
+
 /// One line of the `--mem-report` log.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MemorySample {
@@ -182,6 +199,20 @@ impl MemorySample {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn parent_chains() {
+        // 1 = Krunk, 2 = its network service, 3 = a child of that, 9 = another program, 7 = a loop.
+        let procs = [(1, 100), (2, 1), (3, 2), (9, 100), (7, 8), (8, 7), (5, 0)];
+        assert_eq!(chain_to(2, 1, &procs), Some(vec![2]));
+        assert_eq!(chain_to(3, 1, &procs), Some(vec![3, 2]));
+        assert_eq!(chain_to(1, 1, &procs), None, "the root itself is no child");
+        assert_eq!(chain_to(9, 1, &procs), None);
+        assert_eq!(chain_to(7, 1, &procs), None);
+        assert_eq!(chain_to(5, 1, &procs), None);
+        assert_eq!(chain_to(42, 1, &procs), None, "not running");
+    }
+
     use super::*;
 
     const MIN: i64 = 60_000;

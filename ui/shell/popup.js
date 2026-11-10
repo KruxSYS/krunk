@@ -387,6 +387,119 @@
     return [el('div', { class: 'panel pop' }, [head, count, list, foot])];
   }
 
+  // 0.14.0: the VPN button's popup: the state, the profile picker, Connect / Disconnect, the
+  // uptime, the bytes, the address inside the tunnel, an error, and "VPN settings". The host
+  // sends a `vpn` event at each change (and every ~2 s while connected): the panel is updated
+  // in place, keeping the profile the user picked and the focus.
+  const VPN_KIND = { wireguard: 'WireGuard', openvpn: 'OpenVPN' };
+  const VPN_TITLE = { connected: 'VPN connected', connecting: 'Connecting…', reconnecting: 'Reconnecting…', failed: 'VPN error', stopped: 'VPN is off' };
+  const vpn = { picked: null, timer: 0, error: '' };
+  LB.on('popupClear', function () { vpn.picked = null; vpn.error = ''; clearInterval(vpn.timer); });
+  // Connect and Disconnect wait for the host's answer: a refusal (a manual proxy, missing
+  // credentials) is shown here.
+  function vpnAsk(cmd, args) {
+    vpn.error = '';
+    LB.request(cmd, args).then(function () { vpn.error = ''; }, function (e) {
+      vpn.error = e.message || 'Failed';
+      if (current && current.kind === 'vpn') vpnRerender();
+    });
+  }
+  function vpnBytes(n) {
+    if (!(n > 0)) return '0 B';
+    const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.min(u.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
+    return (i === 0 ? n : (n / Math.pow(1024, i)).toFixed(n < 10 * Math.pow(1024, i) ? 1 : 0)) + ' ' + u[i];
+  }
+  function vpnUptime(sinceMs) {
+    const s = Math.max(0, Math.floor((Date.now() - sinceMs) / 1000));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    return (h ? h + ':' + String(m).padStart(2, '0') : String(m)) + ':' + String(sec).padStart(2, '0');
+  }
+  function renderVpn(c) {
+    clearInterval(vpn.timer);
+    const st = (c.status && c.status.state) || 'stopped';
+    const engaged = st !== 'stopped';
+    const profiles = c.profiles || [];
+    const active = profiles.find((p) => p.id === c.active) || null;
+    if (vpn.picked && !profiles.some((p) => p.id === vpn.picked)) vpn.picked = null;
+    const look = st === 'connected' ? 'ok' : st === 'failed' ? 'warn' : (st === 'stopped' ? 'plain' : 'busy');
+    const head = el('div', { class: 'pop-head' }, [
+      el('div', { class: 'pop-icon vpn-' + look, 'aria-hidden': 'true' }, [el('span', { text: st === 'connected' ? '●' : st === 'failed' ? '!' : st === 'stopped' ? '○' : '◐' })]),
+      el('div', { class: 'pop-titles' }, [
+        el('h2', { class: 'pop-title', id: 'vpn-title', text: VPN_TITLE[st] || 'VPN' }),
+        el('div', { class: 'pop-sub', id: 'vpn-sub', text: engaged && active ? active.name + ' · ' + (c.status.server || active.server) : 'Only Krunk\'s connections use the VPN' }),
+      ]),
+    ]);
+    const parts = [head];
+    if (!profiles.length) {
+      parts.push(el('div', { class: 'pop-card plain-note', text: 'No VPN profiles yet. Import a WireGuard (.conf) or OpenVPN (.ovpn) file in Settings.' }));
+    } else {
+      const chosen = vpn.picked || (active ? active.id : profiles[0].id);
+      const sel = el('select', { id: 'vpn-profile', class: 'vpn-select', 'aria-label': 'VPN profile' }, profiles.map((p) =>
+        el('option', { value: p.id, selected: p.id === chosen, text: p.name + ' (' + (VPN_KIND[p.kind] || p.kind) + ')' })));
+      sel.value = chosen;
+      sel.addEventListener('change', function () {
+        vpn.picked = sel.value;
+        vpnRerender();
+        const again = document.getElementById('vpn-profile');
+        if (again) again.focus();
+      });
+      parts.push(el('label', { class: 'vpn-pick' }, [el('span', { text: 'Profile' }), sel]));
+      const picked = profiles.find((p) => p.id === chosen);
+      const other = engaged && active && chosen !== active.id;
+      if (picked && picked.needsCredentials && !picked.hasCredentials) {
+        parts.push(el('div', { class: 'pop-card warning', text: 'This profile needs a user name and password: enter them in VPN settings.' }));
+      }
+      if (vpn.error) parts.push(el('div', { class: 'pop-card warning', id: 'vpn-refused', role: 'alert', text: vpn.error }));
+      if (c.status && c.status.error && (st === 'failed' || st === 'reconnecting')) {
+        parts.push(el('div', { class: 'pop-card warning', id: 'vpn-error', role: 'alert', text: c.status.error }));
+      }
+      if (st === 'failed') parts.push(el('div', { class: 'pop-card plain-note', text: 'Krunk\'s connections are stopped until the VPN connects again or you disconnect.' }));
+      if (st === 'connected' || st === 'reconnecting') {
+        const kv = (k, v, id) => el('div', { class: 'kv' }, [el('span', { class: 'k', text: k }), el('span', { class: 'v', id: id, text: v })]);
+        parts.push(el('div', { class: 'pop-card vpn-stats' }, [
+          st === 'connected' ? kv('Connected for', vpnUptime(c.status.sinceMs), 'vpn-uptime') : null,
+          kv('Address', c.status.tunnelIp || '–', 'vpn-ip'),
+          kv('Received', vpnBytes(c.status.rxBytes), 'vpn-rx'),
+          kv('Sent', vpnBytes(c.status.txBytes), 'vpn-tx'),
+        ]));
+        if (st === 'connected') {
+          vpn.timer = setInterval(function () {
+            const u = document.getElementById('vpn-uptime');
+            if (!u || !current || current.kind !== 'vpn') { clearInterval(vpn.timer); return; }
+            u.textContent = vpnUptime(current.status.sinceMs);
+          }, 1000);
+        }
+      }
+      const connect = () => { const id = sel.value; vpn.picked = null; vpnAsk('vpnConnect', { id: id }); };
+      const row = el('div', { class: 'pop-row vpn-actions' }, [
+        engaged && (st === 'failed' || other)
+          ? el('button', { class: 'btn', id: 'vpn-connect', onclick: connect, text: other ? 'Connect to this one' : 'Try again' }) : null,
+        engaged
+          ? el('button', { class: 'btn primary', id: 'vpn-toggle', onclick: () => { vpn.picked = null; vpnAsk('vpnDisconnect'); }, text: 'Disconnect' })
+          : el('button', { class: 'btn primary', id: 'vpn-toggle', onclick: connect, text: 'Connect' }),
+      ]);
+      parts.push(row);
+    }
+    parts.push(el('button', { class: 'link', id: 'vpn-settings', onclick: () => { LB.post('openPage', { page: 'settings', section: 'vpn' }); close(); }, text: 'VPN settings' }));
+    return [el('div', { class: 'panel pop vpn-pop' }, parts)];
+  }
+  function vpnRerender() {
+    root.textContent = '';
+    renderVpn(current).forEach((n) => n && root.appendChild(n));
+    requestAnimationFrame(fit);
+  }
+  // A new state while the panel is open: rendered again in place.
+  LB.on('vpn', function (m) {
+    if (!current || current.kind !== 'vpn') return;
+    const focused = document.activeElement && document.activeElement.id;
+    current = Object.assign({}, m, { kind: 'vpn' });
+    delete current.event;
+    vpnRerender();
+    const f = focused && document.getElementById(focused);
+    if (f) f.focus();
+  });
+
   // The lock popup: the connection, a warning when something is wrong, the certificate.
   function dateText(unix) {
     const d = new Date(unix * 1000);
@@ -462,7 +575,7 @@
   function fit() { LB.post('popupResize', { height: Math.max(root.offsetHeight, root.scrollHeight) + 2 }); }
   // Content whose height depends on its items: the window is opened with an upper bound
   // and fitted right after the render (the ⋮ menu used to leave a gap at the bottom).
-  const FITS = { extInstall: true, suggest: true, cardFill: true, menu: true, tabMenu: true, navMenu: true, httpAuth: true, bookmarkMenu: true, siteInfo: true, addressMenu: true, captionMenu: true, downloads: true, permission: true, passwordSaved: true, pip: true, bookmarkFolder: true, jsDialog: true };
+  const FITS = { vpn: true, extInstall: true, suggest: true, cardFill: true, menu: true, tabMenu: true, navMenu: true, httpAuth: true, bookmarkMenu: true, siteInfo: true, addressMenu: true, captionMenu: true, downloads: true, permission: true, passwordSaved: true, pip: true, bookmarkFolder: true, jsDialog: true };
 
 
   // Login suggestions under a focused field: the matching usernames (with the host for a
@@ -1111,7 +1224,7 @@
       return;
     }
     current = m.content;
-    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, cardFill: renderCardFill, saveCard: renderSaveCard, pip: renderPip, pipVolume: renderPipVolume, extInstall: renderExtInstall, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, navMenu: renderNavMenu, httpAuth: renderHttpAuth, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit, tabList: renderTabList, unresponsive: renderUnresponsive, jsDialog: renderJsDialog }[c.kind];
+    const render = { menu: renderMenu, shield: renderShield, vpn: renderVpn, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, cardFill: renderCardFill, saveCard: renderSaveCard, pip: renderPip, pipVolume: renderPipVolume, extInstall: renderExtInstall, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, navMenu: renderNavMenu, httpAuth: renderHttpAuth, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit, tabList: renderTabList, unresponsive: renderUnresponsive, jsDialog: renderJsDialog }[c.kind];
     root.textContent = '';
     root.dataset.kind = c.kind;
     // The volume bar matches the engine's floating window, which is always dark.

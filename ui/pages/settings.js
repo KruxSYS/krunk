@@ -13,8 +13,11 @@
 
   // ---------- tabs and deep links ----------
   const TABS = ['account', 'general', 'privacy', 'permissions', 'passwords', 'downloads', 'appearance', 'ai', 'advanced'];
+  // Sections inside a tab (0.14.0: the VPN popup's "VPN settings" opens #vpn).
+  const SECTIONS = { vpn: ['privacy', 'vpn-card'] };
   function tabFromHash() {
     const h = (location.hash || '').replace(/^#/, '').toLowerCase();
+    if (SECTIONS[h]) return SECTIONS[h][0];
     return TABS.includes(h) ? h : 'general';
   }
   function showTab(name) {
@@ -24,6 +27,11 @@
       if (a.dataset.tab === name) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
     });
     window.scrollTo(0, 0);
+    const section = SECTIONS[(location.hash || '').replace(/^#/, '').toLowerCase()];
+    if (section && section[0] === name) {
+      const card = $(section[1]);
+      if (card) requestAnimationFrame(function () { card.scrollIntoView({ block: 'start' }); });
+    }
     // The per-site answers change while the page is open (prompts in other tabs).
     if (name === 'permissions' && typeof loadPermissions === 'function') loadPermissions();
     // The Account card on screen: a signed-in device may check with the server (0.8.0).
@@ -255,6 +263,151 @@
       });
     }, function (err) { $('dns-error').textContent = err.message; });
   });
+
+  // ---------- VPN (0.14.0) ----------
+  // The host reads the imported file itself (native dialog) and keeps the profiles; the page
+  // shows the `vpn` view and sends commands. A password goes to the host once and is never
+  // shown or sent back: the field is cleared as soon as it is read.
+  const VPN_KIND = { wireguard: 'WireGuard', openvpn: 'OpenVPN' };
+  const VPN_STATE = { connected: 'Connected', connecting: 'Connecting…', reconnecting: 'Reconnecting…', failed: 'Not connected', stopped: 'Off' };
+  let vpnView = null;
+  let vpnOpen = { id: '', what: '' }; // the profile whose rename or credentials form is open
+  let vpnSig = '';
+  function vpnError(e) { return (e && e.message) || 'Failed'; }
+  function vpnBytes(n) {
+    if (!(n > 0)) return '0 B';
+    const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.min(u.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
+    return (i === 0 ? n : (n / Math.pow(1024, i)).toFixed(1)) + ' ' + u[i];
+  }
+  function vpnSet(v) { if (v && Array.isArray(v.profiles)) vpnView = v; renderVpn(); }
+  function vpnAsk(cmd, args) {
+    $('vpn-error').textContent = '';
+    return LB.request(cmd, args).then(function (v) { vpnSet(v); return true; }, function (e) { $('vpn-error').textContent = vpnError(e); return false; });
+  }
+  function renderVpn() {
+    const v = vpnView;
+    if (!v) return;
+    const st = (v.status && v.status.state) || 'stopped';
+    const engaged = st !== 'stopped';
+    const active = v.profiles.find((p) => p.id === v.active) || null;
+    // The status line.
+    let line = '';
+    if (engaged) {
+      line = VPN_STATE[st] + (active ? ' · ' + active.name : '');
+      if (st === 'connected') line += (v.status.tunnelIp ? ' · ' + v.status.tunnelIp : '') + ' · ' + vpnBytes(v.status.rxBytes) + ' received, ' + vpnBytes(v.status.txBytes) + ' sent';
+      if (v.status.error && (st === 'failed' || st === 'reconnecting')) line += ' · ' + v.status.error;
+      if (st === 'failed') line += '. Krunk\'s connections are stopped until it connects or you disconnect.';
+    } else line = v.profiles.length ? 'Off: Krunk connects directly.' : '';
+    $('vpn-status').textContent = line;
+    $('vpn-status').classList.toggle('bad', st === 'failed');
+    $('vpn-auto-desc').textContent = active
+      ? 'To the profile used last (' + active.name + '), before any page loads.'
+      : 'To the profile used last, before any page loads. Connect to one first.';
+    // The list (rebuilt only when what it shows changed: an open form keeps what is typed).
+    const sig = JSON.stringify([v.profiles, v.active, st, vpnOpen]);
+    if (sig === vpnSig) return;
+    vpnSig = sig;
+    const box = $('vpn-profiles');
+    box.textContent = '';
+    if (!v.profiles.length) box.appendChild(el('p', { class: 'muted', text: 'No profiles yet: import a file from your VPN provider.' }));
+    v.profiles.forEach(function (p) {
+      const running = engaged && p.id === v.active;
+      const needs = p.needsCredentials && !p.hasCredentials;
+      const sub = [VPN_KIND[p.kind] || p.kind, p.server].concat(p.needsCredentials ? [p.hasCredentials ? 'user name and password saved' : 'needs a user name and password'] : []);
+      box.appendChild(el('div', { class: 'row vpn-profile' + (running ? ' running' : ''), 'data-id': p.id }, [
+        el('div', { class: 'main' }, [
+          el('span', { class: 'name', text: p.name }),
+          el('span', { class: 'sub', text: sub.join(' · ') }),
+        ]),
+        running ? el('span', { class: 'vpn-badge ' + st, text: VPN_STATE[st] }) : null,
+        running
+          ? el('button', { type: 'button', class: 'btn small vpn-disconnect', text: 'Disconnect', onclick: function () { vpnAsk('vpnDisconnect'); } })
+          : el('button', { type: 'button', class: 'btn small primary vpn-connect', text: 'Connect', disabled: needs, title: needs ? 'Enter the user name and password first' : null, 'aria-label': 'Connect to ' + p.name,
+            onclick: function () { vpnAsk('vpnConnect', { id: p.id }); } }),
+        el('button', { type: 'button', class: 'btn small vpn-rename', text: 'Rename', 'aria-label': 'Rename ' + p.name, onclick: function () { vpnToggle(p.id, 'rename'); } }),
+        p.kind === 'openvpn' ? el('button', { type: 'button', class: 'btn small vpn-creds', text: p.hasCredentials ? 'Change password' : 'User name and password', onclick: function () { vpnToggle(p.id, 'credentials'); } }) : null,
+        el('button', { type: 'button', class: 'btn small danger vpn-remove', text: 'Remove', 'aria-label': 'Remove ' + p.name, onclick: function () { vpnRemove(p); } }),
+      ]));
+      if (vpnOpen.id === p.id) {
+        const form = vpnOpen.what === 'rename' ? vpnRenameForm(p) : vpnCredentialsForm(p);
+        box.appendChild(form);
+        form.querySelector('input').focus();
+      }
+    });
+  }
+  function vpnToggle(id, what) {
+    vpnOpen = vpnOpen.id === id && vpnOpen.what === what ? { id: '', what: '' } : { id: id, what: what };
+    renderVpn();
+  }
+  function vpnClose() { vpnOpen = { id: '', what: '' }; renderVpn(); }
+  function vpnRenameForm(p) {
+    const input = el('input', { type: 'text', class: 'vpn-name-input', maxlength: '60', spellcheck: 'false', value: p.name, 'aria-label': 'New name for ' + p.name });
+    const err = el('p', { class: 'field-error' });
+    const form = el('form', { class: 'inline-form vpn-form', autocomplete: 'off', 'data-for': p.id }, [
+      input,
+      el('button', { type: 'submit', class: 'btn small primary', text: 'Save' }),
+      el('button', { type: 'button', class: 'btn small', text: 'Cancel', onclick: vpnClose }),
+      err,
+    ]);
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      const name = input.value.trim();
+      if (!name) { err.textContent = 'Enter a name'; return; }
+      LB.request('vpnRename', { id: p.id, name: name }).then(function (v) { vpnOpen = { id: '', what: '' }; vpnSet(v); }, function (x) { err.textContent = vpnError(x); });
+    });
+    return form;
+  }
+  function vpnCredentialsForm(p) {
+    const user = el('input', { type: 'text', class: 'vpn-user', autocomplete: 'off', spellcheck: 'false', maxlength: '256', placeholder: 'User name', 'aria-label': 'User name for ' + p.name });
+    const pass = el('input', { type: 'password', class: 'vpn-pass', autocomplete: 'off', spellcheck: 'false', maxlength: '1024', placeholder: 'Password', 'aria-label': 'Password for ' + p.name });
+    const err = el('p', { class: 'field-error' });
+    const form = el('form', { class: 'inline-form vpn-form', autocomplete: 'off', 'data-for': p.id }, [
+      user, pass,
+      el('button', { type: 'submit', class: 'btn small primary', text: 'Save' }),
+      el('button', { type: 'button', class: 'btn small', text: 'Cancel', onclick: function () { pass.value = ''; vpnClose(); } }),
+      err,
+    ]);
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      const username = user.value.trim();
+      const password = pass.value;
+      pass.value = '';
+      if (!username) { err.textContent = 'Enter the user name'; return; }
+      LB.request('vpnCredentials', { id: p.id, username: username, password: password }).then(function (v) {
+        vpnOpen = { id: '', what: '' }; vpnSet(v); Page.toast('User name and password saved');
+      }, function (x) { err.textContent = vpnError(x); });
+    });
+    return form;
+  }
+  function vpnRemove(p) {
+    Page.confirm('Remove the VPN profile ' + p.name + '? Its file and password are deleted from this computer.', { ok: 'Remove', danger: true }).then(function (yes) {
+      if (!yes) return;
+      if (vpnOpen.id === p.id) vpnOpen = { id: '', what: '' };
+      vpnAsk('vpnRemove', { id: p.id }).then(function (ok) {
+        if (!ok) return;
+        // The host may have turned auto-connect off with it.
+        LB.request('getSettings').then(function (r) { settings = r.settings; render(); }).catch(function () {});
+      });
+    });
+  }
+  $('vpn-import').addEventListener('click', function () {
+    const btn = this;
+    $('vpn-error').textContent = '';
+    $('vpn-warnings').hidden = true;
+    btn.disabled = true;
+    LB.request('vpnImport').then(function (r) {
+      btn.disabled = false;
+      if (!r) return; // cancelled
+      const w = $('vpn-warnings');
+      w.textContent = '';
+      (r.warnings || []).forEach(function (t) { w.appendChild(el('li', { text: t })); });
+      w.hidden = !(r.warnings || []).length;
+      Page.toast('Imported ' + (r.profile ? r.profile.name : 'the profile'));
+      LB.request('vpnState').then(vpnSet).catch(function () {});
+    }, function (e) { btn.disabled = false; $('vpn-error').textContent = vpnError(e); });
+  });
+  LB.on('vpn', function (m) { vpnSet(m); });
 
   function renderUserAgent() {
     const sel = $('userAgentPreset');
@@ -552,6 +705,7 @@
     renderUserAgent();
     renderHeaders();
     renderDns();
+    renderVpn();
     LB.applyTheme(settings.theme, settings.appearance && settings.appearance.accent);
     renderLists();
   }
@@ -1074,5 +1228,6 @@
     loadUpdates();
     loadImportProfiles();
     loadAiStatus();
+    LB.request('vpnState').then(vpnSet).catch(function () {});
   });
 })();

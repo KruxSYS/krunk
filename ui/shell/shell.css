@@ -147,6 +147,24 @@ html.fullscreen #caption, html.fullscreen #drag-space { display: none; }
 #shield-count { position: absolute; right: 0; bottom: 2px; min-width: 15px; padding: 0 3px; border-radius: 8px;
                 background: #ea580c; color: #fff; font-size: 10px; line-height: 14px; text-align: center; }
 #shield-count[hidden] { display: none; }
+/* 0.14.0: the VPN button (before the shield, only when turned on in Settings). Its state is a
+   colour and a dot: off (plain), connecting (amber, pulsing), on (green), error (red). */
+#vpn[hidden] { display: none; }
+#vpn.on:not(.open):not(:hover) { background: none; }
+#vpn.open { background: var(--bg-hover); }
+#vpn-dot { position: absolute; right: 5px; bottom: 6px; width: 7px; height: 7px; border-radius: 50%; display: none;
+           box-shadow: 0 0 0 2px var(--toolbar-bg, var(--bg-raised)); pointer-events: none; }
+#vpn { --vpn-on: #16a34a; }
+:root.dark #vpn { --vpn-on: #4ade80; }
+@media (prefers-color-scheme: dark) { :root:not(.light) #vpn { --vpn-on: #4ade80; } }
+#vpn.on .icon { color: var(--vpn-on); }
+#vpn.on #vpn-dot { display: block; background: var(--vpn-on); }
+#vpn.connecting .icon { color: #d97706; }
+#vpn.connecting #vpn-dot { display: block; background: #d97706; animation: vpn-pulse 1.2s ease-in-out infinite; }
+#vpn.error .icon { color: #dc2626; }
+#vpn.error #vpn-dot { display: block; background: #dc2626; }
+@keyframes vpn-pulse { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { #vpn.connecting #vpn-dot { animation: none; } }
 /* 0.12.0: the AI agent button (next to the shield) and the running-macro indicator. */
 #agent[hidden], #macro-run[hidden] { display: none; }
 #agent.on .icon { color: var(--accent); }

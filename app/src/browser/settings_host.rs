@@ -52,6 +52,8 @@ impl Browser {
                     // the panel width by its splitter.
                     s.ai.providers = cur.ai.providers.clone();
                     s.ai.panel_width = cur.ai.panel_width;
+                    // 0.14.0: the VPN's profile used last is set by connecting.
+                    s.vpn.active_profile = cur.vpn.active_profile.clone();
                     if s.ai.provider(&s.ai.active_provider).is_none() {
                         s.ai.active_provider.clear();
                     }
@@ -62,6 +64,8 @@ impl Browser {
                 // The AI providers stay (their keys are kept); AI itself goes off.
                 let mut d = Settings::default();
                 d.ai.providers = self.settings.borrow().ai.providers.clone();
+                // The VPN profiles stay too (the button and auto-connect go off).
+                d.vpn.active_profile = self.settings.borrow().vpn.active_profile.clone();
                 self.save_settings(tab, req_id, d)
             }
             Request::PickDownloadFolder => {
@@ -165,6 +169,15 @@ impl Browser {
             self.reply(tab, Event::invalid(req_id, &errors));
             return;
         }
+        // 0.14.0: the VPN is the engine's proxy while it runs; a manual one can't be added then.
+        if self.vpn_engaged() && !new.proxy.trim().is_empty() {
+            let e = lb_core::settings::FieldError {
+                field: "proxy",
+                message: "The VPN is on: disconnect it first (Privacy & security → VPN)".into(),
+            };
+            self.reply(tab, Event::invalid(req_id, &[e]));
+            return;
+        }
         if let Err(e) = self.store.borrow().save_settings(&new) {
             warning!("saving settings: {e}");
             self.reply(tab, Event::err(req_id, "Could not save settings"));
@@ -232,6 +245,9 @@ impl Browser {
         }
         if old.macros != new.macros {
             self.macros_settings_changed();
+        }
+        if old.vpn != new.vpn {
+            self.vpn_settings_changed();
         }
         if old.tab_sleep_minutes != new.tab_sleep_minutes
             || old.tab_discard_enabled != new.tab_discard_enabled

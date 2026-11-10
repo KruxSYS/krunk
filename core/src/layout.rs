@@ -371,6 +371,8 @@ pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> Pop
         PopupKind::Unresponsive => (380.0, 150.0),
         // An upper bound; the popup fits its height to the message (0.12.4).
         PopupKind::JsDialog => (JS_DIALOG_WIDTH, 460.0),
+        // 0.14.0: the shell's own size (shell.js POPUP_SIZES); the popup fits its height.
+        PopupKind::Vpn => (320.0, 330.0),
     };
     // A page's dialog sits in the middle, under the toolbar, as in Chrome.
     let x = if kind == PopupKind::JsDialog {

@@ -454,6 +454,21 @@ pub struct Settings {
     pub ai: Ai,
     pub userscripts: UserscriptsSettings,
     pub macros: MacrosSettings,
+
+    // 0.14.0: the in-browser VPN (device-local, never synced; the profiles are in the database).
+    pub vpn: VpnSettings,
+}
+
+/// The in-browser VPN (0.14.0): only Krunk's own connections go through it.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct VpnSettings {
+    /// The toolbar's VPN button (off: no button; Settings still connects).
+    pub show_button: bool,
+    /// Connect to `active_profile` when Krunk starts, before any page loads.
+    pub auto_connect: bool,
+    /// The profile used last (set by the host when it connects; the popup's default).
+    pub active_profile: String,
 }
 
 /// The AI agent (0.12.0). Off by default: while off there is no toolbar button, no agent and
@@ -656,6 +671,7 @@ impl Default for Settings {
             ai: Ai::default(),
             userscripts: UserscriptsSettings::default(),
             macros: MacrosSettings::default(),
+            vpn: VpnSettings::default(),
         }
     }
 }
@@ -922,6 +938,19 @@ impl Settings {
         if !self.proxy.is_empty() && !is_proxy(&self.proxy) {
             err("proxy", "Use host:port, scheme://host:port (http, https, socks4, socks5) or direct://");
         }
+        // 0.14.0: the VPN is the engine's proxy while it runs; a manual one would take its place.
+        if !self.vpn.active_profile.is_empty() && !crate::vpn::valid_id(&self.vpn.active_profile) {
+            err("vpn.activeProfile", "Not a VPN profile");
+        }
+        if self.vpn.auto_connect {
+            if self.vpn.active_profile.is_empty() {
+                err("vpn.autoConnect", "Connect to a profile once first: Krunk connects to the one used last");
+            }
+            if !self.proxy.trim().is_empty() {
+                err("vpn.autoConnect", "A manual proxy is set (Advanced): the VPN can't be used with it");
+                err("proxy", "The VPN connects at start: turn that off first (Privacy & security → VPN)");
+            }
+        }
         for (field, v) in
             [("devtoolsSizeRight", self.devtools_size_right), ("devtoolsSizeBottom", self.devtools_size_bottom)]
         {
@@ -1028,7 +1057,10 @@ impl Settings {
                     "headers.rules" => s.headers.rules.clear(),
                     "dns" => s.dns = crate::dns::Dns::default(),
                     "passgen.length" => s.passgen = crate::passgen::Passgen::default(),
-                    "proxy" => s.proxy.clear(),
+                    // A valid proxy stays; the VPN's auto-connect goes instead (below).
+                    "proxy" if !is_proxy(&s.proxy) => s.proxy.clear(),
+                    "vpn.activeProfile" => s.vpn = VpnSettings::default(),
+                    "vpn.autoConnect" => s.vpn.auto_connect = false,
                     "extraFlags" => s.extra_flags.clear(),
                     "defaultZoom" => s.default_zoom = d.default_zoom,
                     "ai.providers" => {
@@ -1061,13 +1093,29 @@ impl Settings {
         self.browser_switches().join(" ")
     }
 
+    /// Hosts the engine must never reach (`INTERNAL_HOSTS`, and `UPDATER_HOSTS` unless the
+    /// user opted in to the engine's components): DNS never answers for them and no proxy gets
+    /// them.
+    pub fn unreachable_hosts(&self) -> Vec<&'static str> {
+        let mut hosts: Vec<&'static str> = INTERNAL_HOSTS.to_vec();
+        if !self.engine_security_components && !self.protected_content {
+            hosts.extend(UPDATER_HOSTS);
+        }
+        hosts
+    }
+
+    /// The `bypass_list` of the engine's proxy while the VPN runs (0.14.0): the same hosts as
+    /// the manual proxy's `--proxy-bypass-list` (loopback is bypassed implicitly).
+    pub fn vpn_bypass_list(&self) -> String {
+        self.unreachable_hosts().join(";")
+    }
+
     /// The Chromium switches for the engine (`--name` or `--name=value`).
     pub fn browser_switches(&self) -> Vec<String> {
         let mut args: Vec<String> = BASE_SWITCHES.iter().map(|s| s.to_string()).collect();
-        let mut unreachable: Vec<&str> = INTERNAL_HOSTS.to_vec();
+        let unreachable = self.unreachable_hosts();
         if !self.engine_security_components && !self.protected_content {
             args.push(NO_COMPONENT_UPDATE_SWITCH.into());
-            unreachable.extend(UPDATER_HOSTS);
         }
         // DNS never answers for these hosts...
         let rules: Vec<String> = unreachable.iter().map(|h| format!("MAP {h} ~NOTFOUND")).collect();
@@ -1129,6 +1177,15 @@ pub fn updater_proxy(proxy: &str) -> UpdaterProxy {
         Some(("http" | "https", rest)) => UpdaterProxy::Named(rest.trim_end_matches('/').to_string()),
         Some(_) => UpdaterProxy::Skip,
         None => UpdaterProxy::Named(p.to_string()),
+    }
+}
+
+/// How Krunk's own requests (updates, sync, filter lists, extensions) reach the network: through
+/// the VPN's local proxy (`host:port`) while it runs (0.14.0), else as the proxy setting says.
+pub fn krunk_proxy(proxy: &str, vpn: Option<&str>) -> UpdaterProxy {
+    match vpn {
+        Some(addr) => UpdaterProxy::Named(addr.to_string()),
+        None => updater_proxy(proxy),
     }
 }
 
@@ -1535,6 +1592,58 @@ mod tests {
         assert_eq!(updater_proxy("http://proxy.corp:3128"), UpdaterProxy::Named("proxy.corp:3128".into()));
         assert_eq!(updater_proxy("socks5://127.0.0.1:9050"), UpdaterProxy::Skip);
         assert_eq!(updater_proxy("socks4://h:1"), UpdaterProxy::Skip);
+    }
+
+    #[test]
+    fn krunk_requests_follow_the_vpn() {
+        assert_eq!(krunk_proxy("", Some("127.0.0.1:53127")), UpdaterProxy::Named("127.0.0.1:53127".into()));
+        // SOCKS can't be used by WinHTTP, but the VPN's proxy can: nothing is skipped or direct.
+        assert_eq!(krunk_proxy("socks5://h:1", Some("127.0.0.1:9")), UpdaterProxy::Named("127.0.0.1:9".into()));
+        assert_eq!(krunk_proxy("", None), UpdaterProxy::System);
+        assert_eq!(krunk_proxy("socks5://h:1", None), UpdaterProxy::Skip);
+    }
+
+    #[test]
+    fn vpn_bypasses_what_the_manual_proxy_bypasses() {
+        let s = Settings::default();
+        assert_eq!(s.vpn_bypass_list(), "krunk.invalid;*.krunk.invalid;update.googleapis.com");
+        let manual = Settings { proxy: "127.0.0.1:8888".into(), ..Settings::default() };
+        let want = format!("--proxy-bypass-list={}", s.vpn_bypass_list());
+        assert!(manual.browser_switches().contains(&want));
+        let opted = Settings { engine_security_components: true, ..Settings::default() };
+        assert_eq!(opted.vpn_bypass_list(), "krunk.invalid;*.krunk.invalid");
+    }
+
+    #[test]
+    fn vpn_settings_validation() {
+        let d = Settings::default();
+        assert_eq!(d.vpn, VpnSettings { show_button: false, auto_connect: false, active_profile: String::new() });
+        let j = serde_json::to_value(&d).unwrap();
+        assert_eq!(j["vpn"], serde_json::json!({ "showButton": false, "autoConnect": false, "activeProfile": "" }));
+        // Auto-connect needs a profile.
+        let mut s =
+            Settings { vpn: VpnSettings { auto_connect: true, ..VpnSettings::default() }, ..Settings::default() };
+        assert_eq!(fields(&s), vec!["vpn.autoConnect"]);
+        s.vpn.active_profile = "0123456789abcdef0123456789abcdef".into();
+        assert_eq!(s.validate(), Ok(()));
+        // Not together with a manual proxy.
+        s.proxy = "127.0.0.1:8080".into();
+        assert_eq!(fields(&s), vec!["vpn.autoConnect", "proxy"]);
+        s.vpn.auto_connect = false;
+        assert_eq!(s.validate(), Ok(()));
+        s.vpn.active_profile = "../x".into();
+        assert_eq!(fields(&s), vec!["vpn.activeProfile"]);
+        // A stored combination of both keeps the proxy and drops the auto-connect.
+        let l = Settings::from_json_lenient(
+            r#"{"proxy":"127.0.0.1:8080","vpn":{"showButton":true,"autoConnect":true,"activeProfile":"ab12"}}"#,
+        );
+        assert_eq!(l.proxy, "127.0.0.1:8080");
+        assert_eq!(l.vpn, VpnSettings { show_button: true, auto_connect: false, active_profile: "ab12".into() });
+        let l = Settings::from_json_lenient(r#"{"vpn":{"showButton":true,"autoConnect":true,"activeProfile":"A/B"}}"#);
+        assert_eq!(l.vpn, VpnSettings::default());
+        // Older settings have none: the defaults.
+        let old: Settings = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
+        assert_eq!(old.vpn, VpnSettings::default());
     }
 
     #[test]

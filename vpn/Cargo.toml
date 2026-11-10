@@ -1,0 +1,28 @@
+[package]
+name = "vpn"
+description = "Krunk's in-browser VPN: WireGuard and OpenVPN tunnels in user space, a smoltcp stack and a local HTTP proxy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+# openvpn-connect needs 1.88.
+rust-version = "1.88"
+
+[lib]
+name = "krunk_vpn"
+path = "src/lib.rs"
+
+[dependencies]
+# WireGuard: only the `noise` protocol state machine (no `device`, no TUN). BSD-3-Clause.
+boringtun = { version = "=0.7.1", default-features = false }
+# The TCP/IP stack over the tunnel's IP packets. 0BSD.
+smoltcp = { version = "=0.14.0", default-features = false, features = ["std", "async", "medium-ip", "proto-ipv4", "proto-ipv6", "socket-tcp", "socket-udp"] }
+# OpenVPN 3 Core (MPL-2.0), vendored and pinned (../vendor/README.md): external TUN, sources built in.
+openvpn-connect = { path = "../vendor/openvpn-connect", version = "=0.1.2", default-features = false, features = ["external-tun", "vendor"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "macros", "io-util"] }
+serde = { version = "1", features = ["derive"] }
+zeroize = { version = "1.8", features = ["std"] }
+base64ct = { version = "1.8", features = ["alloc"] }
+getrandom = "0.4"
+
+[dev-dependencies]
+serde_json = "1"

@@ -1,0 +1,2 @@
+# Krunk: the root .gitignore ignores build/ (build outputs); this one holds the build script's modules.
+!build/

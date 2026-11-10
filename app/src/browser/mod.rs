@@ -96,6 +96,7 @@ mod tablist;
 mod tasks;
 mod updater;
 mod userscripts;
+mod vpn;
 
 pub use power::PowerOptions;
 use power::{MEMREPORT_TIMER, POWER_TIMER};
@@ -408,6 +409,8 @@ pub struct Browser {
     /// "Save image as…" (0.12.2): image addresses whose download asks where to save it next,
     /// with the time they were asked for.
     save_image_as: RefCell<Vec<(String, i64)>>,
+    /// The in-browser VPN (0.14.0).
+    vpn: vpn::VpnHost,
 }
 
 impl Browser {
@@ -517,6 +520,7 @@ impl Browser {
             menu_from_folder: Cell::new(None),
             session_final: Cell::new(false),
             save_image_as: RefCell::new(Vec::new()),
+            vpn: vpn::VpnHost::default(),
         });
         let app = Window::create_app(Rc::new(AppEvents(browser.me.clone())))?;
         let _ = browser.app.set(app);
@@ -525,6 +529,8 @@ impl Browser {
         browser.init_extensions();
         browser.start_bounce_timer();
         browser.apply_dns();
+        // 0.14.0: a VPN that connects at start is the engine's proxy before any page loads.
+        browser.init_vpn();
         browser.init_vault();
         engine::set_internal_server(browser.server());
         let weak = browser.me.clone();
@@ -2438,6 +2444,7 @@ impl Browser {
         self.pass_shell_hit_tests(win);
         self.send_agent_button_to(win);
         self.send_macro_running_to(win);
+        self.send_vpn_to(win);
     }
 
     /// What every shell shows alike, besides the config: the bookmarks bar, downloads,
@@ -2591,6 +2598,7 @@ impl Browser {
                     PopupKind::Downloads => "downloads",
                     PopupKind::Pip => "pip",
                     PopupKind::TabList => "tabList",
+                    PopupKind::Vpn => "vpn",
                     _ => "shield",
                 };
                 if self.toggle_suppressed(anchor) {
@@ -2602,6 +2610,7 @@ impl Browser {
                         PopupKind::Pip => self.pip_command(Some(rect)),
                         PopupKind::SiteInfo => self.show_site_info(rect),
                         PopupKind::TabList => self.show_tab_list(rect),
+                        PopupKind::Vpn => self.show_vpn_popup(rect),
                         _ => {
                             self.shield_anchor.set(Some(rect));
                             self.show_shield();
@@ -2881,6 +2890,13 @@ impl Browser {
             | Request::AiTest { .. }
             | Request::AiModels { .. }
             | Request::AiStatus) => self.ai_settings_request(tab, req_id, r),
+            r @ (Request::VpnState
+            | Request::VpnImport {}
+            | Request::VpnRename { .. }
+            | Request::VpnRemove { .. }
+            | Request::VpnCredentials { .. }
+            | Request::VpnConnect { .. }
+            | Request::VpnDisconnect {}) => self.dispatch_vpn(sender, tab, req_id, r),
             r @ (Request::ScriptsList
             | Request::ScriptGet { .. }
             | Request::ScriptSave { .. }
@@ -3415,6 +3431,9 @@ impl Browser {
             }
         }
         self.drop_spare();
+        // 0.14.0: the VPN ends with Krunk (the engine keeps pointing at its closed proxy, so
+        // nothing goes direct while the last requests end).
+        self.vpn_shutdown();
         // The message loop ends when the engine has closed every browser.
         engine::quit_when_closed();
     }
@@ -3567,6 +3586,7 @@ impl WindowEvents for AppEvents {
             APP_JOB => b.jobs_ready(),
             APP_SHIELD => b.shield_changed(),
             flight::APP_VSYNC => b.flight_tick(),
+            vpn::APP_VPN => b.vpn_status_ready(),
             _ => {}
         }
     }

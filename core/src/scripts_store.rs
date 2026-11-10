@@ -430,7 +430,8 @@ mod tests {
         }
         let s = Store::open(&path).unwrap();
         let v: i64 = s.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(v, 7);
+        // 7, or later versions migrated on top (0.14.0: 8).
+        assert!(v >= 7, "{v}");
         assert_eq!(s.kv_get("marker").unwrap().as_deref(), Some("0.11.7"));
         let n: i64 = s.conn.query_row("SELECT count(*) FROM bookmarks", [], |r| r.get(0)).unwrap();
         assert_eq!(n, 11);

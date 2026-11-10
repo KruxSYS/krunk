@@ -19,7 +19,7 @@ use lb_core::headers::Headers;
 use lb_core::pages::Page;
 use lb_core::protection::{self, Protection, Referrer, ThirdPartyCookies, TrackerSet};
 use lb_core::protocol::{ContentMessage, Event, PopupContent, Request};
-use lb_core::settings::{updater_proxy, UpdaterProxy};
+use lb_core::settings::UpdaterProxy;
 use lb_core::storage::now_ms;
 use lb_core::tabs::TabId;
 use lb_core::urlclean::{self, LoadFailure, RewriteOptions};
@@ -587,7 +587,7 @@ impl Browser {
         let cache_path = self.dirs.engine_cache();
         let scriptlet_path = self.dirs.scriptlet_cache();
         let sources = self.filter_sources();
-        let proxy = updater_proxy(&self.settings.borrow().proxy);
+        let proxy = self.own_proxy();
         let mut state = f.update.borrow().clone();
         let current_key = if force { None } else { self.net.engine().map(|e| e.key()) };
         let (tx, rx) = mpsc::channel();

@@ -208,6 +208,52 @@ impl KeyWrapper for DpapiAgent {
     }
 }
 
+/// DPAPI for the VPN profiles in the `vpn_profiles` table (0.14.0): the profile file and the
+/// OpenVPN user name and password, with their own entropy and description, so a profile blob
+/// can't be swapped with any other of Krunk's secrets.
+pub struct DpapiVpn;
+
+const VPN_ENTROPY: &[u8] = b"Krunk VPN profile v1";
+
+impl KeyWrapper for DpapiVpn {
+    fn name(&self) -> &'static str {
+        "dpapi-vpn"
+    }
+
+    fn protect(&self, data: &[u8]) -> Result<Vec<u8>, String> {
+        let input = blob(data);
+        let entropy = blob(VPN_ENTROPY);
+        let mut out = CRYPT_INTEGER_BLOB::default();
+        // SAFETY: input/entropy point to live slices for the call; DPAPI allocates `out`, which
+        // `take_blob` frees.
+        unsafe {
+            CryptProtectData(
+                &input,
+                w!("Krunk VPN profile"),
+                Some(&entropy),
+                None,
+                None,
+                CRYPTPROTECT_UI_FORBIDDEN,
+                &mut out,
+            )
+            .map_err(|e| format!("CryptProtectData: {e}"))?;
+        }
+        Ok(take_blob(&out).to_vec())
+    }
+
+    fn unprotect(&self, data: &[u8]) -> Result<Zeroizing<Vec<u8>>, String> {
+        let input = blob(data);
+        let entropy = blob(VPN_ENTROPY);
+        let mut out = CRYPT_INTEGER_BLOB::default();
+        // SAFETY: as above.
+        unsafe {
+            CryptUnprotectData(&input, None, Some(&entropy), None, None, CRYPTPROTECT_UI_FORBIDDEN, &mut out)
+                .map_err(|e| format!("CryptUnprotectData: {e}"))?;
+        }
+        Ok(take_blob(&out))
+    }
+}
+
 /// Decrypts a DPAPI blob made without extra entropy by another program of this user
 /// (Chromium's `os_crypt` key and its legacy password blobs).
 pub fn unprotect_plain(data: &[u8]) -> Result<Zeroizing<Vec<u8>>, String> {

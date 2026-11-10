@@ -251,3 +251,24 @@ body.pv-dark { --bg-raised: #202124; --bg-hover: #3c4043; --fg: #e8eaed; --fg-mu
 .panel.js-dialog input[type=text]:focus { outline: none; border-color: var(--accent); }
 .js-dialog .jsd-block { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; color: var(--fg-muted); }
 .js-dialog .jsd-block input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+/* 0.14.0: the VPN popup. */
+.pop-icon.vpn-ok { background: #dcfce7; color: #15803d; }
+.pop-icon.vpn-busy { background: #fef3c7; color: #b45309; }
+.pop-icon.vpn-warn { background: #fee2e2; color: #b91c1c; }
+:root.dark .pop-icon.vpn-ok { background: #14532d; color: #bbf7d0; }
+:root.dark .pop-icon.vpn-busy { background: #78350f; color: #fde68a; }
+:root.dark .pop-icon.vpn-warn { background: #7f1d1d; color: #fecaca; }
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) .pop-icon.vpn-ok { background: #14532d; color: #bbf7d0; }
+  :root:not(.light) .pop-icon.vpn-busy { background: #78350f; color: #fde68a; }
+  :root:not(.light) .pop-icon.vpn-warn { background: #7f1d1d; color: #fecaca; }
+}
+.vpn-pick { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; }
+.vpn-pick span { flex: none; color: var(--fg-muted); }
+.vpn-select { flex: 1; min-width: 0; height: 28px; padding: 0 6px; border: 1px solid var(--border); border-radius: 6px;
+              background: var(--bg-raised); color: var(--fg); font: inherit; }
+.vpn-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.vpn-stats .kv .k { width: 100px; }
+.vpn-stats .kv .v { font-variant-numeric: tabular-nums; }
+.vpn-actions { margin: 0 0 4px; }
+.vpn-pop .link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
