@@ -37,7 +37,8 @@ CREATE INDEX IF NOT EXISTS download_items_order ON download_items(started DESC, 
 /// `download_items` as it was (the next start restores running ones as after any close), then
 /// deletes the record. Private downloads were never in it; they are skipped all the same.
 pub(crate) fn upgrade_v9(tx: &rusqlite::Transaction) -> DbResult<()> {
-    let old: Option<String> = tx.query_row("SELECT value FROM kv WHERE key = 'downloads'", [], |r| r.get(0)).optional()?;
+    let old: Option<String> =
+        tx.query_row("SELECT value FROM kv WHERE key = 'downloads'", [], |r| r.get(0)).optional()?;
     let Some(json) = old else { return Ok(()) };
     let list: Downloads = serde_json::from_str(&json).unwrap_or_default();
     for item in list.items.iter().filter(|i| !i.private) {
@@ -383,7 +384,7 @@ impl Downloads {
         let saved = Downloads {
             items: self.items.iter().filter(|i| !i.private).cloned().collect(),
             next_id: self.next_id,
-            meters: Default::default(),
+            ..Default::default()
         };
         serde_json::to_string(&saved).unwrap_or_else(|_| "{}".into())
     }
@@ -702,7 +703,8 @@ impl Store {
             let mut page = self.conn.prepare_cached(&format!(
                 "SELECT json FROM download_items WHERE {wh} ORDER BY started DESC, id DESC LIMIT ?3 OFFSET ?4"
             ))?;
-            let found = page.query_map(params![skip, pattern, need, q.offset - mem_before], |r| r.get::<_, String>(0))?;
+            let found =
+                page.query_map(params![skip, pattern, need, q.offset - mem_before], |r| r.get::<_, String>(0))?;
             for j in found {
                 rows.extend(row_item(&j?));
             }
@@ -1047,12 +1049,306 @@ mod tests {
 
     #[test]
     fn capped() {
+        // Private ones stay in memory for the session, up to a cap.
         let mut d = Downloads::new();
-        for i in 0..MAX_ITEMS + 10 {
-            let id = d.start("https://e.com/", Path::new("f"), None, i as i64, false);
+        for i in 0..MAX_MEMORY_ITEMS + 10 {
+            let id = d.start("https://e.com/", Path::new("f"), None, i as i64, true);
             d.set_state(id, DownloadState::Completed, None, 9);
         }
-        assert_eq!(d.items().len(), MAX_ITEMS);
+        assert_eq!(d.items().len(), MAX_MEMORY_ITEMS);
+    }
+
+    // ------------------------------------------------------------ 0.15.0: the table
+
+    const DAY: i64 = 86_400_000;
+
+    fn q(text: &str, filter: DownloadFilter, offset: u32, limit: u32) -> DownloadQuery {
+        DownloadQuery { text: text.into(), filter, offset, limit, counts: true, since: Vec::new() }
+    }
+
+    fn ids(p: &DownloadPage) -> Vec<u32> {
+        p.items.iter().map(|i| i.id).collect()
+    }
+
+    /// `n` finished downloads, one a minute from `t0`: every 10th failed, every 25th cancelled,
+    /// names by kind (`.zip`, `.pdf`, `.mp4`).
+    fn fill(s: &Store, d: &mut Downloads, n: usize, t0: i64) {
+        for k in 0..n {
+            let name = format!("file-{k}.{}", ["zip", "pdf", "mp4"][k % 3]);
+            let id = d.start(
+                &format!("https://dl{}.example/{name}", k % 7),
+                Path::new(&name),
+                Some(1000),
+                t0 + k as i64 * 60_000,
+                false,
+            );
+            let state = if k % 25 == 0 {
+                DownloadState::Cancelled
+            } else if k % 10 == 0 {
+                DownloadState::Interrupted
+            } else {
+                DownloadState::Completed
+            };
+            d.set_state(id, state, None, t0 + k as i64 * 60_000 + 5_000);
+            if k % 200 == 199 {
+                s.downloads_save(d).unwrap();
+            }
+        }
+        s.downloads_save(d).unwrap();
+    }
+
+    fn rows(s: &Store) -> i64 {
+        s.conn.query_row("SELECT count(*) FROM download_items", [], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn finished_downloads_go_to_the_table_and_progress_is_not_written() {
+        let s = Store::open_in_memory().unwrap();
+        let mut d = s.downloads_load(1, 0).unwrap();
+        let a = d.start("https://e.com/a.zip", Path::new("C:/dl/a.zip"), Some(100), 10, false);
+        s.downloads_save(&mut d).unwrap();
+        assert_eq!(rows(&s), 1, "a row from the start");
+        d.progress_at(a, 50, Some(100), 20);
+        assert!(d.dirty.is_empty(), "progress alone is not written");
+        assert_eq!(d.take_moved().iter().map(|i| i.received).collect::<Vec<_>>(), vec![50]);
+        assert!(d.take_moved().is_empty(), "only what moved since the last push");
+        assert!(d.take_list_changed() && !d.take_list_changed());
+        d.set_state(a, DownloadState::Completed, None, 30);
+        assert!(d.take_list_changed());
+        s.downloads_save(&mut d).unwrap();
+        assert!(d.items().is_empty(), "finished: only in the table");
+        let item = s.download_get(&d, a).unwrap().unwrap();
+        assert_eq!((item.state, item.received, item.finished), (DownloadState::Completed, 100, Some(30)));
+        assert_eq!(ids(&s.downloads_query(&d, &q("", DownloadFilter::All, 0, 10)).unwrap()), vec![a]);
+        // The next start counts on from the table's ids.
+        let d2 = s.downloads_load(40, 0).unwrap();
+        assert!(d2.items().is_empty());
+        assert_eq!(d2.next_id, a + 1);
+    }
+
+    #[test]
+    fn private_downloads_never_reach_the_table() {
+        let s = Store::open_in_memory().unwrap();
+        let mut d = Downloads::new();
+        let p = d.start("https://e.com/secret.zip", Path::new("secret.zip"), None, 5, true);
+        d.set_state(p, DownloadState::Completed, None, 6);
+        let o = d.start("https://e.com/open.zip", Path::new("open.zip"), None, 7, false);
+        s.downloads_save(&mut d).unwrap();
+        let json: Vec<String> = s
+            .conn
+            .prepare("SELECT json FROM download_items")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(json.len(), 1);
+        assert!(!json[0].contains("secret"));
+        // Shown in this session, merged into the list.
+        let page = s.downloads_query(&d, &q("", DownloadFilter::All, 0, 10)).unwrap();
+        assert_eq!(ids(&page), vec![o, p]);
+        assert_eq!(page.counts.unwrap().done, 1);
+    }
+
+    #[test]
+    fn pages_come_newest_first_with_memory_merged_in_place() {
+        let s = Store::open_in_memory().unwrap();
+        let mut d = Downloads::new();
+        fill(&s, &mut d, 2500, 1_000_000);
+        // In memory: a running one started between stored ones, and a new private one.
+        let mid =
+            d.start("https://e.com/mid.iso", Path::new("mid.iso"), None, 1_000_000 + 1234 * 60_000 + 30_000, false);
+        let newest = d.start("https://e.com/new.iso", Path::new("new.iso"), None, 9_000_000_000, true);
+        // The whole order, one page at a time, equals the order of everything sorted.
+        let mut all = Vec::new();
+        let mut offset = 0;
+        loop {
+            let page = s.downloads_query(&d, &q("", DownloadFilter::All, offset, 97)).unwrap();
+            assert_eq!(page.offset, offset);
+            if page.items.is_empty() {
+                break;
+            }
+            offset += page.items.len() as u32;
+            all.extend(page.items);
+        }
+        assert_eq!(all.len(), 2502);
+        assert!(all.windows(2).all(|w| (w[0].started, w[0].id) > (w[1].started, w[1].id)), "newest first");
+        assert_eq!(all[0].id, newest);
+        let at = all.iter().position(|i| i.id == mid).unwrap();
+        assert_eq!(at, 2500 - 1235 + 1, "the running one sits by its start time");
+        // A page in the middle without fetching the ones before it.
+        let page = s.downloads_query(&d, &q("", DownloadFilter::All, 1200, 100)).unwrap();
+        assert_eq!(ids(&page), all[1200..1300].iter().map(|i| i.id).collect::<Vec<_>>());
+        assert_eq!(page.counts.unwrap().all, 2502);
+        // Past the end: nothing; the limit is capped.
+        assert!(s.downloads_query(&d, &q("", DownloadFilter::All, 5000, 10)).unwrap().items.is_empty());
+        assert_eq!(
+            s.downloads_query(&d, &q("", DownloadFilter::All, 0, 100_000)).unwrap().items.len(),
+            MAX_PAGE as usize
+        );
+    }
+
+    #[test]
+    fn search_filters_and_counts() {
+        let s = Store::open_in_memory().unwrap();
+        let mut d = Downloads::new();
+        fill(&s, &mut d, 300, 1_000_000);
+        let run = d.start("https://e.com/Running.ZIP", Path::new("Running.ZIP"), None, 50_000_000, false);
+        let c = s.downloads_query(&d, &q("", DownloadFilter::All, 0, 10)).unwrap().counts.unwrap();
+        // 300: 12 cancelled (k % 25 == 0), 30 - 6 = 24 more failed (k % 10 == 0 but not % 25 == 0... 0,50,100,...).
+        let cancelled = (0..300).filter(|k| k % 25 == 0).count() as u32;
+        let failed = (0..300).filter(|k| k % 25 != 0 && k % 10 == 0).count() as u32;
+        assert_eq!((c.all, c.active, c.failed), (301, 1, cancelled + failed));
+        assert_eq!(c.done, 300 - cancelled - failed);
+        // Filters.
+        let page = s.downloads_query(&d, &q("", DownloadFilter::Active, 0, 50)).unwrap();
+        assert_eq!(ids(&page), vec![run]);
+        let page = s.downloads_query(&d, &q("", DownloadFilter::Failed, 0, 500)).unwrap();
+        assert_eq!(page.items.len() as u32, cancelled + failed);
+        assert!(page.items.iter().all(|i| matches!(i.state, DownloadState::Interrupted | DownloadState::Cancelled)));
+        assert_eq!(page.counts.unwrap().filtered, cancelled + failed);
+        let page = s.downloads_query(&d, &q("", DownloadFilter::Done, 0, 500)).unwrap();
+        assert!(page.items.iter().all(|i| i.state == DownloadState::Completed));
+        // Search: name or address, any case, in memory too; LIKE characters are literal.
+        let page = s.downloads_query(&d, &q("ZIP", DownloadFilter::All, 0, 500)).unwrap();
+        assert_eq!(page.items.len(), 101);
+        assert_eq!(page.items[0].id, run);
+        let c = page.counts.unwrap();
+        assert_eq!((c.all, c.filtered, c.active), (101, 101, 1));
+        let page = s.downloads_query(&d, &q("dl3.example", DownloadFilter::Done, 0, 500)).unwrap();
+        assert!(!page.items.is_empty() && page.items.iter().all(|i| i.url.contains("dl3.example")));
+        assert!(s.downloads_query(&d, &q("file-1%", DownloadFilter::All, 0, 10)).unwrap().items.is_empty());
+        assert_eq!(s.downloads_query(&d, &q("file-299.", DownloadFilter::All, 0, 10)).unwrap().items.len(), 1);
+        // Without `counts`, no counting.
+        let mut nq = q("", DownloadFilter::All, 0, 5);
+        nq.counts = false;
+        assert!(s.downloads_query(&d, &nq).unwrap().counts.is_none());
+    }
+
+    #[test]
+    fn date_groups_count_since_the_page_midnights() {
+        let s = Store::open_in_memory().unwrap();
+        let mut d = Downloads::new();
+        let today = 100 * DAY;
+        let yesterday = today - DAY;
+        // 3 before yesterday, 4 yesterday, 5 today (one of them running, in memory), one failed today.
+        for (k, t) in [(3, yesterday - 5 * DAY), (4, yesterday + 1000), (4, today + 1000)] {
+            for n in 0..k {
+                let id = d.start("https://e.com/x.bin", Path::new("x.bin"), None, t + n, false);
+                d.set_state(id, DownloadState::Completed, None, t + n + 1);
+            }
+        }
+        let f = d.start("https://e.com/y.bin", Path::new("y.bin"), None, today + 50, false);
+        d.set_state(f, DownloadState::Interrupted, Some("Network error".into()), today + 60);
+        s.downloads_save(&mut d).unwrap();
+        d.start("https://e.com/run.bin", Path::new("run.bin"), None, today + 99, false);
+        let mut query = q("", DownloadFilter::All, 0, 100);
+        query.since = vec![today, yesterday];
+        let c = s.downloads_query(&d, &query).unwrap().counts.unwrap();
+        assert_eq!(c.since, vec![6, 10], "today 6, yesterday 4, earlier 3");
+        query.filter = DownloadFilter::Done;
+        let c = s.downloads_query(&d, &query).unwrap().counts.unwrap();
+        assert_eq!((c.filtered, c.since.clone()), (11, vec![4, 8]), "the groups follow the filter");
+        query.text = "y.bin".into();
+        query.filter = DownloadFilter::All;
+        assert_eq!(s.downloads_query(&d, &query).unwrap().counts.unwrap().since, vec![1, 1]);
+    }
+
+    #[test]
+    fn clear_completed_remove_auto_clear_and_prune() {
+        let s = Store::open_in_memory().unwrap();
+        let mut d = Downloads::new();
+        fill(&s, &mut d, 50, DAY);
+        let run = d.start("https://e.com/run.bin", Path::new("run.bin"), None, 100 * DAY, false);
+        s.downloads_save(&mut d).unwrap();
+        // Remove one stored row: gone from pages before the save already, and from the table after.
+        let gone = s.downloads_query(&d, &q("", DownloadFilter::All, 1, 1)).unwrap().items[0].id;
+        assert!(d.remove(gone));
+        assert!(!d.remove(run), "a running one stays");
+        assert!(s.download_get(&d, gone).unwrap().is_none());
+        assert_eq!(s.downloads_query(&d, &q("", DownloadFilter::All, 0, 100)).unwrap().items.len(), 50);
+        s.downloads_save(&mut d).unwrap();
+        assert_eq!(rows(&s), 50);
+        // Auto-clear by age: what ended before the cut goes; running ones never; 0 = off.
+        assert_eq!(s.downloads_clear_older(DAY + 20 * 60_000, 0).unwrap(), 0);
+        let n = s.downloads_clear_older(DAY + 10 * 60_000 + DAY * 3, 3).unwrap();
+        assert_eq!(n, 10, "the 10 that ended before minute 10");
+        assert_eq!(rows(&s), 40);
+        // And at start (`downloads_load`), with the setting.
+        let loaded = s.downloads_load(DAY + 20 * 60_000 + 3 * DAY, 3).unwrap();
+        assert_eq!(rows(&s), 30);
+        assert_eq!(loaded.items().len(), 1, "the running one is restored");
+        // Prune keeps the newest, never a running one.
+        assert_eq!(s.downloads_prune(5).unwrap(), 25);
+        let page = s.downloads_query(&d, &q("", DownloadFilter::All, 0, 100)).unwrap();
+        assert_eq!(page.items.len(), 5);
+        assert_eq!(page.items[0].id, run);
+        // Clear completed: every finished one, at once in pages, then in the table.
+        d.clear_finished();
+        let page = s.downloads_query(&d, &q("", DownloadFilter::All, 0, 100)).unwrap();
+        assert_eq!((ids(&page), page.counts.unwrap().all), (vec![run], 1));
+        s.downloads_save(&mut d).unwrap();
+        assert_eq!(rows(&s), 1);
+    }
+
+    #[test]
+    fn the_old_kv_list_moves_into_the_table() {
+        let dir = std::env::temp_dir().join(format!("lb-dl-v9-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("browser.db");
+        {
+            let s = Store::open_at_version(&path, 8).unwrap();
+            // As 0.14 saved it: a finished, a failed and a running one (no private ones: never saved).
+            let old = r#"{"items":[
+                {"id":3,"url":"https://e.com/a.zip","fileName":"a.zip","path":"C:/dl/a.zip","state":"completed","received":5,"total":5,"started":7,"reason":null,"private":false,"finished":9},
+                {"id":4,"url":"https://e.com/b.pdf","fileName":"b.pdf","path":"C:/dl/b.pdf","state":"interrupted","received":1,"total":null,"started":8,"reason":"Network error"},
+                {"id":6,"url":"https://e.com/c.iso","fileName":"c.iso","path":"C:/dl/c.iso","state":"inProgress","received":1,"total":9,"started":10,"reason":null},
+                {"id":7,"url":"https://e.com/p.iso","fileName":"p.iso","path":"C:/dl/p.iso","state":"completed","received":1,"total":1,"started":11,"reason":null,"private":true}
+            ],"next_id":8}"#;
+            s.kv_set("downloads", old).unwrap();
+        }
+        let s = Store::open(&path).unwrap();
+        assert_eq!(s.kv_get("downloads").unwrap(), None, "the record is gone");
+        assert_eq!(rows(&s), 3, "private ones are skipped");
+        let mut d = s.downloads_load(100, 0).unwrap();
+        assert_eq!(d.get(6).unwrap().state, DownloadState::Interrupted, "running: stopped by the close");
+        assert_eq!(d.stopped_by_close(), vec!["https://e.com/c.iso".to_string()]);
+        assert_eq!(d.next_id, 7);
+        s.downloads_save(&mut d).unwrap();
+        let page = s.downloads_query(&d, &q("", DownloadFilter::All, 0, 10)).unwrap();
+        assert_eq!(ids(&page), vec![6, 4, 3]);
+        let c = page.counts.unwrap();
+        assert_eq!((c.done, c.failed, c.active), (1, 2, 0));
+        assert_eq!(s.download_get(&d, 3).unwrap().unwrap().finished, Some(9));
+        drop(s);
+        // Opening again changes nothing.
+        let s = Store::open(&path).unwrap();
+        assert_eq!(rows(&s), 3);
+        drop(s);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn paused_downloads_in_parts_survive_a_restart_through_the_table() {
+        use crate::segdl::Segment;
+        let s = Store::open_in_memory().unwrap();
+        let mut d = Downloads::new();
+        let a = d.start("https://e.com/big.iso", Path::new("C:/dl/big.iso"), Some(1 << 26), 1, false);
+        d.set_parts(a, 4, vec!["C:/dl/big.iso.krunkpart".into()]);
+        let resume = Resume {
+            temp: "C:/dl/big.iso.krunkpart".into(),
+            total: 1 << 26,
+            etag: None,
+            last_modified: None,
+            referer: None,
+            segments: vec![Segment { start: 0, end: 99, next: 50 }],
+        };
+        d.set_resume(a, Some(resume.clone()));
+        s.downloads_save(&mut d).unwrap();
+        let back = s.downloads_load(5, 0).unwrap();
+        let item = back.get(a).unwrap();
+        assert_eq!((item.state, item.resume.as_ref()), (DownloadState::Paused, Some(&resume)));
     }
 
     #[test]

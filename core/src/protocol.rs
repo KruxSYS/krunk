@@ -1435,7 +1435,25 @@ pub enum Request {
     },
 
     // ---- downloads ----
+    /// The newest downloads (at most 200; the page uses `QueryDownloads`).
     GetDownloads,
+    /// 0.15.0: a page of the list, newest first (`crate::downloads::DownloadPage`): by search
+    /// text (name and address) and filter; `counts` also counts (per filter, and how many
+    /// started at or after each time in `since`: the page's local midnights).
+    QueryDownloads {
+        #[serde(default)]
+        text: String,
+        #[serde(default)]
+        filter: crate::downloads::DownloadFilter,
+        #[serde(default)]
+        offset: u32,
+        #[serde(default = "default_limit")]
+        limit: u32,
+        #[serde(default)]
+        counts: bool,
+        #[serde(default)]
+        since: Vec<i64>,
+    },
     /// Removes finished, failed and cancelled downloads from the list.
     ClearDownloads,
     DownloadAction {
@@ -2142,7 +2160,7 @@ impl Sender {
                     | R::VaultStatus
             ),
             Sender::Page(Page::Downloads) => {
-                matches!(req, R::GetDownloads | R::ClearDownloads | R::DownloadAction { .. })
+                matches!(req, R::GetDownloads | R::QueryDownloads { .. } | R::ClearDownloads | R::DownloadAction { .. })
             }
             Sender::Page(Page::About) => matches!(req, R::GetAbout | R::RepairEngine),
             Sender::Page(Page::Gpu) => matches!(req, R::GetGpuInfo | R::OpenGpuInternals | R::RepairEngine),
@@ -2596,7 +2614,8 @@ pub enum Event {
     BookmarksBar {
         items: Vec<BarItem>,
     },
-    /// To the downloads page: the full list.
+    /// To downloads pages: the running downloads whose progress moved (0.15.0; the list itself
+    /// comes in pages, `QueryDownloads`, fetched again on `DownloadsChanged`).
     Downloads {
         items: Vec<DownloadItem>,
     },
@@ -2622,6 +2641,8 @@ pub enum Event {
     NewTabConfig {
         config: serde_json::Value,
     },
+    /// To the shell: how many downloads run. 0.15.0: also to downloads pages when the list
+    /// changed beyond progress (they fetch the rows they show again).
     DownloadsChanged {
         active: u32,
     },
@@ -3315,6 +3336,7 @@ mod tests {
             r#"{"cmd":"exportBookmarks"}"#,
             r#"{"cmd":"getDownloads"}"#,
             r#"{"cmd":"downloadAction","id":1,"action":"open"}"#,
+            r#"{"cmd":"queryDownloads","text":"a","filter":"failed","offset":100,"limit":50,"counts":true,"since":[1,2]}"#,
         ];
         // A web origin is classified as web content, never privileged...
         assert!(matches!(classify(Channel::Tab, "https://evil.example/history.html", true), Ok(Source::Web { .. })));
@@ -3329,6 +3351,7 @@ mod tests {
         assert!(parse_request(Sender::Page(Page::History), privileged[0]).is_ok());
         assert!(parse_request(Sender::Page(Page::Bookmarks), privileged[5]).is_ok());
         assert!(parse_request(Sender::Page(Page::Downloads), privileged[13]).is_ok());
+        assert!(parse_request(Sender::Page(Page::Downloads), privileged[14]).is_ok());
         assert_eq!(parse_request(Sender::Page(Page::History), privileged[8]), Err(ProtocolError::Forbidden));
         assert_eq!(parse_request(Sender::Page(Page::Bookmarks), privileged[0]), Err(ProtocolError::Forbidden));
     }
@@ -3724,6 +3747,14 @@ mod tests {
             Request::GeneratePassword { length: 24, symbols: false },
             Request::DownloadAction { id: 1, action: DownloadAction::ShowInFolder },
             Request::ClearDownloads,
+            Request::QueryDownloads {
+                text: "zip".into(),
+                filter: crate::downloads::DownloadFilter::Done,
+                offset: 200,
+                limit: 100,
+                counts: true,
+                since: vec![5, 4],
+            },
             Request::ShowBookmarkFolder { id: 4, rect: Some(rect), from: None },
             Request::ShowBookmarkFolder { id: 4, rect: None, from: None },
             Request::ShowBookmarkFolder { id: 1, rect: Some(rect), from: Some(3) },
