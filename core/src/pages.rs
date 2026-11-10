@@ -46,6 +46,8 @@ pub enum Page {
     Gpu,
     /// The task manager: the engine's processes and what they cost (Krunk 0.6.0).
     Tasks,
+    /// Session logs (0.15.0): sites, time in front and CPU use per browser run.
+    Sessions,
     /// Installed extensions (Krunk 0.6.0).
     Extensions,
     /// Sync (beta, Krunk 0.9.0): setup, restore, approvals, devices.
@@ -60,7 +62,7 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 18] = [
+    pub const ALL: [Page; 19] = [
         Page::NewTab,
         Page::History,
         Page::Bookmarks,
@@ -74,6 +76,7 @@ impl Page {
         Page::Adblock,
         Page::Gpu,
         Page::Tasks,
+        Page::Sessions,
         Page::Extensions,
         Page::Sync,
         Page::Source,
@@ -97,6 +100,7 @@ impl Page {
             Page::Adblock => "adblock",
             Page::Gpu => "gpu",
             Page::Tasks => "tasks",
+            Page::Sessions => "sessions",
             Page::Extensions => "extensions",
             Page::Sync => "sync",
             Page::Source => "source",
@@ -107,9 +111,9 @@ impl Page {
 
     /// Pages with secrets or privileged data the AI agent may never open (0.12.0): the vault and
     /// payment methods, sync, and the cookie and storage pages (they would bypass the agent's
-    /// sensitive-data gate).
+    /// sensitive-data gate). 0.15.0: the session logs (a record of the user's browsing).
     pub fn agent_forbidden(self) -> bool {
-        matches!(self, Page::Passwords | Page::Sync | Page::SiteData | Page::Storage)
+        matches!(self, Page::Passwords | Page::Sync | Page::SiteData | Page::Storage | Page::Sessions)
     }
 
     /// The real URL loaded in the tab.

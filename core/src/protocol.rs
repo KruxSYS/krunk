@@ -1172,6 +1172,25 @@ pub enum Request {
     KillTask {
         id: i64,
     },
+    /// krunk://sessions (0.15.0): the sessions with the logging settings.
+    SessionList,
+    /// krunk://sessions: one session in full.
+    SessionDetail {
+        id: i64,
+    },
+    /// krunk://sessions: delete one past session (not the running one).
+    SessionDelete {
+        id: i64,
+    },
+    /// krunk://sessions: delete every past session and the running one's events.
+    SessionClear,
+    /// krunk://sessions: turn logging on or off, or change how long sessions are kept.
+    SessionLogSet {
+        #[serde(default)]
+        enabled: Option<bool>,
+        #[serde(default)]
+        retention_days: Option<u32>,
+    },
     /// The shell moved the keyboard selection in the suggestions.
     AddressSuggestSelect {
         selected: Option<usize>,
@@ -2147,6 +2166,10 @@ impl Sender {
             Sender::Page(Page::About) => matches!(req, R::GetAbout | R::RepairEngine),
             Sender::Page(Page::Gpu) => matches!(req, R::GetGpuInfo | R::OpenGpuInternals | R::RepairEngine),
             Sender::Page(Page::Tasks) => matches!(req, R::GetTasks | R::KillTask { .. }),
+            Sender::Page(Page::Sessions) => matches!(
+                req,
+                R::SessionList | R::SessionDetail { .. } | R::SessionDelete { .. } | R::SessionClear | R::SessionLogSet { .. }
+            ),
             Sender::Page(Page::Extensions) => matches!(
                 req,
                 R::ExtList
@@ -3669,6 +3692,12 @@ mod tests {
             Request::CaptionWindow { action: WindowAction::Maximize },
             Request::GetTasks,
             Request::KillTask { id: 42 },
+            Request::SessionList,
+            Request::SessionDetail { id: 3 },
+            Request::SessionDelete { id: 3 },
+            Request::SessionClear,
+            Request::SessionLogSet { enabled: Some(true), retention_days: None },
+            Request::SessionLogSet { enabled: None, retention_days: Some(90) },
             Request::PermissionExceptions,
             Request::BounceStatus,
             Request::BounceCleanNow,
@@ -4362,6 +4391,30 @@ mod tests {
             Sender::Popup.permits(&act) && Sender::Page(Page::Downloads).permits(&act) && !Sender::Shell.permits(&act)
         );
         assert!(Event::DownloadStarted.to_json().contains("downloadStarted"));
+    }
+
+    /// 0.15.0: only krunk://sessions reads or changes the session logs.
+    #[test]
+    fn session_log_permits() {
+        let reqs = [
+            Request::SessionList,
+            Request::SessionDetail { id: 1 },
+            Request::SessionDelete { id: 1 },
+            Request::SessionClear,
+            Request::SessionLogSet { enabled: Some(false), retention_days: None },
+        ];
+        for r in &reqs {
+            assert!(Sender::Page(Page::Sessions).permits(r), "{r:?}");
+            for s in [Sender::Shell, Sender::Popup, Sender::Agent, Sender::Ext, Sender::Runner] {
+                assert!(!s.permits(r), "{s:?} {r:?}");
+            }
+            for p in Page::ALL.iter().filter(|p| **p != Page::Sessions) {
+                assert!(!Sender::Page(*p).permits(r), "{p:?} {r:?}");
+            }
+        }
+        assert!(Page::Sessions.agent_forbidden() && Page::Sessions.single_instance());
+        let set: Request = serde_json::from_str(r#"{"cmd":"sessionLogSet","retentionDays":7}"#).unwrap();
+        assert_eq!(set, Request::SessionLogSet { enabled: None, retention_days: Some(7) });
     }
 
     #[test]

@@ -592,6 +592,7 @@ fn page_title(p: Page) -> &'static str {
         Page::HttpsOnly => "Not secure",
         Page::Gpu => "Graphics",
         Page::Tasks => "Task manager",
+        Page::Sessions => "Session logs",
         Page::Extensions => "Extensions",
         Page::Sync => "Sync",
         Page::Source => "Page source",
