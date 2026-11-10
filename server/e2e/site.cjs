@@ -585,7 +585,7 @@ async function publicSite() {
     const fine = (e.none ? got.none : !got.none)
       && (!e.main || got.main === e.main) && (!e.sub || got.sub === e.sub)
       && (e.using === undefined || (e.using === null ? got.using === null : (got.using || '').includes(e.using)))
-      && got.hrefs.every((h) => h.startsWith('/download/'));
+      && got.hrefs.every((h) => h.startsWith('/download/') || h.startsWith('/changelog#'));
     ok(fine, `download box, ${c.name}: ${JSON.stringify(got).slice(0, 220)}`);
     // With no release the browser itself reports release.json's 404; nothing else may appear.
     const errors = page.krunk.errors.filter((e) => !(c.status === 404 && /status of 404/.test(e)));

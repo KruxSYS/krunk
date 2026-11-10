@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://krunk.209.wf/schema/krunk-account-export-1.json",
+  "title": "krunk-account-export/1",
+  "description": "The personal-data download of a Krunk account (POST /api/v1/web/export, PROTOCOL §11.2). Times are RFC 3339 in UTC; IPs are as stored (purged after 90 days). Records are end-to-end encrypted envelopes (PROTOCOL §9.1): the server can't read them and the download holds no key material (no directories, seals or escrow).",
+  "type": "object",
+  "required": ["schema", "generated_at", "account", "devices", "web_sessions", "activity", "pending", "emails", "sync", "records"],
+  "additionalProperties": false,
+  "$defs": {
+    "time": { "type": "string", "format": "date-time" },
+    "time_or_null": { "type": ["string", "null"], "format": "date-time" },
+    "uuid": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" },
+    "uuid_or_null": { "type": ["string", "null"] },
+    "text_or_null": { "type": ["string", "null"] }
+  },
+  "properties": {
+    "schema": { "const": "krunk-account-export/1" },
+    "generated_at": { "$ref": "#/$defs/time" },
+    "account": {
+      "type": "object",
+      "required": ["id", "email", "email_verified_at", "created_at", "password_changed_at", "last_active_at", "totp_enabled", "backup_codes"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/uuid" },
+        "email": { "type": "string" },
+        "email_verified_at": { "$ref": "#/$defs/time_or_null" },
+        "created_at": { "$ref": "#/$defs/time" },
+        "password_changed_at": { "$ref": "#/$defs/time" },
+        "last_active_at": { "$ref": "#/$defs/time" },
+        "totp_enabled": { "type": "boolean" },
+        "backup_codes": {
+          "type": "object",
+          "required": ["total", "unused"],
+          "additionalProperties": false,
+          "properties": { "total": { "type": "integer" }, "unused": { "type": "integer" } }
+        }
+      }
+    },
+    "devices": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "short", "platform", "label", "client_version", "created_at", "last_used_at", "last_sync_at", "last_ip", "last_country", "user_agent", "has_keys", "revoked_at"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "#/$defs/uuid" },
+          "short": { "type": "integer" },
+          "platform": { "enum": ["windows", "android"] },
+          "label": { "type": "string" },
+          "client_version": { "type": "string" },
+          "created_at": { "$ref": "#/$defs/time" },
+          "last_used_at": { "$ref": "#/$defs/time" },
+          "last_sync_at": { "$ref": "#/$defs/time_or_null" },
+          "last_ip": { "$ref": "#/$defs/text_or_null" },
+          "last_country": { "$ref": "#/$defs/text_or_null" },
+          "user_agent": { "$ref": "#/$defs/text_or_null" },
+          "has_keys": { "type": "boolean" },
+          "revoked_at": { "$ref": "#/$defs/time_or_null" }
+        }
+      }
+    },
+    "web_sessions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "created_at", "last_used_at", "ip", "country", "user_agent", "via", "revoked_at", "current"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "$ref": "#/$defs/uuid" },
+          "created_at": { "$ref": "#/$defs/time" },
+          "last_used_at": { "$ref": "#/$defs/time" },
+          "ip": { "$ref": "#/$defs/text_or_null" },
+          "country": { "$ref": "#/$defs/text_or_null" },
+          "user_agent": { "$ref": "#/$defs/text_or_null" },
+          "via": { "enum": ["password", "qr"] },
+          "revoked_at": { "$ref": "#/$defs/time_or_null" },
+          "current": { "type": "boolean" }
+        }
+      }
+    },
+    "activity": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "at", "ip", "country", "source_kind", "source_id"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "integer" },
+          "kind": { "type": "string" },
+          "at": { "$ref": "#/$defs/time" },
+          "ip": { "$ref": "#/$defs/text_or_null" },
+          "country": { "$ref": "#/$defs/text_or_null" },
+          "source_kind": { "enum": ["web", "device", null] },
+          "source_id": { "$ref": "#/$defs/uuid_or_null" }
+        }
+      }
+    },
+    "pending": {
+      "type": "object",
+      "required": ["link_grants", "pair_grants"],
+      "additionalProperties": false,
+      "properties": {
+        "link_grants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["platform", "label", "client_version", "ip", "country", "user_agent", "created_at", "expires_at", "status"],
+            "additionalProperties": false,
+            "properties": {
+              "platform": { "type": "string" },
+              "label": { "type": "string" },
+              "client_version": { "type": "string" },
+              "ip": { "$ref": "#/$defs/text_or_null" },
+              "country": { "$ref": "#/$defs/text_or_null" },
+              "user_agent": { "$ref": "#/$defs/text_or_null" },
+              "created_at": { "$ref": "#/$defs/time" },
+              "expires_at": { "$ref": "#/$defs/time" },
+              "status": { "enum": ["pending", "approved", "denied"] }
+            }
+          }
+        },
+        "pair_grants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["created_at", "expires_at", "status", "claim_kind", "claimed_at", "platform", "label", "client_version", "ip", "country", "user_agent"],
+            "additionalProperties": false,
+            "properties": {
+              "created_at": { "$ref": "#/$defs/time" },
+              "expires_at": { "$ref": "#/$defs/time" },
+              "status": { "enum": ["waiting", "claimed", "approved", "denied"] },
+              "claim_kind": { "enum": ["device", "web", null] },
+              "claimed_at": { "$ref": "#/$defs/time_or_null" },
+              "platform": { "$ref": "#/$defs/text_or_null" },
+              "label": { "$ref": "#/$defs/text_or_null" },
+              "client_version": { "$ref": "#/$defs/text_or_null" },
+              "ip": { "$ref": "#/$defs/text_or_null" },
+              "country": { "$ref": "#/$defs/text_or_null" },
+              "user_agent": { "$ref": "#/$defs/text_or_null" }
+            }
+          }
+        }
+      }
+    },
+    "emails": {
+      "description": "The mails sent to the account in the last 90 days: the template name and when it was queued; never the address, links or tokens.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["template", "queued_at"],
+        "additionalProperties": false,
+        "properties": { "template": { "type": "string" }, "queued_at": { "$ref": "#/$defs/time" } }
+      }
+    },
+    "sync": {
+      "type": "object",
+      "required": ["has_keyset", "state", "record_count", "note"],
+      "additionalProperties": false,
+      "properties": {
+        "has_keyset": { "type": "boolean" },
+        "record_count": { "type": "integer" },
+        "note": { "type": "string" },
+        "state": {
+          "type": ["object", "null"],
+          "required": ["keyset_gen", "current_epoch", "pak_epoch", "rotation_ak", "rotation_pak", "head_seq", "records", "bytes", "history_records", "created_at", "updated_at"],
+          "additionalProperties": false,
+          "properties": {
+            "keyset_gen": { "$ref": "#/$defs/uuid" },
+            "current_epoch": { "type": "integer" },
+            "pak_epoch": { "type": "integer" },
+            "rotation_ak": { "type": "boolean" },
+            "rotation_pak": { "type": "boolean" },
+            "head_seq": { "type": "integer" },
+            "records": { "type": "integer" },
+            "bytes": { "type": "integer" },
+            "history_records": { "type": "integer" },
+            "created_at": { "$ref": "#/$defs/time" },
+            "updated_at": { "$ref": "#/$defs/time" }
+          }
+        }
+      }
+    },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["c", "id", "seq", "e", "k", "envelope", "size", "updated_at"],
+        "additionalProperties": false,
+        "properties": {
+          "c": { "type": "string" },
+          "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{22}$" },
+          "seq": { "type": "integer" },
+          "e": { "type": "integer" },
+          "k": { "enum": ["ak", "pak"] },
+          "envelope": { "type": "object" },
+          "size": { "type": "integer" },
+          "updated_at": { "$ref": "#/$defs/time" }
+        }
+      }
+    }
+  }
+}

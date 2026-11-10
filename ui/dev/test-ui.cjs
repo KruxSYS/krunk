@@ -5630,7 +5630,8 @@ async function measureAccountCard(browser) {
     await emit(page, { event: 'account', card: { state: 'signedIn', email: 'vm090@example.org', device: 'Krunk on Windows', lastCheckedMs: Date.now() } });
     await emit(page, { event: 'sync', view: { state: 'off', message: null } });
     await page.waitForTimeout(60);
-    console.log(JSON.stringify({ height: h, signIn: signIn, copyCode: copy, signOut: await at('account-sign-out'), syncOpen: await at('sync-open') }));
+    console.log(JSON.stringify({ height: h, signIn: signIn, copyCode: copy, signOut: await at('account-sign-out'), syncOpen: await at('sync-open'),
+      addDevice: await at('account-add-device') }));
     await page.context().close();
   }
 }

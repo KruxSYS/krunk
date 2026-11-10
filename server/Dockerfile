@@ -8,6 +8,7 @@ RUN mkdir src && echo 'fn main() {}' > src/main.rs \
     && rm -rf src
 COPY src ./src
 COPY migrations ./migrations
+COPY expand ./expand
 COPY templates ./templates
 COPY data ./data
 RUN cargo build --release --locked --offline \
