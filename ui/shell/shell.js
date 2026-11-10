@@ -819,6 +819,13 @@
       suggest.tail = false;
     }
   });
+  // 0.15.0: the search engine's suggestions arrived: the same rows with more under them, so
+  // the keyboard selection and the inline completion stay as they are.
+  LB.on('addressSearchSuggestions', function (e) {
+    if (document.activeElement !== address || e.text !== suggest.text || !suggest.open) return;
+    suggest.entries = e.entries || [];
+    if (suggest.selected !== null && suggest.selected >= suggest.entries.length) suggest.selected = null;
+  });
   // Focus by keyboard (Ctrl+L, a new tab) selects the whole address. A mouse press lets the field
   // do what text fields do (0.7.0, R4): drag selects, a double click a word, a triple click all;
   // a plain click into the unfocused bar selects all on release, as in Chrome.

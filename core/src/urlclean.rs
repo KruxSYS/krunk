@@ -142,6 +142,13 @@ pub fn search_url(query: &str, search_template: &str) -> String {
     search_template.replace("{searchTerms}", &encoded).replace("%s", &encoded)
 }
 
+/// Names that only exist on the local network (RFC 6761/6762/8375 and common router
+/// defaults): typed without a scheme they are addresses although they are no public suffix.
+const LOCAL_SUFFIXES: &[&str] = &[".local", ".lan", ".internal", ".home.arpa", ".localhost"];
+
+/// An address typed without a scheme (0.15.0): an IP literal, `localhost`, a host with a
+/// port, or a name ending in a real top-level domain (the public suffix list) or a
+/// local-network suffix. `test.test`, `notes.txt` and `user@example.com` are searched.
 fn as_url(input: &str) -> Option<String> {
     // Explicit scheme.
     if let Ok(u) = Url::parse(input) {
@@ -154,30 +161,43 @@ fn as_url(input: &str) -> Option<String> {
     }
     let candidate = format!("http://{input}");
     let u = Url::parse(&candidate).ok()?;
-    let host = u.host()?;
-    let looks_like_host = match host {
-        url::Host::Ipv4(_) | url::Host::Ipv6(_) => true,
+    // `user@host` without a scheme is an e-mail address, not a sign-in (Chrome searches it too).
+    if !u.username().is_empty() || u.password().is_some() {
+        return None;
+    }
+    // The host and port as typed (the parser fills in `1.2` → `1.0.0.2` and drops `:80`).
+    let typed_host = input.split(['/', '?', '#', '\\']).next().unwrap_or("");
+    let has_port = !typed_host.ends_with(']')
+        && typed_host.rsplit_once(':').is_some_and(|(_, p)| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
+    // (public: HTTPS by default; local names and addresses keep HTTP)
+    let (looks_like_host, public) = match u.host()? {
+        url::Host::Ipv4(ip) => {
+            // Only the full dotted form: `1.5` or `3.14` are words.
+            let quad = typed_host.split(':').next().unwrap_or("").trim_end_matches('.').split('.').count() == 4;
+            (quad, !(ip.is_private() || ip.is_loopback() || ip.is_link_local()))
+        }
+        url::Host::Ipv6(ip) => {
+            let seg = ip.segments()[0];
+            let local = ip.is_loopback() || (seg & 0xfe00) == 0xfc00 || (seg & 0xffc0) == 0xfe80;
+            (true, !local)
+        }
         url::Host::Domain(d) => {
-            d == "localhost"
-                || (d.contains('.')
-                    && !d.starts_with('.')
-                    && !d.ends_with('.')
-                    && d.rsplit('.')
-                        .next()
-                        .is_some_and(|tld| tld.len() >= 2 && tld.chars().all(|c| c.is_ascii_alphabetic())))
+            let name = d.strip_suffix('.').unwrap_or(d);
+            let labels_ok = !name.is_empty() && name.split('.').all(|l| !l.is_empty());
+            let local = name == "localhost" || LOCAL_SUFFIXES.iter().any(|s| name.ends_with(s));
+            // The parser lowercases and punycodes the name (`пример.рф` → `xn--e1afmkfd.xn--p1ai`).
+            let known = labels_ok && name.contains('.') && psl::suffix(name.as_bytes()).is_some_and(|s| s.is_known());
+            (labels_ok && (local || known || has_port), known && !local)
         }
     };
     if !looks_like_host {
         return None;
     }
-    // Bare hosts default to HTTPS; local addresses keep HTTP.
-    let local = matches!(u.host(), Some(url::Host::Domain("localhost")))
-        || matches!(u.host(), Some(url::Host::Ipv4(ip)) if ip.is_private() || ip.is_loopback());
-    if local {
-        Some(u.into())
-    } else {
+    if public {
         let mut u = u;
         u.set_scheme("https").ok()?;
+        Some(u.into())
+    } else {
         Some(u.into())
     }
 }
@@ -430,6 +450,70 @@ mod tests {
         assert_eq!(input_to_url("version 1.2", DDG), "https://duckduckgo.com/?q=version+1.2");
         assert_eq!(input_to_url("krunk://settings", DDG), pages::Page::Settings.url());
         assert_eq!(input_to_url("", DDG), pages::Page::NewTab.url());
+    }
+
+    #[test]
+    fn only_real_tlds_navigate() {
+        let s = |q: &str| format!("https://duckduckgo.com/?q={q}");
+        // 0.15.0: a made-up top-level domain is a search...
+        assert_eq!(input_to_url("test.test", DDG), s("test.test"));
+        assert_eq!(input_to_url("notes.txt", DDG), s("notes.txt"));
+        assert_eq!(input_to_url("readme.md5", DDG), s("readme.md5"));
+        assert_eq!(input_to_url("node.js", DDG), s("node.js"));
+        assert_eq!(input_to_url("a.b", DDG), s("a.b"));
+        assert_eq!(input_to_url("dev", DDG), s("dev"), "a bare TLD is a word");
+        assert_eq!(input_to_url("test.test/a?b=1", DDG), s("test.test%2Fa%3Fb%3D1"));
+        // ...unless asked for: a scheme, or a port.
+        assert_eq!(input_to_url("http://test.test", DDG), "http://test.test/");
+        assert_eq!(input_to_url("https://intranet/x", DDG), "https://intranet/x");
+        assert_eq!(input_to_url("test.test:8080", DDG), "http://test.test:8080/");
+        assert_eq!(input_to_url("myserver:3000/api", DDG), "http://myserver:3000/api");
+        assert_eq!(input_to_url("localhost:3000", DDG), "http://localhost:3000/");
+        assert_eq!(input_to_url("localhost", DDG), "http://localhost/");
+        assert_eq!(input_to_url("app.localhost:5173", DDG), "http://app.localhost:5173/");
+        // Real TLDs (ICANN and private suffixes), with paths, queries, fragments and ports.
+        assert_eq!(input_to_url("example.com", DDG), "https://example.com/");
+        assert_eq!(input_to_url("foo.dev", DDG), "https://foo.dev/");
+        assert_eq!(input_to_url("hello.world", DDG), "https://hello.world/", ".world is a gTLD");
+        assert_eq!(input_to_url("bbc.co.uk/news", DDG), "https://bbc.co.uk/news");
+        assert_eq!(input_to_url("someone.github.io", DDG), "https://someone.github.io/");
+        assert_eq!(input_to_url("example.com/a?b", DDG), "https://example.com/a?b");
+        assert_eq!(input_to_url("example.com/a?b=c d", DDG), s("example.com%2Fa%3Fb%3Dc+d"), "a space: words");
+        assert_eq!(input_to_url("example.com#top", DDG), "https://example.com/#top");
+        assert_eq!(input_to_url("Example.COM:8443/X", DDG), "https://example.com:8443/X");
+        assert_eq!(input_to_url("mastodon.social/@krunk", DDG), "https://mastodon.social/@krunk");
+        // A trailing dot (fully qualified) keeps working; empty labels do not.
+        assert_eq!(input_to_url("example.com.", DDG), "https://example.com./");
+        assert_eq!(input_to_url("test.test.", DDG), s("test.test."));
+        assert_eq!(input_to_url("a..com", DDG), s("a..com"));
+        assert_eq!(input_to_url(".com", DDG), s(".com"));
+        // IDN: Unicode and punycode TLDs.
+        assert_eq!(input_to_url("пример.рф", DDG), "https://xn--e1afmkfd.xn--p1ai/");
+        assert_eq!(input_to_url("xn--e1afmkfd.xn--p1ai", DDG), "https://xn--e1afmkfd.xn--p1ai/");
+        assert_eq!(input_to_url("bücher.de", DDG), "https://xn--bcher-kva.de/");
+        assert!(input_to_url("пример.тест", DDG).starts_with("https://duckduckgo.com/?q="));
+        // Local-network names stay on HTTP.
+        assert_eq!(input_to_url("nas.local", DDG), "http://nas.local/");
+        assert_eq!(input_to_url("router.lan/admin", DDG), "http://router.lan/admin");
+        assert_eq!(input_to_url("grafana.internal", DDG), "http://grafana.internal/");
+        assert_eq!(input_to_url("printer.home.arpa", DDG), "http://printer.home.arpa/");
+        // IP literals: the full dotted form only; private and loopback stay on HTTP.
+        assert_eq!(input_to_url("192.168.1.1", DDG), "http://192.168.1.1/");
+        assert_eq!(input_to_url("127.0.0.1:8080/x", DDG), "http://127.0.0.1:8080/x");
+        assert_eq!(input_to_url("169.254.1.1", DDG), "http://169.254.1.1/");
+        assert_eq!(input_to_url("8.8.8.8", DDG), "https://8.8.8.8/");
+        assert_eq!(input_to_url("3.14", DDG), s("3.14"));
+        assert_eq!(input_to_url("1.2.3", DDG), s("1.2.3"));
+        assert_eq!(input_to_url("[::1]:8080", DDG), "http://[::1]:8080/");
+        assert_eq!(input_to_url("[fd00::1]", DDG), "http://[fd00::1]/");
+        assert_eq!(input_to_url("[2001:db8::1]", DDG), "https://[2001:db8::1]/");
+        // user@host without a scheme is an e-mail address: searched (with a scheme it navigates).
+        assert_eq!(input_to_url("me@example.com", DDG), s("me%40example.com"));
+        assert_eq!(input_to_url("user:pw@localhost:8080", DDG), s("user%3Apw%40localhost%3A8080"));
+        assert_eq!(input_to_url("https://me@example.com/", DDG), "https://me@example.com/");
+        // Not ports.
+        assert_eq!(input_to_url("note:todo", DDG), s("note%3Atodo"));
+        assert_eq!(input_to_url("example.com:abc", DDG), s("example.com%3Aabc"));
     }
 
     #[test]

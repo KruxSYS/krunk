@@ -749,14 +749,26 @@
 
   // Address-bar suggestions (0.5.1): the popup never has the focus (the address bar keeps
   // it); the shell's keyboard selection arrives as `selected`. A click goes to the row.
+  // 0.15.0: the search engine's suggestions (`searchSuggestion`) come last, with the search
+  // glyph; the words after the typed ones are bold, as in Firefox.
   function renderAddressSuggest(c) {
-    const glyph = { search: '🔍', url: '🌐', history: '🕘', bookmark: '★' };
+    const glyph = { search: '🔍', url: '🌐', history: '🕘', bookmark: '★', searchSuggestion: '🔍' };
     const label = { search: 'Search', url: 'Go to', history: '', bookmark: '' };
+    const typedRow = c.entries.find(function (s) { return s.kind === 'search'; });
+    const typed = typedRow ? typedRow.title : '';
+    function suggestionTitle(t) {
+      if (!typed || t.length <= typed.length || t.slice(0, typed.length).toLowerCase() !== typed.toLowerCase()) return [el('b', { text: t })];
+      return [el('span', { text: t.slice(0, typed.length) }), el('b', { text: t.slice(typed.length) })];
+    }
     const rows = c.entries.map(function (s, i) {
-      const btn = el('button', { class: 'suggest addr' + (c.selected === i ? ' selected' : ''), 'data-index': String(i), title: s.url }, [
+      const kindClass = s.kind === 'searchSuggestion' ? ' search-suggestion' : '';
+      const title = s.kind === 'searchSuggestion'
+        ? el('span', { class: 'title' }, suggestionTitle(s.title))
+        : el('span', { class: 'title', text: (label[s.kind] ? label[s.kind] + ' ' : '') + s.title });
+      const btn = el('button', { class: 'suggest addr' + kindClass + (c.selected === i ? ' selected' : ''), 'data-index': String(i), title: s.url }, [
         el('span', { class: 'glyph', text: glyph[s.kind] || '' }),
-        el('span', { class: 'title', text: (label[s.kind] ? label[s.kind] + ' ' : '') + s.title }),
-        el('span', { class: 'url', text: s.kind === 'search' || s.kind === 'url' ? '' : s.url }),
+        title,
+        el('span', { class: 'url', text: s.kind === 'search' || s.kind === 'url' || s.kind === 'searchSuggestion' ? '' : s.url }),
       ]);
       // Chosen on the press (0.11.4): the press takes the focus from the address bar, whose
       // blur closes this list before a click (on the release) could arrive.

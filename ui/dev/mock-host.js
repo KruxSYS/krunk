@@ -60,6 +60,23 @@
         host.tabsEvent();
         break;
       }
+      // 0.15.0: address-bar suggestions, when a test sets `host.suggest = { rows(text),
+      // more(text), delayMs }`: the local rows at once, the search engine's later and only for
+      // the newest text (as app/src/browser/omnibox.rs does).
+      case 'addressSuggest': {
+        const sg = host.suggest;
+        if (!sg) break;
+        const gen = sg.gen = (sg.gen || 0) + 1;
+        const rows = sg.rows(msg.text);
+        host.emit({ event: 'addressSuggestions', text: msg.text, entries: rows });
+        const more = sg.more ? sg.more(msg.text) : [];
+        if (more.length) {
+          setTimeout(function () {
+            if (sg.gen === gen) host.emit({ event: 'addressSearchSuggestions', text: msg.text, entries: rows.concat(more) });
+          }, sg.delayMs || 150);
+        }
+        break;
+      }
       case 'navigate': {
         const t = s.tabs.find(function (x) { return x.id === s.active; });
         if (t) { t.url = 'https://duckduckgo.com/?q=' + encodeURIComponent(msg.input); t.loading = true; }

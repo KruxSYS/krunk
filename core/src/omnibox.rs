@@ -82,6 +82,50 @@ pub fn suggestions(store: &Store, text: &str, search_template: &str) -> Vec<Addr
     out
 }
 
+/// Search suggestions under the local rows (0.15.0): at most this many...
+pub const MAX_SEARCH_SUGGESTIONS: usize = 5;
+/// ...and never more rows than this in all (the local rows keep their place).
+pub const MAX_ALL_ROWS: usize = 10;
+
+/// The rows shown once the search engine's suggestions for `typed` arrived: `entries` (the
+/// local rows, unchanged and in order), then the suggestions that are neither the typed text
+/// nor a search already listed, each searching itself. `None` when nothing new remains (the
+/// popup then stays as it is).
+pub fn with_search_suggestions(
+    entries: &[AddressSuggestion],
+    typed: &str,
+    suggestions: &[String],
+    search_template: &str,
+) -> Option<Vec<AddressSuggestion>> {
+    let typed_l = typed.trim().to_lowercase();
+    let room = MAX_SEARCH_SUGGESTIONS.min(MAX_ALL_ROWS.saturating_sub(entries.len()));
+    let mut out = entries.to_vec();
+    for s in suggestions {
+        if out.len() - entries.len() >= room {
+            break;
+        }
+        let s = s.trim();
+        let url = urlclean::search_url(s, search_template);
+        let lower = s.to_lowercase();
+        let dup = lower == typed_l
+            || out.iter().any(|e| {
+                e.url == url
+                    || (matches!(e.kind, AddressSuggestionKind::Search | AddressSuggestionKind::SearchSuggestion)
+                        && e.title.to_lowercase() == lower)
+            });
+        if s.is_empty() || dup {
+            continue;
+        }
+        out.push(AddressSuggestion {
+            url,
+            title: s.to_string(),
+            kind: AddressSuggestionKind::SearchSuggestion,
+            fill: s.to_string(),
+        });
+    }
+    (out.len() > entries.len()).then_some(out)
+}
+
 /// A site whose name the user is typing (`yo` → `https://www.youtube.com/`).
 struct Site {
     root: String,
@@ -191,7 +235,10 @@ pub fn inline_completion(typed: &str, entries: &[AddressSuggestion]) -> Option<I
     let typed_rest = typed_l.strip_prefix("https://").or_else(|| typed_l.strip_prefix("http://")).unwrap_or(&typed_l);
     let in_host = !typed_rest.contains('/');
     for (index, e) in entries.iter().enumerate() {
-        if matches!(e.kind, AddressSuggestionKind::Search | AddressSuggestionKind::Url) {
+        if matches!(
+            e.kind,
+            AddressSuggestionKind::Search | AddressSuggestionKind::Url | AddressSuggestionKind::SearchSuggestion
+        ) {
             continue;
         }
         let url_l = e.url.to_lowercase();
@@ -367,6 +414,87 @@ mod tests {
         let (rows, inline) = query(&s, "yo yo", DDG);
         assert!(inline.is_none());
         assert_eq!(rows[0].kind, AddressSuggestionKind::Search);
+    }
+
+    #[test]
+    fn first_row_agrees_with_input_to_url() {
+        // 0.15.0: what the first row says is what Enter does.
+        let s = store();
+        for (typed, kind) in [
+            ("test.test", AddressSuggestionKind::Search),
+            ("me@example.com", AddressSuggestionKind::Search),
+            ("3.14", AddressSuggestionKind::Search),
+            ("example.com", AddressSuggestionKind::Url),
+            ("foo.dev", AddressSuggestionKind::Url),
+            ("192.168.1.1", AddressSuggestionKind::Url),
+            ("localhost:3000", AddressSuggestionKind::Url),
+            ("http://test.test", AddressSuggestionKind::Url),
+            ("nas.local", AddressSuggestionKind::Url),
+            ("[::1]", AddressSuggestionKind::Url),
+        ] {
+            let (rows, inline) = query(&s, typed, DDG);
+            assert_eq!(rows[0].kind, kind, "{typed}");
+            assert_eq!(rows[0].url, urlclean::input_to_url(typed, DDG), "{typed}");
+            assert!(inline.is_none(), "{typed}");
+        }
+        // A visited made-up host is still completed from history (the row goes there), but
+        // typed out in full it is searched, as Enter does.
+        s.record_visit("http://test.test/", "Test server", 1_700_000_010_000).unwrap();
+        let (rows, inline) = query(&s, "test.te", DDG);
+        assert_eq!(inline.unwrap().url, "http://test.test/");
+        assert_eq!(rows[0].url, "http://test.test/");
+        let (rows, inline) = query(&s, "test.test", DDG);
+        assert!(inline.is_none());
+        assert_eq!(rows[0].kind, AddressSuggestionKind::Search);
+    }
+
+    #[test]
+    fn search_suggestions_go_under_the_local_rows() {
+        use AddressSuggestionKind::*;
+        let local = vec![
+            AddressSuggestion {
+                url: "https://duckduckgo.com/?q=why+do".into(),
+                title: "why do".into(),
+                kind: Search,
+                fill: "why do".into(),
+            },
+            row("https://whydo.example/", History),
+            AddressSuggestion {
+                url: "https://duckduckgo.com/?q=why+do+cats+purr".into(),
+                title: "why do cats purr - DuckDuckGo".into(),
+                kind: History,
+                fill: "https://duckduckgo.com/?q=why+do+cats+purr".into(),
+            },
+        ];
+        let got: Vec<String> = ["Why Do", "why do cats purr", "why do we yawn", "WHY DO WE YAWN", "  ", "why don't we"]
+            .map(String::from)
+            .to_vec();
+        let rows = with_search_suggestions(&local, "why do", &got, DDG).unwrap();
+        assert_eq!(&rows[..3], &local[..], "the local rows stay as they were");
+        let added: Vec<(&str, &str, AddressSuggestionKind)> =
+            rows[3..].iter().map(|r| (r.title.as_str(), r.url.as_str(), r.kind)).collect();
+        assert_eq!(
+            added,
+            [
+                ("why do we yawn", "https://duckduckgo.com/?q=why+do+we+yawn", SearchSuggestion),
+                ("why don't we", "https://duckduckgo.com/?q=why+don%27t+we", SearchSuggestion),
+            ],
+            "the typed text, a search in history and repeats are dropped"
+        );
+        assert_eq!(rows[3].fill, "why do we yawn", "the bar shows the words, not the URL");
+        // Nothing new: no change.
+        assert_eq!(with_search_suggestions(&local, "why do", &["why do".into()], DDG), None);
+        assert_eq!(with_search_suggestions(&local, "why do", &[], DDG), None);
+        // At most MAX_SEARCH_SUGGESTIONS, and MAX_ALL_ROWS in all.
+        let many: Vec<String> = (0..8).map(|i| format!("why do {i}")).collect();
+        assert_eq!(with_search_suggestions(&local, "why do", &many, DDG).unwrap().len(), 3 + MAX_SEARCH_SUGGESTIONS);
+        let full: Vec<AddressSuggestion> =
+            (0..MAX_ROWS).map(|i| row(&format!("https://h{i}.example/"), History)).collect();
+        assert_eq!(with_search_suggestions(&full, "why do", &many, DDG).unwrap().len(), MAX_ALL_ROWS);
+        // Suggestions are never completed inline.
+        let rows = vec![row("https://duckduckgo.com/?q=ex", SearchSuggestion)];
+        assert!(inline_completion("duckduckgo", &rows).is_none());
+        assert_eq!(height_css(MAX_ALL_ROWS), 8.0 + 10.0 * 38.0);
     }
 
     #[test]
