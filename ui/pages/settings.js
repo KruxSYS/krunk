@@ -48,7 +48,7 @@
         const hit = !q || (short ? short.test(hay) : hay.includes(q));
         row.classList.toggle('filtered-out', !!q && !hit);
         row.hidden = (!!q && !hit) || row.dataset.hiddenByState === '1';
-        if (hit) hits++;
+        if (hit && row.dataset.hiddenByState !== '1') hits++;
       });
       panel.querySelectorAll('.card.group').forEach(function (g) {
         g.hidden = !!q && !g.querySelector('.row.setting:not(.filtered-out)');

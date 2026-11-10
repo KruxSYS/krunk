@@ -212,3 +212,11 @@ html.fullscreen #caption, html.fullscreen #drag-space { display: none; }
 /* The active tab's docked DevTools: dock side and close. */
 #devtools-ctl { display: flex; align-items: center; gap: 1px; margin: 0 4px; padding: 0 2px; border: 1px solid var(--border); border-radius: 6px; }
 #devtools-ctl[hidden] { display: none; }
+
+/* 0.12.0: a toast from a userscript or a macro: one line over the middle of the tab row, a few
+   seconds, never in the way of the mouse. */
+#shell-toast { position: fixed; top: 5px; left: 50%; transform: translateX(-50%); max-width: 60%; z-index: 50;
+               padding: 3px 12px; border-radius: 12px; background: var(--fg); color: var(--bg); font-size: 0.923rem;
+               line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none;
+               box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+#shell-toast[hidden] { display: none; }

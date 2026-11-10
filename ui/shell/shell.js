@@ -1281,6 +1281,15 @@
     b.setAttribute('aria-pressed', m.open ? 'true' : 'false');
     reportHitMap();
   });
+  // A message from a userscript (GM_notification) or a macro's toast(): shown for 4 s.
+  let toastTimer = 0;
+  LB.on('toast', function (m) {
+    const t = $('shell-toast');
+    t.textContent = String(m.message || '').slice(0, 200);
+    t.hidden = !t.textContent;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.hidden = true; }, 4000);
+  });
   LB.on('macroRunning', function (m) {
     $('macro-run').hidden = !m.id;
     $('macro-run-name').textContent = m.name || '';

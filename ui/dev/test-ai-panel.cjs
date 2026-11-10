@@ -399,6 +399,12 @@ module.exports = (h) => {
       await emit(page, { event: 'macroRunning', id: null, name: null });
       await page.waitForTimeout(40);
       check(await page.isHidden('#macro-run'), theme + ': no macro -> no indicator');
+      // A userscript's GM_notification / a macro's toast() reach the shell as `toast`.
+      await emit(page, { event: 'toast', message: 'GM test ran 1 times <b>x</b>' });
+      await page.waitForTimeout(40);
+      check(await page.isVisible('#shell-toast') && (await page.textContent('#shell-toast')) === 'GM test ran 1 times <b>x</b>'
+        && await page.$('#shell-toast b') === null, theme + ': toast shows the message as text');
+      await shot(page, 'ai-shell-toast-' + theme + '.png');
       check(external.length === 0, theme + ': no network requests');
       check(errors.length === 0, theme + ': no console errors (' + errors.join(' | ') + ')');
       await page.context().close();
