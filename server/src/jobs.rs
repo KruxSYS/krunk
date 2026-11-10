@@ -17,7 +17,7 @@ use sqlx::PgPool;
 use std::time::Duration;
 
 pub async fn run_once(db: &PgPool, ip_retention_days: i32) -> Result<(), sqlx::Error> {
-    let steps: [(&str, &str); 18] = [
+    let steps: [(&str, &str); 21] = [
         (
             "session ips",
             "UPDATE web_sessions SET ip = NULL WHERE ip IS NOT NULL AND last_used_at < now() - make_interval(days => $1)",
@@ -45,6 +45,11 @@ pub async fn run_once(db: &PgPool, ip_retention_days: i32) -> Result<(), sqlx::E
             "DELETE FROM email_outbox WHERE coalesce(sent_at, failed_at) < now() - interval '7 days'",
         ),
         ("link grants", "DELETE FROM link_grants WHERE expires_at < now() - interval '10 minutes'"),
+        // 0.13.0: pairings, the mail log (90 days, like the IPs) and the deletion list (30 days,
+        // longer than the 14 days of dumps that restore-db.sh may bring back).
+        ("pairings", "DELETE FROM pair_grants WHERE expires_at < now() - interval '10 minutes'"),
+        ("mail log", "DELETE FROM email_log WHERE queued_at < now() - make_interval(days => $1)"),
+        ("deletion list", "DELETE FROM account_deletions WHERE deleted_at < now() - interval '30 days'"),
         (
             "uncollected devices",
             "DELETE FROM devices d WHERE d.created_at < now() - interval '30 minutes'

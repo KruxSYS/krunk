@@ -25,7 +25,7 @@
 <div class="doc-layout">
 <nav class="toc" aria-label="On this page">
   <h2>On this page</h2>
-  <ol><li><a href="#without-account">Without an account</a></li><li><a href="#with-account">With an account</a></li><li><a href="#sync">Synced data</a></li><li><a href="#retention">How long we keep it</a></li><li><a href="#deleting">Deleting your account</a></li><li><a href="#others">Who else is involved</a></li><li><a href="#contact">Contact</a></li></ol>
+  <ol><li><a href="#without-account">Without an account</a></li><li><a href="#with-account">With an account</a></li><li><a href="#activity">Activity &amp; IP addresses</a></li><li><a href="#qr">Adding a device by QR code</a></li><li><a href="#sync">Synced data</a></li><li><a href="#your-data">Downloading your data</a></li><li><a href="#retention">How long we keep it</a></li><li><a href="#deleting">Deleting your account</a></li><li><a href="#others">Who else is involved</a></li><li><a href="#contact">Contact</a></li></ol>
 </nav>
 <main id="main" class="prose">
   <h1>Privacy</h1>
@@ -56,19 +56,46 @@
     <li><strong>Sign-in sessions</strong>: when they started and were last used, the browser's
       user-agent string, the IP address and the country it came from. A session cookie keeps you signed
       in to this website (up to 7 days; 12 hours idle).</li>
-    <li><strong>Security events</strong> (registration, sign-in, password and two-step changes) with
-      IP address and country.</li>
+    <li><strong>Security events</strong> (registration, sign-in, password and two-step changes, devices
+      added and removed, data downloads, sync resets) with IP address and country; see below.</li>
+    <li><strong>An email log</strong>: which kind of account email we sent you (for example "new device")
+      and when. Not the message itself.</li>
   </ul>
+
+  <h2 id="activity">Activity &amp; IP addresses</h2>
+  <p>Your account page shows you the activity of the last 90 days: each sign-in and security change, when it
+    happened, the full IP address and country it came from, and which device or browser it was. Devices and
+    signed-in browsers show their last IP address too. Only you see this, when signed in; it is your own data.
+    After 90 days the entries and their IP addresses are deleted.</p>
+
+  <h2 id="qr">Adding a device by QR code</h2>
+  <p>"Add a device" on your account page shows a QR code that works once, for 5 minutes. When a phone scans it,
+    we keep what you need to decide whether it is yours: the phone's IP address and country, the device name or
+    browser it reports, and when it asked. You approve or deny it on your signed-in screen. The code and these
+    details are deleted within minutes after it is used or expires; an approved device is then listed like any
+    other.</p>
 
   <h2 id="sync">Synced data</h2>
   <p>With sync on (optional, since Krunk 0.9.0), your bookmarks, history, open tabs, settings and passwords are encrypted on your devices before they
     are uploaded, with keys only your devices hold. Our server stores ciphertext it can't read. It does see
     how much you store, when your devices sync, and which devices are linked. The Krunk website never asks
     for your sync passphrase or recovery key.</p>
+  <p><strong>Resetting sync</strong> on your account page deletes all your encrypted sync data and the sync keys we
+    store, at once. Your devices stay signed in and keep what they hold locally; the next one that turns sync on
+    sets it up again.</p>
+
+  <h2 id="your-data">Downloading your data</h2>
+  <p>"Download all your data" on your account page gives you one JSON file with everything we hold about your
+    account: the account itself, devices, signed-in browsers, activity with IP addresses, pending device links
+    and QR codes, the email log, and your synced records encrypted exactly as stored. It contains no keys, so
+    the synced records stay unreadable without your devices. The file is only downloaded in your browser;
+    it is never emailed.</p>
 
   <h2 id="retention">How long we keep it</h2>
   <ul>
-    <li><strong>IP addresses</strong> are removed after 90 days. Countries stay while the session exists.</li>
+    <li><strong>IP addresses and activity</strong> are removed after 90 days. Countries stay while the session exists.</li>
+    <li><strong>The email log</strong> is kept for 90 days.</li>
+    <li><strong>QR codes for adding a device</strong> and what a phone sent with them are deleted within minutes.</li>
     <li><strong>Ended sign-in sessions</strong> are deleted after 30 days.</li>
     <li><strong>Accounts never confirmed</strong> are deleted after 7 days.</li>
     <li><strong>Your account</strong> is kept until you delete it; unused accounts are not deleted
@@ -77,10 +104,13 @@
   </ul>
 
   <h2 id="deleting">Deleting your account</h2>
-  <p>Deletion removes the account and everything attached to it from our database at once. Backups still
-    hold it until they expire, within 14 days; if we ever restore one, deleted accounts are deleted again.
-    There is no delete button yet: email <a href="mailto:privacy@209.wf">privacy@209.wf</a>
-    from your account's address and we delete the account, its devices and its synced records.</p>
+  <p>Delete your account yourself on the account page ("Delete account…"): it asks for your password (and
+    your two-step code, if it is on) and your email address typed out. Deletion removes the account and
+    everything attached to it from our database at once: devices, sessions, activity, the email log and all
+    synced data and keys. We send one receipt to your address. Download your data first if you want a copy.</p>
+  <p>Backups still hold the account until they expire, within 14 days. To make sure a restore can't bring it
+    back, we keep a deletion log with only the deleted account's internal id and the time, for 30 days; a
+    restore deletes every account in that log again.</p>
 
   <h2 id="others">Who else is involved</h2>
   <ul>
@@ -95,7 +125,7 @@
   <p>We don't sell or share your data with anyone else, and we show no ads.</p>
 
   <h2 id="contact">Contact</h2>
-  <p>Questions, a copy of your data, or deletion: <a href="mailto:privacy@209.wf">privacy@209.wf</a>.</p>
+  <p>Questions, or help with a copy of your data or deletion: <a href="mailto:privacy@209.wf">privacy@209.wf</a>.</p>
 </main>
 </div>
 <footer class="site-foot">
@@ -104,7 +134,7 @@
       <a class="brand" href="/"><img src="/krunk.svg" width="24" height="24" alt=""> Krunk</a>
       <p>Open source (MIT). A browser that keeps out of your business.</p>
     </div>
-    <nav aria-label="Footer"><h2>Krunk</h2><a href="/#install">Download</a><a class="opt" href="/#features">Features</a></nav>
+    <nav aria-label="Footer"><h2>Krunk</h2><a href="/#install">Download</a><a class="opt" href="/#features">Features</a><a href="/changelog">Changelog</a></nav>
     <nav aria-label="Account"><h2>Account</h2><a href="/account/login">Sign in</a><a href="/account/register">Create an account</a></nav>
     <nav aria-label="About"><h2>About</h2><a href="/privacy">Privacy</a><a href="mailto:privacy@209.wf">Contact</a></nav>
   </div>

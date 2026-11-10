@@ -8,7 +8,10 @@
 //! **Linking** (RFC 8628 pattern): `link/authorize` gives a device code (kept in memory only) and
 //! a user code the user confirms on `https://krunk.209.wf/link?code=…`; Krunk polls `link/token`
 //! every `interval` seconds (5 s more after `slow_down`) until it gets tokens, `access_denied`
-//! or `expired_token`, or the 10 minutes run out.
+//! or `expired_token`, or the 10 minutes run out. Since 0.13.0 the answer may carry the sign-in
+//! link as a QR code (`qr_svg`), which the card shows next to the code after [`qr_data_url`]
+//! checked it; without one (an older server, or an SVG that fails the checks) the card shows the
+//! code alone.
 //!
 //! **Storage:** the refresh token is kept only DPAPI-protected, in `account.json` next to the
 //! other profile files (format below); the access token lives in memory only. Tokens are
@@ -82,6 +85,76 @@ pub struct Authorized {
     pub verification_uri_complete: String,
     pub expires_in: u64,
     pub interval: u64,
+    /// The sign-in link as a QR code, an SVG document (0.13.0; older servers send none).
+    #[serde(default)]
+    pub qr_svg: Option<String>,
+}
+
+/// The largest QR SVG the card shows.
+pub const MAX_QR_SVG: usize = 64 * 1024;
+
+/// The server's QR SVG as a `data:image/svg+xml;base64,…` URL for the card's `<img>` (0.13.0),
+/// or `None` (the card shows the code alone). The page loads it as an image, where SVG can't run
+/// scripts or fetch anything; still, only what the server's QR renderer makes is accepted: at
+/// most [`MAX_QR_SVG`], an `<svg>` root after an optional XML declaration, and none of script,
+/// event attributes, links, styles, external images, `<use>`, entities or a DOCTYPE.
+pub fn qr_data_url(svg: &str) -> Option<String> {
+    if svg.is_empty() || svg.len() > MAX_QR_SVG {
+        return None;
+    }
+    let lower = svg.to_ascii_lowercase();
+    let mut rest = lower.trim_start();
+    if let Some(decl) = rest.strip_prefix("<?xml") {
+        if !decl.starts_with(|c: char| c.is_ascii_whitespace()) {
+            return None;
+        }
+        let (decl, after) = decl.split_once("?>")?;
+        if decl.contains(['<', '>', '&']) {
+            return None;
+        }
+        rest = after.trim_start();
+    }
+    let root = rest.strip_prefix("<svg")?;
+    if !root.starts_with(|c: char| c.is_ascii_whitespace() || c == '>') || !root.trim_end().ends_with("</svg>") {
+        return None;
+    }
+    const REFUSED: [&str; 12] = [
+        "<script",
+        "foreignobject",
+        "href",
+        "<!entity",
+        "<!doctype",
+        "<!",
+        "<?",
+        "<style",
+        "url(",
+        "<image",
+        "<use",
+        // Character references could spell any of the above inside an attribute value; the QR
+        // renderer never writes one.
+        "&",
+    ];
+    if REFUSED.iter().any(|bad| rest.contains(bad)) || has_event_attribute(rest) {
+        return None;
+    }
+    Some(format!("data:image/svg+xml;base64,{}", Base64::encode_string(svg.as_bytes())))
+}
+
+/// An `on…=` attribute (`onload=`, `onclick =`): `on` and a name right after whitespace, a quote
+/// or `/`, then `=`. `lower` is lower case.
+fn has_event_attribute(lower: &str) -> bool {
+    let b = lower.as_bytes();
+    (1..b.len()).any(|i| {
+        let after_gap = matches!(b[i - 1], b' ' | b'\t' | b'\n' | b'\r' | b'"' | b'\'' | b'/');
+        if !after_gap || !b[i..].starts_with(b"on") {
+            return false;
+        }
+        let name_end = b[i + 2..]
+            .iter()
+            .position(|c| !(c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b':' | b'.')))
+            .map_or(b.len(), |p| i + 2 + p);
+        name_end > i + 2 && b[name_end..].iter().find(|c| !c.is_ascii_whitespace()) == Some(&b'=')
+    })
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -207,6 +280,8 @@ pub struct Linking {
     /// When the code expires (ms since the epoch).
     pub expires_at_ms: i64,
     pub interval_s: u64,
+    /// The sign-in link as a QR code, a checked `data:` URL (0.13.0).
+    pub qr: Option<String>,
 }
 
 /// What the host does after a poll.
@@ -245,6 +320,7 @@ impl Linking {
             user_code: a.user_code,
             expires_at_ms: now_ms + (a.expires_in.min(3600) as i64) * 1000,
             interval_s: a.interval.clamp(1, MAX_INTERVAL_S),
+            qr: a.qr_svg.as_deref().and_then(qr_data_url),
         })
     }
 
@@ -339,13 +415,14 @@ pub enum CardState {
         message: Option<String>,
     },
     /// Waiting for a server answer (starting, signing out).
-    Working {
-        message: String,
-    },
+    Working { message: String },
     Linking {
         user_code: String,
         verify_url: String,
         expires_at_ms: i64,
+        /// The sign-in link as a QR code (`data:image/svg+xml;base64,…`, 0.13.0).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        qr: Option<String>,
     },
     SignedIn {
         email: String,
@@ -518,6 +595,7 @@ mod tests {
             user_code: "ABCD-EFGH".into(),
             verify_url: "https://krunk.209.wf/link?code=ABCD-EFGH".into(),
             expires_at_ms: 5,
+            qr: None,
         };
         assert_eq!(
             serde_json::to_value(&s).unwrap(),
@@ -534,5 +612,103 @@ mod tests {
             serde_json::json!({"state": "signedIn", "email": "a@b.c", "deviceName": "PC", "version": "0.11.0"})
         );
         assert_eq!(serde_json::to_value(CardState::Private).unwrap(), serde_json::json!({"state": "private"}));
+        // 0.13.0: the QR only when there is one.
+        let s = CardState::Linking {
+            user_code: "ABCD-EFGH".into(),
+            verify_url: "https://krunk.209.wf/link?code=ABCD-EFGH".into(),
+            expires_at_ms: 5,
+            qr: Some("data:image/svg+xml;base64,PHN2Zz4=".into()),
+        };
+        assert_eq!(
+            serde_json::to_value(&s).unwrap(),
+            serde_json::json!({"state": "linking", "userCode": "ABCD-EFGH", "verifyUrl": "https://krunk.209.wf/link?code=ABCD-EFGH", "expiresAtMs": 5, "qr": "data:image/svg+xml;base64,PHN2Zz4="})
+        );
+    }
+
+    /// What the server's renderer makes (`qrcode` 0.14 `svg::Color`, `min_dimensions(200, 200)`,
+    /// quiet zone), with a made-up module pattern.
+    fn server_qr_svg() -> String {
+        let mut d = String::new();
+        for y in 0..29u32 {
+            for x in (0..29u32).filter(|x| (x * 7 + y * 3) % 5 < 2) {
+                d.push_str(&format!("M{l} {t}h7v7H{l}V{t}", l = 28 + x * 7, t = 28 + y * 7));
+            }
+        }
+        format!(
+            concat!(
+                r#"<?xml version="1.0" standalone="yes"?>"#,
+                r#"<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="259" height="259""#,
+                r#" viewBox="0 0 259 259" shape-rendering="crispEdges">"#,
+                r##"<rect x="0" y="0" width="259" height="259" fill="#fff"/><path fill="#000" d="{d}"/></svg>"##
+            ),
+            d = d
+        )
+    }
+
+    #[test]
+    fn the_qr_is_the_servers_svg_or_nothing() {
+        // An older server: no QR, the code alone (and the rest exactly as before).
+        let a = authorized();
+        assert!(a.qr_svg.is_none());
+        let l = Linking::start(a, Some("https://krunk.209.wf"), 0).unwrap();
+        assert!(l.qr.is_none());
+
+        let svg = server_qr_svg();
+        let url = qr_data_url(&svg).expect("the server's own QR");
+        let b64 = url.strip_prefix("data:image/svg+xml;base64,").unwrap();
+        assert_eq!(Base64::decode_vec(b64).unwrap(), svg.as_bytes());
+        // Through the authorize answer to the card.
+        let body = serde_json::json!({
+            "device_code": "dc", "user_code": "ABCD-EFGH", "verification_uri": "https://krunk.209.wf/link",
+            "verification_uri_complete": "https://krunk.209.wf/link?code=ABCD-EFGH", "expires_in": 600,
+            "interval": 5, "qr_svg": svg,
+        });
+        let a: Authorized = serde_json::from_value(body).unwrap();
+        let l = Linking::start(a, Some("https://krunk.209.wf"), 0).unwrap();
+        assert_eq!(l.qr.as_deref(), Some(url.as_str()));
+        // Without the declaration, with whitespace around, too.
+        let bare = svg.split_once("?>").unwrap().1;
+        assert!(qr_data_url(bare).is_some());
+        assert!(qr_data_url(&format!("\n  {bare}\n")).is_some());
+
+        let inject = |what: &str| svg.replacen("<rect ", &format!("{what}<rect "), 1);
+        let attr = |what: &str| svg.replacen("<rect ", &format!("<rect {what} "), 1);
+        let too_big = svg.replacen(r#"d=""#, &format!(r#"d="{}"#, "M0 0h1v1H0V0".repeat(6000)), 1);
+        assert!(too_big.len() > MAX_QR_SVG);
+        for (why, bad) in [
+            ("script", inject("<script>alert(1)</script>")),
+            ("script, upper case", inject("<SCRIPT>alert(1)</SCRIPT>")),
+            ("foreignObject", inject("<foreignObject><p>x</p></foreignObject>")),
+            ("href", attr(r#"href="https://evil.example/""#)),
+            ("xlink:href", inject(r#"<a xlink:href="javascript:alert(1)">x</a>"#)),
+            ("onload", svg.replacen("<svg ", r#"<svg onload="alert(1)" "#, 1)),
+            ("onclick, spaced and upper case", attr(r#"ONCLICK = "x""#)),
+            ("onmouseover after a quote", svg.replacen(r##"fill="#fff""##, r##"fill="#fff"onmouseover="x""##, 1)),
+            ("DOCTYPE with ENTITY", svg.replacen("?>", r#"?><!DOCTYPE svg [<!ENTITY x "y">]>"#, 1)),
+            ("ENTITY", inject(r#"<!ENTITY x "y">"#)),
+            ("character reference", attr(r#"fill="&#x75;rl(#a)""#)),
+            ("style", inject("<style>rect{fill:red}</style>")),
+            ("url(", attr(r#"fill="url(https://evil.example/#a)""#)),
+            ("image", inject(r#"<image width="9" height="9"/>"#)),
+            ("use", inject(r##"<use x="1"/>"##)),
+            ("a second processing instruction", svg.replacen("?>", r#"?><?xml-stylesheet type="text/css"?>"#, 1)),
+            ("too large", too_big),
+            ("not svg", "<html><body>x</body></html>".into()),
+            ("svg not at the root", format!("<g>{bare}</g>")),
+            ("svgx root", bare.replacen("<svg ", "<svgx ", 1)),
+            ("unclosed", bare.trim_end_matches("</svg>").to_string()),
+            ("text before the root", format!("hello{bare}")),
+            ("empty", String::new()),
+        ] {
+            assert_eq!(qr_data_url(&bad), None, "{why}");
+            // The sign-in still works, with the code alone.
+            let mut a = authorized();
+            a.qr_svg = Some(bad);
+            let l = Linking::start(a, Some("https://krunk.209.wf"), 0).unwrap();
+            assert!(l.qr.is_none(), "{why}");
+        }
+        // Words that merely contain "on" are fine.
+        assert!(qr_data_url(&attr(r#"data-version="1""#)).is_some());
+        assert!(qr_data_url(&attr(r#"class="icon one""#)).is_some());
     }
 }

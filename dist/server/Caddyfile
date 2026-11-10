@@ -102,13 +102,14 @@
 		}
 	}
 
-	# The account pages (docs/sync/PLAN.md §4.6): static, never cached. Only the four form pages
-	# may load Cloudflare Turnstile, so only they allow its script and frame (PLAN §4.5).
+	# The account pages (docs/sync/PLAN.md §4.6): static, never cached. Only the form pages
+	# may load Cloudflare Turnstile, so only they allow its script and frame (PLAN §4.5):
+	# sign-in, registration, password reset, resending the confirmation and (0.13.0) deletion.
 	redir /account /account/ 308
 	handle /account/* {
 		root * /srv/site
 		header Cache-Control "no-store, no-transform"
-		@turnstile path /account/login /account/register /account/reset /account/resend /account/login.html /account/register.html /account/reset.html /account/resend.html
+		@turnstile path /account/login /account/register /account/reset /account/resend /account/delete /account/login.html /account/register.html /account/reset.html /account/resend.html /account/delete.html
 		header @turnstile Content-Security-Policy "default-src 'none'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 		try_files {path} {path}.html
 		file_server {
@@ -125,10 +126,27 @@
 		file_server
 	}
 
+	# "Add a device" by QR code (0.13.0): the phone opens /pair#<token>. The token stays in the
+	# fragment, so it never reaches the server or a log; the page needs no Turnstile.
+	handle /pair {
+		root * /srv/site
+		header Cache-Control "no-store, no-transform"
+		rewrite * /account/pair.html
+		file_server
+	}
+
 	handle /privacy {
 		root * /srv/site
 		header Cache-Control "no-cache, no-transform"
 		rewrite * /privacy.html
+		file_server
+	}
+
+	# Generated from CHANGELOG.md when the image is built (changelog.py render, Dockerfile).
+	handle /changelog {
+		root * /srv/site
+		header Cache-Control "no-cache, no-transform"
+		rewrite * /changelog.html
 		file_server
 	}
 

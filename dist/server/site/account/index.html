@@ -27,6 +27,9 @@
       <li><a href="#two-step">Two-step verification</a></li>
       <li><a href="#devices-sync">Devices &amp; sync</a></li>
       <li><a href="#browsers">Signed-in browsers</a></li>
+      <li><a href="#usage">Usage</a></li>
+      <li><a href="#activity">Activity &amp; IP addresses</a></li>
+      <li><a href="#export">Your data</a></li>
     </ul>
   </nav>
   <div class="sections">
@@ -110,7 +113,60 @@
             <ul class="items" aria-label="Removed devices"></ul>
           </details>
         </div>
-        <p class="never">To add a device, open Krunk → Settings → Account → Sign in. Sync is turned on in Krunk, never here: the Krunk website never asks for your sync passphrase or recovery key.</p>
+        <div id="add-device" class="add-device">
+          <h3 id="h-add-device">Add a device</h3>
+          <p class="hint">Show a QR code here and scan it with your phone. In Krunk on a computer, open Settings → Account → Sign in instead.</p>
+          <button id="add-device-open" type="button" class="primary" aria-expanded="false" aria-controls="pair-panel">Add a device</button>
+          <div id="pair-panel" class="inline-panel pair-panel" hidden aria-labelledby="pair-title">
+            <h3 id="pair-title" tabindex="-1">Scan this code with your phone</h3>
+            <p id="pair-msg" class="pair-msg" aria-live="polite"></p>
+            <p id="pair-timer" class="timer" hidden><span id="pair-countdown" role="timer" aria-live="off"></span>
+              <span id="pair-announce" class="sr-label" aria-live="polite"></span></p>
+            <div id="pair-wait" hidden>
+              <div class="qr-setup">
+                <div id="pair-qr" class="qr" role="img" aria-label="QR code with the link below"></div>
+                <div>
+                  <p>Scan it with your phone's camera or the Krunk app. <strong>Only scan it with your own phone.</strong>
+                    Nothing is signed in until you check the code and approve it here.</p>
+                  <p class="hint" id="pair-url-label">Or open this link on the phone:</p>
+                  <div class="key"><code id="pair-url" aria-labelledby="pair-url-label"></code><button type="button" class="small" id="pair-copy">Copy link</button></div>
+                </div>
+              </div>
+            </div>
+            <form id="pair-claimed" hidden novalidate>
+              <h3 id="pair-claimed-title" tabindex="-1">Someone scanned the code</h3>
+              <dl id="pair-claimant" class="facts"></dl>
+              <p class="warn">Approve only if this is your own phone or browser and you scanned the code just now.
+                Approving lets it use your Krunk account. You can remove it at any time on this page.</p>
+              <p id="pair-code-label">The code on your phone:</p>
+              <p id="pair-code" class="usercode" aria-labelledby="pair-code-label"></p>
+              <label class="check"><input type="checkbox" id="pair-same" name="same" required> <span>My phone shows this code.</span></label>
+              <div class="decide">
+                <button type="submit" id="pair-approve" class="primary" disabled>Approve</button>
+                <button type="button" id="pair-deny">Deny</button>
+              </div>
+            </form>
+            <p id="pair-result" class="pair-result" tabindex="-1" hidden></p>
+            <div class="row-buttons">
+              <button type="button" id="pair-new" class="small" hidden>New code</button>
+              <button type="button" id="pair-close" class="small">Close</button>
+            </div>
+          </div>
+        </div>
+        <details id="sync-reset-box" class="danger-zone">
+          <summary><span>Reset sync…</span></summary>
+          <form id="sync-reset" novalidate>
+            <p>Resetting deletes your encrypted sync data and the sync keys stored on the server: bookmarks,
+              history, tabs, settings and passwords as synced. Your devices stay signed in and keep what they
+              have locally. The next device that turns sync on sets it up again with a new passphrase.</p>
+            <p>Use it if you lost your sync passphrase and recovery key, or want to start over. It can't be undone.</p>
+            <label>Type <strong>DELETE SYNC DATA</strong> to confirm
+              <input id="sync-reset-confirm" name="confirm" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="32"></label>
+            <button type="submit" id="sync-reset-go" class="danger" disabled>Delete sync data</button>
+            <p id="sync-reset-result" class="state-line" tabindex="-1" hidden></p>
+          </form>
+        </details>
+        <p class="never">Sync is turned on in Krunk, never here: the Krunk website never asks for your sync passphrase or recovery key.</p>
       </section>
 
       <section id="browsers" class="card" aria-labelledby="h-browsers">
@@ -130,6 +186,90 @@
         <ul id="sessions" class="items" aria-label="Signed-in browsers"></ul>
       </section>
 
+      <section id="usage" class="card" aria-labelledby="h-usage">
+        <h2 id="h-usage">Usage</h2>
+        <p class="lead">What your account stores on the server, and its limits.</p>
+        <p id="usage-error" class="state-line" hidden></p>
+        <div id="usage-body" hidden>
+          <div class="meters">
+            <div class="meter-row">
+              <span class="meter-k" id="usage-records-k">Synced items</span>
+              <meter id="usage-records-meter" min="0" max="1" value="0" aria-labelledby="usage-records-k" aria-describedby="usage-records-text"></meter>
+              <span class="meter-d" id="usage-records-text"></span>
+            </div>
+            <div class="meter-row">
+              <span class="meter-k" id="usage-bytes-k">Storage</span>
+              <meter id="usage-bytes-meter" min="0" max="1" value="0" aria-labelledby="usage-bytes-k" aria-describedby="usage-bytes-text"></meter>
+              <span class="meter-d" id="usage-bytes-text"></span>
+            </div>
+            <div class="meter-row">
+              <span class="meter-k" id="usage-history-k">History entries</span>
+              <meter id="usage-history-meter" min="0" max="1" value="0" aria-labelledby="usage-history-k" aria-describedby="usage-history-text"></meter>
+              <span class="meter-d" id="usage-history-text"></span>
+            </div>
+          </div>
+          <p class="hint" id="usage-record-limit"></p>
+          <h3>By type</h3>
+          <div class="table-wrap" role="region" aria-labelledby="usage-coll-caption" tabindex="0">
+            <table id="usage-collections" class="data">
+              <caption id="usage-coll-caption" class="sr-label">Synced items by type</caption>
+              <thead><tr><th scope="col">Type</th><th scope="col" class="num">Items</th><th scope="col" class="num">Size</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <p id="usage-coll-empty" class="hint" hidden>Nothing is synced yet.</p>
+          <h3>Devices <span id="usage-devices-count" class="badge off"></span></h3>
+          <div class="table-wrap" role="region" aria-labelledby="usage-dev-caption" tabindex="0">
+            <table id="usage-devices" class="data">
+              <caption id="usage-dev-caption" class="sr-label">Devices and when they last synced</caption>
+              <thead><tr><th scope="col">Device</th><th scope="col">Last synced</th><th scope="col">Last seen</th><th scope="col">IP address</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <h3>Account</h3>
+          <dl class="facts" id="usage-account">
+            <dt>Created</dt><dd id="ua-created"></dd>
+            <dt>Last sign-in</dt><dd id="ua-sign-in"></dd>
+            <dt>Password last changed</dt><dd id="ua-password"></dd>
+            <dt>Two-step verification</dt><dd id="ua-totp"></dd>
+            <dt>Backup codes left</dt><dd id="ua-codes"></dd>
+          </dl>
+        </div>
+      </section>
+
+      <section id="activity" class="card" aria-labelledby="h-activity">
+        <h2 id="h-activity">Activity &amp; IP addresses</h2>
+        <p class="lead">Sign-ins and security changes on your account, with the IP address and country they came from.
+          <span id="activity-retention">Kept for 90 days.</span></p>
+        <p id="activity-error" class="state-line" hidden></p>
+        <div class="table-wrap" role="region" aria-labelledby="activity-caption" tabindex="0">
+          <table id="activity-table" class="data">
+            <caption id="activity-caption" class="sr-label">Account activity, newest first</caption>
+            <thead><tr><th scope="col">Event</th><th scope="col">When</th><th scope="col">IP address</th><th scope="col">Country</th><th scope="col">From</th></tr></thead>
+            <tbody id="activity-rows"></tbody>
+          </table>
+        </div>
+        <p id="activity-empty" class="hint" hidden>No activity in the last 90 days.</p>
+        <div class="row-buttons">
+          <button id="activity-more" type="button" class="small" hidden>Show older</button>
+        </div>
+      </section>
+
+      <section id="export" class="card" aria-labelledby="h-export">
+        <h2 id="h-export">Your data</h2>
+        <p class="lead">Download everything your account holds on the server, as one JSON file.</p>
+        <ul class="plain-list">
+          <li>Your account (email, dates, two-step on or off, how many backup codes are left), devices and signed-in browsers.</li>
+          <li>Activity with IP addresses, pending device links and QR codes, and the list of emails sent to you (type and time).</li>
+          <li>Your synced records, encrypted exactly as stored. No keys: only your devices can read them.</li>
+        </ul>
+        <p>The file is made for this browser only and downloaded here. It is never emailed.</p>
+        <div class="row-buttons">
+          <button id="export-download" type="button" class="primary">Download all your data</button>
+        </div>
+        <p id="export-result" class="state-line" tabindex="-1" hidden></p>
+      </section>
+
       <form id="reauth" class="inline-panel" hidden novalidate>
         <p><strong>Confirm it's you.</strong> <span class="why">Enter your password again to continue.</span></p>
         <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
@@ -139,6 +279,7 @@
           <button type="button" class="cancel">Cancel</button>
         </div>
       </form>
+      <p id="delete-line" class="delete-line"><a id="delete-link" href="/account/delete">Delete account…</a></p>
     </div>
   </div>
 </main>

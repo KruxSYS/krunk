@@ -58,28 +58,49 @@ pub fn cookie_token(headers: &HeaderMap) -> Option<String> {
         .filter(|v| crypto::b64url_decode::<32>(v).is_some())
 }
 
-/// Creates a session; returns `(token, csrf)`.
+/// How a website session was signed in (`web_sessions.via`, 0.13.0).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Via {
+    /// The sign-in form (password, and the second factor if on).
+    Password,
+    /// A phone that a signed-in browser approved by QR code (`web/pair/*`).
+    Qr,
+}
+
+impl Via {
+    pub fn name(self) -> &'static str {
+        match self {
+            Via::Password => "password",
+            Via::Qr => "qr",
+        }
+    }
+}
+
+/// Creates a session; returns `(id, token, csrf)`.
 pub async fn create(
     conn: &mut PgConnection,
     keys: &Keys,
     account_id: Uuid,
     client: &Client,
-) -> Result<(String, String), sqlx::Error> {
+    via: Via,
+) -> Result<(Uuid, String, String), sqlx::Error> {
     let token = crypto::new_token();
+    let id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO web_sessions (id, account_id, token_hash, ip, country, user_agent)
-         VALUES ($1, $2, $3, $4::inet, $5, $6)",
+        "INSERT INTO web_sessions (id, account_id, token_hash, ip, country, user_agent, via)
+         VALUES ($1, $2, $3, $4::inet, $5, $6, $7)",
     )
-    .bind(Uuid::new_v4())
+    .bind(id)
     .bind(account_id)
     .bind(token_hash(keys, &token).as_slice())
     .bind(client.ip().to_string())
     .bind(client.info.country.as_deref())
     .bind(client.user_agent.as_deref())
+    .bind(via.name())
     .execute(conn)
     .await?;
     let csrf = csrf_for(keys, &token);
-    Ok((token, csrf))
+    Ok((id, token, csrf))
 }
 
 /// A signed-in request. Extracting it checks the cookie, the lifetime and, for any method

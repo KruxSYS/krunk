@@ -15,6 +15,7 @@
 use crate::api::{ApiError, ApiResult, Client, JsonBody};
 use crate::config::Keys;
 use crate::crypto;
+use crate::events::{self, Source};
 use crate::http::AppState;
 use crate::mail::{self, Template};
 use crate::password::{self, PEPPER_ID};
@@ -65,7 +66,7 @@ pub fn normalize_email(s: &str) -> Option<String> {
     (local_ok && domain_ok).then(|| format!("{local}@{domain}"))
 }
 
-fn email_or_400(s: &str) -> Result<String, ApiError> {
+pub(crate) fn email_or_400(s: &str) -> Result<String, ApiError> {
     normalize_email(s).ok_or_else(|| ApiError::bad_request("invalid_email", "Enter a valid email address."))
 }
 
@@ -90,7 +91,7 @@ fn too_long(s: &str, max: usize) -> bool {
     s.len() > max
 }
 
-fn check_lengths(fields: &[(&str, usize)]) -> Result<(), ApiError> {
+pub(crate) fn check_lengths(fields: &[(&str, usize)]) -> Result<(), ApiError> {
     if fields.iter().any(|(s, max)| too_long(s, *max)) {
         return Err(ApiError::bad_request("bad_request", "The request is not valid."));
     }
@@ -98,11 +99,11 @@ fn check_lengths(fields: &[(&str, usize)]) -> Result<(), ApiError> {
 }
 
 // Upper bounds in bytes; the password policy itself counts characters.
-const EMAIL_MAX: usize = 254;
-const PASSWORD_MAX: usize = 1024;
+pub(crate) const EMAIL_MAX: usize = 254;
+pub(crate) const PASSWORD_MAX: usize = 1024;
 const TOKEN_MAX: usize = 64;
-const TURNSTILE_MAX: usize = 2048;
-const CODE_MAX: usize = 32;
+pub(crate) const TURNSTILE_MAX: usize = 2048;
+pub(crate) const CODE_MAX: usize = 32;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -218,15 +219,14 @@ async fn new_email_token(
     Ok(token)
 }
 
-async fn ip_event(conn: &mut PgConnection, account_id: Uuid, kind: &str, client: &Client) -> Result<(), sqlx::Error> {
-    sqlx::query("INSERT INTO ip_events (account_id, kind, ip, country) VALUES ($1, $2, $3::inet, $4)")
-        .bind(account_id)
-        .bind(kind)
-        .bind(client.ip().to_string())
-        .bind(client.info.country.as_deref())
-        .execute(conn)
-        .await?;
-    Ok(())
+async fn ip_event(
+    conn: &mut PgConnection,
+    account_id: Uuid,
+    kind: &str,
+    client: &Client,
+    source: Source,
+) -> Result<(), sqlx::Error> {
+    events::record(conn, account_id, kind, client, source).await
 }
 
 fn totp_required() -> ApiError {
@@ -237,7 +237,7 @@ fn totp_invalid() -> ApiError {
     ApiError::new(StatusCode::UNAUTHORIZED, "totp_invalid", "The code is wrong. Try the current code or a backup code.")
 }
 
-fn wrong_password() -> ApiError {
+pub(crate) fn wrong_password() -> ApiError {
     ApiError::new(StatusCode::UNAUTHORIZED, "unauthorized", "The password is wrong.")
 }
 
@@ -250,7 +250,7 @@ struct Factor {
 
 /// The second factor, if the account has one: a TOTP code (each time step once) or an unused
 /// backup code. `totp_required` when none was given.
-async fn second_factor(state: &AppState, account_id: Uuid, code: Option<&str>) -> Result<(), ApiError> {
+pub(crate) async fn second_factor(state: &AppState, account_id: Uuid, code: Option<&str>) -> Result<(), ApiError> {
     let f: Factor = sqlx::query_as("SELECT totp_enabled, totp_secret_enc, totp_last_step FROM accounts WHERE id = $1")
         .bind(account_id)
         .fetch_one(&state.db)
@@ -407,7 +407,7 @@ pub async fn register(
         let token = new_email_token(&mut tx, keys, id, "verify", VERIFY_TTL_H).await?;
         let link = format!("{site}/account/verify?token={token}");
         mail::enqueue(&mut tx, Some(id), &email, Template::Verify, json!({ "link": link })).await?;
-        ip_event(&mut tx, id, "register", &client).await?;
+        ip_event(&mut tx, id, "register", &client, Source::None).await?;
     }
     tx.commit().await?;
     Ok(status(StatusCode::ACCEPTED, "check_email"))
@@ -553,9 +553,9 @@ pub async fn login(State(state): State<AppState>, client: Client, JsonBody(req):
     }
     let mut tx = state.db.begin().await?;
     login_succeeded(&mut tx, &ekey).await?;
-    let (token, csrf) = sessions::create(&mut tx, keys, row.id, &client).await?;
+    let (session_id, token, csrf) = sessions::create(&mut tx, keys, row.id, &client, sessions::Via::Password).await?;
     sqlx::query("UPDATE accounts SET last_active_at = now() WHERE id = $1").bind(row.id).execute(&mut *tx).await?;
-    ip_event(&mut tx, row.id, "login", &client).await?;
+    ip_event(&mut tx, row.id, "login", &client, Source::Web(session_id)).await?;
     tx.commit().await?;
     let mut res = Json(CsrfBody { csrf }).into_response();
     res.headers_mut().insert(header::SET_COOKIE, sessions::set_cookie(&token));
@@ -657,12 +657,12 @@ pub async fn reset_confirm(
         .await?;
     login_succeeded(&mut tx, &email_key(keys, &row.email)).await?;
     mail::enqueue(&mut tx, Some(row.account_id), &row.email, Template::PasswordChanged, json!({})).await?;
-    ip_event(&mut tx, row.account_id, "password_reset", &client).await?;
+    ip_event(&mut tx, row.account_id, "password_reset", &client, Source::None).await?;
     tx.commit().await?;
     Ok(status(StatusCode::OK, "password_reset"))
 }
 
-async fn current_phc(state: &AppState, account_id: Uuid) -> Result<String, ApiError> {
+pub(crate) async fn current_phc(state: &AppState, account_id: Uuid) -> Result<String, ApiError> {
     Ok(sqlx::query_scalar("SELECT pw_phc FROM accounts WHERE id = $1").bind(account_id).fetch_one(&state.db).await?)
 }
 
@@ -709,7 +709,7 @@ pub async fn password_change(
         .execute(&mut *tx)
         .await?;
     mail::enqueue(&mut tx, Some(s.account_id), &s.email, Template::PasswordChanged, json!({})).await?;
-    ip_event(&mut tx, s.account_id, "password_change", &client).await?;
+    ip_event(&mut tx, s.account_id, "password_change", &client, Source::Web(s.id)).await?;
     tx.commit().await?;
     Ok(status(StatusCode::OK, "password_changed"))
 }
@@ -779,11 +779,6 @@ pub async fn me(State(state): State<AppState>, s: WebSession) -> ApiResult {
     .into_response())
 }
 
-fn qr_svg(data: &str) -> Option<String> {
-    let code = qrcode::QrCode::new(data.as_bytes()).ok()?;
-    Some(code.render::<qrcode::render::svg::Color>().min_dimensions(200, 200).quiet_zone(true).build())
-}
-
 #[derive(Serialize)]
 struct TotpSetup {
     secret_b32: String,
@@ -814,7 +809,7 @@ pub async fn totp_setup(
         .await?;
     let b32 = totp::base32(&secret);
     let uri = totp::otpauth_uri(&b32, &s.email);
-    let qr = qr_svg(&uri);
+    let qr = crate::qr::svg(&uri);
     Ok(Json(TotpSetup { secret_b32: b32, otpauth_uri: uri, qr_svg: qr }).into_response())
 }
 
@@ -867,7 +862,7 @@ pub async fn totp_enable(
             .await?;
     }
     mail::enqueue(&mut tx, Some(s.account_id), &s.email, Template::TotpEnabled, json!({})).await?;
-    ip_event(&mut tx, s.account_id, "totp_enabled", &client).await?;
+    ip_event(&mut tx, s.account_id, "totp_enabled", &client, Source::Web(s.id)).await?;
     tx.commit().await?;
     Ok(Json(json!({ "backup_codes": codes })).into_response())
 }
@@ -897,7 +892,7 @@ pub async fn totp_disable(
     .await?;
     sqlx::query("DELETE FROM backup_codes WHERE account_id = $1").bind(s.account_id).execute(&mut *tx).await?;
     mail::enqueue(&mut tx, Some(s.account_id), &s.email, Template::TotpDisabled, json!({})).await?;
-    ip_event(&mut tx, s.account_id, "totp_disabled", &client).await?;
+    ip_event(&mut tx, s.account_id, "totp_disabled", &client, Source::Web(s.id)).await?;
     tx.commit().await?;
     Ok(status(StatusCode::OK, "totp_disabled"))
 }

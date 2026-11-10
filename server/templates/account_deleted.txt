@@ -1,0 +1,14 @@
+Subject: Your Krunk account was deleted
+
+Hello,
+
+Your Krunk account was deleted on {{time}}, as you asked. Everything it
+held on our server is gone: {{records}} synced records (encrypted),
+{{devices}} linked devices, {{sessions}} website sessions, your sync keys'
+encrypted copies, and the account's activity and IP history.
+
+Daily database backups that still contain the account expire within
+14 days. If a backup is ever restored, the deletion is applied again.
+
+Krunk keeps working on your devices without an account; their local data
+is not touched. This is the last mail you get from us for this address.

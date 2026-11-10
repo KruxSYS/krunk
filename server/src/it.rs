@@ -27,6 +27,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tower::ServiceExt;
 
+mod s10;
 mod s3;
 mod s6;
 mod s7;

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Sign in with a QR code · Krunk</title>
+<link rel="icon" type="image/png" href="/krunk-64.png">
+<link rel="stylesheet" href="/style.css">
+<script src="/account/account.js" defer></script>
+</head>
+<body class="account auth" data-page="pair">
+<header class="bar">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="/krunk.svg" width="28" height="28" alt=""> Krunk</a>
+    <nav aria-label="Site"><a href="/account/">Account</a> <a href="/privacy">Privacy</a></nav>
+  </div>
+</header>
+<main>
+  <h1>Sign in with a QR code</h1>
+  <p class="lead">This signs in this browser to your Krunk account on this website.</p>
+  <p id="closed" class="closed" hidden>Accounts are coming soon. Krunk works fully without one; an account will only be needed for sync.</p>
+  <p id="status" class="status" role="status" aria-live="polite"></p>
+
+  <div id="wait" class="card" hidden>
+    <h2 id="wait-title" tabindex="-1">Check the code</h2>
+    <p id="claim-code-label">Check that your other screen shows this code, then approve there:</p>
+    <p id="claim-code" class="usercode" aria-labelledby="claim-code-label"></p>
+    <p id="timer" class="hint timer" role="timer" aria-live="off"></p>
+    <p class="hint">If the codes are different, deny it on the other screen.</p>
+  </div>
+
+  <div id="again" class="card" hidden>
+    <p>On your signed-in browser, open <strong>Account → Devices &amp; sync → Add a device</strong> to make a new code.</p>
+  </div>
+
+  <p class="never">To sync a phone, use the Krunk app (the Android app is coming). Signing in here only opens
+    your account page in this browser.</p>
+</main>
+<footer class="wrap"><p><a href="/">Krunk</a> · <a href="/privacy">Privacy</a></p></footer>
+</body>
+</html>

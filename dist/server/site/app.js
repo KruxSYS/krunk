@@ -38,6 +38,11 @@
     return typeof p === 'string' && /^\/download\/[A-Za-z0-9._\/-]+$/.test(p) && p.indexOf('..') < 0 ? p : null;
   }
 
+  // The version's entry on /changelog, only for a well-formed version.
+  function changelogPath(v) {
+    return typeof v === 'string' && /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(v) ? '/changelog#' + v : null;
+  }
+
   function none() {
     box.textContent = '';
     box.appendChild(el('p', { class: 'none', text: 'No release published yet.' }));
@@ -62,6 +67,8 @@
       r.released ? ' · ' + String(r.released) : '',
       safePath(r.notes) ? ' · ' : '',
       safePath(r.notes) ? el('a', { href: safePath(r.notes), text: 'What\u2019s new' }) : null,
+      changelogPath(r.version) ? ' · ' : '',
+      changelogPath(r.version) ? el('a', { href: changelogPath(r.version), text: 'Full changelog' }) : null,
       installer && portable ? ' · ' : '',
       installer && portable ? el('a', { href: safePath(portable.url), download: '', text: 'Portable zip' + (size(portable.size) ? ' (' + size(portable.size) + ')' : '') }) : null,
     ]);

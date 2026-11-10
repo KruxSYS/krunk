@@ -133,6 +133,11 @@ table.exceptions th:last-child, table.exceptions td:last-child { padding-right: 
 .account-code { display: inline-block; margin: 10px 0 6px; padding: 10px 18px; font: 700 1.85rem/1.2 ui-monospace, Consolas, monospace;
   letter-spacing: .14em; background: var(--bg); border: 1px dashed var(--border); border-radius: 10px; }
 .account-message { color: var(--fg); }
+/* 0.13.0: the sign-in link as a QR code. It stays black on white with its quiet zone in dark mode
+   too, so a phone can scan it. */
+.account-qr { display: block; width: 180px; height: 180px; margin: 4px 0 6px; padding: 6px; background: #fff;
+  border: 1px solid var(--border); border-radius: 10px; }
+.account-qr[hidden] { display: none; }
 .account-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .account-actions .btn { min-height: 32px; font-weight: 600; }
 .account-never { margin: 0 !important; padding-top: 10px; border-top: 1px dashed var(--border); }

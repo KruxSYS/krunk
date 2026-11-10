@@ -2,7 +2,11 @@
 # publishes the service; for standalone use add compose.ports.yaml (see README.md).
 services:
   web:
-    build: .
+    # The repository root, for CHANGELOG.md (the /changelog page). Dockerfile.dockerignore
+    # whitelists what is sent, so target/ never is.
+    build:
+      context: ../..
+      dockerfile: dist/server/Dockerfile
     image: krunk-site:local
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:-:8080}
@@ -169,18 +173,38 @@ services:
         umask 077
         PGPASSWORD=$$(cat /run/krunk-secrets/postgres_password)
         export PGPASSWORD
-        while :; do
-          f=$$dir/krunk-$$(date -u +%Y%m%dT%H%M%SZ).dump
-          if pg_dump -h db -U krunk -d krunk -Fc -f "$$f.part"; then
-            mv "$$f.part" "$$f"
-            echo "backup: wrote $${f##*/} ($$(stat -c %s "$$f") bytes)"
-            find "$$dir" -maxdepth 1 -name 'krunk-*.dump' -mtime +13 -print -delete
-            sleep 86400
-          else
-            rm -f "$$f.part"
-            echo "backup: pg_dump failed, retrying in 5 minutes" >&2
-            sleep 300
+        # Hourly (0.13.0): the ids of deleted accounts, merged into deletions.log beside the
+        # dumps (restore-db.sh deletes them again after a restore; kept 45 days). Before the
+        # 0007 step the table doesn't exist and this does nothing.
+        q="SELECT account_id || ' ' || extract(epoch FROM deleted_at)::bigint"
+        q="$$q FROM account_deletions"
+        deletions() {
+          if psql -h db -U krunk -d krunk -XAtqc "$$q" > "$$dir/deletions.new" 2>/dev/null; then
+            cutoff=$$(( $$(date +%s) - 45 * 86400 ))
+            cat "$$dir/deletions.log" "$$dir/deletions.new" 2>/dev/null | sort -u |
+              awk -v c="$$cutoff" 'NF == 2 && $$2 >= c' > "$$dir/deletions.tmp"
+            mv "$$dir/deletions.tmp" "$$dir/deletions.log"
           fi
+          rm -f "$$dir/deletions.new"
+        }
+        last=0
+        while :; do
+          deletions
+          if [ $$(( $$(date +%s) - last )) -ge 86400 ]; then
+            f=$$dir/krunk-$$(date -u +%Y%m%dT%H%M%SZ).dump
+            if pg_dump -h db -U krunk -d krunk -Fc -f "$$f.part"; then
+              mv "$$f.part" "$$f"
+              last=$$(date +%s)
+              echo "backup: wrote $${f##*/} ($$(stat -c %s "$$f") bytes)"
+              find "$$dir" -maxdepth 1 -name 'krunk-*.dump' -mtime +13 -print -delete
+            else
+              rm -f "$$f.part"
+              echo "backup: pg_dump failed, retrying in 5 minutes" >&2
+              sleep 300
+              continue
+            fi
+          fi
+          sleep 3600
         done
     volumes:
       - krunk-backups:/var/lib/postgresql

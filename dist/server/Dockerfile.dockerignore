@@ -1,0 +1,9 @@
+# The web image's build context is the repository root (compose.yaml). Only what the
+# Dockerfile copies is sent: everything else (target/ is tens of GB) stays out.
+*
+!CHANGELOG.md
+!dist/server/changelog.py
+!dist/server/Caddyfile
+!dist/server/cloudflare-trusted.caddy
+!dist/server/cloudflare-untrusted.caddy
+!dist/server/site/

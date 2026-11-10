@@ -782,6 +782,8 @@ pub enum Request {
     AccountSignOut,
     /// Opens the account page on the website in a new tab.
     AccountManage,
+    /// Opens the website's "Add a device" section (a sign-in QR for a phone) in a new tab (0.13.0).
+    AccountAddDevice,
     /// Opens the sign-in page with the code again.
     AccountReopen,
     // ---- sync (krunk://sync and Settings → Sync (beta), 0.9.0) ----
@@ -2059,6 +2061,7 @@ impl Sender {
                     | R::AccountCancel
                     | R::AccountSignOut
                     | R::AccountManage
+                    | R::AccountAddDevice
                     | R::AccountReopen
                     | R::SyncState
                     | R::SyncOpen
@@ -3488,6 +3491,7 @@ mod tests {
             Request::AccountCancel,
             Request::AccountSignOut,
             Request::AccountManage,
+            Request::AccountAddDevice,
             Request::AccountReopen,
             Request::SyncState,
             Request::SyncOpen,
@@ -4619,6 +4623,7 @@ mod tests {
             Request::AccountCancel,
             Request::AccountSignOut,
             Request::AccountManage,
+            Request::AccountAddDevice,
             Request::AccountReopen,
         ];
         for r in &all {
@@ -4632,6 +4637,11 @@ mod tests {
         assert_eq!(parsed.request, Request::AccountState { check: true });
         let parsed = parse_request(Sender::Page(Page::Settings), r#"{"cmd":"accountState"}"#).unwrap();
         assert_eq!(parsed.request, Request::AccountState { check: false });
+        // 0.13.0: Add a device, from Settings only.
+        let parsed = parse_request(Sender::Page(Page::Settings), r#"{"cmd":"accountAddDevice"}"#).unwrap();
+        assert_eq!(parsed.request, Request::AccountAddDevice);
+        assert!(parse_request(Sender::Shell, r#"{"cmd":"accountAddDevice"}"#).is_err());
+        assert!(parse_request(Sender::Page(Page::Sync), r#"{"cmd":"accountAddDevice"}"#).is_err());
         assert!(
             parse_request(Sender::Page(Page::Settings), r#"{"cmd":"accountState","check":true,"token":"x"}"#).is_err()
         );

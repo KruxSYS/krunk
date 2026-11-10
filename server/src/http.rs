@@ -7,6 +7,8 @@ use crate::client_ip::{self, TrustedPeers};
 use crate::config::Config;
 use crate::devices;
 use crate::keys;
+use crate::lifecycle;
+use crate::pairing;
 use crate::password::Passwords;
 use crate::ratelimit;
 use crate::records;
@@ -102,12 +104,26 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/web/sessions", get(devices::sessions_list))
         .route("/api/v1/web/sessions/revoke-all", post(devices::sessions_revoke_all))
         .route("/api/v1/web/sessions/{id}/revoke", post(devices::session_revoke))
+        // 0.13.0: "Add a device" by QR (PROTOCOL §6.5), the account section and S10.
+        .route("/api/v1/web/pair", get(pairing::status))
+        .route("/api/v1/web/pair/start", post(pairing::start))
+        .route("/api/v1/web/pair/approve", post(pairing::approve))
+        .route("/api/v1/web/pair/deny", post(pairing::deny))
+        .route("/api/v1/web/pair/cancel", post(pairing::cancel))
+        .route("/api/v1/web/pair/claim", post(pairing::web_claim))
+        .route("/api/v1/web/pair/poll", post(pairing::web_poll))
+        .route("/api/v1/web/usage", get(lifecycle::usage))
+        .route("/api/v1/web/activity", get(lifecycle::activity))
+        .route("/api/v1/web/export", post(lifecycle::export))
+        .route("/api/v1/web/sync/reset", post(lifecycle::sync_reset))
+        .route("/api/v1/web/account/delete", post(lifecycle::delete_account))
         .route_layer(middleware::from_fn_with_state(state.clone(), sessions::same_origin))
         .route_layer(middleware::from_fn_with_state(state.clone(), sessions::accounts_gate));
     // S3: native clients (Krunk). No Origin, no cookies: device codes and bearer tokens.
     let device = Router::new()
         .route("/api/v1/link/authorize", post(devices::authorize))
         .route("/api/v1/link/token", post(devices::token))
+        .route("/api/v1/link/pair/claim", post(pairing::native_claim))
         .route("/api/v1/token/refresh", post(devices::refresh))
         .route("/api/v1/device/unlink", post(devices::unlink))
         .route("/api/v1/device/me", get(devices::device_me))

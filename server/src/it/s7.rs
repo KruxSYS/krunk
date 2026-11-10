@@ -387,7 +387,12 @@ async fn rekey_keeps_to_the_quota() {
 }
 
 /// Migration 0005 is additive: an S6 database (keys, escrow, approvals) migrates intact.
+// Historical (it passed when that migration shipped): it seeds through today's code on the older
+// schema, and since 0.13.0 that code writes the 0007 columns (email_log, web_sessions.via, the
+// event source). The 0.13.0 counterpart, which seeds a 0006 database in SQL, is
+// `s10::pre_0007_data_survives_the_expand_step`.
 #[tokio::test]
+#[ignore = "historical: today's code needs the 0007 schema to seed"]
 async fn s6_data_survives_migration_0005() {
     let Some(e) = env().await else { return };
     let admin_url = std::env::var("KRUNK_TEST_DATABASE_URL").unwrap();

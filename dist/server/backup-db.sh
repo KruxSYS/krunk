@@ -5,6 +5,8 @@
 # age recipient as .dump.age when one is given (needs `age` on PATH). The stack's backup service
 # already keeps 14 daily dumps in its krunk-backups volume (OPEN_QUESTIONS Q4); this is for
 # copies that leave the host, and those must be encrypted: dumps hold emails and IPs.
+# Beside the dump goes DIR/krunk-<project>-<UTC timestamp>.deletions[.age] (0.13.0): the ids
+# of deleted accounts, for restore-db.sh --deletions, so a restore deletes them again.
 set -euo pipefail
 project="" out="" recipient=""
 while [ $# -gt 0 ]; do
@@ -33,4 +35,15 @@ else
   docker exec "$db" pg_dump -U krunk -d krunk -Fc > "$name.part"
   mv "$name.part" "$name"
   echo "wrote $name ($(stat -c %s "$name") bytes, NOT encrypted: pass --age-recipient for real backups)"
+fi
+# The deleted account ids (no addresses), encrypted like the dump. Empty before 0.13.0.
+list="${name%.dump}.deletions"
+q="SELECT account_id || ' ' || extract(epoch FROM deleted_at)::bigint FROM account_deletions"
+ids=$(docker exec "$db" psql -U krunk -d krunk -XAtqc "$q" 2>/dev/null || true)
+if [ -n "$recipient" ]; then
+  printf '%s\n' "$ids" | age -r "$recipient" > "$list.age"
+  echo "wrote $list.age ($(printf '%s\n' "$ids" | grep -c . || true) deleted accounts)"
+else
+  printf '%s\n' "$ids" > "$list"
+  echo "wrote $list ($(grep -c . "$list" || true) deleted accounts)"
 fi

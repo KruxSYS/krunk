@@ -1,0 +1,15 @@
+Subject: A new sign-in to your Krunk account by QR code
+
+Hello,
+
+A browser was just signed in to your Krunk account by scanning the QR code
+of "Add a device" on your account page:
+
+  {{browser}}, from {{country}}, {{time}}
+
+If this was you, there is nothing to do.
+
+If it wasn't, sign that browser out under "Signed-in browsers" and change
+your password on your account page:
+
+{{site}}/account/

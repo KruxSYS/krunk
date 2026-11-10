@@ -79,6 +79,20 @@ pub const SESSIONS_LIST_DEVICE: Limit = l("sessions/device", 60, MIN);
 pub const RECORDS_READ: Limit = l("records-read/device", 1200, HOUR);
 pub const RECORDS_WRITE: Limit = l("records-write/device", 600, HOUR);
 pub const REKEY: Limit = l("rekey/device", 600, HOUR);
+// 0.13.0 (PROTOCOL §6.5, §11.2): "Add a device" by QR. The desktop page polls every 2 s for
+// 5 minutes; a phone polls every 2 s. Claims count whether or not the token is known.
+pub const PAIR_START: Limit = l("pair-start/account", 10, HOUR);
+pub const PAIR_STATUS: Limit = l("pair-status/session", 300, 10 * MIN);
+pub const PAIR_CLAIM_IP: Limit = l("pair-claim/ip", 20, HOUR);
+pub const PAIR_POLL_IP: Limit = l("pair-poll/ip", 600, HOUR);
+pub const PAIR_ACT: Limit = l("pair-act/account", 30, HOUR);
+// The account section and its lifecycle (S10).
+pub const USAGE: Limit = l("usage/session", 60, MIN);
+pub const ACTIVITY: Limit = l("activity/session", 60, MIN);
+pub const EXPORT: Limit = l("export/account", 5, HOUR);
+pub const SYNC_RESET: Limit = l("sync-reset/account", 3, DAY);
+pub const DELETE_ACCOUNT: Limit = l("delete/account", 5, DAY);
+pub const DELETE_IP: Limit = l("delete/ip", 5, HOUR);
 
 /// The per-IP key: an IPv4 address, or the /64 network of an IPv6 address. One IPv6
 /// customer usually has a whole /64 (or more), so a key per address gave everyone an

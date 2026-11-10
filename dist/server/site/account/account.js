@@ -26,15 +26,30 @@
       opts.body = JSON.stringify(body);
     }
     if (csrf && method !== 'GET') opts.headers['X-Krunk-CSRF'] = csrf;
-    return fetch('/api/v1/web/' + path, opts).then(function (res) {
-      return res.text().then(function (t) {
-        var j = {};
-        try { j = t ? JSON.parse(t) : {}; } catch (e) { j = {}; }
-        return { status: res.status, ok: res.ok, body: j || {}, retryAfter: res.headers.get('Retry-After') };
-      });
-    }, function () {
-      return { status: 0, ok: false, body: { error: 'network', message: 'The connection failed. Check your network and try again.' } };
+    return fetch('/api/v1/web/' + path, opts).then(jsonResult, networkError);
+  }
+  function jsonResult(res) {
+    return res.text().then(function (t) {
+      var j = {};
+      try { j = t ? JSON.parse(t) : {}; } catch (e) { j = {}; }
+      return { status: res.status, ok: res.ok, body: j || {}, retryAfter: res.headers.get('Retry-After') };
     });
+  }
+  function networkError() {
+    return { status: 0, ok: false, body: { error: 'network', message: 'The connection failed. Check your network and try again.' } };
+  }
+  // A POST whose success answer is a file (web/export): `blob` and the Content-Disposition on
+  // 200, otherwise the same result as api().
+  function apiFile(path, body) {
+    var opts = { method: 'POST', credentials: 'same-origin', cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+    if (csrf) opts.headers['X-Krunk-CSRF'] = csrf;
+    return fetch('/api/v1/web/' + path, opts).then(function (res) {
+      if (!res.ok) return jsonResult(res);
+      return res.blob().then(function (b) {
+        return { status: res.status, ok: true, body: {}, blob: b, disposition: res.headers.get('Content-Disposition') || '' };
+      });
+    }).then(null, networkError);
   }
 
   function errorText(r) {
@@ -175,11 +190,21 @@
   }
 
 
-  // After signing in, go back to the device approval page if that is where the user came from.
-  // Only that one path is accepted, so the parameter can't send anyone elsewhere.
+  // After signing in, go back to where the user came from: the device approval page, the
+  // dashboard's "Add a device" or "Your data", or the delete page. Only these paths are accepted,
+  // so the parameter can't send anyone elsewhere.
   function safeNext() {
     var n = new URLSearchParams(location.search).get('next');
-    return n && /^\/link\?code=[0-9A-Za-z-]{1,12}$/.test(n) ? n : null;
+    if (!n) return null;
+    return /^\/link\?code=[0-9A-Za-z-]{1,12}$/.test(n) || /^\/account\/(#(add-device|export))?$/.test(n) ||
+      n === '/account/delete' ? n : null;
+  }
+  // A device code as the server reads it (devices.rs normalize_user_code): Crockford symbols,
+  // O→0, I/L→1, dashes and spaces dropped; 8 symbols are shown as XXXX-XXXX.
+  function normCode(c) {
+    var s = String(c || '').toUpperCase().replace(/[\s-]/g, '').replace(/O/g, '0').replace(/[IL]/g, '1')
+      .replace(/[^0-9A-Z]/g, '').slice(0, 12);
+    return s.length === 8 ? s.slice(0, 4) + '-' + s.slice(4) : s;
   }
 
   function el(tag, cls, text) {
@@ -211,19 +236,28 @@
       : /Mac OS X/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : null;
     return b && o ? b + ' on ' + o : b || o || ua.slice(0, 60);
   }
-  function platformName(p) { return p === 'android' ? 'Android' : 'Windows'; }
+  function platformName(p) {
+    var names = { android: 'Android', windows: 'Windows', ios: 'iOS', macos: 'macOS', linux: 'Linux' };
+    if (!p) return 'Windows';
+    return names[String(p).toLowerCase()] || String(p);
+  }
+  // A browser name from the server: a user agent string is summarised, a name is kept.
+  function browserName(b) { return !b ? 'A browser' : /\//.test(b) ? uaSummary(b) : String(b); }
 
   // Sensitive actions answer 403 reauth_required unless the password was entered in the last
   // 10 minutes. Then this form asks for it (and a code, if two-step verification is on) and the
-  // action runs again. `anchor`: the form is moved right after it, next to the action.
+  // action runs again. `anchor`: the form is moved right after it, next to the action (never
+  // inside another form: its submit would bubble there). `fail(r)`, if given, gets the other
+  // errors instead of the banner.
   // web/me says whether the last re-auth is still fresh, so the form usually comes up before the
   // action is tried (no 403 on the way); a 403 reauth_required (a race) brings it up too.
-  function withReauth(form, totpOn, action, done, anchor) {
+  function withReauth(form, totpOn, action, done, anchor, fail) {
+    function failed(r) { if (fail) fail(r); else say(errorText(r), 'error'); }
     api('GET', 'me').then(function (m) {
       if (m.ok && m.body.reauth_valid === false) { ask(); return; }
       action().then(function (r) {
         if (r.ok) { done(r); return; }
-        if (r.body.error !== 'reauth_required') { say(errorText(r), 'error'); return; }
+        if (r.body.error !== 'reauth_required') { failed(r); return; }
         ask();
       });
     });
@@ -248,7 +282,7 @@
           if (!x.ok) { say(errorText(x), 'error'); return; }
           show(form, false);
           say('');
-          action().then(function (r2) { if (r2.ok) done(r2); else say(errorText(r2), 'error'); });
+          action().then(function (r2) { if (r2.ok) done(r2); else failed(r2); });
         });
       };
       form.querySelector('.cancel').onclick = function () {
@@ -380,20 +414,28 @@
   // taken out of the address bar; the user checks the device and confirms the code.
   pages.link = function () {
     var params = new URLSearchParams(location.search);
-    var code = (params.get('code') || '').trim().slice(0, 12);
-    if (code) history.replaceState(null, '', location.pathname);
+    var raw = params.get('code') || '';
+    var code = normCode(raw);
+    if (raw) history.replaceState(null, '', location.pathname);
     var codeForm = $('#code-form');
     var form = $('#approve-form');
     var me = null;
+    // The code form, filled in with the code (normalised) so it can be checked and sent again.
+    function askCode(c) {
+      codeForm.reset();
+      if (c) field(codeForm, 'code').value = normCode(c);
+      show(codeForm, true);
+    }
     api('GET', 'me').then(function (r) {
       if (r.status === 401) {
+        // The normalised code always passes safeNext, so it survives the sign-in.
         location.href = '/account/login?next=' + encodeURIComponent('/link' + (code ? '?code=' + code : ''));
         return;
       }
       if (!r.ok) { say(errorText(r), 'error'); return; }
       me = r.body;
       csrf = me.csrf;
-      if (code) lookup(code); else show(codeForm, true);
+      if (code) lookup(code); else askCode(raw);
     });
     codeForm.addEventListener('submit', function (ev) {
       ev.preventDefault();
@@ -405,9 +447,8 @@
       say('');
       api('GET', 'link/' + encodeURIComponent(c)).then(function (r) {
         if (!r.ok) {
-          say(r.status === 404 ? 'This code is not valid or has expired. Start again in Krunk to get a new one.' : errorText(r), 'error');
-          codeForm.reset();
-          show(codeForm, true);
+          say(r.status === 404 ? 'This code is not valid or has expired. Check it below, or start again in Krunk to get a new one.' : errorText(r), 'error');
+          askCode(c);
           show(form, false);
           return;
         }
@@ -461,15 +502,21 @@
   };
 
   // The QR code is an SVG made by the server; it is parsed as SVG (never as HTML) and only an
-  // <svg> root is accepted.
-  function showQr(svgText) {
-    var box = $('#totp-qr');
+  // <svg> root of plain shapes is accepted: no script, foreignObject, links or event attributes.
+  function showQr(box, svgText) {
     box.textContent = '';
-    if (typeof svgText !== 'string') return;
+    if (typeof svgText !== 'string') return false;
     var doc = new DOMParser().parseFromString(svgText, 'image/svg+xml');
     var root = doc.documentElement;
-    if (!root || root.nodeName !== 'svg' || doc.getElementsByTagName('script').length) return;
+    if (!root || root.nodeName !== 'svg' || doc.getElementsByTagName('script').length ||
+        doc.getElementsByTagName('foreignObject').length) return false;
+    var all = [root].concat(Array.prototype.slice.call(root.getElementsByTagName('*')));
+    var bad = all.some(function (n) {
+      return Array.prototype.some.call(n.attributes, function (a) { return /^on/i.test(a.name) || /href$/i.test(a.name); });
+    });
+    if (bad) return false;
     box.appendChild(document.importNode(root, true));
+    return true;
   }
 
   // ---- Dashboard helpers --------------------------------------------------------------------
@@ -509,10 +556,28 @@
     if (s < 7 * 86400) return Math.floor(s / 86400) + ' days ago';
     return 'on ' + d.toLocaleDateString(undefined, { dateStyle: 'medium' });
   }
+  // A <time> with the relative text and the exact time in its title and datetime.
   function timeSpan(prefix, iso) {
-    var t = el('span', null, prefix + ago(iso));
+    var t = el('time', null, prefix + ago(iso));
     t.title = when(iso);
+    if (!isNaN(new Date(iso))) t.dateTime = new Date(iso).toISOString();
     return t;
+  }
+  // "12 s ago", "3 min ago" for the last hour, then as ago().
+  function secsAgo(s) {
+    s = Math.max(0, Math.round(s));
+    if (s < 60) return s + ' s ago';
+    if (s < 3600) return Math.round(s / 60) + ' min ago';
+    return ago(new Date(Date.now() - s * 1000).toISOString());
+  }
+  function mmss(s) {
+    s = Math.max(0, Math.round(s));
+    var m = Math.floor(s / 60), r = s % 60;
+    return m + ':' + (r < 10 ? '0' : '') + r;
+  }
+  function percent(v, max) {
+    var p = max > 0 ? (Number(v) || 0) / max * 100 : 0;
+    return p > 0 && p < 1 ? 'under 1%' : Math.round(p) + '%';
   }
   function size(bytes) {
     var n = Number(bytes) || 0;
@@ -573,15 +638,15 @@
     if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(function () { done(true); }, fallback);
     else fallback();
   }
-  function download(name, text) {
-    var url = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+  function download(name, data) {
+    var url = URL.createObjectURL(data instanceof Blob ? data : new Blob([data], { type: 'text/plain;charset=utf-8' }));
     var a = el('a');
     a.href = url;
     a.download = name;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
   }
   // The section nav marks the section in view (aria-current) as the page scrolls.
   function sectionNav() {
@@ -608,6 +673,9 @@
     var meCache = null;
     var reauthForm = $('#reauth');
     statusEl.tabIndex = -1;
+    // /account/#add-device (Krunk's "Add a device") and /account/#export open those parts; kept
+    // through the sign-in (safeNext).
+    var startHash = /^#(add-device|export)$/.test(location.hash) ? location.hash : '';
     // Krunk's "Manage account" opens /account/?this=<device id>: that row says "This device".
     var params = new URLSearchParams(location.search);
     var thisDevice = params.get('this');
@@ -642,6 +710,7 @@
             parts.push(timeSpan('removed ', d.revoked_at));
           } else {
             parts.push(d.last_sync ? timeSpan('last synced ', d.last_sync) : timeSpan('last seen ', d.last_used));
+            if (d.last_ip) parts.push(d.last_ip);
             parts.push(country(d.last_country));
           }
           li.appendChild(meta(parts));
@@ -719,9 +788,13 @@
         list.textContent = '';
         var others = 0;
         r.body.filter(function (x) { return x.kind === 'web'; }).forEach(function (x) {
-          var li = row('', 'browser', uaSummary(x.user_agent), x.current ? [['self', 'This browser']] : []);
-          li.appendChild(meta([timeSpan('signed in ', x.created), x.current ? 'active now' : timeSpan('last seen ', x.last_used),
-            x.ip_masked || 'address not kept', country(x.country)]));
+          var badges = x.current ? [['self', 'This browser']] : [];
+          if (x.via === 'qr') badges.push(['info', 'Signed in by QR']);
+          var li = row('', 'browser', uaSummary(x.user_agent), badges);
+          // `ip` since the 0.13.0 server (the owner sees the full address); `ip_masked` before.
+          li.appendChild(meta([timeSpan('signed in ', x.created),
+            x.current ? 'active now' : timeSpan('last seen ', x.last_used),
+            x.ip || x.ip_masked || 'address not kept', country(x.country)]));
           if (!x.current) {
             others++;
             var actions = el('div', 'actions');
@@ -745,7 +818,10 @@
     }
     function loadMe() {
       return api('GET', 'me').then(function (r) {
-        if (r.status === 401) { location.href = '/account/login'; return; }
+        if (r.status === 401) {
+          location.href = '/account/login' + (startHash ? '?next=' + encodeURIComponent('/account/' + startHash) : '');
+          return;
+        }
         if (!r.ok) { say(errorText(r), 'error'); return; }
         var me = r.body;
         meCache = me;
@@ -823,7 +899,7 @@
       // The key in groups of 4 for reading; copied without spaces.
       $('#totp-secret').textContent = String(r.body.secret_b32).replace(/(.{4})(?=.)/g, '$1 ');
       $('#totp-secret').setAttribute('data-key', r.body.secret_b32);
-      showQr(r.body.qr_svg);
+      showQr($('#totp-qr'), r.body.qr_svg);
       show($('#totp-confirm'), true);
       field($('#totp-confirm'), 'code').focus();
     });
@@ -878,8 +954,616 @@
       loadSessions();
     });
 
+    // ---- Add a device: a QR code for a phone (PROTOCOL, pairing) ------------------------------
+    // web/pair/start makes the code (one per account; a new one voids the old); the phone claims
+    // it and shows a 6-digit code; this page polls web/pair every 2 s while it is open and
+    // visible, shows who claimed it and the same code, and approves or denies.
+    var pair = { open: false, live: false, id: null, state: null, code: null, claimant: null,
+      deadline: 0, claimedAt: 0, poll: null, tick: null, announced: false };
+    var pairPanel = $('#pair-panel');
+    var pairOpener = $('#add-device-open');
+    var pairForm = $('#pair-claimed');
+    var pairSame = $('#pair-same');
+    var pairApprove = $('#pair-approve');
+    function pairMsg(text) { $('#pair-msg').textContent = text || ''; }
+    // Which part shows: 'wait' (the QR), 'claimed' (approve or deny), 'result' or 'none'.
+    function pairView(v) {
+      show($('#pair-wait'), v === 'wait');
+      show(pairForm, v === 'claimed');
+      show($('#pair-result'), v === 'result');
+      show($('#pair-timer'), v === 'wait' || v === 'claimed');
+      show($('#pair-new'), v !== 'claimed');
+    }
+    function pairFocus(target) {
+      // Only when the user is in the panel (or nowhere): a phone's claim shouldn't pull focus away.
+      var a = document.activeElement;
+      if (!a || a === document.body || pairPanel.contains(a)) target.focus();
+    }
+    function setPairOpen(on) {
+      pair.open = on;
+      show(pairPanel, on);
+      show(pairOpener, !on);
+      pairOpener.setAttribute('aria-expanded', on ? 'true' : 'false');
+    }
+    function pairStopPoll() { if (pair.poll) { clearTimeout(pair.poll); pair.poll = null; } }
+    function pairSchedule(ms) { pairStopPoll(); if (pair.live) pair.poll = setTimeout(pairPoll, ms); }
+    function pairPoll() {
+      pair.poll = null;
+      if (!pair.open || !pair.live || document.hidden) return; // resumed by visibilitychange
+      var id = pair.id;
+      api('GET', 'pair').then(function (r) {
+        if (!pair.live || pair.id !== id) return;
+        if (r.status === 401) { location.href = '/account/login?next=' + encodeURIComponent('/account/#add-device'); return; }
+        if (r.ok) pairState(r.body);
+        pairSchedule(r.body.error === 'rate_limited' ? 10000 : 2000);
+      });
+    }
+    function pairTick() {
+      if (!pair.open) return;
+      var left = (pair.deadline - Date.now()) / 1000;
+      if (pair.live) {
+        $('#pair-countdown').textContent = left > 0 ? 'Expires in ' + mmss(left) : 'Expired';
+        if (left <= 60 && left > 0 && !pair.announced) { pair.announced = true; $('#pair-announce').textContent = 'One minute left.'; }
+        // The server says "expired" first; this is only for a lost connection.
+        if (left < -6) pairEnd('This code has expired. Make a new one to try again.', 'error');
+      }
+      var age = $('#pair-age');
+      if (age && pair.claimedAt) {
+        var iso = new Date(pair.claimedAt).toISOString();
+        age.textContent = secsAgo((Date.now() - pair.claimedAt) / 1000);
+        age.dateTime = iso;
+        age.title = when(iso);
+      }
+    }
+    function pairLive(b) {
+      pair.live = true;
+      pair.id = b.pair_id;
+      pair.state = 'waiting';
+      pair.code = null;
+      pair.claimant = null;
+      pair.claimedAt = 0;
+      pair.announced = false;
+      $('#pair-announce').textContent = '';
+      pair.deadline = Date.now() + (Number(b.expires_in) || 300) * 1000;
+      if (!pair.tick) pair.tick = setInterval(pairTick, 1000);
+      pairTick();
+      pairSchedule(2000);
+    }
+    function pairStart() {
+      reauthForm.querySelector('.why').textContent = 'Enter your password again to add a device.';
+      var anchor = pair.open ? $('#pair-msg') : pairOpener;
+      withReauth(reauthForm, meCache && meCache.totp, function () {
+        return api('POST', 'pair/start', {});
+      }, function (r) {
+        var b = r.body;
+        setPairOpen(true);
+        showQr($('#pair-qr'), b.qr_svg);
+        var url = $('#pair-url');
+        url.textContent = b.url || '';
+        $('#pair-title').textContent = 'Scan this code with your phone';
+        pairMsg('');
+        pairView('wait');
+        pairLive(b);
+        $('#pair-title').focus();
+      }, anchor, pairFailed);
+    }
+    // Server states (web/pair): none, waiting, claimed, approved, denied, expired.
+    function pairState(b) {
+      if (b.pair_id && pair.id && b.pair_id !== pair.id) {
+        pairEnd('A newer code was made in another tab or window. Use that one, or make a new code here.', '');
+        return;
+      }
+      if (typeof b.expires_in === 'number' && (b.state === 'waiting' || b.state === 'claimed')) {
+        pair.deadline = Date.now() + b.expires_in * 1000;
+      }
+      if (b.state === 'waiting') return;
+      if (b.state === 'claimed') { pairClaimed(b); return; }
+      if (b.state === 'approved') { pairApproved(); return; }
+      if (b.state === 'denied') { pairEnd('Denied. Nothing was signed in.', ''); return; }
+      if (b.state === 'expired') { pairEnd('This code has expired. Make a new one to try again.', 'error'); return; }
+      pairEnd('This code is no longer active. Make a new one to try again.', 'error');
+    }
+    function pairClaimed(b) {
+      var c = b.claimant || {};
+      if (pair.state === 'claimed' && pair.code === b.confirm_code) return;
+      pair.state = 'claimed';
+      pair.code = b.confirm_code;
+      pair.claimant = c;
+      pair.claimedAt = Date.now() - (Number(c.age_s) || 0) * 1000;
+      var dl = $('#pair-claimant');
+      dl.textContent = '';
+      function add(k, v) {
+        if (v === null || v === undefined || v === '') return;
+        dl.appendChild(el('dt', null, k));
+        var dd = el('dd');
+        if (typeof v === 'string') dd.textContent = v; else dd.appendChild(v);
+        dl.appendChild(dd);
+      }
+      var device = c.kind === 'device';
+      add('What', device ? 'The Krunk app on ' + platformName(c.platform) : 'A web browser: approving signs it in to this website');
+      if (device) add('Device', c.label);
+      else add('Browser', browserName(c.browser || c.label));
+      if (!device && c.platform) add('System', platformName(c.platform));
+      if (c.client_version) add('Version', String(c.client_version));
+      add('IP address', c.ip || 'unknown');
+      add('Location', country(c.country));
+      var age = el('time');
+      age.id = 'pair-age';
+      add('Asked', age);
+      $('#pair-code').textContent = b.confirm_code || '';
+      pairSame.checked = false;
+      pairApprove.disabled = true;
+      $('#pair-title').textContent = 'Check the code';
+      pairMsg('');
+      $('#pair-announce').textContent = 'Someone scanned the code. Check that your phone shows the same code before you approve.';
+      pairView('claimed');
+      pairTick();
+      pairFocus($('#pair-claimed-title'));
+    }
+    function pairApproved() {
+      var c = pair.claimant || {};
+      pairEnd(c.kind === 'web'
+        ? 'Approved. That browser is now signed in to this website.'
+        : 'Added. ' + (c.label ? '"' + c.label + '"' : 'Your phone') + ' is signed in to your account within a few seconds.', 'ok');
+      Promise.all([loadMe(), loadDevices(), loadSessions(), loadUsage(), loadActivity(true)]);
+      // A device is listed once it has collected its tokens (a few seconds after approval).
+      setTimeout(function () { loadDevices(); loadUsage(); }, 8000);
+    }
+    // Ends this code: no more polling; the result and "New code".
+    function pairEnd(text, kind) {
+      pair.live = false;
+      pair.state = 'ended';
+      pairStopPoll();
+      if (pair.tick) { clearInterval(pair.tick); pair.tick = null; }
+      if (!pair.open) setPairOpen(true);
+      $('#pair-title').textContent = kind === 'ok' ? 'Device added' : 'Add a device';
+      pairMsg('');
+      var res = $('#pair-result');
+      res.textContent = text;
+      res.className = 'pair-result result' + (kind ? ' ' + kind : '');
+      pairView('result');
+      pairFocus(res);
+    }
+    function pairFailed(r) {
+      var e = r.body.error;
+      if (e === 'pair_not_claimed') { pairMsg('Nobody has scanned this code yet. Scan it with your phone first.'); return; }
+      var text = e === 'expired_token' ? 'This code has expired. Make a new one to try again.'
+        : e === 'quota_exceeded' ? 'Your account has the most devices it can have (' + ((meCache && meCache.max_devices) || 10) +
+          '). Remove one above, then make a new code.'
+        : e === 'bad_request' ? 'The code didn\'t match. Make a new code and scan it again.'
+        : e === 'rate_limited' ? errorText(r) + ' Then make a new code.'
+        : errorText(r);
+      pairEnd(text, 'error');
+    }
+    function pairClose() {
+      if (pair.live) api('POST', 'pair/cancel', {});
+      pair.live = false;
+      pairStopPoll();
+      if (pair.tick) { clearInterval(pair.tick); pair.tick = null; }
+      if (pairPanel.contains(reauthForm)) show(reauthForm, false);
+      setPairOpen(false);
+      pairOpener.focus();
+    }
+    pairOpener.addEventListener('click', pairStart);
+    $('#pair-new').addEventListener('click', pairStart);
+    $('#pair-close').addEventListener('click', pairClose);
+    $('#pair-copy').addEventListener('click', function () { copyText($('#pair-url').textContent, 'The link'); });
+    pairSame.addEventListener('change', function () { pairApprove.disabled = !pairSame.checked; });
+    pairForm.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      if (!pairSame.checked || !pair.code || !pair.live) return;
+      var code = pair.code;
+      reauthForm.querySelector('.why').textContent = 'Enter your password again to approve.';
+      withReauth(reauthForm, meCache && meCache.totp, function () {
+        return api('POST', 'pair/approve', { confirm_code: code });
+      }, pairApproved, pairForm, pairFailed);
+    });
+    $('#pair-deny').addEventListener('click', function () {
+      var b = $('#pair-deny');
+      b.disabled = true;
+      api('POST', 'pair/deny', {}).then(function (r) {
+        b.disabled = false;
+        if (r.ok) { pairEnd('Denied. Nothing was signed in.', ''); loadActivity(true); } else pairFailed(r);
+      });
+    });
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden && pair.open && pair.live) { pairStopPoll(); pairPoll(); }
+    });
+    // On load: a code someone already claimed (say, after a reload) is shown for approval;
+    // otherwise #add-device makes a new one.
+    function pairResume() {
+      return api('GET', 'pair').then(function (r) {
+        if (r.ok && r.body.state === 'claimed') {
+          setPairOpen(true);
+          pairLive(r.body);
+          pairState(r.body);
+          $('#add-device').scrollIntoView({ block: 'start' });
+          return;
+        }
+        if (startHash === '#add-device') {
+          $('#add-device').scrollIntoView({ block: 'start' });
+          pairStart();
+        }
+      });
+    }
+
+    // ---- Usage ---------------------------------------------------------------------------------
+    var COLLECTIONS = { history: 'History', bookmarks: 'Bookmarks', settings: 'Settings', tabs: 'Open tabs',
+      allowlist: 'Ad blocker exceptions', pins: 'Pinned sites', device_meta: 'Device names', passwords: 'Passwords',
+      never_save: 'Sites never to save passwords for', payments: 'Payment cards' };
+    function meterSet(name, v, max, text) {
+      var m = $('#usage-' + name + '-meter');
+      max = Math.max(1, Number(max) || 1);
+      m.max = max;
+      m.value = Math.min(Math.max(0, Number(v) || 0), max);
+      m.low = max * 0.8;
+      m.high = max * 0.95;
+      m.optimum = 0;
+      $('#usage-' + name + '-text').textContent = text;
+    }
+    function cell(tr, content, cls, header) {
+      var c = el(header ? 'th' : 'td', cls || null);
+      if (header) c.scope = 'row';
+      if (typeof content === 'string') c.textContent = content; else if (content) c.appendChild(content);
+      tr.appendChild(c);
+      return c;
+    }
+    function loadUsage() {
+      return api('GET', 'usage').then(function (r) {
+        var err = $('#usage-error');
+        if (!r.ok) {
+          err.textContent = r.status === 404 ? 'Usage isn\'t available on this server yet.' : errorText(r);
+          show(err, true);
+          show($('#usage-body'), false);
+          return;
+        }
+        show(err, false);
+        var u = r.body, rec = u.records || {}, dev = u.devices || {}, acc = u.account || {};
+        meterSet('records', rec.total, rec.max, count(rec.total) + ' of ' + count(rec.max) + ' items (' + percent(rec.total, rec.max) + ')');
+        meterSet('bytes', rec.bytes, rec.max_bytes, size(rec.bytes) + ' of ' + size(rec.max_bytes) + ' (' + percent(rec.bytes, rec.max_bytes) + ')');
+        meterSet('history', rec.history, rec.max_history, count(rec.history) + ' of ' + count(rec.max_history) +
+          ' history entries (' + percent(rec.history, rec.max_history) + '). Krunk removes the oldest before the limit.');
+        $('#usage-record-limit').textContent = 'Sizes are of the encrypted data. One item can be at most ' +
+          size(rec.max_record_bytes || 65536) + ' encrypted.';
+        var tb = $('#usage-collections tbody');
+        tb.textContent = '';
+        var cols = (rec.collections || []).slice().sort(function (a, b) { return (b.bytes || 0) - (a.bytes || 0); });
+        cols.forEach(function (c) {
+          var tr = el('tr');
+          var th = cell(tr, COLLECTIONS[c.c] || String(c.c), null, true);
+          th.title = String(c.c);
+          cell(tr, count(c.records), 'num');
+          cell(tr, size(c.bytes), 'num');
+          tb.appendChild(tr);
+        });
+        show($('#usage-coll-empty'), cols.length === 0);
+        show($('#usage-collections').parentNode, cols.length > 0);
+        $('#usage-devices-count').textContent = count(dev.active) + ' of ' + count(dev.max || 10);
+        var dtb = $('#usage-devices tbody');
+        dtb.textContent = '';
+        (dev.items || []).forEach(function (d) {
+          var tr = el('tr');
+          cell(tr, d.label + ' (' + platformName(d.platform) + ')', null, true);
+          cell(tr, d.last_sync ? timeSpan('', d.last_sync) : 'never');
+          cell(tr, d.last_used ? timeSpan('', d.last_used) : '–');
+          cell(tr, (d.last_ip || '–') + (d.last_country ? ' · ' + country(d.last_country) : ''));
+          dtb.appendChild(tr);
+        });
+        show($('#usage-devices').parentNode, (dev.items || []).length > 0);
+        function fact(id, iso, none) {
+          var dd = $(id);
+          dd.textContent = '';
+          if (iso) {
+            var t = timeSpan('', iso);
+            var rel = ago(iso);
+            t.textContent = when(iso) + (/^on /.test(rel) ? '' : ' (' + rel + ')');
+            dd.appendChild(t);
+          } else dd.textContent = none;
+        }
+        fact('#ua-created', acc.created, 'unknown');
+        fact('#ua-sign-in', acc.last_sign_in, 'unknown');
+        fact('#ua-password', acc.password_changed, 'not changed since the account was made');
+        $('#ua-totp').textContent = acc.totp ? 'On' : 'Off';
+        $('#ua-codes').textContent = acc.totp ? count(acc.backup_codes_left) : '– (two-step verification is off)';
+        show($('#usage-body'), true);
+      });
+    }
+
+    // ---- Activity -------------------------------------------------------------------------------
+    var KINDS = {
+      register: 'Account created', login: 'Signed in', qr_sign_in: 'Signed in by QR', logout: 'Signed out',
+      password_change: 'Password changed', password_changed: 'Password changed', password_reset: 'Password reset by email',
+      totp_enabled: 'Two-step verification turned on', totp_disabled: 'Two-step verification turned off',
+      device_linked: 'Device added', device_revoked: 'Device removed', sessions_revoked: 'Signed out everywhere else',
+      token_reuse: 'Stolen sign-in suspected: device signed out', pair_started: '"Add a device" code made',
+      pair_claimed: '"Add a device" code scanned', pair_approved: '"Add a device" approved', pair_denied: '"Add a device" denied',
+      export: 'Data downloaded', sync_reset: 'Sync data reset'
+    };
+    var act = { before: null, loading: false };
+    var moreBtn = $('#activity-more');
+    function sourceCell(s) {
+      var box = el('span');
+      if (!s || !s.kind) { box.textContent = '–'; return box; }
+      if (s.kind === 'device') box.textContent = s.label ? s.label : 'a removed device';
+      else box.textContent = s.label ? browserName(s.label) : 'a browser';
+      if (s.current) { box.appendChild(document.createTextNode(' ')); box.appendChild(el('span', 'badge self', 'This is you')); }
+      return box;
+    }
+    function loadActivity(reset) {
+      if (act.loading) return Promise.resolve(null);
+      act.loading = true;
+      moreBtn.disabled = true;
+      moreBtn.setAttribute('aria-busy', 'true');
+      var q = 'activity?limit=50' + (!reset && act.before !== null && act.before !== undefined ? '&before=' + encodeURIComponent(act.before) : '');
+      return api('GET', q).then(function (r) {
+        act.loading = false;
+        moreBtn.disabled = false;
+        moreBtn.removeAttribute('aria-busy');
+        var err = $('#activity-error');
+        if (!r.ok) {
+          err.textContent = r.status === 404 ? 'The activity list isn\'t available on this server yet.' : errorText(r);
+          show(err, true);
+          return null;
+        }
+        show(err, false);
+        var tb = $('#activity-rows');
+        if (reset) tb.textContent = '';
+        var first = null;
+        (r.body.events || []).forEach(function (e) {
+          var tr = el('tr');
+          tr.tabIndex = -1;
+          var th = cell(tr, KINDS[e.kind] || String(e.kind), null, true);
+          th.title = String(e.kind);
+          cell(tr, timeSpan('', e.at));
+          cell(tr, e.ip || '–');
+          cell(tr, e.country ? country(e.country) : '–');
+          cell(tr, sourceCell(e.source));
+          tb.appendChild(tr);
+          if (!first) first = tr;
+        });
+        act.before = r.body.next_before;
+        show(moreBtn, act.before !== null && act.before !== undefined && act.before !== '');
+        var days = Number(r.body.retention_days) || 90;
+        $('#activity-retention').textContent = 'Kept for ' + days + ' days, then the entries and their IP addresses are deleted.';
+        var none = tb.children.length === 0;
+        show($('#activity-empty'), none);
+        $('#activity-empty').textContent = 'No activity in the last ' + days + ' days.';
+        show($('#activity-table').parentNode, !none);
+        return first;
+      });
+    }
+    moreBtn.addEventListener('click', function () {
+      loadActivity(false).then(function (first) { if (first) first.focus(); else if (moreBtn.hidden) statusEl.focus(); });
+    });
+
+    // ---- Your data: the export ----------------------------------------------------------------
+    var expBtn = $('#export-download');
+    function resultLine(id, text, kind) {
+      var p = $(id);
+      p.textContent = text || '';
+      p.className = 'state-line result' + (kind ? ' ' + kind : '');
+      show(p, !!text);
+      return p;
+    }
+    function today() {
+      var d = new Date();
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }
+    function exportName(disp) {
+      var m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disp || '');
+      var n = m ? m[1].trim() : '';
+      return /^krunk-account-[0-9]{4}-[0-9]{2}-[0-9]{2}\.json$/.test(n) ? n : 'krunk-account-' + today() + '.json';
+    }
+    expBtn.addEventListener('click', function () {
+      reauthForm.querySelector('.why').textContent = 'Enter your password again to download your data.';
+      resultLine('#export-result', '');
+      withReauth(reauthForm, meCache && meCache.totp, function () {
+        expBtn.disabled = true;
+        expBtn.setAttribute('aria-busy', 'true');
+        resultLine('#export-result', 'Preparing your data. This can take up to a minute…');
+        return apiFile('export', {}).then(function (r) {
+          expBtn.disabled = false;
+          expBtn.removeAttribute('aria-busy');
+          if (r.body.error === 'reauth_required') resultLine('#export-result', '');
+          return r;
+        });
+      }, function (r) {
+        var name = exportName(r.disposition);
+        download(name, r.blob);
+        afterAction(resultLine('#export-result', 'Saved as ' + name + ' (' + size(r.blob.size) + '). Keep it somewhere safe: it lists your devices and IP addresses.', 'ok'));
+        loadActivity(true);
+      }, expBtn.parentNode, function (r) {
+        afterAction(resultLine('#export-result', errorText(r), 'error'));
+      });
+    });
+
+    // ---- Sync reset -----------------------------------------------------------------------------
+    var PHRASE = 'DELETE SYNC DATA';
+    var srForm = $('#sync-reset');
+    var srInput = $('#sync-reset-confirm');
+    var srGo = $('#sync-reset-go');
+    srInput.addEventListener('input', function () { srGo.disabled = srInput.value.trim() !== PHRASE; });
+    srForm.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      if (srInput.value.trim() !== PHRASE) { fieldError(srInput, 'Type DELETE SYNC DATA exactly, in capitals.'); srInput.focus(); return; }
+      fieldError(srInput, '');
+      reauthForm.querySelector('.why').textContent = 'Enter your password again to delete your sync data.';
+      resultLine('#sync-reset-result', '');
+      withReauth(reauthForm, meCache && meCache.totp, function () {
+        return api('POST', 'sync/reset', { confirm: PHRASE });
+      }, function (r) {
+        srForm.reset();
+        srGo.disabled = true;
+        var text = 'Your sync data and keys are deleted from the server. Your devices stay signed in; turn sync on again in Krunk ' +
+          '(Settings → Sync) to set it up with a new passphrase.';
+        var d = r.body && r.body.deleted;
+        if (d && typeof d === 'object') {
+          var parts = Object.keys(d).filter(function (k) { return typeof d[k] === 'number'; }).map(function (k) { return k.replace(/_/g, ' ') + ': ' + count(d[k]); });
+          if (parts.length) text += ' Deleted: ' + parts.join(', ') + '.';
+        }
+        var p = resultLine('#sync-reset-result', text, 'ok');
+        Promise.all([loadMe(), loadDevices(), loadUsage(), loadActivity(true)]).then(function () { afterAction(p); });
+      }, srForm, function (r) {
+        afterAction(resultLine('#sync-reset-result', errorText(r), 'error'));
+      });
+    });
+
+    window.addEventListener('hashchange', function () {
+      if (location.hash === '#add-device' && !pair.open && csrf) pairStart();
+      if (location.hash === '#export' && csrf) expBtn.focus();
+    });
+
     sectionNav();
-    loadMe().then(function () { if (csrf) { loadDevices(); loadSessions(); } });
+    loadMe().then(function () {
+      if (!csrf) return;
+      loadDevices();
+      loadSessions();
+      loadUsage();
+      loadActivity(true);
+      pairResume();
+      if (startHash === '#export') { $('#export').scrollIntoView({ block: 'start' }); expBtn.focus(); }
+    });
+  };
+
+  // ---- Delete the account (/account/delete) ---------------------------------------------------
+  // Signed-in only. A fresh password (and code), the typed email and the bot check; on success
+  // the account is gone and the server has cleared the cookie.
+  pages['delete'] = function (cfg) {
+    var form = $('#form');
+    api('GET', 'me').then(function (r) {
+      if (r.status === 401) { location.href = '/account/login?next=' + encodeURIComponent('/account/delete'); return; }
+      if (!r.ok) { say(errorText(r), 'error'); return; }
+      var me = r.body;
+      csrf = me.csrf;
+      $('#del-email').textContent = me.email;
+      show($('#totp-row'), !!me.totp);
+      show($('#intro'), true);
+      show(form, true);
+      loadTurnstile(cfg.turnstile_site_key, 'delete');
+      form.addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        var ok = validate(form, function (i) {
+          return i.name === 'confirm_email' && i.value.trim().toLowerCase() !== String(me.email).toLowerCase()
+            ? 'This isn\'t the email address of this account.' : '';
+        });
+        if (!ok || needToken()) return;
+        var b = { password: value(form, 'password'), confirm_email: value(form, 'confirm_email').trim(), turnstile: tsToken() };
+        if (value(form, 'totp')) b.totp = value(form, 'totp').trim();
+        busy(form, true);
+        say('');
+        api('POST', 'account/delete', b).then(function (x) {
+          busy(form, false);
+          if (x.ok) { deleted(x.body); return; }
+          tsReset();
+          var e = x.body.error;
+          if (e === 'totp_required' || e === 'totp_invalid') {
+            show($('#totp-row'), true);
+            field(form, 'totp').focus();
+          } else if (e === 'unauthorized') {
+            field(form, 'password').value = '';
+            field(form, 'password').focus();
+          } else if (x.status === 401) {
+            say('You are signed out. Sign in again to delete your account.', 'error');
+            return;
+          }
+          say(errorText(x), 'error');
+        });
+      });
+    });
+    function deleted(b) {
+      csrf = null;
+      show(form, false);
+      show($('#intro'), false);
+      Array.prototype.forEach.call(document.querySelectorAll('[data-signed-in]'), function (n) { show(n, false); });
+      var list = $('#remaining');
+      list.textContent = '';
+      var rem = (b && b.remaining) || {};
+      var names = { records: 'Synced records', devices: 'Devices', sessions: 'Sign-in sessions', keys: 'Sync keys' };
+      Object.keys(rem).forEach(function (k) {
+        list.appendChild(el('dt', null, names[k] || k.replace(/_/g, ' ')));
+        list.appendChild(el('dd', null, count(rem[k]) + ' left'));
+      });
+      show(list, Object.keys(rem).length > 0);
+      show($('#done'), true);
+      $('#done-title').focus();
+    }
+  };
+
+  // ---- Sign in by QR on a phone (/pair#<token>) -------------------------------------------------
+  // The token is in the fragment (never sent to a server by the browser) and is dropped from the
+  // address bar at once. The claim answers a 6-digit code to compare with the signed-in screen;
+  // then this page polls until it is approved there (the server sets the session cookie).
+  pages.pair = function () {
+    var t = location.hash.slice(1);
+    if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+    var token = /^[A-Za-z0-9_-]{43}$/.test(t) ? t : null;
+    var wait = $('#wait');
+    var timer = $('#timer');
+    var p = { poll: null, tick: null, interval: 2, started: Date.now(), deadline: 0, pollToken: null, done: false };
+    function stop(text, kind) {
+      p.done = true;
+      if (p.poll) clearTimeout(p.poll);
+      if (p.tick) clearInterval(p.tick);
+      show(wait, false);
+      if (text) say(text, kind);
+      show($('#again'), kind === 'error');
+      statusEl.focus();
+    }
+    statusEl.tabIndex = -1;
+    if (!token) {
+      stop('Open the link from the QR code on your signed-in browser: this link is incomplete.', 'error');
+      return;
+    }
+    var CLAIM_ERRORS = {
+      not_found: 'This code isn\'t valid. Make a new one on your signed-in browser (Account → Add a device) and scan it again.',
+      expired_token: 'This code has expired — make a new one on your signed-in browser.',
+      pair_used: 'This code was already used — make a new one on your signed-in browser.'
+    };
+    say('Checking the code…');
+    api('POST', 'pair/claim', { token: token }).then(function (r) {
+      if (!r.ok) { stop(CLAIM_ERRORS[r.body.error] || errorText(r), 'error'); return; }
+      var b = r.body;
+      p.pollToken = b.poll_token;
+      p.interval = Math.max(1, Number(b.interval) || 2);
+      p.deadline = Date.now() + (Number(b.expires_in) || 300) * 1000;
+      $('#claim-code').textContent = b.confirm_code;
+      say('');
+      show(wait, true);
+      $('#wait-title').focus();
+      p.tick = setInterval(tick, 1000);
+      tick();
+      schedule();
+    });
+    function tick() {
+      var left = (p.deadline - Date.now()) / 1000;
+      timer.textContent = 'Waiting for approval for ' + secsAgo((Date.now() - p.started) / 1000).replace(' ago', '') +
+        (left > 0 ? ' · the code expires in ' + mmss(left) : ' · the code has expired');
+      if (left < -6) stop('This code has expired — make a new one on your signed-in browser.', 'error');
+    }
+    function schedule() { if (!p.done) p.poll = setTimeout(poll, p.interval * 1000); }
+    function poll() {
+      p.poll = null;
+      if (p.done) return;
+      api('POST', 'pair/poll', { poll_token: p.pollToken }).then(function (r) {
+        if (p.done) return;
+        if (r.ok) {
+          csrf = r.body.csrf || null;
+          stop('Signed in. Opening your account…', 'ok');
+          setTimeout(function () { location.href = '/account/'; }, 1200);
+          return;
+        }
+        var e = r.body.error;
+        if (e === 'authorization_pending' || r.status === 0) { schedule(); return; }
+        if (e === 'slow_down') { p.interval += 2; schedule(); return; }
+        if (e === 'rate_limited') { p.interval = Math.max(p.interval, 10); schedule(); return; }
+        if (e === 'access_denied') { stop('Denied on your other browser. This browser is not signed in.', 'error'); return; }
+        if (e === 'expired_token') { stop('This code has expired — make a new one on your signed-in browser.', 'error'); return; }
+        stop(errorText(r), 'error');
+      });
+    }
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden && !p.done && p.pollToken && p.poll) { clearTimeout(p.poll); poll(); }
+    });
   };
 
   api('GET', 'config').then(function (r) {

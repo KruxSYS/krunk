@@ -17,6 +17,7 @@
 use crate::api::{ApiError, ApiResult, Client, JsonBody};
 use crate::crypto;
 use crate::devices::{self, DeviceAuth};
+use crate::events::Source;
 use crate::http::AppState;
 use crate::mail::{self, Template};
 use crate::ratelimit::{self as rl, hit};
@@ -858,7 +859,7 @@ pub async fn device_revoke(
     if id == d.device_id {
         return Err(bad("Use device/unlink to remove this device."));
     }
-    devices::revoke_from(&state, d.account_id, id, &client, "a device").await?;
+    devices::revoke_from(&state, d.account_id, id, &client, "a device", Source::Device(d.device_id)).await?;
     Ok(Json(json!({ "status": "revoked" })).into_response())
 }
 
@@ -891,7 +892,7 @@ pub async fn device_session_revoke(
         if uid == d.device_id {
             return Err(bad("Use device/unlink to remove this device."));
         }
-        devices::revoke_from(&state, d.account_id, uid, &client, "a device").await?;
+        devices::revoke_from(&state, d.account_id, uid, &client, "a device", Source::Device(d.device_id)).await?;
     }
     Ok(StatusCode::NO_CONTENT.into_response())
 }

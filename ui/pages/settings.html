@@ -44,13 +44,15 @@
     <h2 class="panel-title">Account</h2>
     <div class="card group" id="account-card">
       <h3>Krunk account</h3>
-      <div class="row setting column" data-keywords="sign in krunk account sign out manage account device" id="account-row">
+      <div class="row setting column" data-keywords="sign in krunk account sign out manage account device add a device phone qr code" id="account-row">
         <div class="text">
           <span class="label" id="account-title">Sign in to Krunk</span>
           <p class="desc" id="account-desc">Sign in with your Krunk account to see this device on your account page.</p>
           <div id="account-linking" hidden>
             <p class="desc">Enter or confirm this code on krunk.209.wf (the page opened in a new tab):</p>
             <p class="account-code" id="account-code"></p>
+            <img id="account-qr" class="account-qr" width="180" height="180" alt="QR code of the sign-in link: scan it with a phone that is signed in to your Krunk account" hidden>
+            <p class="desc" id="account-qr-hint" hidden>Or scan the code with a phone that is signed in to your account.</p>
             <p class="desc" id="account-wait">Waiting for the approval…</p>
           </div>
           <p class="desc account-message" id="account-message" role="status" hidden></p>
@@ -61,6 +63,7 @@
           <button id="account-reopen" class="btn" hidden>Open the page again</button>
           <button id="account-cancel" class="btn" hidden>Cancel</button>
           <button id="account-manage" class="btn" hidden>Manage account</button>
+          <button id="account-add-device" class="btn" hidden>Add a device</button>
           <button id="account-sign-out" class="btn danger" hidden>Sign out on this device</button>
         </div>
         <p class="desc account-never">The Krunk website never asks for your sync passphrase or recovery key.</p>

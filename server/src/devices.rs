@@ -22,6 +22,7 @@ use crate::api::{ApiError, ApiResult, Client, JsonBody};
 use crate::client_ip;
 use crate::config::Keys;
 use crate::crypto;
+use crate::events::{self, Source};
 use crate::http::AppState;
 use crate::mail::{self, Template};
 use crate::ratelimit::{self as rl, hit};
@@ -43,8 +44,8 @@ pub const POLL_INTERVAL_S: i32 = 5;
 pub const ACCESS_TTL_S: i64 = 900;
 pub const REFRESH_IDLE_DAYS: i64 = 90;
 pub const LABEL_MAX: usize = 64;
-const VERSION_MAX: usize = 32;
-const TOKEN_MAX: usize = 64;
+pub(crate) const VERSION_MAX: usize = 32;
+pub(crate) const TOKEN_MAX: usize = 64;
 
 /// The app version in a Krunk user agent (`Krunk/0.10.1`), if it is one.
 fn agent_version(user_agent: Option<&str>) -> Option<&str> {
@@ -99,7 +100,7 @@ fn user_code_hash(keys: &Keys, normalized: &str) -> [u8; 32] {
     crypto::hmac(&keys.token_hmac, "krunk-user-code", &[normalized.as_bytes()])
 }
 
-fn device_code_hash(keys: &Keys, code: &str) -> [u8; 32] {
+pub(crate) fn device_code_hash(keys: &Keys, code: &str) -> [u8; 32] {
     crypto::hmac(&keys.token_hmac, "krunk-device-code", &[code.as_bytes()])
 }
 
@@ -144,7 +145,7 @@ pub fn display_label(label: &str) -> String {
     }
 }
 
-fn bad() -> ApiError {
+pub(crate) fn bad() -> ApiError {
     ApiError::bad_request("bad_request", "The request is not valid.")
 }
 
@@ -204,6 +205,10 @@ struct AuthorizeResp {
     verification_uri_complete: String,
     expires_in: i64,
     interval: i32,
+    /// 0.13.0: a QR code (SVG) of `verification_uri_complete`, so a phone that is signed in can
+    /// approve by scanning it. Additive; clients ignore it or fall back to the code.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    qr_svg: Option<String>,
 }
 
 /// `POST link/authorize` `{platform, label, client_version}` → the codes (PROTOCOL §11.3).
@@ -248,10 +253,12 @@ pub async fn authorize(
         if inserted == 1 {
             tracing::info!("link grant created");
             let base = &state.config.public_base_url;
+            let complete = format!("{base}/link?code={user_code}");
             return Ok(Json(AuthorizeResp {
                 device_code,
                 verification_uri: format!("{base}/link"),
-                verification_uri_complete: format!("{base}/link?code={user_code}"),
+                qr_svg: crate::qr::svg(&complete),
+                verification_uri_complete: complete,
                 user_code,
                 expires_in: LINK_TTL_S,
                 interval: POLL_INTERVAL_S,
@@ -512,14 +519,7 @@ pub async fn refresh(State(state): State<AppState>, client: Client, JsonBody(req
             revoke_device(&mut tx, r.device_id).await?;
             mail::enqueue(&mut tx, Some(r.account_id), &r.email, Template::TokenReuse, json!({ "label": r.label }))
                 .await?;
-            sqlx::query(
-                "INSERT INTO ip_events (account_id, kind, ip, country) VALUES ($1, 'token_reuse', $2::inet, $3)",
-            )
-            .bind(r.account_id)
-            .bind(client.ip().to_string())
-            .bind(client.info.country.as_deref())
-            .execute(&mut *tx)
-            .await?;
+            events::record(&mut tx, r.account_id, "token_reuse", &client, Source::Device(r.device_id)).await?;
             tracing::warn!(device = %r.device_id, family = %r.family_id, "refresh token reuse: device revoked");
         }
         tx.commit().await?;
@@ -626,12 +626,12 @@ pub async fn device_me(State(state): State<AppState>, d: DeviceAuth) -> ApiResul
 // ---- Website: approval page -----------------------------------------------------------------
 
 #[derive(sqlx::FromRow)]
-struct GrantView {
-    label: String,
-    platform: String,
-    country: Option<String>,
-    age_s: f64,
-    hash: Vec<u8>,
+pub(crate) struct GrantView {
+    pub(crate) label: String,
+    pub(crate) platform: String,
+    pub(crate) country: Option<String>,
+    pub(crate) age_s: f64,
+    pub(crate) hash: Vec<u8>,
 }
 
 /// Counts one code lookup against the brute-force limits: 5 per session per 10 minutes, 20 per
@@ -739,6 +739,22 @@ pub async fn link_approve(
         drop(tx);
         return Err(act_not_found(&state, &s, &client).await);
     };
+    let (device_id, short) = approve_grant(&mut tx, &state, &s, &client, &g).await?;
+    tx.commit().await?;
+    tracing::info!(device = %device_id, "link approved");
+    Ok(Json(json!({ "device_id": device_id, "short": short })).into_response())
+}
+
+/// Approves a pending, locked link grant for the signed-in account: the device quota, the next
+/// free `short`, the device row, the `device_linked` mail and the event. Shared by `/link` and by
+/// "Add a device" (`pairing.rs`); the caller commits. Returns `(device_id, short)`.
+pub(crate) async fn approve_grant(
+    tx: &mut PgConnection,
+    state: &AppState,
+    s: &WebSession,
+    client: &Client,
+    g: &GrantView,
+) -> Result<(Uuid, i32), ApiError> {
     let active: i64 =
         sqlx::query_scalar("SELECT count(*) FROM devices d WHERE d.account_id = $1 AND d.revoked_at IS NULL")
             .bind(s.account_id)
@@ -782,7 +798,7 @@ pub async fn link_approve(
     .await?;
     let when = Utc::now().format("%Y-%m-%d %H:%M UTC").to_string();
     mail::enqueue(
-        &mut tx,
+        &mut *tx,
         Some(s.account_id),
         &s.email,
         Template::DeviceLinked,
@@ -794,15 +810,8 @@ pub async fn link_approve(
         }),
     )
     .await?;
-    sqlx::query("INSERT INTO ip_events (account_id, kind, ip, country) VALUES ($1, 'device_linked', $2::inet, $3)")
-        .bind(s.account_id)
-        .bind(client.ip().to_string())
-        .bind(client.info.country.as_deref())
-        .execute(&mut *tx)
-        .await?;
-    tx.commit().await?;
-    tracing::info!(device = %device_id, "link approved");
-    Ok(Json(json!({ "device_id": device_id, "short": short })).into_response())
+    events::record(&mut *tx, s.account_id, "device_linked", client, Source::Web(s.id)).await?;
+    Ok((device_id, short))
 }
 
 /// `POST web/link/{code}/deny` → 204.
@@ -828,7 +837,7 @@ pub async fn link_deny(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-fn platform_name(p: &str) -> &'static str {
+pub(crate) fn platform_name(p: &str) -> &'static str {
     match p {
         "android" => "Android",
         _ => "Windows",
@@ -848,6 +857,8 @@ pub struct DeviceItem {
     last_used: DateTime<Utc>,
     last_sync: Option<DateTime<Utc>>,
     last_country: Option<String>,
+    /// 0.13.0: the full last IP, for the account owner (purged after 90 days).
+    last_ip: Option<String>,
     has_keys: bool,
     revoked_at: Option<DateTime<Utc>>,
     /// Set in the device API's list (PROTOCOL §11.8): the calling device.
@@ -861,7 +872,8 @@ pub struct DeviceItem {
 pub async fn list_devices(db: &sqlx::PgPool, account_id: Uuid) -> Result<Vec<DeviceItem>, sqlx::Error> {
     let rows: Vec<DeviceItem> = sqlx::query_as(
         "SELECT d.id, d.short, d.platform, d.label, d.client_version, d.created_at AS created,
-                d.last_used_at AS last_used, d.last_sync_at AS last_sync, d.last_country, d.has_keys, d.revoked_at
+                d.last_used_at AS last_used, d.last_sync_at AS last_sync, d.last_country,
+                host(d.last_ip) AS last_ip, d.has_keys, d.revoked_at
          FROM devices d WHERE d.account_id = $1
            AND EXISTS (SELECT 1 FROM refresh_families f WHERE f.device_id = d.id)
          ORDER BY d.revoked_at IS NOT NULL, d.last_used_at DESC",
@@ -898,7 +910,7 @@ async fn revoke_own_device(state: &AppState, s: &WebSession, client: &Client, id
         return Err(reauth_required());
     }
     let id: Uuid = id.parse().map_err(|_| device_not_found())?;
-    revoke_from(state, s.account_id, id, client, "the website").await
+    revoke_from(state, s.account_id, id, client, "the website", Source::Web(s.id)).await
 }
 
 /// Removes device `id` of the account (from the website or from another device): revoked, the
@@ -909,6 +921,7 @@ pub async fn revoke_from(
     id: Uuid,
     client: &Client,
     by: &str,
+    source: Source,
 ) -> Result<(), ApiError> {
     let mut tx = state.db.begin().await?;
     let (id, label, revoked) = own_device(&mut tx, account_id, &id.to_string()).await?;
@@ -919,14 +932,7 @@ pub async fn revoke_from(
             .fetch_one(&mut *tx)
             .await?;
         mail::enqueue(&mut tx, Some(account_id), &email, Template::DeviceRevoked, json!({ "label": label })).await?;
-        sqlx::query(
-            "INSERT INTO ip_events (account_id, kind, ip, country) VALUES ($1, 'device_revoked', $2::inet, $3)",
-        )
-        .bind(account_id)
-        .bind(client.ip().to_string())
-        .bind(client.info.country.as_deref())
-        .execute(&mut *tx)
-        .await?;
+        events::record(&mut tx, account_id, "device_revoked", client, source).await?;
     }
     tx.commit().await?;
     tracing::info!(device = %id, "device revoked from {by}");
@@ -979,9 +985,14 @@ pub struct SessionItem {
     created: DateTime<Utc>,
     last_used: DateTime<Utc>,
     ip_masked: Option<String>,
+    /// 0.13.0: the full IP, for the account owner (purged after 90 days).
+    ip: Option<String>,
     country: Option<String>,
     user_agent: Option<String>,
     label: Option<String>,
+    /// 0.13.0: how a website session was signed in, `password` or `qr` (devices: absent).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    via: Option<String>,
     current: bool,
 }
 
@@ -994,6 +1005,7 @@ struct SessionRow {
     country: Option<String>,
     user_agent: Option<String>,
     label: Option<String>,
+    via: Option<String>,
 }
 
 fn mask(ip: Option<String>) -> Option<String> {
@@ -1014,7 +1026,8 @@ pub async fn list_sessions(
     current: Option<Uuid>,
 ) -> Result<Vec<SessionItem>, sqlx::Error> {
     let web: Vec<SessionRow> = sqlx::query_as(
-        "SELECT id, created_at, last_used_at, host(ip) AS ip, country, user_agent, NULL::text AS label
+        "SELECT id, created_at, last_used_at, host(ip) AS ip, country, user_agent, NULL::text AS label,
+                coalesce(via, 'password') AS via
          FROM web_sessions WHERE account_id = $1 AND revoked_at IS NULL
            AND created_at > now() - make_interval(secs => $2) AND last_used_at > now() - make_interval(secs => $3)
          ORDER BY last_used_at DESC",
@@ -1026,7 +1039,7 @@ pub async fn list_sessions(
     .await?;
     let dev: Vec<SessionRow> = sqlx::query_as(
         "SELECT d.id, d.created_at, d.last_used_at, host(d.last_ip) AS ip, d.last_country AS country, d.user_agent,
-                d.label
+                d.label, NULL::text AS via
          FROM devices d WHERE d.account_id = $1 AND d.revoked_at IS NULL
            AND EXISTS (SELECT 1 FROM refresh_families f WHERE f.device_id = d.id)
          ORDER BY d.last_used_at DESC",
@@ -1044,7 +1057,9 @@ pub async fn list_sessions(
             kind,
             created: r.created_at,
             last_used: r.last_used_at,
-            ip_masked: mask(r.ip),
+            ip_masked: mask(r.ip.clone()),
+            ip: r.ip,
+            via: r.via,
             country: r.country,
             user_agent: r.user_agent,
             label: r.label.as_deref().map(display_label),
@@ -1121,12 +1136,7 @@ pub async fn sessions_revoke_all(
             devices += 1;
         }
     }
-    sqlx::query("INSERT INTO ip_events (account_id, kind, ip, country) VALUES ($1, 'sessions_revoked', $2::inet, $3)")
-        .bind(s.account_id)
-        .bind(client.ip().to_string())
-        .bind(client.info.country.as_deref())
-        .execute(&mut *tx)
-        .await?;
+    events::record(&mut tx, s.account_id, "sessions_revoked", &client, Source::Web(s.id)).await?;
     tx.commit().await?;
     tracing::info!(web, devices, "signed out everywhere else");
     Ok(StatusCode::NO_CONTENT.into_response())

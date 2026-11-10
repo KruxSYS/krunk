@@ -139,6 +139,7 @@ impl Browser {
                 user_code: l.user_code.clone(),
                 verify_url: l.verify_url.clone(),
                 expires_at_ms: l.expires_at_ms,
+                qr: l.qr.clone(),
             },
             Stage::SignedIn { file, message } => CardState::SignedIn {
                 email: file.email.clone(),
@@ -216,6 +217,11 @@ impl Browser {
                 if let Some((_, device, _)) = self.account_ids() {
                     url.push_str(&format!("?this={device}"));
                 }
+                self.new_tab(Some(&url), false)
+            }
+            // 0.13.0: the website's sign-in QR for a phone.
+            R::AccountAddDevice => {
+                let url = format!("{}#add-device", acct::endpoint(base(), acct::ACCOUNT_PAGE));
                 self.new_tab(Some(&url), false)
             }
             R::AccountReopen => {

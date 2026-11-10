@@ -290,7 +290,13 @@ fn link(a: &Args, dir: &Path) {
     }
     out("user_code", v["user_code"].as_str().unwrap_or_default());
     let dc = v["device_code"].as_str().unwrap_or_default().to_string();
-    let mut interval = v["interval"].as_u64().unwrap_or(5);
+    collect(a, dir, &http, server, label, &dc, v["interval"].as_u64().unwrap_or(5));
+}
+
+/// Polls `link/token` with a device code until the tokens come, then writes `cli.json`.
+#[allow(clippy::too_many_arguments)]
+fn collect(a: &Args, dir: &Path, http: &Ureq, server: &str, label: &str, dc: &str, interval: u64) {
+    let mut interval = interval;
     let deadline = Instant::now() + a.timeout();
     loop {
         std::thread::sleep(Duration::from_secs(interval));
@@ -316,12 +322,43 @@ fn link(a: &Args, dir: &Path) {
         match t["error"].as_str() {
             Some("authorization_pending") => {}
             Some("slow_down") => interval += 5,
+            Some(e @ ("access_denied" | "expired_token")) => {
+                out("error", e);
+                fail(3, format!("link: {e}"));
+            }
             e => fail(3, format!("link: {e:?}")),
         }
         if Instant::now() > deadline {
             fail(3, "link timed out");
         }
     }
+}
+
+/// 0.13.0: "Add a device" from the native side, as the Android app will do it. Takes the QR
+/// code's link (`https://…/pair#<token>`) or the bare token, claims it with `link/pair/claim`,
+/// prints the confirm code the account page shows, then polls `link/token` like `link`.
+fn pair(a: &Args, dir: &Path) {
+    std::fs::create_dir_all(dir).unwrap_or_else(|e| fail(3, e));
+    let server = a.need("server");
+    let arg = a.pos.first().map(String::as_str).unwrap_or_else(|| fail(2, "pair needs the link or token"));
+    let token = arg.rsplit_once('#').map_or(arg, |(_, t)| t);
+    let platform = a.get("platform").unwrap_or("android");
+    let label = a.get("label").unwrap_or("Krunk on Android");
+    let http = Ureq::new(server);
+    let body = serde_json::to_vec(
+        &json!({"token": token, "platform": platform, "label": label, "client_version": env!("CARGO_PKG_VERSION")}),
+    )
+    .unwrap_or_default();
+    let r = http.call("POST", "link/pair/claim", None, Some(&body)).unwrap_or_else(|e| fail(3, e));
+    let v: Value = serde_json::from_slice(&r.body).unwrap_or_default();
+    if r.status != 200 {
+        out("error", v["error"].as_str().unwrap_or("unknown"));
+        fail(3, format!("pair claim: {} {v}", r.status));
+    }
+    out("confirm_code", v["confirm_code"].as_str().unwrap_or_default());
+    out("expires_in", v["expires_in"].as_i64().unwrap_or_default());
+    let dc = v["device_code"].as_str().unwrap_or_default().to_string();
+    collect(a, dir, &http, server, label, &dc, v["interval"].as_u64().unwrap_or(5));
 }
 
 fn save_joined(d: &Device, me: &Me, j: &keys::Joined, gen: String, vault_pw: Option<&str>) {
@@ -341,6 +378,7 @@ fn main() {
     let dir = PathBuf::from(a.get("dir").unwrap_or_else(|| fail(2, "--dir is needed")));
     match a.cmd.as_str() {
         "link" => link(&a, &dir),
+        "pair" => pair(&a, &dir),
         "state" => {
             let mut d = Device::open(&dir);
             let t = d.token();

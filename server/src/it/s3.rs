@@ -123,7 +123,15 @@ async fn link_flow_in_every_state() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.raw);
     assert_eq!(
         keys_of(&r.body),
-        ["device_code", "expires_in", "interval", "user_code", "verification_uri", "verification_uri_complete"],
+        [
+            "device_code",
+            "expires_in",
+            "interval",
+            "qr_svg",
+            "user_code",
+            "verification_uri",
+            "verification_uri_complete"
+        ],
         "exactly the documented fields (no key material)"
     );
     assert_eq!((r.body["expires_in"].as_i64(), r.body["interval"].as_i64()), (Some(600), Some(5)));
@@ -371,6 +379,7 @@ async fn revoking_rename_and_sessions() {
             "id",
             "label",
             "last_country",
+            "last_ip",
             "last_sync",
             "last_used",
             "platform",
@@ -632,7 +641,12 @@ async fn spent_refresh_tokens_are_kept_for_120_days() {
 
 /// Migration 0003 is additive: an S2 database (0001–0002) with accounts, sessions, codes and
 /// mail migrates, and its users still sign in.
+// Historical (it passed when that migration shipped): it seeds through today's code on the older
+// schema, and since 0.13.0 that code writes the 0007 columns (email_log, web_sessions.via, the
+// event source). The 0.13.0 counterpart, which seeds a 0006 database in SQL, is
+// `s10::pre_0007_data_survives_the_expand_step`.
 #[tokio::test]
+#[ignore = "historical: today's code needs the 0007 schema to seed"]
 async fn s2_data_survives_migration_0003() {
     let Some(e) = env().await else { return };
     // A second, empty database migrated only to 0002, like the live one before this release.

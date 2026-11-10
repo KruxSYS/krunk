@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Delete your account · Krunk</title>
+<link rel="icon" type="image/png" href="/krunk-64.png">
+<link rel="stylesheet" href="/style.css">
+<script src="/account/account.js" defer></script>
+</head>
+<body class="account auth" data-page="delete">
+<header class="bar">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="/krunk.svg" width="28" height="28" alt=""> Krunk</a>
+    <nav aria-label="Site"><a href="/account/" data-signed-in>Account</a> <a href="/privacy">Privacy</a></nav>
+  </div>
+</header>
+<main>
+  <h1>Delete your account</h1>
+  <p class="lead">This can't be undone.</p>
+  <p id="closed" class="closed" hidden>Accounts are coming soon. Krunk works fully without one; an account will only be needed for sync.</p>
+  <p id="status" class="status" role="status" aria-live="polite"></p>
+
+  <div id="intro" class="card" hidden>
+    <h2>What is deleted</h2>
+    <ul class="plain-list">
+      <li>Everything at once: your account, its devices and sign-ins, its activity and IP addresses, and all your
+        encrypted sync data and keys on the server.</li>
+      <li>Your Krunk browsers are signed out and stop syncing. What they hold locally stays on them.</li>
+      <li>Our backups still hold it until they expire, within 14 days. If we ever restore one, deleted accounts are
+        deleted again.</li>
+    </ul>
+    <p class="row-buttons"><a class="btn primary" id="export-first" href="/account/#export">Download your data first</a></p>
+  </div>
+
+  <form id="form" class="card" hidden novalidate>
+    <h2>Confirm it's you</h2>
+    <label>Type your email address <input name="confirm_email" type="email" autocomplete="off" spellcheck="false" required maxlength="254" aria-describedby="del-email-hint">
+      <span class="hint" id="del-email-hint">The address of this account: <span id="del-email"></span></span></label>
+    <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+    <label id="totp-row" hidden>Code from your authenticator app (or a backup code)
+      <input name="totp" autocomplete="one-time-code" inputmode="numeric" maxlength="20"></label>
+    <div class="turnstile" data-turnstile></div>
+    <button type="submit" class="danger" id="delete-submit">Delete my account</button>
+  </form>
+
+  <div id="done" class="card" hidden>
+    <h2 id="done-title" tabindex="-1">Your account is deleted</h2>
+    <p>Everything it held on our server is gone. A receipt is on its way to your email address.</p>
+    <dl id="remaining" class="facts" aria-label="What is left on the server" hidden></dl>
+    <p><a href="/">Back to the Krunk website</a></p>
+  </div>
+  <p class="never" data-signed-in>The Krunk website never asks for your sync passphrase or recovery key.</p>
+</main>
+<footer class="wrap"><p><a href="/">Krunk</a> · <a href="/privacy">Privacy</a></p></footer>
+</body>
+</html>

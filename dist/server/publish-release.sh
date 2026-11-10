@@ -2,15 +2,20 @@
 # Signs and publishes a Krunk release to the download/update server's release store.
 #
 #   dist/server/publish-release.sh INSTALLER ZIP VERSION (--dest DIR | --volume NAME)
-#       [--key PATH] [--notes FILE] [--min-supported VERSION] [--released YYYY-MM-DD]
+#       [--key PATH] [--changelog FILE | --notes FILE] [--min-supported VERSION]
+#       [--released YYYY-MM-DD]
 #
 #   INSTALLER   dist/Krunk-Setup-<VERSION>.exe
 #   ZIP         dist/Krunk-win-x64.zip
 #   --dest DIR      a plain folder (mounted into the container as /srv/releases)
 #   --volume NAME   a Docker named volume, written through a throwaway pinned alpine container
 #   --key PATH      Ed25519 private key (default ~/.config/krunk/update-signing.key)
-#   --notes FILE    release notes (Markdown); default: a short generic note
+#   --changelog FILE  where the release notes come from (default: the repository's
+#                   CHANGELOG.md): its "## VERSION — DATE" section becomes NOTES.md, and DATE
+#                   the release date. Publishing fails when the section is missing.
+#   --notes FILE    use this Markdown file as NOTES.md instead (as before 0.13.0)
 #   --min-supported the oldest version the installer updates in place (default 0.2.0)
+#   --released      the release date (default: the changelog section's date, else today, UTC)
 #
 # Signing happens here, on this machine: the key never goes into a container or the image.
 # The signature is checked again with the public key before anything is copied, and the update
@@ -25,17 +30,18 @@
 set -euo pipefail
 ALPINE="alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f"
 
-usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 [ $# -ge 3 ] || usage
 installer=$1 zip=$2 version=$3; shift 3
 dest="" volume="" key="$HOME/.config/krunk/update-signing.key" notes="" min_supported="0.2.0"
-released=$(date -u +%Y-%m-%d)
+changelog="$(dirname "$0")/../../CHANGELOG.md" released=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dest) dest=$2; shift 2 ;;
     --volume) volume=$2; shift 2 ;;
     --key) key=$2; shift 2 ;;
     --notes) notes=$2; shift 2 ;;
+    --changelog) changelog=$2; shift 2 ;;
     --min-supported) min_supported=$2; shift 2 ;;
     --released) released=$2; shift 2 ;;
     *) usage ;;
@@ -44,7 +50,7 @@ done
 semver='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'
 [[ $version =~ $semver ]] || { echo "not a semver version: $version" >&2; exit 2; }
 [[ $min_supported =~ $semver ]] || { echo "not a semver version: $min_supported" >&2; exit 2; }
-[[ $released =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "--released must be YYYY-MM-DD" >&2; exit 2; }
+[[ -z $released || $released =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || { echo "--released must be YYYY-MM-DD" >&2; exit 2; }
 { [ -n "$dest" ] && [ -z "$volume" ]; } || { [ -z "$dest" ] && [ -n "$volume" ]; } ||
   { echo "give exactly one of --dest DIR or --volume NAME" >&2; exit 2; }
 [[ -z $volume || $volume =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || { echo "bad volume name: $volume" >&2; exit 2; }
@@ -54,17 +60,28 @@ for f in "$installer" "$zip"; do [ -f "$f" ] || { echo "missing: $f" >&2; exit 1
 command -v openssl >/dev/null || { echo "openssl (3.x) is required" >&2; exit 1; }
 
 work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+# The release notes: the version's CHANGELOG.md section (the same parser renders /changelog),
+# unless --notes names a file.
+if [ -z "$notes" ]; then
+  [ -f "$changelog" ] || { echo "changelog not found: $changelog (or give --notes FILE)" >&2; exit 1; }
+  changelog_py="$(dirname "$0")/changelog.py"
+  section=$(python3 -I "$changelog_py" section "$changelog" "$version") ||
+    { echo "no release notes for $version (see above): add or fix its section in $changelog" >&2; exit 1; }
+  printf '# Krunk %s\n\n%s\n' "$version" "$section" > "$work/NOTES.md"
+  notes="$work/NOTES.md"
+  if [ -z "$released" ]; then
+    released=$(python3 -I "$changelog_py" date "$changelog" "$version")
+    echo "release date $released (from $changelog)"
+  fi
+fi
+[ -n "$released" ] || released=$(date -u +%Y-%m-%d)
 stage="$work/releases"
 rel="$stage/download/$version"
 mkdir -p "$rel" "$stage/updates/win-x64"
 setup_name="Krunk-Setup-$version.exe"
 cp "$installer" "$rel/$setup_name"
 cp "$zip" "$rel/Krunk-win-x64.zip"
-if [ -n "$notes" ]; then
-  cp "$notes" "$rel/NOTES.md"
-else
-  printf '# Krunk %s\n\nReleased %s.\n' "$version" "$released" > "$rel/NOTES.md"
-fi
+cp "$notes" "$rel/NOTES.md"
 (cd "$rel" && sha256sum "$setup_name" Krunk-win-x64.zip > SHA256SUMS)
 setup_sha=$(sha256sum "$rel/$setup_name" | cut -d' ' -f1)
 setup_size=$(stat -c %s "$rel/$setup_name")

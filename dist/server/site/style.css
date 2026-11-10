@@ -162,6 +162,9 @@ footer { border-top: 1px solid var(--border); color: var(--muted); font-size: va
 .prose h2 { font-size: var(--t-xl); margin: var(--s6) 0 var(--s3); padding-top: var(--s4); border-top: 1px solid var(--border); scroll-margin-top: 84px; }
 .prose li { margin: var(--s2) 0; }
 .prose p, .prose li { line-height: 1.65; }
+.prose section[id] { scroll-margin-top: 84px; }
+.prose h2 a { color: inherit; text-decoration: none; }
+@media (min-width: 960px) { .toc.versions { max-height: calc(100vh - 100px); overflow-y: auto; } }
 .errpage main { max-width: 640px; margin: 0 auto; padding: 96px 20px var(--s7); text-align: center; }
 .errpage .errcode { display: inline-block; font-size: 72px; font-weight: 800; line-height: 1; letter-spacing: -0.04em; margin: 0 0 var(--s4);
   background: var(--brand); -webkit-background-clip: text; background-clip: text; color: transparent; }
@@ -346,3 +349,59 @@ details.removed[open] summary::before { content: "▾"; }
   gap: var(--s2) var(--s5); white-space: nowrap; font: 15px ui-monospace, Consolas, monospace; background: var(--card);
   border: 1px solid var(--border); border-radius: var(--r-md); }
 .dash-foot { max-width: 1180px; }
+
+/* ---- 0.13.0: Add a device (QR), usage, activity, your data, sync reset, delete ------------- */
+.badge.info { color: var(--info); background: var(--info-bg); }
+.add-device { margin: var(--s5) 0 0; padding-top: var(--s4); border-top: 1px solid var(--border); }
+.card .add-device h3 { margin-top: 0; }
+.qr-setup { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s4); align-items: start; }
+@media (min-width: 640px) { .qr-setup { grid-template-columns: 226px minmax(0, 1fr); } }
+.pair-msg:empty { display: none; }
+.pair-msg { font-weight: 600; }
+.timer { font-weight: 600; font-variant-numeric: tabular-nums; }
+.pair-panel .usercode { letter-spacing: 8px; }
+/* A result line next to an action (the banner at the top stays for page-wide messages). */
+.result { font-weight: 600; }
+.result.ok, .result.error { padding: 10px 14px; border-radius: var(--r-sm); border: 1px solid; }
+.result.ok { color: var(--ok); background: var(--ok-bg); }
+.result.error { color: var(--danger); background: var(--danger-bg); }
+.plain-list { margin: 0 0 var(--s4); padding-left: 22px; }
+.plain-list li { margin: var(--s1) 0; }
+/* Usage meters: the native <meter> (role meter, value and range read out), styled on the tokens. */
+.meters { display: grid; gap: var(--s3); margin: 0 0 var(--s3); }
+.meter-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; }
+@media (min-width: 640px) { .meter-row { grid-template-columns: 150px minmax(0, 1fr); column-gap: var(--s4); align-items: center; }
+  .meter-row .meter-d { grid-column: 2; } }
+.meter-k { font-weight: 600; }
+.meter-d { color: var(--muted); font-size: var(--t-sm); }
+meter { -webkit-appearance: none; appearance: none; display: block; width: 100%; height: 12px; margin: 0;
+  background: var(--sunken); border: 1px solid var(--border-strong); border-radius: 999px; overflow: hidden; }
+meter::-webkit-meter-bar { background: var(--sunken); border: 0; border-radius: 999px; height: 100%; }
+meter::-webkit-meter-optimum-value { background: var(--primary); border-radius: 999px; }
+meter::-webkit-meter-suboptimum-value { background: var(--warn); border-radius: 999px; }
+meter::-webkit-meter-even-less-good-value { background: var(--danger); border-radius: 999px; }
+meter::-moz-meter-bar { background: var(--primary); border-radius: 999px; }
+meter:-moz-meter-sub-optimum::-moz-meter-bar { background: var(--warn); }
+meter:-moz-meter-sub-sub-optimum::-moz-meter-bar { background: var(--danger); }
+/* Tables (usage, activity): scroll sideways on narrow screens, keyboard-scrollable. */
+.table-wrap { overflow-x: auto; margin: 0 0 var(--s3); border: 1px solid var(--border); border-radius: var(--r-md); }
+.table-wrap:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+table.data { width: 100%; border-collapse: collapse; font-size: var(--t-sm); }
+table.data th, table.data td { text-align: left; padding: var(--s2) var(--s3); border-top: 1px solid var(--border); vertical-align: top; }
+table.data thead th { border-top: 0; color: var(--muted); font-size: var(--t-xs); text-transform: uppercase; letter-spacing: .06em; background: var(--sunken); white-space: nowrap; }
+table.data tbody th { font-weight: 600; }
+table.data td { overflow-wrap: anywhere; }
+table.data .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.data tr:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+#activity-table td:nth-child(2), #activity-table td:nth-child(3) { white-space: nowrap; }
+/* Sync reset: tucked away, red only as a frame. */
+details.danger-zone { margin-top: var(--s5); border: 1px solid var(--danger); border-radius: var(--r-md); padding: 0 var(--s4); }
+details.danger-zone summary { cursor: pointer; font-weight: 600; color: var(--danger); min-height: 44px; display: flex; align-items: center; gap: var(--s2); }
+details.danger-zone summary::-webkit-details-marker { display: none; }
+details.danger-zone summary::before { content: "▸"; }
+details.danger-zone[open] summary::before { content: "▾"; }
+details.danger-zone form { padding-bottom: var(--s4); max-width: 620px; }
+details.danger-zone + .inline-panel, details.danger-zone .inline-panel { margin-top: var(--s3); }
+.delete-line { margin: 0; text-align: right; font-size: var(--t-sm); }
+.delete-line a { color: var(--danger); display: inline-flex; align-items: center; min-height: 44px; padding: 0 var(--s1); }
+.auth .card .row-buttons .btn { width: 100%; }

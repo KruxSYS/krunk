@@ -1,0 +1,13 @@
+Subject: Krunk sync was reset on your account
+
+Hello,
+
+The sync data of your Krunk account was just deleted from our server on
+your account page: {{records}} encrypted records and the encrypted sync
+keys. Your account and your linked devices stay; the data on your devices
+is not touched. The next device you set up sync on starts afresh.
+
+If you didn't do this, change your password and check your devices on your
+account page:
+
+{{site}}/account/

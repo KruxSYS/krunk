@@ -2734,6 +2734,7 @@ impl Browser {
             | Request::AccountCancel
             | Request::AccountSignOut
             | Request::AccountManage
+            | Request::AccountAddDevice
             | Request::AccountReopen) => self.dispatch_account(tab, r),
             r @ (Request::SyncState
             | Request::SyncOpen

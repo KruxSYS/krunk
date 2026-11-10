@@ -19,17 +19,17 @@ fn pp_kdf() -> Value {
 }
 
 /// A device of an account in a test: its id and access token.
-struct Dev {
+pub(super) struct Dev {
     d: Device,
     id: String,
-    token: String,
+    pub(super) token: String,
 }
 
 impl Dev {
-    async fn get(&self, e: &Env, path: &str) -> Resp {
+    pub(super) async fn get(&self, e: &Env, path: &str) -> Resp {
         self.d.call(e, Method::GET, path, None, Some(&self.token)).await
     }
-    async fn post(&self, e: &Env, path: &str, body: Value) -> Resp {
+    pub(super) async fn post(&self, e: &Env, path: &str, body: Value) -> Resp {
         self.d.call(e, Method::POST, path, Some(body), Some(&self.token)).await
     }
 }
@@ -119,15 +119,15 @@ fn escrow(rr_gen: u32) -> Value {
 }
 
 /// A set-up account: device A holds the keys (ak_dir and pak_dir seq 1).
-struct Setup {
-    acc: Uuid,
-    owner: Browser,
-    a: Dev,
+pub(super) struct Setup {
+    pub(super) acc: Uuid,
+    pub(super) owner: Browser,
+    pub(super) a: Dev,
     ak: Ver,
     pak: Ver,
 }
 
-async fn setup(e: &Env, email: &str) -> Setup {
+pub(super) async fn setup(e: &Env, email: &str) -> Setup {
     let mut owner = signed_in(e, email).await;
     let a = new_dev(e, &mut owner).await;
     let acc = account_of(e, &a).await;
@@ -560,7 +560,12 @@ async fn the_device_api_lists_devices_and_sessions() {
 
 /// Migration 0004 is additive: an S3 database (0001–0003) with an account, two-step on, two
 /// devices (one removed), sessions and mail migrates, and everything still works.
+// Historical (it passed when that migration shipped): it seeds through today's code on the older
+// schema, and since 0.13.0 that code writes the 0007 columns (email_log, web_sessions.via, the
+// event source). The 0.13.0 counterpart, which seeds a 0006 database in SQL, is
+// `s10::pre_0007_data_survives_the_expand_step`.
 #[tokio::test]
+#[ignore = "historical: today's code needs the 0007 schema to seed"]
 async fn s3_data_survives_migration_0004() {
     let Some(e) = env().await else { return };
     let admin_url = std::env::var("KRUNK_TEST_DATABASE_URL").unwrap();

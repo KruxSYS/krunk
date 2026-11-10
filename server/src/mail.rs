@@ -30,6 +30,9 @@ pub enum Template {
     TokenReuse,
     EscrowFetched,
     ApprovalRequested,
+    QrSignIn,
+    AccountDeleted,
+    SyncReset,
 }
 
 impl Template {
@@ -46,6 +49,9 @@ impl Template {
             Template::TokenReuse => "token_reuse",
             Template::EscrowFetched => "escrow_fetched",
             Template::ApprovalRequested => "approval_requested",
+            Template::QrSignIn => "qr_sign_in",
+            Template::AccountDeleted => "account_deleted",
+            Template::SyncReset => "sync_reset",
         }
     }
 
@@ -53,7 +59,7 @@ impl Template {
         Template::ALL.into_iter().find(|t| t.name() == n)
     }
 
-    pub const ALL: [Template; 11] = [
+    pub const ALL: [Template; 14] = [
         Template::Verify,
         Template::RegisterExists,
         Template::Reset,
@@ -65,6 +71,9 @@ impl Template {
         Template::TokenReuse,
         Template::EscrowFetched,
         Template::ApprovalRequested,
+        Template::QrSignIn,
+        Template::AccountDeleted,
+        Template::SyncReset,
     ];
 
     fn source(self) -> &'static str {
@@ -80,6 +89,9 @@ impl Template {
             Template::TokenReuse => include_str!("../templates/token_reuse.txt"),
             Template::EscrowFetched => include_str!("../templates/escrow_fetched.txt"),
             Template::ApprovalRequested => include_str!("../templates/approval_requested.txt"),
+            Template::QrSignIn => include_str!("../templates/qr_sign_in.txt"),
+            Template::AccountDeleted => include_str!("../templates/account_deleted.txt"),
+            Template::SyncReset => include_str!("../templates/sync_reset.txt"),
         }
     }
 }
@@ -101,7 +113,8 @@ pub fn render(t: Template, params: &Value, site: &str) -> (String, String) {
     (subject, body.replace("{{site}}", site))
 }
 
-/// Queues a mail inside the caller's transaction.
+/// Queues a mail inside the caller's transaction, and notes its template and time in the
+/// account's `email_log` (0.13.0; for the data download, never the address or parameters).
 pub async fn enqueue(
     conn: &mut PgConnection,
     account_id: Option<uuid::Uuid>,
@@ -114,8 +127,15 @@ pub async fn enqueue(
         .bind(to)
         .bind(t.name())
         .bind(params)
-        .execute(conn)
+        .execute(&mut *conn)
         .await?;
+    if let Some(id) = account_id {
+        sqlx::query("INSERT INTO email_log (account_id, template) VALUES ($1, $2)")
+            .bind(id)
+            .bind(t.name())
+            .execute(&mut *conn)
+            .await?;
+    }
     Ok(())
 }
 
@@ -248,7 +268,8 @@ mod tests {
             let (subject, body) = render(
                 t,
                 &serde_json::json!({"link": "https://x/account/verify?token=T", "label": "Krunk 0.8.0 on Windows 11",
-                                    "platform": "Windows", "country": "DE", "time": "2026-11-08 12:00 UTC"}),
+                                    "platform": "Windows", "country": "DE", "time": "2026-11-08 12:00 UTC",
+                                    "browser": "Chrome on Android", "records": "12", "devices": "2", "sessions": "1"}),
                 "https://krunk.209.wf",
             );
             assert!(!subject.is_empty() && !subject.contains('\n') && subject.len() < 80, "{t:?}");

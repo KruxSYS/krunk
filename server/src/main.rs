@@ -17,13 +17,17 @@ mod config;
 mod crypto;
 mod db;
 mod devices;
+mod events;
 mod http;
 #[cfg(test)]
 mod it;
 mod jobs;
 mod keys;
+mod lifecycle;
 mod mail;
+mod pairing;
 mod password;
+mod qr;
 mod ratelimit;
 mod records;
 mod secrets;

@@ -654,6 +654,7 @@
     accountShow('account-reopen', st === 'linking');
     accountShow('account-cancel', st === 'linking');
     accountShow('account-manage', st === 'signedIn');
+    accountShow('account-add-device', st === 'signedIn');
     accountShow('account-sign-out', st === 'signedIn');
     const msg = c.message || '';
     $('account-message').textContent = msg;
@@ -668,6 +669,12 @@
       $('account-title').textContent = 'Signing in…';
       $('account-desc').textContent = 'Approve this device on krunk.209.wf. Only approve a code that you see here.';
       $('account-code').textContent = c.userCode;
+      // 0.13.0: the QR of the sign-in link (checked in core; an older server sends none).
+      const qr = typeof c.qr === 'string' && c.qr.startsWith('data:image/svg+xml;base64,') ? c.qr : '';
+      if (qr) $('account-qr').src = qr;
+      else $('account-qr').removeAttribute('src');
+      accountShow('account-qr', !!qr);
+      accountShow('account-qr-hint', !!qr);
       const tick = function () {
         const left = Math.max(0, Math.round((c.expiresAtMs - Date.now()) / 1000));
         $('account-wait').textContent = 'Waiting for the approval… The code works for ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') + ' more.';
@@ -726,6 +733,7 @@
   $('account-cancel').addEventListener('click', function () { LB.post('accountCancel'); });
   $('account-reopen').addEventListener('click', function () { LB.post('accountReopen'); });
   $('account-manage').addEventListener('click', function () { LB.post('accountManage'); });
+  $('account-add-device').addEventListener('click', function () { LB.post('accountAddDevice'); });
   $('account-sign-out').addEventListener('click', function () { LB.post('accountSignOut'); });
   $('account-copy').addEventListener('click', function () {
     const text = accountCard && accountCard.userCode;
