@@ -442,6 +442,13 @@ pub fn system_prompt(extra: &str, vision: bool) -> String {
          - Answer in the language of the user's message.\n",
     );
     p.push('\n');
+    // Krunk facts: the built-in pages it may open and the settings it may change (brief B7).
+    p.push_str(&format!(
+        "Krunk's own pages you may open with navigate or open_tab: {}.\n\
+         Settings you may read with get_settings and change with set_setting: {}.\n\n",
+        super::pages::navigable_pages().join(", "),
+        super::settings_allow::allowed_keys().join(", ")
+    ));
     if vision {
         p.push_str(
             "The screenshot tool gives you an image of the visible page; use it when the layout \
@@ -468,6 +475,13 @@ pub fn system_prompt(extra: &str, vision: bool) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn system_prompt_names_pages_and_settings() {
+        let p = system_prompt("", false);
+        assert!(p.contains("krunk://settings") && p.contains("theme") && p.contains("adblockEnabled"), "{p}");
+        assert!(!p.contains("krunk://passwords") && !p.contains("proxy,"));
+    }
+
     use super::*;
     use serde_json::json;
 
