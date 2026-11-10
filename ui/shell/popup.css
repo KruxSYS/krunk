@@ -194,6 +194,9 @@ body.pv-dark { --bg-raised: #202124; --bg-hover: #3c4043; --fg: #e8eaed; --fg-mu
 .suggest.addr.selected { background: var(--bg-hover); box-shadow: 0 0 0 1px var(--accent) inset; }
 .suggest.addr .glyph { width: 18px; text-align: center; flex: none; font-size: 1rem; }
 .suggest.addr .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; }
+.suggest.addr.search-suggestion .title { font-weight: 400; }
+.suggest.addr.search-suggestion .title b { font-weight: 600; }
+.suggest.addr.search-suggestion .glyph { opacity: .7; }
 .suggest.addr .url { color: var(--fg-muted); font-size: 0.923rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1 1 auto; min-width: 0; }
 .suggest.generated .user { color: var(--link); }
 .suggest .host.mono { font-family: ui-monospace, Consolas, monospace; font-size: 0.923rem; color: var(--fg); letter-spacing: .02em; word-break: break-all; white-space: normal; }
