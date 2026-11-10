@@ -161,6 +161,52 @@ impl KeyWrapper for DpapiSync {
     }
 }
 
+/// DPAPI for the AI providers' API keys in the `ai_keys` table (0.12.0): its own entropy and
+/// description, so a key blob can't be swapped with the vault key, the account token or the
+/// sync state.
+pub struct DpapiAgent;
+
+const AGENT_ENTROPY: &[u8] = b"Krunk AI provider key v1";
+
+impl KeyWrapper for DpapiAgent {
+    fn name(&self) -> &'static str {
+        "dpapi-agent"
+    }
+
+    fn protect(&self, data: &[u8]) -> Result<Vec<u8>, String> {
+        let input = blob(data);
+        let entropy = blob(AGENT_ENTROPY);
+        let mut out = CRYPT_INTEGER_BLOB::default();
+        // SAFETY: input/entropy point to live slices for the call; DPAPI allocates `out`, which
+        // `take_blob` frees.
+        unsafe {
+            CryptProtectData(
+                &input,
+                w!("Krunk AI provider key"),
+                Some(&entropy),
+                None,
+                None,
+                CRYPTPROTECT_UI_FORBIDDEN,
+                &mut out,
+            )
+            .map_err(|e| format!("CryptProtectData: {e}"))?;
+        }
+        Ok(take_blob(&out).to_vec())
+    }
+
+    fn unprotect(&self, data: &[u8]) -> Result<Zeroizing<Vec<u8>>, String> {
+        let input = blob(data);
+        let entropy = blob(AGENT_ENTROPY);
+        let mut out = CRYPT_INTEGER_BLOB::default();
+        // SAFETY: as above.
+        unsafe {
+            CryptUnprotectData(&input, None, Some(&entropy), None, None, CRYPTPROTECT_UI_FORBIDDEN, &mut out)
+                .map_err(|e| format!("CryptUnprotectData: {e}"))?;
+        }
+        Ok(take_blob(&out))
+    }
+}
+
 /// Decrypts a DPAPI blob made without extra entropy by another program of this user
 /// (Chromium's `os_crypt` key and its legacy password blobs).
 pub fn unprotect_plain(data: &[u8]) -> Result<Zeroizing<Vec<u8>>, String> {
@@ -358,5 +404,14 @@ mod sync_tests {
         assert!(DpapiAccount.unprotect(&blob).is_err(), "the account entropy can't open it");
         assert!(Dpapi.unprotect(&blob).is_err(), "nor the vault's");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 0.12.0: an AI key round-trips and can't be opened with the other entropies.
+    #[test]
+    fn agent_key_round_trips_with_its_own_entropy() {
+        let blob = DpapiAgent.protect(b"sk-test-key").unwrap();
+        assert_eq!(&*DpapiAgent.unprotect(&blob).unwrap(), b"sk-test-key");
+        assert!(Dpapi.unprotect(&blob).is_err() && DpapiSync.unprotect(&blob).is_err());
+        assert!(DpapiAgent.unprotect(&Dpapi.protect(b"x").unwrap()).is_err());
     }
 }
