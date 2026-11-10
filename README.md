@@ -414,6 +414,12 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   notices the change by itself. Links and pages opened from other apps open in a new tab of the
   running Krunk (or start it with them); only http(s) addresses, `file:` URLs and absolute file
   paths are opened. A portable copy can't be the default. Uninstalling removes the registration.
+- **Image context menu (0.12.2):** right-clicking an image offers "Open image in new tab",
+  "Save image as…" (always asks where; downloaded through the tab, with its cookies and, in a
+  private tab, its private profile), "Copy image" (the clipboard gets a bitmap and a PNG, so
+  transparency survives in programs that read PNG) and "Copy image address". `data:` images
+  work too; an image that exists only inside the page (a `blob:` address) can be saved and
+  opened but not copied.
 - **View page source (0.11.0):** the page's context menu, Ctrl+U or typing
   `view-source:<address>` opens the source in a new tab next to the page (a private tab for a
   private page): line numbers and colours for HTML and for the page's scripts and styles; links

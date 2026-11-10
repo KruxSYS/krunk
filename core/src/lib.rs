@@ -24,6 +24,7 @@ pub mod frecency;
 pub mod headers;
 pub mod history;
 pub mod http_auth;
+pub mod image_menu;
 pub mod import;
 pub mod integrity;
 pub mod keys;

@@ -1,4 +1,5 @@
-//! DPAPI key wrapping and a "private" clipboard for copied passwords.
+//! DPAPI key wrapping and a "private" clipboard for copied passwords (and the plain
+//! clipboard: addresses, 0.12.2 images).
 
 use lb_core::vault::KeyWrapper;
 use windows::core::{w, PCWSTR};
@@ -267,6 +268,53 @@ fn put_text(owner: HWND, text: &str, private: bool) -> Option<u32> {
         let _ = CloseClipboard();
         result?;
         Some(GetClipboardSequenceNumber())
+    }
+}
+
+/// Puts a copied image on the clipboard (0.12.2): `dib` as `CF_DIB` and `png` as the
+/// registered "PNG" format; `false` if that failed.
+pub fn copy_image(owner: HWND, dib: &[u8], png: &[u8]) -> bool {
+    const CF_DIB: u32 = 8;
+    // SAFETY: standard clipboard sequence on the UI thread; memory handed to SetClipboardData
+    // is owned by the system afterwards.
+    unsafe {
+        if OpenClipboard(Some(owner)).is_err() {
+            return false;
+        }
+        let ok = EmptyClipboard().is_ok() && put_bytes(CF_DIB, dib);
+        if ok && !png.is_empty() {
+            // Optional: programs that read PNG get the transparency; the DIB alone is enough.
+            let id = RegisterClipboardFormatW(w!("PNG"));
+            if id != 0 {
+                let _ = put_bytes(id, png);
+            }
+        }
+        let _ = CloseClipboard();
+        ok
+    }
+}
+
+/// Adds one clipboard format holding `data`.
+///
+/// # Safety
+/// The clipboard must be open.
+unsafe fn put_bytes(format: u32, data: &[u8]) -> bool {
+    // SAFETY: the caller holds the clipboard open; memory ownership passes to the system on
+    // success.
+    unsafe {
+        let Ok(mem) = GlobalAlloc(GMEM_MOVEABLE, data.len()) else { return false };
+        let ptr = GlobalLock(mem) as *mut u8;
+        if ptr.is_null() {
+            let _ = GlobalFree(Some(mem));
+            return false;
+        }
+        std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
+        let _ = GlobalUnlock(mem);
+        if SetClipboardData(format, Some(HANDLE(mem.0))).is_err() {
+            let _ = GlobalFree(Some(mem));
+            return false;
+        }
+        true
     }
 }
 

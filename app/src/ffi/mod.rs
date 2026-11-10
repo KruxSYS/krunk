@@ -9,6 +9,7 @@ pub mod default_browser;
 pub mod dialogs;
 pub mod http;
 pub mod icon;
+pub mod image;
 pub mod keyboard;
 pub mod overlay;
 pub mod pipwin;

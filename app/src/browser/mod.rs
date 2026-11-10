@@ -66,6 +66,7 @@ mod frame;
 mod hang;
 mod hints;
 mod http_auth;
+mod image_menu;
 mod import;
 mod input;
 mod integrity;
@@ -401,6 +402,9 @@ pub struct Browser {
     /// The session was saved for the last time (exit): frames are going away, so later saves
     /// would lose their places.
     session_final: Cell<bool>,
+    /// "Save image as…" (0.12.2): image addresses whose download asks where to save it next,
+    /// with the time they were asked for.
+    save_image_as: RefCell<Vec<(String, i64)>>,
 }
 
 impl Browser {
@@ -508,6 +512,7 @@ impl Browser {
             bar_drag: Cell::new(None),
             menu_from_folder: Cell::new(None),
             session_final: Cell::new(false),
+            save_image_as: RefCell::new(Vec::new()),
         });
         let app = Window::create_app(Rc::new(AppEvents(browser.me.clone())))?;
         let _ = browser.app.set(app);
@@ -1341,6 +1346,12 @@ impl Browser {
         c.on_search_selection(move |sel| {
             if let Some(b) = weak.upgrade() {
                 b.search_selection(id, &sel);
+            }
+        });
+        let weak = self.me.clone();
+        c.on_image_menu(move |action, url| {
+            if let Some(b) = weak.upgrade() {
+                b.defer(move |b| b.image_action(id, action, url));
             }
         });
         let weak = self.me.clone();

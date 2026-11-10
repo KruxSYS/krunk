@@ -45,7 +45,7 @@ impl Browser {
 
     /// The folder downloads go to: the configured one, else the user's
     /// Downloads folder.
-    fn download_folder(&self) -> Option<PathBuf> {
+    pub(super) fn download_folder(&self) -> Option<PathBuf> {
         let dir = self.settings.borrow().download_dir.clone();
         if !dir.is_empty() && Path::new(&dir).is_dir() {
             return Some(PathBuf::from(dir));
@@ -84,8 +84,14 @@ impl Browser {
         if let Some(tab) = tab.filter(|_| pdf) {
             return self.view_pdf(start, tab);
         }
-        let ask = self.settings.borrow().ask_where_to_save;
-        let name = sanitize_file_name(&start.suggested_name);
+        // "Save image as…" (0.12.2) always asks, with an image's file name.
+        let save_image = self.take_save_image_as(&start.url, &start.original_url);
+        let ask = self.settings.borrow().ask_where_to_save || save_image;
+        let name = if save_image {
+            sanitize_file_name(&lb_core::image_menu::file_name(&start.suggested_name, &start.url, &start.mime))
+        } else {
+            sanitize_file_name(&start.suggested_name)
+        };
         let Some(folder) = self.download_folder() else {
             warning!("download {}: no download folder", start.id);
             self.abandon_download(start);
@@ -94,7 +100,8 @@ impl Browser {
         let mut path = unique_path(&folder, &name, |p| p.exists());
         if ask {
             let Some(w) = self.window() else { return };
-            match dialogs::save_file(w.hwnd(), "Save as", &name, ("All files", "*.*"), Some(&folder)) {
+            let title = if save_image { "Save image as" } else { "Save as" };
+            match dialogs::save_file(w.hwnd(), title, &name, ("All files", "*.*"), Some(&folder)) {
                 Some(p) => path = p,
                 None => {
                     self.abandon_download(start);

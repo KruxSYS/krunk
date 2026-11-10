@@ -724,9 +724,20 @@ wrap_context_menu_handler! {
 const MENU_INSPECT: c_int = 26501;
 /// "Search <engine> for …" with selected text (0.11.0).
 const MENU_SEARCH: c_int = 26502;
+/// The image items (0.12.2), in `ImageAction::ALL`'s order from this id on.
+const MENU_IMAGE_FIRST: c_int = 26503;
 /// CEF's own ids: Copy, and "View page source" (which opened the system text editor).
 const MENU_ID_COPY: c_int = 113;
 const MENU_ID_VIEW_SOURCE: c_int = 132;
+
+/// The address of the image the context menu is for, if it is for one with contents.
+fn image_url(p: &ContextMenuParams) -> Option<String> {
+    if p.media_type() != ContextMenuMediaType::IMAGE || p.has_image_contents() == 0 {
+        return None;
+    }
+    let url = CefString::from(&p.source_url()).to_string();
+    (!url.is_empty()).then_some(url)
+}
 
 /// Hands a frame's HTML (`Frame::source`) to `done` once.
 pub(super) fn source_visitor(done: Box<dyn FnOnce(Option<String>)>) -> CefStringVisitor {
@@ -761,9 +772,20 @@ wrap_context_menu_handler! {
             model: Option<&mut MenuModel>,
         ) {
             let Some(m) = model else { return };
+            let image = params.as_ref().and_then(|p| image_url(p));
             // Selected text (never a password field's: the engine gives none): "Search … for"
             // after Copy, as in Chrome (0.11.0).
             let selection = params.map(|p| CefString::from(&p.selection_text()).to_string()).unwrap_or_default();
+            // An image: Chrome's four image items first (0.12.2).
+            if image.is_some() {
+                let items = lb_core::image_menu::ImageAction::ALL;
+                for (i, a) in items.iter().enumerate() {
+                    m.insert_item_at(i, MENU_IMAGE_FIRST + i as c_int, Some(&CefString::from(a.label())));
+                }
+                if m.count() > items.len() {
+                    m.insert_separator_at(items.len());
+                }
+            }
             let label = lookup(self.key).and_then(|v| v.ev.search_label.with(|f| f(&selection)).flatten());
             if let Some(label) = label {
                 let at = m.index_of(MENU_ID_COPY);
@@ -793,6 +815,15 @@ wrap_context_menu_handler! {
                 let url = _browser.and_then(|b| b.main_frame()).map(|f| CefString::from(&f.url()).to_string());
                 if let (Some(url), Some(view)) = (url, lookup(self.key)) {
                     view.ev.view_source.with(|f| f(url));
+                }
+                return 1;
+            }
+            let image_items = lb_core::image_menu::ImageAction::ALL;
+            if (MENU_IMAGE_FIRST..MENU_IMAGE_FIRST + image_items.len() as c_int).contains(&command_id) {
+                let action = image_items[(command_id - MENU_IMAGE_FIRST) as usize];
+                let url = params.as_ref().and_then(|p| image_url(p));
+                if let (Some(url), Some(view)) = (url, lookup(self.key)) {
+                    view.ev.image_menu.with(|f| f(action, url));
                 }
                 return 1;
             }
@@ -859,6 +890,7 @@ wrap_download_handler! {
             let start = DownloadStart {
                 id: item.id(),
                 url: CefString::from(&item.url()).to_string(),
+                original_url: CefString::from(&item.original_url()).to_string(),
                 suggested_name: text(suggested_name),
                 mime: CefString::from(&item.mime_type()).to_string(),
                 total: (total > 0).then_some(total),

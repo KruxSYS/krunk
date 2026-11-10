@@ -151,6 +151,8 @@ pub struct NewWindow {
 pub struct DownloadStart {
     pub id: u32,
     pub url: String,
+    /// The address the download was asked for, before redirects (0.12.2).
+    pub original_url: String,
     pub suggested_name: String,
     /// The response's MIME type (0.11.3: PDFs open in the viewer).
     pub mime: String,
@@ -308,6 +310,8 @@ pub(super) struct Events {
     pub search_label: Slot<SearchLabelFn>,
     /// That item was chosen: the selected text.
     pub search_selection: Slot<dyn FnMut(String)>,
+    /// An image item of the context menu was chosen (0.12.2): the image's address.
+    pub image_menu: Slot<dyn FnMut(lb_core::image_menu::ImageAction, String)>,
 }
 
 /// An HTTP authentication challenge of a site (0.8.0): Basic or Digest from a server, never a
@@ -1405,6 +1409,10 @@ impl View {
 
     pub fn on_search_selection(&self, f: impl FnMut(String) + 'static) {
         self.0.ev.search_selection.set(Box::new(f));
+    }
+
+    pub fn on_image_menu(&self, f: impl FnMut(lb_core::image_menu::ImageAction, String) + 'static) {
+        self.0.ev.image_menu.set(Box::new(f));
     }
 
     /// The main frame's current document as HTML (the source viewer's fallback when the
