@@ -144,7 +144,12 @@ impl Browser {
         }
         // Stop the engine refreshing its task list every second, unless the task manager page
         // still shows it.
-        if !exit && !self.ws.borrow().tabs().any(|(_, t)| Page::from_url(&t.url) == Some(Page::Tasks)) {
+        let tasks_open = self
+            .ws
+            .try_borrow()
+            .map(|ws| ws.tabs().any(|(_, t)| Page::from_url(&t.url) == Some(Page::Tasks)))
+            .unwrap_or(true);
+        if !exit && !tasks_open {
             tasks::release();
         }
     }

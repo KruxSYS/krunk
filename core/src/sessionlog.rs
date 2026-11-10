@@ -49,6 +49,8 @@ CREATE INDEX IF NOT EXISTS log_samples_session ON log_samples(session_id, ts);
 
 /// How often the host samples CPU use and re-checks the foreground tab.
 pub const SAMPLE_MS: u32 = 5_000;
+// Sampled at most every 5 s.
+const _: () = assert!(SAMPLE_MS >= 5_000);
 /// How often the buffer goes to the database.
 pub const FLUSH_MS: u32 = 30_000;
 /// Old sessions are purged at start and then once a day.
@@ -703,7 +705,6 @@ mod tests {
         assert!(s.timers().is_empty());
         assert_eq!(s.set(true), Some(Transition::Start));
         assert_eq!(s.timers(), &[SAMPLE_MS, FLUSH_MS]);
-        assert!(SAMPLE_MS >= 5_000, "sampled at most every 5 s");
         assert_eq!(s.set(true), None, "no second session");
         assert_eq!(s.set(false), Some(Transition::Stop));
         assert!(!s.on() && s.timers().is_empty());
