@@ -111,6 +111,12 @@ module.exports = (h) => {
       }));
       check(r.ai && r.shown > 0, 'search "' + q + '" shows AI and scripts rows (' + r.shown + ')');
     }
+    // A two-letter word matches word starts only: "AI" is not the "ai" inside "email".
+    await page.fill('#filter', 'AI');
+    await page.waitForTimeout(20);
+    const short = await page.evaluate(() => Array.from(document.querySelectorAll('.row.setting')).filter((x) => x.offsetParent !== null)
+      .map((x) => x.closest('.panel').dataset.tab));
+    check(short.length > 0 && short.every((t) => t === 'ai'), '"AI" matches only AI and scripts rows (' + [...new Set(short)].join(',') + ')');
     await page.fill('#filter', 'openrouter');
     await page.waitForTimeout(20);
     check(await page.locator('#ai-providers-row').isVisible() && await page.locator('.panel.has-matches').count() === 1, '"openrouter": only the providers row\'s tab matches');

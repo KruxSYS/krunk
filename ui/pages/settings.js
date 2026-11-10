@@ -35,6 +35,9 @@
   // ---------- search across every tab ----------
   function applyFilter() {
     const q = $('filter').value.trim().toLowerCase();
+    // 0.12.0: a word of one or two letters ("AI") matches where a word starts, not inside
+    // words ("email"); longer queries match anywhere, as before.
+    const short = q.length > 0 && q.length < 3 ? new RegExp('(^|[^a-z0-9])' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) : null;
     const panels = document.querySelector('.panels');
     panels.classList.toggle('searching', !!q);
     let any = false;
@@ -42,7 +45,7 @@
       let hits = 0;
       panel.querySelectorAll('.row.setting').forEach(function (row) {
         const hay = (row.textContent + ' ' + (row.dataset.keywords || '')).toLowerCase();
-        const hit = !q || hay.includes(q);
+        const hit = !q || (short ? short.test(hay) : hay.includes(q));
         row.classList.toggle('filtered-out', !!q && !hit);
         row.hidden = (!!q && !hit) || row.dataset.hiddenByState === '1';
         if (hit) hits++;

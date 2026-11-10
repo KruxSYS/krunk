@@ -14,6 +14,11 @@
 //                             and card too: Krunk must refuse those), then finish
 //   "ask"                     ask_user (3 colours), then finish with the answer
 //   "slow"                    text, one word every 200 ms for 60 s (for Stop)
+//   "history" / "bookmarks"   get_history / get_bookmarks (the gate and consent), then finish
+//   "passwords page"          navigate to krunk://passwords and krunk://sync (both refused)
+//   "read this settings page" get_html and screenshot on a built-in page (refused)
+//   "read the password"       eval_js that fills (if empty) and reads the password field
+//   "loop"                    get_page_context forever (the step limit's question)
 //   anything else             a short text answer
 // Every request is appended to the log (JSON lines: time, body), and so is every connection
 // that closes before its answer ended: the VM smoke test checks both (Stop closes the
@@ -63,6 +68,43 @@ function userWords(text) {
 const call = (name, a) => ({ tool: { name, args: a || {} } });
 const finish = (answer) => call('finish', { answer });
 const SCENARIOS = [
+  // ---- 0.12.0 M5 ----
+  {
+    match: /\bhistory\b/i,
+    steps: [() => call('get_history', { days: 1, limit: 20 }), (m, r) => finish('History result: ' + (r[0] || '').slice(0, 300))],
+  },
+  {
+    match: /\bbookmarks\b/i,
+    steps: [() => call('get_bookmarks', {}), (m, r) => finish('Bookmarks result: ' + (r[0] || '').slice(0, 300))],
+  },
+  {
+    match: /passwords page/i,
+    steps: [
+      () => call('navigate', { url: 'krunk://passwords' }),
+      () => call('navigate', { url: 'krunk://sync' }),
+      (m, r) => finish('passwords: ' + (r[0] || '').slice(0, 150) + ' | sync: ' + (r[1] || '').slice(0, 150)),
+    ],
+  },
+  {
+    match: /read this settings page/i,
+    steps: [
+      () => call('get_html', {}),
+      () => call('screenshot', {}),
+      (m, r) => finish('get_html: ' + (r[0] || '').slice(0, 150) + ' | screenshot: ' + (r[1] || '').slice(0, 150)),
+    ],
+  },
+  {
+    match: /read the password/i,
+    steps: [
+      () => call('eval_js', { code: "(() => { const p = document.getElementById('pw'); if (!p.value) p.value = 'typed-SECRET-777'; return 'the field holds: ' + p.value; })()" }),
+      (m, r) => finish('eval_js: ' + (r[0] || '').slice(0, 200)),
+    ],
+  },
+  {
+    // Never finishes: for the step limit (a continue question after max steps).
+    match: /\bloop\b/i,
+    steps: [() => call('get_page_context', {})],
+  },
   {
     match: /title of this page to\s+(\S+)/i,
     steps: [
