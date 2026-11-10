@@ -348,3 +348,48 @@ if ($Phase -eq 'hotkey') {
   KLog 'macro|input'
   StopKrunk
 }
+
+if ($Phase -eq 'off') {
+  # h: userscripts and macros off in Settings: no injection, the hotkey does nothing; then AI off.
+  FreshProfile $mock
+  Log "[$P] seeded: $(& $py C:\pipeline\krunk\seed-macro.py $profile --userscript 2>&1)"
+  StartKrunk
+  Page 'http://127.0.0.1:8094/agent.html'
+  Log "[$P] title with scripts on: $(Title)"
+  Page 'krunk://settings#ai'
+  Click 240 640 200
+  SafeKeys '{PGDN}' 600
+  Shot "$P-h1-settings-before"
+  Click 1099 458 600
+  Click 1099 577 600
+  Shot "$P-h2-scripts-macros-off"
+  Remove-Item "$www\access.log" -ErrorAction SilentlyContinue
+  Page 'http://127.0.0.1:8094/agent.html'
+  Log "[$P] title with scripts off: $(Title)"
+  Click 200 640 300
+  SafeKeys '^%k' 2500
+  Shot "$P-h3-hotkey-does-nothing"
+  Get-Content "$www\access.log" -ErrorAction SilentlyContinue | Where-Object { $_ -match 'agent-key=' } | ForEach-Object { Log "[$P] key $(($_ -split 'agent-key=')[1] -split ' ' | Select-Object -First 1)" }
+  # AI off.
+  Page 'krunk://settings#ai'
+  Click 240 640 200
+  SafeKeys '^{HOME}' 600
+  Click 1099 302 800
+  Shot "$P-h4-ai-off"
+  KLog 'macro|userscript|ai provider'
+  StopKrunk
+}
+if ($Phase -eq 'aioff') {
+  $profile = 'C:\pipeline\krunk\p0120-off'; $env:LOCALAPPDATA = $profile; $klog = "$profile\Krunk\krunk.log"
+  # h: the same profile with AI off, restarted: the button is gone, Ctrl+Shift+Space goes to
+  # the page, and the mock must see no request (counted on the Linux side).
+  StartKrunk
+  Page 'http://127.0.0.1:8094/agent.html'
+  SafeKeys '^+ ' 1200
+  Shot "$P-h5-ai-off-restart"
+  Page 'krunk://settings#ai' 2000
+  Start-Sleep 20
+  Shot "$P-h6-ai-off-settings"
+  KLog 'ai provider|agent'
+  StopKrunk
+}

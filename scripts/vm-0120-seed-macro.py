@@ -16,3 +16,15 @@ db.execute(
 )
 db.commit()
 print(db.execute("SELECT id, hotkey FROM macros").fetchall())
+
+# With --userscript: a script on every web page that marks the title.
+if "--userscript" in sys.argv:
+    us = "// ==UserScript==\n// @name Title marker\n// @match *://*/*\n// @grant none\n// ==/UserScript==\n" \
+         "document.title = 'US RAN ' + document.title;\n"
+    db.execute(
+        "INSERT OR REPLACE INTO userscripts(id, name, namespace, version, source, enabled, created_by_ai, created, updated, position)"
+        " VALUES ('title-marker', 'Title marker', '', '', ?, 1, 0, 1, 1, 1)",
+        (us,),
+    )
+    db.commit()
+    print(db.execute("SELECT id FROM userscripts").fetchall())
