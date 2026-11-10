@@ -8,6 +8,7 @@ pub mod cursor;
 pub mod dialogs;
 pub mod http;
 pub mod icon;
+pub mod keyboard;
 pub mod overlay;
 pub mod pipwin;
 pub mod process;
