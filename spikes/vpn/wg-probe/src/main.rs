@@ -95,10 +95,7 @@ fn self_test() -> bool {
     let mut iface = netstack(&mut dev, Ipv4Addr::new(10, 66, 0, 2));
     let mut sockets = SocketSet::new(vec![]);
     let h = sockets.add(tcp_socket());
-    sockets
-        .get_mut::<tcp::Socket>(h)
-        .connect(iface.context(), (IpAddress::v4(10, 0, 0, 1), 80), 49152)
-        .unwrap();
+    sockets.get_mut::<tcp::Socket>(h).connect(iface.context(), (IpAddress::v4(10, 0, 0, 1), 80), 49152).unwrap();
     iface.poll(now(start), &mut dev, &mut sockets);
     let syn = dev.tx.pop_front().expect("smoltcp emitted no SYN");
     println!("smoltcp SYN: {} bytes", syn.len());
@@ -155,14 +152,18 @@ fn connect(endpoint: &str, server_pub: &str, client_priv: &str, client_ip: &str,
     let sock = UdpSocket::bind("0.0.0.0:0").unwrap();
     sock.connect(ep).unwrap();
     sock.set_read_timeout(Some(Duration::from_millis(20))).unwrap();
-    let mut tunn = Tunn::new(StaticSecret::from(key(client_priv)), PublicKey::from(key(server_pub)), None, Some(25), 7, None);
+    let mut tunn =
+        Tunn::new(StaticSecret::from(key(client_priv)), PublicKey::from(key(server_pub)), None, Some(25), 7, None);
 
     let start = StdInstant::now();
     let mut dev = QueueDevice { mtu: 1420, ..Default::default() };
     let mut iface = netstack(&mut dev, client_ip.parse().unwrap());
     let mut sockets = SocketSet::new(vec![]);
     let h = sockets.add(tcp_socket());
-    sockets.get_mut::<tcp::Socket>(h).connect(iface.context(), (IpAddress::Ipv4(*inside.ip()), inside.port()), 49152).unwrap();
+    sockets
+        .get_mut::<tcp::Socket>(h)
+        .connect(iface.context(), (IpAddress::Ipv4(*inside.ip()), inside.port()), 49152)
+        .unwrap();
 
     let (mut buf, mut out) = (vec![0u8; 65536], vec![0u8; 65536]);
     let (mut sent_req, mut handshaken) = (false, false);
