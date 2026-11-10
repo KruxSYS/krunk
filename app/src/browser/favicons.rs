@@ -200,5 +200,6 @@ fn fetch_error(e: &FetchError) -> &'static str {
         FetchError::TooBig => "too big",
         FetchError::Timeout => "timeout",
         FetchError::Failed => "failed",
+        FetchError::Cancelled => "cancelled",
     }
 }

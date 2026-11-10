@@ -225,10 +225,6 @@ impl<F: ?Sized> Default for Slot<F> {
 }
 
 impl<F: ?Sized> Slot<F> {
-    fn is_set(&self) -> bool {
-        self.0.borrow().is_some()
-    }
-
     fn set(&self, f: Box<F>) {
         *self.0.borrow_mut() = Some(f);
     }
@@ -255,6 +251,8 @@ type DevToolsPlace = (Option<(i32, i32, i32, i32)>, Option<bool>);
 /// A DevTools call that gets no answer in this time fails.
 const DEVTOOLS_TIMEOUT_MS: i64 = 10_000;
 type MessageFn = dyn FnMut(&MessageSource, &str);
+type DevToolsEventFn = Rc<RefCell<dyn FnMut(&str, &serde_json::Value)>>;
+type DevToolsListener = (u32, &'static [&'static str], DevToolsEventFn);
 type SearchLabelFn = dyn FnMut(&str) -> Option<String>;
 
 #[derive(Default)]
@@ -297,8 +295,6 @@ pub(super) struct Events {
     pub media_access: Slot<dyn FnMut(u64, String, u32)>,
     /// The page started or stopped using the camera (video) / the microphone (audio).
     pub media_use: Slot<dyn FnMut(bool, bool)>,
-    /// A DevTools protocol event (method, params); the extensions' binding and contexts.
-    pub devtools_event: Slot<dyn FnMut(String, serde_json::Value)>,
     /// A site asks for HTTP authentication (0.8.0); the responder answers it once.
     pub auth: Slot<dyn FnMut(AuthChallenge, AuthResponder)>,
     /// The main frame finished loading with this HTTP status (0.8.0).
@@ -414,7 +410,10 @@ pub(super) struct ViewInner {
     /// callback waiting for the result, if any.
     devtools_calls: RefCell<HashMap<i32, (String, Option<DevToolsDone>)>>,
     /// The DevTools events the listener handles; others are not parsed (0.10.0).
-    devtools_methods: Cell<&'static [&'static str]>,
+    /// DevTools event listeners (0.12.0: extensions, userscripts and the agent each have
+    /// their own): an id, the methods it wants and the callback.
+    devtools_listeners: RefCell<Vec<DevToolsListener>>,
+    devtools_listener_id: Cell<u32>,
     devtools_observer: RefCell<Option<Registration>>,
     /// The docked DevTools browser, once it exists, and its place until then.
     devtools: RefCell<Option<Browser>>,
@@ -486,7 +485,8 @@ impl View {
             renderer_pid: Cell::new(0),
             hang: RefCell::new(None),
             devtools_calls: RefCell::new(HashMap::new()),
-            devtools_methods: Cell::new(&[]),
+            devtools_listeners: RefCell::new(Vec::new()),
+            devtools_listener_id: Cell::new(0),
             devtools_observer: RefCell::new(None),
             devtools: RefCell::new(None),
             devtools_pending: Cell::new((None, None)),
@@ -1349,16 +1349,34 @@ impl View {
         self.0.ev.audio.set(Box::new(f));
     }
 
-    /// A DevTools protocol event arrived (after a domain was enabled with a method call), for
-    /// the `methods` named. An enabled domain sends much more (console messages, frame events)
-    /// and none of that is parsed.
+    /// Adds a listener for DevTools protocol events (after a domain was enabled with a method
+    /// call) of the `methods` named; returns its id for [`View::remove_devtools_listener`]. An
+    /// enabled domain sends much more (console messages, frame events) and none of that is
+    /// parsed. Several listeners may want the same method; each gets it.
+    pub fn add_devtools_listener(
+        &self,
+        methods: &'static [&'static str],
+        f: impl FnMut(&str, &serde_json::Value) + 'static,
+    ) -> u32 {
+        let id = self.0.devtools_listener_id.get() + 1;
+        self.0.devtools_listener_id.set(id);
+        let f: DevToolsEventFn = Rc::new(RefCell::new(f));
+        self.0.devtools_listeners.borrow_mut().push((id, methods, f));
+        id
+    }
+
+    #[allow(dead_code)] // 0.12.0 spine: for listeners that end before their view
+    pub fn remove_devtools_listener(&self, id: u32) {
+        self.0.devtools_listeners.borrow_mut().retain(|(i, _, _)| *i != id);
+    }
+
+    /// The extensions' listener (one per tab; kept for its callers).
     pub fn on_devtools_event(
         &self,
         methods: &'static [&'static str],
-        f: impl FnMut(String, serde_json::Value) + 'static,
+        mut f: impl FnMut(String, serde_json::Value) + 'static,
     ) {
-        self.0.devtools_methods.set(methods);
-        self.0.ev.devtools_event.set(Box::new(f));
+        self.add_devtools_listener(methods, move |m, v| f(m.to_string(), v.clone()));
     }
 
     /// The same browser view.
@@ -1456,9 +1474,23 @@ impl ViewInner {
     /// A DevTools protocol call finished: failures are logged, a waiting
     /// callback gets the result.
     pub(super) fn devtools_event(&self, method: &str, params: &[u8]) {
-        if self.ev.devtools_event.is_set() && self.devtools_methods.get().contains(&method) {
-            let value = serde_json::from_slice(params).unwrap_or(serde_json::Value::Null);
-            self.ev.devtools_event.with(|f| f(method.to_string(), value));
+        // Collected first: a listener may add or remove listeners.
+        let wanted: Vec<DevToolsEventFn> = self
+            .devtools_listeners
+            .borrow()
+            .iter()
+            .filter(|(_, methods, _)| methods.contains(&method))
+            .map(|(_, _, f)| f.clone())
+            .collect();
+        if wanted.is_empty() {
+            return;
+        }
+        let value = serde_json::from_slice(params).unwrap_or(serde_json::Value::Null);
+        for f in wanted {
+            // A listener that is already running (an event inside its own callback) skips it.
+            if let Ok(mut f) = f.try_borrow_mut() {
+                f(method, &value);
+            }
         }
     }
 

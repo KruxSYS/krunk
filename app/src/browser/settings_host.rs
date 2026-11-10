@@ -48,10 +48,22 @@ impl Browser {
                     s.devtools_dock = cur.devtools_dock;
                     s.devtools_size_right = cur.devtools_size_right;
                     s.devtools_size_bottom = cur.devtools_size_bottom;
+                    // 0.12.0: providers change through their own commands (aiProviderSave …),
+                    // the panel width by its splitter.
+                    s.ai.providers = cur.ai.providers.clone();
+                    s.ai.panel_width = cur.ai.panel_width;
+                    if s.ai.provider(&s.ai.active_provider).is_none() {
+                        s.ai.active_provider.clear();
+                    }
                 }
                 self.save_settings(tab, req_id, s)
             }
-            Request::ResetSettings => self.save_settings(tab, req_id, Settings::default()),
+            Request::ResetSettings => {
+                // The AI providers stay (their keys are kept); AI itself goes off.
+                let mut d = Settings::default();
+                d.ai.providers = self.settings.borrow().ai.providers.clone();
+                self.save_settings(tab, req_id, d)
+            }
             Request::PickDownloadFolder => {
                 let Some(w) = self.window() else { return };
                 let current = self.settings.borrow().download_dir.clone();
@@ -174,6 +186,18 @@ impl Browser {
 
     /// Applies everything that works without a restart.
     pub(super) fn apply_settings(&self, old: &Settings, new: &Settings) {
+        // 0.12.0: the agent, userscripts and macros.
+        if old.ai.enabled != new.ai.enabled {
+            self.agent_setting_changed();
+        } else if old.ai != new.ai {
+            self.agent_config_changed();
+        }
+        if old.userscripts != new.userscripts {
+            self.userscripts_settings_changed();
+        }
+        if old.macros != new.macros {
+            self.macros_settings_changed();
+        }
         if old.tab_sleep_minutes != new.tab_sleep_minutes
             || old.tab_discard_enabled != new.tab_discard_enabled
             || old.tab_discard_minutes != new.tab_discard_minutes

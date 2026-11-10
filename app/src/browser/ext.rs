@@ -159,10 +159,6 @@ pub(super) struct ExtHost {
     scripts: RefCell<HashMap<TabId, Vec<String>>>,
     bindings: RefCell<HashMap<TabId, std::collections::HashSet<String>>>,
     contexts: RefCell<HashMap<TabId, Vec<ExtContext>>>,
-    /// Tabs whose Page and Runtime DevTools domains are on (0.7.0, R24: only while an enabled
-    /// extension has content scripts for them; every event of an enabled domain crosses to the
-    /// browser process, which slowed every page down).
-    domains: RefCell<std::collections::HashSet<TabId>>,
     /// A package waiting for the install confirmation (0.7.0, R20).
     pending_install: RefCell<Option<PendingInstall>>,
     /// The extension whose popup closed last, and when (ms): the toolbar click that closed it
@@ -205,7 +201,6 @@ impl ExtHost {
             next_id: Cell::new(1),
             alarms: RefCell::new(HashMap::new()),
             request_origin: RefCell::new(None),
-            domains: RefCell::new(std::collections::HashSet::new()),
             pending_install: RefCell::new(None),
             popup_closed: RefCell::new((String::new(), 0)),
             scripts: RefCell::new(HashMap::new()),
@@ -510,9 +505,7 @@ impl Browser {
         }
         if bundles.is_empty() {
             // No content scripts for this tab (any more): the domains go off again.
-            if self.ext.domains.borrow_mut().remove(&tab) {
-                view.devtools_method("Runtime.disable", &json!({}));
-                view.devtools_method("Page.disable", &json!({}));
+            if self.cdp_release(tab, view, super::cdp::CdpUser::Ext) {
                 self.ext.contexts.borrow_mut().remove(&tab);
                 self.ext.bindings.borrow_mut().remove(&tab);
             }
@@ -524,10 +517,7 @@ impl Browser {
         }
         // The Page domain (the scripts added below run on new documents only while it is on)
         // and the Runtime domain (contexts, binding calls).
-        if self.ext.domains.borrow_mut().insert(tab) {
-            view.devtools_method("Page.enable", &json!({}));
-            view.devtools_method("Runtime.enable", &json!({}));
-        }
+        self.cdp_use(tab, view, super::cdp::CdpUser::Ext);
         for (id, bundle) in bundles {
             let world = ext::world_name(&id);
             if self.ext.bindings.borrow_mut().entry(tab).or_default().insert(id.clone()) {
@@ -567,13 +557,11 @@ impl Browser {
     /// domains it needs, if any extension has content scripts.
     pub(super) fn ext_tab_created(&self, tab: TabId) {
         let Some(view) = self.tab_view(tab) else { return };
-        self.ext.domains.borrow_mut().remove(&tab);
         self.ext.bindings.borrow_mut().remove(&tab);
         self.ext_install_bundle(tab, &view, view.is_private());
     }
 
     pub(super) fn ext_detach_tab(&self, tab: TabId) {
-        self.ext.domains.borrow_mut().remove(&tab);
         self.ext.scripts.borrow_mut().remove(&tab);
         self.ext.bindings.borrow_mut().remove(&tab);
         self.ext.contexts.borrow_mut().remove(&tab);

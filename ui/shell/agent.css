@@ -1,0 +1,14 @@
+/* The AI agent panel (0.12.0). WP-C replaces this placeholder layout. */
+html, body { height: 100%; margin: 0; }
+body { display: flex; flex-direction: column; background: var(--bg); color: var(--fg); font: 13px/1.45 system-ui, sans-serif; }
+#head { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+#model { flex: 1; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#log { flex: 1; overflow: auto; padding: 8px; }
+.msg { margin: 0 0 8px; white-space: pre-wrap; word-wrap: break-word; }
+.msg.user { color: var(--accent); }
+.msg.notice { color: var(--fg-muted); font-style: italic; }
+#foot { border-top: 1px solid var(--border); padding: 8px; }
+#input { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; background: var(--bg-raised); color: var(--fg);
+         border: 1px solid var(--border); border-radius: 6px; padding: 6px; }
+.row { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
+#state { color: var(--fg-muted); margin-bottom: 6px; }

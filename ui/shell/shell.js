@@ -1271,6 +1271,22 @@
   $('menu').addEventListener('click', function () { togglePopup('menu', $('menu')); });
   $('shield').addEventListener('pointerdown', function () { rememberOpen('shield'); });
   $('shield').addEventListener('click', function () { togglePopup('shield', $('shield')); });
+  // 0.12.0: the AI agent's panel (the button shows only while AI is on) and a running macro.
+  $('agent').addEventListener('click', function () { LB.post('toggleAgent'); });
+  $('macro-stop').addEventListener('click', function () { LB.post('stopMacros'); });
+  LB.on('agentButton', function (m) {
+    const b = $('agent');
+    b.hidden = !m.visible;
+    b.classList.toggle('on', !!m.open);
+    b.setAttribute('aria-pressed', m.open ? 'true' : 'false');
+    reportHitMap();
+  });
+  LB.on('macroRunning', function (m) {
+    $('macro-run').hidden = !m.id;
+    $('macro-run-name').textContent = m.name || '';
+    $('macro-run').title = m.name ? 'Macro running: ' + m.name : '';
+    reportHitMap();
+  });
 
   // ---------- host events ----------
   LB.on('tabs', function (m) {

@@ -43,9 +43,14 @@ const ZOOM_WATCH_MS: u32 = 100;
 const SESSION_DEBOUNCE_MS: u32 = 2000;
 
 mod account;
+mod agent;
+mod agent_panel;
+mod ai_keys;
+mod ai_settings;
 mod blocking;
 mod bookmarks_bar;
 mod bounce;
+mod cdp;
 mod devtools;
 mod dns_host;
 mod downloads;
@@ -60,9 +65,11 @@ mod hang;
 mod hints;
 mod http_auth;
 mod import;
+mod input;
 mod integrity;
 mod jobs;
 mod library;
+mod macros;
 mod navmenu;
 mod omnibox;
 #[cfg(feature = "perf-probe")]
@@ -71,6 +78,7 @@ mod permissions;
 mod pip;
 mod pointer;
 mod power;
+mod scripts_page;
 mod segmented;
 mod settings_host;
 mod siteinfo;
@@ -83,6 +91,7 @@ mod sync;
 mod tablist;
 mod tasks;
 mod updater;
+mod userscripts;
 
 pub use power::PowerOptions;
 use power::{MEMREPORT_TIMER, POWER_TIMER};
@@ -302,6 +311,18 @@ pub struct Browser {
     imports: import::ImportHost,
     permissions: permissions::PermissionHost,
     omnibox: omnibox::OmniboxHost,
+    /// 0.12.0: the agent panels, the agents, the shared DevTools domains, userscripts,
+    /// macros and the engine input they send.
+    panel: agent_panel::PanelHost,
+    #[allow(dead_code)] // 0.12.0 spine: used by the work packages (M4)
+    agent: agent::AgentHost,
+    cdp: cdp::CdpHost,
+    #[allow(dead_code)]
+    userscripts: userscripts::UserscriptHost,
+    #[allow(dead_code)]
+    macros: macros::MacroHost,
+    #[allow(dead_code)]
+    input: input::InputHost,
     /// Some tab was given a user agent other than the one the engine started with.
     ua_overridden: Cell<bool>,
     /// Tabs started at about:blank because of edited headers: their real first URL.
@@ -440,6 +461,12 @@ impl Browser {
             imports: import::ImportHost::default(),
             permissions: permissions::PermissionHost::default(),
             omnibox: omnibox::OmniboxHost::default(),
+            panel: agent_panel::PanelHost::default(),
+            agent: agent::AgentHost::default(),
+            cdp: cdp::CdpHost::default(),
+            userscripts: userscripts::UserscriptHost::default(),
+            macros: macros::MacroHost::default(),
+            input: input::InputHost::default(),
             ua_overridden: Cell::new(false),
             first_url: RefCell::new(HashMap::new()),
             engine_hints: RefCell::new(None),
@@ -756,6 +783,10 @@ impl Browser {
                 if let Some(win) = b.window_of(id) {
                     b.make_current(win);
                 }
+                // 0.12.0: hotkey recording on krunk://scripts, then the macros' hotkeys.
+                if b.macro_key(id, key) {
+                    return true;
+                }
                 b.on_key(key)
             })
         });
@@ -885,6 +916,7 @@ impl Browser {
         // window (the operator saw ⋮ and every context menu go dead while moving tabs). They
         // go to a window that stays first.
         self.rehome_popups(frame.window);
+        self.agent_panel_window_closed(win);
         if let Some(s) = frame.shell.borrow_mut().take() {
             s.close();
         }
@@ -994,6 +1026,8 @@ impl Browser {
         self.hook_tab(id, &view, host_navigation.clone(), net.clone());
         self.hook_blocking(&view, net.clone());
         self.ext_attach_tab(id, &view);
+        self.userscripts_attach_tab(id, &view);
+        self.agent_attach_tab(id, &view);
         self.hook_downloads(&view, Some(id));
         // A popup's browser is being created by the engine already.
         if !popup {
@@ -1208,7 +1242,9 @@ impl Browser {
         let weak = self.me.clone();
         c.on_created(move || {
             if let Some(b) = weak.upgrade() {
+                b.cdp_forget(id);
                 b.ext_tab_created(id);
+                b.userscripts_tab_created(id);
                 b.hints_attach(id);
                 let first = b.first_url.borrow_mut().remove(&id);
                 b.apply_user_agent_to_then(id, move |b| {
@@ -1307,6 +1343,11 @@ impl Browser {
             self.clear_private_pdfs();
         }
         self.ext_detach_tab(id);
+        self.userscripts_detach_tab(id);
+        self.agent_tab_gone(id);
+        self.macro_tab_gone(id);
+        self.input_tab_gone(id);
+        self.cdp_forget(id);
         self.hints_attached.borrow_mut().remove(&id);
         self.pointer.hints.borrow_mut().forget(id);
         if self.status.tab.get() == Some(id) {
@@ -1507,6 +1548,16 @@ impl Browser {
     /// A frame's shell and content areas; in full screen there is no shell and the content
     /// is the whole client area.
     fn frame_areas(&self, f: &Frame) -> (Option<layout::Rect>, layout::Rect) {
+        let (shell, content) = self.frame_areas_full(f);
+        // 0.12.0: the agent panel takes the right side; the tab (and its DevTools) the rest.
+        match self.panel_split_of(f, content) {
+            Some(split) => (shell, split.page),
+            None => (shell, content),
+        }
+    }
+
+    /// [`Browser::frame_areas`] with the agent panel's part included in the content.
+    fn frame_areas_full(&self, f: &Frame) -> (Option<layout::Rect>, layout::Rect) {
         let w = f.window;
         let (width, height) = w.client_size();
         if self.is_fullscreen_frame(f.id) {
@@ -1523,10 +1574,13 @@ impl Browser {
     }
 
     fn layout_frame_now(&self, f: &Frame) {
-        let (shell, content) = self.frame_areas(f);
+        let (shell, full) = self.frame_areas_full(f);
+        let panel = self.panel_split_of(f, full);
+        let content = panel.map_or(full, |p| p.page);
         if let (Some(shell), Some(s)) = (shell, f.shell.borrow().as_ref()) {
             s.set_bounds(shell.x, shell.y, shell.width, shell.height);
         }
+        self.layout_panel(f, panel);
         let Some(c) = self.active_view_of(f.id) else { return };
         match self.devtools_split_of(f) {
             Some(split) => {
@@ -2109,6 +2163,11 @@ impl Browser {
             return true;
         }
         let Some(cmd) = keys::command_for(key.vk, key.ctrl, key.shift, key.alt) else { return false };
+        // 0.12.0: without AI (or a running macro) these keys belong to the page.
+        if (cmd == Command::ToggleAgent && !self.ai_enabled()) || (cmd == Command::StopMacros && !self.macro_running())
+        {
+            return false;
+        }
         // Holding a key down repeats only commands where that makes sense.
         let repeatable = matches!(cmd, Command::ZoomIn | Command::ZoomOut | Command::NextTab | Command::PrevTab);
         if !key.repeat || repeatable {
@@ -2120,6 +2179,8 @@ impl Browser {
     fn run_command(&self, cmd: Command) {
         let now = now_ms();
         match cmd {
+            Command::ToggleAgent => self.toggle_agent(),
+            Command::StopMacros => self.stop_macros("shortcut"),
             Command::NewTab => self.new_tab(None, false),
             Command::NewWindow => self.new_window(),
             Command::NewPrivateTab => self.new_tab(None, true),
@@ -2311,6 +2372,8 @@ impl Browser {
         self.send_shell_shared();
         self.send_window_state();
         self.pass_shell_hit_tests(win);
+        self.send_agent_button_to(win);
+        self.send_macro_running_to(win);
     }
 
     /// What every shell shows alike, besides the config: the bookmarks bar, downloads,
@@ -2338,6 +2401,8 @@ impl Browser {
         match request {
             Request::Ready => match sender {
                 Sender::Ext => {}
+                Sender::Agent => self.agent_panel_ready(),
+                Sender::Runner => self.macro_runner_ready(),
                 Sender::Shell => {
                     // The shell that just loaded is the current window's (its message made it so).
                     let Some(win) = self.cur_id() else { return };
@@ -2716,6 +2781,47 @@ impl Browser {
             Request::OpenSiteData => self.open_site_data(),
             Request::HangReply { tab_id, wait } => self.hang_reply(tab_id, wait),
             Request::SourceGet {} => self.source_get(tab, req_id),
+            // ---- 0.12.0 ----
+            Request::ToggleAgent => self.toggle_agent(),
+            Request::StopMacros => self.stop_macros("toolbar"),
+            r @ (Request::AgentSend { .. }
+            | Request::AgentStop
+            | Request::AgentNew
+            | Request::AgentAnswer { .. }
+            | Request::AgentConsent { .. }
+            | Request::AgentContinue { .. }
+            | Request::AgentSelectModel { .. }
+            | Request::AgentModels
+            | Request::AgentClose
+            | Request::AgentOpenScript { .. }
+            | Request::AgentToggleScript { .. }) => {
+                if let Some(win) = self.agent_request_window() {
+                    self.agent_request(win, req_id, r);
+                }
+            }
+            r @ (Request::MacroCall { .. } | Request::MacroDone { .. }) => self.macro_runner_request(req_id, r),
+            r @ (Request::AiProviderSave { .. }
+            | Request::AiProviderRemove { .. }
+            | Request::AiKeySet { .. }
+            | Request::AiKeyRemove { .. }
+            | Request::AiTest { .. }
+            | Request::AiModels { .. }
+            | Request::AiStatus) => self.ai_settings_request(tab, req_id, r),
+            r @ (Request::ScriptsList
+            | Request::ScriptGet { .. }
+            | Request::ScriptSave { .. }
+            | Request::ScriptToggle { .. }
+            | Request::ScriptDelete { .. }
+            | Request::ScriptExport { .. }
+            | Request::ScriptRunNow { .. }
+            | Request::ScriptCheck { .. }
+            | Request::MacroSave { .. }
+            | Request::MacroDelete { .. }
+            | Request::MacroToggle { .. }
+            | Request::MacroRun { .. }
+            | Request::MacroStop
+            | Request::HotkeyCheck { .. }
+            | Request::HotkeyRecord { .. }) => self.scripts_request(tab, req_id, r),
             other => self.dispatch_library(sender, tab, req_id, other),
         }
     }
@@ -3421,12 +3527,16 @@ impl WindowEvents for FrameEvents {
     }
 
     fn splitter_at(&self, x: i32, y: i32) -> Option<bool> {
-        self.b.upgrade()?.splitter_at(self.win, x, y)
+        let b = self.b.upgrade()?;
+        if b.panel_splitter_at(self.win, x, y) {
+            return Some(true);
+        }
+        b.splitter_at(self.win, x, y)
     }
 
     fn splitter_drag(&self, x: i32, y: i32, done: bool) {
         if let Some(b) = self.b.upgrade() {
-            b.splitter_drag(self.win, x, y, done);
+            b.any_splitter_drag(self.win, x, y, done);
         }
     }
 

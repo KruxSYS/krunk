@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Krunk AI agent</title>
+<link rel="stylesheet" href="shared/common.css">
+<link rel="stylesheet" href="agent.css">
+</head>
+<body>
+<header id="head">
+  <span id="model" title="Model">No model</span>
+  <button id="new" type="button" title="New conversation">New</button>
+  <button id="close" type="button" title="Close (Ctrl+Shift+Space)" aria-label="Close">×</button>
+</header>
+<main id="log" aria-live="polite"></main>
+<footer id="foot">
+  <div id="state" hidden></div>
+  <form id="ask" autocomplete="off">
+    <textarea id="input" rows="3" placeholder="Tell the agent what to do" aria-label="Message"></textarea>
+    <div class="row">
+      <button id="stop" type="button" hidden>Stop</button>
+      <button id="send" type="submit">Send</button>
+    </div>
+  </form>
+</footer>
+<script src="shared/bridge.js"></script>
+<script src="agent.js"></script>
+</body>
+</html>
