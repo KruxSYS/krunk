@@ -1205,6 +1205,11 @@ How it works (`vpn/`, `app/src/browser/vpn.rs`):
   never run and are reported at import. OpenVPN's `remote-cert-tls server` is enforced as the
   equivalent `remote-cert-eku` check (OpenVPN 3 Core 3.11.7 doesn't apply the former). A refused
   username/password or server certificate stops the VPN with that message instead of retrying.
+- **Reach the local network directly** (0.14.2, off by default): private addresses (10/8,
+  172.16/12, 192.168/16, link-local, IPv6 unique- and link-local) and names without a dot or
+  ending in `.local`, `.lan`, `.home.arpa` or `.internal` skip the VPN, so routers, printers and
+  home servers stay reachable. They are added to the engine's proxy bypass list, so they go out
+  directly as without the VPN; a name is matched by its suffix, not by the address it resolves to.
 - Not supported: a manual proxy at the same time (Settings refuses it), UDP through the VPN (QUIC
   falls back to TCP), OpenVPN profiles with a client certificate in a separate file (inline
   `<cert>`/`<key>` work), and the proxy-related Chromium switches in Advanced.

@@ -2,6 +2,14 @@
 
 What changed in each Krunk release, newest first.
 
+## 0.14.2 — 2026-11-10
+
+- **Use your local network while the VPN is connected.** A new option in Settings → Privacy &
+  security → VPN, **Reach the local network directly**, lets your router, printer, NAS and other
+  home servers skip the VPN. It covers addresses like 192.168.x.x, 10.x.x.x and 172.16–31.x.x,
+  and names without a dot or ending in .local or .lan. Everything else still goes through the
+  VPN. The option is off by default and takes effect at once, also while connected.
+
 ## 0.14.1 — 2026-11-10
 
 - **Fixed: Krunk closed on the first page after connecting a WireGuard VPN.** It happened with

@@ -469,7 +469,29 @@ pub struct VpnSettings {
     pub auto_connect: bool,
     /// The profile used last (set by the host when it connects; the popup's default).
     pub active_profile: String,
+    /// 0.14.2: addresses of the local network ([`LOCAL_NETWORK_BYPASS`]) skip the VPN, so
+    /// routers, printers and home servers stay reachable while connected. Off by default.
+    pub allow_local_network: bool,
 }
+
+/// What skips the VPN with `vpn.allow_local_network` (0.14.2), in Chromium's proxy-bypass
+/// syntax: names without a dot, the usual local suffixes, and the private, link-local and
+/// unique-local address ranges (they match addresses typed or linked as such; a name is matched
+/// by its suffix, not by what it resolves to). 100.64.0.0/10 is left out on purpose: VPN
+/// providers use it inside the tunnel (e.g. for their DNS).
+pub const LOCAL_NETWORK_BYPASS: &[&str] = &[
+    "<local>",
+    "*.local",
+    "*.lan",
+    "*.home.arpa",
+    "*.internal",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "169.254.0.0/16",
+    "fc00::/7",
+    "fe80::/10",
+];
 
 /// The AI agent (0.12.0). Off by default: while off there is no toolbar button, no agent and
 /// no provider traffic. API keys are not here: they are DPAPI-protected in the database.
@@ -1115,7 +1137,17 @@ impl Settings {
     /// The `bypass_list` of the engine's proxy while the VPN runs (0.14.0): the same hosts as
     /// the manual proxy's `--proxy-bypass-list` (loopback is bypassed implicitly).
     pub fn vpn_bypass_list(&self) -> String {
-        self.unreachable_hosts().join(";")
+        self.vpn_bypass_list_with(false)
+    }
+
+    /// The same, plus the local network when it may skip the VPN (0.14.2). The flag comes from
+    /// the live settings, the hosts above from the running ones (they follow switches).
+    pub fn vpn_bypass_list_with(&self, local_network: bool) -> String {
+        let mut hosts = self.unreachable_hosts();
+        if local_network {
+            hosts.extend(LOCAL_NETWORK_BYPASS);
+        }
+        hosts.join(";")
     }
 
     /// The Chromium switches for the engine (`--name` or `--name=value`).
@@ -1329,6 +1361,21 @@ fn validate_flags(flags: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+
+    /// 0.14.2: the local network skips the VPN only when asked; it is off by default.
+    #[test]
+    fn vpn_local_network_bypass() {
+        let s = Settings::default();
+        assert!(!s.vpn.allow_local_network);
+        let off = s.vpn_bypass_list_with(false);
+        let on = s.vpn_bypass_list_with(true);
+        assert_eq!(off, s.vpn_bypass_list());
+        assert!(!off.contains("192.168.0.0/16") && !off.contains("<local>"));
+        assert!(on.starts_with(&off) && on.contains(";192.168.0.0/16") && on.contains(";<local>"));
+        assert!(!on.contains("100.64."), "the providers' in-tunnel range stays in the VPN");
+        let parsed: Settings = serde_json::from_str(r#"{"vpn":{"allowLocalNetwork":true}}"#).unwrap();
+        assert!(parsed.vpn.allow_local_network);
+    }
     use super::*;
 
     fn fields(s: &Settings) -> Vec<&'static str> {
@@ -1660,9 +1707,20 @@ mod tests {
     #[test]
     fn vpn_settings_validation() {
         let d = Settings::default();
-        assert_eq!(d.vpn, VpnSettings { show_button: false, auto_connect: false, active_profile: String::new() });
+        assert_eq!(
+            d.vpn,
+            VpnSettings {
+                show_button: false,
+                auto_connect: false,
+                active_profile: String::new(),
+                allow_local_network: false
+            }
+        );
         let j = serde_json::to_value(&d).unwrap();
-        assert_eq!(j["vpn"], serde_json::json!({ "showButton": false, "autoConnect": false, "activeProfile": "" }));
+        assert_eq!(
+            j["vpn"],
+            serde_json::json!({ "showButton": false, "autoConnect": false, "activeProfile": "", "allowLocalNetwork": false })
+        );
         // Auto-connect needs a profile.
         let mut s =
             Settings { vpn: VpnSettings { auto_connect: true, ..VpnSettings::default() }, ..Settings::default() };
@@ -1681,7 +1739,15 @@ mod tests {
             r#"{"proxy":"127.0.0.1:8080","vpn":{"showButton":true,"autoConnect":true,"activeProfile":"ab12"}}"#,
         );
         assert_eq!(l.proxy, "127.0.0.1:8080");
-        assert_eq!(l.vpn, VpnSettings { show_button: true, auto_connect: false, active_profile: "ab12".into() });
+        assert_eq!(
+            l.vpn,
+            VpnSettings {
+                show_button: true,
+                auto_connect: false,
+                active_profile: "ab12".into(),
+                allow_local_network: false
+            }
+        );
         let l = Settings::from_json_lenient(r#"{"vpn":{"showButton":true,"autoConnect":true,"activeProfile":"A/B"}}"#);
         assert_eq!(l.vpn, VpnSettings::default());
         // Older settings have none: the defaults.

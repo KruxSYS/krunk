@@ -294,6 +294,10 @@ The design is in README, "VPN (0.14.0)", and `vpn/README.md`. What matters for s
 - **Supply chain:** OpenVPN 3 Core comes through the `openvpn-connect` crates (one maintainer),
   vendored and pinned (`vendor/README.md`: checksums, patches, how to diff against upstream);
   its TLS and crypto run on rustls and RustCrypto, not OpenSSL.
+- **Local network (0.14.2, opt-in):** with "Reach the local network directly", private
+  addresses and local names go out directly, not through the VPN; everything else stays
+  fail-closed. A public site can't use it to reach the internet directly, only names and
+  addresses on those local lists.
 - **Not covered:** traffic of other programs (by design); a VPN provider who logs; WebRTC calls
   need a TCP relay; long-lived WebRTC connections opened before Connect are not migrated.
 

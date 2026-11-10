@@ -247,7 +247,7 @@ impl Browser {
             self.macros_settings_changed();
         }
         if old.vpn != new.vpn {
-            self.vpn_settings_changed();
+            self.vpn_settings_changed(old.vpn.allow_local_network != new.vpn.allow_local_network);
         }
         if old.tab_sleep_minutes != new.tab_sleep_minutes
             || old.tab_discard_enabled != new.tab_discard_enabled

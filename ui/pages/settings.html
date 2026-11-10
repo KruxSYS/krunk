@@ -360,6 +360,11 @@
         </div>
         <ul id="vpn-warnings" class="desc vpn-warnings" hidden></ul>
       </div>
+      <div class="row setting" data-keywords="vpn local network lan router printer nas home server bypass split tunnel intranet">
+        <div class="text"><label for="vpn.allowLocalNetwork">Reach the local network directly</label>
+          <p class="desc">Your local network skips the VPN, so your router, printers and home servers stay reachable while connected: addresses like 192.168.x.x, 10.x.x.x and 172.16–31.x.x, and names without a dot or ending in .local or .lan. Everything else still goes through the VPN.</p></div>
+        <div class="control"><input type="checkbox" id="vpn.allowLocalNetwork" data-key="vpn.allowLocalNetwork"></div>
+      </div>
       <div class="row setting" data-keywords="vpn auto connect automatically start startup launch">
         <div class="text"><label for="vpn.autoConnect">Connect when Krunk starts</label>
           <p class="desc" id="vpn-auto-desc">To the profile used last, before any page loads.</p>

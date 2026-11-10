@@ -238,7 +238,8 @@ impl Browser {
     }
 
     fn vpn_bypass(&self) -> String {
-        self.running_settings.vpn_bypass_list()
+        let local = self.settings.borrow().vpn.allow_local_network;
+        self.running_settings.vpn_bypass_list_with(local)
     }
 
     /// The local proxy Krunk's traffic goes to now (the VPN's or the stand-in's), `host:port`.
@@ -656,7 +657,19 @@ impl Browser {
     }
 
     /// A VPN setting changed (the button, auto-connect, the profile used last).
-    pub(super) fn vpn_settings_changed(&self) {
+    pub(super) fn vpn_settings_changed(&self, bypass_changed: bool) {
+        // The local network's bypass changed while the engine uses the VPN's proxy (or the
+        // stand-in): the engine takes the new list at once (0.14.2).
+        if bypass_changed {
+            if let Some(addr) = self.vpn_proxy_addr() {
+                let local = self.settings.borrow().vpn.allow_local_network;
+                if engine::set_vpn_proxy(Some((format!("http://{addr}"), self.vpn_bypass()))) {
+                    info!("vpn: the local network {} the VPN", if local { "now skips" } else { "goes through" });
+                } else {
+                    warning!("vpn: the engine did not take the new bypass list");
+                }
+            }
+        }
         self.vpn_push();
     }
 
