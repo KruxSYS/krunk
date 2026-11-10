@@ -3439,7 +3439,7 @@ async function testSettings(browser) {
   // 0.5: the page is tabbed; a control must be on the shown tab before it is used.
   const tab = async (name) => { await page.click('#tabs a[data-tab="' + name + '"]'); await page.waitForTimeout(20); };
   check(await page.locator('.panel.active[data-tab=general]').count() === 1 && await page.locator('#tabs a.active[data-tab=general]').count() === 1, 'the General tab is shown first');
-  check(await page.locator('.panel').count() === 8 && await page.locator('.panel.active').count() === 1, 'eight tabs (Account since 0.8.0), one shown');
+  check(await page.locator('.panel').count() === 9 && await page.locator('.panel.active').count() === 1, 'nine tabs (Account since 0.8.0, AI and scripts since 0.12.0), one shown');
   check(await page.inputValue('#searchEngine') === 'duckDuckGo', 'defaults: DuckDuckGo');
   // 0.6.0: new-tab behaviour (defaults keep the 0.5 behaviour).
   check(await page.inputValue('#newTabPage') === 'krunk' && await page.inputValue('#newTabPosition') === 'end' && await page.inputValue('#linkTabs') === 'auto' && await page.inputValue('#ntpSearchUrl') === '', 'new-tab defaults: Krunk page, at the end, links as asked, default search');
