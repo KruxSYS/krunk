@@ -165,6 +165,23 @@ impl Browser {
         self.agent_panel_loaded(win);
     }
 
+    /// The theme changed (0.15.0): every loaded panel takes the new `Event::Theme` (`json`) at
+    /// once, and its engine background (what shows before a paint, e.g. while it is resized or
+    /// shown again) follows the theme instead of the colour it was created with.
+    pub(super) fn agent_panels_theme(&self, json: &str) {
+        let views: Vec<(View, bool)> = self.panel.panels.borrow().values().map(|p| (p.view.clone(), p.ready)).collect();
+        let argb = if self.frame_dark() { UI_BACKGROUND_DARK } else { UI_BACKGROUND };
+        let color = serde_json::json!({ "color": {
+            "r": (argb >> 16) & 0xff, "g": (argb >> 8) & 0xff, "b": argb & 0xff, "a": 1
+        } });
+        for (view, ready) in views {
+            view.devtools_method("Emulation.setDefaultBackgroundColorOverride", &color);
+            if ready {
+                view.post_json(json);
+            }
+        }
+    }
+
     /// Tells window `win`'s shell whether to show the agent button and whether it is pressed.
     pub(super) fn send_agent_button_to(&self, win: WindowId) {
         let visible = self.ai_enabled();
