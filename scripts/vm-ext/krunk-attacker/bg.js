@@ -1,6 +1,8 @@
 // 0.11.7 audit fixture (C1): asked by the content script, opens krunk://settings and tries to
 // run code in it; then runs code in the web tab that asked (the legitimate path).
-var report = function (k, v) { fetch('http://localhost:8094/log?' + k + '=' + encodeURIComponent(JSON.stringify(v))).catch(function () {}); };
+// An extension page can't reach the local test server (Local Network Access), so results go to
+// krunk.log through the page shim's error report ("extension Krunk audit attacker: Error: AUDIT …").
+var report = function (k, v) { setTimeout(function () { throw new Error('AUDIT ' + k + ' ' + JSON.stringify(v)); }); };
 chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   if (!msg || msg.kind !== 'c1') return;
   sendResponse({ ok: true, from: 'attacker background' });

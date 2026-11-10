@@ -1073,6 +1073,17 @@ impl Browser {
             let allow = assets::allow_navigation(Channel::Tab, &current, &nav.url, host, nav.redirected);
             if !allow {
                 info!("tab {id}: blocked navigation to an internal or unsupported URL");
+                // A tab that shows nothing yet (a popup whose first address was refused) shows
+                // about:blank, not the refused address (0.11.7, audit C3).
+                if current.is_empty() {
+                    b.defer(move |b| {
+                        b.with_tab(id, |m, t| {
+                            m.set_url(t, "about:blank");
+                            m.set_title(t, "");
+                        });
+                        b.tab_changed(id);
+                    });
+                }
                 return false;
             }
             if let Some(rewritten) = b.navigation_starting(&net_start, &nav.url, nav.redirected) {

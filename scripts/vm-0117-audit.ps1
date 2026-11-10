@@ -47,43 +47,50 @@ function X([double]$dip) { [int]($c.Left + $dip * $c.Scale) }
 function Y([double]$dip) { [int]($c.Top + $dip * $c.Scale) }
 $page = 104
 function Title { [TW]::Txt((MainWindow)) }
+# Another program may hold the foreground (the VM is shared): bring Krunk back first.
+function Refocus { Focus (MainWindow) | Out-Null; Start-Sleep -Milliseconds 300 }
 function Alive { [bool](Get-Process Krunk -ErrorAction SilentlyContinue) }
 function Access([string]$pattern) { (Get-Content "$www\access.log" -ErrorAction SilentlyContinue | Select-String $pattern | ForEach-Object { ($_.Line -split ' ')[2] }) -join ' | ' }
 function KLog([string]$pattern, [int]$n = 4) { (Get-Content $klog -ErrorAction SilentlyContinue | Select-String $pattern | Select-Object -Last $n | ForEach-Object { $_.Line -replace '^\d+ ', '' }) -join ' ## ' }
 
 # (1) Both extensions from their zips (each install asks first).
+# (0.11.x layout: "Install from file…" is in the page header, right.)
 foreach ($zip in 'krunk-fixture.zip', 'krunk-attacker.zip') {
+  Refocus
   SafeGo 'krunk://extensions' 3000
-  Click (X 236) (Y 207) 2500
+  Click (X 904) (Y 144) 2500
   Keys "C:\pipeline\krunk\vm-ext\$zip" 300; Keys '{ENTER}' 6000
   Keys '{ENTER}' 4000
 }
+Refocus
 SafeGo 'krunk://extensions' 3000
 Shot "$P-1-two-extensions"
 Log "[$P] installed: $(KLog 'extension.*install' 4)"
 
 # (2) C4 and C1: the test page with both content scripts; the attacker's background opens
 # krunk://settings and tries to script it.
+Refocus
 SafeGo 'http://localhost:8094/ext.html' 9000
 Shot "$P-2-after-c1"
 Log "[$P] C1 title now: $(Title)"
-SafeKeys '^w' 1500
+Refocus; SafeKeys '^w' 1500
 Shot "$P-3-fixture-banner"
 Log "[$P] C4 access.log: $(Access 'c4-')"
 Log "[$P] C1 access.log: $(Access 'c1-')"
 Log "[$P] krunk.log ext: $(KLog 'extension|world' 8)"
 
 # (3) C3: the audit page's two popup tries.
+Refocus
 SafeGo 'http://localhost:8094/audit.html' 3000
 Shot "$P-4-audit-page"
 Click (X 400) (Y ($page + 50)) 3500
 Shot "$P-5-c3a-popup"
 Log "[$P] C3a title: $(Title)"
-SafeKeys '^w' 1500
+Refocus; SafeKeys '^w' 1500
 Click (X 400) (Y ($page + 150)) 3500
 Shot "$P-6-c3b-popup"
 Log "[$P] C3b title: $(Title)"
-SafeKeys '^w' 1500
+Refocus; SafeKeys '^w' 1500
 Log "[$P] C3 access.log: clicks [$(Access 'clicked=c3|c3a-|c3b-')] source fetched [$(Access 'c3-source-fetched')]"
 Log "[$P] C3 krunk.log: $(KLog 'blocked navigation' 4)"
 
@@ -96,6 +103,7 @@ if ($f) { Log "[$P] C7 engine download Zone.Identifier: $((Get-Content -LiteralP
 
 # (5) C7: 64 MB in parts.
 $t0 = Get-Date
+Refocus
 SafeGo 'http://127.0.0.1:8093/big.bin' 1000
 for ($i = 0; $i -lt 240; $i++) {
   $big = Get-ChildItem $dl -Filter 'big*.bin' -ErrorAction SilentlyContinue | Where-Object { $_.Name -notlike '*.part*' -and $_.Length -eq 64MB } | Select-Object -First 1
