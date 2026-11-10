@@ -129,6 +129,9 @@ pub fn run_engine(config: EngineConfig, start: Start) -> Result<i32, String> {
     RELAUNCH.with(|r| r.borrow_mut().take());
     PRIVATE_CONTEXT.with(|c| c.borrow_mut().take());
     BROWSERS.with(|b| b.borrow_mut().clear());
+    // The task manager too (0.14.1): left in its thread-local it was released at process exit,
+    // after the engine had shut down, and the engine's check crashed Krunk while closing.
+    tasks::release();
     shutdown();
     Ok(0)
 }
@@ -272,6 +275,17 @@ pub fn set_doh(mode: &str, templates: &str) -> bool {
 ///
 /// When every profile took it, the engine's open connections (HTTP/2 and QUIC sessions, idle
 /// and pending sockets, WebSocket pools) are closed in both profiles so they come back the new
+/// At a start without the VPN: removes a VPN proxy the engine kept on disk from an earlier
+/// run, and only then (0.14.1: resetting the preference when nothing was set made the engine
+/// log an observer-list check at every start). True when one was removed.
+pub fn clear_stale_vpn_proxy() -> bool {
+    let Some(ctx) = request_context_get_global_context() else { return false };
+    if !app::vpn_proxy_left(&ctx) {
+        return false;
+    }
+    set_vpn_proxy(None)
+}
+
 /// way. WebRTC peer connections can't be moved: they keep their path until they end.
 pub fn set_vpn_proxy(proxy: Option<(String, String)>) -> bool {
     let private = PRIVATE_CONTEXT.with(|c| c.borrow().clone());

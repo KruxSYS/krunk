@@ -57,6 +57,11 @@ fn manager() -> Option<TaskManager> {
     })
 }
 
+/// Drops the task manager while the engine still runs (before `shutdown`).
+pub fn release() {
+    MANAGER.with(|m| m.borrow_mut().take());
+}
+
 /// Every task the engine knows.
 pub fn tasks() -> Vec<TaskRaw> {
     let Some(tm) = manager() else { return Vec::new() };

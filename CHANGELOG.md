@@ -2,6 +2,17 @@
 
 What changed in each Krunk release, newest first.
 
+## 0.14.1 — 2026-11-10
+
+- **Fixed: Krunk closed on the first page after connecting a WireGuard VPN.** It happened with
+  profiles whose `MTU` is below 1420, e.g. `MTU = 1280`, as many VPN providers set. Part of the
+  VPN kept using the larger packet size, and the first large packet stopped Krunk. The
+  profile's MTU now applies everywhere.
+- **Fixed: Krunk could crash while closing** after the task manager had been open. Windows then
+  reported a crash, and could save a crash dump.
+- The VPN no longer turns away one of Krunk's own connections when Windows lists it a moment
+  late.
+
 ## 0.14.0 — 2026-11-10
 
 - **A VPN for Krunk only.** Settings → Privacy & security → VPN imports WireGuard (`.conf`) and

@@ -404,7 +404,9 @@ pub(crate) async fn session(cfg: &Config, shared: &Arc<Shared>, stop: &mut watch
         None,
     );
     let mtu = usize::from(cfg.mtu);
-    let mut out = vec![0u8; (mtu + 64).max(256)];
+    // Room for the largest IP packet plus WireGuard's 32-byte header and tag, whatever the
+    // MTU: boringtun panics (and a panic aborts Krunk) when a packet doesn't fit (0.14.1).
+    let mut out = vec![0u8; 65535 + 64];
     let mut rbuf = vec![0u8; 65536];
     let mut dbuf = vec![0u8; 65536];
 

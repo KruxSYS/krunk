@@ -40,7 +40,14 @@ pub fn peer_allowed(proxy: SocketAddr, peer: SocketAddr) -> bool {
     }) else {
         return false;
     };
-    match check.check(&Win, proxy, peer, Instant::now()) {
+    let mut verdict = check.check(&Win, proxy, peer, Instant::now());
+    if matches!(verdict, Err(Refusal::NoOwner)) {
+        // Windows can list a just-made loopback connection a moment late (seen in 0.14.0's
+        // logs on a busy machine): look once more before refusing.
+        std::thread::sleep(Duration::from_millis(25));
+        verdict = check.check(&Win, proxy, peer, Instant::now());
+    }
+    match verdict {
         Ok(()) => true,
         Err(why) => {
             if log_refusal() {

@@ -182,11 +182,25 @@ impl Netstack {
         }
         let addrs: Vec<IpNet> = v4.into_iter().chain(v6.map(|a| IpNet { prefix: 128, ..a })).collect();
         let mut st = lock(&self.inner.stack);
-        st.dev.mtu = mtu.clamp(576, 9000);
-        if st.addrs == addrs {
+        let mtu = mtu.clamp(576, 9000);
+        let mtu_changed = st.dev.mtu != mtu;
+        st.dev.mtu = mtu;
+        if st.addrs == addrs && !mtu_changed {
             return;
         }
         abort_all(&mut st);
+        if mtu_changed {
+            // smoltcp copies the device's capabilities (the MTU, and with it the TCP segment
+            // size) into the interface when it is made: a new MTU needs a new interface.
+            // Before 0.14.1 a profile's smaller MTU never reached it, so full 1420-byte packets
+            // overflowed the tunnel's buffer (boringtun panics; the browser aborted).
+            let mut cfg = Config::new(HardwareAddress::Ip);
+            cfg.random_seed = u64::from_le_bytes(crate::random::<8>());
+            let now = self.inner.now();
+            let Stack { iface, dev, .. } = &mut *st;
+            *iface = Interface::new(cfg, dev, now);
+            st.addrs.clear();
+        }
         st.iface.update_ip_addrs(|ips| {
             ips.clear();
             for a in &addrs {
@@ -525,6 +539,58 @@ mod tests {
         fn send(&self, packet: &[u8]) {
             self.0.inject(packet);
         }
+    }
+
+    /// Passes packets on and remembers the largest.
+    struct Measure(Netstack, Arc<AtomicUsize>);
+    impl PacketSink for Measure {
+        fn send(&self, packet: &[u8]) {
+            self.1.fetch_max(packet.len(), Ordering::Relaxed);
+            self.0.inject(packet);
+        }
+    }
+
+    /// 0.14.1: a profile's MTU below the default reaches the TCP/IP stack. Before, smoltcp kept
+    /// the 1420 it was made with, sent packets larger than the tunnel's buffer, and boringtun's
+    /// panic aborted Krunk on the first page through a WireGuard profile with `MTU = 1280`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_smaller_mtu_limits_the_packets_sent() {
+        let a = Netstack::new();
+        let b = Netstack::new();
+        a.configure(vec![IpNet::parse("10.0.0.1/24").unwrap()], 1280);
+        b.configure(vec![IpNet::parse("10.0.0.2/24").unwrap()], 1420);
+        let largest = Arc::new(AtomicUsize::new(0));
+        a.set_sink(Some(Arc::new(Measure(b.clone(), largest.clone()))));
+        b.set_sink(Some(Arc::new(Wire(a.clone()))));
+        let listen = {
+            let mut st = lock(&b.inner.stack);
+            let mut s =
+                tcp::Socket::new(tcp::SocketBuffer::new(vec![0; 65536]), tcp::SocketBuffer::new(vec![0; 65536]));
+            s.listen(8080).unwrap();
+            let h = st.sockets.add(s);
+            b.inner.tcp_open.fetch_add(1, Ordering::Relaxed);
+            TcpStream { inner: b.inner.clone(), handle: h, closed: false }
+        };
+        let server = tokio::spawn(async move {
+            let mut listen = listen;
+            poll_fn(|cx| {
+                let mut st = lock(&listen.inner.stack);
+                let s = st.sockets.get_mut::<tcp::Socket>(listen.handle);
+                if s.may_recv() {
+                    return Poll::Ready(());
+                }
+                s.register_recv_waker(cx.waker());
+                Poll::Pending
+            })
+            .await;
+            let mut got = vec![0u8; 100_000];
+            listen.read_exact(&mut got).await.unwrap();
+        });
+        let mut c = a.tcp_connect("10.0.0.2:8080".parse().unwrap(), Duration::from_secs(5)).await.unwrap();
+        c.write_all(&vec![1u8; 100_000]).await.unwrap();
+        server.await.unwrap();
+        let max = largest.load(Ordering::Relaxed);
+        assert!(max > 1000 && max <= 1280, "largest packet {max}");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

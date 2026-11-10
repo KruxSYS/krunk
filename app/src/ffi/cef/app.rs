@@ -205,6 +205,16 @@ fn apply_vpn(ctx: &mut RequestContext, proxy: Option<&VpnProxy>) -> bool {
     ok
 }
 
+/// Whether a context still holds a proxy of Krunk's VPN (a `fixed_servers` proxy on
+/// 127.0.0.1), e.g. left on disk by a run that ended with the VPN on (0.14.1).
+pub(super) fn vpn_proxy_left(ctx: &RequestContext) -> bool {
+    let name = CefString::from("proxy");
+    ctx.preference(Some(&name)).and_then(|v| v.dictionary()).is_some_and(|d| {
+        let get = |k: &str| CefString::from(&d.string(Some(&CefString::from(k)))).to_string();
+        get("mode") == "fixed_servers" && get("server").starts_with("http://127.0.0.1:")
+    })
+}
+
 /// The VPN's proxy for every context: the global one now, the private one now (when it exists)
 /// and whenever it is created. True when the engine took it everywhere.
 pub(super) fn set_vpn_proxy(proxy: Option<VpnProxy>, contexts: &mut [RequestContext]) -> bool {
