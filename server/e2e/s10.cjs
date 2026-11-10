@@ -94,9 +94,10 @@ function cliPair(arg, dir, onLine) {
   // ---- 1. Changelog ----------------------------------------------------------------------
   await page.goto(`${BASE}/changelog`);
   const ids = await page.$$eval('main section[id]', (s) => s.map((x) => x.id));
-  ok(ids[0] === '0.13.0' && ids.includes('0.12.4') && ids[ids.length - 1] === '0.2.0', `changelog: ${ids.length} versions, 0.13.0 … 0.2.0`);
-  const want = ['0.2.0', '0.2.1', '0.3.0', '0.4.0', '0.5.0', '0.5.1', '0.5.2', '0.6.0', '0.7.0', '0.7.1', '0.7.2', '0.7.3', '0.7.4', '0.8.0', '0.9.0', '0.10.0', '0.10.1', '0.10.2', '0.11.0', '0.11.1', '0.11.2', '0.11.3', '0.11.4', '0.11.5', '0.11.6', '0.11.7', '0.12.0', '0.12.1', '0.12.2', '0.12.3', '0.12.4', '0.13.0'];
-  ok(want.every((v) => ids.includes(v)), 'changelog: every published version from 0.2.0 to 0.13.0 has an anchor');
+  // Every version CHANGELOG.md has (newest first), from 0.2.0 on.
+  const want = [...fs.readFileSync(path.join(__dirname, '../../CHANGELOG.md'), 'utf8').matchAll(/^## (\d+\.\d+\.\d+) — /gm)].map((m) => m[1]);
+  ok(want.length >= 32 && ids[0] === want[0] && ids[ids.length - 1] === '0.2.0', `changelog: ${ids.length} versions, ${ids[0]} … ${ids[ids.length - 1]}`);
+  ok(want.every((v) => ids.includes(v)) && ids.length === want.length, `changelog: every version of CHANGELOG.md (0.2.0 … ${want[0]}) has an anchor`);
   await shot(page, 'changelog');
   await page.goto(`${BASE}/changelog#0.12.4`);
   ok(await page.$eval('section[id="0.12.4"] h2', (h) => h.textContent.includes('0.12.4')), 'changelog: /changelog#0.12.4 lands on its section');
@@ -190,8 +191,9 @@ function cliPair(arg, dir, onLine) {
   await sleep(9000); // the page reloads the devices list once the tokens are collected
   await page.reload();
   await page.waitForSelector('#overview:not([hidden])');
-  const devicesText = await page.textContent('#devices-active');
-  ok(/android/i.test(devicesText), 'Devices lists the Android device');
+  // The list renders after the page's own requests: wait for it rather than read it at once.
+  const listed = await page.waitForFunction(() => /android/i.test(document.getElementById('devices-active').textContent), null, { timeout: 15000 }).then(() => true, () => false);
+  ok(listed, 'Devices lists the Android device');
   await shot(page, 'add-device-done');
 
   // Reuse of the same code is refused.

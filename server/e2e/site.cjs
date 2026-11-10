@@ -2,7 +2,7 @@
 // on a staging stack:
 //  A. every page × light/dark × 360/900/1280 under the real CSP: 0 console errors, 0 CSP
 //     violations, [hidden] is never displayed, no sideways scrolling, 44 px tap targets at 360 px,
-//     Cloudflare's Turnstile script loads on exactly the 4 Turnstile pages;
+//     Cloudflare's Turnstile script loads on exactly the 5 Turnstile pages (4 before 0.13.0);
 //  B. axe-core (WCAG 2.1 A/AA) on every page in both schemes at 360 and 1280 px and on the open
 //     panels: 0 serious or critical issues (a separate pass with CSP bypassed, only to inject axe);
 //  C. a keyboard-only walkthrough of /account/ (Tab order, visible focus, the section nav, rename,
@@ -29,7 +29,7 @@ const BASE = 'https://krunk.test';
 const TS = 'XXXX.DUMMY.TOKEN.XXXX';
 const THEMES = ['light', 'dark'];
 const WIDTHS = [360, 900, 1280];
-const TURNSTILE_PAGES = ['login', 'register', 'reset-request', 'resend'];
+const TURNSTILE_PAGES = ['login', 'register', 'reset-request', 'resend', 'delete'];
 
 const lines = [];
 const problems = [];
@@ -171,6 +171,11 @@ const PAGES = [
   { name: 'verify', url: '/account/verify?token=' + 'A'.repeat(43), ready: '#form:not([hidden])' },
   { name: 'account', url: '/account/', ready: '#devices-active li', signed: true },
   { name: 'link', url: '/link?code=', ready: '#approve-form:not([hidden])', signed: true, code: true },
+  // 0.13.0: the changelog, the phone's pairing page (without a token: its explanation) and the
+  // deletion page (Turnstile).
+  { name: 'changelog', url: '/changelog', ready: 'main section[id]' },
+  { name: 'pair', url: '/pair', ready: '#status:not(:empty)' },
+  { name: 'delete', url: '/account/delete', ready: '#form:not([hidden])', signed: true },
 ];
 
 async function allPages(seed) {
