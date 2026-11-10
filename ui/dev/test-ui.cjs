@@ -5963,6 +5963,16 @@ async function testHttpAuth(browser) {
     if (!ONLY || ONLY.includes('LinkSweep')) await testLinkSweep(browser);
     if (!ONLY || ONLY.includes('WebStore')) await testWebStoreScript(browser);
     if (!ONLY || ONLY.includes('PermissionsPadding')) await testPermissionsPadding(browser);
+    // 0.12.0: the AI agent, userscripts and macros have their own files; each exports
+    // `(helpers) => ({ testName: async (browser) => … })` and runs here (ONLY=Name without 'test').
+    for (const f of ['test-ai-panel.cjs', 'test-ai-settings.cjs', 'test-scripts.cjs']) {
+      const file = path.join(__dirname, f);
+      if (!fs.existsSync(file)) continue;
+      const tests = require(file)({ openPage, check, sent, lastSent, emit, shot, acceptInPage, settleTabs, SHOTS, UI });
+      for (const [name, fn] of Object.entries(tests)) {
+        if (!ONLY || ONLY.includes(name.replace(/^test/, ''))) await fn(browser);
+      }
+    }
   } finally {
     await browser.close();
   }

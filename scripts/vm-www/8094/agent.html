@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Agent test page</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 0; }
+  #promo-banner { background: #f59e0b; color: #111; padding: 18px 24px; font-size: 20px; font-weight: 700; }
+  main { padding: 12px 24px; }
+  form { display: grid; grid-template-columns: 140px 260px; gap: 6px 12px; align-items: center; margin: 12px 0; }
+  #keys { font: 13px/1.4 monospace; background: #f3f4f6; padding: 8px; min-height: 60px; white-space: pre-wrap; }
+  #counts { font-weight: 700; }
+</style>
+</head>
+<body>
+<div id="promo-banner">BIG SALE! This banner should be removed by a userscript.</div>
+<main>
+  <h1>Agent test page</h1>
+  <h2>Links</h2>
+  <ul>
+    <li><a href="https://example.com/">Example Domain</a></li>
+    <li><a href="https://www.wikipedia.org/">Wikipedia</a></li>
+    <li><a href="/links.html">Local links page</a></li>
+  </ul>
+  <h2>Sign-up form</h2>
+  <form id="signup" action="/log" method="get">
+    <label for="name">Full name</label><input id="name" name="name" type="text" autocomplete="name">
+    <label for="email">Email</label><input id="email" name="email" type="email" autocomplete="email">
+    <label for="pw">Password</label><input id="pw" name="password" type="password" autocomplete="new-password" value="hunter2-SECRET-pw">
+    <label for="cc">Card number</label><input id="cc" name="cardnumber" type="text" autocomplete="cc-number" inputmode="numeric">
+    <span></span><button type="submit">Sign up</button>
+  </form>
+  <h2>Key log</h2>
+  <p id="counts">keydown 0 · repeats 0 · keyup 0</p>
+  <div id="keys" tabindex="0"></div>
+</main>
+<script>
+(function () {
+  'use strict';
+  let down = 0, repeats = 0, up = 0;
+  const lines = [];
+  function report(kind, e) {
+    if (kind === 'keydown') { down++; if (e.repeat) repeats++; } else { up++; }
+    document.getElementById('counts').textContent = 'keydown ' + down + ' · repeats ' + repeats + ' · keyup ' + up;
+    lines.push(kind + ' ' + e.key + (e.repeat ? ' repeat' : ''));
+    if (lines.length > 12) lines.shift();
+    document.getElementById('keys').textContent = lines.join('\n');
+    // Every event goes to the test server's access log (first keydown, every 10th repeat, keyup).
+    if (kind === 'keyup' || !e.repeat || repeats % 10 === 0) {
+      fetch('/log?agent-key=' + kind + '&key=' + encodeURIComponent(e.key) + '&repeat=' + e.repeat + '&down=' + down + '&repeats=' + repeats + '&up=' + up).catch(function () {});
+    }
+  }
+  window.addEventListener('keydown', function (e) { report('keydown', e); });
+  window.addEventListener('keyup', function (e) { report('keyup', e); });
+  // What the form holds, for the smoke test's check (never the password).
+  document.getElementById('signup').addEventListener('input', function () {
+    const f = document.getElementById('signup');
+    fetch('/log?agent-form=name:' + encodeURIComponent(f.name.value) + ',email:' + encodeURIComponent(f.email.value) +
+      ',pwchanged:' + (f.password.value !== 'hunter2-SECRET-pw') + ',cc:' + (f.cardnumber.value ? 'set' : 'empty')).catch(function () {});
+  });
+})();
+</script>
+</body>
+</html>

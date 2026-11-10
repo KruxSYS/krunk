@@ -35,6 +35,12 @@ impl Browser {
         self.input_release_all(); // WP-F
     }
 
+    /// The agent stopped (or its window closed): a macro it started stops too, and every held
+    /// key and button is released.
+    pub(super) fn stop_agent_macros(&self) {
+        self.input_release_all(); // WP-F
+    }
+
     /// A key in tab `tab` before the page sees it: hotkey recording on krunk://scripts, a
     /// macro's hotkey (start, or stop when it runs). True = handled.
     pub(super) fn macro_key(&self, tab: TabId, key: KeyPress) -> bool {
