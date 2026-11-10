@@ -3250,6 +3250,16 @@ async function testPasswords(browser) {
   await emit(page, { event: 'popup', content: { kind: 'pip', tabId: 4, videos: [{ index: 0, label: 'trailer.mp4', width: 640, height: 360, playing: true, pip: false }, { index: 1, label: '', width: 0, height: 0, playing: false, pip: false }] } });
   await page.waitForSelector('.pip-row');
   check((await page.locator('.pip-row').count()) === 2 && (await page.textContent('.pip-row[data-index="0"]')).includes('640×360 · playing') && (await page.textContent('.pip-row[data-index="1"]')).includes('Video 2'), 'the chooser lists the videos with size and state');
+  {
+    // 0.12.1: each row holds both of its lines; the rows don't overlap.
+    const boxes = await page.evaluate(() => [...document.querySelectorAll('.pip-row')].map((r) => {
+      const b = r.getBoundingClientRect();
+      const m = r.querySelector('.pip-meta').getBoundingClientRect();
+      const n = r.querySelector('.pip-name').getBoundingClientRect();
+      return { top: b.top, bottom: b.bottom, nameTop: n.top, metaTop: m.top, metaBottom: m.bottom };
+    }));
+    check(boxes.every((b) => b.nameTop >= b.top && b.metaBottom <= b.bottom && b.metaTop >= b.nameTop) && boxes[1].top >= boxes[0].bottom, 'each video row holds its name and its size/state; rows do not overlap (' + JSON.stringify(boxes) + ')');
+  }
   await shot(page, 'popup-pip-chooser.png');
   await page.click('.pip-row[data-index="1"]');
   const pp = await lastSent(page, 'pipPick');
@@ -3360,6 +3370,11 @@ function settingsMock(defaults) {
   const restart = (s) => ['hardwareAcceleration', 'proxy', 'extraFlags', 'blockThirdPartyCookies', 'engineSecurityComponents', 'protectedContent'].some((k) => sync(s)[k] !== running[k]);
   window.__bounce = { watched: 2, cleanedTotal: 5, lastCleanupMs: Date.now() - 3600e3 };
   h.bounceStatus = () => window.__bounce;
+  // 0.12.1: Krunk as the default browser.
+  window.__default = { installed: true, isDefault: false };
+  window.__defaultOpened = 0;
+  h.defaultBrowserStatus = () => window.__default;
+  h.makeDefaultBrowser = () => { window.__defaultOpened++; return { opened: true }; };
   // 0.6.0 custom DNS: presets, parsing and the stub's status come from the host.
   window.__dnsStatus = { route: 'system', spki: 'abc=' };
   h.dnsStatus = () => window.__dnsStatus;
@@ -3441,6 +3456,27 @@ async function testSettings(browser) {
   check(await page.locator('.panel.active[data-tab=general]').count() === 1 && await page.locator('#tabs a.active[data-tab=general]').count() === 1, 'the General tab is shown first');
   check(await page.locator('.panel').count() === 9 && await page.locator('.panel.active').count() === 1, 'nine tabs (Account since 0.8.0, AI and scripts since 0.12.0), one shown');
   check(await page.inputValue('#searchEngine') === 'duckDuckGo', 'defaults: DuckDuckGo');
+  // 0.12.1: not the default browser: a banner and a General card with "Make default".
+  await page.waitForFunction(() => !document.getElementById('default-banner').hidden);
+  check((await page.textContent('#default-status')).startsWith('Krunk is not your default browser') && await page.locator('#default-make').isVisible() && await page.locator('#default-hint').isHidden(), 'not the default: the banner, the status and Make default are shown');
+  await shot(page, 'settings-default-banner.png');
+  await page.click('#default-banner-make');
+  await page.waitForFunction(() => window.__defaultOpened === 1 && !document.getElementById('default-hint').hidden);
+  check(await page.locator('#default-hint').isVisible(), 'Make default opens Windows Settings and says what to click there');
+  await shot(page, 'settings-default-hint.png');
+  await page.evaluate(() => { window.__default = { installed: true, isDefault: true }; });
+  await page.waitForFunction(() => document.getElementById('default-banner').hidden, null, { timeout: 5000 });
+  check((await page.textContent('#default-status')) === 'Krunk is your default browser.' && await page.locator('#default-make').isHidden() && await page.locator('#default-hint').isHidden(), 'once Windows has changed it the page notices by itself: no banner, no button');
+  await page.evaluate(() => { window.__default = { installed: false, isDefault: false }; window.dispatchEvent(new Event('focus')); });
+  await page.waitForFunction(() => document.getElementById('default-status').textContent.startsWith('This copy'));
+  check(await page.locator('#default-banner').isHidden() && await page.locator('#default-make').isHidden(), 'a copy that is not installed: no banner, no button, it says why');
+  await page.evaluate(() => { window.__default = { installed: true, isDefault: false }; window.dispatchEvent(new Event('focus')); });
+  await page.waitForFunction(() => !document.getElementById('default-banner').hidden);
+  await page.fill('#filter', 'default browser');
+  await page.waitForTimeout(60);
+  check(await page.locator('#default-make').isVisible(), 'search finds the Default browser setting');
+  await page.fill('#filter', '');
+  await page.waitForTimeout(60);
   // 0.6.0: new-tab behaviour (defaults keep the 0.5 behaviour).
   check(await page.inputValue('#newTabPage') === 'krunk' && await page.inputValue('#newTabPosition') === 'end' && await page.inputValue('#linkTabs') === 'auto' && await page.inputValue('#ntpSearchUrl') === '', 'new-tab defaults: Krunk page, at the end, links as asked, default search');
   check(await page.locator('#new-tab-url-row').isHidden(), 'the custom address row is hidden unless "custom"');

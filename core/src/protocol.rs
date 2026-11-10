@@ -1269,6 +1269,12 @@ pub enum Request {
     ResetSettings,
     /// Opens the native folder picker for the download folder.
     PickDownloadFolder,
+    /// Settings page (0.12.1): is Krunk the default browser? Replies `{installed, isDefault}`
+    /// (`isDefault` null when Windows can't tell).
+    DefaultBrowserStatus,
+    /// Settings page: registers Krunk as a browser and opens Windows Settings at its page of
+    /// Default apps (replies `{opened}` or an error).
+    MakeDefaultBrowser,
     UpdateFilterLists,
     /// Last filter-list update time, sources and error (settings page).
     GetFilterStatus,
@@ -2004,6 +2010,8 @@ impl Sender {
                     | R::SaveSettings { .. }
                     | R::ResetSettings
                     | R::PickDownloadFolder
+                    | R::DefaultBrowserStatus
+                    | R::MakeDefaultBrowser
                     | R::UpdateFilterLists
                     | R::GetFilterStatus
                     | R::GetAllowlist
@@ -3531,6 +3539,8 @@ mod tests {
             Request::PermissionExceptions,
             Request::BounceStatus,
             Request::BounceCleanNow,
+            Request::DefaultBrowserStatus,
+            Request::MakeDefaultBrowser,
             Request::DnsStatus,
             Request::DnsTest { index: 1 },
             Request::DnsParse { text: "1.1.1.1".into() },
@@ -4172,6 +4182,8 @@ mod tests {
         for r in [
             Request::BounceStatus,
             Request::BounceCleanNow,
+            Request::DefaultBrowserStatus,
+            Request::MakeDefaultBrowser,
             Request::DnsStatus,
             Request::DnsTest { index: 0 },
             Request::DnsParse { text: "x".into() },

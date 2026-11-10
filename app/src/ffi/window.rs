@@ -44,6 +44,9 @@ pub trait WindowEvents {
     fn destroyed(&self) {}
     /// A `WM_APP` message posted to this window.
     fn app_message(&self, _code: usize) {}
+    /// Another Krunk.exe handed over the addresses it was started with (0.12.1, see
+    /// [`hand_over_launch`]): one per line, not yet checked.
+    fn launch(&self, _addresses: &str) {}
     /// A timer started with [`Window::set_timer`] fired.
     fn timer(&self, _id: usize) {}
     /// The Windows session was locked (Win+L, lock screen).
@@ -1695,6 +1698,31 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
             }
             LRESULT(0)
         }
+        windows::Win32::UI::WindowsAndMessaging::WM_COPYDATA => {
+            use windows::Win32::System::DataExchange::COPYDATASTRUCT;
+            // SAFETY: for WM_COPYDATA, lparam points at a COPYDATASTRUCT that the system keeps
+            // valid (with its data) until this message returns; the size is checked first.
+            let text = unsafe {
+                let cds = &*(lparam.0 as *const COPYDATASTRUCT);
+                (cds.dwData == LAUNCH_MAGIC
+                    && !cds.lpData.is_null()
+                    && (cds.cbData as usize).is_multiple_of(2)
+                    && cds.cbData as usize <= LAUNCH_MAX_BYTES)
+                    .then(|| {
+                        String::from_utf16_lossy(std::slice::from_raw_parts(
+                            cds.lpData as *const u16,
+                            cds.cbData as usize / 2,
+                        ))
+                    })
+            };
+            match (text, ev) {
+                (Some(t), Some(ev)) => {
+                    ev.launch(&t);
+                    LRESULT(1)
+                }
+                _ => LRESULT(0),
+            }
+        }
         WM_CLOSE => {
             if ev.is_none_or(|ev| ev.close_requested()) {
                 // SAFETY: destroying our own window on its thread.
@@ -1778,6 +1806,62 @@ pub fn in_z_order(windows: &[Window]) -> Vec<Window> {
         .filter_map(|h| windows.iter().copied().find(|w| w.0 .0 as isize == h))
         .filter(|w| w.is_visible())
         .collect()
+}
+
+/// `WM_COPYDATA` tag of a hand-over of launch addresses ("KRLA"), and its largest payload.
+const LAUNCH_MAGIC: usize = 0x4B52_4C41;
+const LAUNCH_MAX_BYTES: usize = 64 * 1024;
+
+/// Hands `addresses` (one per line) to the Krunk already running in this session, through its
+/// application window (0.12.1). The engine can't do it: with its command-line arguments
+/// disabled it forwards only "started again". Waits up to `wait_ms` for a Krunk that is still
+/// starting to create that window; `false` when there is none or it did not take them.
+pub fn hand_over_launch(addresses: &str, wait_ms: u64) -> bool {
+    use windows::Win32::System::DataExchange::COPYDATASTRUCT;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        AllowSetForegroundWindow, FindWindowW, GetWindowThreadProcessId, SendMessageTimeoutW, SMTO_ABORTIFHUNG,
+        WM_COPYDATA,
+    };
+    let wide: Vec<u16> = addresses.encode_utf16().collect();
+    if wide.len() * 2 > LAUNCH_MAX_BYTES {
+        return false;
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(wait_ms);
+    loop {
+        // SAFETY: FindWindowW with a static class name; the other calls get that window (a
+        // stale handle only fails) and a COPYDATASTRUCT whose data outlives the synchronous send.
+        unsafe {
+            if let Ok(hwnd) = FindWindowW(APP_CLASS, PCWSTR::null()) {
+                if !hwnd.is_invalid() {
+                    let mut pid = 0u32;
+                    GetWindowThreadProcessId(hwnd, Some(&mut pid));
+                    // The running Krunk may bring its window to the front (this process was
+                    // started by the user, so it may pass that on).
+                    let _ = AllowSetForegroundWindow(pid);
+                    let cds = COPYDATASTRUCT {
+                        dwData: LAUNCH_MAGIC,
+                        cbData: (wide.len() * 2) as u32,
+                        lpData: wide.as_ptr() as *mut std::ffi::c_void,
+                    };
+                    let mut result = 0usize;
+                    let sent = SendMessageTimeoutW(
+                        hwnd,
+                        WM_COPYDATA,
+                        WPARAM(0),
+                        LPARAM(&cds as *const COPYDATASTRUCT as isize),
+                        SMTO_ABORTIFHUNG,
+                        10_000,
+                        Some(&mut result),
+                    );
+                    return sent.0 != 0 && result == 1;
+                }
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
 }
 
 /// Is there a top-level window of this class (in this session)?

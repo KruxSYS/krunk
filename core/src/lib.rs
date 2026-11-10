@@ -13,6 +13,7 @@ pub mod bookmarks;
 pub mod certinfo;
 pub mod color;
 pub mod cookies;
+pub mod default_browser;
 pub mod dns;
 pub mod downloads;
 pub mod ext;

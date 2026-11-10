@@ -19,6 +19,10 @@
     <button id="restart" class="btn primary">Restart now</button>
   </div>
   <p id="save-error" class="error banner-error" role="alert" hidden></p>
+  <div id="default-banner" class="banner" role="status" hidden>
+    <span><strong>Krunk isn't your default browser.</strong> Links you open in other apps open in another browser.</span>
+    <button id="default-banner-make" class="btn primary">Make default</button>
+  </div>
 
   <div class="layout">
   <nav id="tabs" class="tabs" aria-label="Settings sections">
@@ -82,8 +86,17 @@
   </section>
 
   <!-- ================================================================ General -->
-  <section class="panel" data-tab="general" data-section="general search startup home page bookmarks bar tabs memory performance sleep">
+  <section class="panel" data-tab="general" data-section="general default browser search startup home page bookmarks bar tabs memory performance sleep">
     <h2 class="panel-title">General</h2>
+    <div class="card group">
+      <h3>Default browser</h3>
+      <div class="row setting" data-keywords="default browser make default links open windows apps">
+        <div class="text"><span class="label">Default browser</span><p class="desc" id="default-status" role="status">Checking…</p>
+          <p class="desc" id="default-hint" hidden>In Windows Settings, click <em>Set default</em> next to Krunk. This page updates when Windows has changed it.</p></div>
+        <div class="control"><button id="default-make" class="btn" hidden>Make default</button></div>
+      </div>
+    </div>
+
     <div class="card group">
       <h3>Search</h3>
       <div class="row setting" data-keywords="search engine duckduckgo google bing">

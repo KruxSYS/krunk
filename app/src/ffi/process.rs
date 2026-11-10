@@ -68,11 +68,15 @@ pub fn relaunch(args: &[String]) -> Result<(), String> {
 
 /// Creates the `Krunk.Running` mutex and keeps it until the process exits.
 /// The installer waits while it exists (a running Krunk holds its files).
-pub fn hold_running_mutex() {
+/// Returns whether another Krunk already held it (one is running in this session).
+pub fn hold_running_mutex() -> bool {
+    use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
     use windows::Win32::System::Threading::CreateMutexW;
     // SAFETY: an unnamed-security, non-owned mutex; the handle is deliberately
     // never closed, so the mutex lives exactly as long as this process.
-    let _ = unsafe { CreateMutexW(None, false, w!("Krunk.Running")) };
+    let created = unsafe { CreateMutexW(None, false, w!("Krunk.Running")) };
+    // SAFETY: read right after the call that set it.
+    created.is_ok() && unsafe { GetLastError() } == ERROR_ALREADY_EXISTS
 }
 
 /// Starts a downloaded installer with `args` (no shell, no elevation: the

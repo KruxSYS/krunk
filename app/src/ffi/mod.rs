@@ -5,6 +5,7 @@
 pub mod appid;
 pub mod cef;
 pub mod cursor;
+pub mod default_browser;
 pub mod dialogs;
 pub mod http;
 pub mod icon;

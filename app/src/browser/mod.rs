@@ -41,6 +41,8 @@ const SESSION_TIMER: usize = 1;
 const ZOOM_TIMER: usize = 15;
 const ZOOM_WATCH_MS: u32 = 100;
 const SESSION_DEBOUNCE_MS: u32 = 2000;
+/// The most tabs one hand-over of launch addresses opens (0.12.1).
+const MAX_LAUNCH_TABS: usize = 20;
 
 mod account;
 mod agent;
@@ -410,6 +412,7 @@ impl Browser {
         store: Store,
         settings: Settings,
         power: PowerOptions,
+        launch: Vec<String>,
     ) -> Result<Rc<Browser>, String> {
         if !window.exists() {
             return Err("The window was closed during start-up".into());
@@ -516,13 +519,12 @@ impl Browser {
         browser.init_vault();
         engine::set_internal_server(browser.server());
         let weak = browser.me.clone();
+        // Started again without an address (one with addresses hands them over itself:
+        // AppEvents::launch); the engine passes no arguments on.
         engine::on_relaunch(move |_args| {
             if let Some(b) = weak.upgrade() {
                 info!("Krunk was started again; opening a new tab");
-                if let Some(w) = b.window() {
-                    w.bring_to_front();
-                }
-                b.new_tab(None, false);
+                b.open_launch(&[]);
             }
         });
         engine::set_color_scheme(browser.color_scheme());
@@ -530,7 +532,7 @@ impl Browser {
         // hidden: creating its browser later would take the keyboard focus
         // from the page once (a game would see the window lose focus).
         browser.create_popup(window, PopupSlot::Main);
-        browser.restore_or_open_start();
+        browser.restore_or_open_start(launch);
         if browser.frames.borrow().is_empty() {
             return Err("Cannot create the browser window".into());
         }
@@ -806,7 +808,23 @@ impl Browser {
         }
     }
 
-    fn restore_or_open_start(&self) {
+    /// Krunk was started again: the addresses it was given in new tabs of the current window,
+    /// or a new tab; the window comes to the front.
+    fn open_launch(&self, urls: &[String]) {
+        if let Some(w) = self.window() {
+            w.bring_to_front();
+        }
+        if urls.is_empty() {
+            self.new_tab(None, false);
+        }
+        for u in urls {
+            self.new_tab(Some(u), false);
+        }
+    }
+
+    /// `launch`: the addresses Krunk was started with (a link opened in another app); they open
+    /// in new tabs after the restored session, or in the first window instead of its start page.
+    fn restore_or_open_start(&self, launch: Vec<String>) {
         if let Ok(Some(json)) = self.store.borrow().kv_get(DOWNLOADS_KEY) {
             *self.downloads.borrow_mut() = Downloads::from_json(&json);
             *self.stopped_by_close.borrow_mut() = (now_ms(), self.downloads.borrow().stopped_by_close());
@@ -829,6 +847,7 @@ impl Browser {
             let r = layout::fit_to_monitors(layout::Rect { x: b.x, y: b.y, width: b.width, height: b.height }, &areas);
             Bounds { x: r.x, y: r.y, width: r.width, height: r.height }
         };
+        let mut launch = launch.into_iter();
         let ops = {
             let mut ws = self.ws.borrow_mut();
             let restored = match (startup, &saved) {
@@ -838,6 +857,8 @@ impl Browser {
             if !restored.is_empty() {
                 info!("session restored: {} window(s)", ws.len());
                 restored
+            } else if let Some(first) = launch.next() {
+                ws.open_window(&first, false, None, false, now).2
             } else if startup == Startup::Homepage && !homepage.is_empty() {
                 ws.open_window(&homepage, false, None, false, now).2
             } else {
@@ -857,6 +878,9 @@ impl Browser {
             }
         }
         self.apply(ops);
+        for url in launch {
+            self.new_tab(Some(&url), false);
+        }
         // The window used last was restored last; make sure it is in front.
         if let Some(f) = self.cur() {
             f.window.bring_to_front();
@@ -1691,10 +1715,15 @@ impl Browser {
         let Ok(exe) = std::env::current_exe() else { return };
         self.spawn_job(
             "app-identity",
-            move || crate::ffi::appid::register_installed(&exe),
-            |_, done: Vec<String>| {
+            move || (crate::ffi::appid::register_installed(&exe), crate::ffi::default_browser::register(&exe)),
+            |_, (done, browser): (Vec<String>, Result<bool, String>)| {
                 if !done.is_empty() {
                     info!("app identity: {} set on {}", crate::ffi::appid::APP_ID, done.join(", "));
+                }
+                match browser {
+                    Ok(true) => info!("default browser: Krunk registered with Windows as a browser"),
+                    Ok(false) => {}
+                    Err(e) => warning!("default browser: registration failed: {e}"),
                 }
             },
         );
@@ -2660,6 +2689,8 @@ impl Browser {
             | Request::SaveSettings { .. }
             | Request::ResetSettings
             | Request::PickDownloadFolder
+            | Request::DefaultBrowserStatus
+            | Request::MakeDefaultBrowser
             | Request::Restart
             | Request::GetAbout
             | Request::GetGpuInfo
@@ -3413,6 +3444,18 @@ impl WindowEvents for MenuPopupEvents {
 struct AppEvents(Weak<Browser>);
 
 impl WindowEvents for AppEvents {
+    fn launch(&self, addresses: &str) {
+        let Some(b) = self.0.upgrade() else { return };
+        // Checked again here: any program of the user's could send this message.
+        let urls: Vec<String> =
+            addresses.lines().filter_map(lb_core::default_browser::launch_url).take(MAX_LAUNCH_TABS).collect();
+        info!("Krunk was started again with {} address(es); opening them", urls.len());
+        if !urls.is_empty() {
+            // Not inside the other process's SendMessage (it may arrive in a modal loop).
+            b.defer(move |b| b.open_launch(&urls));
+        }
+    }
+
     fn system_theme_changed(&self) {
         if let Some(b) = self.0.upgrade() {
             b.apply_frame_theme();

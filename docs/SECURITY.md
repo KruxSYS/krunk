@@ -181,6 +181,18 @@ setting.
 - Macros act on Krunk's web pages through engine input only, never on other programs or
   Windows-wide input, and every stop releases held keys.
 
+## Addresses from other apps (0.12.1)
+Windows starts Krunk with `"…\Krunk.exe" --single-argument %1` for a link or page the user opens
+elsewhere. Everything after the switch is one address, so a link can't add a switch of its own.
+Krunk opens only http(s) addresses, `file:` URLs and absolute file paths
+(`core::default_browser::launch_url`). `javascript:`, `data:`, `krunk://` and other schemes are
+refused. When Krunk is already running, the new Krunk.exe hands the addresses to it with
+`WM_COPYDATA` (tagged, at most 64 KiB) and exits before it touches the profile. The running Krunk
+checks every address again (any program of the user's can send that message, just as it can start
+Krunk.exe with an address) and opens at most 20 tabs per hand-over. The engine's own command-line
+switches stay disabled. Becoming the default browser is always the user's choice in Windows
+Settings: Krunk only writes its registration under HKCU (`core::default_browser::registration`).
+
 ## Update check
 How it works: README, "Updates". The rules are in `core::update` (unit-tested); the app only
 fetches files and runs the installer.

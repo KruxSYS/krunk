@@ -1000,6 +1000,53 @@
     LB.request('importDetect').then(renderImportProfiles, function () { renderImportProfiles([]); });
   }
 
+  // ---------- default browser (0.12.1) ----------
+  // Windows lets no program make itself the default: "Make default" opens Windows Settings at
+  // Krunk's page, and the page asks again while that may be under way and when it is back in
+  // front.
+  let defaultState = null;
+  let defaultOpened = false;
+  let defaultTimer = 0;
+  function renderDefault() {
+    const s = defaultState;
+    const notDefault = !!(s && s.installed && s.isDefault === false);
+    $('default-banner').hidden = !notDefault;
+    $('default-make').hidden = !(s && s.installed && s.isDefault !== true);
+    $('default-hint').hidden = !(notDefault && defaultOpened);
+    let text = 'Checking…';
+    if (s && !s.installed) text = 'This copy of Krunk is not installed. Install Krunk with its setup to make it your default browser.';
+    else if (s && s.isDefault === true) text = 'Krunk is your default browser.';
+    else if (s && s.isDefault === false) text = 'Krunk is not your default browser: links you open in other apps open in another browser.';
+    else if (s) text = 'Windows did not say which browser is the default.';
+    $('default-status').textContent = text;
+  }
+  function checkDefault() {
+    return LB.request('defaultBrowserStatus').then(function (s) {
+      if (!s) return;
+      defaultState = s;
+      if (s.isDefault === true) stopDefaultPoll();
+      renderDefault();
+    }, function () {});
+  }
+  function stopDefaultPoll() { if (defaultTimer) { clearInterval(defaultTimer); defaultTimer = 0; } }
+  function makeDefault() {
+    LB.request('makeDefaultBrowser').then(function () {
+      defaultOpened = true;
+      renderDefault();
+      // Asked every 2 s for 3 minutes while the user is in Windows Settings.
+      stopDefaultPoll();
+      const until = Date.now() + 180e3;
+      defaultTimer = setInterval(function () { if (Date.now() > until) stopDefaultPoll(); else checkDefault(); }, 2000);
+    }, function (e) {
+      $('default-status').textContent = e.message;
+    });
+  }
+  $('default-make').addEventListener('click', makeDefault);
+  $('default-banner-make').addEventListener('click', makeDefault);
+  window.addEventListener('focus', checkDefault);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) checkDefault(); });
+  checkDefault();
+
   LB.post('ready');
   LB.request('getSettings').then(function (r) {
     settings = r.settings;

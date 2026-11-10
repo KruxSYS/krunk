@@ -44,6 +44,10 @@ AllowSkipFiles off
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Krunk"
 !define MUTEX "Krunk.Running"
 !define WINDOW_CLASS "KrunkWindow"
+; Krunk as a browser (0.12.1, see lb_core::default_browser).
+!define PROGID "KrunkHTML"
+!define CLIENT_KEY "Software\Clients\StartMenuInternet\Krunk"
+!define DESCRIPTION "Krunk, a fast and private web browser"
 
 Name "${APP}"
 OutFile "${OUT}"
@@ -219,6 +223,12 @@ FunctionEnd
 
 ; ---------------------------------------------------------------------------- install
 
+; A web page type Krunk offers to open: in its capabilities and in the type's "Open with" list.
+!macro FileType EXT
+  WriteRegStr HKCU "${CLIENT_KEY}\Capabilities\FileAssociations" "${EXT}" "${PROGID}"
+  WriteRegStr HKCU "Software\Classes\${EXT}\OpenWithProgids" "${PROGID}" ""
+!macroend
+
 Section "Krunk" SecMain
   SectionIn RO
   Call WaitForKrunk
@@ -245,6 +255,35 @@ Section "Krunk" SecMain
   ; overlay. Krunk.exe sets this ID and puts it on its shortcuts.
   WriteRegStr HKCU "Software\Classes\AppUserModelId\Krunk.Browser" "DisplayName" "${APP}"
   WriteRegStr HKCU "Software\Classes\AppUserModelId\Krunk.Browser" "IconUri" "$INSTDIR\Krunk.exe,0"
+  ; Krunk as a browser (0.12.1): listed under Settings > Apps > Default apps, where the user
+  ; makes it the default. The same values as lb_core::default_browser::registration (Krunk
+  ; writes them again at start if they are missing or point elsewhere).
+  WriteRegStr HKCU "Software\Classes\${PROGID}" "" "Krunk HTML Document"
+  WriteRegStr HKCU "Software\Classes\${PROGID}" "AppUserModelId" "Krunk.Browser"
+  WriteRegStr HKCU "Software\Classes\${PROGID}\Application" "ApplicationName" "${APP}"
+  WriteRegStr HKCU "Software\Classes\${PROGID}\Application" "ApplicationIcon" "$INSTDIR\Krunk.exe,0"
+  WriteRegStr HKCU "Software\Classes\${PROGID}\Application" "ApplicationCompany" "${APP}"
+  WriteRegStr HKCU "Software\Classes\${PROGID}\Application" "ApplicationDescription" "${DESCRIPTION}"
+  WriteRegStr HKCU "Software\Classes\${PROGID}\Application" "AppUserModelId" "Krunk.Browser"
+  WriteRegStr HKCU "Software\Classes\${PROGID}\DefaultIcon" "" "$INSTDIR\Krunk.exe,0"
+  WriteRegStr HKCU "Software\Classes\${PROGID}\shell\open\command" "" '"$INSTDIR\Krunk.exe" --single-argument %1'
+  WriteRegStr HKCU "${CLIENT_KEY}" "" "${APP}"
+  WriteRegStr HKCU "${CLIENT_KEY}\DefaultIcon" "" "$INSTDIR\Krunk.exe,0"
+  WriteRegStr HKCU "${CLIENT_KEY}\shell\open\command" "" '"$INSTDIR\Krunk.exe"'
+  WriteRegStr HKCU "${CLIENT_KEY}\Capabilities" "ApplicationName" "${APP}"
+  WriteRegStr HKCU "${CLIENT_KEY}\Capabilities" "ApplicationIcon" "$INSTDIR\Krunk.exe,0"
+  WriteRegStr HKCU "${CLIENT_KEY}\Capabilities" "ApplicationDescription" "${DESCRIPTION}"
+  WriteRegStr HKCU "${CLIENT_KEY}\Capabilities\StartMenu" "StartMenuInternet" "${APP}"
+  WriteRegStr HKCU "${CLIENT_KEY}\Capabilities\URLAssociations" "http" "${PROGID}"
+  WriteRegStr HKCU "${CLIENT_KEY}\Capabilities\URLAssociations" "https" "${PROGID}"
+  !insertmacro FileType ".htm"
+  !insertmacro FileType ".html"
+  !insertmacro FileType ".shtml"
+  !insertmacro FileType ".xht"
+  !insertmacro FileType ".xhtml"
+  WriteRegStr HKCU "Software\RegisteredApplications" "${APP}" "${CLIENT_KEY}\Capabilities"
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
+
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "${APP}"
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayVersion" "${VERSION}"
   WriteRegStr HKCU "${UNINST_KEY}" "Publisher" "${APP}"
@@ -304,6 +343,15 @@ Section "un.Krunk" UnSecMain
   Delete "$DESKTOP\Krunk.lnk"
   DeleteRegKey HKCU "${UNINST_KEY}"
   DeleteRegKey HKCU "Software\Classes\AppUserModelId\Krunk.Browser"
+  DeleteRegValue HKCU "Software\RegisteredApplications" "${APP}"
+  DeleteRegKey HKCU "${CLIENT_KEY}"
+  DeleteRegKey HKCU "Software\Classes\${PROGID}"
+  DeleteRegValue HKCU "Software\Classes\.htm\OpenWithProgids" "${PROGID}"
+  DeleteRegValue HKCU "Software\Classes\.html\OpenWithProgids" "${PROGID}"
+  DeleteRegValue HKCU "Software\Classes\.shtml\OpenWithProgids" "${PROGID}"
+  DeleteRegValue HKCU "Software\Classes\.xht\OpenWithProgids" "${PROGID}"
+  DeleteRegValue HKCU "Software\Classes\.xhtml\OpenWithProgids" "${PROGID}"
+  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'
   ; Only a folder that holds Krunk is removed.
   ${If} ${FileExists} "$INSTDIR\Krunk.exe"
     RMDir /r "$INSTDIR"

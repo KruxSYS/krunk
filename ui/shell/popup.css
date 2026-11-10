@@ -7,8 +7,11 @@ body { background: var(--bg-raised); border: 1px solid var(--border); border-rad
 .item .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item .kbd { color: var(--fg-muted); font-size: 0.923rem; }
 .panel-title { padding: 8px 12px 4px; font-weight: 600; font-size: 0.9rem; color: var(--fg-muted, #555); }
-.pip-row .label { display: flex; flex-direction: column; gap: 2px; }
-.pip-row .pip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Two lines per video (0.12.1): the row grows with them (a fixed 30 px item let a video's
+   size and state run into the next video's name). */
+.item.pip-row { height: auto; min-height: 44px; padding: 6px 10px; }
+.pip-row .label { display: flex; flex-direction: column; gap: 2px; line-height: 1.3; }
+.pip-row .pip-name, .pip-row .pip-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pip-row .pip-meta { font-size: 0.8rem; opacity: 0.7; }
 /* The floating video's volume slider (0.11.0: inside the player, next to its mute button):
    slider and level on one compact row, in the player's dark look. */

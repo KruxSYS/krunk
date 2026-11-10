@@ -10,9 +10,18 @@ use std::sync::Mutex;
 static LOG: Mutex<Option<std::fs::File>> = Mutex::new(None);
 const MAX_BYTES: u64 = 1024 * 1024;
 
-pub fn init(path: &std::path::Path) {
-    let _ = std::fs::rename(path, path.with_extension("old.log"));
-    if let Ok(f) = std::fs::File::create(path) {
+/// Opens the log; `rotate`: the previous one becomes `krunk.old.log` first (else this process
+/// appends to the running Krunk's log).
+pub fn init(path: &std::path::Path, rotate: bool) {
+    if rotate {
+        let _ = std::fs::rename(path, path.with_extension("old.log"));
+    }
+    let file = if rotate {
+        std::fs::File::create(path)
+    } else {
+        std::fs::OpenOptions::new().create(true).append(true).open(path)
+    };
+    if let Ok(f) = file {
         if let Ok(mut g) = LOG.lock() {
             *g = Some(f);
         }

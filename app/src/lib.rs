@@ -48,10 +48,22 @@ fn run() -> Result<i32, String> {
         std::thread::sleep(std::time::Duration::from_millis(300));
     }
     ffi::process::init_ui_thread()?;
-    ffi::process::hold_running_mutex();
+    let already_running = ffi::process::hold_running_mutex();
+    let args: Vec<String> = std::env::args().collect();
+    // A link or page opened from another app (Krunk as the default browser, 0.12.1).
+    let launch: Vec<String> =
+        lb_core::default_browser::launch_targets(&ffi::default_browser::raw_command_line(), &args)
+            .iter()
+            .filter_map(|t| lb_core::default_browser::launch_url(t))
+            .collect();
+    // Krunk runs already: it opens them (before anything here touches the profile).
+    if already_running && !launch.is_empty() && ffi::window::hand_over_launch(&launch.join("\n"), 10_000) {
+        return Ok(0);
+    }
     let migration = migrate_legacy_data()?;
     let dirs = paths::DataDirs::resolve()?;
-    log::init(&dirs.log_file());
+    // A second Krunk (it hands over to the running one) must not rotate that one's log away.
+    log::init(&dirs.log_file(), !already_running);
     info!("Krunk {} starting, data dir {}", env!("CARGO_PKG_VERSION"), dirs.root().display());
     if let Some(m) = migration {
         info!("{m}");
@@ -72,7 +84,6 @@ fn run() -> Result<i32, String> {
     // switches crash this engine build, so it is removed at every start.
     let _ = std::fs::remove_dir_all(dirs.profile().join("segmentation_platform"));
 
-    let args: Vec<String> = std::env::args().collect();
     let power = browser::PowerOptions::from_args(&args);
     if args.iter().any(|a| a == "--log-blocked") {
         browser::LOG_BLOCKED.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -99,7 +110,7 @@ fn run() -> Result<i32, String> {
         log::write("WARN", &e);
     }
     let start: ffi::cef::Start =
-        Box::new(move || match browser::Browser::start(window, &dirs, store, settings, power) {
+        Box::new(move || match browser::Browser::start(window, &dirs, store, settings, power, launch) {
             Ok(b) => Some(Box::new(b) as Box<dyn std::any::Any>),
             Err(e) => {
                 log::write("ERROR", &e);

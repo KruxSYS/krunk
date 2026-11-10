@@ -71,6 +71,41 @@ impl Browser {
                 let picked = dialogs::pick_folder(w.hwnd(), "Save downloads to", start.as_deref());
                 self.reply(tab, Event::ok(req_id, picked.map(|p| p.display().to_string())));
             }
+            Request::DefaultBrowserStatus => self.spawn_job(
+                "default-browser",
+                crate::ffi::default_browser::is_default,
+                move |b, is_default: Option<bool>| {
+                    let installed = process::is_installed();
+                    b.reply(
+                        tab,
+                        Event::ok(req_id, serde_json::json!({ "installed": installed, "isDefault": is_default })),
+                    );
+                },
+            ),
+            Request::MakeDefaultBrowser => {
+                let exe = std::env::current_exe().ok().filter(|_| process::is_installed());
+                let Some(exe) = exe else {
+                    self.reply(tab, Event::err(req_id, "Only an installed Krunk can be the default browser"));
+                    return;
+                };
+                self.spawn_job(
+                    "default-browser",
+                    move || {
+                        crate::ffi::default_browser::register(&exe)?;
+                        crate::ffi::default_browser::open_settings()
+                    },
+                    move |b, r: Result<(), String>| match r {
+                        Ok(()) => {
+                            info!("default browser: Windows Settings opened");
+                            b.reply(tab, Event::ok(req_id, serde_json::json!({ "opened": true })));
+                        }
+                        Err(e) => {
+                            warning!("default browser: {e}");
+                            b.reply(tab, Event::err(req_id, e));
+                        }
+                    },
+                );
+            }
             Request::Restart => self.restart(),
             Request::GetAbout => self.reply(tab, Event::ok(req_id, self.about())),
             Request::GetGpuInfo => self.reply(tab, Event::ok(req_id, self.gpu_info())),

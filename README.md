@@ -388,7 +388,8 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
 - **Picture-in-Picture** (0.6.0): when a page has a video, a small window icon appears in the
   address bar; it, the menu's "Picture-in-Picture" and Alt+P send the video to the engine's
   floating always-on-top window (play/pause, back to tab, close). With several videos a chooser
-  lists them with their size and state; the same control takes the video back. Settings →
+  lists them with their size and state (0.12.1: the two lines of a row no longer overlap the
+  next one); the same control takes the video back. Settings →
   General → Media → "Automatic Picture-in-Picture" does it when you switch tabs while a video
   plays and reverses it when you return. Videos inside a frame from another site (an embedded
   player) are not listed: use the player's own control. **Volume (0.7.0, inside the player since
@@ -402,7 +403,17 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   names Krunk with its icon for media a page plays; it showed Chromium before. Krunk sets its
   own Windows app ID (`Krunk.Browser`), registers its name and icon for it, and puts it on its
   own shortcuts (Start menu, desktop, taskbar pins), so a pinned Krunk still groups its windows.
-  A portable copy sets the ID but changes nothing on the system.
+  A portable copy sets the ID but changes nothing on the system. **Artwork (0.12.1):** when a site
+  gives no artwork of its own, the overlay shows Krunk's logo (it showed Chromium's): Krunk's
+  engine build carries Krunk's logo as its product logo (`scripts/cef-build/README.md`).
+- **Default browser (0.12.1):** an installed Krunk registers itself with Windows as a browser
+  (per user: http, https and .htm/.html/.shtml/.xht/.xhtml; the installer writes it and Krunk
+  repairs it at start). While it is not the default, `krunk://settings` shows a banner, and
+  General → Default browser says so; "Make default" opens Windows Settings at Krunk's own page,
+  whose "Set default" makes it the default (Windows lets no program do that itself). The page
+  notices the change by itself. Links and pages opened from other apps open in a new tab of the
+  running Krunk (or start it with them); only http(s) addresses, `file:` URLs and absolute file
+  paths are opened. A portable copy can't be the default. Uninstalling removes the registration.
 - **View page source (0.11.0):** the page's context menu, Ctrl+U or typing
   `view-source:<address>` opens the source in a new tab next to the page (a private tab for a
   private page): line numbers and colours for HTML and for the page's scripts and styles; links
