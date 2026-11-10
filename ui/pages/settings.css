@@ -143,3 +143,48 @@ table.exceptions th:last-child, table.exceptions td:last-child { padding-right: 
 .sync-collections { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px; }
 .row.setting .text label.sync-coll { display: inline-flex; gap: 6px; align-items: center; font-weight: 400; }
 .row.setting .sync-coll input { width: 16px; height: 16px; margin: 0; }
+
+/* AI and scripts (0.12.0). While AI is off its controls stay visible, greyed and disabled. */
+.ai-body { border: 0; margin: 0; padding: 0; min-width: 0; }
+.ai-body:disabled .row.setting > *, .ai-body:disabled .ai-model-head > * { opacity: .55; }
+#ai-off-hint { color: var(--fg); }
+#ai-off-hint[hidden] { display: none; }
+#ai-providers .ai-provider { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-top: 1px solid var(--border); }
+#ai-providers .ai-provider:first-child { border-top: 0; }
+#ai-providers .main { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+#ai-providers .name { font-weight: 600; overflow-wrap: anywhere; }
+#ai-providers .sub { color: var(--fg-muted); font-size: 0.923rem; overflow-wrap: anywhere; }
+#ai-providers .ai-test-result.ok { color: #15803d; }
+#ai-providers .ai-test-result.bad { color: var(--danger); }
+:root.dark #ai-providers .ai-test-result.ok { color: #4ade80; }
+@media (prefers-color-scheme: dark) { :root:not(.light) #ai-providers .ai-test-result.ok { color: #4ade80; } }
+.key-status { flex: none; padding: 1px 8px; border-radius: 999px; font-size: 0.846rem; font-weight: 600; background: var(--bg); color: var(--fg-muted); border: 1px solid var(--border); }
+.key-status.saved { color: var(--accent); border-color: var(--accent); }
+.ai-key-form { margin: 0 0 8px 8px; }
+.ai-add, .ai-key-form { align-items: flex-start; }
+.ai-add select, .ai-add input, .ai-key-form input { height: 32px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg); color: var(--fg); font: inherit; min-width: 0; }
+.ai-add #ai-name { width: 170px; }
+.ai-add #ai-base-url { flex: 1 1 220px; }
+.ai-add #ai-key, .ai-key-form .ai-key-input { flex: 1 1 200px; }
+.ai-add input[hidden] { display: none; }
+.ai-add .field-error, .ai-key-form .field-error { flex-basis: 100%; }
+.ai-model-head { display: flex; align-items: center; gap: 16px; }
+.ai-model-head .btn, #ai-providers .btn, .ai-add .btn { white-space: nowrap; }
+.ai-model-head .control input[type=text] { width: 260px; min-width: 0; }
+.ai-model-picker { display: flex; flex-direction: column; gap: 6px; }
+.ai-model-picker[hidden] { display: none; }
+.ai-model-filter { height: 32px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font: inherit; }
+.ai-models { max-height: 300px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+.ai-models .muted { margin: 8px 10px; }
+.ai-model { display: flex; align-items: baseline; gap: 8px; width: 100%; padding: 6px 10px; border: 0; border-top: 1px solid var(--border);
+  background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+.ai-model:first-child { border-top: 0; }
+.ai-model:hover { background: var(--bg-hover); }
+.ai-model.on { background: var(--accent-soft); }
+.ai-model:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ai-model .name { font-weight: 600; }
+.ai-model .id { flex: 1; min-width: 0; color: var(--fg-muted); font: 0.923rem ui-monospace, Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-model .cap { flex: none; padding: 0 6px; border-radius: 8px; font-size: 0.846rem; background: var(--bg-hover); color: var(--fg-muted); }
+#ai-models-status:empty { display: none; }
+.ai-count { white-space: nowrap; }
