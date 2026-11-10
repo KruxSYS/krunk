@@ -55,10 +55,12 @@ pub enum Page {
     /// A tab whose page crashed or was ended ("Close page" on a page that stopped
     /// responding, 0.11.0): what happened, and Reload.
     Crashed,
+    /// Userscripts and macros with their editor (0.12.0).
+    Scripts,
 }
 
 impl Page {
-    pub const ALL: [Page; 17] = [
+    pub const ALL: [Page; 18] = [
         Page::NewTab,
         Page::History,
         Page::Bookmarks,
@@ -76,6 +78,7 @@ impl Page {
         Page::Sync,
         Page::Source,
         Page::Crashed,
+        Page::Scripts,
     ];
 
     /// Short name used in the display URL (`krunk://<name>`) and file name.
@@ -98,7 +101,15 @@ impl Page {
             Page::Sync => "sync",
             Page::Source => "source",
             Page::Crashed => "crashed",
+            Page::Scripts => "scripts",
         }
+    }
+
+    /// Pages with secrets or privileged data the AI agent may never open (0.12.0): the vault and
+    /// payment methods, sync, and the cookie and storage pages (they would bypass the agent's
+    /// sensitive-data gate).
+    pub fn agent_forbidden(self) -> bool {
+        matches!(self, Page::Passwords | Page::Sync | Page::SiteData | Page::Storage)
     }
 
     /// The real URL loaded in the tab.

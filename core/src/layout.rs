@@ -207,6 +207,55 @@ pub fn devtools_size_at(content: Rect, dock: DevToolsDock, x: i32, y: i32, scale
     clamp_devtools_size(content, dock, dip, scale)
 }
 
+/// The agent side panel (0.12.0): docked right of the tab area, like DevTools docked right.
+pub const PANEL_SPLITTER_DIP: f64 = 5.0;
+pub const PANEL_MIN_DIP: f64 = 280.0;
+pub const PANEL_MAX_DIP: f64 = 900.0;
+/// The page keeps at least this much next to the panel while there is room for both (DIP).
+pub const PANEL_PAGE_MIN_DIP: f64 = 320.0;
+pub const PANEL_DEFAULT_DIP: f64 = 380.0;
+
+/// A window's content area split between the tab (page plus any docked DevTools), the
+/// splitter and the agent panel (physical pixels).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PanelSplit {
+    pub page: Rect,
+    pub splitter: Rect,
+    pub panel: Rect,
+}
+
+/// The panel width (DIP) that fits `content`: within its range and leaving the page
+/// [`PANEL_PAGE_MIN_DIP`]; when both minimums don't fit, they share the space in proportion.
+pub fn clamp_panel_width(content: Rect, width_dip: f64, scale: f64) -> f64 {
+    let s = sane_scale(scale);
+    let total = (f64::from(content.width) / s - PANEL_SPLITTER_DIP).max(0.0);
+    if total < PANEL_MIN_DIP + PANEL_PAGE_MIN_DIP {
+        return total * PANEL_MIN_DIP / (PANEL_MIN_DIP + PANEL_PAGE_MIN_DIP);
+    }
+    let w = if width_dip.is_finite() { width_dip } else { PANEL_DEFAULT_DIP };
+    w.clamp(PANEL_MIN_DIP, PANEL_MAX_DIP.min(total - PANEL_PAGE_MIN_DIP).max(PANEL_MIN_DIP))
+}
+
+/// Splits `content` into page, splitter and panel (panel on the right).
+pub fn panel_split(content: Rect, width_dip: f64, scale: f64) -> PanelSplit {
+    let s = sane_scale(scale);
+    let bar = ((PANEL_SPLITTER_DIP * s).round() as i32).min(content.width.max(0));
+    let w = ((clamp_panel_width(content, width_dip, s) * s).round() as i32).min(content.width - bar).max(0);
+    let page_w = (content.width - bar - w).max(0);
+    PanelSplit {
+        page: Rect { x: content.x, y: content.y, width: page_w, height: content.height },
+        splitter: Rect { x: content.x + page_w, y: content.y, width: bar, height: content.height },
+        panel: Rect { x: content.x + page_w + bar, y: content.y, width: w, height: content.height },
+    }
+}
+
+/// The panel width (DIP) for its splitter dragged to client x `x` (physical pixels).
+pub fn panel_width_at(content: Rect, x: i32, scale: f64) -> f64 {
+    let s = sane_scale(scale);
+    let px = content.x + content.width - x;
+    clamp_panel_width(content, f64::from(px) / s - PANEL_SPLITTER_DIP / 2.0, s)
+}
+
 /// Keeps a restored window reachable: if not even the top 40 px of `rect` overlap any
 /// monitor's work area by 100 px (a monitor was unplugged, or the resolution got smaller), it
 /// moves onto the monitor it overlaps most (else the first one, the primary), shrunk to fit.
@@ -407,6 +456,30 @@ pub fn next_zoom(current: f64, zoom_in: bool) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn panel_split_keeps_both_sides() {
+        let content = Rect { x: 0, y: 76, width: 1280, height: 700 };
+        let p = panel_split(content, 380.0, 1.0);
+        assert_eq!(p.panel.width, 380);
+        assert_eq!(p.splitter.width, 5);
+        assert_eq!(p.page.width + p.splitter.width + p.panel.width, 1280);
+        assert_eq!(p.panel.x + p.panel.width, 1280);
+        assert_eq!(p.page.height, 700);
+        // Too wide: the page keeps its minimum; too narrow: the panel keeps its minimum.
+        assert_eq!(panel_split(content, 5000.0, 1.0).panel.width, 900);
+        let narrow = Rect { x: 0, y: 0, width: 800, height: 600 };
+        assert_eq!(panel_split(narrow, 700.0, 1.0).page.width, 320);
+        assert_eq!(panel_split(content, 10.0, 1.0).panel.width, 280);
+        // 150 %: DIP scale.
+        let hi = panel_split(Rect { x: 0, y: 0, width: 1920, height: 900 }, 380.0, 1.5);
+        assert_eq!(hi.panel.width, 570);
+        // A tiny window shares the space and never goes negative.
+        let tiny = panel_split(Rect { x: 0, y: 0, width: 200, height: 100 }, 380.0, 1.0);
+        assert!(tiny.page.width >= 0 && tiny.panel.width >= 0);
+        assert_eq!(tiny.page.width + tiny.splitter.width + tiny.panel.width, 200);
+        assert_eq!(panel_width_at(content, 1280 - 402, 1.0), 399.5);
+    }
+
     use super::*;
 
     #[test]

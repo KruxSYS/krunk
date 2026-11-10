@@ -926,6 +926,11 @@ mod tests {
     fn every_setting_is_either_synced_or_device_local() {
         // A new setting must be sorted into one of the two lists (PLAN §5.5); this fails otherwise.
         const LOCAL: &[&str] = &[
+            // 0.12.0: the AI agent (providers are per device; keys are never in settings),
+            // userscripts and macros are local only.
+            "ai",
+            "macros",
+            "userscripts",
             "appearance",
             "autoPip",
             "blockThirdPartyCookies",

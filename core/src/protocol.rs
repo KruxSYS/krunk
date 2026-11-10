@@ -13,11 +13,12 @@
 //!
 //! Outbound messages are [`Event`]s.
 
+use crate::agent::{AskSpec, Category, ModelChoice, RunState, ScriptCard, ScriptKind, StepView};
 use crate::downloads::DownloadItem;
 use crate::keys::Command;
 use crate::pages::{self, Page};
 use crate::secret::Secret;
-use crate::settings::{Settings, Theme};
+use crate::settings::{AiProvider, Settings, Theme};
 use serde::{Deserialize, Serialize};
 
 /// Maximum size of a privileged message (settings JSON is the largest).
@@ -1537,6 +1538,152 @@ pub enum Request {
     HttpsOnlyProceed {
         url: String,
     },
+
+    // ---- 0.12.0: the AI agent, userscripts and macros ----
+    /// The shell's agent button (also Ctrl+Shift+Space): show or hide the window's panel.
+    ToggleAgent,
+    /// The shell's macro indicator: stop the running macro.
+    StopMacros,
+    /// The agent panel: a new task (or a follow-up in the same conversation).
+    AgentSend {
+        text: String,
+    },
+    AgentStop,
+    /// "New conversation".
+    AgentNew,
+    AgentAnswer {
+        ask: u32,
+        #[serde(default)]
+        choices: Vec<u8>,
+        #[serde(default)]
+        other: Option<String>,
+    },
+    /// Allow or deny a sensitive category (history, bookmarks, downloads, cookies).
+    AgentConsent {
+        ask: u32,
+        allow: bool,
+    },
+    /// The step limit was reached: continue for another round, or end.
+    AgentContinue {
+        ask: u32,
+        go: bool,
+    },
+    /// The panel's quick switch.
+    AgentSelectModel {
+        provider: String,
+        model: String,
+    },
+    /// The panel asks for its configuration (model indicator, quick-switch list).
+    AgentModels,
+    /// The panel's close button.
+    AgentClose,
+    AgentOpenScript {
+        id: String,
+        kind: ScriptKind,
+    },
+    AgentToggleScript {
+        id: String,
+        kind: ScriptKind,
+        enabled: bool,
+    },
+    /// The macro runner: one API call of the running macro (`op` e.g. "key.down").
+    MacroCall {
+        op: String,
+        #[serde(default)]
+        args: serde_json::Value,
+    },
+    /// The macro runner: the macro ended.
+    MacroDone {
+        ok: bool,
+        #[serde(default)]
+        error: Option<String>,
+    },
+    /// Settings → AI: add or change a provider (never its key).
+    AiProviderSave {
+        provider: AiProvider,
+    },
+    AiProviderRemove {
+        id: String,
+    },
+    /// Settings → AI: store a provider's key (DPAPI). Never echoed or sent back.
+    AiKeySet {
+        id: String,
+        key: Secret,
+    },
+    AiKeyRemove {
+        id: String,
+    },
+    /// Settings → AI: check the key and the address with the provider's model list.
+    AiTest {
+        id: String,
+    },
+    AiModels {
+        id: String,
+        #[serde(default)]
+        refresh: bool,
+    },
+    /// Which providers have a key stored.
+    AiStatus,
+    /// krunk://scripts (0.12.0).
+    ScriptsList,
+    ScriptGet {
+        id: String,
+    },
+    /// Create (no id) or update a userscript from its source.
+    ScriptSave {
+        #[serde(default)]
+        id: Option<String>,
+        source: String,
+    },
+    ScriptToggle {
+        id: String,
+        enabled: bool,
+    },
+    ScriptDelete {
+        id: String,
+    },
+    ScriptExport {
+        id: String,
+    },
+    /// Run a userscript once on the window's most recent web tab.
+    ScriptRunNow {
+        id: String,
+    },
+    /// Parse check of a userscript or macro (the engine compiles it; nothing runs).
+    ScriptCheck {
+        source: String,
+        kind: ScriptKind,
+    },
+    MacroSave {
+        #[serde(default)]
+        id: Option<String>,
+        name: String,
+        source: String,
+        #[serde(default)]
+        hotkey: Option<String>,
+    },
+    MacroDelete {
+        id: String,
+    },
+    MacroToggle {
+        id: String,
+        enabled: bool,
+    },
+    MacroRun {
+        id: String,
+    },
+    MacroStop,
+    /// Is this chord free as a macro hotkey?
+    HotkeyCheck {
+        chord: String,
+        #[serde(default)]
+        id: Option<String>,
+    },
+    /// While on, the page's key presses with modifiers come back as `hotkeyRecorded` instead
+    /// of running Krunk's shortcuts.
+    HotkeyRecord {
+        on: bool,
+    },
 }
 
 fn default_limit() -> u32 {
@@ -1560,6 +1707,10 @@ pub enum Sender {
     /// page, the action popup or the options page. Only `Request::Ext` is permitted; the host
     /// checks the id against the page's origin.
     Ext,
+    /// A window's AI agent panel (0.12.0, `shell.krunk.invalid/agent.html`).
+    Agent,
+    /// The hidden view that runs macros (0.12.0, `shell.krunk.invalid/runner.html`).
+    Runner,
 }
 
 /// Which browser view a message arrived on.
@@ -1570,6 +1721,10 @@ pub enum Channel {
     Tab,
     /// An extension's background or popup view (0.6.0).
     Ext,
+    /// The agent panel view (0.12.0).
+    Agent,
+    /// The macro runner view (0.12.0).
+    Runner,
 }
 
 /// Classification of a message source.
@@ -1585,6 +1740,8 @@ pub enum Source {
 
 pub const SHELL_PATH: &str = "/shell.html";
 pub const POPUP_PATH: &str = "/popup.html";
+pub const AGENT_PATH: &str = "/agent.html";
+pub const RUNNER_PATH: &str = "/runner.html";
 
 /// Decides how a message may be treated, from the channel it came in on,
 /// the `Source` URI and whether it came from the top-level document.
@@ -1613,10 +1770,15 @@ pub fn classify(channel: Channel, source: &str, top_level: bool) -> Result<Sourc
                 Err(ProtocolError::Forbidden)
             }
         }
-        Channel::Shell | Channel::Popup => {
-            let want = if channel == Channel::Shell { SHELL_PATH } else { POPUP_PATH };
+        Channel::Shell | Channel::Popup | Channel::Agent | Channel::Runner => {
+            let (want, sender) = match channel {
+                Channel::Shell => (SHELL_PATH, Sender::Shell),
+                Channel::Popup => (POPUP_PATH, Sender::Popup),
+                Channel::Agent => (AGENT_PATH, Sender::Agent),
+                _ => (RUNNER_PATH, Sender::Runner),
+            };
             if origin == pages::SHELL_ORIGIN && url.path() == want {
-                Ok(Source::Privileged(if channel == Channel::Shell { Sender::Shell } else { Sender::Popup }))
+                Ok(Source::Privileged(sender))
             } else {
                 Err(ProtocolError::Forbidden)
             }
@@ -1650,7 +1812,13 @@ impl Sender {
             return true;
         }
         if matches!(req, R::OpenUrl { .. } | R::OpenPage { .. }) {
-            return self != Sender::Page(Page::SiteData);
+            // The panel opens links of the agent's answers (http(s), checked by the host); the
+            // runner opens tabs only through its own API.
+            return match self {
+                Sender::Page(Page::SiteData) | Sender::Runner => false,
+                Sender::Agent => matches!(req, R::OpenUrl { .. }),
+                _ => true,
+            };
         }
         match self {
             Sender::Shell => matches!(
@@ -1701,6 +1869,8 @@ impl Sender {
                     | R::VaultUnlock { .. }
                     | R::VaultLock
                     | R::GeneratePassword { .. }
+                    | R::ToggleAgent
+                    | R::StopMacros
             ),
             Sender::Popup => matches!(
                 req,
@@ -1857,6 +2027,13 @@ impl Sender {
                     | R::SyncOpen
                     | R::SyncNow
                     | R::SyncSetCollection { .. }
+                    | R::AiProviderSave { .. }
+                    | R::AiProviderRemove { .. }
+                    | R::AiKeySet { .. }
+                    | R::AiKeyRemove { .. }
+                    | R::AiTest { .. }
+                    | R::AiModels { .. }
+                    | R::AiStatus
             ),
             Sender::Page(Page::Sync) => matches!(
                 req,
@@ -1913,6 +2090,39 @@ impl Sender {
             Sender::Page(Page::Source) => matches!(req, R::SourceGet {}),
             // The crash page only reloads its address (an ordinary navigation).
             Sender::Page(Page::Crashed) => false,
+            Sender::Agent => matches!(
+                req,
+                R::AgentSend { .. }
+                    | R::AgentStop
+                    | R::AgentNew
+                    | R::AgentAnswer { .. }
+                    | R::AgentConsent { .. }
+                    | R::AgentContinue { .. }
+                    | R::AgentSelectModel { .. }
+                    | R::AgentModels
+                    | R::AgentClose
+                    | R::AgentOpenScript { .. }
+                    | R::AgentToggleScript { .. }
+            ),
+            Sender::Runner => matches!(req, R::MacroCall { .. } | R::MacroDone { .. }),
+            Sender::Page(Page::Scripts) => matches!(
+                req,
+                R::ScriptsList
+                    | R::ScriptGet { .. }
+                    | R::ScriptSave { .. }
+                    | R::ScriptToggle { .. }
+                    | R::ScriptDelete { .. }
+                    | R::ScriptExport { .. }
+                    | R::ScriptRunNow { .. }
+                    | R::ScriptCheck { .. }
+                    | R::MacroSave { .. }
+                    | R::MacroDelete { .. }
+                    | R::MacroToggle { .. }
+                    | R::MacroRun { .. }
+                    | R::MacroStop
+                    | R::HotkeyCheck { .. }
+                    | R::HotkeyRecord { .. }
+            ),
             Sender::Page(Page::SiteData) => matches!(
                 req,
                 R::SiteDataGet {}
@@ -2388,6 +2598,79 @@ pub enum Event {
     },
     /// Settings that need a restart changed.
     RestartRequired,
+
+    // ---- 0.12.0 ----
+    /// To the shell: the agent button (shown only while AI is on) and whether the panel is open.
+    AgentButton {
+        visible: bool,
+        open: bool,
+    },
+    /// To the shell: a macro is running (its name) or none (`None`): the toolbar's Stop.
+    MacroRunning {
+        id: Option<String>,
+        name: Option<String>,
+    },
+    /// To the panel: the model indicator and the quick-switch list. `problem` explains why the
+    /// agent can't run (no provider, no model, no key).
+    AgentConfig {
+        provider: String,
+        provider_name: String,
+        model: String,
+        models: Vec<ModelChoice>,
+        vision: bool,
+        problem: Option<String>,
+    },
+    AgentState {
+        state: RunState,
+        steps: u32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ms: Option<u64>,
+    },
+    /// Streamed text of the assistant's current answer.
+    AgentDelta {
+        text: String,
+    },
+    /// A whole message: "user", "assistant" (the final answer) or "notice".
+    AgentMessage {
+        role: String,
+        text: String,
+    },
+    /// A step was added or changed.
+    AgentStep {
+        step: StepView,
+    },
+    AgentAsk {
+        ask: AskSpec,
+    },
+    AgentConsentAsk {
+        ask: u32,
+        category: Category,
+        label: String,
+    },
+    AgentContinueAsk {
+        ask: u32,
+        steps: u32,
+    },
+    /// A userscript or macro the agent made, with Disable / Open in editor.
+    AgentScript {
+        card: ScriptCard,
+    },
+    AgentError {
+        message: String,
+    },
+    /// "New conversation": empty the panel.
+    AgentClear,
+    /// To krunk://scripts: the lists changed (reload them).
+    ScriptsChanged,
+    /// To krunk://scripts while recording a hotkey: the chord pressed and why it can't be used.
+    HotkeyRecorded {
+        chord: String,
+        conflict: Option<String>,
+    },
+    /// To krunk://scripts: which macro runs now.
+    MacroState {
+        running: Option<String>,
+    },
 }
 
 /// A saved card as the fill dropdown shows it (0.6.0).
@@ -2619,6 +2902,152 @@ mod tests {
             classify(Channel::Tab, "http://plain.example/x", true),
             Ok(Source::Web { origin: "http://plain.example".into() })
         );
+    }
+
+    fn every_sender() -> Vec<Sender> {
+        let mut v = vec![Sender::Shell, Sender::Popup, Sender::Ext, Sender::Agent, Sender::Runner];
+        v.extend(Page::ALL.into_iter().map(Sender::Page));
+        v
+    }
+
+    /// 0.12.0: each new command belongs to exactly its sender; web content gets none of them.
+    #[test]
+    fn agent_scripts_and_macro_commands_are_least_privilege() {
+        let cases: &[(&str, &[Sender])] = &[
+            (r#"{"cmd":"toggleAgent"}"#, &[Sender::Shell]),
+            (r#"{"cmd":"stopMacros"}"#, &[Sender::Shell]),
+            (r#"{"cmd":"agentSend","text":"List the links"}"#, &[Sender::Agent]),
+            (r#"{"cmd":"agentStop"}"#, &[Sender::Agent]),
+            (r#"{"cmd":"agentNew"}"#, &[Sender::Agent]),
+            (r#"{"cmd":"agentAnswer","ask":1,"choices":[0,2],"other":"x"}"#, &[Sender::Agent]),
+            (r#"{"cmd":"agentConsent","ask":2,"allow":false}"#, &[Sender::Agent]),
+            (r#"{"cmd":"agentContinue","ask":3,"go":true}"#, &[Sender::Agent]),
+            (r#"{"cmd":"agentSelectModel","provider":"0a1b2c3d","model":"m"}"#, &[Sender::Agent]),
+            (r#"{"cmd":"agentModels"}"#, &[Sender::Agent]),
+            (r#"{"cmd":"agentClose"}"#, &[Sender::Agent]),
+            (r#"{"cmd":"agentOpenScript","id":"a","kind":"userscript"}"#, &[Sender::Agent]),
+            (r#"{"cmd":"agentToggleScript","id":"a","kind":"macro","enabled":false}"#, &[Sender::Agent]),
+            (r#"{"cmd":"macroCall","op":"key.down","args":{"key":"a"}}"#, &[Sender::Runner]),
+            (r#"{"cmd":"macroDone","ok":true}"#, &[Sender::Runner]),
+            (
+                r#"{"cmd":"aiProviderSave","provider":{"id":"0a1b2c3d","kind":"custom","name":"Local","baseUrl":"http://127.0.0.1:11434/v1"}}"#,
+                &[Sender::Page(Page::Settings)],
+            ),
+            (r#"{"cmd":"aiProviderRemove","id":"0a1b2c3d"}"#, &[Sender::Page(Page::Settings)]),
+            (r#"{"cmd":"aiKeySet","id":"0a1b2c3d","key":"sk-test"}"#, &[Sender::Page(Page::Settings)]),
+            (r#"{"cmd":"aiKeyRemove","id":"0a1b2c3d"}"#, &[Sender::Page(Page::Settings)]),
+            (r#"{"cmd":"aiTest","id":"0a1b2c3d"}"#, &[Sender::Page(Page::Settings)]),
+            (r#"{"cmd":"aiModels","id":"0a1b2c3d","refresh":true}"#, &[Sender::Page(Page::Settings)]),
+            (r#"{"cmd":"aiStatus"}"#, &[Sender::Page(Page::Settings)]),
+            (r#"{"cmd":"scriptsList"}"#, &[Sender::Page(Page::Scripts)]),
+            (r#"{"cmd":"scriptGet","id":"a"}"#, &[Sender::Page(Page::Scripts)]),
+            (r#"{"cmd":"scriptSave","source":"x"}"#, &[Sender::Page(Page::Scripts)]),
+            (r#"{"cmd":"scriptToggle","id":"a","enabled":true}"#, &[Sender::Page(Page::Scripts)]),
+            (r#"{"cmd":"scriptDelete","id":"a"}"#, &[Sender::Page(Page::Scripts)]),
+            (r#"{"cmd":"scriptExport","id":"a"}"#, &[Sender::Page(Page::Scripts)]),
+            (r#"{"cmd":"scriptRunNow","id":"a"}"#, &[Sender::Page(Page::Scripts)]),
+            (r#"{"cmd":"scriptCheck","source":"x","kind":"macro"}"#, &[Sender::Page(Page::Scripts)]),
+            (r#"{"cmd":"macroSave","name":"n","source":"s","hotkey":"Ctrl+Alt+K"}"#, &[Sender::Page(Page::Scripts)]),
+            (r#"{"cmd":"macroDelete","id":"a"}"#, &[Sender::Page(Page::Scripts)]),
+            (r#"{"cmd":"macroToggle","id":"a","enabled":false}"#, &[Sender::Page(Page::Scripts)]),
+            (r#"{"cmd":"macroRun","id":"a"}"#, &[Sender::Page(Page::Scripts)]),
+            (r#"{"cmd":"macroStop"}"#, &[Sender::Page(Page::Scripts)]),
+            (r#"{"cmd":"hotkeyCheck","chord":"Ctrl+T"}"#, &[Sender::Page(Page::Scripts)]),
+            (r#"{"cmd":"hotkeyRecord","on":true}"#, &[Sender::Page(Page::Scripts)]),
+        ];
+        for (msg, allowed) in cases {
+            for s in every_sender() {
+                let r = parse_request(s, msg);
+                if allowed.contains(&s) {
+                    assert!(r.is_ok(), "{s:?} {msg}: {r:?}");
+                } else {
+                    assert_eq!(r, Err(ProtocolError::Forbidden), "{s:?} {msg}");
+                }
+            }
+            assert!(parse_content(msg).is_err(), "{msg}");
+        }
+        // The panel and the runner get nothing else: no tab, vault, settings or page commands.
+        for msg in [
+            r#"{"cmd":"vaultList"}"#,
+            r#"{"cmd":"getSettings"}"#,
+            r#"{"cmd":"closeTab","id":1}"#,
+            r#"{"cmd":"newTab"}"#,
+            r#"{"cmd":"openPage","page":"settings"}"#,
+            r#"{"cmd":"command","command":{"command":"newTab"}}"#,
+        ] {
+            assert_eq!(parse_request(Sender::Agent, msg), Err(ProtocolError::Forbidden), "{msg}");
+            assert_eq!(parse_request(Sender::Runner, msg), Err(ProtocolError::Forbidden), "{msg}");
+        }
+        assert!(parse_request(Sender::Agent, r#"{"cmd":"openUrl","url":"https://a.example/"}"#).is_ok());
+        assert_eq!(
+            parse_request(Sender::Runner, r#"{"cmd":"openUrl","url":"https://a.example/"}"#),
+            Err(ProtocolError::Forbidden)
+        );
+        assert!(parse_request(Sender::Agent, r#"{"cmd":"ready"}"#).is_ok());
+        assert!(parse_request(Sender::Runner, r#"{"cmd":"ready"}"#).is_ok());
+        // Unknown fields of struct commands are refused.
+        assert!(parse_request(Sender::Agent, r#"{"cmd":"agentSend","text":"x","tab":3}"#).is_err());
+    }
+
+    /// The panel and runner channels accept only their own document on the shell origin; a tab
+    /// can never become them.
+    #[test]
+    fn agent_and_runner_channels() {
+        let agent = "https://shell.krunk.invalid/agent.html";
+        let runner = "https://shell.krunk.invalid/runner.html";
+        assert_eq!(classify(Channel::Agent, agent, true), Ok(Source::Privileged(Sender::Agent)));
+        assert_eq!(classify(Channel::Runner, runner, true), Ok(Source::Privileged(Sender::Runner)));
+        assert_eq!(classify(Channel::Agent, runner, true), Err(ProtocolError::Forbidden));
+        assert_eq!(classify(Channel::Runner, agent, true), Err(ProtocolError::Forbidden));
+        assert_eq!(classify(Channel::Agent, agent, false), Err(ProtocolError::Forbidden));
+        assert_eq!(classify(Channel::Agent, "https://evil.example/agent.html", true), Err(ProtocolError::Forbidden));
+        assert_eq!(classify(Channel::Agent, "https://krunk.invalid/agent.html", true), Err(ProtocolError::Forbidden));
+        for url in [agent, runner] {
+            assert_eq!(classify(Channel::Tab, url, true), Err(ProtocolError::Forbidden));
+            assert_eq!(classify(Channel::Shell, url, true), Err(ProtocolError::Forbidden));
+        }
+        assert_eq!(
+            classify(Channel::Tab, "https://krunk.invalid/scripts.html", true),
+            Ok(Source::Privileged(Sender::Page(Page::Scripts)))
+        );
+    }
+
+    /// An API key is parsed into a `Secret` and never shown by `Debug`.
+    #[test]
+    fn ai_key_is_secret() {
+        let env =
+            parse_request(Sender::Page(Page::Settings), r#"{"cmd":"aiKeySet","id":"0a1b2c3d","key":"sk-or-SECRET-1"}"#)
+                .unwrap();
+        assert!(!format!("{env:?}").contains("SECRET"));
+        let bad = parse_request(
+            Sender::Page(Page::Settings),
+            r#"{"cmd":"aiKeySet","id":"0a1b2c3d","key":"sk-or-SECRET-1",}"#,
+        );
+        assert!(matches!(&bad, Err(ProtocolError::Malformed(m)) if !m.contains("SECRET")));
+    }
+
+    #[test]
+    fn agent_events_shape() {
+        let step = StepView {
+            n: 2,
+            tool: "click".into(),
+            label: "Click #go".into(),
+            status: crate::agent::StepStatus::Ok,
+            summary: "clicked".into(),
+            detail: String::new(),
+            image: None,
+            ms: 12,
+        };
+        let j = Event::AgentStep { step }.to_json();
+        assert!(j.starts_with(r#"{"event":"agentStep","step":{"n":2,"tool":"click""#), "{j}");
+        let j = Event::AgentState { state: RunState::Stopped, steps: 3, ms: Some(40) }.to_json();
+        assert_eq!(j, r#"{"event":"agentState","state":"stopped","steps":3,"ms":40}"#);
+        let j = Event::AgentConsentAsk { ask: 1, category: Category::History, label: "your browsing history".into() }
+            .to_json();
+        assert!(j.contains(r#""category":"history""#), "{j}");
+        assert_eq!(Event::ScriptsChanged.to_json(), r#"{"event":"scriptsChanged"}"#);
+        let j = Event::AgentButton { visible: true, open: false }.to_json();
+        assert_eq!(j, r#"{"event":"agentButton","visible":true,"open":false}"#);
     }
 
     #[test]

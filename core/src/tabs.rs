@@ -596,6 +596,7 @@ fn page_title(p: Page) -> &'static str {
         Page::Sync => "Sync",
         Page::Source => "Page source",
         Page::Crashed => "Page stopped",
+        Page::Scripts => "Scripts and macros",
     }
 }
 

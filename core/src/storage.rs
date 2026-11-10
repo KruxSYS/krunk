@@ -16,7 +16,7 @@ pub const BOOKMARKS_BAR: i64 = 1;
 /// Id of the "Other bookmarks" root folder.
 pub const OTHER_BOOKMARKS: i64 = 2;
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 /// Fixed sync guids of the two root folders (PROTOCOL §9.5): "bar" and "other".
 pub const ROOT_GUID_BAR: [u8; 16] = [0x01; 16];
@@ -241,6 +241,16 @@ impl Store {
         Store::init(Connection::open_in_memory()?)
     }
 
+    /// A database migrated only up to schema version `max` (migration tests).
+    #[cfg(test)]
+    pub(crate) fn open_at_version(path: &Path, max: i64) -> DbResult<Store> {
+        let conn = Connection::open(path)?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+        let mut store = Store { conn };
+        store.migrate_to(max)?;
+        Ok(store)
+    }
+
     fn init(conn: Connection) -> DbResult<Store> {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
@@ -255,20 +265,25 @@ impl Store {
     }
 
     fn migrate(&mut self) -> DbResult<()> {
+        self.migrate_to(SCHEMA_VERSION)
+    }
+
+    /// Migrates up to schema version `max` (tests stop at an older version to fill it with data).
+    fn migrate_to(&mut self, max: i64) -> DbResult<()> {
         let version: i64 = self.conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version < 1 {
+        if version < 1 && max >= 1 {
             let tx = self.conn.transaction()?;
             tx.execute_batch(SCHEMA_V1)?;
             tx.pragma_update(None, "user_version", 1)?;
             tx.commit()?;
         }
-        if version < 2 {
+        if version < 2 && max >= 2 {
             let tx = self.conn.transaction()?;
             tx.execute_batch(SCHEMA_V2)?;
             tx.pragma_update(None, "user_version", 2)?;
             tx.commit()?;
         }
-        if version < 3 {
+        if version < 3 && max >= 3 {
             let tx = self.conn.transaction()?;
             tx.execute_batch(SCHEMA_V3)?;
             // Move an allowlist from an older settings record into the table.
@@ -287,23 +302,29 @@ impl Store {
             tx.pragma_update(None, "user_version", 3)?;
             tx.commit()?;
         }
-        if version < 4 {
+        if version < 4 && max >= 4 {
             let tx = self.conn.transaction()?;
             tx.execute_batch(SCHEMA_V4)?;
             tx.pragma_update(None, "user_version", 4)?;
             tx.commit()?;
         }
-        if version < 5 {
+        if version < 5 && max >= 5 {
             let tx = self.conn.transaction()?;
             tx.execute_batch(SCHEMA_V5)?;
             tx.pragma_update(None, "user_version", 5)?;
             tx.commit()?;
         }
-        if version < 6 {
+        if version < 6 && max >= 6 {
             let tx = self.conn.transaction()?;
             tx.execute_batch(SCHEMA_V6)?;
             tx.execute_batch(&sync_triggers())?;
-            tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+            tx.pragma_update(None, "user_version", 6)?;
+            tx.commit()?;
+        }
+        if version < 7 && max >= 7 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(crate::scripts_store::SCHEMA_V7)?;
+            tx.pragma_update(None, "user_version", 7)?;
             tx.commit()?;
         }
         Ok(())
@@ -609,7 +630,7 @@ mod tests {
             assert_eq!(v, 5, "the fixture is a 0.8.0 (v5) database");
         }
         let s = Store::open(&path).unwrap();
-        assert_eq!(count(&s, "PRAGMA user_version"), 6);
+        assert_eq!(count(&s, "PRAGMA user_version"), SCHEMA_VERSION);
         // Every row is still there.
         assert_eq!(count(&s, "SELECT count(*) FROM bookmarks"), 11);
         assert_eq!(count(&s, "SELECT count(*) FROM urls"), 3);

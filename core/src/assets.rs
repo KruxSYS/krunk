@@ -5,7 +5,7 @@
 //! is reachable: a tab can never load the shell document and vice versa.
 
 use crate::pages::{self, Page};
-use crate::protocol::{Channel, POPUP_PATH, SHELL_PATH};
+use crate::protocol::{Channel, AGENT_PATH, POPUP_PATH, RUNNER_PATH, SHELL_PATH};
 use url::Url;
 
 include!(concat!(env!("OUT_DIR"), "/ui_assets.rs"));
@@ -290,6 +290,9 @@ pub fn allow_navigation(
     match channel {
         Channel::Shell => target_origin == pages::SHELL_ORIGIN && target_url.path() == SHELL_PATH,
         Channel::Popup => target_origin == pages::SHELL_ORIGIN && target_url.path() == POPUP_PATH,
+        // 0.12.0: the agent panel and the macro runner stay on their own document.
+        Channel::Agent => target_origin == pages::SHELL_ORIGIN && target_url.path() == AGENT_PATH,
+        Channel::Runner => target_origin == pages::SHELL_ORIGIN && target_url.path() == RUNNER_PATH,
         // An extension's background or popup view stays on extension origins (its own: the
         // host's hook checks the id).
         Channel::Ext => crate::ext::id_of_url(target).is_some(),

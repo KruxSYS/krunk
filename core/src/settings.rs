@@ -449,6 +449,149 @@ pub struct Settings {
     pub devtools_size_right: f64,
     /// Height of DevTools docked at the bottom, DIP.
     pub devtools_size_bottom: f64,
+
+    // 0.12.0: the optional AI agent, userscripts and macros (all device-local, never synced).
+    pub ai: Ai,
+    pub userscripts: UserscriptsSettings,
+    pub macros: MacrosSettings,
+}
+
+/// The AI agent (0.12.0). Off by default: while off there is no toolbar button, no agent and
+/// no provider traffic. API keys are not here: they are DPAPI-protected in the database.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Ai {
+    pub enabled: bool,
+    pub providers: Vec<AiProvider>,
+    /// The id of the provider and the model the agent uses.
+    pub active_provider: String,
+    pub active_model: String,
+    /// Added to the system prompt.
+    pub system_prompt_extra: String,
+    /// Tool calls before the agent asks whether to continue.
+    pub max_steps: u32,
+    /// The agent panel's width (DIP), set by dragging its splitter.
+    pub panel_width: f64,
+}
+
+impl Default for Ai {
+    fn default() -> Self {
+        Ai {
+            enabled: false,
+            providers: Vec::new(),
+            active_provider: String::new(),
+            active_model: String::new(),
+            system_prompt_extra: String::new(),
+            max_steps: 30,
+            panel_width: crate::layout::PANEL_DEFAULT_DIP,
+        }
+    }
+}
+
+/// A configured model provider. Its key (if any) is stored separately under its `id`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiProvider {
+    /// 8 lower-case hex digits.
+    pub id: String,
+    pub kind: crate::agent::ProviderKind,
+    pub name: String,
+    /// Only `custom` uses its own; the named providers have a fixed one.
+    #[serde(default)]
+    pub base_url: String,
+    /// The user's answer to "does the model take images?"; `None` = what the model list says.
+    #[serde(default)]
+    pub vision: Option<bool>,
+}
+
+impl Ai {
+    pub fn provider(&self, id: &str) -> Option<&AiProvider> {
+        self.providers.iter().find(|p| p.id == id)
+    }
+}
+
+impl Ai {
+    /// Every problem, as (field, message).
+    pub fn problems(&self) -> Vec<(&'static str, String)> {
+        use crate::agent::ProviderKind;
+        let mut out = Vec::new();
+        let providers = || -> Result<(), String> {
+            if self.providers.len() > MAX_AI_PROVIDERS {
+                return Err(format!("At most {MAX_AI_PROVIDERS} providers"));
+            }
+            let mut ids = std::collections::HashSet::new();
+            for p in &self.providers {
+                if p.id.len() != 8 || !p.id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+                    return Err("A provider has an invalid id".into());
+                }
+                if !ids.insert(p.id.as_str()) {
+                    return Err("Two providers have the same id".into());
+                }
+                if p.name.trim().is_empty() || p.name.chars().count() > 60 || p.name.chars().any(char::is_control) {
+                    return Err("A provider name must be 1 to 60 characters".into());
+                }
+                match p.kind {
+                    ProviderKind::Custom => crate::agent::provider::check_base_url(p.kind, &p.base_url)?,
+                    _ => {
+                        if !p.base_url.is_empty() && p.base_url != p.kind.default_base_url() {
+                            return Err(format!("{} uses its own address", p.kind.label()));
+                        }
+                    }
+                }
+            }
+            if !self.active_provider.is_empty() && self.provider(&self.active_provider).is_none() {
+                return Err("The active provider does not exist".into());
+            }
+            Ok(())
+        };
+        if let Err(m) = providers() {
+            out.push(("ai.providers", m));
+        }
+        if self.active_model.chars().count() > 200 || self.active_model.chars().any(char::is_control) {
+            out.push(("ai.activeModel", "A model id is at most 200 printable characters".into()));
+        }
+        if self.system_prompt_extra.chars().count() > MAX_SYSTEM_PROMPT_EXTRA {
+            out.push(("ai.systemPromptExtra", format!("At most {MAX_SYSTEM_PROMPT_EXTRA} characters")));
+        }
+        if !MAX_STEPS_RANGE.contains(&self.max_steps) {
+            out.push(("ai.maxSteps", "Must be between 1 and 200".into()));
+        }
+        if !self.panel_width.is_finite() || !(100.0..=4000.0).contains(&self.panel_width) {
+            out.push(("ai.panelWidth", "Must be between 100 and 4000".into()));
+        }
+        out
+    }
+}
+
+/// Up to this many providers; prompt additions up to this long.
+pub const MAX_AI_PROVIDERS: usize = 16;
+pub const MAX_SYSTEM_PROMPT_EXTRA: usize = 4000;
+pub const MAX_STEPS_RANGE: std::ops::RangeInclusive<u32> = 1..=200;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct UserscriptsSettings {
+    pub enabled: bool,
+    /// Userscripts also run in private tabs.
+    pub private_tabs: bool,
+}
+
+impl Default for UserscriptsSettings {
+    fn default() -> Self {
+        UserscriptsSettings { enabled: true, private_tabs: false }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct MacrosSettings {
+    pub enabled: bool,
+}
+
+impl Default for MacrosSettings {
+    fn default() -> Self {
+        MacrosSettings { enabled: true }
+    }
 }
 
 /// DevTools sizes kept in settings are within this range (DIP).
@@ -510,6 +653,9 @@ impl Default for Settings {
             devtools_dock: DevToolsDock::Right,
             devtools_size_right: 480.0,
             devtools_size_bottom: 320.0,
+            ai: Ai::default(),
+            userscripts: UserscriptsSettings::default(),
+            macros: MacrosSettings::default(),
         }
     }
 }
@@ -789,6 +935,9 @@ impl Settings {
         if !(0.25..=5.0).contains(&self.default_zoom) || !self.default_zoom.is_finite() {
             err("defaultZoom", "Must be between 25% and 500%");
         }
+        for (field, message) in self.ai.problems() {
+            err(field, &message);
+        }
         if errs.is_empty() {
             Ok(())
         } else {
@@ -882,6 +1031,14 @@ impl Settings {
                     "proxy" => s.proxy.clear(),
                     "extraFlags" => s.extra_flags.clear(),
                     "defaultZoom" => s.default_zoom = d.default_zoom,
+                    "ai.providers" => {
+                        s.ai.providers.clear();
+                        s.ai.active_provider.clear();
+                    }
+                    "ai.systemPromptExtra" => s.ai.system_prompt_extra.clear(),
+                    "ai.maxSteps" => s.ai.max_steps = d.ai.max_steps,
+                    "ai.panelWidth" => s.ai.panel_width = d.ai.panel_width,
+                    "ai.activeModel" => s.ai.active_model.clear(),
                     _ => {}
                 }
             }
@@ -1483,6 +1640,46 @@ mod tests {
 
     /// The UI tests use `ui/dev/default-settings.json`; it must match the real
     /// defaults. Regenerate with `LB_UPDATE_FIXTURES=1 cargo test -p core`.
+    /// 0.12.0: AI is off by default with no providers; userscripts and macros are on.
+    #[test]
+    fn ai_defaults_and_validation() {
+        let d = Settings::default();
+        assert!(!d.ai.enabled && d.ai.providers.is_empty() && d.ai.max_steps == 30);
+        assert!(d.userscripts.enabled && !d.userscripts.private_tabs && d.macros.enabled);
+        let p = |id: &str, kind: crate::agent::ProviderKind, base: &str| AiProvider {
+            id: id.into(),
+            kind,
+            name: "P".into(),
+            base_url: base.into(),
+            vision: None,
+        };
+        let mut s = Settings::default();
+        s.ai.providers.push(p("0a1b2c3d", crate::agent::ProviderKind::OpenRouter, ""));
+        s.ai.active_provider = "0a1b2c3d".into();
+        assert!(s.validate().is_ok());
+        s.ai.providers.push(p("0a1b2c3d", crate::agent::ProviderKind::OpenAi, ""));
+        assert!(s.validate().unwrap_err().iter().any(|e| e.field == "ai.providers"));
+        s.ai.providers.pop();
+        s.ai.providers.push(p("ZZZ", crate::agent::ProviderKind::OpenAi, ""));
+        assert!(s.validate().is_err());
+        s.ai.providers.pop();
+        s.ai.providers.push(p("11111111", crate::agent::ProviderKind::OpenAi, "https://evil.example/v1"));
+        assert!(s.validate().is_err(), "named providers keep their own address");
+        s.ai.providers.pop();
+        s.ai.max_steps = 0;
+        assert!(s.validate().unwrap_err().iter().any(|e| e.field == "ai.maxSteps"));
+        s.ai.max_steps = 30;
+        s.ai.active_provider = "99999999".into();
+        assert!(s.validate().is_err());
+        // A bad AI section loads leniently: the providers are dropped, nothing else.
+        let mut j: serde_json::Value = serde_json::to_value(Settings::default()).unwrap();
+        j["ai"]["providers"] = serde_json::json!([{"id":"x","kind":"openai","name":"n"}]);
+        j["ai"]["maxSteps"] = serde_json::json!(5000);
+        j["homepage"] = serde_json::json!("https://keep.example/");
+        let l = Settings::from_json_lenient(&j.to_string());
+        assert!(l.ai.providers.is_empty() && l.ai.max_steps == 30 && l.homepage == "https://keep.example/");
+    }
+
     #[test]
     fn ui_default_settings_fixture_is_current() {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../ui/dev/default-settings.json");

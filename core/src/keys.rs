@@ -54,11 +54,17 @@ pub enum Command {
     PictureInPicture,
     /// Ctrl+U: the page's source in Krunk's viewer (0.11.0).
     ViewSource,
+    /// Ctrl+Shift+Space: show or hide the AI agent panel (0.12.0; only while AI is on, else the
+    /// key goes to the page).
+    ToggleAgent,
+    /// Ctrl+Shift+.: stop the running macro (0.12.0).
+    StopMacros,
 }
 
 /// Virtual-key codes (winuser.h).
 pub mod vk {
     pub const TAB: u32 = 0x09;
+    pub const SPACE: u32 = 0x20;
     pub const ESCAPE: u32 = 0x1B;
     pub const HOME: u32 = 0x24;
     pub const LEFT: u32 = 0x25;
@@ -82,6 +88,7 @@ pub mod vk {
     pub const BROWSER_HOME: u32 = 0xAC;
     pub const OEM_PLUS: u32 = 0xBB;
     pub const OEM_MINUS: u32 = 0xBD;
+    pub const OEM_PERIOD: u32 = 0xBE;
 
     pub const fn letter(c: char) -> u32 {
         c as u32
@@ -105,6 +112,8 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Developer tools", "F12"),
     ("Full screen", "F11"),
     ("Picture-in-Picture", "Alt+P"),
+    ("AI agent panel", "Ctrl+Shift+Space"),
+    ("Stop macros", "Ctrl+Shift+."),
 ];
 
 /// Maps a key press to a command. `vk` is the virtual-key code; letters
@@ -162,6 +171,8 @@ pub fn command_for(vk: u32, ctrl: bool, shift: bool, alt: bool) -> Option<Comman
         (false, true, false, vk::ESCAPE) => TaskManager,
         (true, true, false, k) if k == vk::letter('I') => DevTools,
         (true, true, false, k) if k == vk::letter('C') => InspectElement,
+        (true, true, false, vk::SPACE) => ToggleAgent,
+        (true, true, false, vk::OEM_PERIOD) => StopMacros,
         _ => return None,
     };
     Some(cmd)
@@ -213,6 +224,8 @@ mod tests {
                 "F12" => vk::F12,
                 "F11" => vk::F11,
                 "0" => vk::KEY_0,
+                "Space" => vk::SPACE,
+                "." => vk::OEM_PERIOD,
                 _ => return None,
             };
             command_for(vk, ctrl, shift, alt)
@@ -224,6 +237,11 @@ mod tests {
             assert!(parse(keys).is_some(), "{label}: {keys}");
         }
         assert_eq!(parse("Shift+Esc"), Some(Command::TaskManager));
+        assert_eq!(parse("Ctrl+Shift+Space"), Some(Command::ToggleAgent));
+        assert_eq!(parse("Ctrl+Shift+."), Some(Command::StopMacros));
+        // Free before 0.12.0: nothing else uses them, and DevTools keeps neither.
+        assert!(!devtools_keeps(vk::SPACE, true, true, false) && !devtools_keeps(vk::OEM_PERIOD, true, true, false));
+        assert_eq!(command_for(vk::SPACE, false, false, true), None, "Alt+Space stays the system menu");
     }
     use super::Command::*;
     use super::*;

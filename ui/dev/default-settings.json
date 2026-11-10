@@ -116,5 +116,21 @@
   "checkUpdatesAutomatically": true,
   "devtoolsDock": "right",
   "devtoolsSizeRight": 480.0,
-  "devtoolsSizeBottom": 320.0
+  "devtoolsSizeBottom": 320.0,
+  "ai": {
+    "enabled": false,
+    "providers": [],
+    "activeProvider": "",
+    "activeModel": "",
+    "systemPromptExtra": "",
+    "maxSteps": 30,
+    "panelWidth": 380.0
+  },
+  "userscripts": {
+    "enabled": true,
+    "privateTabs": false
+  },
+  "macros": {
+    "enabled": true
+  }
 }

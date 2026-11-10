@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 pub mod account;
+pub mod agent;
 pub mod assets;
 pub mod blocker;
 pub mod blocklog;
@@ -26,6 +27,7 @@ pub mod import;
 pub mod integrity;
 pub mod keys;
 pub mod layout;
+pub mod macros;
 pub mod mailto;
 pub mod memory;
 pub mod migrate;
@@ -42,6 +44,7 @@ pub mod protection;
 pub mod protocol;
 pub mod recovery;
 pub mod reveal;
+pub mod scripts_store;
 pub mod scroll_lock;
 pub mod secret;
 pub mod segdl;
@@ -54,6 +57,7 @@ pub mod toggle;
 pub mod update;
 pub mod urlclean;
 pub mod useragents;
+pub mod userscripts;
 pub mod vault;
 pub mod windows;
 pub mod workerfix;
