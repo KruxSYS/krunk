@@ -72,6 +72,59 @@
   // Request handlers: host.handlers[cmd] = function (msg) { return data; }.
   // Requests with a reqId get a reply (ok + data, or the thrown error).
   host.handlers = {};
+
+  // 0.15.0: the downloads list as the host keeps it (core/src/downloads.rs): `queryDownloads`
+  // pages newest first by search text and filter, with counts; `clearDownloads` and the
+  // `remove` action change it. `list` is the items, or how many realistic ones to make.
+  // host.dl.queries counts the requests (the page must fetch pages, not everything).
+  host.mockDownloads = function (list, now) {
+    now = now || Date.now();
+    if (typeof list === 'number') {
+      const names = ['report.pdf', 'setup-x64.msi', 'photos.zip', 'talk.mp4', 'song.mp3', 'data.csv', 'ubuntu.iso', 'notes.txt', 'logo.png', 'app.js'];
+      const sites = ['github.com', 'releases.example.org', 'cdn.example.net', 'arxiv.org', 'files.example.com', 'drive.example.io'];
+      const n = list;
+      list = [];
+      for (let k = 0; k < n; k++) {
+        const name = names[k % names.length].replace('.', '-' + (n - k) + '.');
+        const site = sites[k % sites.length];
+        // Three a day or so, newest first; every 13th failed, every 29th cancelled.
+        const started = now - Math.floor(k * 8.3 * 3600000 / 3) - 60000;
+        const state = k % 29 === 0 ? 'cancelled' : k % 13 === 0 ? 'interrupted' : 'completed';
+        const size = 1000 + ((k * 7919) % 900) * 1048576 / 8;
+        list.push({ id: n - k, url: 'https://' + site + '/dl/' + name, fileName: name, path: 'C:\\Users\\me\\Downloads\\' + name,
+          state: state, received: state === 'completed' ? size : Math.floor(size / 3), total: size, started: started,
+          finished: started + 30000, reason: state === 'interrupted' ? 'Network error' : null, pageUrl: 'https://' + site + '/releases', private: false });
+      }
+    }
+    const dl = { items: list.slice(), queries: 0 };
+    host.dl = dl;
+    const order = function (a, b) { return b.started - a.started || b.id - a.id; };
+    const running = function (s) { return s === 'inProgress' || s === 'paused'; };
+    const pass = { all: function () { return true; }, active: running, done: function (s) { return s === 'completed'; },
+      failed: function (s) { return s === 'interrupted' || s === 'cancelled'; } };
+    host.handlers.queryDownloads = function (m) {
+      dl.queries++;
+      const text = (m.text || '').toLowerCase();
+      const hits = dl.items.filter(function (d) { return (d.fileName + '\n' + d.url).toLowerCase().indexOf(text) >= 0; }).sort(order);
+      const shown = hits.filter(function (d) { return pass[m.filter || 'all'](d.state); });
+      const out = { offset: m.offset || 0, items: shown.slice(m.offset || 0, (m.offset || 0) + Math.min(m.limit || 100, 500)) };
+      if (m.counts) {
+        const count = function (f) { return hits.filter(function (d) { return pass[f](d.state); }).length; };
+        out.counts = { all: hits.length, active: count('active'), done: count('done'), failed: count('failed'), filtered: shown.length,
+          since: (m.since || []).map(function (t) { return shown.filter(function (d) { return d.started >= t; }).length; }) };
+      }
+      return out;
+    };
+    host.handlers.clearDownloads = function () {
+      dl.items = dl.items.filter(function (d) { return running(d.state); });
+      return null;
+    };
+    host.handlers.downloadAction = function (m) {
+      if (m.action === 'remove') dl.items = dl.items.filter(function (d) { return d.id !== m.id; });
+      return null;
+    };
+    return dl;
+  };
   function answer(msg) {
     if (msg.reqId === undefined) return;
     const h = host.handlers[msg.cmd];

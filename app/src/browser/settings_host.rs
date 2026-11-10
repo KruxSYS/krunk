@@ -249,6 +249,10 @@ impl Browser {
         if old.vpn != new.vpn {
             self.vpn_settings_changed(old.vpn.allow_local_network != new.vpn.allow_local_network);
         }
+        // 0.15.0: finished downloads older than the new limit leave the list at once.
+        if old.download_auto_clear_days != new.download_auto_clear_days {
+            self.downloads_auto_clear();
+        }
         if old.tab_sleep_minutes != new.tab_sleep_minutes
             || old.tab_discard_enabled != new.tab_discard_enabled
             || old.tab_discard_minutes != new.tab_discard_minutes

@@ -1,10 +1,12 @@
 //! Downloads: the engine's download events, the downloads page and actions.
 
-use super::{Browser, DOWNLOADS_KEY};
+use super::Browser;
 use crate::ffi::cef::{DownloadStart, DownloadStatus, DownloadUpdate, View};
 use crate::ffi::dialogs;
 use crate::log::{info, warning};
-use lb_core::downloads::{interrupt_reason_text, sanitize_file_name, unique_path, DownloadState};
+use lb_core::downloads::{
+    interrupt_reason_text, sanitize_file_name, unique_path, DownloadItem, DownloadPage, DownloadQuery, DownloadState,
+};
 use lb_core::pages::Page;
 use lb_core::protocol::{DownloadAction, Event, PopupContent, PopupKind, Request};
 use lb_core::storage::now_ms;
@@ -16,8 +18,10 @@ use std::rc::Rc;
 /// Minimum time between progress pushes to the downloads page.
 const PROGRESS_PUSH_MS: i64 = 400;
 
-/// Rows the downloads popup shows (the page shows everything).
-const DOWNLOADS_POPUP_MAX: usize = 8;
+/// Rows the downloads popup shows (the page shows everything, in pages).
+const DOWNLOADS_POPUP_MAX: u32 = 8;
+/// What `GetDownloads` returns at most (0.15.0; the page uses `QueryDownloads`).
+const GET_DOWNLOADS_MAX: u32 = 200;
 /// The engine restarts the downloads of the last session within this long after the start.
 const ENGINE_RESTART_GRACE_MS: i64 = 20_000;
 
@@ -231,11 +235,61 @@ impl Browser {
 
     /// The downloads button's popup: the list, newest first.
     pub(super) fn downloads_content(&self) -> PopupContent {
-        // `items()` is newest first already (0.11.5: a second reverse put the oldest on top and
-        // kept the oldest when cut).
-        let mut items = self.downloads.borrow().items();
-        items.truncate(DOWNLOADS_POPUP_MAX);
-        PopupContent::Downloads { items }
+        PopupContent::Downloads { items: self.recent_downloads(DOWNLOADS_POPUP_MAX) }
+    }
+
+    /// The newest `limit` downloads (the popup, the agent).
+    pub(super) fn recent_downloads(&self, limit: u32) -> Vec<DownloadItem> {
+        self.query_downloads(&DownloadQuery { limit, ..Default::default() }).items
+    }
+
+    /// A page of the list (0.15.0): the table merged with what is in memory.
+    fn query_downloads(&self, q: &DownloadQuery) -> DownloadPage {
+        let d = self.downloads.borrow();
+        let page = match self.store.try_borrow() {
+            Ok(store) => store.downloads_query(&d, q).map_err(|e| e.to_string()),
+            Err(e) => Err(e.to_string()),
+        };
+        page.unwrap_or_else(|e| {
+            warning!("downloads query: {e}");
+            DownloadPage { offset: q.offset, ..Default::default() }
+        })
+    }
+
+    /// Download `id`, from memory or the table.
+    fn download_item(&self, id: u32) -> Option<DownloadItem> {
+        let d = self.downloads.borrow();
+        self.store.try_borrow().ok().and_then(|s| s.download_get(&d, id).ok().flatten())
+    }
+
+    /// The list at start (0.15.0: from the table, storage V9): finished downloads older than
+    /// Settings → Downloads' limit go; running ones were stopped by the close.
+    pub(super) fn load_downloads(&self) {
+        let days = self.settings.borrow().download_auto_clear_days;
+        let loaded = self.store.borrow().downloads_load(now_ms(), days);
+        match loaded {
+            Ok(d) => *self.downloads.borrow_mut() = d,
+            Err(e) => warning!("loading downloads: {e}"),
+        }
+        *self.stopped_by_close.borrow_mut() = (now_ms(), self.downloads.borrow().stopped_by_close());
+        self.remove_leftover_parts();
+        self.save_downloads();
+    }
+
+    /// Settings → Downloads' "Remove finished downloads from the list" changed (0.15.0): the
+    /// ones older than the new limit go at once.
+    pub(super) fn downloads_auto_clear(&self) {
+        let days = self.settings.borrow().download_auto_clear_days;
+        let cleared = self.store.borrow().downloads_clear_older(now_ms(), days);
+        match cleared {
+            Ok(0) => {}
+            Ok(n) => {
+                info!("downloads: {n} finished entries older than {days} days removed from the list");
+                self.downloads.borrow_mut().mark_list_changed();
+                self.push_downloads();
+            }
+            Err(e) => warning!("downloads auto-clear: {e}"),
+        }
     }
 
     /// The engine's download is not wanted (Krunk fetches it in parts, or the save dialog was
@@ -328,8 +382,12 @@ impl Browser {
     pub(super) fn dispatch_downloads(&self, tab: Option<TabId>, req_id: Option<u32>, request: Request) {
         match request {
             Request::GetDownloads => {
-                let items = self.downloads.borrow().items();
+                let items = self.recent_downloads(GET_DOWNLOADS_MAX);
                 self.reply(tab, Event::ok(req_id, items));
+            }
+            Request::QueryDownloads { text, filter, offset, limit, counts, since } => {
+                let page = self.query_downloads(&DownloadQuery { text, filter, offset, limit, counts, since });
+                self.reply(tab, Event::ok(req_id, page));
             }
             Request::ClearDownloads => {
                 self.downloads.borrow_mut().clear_finished();
@@ -338,7 +396,7 @@ impl Browser {
                 self.push_downloads();
             }
             Request::DownloadAction { id, action } => {
-                let item = self.downloads.borrow().get(id).cloned();
+                let item = self.download_item(id);
                 let Some(item) = item else {
                     self.reply(tab, Event::err(req_id, "Download not found"));
                     return;
@@ -439,26 +497,38 @@ impl Browser {
         }
     }
 
+    /// Writes what changed in the list to the table (0.15.0: rows of new and changed downloads;
+    /// never progress alone).
     pub(super) fn save_downloads(&self) {
-        let json = self.downloads.borrow().to_json();
         if let Ok(store) = self.store.try_borrow() {
-            if let Err(e) = store.kv_set(DOWNLOADS_KEY, &json) {
+            if let Err(e) = store.downloads_save(&mut self.downloads.borrow_mut()) {
                 warning!("saving downloads: {e}");
             }
         }
     }
 
-    /// Sends the list to every tab showing the downloads page, and the
-    /// active count to the shell.
+    /// Tells every tab showing the downloads page what changed (0.15.0: the running downloads
+    /// that moved, and a signal when the list itself changed, so the page fetches the rows it
+    /// shows again), refreshes the button's popup, and sends the active count to the shell.
     pub(super) fn push_downloads(&self) {
-        let (items, active) = {
-            let d = self.downloads.borrow();
-            (d.items(), d.active_count())
+        let (moved, changed, active) = {
+            let mut d = self.downloads.borrow_mut();
+            (d.take_moved(), d.take_list_changed(), d.active_count())
         };
-        let event = Event::Downloads { items }.to_json();
-        // The button's popup, if open, shows the same list.
+        // The button's popup, if open, shows the newest ones.
         if self.popup_kind() == Some(PopupKind::Downloads) {
             self.show_popup(self.downloads_content(), None);
+        }
+        let mut events = Vec::new();
+        if !moved.is_empty() {
+            events.push(Event::Downloads { items: moved }.to_json());
+        }
+        if changed {
+            events.push(Event::DownloadsChanged { active }.to_json());
+        }
+        if events.is_empty() {
+            self.post_shell(&Event::DownloadsChanged { active });
+            return;
         }
         let tabs: Vec<TabId> = self
             .ws
@@ -469,7 +539,9 @@ impl Browser {
             .collect();
         for id in tabs {
             if let Some(c) = self.tab_view(id) {
-                c.post_json(&event);
+                for event in &events {
+                    c.post_json(event);
+                }
             }
         }
         self.post_shell(&Event::DownloadsChanged { active });
