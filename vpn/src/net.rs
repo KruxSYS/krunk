@@ -27,8 +27,10 @@ const TCP_RX: usize = 256 * 1024;
 const TCP_TX: usize = 128 * 1024;
 /// The most TCP connections open at once (Chromium uses at most 32 per proxy).
 pub const MAX_TCP: usize = 256;
-/// Incoming packets waiting for the stack; more are dropped (TCP retransmits).
+/// Incoming packets waiting for the stack, by count and by bytes; more are dropped (TCP
+/// retransmits).
 const RX_QUEUE: usize = 4096;
+const RX_QUEUE_BYTES: usize = 16 * 1024 * 1024;
 /// A TCP connection that gets no ACK for this long is aborted.
 const TCP_TIMEOUT: Duration = Duration::from_secs(60);
 /// A closed connection that never finishes its FIN handshake is aborted after this long.
@@ -41,8 +43,22 @@ pub trait PacketSink: Send + Sync {
 
 struct QueueDevice {
     rx: VecDeque<Vec<u8>>,
+    /// The bytes in `rx`.
+    rx_queued: usize,
     tx: Vec<Vec<u8>>,
     mtu: usize,
+}
+
+impl QueueDevice {
+    /// Queues an incoming packet unless the queue is full (by count or by bytes).
+    fn push_rx(&mut self, packet: &[u8]) -> bool {
+        if self.rx.len() >= RX_QUEUE || self.rx_queued + packet.len() > RX_QUEUE_BYTES {
+            return false;
+        }
+        self.rx_queued += packet.len();
+        self.rx.push_back(packet.to_vec());
+        true
+    }
 }
 
 struct Rx(Vec<u8>);
@@ -68,6 +84,7 @@ impl Device for QueueDevice {
     type TxToken<'a> = Tx<'a>;
     fn receive(&mut self, _: SmolInstant) -> Option<(Rx, Tx<'_>)> {
         let p = self.rx.pop_front()?;
+        self.rx_queued -= p.len();
         Some((Rx(p), Tx(&mut self.tx)))
     }
     fn transmit(&mut self, _: SmolInstant) -> Option<Tx<'_>> {
@@ -128,7 +145,7 @@ impl Netstack {
     /// A stack with no address yet; its poll task runs on the current tokio runtime until
     /// [`Netstack::close`].
     pub fn new() -> Netstack {
-        let mut dev = QueueDevice { rx: VecDeque::new(), tx: Vec::new(), mtu: 1420 };
+        let mut dev = QueueDevice { rx: VecDeque::new(), rx_queued: 0, tx: Vec::new(), mtu: 1420 };
         let mut cfg = Config::new(HardwareAddress::Ip);
         cfg.random_seed = u64::from_le_bytes(crate::random::<8>());
         let start = Instant::now();
@@ -214,9 +231,7 @@ impl Netstack {
         }
         self.inner.rx_bytes.fetch_add(packet.len() as u64, Ordering::Relaxed);
         let mut st = lock(&self.inner.stack);
-        if st.dev.rx.len() < RX_QUEUE {
-            st.dev.rx.push_back(packet.to_vec());
-        }
+        st.dev.push_rx(packet);
         drop(st);
         self.inner.wake.notify_one();
     }
@@ -429,7 +444,12 @@ impl AsyncRead for TcpStream {
             return Poll::Ready(Ok(()));
         }
         if !s.may_recv() {
-            return Poll::Ready(Ok(()));
+            // The peer's FIN is a clean end; a reset, a timeout or an abort (the tunnel went
+            // away) is not, so a cut-off response is never taken for a complete one.
+            return Poll::Ready(match s.recv_slice(&mut []) {
+                Err(tcp::RecvError::Finished) => Ok(()),
+                _ => Err(io::Error::new(io::ErrorKind::ConnectionReset, "the connection was reset")),
+            });
         }
         s.register_recv_waker(cx.waker());
         Poll::Pending
@@ -598,5 +618,109 @@ mod tests {
         assert_eq!(a.addresses()[0].to_string(), "10.0.0.9/32");
         a.close();
         b.close();
+    }
+
+    /// A listening socket on `b`, port `port`, as a stream once a client is in.
+    fn listen(b: &Netstack, port: u16) -> TcpStream {
+        let mut st = lock(&b.inner.stack);
+        let mut s = tcp::Socket::new(tcp::SocketBuffer::new(vec![0; 65536]), tcp::SocketBuffer::new(vec![0; 65536]));
+        s.listen(port).unwrap();
+        let h = st.sockets.add(s);
+        b.inner.tcp_open.fetch_add(1, Ordering::Relaxed);
+        TcpStream { inner: b.inner.clone(), handle: h, closed: false }
+    }
+
+    async fn accepted(s: &TcpStream) {
+        poll_fn(|cx| {
+            let mut st = lock(&s.inner.stack);
+            let sock = st.sockets.get_mut::<tcp::Socket>(s.handle);
+            if sock.state() == tcp::State::Established {
+                return Poll::Ready(());
+            }
+            sock.register_recv_waker(cx.waker());
+            Poll::Pending
+        })
+        .await;
+    }
+
+    /// A reset (the peer's RST, or the stack aborting the connection) is an error for the
+    /// reader, never a clean end of the stream.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_reset_is_not_a_clean_end() {
+        let a = Netstack::new();
+        let b = Netstack::new();
+        a.configure(vec![IpNet::parse("10.0.0.1/24").unwrap()], 1400);
+        b.configure(vec![IpNet::parse("10.0.0.2/24").unwrap()], 1400);
+        a.set_sink(Some(Arc::new(Wire(b.clone()))));
+        b.set_sink(Some(Arc::new(Wire(a.clone()))));
+
+        // The server writes a little and then aborts (RST).
+        let server = listen(&b, 8080);
+        let task = tokio::spawn(async move {
+            let mut server = server;
+            accepted(&server).await;
+            server.write_all(b"partial").await.unwrap();
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            drop(server); // not shut down: abort
+        });
+        let mut c = a.tcp_connect("10.0.0.2:8080".parse().unwrap(), Duration::from_secs(5)).await.unwrap();
+        let mut got = Vec::new();
+        let e = tokio::time::timeout(Duration::from_secs(5), c.read_to_end(&mut got)).await.unwrap().unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::ConnectionReset);
+        assert_eq!(got, b"partial");
+        task.await.unwrap();
+
+        // The server ends cleanly (FIN): a clean end.
+        let server = listen(&b, 8081);
+        let task = tokio::spawn(async move {
+            let mut server = server;
+            accepted(&server).await;
+            server.write_all(b"whole").await.unwrap();
+            server.shutdown().await.unwrap();
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        });
+        let mut c = a.tcp_connect("10.0.0.2:8081".parse().unwrap(), Duration::from_secs(5)).await.unwrap();
+        let mut got = Vec::new();
+        c.read_to_end(&mut got).await.unwrap();
+        assert_eq!(got, b"whole");
+        task.await.unwrap();
+
+        // The tunnel goes away (the stack aborts everything): a reset too.
+        let server = listen(&b, 8082);
+        let task = tokio::spawn(async move {
+            let s = server;
+            accepted(&s).await;
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        });
+        let mut c = a.tcp_connect("10.0.0.2:8082".parse().unwrap(), Duration::from_secs(5)).await.unwrap();
+        abort_all(&mut lock(&a.inner.stack));
+        let mut buf = [0u8; 8];
+        let e = c.read(&mut buf).await.unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::ConnectionReset);
+        task.abort();
+        a.close();
+        b.close();
+    }
+
+    #[test]
+    fn the_queue_is_capped_in_bytes_too() {
+        let mut d = QueueDevice { rx: VecDeque::new(), rx_queued: 0, tx: Vec::new(), mtu: 1420 };
+        let big = vec![0u8; 65535];
+        let mut n = 0;
+        while d.push_rx(&big) {
+            n += 1;
+        }
+        assert_eq!(n, RX_QUEUE_BYTES / 65535);
+        assert!(d.rx_queued <= RX_QUEUE_BYTES);
+        // Small packets still fit until the count cap.
+        assert!(d.push_rx(&[1, 2, 3]));
+        let _ = d.receive(SmolInstant::from_millis(0));
+        assert_eq!(d.rx_queued, (n - 1) * 65535 + 3);
+        let mut small = QueueDevice { rx: VecDeque::new(), rx_queued: 0, tx: Vec::new(), mtu: 1420 };
+        let mut m = 0;
+        while small.push_rx(&[0u8; 20]) {
+            m += 1;
+        }
+        assert_eq!(m, RX_QUEUE);
     }
 }

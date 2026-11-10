@@ -265,6 +265,37 @@ The full treatment is in `docs/sync/THREAT_MODEL.md` (attacker 11) and `PROTOCOL
   the migrated database. From 0.13.0 on, the api ignores unknown applied migrations, so later
   migrations stay rollback-safe (PLAN §4.9).
 
+## In-browser VPN (0.14.0)
+The design is in README, "VPN (0.14.0)", and `vpn/README.md`. What matters for security:
+- **Scope:** only Krunk's own traffic. There is no adapter, route, driver or service, so the
+  VPN can't change what other programs do, and a bug in it can't affect the system's networking.
+- **Fail-closed:** while the VPN is on, the engine's proxy and Krunk's WinHTTP requests point at
+  the local proxy, which answers "VPN not connected" (503) whenever the tunnel is down and refuses
+  destinations outside the profile's routes (502). Nothing is sent direct as a fallback. At start
+  with "Connect when Krunk starts", the proxy is in place before the first page or job; if it
+  can't be, Krunk opens no tabs. Connections opened before Connect are closed, so they can't stay
+  direct. The proxy-related Chromium switches (`--no-proxy-server`, `--proxy-pac-url`,
+  `--proxy-auto-detect`, `--force-webrtc-ip-handling-policy` …) are refused in Advanced, since
+  they would override the setting.
+- **Leaks closed:** names are resolved inside the tunnel, never by Windows (the custom-DNS stub
+  answers nothing and the engine's secure DNS is off while the VPN runs). WebRTC is limited to
+  proxied UDP, i.e. none. QUIC can't use an HTTP proxy, so the engine uses TCP.
+- **Who may use the proxy:** it listens on 127.0.0.1 only, with the port held exclusively. A
+  connection is accepted only when Windows' TCP table shows its other end belongs to Krunk's own
+  process or an engine process started from Krunk's executable; programs that Krunk starts (an
+  opened download, a mail program) and any other local program are refused. A same-user program
+  that inspects Krunk's memory is out of scope, as for the vault.
+- **Profiles:** DPAPI-encrypted for the Windows user (own entropy), decrypted only to connect,
+  kept in zeroizing memory; never logged, synced or sent to a page. Scripts in profiles never
+  run. The OpenVPN server certificate's purpose is enforced (`remote-cert-tls server` becomes
+  `remote-cert-eku "TLS Web Server Authentication"`, since OpenVPN 3 Core 3.11.7 ignores the
+  former); a refused certificate or password stops the VPN.
+- **Supply chain:** OpenVPN 3 Core comes through the `openvpn-connect` crates (one maintainer),
+  vendored and pinned (`vendor/README.md`: checksums, patches, how to diff against upstream);
+  its TLS and crypto run on rustls and RustCrypto, not OpenSSL.
+- **Not covered:** traffic of other programs (by design); a VPN provider who logs; WebRTC calls
+  need a TCP relay; long-lived WebRTC connections opened before Connect are not migrated.
+
 ## Password vault: design and threat model
 
 ### Assets

@@ -37,11 +37,14 @@ fn main() {
         Err(e) => fail(&format!("import failed: {e}")),
     };
     println!("profile: {}", serde_json::to_string(&info).unwrap_or_default());
-    let creds = user.map(|u| Credentials { username: u, password: Zeroizing::new(pass.take().unwrap_or_default()) });
+    let creds = user.map(|u| Credentials {
+        username: Zeroizing::new(u),
+        password: Zeroizing::new(pass.take().unwrap_or_default()),
+    });
     let vpn = match Vpn::start(
         profile,
         creds,
-        Box::new(|_| true),
+        Box::new(|_, _| true),
         Box::new(|s| println!("status: {}", serde_json::to_string(s).unwrap_or_default())),
     ) {
         Ok(v) => v,

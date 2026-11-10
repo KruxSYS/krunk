@@ -14,7 +14,6 @@ use lb_core::account::{self as acct, AccountFile, Answer, CardState, Failure, Li
 use lb_core::pages::Page;
 use lb_core::protocol::Event;
 use lb_core::secret::Secret;
-use lb_core::settings::UpdaterProxy;
 use lb_core::storage::now_ms;
 use lb_core::tabs::TabId;
 use lb_core::vault::KeyWrapper;
@@ -101,11 +100,7 @@ fn wrap(token: &Secret) -> Result<Vec<u8>, String> {
 
 impl Browser {
     fn account_proxy(&self) -> Option<ProxyMode> {
-        match self.own_proxy() {
-            UpdaterProxy::Skip => None,
-            UpdaterProxy::Named(p) => Some(ProxyMode::Named(p)),
-            UpdaterProxy::System => Some(ProxyMode::System),
-        }
+        self.own_route()
     }
 
     /// The stage, read from `account.json` the first time (no network).

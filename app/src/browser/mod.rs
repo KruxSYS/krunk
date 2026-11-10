@@ -525,12 +525,14 @@ impl Browser {
         let app = Window::create_app(Rc::new(AppEvents(browser.me.clone())))?;
         let _ = browser.app.set(app);
         browser.net.set_notifier(app.notifier());
+        // 0.14.0: a VPN that connects at start is the engine's proxy before any page loads and
+        // the route of Krunk's own requests before any of them starts (the filter lists,
+        // extensions, DNS, updates, sync and the integrity check all come after this).
+        let online = browser.init_vpn();
         browser.init_filters();
         browser.init_extensions();
         browser.start_bounce_timer();
         browser.apply_dns();
-        // 0.14.0: a VPN that connects at start is the engine's proxy before any page loads.
-        browser.init_vpn();
         browser.init_vault();
         engine::set_internal_server(browser.server());
         let weak = browser.me.clone();
@@ -547,7 +549,11 @@ impl Browser {
         // hidden: creating its browser later would take the keyboard focus
         // from the page once (a game would see the window lose focus).
         browser.create_popup(window, PopupSlot::Main);
-        browser.restore_or_open_start(launch);
+        if online {
+            browser.restore_or_open_start(launch);
+        } else {
+            browser.open_offline_start(launch.len());
+        }
         if browser.frames.borrow().is_empty() {
             return Err("Cannot create the browser window".into());
         }
@@ -897,6 +903,25 @@ impl Browser {
             self.new_tab(Some(&url), false);
         }
         // The window used last was restored last; make sure it is in front.
+        if let Some(f) = self.cur() {
+            f.window.bring_to_front();
+        }
+    }
+
+    /// 0.14.0: the VPN should connect at start and not even its stand-in could be put in
+    /// place: no tab is restored or opened, only Settings → VPN, which says why and how to go
+    /// on (Krunk stays offline until the VPN connects or auto-connect is turned off). The saved
+    /// session is kept for the next start.
+    fn open_offline_start(&self, dropped_launch_urls: usize) {
+        if let Ok(Some(json)) = self.store.borrow().kv_get(DOWNLOADS_KEY) {
+            *self.downloads.borrow_mut() = Downloads::from_json(&json);
+        }
+        if dropped_launch_urls > 0 {
+            warning!("{dropped_launch_urls} address(es) from the command line not opened: the VPN couldn't start");
+        }
+        let url = Page::Settings.url_with_section(Some("vpn"));
+        let ops = self.ws.borrow_mut().open_window(&url, false, None, false, now_ms()).2;
+        self.apply(ops);
         if let Some(f) = self.cur() {
             f.window.bring_to_front();
         }
@@ -1976,7 +2001,7 @@ impl Browser {
 
     /// Saves every window's tabs and place (session v2).
     fn save_session(&self) {
-        if self.session_final.get() {
+        if self.session_final.get() || self.vpn_holds_session() {
             return;
         }
         let frames = self.all_frames();

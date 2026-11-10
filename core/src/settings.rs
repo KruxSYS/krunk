@@ -700,6 +700,14 @@ const FORBIDDEN_FLAGS: &[&str] = &[
     "--ignore-certificate-errors-spki-list",
     "--unsafely-treat-insecure-origin-as-secure",
     "--proxy-server",
+    // 0.14.0: these change how (or whether) the engine uses a proxy, so the VPN's proxy could
+    // be bypassed or replaced; WebRTC's policy is the VPN's to set.
+    "--no-proxy-server",
+    "--proxy-pac-url",
+    "--proxy-auto-detect",
+    "--proxy-bypass-list",
+    "--winhttp-proxy-resolver",
+    "--force-webrtc-ip-handling-policy",
     "--user-agent",
     "--single-process",
     "--disable-gpu-sandbox",
@@ -1163,6 +1171,9 @@ pub enum UpdaterProxy {
     System,
     /// Use this `host:port` HTTP proxy.
     Named(String),
+    /// The VPN's local proxy (`127.0.0.1:<port>`, 0.14.0): like `Named`, but nothing bypasses
+    /// it (no `<local>` list).
+    Vpn(String),
     /// Don't download: the browser goes through a SOCKS proxy, which the
     /// updater (WinHTTP) cannot use, and bypassing it would leak the user's IP.
     Skip,
@@ -1184,7 +1195,7 @@ pub fn updater_proxy(proxy: &str) -> UpdaterProxy {
 /// the VPN's local proxy (`host:port`) while it runs (0.14.0), else as the proxy setting says.
 pub fn krunk_proxy(proxy: &str, vpn: Option<&str>) -> UpdaterProxy {
     match vpn {
-        Some(addr) => UpdaterProxy::Named(addr.to_string()),
+        Some(addr) => UpdaterProxy::Vpn(addr.to_string()),
         None => updater_proxy(proxy),
     }
 }
@@ -1242,6 +1253,32 @@ fn is_proxy(p: &str) -> bool {
     port.parse::<u16>().is_ok_and(|n| n != 0) && is_hostname(host)
 }
 
+/// The engine switches that would let the engine's traffic around the VPN's proxy (0.14.0):
+/// they are refused in the extra flags, and the VPN refuses to connect while one is in the
+/// settings or in the flags the engine runs with (an older settings file).
+pub const VPN_CONFLICTING_FLAGS: &[&str] = &[
+    "--proxy-server",
+    "--no-proxy-server",
+    "--proxy-pac-url",
+    "--proxy-auto-detect",
+    "--proxy-bypass-list",
+    "--winhttp-proxy-resolver",
+    "--force-webrtc-ip-handling-policy",
+];
+
+/// The first of [`VPN_CONFLICTING_FLAGS`] in `flags` (as written), if any.
+pub fn vpn_conflicting_flag(flags: &str) -> Option<String> {
+    flags.split_whitespace().find_map(|flag| {
+        let name = flag.split_once('=').map_or(flag, |(n, _)| n).to_ascii_lowercase();
+        if !name.starts_with('-') {
+            return None;
+        }
+        // Chromium takes a single dash too.
+        let name = format!("--{}", name.trim_start_matches('-'));
+        VPN_CONFLICTING_FLAGS.contains(&name.as_str()).then_some(name)
+    })
+}
+
 fn validate_flags(flags: &str) -> Result<(), String> {
     if flags.len() > 4096 {
         return Err("Too long".into());
@@ -1269,7 +1306,13 @@ fn validate_flags(flags: &str) -> Result<(), String> {
         let lname = name.to_ascii_lowercase();
         if FORBIDDEN_FLAGS.contains(&lname.as_str()) {
             let hint = match lname.as_str() {
-                "--proxy-server" => " (use the proxy field)",
+                "--proxy-server"
+                | "--no-proxy-server"
+                | "--proxy-pac-url"
+                | "--proxy-auto-detect"
+                | "--proxy-bypass-list"
+                | "--winhttp-proxy-resolver" => " (use the proxy field)",
+                "--force-webrtc-ip-handling-policy" => " (weakens privacy)",
                 "--user-agent" => " (use the user agent field)",
                 _ => " (weakens security)",
             };
@@ -1596,9 +1639,9 @@ mod tests {
 
     #[test]
     fn krunk_requests_follow_the_vpn() {
-        assert_eq!(krunk_proxy("", Some("127.0.0.1:53127")), UpdaterProxy::Named("127.0.0.1:53127".into()));
+        assert_eq!(krunk_proxy("", Some("127.0.0.1:53127")), UpdaterProxy::Vpn("127.0.0.1:53127".into()));
         // SOCKS can't be used by WinHTTP, but the VPN's proxy can: nothing is skipped or direct.
-        assert_eq!(krunk_proxy("socks5://h:1", Some("127.0.0.1:9")), UpdaterProxy::Named("127.0.0.1:9".into()));
+        assert_eq!(krunk_proxy("socks5://h:1", Some("127.0.0.1:9")), UpdaterProxy::Vpn("127.0.0.1:9".into()));
         assert_eq!(krunk_proxy("", None), UpdaterProxy::System);
         assert_eq!(krunk_proxy("socks5://h:1", None), UpdaterProxy::Skip);
     }
@@ -1663,6 +1706,40 @@ mod tests {
         ] {
             assert!(validate_flags(bad).is_err(), "{bad}");
         }
+    }
+
+    /// 0.14.0: the switches that would take the engine's traffic around the VPN's proxy.
+    #[test]
+    fn proxy_and_webrtc_flags_rejected_and_found() {
+        for bad in [
+            "--no-proxy-server",
+            "--proxy-pac-url=http://wpad/wpad.dat",
+            "--proxy-auto-detect",
+            "--proxy-bypass-list=*",
+            "--winhttp-proxy-resolver",
+            "--force-webrtc-ip-handling-policy=default",
+            "--Proxy-Server=h:1",
+        ] {
+            let e = validate_flags(bad).unwrap_err();
+            assert!(e.contains("is not allowed"), "{bad}: {e}");
+            let s = Settings { extra_flags: format!("--force-dark-mode {bad}"), ..Settings::default() };
+            assert_eq!(s.validate().unwrap_err()[0].field, "extraFlags");
+            assert!(vpn_conflicting_flag(&s.extra_flags).is_some(), "{bad}");
+        }
+        for name in VPN_CONFLICTING_FLAGS {
+            assert!(FORBIDDEN_FLAGS.contains(name), "{name}");
+        }
+        assert_eq!(
+            vpn_conflicting_flag("--force-dark-mode -proxy-auto-detect").as_deref(),
+            Some("--proxy-auto-detect")
+        );
+        assert_eq!(vpn_conflicting_flag("--no-proxy-server=1").as_deref(), Some("--no-proxy-server"));
+        assert_eq!(vpn_conflicting_flag("--force-dark-mode --proxy-serverx"), None);
+        assert_eq!(vpn_conflicting_flag("proxy-server"), None);
+        assert_eq!(vpn_conflicting_flag(""), None);
+        // A file from before 0.14.0 with one of them loads without it.
+        let l = Settings::from_json_lenient(r#"{"extraFlags":"--no-proxy-server"}"#);
+        assert_eq!(l.extra_flags, "");
     }
 
     #[test]

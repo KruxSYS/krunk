@@ -1,45 +1,62 @@
-//! The VPN proxy's owner check (0.14.0): the local proxy accepts a connection only from Krunk's
-//! own process tree (the browser process, or a child of it such as the engine's network
-//! service). The owner of the peer's local port comes from the TCP table, the parent chain from
-//! a ToolHelp snapshot; every link of the chain must have started after its parent, so a parent
-//! id reused by Windows doesn't count. Called on the VPN's runtime threads.
+//! The VPN proxy's owner check (0.14.0) on Windows: the local proxy accepts a connection only
+//! from the browser process itself or from one of its own `Krunk.exe` subprocesses (the
+//! engine's network service, renderers, GPU and utility processes: CEF starts them from the same
+//! exe, no `browser_subprocess_path` is set). Programs the browser starts through the shell
+//! (a downloaded file opened, mail, external protocols, installers) are children with another
+//! image and never pass. The logic, with its caches, is `lb_core::vpnpeer`; this is its view
+//! of the system: the TCP table (`GetExtendedTcpTable`, the full 4-tuple of the client's
+//! ESTABLISHED row), a ToolHelp snapshot for the parent chain, `GetProcessTimes` and
+//! `QueryFullProcessImageNameW`. Called on the VPN's blocking threads.
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::Mutex;
+use lb_core::vpnpeer::{PeerCheck, Refusal, System, TcpRow};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use windows::Win32::Foundation::{CloseHandle, FILETIME};
+use windows::core::PWSTR;
+use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE};
 use windows::Win32::NetworkManagement::IpHelper::{
-    GetExtendedTcpTable, MIB_TCPROW_OWNER_PID, MIB_TCPTABLE_OWNER_PID, TCP_TABLE_OWNER_PID_ALL,
+    GetExtendedTcpTable, MIB_TCPROW_OWNER_PID, MIB_TCPTABLE_OWNER_PID, MIB_TCP_STATE_ESTAB, TCP_TABLE_OWNER_PID_ALL,
 };
 use windows::Win32::Networking::WinSock::AF_INET;
-use windows::Win32::System::Threading::{GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+use windows::Win32::System::Threading::{
+    GetProcessTimes, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+};
 
-/// Processes found to be Krunk's, with when that was found (a cheap check for the next
-/// connections; the network service opens many).
-static ALLOWED: Mutex<Vec<(u32, Instant)>> = Mutex::new(Vec::new());
-const CACHE_TTL: Duration = Duration::from_secs(30);
-const CACHE_MAX: usize = 64;
 const NO_ERROR: u32 = 0;
 const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
 
-/// May the connection from `peer` (the client end, on loopback) use the proxy?
-pub fn peer_allowed(peer: SocketAddr) -> bool {
-    let IpAddr::V4(ip) = peer.ip() else { return false };
-    if !ip.is_loopback() {
+/// The check of this browser process (made on first use).
+static CHECK: OnceLock<Option<PeerCheck>> = OnceLock::new();
+
+/// May the connection from `peer` (the client end, on loopback) to the proxy's end `proxy` use
+/// the proxy?
+pub fn peer_allowed(proxy: SocketAddr, peer: SocketAddr) -> bool {
+    let Some(check) = CHECK.get_or_init(|| {
+        let c = PeerCheck::new(std::process::id(), &Win);
+        if c.is_none() {
+            crate::log::warning!("vpn: the browser process's own image could not be read; the proxy refuses everyone");
+        }
+        c
+    }) else {
         return false;
+    };
+    match check.check(&Win, proxy, peer, Instant::now()) {
+        Ok(()) => true,
+        Err(why) => {
+            if log_refusal() {
+                let text = match &why {
+                    Refusal::NotLoopback => "not from loopback".to_string(),
+                    Refusal::NoOwner => "no process owns the connection".to_string(),
+                    Refusal::Gone(p) => format!("process {p} is gone"),
+                    Refusal::NotDescendant(p) => format!("process {p} is not Krunk's"),
+                    Refusal::OtherImage(p, file) => format!("process {p} ({file}) is not Krunk's own program"),
+                    Refusal::Cached(p) => format!("process {p} was refused a moment ago"),
+                };
+                crate::log::warning!("vpn: refused a proxy connection: {text}");
+            }
+            false
+        }
     }
-    let Some(pid) = owner_pid(ip, peer.port()) else { return false };
-    let me = std::process::id();
-    if pid == me || cached(pid) {
-        return true;
-    }
-    let ok = is_ours(pid, me);
-    if ok {
-        remember(pid);
-    } else if log_refusal() {
-        crate::log::warning!("vpn: refused a proxy connection from process {pid} (not Krunk's)");
-    }
-    ok
 }
 
 /// At most one refusal line every 10 s (a program could knock in a loop).
@@ -53,25 +70,59 @@ fn log_refusal() -> bool {
     true
 }
 
-fn cached(pid: u32) -> bool {
-    let Ok(mut c) = ALLOWED.lock() else { return false };
-    c.retain(|(_, at)| at.elapsed() < CACHE_TTL);
-    c.iter().any(|(p, _)| *p == pid)
-}
+/// The system as the check sees it.
+struct Win;
 
-fn remember(pid: u32) {
-    if let Ok(mut c) = ALLOWED.lock() {
-        if c.len() >= CACHE_MAX {
-            c.remove(0);
-        }
-        c.push((pid, Instant::now()));
+impl System for Win {
+    fn tcp_rows(&self) -> Option<Vec<TcpRow>> {
+        tcp_rows()
+    }
+
+    fn processes(&self) -> Vec<(u32, u32)> {
+        super::procmem::snapshot()
+    }
+
+    fn created(&self, pid: u32) -> Option<u64> {
+        let h = Process::open(pid)?;
+        let (mut c, mut e, mut k, mut u) =
+            (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
+        // SAFETY: a live query handle and four FILETIMEs to write.
+        unsafe { GetProcessTimes(h.0, &mut c, &mut e, &mut k, &mut u) }.ok()?;
+        Some((u64::from(c.dwHighDateTime) << 32) | u64::from(c.dwLowDateTime))
+    }
+
+    fn image(&self, pid: u32) -> Option<String> {
+        let h = Process::open(pid)?;
+        let mut buf = vec![0u16; 32 * 1024];
+        let mut len = buf.len() as u32;
+        // SAFETY: a live query handle; `buf` has `len` writable UTF-16 units and the call
+        // writes at most that many, setting `len` to what it wrote.
+        unsafe { QueryFullProcessImageNameW(h.0, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len) }.ok()?;
+        Some(String::from_utf16_lossy(&buf[..(len as usize).min(buf.len())]))
     }
 }
 
-/// The process that owns the TCP endpoint `ip:port` (IPv4).
-fn owner_pid(ip: Ipv4Addr, port: u16) -> Option<u32> {
+/// A query-only process handle, closed on drop.
+struct Process(HANDLE);
+
+impl Process {
+    fn open(pid: u32) -> Option<Process> {
+        // SAFETY: opens a query-only handle (owned by the returned value).
+        unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok().map(Process)
+    }
+}
+
+impl Drop for Process {
+    fn drop(&mut self) {
+        // SAFETY: a handle from OpenProcess, closed once.
+        let _ = unsafe { CloseHandle(self.0) };
+    }
+}
+
+/// The IPv4 TCP table with the owner of each row.
+fn tcp_rows() -> Option<Vec<TcpRow>> {
     // u32 elements: the table is a u32 count followed by rows of six u32.
-    let mut buf: Vec<u32> = vec![0; 1024];
+    let mut buf: Vec<u32> = vec![0; 4096];
     for _ in 0..4 {
         let mut size = (buf.len() * 4) as u32;
         // SAFETY: `buf` has `size` writable bytes; the call fills it or says how many it needs.
@@ -95,47 +146,23 @@ fn owner_pid(ip: Ipv4Addr, port: u16) -> Option<u32> {
                     let max = (size as usize).saturating_sub(4) / std::mem::size_of::<MIB_TCPROW_OWNER_PID>();
                     std::slice::from_raw_parts((*table).table.as_ptr(), n.min(max))
                 };
-                let addr = u32::from_ne_bytes(ip.octets());
-                return rows
-                    .iter()
-                    .find(|r| r.dwLocalAddr == addr && u16::from_be((r.dwLocalPort & 0xffff) as u16) == port)
-                    .map(|r| r.dwOwningPid);
+                let addr = |a: u32, p: u32| {
+                    SocketAddrV4::new(Ipv4Addr::from(a.to_ne_bytes()), u16::from_be((p & 0xffff) as u16))
+                };
+                return Some(
+                    rows.iter()
+                        .map(|r| TcpRow {
+                            local: addr(r.dwLocalAddr, r.dwLocalPort),
+                            remote: addr(r.dwRemoteAddr, r.dwRemotePort),
+                            established: r.dwState == MIB_TCP_STATE_ESTAB.0 as u32,
+                            pid: r.dwOwningPid,
+                        })
+                        .collect(),
+                );
             }
             ERROR_INSUFFICIENT_BUFFER => buf.resize((size as usize).div_ceil(4) + 256, 0),
             _ => return None,
         }
     }
     None
-}
-
-/// Is `pid` a descendant of `me` (each link started after its parent)?
-fn is_ours(pid: u32, me: u32) -> bool {
-    let procs = super::procmem::snapshot();
-    let Some(chain) = lb_core::memory::chain_to(pid, me, &procs) else { return false };
-    let mut parent_start = match started(me) {
-        Some(t) => t,
-        None => return false,
-    };
-    // From the child of `me` down to `pid`.
-    for p in chain.iter().rev() {
-        match started(*p) {
-            Some(t) if t >= parent_start => parent_start = t,
-            _ => return false,
-        }
-    }
-    true
-}
-
-/// When process `pid` was created (FILETIME ticks).
-fn started(pid: u32) -> Option<u64> {
-    // SAFETY: a query-only handle, closed after reading the times.
-    unsafe {
-        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
-        let (mut c, mut e, mut k, mut u) =
-            (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
-        let r = GetProcessTimes(h, &mut c, &mut e, &mut k, &mut u);
-        let _ = CloseHandle(h);
-        r.ok()?;
-        Some((u64::from(c.dwHighDateTime) << 32) | u64::from(c.dwLowDateTime))
-    }
 }

@@ -360,6 +360,13 @@ const PROBE_AFTER_SEND: Duration = Duration::from_secs(4);
 /// An unanswered probe is repeated after this long; two unanswered probes end the session.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(6);
 const TICK: Duration = Duration::from_millis(250);
+/// This many receive errors in a row end the session (it is retried with back-off).
+const RECV_ERRORS_GIVE_UP: u32 = 200;
+
+/// The pause after the `n`th receive error in a row: 10 ms, doubling, at most 1 s.
+fn recv_backoff(n: u32) -> Duration {
+    Duration::from_millis((10u64 << n.saturating_sub(1).min(7)).min(1000))
+}
 
 /// Hands smoltcp's packets to the WireGuard task.
 struct Sink(mpsc::Sender<Vec<u8>>);
@@ -386,11 +393,12 @@ pub(crate) async fn session(cfg: &Config, shared: &Arc<Shared>, stop: &mut watch
         return SessionEnd::Retry("The server is unreachable".into());
     }
     let index = u32::from_le_bytes(crate::random::<4>()) >> 8;
-    let psk = cfg.preshared.as_ref().map(|p| **p);
+    // The keys are copied straight into boringtun (no copy of ours lives on in this session's
+    // state; the config keeps the zeroizing originals).
     let mut tunn = Tunn::new(
         StaticSecret::from(*cfg.private_key),
         PublicKey::from(cfg.peer_public),
-        psk,
+        cfg.preshared.as_deref().copied(),
         cfg.keepalive,
         index,
         None,
@@ -419,12 +427,31 @@ pub(crate) async fn session(cfg: &Config, shared: &Arc<Shared>, stop: &mut watch
     let mut tick = tokio::time::interval(TICK);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let tunnel_ip = cfg.addresses.first().map(|a| a.addr.to_string());
+    let mut recv_errors = 0u32;
 
     loop {
         tokio::select! {
             _ = crate::service::stopped(stop) => return SessionEnd::Stopped,
             r = sock.recv(&mut rbuf) => {
-                let Ok(n) = r else { continue };
+                let n = match r {
+                    Ok(n) => {
+                        recv_errors = 0;
+                        n
+                    }
+                    Err(_) => {
+                        // E.g. ICMP port unreachable (ConnectionReset on Windows) while the
+                        // server is down: wait a little, longer each time, instead of spinning.
+                        recv_errors = recv_errors.saturating_add(1);
+                        if recv_errors >= RECV_ERRORS_GIVE_UP {
+                            return SessionEnd::Retry("The server is unreachable".into());
+                        }
+                        tokio::select! {
+                            _ = crate::service::stopped(stop) => return SessionEnd::Stopped,
+                            _ = tokio::time::sleep(recv_backoff(recv_errors)) => {}
+                        }
+                        continue;
+                    }
+                };
                 let mut res = tunn.decapsulate(Some(endpoint.ip()), &rbuf[..n], &mut dbuf);
                 let mut valid = false;
                 loop {
@@ -619,6 +646,12 @@ mod tests {
         assert!(parse("[Interface]\n=\n").is_err());
         let unknown = good().replace("MTU = 1380", "Frobnicate = 1");
         assert!(parse(&unknown).unwrap().warnings.iter().any(|w| w.contains("frobnicate")));
+    }
+
+    #[test]
+    fn recv_errors_back_off() {
+        let v: Vec<u64> = (1..=10).map(|n| recv_backoff(n).as_millis() as u64).collect();
+        assert_eq!(v, vec![10, 20, 40, 80, 160, 320, 640, 1000, 1000, 1000]);
     }
 
     #[test]

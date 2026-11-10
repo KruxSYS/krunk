@@ -63,6 +63,7 @@ pub mod useragents;
 pub mod userscripts;
 pub mod vault;
 pub mod vpn;
+pub mod vpnpeer;
 pub mod windows;
 pub mod workerfix;
 pub mod zoom;

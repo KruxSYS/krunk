@@ -19,7 +19,6 @@ use lb_core::headers::Headers;
 use lb_core::pages::Page;
 use lb_core::protection::{self, Protection, Referrer, ThirdPartyCookies, TrackerSet};
 use lb_core::protocol::{ContentMessage, Event, PopupContent, Request};
-use lb_core::settings::UpdaterProxy;
 use lb_core::storage::now_ms;
 use lb_core::tabs::TabId;
 use lb_core::urlclean::{self, LoadFailure, RewriteOptions};
@@ -129,6 +128,9 @@ pub(super) struct NetShared {
     notifier: OnceLock<AppNotifier>,
     /// An APP_SHIELD message is on its way to the UI thread.
     shield_posted: AtomicBool,
+    /// 0.14.0: the VPN should run and neither it nor its stand-in is the engine's proxy: every
+    /// web request is refused (only Krunk's own pages load).
+    offline: AtomicBool,
 }
 
 impl NetShared {
@@ -204,6 +206,10 @@ impl NetShared {
     /// The redirect hops recorded since the last call.
     pub fn take_hops(&self) -> Vec<(String, String)> {
         self.hops.lock().map(|mut h| std::mem::take(&mut *h)).unwrap_or_default()
+    }
+
+    pub fn set_offline(&self, on: bool) {
+        self.offline.store(on, Relaxed);
     }
 
     pub fn set_notifier(&self, n: AppNotifier) {
@@ -291,6 +297,13 @@ impl RequestPolicy for TabPolicy {
             } else {
                 NetVerdict::Block
             };
+        }
+        let own_host =
+            || urlclean::host_of(req.url).is_some_and(|h| h == "krunk.invalid" || h.ends_with(".krunk.invalid"));
+        if self.net.offline.load(Relaxed) && blocker::is_filterable(req.url) && !own_host() {
+            // The VPN couldn't start: nothing leaves (fail-closed), not even past the engine's
+            // missing proxy setting.
+            return NetVerdict::Block;
         }
         // Tracking protection: a cross-site request says at most the origin it comes from
         // (nothing in Strict); off for sites the shield exempts.
@@ -587,24 +600,23 @@ impl Browser {
         let cache_path = self.dirs.engine_cache();
         let scriptlet_path = self.dirs.scriptlet_cache();
         let sources = self.filter_sources();
-        let proxy = self.own_proxy();
+        let route = self.own_route();
         let mut state = f.update.borrow().clone();
         let current_key = if force { None } else { self.net.engine().map(|e| e.key()) };
         let (tx, rx) = mpsc::channel();
         *f.rx.borrow_mut() = Some(rx);
-        let skip_reason = (fetching != Fetching::Nothing && proxy == UpdaterProxy::Skip)
-            .then_some("Updates are skipped while a SOCKS proxy is configured (it would bypass the proxy)");
-        if let Some(reason) = skip_reason {
-            state.last_error = Some(reason.into());
+        let skip_reason = (fetching != Fetching::Nothing && route.is_none()).then(|| {
+            self.own_route_skipped("Updates are skipped while a SOCKS proxy is configured (it would bypass the proxy)")
+        });
+        if let Some(reason) = &skip_reason {
+            state.last_error = Some(reason.clone());
         }
         let download = fetching != Fetching::Nothing && skip_reason.is_none();
         let only_added = fetching == Fetching::Added;
         let spawned = std::thread::Builder::new().name("filter-lists".into()).spawn(move || {
             let _ = std::fs::create_dir_all(&dir);
-            let mode = match proxy {
-                UpdaterProxy::Named(p) => ProxyMode::Named(p),
-                _ => ProxyMode::System,
-            };
+            // Without a route nothing is downloaded (`download` is false).
+            let mode = route.unwrap_or_else(ProxyMode::system);
             let fetch = move |url: &str| http::get(url, MAX_LIST_BYTES, &mode, DOWNLOAD_TIMEOUT_MS);
             let fetch_ref: &dyn Fn(&str) -> Result<Vec<u8>, String> = &fetch;
             let r = filterlists::rebuild_sources(

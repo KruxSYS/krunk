@@ -43,7 +43,7 @@ fn state_file(service: &str, path: &str) -> String {
 }
 
 fn creds(password: &str) -> Option<Credentials> {
-    Some(Credentials { username: "krunk".into(), password: Zeroizing::new(password.into()) })
+    Some(Credentials { username: Zeroizing::new("krunk".into()), password: Zeroizing::new(password.into()) })
 }
 
 struct Running {
@@ -55,7 +55,7 @@ fn start(file: &str, text: &str, creds: Option<Credentials>) -> Running {
     let (profile, _info) = import(file, text).expect("import");
     let log = Arc::new(Mutex::new(Vec::new()));
     let l = log.clone();
-    let vpn = Vpn::start(profile, creds, Box::new(|_| true), Box::new(move |s| l.lock().unwrap().push(s.clone())))
+    let vpn = Vpn::start(profile, creds, Box::new(|_, _| true), Box::new(move |s| l.lock().unwrap().push(s.clone())))
         .expect("start");
     Running { vpn, log }
 }
@@ -185,7 +185,7 @@ fn openvpn_refusals_fail() {
     let (p, info) = import("udp.ovpn", &state_file("ovpn", "/state/ovpn/client-udp.ovpn")).unwrap();
     assert!(info.needs_credentials);
     assert!(matches!(
-        Vpn::start(p, None, Box::new(|_| true), Box::new(|_| {})),
+        Vpn::start(p, None, Box::new(|_, _| true), Box::new(|_| {})),
         Err(krunk_vpn::StartError::NeedsCredentials)
     ));
 }

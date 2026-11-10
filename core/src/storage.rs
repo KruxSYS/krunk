@@ -333,6 +333,8 @@ impl Store {
             tx.execute_batch(crate::vpn::SCHEMA_V8)?;
             tx.pragma_update(None, "user_version", 8)?;
             tx.commit()?;
+        } else if version >= 8 && max >= 8 {
+            crate::vpn::upgrade_v8(&self.conn)?;
         }
         Ok(())
     }

@@ -23,7 +23,6 @@ use lb_core::ext::{self, Installed, Manifest};
 use lb_core::pages::Page;
 use lb_core::protocol::Channel;
 use lb_core::protocol::{Event, ExtAction, PopupRect};
-use lb_core::settings::UpdaterProxy;
 use lb_core::storage::now_ms;
 use lb_core::{assets, layout};
 use serde_json::{json, Value};
@@ -892,11 +891,7 @@ impl Browser {
     /// proxy setting says. `None` with a SOCKS proxy, which WinHTTP can't use: going around it
     /// would reveal the user's address (0.14.0; it used to fall back to the system's settings).
     fn ext_proxy(&self) -> Option<http::ProxyMode> {
-        match self.own_proxy() {
-            UpdaterProxy::Named(p) => Some(http::ProxyMode::Named(p)),
-            UpdaterProxy::System => Some(http::ProxyMode::System),
-            UpdaterProxy::Skip => None,
-        }
+        self.own_route()
     }
 
     fn ext_name(&self, ext_id: &str) -> String {

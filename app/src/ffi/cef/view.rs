@@ -593,17 +593,39 @@ impl View {
         if self.0.started.replace(true) {
             return Ok(());
         }
+        if self.0.private {
+            super::private_context().ok_or("could not create the private profile")?;
+            // 0.14.0: not before the private profile's preferences (the VPN's proxy) are in
+            // place: CEF initializes a new context asynchronously.
+            let view = self.clone();
+            let url = url.to_string();
+            super::when_private_ready(move || {
+                if view.0.closed.get() {
+                    return;
+                }
+                let Some(context) = super::PRIVATE_CONTEXT.with(|c| c.borrow().clone()) else { return };
+                if let Err(e) = view.create_browser(parent, &url, activate, Some(context)) {
+                    crate::log::warning!("private tab: {e}");
+                }
+            });
+            return Ok(());
+        }
+        self.create_browser(parent, url, activate, None)
+    }
+
+    fn create_browser(
+        &self,
+        parent: HWND,
+        url: &str,
+        activate: bool,
+        context: Option<RequestContext>,
+    ) -> Result<(), String> {
         let mut window_info = child_window_info(parent);
         if !activate {
             window_info.ex_style = windows::Win32::UI::WindowsAndMessaging::WS_EX_NOACTIVATE.0;
         }
         let mut client = client::for_view(&self.0);
         let settings = self.browser_settings();
-        let context = if self.0.private {
-            Some(super::private_context().ok_or("could not create the private profile")?)
-        } else {
-            None
-        };
         let mut extra = self.0.scripts.to_dictionary();
         if let Some(d) = extra.as_mut() {
             super::scriptlets::add_to_extra_info(d);

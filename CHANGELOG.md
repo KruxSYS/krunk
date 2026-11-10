@@ -2,6 +2,26 @@
 
 What changed in each Krunk release, newest first.
 
+## 0.14.0 — 2026-11-10
+
+- **A VPN for Krunk only.** Settings → Privacy & security → VPN imports WireGuard (`.conf`) and
+  OpenVPN (`.ovpn`) files from your VPN provider.
+  - Only Krunk's connections use it: normal and private windows, and Krunk's own updates, sync,
+    filter lists and extensions. Other programs on your computer are not affected, and nothing
+    is installed in Windows: no network adapter, no driver, no administrator rights.
+  - While the VPN is on but not connected, Krunk's connections stop instead of going around it.
+    Addresses outside a profile's networks are refused, not sent directly.
+  - Names are looked up through the VPN, and WebRTC can't reveal your address.
+  - **Show the VPN button in the toolbar** (off by default) adds a button next to the shield. Its
+    popup shows whether you're connected, the profile, your address in the VPN and the traffic,
+    with Connect and Disconnect.
+  - **Connect when Krunk starts** connects before any page loads.
+  - Profiles are stored encrypted for your Windows account and never sync. Scripts in profiles
+    never run.
+- WireGuard and OpenVPN run inside Krunk (boringtun, and OpenVPN 3 Core, the library behind
+  OpenVPN Connect). OpenVPN works over UDP and TCP, with a user name and password or
+  certificates included in the file.
+
 ## 0.13.0 — 2026-11-10
 
 - **Sign in by scanning a QR code.** While you sign in, Settings → Account now shows a QR code

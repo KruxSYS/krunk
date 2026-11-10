@@ -12,7 +12,9 @@
 //! ends only, no obs-fold, no whitespace before the colon, one `Content-Length` at most, no
 //! `Content-Length` together with `Transfer-Encoding`, and `chunked` as the only transfer
 //! coding. Request bodies are forwarded by their framing (chunked bodies are re-checked
-//! chunk by chunk), so nothing after the body can slip through as a second request.
+//! chunk by chunk), so nothing after the body can slip through as a second request; a body
+//! that stops moving for a minute ends with 408. `Expect: 100-continue` is answered by the
+//! proxy itself (`100 Continue`, then the body) and not forwarded; other expectations get 417.
 
 use crate::service::Shared;
 use std::io;
@@ -37,6 +39,8 @@ const HEAD_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(120);
 const IDLE_FORWARD: Duration = Duration::from_secs(300);
+/// A request body that stops moving (client to server) for this long ends with 408.
+const IDLE_BODY: Duration = Duration::from_secs(60);
 const IDLE_TUNNEL: Duration = Duration::from_secs(1800);
 
 /// A destination host.
@@ -307,7 +311,8 @@ pub fn rewrite_request(req: &Request) -> Vec<u8> {
     }
     for (k, v) in &req.headers {
         let lk = k.to_ascii_lowercase();
-        if lk == "host" || drop.contains(&lk) {
+        // `Expect: 100-continue` is the proxy's to answer (see `forward`).
+        if lk == "host" || lk == "expect" || drop.contains(&lk) {
             continue;
         }
         out.push_str(k);
@@ -375,6 +380,21 @@ pub fn rewrite_response(head: &[u8]) -> Option<(Vec<u8>, u16)> {
     Some((out.into_bytes(), status))
 }
 
+/// `Expect`: `Ok(true)` for `100-continue`, `Ok(false)` without the header, `Err` for any
+/// other expectation (answered with 417).
+pub fn expects_continue(req: &Request) -> Result<bool, Reject> {
+    let mut any = false;
+    for (k, v) in &req.headers {
+        if k.eq_ignore_ascii_case("expect") {
+            if !v.eq_ignore_ascii_case("100-continue") {
+                return Err(reject(417, "Expectation Failed"));
+            }
+            any = true;
+        }
+    }
+    Ok(any)
+}
+
 /// A complete short response (`Connection: close`, plain-text body).
 pub fn simple_response(status: u16, reason: &str, body: &str) -> Vec<u8> {
     format!(
@@ -397,7 +417,7 @@ pub fn not_connected() -> Vec<u8> {
 pub(crate) async fn serve(
     listener: TcpListener,
     shared: Arc<Shared>,
-    peer_allowed: Arc<dyn Fn(SocketAddr) -> bool + Send + Sync>,
+    peer_allowed: Arc<dyn Fn(SocketAddr, SocketAddr) -> bool + Send + Sync>,
     mut stop: watch::Receiver<bool>,
 ) {
     let limit = Arc::new(Semaphore::new(MAX_CONNECTIONS));
@@ -421,7 +441,9 @@ pub(crate) async fn serve(
             if !peer.ip().is_loopback() {
                 return;
             }
-            let ok = tokio::task::spawn_blocking(move || allowed(peer)).await.unwrap_or(false);
+            // The proxy's end of this connection (with the peer's: the TCP table's 4-tuple).
+            let Ok(local) = stream.local_addr() else { return };
+            let ok = tokio::task::spawn_blocking(move || allowed(local, peer)).await.unwrap_or(false);
             if !ok {
                 return;
             }
@@ -469,10 +491,19 @@ async fn handle(mut client: TcpStream, shared: Arc<Shared>) {
             return;
         }
     };
-    match req.target {
-        Target::Connect { .. } => tunnel(client, upstream, leftover).await,
-        Target::Forward { .. } => forward(client, upstream, &req, leftover).await,
+    let cut = match req.target {
+        Target::Connect { .. } => tunnel(&mut client, upstream, leftover).await,
+        Target::Forward { .. } => forward(&mut client, upstream, &req, leftover, IDLE_BODY).await,
+    };
+    if cut {
+        abort(&client);
     }
+}
+
+/// The server's side broke off (reset, or the tunnel went away): the client gets a reset too
+/// (`SO_LINGER` 0, then the close), never a clean end that would pass for a complete response.
+fn abort(client: &TcpStream) {
+    let _ = socket2::SockRef::from(client).set_linger(Some(Duration::ZERO));
 }
 
 /// Reads until the end of the head; `None` when it exceeds `max`. Reads in small steps so the
@@ -535,30 +566,67 @@ async fn open(shared: &Shared, host: &Host, port: u16) -> Result<crate::net::Tcp
     }
 }
 
-async fn tunnel(mut client: TcpStream, mut upstream: crate::net::TcpStream, leftover: Vec<u8>) {
+/// CONNECT: both ways until done. True when the server's side broke off.
+async fn tunnel(client: &mut TcpStream, mut upstream: crate::net::TcpStream, leftover: Vec<u8>) -> bool {
     if client.write_all(b"HTTP/1.1 200 Connection established\r\n\r\n").await.is_err() {
-        return;
+        return false;
     }
     if !leftover.is_empty() && upstream.write_all(&leftover).await.is_err() {
-        return;
+        return true;
     }
-    pipe(client, upstream, IDLE_TUNNEL).await;
+    pipe(client, upstream, IDLE_TUNNEL).await
 }
 
-async fn forward(mut client: TcpStream, mut upstream: crate::net::TcpStream, req: &Request, leftover: Vec<u8>) {
+/// One absolute-form request: the head and the body to the server, then its response back
+/// until it closes. `body_idle` limits how long the request body may stand still. True when
+/// the response was cut off by the server's side breaking off (the client must see an error).
+async fn forward<C, U>(client: &mut C, mut upstream: U, req: &Request, leftover: Vec<u8>, body_idle: Duration) -> bool
+where
+    C: AsyncRead + AsyncWrite + Unpin,
+    U: AsyncRead + AsyncWrite + Unpin,
+{
+    let expect = match expects_continue(req) {
+        Ok(e) => e && req.body != Body::None,
+        Err(r) => {
+            let _ = client.write_all(&simple_response(r.status, r.reason, &format!("{}\n", r.reason))).await;
+            return false;
+        }
+    };
     let head = rewrite_request(req);
     if upstream.write_all(&head).await.is_err() {
-        return;
+        return false;
+    }
+    // The client waits for this before it sends the body; the server never saw the Expect.
+    if expect && req.version == "HTTP/1.1" && client.write_all(b"HTTP/1.1 100 Continue\r\n\r\n").await.is_err() {
+        return false;
     }
     let mut body = BodyReader { buf: leftover, pos: 0 };
-    let sent = match req.body {
-        Body::None => Ok(()),
-        Body::Length(n) => body.copy_exact(&mut client, &mut upstream, n).await,
-        Body::Chunked => body.copy_chunked(&mut client, &mut upstream).await,
+    let sent = {
+        let activity = Activity::new();
+        let mut from = Tracked { inner: &mut *client, activity: activity.clone() };
+        let mut to = Tracked { inner: &mut upstream, activity: activity.clone() };
+        let copy = async {
+            match req.body {
+                Body::None => Ok(()),
+                Body::Length(n) => body.copy_exact(&mut from, &mut to, n).await,
+                Body::Chunked => body.copy_chunked(&mut from, &mut to).await,
+            }
+        };
+        tokio::select! {
+            r = copy => r,
+            _ = activity.idle(body_idle) => Err(io::ErrorKind::TimedOut.into()),
+        }
     };
-    if sent.is_err() {
-        let _ = client.write_all(&simple_response(400, "Bad Request", "Bad request body\n")).await;
-        return;
+    match sent {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::TimedOut => {
+            let _ = client.write_all(&simple_response(408, "Request Timeout", "The request body stopped\n")).await;
+            return false;
+        }
+        Err(_) => {
+            let _ = client.write_all(&simple_response(400, "Bad Request", "Bad request body\n")).await;
+            return false;
+        }
     }
     // The response head(s): 1xx heads are passed on, then the final one.
     let mut rbuf = Vec::with_capacity(4096);
@@ -568,24 +636,24 @@ async fn forward(mut client: TcpStream, mut upstream: crate::net::TcpStream, req
             Ok(_) => {
                 let _ =
                     client.write_all(&simple_response(502, "Bad Gateway", "The server sent a bad response\n")).await;
-                return;
+                return false;
             }
             Err(_) => {
                 let _ = client.write_all(&simple_response(504, "Gateway Timeout", "The server did not answer\n")).await;
-                return;
+                return false;
             }
         };
         let rest = rbuf.split_off(end);
         let Some((head, status)) = rewrite_response(&rbuf) else {
             let _ = client.write_all(&simple_response(502, "Bad Gateway", "The server sent a bad response\n")).await;
-            return;
+            return false;
         };
         if status == 101 {
             let _ = client.write_all(&simple_response(502, "Bad Gateway", "Protocol upgrades are not proxied\n")).await;
-            return;
+            return false;
         }
         if client.write_all(&head).await.is_err() {
-            return;
+            return false;
         }
         rbuf = rest;
         if !(100..200).contains(&status) {
@@ -593,13 +661,13 @@ async fn forward(mut client: TcpStream, mut upstream: crate::net::TcpStream, req
         }
     }
     if !rbuf.is_empty() && client.write_all(&rbuf).await.is_err() {
-        return;
+        return false;
     }
     // The rest of the response until the server closes; the client's side is done.
-    let (mut cr, mut cw) = client.into_split();
+    let (mut cr, mut cw) = tokio::io::split(client);
     let activity = Activity::new();
     let mut up = Tracked { inner: upstream, activity: activity.clone() };
-    let copy = tokio::io::copy(&mut up, &mut cw);
+    let copy = copy_reporting(&mut up, &mut cw);
     let drain = async {
         // Read (and discard) anything more the client sends, to notice when it goes away.
         let mut sink = [0u8; 1024];
@@ -609,12 +677,40 @@ async fn forward(mut client: TcpStream, mut upstream: crate::net::TcpStream, req
             }
         }
     };
-    tokio::select! {
-        _ = copy => {}
-        _ = drain => {}
-        _ = activity.idle(IDLE_FORWARD) => {}
+    let cut = tokio::select! {
+        r = copy => r == Copied::ReadFailed,
+        _ = drain => false,
+        _ = activity.idle(IDLE_FORWARD) => false,
+    };
+    if !cut {
+        let _ = cw.shutdown().await;
     }
-    let _ = cw.shutdown().await;
+    cut
+}
+
+#[derive(PartialEq, Eq)]
+enum Copied {
+    /// The reader ended cleanly.
+    Done,
+    /// Reading failed (a reset, the tunnel went away).
+    ReadFailed,
+    /// Writing failed (the client went away).
+    WriteFailed,
+}
+
+/// `tokio::io::copy` that says which side failed.
+async fn copy_reporting<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(r: &mut R, w: &mut W) -> Copied {
+    let mut buf = vec![0u8; 16 * 1024];
+    loop {
+        let n = match r.read(&mut buf).await {
+            Ok(0) => return Copied::Done,
+            Ok(n) => n,
+            Err(_) => return Copied::ReadFailed,
+        };
+        if w.write_all(&buf[..n]).await.is_err() {
+            return Copied::WriteFailed;
+        }
+    }
 }
 
 /// Reads a response head (CRLF or bare LF line ends); `None` when too large or not HTTP.
@@ -763,13 +859,47 @@ pub fn chunk_size(line: &[u8]) -> Option<u64> {
 }
 
 /// Both ways until both sides are done, or nothing moves for `idle`.
-async fn pipe(client: TcpStream, upstream: crate::net::TcpStream, idle: Duration) {
+/// Both ways until both sides are done, or nothing moves for `idle`. True when the upstream
+/// side broke off (reset, or the tunnel went away).
+async fn pipe(client: &mut TcpStream, upstream: crate::net::TcpStream, idle: Duration) -> bool {
     let activity = Activity::new();
-    let mut a = Tracked { inner: client, activity: activity.clone() };
-    let mut b = Tracked { inner: upstream, activity: activity.clone() };
-    tokio::select! {
-        _ = tokio::io::copy_bidirectional(&mut a, &mut b) => {}
-        _ = activity.idle(idle) => {}
+    let (mut cr, mut cw) = client.split();
+    let (mut ur, mut uw) = tokio::io::split(upstream);
+    let mut cr = Tracked { inner: &mut cr, activity: activity.clone() };
+    let mut ur = Tracked { inner: &mut ur, activity: activity.clone() };
+    let up = async {
+        let r = copy_reporting(&mut cr, &mut uw).await;
+        if r == Copied::Done {
+            let _ = uw.shutdown().await;
+        }
+        r
+    };
+    let down = async {
+        let r = copy_reporting(&mut ur, &mut cw).await;
+        if r == Copied::Done {
+            let _ = cw.shutdown().await;
+        }
+        r
+    };
+    tokio::pin!(up, down);
+    let (mut up_done, mut down_done) = (false, false);
+    loop {
+        tokio::select! {
+            r = &mut up, if !up_done => match r {
+                Copied::Done => up_done = true,
+                // Writing to the server failed: it broke off. Reading the client failed: the
+                // client went away (nothing to tell it).
+                r => return r == Copied::WriteFailed,
+            },
+            r = &mut down, if !down_done => match r {
+                Copied::Done => down_done = true,
+                r => return r == Copied::ReadFailed,
+            },
+            _ = activity.idle(idle) => return false,
+        }
+        if up_done && down_done {
+            return false;
+        }
     }
 }
 
@@ -1001,6 +1131,106 @@ mod tests {
         assert!(r.starts_with("HTTP/1.1 503 VPN not connected\r\n"), "{r}");
         assert!(r.ends_with("\r\n\r\nVPN not connected\n"));
         assert!(r.contains("Content-Length: 18\r\n"));
+    }
+
+    /// Reads from `r` until `needle` has arrived (or EOF); everything read.
+    async fn read_until<R: AsyncRead + Unpin>(r: &mut R, needle: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut b = [0u8; 512];
+        while !out.windows(needle.len()).any(|w| w == needle) {
+            match r.read(&mut b).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => out.extend_from_slice(&b[..n]),
+            }
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn expect_100_continue_is_answered_without_a_deadlock() {
+        let req = p("POST http://a.test/up HTTP/1.1\r\nExpect: 100-Continue\r\nContent-Length: 4\r\n\r\n").unwrap();
+        assert_eq!(expects_continue(&req), Ok(true));
+        let (mut client, mut proxy_side) = tokio::io::duplex(4096);
+        let (proxy_up, mut server) = tokio::io::duplex(4096);
+        let task =
+            tokio::spawn(
+                async move { forward(&mut proxy_side, proxy_up, &req, Vec::new(), Duration::from_secs(5)).await },
+            );
+        // The client waits for the 100 before it sends the body, like curl or .NET do.
+        let got = tokio::time::timeout(Duration::from_secs(5), read_until(&mut client, b"\r\n\r\n")).await.unwrap();
+        assert_eq!(got, b"HTTP/1.1 100 Continue\r\n\r\n");
+        client.write_all(b"body").await.unwrap();
+        let head = tokio::time::timeout(Duration::from_secs(5), read_until(&mut server, b"body")).await.unwrap();
+        let head = String::from_utf8(head).unwrap();
+        assert!(head.starts_with("POST /up HTTP/1.1\r\nHost: a.test\r\n"), "{head}");
+        assert!(!head.to_ascii_lowercase().contains("expect"), "{head}");
+        server.write_all(b"HTTP/1.1 201 Created\r\nContent-Length: 2\r\n\r\nok").await.unwrap();
+        drop(server);
+        let rest = tokio::time::timeout(Duration::from_secs(5), read_until(&mut client, b"ok")).await.unwrap();
+        assert!(String::from_utf8(rest).unwrap().starts_with("HTTP/1.1 201 Created\r\n"));
+        assert!(!task.await.unwrap(), "a clean end");
+
+        // Any other expectation: 417, nothing forwarded.
+        let req = p("POST http://a.test/ HTTP/1.1\r\nExpect: magic\r\nContent-Length: 4\r\n\r\n").unwrap();
+        assert_eq!(expects_continue(&req).unwrap_err().status, 417);
+        let (mut client, mut proxy_side) = tokio::io::duplex(4096);
+        let (proxy_up, mut server) = tokio::io::duplex(4096);
+        assert!(!forward(&mut proxy_side, proxy_up, &req, Vec::new(), Duration::from_secs(5)).await);
+        drop(proxy_side);
+        let mut r = Vec::new();
+        client.read_to_end(&mut r).await.unwrap();
+        assert!(r.starts_with(b"HTTP/1.1 417 Expectation Failed\r\n"));
+        let mut up = Vec::new();
+        server.read_to_end(&mut up).await.unwrap();
+        assert!(up.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_stalled_request_body_times_out() {
+        let req = p("PUT http://a.test/ HTTP/1.1\r\nContent-Length: 10\r\n\r\n").unwrap();
+        let (mut client, mut proxy_side) = tokio::io::duplex(4096);
+        let (proxy_up, _server) = tokio::io::duplex(4096);
+        client.write_all(b"abc").await.unwrap();
+        let t = Instant::now();
+        let task = tokio::spawn(async move {
+            forward(&mut proxy_side, proxy_up, &req, Vec::new(), Duration::from_millis(300)).await
+        });
+        let got = tokio::time::timeout(Duration::from_secs(5), read_until(&mut client, b"stopped\n")).await.unwrap();
+        assert!(got.starts_with(b"HTTP/1.1 408 Request Timeout\r\n"), "{:?}", String::from_utf8_lossy(&got));
+        assert!(t.elapsed() >= Duration::from_millis(300));
+        assert!(!task.await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_response_cut_off_by_the_server_is_reported() {
+        /// An upstream that sends a head and some body, then fails like a reset.
+        struct Cut(Vec<u8>);
+        impl AsyncRead for Cut {
+            fn poll_read(mut self: Pin<&mut Self>, _: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+                if self.0.is_empty() {
+                    return Poll::Ready(Err(io::ErrorKind::ConnectionReset.into()));
+                }
+                let n = self.0.len().min(buf.remaining());
+                buf.put_slice(&self.0[..n]);
+                self.0.drain(..n);
+                Poll::Ready(Ok(()))
+            }
+        }
+        impl AsyncWrite for Cut {
+            fn poll_write(self: Pin<&mut Self>, _: &mut Context<'_>, d: &[u8]) -> Poll<io::Result<usize>> {
+                Poll::Ready(Ok(d.len()))
+            }
+            fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+                Poll::Ready(Ok(()))
+            }
+            fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+                Poll::Ready(Ok(()))
+            }
+        }
+        let req = p("GET http://a.test/ HTTP/1.1\r\n\r\n").unwrap();
+        let (_client, mut proxy_side) = tokio::io::duplex(65536);
+        let up = Cut(b"HTTP/1.1 200 OK\r\n\r\npart of the bo".to_vec());
+        assert!(forward(&mut proxy_side, up, &req, Vec::new(), Duration::from_secs(5)).await);
     }
 
     #[test]

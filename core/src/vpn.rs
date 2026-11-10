@@ -21,9 +21,23 @@ CREATE TABLE vpn_profiles (
     server            TEXT NOT NULL,
     needs_credentials INTEGER NOT NULL,
     created_ms        INTEGER NOT NULL,
-    blob              BLOB NOT NULL
+    blob              BLOB NOT NULL,
+    has_credentials   INTEGER NOT NULL DEFAULT 0
 );
 ";
+
+/// A pre-release v8 table (0.14.0 test builds) without `has_credentials` gets it.
+pub(crate) fn upgrade_v8(conn: &rusqlite::Connection) -> DbResult<()> {
+    let has: i64 = conn.query_row(
+        "SELECT count(*) FROM pragma_table_info('vpn_profiles') WHERE name = 'has_credentials'",
+        [],
+        |r| r.get(0),
+    )?;
+    if has == 0 {
+        conn.execute_batch("ALTER TABLE vpn_profiles ADD COLUMN has_credentials INTEGER NOT NULL DEFAULT 0")?;
+    }
+    Ok(())
+}
 
 /// At most this many profiles; an imported file is at most this large.
 pub const MAX_PROFILES: usize = 32;
@@ -68,6 +82,10 @@ pub struct VpnProfile {
     /// OpenVPN `auth-user-pass` without an inline pair: a user name and password are needed.
     pub needs_credentials: bool,
     pub created_ms: i64,
+    /// A user name and password are stored in the blob (kept with the row, so the list never
+    /// has to open the blobs).
+    #[serde(default)]
+    pub has_credentials: bool,
 }
 
 /// A profile as the UI shows it: `has_credentials` says whether a user name and password are
@@ -84,14 +102,14 @@ pub struct VpnProfileView {
 }
 
 impl VpnProfileView {
-    pub fn new(p: &VpnProfile, has_credentials: bool) -> VpnProfileView {
+    pub fn new(p: &VpnProfile) -> VpnProfileView {
         VpnProfileView {
             id: p.id.clone(),
             name: p.name.clone(),
             kind: p.kind,
             server: p.server.clone(),
             needs_credentials: p.needs_credentials,
-            has_credentials,
+            has_credentials: p.has_credentials,
         }
     }
 }
@@ -187,11 +205,20 @@ pub fn seal(wrapper: &dyn KeyWrapper, secret: &ProfileSecret) -> Result<Vec<u8>,
         username: secret.username.as_deref().map(String::as_str),
         password: secret.password.as_deref().map(String::as_str),
     };
-    // Room for the escapes up front, so the buffer is not reallocated (and copied) on the way.
-    let room = 64 + 2 * (secret.text.len() + out.username.map_or(0, str::len) + out.password.map_or(0, str::len));
+    // Room for the worst case up front (every byte a `\u00XX` escape: six bytes), so the buffer
+    // is never reallocated, which would leave an unzeroized copy behind.
+    let room = 64 + 6 * (secret.text.len() + out.username.map_or(0, str::len) + out.password.map_or(0, str::len));
     let mut json = Zeroizing::new(Vec::with_capacity(room));
     serde_json::to_writer(&mut *json, &out).map_err(|e| e.to_string())?;
+    debug_assert!(json.capacity() == room, "the sealed JSON was reallocated");
     wrapper.protect(&json)
+}
+
+/// May the popup that is open now (`open`) start or stop the VPN? Only the VPN popup itself
+/// (the protocol lets "the popup" send `vpnConnect`/`vpnDisconnect`; the popup browser shows
+/// other menus too).
+pub fn popup_may_control(open: Option<crate::protocol::PopupKind>) -> bool {
+    open == Some(crate::protocol::PopupKind::Vpn)
 }
 
 /// Unwraps and parses a blob made by [`seal`].
@@ -245,7 +272,7 @@ pub fn check_credentials(username: &str, password: &str) -> Result<(), String> {
 
 pub use crate::scripts_store::{new_id, valid_id};
 
-const COLS: &str = "id, name, kind, server, needs_credentials, created_ms";
+const COLS: &str = "id, name, kind, server, needs_credentials, created_ms, has_credentials";
 
 fn row(r: &Row) -> rusqlite::Result<VpnProfile> {
     let kind: String = r.get(2)?;
@@ -256,6 +283,7 @@ fn row(r: &Row) -> rusqlite::Result<VpnProfile> {
         server: r.get(3)?,
         needs_credentials: r.get(4)?,
         created_ms: r.get(5)?,
+        has_credentials: r.get(6)?,
     })
 }
 
@@ -277,9 +305,18 @@ impl Store {
 
     pub fn vpn_profile_add(&self, p: &VpnProfile, blob: &[u8]) -> DbResult<()> {
         self.conn.execute(
-            "INSERT INTO vpn_profiles(id, name, kind, server, needs_credentials, created_ms, blob)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![p.id, p.name, p.kind.as_str(), p.server, p.needs_credentials, p.created_ms, blob],
+            "INSERT INTO vpn_profiles(id, name, kind, server, needs_credentials, created_ms, blob, has_credentials)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                p.id,
+                p.name,
+                p.kind.as_str(),
+                p.server,
+                p.needs_credentials,
+                p.created_ms,
+                blob,
+                p.has_credentials
+            ],
         )?;
         Ok(())
     }
@@ -289,8 +326,12 @@ impl Store {
         Ok(self.conn.execute("UPDATE vpn_profiles SET name = ?2 WHERE id = ?1", params![id, name])? > 0)
     }
 
-    pub fn vpn_profile_set_blob(&self, id: &str, blob: &[u8]) -> DbResult<bool> {
-        Ok(self.conn.execute("UPDATE vpn_profiles SET blob = ?2 WHERE id = ?1", params![id, blob])? > 0)
+    /// A new blob, and whether it holds a user name and password.
+    pub fn vpn_profile_set_blob(&self, id: &str, blob: &[u8], has_credentials: bool) -> DbResult<bool> {
+        Ok(self.conn.execute(
+            "UPDATE vpn_profiles SET blob = ?2, has_credentials = ?3 WHERE id = ?1",
+            params![id, blob, has_credentials],
+        )? > 0)
     }
 
     pub fn vpn_profile_remove(&self, id: &str) -> DbResult<bool> {
@@ -334,6 +375,7 @@ mod tests {
             server: "vpn.example.org:1194".into(),
             needs_credentials: true,
             created_ms: created,
+            has_credentials: false,
         }
     }
 
@@ -365,9 +407,14 @@ mod tests {
             username: Some(Zeroizing::new("alice".into())),
             password: Some(Zeroizing::new("p\"w\\d".into())),
         };
-        assert!(s.vpn_profile_set_blob("b", &seal(&Fake, &with).unwrap()).unwrap());
+        assert!(s.vpn_profile_set_blob("b", &seal(&Fake, &with).unwrap(), with.has_credentials()).unwrap());
         let back = open(&Fake, &s.vpn_profile_blob("b").unwrap().unwrap()).unwrap();
         assert!(back.has_credentials());
+        // The list knows without opening the blob.
+        assert!(s.vpn_profile("b").unwrap().unwrap().has_credentials);
+        assert!(VpnProfileView::new(&s.vpn_profile("b").unwrap().unwrap()).has_credentials);
+        assert!(!s.vpn_profile("a").unwrap().unwrap().has_credentials);
+        assert!(!s.vpn_profile_set_blob("zz", b"x", false).unwrap());
         assert_eq!(back.password.as_deref().map(String::as_str), Some("p\"w\\d"));
         assert!(!format!("{back:?}").contains("alice"));
 
@@ -441,10 +488,59 @@ mod tests {
     }
 
     #[test]
+    fn a_test_build_v8_table_gets_the_column() {
+        let dir = std::env::temp_dir().join(format!("krunk-vpn-v8-{}", new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("browser.db");
+        {
+            let s = Store::open(&path).unwrap();
+            s.conn.execute_batch("DROP TABLE vpn_profiles").unwrap();
+            // The table as the first 0.14.0 test builds made it.
+            s.conn
+                .execute_batch(
+                    "CREATE TABLE vpn_profiles (id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
+                     server TEXT NOT NULL, needs_credentials INTEGER NOT NULL, created_ms INTEGER NOT NULL,
+                     blob BLOB NOT NULL);
+                     INSERT INTO vpn_profiles VALUES ('a', 'Old', 'openvpn', 'h:1', 1, 1, x'00');",
+                )
+                .unwrap();
+        }
+        let s = Store::open(&path).unwrap();
+        let p = s.vpn_profile("a").unwrap().unwrap();
+        assert_eq!((p.name.as_str(), p.has_credentials), ("Old", false));
+        drop(s);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn seal_never_reallocates_even_with_escapes() {
+        // Control characters are the longest escapes (`\u0001`: six bytes for one).
+        let text: String = (0..2000).map(|i| char::from(1 + (i % 30) as u8)).collect();
+        let secret = ProfileSecret {
+            text: Zeroizing::new(text.clone()),
+            username: Some(Zeroizing::new("\u{1}\"\\".repeat(50))),
+            password: Some(Zeroizing::new("\u{7f}\u{2}".repeat(100))),
+        };
+        // `seal` checks its capacity (debug builds); the result opens again.
+        let back = open(&Fake, &seal(&Fake, &secret).unwrap()).unwrap();
+        assert_eq!(back.text.as_str(), text);
+        assert_eq!(back.username.as_deref().map(String::as_str), Some("\u{1}\"\\".repeat(50).as_str()));
+    }
+
+    #[test]
+    fn only_the_vpn_popup_controls_the_vpn() {
+        use crate::protocol::PopupKind;
+        assert!(popup_may_control(Some(PopupKind::Vpn)));
+        assert!(!popup_may_control(None));
+        assert!(!popup_may_control(Some(PopupKind::SiteInfo)));
+        assert!(!popup_may_control(Some(PopupKind::Downloads)));
+    }
+
+    #[test]
     fn view_shapes() {
         let v = VpnView {
             status: VpnStatus { state: VpnState::Connected, since_ms: 5, server: "h:1".into(), ..Default::default() },
-            profiles: vec![VpnProfileView::new(&profile("b", 2), true)],
+            profiles: vec![VpnProfileView::new(&VpnProfile { has_credentials: true, ..profile("b", 2) })],
             active: "b".into(),
             show_button: true,
         };

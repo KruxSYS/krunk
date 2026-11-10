@@ -72,6 +72,11 @@ thread_local! {
     /// Live browsers that use the private (in-memory) request context.
     static PRIVATE_LIVE: Cell<usize> = const { Cell::new(0) };
     static PRIVATE_CONTEXT: RefCell<Option<RequestContext>> = const { RefCell::new(None) };
+    /// 0.14.0: the private context's preferences (the VPN's proxy among them) are in place;
+    /// until then its browsers wait in `PRIVATE_WAITING` (CEF initializes a new context, and
+    /// calls its handler, asynchronously: a browser created at once could navigate first).
+    static PRIVATE_READY: Cell<bool> = const { Cell::new(false) };
+    static PRIVATE_WAITING: RefCell<Vec<Box<dyn FnOnce()>>> = RefCell::new(Vec::new());
     static QUITTING: Cell<bool> = const { Cell::new(false) };
     static START: RefCell<Option<Start>> = RefCell::new(None);
     static KEEP: RefCell<Option<Box<dyn Any>>> = RefCell::new(None);
@@ -245,6 +250,7 @@ fn browser_closed(browser: &Browser, private: bool) {
         // next private tab starts empty.
         if live == 0 {
             PRIVATE_CONTEXT.with(|c| c.borrow_mut().take());
+            PRIVATE_READY.set(false);
             info!("private session ended");
         }
     }
@@ -263,10 +269,78 @@ pub fn set_doh(mode: &str, templates: &str) -> bool {
 /// sets the `proxy` preference to `fixed_servers` with `server` (`http://127.0.0.1:<port>`) on
 /// the default and the private profile (also one created later) and keeps WebRTC from sending
 /// UDP outside it; `None` goes back to the system's settings. True when every profile took it.
+///
+/// When every profile took it, the engine's open connections (HTTP/2 and QUIC sessions, idle
+/// and pending sockets, WebSocket pools) are closed in both profiles so they come back the new
+/// way. WebRTC peer connections can't be moved: they keep their path until they end.
 pub fn set_vpn_proxy(proxy: Option<(String, String)>) -> bool {
+    let private = PRIVATE_CONTEXT.with(|c| c.borrow().clone());
+    // A private context that is still initializing gets the proxy in its handler (before any
+    // of its browsers exists); setting preferences on it now would be refused.
+    let private = private.filter(|_| PRIVATE_READY.get());
     let mut contexts: Vec<RequestContext> = request_context_get_global_context().into_iter().collect();
-    contexts.extend(PRIVATE_CONTEXT.with(|c| c.borrow().clone()));
-    app::set_vpn_proxy(proxy.map(|(server, bypass)| app::VpnProxy { server, bypass }), &mut contexts)
+    contexts.extend(private);
+    let ok = app::set_vpn_proxy(proxy.map(|(server, bypass)| app::VpnProxy { server, bypass }), &mut contexts);
+    if ok {
+        for ctx in &contexts {
+            let mut done = ConnectionsClosed::new(if ctx.is_global() != 0 { "default" } else { "private" });
+            ctx.close_all_connections(Some(&mut done));
+        }
+        info!(
+            "vpn: the engine's open connections are being closed so they reconnect the new way; \
+             WebRTC peer connections can't move and keep their path until they end"
+        );
+    }
+    ok
+}
+
+wrap_completion_callback! {
+    struct ConnectionsClosed {
+        scope: &'static str,
+    }
+    impl CompletionCallback {
+        fn on_complete(&self) {
+            info!("vpn: the {} profile's open connections were closed", self.scope);
+        }
+    }
+}
+
+/// The private context's preferences are in place (its handler ran): browsers waiting for it
+/// are created now. `ctx` must be the current private context (an older one finishing late
+/// changes nothing).
+pub(super) fn private_context_ready(ctx: &mut RequestContext) {
+    let current = PRIVATE_CONTEXT.with(|c| c.borrow().clone());
+    let Some(current) = current else { return };
+    if current.is_same(Some(ctx)) == 0 {
+        return;
+    }
+    PRIVATE_READY.set(true);
+    let waiting = PRIVATE_WAITING.with(|w| std::mem::take(&mut *w.borrow_mut()));
+    for f in waiting {
+        f();
+    }
+}
+
+/// The private context did not take the VPN's proxy: it is dropped with the browsers waiting
+/// for it (their tabs stay empty; the next private tab makes a new context and tries again).
+pub(super) fn private_context_failed(ctx: &mut RequestContext) {
+    let current = PRIVATE_CONTEXT.with(|c| c.borrow().clone());
+    if !current.is_some_and(|c| c.is_same(Some(ctx)) != 0) {
+        return;
+    }
+    PRIVATE_CONTEXT.with(|c| c.borrow_mut().take());
+    PRIVATE_READY.set(false);
+    let waiting = PRIVATE_WAITING.with(|w| std::mem::take(&mut *w.borrow_mut()));
+    warning!("vpn: the private profile did not take the VPN's proxy; {} private tab(s) not loaded", waiting.len());
+}
+
+/// Runs `f` once the private context's preferences are in place (at once when they are).
+pub(super) fn when_private_ready(f: impl FnOnce() + 'static) {
+    if PRIVATE_READY.get() {
+        f();
+    } else {
+        PRIVATE_WAITING.with(|w| w.borrow_mut().push(Box::new(f)));
+    }
 }
 
 fn private_context() -> Option<RequestContext> {
@@ -276,6 +350,7 @@ fn private_context() -> Option<RequestContext> {
     // An empty cache path makes an incognito, memory-only context.
     let settings = RequestContextSettings { persist_session_cookies: 0, ..Default::default() };
     let mut handler = app::context_handler();
+    PRIVATE_READY.set(false);
     let ctx = request_context_create_context(Some(&settings), Some(&mut handler))?;
     scheme::register(Some(ctx.clone()), false);
     for host in EXT_HOSTS.with(|h| h.borrow().clone()) {

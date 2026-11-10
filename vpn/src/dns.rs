@@ -257,6 +257,11 @@ impl Resolver {
         }
     }
 
+    /// Forgets every cached answer (at the start of each tunnel session).
+    pub fn clear_cache(&self) {
+        self.cache.lock().unwrap_or_else(PoisonError::into_inner).clear();
+    }
+
     pub fn servers(&self) -> Vec<IpAddr> {
         self.servers.read().unwrap_or_else(PoisonError::into_inner).clone()
     }
@@ -481,5 +486,13 @@ mod tests {
         assert_eq!(r.servers(), vec![FALLBACK]);
         r.set_servers(vec!["10.77.0.53".parse().unwrap()]);
         assert_eq!(r.servers(), vec!["10.77.0.53".parse::<IpAddr>().unwrap()]);
+        let entry = || Entry { result: Err(DnsError::NotFound), expires: Instant::now() + Duration::from_secs(60) };
+        r.cache.lock().unwrap().insert("a.test".into(), entry());
+        assert_eq!(r.cached("a.test"), Some(Err(DnsError::NotFound)));
+        // The same servers again keep the cache; a new session clears it.
+        r.set_servers(vec!["10.77.0.53".parse().unwrap()]);
+        assert!(r.cached("a.test").is_some());
+        r.clear_cache();
+        assert_eq!(r.cached("a.test"), None);
     }
 }

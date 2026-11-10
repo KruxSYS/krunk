@@ -21,7 +21,6 @@ use crate::ffi::http::{self, ProxyMode};
 use crate::log::{info, warning};
 use lb_core::downloads::{DownloadState, Resume};
 use lb_core::segdl::{self, Part, Probed, Validator};
-use lb_core::settings::{krunk_proxy, UpdaterProxy};
 use lb_core::storage::now_ms;
 use lb_core::tabs::TabId;
 use std::cell::{Cell, RefCell};
@@ -48,6 +47,8 @@ const RATE_SAMPLE_MS: u64 = 250;
 const RUN: u8 = 0;
 const PAUSE: u8 = 1;
 const CANCEL: u8 = 2;
+/// The VPN's route changed (0.14.0): the connections stop and start again the new way.
+const REROUTE: u8 = 3;
 
 /// The chunk callback's way to end a request whose part was shortened by a split (not an error).
 const PART_COMPLETE: &str = "part complete";
@@ -100,6 +101,8 @@ enum Outcome {
     Failed(String),
     /// The file changed on the server or ranges stopped: the engine downloads it again.
     Restart(String),
+    /// A connection ended because the VPN's route changed (it goes on the new way).
+    Rerouted,
 }
 
 /// Why the probe said no.
@@ -188,13 +191,9 @@ impl Browser {
         let s = self.settings.borrow();
         let agent = if s.user_agent.is_empty() { crate::ffi::cef::default_user_agent() } else { s.user_agent.clone() };
         // 0.14.0: through the VPN while it runs, like every other request of Krunk's.
-        let vpn = self.vpn_proxy_addr();
-        let proxy = match krunk_proxy(&s.proxy, vpn.as_deref()) {
-            UpdaterProxy::Named(p) => Some(ProxyMode::Named(p)),
-            _ if s.proxy.trim() == "direct://" => None,
-            UpdaterProxy::System => Some(ProxyMode::System),
-            UpdaterProxy::Skip => None,
-        };
+        let route = self.own_route();
+        let vpn = route.as_ref().is_some_and(|r| matches!(r.via, http::Via::Vpn(_)));
+        let proxy = route.filter(|_| vpn || s.proxy.trim() != "direct://");
         (s.download_connections, proxy, agent)
     }
 
@@ -275,8 +274,43 @@ impl Browser {
         }
     }
 
+    /// The route changed (the VPN connected, switched or stopped): running downloads in parts
+    /// stop their connections and go on through the new route (`parts_ended`).
+    pub(super) fn parts_reroute(&self) {
+        let running: Vec<u32> =
+            self.parts_jobs.jobs.borrow().iter().filter(|(_, j)| j.running).map(|(id, _)| *id).collect();
+        for id in running {
+            if let Some(j) = self.parts_jobs.jobs.borrow().get(&id) {
+                let _ = j.shared.stop.compare_exchange(RUN, REROUTE, Ordering::SeqCst, Ordering::SeqCst);
+            }
+        }
+    }
+
     /// (Re)starts the workers of download `id` from where its parts are.
     fn run_parts(&self, id: u32) {
+        // A route decided before the VPN last changed is not used again.
+        let stale = self.parts_jobs.jobs.borrow().get(&id).is_some_and(|j| j.fetch.proxy.stale());
+        if stale {
+            let (_, fresh, _) = self.parts_settings();
+            let url = self.parts_jobs.jobs.borrow().get(&id).map(|j| j.fetch.url.clone()).unwrap_or_default();
+            match fresh {
+                Some(p) => {
+                    if let Some(j) = self.parts_jobs.jobs.borrow_mut().get_mut(&id) {
+                        j.fetch.proxy = p;
+                    }
+                }
+                None => {
+                    let temp = self.parts_jobs.jobs.borrow_mut().remove(&id).map(|j| j.temp);
+                    if let Some(t) = temp {
+                        let _ = std::fs::remove_file(t);
+                    }
+                    self.parts_restart_with_engine(id, &url, "The connection route changed");
+                    self.save_downloads();
+                    self.push_downloads();
+                    return;
+                }
+            }
+        }
         let (fetch, temp, path, shared) = {
             let mut jobs = self.parts_jobs.jobs.borrow_mut();
             let Some(job) = jobs.get_mut(&id).filter(|j| !j.running) else { return };
@@ -314,6 +348,12 @@ impl Browser {
                 self.downloads.borrow_mut().set_state(id, DownloadState::Paused, None, now);
                 false
             }
+            Outcome::Stopped if stop == REROUTE => {
+                info!("download {id}: the connection route changed (VPN); going on the new way");
+                self.save_parts_state(id);
+                self.run_parts(id);
+                false
+            }
             Outcome::Stopped => {
                 let _ = std::fs::remove_file(&temp);
                 self.downloads.borrow_mut().set_state(id, DownloadState::Cancelled, None, now);
@@ -325,6 +365,12 @@ impl Browser {
                 let _ = std::fs::remove_file(&temp);
                 self.downloads.borrow_mut().set_state(id, DownloadState::Interrupted, Some(why), now);
                 true
+            }
+            Outcome::Rerouted => {
+                // (Workers turn this into REROUTE; here for completeness.)
+                self.save_parts_state(id);
+                self.run_parts(id);
+                false
             }
             Outcome::Restart(why) => {
                 let _ = std::fs::remove_file(&temp);
@@ -651,7 +697,10 @@ fn run_workers(id: u32, fetch: &Fetch, temp: &Path, path: &Path, shared: &Arc<Sh
             let failure = &failure;
             scope.spawn(move || {
                 if let Err(o) = worker(id, fetch, temp, shared, conn) {
-                    if shared.stop.load(Ordering::SeqCst) == RUN {
+                    if matches!(o, Outcome::Rerouted) {
+                        // The route changed under it: everyone stops and starts the new way.
+                        let _ = shared.stop.compare_exchange(RUN, REROUTE, Ordering::SeqCst, Ordering::SeqCst);
+                    } else if shared.stop.load(Ordering::SeqCst) == RUN {
                         // One connection failed for good: the others stop too.
                         if let Ok(mut f) = failure.lock() {
                             f.get_or_insert(o);
@@ -775,6 +824,9 @@ fn fetch_part(fetch: &Fetch, file: &std::fs::File, shared: &Arc<Shared>, i: usiz
         );
         if shared.stop.load(Ordering::SeqCst) != RUN {
             return Err(Outcome::Stopped);
+        }
+        if fetch.proxy.stale() {
+            return Err(Outcome::Rerouted);
         }
         if let Some(o) = fatal.into_inner() {
             return Err(o);

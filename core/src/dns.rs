@@ -362,6 +362,43 @@ pub fn base64url_decode(text: &str) -> Result<Vec<u8>, String> {
     Base64UrlUnpadded::decode_vec(text.trim_end_matches('=')).map_err(|e| e.to_string())
 }
 
+/// The REFUSED answer to a DNS query (0.14.0: the loopback stub while the VPN runs): the
+/// query's id, opcode, RD bit and question, rcode 5, no records. `None` for a packet that is
+/// not a query.
+pub fn refused_answer(query: &[u8]) -> Option<Vec<u8>> {
+    if query.len() < 12 || query[2] & 0x80 != 0 {
+        return None;
+    }
+    let qdcount = u16::from_be_bytes([query[4], query[5]]);
+    // The question (plain labels; a query has no compression), when there is exactly one.
+    let question = (qdcount == 1)
+        .then(|| {
+            let mut i = 12;
+            loop {
+                let len = usize::from(*query.get(i)?);
+                if len == 0 {
+                    break;
+                }
+                if len & 0xc0 != 0 {
+                    return None;
+                }
+                i += 1 + len;
+            }
+            query.get(12..i + 5)
+        })
+        .flatten();
+    let mut out = Vec::with_capacity(12 + question.map_or(0, <[u8]>::len));
+    out.extend_from_slice(&query[0..2]);
+    // QR, the query's opcode and RD; RA 0; rcode 5 (REFUSED).
+    out.push(0x80 | (query[2] & 0x79));
+    out.push(5);
+    out.extend_from_slice(&[0, u8::from(question.is_some()), 0, 0, 0, 0, 0, 0]);
+    if let Some(q) = question {
+        out.extend_from_slice(q);
+    }
+    Some(out)
+}
+
 /// A preset of the picker.
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -446,6 +483,30 @@ impl Dns {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refused_answers_echo_the_question() {
+        // id 0x1234, RD, one question: example.com A IN, plus an OPT record.
+        let mut q = vec![0x12, 0x34, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 1];
+        q.extend_from_slice(b"\x07example\x03com\x00\x00\x01\x00\x01");
+        q.extend_from_slice(&[0, 0, 41, 4, 0xd0, 0, 0, 0, 0, 0, 0]);
+        let a = refused_answer(&q).unwrap();
+        assert_eq!(&a[..12], &[0x12, 0x34, 0x81, 0x05, 0, 1, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(&a[12..], b"\x07example\x03com\x00\x00\x01\x00\x01");
+        // An answer is not a query; short and odd packets get no question back.
+        let mut answer = q.clone();
+        answer[2] |= 0x80;
+        assert_eq!(refused_answer(&answer), None);
+        assert_eq!(refused_answer(&q[..11]), None);
+        let truncated = &q[..16];
+        assert_eq!(refused_answer(truncated).unwrap(), vec![0x12, 0x34, 0x81, 0x05, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let mut two = q.clone();
+        two[5] = 2;
+        assert_eq!(refused_answer(&two).unwrap()[5], 0);
+        let mut pointer = q[..12].to_vec();
+        pointer.extend_from_slice(&[0xc0, 0x0c, 0, 1, 0, 1]);
+        assert_eq!(refused_answer(&pointer).unwrap().len(), 12);
+    }
 
     #[test]
     fn text_forms() {

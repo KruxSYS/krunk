@@ -185,8 +185,10 @@ pub fn inspect(text: &str) -> Result<Inspected, ImportError> {
                     let mut it = pair.lines().map(str::trim).filter(|l| !l.is_empty());
                     match (it.next(), it.next()) {
                         (Some(u), Some(p)) => {
-                            inline =
-                                Some(Credentials { username: u.to_owned(), password: Zeroizing::new(p.to_owned()) })
+                            inline = Some(Credentials {
+                                username: Zeroizing::new(u.to_owned()),
+                                password: Zeroizing::new(p.to_owned()),
+                            })
                         }
                         _ => return Err(invalid("The inline <auth-user-pass> needs a username and a password line")),
                     }

@@ -17,7 +17,6 @@ use crate::ffi::http::{self, ProxyMode};
 use crate::ffi::process;
 use crate::log::{info, warning};
 use lb_core::protocol::{Event, PopupContent, PopupKind, UpdateChoice, UpdateProgress};
-use lb_core::settings::UpdaterProxy;
 use lb_core::storage::now_ms;
 use lb_core::tabs::TabId;
 use lb_core::update::{self, Config, DownloadCheck, Manifest, Offer, Status, UpdateError};
@@ -218,13 +217,11 @@ impl Browser {
                 return;
             }
         };
-        let proxy = match self.own_proxy() {
-            UpdaterProxy::Skip => {
-                self.update_checked(Err("skipped: a SOCKS proxy is configured (WinHTTP would bypass it)".into()));
-                return;
-            }
-            UpdaterProxy::Named(p) => ProxyMode::Named(p),
-            UpdaterProxy::System => ProxyMode::System,
+        let Some(proxy) = self.own_route() else {
+            self.update_checked(Err(
+                self.own_route_skipped("skipped: a SOCKS proxy is configured (WinHTTP would bypass it)")
+            ));
+            return;
         };
         self.updates.checking.set(true);
         self.spawn_job(
@@ -405,13 +402,11 @@ impl Browser {
             self.show_update_prompt(UpdateProgress::Downloading { percent: self.download_percent() });
             return;
         }
-        let proxy = match self.own_proxy() {
-            UpdaterProxy::Skip => {
-                self.update_failed("a SOCKS proxy is configured; download the update from the website".into());
-                return;
-            }
-            UpdaterProxy::Named(p) => ProxyMode::Named(p),
-            UpdaterProxy::System => ProxyMode::System,
+        let Some(proxy) = self.own_route() else {
+            self.update_failed(
+                self.own_route_skipped("a SOCKS proxy is configured; download the update from the website"),
+            );
+            return;
         };
         let allow_http = self.updates.config.as_ref().is_ok_and(|c| c.allow_http);
         let bytes = Arc::new(AtomicU64::new(0));

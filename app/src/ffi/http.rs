@@ -3,16 +3,97 @@
 //! `dev-updates` build may use http://), size-capped, with timeouts.
 
 use std::ffi::c_void;
+use std::sync::atomic::{AtomicU64, Ordering};
 use windows::core::{w, HSTRING, PCWSTR};
 use windows::Win32::Networking::WinHttp::*;
 
-/// How the updater may reach the network.
+/// Where a request goes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProxyMode {
+pub enum Via {
     /// The system (WinINet/WPAD) proxy configuration.
     System,
-    /// An explicit `host:port` HTTP(S) proxy.
+    /// An explicit `host:port` HTTP(S) proxy (`<local>` names bypass it).
     Named(String),
+    /// The VPN's local proxy (0.14.0): nothing bypasses it, not even dotless names.
+    Vpn(String),
+}
+
+/// How Krunk's own request reaches the network, as decided on the UI thread, with the route
+/// generation of that moment (0.14.0): when the VPN connects, switches or stops, the route
+/// changes and a request decided before ends (`stale`) instead of going on the old way.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProxyMode {
+    pub via: Via,
+    route: u64,
+}
+
+/// Bumped by the VPN each time the engine's and Krunk's route changes.
+static ROUTE: AtomicU64 = AtomicU64::new(0);
+
+/// The route changed (the VPN connected, switched or stopped): requests decided before end.
+pub fn route_changed() {
+    ROUTE.fetch_add(1, Ordering::SeqCst);
+}
+
+/// The error text of a request that ended because the route changed.
+pub const ROUTE_CHANGED: &str = "the connection route changed (VPN)";
+
+impl ProxyMode {
+    pub fn new(via: Via) -> ProxyMode {
+        ProxyMode { via, route: ROUTE.load(Ordering::SeqCst) }
+    }
+
+    pub fn system() -> ProxyMode {
+        ProxyMode::new(Via::System)
+    }
+
+    /// From the proxy setting's answer; `None` for `Skip` (a SOCKS proxy WinHTTP can't use).
+    pub fn from_updater(p: lb_core::settings::UpdaterProxy) -> Option<ProxyMode> {
+        use lb_core::settings::UpdaterProxy as U;
+        match p {
+            U::System => Some(ProxyMode::new(Via::System)),
+            U::Named(p) => Some(ProxyMode::new(Via::Named(p))),
+            U::Vpn(p) => Some(ProxyMode::new(Via::Vpn(p))),
+            U::Skip => None,
+        }
+    }
+
+    /// The route changed since this was decided.
+    pub fn stale(&self) -> bool {
+        self.route != ROUTE.load(Ordering::SeqCst)
+    }
+
+    fn check(&self) -> Result<(), String> {
+        if self.stale() {
+            Err(ROUTE_CHANGED.into())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// A WinHTTP session for this route.
+    ///
+    /// # Safety
+    /// Plain WinHTTP call; the returned handle is owned.
+    unsafe fn open_session(&self, agent: &HSTRING) -> Result<Handle, String> {
+        // SAFETY: as documented above.
+        unsafe {
+            match &self.via {
+                Via::System => {
+                    check(WinHttpOpen(agent, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, None, None, 0), "WinHttpOpen")
+                }
+                Via::Named(p) => check(
+                    WinHttpOpen(agent, WINHTTP_ACCESS_TYPE_NAMED_PROXY, &HSTRING::from(p.as_str()), w!("<local>"), 0),
+                    "WinHttpOpen",
+                ),
+                // An empty bypass list: dotless names (intranet-style) go through the VPN too.
+                Via::Vpn(p) => check(
+                    WinHttpOpen(agent, WINHTTP_ACCESS_TYPE_NAMED_PROXY, &HSTRING::from(p.as_str()), PCWSTR::null(), 0),
+                    "WinHttpOpen",
+                ),
+            }
+        }
+    }
 }
 
 /// Closes a WinHTTP handle on drop.
@@ -106,15 +187,8 @@ pub fn fetch(
     // `Handle` and closed on all paths; buffers are sized correctly.
     unsafe {
         let agent = HSTRING::from(opts.user_agent);
-        let session = match opts.proxy {
-            ProxyMode::System => {
-                check(WinHttpOpen(&agent, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, None, None, 0), "WinHttpOpen")?
-            }
-            ProxyMode::Named(p) => check(
-                WinHttpOpen(&agent, WINHTTP_ACCESS_TYPE_NAMED_PROXY, &HSTRING::from(p.as_str()), w!("<local>"), 0),
-                "WinHttpOpen",
-            )?,
-        };
+        opts.proxy.check()?;
+        let session = opts.proxy.open_session(&agent)?;
         let t = opts.timeout_ms;
         WinHttpSetTimeouts(session.0, t, t, t, t).map_err(|e| e.to_string())?;
         let tls12 = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2 | 0x2000; // | TLS 1.3
@@ -132,6 +206,7 @@ pub fn fetch(
             ),
             "WinHttpOpenRequest",
         )?;
+        opts.proxy.check()?;
         WinHttpSendRequest(request.0, None, None, 0, 0, 0).map_err(|e| failure("send", &e))?;
         WinHttpReceiveResponse(request.0, std::ptr::null_mut()).map_err(|e| failure("receive", &e))?;
         let mut status: u32 = 0;
@@ -152,6 +227,8 @@ pub fn fetch(
         let mut total: u64 = 0;
         let mut buf = vec![0u8; 64 * 1024];
         loop {
+            // A long transfer ends when the route changes (it goes on, restarted, the new way).
+            opts.proxy.check()?;
             let mut avail = 0u32;
             WinHttpQueryDataAvailable(request.0, &mut avail).map_err(|e| failure("read", &e))?;
             if avail == 0 {
@@ -214,15 +291,8 @@ pub fn get_range(
     // buffers are sized correctly.
     unsafe {
         let agent = HSTRING::from(opts.user_agent);
-        let session = match opts.proxy {
-            ProxyMode::System => {
-                check(WinHttpOpen(&agent, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, None, None, 0), "WinHttpOpen")?
-            }
-            ProxyMode::Named(p) => check(
-                WinHttpOpen(&agent, WINHTTP_ACCESS_TYPE_NAMED_PROXY, &HSTRING::from(p.as_str()), w!("<local>"), 0),
-                "WinHttpOpen",
-            )?,
-        };
+        opts.proxy.check()?;
+        let session = opts.proxy.open_session(&agent)?;
         let t = opts.timeout_ms;
         WinHttpSetTimeouts(session.0, t, t, t, t).map_err(|e| e.to_string())?;
         let tls12 = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2 | 0x2000; // | TLS 1.3
@@ -247,6 +317,7 @@ pub fn get_range(
         let _ = WinHttpSetOption(Some(request.0), WINHTTP_OPTION_AUTOLOGON_POLICY, Some(&logon.to_le_bytes()));
         WinHttpAddRequestHeaders(request.0, &extra, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE)
             .map_err(|e| failure("headers", &e))?;
+        opts.proxy.check()?;
         WinHttpSendRequest(request.0, None, None, 0, 0, 0).map_err(|e| failure("send", &e))?;
         WinHttpReceiveResponse(request.0, std::ptr::null_mut()).map_err(|e| failure("receive", &e))?;
         // The raw head: first its size, then the text.
@@ -273,6 +344,8 @@ pub fn get_range(
         let mut total: u64 = 0;
         let mut buf = vec![0u8; 64 * 1024];
         loop {
+            // A long transfer ends when the route changes (it goes on, restarted, the new way).
+            opts.proxy.check()?;
             let mut avail = 0u32;
             WinHttpQueryDataAvailable(request.0, &mut avail).map_err(|e| failure("read", &e))?;
             if avail == 0 {
@@ -372,15 +445,8 @@ pub fn request(
     // body slice outlives the synchronous send, and buffers are sized correctly.
     unsafe {
         let agent = HSTRING::from(opts.user_agent);
-        let session = match opts.proxy {
-            ProxyMode::System => {
-                check(WinHttpOpen(&agent, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, None, None, 0), "WinHttpOpen")?
-            }
-            ProxyMode::Named(p) => check(
-                WinHttpOpen(&agent, WINHTTP_ACCESS_TYPE_NAMED_PROXY, &HSTRING::from(p.as_str()), w!("<local>"), 0),
-                "WinHttpOpen",
-            )?,
-        };
+        opts.proxy.check()?;
+        let session = opts.proxy.open_session(&agent)?;
         let t = opts.timeout_ms;
         WinHttpSetTimeouts(session.0, t, t, t, t).map_err(|e| e.to_string())?;
         let tls12 = WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2 | 0x2000; // | TLS 1.3
@@ -409,6 +475,7 @@ pub fn request(
         }
         let len = body.len() as u32;
         let ptr = (!body.is_empty()).then_some(body.as_ptr() as *const c_void);
+        opts.proxy.check()?;
         WinHttpSendRequest(request.0, None, ptr, len, len, 0).map_err(|e| failure("send", &e))?;
         WinHttpReceiveResponse(request.0, std::ptr::null_mut()).map_err(|e| failure("receive", &e))?;
         let mut status: u32 = 0;
@@ -426,6 +493,8 @@ pub fn request(
         let mut out = Vec::new();
         let mut buf = vec![0u8; 16 * 1024];
         loop {
+            // A long transfer ends when the route changes (it goes on, restarted, the new way).
+            opts.proxy.check()?;
             let mut avail = 0u32;
             WinHttpQueryDataAvailable(request.0, &mut avail).map_err(|e| failure("read", &e))?;
             if avail == 0 {

@@ -135,7 +135,13 @@ wrap_request_context_handler! {
     impl RequestContextHandler {
         fn on_request_context_initialized(&self, request_context: Option<&mut RequestContext>) {
             if let Some(ctx) = request_context {
-                apply_profile_prefs(ctx);
+                // Its browsers wait for this (`when_private_ready`): they never load a page
+                // before the VPN's proxy is the profile's.
+                if apply_profile_prefs(ctx) {
+                    super::private_context_ready(ctx);
+                } else {
+                    super::private_context_failed(ctx);
+                }
             }
         }
     }
@@ -151,8 +157,9 @@ pub(super) fn context_handler() -> RequestContextHandler {
 
 /// Profile preferences of every request context: no password manager or
 /// autofill (Krunk has its own vault), no network prediction and no
-/// local IP addresses in WebRTC.
-pub(super) fn apply_profile_prefs(ctx: &mut RequestContext) {
+/// local IP addresses in WebRTC. False when the VPN runs and the context did not take its
+/// proxy (its pages must not load).
+pub(super) fn apply_profile_prefs(ctx: &mut RequestContext) -> bool {
     let prefs: &[(&str, Pref)] = &[
         ("credentials_enable_service", Pref::Bool(false)),
         ("credentials_enable_autosignin", Pref::Bool(false)),
@@ -170,8 +177,9 @@ pub(super) fn apply_profile_prefs(ctx: &mut RequestContext) {
     let scope = if ctx.is_global() != 0 { "default" } else { "private" };
     info!("engine preferences applied ({scope} profile): {applied}/{}", prefs.len());
     // 0.14.0: a context created while the VPN runs (the private one) uses it from the start.
-    if let Some(p) = VPN_PROXY.with(|v| v.borrow().clone()) {
-        apply_vpn(ctx, Some(&p));
+    match VPN_PROXY.with(|v| v.borrow().clone()) {
+        Some(p) => apply_vpn(ctx, Some(&p)),
+        None => true,
     }
 }
 

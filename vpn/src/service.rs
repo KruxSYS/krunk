@@ -119,11 +119,24 @@ impl Backoff {
     }
 }
 
+/// The proxy's owner check: `(proxy_local, peer)` of a new connection, where `proxy_local`
+/// is the proxy's end (`127.0.0.1:<port>`) and `peer` the client's; true lets it in.
+pub type PeerAllowed = Box<dyn Fn(SocketAddr, SocketAddr) -> bool + Send + Sync>;
+
+/// How the runtime thread ends.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shutdown {
+    /// Everything stops, the proxy last.
+    All,
+    /// The tunnel stops; the proxy keeps its port and answers 503 until the process ends.
+    KeepProxy,
+}
+
 /// The running VPN. Dropping it stops everything; the proxy closes last.
 pub struct Vpn {
     addr: SocketAddr,
     shared: Arc<Shared>,
-    shutdown: Option<oneshot::Sender<()>>,
+    shutdown: Option<oneshot::Sender<Shutdown>>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -131,12 +144,13 @@ impl Vpn {
     /// Binds the proxy on 127.0.0.1:0, then connects the tunnel in the background and
     /// reconnects with back-off. `on_status` is called on the VPN's runtime threads at each
     /// state change and every ~2 s while connected (bytes counters); it must not call
-    /// [`Vpn::stop`] or drop the `Vpn`. `peer_allowed` is the PID check (always true on Linux);
-    /// it runs on a blocking thread for each new proxy connection.
+    /// [`Vpn::stop`] or drop the `Vpn`. `peer_allowed(proxy_local, peer)` is the owner check
+    /// (always true on Linux); it runs on a blocking thread for each new proxy connection. The
+    /// listener is the crate's [`crate::bind_loopback`] (exclusive on Windows).
     pub fn start(
         profile: Profile,
         creds: Option<Credentials>,
-        peer_allowed: Box<dyn Fn(SocketAddr) -> bool + Send + Sync>,
+        peer_allowed: PeerAllowed,
         on_status: Box<dyn Fn(&Status) + Send + Sync>,
     ) -> Result<Vpn, StartError> {
         let creds = match &profile {
@@ -154,7 +168,7 @@ impl Vpn {
             .enable_all()
             .thread_name("krunk-vpn")
             .build()?;
-        let std_listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
+        let std_listener = crate::listen::bind_loopback()?;
         std_listener.set_nonblocking(true)?;
         let addr = std_listener.local_addr()?;
         let server = profile.server();
@@ -181,23 +195,27 @@ impl Vpn {
         });
         let (stop_tunnel, stop_rx) = watch::channel(false);
         let (stop_proxy, proxy_rx) = watch::channel(false);
-        let peer_allowed: Arc<dyn Fn(SocketAddr) -> bool + Send + Sync> = Arc::from(peer_allowed);
+        let peer_allowed: Arc<dyn Fn(SocketAddr, SocketAddr) -> bool + Send + Sync> = Arc::from(peer_allowed);
         let proxy = runtime.spawn(crate::proxy::serve(listener, shared.clone(), peer_allowed, proxy_rx));
         let tunnel = runtime.spawn(run(shared.clone(), profile, creds, stop_rx));
         let ticker = runtime.spawn(tick(shared.clone()));
         drop(_guard);
 
-        let (shutdown, shutdown_rx) = oneshot::channel::<()>();
+        let (shutdown, shutdown_rx) = oneshot::channel::<Shutdown>();
         let sh = shared.clone();
         let thread = std::thread::Builder::new().name("krunk-vpn-rt".into()).spawn(move || {
             runtime.block_on(async move {
-                let _ = shutdown_rx.await;
+                let how = shutdown_rx.await.unwrap_or(Shutdown::All);
                 // Fail-closed while shutting down: the proxy answers 503 until it closes.
                 sh.set_state(State::Stopped, None);
                 let _ = stop_tunnel.send(true);
                 let _ = tokio::time::timeout(Duration::from_secs(6), tunnel).await;
                 ticker.abort();
                 sh.net.close();
+                if how == Shutdown::KeepProxy {
+                    // The port stays Krunk's (answering 503) until the process ends.
+                    std::future::pending::<()>().await;
+                }
                 let _ = stop_proxy.send(true);
                 let _ = tokio::time::timeout(Duration::from_secs(1), proxy).await;
             });
@@ -219,12 +237,23 @@ impl Vpn {
     pub fn stop(self) {
         drop(self);
     }
+
+    /// At exit: the tunnel stops (in the background, without waiting) and the proxy keeps
+    /// its port, answering 503, until the process ends, so nothing else can take the port the
+    /// engine still points at while its last requests end.
+    pub fn stop_for_exit(mut self) {
+        if let Some(s) = self.shutdown.take() {
+            let _ = s.send(Shutdown::KeepProxy);
+        }
+        // Not joined: the runtime thread lives as long as the process.
+        self.thread.take();
+    }
 }
 
 impl Drop for Vpn {
     fn drop(&mut self) {
         if let Some(s) = self.shutdown.take() {
-            let _ = s.send(());
+            let _ = s.send(Shutdown::All);
         }
         if let Some(t) = self.thread.take() {
             let _ = t.join();
@@ -253,6 +282,8 @@ async fn run(shared: Arc<Shared>, profile: Profile, creds: Option<Credentials>, 
     let mut backoff = Backoff(0);
     loop {
         shared.session_connected.store(false, Ordering::Release);
+        // Each session starts with an empty DNS cache (new servers, maybe a new exit).
+        shared.dns.clear_cache();
         let end = match &profile {
             Profile::WireGuard(cfg) => crate::wg::session(cfg, &shared, &mut stop).await,
             Profile::OpenVpn(p) => crate::ovpn::session(p, creds.as_ref(), &shared, &mut stop).await,
@@ -308,8 +339,9 @@ mod tests {
         let vpn = Vpn::start(
             profile,
             None,
-            Box::new(move |peer| {
-                assert!(peer.ip().is_loopback());
+            Box::new(move |local, peer| {
+                assert!(peer.ip().is_loopback() && local.ip().is_loopback());
+                assert_ne!(local.port(), peer.port());
                 !refuse2.load(Ordering::Relaxed)
             }),
             Box::new(move |s| seen2.lock().unwrap().push(s.state)),
@@ -351,5 +383,40 @@ mod tests {
         let seen = seen.lock().unwrap();
         assert_eq!(seen.first(), Some(&State::Connecting));
         assert_eq!(seen.last(), Some(&State::Stopped));
+    }
+
+    /// At exit the tunnel stops but the proxy keeps its port, answering 503.
+    #[test]
+    fn stop_for_exit_keeps_the_port() {
+        let text = "[Interface]\nPrivateKey = yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=\nAddress = 10.66.0.2/32\n\
+                    [Peer]\nPublicKey = xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=\nAllowedIPs = 0.0.0.0/0\nEndpoint = 192.0.2.1:9\n";
+        let (profile, _) = crate::import("t.conf", text).unwrap();
+        let stopped = Arc::new(AtomicBool::new(false));
+        let s2 = stopped.clone();
+        let vpn = Vpn::start(
+            profile,
+            None,
+            Box::new(|_, _| true),
+            Box::new(move |s| {
+                if s.state == State::Stopped {
+                    s2.store(true, Ordering::SeqCst);
+                }
+            }),
+        )
+        .unwrap();
+        let addr = vpn.proxy_addr();
+        vpn.stop_for_exit();
+        let t = std::time::Instant::now();
+        while !stopped.load(Ordering::SeqCst) && t.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(stopped.load(Ordering::SeqCst));
+        std::thread::sleep(Duration::from_millis(300));
+        let mut c = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(1)).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        c.write_all(b"GET http://example.com/ HTTP/1.1\r\n\r\n").unwrap();
+        let mut r = String::new();
+        c.read_to_string(&mut r).unwrap();
+        assert!(r.starts_with("HTTP/1.1 503 VPN not connected\r\n"), "{r}");
     }
 }

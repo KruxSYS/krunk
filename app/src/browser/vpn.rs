@@ -4,8 +4,14 @@
 //! it runs the engine's `proxy` preference (both profiles) and Krunk's own HTTP (updates, sync,
 //! filter lists, extensions) point at that proxy. It is fail-closed: while the tunnel is down the
 //! proxy answers 503, nothing goes direct, and a VPN set to connect at start is in place before
-//! the first page loads (if it can't start then, a local stand-in refuses every request until
-//! the user connects or disconnects).
+//! the first page loads and before any of Krunk's own requests (if it can't start then, a local
+//! stand-in refuses every request until the user connects or disconnects; if not even that can
+//! be put in place, Krunk stays offline: no tabs are restored, only Settings → VPN opens, page
+//! requests are blocked and Krunk's own requests are skipped).
+//!
+//! Each change of route (connect, switch, disconnect) closes the engine's open connections so
+//! they come back the new way, and ends Krunk's own requests decided before (`http::route_changed`;
+//! downloads in parts go on through the new route). WebRTC peer connections can't move.
 //!
 //! Profiles are stored in `vpn_profiles` as DPAPI blobs (`DpapiVpn`) of the file and the OpenVPN
 //! user name and password; they are opened in zeroizing memory only to connect, and never sent
@@ -14,6 +20,7 @@
 use super::Browser;
 use crate::ffi::cef as engine;
 use crate::ffi::dialogs;
+use crate::ffi::http::{self, ProxyMode};
 use crate::ffi::secure::DpapiVpn;
 use crate::log::{info, warning};
 use lb_core::pages::Page;
@@ -23,8 +30,8 @@ use lb_core::storage::now_ms;
 use lb_core::tabs::TabId;
 use lb_core::vpn::{self as v, ProfileSecret, VpnKind, VpnProfile, VpnProfileView, VpnState, VpnStatus, VpnView};
 use std::cell::{Cell, RefCell};
-use std::io::Write;
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use zeroize::Zeroizing;
@@ -43,6 +50,11 @@ pub(super) struct VpnHost {
     /// The latest status from the VPN's runtime thread, with the run it belongs to.
     latest: Arc<Mutex<Option<(u64, krunk_vpn::Status)>>>,
     generation: Cell<u64>,
+    /// The VPN should run, but neither it nor the stand-in is the engine's proxy: page requests
+    /// are blocked and Krunk's own requests skipped until the user connects or disconnects.
+    offline: Cell<bool>,
+    /// The saved session is kept as it was (start-up opened only Settings → VPN, offline).
+    hold_session: Cell<bool>,
 }
 
 /// Who gets a reply.
@@ -69,7 +81,8 @@ Connection: close\r\n\r\nVPN not connected";
 
 impl Block {
     fn start() -> std::io::Result<Block> {
-        let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
+        // Exclusive on Windows, like the VPN's own proxy: no other program can share the port.
+        let listener = krunk_vpn::bind_loopback()?;
         let addr = listener.local_addr()?;
         let stop = Arc::new(AtomicBool::new(false));
         let flag = stop.clone();
@@ -132,9 +145,11 @@ fn status_of(s: &krunk_vpn::Status) -> VpnStatus {
 }
 
 impl Browser {
-    /// At start, after the engine is up and before any tab is restored: the profile list and,
-    /// with auto-connect, the VPN (its proxy is in place before the first navigation).
-    pub(super) fn init_vpn(&self) {
+    /// At start, after the engine is up and before any tab is restored or any of Krunk's own
+    /// requests starts: the profile list and, with auto-connect, the VPN (its proxy is in place
+    /// before the first navigation). False when tabs must not be restored: the VPN should run
+    /// and not even the stand-in could be put in place (Krunk stays offline).
+    pub(super) fn init_vpn(&self) -> bool {
         self.vpn_reload_profiles();
         *self.vpn.status.borrow_mut() = VpnStatus { since_ms: now_ms(), ..VpnStatus::default() };
         let (auto, id) = {
@@ -142,30 +157,52 @@ impl Browser {
             (s.vpn.auto_connect, s.vpn.active_profile.clone())
         };
         if !auto {
-            return;
+            return true;
         }
         info!("vpn: connecting at start");
-        if let Err(e) = self.vpn_connect(&id) {
-            warning!("vpn: could not connect at start: {e}");
-            self.vpn_block(&format!(
-                "Could not connect at start: {e}. Krunk's connections are stopped until you connect or disconnect."
+        let Err(e) = self.vpn_connect(&id) else { return true };
+        warning!("vpn: could not connect at start: {e}");
+        let blocked = self.vpn_block(&format!(
+            "Could not connect at start: {e}. Krunk's connections are stopped until you connect or disconnect."
+        ));
+        if !blocked {
+            warning!(
+                "vpn: Krunk stays offline (no tabs restored) until the VPN connects or auto-connect is turned off"
+            );
+            self.vpn.hold_session.set(true);
+            let mut status = self.vpn.status.borrow_mut();
+            status.error = Some(format!(
+                "The VPN couldn't start ({e}). Krunk stays offline until you connect or turn auto-connect off; \
+                 your tabs are kept for the next start."
             ));
         }
+        blocked
     }
 
     /// Fail-closed when the VPN should run and can't: every connection of the engine and of
-    /// Krunk goes to a local stand-in that refuses it.
-    fn vpn_block(&self, error: &str) {
-        match Block::start() {
+    /// Krunk goes to a local stand-in that refuses it. False when not even that could be put in
+    /// place: then Krunk is offline (page requests blocked, its own requests skipped).
+    fn vpn_block(&self, error: &str) -> bool {
+        let installed = match Block::start() {
             Ok(b) => {
                 let ok = engine::set_vpn_proxy(Some((format!("http://{}", b.addr), self.vpn_bypass())));
-                if !ok {
+                if ok {
+                    *self.vpn.block.borrow_mut() = Some(b);
+                } else {
                     warning!("vpn: the engine did not take the blocking proxy");
+                    // Not dropped: the engine may point at it in part (a profile that took it).
+                    std::mem::forget(b);
                 }
-                *self.vpn.block.borrow_mut() = Some(b);
+                ok
             }
-            Err(e) => warning!("vpn: the blocking stand-in could not start: {e}"),
-        }
+            Err(e) => {
+                warning!("vpn: the blocking stand-in could not start: {e}");
+                false
+            }
+        };
+        self.vpn.offline.set(!installed);
+        self.net.set_offline(!installed);
+        self.vpn_route_changed();
         let server = self.vpn.status.borrow().server.clone();
         *self.vpn.status.borrow_mut() = VpnStatus {
             state: VpnState::Failed,
@@ -174,6 +211,22 @@ impl Browser {
             server,
             ..Default::default()
         };
+        installed
+    }
+
+    /// The route of the engine and of Krunk's requests changed (connect, switch, stand-in,
+    /// disconnect): requests decided before end (`http::route_changed`), downloads in parts go
+    /// on through the new route, and the DNS settings follow (no custom DNS while the VPN runs).
+    /// The engine's open connections were closed by `engine::set_vpn_proxy`.
+    fn vpn_route_changed(&self) {
+        http::route_changed();
+        self.parts_reroute();
+        self.apply_dns();
+    }
+
+    /// Start-up opened only Settings → VPN (offline): the saved session is kept as it was.
+    pub(super) fn vpn_holds_session(&self) -> bool {
+        self.vpn.hold_session.get()
     }
 
     fn vpn_bypass(&self) -> String {
@@ -189,14 +242,33 @@ impl Browser {
     }
 
     /// How Krunk's own requests reach the network: through the VPN while it runs, else as the
-    /// proxy setting says (`UpdaterProxy::Skip` for SOCKS, which WinHTTP can't use).
+    /// proxy setting says (`UpdaterProxy::Skip` for SOCKS, which WinHTTP can't use, and while
+    /// Krunk is offline because the VPN couldn't start).
     pub(super) fn own_proxy(&self) -> UpdaterProxy {
+        if self.vpn.offline.get() {
+            return UpdaterProxy::Skip;
+        }
         lb_core::settings::krunk_proxy(&self.settings.borrow().proxy, self.vpn_proxy_addr().as_deref())
     }
 
-    /// The VPN is on (its proxy, or the stand-in, is the engine's).
+    /// [`Browser::own_proxy`] for WinHTTP, with the route generation of now; `None`: don't.
+    pub(super) fn own_route(&self) -> Option<ProxyMode> {
+        ProxyMode::from_updater(self.own_proxy())
+    }
+
+    /// Why [`Browser::own_route`] said no: `socks` (a SOCKS proxy), or that Krunk is offline.
+    pub(super) fn own_route_skipped(&self, socks: &str) -> String {
+        if self.vpn.offline.get() {
+            "skipped: the VPN couldn't start (Krunk stays offline until you connect or turn auto-connect off)".into()
+        } else {
+            socks.into()
+        }
+    }
+
+    /// The VPN is on (its proxy, or the stand-in, is the engine's; or Krunk is offline because
+    /// neither could be put in place).
     pub(super) fn vpn_engaged(&self) -> bool {
-        self.vpn_proxy_addr().is_some()
+        self.vpn_proxy_addr().is_some() || self.vpn.offline.get()
     }
 
     fn vpn_reload_profiles(&self) {
@@ -207,22 +279,8 @@ impl Browser {
                 Vec::new()
             }
         };
-        let views = rows
-            .iter()
-            .map(|p| {
-                // Whether a user name and password are stored (only asked where one is needed).
-                let has = p.needs_credentials
-                    && self
-                        .store
-                        .borrow()
-                        .vpn_profile_blob(&p.id)
-                        .ok()
-                        .flatten()
-                        .and_then(|b| v::open(&DpapiVpn, &b).ok())
-                        .is_some_and(|s| s.has_credentials());
-                VpnProfileView::new(p, has)
-            })
-            .collect();
+        // Whether a user name and password are stored is a column: no blob is opened here.
+        let views = rows.iter().map(VpnProfileView::new).collect();
         *self.vpn.profiles.borrow_mut() = views;
     }
 
@@ -298,8 +356,16 @@ impl Browser {
             }
             Request::VpnCredentials { id, username, password } => {
                 let password = password.into_zeroizing();
-                let r = self.vpn_set_credentials(&id, username, password);
+                let r = self.vpn_set_credentials(&id, Zeroizing::new(username), password);
                 self.vpn_answer(to, req_id, r);
+            }
+            Request::VpnConnect { .. } | Request::VpnDisconnect {}
+                if sender == Sender::Popup && !v::popup_may_control(self.popup_kind()) =>
+            {
+                // The popup browser also shows menus and other panels: only the VPN popup itself
+                // starts or stops the VPN.
+                warning!("vpn: a connect or disconnect from a popup that is not the VPN's was refused");
+                self.vpn_reply(to, Event::err(req_id, "Not from this popup"));
             }
             Request::VpnConnect { id } => {
                 let r = self.vpn_connect(&id);
@@ -369,11 +435,16 @@ impl Browser {
         path: &std::path::Path,
         file_name: &str,
     ) -> Result<(VpnProfileView, Vec<String>), String> {
-        let len = std::fs::metadata(path).map_err(|e| format!("The file could not be read: {e}"))?.len();
-        if len as usize > v::MAX_IMPORT_BYTES {
+        // Read with a bound (never more than the limit plus one byte, whatever the file says it
+        // is), into a buffer that is never reallocated (no unzeroized copies).
+        let file = std::fs::File::open(path).map_err(|e| format!("The file could not be read: {e}"))?;
+        let mut bytes = Zeroizing::new(Vec::with_capacity(v::MAX_IMPORT_BYTES + 1));
+        file.take(v::MAX_IMPORT_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| format!("The file could not be read: {e}"))?;
+        if bytes.len() > v::MAX_IMPORT_BYTES {
             return Err("The file is larger than 64 KiB: this is not a VPN profile".into());
         }
-        let bytes = Zeroizing::new(std::fs::read(path).map_err(|e| format!("The file could not be read: {e}"))?);
         let text = std::str::from_utf8(&bytes).map_err(|_| "This is not a text file".to_string())?;
         let (profile, imported) = krunk_vpn::import(file_name, text).map_err(|e| e.to_string())?;
         drop(profile);
@@ -385,6 +456,7 @@ impl Browser {
             server: imported.server.chars().take(300).collect(),
             needs_credentials: imported.needs_credentials,
             created_ms: now_ms(),
+            has_credentials: false,
         };
         // The file as it was imported: it is parsed (and rewritten) again at each connect.
         let secret = ProfileSecret { text: Zeroizing::new(text.to_string()), username: None, password: None };
@@ -402,7 +474,7 @@ impl Browser {
             imported.warnings.len(),
             if row.needs_credentials { ", needs a user name and password" } else { "" }
         );
-        Ok((VpnProfileView::new(&row, false), imported.warnings))
+        Ok((VpnProfileView::new(&row), imported.warnings))
     }
 
     fn vpn_remove(&self, id: &str) -> Result<(), String> {
@@ -427,7 +499,12 @@ impl Browser {
         Ok(())
     }
 
-    fn vpn_set_credentials(&self, id: &str, username: String, password: Zeroizing<String>) -> Result<(), String> {
+    fn vpn_set_credentials(
+        &self,
+        id: &str,
+        username: Zeroizing<String>,
+        password: Zeroizing<String>,
+    ) -> Result<(), String> {
         v::check_credentials(&username, &password)?;
         let blob = self.store.borrow().vpn_profile_blob(id).ok().flatten().ok_or("This profile is gone")?;
         let old = v::open(&DpapiVpn, &blob).map_err(|e| {
@@ -440,7 +517,7 @@ impl Browser {
             password: Some(password),
         };
         let blob = v::seal(&DpapiVpn, &secret).map_err(|_| "Could not protect the password".to_string())?;
-        match self.store.borrow().vpn_profile_set_blob(id, &blob) {
+        match self.store.borrow().vpn_profile_set_blob(id, &blob, secret.has_credentials()) {
             Ok(true) => Ok(()),
             Ok(false) => Err("This profile is gone".into()),
             Err(e) => {
@@ -461,6 +538,15 @@ impl Browser {
                 "A manual proxy is set in Settings → Advanced. Remove it (and restart Krunk) to use the VPN.".into()
             );
         }
+        // An engine switch that changes how proxies are used would take traffic around the VPN.
+        let flag = lb_core::settings::vpn_conflicting_flag(&self.settings.borrow().extra_flags)
+            .or_else(|| lb_core::settings::vpn_conflicting_flag(&self.running_settings.extra_flags));
+        if let Some(flag) = flag {
+            return Err(format!(
+                "The engine flag {flag} (Settings → Advanced → extra flags) changes how proxies are used. \
+                 Remove it and restart Krunk to use the VPN."
+            ));
+        }
         let same = self.vpn.running.borrow().as_ref().is_some_and(|r| r.id == id);
         if same && self.vpn.status.borrow().state != VpnState::Failed {
             return Ok(());
@@ -474,7 +560,7 @@ impl Browser {
         let (profile, _) = krunk_vpn::import("profile.conf", &secret.text).map_err(|e| e.to_string())?;
         let creds = match (&secret.username, &secret.password) {
             (Some(u), p) if !u.is_empty() => Some(krunk_vpn::Credentials {
-                username: u.to_string(),
+                username: Zeroizing::new(u.to_string()),
                 password: Zeroizing::new(p.as_ref().map(|p| p.to_string()).unwrap_or_default()),
             }),
             _ => None,
@@ -510,6 +596,9 @@ impl Browser {
         if let Some(old) = old {
             stop_later(old.vpn);
         }
+        self.vpn.offline.set(false);
+        self.net.set_offline(false);
+        self.vpn_route_changed();
         info!("vpn: started a {} profile; Krunk's traffic goes through the local proxy {addr}", row.kind.as_str());
         if self.settings.borrow().vpn.active_profile != id {
             let id = id.to_string();
@@ -521,8 +610,8 @@ impl Browser {
     /// Stops the VPN (or the stand-in): the engine and Krunk's requests go direct again.
     pub(super) fn vpn_disconnect(&self) {
         let engaged = self.vpn_engaged();
-        if engaged {
-            engine::set_vpn_proxy(None);
+        if engaged && !engine::set_vpn_proxy(None) {
+            warning!("vpn: the engine kept the VPN's proxy setting; its connections fail until Krunk restarts");
         }
         self.vpn.block.borrow_mut().take();
         self.vpn.generation.set(self.vpn.generation.get() + 1);
@@ -530,8 +619,11 @@ impl Browser {
         if let Some(r) = running {
             stop_later(r.vpn);
         }
+        self.vpn.offline.set(false);
+        self.net.set_offline(false);
         *self.vpn.status.borrow_mut() = VpnStatus { since_ms: now_ms(), ..VpnStatus::default() };
         if engaged {
+            self.vpn_route_changed();
             info!("vpn: disconnected; Krunk's traffic goes direct again");
         }
     }
@@ -560,15 +652,19 @@ impl Browser {
         self.vpn_push();
     }
 
-    /// Exit: the VPN stops; the engine keeps the proxy setting (nothing goes direct while the
-    /// last requests end).
+    /// Exit: the tunnel stops; the engine keeps the proxy setting and the proxy (or the
+    /// stand-in) keeps its port, answering 503, until the process ends, so nothing goes direct
+    /// and no other program can take the port while the engine's last requests end.
     pub(super) fn vpn_shutdown(&self) {
         self.vpn.generation.set(self.vpn.generation.get() + 1);
         let running = self.vpn.running.borrow_mut().take();
         if let Some(r) = running {
             info!("vpn: stopping for exit");
-            stop_later(r.vpn);
+            r.vpn.stop_for_exit();
         }
-        self.vpn.block.borrow_mut().take();
+        if let Some(b) = self.vpn.block.borrow_mut().take() {
+            // Its thread keeps answering until the process ends.
+            std::mem::forget(b);
+        }
     }
 }

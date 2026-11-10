@@ -168,7 +168,7 @@ fn migrate_legacy_data() -> Result<Option<String>, String> {
 fn update_filters_headless(dirs: &paths::DataDirs, settings: &lb_core::settings::Settings, user: &str) -> i32 {
     use lb_core::filterlists::{self, Sources, UpdateState, MAX_LIST_BYTES};
     let sources = Sources { builtin: &settings.filter_lists, custom: &settings.custom_lists, user, ext: "" };
-    use lb_core::settings::{updater_proxy, UpdaterProxy};
+    use lb_core::settings::updater_proxy;
     let dir = dirs.filters();
     let _ = std::fs::create_dir_all(&dir);
     let state = std::fs::read_to_string(dir.join("state.json")).map(|j| UpdateState::from_json(&j)).unwrap_or_default();
@@ -178,13 +178,9 @@ fn update_filters_headless(dirs: &paths::DataDirs, settings: &lb_core::settings:
         log::write("WARN", "filter update skipped: the VPN connects at start (Krunk's traffic goes through it only)");
         return 3;
     }
-    let mode = match updater_proxy(&settings.proxy) {
-        UpdaterProxy::Skip => {
-            log::write("WARN", "filter update skipped: SOCKS proxy configured");
-            return 3;
-        }
-        UpdaterProxy::Named(p) => ffi::http::ProxyMode::Named(p),
-        UpdaterProxy::System => ffi::http::ProxyMode::System,
+    let Some(mode) = ffi::http::ProxyMode::from_updater(updater_proxy(&settings.proxy)) else {
+        log::write("WARN", "filter update skipped: SOCKS proxy configured");
+        return 3;
     };
     let fetch = |url: &str| ffi::http::get(url, MAX_LIST_BYTES, &mode, 30_000);
     let t = std::time::Instant::now();

@@ -19,7 +19,7 @@ use hyper::{Request, Response, StatusCode};
 use lb_core::dns::{Dns, Kind, Resolver, RESOLVER_TIMEOUT_MS};
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
@@ -91,6 +91,8 @@ struct Shared {
     conns: tokio::sync::Mutex<HashMap<usize, DnsExchange>>,
     stats: Mutex<Vec<Arc<Stat>>>,
     tls: Arc<rustls::ClientConfig>,
+    /// 0.14.0: the VPN runs: every query is refused (nothing goes over the system's network).
+    refusing: AtomicBool,
 }
 
 /// The running resolver: the stub on `port`, serving the current list.
@@ -125,6 +127,7 @@ pub fn start(dns: &Dns) -> Option<Engine> {
         conns: tokio::sync::Mutex::new(HashMap::new()),
         stats: Mutex::new(usable(dns).iter().map(|_| Arc::new(Stat::default())).collect()),
         tls,
+        refusing: AtomicBool::new(false),
     });
     let cert = rustls::pki_types::CertificateDer::from(id.cert_der.clone());
     let key = rustls::pki_types::PrivateKeyDer::try_from(id.key_der.clone()).ok()?;
@@ -171,6 +174,15 @@ impl Engine {
         let _ = self.config.send(Arc::new(list));
         let shared = self.shared.clone();
         self.handle.spawn(async move { shared.conns.lock().await.clear() });
+    }
+
+    /// While the VPN runs every query gets REFUSED (and the Test button an error); open
+    /// connections to the resolvers are dropped.
+    pub fn set_refusing(&self, on: bool) {
+        if self.shared.refusing.swap(on, Relaxed) != on && on {
+            let shared = self.shared.clone();
+            self.handle.spawn(async move { shared.conns.lock().await.clear() });
+        }
     }
 
     /// A handle for the Test button's worker thread.
@@ -223,6 +235,12 @@ async fn handle_http(
     let Some(query) = query.filter(|q| q.len() >= 12) else {
         return Ok(reply(StatusCode::BAD_REQUEST, b"bad request".to_vec(), "text/plain"));
     };
+    if shared.refusing.load(Relaxed) {
+        return Ok(match lb_core::dns::refused_answer(&query) {
+            Some(answer) => reply(StatusCode::OK, answer, "application/dns-message"),
+            None => reply(StatusCode::BAD_GATEWAY, b"refused while the VPN runs".to_vec(), "text/plain"),
+        });
+    }
     match resolve(&shared, &query).await {
         Ok(answer) => Ok(reply(StatusCode::OK, answer, "application/dns-message")),
         Err(e) => Ok(reply(StatusCode::BAD_GATEWAY, e.into_bytes(), "text/plain")),
@@ -409,6 +427,9 @@ impl Tester {
     pub fn test(&self, index: usize) -> Result<u32, String> {
         let shared = self.shared.clone();
         self.handle.block_on(async move {
+            if shared.refusing.load(Relaxed) {
+                return Err("Custom DNS is not used while the VPN runs (names are resolved inside the tunnel)".into());
+            }
             let list = shared.config.borrow().clone();
             let r = list.get(index).ok_or("No such resolver")?.clone();
             let mut q = Message::new();

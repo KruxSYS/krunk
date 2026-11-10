@@ -13,6 +13,21 @@ impl Browser {
     /// DoH preferences. Called at startup and after a settings change.
     pub(super) fn apply_dns(&self) {
         let settings = self.settings.borrow().dns.clone();
+        // 0.14.0: while the VPN runs (or should), names are resolved inside the tunnel: the
+        // engine's own DNS-over-HTTPS is off and the stub refuses every query (nothing is asked
+        // over the system's network).
+        let vpn = self.vpn_engaged();
+        if let Some(e) = self.dns.borrow().as_ref() {
+            e.set_refusing(vpn);
+        }
+        if vpn {
+            let ok = engine::set_doh("off", "");
+            info!(
+                "dns: the VPN runs: the engine's secure DNS is off, the stub refuses{}",
+                if ok { "" } else { " (not applied)" }
+            );
+            return;
+        }
         if settings.active() && self.dns.borrow().is_none() {
             match dns::start(&settings) {
                 Some(e) => *self.dns.borrow_mut() = Some(e),

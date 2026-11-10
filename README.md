@@ -1169,6 +1169,44 @@ way. Resolvers given by name and without a bootstrap address (presets have one) 
 once through Windows' resolver, which the log says. A SOCKS proxy still resolves names at the
 proxy; "secure" mode means no resolution at all when every resolver fails (by design).
 
+### VPN (0.14.0)
+
+Settings → Privacy & security → VPN imports WireGuard (`.conf`) and OpenVPN (`.ovpn`) files from a
+VPN provider. **Only Krunk's connections use it**: normal and private windows, and Krunk's own
+requests (updates, sync, the account, filter lists, extensions, downloads). Nothing is installed
+in Windows: no network adapter, no routes, no driver, no administrator rights, and other programs
+are not affected. "Show the VPN button in the toolbar" (off by default) adds a button before the
+shield whose popup shows the state, the profile, the tunnel address and the traffic, with
+Connect and Disconnect. "Connect when Krunk starts" connects before any page loads.
+
+How it works (`vpn/`, `app/src/browser/vpn.rs`):
+- The tunnel runs inside Krunk's process, in user space: WireGuard through boringtun's protocol
+  code over a UDP socket, OpenVPN through OpenVPN 3 Core (the library behind OpenVPN Connect,
+  vendored in `vendor/` with its external-TUN interface). The IP packets go to a TCP/IP stack in
+  Krunk (smoltcp), not to Windows.
+- In front of it is an HTTP proxy on `127.0.0.1` (a random port). While the VPN runs, the engine's
+  request contexts (normal and private) use it as their proxy, set at runtime, and Krunk's own
+  WinHTTP requests go through it too. Names are resolved inside the tunnel by the VPN's DNS
+  servers (1.1.1.1 through the tunnel when the profile names none); Krunk's custom-DNS stub and
+  the engine's secure DNS are paused meanwhile. WebRTC may only use UDP through the proxy, which
+  means no UDP: calls fall back to TCP relays where the site offers them. Open connections are
+  closed at Connect, Disconnect and a switch, so they reopen through the new route.
+- Only Krunk may use the proxy: a connection is accepted when the program on the other end is
+  Krunk itself or one of its engine processes (Windows' TCP table and process list), and the
+  port can't be shared.
+- **Fail-closed:** while the VPN is on but not connected (connecting, reconnecting, the server
+  down), every connection gets "VPN not connected" and nothing goes direct. Addresses outside the
+  profile's routes (a split profile, e.g. only a company network) are refused, not sent direct.
+  Disconnecting returns to direct connections.
+- Profiles are stored in `browser.db` (`vpn_profiles`) encrypted with Windows DPAPI for the
+  user; they never sync and never reach a page. Scripts in profiles (`PostUp`, `up`, `down` …)
+  never run and are reported at import. OpenVPN's `remote-cert-tls server` is enforced as the
+  equivalent `remote-cert-eku` check (OpenVPN 3 Core 3.11.7 doesn't apply the former). A refused
+  username/password or server certificate stops the VPN with that message instead of retrying.
+- Not supported: a manual proxy at the same time (Settings refuses it), UDP through the VPN (QUIC
+  falls back to TCP), OpenVPN profiles with a client certificate in a separate file (inline
+  `<cert>`/`<key>` work), and the proxy-related Chromium switches in Advanced.
+
 ### Request headers
 
 Settings → Advanced → Request headers (0.6.0) edits what every request says about the
@@ -1681,6 +1719,10 @@ Testing on Windows:
   `windows` (MIT/Apache-2.0), `adblock` (MPL-2.0), `psl` (MIT/Apache-2.0), `rusqlite` with
   bundled SQLite (MIT, public domain), and RustCrypto `argon2`/`chacha20poly1305`
   (MIT/Apache-2.0). The build tool `tools/pebrand` uses `editpe` (MIT).
+- **VPN (0.14.0):** OpenVPN 3 Core (MPL-2.0, used under MPL-2.0; with Asio, BSL-1.0, and LZ4,
+  BSD-2) through the `openvpn-connect` crates (MPL-2.0), vendored unchanged apart from the patches
+  listed in `vendor/README.md`; `boringtun` (BSD-3-Clause) and `smoltcp` (0BSD). Their notices
+  are in `vpn/THIRD-PARTY-NOTICES.txt`, appended to `THIRD-PARTY-NOTICES.txt` in the download.
 - **No third-party editor or Markdown library (0.12.0).** The code editor of `krunk://scripts`
   (`ui/shared/editor.js`, `jstok.js`), the agent panel's Markdown renderer
   (`ui/shell/markdown.js`) and the SSE parser are Krunk's own code. Nothing new is bundled.

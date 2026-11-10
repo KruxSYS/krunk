@@ -8,19 +8,22 @@
 //! answers `503` and nothing ever goes direct.
 //!
 //! The crate is platform-neutral (its tests run on Linux); the Windows-only owner-PID check of
-//! the proxy's peers is the caller's `peer_allowed` hook. Keys, passwords and profile texts
-//! are never logged and are zeroized when dropped.
+//! the proxy's peers is the caller's `peer_allowed(proxy_local, peer)` hook. Keys, user names,
+//! passwords and profile texts are never logged and are zeroized when dropped.
 
-#![forbid(unsafe_code)]
+// The only `unsafe` is the Windows `setsockopt(SO_EXCLUSIVEADDRUSE)` in `listen`.
+#![deny(unsafe_code)]
 
 pub mod dns;
+mod listen;
 pub mod net;
 pub mod ovpn;
 pub mod proxy;
 mod service;
 pub mod wg;
 
-pub use service::Vpn;
+pub use listen::bind_loopback;
+pub use service::{PeerAllowed, Vpn};
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -213,21 +216,24 @@ fn profile_name(file_name: &str, comment: Option<&str>, fallback: &str) -> Strin
     fallback.to_owned()
 }
 
-/// OpenVPN username and password.
+/// OpenVPN username and password (both zeroized when dropped).
 pub struct Credentials {
-    pub username: String,
+    pub username: Zeroizing<String>,
     pub password: Zeroizing<String>,
 }
 
 impl Clone for Credentials {
     fn clone(&self) -> Self {
-        Credentials { username: self.username.clone(), password: Zeroizing::new(self.password.as_str().to_owned()) }
+        Credentials {
+            username: Zeroizing::new(self.username.as_str().to_owned()),
+            password: Zeroizing::new(self.password.as_str().to_owned()),
+        }
     }
 }
 
 impl fmt::Debug for Credentials {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Credentials").field("username", &self.username).field("password", &"<redacted>").finish()
+        f.debug_struct("Credentials").field("username", &"<redacted>").field("password", &"<redacted>").finish()
     }
 }
 
