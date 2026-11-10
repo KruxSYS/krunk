@@ -126,7 +126,60 @@ Consequences:
 - It respects the configured HTTP proxy. With a SOCKS proxy it does not download at all, to
   avoid revealing the user's IP outside the proxy.
 - No telemetry: the only background requests Krunk itself makes are these downloads (at
-  most once a day) and the update check (below).
+  most once a day) and the update check (below). The optional AI agent (0.12.0, off by default)
+  talks only to the provider the user configured (next section).
+
+## AI agent, userscripts and macros (0.12.0)
+How it works: README, "AI agent, userscripts and macros". The agent is off by default. While it is
+off there is no panel, no agent and no provider request. Every provider entry point checks the
+setting.
+
+**What leaves the PC, and where to.**
+- **Where:** only to the provider the user set up, with the user's own key. Requests are made by
+  the browser process (engine URL requests: no cookies, the proxy and DNS settings apply). Krunk
+  runs no AI service and sends nothing elsewhere.
+- **What:** the user's messages, the context block (the active tab's address and title, the
+  window's tabs, the selection, a page outline), and the results of the tools the model calls.
+  Page text, HTML and screenshots are sent only when the model asks for them.
+- **History, bookmarks, downloads and cookies** are sent only when the user's message asks for
+  them in words and the user clicks Allow (once per conversation).
+
+**Never available to the agent.**
+- The password vault, generated passwords, payment cards, the recovery phrase, sync keys,
+  account tokens and API keys: no tool or setting key reaches them (a core test checks this).
+- Krunk's own pages: it can't read, script, click or screenshot them, and can't open the
+  passwords, sync, site-data and storage pages at all.
+- Settings outside an explicit allow-list (the vault, sync, account, AI, proxy, DNS, flags,
+  updates, the download folder and search or mail templates are not on it).
+
+**Password and card fields.**
+- Their values are blanked in every result; filling, typing and editing refuse them.
+- `eval_js` is refused while one holds a value.
+- Every result is scrubbed of the page's current secret values (read again after the model's code
+  ran) and of card numbers.
+- Screenshots mask them.
+- **Limit:** cross-origin iframes are not inspected. Only those that look like payment forms are
+  covered in screenshots.
+
+**Prompt injection.**
+- The system prompt marks page content and tool results as data, not instructions.
+- Pages have no channel into the agent: the panel is on the shell origin, which no tab reaches.
+- The agent still acts with "full control" inside these limits (the operator's choice). A
+  malicious page could try to steer it, but it can only steer it to what the user's browser could
+  do on that page anyway, never to the secrets above.
+
+**Keys and logs.**
+- **Keys:** stored DPAPI-protected (current user, Krunk's own entropy) in the `ai_keys` table,
+  unwrapped only for one request, never synced, exported, logged or sent to a view.
+- **Conversations:** in memory only.
+- **The log:** tool names, statuses and times only.
+
+**Userscripts and macros run code the user (or the agent, when asked) wrote.**
+- Userscripts run in the page's main world, never on Krunk's own pages, and in private tabs only
+  when that setting is on.
+- Their GM storage calls use a hidden binding that page scripts can't reach.
+- Macros act on Krunk's web pages through engine input only, never on other programs or
+  Windows-wide input, and every stop releases held keys.
 
 ## Update check
 How it works: README, "Updates". The rules are in `core::update` (unit-tested); the app only

@@ -71,6 +71,7 @@
       item('Passwords & payments', '', () => openPage('passwords')),
       item('Cookies and site data', '', () => openPage('storage')),
       item('Extensions', '', () => openPage('extensions')),
+      item('Scripts and macros', '', () => openPage('scripts')),
       sep(),
       el('div', { class: 'zoom' }, [
         el('span', { class: 'label', text: 'Zoom' }),

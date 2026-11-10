@@ -88,6 +88,7 @@ changed in Settings. Built-in pages:
 - `krunk://gpu`: whether pages are hardware accelerated (WebGL/WebGPU adapter, the engine's
   switches, the GPU process), with a link to Chromium's `chrome://gpu`
 - `view-source:<address>` (0.11.0): the page's source in Krunk's viewer (see below)
+- `krunk://scripts` (0.12.0): userscripts and macros with their code editor (see below)
 
 Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
 
@@ -110,9 +111,12 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
 | F12, Ctrl+Shift+I | DevTools, docked in the tab's window (press again to close) |
 | Ctrl+Shift+C, right-click → Inspect | DevTools with the element under the mouse selected |
 | Alt+Space | Window menu (move, size, minimize, maximize, close) |
+| Ctrl+Shift+Space | Show or hide the AI agent panel (0.12.0; only while AI features are on, else the page gets the key) |
+| Ctrl+Shift+. | Stop the running macro (0.12.0; only while one runs) |
 
 - **Settings** (`krunk://settings`) has tabs: Account (0.8.0), General, Privacy & security,
-  Passwords & import, Downloads, Appearance, Advanced. The search box finds a setting on any tab;
+  Passwords & import, Downloads, Appearance, AI and scripts (0.12.0), Advanced. The search box
+  finds a setting on any tab (a word of one or two letters, like "AI", matches word starts);
   `krunk://settings#privacy` (and the other tab names) opens that tab. Advanced → User agent
   shows the browser's own string with Copy, and a list of presets (Chrome, Edge, Firefox,
   Safari on Windows, macOS, iPhone, Android; versions as of November 2026) or a custom string;
@@ -417,6 +421,70 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   which ends it; the tab then shows that the page stopped, with **Reload** (the address stays in
   the bar). Tabs of one site can share a process: each of them asks, and Close page ends all of
   them. A page that crashes shows the same page with Reload.
+- **AI agent (0.12.0, optional, off by default):** Settings → AI and scripts → "AI features".
+  While it is off there is no agent button, no agent and no request to any provider.
+  - **Your own provider and key:** OpenRouter, OpenAI, Anthropic, or any OpenAI-compatible server
+    (Ollama, LM Studio, …) at its address (`https://`, or `http://` only on this computer or the
+    local network). You can add several. Each has a key field (masked, never shown again: Krunk
+    only says "Key saved"), Test, Change key and Remove. Pick the provider and the model; the
+    model list comes from the provider, with search, or type a model id. Optional: extra
+    instructions for the agent and the number of steps before it asks whether to go on
+    (default 30).
+  - **The panel:** the ✦ button right of the shield (or Ctrl+Shift+Space) opens the agent's panel
+    on the right of the window. Drag its edge to resize it. Tell it what to do in plain words;
+    it works on the tab you are looking at (and may open or switch tabs itself). You see its
+    answer as it is written, and each step it takes (expand a step for details, screenshots
+    included).
+  - **Questions and Stop:** it may ask you a question with buttons. **Stop** (or Esc in the
+    panel) ends the task at once: the request to the provider is cancelled, and keys or buttons
+    it held are released. The model indicator in the panel switches between the provider's
+    models. "+" starts a new conversation. A conversation belongs to its window, is kept in
+    memory only, and is gone when the window closes.
+  - **What it can do:** read the page (text, HTML, links, forms, media, screenshots), click,
+    type, fill forms, choose options, press keys, scroll, wait, run JavaScript in the page, edit
+    the page, change its title, open, switch and close tabs, go back, forward and reload, save a
+    screenshot to Downloads, change some settings, and write userscripts and macros.
+  - **What it can't do:** see or use passwords, payment cards, the password vault, sync or account
+    data, or API keys. Password and card fields are redacted and refused. It can't read or act on
+    Krunk's own pages, and can't open the passwords, sync, site-data and storage pages at all.
+  - **Asking first:** your history, bookmarks, downloads list and a site's cookies are offered to
+    it only when your message asks for them in words ("history", "bookmarks", "downloads",
+    "cookies"), and you click Allow the first time in each conversation.
+  - **What you send:** the page content it works on goes to the provider you chose. Krunk itself
+    runs no AI service and sends nothing anywhere else.
+- **Userscripts (0.12.0):** `krunk://scripts` (menu → Scripts and macros, or Settings → AI and scripts →
+  Manage scripts) lists your Tampermonkey-style userscripts: on/off, where they run, when they
+  last ran, Edit, Export, Delete.
+  - **Adding scripts:** New writes a script in the editor, and Import .user.js reads a file. The
+    AI agent can also make one, tagged "created by AI"; it runs on the current tab at once.
+  - **Metadata:** `@name @namespace @version @description @match @include @exclude @run-at
+    (document-start | document-end | document-idle) @grant @noframes`.
+  - **Grants:** `none`, `GM_addStyle`, `GM_getValue`/`GM_setValue`/`GM_deleteValue`/
+    `GM_listValues` (stored per script), `GM_setClipboard`, `GM_notification` (a short message over
+    the tab row) and `GM_openInTab`. `unsafeWindow` is `window`.
+  - **Not supported in 0.12.0:** `GM_xmlhttpRequest`, `@require`, `@resource` and
+    regular-expression `@include` (the editor warns).
+  - **Where they run:** on web pages only, never on Krunk's own pages, and in private tabs only
+    when "Also in private tabs" is on (off by default). Settings → AI and scripts → "Run
+    userscripts" turns them all off; they need no AI.
+- **Macros (0.12.0):** small JavaScript programs that press keys, click and type in the current
+  tab, on the Macros tab of `krunk://scripts`. They need no AI.
+  - **The API:** `await key.down('a')` / `key.up` / `key.press('Enter', {ctrl: true})` /
+    `key.hold('a', 500)`, `mouse.click(x, y)` or `mouse.click('#button')`, `mouse.move`,
+    `type('text')`, `wait(ms)`, `page.eval(js)`, `page.query(selector)`, `tabs.open(url)`,
+    `tabs.switch(id)`, `navigate(url)`, `repeat(n, fn)` or `repeat('forever', fn)`, `toast(text)`
+    and `log(text)`. A held key repeats at Windows' own keyboard rate (`{repeat: false}` holds it
+    without repeats) until `key.up`.
+  - **Running and stopping:** Run in the list, or a **hotkey** recorded in the editor (it needs
+    Ctrl or Alt, or is an F-key; Krunk's own shortcuts and another macro's hotkey are refused).
+    The toolbar shows a running macro with its Stop button. Its hotkey again, or Ctrl+Shift+.,
+    stops it too. Every stop releases all held keys and buttons.
+  - **Where they act:** a macro acts on its window's current web page (from `krunk://scripts`, on
+    the last web page you used). Its keys and clicks go to the page only: never to other programs,
+    and they don't trigger Krunk's own shortcuts.
+- **The code editor** (userscripts and macros) is Krunk's own: line numbers, JavaScript colours,
+  Tab / Shift+Tab indent, Ctrl+F find, Ctrl+S save. A syntax error is shown at its line, and the
+  script is not saved.
 - **Extensions** (0.6.0; `krunk://extensions`, also in the menu): Krunk runs its own subset of
   Chrome's Manifest V3, since the engine has no extension system of its own. On a Chrome Web
   Store page the store's button says **Add to Krunk** (0.7.0); you can also paste a store
@@ -613,7 +681,7 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
 ### Internal origins
 | Origin | Serves | Who can send privileged messages |
 |--------|--------|----------------------------------|
-| `https://shell.krunk.invalid` | `ui/shell/*` (`shell.html`, `popup.html`) + `/shared/*` | the shell view (only `/shell.html`) and the popup view (only `/popup.html`) |
+| `https://shell.krunk.invalid` | `ui/shell/*` (`shell.html`, `popup.html`, 0.12.0: `agent.html`, `runner.html`) + `/shared/*` | the shell view (only `/shell.html`), the popup view (only `/popup.html`), a window's agent panel (only `/agent.html`) and the hidden macro runner (only `/runner.html`); each has its own allow-list |
 | `https://krunk.invalid` | `ui/pages/*` + `/shared/*` | a tab showing a known built-in page; each page has its own command allow-list |
 
 - A CEF scheme-handler factory answers every request to these origins from embedded bytes. An
@@ -645,6 +713,124 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
   fill requested, page class names for cosmetic filtering).
 - Replies and vault fills go to the main frame only; a fill is sent only if the tab still shows
   the origin the login belongs to.
+
+### AI agent, userscripts and macros (0.12.0)
+
+**Architecture.**
+- The agent's loop runs in the **browser process**. Its logic is in `core::agent`, which is tested
+  on Linux:
+  - `session`: the conversation state machine; the user's message, stream events, tool results
+    and answers go in, actions come out;
+  - `provider` and `sse`: OpenAI-style requests for OpenRouter, OpenAI and custom servers;
+    Anthropic's Messages API; the streamed answers;
+  - `tools`: 41 tools with their JSON schemas and argument checks;
+  - `context`: the context block and the system prompt;
+  - `redact`, `gate`, `settings_allow` and `pages`: the privacy rules below.
+- `app/src/browser/agent/` carries the actions out. Provider calls are engine URL requests from
+  the browser process (`ffi/cef/fetch.rs`: POST, a streamed body, an idle timeout, cancel). They go
+  through the profile's network context, so the proxy and secure-DNS settings apply. They send no
+  cookies, and every one checks that AI is on.
+- Tools run on the window's active tab:
+  - **page tools** use a probe (`ui/inject/agent-probe.js`) in an isolated world
+    (`krunk-agent`), so page scripts can't see or change it;
+  - **`eval_js`** alone runs in the page's main world;
+  - **input** uses DevTools `Input.*` events on that tab (engine-level, never Windows-wide input).
+    These don't reach Krunk's own shortcuts.
+- **Before each task** Krunk sends a context block: the tab's address, title, load state and
+  private flag; the window's tabs; the selection; viewport and scroll; a page outline; the tools.
+  The system prompt says that page content, titles and tool results are untrusted data, never
+  instructions, and lists the built-in pages and settings the agent may use.
+- **Results are capped** at 8,000 characters (20,000 for HTML and text on request), with an offset
+  to read on. Only the last two screenshots stay in the conversation.
+
+**The panel** is a CEF view per window on its own channel (`shell.krunk.invalid/agent.html`), docked
+right of the tab area. The frame paints and drags its splitter. Its width is a setting.
+
+**Tools.**
+- **Reading:** get_page_context, get_html, get_text, query, list_links, list_forms, list_media.
+- **Screenshots:** screenshot (to the model as an image when it takes images), save_screenshot.
+- **Input:** click, type_text, fill_fields, select_option, press_keys, scroll, wait_for.
+- **Page changes:** eval_js, edit_page, set_title.
+- **Tabs:** navigate, back, forward, reload, open_tab, switch_tab, close_tab, list_tabs.
+- **Settings:** get_settings, set_setting.
+- **Userscripts:** list_userscripts, save_userscript, toggle_userscript.
+- **Macros:** list_macros, save_macro, run_macro.
+- **Talking to you:** ask_user, finish.
+- **Asked for in words only:** get_history, get_bookmarks, get_downloads, get_cookies_for_site.
+
+**Privacy and redaction.**
+- **No code path to secrets.** No tool, setting key or schema reaches the vault, payment cards,
+  sync, the account or API keys; a core test checks the tool table.
+- **Settings.** Settings change only through an explicit allow-list (`core::agent::settings_allow`).
+  It holds appearance, start-up, new tabs, search engine, tab sleep, ad blocking, DNT/GPC, PDFs,
+  download connections, DevTools dock, and userscripts and macros on/off. The vault, cards,
+  sync, account, AI, proxy, DNS, flags, user agent, headers, updates, the download folder and
+  custom search or mail templates are not on it.
+- **Krunk's own pages.** The agent never reads, scripts, clicks, types into or screenshots them,
+  nor extension pages or DevTools. It cannot open the passwords, sync, site-data and storage
+  pages at all.
+- **Password and card fields** are `input[type=password]`, an `autocomplete` `cc-*` token,
+  card-like names or labels, or a Luhn-valid 13–19 digit value.
+  - Their values are blanked in every result.
+  - `fill_fields`, `type_text`, `press_keys` and `edit_page` refuse them.
+  - `eval_js` is refused while one holds a value.
+  - Every result is scrubbed of the page's current secret values, read again after `eval_js` and
+    after an agent-started macro, and of any card number.
+  - Screenshots mask the fields, and cover cross-origin iframes that look like payment forms.
+- **History, bookmarks, downloads and cookies** are offered only when the user's message names
+  them (an English keyword gate in `core::agent::gate`), and after Allow once per conversation.
+  They are never in the context block.
+- **Memory and logs.** Conversations are in memory only. The log holds step and tool names,
+  statuses and times only, never content, addresses or keys.
+
+**API keys** are stored DPAPI-protected (current user, Krunk's own entropy) in the `ai_keys` table.
+- A key is unwrapped only for the request that needs it, then wiped.
+- It is never synced, exported, sent to a view or logged.
+- The settings page sends a key once (`aiKeySet`, a zeroized secret) and only ever learns whether
+  one is saved.
+
+**Messages and allow-lists.**
+- **Shell:** `toggleAgent`, `stopMacros`.
+- **Agent panel** (sender `Agent`): `agentSend`, `agentStop`, `agentNew`, `agentAnswer`,
+  `agentConsent`, `agentContinue`, `agentSelectModel`, `agentModels`, `agentClose`,
+  `agentOpenScript`, `agentToggleScript`, `openUrl` (web addresses only).
+- **Macro runner** (sender `Runner`): `macroCall`, `macroDone`.
+- **Settings page:** `aiProviderSave`, `aiProviderRemove`, `aiKeySet`, `aiKeyRemove`, `aiTest`,
+  `aiModels`, `aiStatus`.
+- **`krunk://scripts`:** `scriptsList`, `scriptGet`, `scriptSave`, `scriptToggle`, `scriptDelete`,
+  `scriptExport`, `scriptRunNow`, `scriptCheck`, `macroSave`, `macroDelete`, `macroToggle`,
+  `macroRun`, `macroStop`, `hotkeyCheck`, `hotkeyRecord`.
+- **Events to the panel:** `agentConfig`, `agentState`, `agentDelta`, `agentMessage`, `agentStep`,
+  `agentAsk`, `agentConsentAsk`, `agentContinueAsk`, `agentScript`, `agentError`, `agentClear`.
+- **Events to the shell:** `agentButton`, `macroRunning`, `toast`.
+- **Events to the scripts page:** `scriptsChanged`, `hotkeyRecorded`, `macroState`.
+- Pages have no channel into the agent. The panel and runner documents are on the shell origin,
+  which no tab reaches, and `classify` grants them only on their own view.
+
+**Userscripts.**
+- Each tab gets one loader (`core::userscripts::bundle`). It is registered as a new-document script
+  in the main world, in all frames, and re-registered when scripts or their values change.
+- It checks `@match`/`@include`/`@exclude` in JavaScript (a Rust twin is tested against the same
+  vectors) and runs each script at its run-at with only its granted GM functions.
+- GM calls go to the browser through a DevTools binding with a random name, which the loader takes
+  and deletes before any page script runs. A per-tab nonce is checked too.
+- `@match`/`@include` never match Krunk's own origins.
+- The DevTools `Page`/`Runtime` domains of a tab are shared and reference-counted between the
+  extensions, the userscripts, the agent and the scripts page (`browser/cdp.rs`).
+
+**Macros** run in a hidden view (`shell.krunk.invalid/runner.html`).
+- The browser starts the macro's code there with DevTools `Runtime.evaluate`, so the page's CSP
+  needs no `eval`. Each API call is a request the browser carries out on the window's web page.
+- `wait`, held keys and their repeat (at Windows' delay and rate) are browser timers.
+- Stop ends the runner's script, reloads it and releases every held key and button. Before each
+  key-up it sends one more key-down without a character: Chromium drops key-ups after a key the
+  browser handled itself, such as the hotkey.
+- Hotkeys are matched in `OnPreKeyEvent` of tab views.
+- The editor's syntax check is the engine's own `Runtime.compileScript` in the scripts page's tab.
+
+**Storage** is SQLite schema 7: `userscripts`, `userscript_values` (at most 1 MB per script),
+`macros` (unique hotkeys) and `ai_keys`. All of it is local: no sync, and not in settings export or
+reset.
 
 ### Ad and tracker blocking
 - **Engine:** Brave's `adblock` engine with seven bundled lists: EasyList, EasyPrivacy, and the
@@ -1247,6 +1433,28 @@ Testing on Windows:
 - The Windows checklist is `docs/MANUAL_TEST.md`.
 
 ## Known limitations
+- **The AI agent (0.12.0) was tested against a mock provider only.** No live provider (OpenRouter,
+  OpenAI, Anthropic, Ollama or LM Studio) and no vision model was exercised before the release.
+  The OpenAI-style and Anthropic request and stream formats are covered by unit tests. Also:
+  - Models without tool calling can't run the agent (the panel says so).
+  - A model without image input gets a notice instead of screenshots.
+  - The sensitive-data keyword gate understands English words only.
+  - Cross-origin iframes (such as a payment provider's card form) are not read. Beyond masking
+    the ones that look like payment forms in screenshots, nothing is redacted there.
+  - The agent doesn't act on Krunk's own pages.
+- **Not tested on Windows in 0.12.0:**
+  - the agent tools press_keys, forward, toggle_userscript, list_userscripts, list_macros,
+    get_downloads and get_cookies_for_site;
+  - GM_setClipboard, GM_openInTab, @noframes and frames, @exclude, userscripts in private tabs,
+    export, and "Run on current tab now";
+  - the macro calls for the mouse, typing, the page, tabs and navigation;
+  - two windows with their own agents;
+  - HiDPI.
+
+  All of them have unit or UI tests; the test evidence lists every flow.
+- **Userscripts in 0.12.0** don't support `GM_xmlhttpRequest`, `@require`, `@resource` or
+  regular-expression `@include` (the editor warns). Only one macro runs at a time: starting
+  another stops the first.
 - **Sync is a beta (0.9.0).** Not yet: choosing your own passphrase, changing the passphrase
   or making a new recovery key, deleting or exporting the synced data, a sync reset, payment
   cards, a way to see the kept previous versions of passwords, and trimming synced history beyond
@@ -1420,3 +1628,6 @@ Testing on Windows:
   `windows` (MIT/Apache-2.0), `adblock` (MPL-2.0), `psl` (MIT/Apache-2.0), `rusqlite` with
   bundled SQLite (MIT, public domain), and RustCrypto `argon2`/`chacha20poly1305`
   (MIT/Apache-2.0). The build tool `tools/pebrand` uses `editpe` (MIT).
+- **No third-party editor or Markdown library (0.12.0).** The code editor of `krunk://scripts`
+  (`ui/shared/editor.js`, `jstok.js`), the agent panel's Markdown renderer
+  (`ui/shell/markdown.js`) and the SSE parser are Krunk's own code. Nothing new is bundled.
