@@ -393,3 +393,24 @@ if ($Phase -eq 'aioff') {
   KLog 'ai provider|agent'
   StopKrunk
 }
+
+if ($Phase -eq 'tools') {
+  # i: the page-action tools in one mock-scripted task on tools.html (the page logs every event).
+  FreshProfile ($mock -replace '"maxSteps": 3', '"maxSteps": 30')
+  Get-ChildItem "$env:USERPROFILE\Downloads" -Filter 'Screenshot*.png' -ErrorAction SilentlyContinue | Remove-Item -Force
+  StartKrunk
+  Page 'http://127.0.0.1:8094/tools.html'
+  SafeKeys '^+ ' 1500
+  Ask 'run the tools test' 45000
+  Shot "$P-i1-after-task"
+  Click 1227 121 300
+  Focus (MainWindow) | Out-Null
+  Shot "$P-i2-page"
+  $png = Get-ChildItem "$env:USERPROFILE\Downloads" -Filter 'Screenshot*.png' -ErrorAction SilentlyContinue | Select-Object -First 1
+  Log "[$P] screenshot file: $($png.Name) $($png.Length)"
+  Get-Content "$www\access.log" -ErrorAction SilentlyContinue | Where-Object { $_ -match 'tools=' } | ForEach-Object { Log "[$P] page $([uri]::UnescapeDataString((($_ -split 'tools=')[1] -split ' cookie')[0]))" }
+  KLog 'agent step|agent done|agent stopped|ai provider: chat ended'
+  StopKrunk
+  $q = "import sqlite3, json; db = sqlite3.connect(r'$db'); s = json.loads(db.execute('select value from kv where key = ?', ('settings',)).fetchone()[0]); print('tabSleepMinutes', s.get('tabSleepMinutes'), 'vaultAutolockMinutes', s.get('vaultAutolockMinutes'))"
+  Log "[$P] settings after: $(& $py -c $q 2>&1)"
+}

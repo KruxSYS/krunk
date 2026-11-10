@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Agent tools fixture</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 0; padding: 12px 24px; }
+  #target { position: fixed; left: 400px; top: 120px; width: 100px; height: 60px; background: #c7d2fe; z-index: 5;
+            display: flex; align-items: center; justify-content: center; }
+  form { display: grid; grid-template-columns: 140px 240px; gap: 6px 12px; margin: 12px 0; }
+  #spacer { height: 1800px; background: linear-gradient(#fff, #e5e7eb); }
+  #late { padding: 12px; background: #fde68a; }
+  video { width: 240px; height: 135px; background: #000; }
+</style>
+</head>
+<body>
+<h1>Agent tools fixture</h1>
+<p id="intro">This page checks the agent's page tools. The secret word is <b>pineapple</b>.</p>
+<button id="btn" type="button">Press me</button>
+<div id="target">click here</div>
+<form id="f">
+  <label for="q">Search</label><input id="q" name="q" type="text">
+  <label for="name">Name</label><input id="name" name="name" type="text">
+  <label for="color">Colour</label><select id="color" name="color"><option>Red</option><option>Green</option><option>Blue</option></select>
+  <label for="pw">Password</label><input id="pw" name="password" type="password">
+  <label for="cc">Card</label><input id="cc" name="cardnumber" type="text" autocomplete="cc-number">
+</form>
+<video id="v" muted playsinline></video>
+<div id="spacer"></div>
+<p id="bottom">The end of the page.</p>
+<script src="tools.js"></script>
+</body>
+</html>

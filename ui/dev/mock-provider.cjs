@@ -67,7 +67,44 @@ function userWords(text) {
 // ---- scenarios: each returns the answer for step `n` (tool results so far in `results`) ----
 const call = (name, a) => ({ tool: { name, args: a || {} } });
 const finish = (answer) => call('finish', { answer });
+// Flow "i": every page-action tool in one task on scripts/vm-www/8094/tools.html.
+const TOOLS_TEST = [
+  () => call('get_text', {}),
+  () => call('list_media', {}),
+  () => call('click', { selector: '#btn' }),
+  () => call('click', { x: 450, y: 150 }),
+  () => call('type_text', { selector: '#q', text: 'hello krunk' }),
+  () => call('fill_fields', { fields: { '#name': 'Ann Example', '#pw': 'mock-secret-pw', '#cc': '4111111111111111' } }),
+  () => call('type_text', { selector: '#pw', text: 'typed-pw' }),
+  () => call('type_text', { selector: '#cc', text: '4111' }),
+  () => call('select_option', { selector: '#color', values: ['Green'] }),
+  () => call('scroll', { to: 'bottom' }),
+  () => call('wait_for', { selector: '#late', timeout_ms: 10000 }),
+  () => call('edit_page', { action: 'insert_css', css: '#btn { outline: 4px solid rgb(0, 128, 0) !important; }' }),
+  () => call('save_screenshot', {}),
+  () => call('get_settings', {}),
+  () => call('set_setting', { key: 'tabSleepMinutes', value: 7 }),
+  () => call('set_setting', { key: 'vaultAutolockMinutes', value: 1 }),
+  () => call('list_tabs', {}),
+  () => call('navigate', { url: 'http://127.0.0.1:8094/tools.html?step=2' }),
+  () => call('back', {}),
+  () => call('reload', {}),
+  () => call('open_tab', { query: 'krunk agent tools test' }),
+  (m, r) => {
+    const v = parse(r[16]) || {};
+    const tabs = v.tabs || v;
+    const first = Array.isArray(tabs) ? (tabs.find((t) => t.active) || tabs[0]) : null;
+    return call('switch_tab', { tab_id: first ? (first.id || first.tab_id) : 1 });
+  },
+  (m, r) => {
+    const v = parse(r[20]) || {};
+    return call('close_tab', { tab_id: v.tab_id || v.id || 2 });
+  },
+  (m, r) => finish('Tools test done:\n\n' + r.map((x, i) => (i + 1) + '. ' + String(x).replace(/\s+/g, ' ').slice(0, 90)).join('\n')),
+];
+
 const SCENARIOS = [
+  { match: /run the tools test/i, steps: TOOLS_TEST },
   // ---- 0.12.0 M5 ----
   {
     match: /\bhistory\b/i,
