@@ -146,9 +146,7 @@ impl Browser {
             r @ (Request::GetDownloads
             | Request::QueryDownloads { .. }
             | Request::ClearDownloads
-            | Request::DownloadAction { .. }) => {
-                self.dispatch_downloads(tab, req_id, r)
-            }
+            | Request::DownloadAction { .. }) => self.dispatch_downloads(tab, req_id, r),
 
             other => self.not_available(sender, tab, req_id, &other),
         }
