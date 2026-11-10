@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Scripts</title>
+<link rel="stylesheet" href="/shared/common.css">
+<link rel="stylesheet" href="/shared/page.css">
+<link rel="stylesheet" href="/shared/editor.css">
+<link rel="stylesheet" href="scripts.css">
+</head>
+<body>
+<main class="page" id="page">
+  <section id="list-view">
+    <header class="page-header">
+      <h1>Scripts</h1>
+      <nav class="kinds" aria-label="Kind of script">
+        <a href="#userscripts" id="tab-userscripts" data-kind="userscript">Userscripts</a>
+        <a href="#macros" id="tab-macros" data-kind="macro">Macros</a>
+      </nav>
+    </header>
+
+    <div id="userscripts-panel" class="kind-panel">
+      <p class="notice" id="userscripts-off" hidden>Userscripts are turned off, so none of them runs.
+        <a href="#" class="open-settings">Turn them on in Settings → AI and scripts</a></p>
+      <div class="toolbar">
+        <button class="btn primary" id="new-userscript">New userscript</button>
+        <button class="btn" id="import-userscript">Import .user.js…</button>
+        <input type="file" id="import-file" accept=".js,.user.js" hidden>
+        <span class="status" id="userscripts-status" role="status"></span>
+      </div>
+      <div class="card list" id="userscripts-list"></div>
+      <div class="card empty-state" id="userscripts-empty" hidden>
+        <h2>No userscripts yet</h2>
+        <p>A userscript is a small piece of JavaScript that runs on the websites you choose, for example to hide a
+          banner or add a button. Write one with <strong>New userscript</strong>, import a <code>.user.js</code> file,
+          or ask the AI agent to make one.</p>
+      </div>
+    </div>
+
+    <div id="macros-panel" class="kind-panel" hidden>
+      <p class="notice" id="macros-off" hidden>Macros are turned off: they don't run, and their hotkeys do nothing.
+        <a href="#" class="open-settings">Turn them on in Settings → AI and scripts</a></p>
+      <div class="toolbar">
+        <button class="btn primary" id="new-macro">New macro</button>
+        <span class="status" id="macros-status" role="status"></span>
+      </div>
+      <div class="card list" id="macros-list"></div>
+      <div class="card empty-state" id="macros-empty" hidden>
+        <h2>No macros yet</h2>
+        <p>A macro is a short script that presses keys, clicks and types for you in the current tab. Give it a hotkey
+          to start it from any tab, or run it from here. Write one with <strong>New macro</strong>, or ask the AI agent
+          to make one.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="editor-view" hidden>
+    <div class="ed-head">
+      <button class="btn" id="ed-back" title="Back to the list">← Back</button>
+      <div class="ed-title">
+        <input type="text" id="ed-name" placeholder="Macro name" aria-label="Macro name" maxlength="100" spellcheck="false">
+        <span id="ed-script-name" class="ed-script-name"></span>
+        <span id="ed-dirty" class="ed-dirty" hidden>Not saved</span>
+      </div>
+      <button class="btn" id="ed-run-now" title="Runs the saved script once on the last web page you used in this window">Run on current tab now</button>
+      <button class="btn" id="ed-run">Run</button>
+      <button class="btn primary" id="ed-save" title="Save (Ctrl+S)">Save</button>
+    </div>
+    <div class="hotkey-row" id="hotkey-row">
+      <span class="hotkey-label">Hotkey:</span>
+      <span id="hotkey-value" class="keys"></span>
+      <button class="btn small" id="hotkey-record">Record</button>
+      <button class="btn small" id="hotkey-clear">Clear</button>
+      <span id="hotkey-status" class="hotkey-status" role="status"></span>
+    </div>
+    <ul class="warnings" id="ed-warnings" hidden></ul>
+    <p class="save-error" id="ed-save-error" role="alert" hidden></p>
+    <div class="ed-box" id="ed-box"></div>
+    <p class="ed-help" id="ed-help-userscript">The <code>// ==UserScript==</code> block at the top names the script and
+      says where it runs (<code>@match</code>). Ctrl+S saves, Ctrl+F finds, Tab indents.</p>
+    <p class="ed-help" id="ed-help-macro" hidden>Use <code>await key.press('a')</code>, <code>key.down(k)</code> /
+      <code>key.up(k)</code>, <code>key.hold(k, ms)</code>, <code>type('text')</code>, <code>mouse.click(x, y)</code>,
+      <code>wait(ms)</code>, <code>repeat(n, fn)</code>, <code>navigate(url)</code>, <code>tabs.open(url)</code> and
+      <code>toast(text)</code>. A macro acts on the current tab; Stop in the toolbar ends it. Ctrl+S saves, Ctrl+F
+      finds, Tab indents.</p>
+  </section>
+</main>
+<script src="/shared/bridge.js"></script>
+<script src="/shared/page.js"></script>
+<script src="/shared/jstok.js"></script>
+<script src="/shared/editor.js"></script>
+<script src="scripts.js"></script>
+</body>
+</html>
