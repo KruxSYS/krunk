@@ -3,8 +3,9 @@ html, body { height: 100%; overflow: hidden; }
 body { display: flex; flex-direction: column; background: var(--bg-raised); color: var(--fg); font-size: 13px; line-height: 1.45; }
 .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* 0.15.0: the light amber is #b45309 (WCAG AA on the panel; #d97706 was 3.2:1). */
 :root { --card: color-mix(in srgb, var(--fg) 4%, var(--bg-raised)); --line: color-mix(in srgb, var(--border) 70%, transparent);
-        --ok: #16a34a; --warn: #d97706; --soft-danger: color-mix(in srgb, var(--danger) 10%, var(--bg-raised)); }
+        --ok: #16a34a; --warn: #b45309; --soft-danger: color-mix(in srgb, var(--danger) 10%, var(--bg-raised)); }
 :root.dark { --ok: #4ade80; --warn: #fbbf24; --danger: #f87171; }
 @media (prefers-color-scheme: dark) { :root:not(.light) { --ok: #4ade80; --warn: #fbbf24; --danger: #f87171; } }
 button { cursor: pointer; }

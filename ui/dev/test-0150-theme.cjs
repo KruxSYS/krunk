@@ -104,7 +104,7 @@ module.exports = (h) => {
     await emit(page, { event: 'agentAsk', ask: { id: 7, question: 'Which format do you want?', options: ['CSV', 'JSON'], multi: false, allowOther: true } });
     await emit(page, { event: 'agentError', message: 'The provider refused the request (429).' });
     await settle(page, 200);
-    const sels = ['.md p', '.md pre code', '.md blockquote', '.step-label', '.step.ok .step-sum', '.card.ask .card-q', '.card.ask .opt', '#model-name', '#input', '.msg.error'];
+    const sels = ['.md p', '.md pre code', '.md blockquote', '.step-label', '.step.ok .step-sum', '.step.error .step-sum', '.step.refused .step-sum', '.card.ask .card-q', '.card.ask .opt', '#model-name', '#input', '.msg.error'];
     const look = async () => page.evaluate(() => ({ bg: getComputedStyle(document.body).backgroundColor, fg: getComputedStyle(document.body).color,
       pre: getComputedStyle(document.querySelector('.md pre')).backgroundColor, opt: getComputedStyle(document.querySelector('.card.ask .opt')).backgroundColor,
       dark: document.documentElement.classList.contains('dark') }));
