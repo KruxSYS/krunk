@@ -630,6 +630,14 @@ impl Browser {
             Err(_) => "error",
         };
         info!("macro run {run_id}: {status} after {ms} ms");
+        // A macro the user started (hotkey, Run) that failed says why; the agent gets the
+        // error as its tool result instead.
+        if let (Err(e), false, Some(win)) = (&result, r.by_agent, r.win) {
+            if e != "stopped" {
+                let first = e.lines().next().unwrap_or("").chars().take(160).collect::<String>();
+                self.post_shell_to(win, &Event::Toast { message: format!("Macro \"{}\": {first}", r.name) });
+            }
+        }
         if let Some(done) = r.done.take() {
             let log = if r.log.is_empty() { String::new() } else { format!("\nLog:\n{}", r.log.join("\n")) };
             done(match result {

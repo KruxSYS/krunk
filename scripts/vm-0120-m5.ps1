@@ -261,13 +261,68 @@ if ($Phase -eq 'scripts') {
   Shot "$P-f4-about-untouched"
   Import 'C:\pipeline\krunk\userscripts\warn.user.js'
   Shot "$P-f5-warn-imported"
-  # g: the editor (layout pass).
+  # g: the editor: a syntax error on Ctrl+S, then Ctrl+F.
   Page 'krunk://scripts'
   Click 239 198 1500
-  Shot "$P-g1-new-userscript"
+  Click 640 500 300
+  SafeKeys '^{END}' 100
+  SafeKeys '{ENTER}let x = ;' 200
+  SafeKeys '^s' 1500
+  Shot "$P-g1-syntax-error"
+  SafeKeys '^f' 400
+  SafeKeys 'match' 200
+  SafeKeys '{ENTER}' 600
+  Shot "$P-g2-find"
+  SafeKeys '{ESC}' 300
+  # A macro that holds A, made by the agent (then stopped), gets a hotkey: Ctrl+T is refused,
+  # Ctrl+Alt+K taken.
+  Page 'http://127.0.0.1:8094/agent.html'
+  SafeKeys '^+ ' 1500
+  Ask 'Create a macro that holds the A key' 8000
+  Focus (MainWindow) | Out-Null
+  SafeKeys '^+.' 1000
+  SafeKeys '^+ ' 1000
+  Page 'krunk://scripts#macros'
+  Shot "$P-g3-macros-list"
+  Click 998 257 1500
+  Click 158 185 600
+  SafeKeys '^t' 1000
+  Shot "$P-g4-hotkey-ctrl-t-refused"
+  # (Recording goes on after a refused chord: the next one is taken.)
+  SafeKeys '^%k' 1000
+  Click 1221 144 1500
+  Shot "$P-g5-hotkey-saved"
+  # A second macro can't take the same hotkey.
   Page 'krunk://scripts#macros'
   Click 229 198 1500
-  Shot "$P-g2-new-macro"
+  Click 317 144 200
+  SafeKeys 'Duplicate' 200
+  Click 158 185 600
+  SafeKeys '^%k' 1000
+  Shot "$P-g6-hotkey-duplicate-refused"
+  # The hotkey starts the macro (toolbar indicator), a second press stops it (keyup).
+  Remove-Item "$www\access.log" -ErrorAction SilentlyContinue
+  Page 'http://127.0.0.1:8094/agent.html'
+  Click 200 640 300
+  SafeKeys '^%k' 3000
+  Shot "$P-g7-hotkey-started"
+  SafeKeys '^%k' 1500
+  Shot "$P-g8-hotkey-stopped"
+  Get-Content "$www\access.log" -ErrorAction SilentlyContinue | Where-Object { $_ -match 'agent-key=' } | Select-Object -Last 4 | ForEach-Object { Log "[$P] key $(($_ -split 'agent-key=')[1] -split ' ' | Select-Object -First 1)" }
+  # The Run button in the list, in a second tab: it acts on the window's last web tab (the
+  # test page), then Stop.
+  Focus (MainWindow) | Out-Null
+  SafeKeys '^t' 1200
+  Page 'krunk://scripts#macros'
+  Click 949 257 3000
+  Shot "$P-g9a-run-from-scripts"
+  Focus (MainWindow) | Out-Null
+  SafeKeys '^1' 1500
+  Shot "$P-g9-run-button"
+  Focus (MainWindow) | Out-Null
+  SafeKeys '^+.' 1500
+  Shot "$P-g10-run-stopped"
+  KLog 'macro'
   Get-Content "$www\access.log" -ErrorAction SilentlyContinue | Where-Object { $_ -match 'gm-count' } | ForEach-Object { Log "[$P] $(($_ -split 'GET ')[1] -split ' cookie' | Select-Object -First 1)" }
   KLog 'userscript'
   StopKrunk
