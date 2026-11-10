@@ -575,8 +575,15 @@ impl Browser {
                     }
                 }
                 Action::ReleaseInput => {
-                    self.input_release_all();
-                    self.stop_agent_macros();
+                    // A task that finished normally leaves a macro it started running (holding
+                    // its keys) until the user stops it (toolbar, Ctrl+Shift+.); Stop, an error
+                    // or a closed window end it and release everything.
+                    let done = self.agent.wins.borrow().get(&win).is_some_and(|w| w.session.state() == RunState::Done);
+                    if !done {
+                        self.stop_agent_macros();
+                    } else if !self.macro_running() {
+                        self.input_release_all();
+                    }
                 }
                 Action::Emit(event) => {
                     if let Event::AgentState { state: RunState::Stopped, .. } = &*event {

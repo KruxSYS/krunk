@@ -45,7 +45,7 @@ function Page([string]$url) { Focus (MainWindow) | Out-Null; SafeGo $url 2500 }
 # The panel's message box (bottom of the panel, right side of the window).
 function Ask([string]$text, [int]$wait) {
   Focus (MainWindow) | Out-Null
-  Click ($c.Right - 190) ($c.Bottom - 60) 300
+  Click ($c.Right - 190) ($c.Bottom - 26) 300
   SafeKeys $text 150
   SafeKeys '{ENTER}' $wait
 }
@@ -103,6 +103,8 @@ if (Want 'macro') {
   Focus (MainWindow) | Out-Null; Click ($c.Left + 200) ($c.Top + 640) 300
   Ask 'Create a macro that holds the A key' 9000
   Shot "$P-06a-macro-running"
+  Start-Sleep 3
+  Shot "$P-06a2-macro-still-running"
   Focus (MainWindow) | Out-Null
   SafeKeys '^+.' 1500
   Shot "$P-06b-macro-stopped"
@@ -118,7 +120,10 @@ if (Want 'form') {
 if (Want 'ask') {
   Ask 'ask me something' 4000
   Shot "$P-08a-ask"
-  if ($AskX -gt 0) { Click $AskX $AskY 4000; Shot "$P-08b-answered" }
+  # The first option has the focus: Tab to the second ("Green") and choose it.
+  SafeKeys '{TAB}' 300
+  SafeKeys '{ENTER}' 4000
+  Shot "$P-08b-answered"
 }
 if (Want 'stop') {
   Ask 'slow' 2500
