@@ -338,6 +338,9 @@ pub fn bookmark_edit_rect(x: f64, y: f64, is_folder: bool) -> PopupRect {
     PopupRect { x, y, width: 340.0, height: if is_folder { 150.0 } else { 214.0 } }
 }
 
+/// The width of a page's dialog (CSS px, 0.12.4).
+pub const JS_DIALOG_WIDTH: f64 = 440.0;
+
 pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> PopupRect {
     let (w, h) = match kind {
         PopupKind::SavePassword => (360.0, 196.0),
@@ -366,8 +369,15 @@ pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> Pop
         PopupKind::BookmarkEdit => (340.0, 214.0),
         PopupKind::TabList => (TAB_LIST_WIDTH, tab_list_height(entries)),
         PopupKind::Unresponsive => (380.0, 150.0),
+        // An upper bound; the popup fits its height to the message (0.12.4).
+        PopupKind::JsDialog => (JS_DIALOG_WIDTH, 460.0),
     };
-    let x = (shell_width_css - w - 8.0).max(0.0);
+    // A page's dialog sits in the middle, under the toolbar, as in Chrome.
+    let x = if kind == PopupKind::JsDialog {
+        ((shell_width_css - w) / 2.0).max(0.0)
+    } else {
+        (shell_width_css - w - 8.0).max(0.0)
+    };
     PopupRect { x, y: SHELL_HEIGHT_DIP - 4.0, width: w, height: h }
 }
 

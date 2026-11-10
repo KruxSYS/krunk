@@ -4255,6 +4255,58 @@ async function testTabList(browser) {
 }
 
 // 0.11.0: a page that stops responding: the prompt (Wait / Close page) and the crash page.
+async function testJsDialogs(browser) {
+  console.log('popup: page dialogs (alert, confirm, prompt, leave site)');
+  const { page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 440, height: 460 }, 1);
+  const show = async (c) => {
+    await page.evaluate(() => { window.__host.sent.length = 0; });
+    await emit(page, { event: 'popup', content: Object.assign({ kind: 'jsDialog', tabId: 4, dialogId: 1, title: 'a.example says', message: '', defaultText: '', offerBlock: false }, c) });
+    await page.waitForSelector('.js-dialog #default');
+  };
+  // alert: OK only, the message as written (line breaks kept, markup as text).
+  await show({ dialog: 'alert', dialogId: 1, message: 'Line one\nLine <b>two</b>' });
+  check((await page.textContent('#jsd-title')) === 'a.example says' && (await page.$$('#jsd-cancel')).length === 0 && (await page.textContent('#default')) === 'OK', 'alert: the title and only OK');
+  check((await page.$$('.jsd-message b')).length === 0 && await page.evaluate(() => getComputedStyle(document.getElementById('jsd-message')).whiteSpace) === 'pre-wrap', 'alert: the page\'s text is text, its line breaks kept');
+  check(await page.evaluate(() => document.activeElement.id) === 'default', 'alert: OK has the focus (Enter answers)');
+  await shot(page, 'popup-js-alert.png');
+  await page.keyboard.press('Enter');
+  let r = await lastSent(page, 'jsDialogReply');
+  check(r && r.dialogId === 1 && r.accept === true && r.block === false, 'alert: Enter answers OK');
+  // confirm: Cancel answers false; Esc closes (the host answers the dismissal).
+  await show({ dialog: 'confirm', dialogId: 2, message: 'Delete it?' });
+  await page.click('#jsd-cancel');
+  r = await lastSent(page, 'jsDialogReply');
+  check(r && r.dialogId === 2 && r.accept === false, 'confirm: Cancel answers false');
+  await show({ dialog: 'confirm', dialogId: 3, message: 'Again?' });
+  await page.keyboard.press('Escape');
+  check(!(await lastSent(page, 'jsDialogReply')) && (await lastSent(page, 'hidePopup')), 'confirm: Esc closes it without an answer of its own (the host answers the dismissal)');
+  // prompt: the default text selected in the field; the answer goes back.
+  await show({ dialog: 'prompt', dialogId: 4, message: 'Your name?', defaultText: 'Ann' });
+  await page.waitForFunction(() => document.activeElement && document.activeElement.id === 'jsd-input');
+  check(await page.inputValue('#jsd-input') === 'Ann' && await page.evaluate(() => { const i = document.getElementById('jsd-input'); return i.selectionStart === 0 && i.selectionEnd === 3; }), 'prompt: the default text, selected');
+  await page.keyboard.type('Bob');
+  await page.keyboard.press('Enter');
+  r = await lastSent(page, 'jsDialogReply');
+  check(r && r.dialogId === 4 && r.accept === true && r.text === 'Bob', 'prompt: Enter answers the typed text');
+  // Leave site? / Reload site?, with the block offer.
+  await show({ dialog: 'beforeUnload', dialogId: 5, title: 'Leave site?', message: 'Changes you made may not be saved.', offerBlock: true });
+  check((await page.textContent('#default')) === 'Leave' && (await page.textContent('#jsd-cancel')) === 'Cancel', 'leave site: Leave and Cancel');
+  await shot(page, 'popup-js-leave.png');
+  await page.check('#jsd-block');
+  await page.click('#jsd-cancel');
+  r = await lastSent(page, 'jsDialogReply');
+  check(r && r.dialogId === 5 && r.accept === false && r.block === true, 'leave site: Cancel stays, with the block ticked');
+  await show({ dialog: 'beforeReload', dialogId: 6, title: 'Reload site?', message: 'Changes you made may not be saved.' });
+  check((await page.textContent('#default')) === 'Reload', 'reload site: Reload');
+  // A very long message scrolls inside the dialog; the buttons stay in the popup.
+  await show({ dialog: 'confirm', dialogId: 7, message: 'word '.repeat(3000) });
+  const box = await page.evaluate(() => ({ msg: document.getElementById('jsd-message').getBoundingClientRect().height, btn: document.getElementById('default').getBoundingClientRect().bottom }));
+  check(box.msg <= 281 && box.btn <= 460, 'a long message scrolls; the buttons stay visible (' + JSON.stringify(box) + ')');
+  const fit = await lastSent(page, 'popupResize');
+  check(fit && fit.height <= 460, 'the popup asks for the height it needs (' + (fit && fit.height) + ')');
+  check(errors.length === 0, 'page dialogs: no console errors (' + errors.join('; ') + ')');
+}
+
 async function testHangAndCrash(browser) {
   console.log('popup: page not responding; crash page');
   let { page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 380, height: 150 }, 1);
@@ -5979,6 +6031,7 @@ async function testHttpAuth(browser) {
     if (!ONLY || ONLY.includes('BarOverflow')) await testBarOverflow(browser);
     if (!ONLY || ONLY.includes('TabOverflow')) await testTabOverflow(browser);
     if (!ONLY || ONLY.includes('TabList')) await testTabList(browser);
+    if (!ONLY || ONLY.includes('JsDialogs')) await testJsDialogs(browser);
     if (!ONLY || ONLY.includes('HangAndCrash')) await testHangAndCrash(browser);
     if (!ONLY || ONLY.includes('SourceViewer')) await testSourceViewer(browser);
     if (!ONLY || ONLY.includes('ShieldAndHttpsOnly')) await testShieldAndHttpsOnly(browser);

@@ -30,7 +30,8 @@ pub use scheme::InternalResponse;
 pub use scriptlets::set_scriptlets;
 pub use view::{
     with_batched_moves, AuthChallenge, AuthResponder, ClearKinds, DownloadControl, DownloadStart, DownloadStatus,
-    DownloadUpdate, KeyPress, LoadingState, MessageSource, NewWindow, Role, Scripts, View, ViewOptions,
+    DownloadUpdate, JsDialogRequest, JsDialogResponder, KeyPress, LoadingState, MessageSource, NewWindow, Role,
+    Scripts, View, ViewOptions,
 };
 
 use crate::log::{info, warning};

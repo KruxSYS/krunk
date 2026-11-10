@@ -310,6 +310,10 @@ pub(super) struct Events {
     pub search_label: Slot<SearchLabelFn>,
     /// That item was chosen: the selected text.
     pub search_selection: Slot<dyn FnMut(String)>,
+    /// A page's JavaScript dialog (0.12.4); the host answers it through the responder.
+    pub js_dialog: Slot<dyn FnMut(JsDialogRequest, JsDialogResponder)>,
+    /// The engine dropped the page's open dialog (navigation, close): hide it unanswered.
+    pub js_dialog_reset: Slot<dyn FnMut()>,
     /// An image item of the context menu was chosen (0.12.2): the image's address.
     pub image_menu: Slot<dyn FnMut(lb_core::image_menu::ImageAction, String)>,
 }
@@ -357,6 +361,65 @@ impl Drop for AuthResponder {
         if let Some(cb) = self.0.take() {
             cb.cancel();
         }
+    }
+}
+
+/// A page's JavaScript dialog (0.12.4, `lb_core::js_dialog`): what it asks, raw from the page.
+#[derive(Debug, Clone)]
+pub struct JsDialogRequest {
+    pub kind: lb_core::js_dialog::JsDialogKind,
+    pub origin_url: String,
+    pub message: String,
+    pub default_text: String,
+}
+
+/// Answers a page's dialog exactly once. Dropped without an answer, it gives the answer for a
+/// dialog nobody saw (`JsDialogKind::unseen_answer`: leaving goes ahead): the page never waits
+/// for a dialog that isn't there, and never keeps the user on it with one.
+pub struct JsDialogResponder {
+    cb: Option<cef::JsdialogCallback>,
+    kind: lb_core::js_dialog::JsDialogKind,
+}
+
+impl JsDialogResponder {
+    pub(super) fn new(cb: cef::JsdialogCallback, kind: lb_core::js_dialog::JsDialogKind) -> JsDialogResponder {
+        JsDialogResponder { cb: Some(cb), kind }
+    }
+
+    pub fn answer(mut self, accept: bool, text: &str) {
+        if let Some(cb) = self.cb.take() {
+            use cef::ImplJsdialogCallback;
+            cb.cont(std::os::raw::c_int::from(accept), Some(&cef::CefString::from(text)));
+        }
+    }
+
+    /// The user dismissed the prompt (Esc, a click elsewhere): alert acknowledged, everything
+    /// else refused (the page stays).
+    pub fn dismiss(mut self) {
+        if let Some(cb) = self.cb.take() {
+            use cef::ImplJsdialogCallback;
+            cb.cont(std::os::raw::c_int::from(self.kind.dismissed_answer()), Some(&cef::CefString::from("")));
+        }
+    }
+
+    /// The engine dropped the dialog itself (the page navigated or closed): nothing to answer.
+    pub fn disarm(mut self) {
+        self.cb.take();
+    }
+}
+
+impl Drop for JsDialogResponder {
+    fn drop(&mut self) {
+        if let Some(cb) = self.cb.take() {
+            use cef::ImplJsdialogCallback;
+            cb.cont(std::os::raw::c_int::from(self.kind.unseen_answer()), Some(&cef::CefString::from("")));
+        }
+    }
+}
+
+impl std::fmt::Debug for JsDialogResponder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "JsDialogResponder({:?})", self.kind)
     }
 }
 
@@ -1409,6 +1472,14 @@ impl View {
 
     pub fn on_search_selection(&self, f: impl FnMut(String) + 'static) {
         self.0.ev.search_selection.set(Box::new(f));
+    }
+
+    pub fn on_js_dialog(&self, f: impl FnMut(JsDialogRequest, JsDialogResponder) + 'static) {
+        self.0.ev.js_dialog.set(Box::new(f));
+    }
+
+    pub fn on_js_dialog_reset(&self, f: impl FnMut() + 'static) {
+        self.0.ev.js_dialog_reset.set(Box::new(f));
     }
 
     pub fn on_image_menu(&self, f: impl FnMut(lb_core::image_menu::ImageAction, String) + 'static) {

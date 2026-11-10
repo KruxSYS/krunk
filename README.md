@@ -417,6 +417,19 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   notices the change by itself. Links and pages opened from other apps open in a new tab of the
   running Krunk (or start it with them); only http(s) addresses, `file:` URLs and absolute file
   paths are opened. A portable copy can't be the default. Uninstalling removes the registration.
+- **Page dialogs (0.12.4):** a page's `alert`, `confirm`, `prompt` and "Leave site?" /
+  "Reload site?" are Krunk's own prompt, in the middle under the toolbar, titled with the site
+  ("example.com says"). The engine's own dialog windows could end up behind Krunk's window
+  while the page waited for them, and the tab looked frozen. The prompt always stays above
+  the window, and every way it ends answers the page:
+  - OK/Leave (Enter) or Cancel;
+  - Esc or a click elsewhere: alert acknowledged, anything else refused, the page stays;
+  - switching or closing the tab.
+
+  A dialog of a tab that isn't in front is answered at once (leaving then goes ahead). From a
+  page's second dialog on, "Don't let this page show more dialogs" stops the rest until the
+  page loads again; that is never offered on "Leave site?", and a stopped page always lets
+  you leave.
 - **Image context menu (0.12.2):** right-clicking an image offers "Open image in new tab",
   "Save image as…" (always asks where; downloaded through the tab, with its cookies and, in a
   private tab, its private profile), "Copy image" (the clipboard gets a bitmap and a PNG, so

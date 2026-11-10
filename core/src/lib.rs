@@ -27,6 +27,7 @@ pub mod http_auth;
 pub mod image_menu;
 pub mod import;
 pub mod integrity;
+pub mod js_dialog;
 pub mod keys;
 pub mod layout;
 pub mod macros;

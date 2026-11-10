@@ -81,7 +81,9 @@ wrap_client! {
         }
 
         fn jsdialog_handler(&self) -> Option<JsdialogHandler> {
-            (self.role != Role::Tab).then(NoDialogs::new)
+            // A tab's dialogs are Krunk's own prompts (0.12.4): the engine's native dialog
+            // windows could end up behind the frame while the page waited for them.
+            Some(if self.role == Role::Tab { TabDialogs::new(self.key) } else { NoDialogs::new() })
         }
 
         fn download_handler(&self) -> Option<DownloadHandler> {
@@ -843,6 +845,81 @@ wrap_context_menu_handler! {
                 view.ev.inspect.with(|f| f(at));
             }
             1
+        }
+    }
+}
+
+wrap_jsdialog_handler! {
+    struct TabDialogs {
+        key: u64,
+    }
+    impl JsdialogHandler {
+        fn on_jsdialog(
+            &self,
+            _browser: Option<&mut Browser>,
+            origin_url: Option<&CefString>,
+            dialog_type: JsdialogType,
+            message_text: Option<&CefString>,
+            default_prompt_text: Option<&CefString>,
+            callback: Option<&mut JsdialogCallback>,
+            suppress_message: Option<&mut c_int>,
+        ) -> c_int {
+            use lb_core::js_dialog::JsDialogKind;
+            let kind = if dialog_type == JsdialogType::CONFIRM {
+                JsDialogKind::Confirm
+            } else if dialog_type == JsdialogType::PROMPT {
+                JsDialogKind::Prompt
+            } else {
+                JsDialogKind::Alert
+            };
+            let Some(cb) = callback else {
+                if let Some(s) = suppress_message {
+                    *s = 1;
+                }
+                return 0;
+            };
+            let request = super::view::JsDialogRequest {
+                kind,
+                origin_url: text(origin_url),
+                message: text(message_text),
+                default_text: text(default_prompt_text),
+            };
+            // Handled either way: the host shows it, or the responder (dropped unanswered)
+            // gives the dismissal's answer at once. Never the engine's own dialog.
+            let responder = super::view::JsDialogResponder::new(cb.clone(), kind);
+            if let Some(view) = lookup(self.key) {
+                view.ev.js_dialog.with(|f| f(request, responder));
+            }
+            1
+        }
+
+        fn on_before_unload_dialog(
+            &self,
+            _browser: Option<&mut Browser>,
+            message_text: Option<&CefString>,
+            is_reload: c_int,
+            callback: Option<&mut JsdialogCallback>,
+        ) -> c_int {
+            use lb_core::js_dialog::JsDialogKind;
+            let Some(cb) = callback else { return 0 };
+            let kind = if is_reload != 0 { JsDialogKind::BeforeReload } else { JsDialogKind::BeforeUnload };
+            let request = super::view::JsDialogRequest {
+                kind,
+                origin_url: String::new(),
+                message: text(message_text),
+                default_text: String::new(),
+            };
+            let responder = super::view::JsDialogResponder::new(cb.clone(), kind);
+            if let Some(view) = lookup(self.key) {
+                view.ev.js_dialog.with(|f| f(request, responder));
+            }
+            1
+        }
+
+        fn on_reset_dialog_state(&self, _browser: Option<&mut Browser>) {
+            if let Some(view) = lookup(self.key) {
+                view.ev.js_dialog_reset.with(|f| f());
+            }
         }
     }
 }

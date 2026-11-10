@@ -182,6 +182,8 @@ pub enum PopupKind {
     TabList,
     /// "This page isn't responding" (0.11.0): Wait / Close page. Opened by the host only.
     Unresponsive,
+    /// A page's alert / confirm / prompt or "Leave site?" (0.12.4). Opened by the host only.
+    JsDialog,
 }
 
 impl PopupKind {
@@ -432,6 +434,18 @@ pub enum PopupContent {
         tab_id: u32,
         /// The page's host, for the text.
         host: String,
+    },
+    /// A page's JavaScript dialog (0.12.4, `core::js_dialog`): `title` is "<host> says" (or
+    /// "Leave site?"), `message` the page's text (cleaned), `default_text` a prompt's input;
+    /// `offer_block`: "Don't let this page show more dialogs".
+    JsDialog {
+        tab_id: u32,
+        dialog_id: u32,
+        dialog: crate::js_dialog::JsDialogKind,
+        title: String,
+        message: String,
+        default_text: String,
+        offer_block: bool,
     },
     /// A newer Krunk: Update now (or Download) / Later / Release notes.
     Update {
@@ -688,6 +702,7 @@ impl PopupContent {
             PopupContent::BookmarkEdit { .. } => PopupKind::BookmarkEdit,
             PopupContent::TabList { .. } => PopupKind::TabList,
             PopupContent::Unresponsive { .. } => PopupKind::Unresponsive,
+            PopupContent::JsDialog { .. } => PopupKind::JsDialog,
         }
     }
 
@@ -956,6 +971,16 @@ pub enum Request {
     HangReply {
         tab_id: u32,
         wait: bool,
+    },
+    /// The answer to a page's dialog (0.12.4): OK / Leave (`accept`), a prompt's `text`, and
+    /// "Don't let this page show more dialogs" (`block`).
+    JsDialogReply {
+        dialog_id: u32,
+        accept: bool,
+        #[serde(default)]
+        text: Option<String>,
+        #[serde(default)]
+        block: bool,
     },
     /// Middle-click on a bookmark of the bar or of a folder dropdown: it opens in a new tab
     /// behind the current one, and a dropdown stays open (0.11.0).
@@ -1897,6 +1922,7 @@ impl Sender {
                     | R::ShowBookmarkFolder { rect: None, from: None, .. }
                     | R::BookmarkFolderBack
                     | R::HangReply { .. }
+                    | R::JsDialogReply { .. }
                     | R::OpenBookmarkBackground { .. }
                     | R::PopupResize { .. }
                     | R::PopupShown { .. }
@@ -3596,6 +3622,8 @@ mod tests {
             Request::ShowBookmarkFolder { id: 1, rect: Some(rect), from: Some(3) },
             Request::BookmarkFolderBack,
             Request::HangReply { tab_id: 3, wait: false },
+            Request::JsDialogReply { dialog_id: 2, accept: true, text: Some("x".into()), block: false },
+            Request::JsDialogReply { dialog_id: 3, accept: false, text: None, block: true },
             Request::OpenBookmarkBackground { id: 9 },
             Request::PopupShown { seq: 3, height: Some(212.0) },
             Request::PopupShown { seq: 4, height: None },

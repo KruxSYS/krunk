@@ -42,6 +42,10 @@ impl Browser {
             .map(|(id, v)| (*id, v.view.is_unresponsive(), v.unresponsive.get() && now >= v.hang_quiet_until.get()))
             .collect();
         for (id, hung, shown) in states {
+            // A page waiting for its dialog's answer (0.12.4) is blocked, not hung.
+            if self.js_dialog_open_in(id) {
+                continue;
+            }
             let known = self.views.borrow().get(&id).is_some_and(|v| v.unresponsive.get());
             if hung != known {
                 self.tab_unresponsive(id, hung);

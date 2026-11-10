@@ -997,6 +997,7 @@ impl Browser {
             PopupContent::Permission { prompt_id, .. } => self.permission_dismissed(*prompt_id),
             PopupContent::ExtInstall { request_id, .. } => self.ext_install_dismissed(*request_id),
             PopupContent::HttpAuth { .. } => self.http_auth_dismissed(),
+            PopupContent::JsDialog { dialog_id, .. } => self.js_dialog_dismissed(*dialog_id),
             PopupContent::Unlock { purpose, .. } => {
                 self.vaults.unlock_for.borrow_mut().take();
                 match purpose {

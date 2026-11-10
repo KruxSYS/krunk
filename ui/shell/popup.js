@@ -462,7 +462,7 @@
   function fit() { LB.post('popupResize', { height: Math.max(root.offsetHeight, root.scrollHeight) + 2 }); }
   // Content whose height depends on its items: the window is opened with an upper bound
   // and fitted right after the render (the ⋮ menu used to leave a gap at the bottom).
-  const FITS = { extInstall: true, suggest: true, cardFill: true, menu: true, tabMenu: true, navMenu: true, httpAuth: true, bookmarkMenu: true, siteInfo: true, addressMenu: true, captionMenu: true, downloads: true, permission: true, passwordSaved: true, pip: true, bookmarkFolder: true };
+  const FITS = { extInstall: true, suggest: true, cardFill: true, menu: true, tabMenu: true, navMenu: true, httpAuth: true, bookmarkMenu: true, siteInfo: true, addressMenu: true, captionMenu: true, downloads: true, permission: true, passwordSaved: true, pip: true, bookmarkFolder: true, jsDialog: true };
 
 
   // Login suggestions under a focused field: the matching usernames (with the host for a
@@ -1011,6 +1011,34 @@
     ])];
   }
 
+  // A page's alert / confirm / prompt or "Leave site?" (0.12.4). Krunk's own prompt: the
+  // engine's dialog windows could end up behind the window while the page waited. The host
+  // answers the page whenever this goes away without an answer (Esc, a click elsewhere).
+  function renderJsDialog(c) {
+    const input = c.dialog === 'prompt'
+      ? el('input', { type: 'text', id: 'jsd-input', value: c.defaultText || '', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Your answer' })
+      : null;
+    const block = c.offerBlock ? el('input', { type: 'checkbox', id: 'jsd-block' }) : null;
+    const reply = (accept) => LB.post('jsDialogReply', {
+      dialogId: c.dialogId, accept: accept, text: input ? input.value : null, block: !!(block && block.checked),
+    });
+    const okLabel = c.dialog === 'beforeUnload' ? 'Leave' : c.dialog === 'beforeReload' ? 'Reload' : 'OK';
+    const buttons = [];
+    if (c.dialog !== 'alert') buttons.push(el('button', { class: 'btn', type: 'button', id: 'jsd-cancel', onclick: () => reply(false), text: 'Cancel' }));
+    buttons.push(el('button', { class: 'btn primary', type: 'submit', id: 'default', text: okLabel }));
+    const form = el('form', { class: 'jsd-form', onsubmit: (e) => { e.preventDefault(); reply(true); } }, [
+      c.message ? el('p', { class: 'jsd-message', id: 'jsd-message', text: c.message }) : null,
+      input,
+      block ? el('label', { class: 'jsd-block' }, [block, el('span', { text: "Don't let this page show more dialogs" })]) : null,
+      el('div', { class: 'row' }, buttons),
+    ]);
+    if (input) setTimeout(() => { input.focus(); input.select(); }, 0);
+    return [el('div', { class: 'panel js-dialog', role: 'alertdialog', 'aria-labelledby': 'jsd-title', 'aria-describedby': 'jsd-message' }, [
+      el('h2', { id: 'jsd-title', text: c.title }),
+      form,
+    ])];
+  }
+
   // "Krunk X is available" and the download that follows "Update now".
   function renderUpdate(c) {
     const reply = (choice) => LB.post('updateReply', { choice: choice });
@@ -1083,7 +1111,7 @@
       return;
     }
     current = m.content;
-    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, cardFill: renderCardFill, saveCard: renderSaveCard, pip: renderPip, pipVolume: renderPipVolume, extInstall: renderExtInstall, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, navMenu: renderNavMenu, httpAuth: renderHttpAuth, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit, tabList: renderTabList, unresponsive: renderUnresponsive }[c.kind];
+    const render = { menu: renderMenu, shield: renderShield, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, cardFill: renderCardFill, saveCard: renderSaveCard, pip: renderPip, pipVolume: renderPipVolume, extInstall: renderExtInstall, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, navMenu: renderNavMenu, httpAuth: renderHttpAuth, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit, tabList: renderTabList, unresponsive: renderUnresponsive, jsDialog: renderJsDialog }[c.kind];
     root.textContent = '';
     root.dataset.kind = c.kind;
     // The volume bar matches the engine's floating window, which is always dark.

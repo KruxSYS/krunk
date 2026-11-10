@@ -71,6 +71,7 @@ mod import;
 mod input;
 mod integrity;
 mod jobs;
+mod js_dialogs;
 mod library;
 mod macros;
 mod navmenu;
@@ -271,6 +272,8 @@ pub struct Browser {
     sync: sync::SyncHost,
     /// A site's HTTP sign-in dialog (0.8.0).
     http_auth: http_auth::HttpAuthHost,
+    /// A page's open JavaScript dialog (0.12.4).
+    js_dialogs: js_dialogs::JsDialogHost,
     /// The floating video's volume bar (created when first needed) and its state.
     pip_popup: RefCell<Option<Popup>>,
     pip_bar: RefCell<Option<pip::PipBar>>,
@@ -441,6 +444,7 @@ impl Browser {
             account: account::AccountHost::default(),
             sync: sync::SyncHost::default(),
             http_auth: http_auth::HttpAuthHost::default(),
+            js_dialogs: js_dialogs::JsDialogHost::default(),
             pip_popup: RefCell::new(None),
             pip_bar: RefCell::new(None),
             menu_closing: Cell::new(false),
@@ -1309,6 +1313,7 @@ impl Browser {
         let weak = self.me.clone();
         c.on_load_end(move |status| {
             if let Some(b) = weak.upgrade() {
+                b.js_dialog_load_end(id);
                 b.http_auth_load_end(id, status);
             }
         });
@@ -1349,6 +1354,18 @@ impl Browser {
             }
         });
         let weak = self.me.clone();
+        c.on_js_dialog(move |req, responder| {
+            if let Some(b) = weak.upgrade() {
+                b.defer(move |b| b.js_dialog(id, req, responder));
+            }
+        });
+        let weak = self.me.clone();
+        c.on_js_dialog_reset(move || {
+            if let Some(b) = weak.upgrade() {
+                b.defer(move |b| b.js_dialog_reset(id));
+            }
+        });
+        let weak = self.me.clone();
         c.on_image_menu(move |action, url| {
             if let Some(b) = weak.upgrade() {
                 b.defer(move |b| b.image_action(id, action, url));
@@ -1375,6 +1392,7 @@ impl Browser {
     }
 
     fn destroy_view(&self, id: TabId) {
+        self.js_dialog_tab_left(id, true);
         // The last private tab: its PDFs go with it (0.11.3). (The model may have dropped the
         // tab already; the views know which are private.)
         let private_views =
@@ -1481,6 +1499,7 @@ impl Browser {
         self.pointer_tab_activated(to);
         self.hide_status();
         if let Some(f) = from.filter(|f| *f != to) {
+            self.js_dialog_tab_left(f, false);
             self.fullscreen_tab_gone(f);
         }
         if self.address_focus.get().is_some_and(|held| held != to) {
@@ -2831,6 +2850,9 @@ impl Browser {
             | Request::SiteCookiesDelete { .. }) => self.dispatch_site_data(tab, req_id, r),
             Request::OpenSiteData => self.open_site_data(),
             Request::HangReply { tab_id, wait } => self.hang_reply(tab_id, wait),
+            Request::JsDialogReply { dialog_id, accept, text, block } => {
+                self.js_dialog_reply(dialog_id, accept, text, block)
+            }
             Request::SourceGet {} => self.source_get(tab, req_id),
             // ---- 0.12.0 ----
             Request::ToggleAgent => self.toggle_agent(),
@@ -2956,6 +2978,18 @@ impl Browser {
                 &content,
                 PopupContent::HttpAuth { .. } | PopupContent::Unlock { purpose: UnlockPurpose::HttpAuth, .. }
             );
+        // A page's dialog replaced by anything else: the page gets the dismissal's answer.
+        if let Some(PopupContent::JsDialog { dialog_id: gone, .. }) = &replaced {
+            let same = matches!(&content, PopupContent::JsDialog { dialog_id, .. } if dialog_id == gone);
+            if !same {
+                let (weak, gone) = (self.me.clone(), *gone);
+                crate::ffi::cef::post_ui(move || {
+                    if let Some(b) = weak.upgrade() {
+                        b.js_dialog_dismissed(gone);
+                    }
+                });
+            }
+        }
         if auth_gone {
             let weak = self.me.clone();
             crate::ffi::cef::post_ui(move || {
