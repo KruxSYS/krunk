@@ -90,6 +90,10 @@ if (Want 'shot') {
   $png = Get-ChildItem $dl -Filter 'Screenshot*.png' -ErrorAction SilentlyContinue | Select-Object -First 1
   Log "[$P] screenshot file: $($png.Name) $($png.Length)"
   Shot "$P-04-screenshot"
+  # The saved file on the downloads list.
+  Page 'krunk://downloads'
+  Shot "$P-04b-downloads-list"
+  Page 'http://127.0.0.1:8094/agent.html'
 }
 if (Want 'banner') {
   Ask 'Create me a script that will remove the banner' 8000
