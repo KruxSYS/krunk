@@ -4,7 +4,7 @@
 #   scripts/cef-build/cross-build.sh checkout     depot_tools + CEF/Chromium checkout (pinned)
 #   scripts/cef-build/cross-build.sh toolchain    register the Windows toolchain package, win deps
 #   scripts/cef-build/cross-build.sh configure    patch CEF's platform detection, gn gen
-#   scripts/cef-build/cross-build.sh build        Krunk's CEF patches (patches/*.patch), ninja
+#   scripts/cef-build/cross-build.sh build        Krunk's CEF patches (patches/*.patch), logo, ninja
 #   scripts/cef-build/cross-build.sh distrib      minimal distribution archive
 #
 # Everything lives under $CEF_BUILD_ROOT (default /work/cef-build), outside the repository. No
@@ -17,9 +17,11 @@ CEF_COMMIT=cf671c0                 # CEF 156.0.15
 CEF_VERSION=156.0.15
 CHROMIUM_VERSION=156.0.8078.80
 TOOLCHAIN_HASH_KEY=3bfcb536c8      # TOOLCHAIN_HASH in src/build/vs_toolchain.py at this Chromium
-# The archive's flavour: krunk-codecs (0.5.2–0.9.0); -hidden since 0.10.0 (patches/).
-CEF_FLAVOR=krunk-codecs-hidden
+# The archive's flavour: krunk-codecs (0.5.2–0.9.0); -hidden since 0.10.0 (patches/); -brand
+# since 0.12.1 (Krunk's logo as the engine's product logo, see brand()).
+CEF_FLAVOR=krunk-codecs-hidden-brand
 PATCHES=$(cd "$(dirname "$0")" && pwd)/patches
+REPO=$(cd "$(dirname "$0")/../.." && pwd)
 SRC=$ROOT/chromium_git/chromium/src
 export PATH=$ROOT/chromium_git/depot_tools:$ROOT/depot_tools:$PATH
 export DEPOT_TOOLS_UPDATE=0
@@ -50,6 +52,20 @@ apply_patches() {
       exit 1
     fi
   done
+}
+
+# Krunk's logo in place of Chromium's (0.12.1): the engine shows its product logo as the media
+# overlay's artwork when a site gives none (SystemMediaControlsNotifier::UpdateIcon ->
+# GetProductLogo -> IDR_PRODUCT_LOGO_256 in resources.pak). Copied over the source PNG, so only
+# the resource pack changes; a `git checkout` of the file undoes it before a gclient sync.
+brand() {
+  local logo=$SRC/chrome/app/theme/chromium/product_logo_256.png
+  if cmp -s "$REPO/assets/brand/krunk-256.png" "$logo"; then
+    echo "already branded: product_logo_256.png"
+  else
+    cp "$REPO/assets/brand/krunk-256.png" "$logo"
+    echo "branded: product_logo_256.png <- assets/brand/krunk-256.png"
+  fi
 }
 
 case "${1:-}" in
@@ -152,6 +168,7 @@ EOF2
   build)
     toolchain_env
     apply_patches
+    brand
     cd "$SRC"
     autoninja -C out/Release_GN_x64 cefsimple bootstrap bootstrapc
     ls -la out/Release_GN_x64/libcef.dll out/Release_GN_x64/bootstrap.exe

@@ -14,12 +14,12 @@ CEF_CRATE=156.3.0+156.0.15
 CEF_VERSION=156.0.15
 CHROMIUM_VERSION=156.0.8078.80
 CEF_SOURCE=self-built
-CEF_ARCHIVE=cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_windows64_minimal_krunk-codecs-hidden.tar.bz2
-CEF_SHA256=5aab849638142d80164516e596b08ea292d7a51a73ba3926aebb1bf5094a39d2
+CEF_ARCHIVE=cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_windows64_minimal_krunk-codecs-hidden-brand.tar.bz2
+CEF_SHA256=29d97fa878d6a752f52952f8431b0f1839cd28db2d8696e9f2d135d2534bdc3e
 # Where the archive is kept (outside git, with the release artifacts): the pipeline's artifact
-# store and the GitHub release of 0.10.0 (dist/). 0.5.2-0.9.0 shipped the unpatched ..._krunk-codecs
-# archive (a8bb5c42…).
-CEF_ARTIFACT=/work/projects/browser/.pipeline/artifacts/cef/cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_windows64_minimal_krunk-codecs-hidden.tar.bz2
+# store and the GitHub release of 0.12.1 (dist/). 0.5.2-0.9.0 shipped the unpatched ..._krunk-codecs
+# archive (a8bb5c42…), 0.10.0-0.12.0 ..._krunk-codecs-hidden (5aab8496…).
+CEF_ARTIFACT=/work/projects/browser/.pipeline/artifacts/cef/cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_windows64_minimal_krunk-codecs-hidden-brand.tar.bz2
 # Build inputs: CEF cf671c0, Chromium tag 156.0.8078.80, Linux->Windows cross build, GN args in
 # scripts/cef-build/cross-build.sh (is_official_build proprietary_codecs ffmpeg_branding=Chrome
 # enable_platform_hevc enable_platform_ac3_eac3_audio), MSVC 14.51.36231 / SDK 10.0.28000.0.
@@ -27,4 +27,7 @@ CEF_ARTIFACT=/work/projects/browser/.pipeline/artifacts/cef/cef_binary_156.0.15+
 #   scripts/cef-build/patches/krunk-windowed-hidden.patch
 #     sha256 86e46b0042bc18de8cd385124ce3623bbea1a18f7f9c8737c2000451d3c7f14b
 #     background tabs are hidden from the engine (throttled like Chrome's); libcef.dll d9f4549b…
+# Krunk's logo (0.12.1, cross-build.sh brand): assets/brand/krunk-256.png replaces Chromium's
+#   product_logo_256.png, the artwork of the Windows media overlay when a site gives none. Only
+#   resources.pak changes (dd784546…); libcef.dll stays d9f4549b….
 CEF_PATCHES=krunk-windowed-hidden.patch:86e46b0042bc18de8cd385124ce3623bbea1a18f7f9c8737c2000451d3c7f14b
