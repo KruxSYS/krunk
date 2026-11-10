@@ -193,6 +193,7 @@ impl Browser {
                 });
             }
             ("compile", Some(v)) => {
+                v.devtools_method("Runtime.enable", &json!({}));
                 let weak = self.me.clone();
                 for (name, src) in [("bad", "let x = ;\nfoo("), ("good", "const a = 1;\nconsole.log(a);")] {
                     let weak = weak.clone();

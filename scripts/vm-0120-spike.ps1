@@ -33,7 +33,9 @@ Start-Sleep 4
 Get-Process Krunk -ErrorAction SilentlyContinue | Stop-Process -Force
 Get-Process Krunk -ErrorAction SilentlyContinue | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
 Start-Sleep 2
-$set = & 'C:\Program Files\Python312\python.exe' C:\pipeline\krunk\setkv.py $profile '{"ai": {"enabled": true}}' 2>&1
+# (PowerShell 5 drops the double quotes of a native argument: the patch goes through a file.)
+[IO.File]::WriteAllText("$profile\patch.json", '{"ai": {"enabled": true}}')
+$set = & 'C:\Program Files\Python312\python.exe' C:\pipeline\krunk\setkv.py $profile "@$profile\patch.json" 2>&1
 Log "[$P] setkv: $set"
 StartKrunk
 $A = MainWindow
@@ -53,6 +55,7 @@ function Panel([string]$text, [int]$wait) {
   SafeKeys $text 100
   SafeKeys '{ENTER}' $wait
 }
+if ($env:SPIKE_FULL) {
 # (b) streaming, then Stop (Esc in the panel) after 2.5 s.
 Panel '/spike stream http://127.0.0.1:18111/v1/chat/completions' 2500
 Shot "$P-03-streaming"
@@ -70,6 +73,7 @@ Shot "$P-06-ctrlt"
 # (e) screenshot of the web page.
 Panel '/spike shot' 2500
 Log "[$P] spike png: $(Test-Path "$env:USERPROFILE\Downloads\krunk-spike.png") $((Get-Item "$env:USERPROFILE\Downloads\krunk-spike.png" -ErrorAction SilentlyContinue).Length)"
+}
 # (d) compile check in a built-in page.
 Focus (MainWindow) | Out-Null
 Click ($c.Left + 300) ($c.Top + 300) 300
