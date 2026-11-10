@@ -968,6 +968,12 @@ mod tests {
             "mailCustomUrl",
             // 0.14.0: the VPN (its profiles are in this device's database only).
             "vpn",
+            // 0.15.0: hover cards, address-bar suggestions, download clean-up and session logs
+            // are this device's choices (session logs never leave it).
+            "tabHoverPreview",
+            "searchSuggestions",
+            "downloadAutoClearDays",
+            "sessionLog",
         ];
         let v = serde_json::to_value(Settings::default()).unwrap();
         let unsorted: Vec<&String> = v

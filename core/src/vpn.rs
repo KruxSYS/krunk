@@ -446,7 +446,7 @@ mod tests {
         }
         let s = Store::open(&path).unwrap();
         let v: i64 = s.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(v, 8);
+        assert!(v >= 8);
         assert_eq!(s.kv_get("marker").unwrap().as_deref(), Some("0.13.0"));
         s.vpn_profile_add(&profile("a", 1), b"x").unwrap();
         drop(s);

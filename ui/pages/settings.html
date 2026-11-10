@@ -121,6 +121,10 @@
           <p class="field-error" data-error-for="customSearchUrl"></p></div>
         <div class="control wide"><input type="text" id="customSearchUrl" data-key="customSearchUrl" placeholder="https://search.example/?q=%s" spellcheck="false"></div>
       </div>
+      <div class="row setting" data-keywords="search suggestions address bar autocomplete engine">
+        <div class="text"><label for="searchSuggestions">Show search suggestions</label><p class="desc">While you type in the address bar, Krunk asks the search engine for suggestions. Never in private tabs.</p></div>
+        <div class="control"><input type="checkbox" id="searchSuggestions" data-key="searchSuggestions"></div>
+      </div>
     </div>
 
     <div class="card group" data-keywords="new tab page tabs open position switch links">
@@ -149,6 +153,10 @@
             <option value="afterCurrent">Next to the current tab</option>
           </select>
         </div>
+      </div>
+      <div class="row setting" data-keywords="tab hover preview card thumbnail">
+        <div class="text"><label for="tabHoverPreview">Preview tabs on hover</label><p class="desc">Hovering a tab shows its title, site and a small picture of the page.</p></div>
+        <div class="control"><input type="checkbox" id="tabHoverPreview" data-key="tabHoverPreview"></div>
       </div>
       <div class="row setting" data-keywords="links new tab switch background foreground">
         <div class="text"><label for="linkTabs">Links opened in a new tab</label><p class="desc">Middle click, Ctrl+click and links that ask for a new tab.</p></div>
@@ -387,6 +395,20 @@
         <div class="text"><label for="sendGpc">Send “Global Privacy Control”</label><p class="desc">Tells sites not to sell or share your data where the law backs it.</p></div>
         <div class="control"><input type="checkbox" id="sendGpc" data-key="sendGpc"></div>
       </div>
+      <div class="row setting" id="session-log-row" data-keywords="session logs activity time spent sites cpu gpu usage history">
+        <div class="text"><label for="sessionLog.enabled">Keep session logs</label><p class="desc">Records, on this device only, the sites you visit, how long each tab and site is in front, and Krunk's CPU and GPU use, per session (start to exit). Private tabs are never logged. See them on <a href="#" id="open-sessions">krunk://sessions</a>.</p></div>
+        <div class="control"><input type="checkbox" id="sessionLog.enabled" data-key="sessionLog.enabled"></div>
+      </div>
+      <div class="row setting" data-keywords="session logs keep days retention delete">
+        <div class="text"><label for="sessionLog.retentionDays">Keep session logs for</label>
+          <p class="field-error" data-error-for="sessionLog.retentionDays"></p></div>
+        <div class="control">
+          <select id="sessionLog.retentionDays" data-key="sessionLog.retentionDays" data-type="number">
+            <option value="1">1 day</option><option value="7">7 days</option><option value="30">30 days</option>
+            <option value="90">90 days</option><option value="365">1 year</option>
+          </select>
+        </div>
+      </div>
       <div class="row setting" data-keywords="engine security components google certificate revocation transparency">
         <div class="text"><label for="engineSecurityComponents">Download engine security components from Google <span class="tag">restart</span></label>
           <p class="desc">Certificate revocation and Certificate Transparency lists. Off: the engine never contacts Google in the background and the lists only change with new Krunk releases.</p></div>
@@ -479,6 +501,16 @@
         <div class="text"><label for="askWhereToSave">Ask where to save each file</label></div>
         <div class="control"><input type="checkbox" id="askWhereToSave" data-key="askWhereToSave"></div>
       </div>
+      <div class="row setting" data-keywords="clear completed downloads automatically older days list">
+        <div class="text"><label for="downloadAutoClearDays">Remove finished downloads from the list</label><p class="desc">The files stay on disk.</p>
+          <p class="field-error" data-error-for="downloadAutoClearDays"></p></div>
+        <div class="control">
+          <select id="downloadAutoClearDays" data-key="downloadAutoClearDays" data-type="number">
+            <option value="0">Never</option><option value="1">After 1 day</option><option value="7">After 7 days</option>
+            <option value="30">After 30 days</option><option value="90">After 90 days</option>
+          </select>
+        </div>
+      </div>
       <div class="row setting" data-keywords="pdf viewer open documents in browser">
         <div class="text"><label for="pdfInBrowser">Open PDFs in Krunk</label><p class="desc">PDFs open in a tab, also those a site sends as a download. The viewer's Download button saves them.</p></div>
         <div class="control"><input type="checkbox" id="pdfInBrowser" data-key="pdfInBrowser"></div>
@@ -545,9 +577,14 @@
           <p class="field-error" data-error-for="appearance.uiFontPx"></p></div>
         <div class="control"><select id="appearance.uiFontPx" data-key="appearance.uiFontPx" data-type="number"><option value="12">12 px</option><option value="13">13 px (default)</option><option value="14">14 px</option><option value="15">15 px</option><option value="16">16 px</option></select></div>
       </div>
-      <div class="row setting" data-keywords="rounded square tabs">
-        <div class="text"><label for="appearance.roundedTabs">Rounded tabs</label></div>
-        <div class="control"><input type="checkbox" id="appearance.roundedTabs" data-key="appearance.roundedTabs"></div>
+      <div class="row setting" data-keywords="tab shape rounded square pill tabs">
+        <div class="text"><label for="appearance.tabShape">Tab shape</label></div>
+        <div class="control"><select id="appearance.tabShape" data-key="appearance.tabShape"><option value="rounded">Rounded</option><option value="square">Square</option><option value="pill">Pill</option></select></div>
+      </div>
+      <div class="row setting" id="tab-radius-row" data-keywords="tab roundness corner radius">
+        <div class="text"><label for="appearance.tabRadius">Tab roundness</label>
+          <p class="field-error" data-error-for="appearance.tabRadius"></p></div>
+        <div class="control"><input type="range" id="appearance.tabRadius" data-key="appearance.tabRadius" data-type="number" min="0" max="16" step="1"></div>
       </div>
       <div class="row setting" data-keywords="toolbar items show hide downloads button">
         <div class="text"><label for="appearance.showDownloadsButton">Show the downloads button</label><p class="desc">Ctrl+J opens the downloads either way.</p></div>
@@ -560,6 +597,45 @@
       <div class="row setting" data-keywords="toolbar items show hide extensions button">
         <div class="text"><label for="appearance.showExtensionsButton">Show the extensions button</label><p class="desc">Once extensions are installed.</p></div>
         <div class="control"><input type="checkbox" id="appearance.showExtensionsButton" data-key="appearance.showExtensionsButton"></div>
+      </div>
+    </div>
+    <div class="card group" id="style-card" data-keywords="style gradient ombre glass translucent blur preset tab toolbar active highlight glow">
+      <h3>Tab and toolbar style</h3>
+      <div class="row setting" data-keywords="style preset look">
+        <div class="text"><label for="appearance.preset">Style</label><p class="desc">A ready-made look; change any part of it below.</p>
+          <p class="field-error" data-error-for="appearance.preset"></p></div>
+        <div class="control"><select id="appearance.preset" data-key="appearance.preset"><option value="">Your own</option><option value="classic">Classic</option><option value="sunset">Sunset</option><option value="ocean">Ocean</option><option value="glass">Glass</option><option value="mono">Mono</option></select></div>
+      </div>
+      <div class="row setting" data-keywords="tab strip style solid gradient ombre glass">
+        <div class="text"><label for="appearance.tabStyle">Tab strip</label></div>
+        <div class="control"><select id="appearance.tabStyle" data-key="appearance.tabStyle"><option value="solid">Solid</option><option value="gradient">Gradient</option><option value="ombre">Ombre across the tabs</option><option value="glass">Glass</option></select></div>
+      </div>
+      <div class="row setting" data-keywords="toolbar style solid gradient glass">
+        <div class="text"><label for="appearance.toolbarStyle">Toolbar</label>
+          <p class="field-error" data-error-for="appearance.toolbarStyle"></p></div>
+        <div class="control"><select id="appearance.toolbarStyle" data-key="appearance.toolbarStyle"><option value="solid">Solid</option><option value="gradient">Gradient</option><option value="glass">Glass</option></select></div>
+      </div>
+      <div class="row setting gradient-row" data-keywords="gradient colours colors stops">
+        <div class="text"><span class="label">Gradient colours</span><p class="desc">Two or three colours; leave the middle one empty for two.</p>
+          <p class="field-error" data-error-for="appearance.gradientFrom"></p><p class="field-error" data-error-for="appearance.gradientVia"></p><p class="field-error" data-error-for="appearance.gradientTo"></p></div>
+        <div class="control">
+          <input type="text" id="appearance.gradientFrom" data-key="appearance.gradientFrom" data-picker="accent" placeholder="#2563eb" size="8" spellcheck="false" aria-label="First colour">
+          <input type="text" id="appearance.gradientVia" data-key="appearance.gradientVia" data-picker="accent" placeholder="(none)" size="8" spellcheck="false" aria-label="Middle colour">
+          <input type="text" id="appearance.gradientTo" data-key="appearance.gradientTo" data-picker="accent" placeholder="#7c3aed" size="8" spellcheck="false" aria-label="Last colour">
+        </div>
+      </div>
+      <div class="row setting gradient-row" data-keywords="gradient angle direction">
+        <div class="text"><label for="appearance.gradientAngle">Gradient angle</label>
+          <p class="field-error" data-error-for="appearance.gradientAngle"></p></div>
+        <div class="control"><input type="range" id="appearance.gradientAngle" data-key="appearance.gradientAngle" data-type="number" min="0" max="360" step="15"></div>
+      </div>
+      <div class="row setting" data-keywords="active tab highlight fill underline outline">
+        <div class="text"><label for="appearance.activeHighlight">Active tab</label></div>
+        <div class="control"><select id="appearance.activeHighlight" data-key="appearance.activeHighlight"><option value="fill">Filled</option><option value="underline">Underlined</option><option value="outline">Outlined</option></select></div>
+      </div>
+      <div class="row setting" data-keywords="accent glow active tab">
+        <div class="text"><label for="appearance.accentGlow">Accent glow</label><p class="desc">A soft glow in the accent colour around the active tab.</p></div>
+        <div class="control"><input type="checkbox" id="appearance.accentGlow" data-key="appearance.accentGlow"></div>
       </div>
     </div>
     <div class="card group" id="ntp-card" data-keywords="new tab page background wallpaper image colour color picture">

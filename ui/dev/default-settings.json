@@ -97,7 +97,18 @@
     "roundedTabs": true,
     "showDownloadsButton": true,
     "showZoomChip": true,
-    "showExtensionsButton": true
+    "showExtensionsButton": true,
+    "tabStyle": "solid",
+    "toolbarStyle": "solid",
+    "gradientFrom": "",
+    "gradientVia": "",
+    "gradientTo": "",
+    "gradientAngle": 90,
+    "preset": "",
+    "tabShape": "rounded",
+    "tabRadius": 8,
+    "activeHighlight": "fill",
+    "accentGlow": false
   },
   "ntp": {
     "background": "none",
@@ -138,5 +149,12 @@
     "autoConnect": false,
     "activeProfile": "",
     "allowLocalNetwork": false
+  },
+  "tabHoverPreview": true,
+  "searchSuggestions": true,
+  "downloadAutoClearDays": 0,
+  "sessionLog": {
+    "enabled": false,
+    "retentionDays": 30
   }
 }

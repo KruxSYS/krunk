@@ -179,6 +179,58 @@ pub struct Appearance {
     pub show_downloads_button: bool,
     pub show_zoom_chip: bool,
     pub show_extensions_button: bool,
+    /// 0.15.0: how the tab strip is filled (`ombre` spreads the gradient across the strip).
+    pub tab_style: BarStyle,
+    /// 0.15.0: how the toolbar is filled (`ombre` is not offered for it).
+    pub toolbar_style: BarStyle,
+    /// Gradient stops (`#rrggbb`; empty = derived from the accent/theme). `gradient_via` empty
+    /// means a two-stop gradient.
+    pub gradient_from: String,
+    pub gradient_via: String,
+    pub gradient_to: String,
+    /// Gradient angle in degrees (0–360).
+    pub gradient_angle: u16,
+    /// A curated look (`crate::style::PRESETS`), empty = the user's own choices.
+    pub preset: String,
+    pub tab_shape: TabShape,
+    /// Corner radius in px for `TabShape::Rounded` (0–16).
+    pub tab_radius: u8,
+    pub active_highlight: ActiveHighlight,
+    /// A soft accent-coloured glow around the active tab.
+    pub accent_glow: bool,
+}
+
+/// How a bar (tab strip or toolbar) is filled (0.15.0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BarStyle {
+    #[default]
+    Solid,
+    Gradient,
+    /// The gradient spans the whole tab strip; each tab shows its slice.
+    Ombre,
+    /// Translucent: blur behind it where Windows supports it, otherwise semi-transparent.
+    Glass,
+}
+
+/// The tabs' outline (0.15.0; replaces `rounded_tabs`, which is kept for older versions).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TabShape {
+    #[default]
+    Rounded,
+    Square,
+    Pill,
+}
+
+/// How the active tab stands out (0.15.0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ActiveHighlight {
+    #[default]
+    Fill,
+    Underline,
+    Outline,
 }
 
 impl Default for Appearance {
@@ -194,6 +246,17 @@ impl Default for Appearance {
             show_downloads_button: true,
             show_zoom_chip: true,
             show_extensions_button: true,
+            tab_style: BarStyle::Solid,
+            toolbar_style: BarStyle::Solid,
+            gradient_from: String::new(),
+            gradient_via: String::new(),
+            gradient_to: String::new(),
+            gradient_angle: 90,
+            preset: String::new(),
+            tab_shape: TabShape::Rounded,
+            tab_radius: 8,
+            active_highlight: ActiveHighlight::Fill,
+            accent_glow: false,
         }
     }
 }
@@ -457,7 +520,37 @@ pub struct Settings {
 
     // 0.14.0: the in-browser VPN (device-local, never synced; the profiles are in the database).
     pub vpn: VpnSettings,
+
+    // 0.15.0
+    /// Hovering a tab shows a card with its title, site and a thumbnail.
+    pub tab_hover_preview: bool,
+    /// The address bar asks the search engine for suggestions (never in private tabs).
+    pub search_suggestions: bool,
+    /// Finished downloads older than this many days leave the list at start; 0 = never.
+    pub download_auto_clear_days: u32,
+    pub session_log: SessionLogSettings,
 }
+
+/// Session logs (0.15.0, `krunk://sessions`). Off by default: while off nothing is sampled,
+/// buffered or written.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SessionLogSettings {
+    pub enabled: bool,
+    /// Sessions older than this many days are deleted (1–365).
+    pub retention_days: u32,
+}
+
+impl Default for SessionLogSettings {
+    fn default() -> Self {
+        SessionLogSettings { enabled: false, retention_days: 30 }
+    }
+}
+
+/// Session-log retention limits (days).
+pub const SESSION_RETENTION_RANGE: std::ops::RangeInclusive<u32> = 1..=365;
+/// Download auto-clear: at most ten years.
+pub const MAX_DOWNLOAD_AUTO_CLEAR_DAYS: u32 = 3650;
 
 /// The in-browser VPN (0.14.0): only Krunk's own connections go through it.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -539,6 +632,20 @@ pub struct AiProvider {
     /// The user's answer to "does the model take images?"; `None` = what the model list says.
     #[serde(default)]
     pub vision: Option<bool>,
+    /// 0.15.0: the output cap sent with each request; 0 = auto (OpenAI-compatible providers
+    /// omit the field, Anthropic gets the model's known maximum or `DEFAULT_MAX_OUTPUT_TOKENS`).
+    /// The model's known maximum caps it either way.
+    #[serde(default = "default_max_output_tokens")]
+    pub max_output_tokens: u32,
+}
+
+/// The default output cap (0.15.0; it was a fixed 4096).
+pub const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 32_000;
+/// The highest output cap a user can set.
+pub const MAX_OUTPUT_TOKENS_LIMIT: u32 = 1_000_000;
+
+fn default_max_output_tokens() -> u32 {
+    DEFAULT_MAX_OUTPUT_TOKENS
 }
 
 impl Ai {
@@ -566,6 +673,9 @@ impl Ai {
                 }
                 if p.name.trim().is_empty() || p.name.chars().count() > 60 || p.name.chars().any(char::is_control) {
                     return Err("A provider name must be 1 to 60 characters".into());
+                }
+                if p.max_output_tokens > MAX_OUTPUT_TOKENS_LIMIT {
+                    return Err(format!("Max output tokens is at most {MAX_OUTPUT_TOKENS_LIMIT} (0 = auto)"));
                 }
                 match p.kind {
                     ProviderKind::Custom => crate::agent::provider::check_base_url(p.kind, &p.base_url)?,
@@ -694,6 +804,10 @@ impl Default for Settings {
             userscripts: UserscriptsSettings::default(),
             macros: MacrosSettings::default(),
             vpn: VpnSettings::default(),
+            tab_hover_preview: true,
+            search_suggestions: true,
+            download_auto_clear_days: 0,
+            session_log: SessionLogSettings::default(),
         }
     }
 }
@@ -899,6 +1013,33 @@ impl Settings {
                 err(field, "Enter a colour like #2563eb (or leave it empty)");
             }
         }
+        for (field, value) in [
+            ("appearance.gradientFrom", &self.appearance.gradient_from),
+            ("appearance.gradientVia", &self.appearance.gradient_via),
+            ("appearance.gradientTo", &self.appearance.gradient_to),
+        ] {
+            if !is_hex_color(value) {
+                err(field, "Enter a colour like #2563eb (or leave it empty)");
+            }
+        }
+        if self.appearance.gradient_angle > 360 {
+            err("appearance.gradientAngle", "Between 0 and 360 degrees");
+        }
+        if self.appearance.tab_radius > 16 {
+            err("appearance.tabRadius", "Between 0 and 16 px");
+        }
+        if self.appearance.toolbar_style == BarStyle::Ombre {
+            err("appearance.toolbarStyle", "Ombre is for the tab strip; choose gradient for the toolbar");
+        }
+        if !self.appearance.preset.is_empty() && crate::style::preset(&self.appearance.preset).is_none() {
+            err("appearance.preset", "Not one of Krunk's styles");
+        }
+        if !SESSION_RETENTION_RANGE.contains(&self.session_log.retention_days) {
+            err("sessionLog.retentionDays", "Between 1 and 365 days");
+        }
+        if self.download_auto_clear_days > MAX_DOWNLOAD_AUTO_CLEAR_DAYS {
+            err("downloadAutoClearDays", "At most 3650 days (0 = never)");
+        }
         if !(12..=16).contains(&self.appearance.ui_font_px) {
             err("appearance.uiFontPx", "Between 12 and 16 px");
         }
@@ -1032,6 +1173,14 @@ impl Settings {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(json) {
             if v.get("bookmarksBar").is_none() && v.get("showBookmarksBar") == Some(&serde_json::Value::Bool(false)) {
                 s.bookmarks_bar = BookmarksBar::Never;
+            }
+        }
+        // 0.14 and earlier: `appearance.roundedTabs: false` meant square tabs.
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(json) {
+            if let Some(a) = v.get("appearance") {
+                if a.get("tabShape").is_none() && a.get("roundedTabs") == Some(&serde_json::Value::Bool(false)) {
+                    s.appearance.tab_shape = TabShape::Square;
+                }
             }
         }
         // Filter lists added since these settings were saved start enabled.
@@ -1904,6 +2053,7 @@ mod tests {
             name: "P".into(),
             base_url: base.into(),
             vision: None,
+            max_output_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
         };
         let mut s = Settings::default();
         s.ai.providers.push(p("0a1b2c3d", crate::agent::ProviderKind::OpenRouter, ""));

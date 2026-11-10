@@ -16,7 +16,7 @@ pub const BOOKMARKS_BAR: i64 = 1;
 /// Id of the "Other bookmarks" root folder.
 pub const OTHER_BOOKMARKS: i64 = 2;
 
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 10;
 
 /// Fixed sync guids of the two root folders (PROTOCOL §9.5): "bar" and "other".
 pub const ROOT_GUID_BAR: [u8; 16] = [0x01; 16];
@@ -335,6 +335,22 @@ impl Store {
             tx.commit()?;
         } else if version >= 8 && max >= 8 {
             crate::vpn::upgrade_v8(&self.conn)?;
+        }
+        // 0.15.0: the downloads list moves from the `downloads` kv record into a table (paging
+        // for krunk://downloads; thousands of entries).
+        if version < 9 && max >= 9 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(crate::downloads::SCHEMA_V9)?;
+            crate::downloads::upgrade_v9(&tx)?;
+            tx.pragma_update(None, "user_version", 9)?;
+            tx.commit()?;
+        }
+        // 0.15.0: session logs (local only, no sync triggers).
+        if version < 10 && max >= 10 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(crate::sessionlog::SCHEMA_V10)?;
+            tx.pragma_update(None, "user_version", 10)?;
+            tx.commit()?;
         }
         Ok(())
     }

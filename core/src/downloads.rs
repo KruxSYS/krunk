@@ -9,6 +9,24 @@ use std::path::{Path, PathBuf};
 pub const PAUSED_BY_CLOSE: &str = "Paused when Krunk closed";
 pub const INTERRUPTED_BY_CLOSE: &str = "Browser closed";
 
+/// 0.15.0 (storage V9): finished downloads live in this table; WP-E1 owns the schema.
+pub(crate) const SCHEMA_V9: &str = "
+CREATE TABLE IF NOT EXISTS download_items (
+    id INTEGER PRIMARY KEY,
+    started INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS download_items_started ON download_items(started DESC);
+";
+
+/// Moves the old `downloads` kv record into `download_items` (storage V9). WP-E1 fills this.
+pub(crate) fn upgrade_v9(_tx: &rusqlite::Transaction) -> crate::storage::DbResult<()> {
+    Ok(())
+}
+
 /// Entries kept in the list (oldest finished ones are dropped first).
 pub const MAX_ITEMS: usize = 200;
 
