@@ -23,6 +23,7 @@
 // Interim (M3 relaunch): the shot store and tool bookkeeping are used by tools.rs once the tools land.
 #![allow(dead_code)]
 
+mod page;
 pub(super) mod provider;
 mod tools;
 

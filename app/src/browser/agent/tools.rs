@@ -2,10 +2,12 @@
 //! target tab (CDP, the probe in its isolated world, engine input), the browser's tabs,
 //! settings, downloads, userscripts and macros, and returns a redacted, capped `ToolOutcome`.
 //!
-//! Interim after the lost session: `agent_target` is real, the probe and the tools are not yet
-//! (the relaunched WP-B2 package fills them in).
+//! Page tools (`Group::Page`) are in `page.rs` (WP-B2a); this file (WP-B2b) dispatches every
+//! tool and runs the others: navigation and tabs, settings, userscripts, macros and the
+//! sensitive-data tools.
 
 use super::super::Browser;
+use lb_core::agent::tools::{self as agent_tools, Group};
 use lb_core::agent::ToolOutcome;
 use lb_core::tabs::TabId;
 use lb_core::windows::WindowId;
@@ -25,23 +27,16 @@ impl Browser {
         Some(Target { tab, url })
     }
 
-    /// Calls the probe's function `func` with `args` (a JSON array) in tab `tab`'s isolated
-    /// world; `done` gets its JSON result.
-    pub(super) fn agent_probe(
-        &self,
-        tab: TabId,
-        func: &str,
-        args: Value,
-        done: impl FnOnce(Result<Value, String>) + 'static,
-    ) {
-        let _ = (tab, func, args);
-        done(Err("the page probe is not available yet".into()));
-    }
-
     /// Runs tool `name` with validated `args` for window `win`'s agent; `done` gets the outcome
     /// (exactly once, also on failure).
     pub(super) fn run_agent_tool(&self, win: WindowId, name: &str, args: Value, done: Box<dyn FnOnce(ToolOutcome)>) {
-        let _ = (win, args);
-        done(ToolOutcome::error(format!("{name} is not implemented yet")));
+        let Some(tool) = agent_tools::find(name) else {
+            done(ToolOutcome::error("there is no such tool"));
+            return;
+        };
+        match tool.group {
+            Group::Page => self.agent_page_tool(win, tool.name, args, done),
+            _ => done(ToolOutcome::error(format!("{name} is not implemented yet"))), // WP-B2b
+        }
     }
 }

@@ -5965,7 +5965,7 @@ async function testHttpAuth(browser) {
     if (!ONLY || ONLY.includes('PermissionsPadding')) await testPermissionsPadding(browser);
     // 0.12.0: the AI agent, userscripts and macros have their own files; each exports
     // `(helpers) => ({ testName: async (browser) => … })` and runs here (ONLY=Name without 'test').
-    for (const f of ['test-ai-panel.cjs', 'test-ai-settings.cjs', 'test-scripts.cjs']) {
+    for (const f of ['test-ai-panel.cjs', 'test-ai-settings.cjs', 'test-scripts.cjs', 'test-agent-probe.cjs']) {
       const file = path.join(__dirname, f);
       if (!fs.existsSync(file)) continue;
       const tests = require(file)({ openPage, check, sent, lastSent, emit, shot, acceptInPage, settleTabs, SHOTS, UI });
