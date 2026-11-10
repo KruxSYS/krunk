@@ -157,6 +157,19 @@ pub fn favicon_headers() -> &'static str {
      Cache-Control: max-age=3600"
 }
 
+/// A step screenshot of the agent panel (0.12.0): `https://shell.krunk.invalid/agent-shot/…`
+/// → the path (`/agent-shot/<token>/<n>.jpg`). Only on the shell origin, which no tab reaches.
+pub fn agent_shot_request(url: &str) -> Option<String> {
+    let u = Url::parse(url).ok()?;
+    (u.origin().ascii_serialization() == pages::SHELL_ORIGIN && u.path().starts_with("/agent-shot/"))
+        .then(|| u.path().to_string())
+}
+
+pub fn agent_shot_headers() -> &'static str {
+    "Content-Type: image/jpeg\r\nX-Content-Type-Options: nosniff\r\nCross-Origin-Resource-Policy: same-origin\r\n\
+     Cache-Control: no-store"
+}
+
 /// The new tab page's background image: `https://krunk.invalid/ntp-image/<name>` → the file
 /// name (only the host's own `ntp-background-<ms>.<ext>` names, no paths).
 pub fn ntp_image_request(url: &str) -> Option<String> {
@@ -317,6 +330,17 @@ pub fn allow_navigation(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn agent_shots_only_on_the_shell_origin() {
+        assert_eq!(
+            agent_shot_request("https://shell.krunk.invalid/agent-shot/ab12/3.jpg").as_deref(),
+            Some("/agent-shot/ab12/3.jpg")
+        );
+        assert_eq!(agent_shot_request("https://krunk.invalid/agent-shot/ab12/3.jpg"), None);
+        assert_eq!(agent_shot_request("https://shell.krunk.invalid/shell.html"), None);
+        assert!(agent_shot_headers().contains("no-store"));
+    }
+
     use super::*;
 
     #[test]

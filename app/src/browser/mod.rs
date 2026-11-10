@@ -2504,6 +2504,10 @@ impl Browser {
             Request::Forward => self.run_command(Command::Forward),
             Request::Reload => self.run_command(Command::Reload),
             Request::Stop => self.run_command(Command::Stop),
+            // The agent panel opens links of its answers: web addresses only.
+            Request::OpenUrl { url, .. }
+                if sender == Sender::Agent
+                    && !url::Url::parse(&url).is_ok_and(|u| matches!(u.scheme(), "http" | "https")) => {}
             Request::OpenUrl { url, new_tab } => self.open_url(&url, new_tab, false),
             Request::OpenPage { page, section } => {
                 if let Some(p) = Page::from_name(&page) {
@@ -3242,6 +3246,18 @@ impl Browser {
             }
             if lb_core::ext::id_of_url(uri).is_some() {
                 return weak.upgrade().and_then(|b| b.ext_response(uri)).unwrap_or_else(InternalResponse::not_found);
+            }
+            // 0.12.0: a step screenshot for the agent panel (in memory, per window's token).
+            if let Some(path) = assets::agent_shot_request(uri) {
+                return match weak.upgrade().and_then(|b| b.agent_shot(&path)) {
+                    Some(jpeg) => InternalResponse {
+                        status: 200,
+                        reason: "OK",
+                        headers: assets::agent_shot_headers().to_string(),
+                        body: Cow::Owned(jpeg),
+                    },
+                    None => InternalResponse::not_found(),
+                };
             }
             // A tab's favicon for the strip (the model keeps it as a data: URL).
             if let Some(id) = assets::tab_icon_request(uri) {
