@@ -1,0 +1,111 @@
+diff --git a/chrome/browser/media/chrome_media_session_client.cc b/chrome/browser/media/chrome_media_session_client.cc
+index 8ccf1bc44cfea..dcc8d106c590a 100644
+--- a/chrome/browser/media/chrome_media_session_client.cc
++++ b/chrome/browser/media/chrome_media_session_client.cc
+@@ -19,8 +19,9 @@ ChromeMediaSessionClient* ChromeMediaSessionClient::GetInstance() {
+ 
+ bool ChromeMediaSessionClient::ShouldHideMetadata(
+     content::BrowserContext* browser_context) const {
+-  return Profile::FromBrowserContext(browser_context)
+-      ->IsPrimaryOTRProfileWithRegularParent();
++  // Krunk: every off-the-record profile, also CEF's own (Krunk's private tabs);
++  // Chrome only meant its primary incognito profile.
++  return Profile::FromBrowserContext(browser_context)->IsOffTheRecord();
+ }
+ 
+ std::u16string ChromeMediaSessionClient::GetTitlePlaceholder() const {
+diff --git a/content/browser/media/system_media_controls/system_media_controls_notifier.cc b/content/browser/media/system_media_controls/system_media_controls_notifier.cc
+index 8d14e2bb100bc..46f8d4424f8ee 100644
+--- a/content/browser/media/system_media_controls/system_media_controls_notifier.cc
++++ b/content/browser/media/system_media_controls/system_media_controls_notifier.cc
+@@ -92,6 +92,36 @@ void SystemMediaControlsNotifier::MediaSessionInfoChanged(
+   bool is_playing = false;
+ 
+   session_info_ptr_ = std::move(session_info_ptr);
++
++  // Krunk: media of a private (off-the-record) session never reaches the system's
++  // media controls: nothing of it is shown and they are off while it is active.
++  const bool hidden = session_info_ptr_ && session_info_ptr_->hide_metadata;
++  if (hidden) {
++    if (!hidden_session_) {
++      hidden_session_ = true;
++      delayed_metadata_update_ = std::nullopt;
++      delayed_position_update_ = std::nullopt;
++      delayed_playback_status_ = std::nullopt;
++      delayed_icon_update_ = std::nullopt;
++      system_media_controls_->SetPlaybackStatus(PlaybackStatus::kStopped);
++      ClearAllMetadata();
++      system_media_controls_->ClearPosition();
++      system_media_controls_->SetEnabled(false);
++    }
++    return;
++  }
++  if (hidden_session_) {
++    hidden_session_ = false;
++    system_media_controls_->SetEnabled(true);
++    // The artwork that came while hidden was dropped and the controller sends it
++    // only on changes: observe again, which delivers the current one.
++    media_controller_image_observer_receiver_.reset();
++    media_controller_remote_->ObserveImages(
++        media_session::mojom::MediaSessionImageType::kArtwork, kMinImageSize,
++        kDesiredImageSize,
++        media_controller_image_observer_receiver_.BindNewPipeAndPassRemote());
++  }
++
+   if (session_info_ptr_) {
+     is_playing = session_info_ptr_->playback_state ==
+                  media_session::mojom::MediaPlaybackState::kPlaying;
+@@ -267,6 +297,14 @@ void SystemMediaControlsNotifier::MaybeScheduleMetadataUpdate() {
+ void SystemMediaControlsNotifier::UpdateMetadata() {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+ 
++  // Krunk: nothing of a private session (see MediaSessionInfoChanged).
++  if (hidden_session_) {
++    delayed_metadata_update_ = std::nullopt;
++    delayed_position_update_ = std::nullopt;
++    delayed_playback_status_ = std::nullopt;
++    return;
++  }
++
+   if (delayed_position_update_) {
+     system_media_controls_->SetPosition(*delayed_position_update_);
+     delayed_position_update_ = std::nullopt;
+@@ -314,6 +352,11 @@ void SystemMediaControlsNotifier::UpdateMetadata() {
+ 
+ void SystemMediaControlsNotifier::UpdateIcon() {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
++  // Krunk: nothing of a private session (see MediaSessionInfoChanged).
++  if (hidden_session_) {
++    delayed_icon_update_ = std::nullopt;
++    return;
++  }
+   CHECK(delayed_icon_update_);
+ 
+   // If we need to hide the media metadata we replace the playing media's image
+@@ -392,7 +435,10 @@ void SystemMediaControlsNotifier::OnScreenUnlocked() {
+   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+ 
+   StopHideSmtcTimer();
+-  system_media_controls_->SetEnabled(true);
++  // Krunk: they stay off while a private session is active.
++  if (!hidden_session_) {
++    system_media_controls_->SetEnabled(true);
++  }
+ }
+ 
+ void SystemMediaControlsNotifier::StartHideSmtcTimer() {
+diff --git a/content/browser/media/system_media_controls/system_media_controls_notifier.h b/content/browser/media/system_media_controls/system_media_controls_notifier.h
+index 30336f0a2ed08..c5d1050dae9ed 100644
+--- a/content/browser/media/system_media_controls/system_media_controls_notifier.h
++++ b/content/browser/media/system_media_controls/system_media_controls_notifier.h
+@@ -134,6 +134,10 @@ class CONTENT_EXPORT SystemMediaControlsNotifier
+   mojo::Remote<media_session::mojom::MediaController> media_controller_remote_;
+   media_session::mojom::MediaSessionInfoPtr session_info_ptr_;
+ 
++  // Krunk: the active session is a private (off-the-record) one; nothing of it is
++  // given to the system's media controls.
++  bool hidden_session_ = false;
++
+   // Used to receive updates to the active media controller.
+   mojo::Receiver<media_session::mojom::MediaControllerObserver>
+       media_controller_observer_receiver_{this};

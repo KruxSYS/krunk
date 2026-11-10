@@ -385,6 +385,9 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
     it is stored in the vault.
 - **Private tabs:** they share an in-memory profile that is discarded when the last private tab
   closes. Nothing from them is written to disk, history, the session or the favicon cache.
+  Since 0.12.3 their media never reaches Windows' media controls ("Now Playing", the volume
+  flyout, the lock screen): while a private tab's media is the active one, Krunk shows nothing
+  there (Chrome would show "Playing media in incognito"), and media keys don't control it.
 - **Picture-in-Picture** (0.6.0): when a page has a video, a small window icon appears in the
   address bar; it, the menu's "Picture-in-Picture" and Alt+P send the video to the engine's
   floating always-on-top window (play/pause, back to tab, close). With several videos a chooser

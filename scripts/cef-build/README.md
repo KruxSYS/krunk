@@ -66,8 +66,8 @@ Steps (`cross-build.sh` does them; every step is idempotent, all paths under `/w
    remote execution), `enable_platform_dolby_vision=true` (Chromium's default for
    `proprietary_codecs && is_win`), `use_v8_context_snapshot=false` (see below). The generated
    `args.gn` is kept with the evidence.
-4. `build`: applies Krunk's own CEF patches (`patches/*.patch`, with `git apply` in the CEF
-   checkout; skipped when already applied, an error when one doesn't apply), puts Krunk's logo
+4. `build`: applies Krunk's own patches (`patches/*.patch`, with `git apply`: `chromium-*.patch`
+   in the Chromium checkout, the others in the CEF checkout; skipped when already applied, an error when one doesn't apply), puts Krunk's logo
    in place of Chromium's product logo (`brand`, since 0.12.1, see below), then
    `autoninja -C out/Release_GN_x64 cefsimple bootstrap bootstrapc` (libcef.dll and the
    bootstraps are what Krunk packages). After a patch change on a kept tree this is an
@@ -76,7 +76,7 @@ Steps (`cross-build.sh` does them; every step is idempotent, all paths under `/w
    plus `snapshot_blob.bin` copied into `Release/` (CEF's file list does not know it), then
    `tar.bz2` named like the Spotify archive with the suffix `_krunk-codecs` (0.5.2–0.9.0) or,
    with the patches, `_krunk-codecs-hidden` (0.10.0–0.12.0) and `_krunk-codecs-hidden-brand`
-   (`CEF_FLAVOR`, since 0.12.1).
+   (0.12.1–0.12.2) and `_krunk-codecs-hidden-brand-private` (`CEF_FLAVOR`, since 0.12.3).
 6. Re-pin in Krunk (and record each patch's SHA-256 in `cef.lock`, `CEF_PATCHES`): copy the archive into the CEF cache (`~/.cache/krunk-cef/downloads/`), set
    `CEF_SOURCE=self-built`, `CEF_ARCHIVE`, `CEF_SHA256` and `CEF_ARTIFACT` in `cef.lock`
    (`scripts/fetch-cef.sh` then skips CEF's index and checks the SHA-256 only), run
@@ -93,6 +93,14 @@ Everything under `/work/cef-build` (checkout, build tree, toolchain package, arc
 outside git; the archive is kept with the release artifacts (`CEF_ARTIFACT` in `cef.lock`).
 
 **Krunk's patches** (`patches/`, since 0.10.0):
+- `chromium-private-media.patch` (0.12.3, Chromium checkout): media of a private tab never
+  reaches Windows' media controls ("Now Playing", the volume flyout, the lock screen).
+  `ChromeMediaSessionClient::ShouldHideMetadata` counts every off-the-record profile (Chrome
+  meant only its primary incognito one; Krunk's private tabs use a CEF one), and
+  `SystemMediaControlsNotifier` gives such a session nothing: it stops and clears the controls,
+  turns them off while the session is active and drops its pending metadata, position and
+  artwork. Chrome would show "Playing media in incognito" there. Media keys don't control a
+  private tab's media either.
 - `krunk-windowed-hidden.patch`: `CefBrowserHost::WasHidden` works for windowed (Alloy)
   browsers. The native Aura delegate hides or shows the WebContents' own aura window; the
   occlusion tracker then reports it HIDDEN and `WebContentsViewAura` calls `WasHidden()` itself,

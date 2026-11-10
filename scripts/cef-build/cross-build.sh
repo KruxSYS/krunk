@@ -18,8 +18,9 @@ CEF_VERSION=156.0.15
 CHROMIUM_VERSION=156.0.8078.80
 TOOLCHAIN_HASH_KEY=3bfcb536c8      # TOOLCHAIN_HASH in src/build/vs_toolchain.py at this Chromium
 # The archive's flavour: krunk-codecs (0.5.2–0.9.0); -hidden since 0.10.0 (patches/); -brand
-# since 0.12.1 (Krunk's logo as the engine's product logo, see brand()).
-CEF_FLAVOR=krunk-codecs-hidden-brand
+# since 0.12.1 (Krunk's logo as the engine's product logo, see brand()); -private since 0.12.3
+# (patches/chromium-private-media.patch).
+CEF_FLAVOR=krunk-codecs-hidden-brand-private
 PATCHES=$(cd "$(dirname "$0")" && pwd)/patches
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 SRC=$ROOT/chromium_git/chromium/src
@@ -38,17 +39,19 @@ toolchain_env() {
   export KRUNK_NO_CIOPFS=1
 }
 
-# Krunk's own CEF patches (0.10.0): applied to the CEF checkout once, idempotently.
+# Krunk's own patches (0.10.0), applied once, idempotently: patches/chromium-*.patch to the
+# Chromium checkout (0.12.3), every other one to the CEF checkout.
 apply_patches() {
-  local p
+  local p dir
   for p in "$PATCHES"/*.patch; do
-    if git -C "$SRC/cef" apply --check "$p" 2>/dev/null; then
-      git -C "$SRC/cef" apply "$p"
+    case "$(basename "$p")" in chromium-*) dir=$SRC ;; *) dir=$SRC/cef ;; esac
+    if git -C "$dir" apply --check "$p" 2>/dev/null; then
+      git -C "$dir" apply "$p"
       echo "applied $(basename "$p") ($(sha256sum "$p" | cut -c1-16))"
-    elif git -C "$SRC/cef" apply -R --check "$p" 2>/dev/null; then
+    elif git -C "$dir" apply -R --check "$p" 2>/dev/null; then
       echo "already applied: $(basename "$p")"
     else
-      echo "error: $(basename "$p") does not apply to $SRC/cef" >&2
+      echo "error: $(basename "$p") does not apply to $dir" >&2
       exit 1
     fi
   done
