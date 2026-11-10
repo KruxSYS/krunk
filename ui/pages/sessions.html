@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Session logs</title>
+<link rel="stylesheet" href="shared/common.css">
+<link rel="stylesheet" href="shared/page.css">
+<link rel="stylesheet" href="sessions.css">
+</head>
+<body>
+<div class="page wide">
+  <div class="page-header">
+    <h1>Session logs</h1>
+    <label class="keep muted" for="retention">Keep for
+      <select id="retention" aria-label="Keep session logs for"></select>
+    </label>
+    <button id="clear-all" class="btn" disabled>Clear all</button>
+  </div>
+
+  <div id="off" class="card notice" hidden>
+    <div class="notice-text">
+      <strong>Session logging is off.</strong>
+      <p class="muted">When it is on, Krunk records per session (from start to exit) the sites you visit, how long each tab
+        and site is in front, and its own CPU and GPU use. Everything stays on this device; private tabs are never logged.
+        Turn it on here or in <a href="#" id="open-settings">Settings → Privacy</a>.</p>
+    </div>
+    <button id="turn-on" class="btn primary">Turn on</button>
+  </div>
+
+  <section id="list-view">
+    <div id="list" class="card"></div>
+  </section>
+
+  <section id="detail-view" hidden>
+    <div class="detail-head">
+      <button id="back" class="btn">← All sessions</button>
+      <h2 id="detail-title"></h2>
+      <span id="detail-current" class="badge" hidden>Running</span>
+      <button id="delete" class="btn danger">Delete</button>
+    </div>
+    <div id="stats" class="stats"></div>
+    <div class="grid">
+      <div class="card panel">
+        <h3>Time per site</h3>
+        <div id="sites" class="bars"></div>
+      </div>
+      <div class="card panel">
+        <h3>Time per tab</h3>
+        <div id="tabs" class="bars"></div>
+      </div>
+    </div>
+    <div class="card panel">
+      <h3>CPU use <span class="muted small">(percent of all processors; GPU is the GPU process)</span></h3>
+      <div id="legend" class="legend"></div>
+      <div id="chart" class="chart"></div>
+    </div>
+    <div class="card panel">
+      <h3>Timeline</h3>
+      <ol id="timeline" class="timeline"></ol>
+      <p id="timeline-more" class="muted small" hidden></p>
+    </div>
+  </section>
+</div>
+<script src="shared/bridge.js"></script>
+<script src="shared/page.js"></script>
+<script src="sessions.js"></script>
+</body>
+</html>

@@ -673,6 +673,8 @@
     LB.request('aiStatus').then(function (r) { aiKeys = (r && r.keys) || {}; if (settings) renderAiProviders(); }).catch(function () {});
   }
   $('manage-scripts').addEventListener('click', function () { LB.post('openPage', { page: 'scripts' }); });
+  // 0.15.0: Privacy → session logs.
+  $('open-sessions').addEventListener('click', function (e) { e.preventDefault(); LB.post('openPage', { page: 'sessions' }); });
 
   function render() {
     renderAi();
