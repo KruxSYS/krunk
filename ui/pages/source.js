@@ -20,7 +20,6 @@
   const K = { tag: 1, attr: 2, val: 3, com: 4, doc: 5, ent: 6, kw: 7, str: 8, num: 9, prop: 10 };
   const CLS = ['', 'h-tag', 'h-attr', 'h-val', 'h-com', 'h-doc', 'h-ent', 'h-kw', 'h-str', 'h-num', 'h-prop'];
   const LINK_ATTRS = new Set(['href', 'src', 'action', 'poster', 'srcset', 'data']);
-  const JS_KW = new Set(('break case catch class const continue debugger default delete do else export extends false finally for function if import in instanceof let new null return super switch this throw true try typeof undefined var void while with yield async await of static get set').split(' '));
   const VOID = new Set('area base br col embed hr img input link meta param source track wbr'.split(' '));
   const INLINE = new Set(('a abbr b bdi bdo br cite code data dfn em i img kbd label mark q s samp small span strong sub sup time u var wbr ' +
     'input button select textarea').split(' '));
@@ -117,47 +116,10 @@
       }
     }
   }
-  function tokString(s, i, b) {
-    const q = s.charCodeAt(i);
-    let j = i + 1;
-    while (j < b) {
-      const c = s.charCodeAt(j);
-      if (c === 92) { j += 2; continue; }
-      if (c === q) return j + 1;
-      if (c === 10 && q !== 96) return j;
-      j++;
-    }
-    return b;
-  }
-  function tokJs(s, a, b, out) {
-    let i = a;
-    while (i < b) {
-      const c = s.charCodeAt(i);
-      if (c === 47 && s.charCodeAt(i + 1) === 47) {
-        let e = s.indexOf('\n', i);
-        if (e < 0 || e > b) e = b;
-        out.push(i, e, K.com); i = e; continue;
-      }
-      if (c === 47 && s.charCodeAt(i + 1) === 42) {
-        let e = s.indexOf('*/', i + 2);
-        e = e < 0 || e > b ? b : e + 2;
-        out.push(i, e, K.com); i = e; continue;
-      }
-      if (c === 34 || c === 39 || c === 96) { const e = tokString(s, i, b); out.push(i, e, K.str); i = e; continue; }
-      if (isDigit(c) && !(i > a && isId(s.charCodeAt(i - 1)))) {
-        let e = i + 1;
-        while (e < b && (isId(s.charCodeAt(e)) || s.charCodeAt(e) === 46)) e++;
-        out.push(i, e, K.num); i = e; continue;
-      }
-      if (isIdStart(c)) {
-        let e = i + 1;
-        while (e < b && isId(s.charCodeAt(e))) e++;
-        if (JS_KW.has(s.slice(i, e)) && s.charCodeAt(i - 1) !== 46) out.push(i, e, K.kw);
-        i = e; continue;
-      }
-      i++;
-    }
-  }
+  // Scripts: the shared tokenizer (ui/shared/jstok.js, 0.12.0), with this viewer's colours.
+  const tokString = window.KrunkJsTok.string;
+  const JS_KINDS = { com: K.com, str: K.str, kw: K.kw, num: K.num };
+  function tokJs(s, a, b, out) { window.KrunkJsTok.js(s, a, b, out, JS_KINDS); }
   function tokCss(s, a, b, out) {
     let i = a, depth = 0;
     while (i < b) {

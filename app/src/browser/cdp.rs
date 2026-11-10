@@ -21,6 +21,7 @@ pub(super) enum CdpUser {
     Ext = 1,
     Userscripts = 2,
     Agent = 4,
+    ScriptsPage = 8,
 }
 
 #[derive(Default)]

@@ -1,0 +1,76 @@
+/* krunk://scripts (0.12.0): the lists of userscripts and macros, and the editor view. */
+.kinds { display: flex; gap: 4px; padding: 3px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-raised); }
+.kinds a { padding: 5px 14px; border-radius: 6px; color: var(--fg); font-weight: 500; }
+.kinds a:hover { background: var(--bg-hover); text-decoration: none; }
+.kinds a.active { background: var(--accent); color: var(--accent-fg); }
+.toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.status { color: var(--fg-muted); font-size: 0.923rem; }
+.status.error { color: var(--danger); }
+.notice { margin: 0 0 14px; padding: 10px 14px; border: 1px solid color-mix(in srgb, #d97706 45%, var(--border));
+  border-radius: var(--radius); background: color-mix(in srgb, #f59e0b 12%, var(--bg-raised)); line-height: 1.5; }
+.notice a { font-weight: 600; }
+code { font-family: ui-monospace, Consolas, monospace; font-size: 0.846rem; padding: 1px 5px; border-radius: 4px; background: var(--bg-hover); }
+
+/* Rows. */
+.list .row.item { gap: 14px; min-height: 56px; padding: 8px 14px; }
+.list .row.item:hover { background: var(--bg-raised); }
+.row.item .info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.row.item .line1 { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.row.item .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row.item .version { color: var(--fg-muted); font-size: 0.923rem; flex: none; }
+.row.item .sub { color: var(--fg-muted); font-size: 0.923rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row.item.off .info, .row.item.off .hotkey { opacity: 0.55; }
+.row.item .when { flex: none; width: 110px; color: var(--fg-muted); font-size: 0.923rem; text-align: right; }
+.row.item .hotkey { flex: none; min-width: 120px; }
+.row.item .acts { flex: none; display: flex; gap: 6px; }
+.row.item.running { box-shadow: inset 3px 0 0 var(--accent); }
+.btn.small { padding: 4px 10px; font-size: 0.923rem; }
+.btn.danger { color: var(--danger); }
+.btn.stop, .btn.running { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 50%, var(--border)); }
+.tag { flex: none; font-size: 0.846rem; padding: 1px 8px; border-radius: 999px; background: var(--bg-hover); }
+.tag.ai { background: var(--accent-soft); color: var(--fg); }
+.tag.warn { background: color-mix(in srgb, #f59e0b 22%, var(--bg-raised)); }
+.tag.live { background: color-mix(in srgb, var(--danger) 16%, var(--bg-raised)); }
+
+/* Keycaps. */
+.keycaps { display: inline-flex; align-items: center; gap: 3px; }
+.keycaps .plus { color: var(--fg-muted); font-size: 0.846rem; }
+kbd { display: inline-block; min-width: 22px; padding: 1px 6px; border: 1px solid var(--border); border-bottom-width: 2px;
+  border-radius: 5px; background: var(--bg); font: 600 0.846rem/1.5 var(--font); text-align: center; color: var(--fg); }
+
+/* An on/off switch (as on krunk://extensions). */
+.switch { position: relative; flex: none; width: 36px; height: 20px; cursor: pointer; }
+.switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.switch .track { position: absolute; inset: 0; border-radius: 10px; background: var(--border); transition: background .15s; }
+.switch .track::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.3); transition: transform .15s; }
+.switch input:checked + .track { background: var(--accent); }
+.switch input:checked + .track::after { transform: translateX(16px); }
+.switch input:focus-visible + .track { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .switch .track, .switch .track::after { transition: none; } }
+
+.empty-state { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 36px 24px; text-align: center; }
+.empty-state h2 { margin: 0; font-size: 1.154rem; }
+.empty-state p { margin: 0; color: var(--fg-muted); max-width: 520px; line-height: 1.5; }
+
+/* The editor view fills the window. */
+body.editing .page { max-width: 1280px; padding-bottom: 16px; }
+#editor-view { display: flex; flex-direction: column; gap: 10px; height: calc(100vh - 40px); min-height: 360px; }
+#editor-view[hidden] { display: none; }
+.ed-head { display: flex; align-items: center; gap: 8px; flex: none; }
+.ed-title { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; }
+#ed-name { flex: 1; max-width: 420px; height: 32px; font-size: 1.077rem; font-weight: 600; }
+#ed-name:focus { border-color: var(--accent); outline: none; }
+.ed-script-name { font-size: 1.231rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ed-dirty { flex: none; font-size: 0.846rem; color: var(--fg-muted); padding: 1px 8px; border: 1px dashed var(--border); border-radius: 999px; }
+.hotkey-row { display: flex; align-items: center; gap: 10px; flex: none; min-height: 30px; }
+.hotkey-label { font-weight: 600; }
+.hotkey-row .recording { color: var(--accent); font-weight: 600; }
+.hotkey-status { font-size: 0.923rem; color: var(--fg-muted); }
+.hotkey-status.error { color: var(--danger); font-weight: 600; }
+.btn.recording { border-color: var(--accent); color: var(--accent); }
+.warnings { flex: none; margin: 0; padding: 8px 14px 8px 32px; border: 1px solid color-mix(in srgb, #d97706 45%, var(--border));
+  border-radius: var(--radius); background: color-mix(in srgb, #f59e0b 12%, var(--bg-raised)); line-height: 1.5; }
+.save-error { flex: none; margin: 0; color: var(--danger); font-weight: 600; }
+.ed-box { flex: 1; min-height: 200px; }
+.ed-help { flex: none; margin: 0; color: var(--fg-muted); font-size: 0.923rem; line-height: 1.6; }
