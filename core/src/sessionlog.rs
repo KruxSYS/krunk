@@ -121,6 +121,83 @@ pub struct Sample {
     pub memory: u64,
 }
 
+/// What a task-manager task counts as in a [`Sample`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ProcessClass {
+    Browser,
+    Gpu,
+    Renderer,
+    Other,
+    /// Workers run inside renderer processes: counted there already.
+    Skip,
+}
+
+/// Sums the engine's tasks into a sample. The engine reports CPU and memory per process, so
+/// tasks sharing a process (several tabs in one renderer) report the same figures: such
+/// duplicates count once.
+pub fn sample_from(ts: i64, tasks: impl IntoIterator<Item = (ProcessClass, f64, u64)>) -> Sample {
+    let mut seen = std::collections::HashSet::new();
+    let mut s = Sample { ts, ..Sample::default() };
+    for (class, cpu, memory) in tasks {
+        let cpu = if cpu.is_finite() { cpu.clamp(0.0, 100.0) } else { 0.0 };
+        if class == ProcessClass::Skip || (memory > 0 && !seen.insert((class, cpu.to_bits(), memory))) {
+            continue;
+        }
+        let cpu = cpu as f32;
+        match class {
+            ProcessClass::Browser => s.browser += cpu,
+            ProcessClass::Gpu => s.gpu += cpu,
+            ProcessClass::Renderer => s.renderers += cpu,
+            ProcessClass::Other => s.other += cpu,
+            ProcessClass::Skip => {}
+        }
+        s.memory += memory;
+    }
+    s
+}
+
+/// What the host does when the setting changes: while off nothing is armed (no timers, no
+/// task manager, every hook returns at once).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Transition {
+    /// Start a session: arm [`Switch::timers`], open the task manager.
+    Start,
+    /// End the session: flush it, kill the timers, let the task manager go.
+    Stop,
+}
+
+/// Logging on or off, and the timers that go with it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Switch {
+    on: bool,
+}
+
+impl Switch {
+    pub const OFF: Switch = Switch { on: false };
+
+    pub fn on(self) -> bool {
+        self.on
+    }
+
+    /// The setting is now `enabled`.
+    pub fn set(&mut self, enabled: bool) -> Option<Transition> {
+        if self.on == enabled {
+            return None;
+        }
+        self.on = enabled;
+        Some(if enabled { Transition::Start } else { Transition::Stop })
+    }
+
+    /// The periods (ms) of the timers armed in this state: the sampler and the flush, or none.
+    pub fn timers(self) -> &'static [u32] {
+        if self.on {
+            &[SAMPLE_MS, FLUSH_MS]
+        } else {
+            &[]
+        }
+    }
+}
+
 /// Events not yet written.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Batch {
@@ -443,9 +520,9 @@ impl Store {
     /// All sessions, newest first. `current`: the running one (its duration runs to `now`).
     pub fn log_sessions(&self, now: i64, current: Option<i64>) -> DbResult<Vec<SessionSummary>> {
         let mut focus: HashMap<i64, HashMap<String, i64>> = HashMap::new();
-        let mut st = self.conn.prepare(
-            "SELECT session_id, host, sum(ended - started) FROM log_focus GROUP BY session_id, host",
-        )?;
+        let mut st = self
+            .conn
+            .prepare("SELECT session_id, host, sum(ended - started) FROM log_focus GROUP BY session_id, host")?;
         for r in st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)))? {
             let (s, h, ms) = r?;
             focus.entry(s).or_default().insert(h, ms);
@@ -494,7 +571,9 @@ impl Store {
             .conn
             .prepare("SELECT tab, host, started, ended FROM log_focus WHERE session_id = ?1 ORDER BY started")?;
         let raw = st
-            .query_map([id], |r| Ok(Interval { tab: r.get(0)?, host: r.get(1)?, started: r.get(2)?, ended: r.get(3)? }))?
+            .query_map([id], |r| {
+                Ok(Interval { tab: r.get(0)?, host: r.get(1)?, started: r.get(2)?, ended: r.get(3)? })
+            })?
             .collect::<DbResult<Vec<_>>>()?;
         let mut st = self.conn.prepare(
             "SELECT ts, browser, gpu, renderers, other, memory FROM log_samples WHERE session_id = ?1 ORDER BY ts",
@@ -528,16 +607,21 @@ impl Store {
         }
         // A tab's title: its last page in the session.
         let mut titles: HashMap<u32, String> = HashMap::new();
-        let mut st = self.conn.prepare(
-            "SELECT tab, title FROM log_visits WHERE session_id = ?1 AND title <> '' ORDER BY ts, rowid",
-        )?;
+        let mut st = self
+            .conn
+            .prepare("SELECT tab, title FROM log_visits WHERE session_id = ?1 AND title <> '' ORDER BY ts, rowid")?;
         for r in st.query_map([id], |r| Ok((r.get::<_, u32>(0)?, r.get::<_, String>(1)?)))? {
             let (t, title) = r?;
             titles.insert(t, title);
         }
         let mut tabs: Vec<TabTime> = tab_ms
             .into_iter()
-            .map(|(tab, (ms, host))| TabTime { tab, title: titles.remove(&tab).unwrap_or_else(|| host.clone()), host, ms })
+            .map(|(tab, (ms, host))| TabTime {
+                tab,
+                title: titles.remove(&tab).unwrap_or_else(|| host.clone()),
+                host,
+                ms,
+            })
             .collect();
         tabs.sort_by(|a, b| b.ms.cmp(&a.ms).then(a.tab.cmp(&b.tab)));
         let session = summary(id, started, ended, now, current, site_ms.clone(), site_visits.clone());
@@ -612,6 +696,40 @@ mod tests {
     }
 
     #[test]
+    fn nothing_is_armed_while_off() {
+        let mut s = Switch::default();
+        assert!(!s.on() && s.timers().is_empty(), "off by default: no timers");
+        assert_eq!(s.set(false), None, "staying off does nothing");
+        assert!(s.timers().is_empty());
+        assert_eq!(s.set(true), Some(Transition::Start));
+        assert_eq!(s.timers(), &[SAMPLE_MS, FLUSH_MS]);
+        assert!(SAMPLE_MS >= 5_000, "sampled at most every 5 s");
+        assert_eq!(s.set(true), None, "no second session");
+        assert_eq!(s.set(false), Some(Transition::Stop));
+        assert!(!s.on() && s.timers().is_empty());
+    }
+
+    #[test]
+    fn samples_count_shared_processes_once() {
+        use ProcessClass::*;
+        let s = sample_from(
+            T0,
+            [
+                (Browser, 1.5, 100),
+                (Gpu, 0.5, 50),
+                // Two tabs in one renderer, and another renderer.
+                (Renderer, 4.0, 300),
+                (Renderer, 4.0, 300),
+                (Renderer, 2.0, 200),
+                (Skip, 9.0, 300),
+                (Other, f64::NAN, 10),
+            ],
+        );
+        assert_eq!((s.browser, s.gpu, s.renderers, s.other, s.memory), (1.5, 0.5, 6.0, 0.0, 660));
+        assert_eq!(s.ts, T0);
+    }
+
+    #[test]
     fn foreground_intervals_close_on_switch_blur_and_exit() {
         let mut r = Recorder::new(1);
         r.focus(T0, focus(1, "a.example"));
@@ -642,7 +760,10 @@ mod tests {
         assert_eq!(b.intervals[0].ms(), 30_000);
         assert!(!r.is_idle(), "the interval goes on");
         let b = r.take(T0 + 45_000);
-        assert_eq!(b.intervals, vec![Interval { tab: 1, host: "a.example".into(), started: T0 + 30_000, ended: T0 + 45_000 }]);
+        assert_eq!(
+            b.intervals,
+            vec![Interval { tab: 1, host: "a.example".into(), started: T0 + 30_000, ended: T0 + 45_000 }]
+        );
         // Joined again when read.
         let joined = join_intervals(vec![
             Interval { tab: 1, host: "a.example".into(), started: T0, ended: T0 + 30_000 },
@@ -688,7 +809,10 @@ mod tests {
             i(2, "a", 2_100, 2_200),
             i(2, "b", 2_200, 2_300),
         ]);
-        assert_eq!(joined, vec![i(1, "a", 0, 20), i(1, "a", 2_000, 2_100), i(2, "a", 2_100, 2_200), i(2, "b", 2_200, 2_300)]);
+        assert_eq!(
+            joined,
+            vec![i(1, "a", 0, 20), i(1, "a", 2_000, 2_100), i(2, "a", 2_100, 2_200), i(2, "b", 2_200, 2_300)]
+        );
     }
 
     #[test]

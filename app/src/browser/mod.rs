@@ -84,6 +84,7 @@ mod pointer;
 mod power;
 mod scripts_page;
 mod segmented;
+mod sessionlog;
 mod settings_host;
 mod siteinfo;
 mod source;
@@ -565,6 +566,7 @@ impl Browser {
         browser.init_integrity();
         browser.start_power_timer();
         browser.init_sync();
+        browser.sessionlog_init();
         if let Some(w) = browser.app() {
             w.set_timer(ZOOM_TIMER, ZOOM_WATCH_MS);
         }
@@ -1525,6 +1527,7 @@ impl Browser {
 
     fn activate_view(&self, win: WindowId, from: Option<TabId>, to: TabId) {
         self.close_ext_popup();
+        self.sessionlog_focus();
         self.auto_pip_switch(from, to);
         self.ext_tab_event("tabActivated", serde_json::json!({ "tabId": to, "windowId": win }));
         self.pointer_tab_activated(to);
@@ -2596,6 +2599,11 @@ impl Browser {
             },
             Request::GetTasks => self.reply(tab, Event::ok(req_id, self.task_rows())),
             Request::KillTask { id } => self.kill_task(tab, req_id, id),
+            request @ (Request::SessionList
+            | Request::SessionDetail { .. }
+            | Request::SessionDelete { .. }
+            | Request::SessionClear
+            | Request::SessionLogSet { .. }) => self.sessionlog_request(tab, req_id, request),
             Request::Back => self.run_command(Command::Back),
             Request::Forward => self.run_command(Command::Forward),
             Request::Reload => self.run_command(Command::Reload),
@@ -3434,6 +3442,8 @@ impl Browser {
         self.save_session();
         self.flush_titles_now();
         self.save_downloads();
+        // 0.15.0: the session log's last events and its end.
+        self.sessionlog_shutdown();
         self.shutdown_vault();
         self.relaunch_if_requested();
         let adopted: Vec<View> = self.adopted.borrow_mut().drain().map(|(_, (v, _))| v).collect();
@@ -3555,6 +3565,7 @@ impl WindowEvents for AppEvents {
     fn session_locked(&self) {
         if let Some(b) = self.0.upgrade() {
             b.lock_vault("Windows session locked");
+            b.sessionlog_focus();
         }
     }
 
@@ -3588,6 +3599,8 @@ impl WindowEvents for AppEvents {
             drag::BAR_DRAG_TIMER => b.bar_drag_timer(),
             spare::SPARE_TIMER => b.spare_timer(),
             segmented::PARTS_TIMER => b.parts_tick(),
+            sessionlog::SAMPLE_TIMER => b.sessionlog_sample(),
+            sessionlog::FLUSH_TIMER => b.sessionlog_flush(),
             ZOOM_TIMER => b.zoom_tick(),
             hang::HANG_TIMER => b.hang_tick(),
             bounce::BOUNCE_TIMER => b.bounce_tick(),
@@ -3660,6 +3673,7 @@ impl WindowEvents for FrameEvents {
         if let Some(f) = b.frame(self.win) {
             f.active.set(active);
         }
+        b.sessionlog_focus();
         // While a tab is dragged, Windows passes activation back and forth between the source
         // and the dragged window: keep that out of the tab strips (the drop settles it).
         if b.drag.get().is_some() {
@@ -3755,6 +3769,7 @@ impl WindowEvents for FrameEvents {
     fn minimized(&self, minimized: bool) {
         let Some(b) = self.b.upgrade() else { return };
         b.hide_status();
+        b.sessionlog_focus();
         if minimized {
             b.release_pointer(lb_core::pointer_lock::Release::WindowDeactivated);
         }

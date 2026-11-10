@@ -253,6 +253,7 @@ impl Browser {
                     warning!("history: {e}");
                 }
             }
+            self.sessionlog_visit(id, &clean, &title);
         }
     }
 

@@ -2168,7 +2168,11 @@ impl Sender {
             Sender::Page(Page::Tasks) => matches!(req, R::GetTasks | R::KillTask { .. }),
             Sender::Page(Page::Sessions) => matches!(
                 req,
-                R::SessionList | R::SessionDetail { .. } | R::SessionDelete { .. } | R::SessionClear | R::SessionLogSet { .. }
+                R::SessionList
+                    | R::SessionDetail { .. }
+                    | R::SessionDelete { .. }
+                    | R::SessionClear
+                    | R::SessionLogSet { .. }
             ),
             Sender::Page(Page::Extensions) => matches!(
                 req,
