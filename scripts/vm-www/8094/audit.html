@@ -1,0 +1,33 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Krunk 0.11.7 audit page</title>
+<!-- 0.11.7 audit (vm-0117-audit.ps1): each button is 100 px tall, from the top of the page.
+     Results go to access.log through /log?... -->
+<style>
+  body { margin: 0; font: 22px sans-serif; }
+  button { display: block; width: 100%; height: 100px; font: inherit; border: 0; border-bottom: 2px solid #fff; background: #dde8f5; text-align: left; padding-left: 20px; }
+</style>
+<button id="c3a">1 · C3: window.open(krunk.invalid/source.html?url=…/log?c3-source-fetched)</button>
+<button id="c3b">2 · C3: window.open(about:blank), then location = krunk.invalid/settings.html</button>
+<button id="c2">3 · C2: download a blob named 250 × "a" + ".aaaaaaaaaaaaaaaé"</button>
+<p id="out">ready</p>
+<script>
+  const log = (q) => fetch('/log?' + q).catch(() => {});
+  document.getElementById('c3a').onclick = () => {
+    log('clicked=c3a');
+    const w = window.open('https://krunk.invalid/source.html?url=' + encodeURIComponent('http://localhost:8094/log?c3-source-fetched=1'));
+    log('c3a-handle=' + (w ? 'window' : 'null'));
+  };
+  document.getElementById('c3b').onclick = () => {
+    log('clicked=c3b');
+    const w = window.open('about:blank');
+    try { w.location = 'https://krunk.invalid/settings.html'; log('c3b-assigned=1'); } catch (e) { log('c3b-error=' + encodeURIComponent(String(e))); }
+  };
+  document.getElementById('c2').onclick = () => {
+    log('clicked=c2');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob(['krunk 0.11.7 audit C2\n'], { type: 'application/octet-stream' }));
+    a.download = 'a'.repeat(250) + '.aaaaaaaaaaaaaaaé';
+    document.body.appendChild(a); a.click();
+  };
+</script>
