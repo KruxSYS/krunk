@@ -151,11 +151,12 @@ html.fullscreen #caption, html.fullscreen #drag-space { display: none; }
 #agent[hidden], #macro-run[hidden] { display: none; }
 #agent.on .icon { color: var(--accent); }
 #macro-run { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 2px 0 8px; margin: 0 2px;
-             border-radius: 13px; background: var(--accent); color: #fff; font-size: 0.923rem; max-width: 180px; }
-#macro-run .icon { width: 15px; height: 15px; stroke: #fff; flex: none; }
+             border-radius: 13px; background: var(--accent); color: var(--accent-fg); font-size: 0.923rem; max-width: 180px; }
+#macro-run .icon { width: 15px; height: 15px; flex: none; }
 #macro-run-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#macro-run #macro-stop { color: #fff; min-width: 22px; height: 22px; }
-#macro-run #macro-stop:hover { background: rgba(255,255,255,.2); }
+#macro-run #macro-stop { color: inherit; min-width: 22px; height: 22px; border-radius: 11px; }
+#macro-run #macro-stop:hover { background: color-mix(in srgb, var(--accent-fg) 22%, transparent); }
+#macro-run #macro-stop:focus-visible { outline: 2px solid var(--accent-fg); outline-offset: -2px; }
 
 /* ---- zoom chip ---- */
 .chip { height: 22px; padding: 0 8px; border: 1px solid var(--border); border-radius: 11px; background: var(--bg-raised);
