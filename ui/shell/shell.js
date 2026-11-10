@@ -1365,7 +1365,26 @@
     root.style.fontSize = fs;
     document.body.style.fontSize = fs;
     root.classList.toggle('compact', a.density === 'compact');
-    root.classList.toggle('square-tabs', a.roundedTabs === false);
+    // 0.15.0: bar styles (solid, gradient, ombre, glass), the tabs' shape and roundness, the
+    // active tab's highlight and glow. The gradient's stops and readable text come from the
+    // host (core::color); `roundedTabs` alone is what 0.14 and earlier send.
+    const tabStyle = a.tabStyle || 'solid', barStyle = a.toolbarStyle || 'solid';
+    ['solid', 'gradient', 'ombre', 'glass'].forEach(function (s) {
+      root.classList.toggle('tabs-' + s, tabStyle === s);
+      root.classList.toggle('bar-' + s, barStyle === s && s !== 'ombre');
+    });
+    const stops = Array.isArray(c.gradient) ? c.gradient : [];
+    const angle = Number.isFinite(a.gradientAngle) ? a.gradientAngle : 90;
+    set('--grad', stops.length > 1 ? 'linear-gradient(' + angle + 'deg, ' + stops.join(', ') + ')' : '');
+    set('--grad-fg', c.gradientFg);
+    set('--ombre-fg', c.ombreFg);
+    const shape = a.tabShape || (a.roundedTabs === false ? 'square' : 'rounded');
+    ['rounded', 'square', 'pill'].forEach(function (s) { root.classList.toggle('shape-' + s, shape === s); });
+    root.classList.toggle('square-tabs', shape === 'square');
+    set('--tab-radius', shape === 'rounded' && Number.isFinite(a.tabRadius) ? a.tabRadius + 'px' : '');
+    const hl = a.activeHighlight || 'fill';
+    ['fill', 'underline', 'outline'].forEach(function (s) { root.classList.toggle('hl-' + s, hl === s); });
+    root.classList.toggle('accent-glow', !!a.accentGlow);
     state.showDownloads = a.showDownloadsButton !== false;
     $('downloads').classList.toggle('off', !state.showDownloads);
     $('zoom').classList.toggle('off', a.showZoomChip === false);

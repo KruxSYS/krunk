@@ -100,6 +100,52 @@ html.fullscreen #caption, html.fullscreen #drag-space { display: none; }
 :root.compact .tab { height: 28px; padding: 0 6px 0 8px; }
 :root.compact #toolbar { height: 34px; }
 :root.square-tabs .tab { border-radius: 0; }
+/* 0.15.0 styles (classes and variables from shell.js applyAppearance). --grad is fixed to the
+   window, so the strip, the toolbar and the active tab show one continuous gradient; --grad-fg
+   and --ombre-fg are the readable text on it (core::color). Glass: translucent bars over a soft
+   accent backdrop inside the shell, blurred (the shell is an opaque engine view: no desktop
+   shows through). The active tab: surface --on-bg, text --on-fg, marker --on-mark, ring and glow. */
+:root { --grad-fill: var(--grad, linear-gradient(90deg, var(--accent), var(--accent))); --ombre-veil: rgba(0,0,0,.22); --ombre-veil-hover: rgba(0,0,0,.11);
+  --strip-text: var(--strip-fg, var(--bg-fg, var(--fg)));
+  --glass-strip: color-mix(in srgb, var(--strip-bg, var(--bg)) 46%, transparent);
+  --glass-bar: color-mix(in srgb, var(--toolbar-bg, var(--bg-raised)) 64%, transparent);
+  --on-bg: var(--bg-raised); --on-fg: var(--fg); --on-mark: none; --on-ring: 0 -1px 0 var(--border) inset; --on-glow: 0 0 transparent; }
+:root.shape-rounded .tab { border-radius: var(--tab-radius, 8px) var(--tab-radius, 8px) 0 0; }
+:root.shape-pill .tab { border-radius: 13px; height: 26px; margin-bottom: 4px; }
+:root.compact.shape-pill .tab { height: 24px; margin-bottom: 2px; border-radius: 12px; }
+:root.shape-pill { --on-ring: 0 0 0 1px var(--border) inset; }
+:root.tabs-gradient { --strip-text: var(--grad-fg); }
+:root.tabs-gradient #tabstrip { background: var(--grad-fill) fixed; }
+:root.tabs-glass #tabstrip { background: var(--glass-strip); -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5); }
+:root.bar-gradient #toolbar { background: var(--grad-fill) fixed; color: var(--grad-fg); }
+:root.bar-glass #toolbar, :root.bar-glass #bookmarks-bar { background: var(--glass-bar); -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5); }
+:root:is(.tabs-glass, .bar-glass) body {
+  background: radial-gradient(34% 190% at 10% 0%, color-mix(in srgb, var(--accent) 55%, transparent), transparent 72%),
+    radial-gradient(26% 150% at 46% 100%, hsl(from var(--accent) calc(h + 40) s l / .42), transparent 72%),
+    radial-gradient(30% 200% at 88% 10%, hsl(from var(--accent) calc(h - 50) s l / .36), transparent 72%), var(--bg); }
+/* Text and hovers on a styled strip: the inactive tabs, the strip's buttons and the caption. */
+:root.tabs-gradient .tab:not(.active):not(.private), :root.tabs-gradient #tabstrip > .tb, :root.tabs-gradient .cap:not(.hover) { color: var(--grad-fg); opacity: 1; }
+:root.tabs-gradient.inactive .tab:not(.active):not(.private), :root.tabs-gradient.inactive .cap { color: var(--grad-fg); opacity: .75; }
+:root.tabs-ombre .tab:not(.active):not(.private) { background: linear-gradient(var(--ombre-veil), var(--ombre-veil)), var(--grad-fill);
+  background-attachment: scroll, fixed; color: var(--ombre-fg); opacity: 1; }
+:root.tabs-ombre .tab:not(.active):not(.private):hover { background: linear-gradient(var(--ombre-veil-hover), var(--ombre-veil-hover)), var(--grad-fill);
+  background-attachment: scroll, fixed; }
+:root:is(.tabs-gradient, .tabs-glass) .tab:not(.active):hover, :root:is(.tabs-gradient, .tabs-glass) #tabstrip > .tb:hover:not(:disabled),
+:root:is(.tabs-gradient, .tabs-glass) .cap.hover:not(.close), :root:is(.bar-gradient, .bar-glass) #toolbar > .tb:hover:not(:disabled),
+:root:is(.bar-gradient, .bar-glass) #toolbar > .tb.on, :root:is(.bar-gradient, .bar-glass) #ext-actions .tb:hover { background: color-mix(in srgb, currentColor 15%, transparent); }
+:root:is(.tabs-gradient, .tabs-ombre, .bar-gradient) .tab:not(.private) :is(.close, .audio) { color: inherit; }
+:root:is(.tabs-gradient, .tabs-ombre, .bar-gradient) .tab:not(.private) :is(.close, .audio):hover { background: color-mix(in srgb, currentColor 18%, transparent); color: inherit; }
+/* The active tab: filled with the toolbar's surface (so it joins the toolbar), or a tint with an
+   accent underline or outline; on an ombre strip it shows its slice at full strength. */
+:root.bar-gradient { --on-bg: var(--grad-fill) fixed; --on-fg: var(--grad-fg); }
+:root.bar-glass { --on-bg: var(--glass-bar); }
+:root:is(.hl-underline, .hl-outline) { --on-bg: color-mix(in srgb, currentColor 11%, transparent); --on-fg: var(--strip-text); --on-ring: 0 0 transparent; }
+:root.hl-underline { --on-mark: linear-gradient(var(--accent), var(--accent)) center bottom / calc(100% - 16px) 3px no-repeat; }
+:root.hl-outline { --on-ring: inset 0 0 0 2px var(--accent); }
+:root.tabs-ombre { --on-bg: var(--grad-fill) fixed; --on-fg: var(--grad-fg); }
+:root.accent-glow { --on-glow: 0 0 10px 1px color-mix(in srgb, var(--accent) 65%, transparent); }
+.tab.active:not(.private):not(.ghost) { background: var(--on-mark), var(--on-bg); color: var(--on-fg); }
+.tab.active:not(.ghost):not(.dragging):not(.settling) { box-shadow: var(--on-ring), var(--on-glow); }
 #downloads.off, #zoom.off { display: none !important; }
 #media-chip { display: inline-flex; align-items: center; gap: 2px; padding: 0 6px; height: 20px; border-radius: 10px; background: #dc2626; color: #fff; margin-right: 4px; }
 #media-chip .icon { width: 13px; height: 13px; stroke: #fff; }
