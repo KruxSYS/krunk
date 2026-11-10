@@ -49,6 +49,7 @@ pub mod recovery;
 pub mod reveal;
 pub mod scripts_store;
 pub mod scroll_lock;
+pub mod search_suggest;
 pub mod secret;
 pub mod segdl;
 pub mod sessionlog;
