@@ -1189,8 +1189,10 @@ How it works (`vpn/`, `app/src/browser/vpn.rs`):
   WinHTTP requests go through it too. Names are resolved inside the tunnel by the VPN's DNS
   servers (1.1.1.1 through the tunnel when the profile names none); Krunk's custom-DNS stub and
   the engine's secure DNS are paused meanwhile. WebRTC may only use UDP through the proxy, which
-  means no UDP: calls fall back to TCP relays where the site offers them. Open connections are
-  closed at Connect, Disconnect and a switch, so they reopen through the new route.
+  means no UDP: calls fall back to TCP relays where the site offers them. At Connect, Disconnect
+  and a switch the engine closes its idle and HTTP/2/QUIC connections and Krunk restarts its own
+  requests, so they continue on the new route; a WebSocket or long download already open over
+  HTTP/1.1 keeps its old route until it ends.
 - Only Krunk may use the proxy: a connection is accepted when the program on the other end is
   Krunk itself or one of its engine processes (Windows' TCP table and process list), and the
   port can't be shared.

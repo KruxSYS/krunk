@@ -273,8 +273,9 @@ The design is in README, "VPN (0.14.0)", and `vpn/README.md`. What matters for s
   the local proxy, which answers "VPN not connected" (503) whenever the tunnel is down and refuses
   destinations outside the profile's routes (502). Nothing is sent direct as a fallback. At start
   with "Connect when Krunk starts", the proxy is in place before the first page or job; if it
-  can't be, Krunk opens no tabs. Connections opened before Connect are closed, so they can't stay
-  direct. The proxy-related Chromium switches (`--no-proxy-server`, `--proxy-pac-url`,
+  can't be, Krunk opens no tabs. Connections opened before Connect are closed (idle, HTTP/2, QUIC) and
+  Krunk's own jobs restart; an HTTP/1.1 connection in use at that moment (a WebSocket, a long
+  download in the engine) keeps its old route until it ends. The proxy-related Chromium switches (`--no-proxy-server`, `--proxy-pac-url`,
   `--proxy-auto-detect`, `--force-webrtc-ip-handling-policy` …) are refused in Advanced, since
   they would override the setting.
 - **Leaks closed:** names are resolved inside the tunnel, never by Windows (the custom-DNS stub
