@@ -239,15 +239,15 @@ mod tests {
         let (w, a, _) = ws.open_window("https://a.example/", false, None, false, now);
         let b = ws.open(w, "https://b.example/", false, Position::End, true, now).unwrap().0;
         let c = ws.open(w, "https://c.example/", false, Position::End, false, now).unwrap().0;
-        let _ = a;
         // Closing the active tab: the destroy comes first, then the next tab is activated.
         let ops = ws.close_tab(b, now);
         let destroy = ops.iter().position(|o| matches!(o, Op::DestroyView { tab, .. } if *tab == b)).unwrap();
         let activate = ops.iter().position(|o| matches!(o, Op::Activate { from: None, .. })).unwrap();
         assert!(destroy < activate, "{ops:?}");
         assert_eq!(handed_over(&ops), vec![(w, b)]);
-        // A background tab: nothing hands over.
-        let ops = ws.close_tab(c, now);
+        // A background tab (c is active now): nothing hands over.
+        assert_eq!(ws.model(w).and_then(|m| m.active_id()), Some(c));
+        let ops = ws.close_tab(a, now);
         assert!(handed_over(&ops).is_empty(), "{ops:?}");
         // A second window's last tab closes the window: its view simply goes.
         let (w2, d, _) = ws.open_window("https://d.example/", false, None, false, now);
