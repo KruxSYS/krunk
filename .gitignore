@@ -20,6 +20,8 @@ __pycache__/
 *.pyc
 # Tool caches
 .serena/
+# Sub-agent git worktrees
+.claude/worktrees/
 
 # CEF spike / cross builds
 spikes/*/target/

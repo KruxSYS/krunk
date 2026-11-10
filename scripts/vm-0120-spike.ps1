@@ -31,8 +31,10 @@ Shot "$P-00-ai-off"
 Get-Process Krunk -ErrorAction SilentlyContinue | ForEach-Object { $_.CloseMainWindow() | Out-Null }
 Start-Sleep 4
 Get-Process Krunk -ErrorAction SilentlyContinue | Stop-Process -Force
-Start-Sleep 1
-& 'C:\Program Files\Python312\python.exe' C:\pipeline\krunk\setkv.py $profile '{"ai": {"enabled": true}}' | Out-Null
+Get-Process Krunk -ErrorAction SilentlyContinue | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
+Start-Sleep 2
+$set = & 'C:\Program Files\Python312\python.exe' C:\pipeline\krunk\setkv.py $profile '{"ai": {"enabled": true}}' 2>&1
+Log "[$P] setkv: $set"
 StartKrunk
 $A = MainWindow
 [U]::MoveWindow($A, 0, 0, 1280, 760, $true) | Out-Null; Start-Sleep 1
