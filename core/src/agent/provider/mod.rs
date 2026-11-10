@@ -6,6 +6,7 @@
 //! message. Model lists come from [`models_request`] + [`parse_models`].
 
 pub mod anthropic;
+pub mod limits;
 pub mod models;
 pub mod openai;
 

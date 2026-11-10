@@ -11,8 +11,6 @@ use serde_json::{json, Map, Value};
 /// The `anthropic-version` header value.
 pub const VERSION: &str = "2023-06-01";
 
-/// `max_tokens` is required here; used when the request leaves it at 0.
-const DEFAULT_MAX_TOKENS: u32 = 4096;
 
 pub fn chat_request(base: &str, req: &ChatRequest) -> HttpRequest {
     HttpRequest {
@@ -27,7 +25,8 @@ pub fn chat_request(base: &str, req: &ChatRequest) -> HttpRequest {
 pub fn body(req: &ChatRequest) -> Value {
     let mut b = Map::new();
     b.insert("model".into(), req.model.clone().into());
-    let max = if req.max_tokens == 0 { DEFAULT_MAX_TOKENS } else { req.max_tokens };
+    // `max_tokens` is required here: a request that leaves it at 0 gets the default cap.
+    let max = if req.max_tokens == 0 { crate::settings::DEFAULT_MAX_OUTPUT_TOKENS } else { req.max_tokens };
     b.insert("max_tokens".into(), max.into());
     if !req.system.is_empty() {
         b.insert("system".into(), req.system.clone().into());

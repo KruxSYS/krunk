@@ -173,7 +173,7 @@ fn anthropic_merges_and_orders_blocks() {
     };
     let b = anthropic::body(&req);
     assert!(b.get("system").is_none() && b.get("tools").is_none());
-    assert_eq!(b["max_tokens"], 4096);
+    assert_eq!(b["max_tokens"], 32000, "0.15.0: the default cap, not 4096");
     let m = b["messages"].as_array().unwrap();
     assert_eq!(m.len(), 3);
     assert_eq!(m[0]["content"].as_array().unwrap().len(), 2);
@@ -377,6 +377,7 @@ fn error_messages() {
 fn model_lists() {
     let or = json!({"data": [
         {"id": "openai/gpt-4o", "name": "OpenAI: GPT-4o", "context_length": 128000,
+         "top_provider": {"context_length": 128000, "max_completion_tokens": 16384, "is_moderated": true},
          "architecture": {"input_modalities": ["text", "image"], "modality": "text+image->text"},
          "supported_parameters": ["tools", "temperature"]},
         {"id": "meta/llama", "name": "Meta: Llama", "context_length": 8192,
@@ -394,30 +395,38 @@ fn model_lists() {
             name: "OpenAI: GPT-4o".into(),
             vision: Some(true),
             tools: Some(true),
-            context: Some(128000)
+            context: Some(128000),
+            max_output: Some(16384),
         }
     );
     assert_eq!((m[1].vision, m[1].tools), (Some(false), Some(false)));
-    assert_eq!((m[0].vision, m[0].tools, m[0].context), (Some(false), None, None));
+    assert_eq!((m[0].vision, m[0].tools, m[0].context, m[0].max_output), (Some(false), None, None, None));
 
     let oa = r#"{"object":"list","data":[{"id":"gpt-4o","object":"model"},{"id":"dall-e-3","object":"model"}]}"#;
     let m = parse_models(ProviderKind::OpenAi, oa).unwrap();
     assert_eq!(m.iter().map(|x| x.name.as_str()).collect::<Vec<_>>(), ["dall-e-3", "gpt-4o"]);
     assert_eq!((m[1].vision, m[1].tools), (None, None));
 
-    let an = r#"{"data":[{"type":"model","id":"claude-z","display_name":"Claude Z"},
+    let an = r#"{"data":[{"type":"model","id":"claude-z","display_name":"Claude Z","max_input_tokens":200000,"max_tokens":64000},
                  {"type":"model","id":"claude-a","display_name":"Claude A"}],"has_more":false}"#;
     let m = parse_models(ProviderKind::Anthropic, an).unwrap();
     assert_eq!(
         m.iter().map(|x| (x.id.as_str(), x.name.as_str())).collect::<Vec<_>>(),
         [("claude-a", "Claude A"), ("claude-z", "Claude Z")]
     );
+    // 0.15.0: Anthropic's list gives the context window and the output limit.
+    assert_eq!((m[1].context, m[1].max_output), (Some(200000), Some(64000)));
+    assert_eq!((m[0].context, m[0].max_output), (None, None));
 
     let ollama = r#"{"models":[{"name":"qwen2.5:7b","model":"qwen2.5:7b"},{"name":"llama3:latest"}]}"#;
     let m = parse_models(ProviderKind::Custom, ollama).unwrap();
     assert_eq!(m.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(), ["llama3:latest", "qwen2.5:7b"]);
     let lms = r#"{"data":[{"id":"local-model","max_model_len":32768}]}"#;
     assert_eq!(parse_models(ProviderKind::Custom, lms).unwrap()[0].context, Some(32768));
+    // Only Anthropic's `max_tokens` is an output limit; servers that name it plainly count too.
+    let other = r#"{"data":[{"id":"a","max_tokens":5},{"id":"b","max_output_tokens":8192},{"id":"c","max_completion_tokens":0}]}"#;
+    let m = parse_models(ProviderKind::Custom, other).unwrap();
+    assert_eq!(m.iter().map(|x| x.max_output).collect::<Vec<_>>(), [None, Some(8192), None]);
 
     assert_eq!(parse_models(ProviderKind::OpenAi, r#"{"error":{"message":"bad key"}}"#).unwrap_err(), "bad key");
     assert!(parse_models(ProviderKind::OpenAi, "nope").is_err());

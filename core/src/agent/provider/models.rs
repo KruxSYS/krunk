@@ -4,7 +4,12 @@
 //!   (images → vision) and `supported_parameters` (`tools`).
 //! * OpenAI and custom servers: `data[].id`; a custom server may also answer in Ollama's
 //!   `{"models": [{"name": …}]}` shape.
-//! * Anthropic: `data[]` with `id` and `display_name`.
+//! * Anthropic: `data[]` with `id`, `display_name`, `max_input_tokens` and `max_tokens` (the
+//!   output limit).
+//!
+//! 0.15.0: the output limit ([`ModelInfo::max_output`]) is OpenRouter's
+//! `top_provider.max_completion_tokens`, Anthropic's `max_tokens`, or a plainly named
+//! `max_output_tokens` / `max_completion_tokens` of any server.
 //!
 //! The result is sorted by name, without duplicate ids.
 
@@ -45,10 +50,18 @@ fn model(kind: ProviderKind, m: &Value) -> Option<ModelInfo> {
     }
     .map(|n| n.chars().filter(|c| !c.is_control()).take(MAX_ID).collect::<String>())
     .unwrap_or_else(|| id.to_string());
-    let context = ["context_length", "context_window", "max_model_len"]
+    let num = |n: u64| u32::try_from(n).unwrap_or(u32::MAX);
+    let context = ["context_length", "context_window", "max_model_len", "max_input_tokens"]
         .iter()
         .find_map(|k| m.get(*k).and_then(Value::as_u64))
-        .map(|n| u32::try_from(n).unwrap_or(u32::MAX));
+        .map(num);
+    let mut outputs = vec!["/max_output_tokens", "/max_completion_tokens"];
+    match kind {
+        ProviderKind::OpenRouter => outputs.insert(0, "/top_provider/max_completion_tokens"),
+        ProviderKind::Anthropic => outputs.insert(0, "/max_tokens"),
+        _ => {}
+    }
+    let max_output = outputs.iter().find_map(|p| m.pointer(p).and_then(Value::as_u64)).filter(|&n| n > 0).map(num);
     let (vision, tools) = if kind == ProviderKind::OpenRouter {
         let vision = match m.pointer("/architecture/input_modalities").and_then(Value::as_array) {
             Some(a) => Some(a.iter().any(|x| x.as_str() == Some("image"))),
@@ -66,5 +79,5 @@ fn model(kind: ProviderKind, m: &Value) -> Option<ModelInfo> {
     } else {
         (None, None)
     };
-    Some(ModelInfo { id: id.to_string(), name, vision, tools, context })
+    Some(ModelInfo { id: id.to_string(), name, vision, tools, context, max_output })
 }
