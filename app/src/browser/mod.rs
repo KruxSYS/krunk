@@ -783,6 +783,15 @@ impl Browser {
                 if b.macro_key(id, key) {
                     return true;
                 }
+                // krunk://scripts has its own find (its code editor): Ctrl+F, F3 and Ctrl+G go
+                // to the page there.
+                if matches!(
+                    keys::command_for(key.vk, key.ctrl, key.shift, key.alt),
+                    Some(Command::Find | Command::FindNext | Command::FindPrev)
+                ) && b.tab(id).is_some_and(|t| Page::from_url(&t.url) == Some(Page::Scripts))
+                {
+                    return false;
+                }
                 b.on_key(key)
             })
         });
