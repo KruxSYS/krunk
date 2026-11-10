@@ -12,7 +12,7 @@
   let defaultUserAgent = '';
 
   // ---------- tabs and deep links ----------
-  const TABS = ['account', 'general', 'privacy', 'permissions', 'passwords', 'downloads', 'appearance', 'advanced'];
+  const TABS = ['account', 'general', 'privacy', 'permissions', 'passwords', 'downloads', 'appearance', 'ai', 'advanced'];
   function tabFromHash() {
     const h = (location.hash || '').replace(/^#/, '').toLowerCase();
     return TABS.includes(h) ? h : 'general';
@@ -297,7 +297,229 @@
     }, function (e) { Page.toast(e.message); });
   });
 
+  // ---------- AI and scripts (0.12.0) ----------
+  // Providers change through their own commands (the host keeps its list when the page saves).
+  // An API key goes to the host once and is never kept, shown or sent back: the key fields are
+  // cleared as soon as they are read, and the page only learns whether a provider has a key.
+  const AI_KINDS = { openrouter: 'OpenRouter', openai: 'OpenAI', anthropic: 'Anthropic', custom: 'Custom (OpenAI-compatible)' };
+  const AI_MODELS_SHOWN = 200;
+  let aiKeys = {}; // provider id -> true while a key is stored
+  const aiTests = {}; // provider id -> { ok, text } of its last Test
+  let aiKeyOpen = ''; // the provider whose key form is open
+  let aiModels = null; // { provider, models } from the last "Load models"
+  let aiSig = '';
+  function aiProviders() { return (settings && settings.ai && settings.ai.providers) || []; }
+  function aiError(e) { return Array.isArray(e && e.data) && e.data[0] ? e.data[0].message : (e && e.message) || 'Failed'; }
+  function renderAi() {
+    if (!settings || !settings.ai) return;
+    const on = !!settings.ai.enabled;
+    $('ai-body').disabled = !on;
+    $('ai-off-hint').hidden = on;
+    const sel = $('ai.activeProvider');
+    if (sel !== document.activeElement) {
+      sel.textContent = '';
+      sel.appendChild(el('option', { value: '', text: aiProviders().length ? '(choose one)' : '(add a provider first)' }));
+      aiProviders().forEach((p) => sel.appendChild(el('option', { value: p.id, text: p.name })));
+    }
+    if (aiModels && aiModels.provider !== settings.ai.activeProvider) aiModels = null;
+    aiCount();
+    renderAiProviders();
+    renderAiModels();
+  }
+  function aiCount() {
+    $('ai-extra-count').textContent = $('ai.systemPromptExtra').value.length + ' / 4000';
+  }
+  $('ai.systemPromptExtra').addEventListener('input', aiCount);
+
+  function renderAiProviders() {
+    const on = !!settings.ai.enabled;
+    const list = aiProviders();
+    // Rebuilt only when something it shows changed (an open key field keeps what is typed).
+    const sig = JSON.stringify([list, aiKeys, aiTests, aiKeyOpen, on]);
+    if (sig === aiSig) return;
+    aiSig = sig;
+    const box = $('ai-providers');
+    box.textContent = '';
+    if (!list.length) box.appendChild(el('p', { class: 'muted', text: 'No providers yet.' }));
+    list.forEach(function (p) {
+      const has = !!aiKeys[p.id];
+      const test = aiTests[p.id];
+      box.appendChild(el('div', { class: 'row ai-provider', 'data-id': p.id }, [
+        el('div', { class: 'main' }, [
+          el('span', { class: 'name', text: p.name }),
+          el('span', { class: 'sub', text: (AI_KINDS[p.kind] || p.kind) + (p.kind === 'custom' && p.baseUrl ? ' · ' + p.baseUrl : '') }),
+          test ? el('span', { class: 'sub ai-test-result ' + (test.ok ? 'ok' : 'bad'), role: 'status', text: test.text }) : null,
+        ]),
+        el('span', { class: 'key-status' + (has ? ' saved' : ''), text: has ? 'Key saved' : 'No key' }),
+        el('button', { type: 'button', class: 'btn small ai-test', text: 'Test', disabled: !on, title: on ? 'Ask the provider for its model list' : 'Turn on AI features first', onclick: function () { aiTest(p); } }),
+        el('button', { type: 'button', class: 'btn small ai-change-key', text: has ? 'Change key' : 'Add key', onclick: function () { aiKeyOpen = aiKeyOpen === p.id ? '' : p.id; renderAiProviders(); } }),
+        el('button', { type: 'button', class: 'btn small danger ai-remove', text: 'Remove', onclick: function () { aiRemove(p); } }),
+      ]));
+      if (aiKeyOpen === p.id) {
+        const form = aiKeyForm(p, has);
+        box.appendChild(form);
+        form.querySelector('input').focus();
+      }
+    });
+  }
+  function aiKeyForm(p, has) {
+    const input = el('input', { type: 'password', class: 'ai-key-input', autocomplete: 'off', spellcheck: 'false', placeholder: has ? 'New API key' : 'API key', 'aria-label': 'API key for ' + p.name });
+    const err = el('p', { class: 'field-error' });
+    const form = el('form', { class: 'inline-form ai-key-form', autocomplete: 'off', 'data-for': p.id }, [
+      input,
+      el('button', { type: 'submit', class: 'btn small primary', text: 'Save key' }),
+      el('button', { type: 'button', class: 'btn small', text: 'Cancel', onclick: function () { input.value = ''; aiKeyOpen = ''; renderAiProviders(); } }),
+      has ? el('button', { type: 'button', class: 'btn small danger ai-remove-key', text: 'Remove key', onclick: function () {
+        input.value = '';
+        LB.request('aiKeyRemove', { id: p.id }).then(function () {
+          delete aiKeys[p.id]; aiKeyOpen = ''; renderAiProviders(); Page.toast('Key removed');
+        }, function (e) { err.textContent = aiError(e); });
+      } }) : null,
+      err,
+    ]);
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      const key = input.value.trim();
+      input.value = '';
+      if (!key) { err.textContent = 'Enter the key'; return; }
+      aiSetKey(p.id, key).then(function (ok) {
+        if (ok === true) { aiKeyOpen = ''; renderAiProviders(); } else err.textContent = ok;
+      });
+    });
+    return form;
+  }
+  // Resolves true, or the error text.
+  function aiSetKey(id, key) {
+    return LB.request('aiKeySet', { id: id, key: key }).then(function (r) {
+      aiKeys[id] = !(r && r.hasKey === false);
+      renderAiProviders();
+      Page.toast('Key saved');
+      return true;
+    }, function (e) { return 'The key was not saved: ' + aiError(e); });
+  }
+  function aiTest(p) {
+    aiTests[p.id] = { ok: true, text: 'Testing…' };
+    renderAiProviders();
+    LB.request('aiTest', { id: p.id }).then(function (r) {
+      if (r && r.ok === false) aiTests[p.id] = { ok: false, text: r.message || 'Failed' };
+      else {
+        const n = r && typeof r.models === 'number' ? r.models : 0;
+        aiTests[p.id] = { ok: true, text: 'Connected: ' + n + (n === 1 ? ' model' : ' models') };
+      }
+    }, function (e) { aiTests[p.id] = { ok: false, text: aiError(e) }; }).then(renderAiProviders);
+  }
+  function aiRemove(p) {
+    Page.confirm('Remove ' + p.name + '? Its key is deleted from this computer too.', { ok: 'Remove', danger: true }).then(function (yes) {
+      if (!yes) return;
+      LB.request('aiProviderRemove', { id: p.id }).then(function (r) {
+        settings.ai.providers = (r && r.providers) || [];
+        delete aiKeys[p.id]; delete aiTests[p.id];
+        if (aiKeyOpen === p.id) aiKeyOpen = '';
+        if (settings.ai.activeProvider === p.id) {
+          const s = collect();
+          s.ai.activeProvider = '';
+          return save(s);
+        }
+        render();
+      }, function (e) { Page.toast(aiError(e)); });
+    });
+  }
+  $('ai-name').value = AI_KINDS.openrouter;
+  $('ai-kind').addEventListener('change', function () {
+    const kind = this.value;
+    const name = $('ai-name').value.trim();
+    // The name follows the kind until the user types their own.
+    if (!name || Object.values(AI_KINDS).includes(name)) $('ai-name').value = AI_KINDS[kind];
+    $('ai-base-url').hidden = kind !== 'custom';
+    $('ai-key').placeholder = kind === 'custom' ? 'API key (optional)' : 'API key';
+  });
+  $('ai-add-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    const err = $('ai-add-error');
+    err.textContent = '';
+    const kind = $('ai-kind').value;
+    const name = $('ai-name').value.trim();
+    const baseUrl = kind === 'custom' ? $('ai-base-url').value.trim() : '';
+    if (!name) { err.textContent = 'Enter a name'; return; }
+    if (kind === 'custom' && !baseUrl) { err.textContent = 'Enter the server\'s address, for example http://localhost:11434/v1'; return; }
+    if (kind !== 'custom' && !$('ai-key').value.trim()) { err.textContent = AI_KINDS[kind] + ' needs an API key'; return; }
+    // The key leaves the field at once; it goes to the host when the provider exists.
+    let key = $('ai-key').value.trim();
+    $('ai-key').value = '';
+    const hadKey = !!key;
+    LB.request('aiProviderSave', { provider: { id: '', kind: kind, name: name, baseUrl: baseUrl, vision: null } }).then(function (r) {
+      settings.ai.providers = (r && r.providers) || [];
+      const id = r && r.id;
+      const keyDone = key && id ? aiSetKey(id, key) : Promise.resolve(true);
+      key = '';
+      return keyDone.then(function (ok) {
+        if (ok !== true) err.textContent = ok + ' Use "Add key" to enter it again.';
+        $('ai-name').value = AI_KINDS[$('ai-kind').value];
+        $('ai-base-url').value = '';
+        // The first provider becomes the agent's.
+        if (id && !settings.ai.activeProvider) {
+          const s = collect();
+          s.ai.activeProvider = id;
+          return save(s);
+        }
+        render();
+      });
+    }, function (e) {
+      key = '';
+      err.textContent = aiError(e) + (hadKey ? ' The key was not kept: enter it again.' : '');
+    });
+  });
+
+  function renderAiModels() {
+    $('ai-model-picker').hidden = !aiModels;
+    $('ai-load-models').textContent = aiModels ? 'Reload models' : 'Load models';
+    const box = $('ai-models');
+    box.textContent = '';
+    if (!aiModels) return;
+    const q = $('ai-model-filter').value.trim().toLowerCase();
+    const all = aiModels.models;
+    const hits = all.filter((m) => !q || (m.id + ' ' + (m.name || '')).toLowerCase().includes(q));
+    const cur = settings.ai.activeModel;
+    hits.slice(0, AI_MODELS_SHOWN).forEach(function (m) {
+      const on = m.id === cur;
+      box.appendChild(el('button', { type: 'button', class: 'ai-model' + (on ? ' on' : ''), 'data-id': m.id, 'aria-pressed': on ? 'true' : 'false', onclick: function () {
+        const s = collect();
+        s.ai.activeModel = m.id;
+        save(s);
+      } }, [
+        el('span', { class: 'name', text: m.name || m.id }),
+        el('span', { class: 'id', text: m.id }),
+        m.tools ? el('span', { class: 'cap', text: 'tools' }) : null,
+        m.vision ? el('span', { class: 'cap', text: 'images' }) : null,
+      ]));
+    });
+    if (!hits.length) box.appendChild(el('p', { class: 'muted', text: all.length ? 'No model matches.' : 'The provider listed no models.' }));
+    else if (hits.length > AI_MODELS_SHOWN) box.appendChild(el('p', { class: 'muted', text: (hits.length - AI_MODELS_SHOWN) + ' more: narrow the search.' }));
+  }
+  $('ai-model-filter').addEventListener('input', renderAiModels);
+  $('ai-load-models').addEventListener('click', function () {
+    const btn = this;
+    const id = $('ai.activeProvider').value;
+    const status = $('ai-models-status');
+    if (!id) { status.textContent = 'Choose a provider first.'; return; }
+    const refresh = !!(aiModels && aiModels.provider === id);
+    status.textContent = 'Loading models…';
+    btn.disabled = true;
+    LB.request('aiModels', { id: id, refresh: refresh }).then(function (r) {
+      aiModels = { provider: id, models: (r && r.models) || [] };
+      status.textContent = aiModels.models.length + (aiModels.models.length === 1 ? ' model' : ' models') + '. Click one to use it.';
+    }, function (e) {
+      aiModels = null;
+      status.textContent = 'Could not load the models: ' + aiError(e);
+    }).then(function () { btn.disabled = false; renderAiModels(); });
+  });
+  function loadAiStatus() {
+    LB.request('aiStatus').then(function (r) { aiKeys = (r && r.keys) || {}; if (settings) renderAiProviders(); }).catch(function () {});
+  }
+  $('manage-scripts').addEventListener('click', function () { LB.post('openPage', { page: 'scripts' }); });
+
   function render() {
+    renderAi();
     renderProtection();
     document.querySelectorAll('[data-key]').forEach(function (input) {
       // A preset's values are shown but not the user's: they stay as saved.
@@ -357,6 +579,8 @@
     ['tabSleepMinutes', 'tabDiscardMinutes', 'vaultAutolockMinutes'].forEach((k) => {
       if (!Number.isFinite(s[k]) || s[k] < 0 || !Number.isInteger(s[k]) || s[k] > 99999999) s[k] = 99999999;
     });
+    // The same for the agent's step limit (0 is out of its range, so the host names the field).
+    if (s.ai && (!Number.isInteger(s.ai.maxSteps) || s.ai.maxSteps < 0 || s.ai.maxSteps > 99999999)) s.ai.maxSteps = 0;
     return s;
   }
 
@@ -791,5 +1015,6 @@
     loadDnsStatus();
     loadUpdates();
     loadImportProfiles();
+    loadAiStatus();
   });
 })();

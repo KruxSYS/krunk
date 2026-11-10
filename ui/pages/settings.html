@@ -29,6 +29,7 @@
     <a href="#passwords" data-tab="passwords">Passwords &amp; import</a>
     <a href="#downloads" data-tab="downloads">Downloads</a>
     <a href="#appearance" data-tab="appearance">Appearance</a>
+    <a href="#ai" data-tab="ai">AI and scripts</a>
     <a href="#advanced" data-tab="advanced">Advanced</a>
   </nav>
   <div class="panels">
@@ -564,6 +565,92 @@
       <h3>Sites</h3>
       <p class="desc">Your answers per site. Change one, or remove it so Krunk asks again.</p>
       <table class="exceptions" id="perm-exceptions"><thead><tr><th>Site</th><th>Permission</th><th>Answer</th><th></th></tr></thead><tbody id="perm-rows"><tr><td colspan="4" class="muted">No sites yet.</td></tr></tbody></table>
+    </div>
+  </section>
+
+  <!-- ================================================================ AI and scripts (0.12.0) -->
+  <!-- API keys never come back to this page: the host only says whether a provider has one. -->
+  <section class="panel" data-tab="ai" data-section="ai agent assistant provider model api key openrouter openai anthropic ollama userscripts macros tampermonkey hotkey">
+    <h2 class="panel-title">AI and scripts</h2>
+    <div class="card group" id="ai-card">
+      <h3>AI agent</h3>
+      <div class="row setting" data-keywords="ai artificial intelligence agent assistant llm chat enable turn on off">
+        <div class="text"><label for="ai.enabled">AI features</label>
+          <p class="desc">Off: no AI button, no agent, nothing is sent to any provider. On: you choose a provider and model; the agent sends page content you ask it to work on to that provider.</p>
+          <p class="desc" id="ai-off-hint">Turn this on to add a provider, test it and choose a model.</p></div>
+        <div class="control"><input type="checkbox" id="ai.enabled" data-key="ai.enabled"></div>
+      </div>
+      <fieldset id="ai-body" class="ai-body" disabled>
+        <div class="row setting column" id="ai-providers-row" data-keywords="ai provider providers openrouter openai anthropic ollama lm studio custom openai-compatible api key base url test connection">
+          <div class="text"><span class="label">Providers</span>
+            <p class="desc">Your own account with a model provider. A key is stored encrypted on this computer and is never shown again; Krunk only says whether one is saved.</p>
+            <p class="field-error" data-error-for="ai.providers"></p></div>
+          <div id="ai-providers" class="sublist"></div>
+          <form id="ai-add-form" class="inline-form ai-add" autocomplete="off">
+            <select id="ai-kind" aria-label="Provider">
+              <option value="openrouter">OpenRouter</option>
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic</option>
+              <option value="custom">Custom (OpenAI-compatible)</option>
+            </select>
+            <input type="text" id="ai-name" maxlength="60" spellcheck="false" aria-label="Name" placeholder="Name">
+            <input type="text" id="ai-base-url" spellcheck="false" aria-label="Base URL" placeholder="http://localhost:11434/v1" hidden>
+            <input type="password" id="ai-key" autocomplete="off" spellcheck="false" aria-label="API key" placeholder="API key">
+            <button class="btn primary" type="submit" id="ai-add-save">Add provider</button>
+            <p class="field-error ai-add-error" id="ai-add-error"></p>
+          </form>
+        </div>
+        <div class="row setting" data-keywords="ai active provider agent uses openrouter openai anthropic custom">
+          <div class="text"><label for="ai.activeProvider">Provider for the agent</label></div>
+          <div class="control"><select id="ai.activeProvider" data-key="ai.activeProvider"><option value="">(none)</option></select></div>
+        </div>
+        <div class="row setting column" id="ai-model-row" data-keywords="ai model models load list choose gpt claude llama vision images tools model id">
+          <div class="ai-model-head">
+            <div class="text"><label for="ai.activeModel">Model</label>
+              <p class="desc">Load the provider's list and pick one, or type a model id.</p>
+              <p class="field-error" data-error-for="ai.activeModel"></p></div>
+            <div class="control"><input type="text" id="ai.activeModel" data-key="ai.activeModel" maxlength="200" spellcheck="false" placeholder="Model id" aria-label="Model id">
+              <button type="button" class="btn" id="ai-load-models">Load models</button></div>
+          </div>
+          <div id="ai-model-picker" class="ai-model-picker" hidden>
+            <input type="search" id="ai-model-filter" class="ai-model-filter" placeholder="Search models" aria-label="Search models" spellcheck="false">
+            <div id="ai-models" class="ai-models"></div>
+          </div>
+          <p class="desc" id="ai-models-status" role="status"></p>
+        </div>
+        <div class="row setting" data-keywords="ai extra instructions agent system prompt custom">
+          <div class="text"><label for="ai.systemPromptExtra">Extra instructions for the agent</label>
+            <p class="desc">Optional. Added to every task, for example "Answer in German". <span id="ai-extra-count" class="ai-count">0 / 4000</span></p>
+            <p class="field-error" data-error-for="ai.systemPromptExtra"></p></div>
+          <div class="control wide"><textarea id="ai.systemPromptExtra" data-key="ai.systemPromptExtra" rows="3" maxlength="4000" spellcheck="true"></textarea></div>
+        </div>
+        <div class="row setting" data-keywords="ai max steps per task limit tool calls continue">
+          <div class="text"><label for="ai.maxSteps">Max steps per task</label>
+            <p class="desc">After this many actions the agent asks whether to go on (1 to 200).</p>
+            <p class="field-error" data-error-for="ai.maxSteps"></p></div>
+          <div class="control"><input type="number" id="ai.maxSteps" data-key="ai.maxSteps" data-type="number" min="1" max="200"></div>
+        </div>
+      </fieldset>
+    </div>
+
+    <div class="card group" id="scripts-card">
+      <h3>Userscripts and macros</h3>
+      <div class="row setting" data-keywords="userscripts user scripts tampermonkey greasemonkey violentmonkey run">
+        <div class="text"><label for="userscripts.enabled">Run userscripts</label><p class="desc">Scripts you add (Tampermonkey style) run on the sites they name.</p></div>
+        <div class="control"><input type="checkbox" id="userscripts.enabled" data-key="userscripts.enabled"></div>
+      </div>
+      <div class="row setting" data-keywords="userscripts private tabs incognito tampermonkey">
+        <div class="text"><label for="userscripts.privateTabs">Also in private tabs</label><p class="desc">Off: private tabs run no userscripts.</p></div>
+        <div class="control"><input type="checkbox" id="userscripts.privateTabs" data-key="userscripts.privateTabs"></div>
+      </div>
+      <div class="row setting" data-keywords="macros hotkey hotkeys keyboard shortcut automation">
+        <div class="text"><label for="macros.enabled">Macros and their hotkeys</label><p class="desc">Small scripts that press keys and click for you. Ctrl+Shift+. stops a running macro.</p></div>
+        <div class="control"><input type="checkbox" id="macros.enabled" data-key="macros.enabled"></div>
+      </div>
+      <div class="row setting" data-keywords="manage scripts userscripts macros editor krunk://scripts tampermonkey hotkey">
+        <div class="text"><span class="label">Your scripts</span><p class="desc">Add, edit, import and turn scripts and macros on or off.</p></div>
+        <div class="control"><button type="button" class="btn" id="manage-scripts">Manage scripts</button></div>
+      </div>
     </div>
   </section>
 
