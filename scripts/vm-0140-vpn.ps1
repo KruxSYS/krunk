@@ -9,8 +9,9 @@
 #   -Step go -Url          navigate the current tab
 #   -Step private -Url     a private window on -Url
 #   -Step sys              outside Krunk: the inside site from PowerShell, adapters and routes vs the baseline
+#   -Step dnsclear | dnscache -Text NAME   Windows' DNS client cache (a leak check)
 #   -Step quit             close Krunk, stop the relay, collect krunk.log
-param([string]$Step = 'start', [int]$X = 0, [int]$Y = 0, [string]$Name = 'shot', [string]$Text = '', [string]$Url = '', [int]$Wait = 2500)
+param([string]$Step = 'start', [int]$X = 0, [int]$Y = 0, [int]$AX = 0, [int]$AY = 0, [string]$Name = 'shot', [string]$Text = '', [string]$Url = '', [int]$Wait = 2500)
 . C:\pipeline\krunk\lib.ps1
 . C:\pipeline\krunk\vm-windows.ps1
 $P = 'vpn0140'
@@ -42,6 +43,18 @@ switch ($Step) {
     SafeGo 'krunk://settings#vpn' 3000
     Shot "$P-$Name"
   }
+  # Opens the VPN popup from the toolbar (-X -Y) and clicks in it (-AX -AY) without refocusing the
+  # window in between (focusing the window closes popups).
+  'popup' { Focus (MainWindow) | Out-Null; Click $X $Y 1500; Click $AX $AY $Wait; Shot "$P-$Name" }
+  'resume' {
+    Start-Process -FilePath "$App\Krunk.exe" -WorkingDirectory $App
+    for ($i = 0; $i -lt 60 -and (MainWindow) -eq [IntPtr]::Zero; $i++) { Start-Sleep -Milliseconds 500 }
+    Start-Sleep 4
+    $A = MainWindow
+    [U]::MoveWindow($A, 0, 0, 1280, 760, $true) | Out-Null; Start-Sleep 1
+    Focus $A | Out-Null
+    Shot "$P-$Name"
+  }
   'click' { Focus (MainWindow) | Out-Null; Click $X $Y $Wait; Shot "$P-$Name" }
   'keys' { SafeKeys $Text $Wait; Shot "$P-$Name" }
   # A native dialog is in front (SafeKeys types only into a Krunk window): click its field first.
@@ -58,6 +71,13 @@ switch ($Step) {
     Log "[$P] network now: $now (same as before Krunk's VPN: $($now -eq $before))"
     Log "[$P] Krunk's processes: $((Get-Process Krunk -ErrorAction SilentlyContinue | Measure-Object).Count); vpn lines: $(KLog 'vpn')"
   }
+  # Whether Windows' resolver was asked for a name (-Text): with the VPN on, Krunk resolves inside
+  # the tunnel, so the name must not be in the DNS client cache.
+  'dnscache' {
+    $hits = @(Get-DnsClientCache -ErrorAction SilentlyContinue | Where-Object { $_.Entry -like "*$Text*" })
+    Log "[$P] Windows DNS cache entries for '$Text': $($hits.Count)"
+  }
+  'dnsclear' { Clear-DnsClientCache; Log "[$P] Windows DNS cache cleared" }
   'quit' {
     if (Focus (MainWindow)) { SafeKeys '%{F4}' 2500 }
     Get-Process Krunk -ErrorAction SilentlyContinue | Stop-Process -Force

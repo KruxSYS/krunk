@@ -157,6 +157,11 @@ impl Browser {
             (s.vpn.auto_connect, s.vpn.active_profile.clone())
         };
         if !auto {
+            // The engine keeps the proxy preference on disk: after a run that ended with the VPN
+            // on, it would still point at that run's (now closed) proxy port and every page would
+            // fail. Without auto-connect the start is direct, so put it back first (found on the
+            // VM, 0.14.0).
+            engine::set_vpn_proxy(None);
             return true;
         }
         info!("vpn: connecting at start");
