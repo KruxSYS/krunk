@@ -90,6 +90,8 @@ impl Preset {
         a.gradient_to = self.gradient[2].to_string();
         a.gradient_angle = self.gradient_angle;
         a.tab_shape = self.tab_shape;
+        // Older versions read only `roundedTabs`.
+        a.rounded_tabs = self.tab_shape != TabShape::Square;
         a.active_highlight = self.active_highlight;
         a.accent_glow = self.accent_glow;
     }
@@ -108,5 +110,33 @@ mod tests {
             assert_eq!(s.validate(), Ok(()), "preset {}", p.id);
         }
         assert!(preset("nope").is_none());
+    }
+
+    #[test]
+    fn applying_a_preset_copies_every_style_value_and_keeps_the_rest() {
+        let mut a = Appearance {
+            accent: "#16a34a".into(),
+            gradient_via: "#123456".into(),
+            tab_radius: 3,
+            ui_font_px: 15,
+            ..Default::default()
+        };
+        preset("sunset").unwrap().apply(&mut a);
+        assert_eq!(a.preset, "sunset");
+        assert_eq!((a.tab_style, a.toolbar_style), (BarStyle::Ombre, BarStyle::Gradient));
+        assert_eq!([a.gradient_from.as_str(), &a.gradient_via, &a.gradient_to], ["#f97316", "#ec4899", "#8b5cf6"]);
+        assert!(a.accent_glow && a.rounded_tabs);
+        // Colours, the font and the user's radius are not part of a style.
+        assert_eq!((a.accent.as_str(), a.ui_font_px, a.tab_radius), ("#16a34a", 15, 3));
+        // An empty preset colour clears the user's (it derives from the accent again).
+        preset("ocean").unwrap().apply(&mut a);
+        assert!(a.gradient_via.is_empty() && a.gradient_angle == 135 && a.tab_shape == TabShape::Pill);
+        preset("mono").unwrap().apply(&mut a);
+        assert!(!a.rounded_tabs && a.active_highlight == ActiveHighlight::Underline && !a.accent_glow);
+        // Ids are unique, labels set, and ombre only on the tab strip.
+        for (i, p) in PRESETS.iter().enumerate() {
+            assert!(!p.label.is_empty() && PRESETS[i + 1..].iter().all(|q| q.id != p.id));
+            assert_ne!(p.toolbar_style, BarStyle::Ombre, "{}", p.id);
+        }
     }
 }
