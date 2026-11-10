@@ -500,18 +500,56 @@ impl Browser {
                     Ok(a) => a,
                     Err(e) => return done(ToolOutcome::error(e)),
                 };
-                self.macro_run(&a.id, true, Some(MACRO_EARLY_MS), move |r| {
-                    done(match r {
+                // The agent's own window (not whichever is current when it runs).
+                let weak = self.me.clone();
+                self.macro_run(&a.id, Some(win), true, Some(MACRO_EARLY_MS), move |r| {
+                    let (text, ok) = match r {
                         Ok(text) if text == "running" => {
-                            ok_json(json!({ "status": "running; the toolbar shows Stop" }), "The macro is running")
+                            return done(ok_json(
+                                json!({ "status": "running; the toolbar shows Stop" }),
+                                "The macro is running",
+                            ));
                         }
-                        Ok(text) => ok_json(json!({ "status": format!("finished: {text}") }), "The macro finished"),
-                        Err(e) => ToolOutcome::error(format!("the macro failed: {e}")),
-                    })
+                        Ok(text) => (format!("finished: {text}"), true),
+                        Err(e) => (format!("the macro failed: {e}"), false),
+                    };
+                    // What the macro returns may hold a password or card value it read from the
+                    // page: the page's current secrets are cut out first (as for eval_js).
+                    let Some(b) = weak.upgrade() else { return done(ToolOutcome::error("Krunk is closing")) };
+                    b.scrub_with_page_secrets(win, text, move |text| {
+                        done(if ok {
+                            ok_json(json!({ "status": text }), "The macro finished")
+                        } else {
+                            ToolOutcome::error(text)
+                        })
+                    });
                 });
             }
             _ => done(ToolOutcome::error(format!("{name} is not available"))),
         }
+    }
+
+    /// `text` with the current password and card values of window `win`'s target tab cut out
+    /// (an unreadable page: the text is withheld).
+    fn scrub_with_page_secrets(&self, win: WindowId, text: String, done: impl FnOnce(String) + 'static) {
+        let Some(target) = self.agent_target(win) else { return done(redact::scrub(&text, &[])) };
+        if lb_core::agent::pages::may_act(&target.url).is_err() {
+            return done(redact::scrub(&text, &[]));
+        }
+        self.agent_probe(target.tab, "secrets", json!([]), move |r| match r {
+            Ok(Value::Array(list)) => {
+                let secrets: Vec<zeroize::Zeroizing<String>> = list
+                    .into_iter()
+                    .filter_map(|v| match v {
+                        Value::String(s) => Some(zeroize::Zeroizing::new(s)),
+                        _ => None,
+                    })
+                    .collect();
+                done(redact::scrub(&text, &secrets))
+            }
+            Ok(_) => done(redact::scrub(&text, &[])),
+            Err(_) => done("(the result was withheld: the page did not answer the redaction check)".into()),
+        });
     }
 
     /// Checks the macro's syntax (V8's own, in the target tab when the agent may act there),

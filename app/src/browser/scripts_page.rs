@@ -311,7 +311,8 @@ impl Browser {
         let replied = Rc::new(Cell::new(false));
         let weak = self.me.clone();
         let flag = replied.clone();
-        self.macro_run(id, false, None, move |r| {
+        let win = tab.and_then(|t| self.window_of(t));
+        self.macro_run(id, win, false, None, move |r| {
             if flag.replace(true) {
                 return;
             }

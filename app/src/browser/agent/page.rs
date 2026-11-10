@@ -979,8 +979,25 @@ impl Browser {
             } else {
                 res.get("description").and_then(Value::as_str).unwrap_or("(no value)").to_string()
             };
-            let text = c.text(&text, 0, RESULT_CAP);
-            c.finish(ToolOutcome::ok(text, "Ran the script"));
+            // The code may have filled a password or card field and read it back: the page's
+            // secrets are read again now and cut out too (a failure to read them withholds the
+            // result rather than risk it).
+            let weak = b.me.clone();
+            let raw = Zeroizing::new(text);
+            b.agent_probe(c.tab, "secrets", json!([]), move |r| {
+                let Some(_b) = weak.upgrade() else { return c.fail("Krunk is closing") };
+                let mut c = c;
+                match r {
+                    Ok(Value::Array(list)) => c.secrets.extend(list.into_iter().filter_map(|v| match v {
+                        Value::String(s) => Some(Zeroizing::new(s)),
+                        _ => None,
+                    })),
+                    Ok(_) => {}
+                    Err(_) => return c.fail("The result was withheld: the page did not answer the redaction check."),
+                }
+                let text = c.text(&raw, 0, RESULT_CAP);
+                c.finish(ToolOutcome::ok(text, "Ran the script"));
+            });
         });
     }
 }

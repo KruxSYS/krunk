@@ -543,8 +543,45 @@ pub fn parse_keys(s: &str) -> Result<(Mods, KeySpec), String> {
     Ok((mods, spec))
 }
 
+/// The tab a macro acts on in its window (0.12.0): the window's active tab when it shows a web
+/// page (http, https or file), else the window's most recently active web tab (a macro run from
+/// krunk://scripts acts on the page the user came from). `None`: no web tab in that window.
+pub fn target_tab(model: &crate::tabs::TabModel) -> Option<crate::tabs::TabId> {
+    let web = |t: &crate::tabs::Tab| {
+        crate::pages::Page::from_url(&t.url).is_none()
+            && url::Url::parse(&t.url).is_ok_and(|u| {
+                matches!(u.scheme(), "http" | "https" | "file")
+                    && !u.host_str().is_some_and(|h| h == "invalid" || h.ends_with(".invalid"))
+            })
+    };
+    let active = model.active_id();
+    if let Some(t) = model.tabs().iter().find(|t| Some(t.id) == active && web(t)) {
+        return Some(t.id);
+    }
+    model.tabs().iter().filter(|t| web(t)).max_by_key(|t| t.last_active).map(|t| t.id)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn macro_target_tab() {
+        use crate::tabs::{Position, TabModel};
+        let mut m = TabModel::new();
+        assert_eq!(target_tab(&m), None);
+        let (web, _) = m.open("https://a.example/", false, Position::End, true, true, 10);
+        assert_eq!(target_tab(&m), Some(web), "the active web tab");
+        let (old, _) = m.open("https://b.example/", false, Position::End, true, true, 20);
+        let (scripts, _) = m.open("https://krunk.invalid/scripts.html", false, Position::End, true, true, 30);
+        assert_eq!(m.active_id(), Some(scripts));
+        assert_eq!(target_tab(&m), Some(old), "from krunk://scripts: the last web tab used");
+        m.activate(web, 40);
+        m.activate(scripts, 50);
+        assert_eq!(target_tab(&m), Some(web));
+        let mut only = TabModel::new();
+        only.open("https://krunk.invalid/settings.html", false, Position::End, true, true, 1);
+        assert_eq!(target_tab(&only), None, "no web tab: nothing to act on");
+    }
+
     use super::*;
 
     fn chord(s: &str) -> Chord {

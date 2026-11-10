@@ -345,8 +345,8 @@ impl Browser {
         let ws = self.ws.borrow();
         win.and_then(|w| ws.model(w))
             .or_else(|| ws.current().and_then(|w| ws.model(w)))
-            .and_then(|m| m.active_id())
-            .ok_or_else(|| "There is no tab to act on".to_string())
+            .and_then(macros::target_tab)
+            .ok_or_else(|| "There is no web page to act on in this window".to_string())
     }
 
     /// The target tab, refused while it shows a page macros don't act on (Krunk's own pages,
@@ -795,7 +795,8 @@ impl Browser {
             if b.running_macro_id().as_deref() == Some(id.as_str()) {
                 b.stop_macros("hotkey");
             } else {
-                b.macro_run(&id, false, None, |_| {});
+                let win = b.window_of(tab);
+                b.macro_run(&id, win, false, None, |_| {});
             }
         });
         true
@@ -880,9 +881,11 @@ impl Browser {
     /// Runs macro `id`; `done` gets its end (Ok with its result text, Err with its error) or,
     /// when `early_ms` passes first, Ok("running"). One macro runs at a time: starting
     /// another stops the running one.
+    /// `win`: the window it acts in (its active web tab); `None` = the current window.
     pub(super) fn macro_run(
         &self,
         id: &str,
+        win: Option<WindowId>,
         by_agent: bool,
         early_ms: Option<u64>,
         done: impl FnOnce(Result<String, String>) + 'static,
@@ -916,7 +919,7 @@ impl Browser {
             run_id,
             by_agent,
             started: Instant::now(),
-            win: self.cur_id(),
+            win: win.or_else(|| self.cur_id()),
             source: Some(row.source),
             done: Some(Box::new(done)),
             log: Vec::new(),
