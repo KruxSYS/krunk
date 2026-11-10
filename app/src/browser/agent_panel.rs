@@ -6,9 +6,6 @@
 //! the first time it opens and then hidden and shown. While AI is off there is no panel and no
 //! button. What the panel says is the agent's business (`agent/`); this file only hosts it.
 
-// 0.12.0 spine: parts of this are used once the work packages are wired in (M4).
-#![allow(dead_code)]
-
 use super::{Browser, Frame, UI_BACKGROUND, UI_BACKGROUND_DARK};
 use crate::ffi::cef::{Role, Scripts, View, ViewOptions};
 use crate::log::{info, warning};
@@ -44,11 +41,6 @@ impl Browser {
     /// Is the agent panel of window `win` open?
     pub(super) fn agent_panel_open(&self, win: WindowId) -> bool {
         self.panel.panels.borrow().get(&win).is_some_and(|p| p.open)
-    }
-
-    /// The panel view of window `win`, if it exists.
-    pub(super) fn agent_panel_view(&self, win: WindowId) -> Option<View> {
-        self.panel.panels.borrow().get(&win).map(|p| p.view.clone())
     }
 
     /// Posts an event to window `win`'s panel (dropped while it has not loaded).

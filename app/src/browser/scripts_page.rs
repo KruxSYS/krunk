@@ -80,9 +80,9 @@ impl Browser {
                 };
                 reply(Ok(r));
             }
-            Request::HotkeyRecord { on } => match tab {
+            Request::HotkeyRecord { on, id } => match tab {
                 Some(t) => {
-                    self.macro_record(t, on);
+                    self.macro_record_for(t, on, id.filter(|i| lb_core::scripts_store::valid_id(i)));
                     reply(Ok(Value::Null));
                 }
                 None => reply(Err("No such tab.".into())),

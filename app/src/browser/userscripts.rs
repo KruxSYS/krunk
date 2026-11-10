@@ -10,9 +10,6 @@
 //!   tab's runs don't update "last run".
 //! - The log names tabs, script ids and counts only, never sources, values or addresses.
 
-// 0.12.0 spine: parts of this are used once the work packages are wired in (M4).
-#![allow(dead_code)]
-
 use super::cdp::CdpUser;
 use super::Browser;
 use crate::ffi::cef::View;

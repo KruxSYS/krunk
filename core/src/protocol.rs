@@ -1683,6 +1683,9 @@ pub enum Request {
     /// of running Krunk's shortcuts.
     HotkeyRecord {
         on: bool,
+        /// The macro being edited: its own hotkey is no conflict.
+        #[serde(default)]
+        id: Option<String>,
     },
 }
 

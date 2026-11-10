@@ -434,7 +434,7 @@
     if (!ed || recording) return;
     recording = true;
     setHotkeyStatus('Hold Ctrl, Alt or Shift and press a key. Esc stops.');
-    LB.request('hotkeyRecord', { on: true }).catch(function (e) { stopRecording(); setHotkeyStatus(e.message, true); });
+    LB.request('hotkeyRecord', { on: true, id: ed.id || null }).catch(function (e) { stopRecording(); setHotkeyStatus(e.message, true); });
     renderHotkey();
   }
   function stopRecording() {

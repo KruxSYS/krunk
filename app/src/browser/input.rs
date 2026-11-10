@@ -6,9 +6,6 @@
 //! emulation (`Emulation.setFocusEmulationEnabled`) while Krunk drives it, so the focused
 //! element keeps receiving keys; it ends with [`Browser::input_release_all`].
 
-// 0.12.0 spine: parts of this are used once the work packages are wired in (M4).
-#![allow(dead_code)]
-
 use super::Browser;
 use crate::ffi::cef::{post_ui_delayed, View};
 use lb_core::macros::{self, KeySpec, Mods};
@@ -193,12 +190,7 @@ impl Browser {
         }
     }
 
-    /// Sends a key to tab `tab`'s page.
-    pub(super) fn input_key(&self, tab: TabId, key: &KeySpec, mods: Mods, action: KeyAction) {
-        self.input_key_then(tab, key, mods, action, Box::new(|_| {}));
-    }
-
-    /// [`Browser::input_key`]; `done` runs once the engine took the event (for a held key: its
+    /// A key event; `done` runs once the engine took the event (for a held key: its
     /// first key-down). Modifier keys held down add their modifier to every later event of the
     /// tab, like on a keyboard.
     pub(super) fn input_key_then(&self, tab: TabId, key: &KeySpec, mods: Mods, action: KeyAction, done: InputDone) {
@@ -295,12 +287,7 @@ impl Browser {
         }
     }
 
-    /// Clicks at a viewport point (CSS px) of tab `tab`.
-    pub(super) fn input_click(&self, tab: TabId, x: f64, y: f64, button: MouseButton, count: u8) {
-        self.input_click_then(tab, x, y, button, count, Box::new(|_| {}));
-    }
-
-    /// [`Browser::input_click`]: a move there, then `count` presses and releases (1 = click,
+    /// A click: a move there, then `count` presses and releases (1 = click,
     /// 2 = double click); `done` once the engine took the last release.
     pub(super) fn input_click_then(&self, tab: TabId, x: f64, y: f64, button: MouseButton, count: u8, done: InputDone) {
         let view = match self.input_view(tab) {
@@ -324,10 +311,6 @@ impl Browser {
                 None => view.devtools_method("Input.dispatchMouseEvent", &params),
             }
         }
-    }
-
-    pub(super) fn input_mouse_move(&self, tab: TabId, x: f64, y: f64) {
-        self.input_mouse_move_then(tab, x, y, Box::new(|_| {}));
     }
 
     /// Moves the mouse (dragging any held button).
@@ -375,12 +358,7 @@ impl Browser {
         view.devtools_call("Input.dispatchMouseEvent", &params, move |r| done(r.map(|_| ())));
     }
 
-    /// Types text into the focused element of tab `tab` (key events; non-ASCII as text input).
-    pub(super) fn input_type(&self, tab: TabId, text: &str, done: impl FnOnce() + 'static) {
-        self.input_type_then(tab, text, Box::new(move |_| done()));
-    }
-
-    /// [`Browser::input_type`]: one key press per character on a US layout ("\n" is Enter),
+    /// Typing: one key press per character on a US layout ("\n" is Enter),
     /// other characters as `Input.insertText`; stops at a release (Stop) with an error.
     pub(super) fn input_type_then(&self, tab: TabId, text: &str, done: InputDone) {
         if let Err(e) = self.input_view(tab) {
@@ -436,11 +414,6 @@ impl Browser {
                 view.devtools_method("Emulation.setFocusEmulationEnabled", &json!({ "enabled": false }));
             }
         }
-    }
-
-    /// Does any tab have a key or button held?
-    pub(super) fn input_holding(&self) -> bool {
-        self.input.tabs.borrow().values().any(|t| !t.keys.is_empty() || t.buttons != 0)
     }
 
     pub(super) fn input_tab_gone(&self, tab: TabId) {

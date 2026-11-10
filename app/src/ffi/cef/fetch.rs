@@ -4,9 +4,6 @@
 //! or credentials are sent or stored (no `UR_FLAG_ALLOW_STORED_CREDENTIALS`), and there is no
 //! referrer. A body over `max_bytes` and a request over its time limit are cancelled.
 
-// 0.12.0 spine: the streamed requests are used once the agent's provider calls are wired in (M4).
-#![allow(dead_code)]
-
 use super::{post_ui_delayed, request_context_get_global_context, PRIVATE_CONTEXT};
 use cef::*;
 use std::cell::{Cell, RefCell};

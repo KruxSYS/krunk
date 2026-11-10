@@ -314,14 +314,10 @@ pub struct Browser {
     /// 0.12.0: the agent panels, the agents, the shared DevTools domains, userscripts,
     /// macros and the engine input they send.
     panel: agent_panel::PanelHost,
-    #[allow(dead_code)] // 0.12.0 spine: used by the work packages (M4)
     agent: agent::AgentHost,
     cdp: cdp::CdpHost,
-    #[allow(dead_code)]
     userscripts: userscripts::UserscriptHost,
-    #[allow(dead_code)]
     macros: macros::MacroHost,
-    #[allow(dead_code)]
     input: input::InputHost,
     /// Some tab was given a user agent other than the one the engine started with.
     ua_overridden: Cell<bool>,

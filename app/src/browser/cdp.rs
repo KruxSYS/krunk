@@ -6,9 +6,6 @@
 //! it had no scripts for a tab; now each user holds a bit, and the domains go off only when
 //! the last user releases them.
 
-// 0.12.0 spine: parts of this are used once the work packages are wired in (M4).
-#![allow(dead_code)]
-
 use super::Browser;
 use crate::ffi::cef::View;
 use lb_core::tabs::TabId;

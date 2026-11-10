@@ -8,9 +8,6 @@
 //! macro's target: the active tab of the window it started in, looked up at each call. Stop
 //! terminates the runner's script, reloads the runner and releases every held key and button.
 
-// 0.12.0 spine: parts of this are used once the work packages are wired in (M4).
-#![allow(dead_code)]
-
 use super::input::{InputDone, KeyAction, MouseButton};
 use super::Browser;
 use crate::ffi::cef::{post_ui_delayed, KeyPress, Role, Scripts, View, ViewOptions};
@@ -716,12 +713,8 @@ impl Browser {
         self.input_release_all();
     }
 
-    /// krunk://scripts (tab `tab`) records a hotkey (`on`) or stops recording.
-    pub(super) fn macro_record(&self, tab: TabId, on: bool) {
-        self.macro_record_for(tab, on, None);
-    }
-
-    /// [`Browser::macro_record`] while macro `editing` is edited: its own hotkey is no conflict.
+    /// krunk://scripts (tab `tab`) records a hotkey (`on`) or stops recording, while macro
+    /// `editing` (if any) is edited: its own hotkey is no conflict.
     pub(super) fn macro_record_for(&self, tab: TabId, on: bool, editing: Option<String>) {
         let mut rec = self.macros.recording.borrow_mut();
         if on {
