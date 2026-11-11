@@ -221,7 +221,16 @@ impl AndroidSettings {
         s.new_tab_url = self.new_tab_url.trim().to_string();
         s.search_suggestions = self.search_suggestions;
         s.https_only = self.https_only;
-        s.strip_tracking_params = self.strip_tracking_params;
+        // The core derives `strip_tracking_params` from the protection level on every load, so
+        // a plain write would be undone at the next start. The toggle changes the level's own
+        // choice instead: what is in force becomes a Custom configuration with this one value.
+        if s.protection.effective().strip_params != self.strip_tracking_params {
+            let mut protection = s.protection.effective();
+            protection.level = lb_core::protection::Level::Custom;
+            protection.strip_params = self.strip_tracking_params;
+            s.protection = protection;
+        }
+        s.sync_protection();
         s.theme = match self.theme {
             ThemeMode::System => cs::Theme::System,
             ThemeMode::Light => cs::Theme::Light,
@@ -409,6 +418,35 @@ mod tests {
         assert!(back.force_zoom);
         assert_eq!(clean_text_scale(9.0), 2.0);
         assert_eq!(clean_text_scale(f64::INFINITY), 1.0);
+    }
+
+    #[test]
+    fn strip_tracking_toggle_survives_reload() {
+        let store = KrunkStore::in_memory().unwrap();
+        let mut s = store.load_settings().unwrap();
+        assert!(s.strip_tracking_params);
+        s.strip_tracking_params = false;
+        store.save_settings(s).unwrap();
+        // A reload is what the next start does.
+        let back = store.load_settings().unwrap();
+        assert!(!back.strip_tracking_params);
+        let raw: Settings = serde_json::from_str(&store.kv_get("settings".into()).unwrap().unwrap()).unwrap();
+        assert_eq!(raw.protection.level, lb_core::protection::Level::Custom);
+        assert!(!raw.protection.strip_params);
+        // Saving something else keeps it off, and it can be turned on again.
+        let mut other = back.clone();
+        other.theme = ThemeMode::Dark;
+        store.save_settings(other).unwrap();
+        assert!(!store.load_settings().unwrap().strip_tracking_params);
+        let mut on = store.load_settings().unwrap();
+        on.strip_tracking_params = true;
+        store.save_settings(on).unwrap();
+        assert!(store.load_settings().unwrap().strip_tracking_params);
+        // Unchanged settings do not touch the protection level.
+        let fresh = KrunkStore::in_memory().unwrap();
+        fresh.save_settings(fresh.load_settings().unwrap()).unwrap();
+        let raw: Settings = serde_json::from_str(&fresh.kv_get("settings".into()).unwrap().unwrap()).unwrap();
+        assert_eq!(raw.protection.level, Settings::default().protection.level);
     }
 
     #[test]
