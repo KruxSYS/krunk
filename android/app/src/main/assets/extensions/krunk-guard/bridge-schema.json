@@ -1,0 +1,17 @@
+[
+  {
+    "namespace": "krunkBridge",
+    "functions": [
+      {
+        "name": "send",
+        "type": "function",
+        "description": "Sends one message to the bundled blocker through the messaging client of the blocker's own page that Krunk keeps open. Resolves to the reply as JSON.",
+        "async": true,
+        "parameters": [
+          { "name": "channel", "type": "string" },
+          { "name": "message", "type": "string" }
+        ]
+      }
+    ]
+  }
+]

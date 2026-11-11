@@ -36,7 +36,10 @@ import org.krunk.browser.engine.PagePrompt
 import org.krunk.browser.engine.PageState
 import org.krunk.browser.engine.PromptQueue
 import org.krunk.browser.engine.SessionListener
+import org.krunk.browser.engine.blocker.AllowList
+import org.krunk.browser.engine.blocker.blockedTab
 import org.krunk.browser.engine.displayedUrl
+import org.krunk.browser.engine.hasPageUnderBlocked
 import org.krunk.browser.engine.modelUrlAfter
 import org.krunk.ffi.ClosedTab
 import org.krunk.ffi.KvEntry
@@ -182,6 +185,7 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
     fun start(restoredBySystem: Boolean = false) {
         if (started) return
         started = true
+        engine.blocker.onPageBlocked = ::onPageBlocked
         val settings = core.settings.current
         fun read(key: String): String? = runCatching { core.store.kvGet(key) }
             .onFailure { Log.w(KrunkApp.TAG, "could not read $key", it) }
@@ -870,6 +874,34 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
 
     override fun onCloseRequested(session: KrunkSession) {
         close(session.id)
+    }
+
+    // ----- pages the blocker stopped -----
+
+    /**
+     * The blocker stopped a top-level load to [url] (the address itself is on a filter list).
+     * The tab that was loading it shows Krunk's "blocked" panel; nothing was requested.
+     */
+    private fun onPageBlocked(url: String) {
+        val id = blockedTab(url, sessions.mapValues { it.value.current }, _activeId.value) ?: return
+        sessions[id]?.blocked(url)
+    }
+
+    /** "Go back" on the blocked panel: the page under it, or (a tab that never had one) close it. */
+    fun leaveBlocked(id: UInt? = activeId.value) {
+        val s = sessions[id ?: return] ?: return
+        if (s.current.hasPageUnderBlocked()) s.dismissBlocked() else close(id)
+    }
+
+    /**
+     * "Open once" on the blocked panel: the blocker lets the address's host pass for two minutes
+     * (its own bypass, kept in memory only), then the address is loaded again.
+     */
+    fun openBlockedOnce(id: UInt? = activeId.value) {
+        val s = sessions[id ?: return] ?: return
+        val url = s.current.blocked ?: return
+        val host = AllowList.siteOf(url) ?: return
+        engine.blocker.openOnce(host) { sessions[id]?.takeIf { it === s }?.load(url) }
     }
 
     override fun onCrashed(session: KrunkSession) {

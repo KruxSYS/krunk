@@ -27,6 +27,7 @@ class EngineConfigTest {
             "  extensions.blocklist.enabled: false",
             "  browser.region.update.enabled: false",
             "  krunk.guard.blockerUpdates: \"closed\"",
+            "  krunk.guard.engineRequests: \"block\"",
         )
         ) {
             assertTrue(line, yaml.lines().contains(line))

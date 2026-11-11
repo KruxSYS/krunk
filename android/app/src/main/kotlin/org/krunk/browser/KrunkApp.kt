@@ -6,6 +6,8 @@ import android.os.SystemClock
 import android.util.Log
 import org.krunk.browser.core.KrunkCore
 import org.krunk.browser.engine.GeckoEngine
+import org.krunk.browser.engine.blocker.AllowList
+import org.krunk.browser.engine.blocker.BlockerController
 import org.krunk.browser.tabs.TabManager
 import org.krunk.ffi.coreVersion
 
@@ -21,8 +23,16 @@ class KrunkApp : Application() {
 
     val engine: GeckoEngine by lazy {
         val settings = core.settings.current
-        GeckoEngine(this, automaticUpdates = settings.filterAutoUpdate).also {
+        val host = object : BlockerController.Host {
+            override fun settings() = core.settings.current
+            override val allow = AllowList(core.store)
+            override fun listsUpdated(at: Long) {
+                runCatching { core.store.kvSet(AllowList.KV_LISTS_UPDATED, at.toString()) }
+            }
+        }
+        GeckoEngine(this, automaticUpdates = settings.filterAutoUpdate, blockerHost = host).also {
             it.applySettings(settings)
+            DebugHooks.install(this, it, core)
             Log.i(TAG, "engine ready after ${SystemClock.uptimeMillis() - startedAt} ms")
         }
     }

@@ -11,6 +11,9 @@ object DebugProps {
     const val SLEEP_SECONDS = "debug.krunk.sleep_seconds"
     const val DISCARD_TEST = "debug.krunk.discard_test"
 
+    /** Another address for the `krunk-guard` extension (a missing one: a start without the guard). */
+    const val GUARD_URI = "debug.krunk.guard_uri"
+
     fun get(name: String): String? {
         if (!BuildConfig.DEBUG) return null
         return runCatching {

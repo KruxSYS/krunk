@@ -95,8 +95,12 @@ object EngineConfig {
     private fun quote(s: String): String = "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
     /**
-     * What the gate does with the engine's own background requests by default. `log` until the
-     * M4 review of what it would cancel on real sites (see docs/ANDROID_DEV.md).
+     * What the gate does with the engine's own background requests while automatic updates are
+     * off: it cancels them. With the settings above the engine makes none on a fresh profile
+     * (nothing was seen while browsing real sites, `.pipeline/evidence-android-0.2.0/m4`); this
+     * is the second layer, for a profile that still holds data from 0.1.x and for whatever a
+     * later engine version adds. Requests of pages, of Krunk's extensions and OCSP checks are
+     * never touched. `log` instead of `block` only reports them (debug builds show both).
      */
-    const val ENGINE_GATE_DEFAULT = "log"
+    const val ENGINE_GATE_DEFAULT = "block"
 }

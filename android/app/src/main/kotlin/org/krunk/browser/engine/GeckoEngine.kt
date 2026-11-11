@@ -7,6 +7,7 @@ import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import org.krunk.browser.BuildConfig
 import org.krunk.browser.KrunkApp
+import org.krunk.browser.engine.blocker.BlockerController
 import org.krunk.ffi.AndroidSettings
 import org.krunk.ffi.ThemeMode
 import org.mozilla.geckoview.ContentBlocking
@@ -21,8 +22,11 @@ import org.mozilla.geckoview.StorageController
  * The one [GeckoRuntime] of the process and the settings Krunk applies to it. Private tabs use
  * the same runtime with `usePrivateMode` sessions (Gecko keeps their data in memory only).
  */
-class GeckoEngine(context: Context, automaticUpdates: Boolean) {
+class GeckoEngine(context: Context, automaticUpdates: Boolean, blockerHost: BlockerController.Host) {
     val runtime: GeckoRuntime
+
+    /** The ad and tracker blocker; started with the runtime, before any tab exists. */
+    val blocker: BlockerController
 
     init {
         val builder = GeckoRuntimeSettings.Builder()
@@ -54,6 +58,8 @@ class GeckoEngine(context: Context, automaticUpdates: Boolean) {
         val settings = builder.build()
         runtime = GeckoRuntime.create(context.applicationContext, settings)
         Log.i(KrunkApp.TAG, "GeckoRuntime ready (GeckoView ${BuildConfig.GECKOVIEW_VERSION})")
+        blocker = BlockerController(runtime, blockerHost)
+        blocker.start()
     }
 
     val icons: IconsExtension by lazy { IconsExtension(runtime) }
@@ -85,6 +91,7 @@ class GeckoEngine(context: Context, automaticUpdates: Boolean) {
             rs.fontSizeFactor = (settings.textScale * settings.defaultZoom).toFloat().coerceIn(0.5f, 3f)
         }
         rs.forceUserScalableEnabled = settings.forceZoom
+        blocker.settingsChanged(settings)
     }
 
     /** Settings > Advanced > User agent ("" = the engine's own); sessions are created with it. */

@@ -1,0 +1,35 @@
+[
+  {
+    "namespace": "krunkGate",
+    "functions": [
+      {
+        "name": "setBlockerGate",
+        "type": "function",
+        "description": "Opens or closes the gate for the bundled blocker's own requests. Resolves to the gate's state as JSON.",
+        "async": true,
+        "parameters": [{ "name": "open", "type": "boolean" }]
+      },
+      {
+        "name": "setEngineRequests",
+        "type": "function",
+        "description": "What happens to the engine's own background requests: allow, log or block. Resolves to the gate's state as JSON.",
+        "async": true,
+        "parameters": [{ "name": "mode", "type": "string", "enum": ["allow", "log", "block"] }]
+      },
+      {
+        "name": "state",
+        "type": "function",
+        "async": true,
+        "parameters": []
+      }
+    ],
+    "events": [
+      {
+        "name": "onEvent",
+        "type": "function",
+        "description": "A request the gate acted on, as JSON: {k: 'blocker'|'engine'|'stopped', url, cancelled}.",
+        "parameters": [{ "name": "event", "type": "string" }]
+      }
+    ]
+  }
+]

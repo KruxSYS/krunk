@@ -37,6 +37,13 @@ data class PageState(
     val sessionState: String? = null,
     /** The page crashed or was killed by the OS; a reload recreates it. */
     val crashed: Boolean = false,
+    /** The address of the top-level load that started last (what the blocker's verdict is matched to). */
+    val loadingUrl: String? = null,
+    /**
+     * The blocker stopped a top-level load to this address (it is on a filter list). Krunk shows
+     * its own "blocked" panel instead of the page until the tab goes somewhere else.
+     */
+    val blocked: String? = null,
 )
 
 /**
@@ -53,10 +60,11 @@ private val ORIGIN = Regex("""^([A-Za-z][A-Za-z0-9+.-]*)://([^/?#\\]*)""")
 // ----- transitions (pure; KrunkSession applies them from the engine's callbacks) -----
 
 /** The app asked the engine to load [url]. */
-fun PageState.requested(url: String): PageState = copy(pendingUrl = url, loadError = null, crashed = false)
+fun PageState.requested(url: String): PageState =
+    copy(pendingUrl = url, loadError = null, crashed = false, blocked = null)
 
 /** The app parked the engine on a blank page (a native screen such as the new-tab page is shown). */
-fun PageState.parked(): PageState = copy(pendingUrl = null, loadError = null, crashed = false)
+fun PageState.parked(): PageState = copy(pendingUrl = null, loadError = null, crashed = false, blocked = null)
 
 /**
  * `scheme://host:port` of a hierarchical address, lower case and without user:password, or null
@@ -85,6 +93,8 @@ fun PageState.pageStarted(startedUrl: String): PageState {
         loading = true,
         loadError = null,
         crashed = false,
+        loadingUrl = startedUrl,
+        blocked = null,
         secure = if (sameSite) secure else null,
         secureBeforeLoad = if (sameSite) secureBeforeLoad else secure ?: secureBeforeLoad,
     )
@@ -115,6 +125,19 @@ fun PageState.locationChanged(newUrl: String): PageState {
 fun PageState.crashed(): PageState =
     copy(crashed = true, loading = false, progress = 0f, fullScreen = false, pendingUrl = null)
 
+/**
+ * The blocker stopped the top-level load to [url]: nothing was requested and nothing committed.
+ * The tab shows Krunk's "blocked" panel for that address; the page under it (if any) stays.
+ */
+fun PageState.blockedByBlocker(url: String): PageState =
+    copy(blocked = url, loading = false, progress = 0f, pendingUrl = null, loadError = null)
+
+/** The user left the "blocked" panel for the page that was there before. */
+fun PageState.blockedDismissed(): PageState = copy(blocked = null)
+
+/** Whether a tab showing the "blocked" panel has a page to go back to (else it is closed). */
+fun PageState.hasPageUnderBlocked(): Boolean = committed && url.isNotEmpty() && url != ABOUT_BLANK
+
 /** A load ended. One that never committed (a download, "204 No Content", stop) leaves the old page. */
 fun PageState.pageStopped(): PageState = copy(
     progress = 0f,
@@ -144,10 +167,18 @@ fun displayedUrl(
     openedByPage: Boolean,
 ): String = when {
     !hasSession -> modelUrl
+
+    // The address the blocker stopped: the panel is about it, and the user must see which.
+    page.blocked != null -> page.blocked
+
     page.pendingUrl != null -> page.pendingUrl
+
     modelIsInternal && (page.url.isEmpty() || page.url == ABOUT_BLANK) -> modelUrl
+
     page.committed -> if (page.url == ABOUT_BLANK) "" else page.url
+
     openedByPage -> ""
+
     else -> modelUrl
 }
 

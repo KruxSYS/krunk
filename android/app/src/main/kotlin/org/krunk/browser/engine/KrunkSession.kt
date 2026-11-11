@@ -131,7 +131,7 @@ class KrunkSession(
                 loader.flags(GeckoSession.LOAD_FLAGS_EXTERNAL)
             }
         }
-        gecko.load(loader)
+        engine.blocker.pages.run { if (!closed) gecko.load(loader) }
     }
 
     /** Parks the engine on a blank page while a native screen (the new-tab page) is shown. */
@@ -141,7 +141,13 @@ class KrunkSession(
     }
 
     /** Reloads the page. A crashed tab is not reloaded here: the tab manager gives it a new session. */
-    fun reload() = gecko.reload()
+    fun reload() = engine.blocker.pages.run { if (!closed) gecko.reload() }
+
+    /** The blocker stopped the load to [url] (see [PageState.blocked]). */
+    fun blocked(url: String) = set { it.blockedByBlocker(url) }
+
+    /** Leaves the "blocked" panel for the page under it. */
+    fun dismissBlocked() = set { it.blockedDismissed() }
 
     fun stop() = gecko.stop()
 
@@ -174,7 +180,7 @@ class KrunkSession(
             .onFailure { Log.w(KrunkApp.TAG, "could not restore session state", it) }
             .getOrNull() ?: return null
         val current = runCatching { state[state.currentIndex].uri }.getOrDefault("")
-        gecko.restoreState(state)
+        engine.blocker.pages.run { if (!closed) gecko.restoreState(state) }
         // Until the engine reports a newer one this is the tab's state: a save or a crash in
         // the first seconds after a restore must not find "no state" and lose the history.
         _state.value = _state.value.copy(sessionState = serialized)
@@ -209,7 +215,11 @@ class KrunkSession(
         set { it.copy(findCurrent = 0, findTotal = 0) }
     }
 
+    private var closed = false
+
     fun close() {
+        closed = true
+        engine.blocker.detach(id)
         gecko.close()
     }
 
@@ -260,6 +270,7 @@ class KrunkSession(
     private val progress = object : GeckoSession.ProgressDelegate {
         override fun onPageStart(session: GeckoSession, url: String) {
             promptThrottle.newDocument()
+            engine.blocker.newDocument(id)
             set { it.pageStarted(url) }
         }
 
@@ -517,5 +528,6 @@ class KrunkSession(
         gecko.promptDelegate = prompts
         if (!openedByPage) gecko.open(engine.runtime)
         engine.icons.listen(gecko) { url, icons -> listener.onIcons(this, url, icons) }
+        engine.blocker.attach(id, gecko)
     }
 }

@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.windowInsetsTopHeight
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -103,7 +105,9 @@ fun BrowserScreen(vm: BrowserViewModel) {
     BackHandler(enabled = !findActive && !editing && !fullScreen && page?.canGoBack == true) { session?.goBack() }
 
     val crashed = page?.crashed == true
-    val toolbarMayHide = !editing && !findActive && !fullScreen && tab?.isNewTab == false && !crashed
+    val blockedUrl = page?.blocked
+    val toolbarMayHide =
+        !editing && !findActive && !fullScreen && tab?.isNewTab == false && !crashed && blockedUrl == null
     SideEffect {
         toolbarScroll.heightPx = toolbarHeightPx
         toolbarScroll.enabled = toolbarMayHide
@@ -192,6 +196,15 @@ fun BrowserScreen(vm: BrowserViewModel) {
                 NewTabScreen(
                     vm,
                     Modifier
+                        .fillMaxSize()
+                        .padding(top = if (top) ToolbarHeight else 0.dp, bottom = if (!top) ToolbarHeight else 0.dp),
+                )
+            } else if (blockedUrl != null) {
+                PageBlocked(
+                    url = blockedUrl,
+                    onBack = { vm.tabs.leaveBlocked() },
+                    onOpenOnce = { vm.tabs.openBlockedOnce() },
+                    modifier = Modifier
                         .fillMaxSize()
                         .padding(top = if (top) ToolbarHeight else 0.dp, bottom = if (!top) ToolbarHeight else 0.dp),
                 )
@@ -439,6 +452,40 @@ private fun DownloadQuestion(download: PendingDownload, onDownload: () -> Unit, 
         dismissButton = { TextButton(onClick = onCancel) { Text(stringResource(android.R.string.cancel)) } },
     )
 }
+
+/**
+ * Shown instead of the page when the blocker stopped the load: the address itself is on a filter
+ * list. Nothing was requested from it. "Open once" lets it through for two minutes.
+ */
+@Composable
+private fun PageBlocked(url: String, onBack: () -> Unit, onOpenOnce: () -> Unit, modifier: Modifier = Modifier) {
+    Column(
+        modifier.verticalScroll(rememberScrollState()).padding(32.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(stringResource(R.string.page_blocked_title), style = MaterialTheme.typography.titleLarge)
+        Text(
+            url.take(MAX_BLOCKED_URL),
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 12.dp),
+        )
+        Text(
+            stringResource(R.string.page_blocked_message),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 12.dp, bottom = 24.dp),
+        )
+        Button(onClick = onBack) { Text(stringResource(R.string.page_blocked_back)) }
+        TextButton(onClick = onOpenOnce, modifier = Modifier.padding(top = 4.dp)) {
+            Text(stringResource(R.string.page_blocked_open_once))
+        }
+    }
+}
+
+private const val MAX_BLOCKED_URL = 300
 
 /** Shown instead of the page after its process crashed or was killed by the system. */
 @Composable
