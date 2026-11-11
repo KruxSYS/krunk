@@ -35,9 +35,11 @@ TARGET_DIR="${CARGO_TARGET_DIR:-$SRC_DIR/target}"
 
 cd "$SRC_DIR"
 
-echo "[build-rust] host library ($PROFILE)"
-cargo build -j"$JOBS" -p krunk_ffi "${CARGO_PROFILE_FLAG[@]}"
-HOST_LIB="$TARGET_DIR/$PROFILE/libkrunk_ffi.so"
+# The host library is only read by uniffi-bindgen (and the JVM tests): always the debug build,
+# because the workspace's release profile strips it and the UniFFI metadata with it.
+echo "[build-rust] host library (debug, for the bindings generator)"
+cargo build -j"$JOBS" -p krunk_ffi
+HOST_LIB="$TARGET_DIR/debug/libkrunk_ffi.so"
 [ -f "$HOST_LIB" ] || { echo "host library missing: $HOST_LIB" >&2; exit 1; }
 
 echo "[build-rust] Kotlin bindings -> $KT_OUT"
