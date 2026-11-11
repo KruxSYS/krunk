@@ -198,6 +198,14 @@ pub struct Appearance {
     pub active_highlight: ActiveHighlight,
     /// A soft accent-coloured glow around the active tab.
     pub accent_glow: bool,
+    /// 0.15.2: the outline of `ActiveHighlight::Outline` (`#rrggbb`, empty = the accent) and its
+    /// width in px (1–4).
+    pub active_outline_color: String,
+    pub active_outline_width: u8,
+    /// 0.15.2: the tab titles' colours (`#rrggbb`, empty = readable on the strip), for the
+    /// other tabs and for the active one.
+    pub tab_text_color: String,
+    pub active_tab_text_color: String,
 }
 
 /// How a bar (tab strip or toolbar) is filled (0.15.0).
@@ -231,6 +239,8 @@ pub enum ActiveHighlight {
     Fill,
     Underline,
     Outline,
+    /// 0.15.2: nothing beyond the title's colour (and the glow, if on).
+    None,
 }
 
 impl Default for Appearance {
@@ -257,6 +267,10 @@ impl Default for Appearance {
             tab_radius: 8,
             active_highlight: ActiveHighlight::Fill,
             accent_glow: false,
+            active_outline_color: String::new(),
+            active_outline_width: 2,
+            tab_text_color: String::new(),
+            active_tab_text_color: String::new(),
         }
     }
 }
@@ -1017,6 +1031,9 @@ impl Settings {
             ("appearance.gradientFrom", &self.appearance.gradient_from),
             ("appearance.gradientVia", &self.appearance.gradient_via),
             ("appearance.gradientTo", &self.appearance.gradient_to),
+            ("appearance.activeOutlineColor", &self.appearance.active_outline_color),
+            ("appearance.tabTextColor", &self.appearance.tab_text_color),
+            ("appearance.activeTabTextColor", &self.appearance.active_tab_text_color),
         ] {
             if !is_hex_color(value) {
                 err(field, "Enter a colour like #2563eb (or leave it empty)");
@@ -1024,6 +1041,9 @@ impl Settings {
         }
         if self.appearance.gradient_angle > 360 {
             err("appearance.gradientAngle", "Between 0 and 360 degrees");
+        }
+        if !(1..=4).contains(&self.appearance.active_outline_width) {
+            err("appearance.activeOutlineWidth", "Between 1 and 4 px");
         }
         if self.appearance.tab_radius > 16 {
             err("appearance.tabRadius", "Between 0 and 16 px");

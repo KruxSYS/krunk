@@ -607,7 +607,7 @@
       <div class="row setting" data-keywords="style preset look">
         <div class="text"><label for="appearance.preset">Style</label><p class="desc">A ready-made look; change any part of it below.</p>
           <p class="field-error" data-error-for="appearance.preset"></p></div>
-        <div class="control"><select id="appearance.preset" data-key="appearance.preset" data-own-save><option value="">Your own</option><option value="classic">Classic</option><option value="sunset">Sunset</option><option value="ocean">Ocean</option><option value="glass">Glass</option><option value="mono">Mono</option></select></div>
+        <div class="control"><select id="appearance.preset" data-key="appearance.preset" data-own-save><option value="">Your own</option><option value="classic">Classic</option><option value="sunset">Sunset</option><option value="ocean">Ocean</option><option value="glass">Glass</option><option value="mono">Mono</option><option value="aurora">Aurora</option><option value="midnight">Midnight</option><option value="forest">Forest</option><option value="ember">Ember</option><option value="candy">Candy</option><option value="frost">Frost</option><option value="neon">Neon</option></select></div>
       </div>
       <div class="row setting" data-keywords="tab strip style solid gradient ombre glass">
         <div class="text"><label for="appearance.tabStyle">Tab strip</label></div>
@@ -634,7 +634,24 @@
       </div>
       <div class="row setting" data-keywords="active tab highlight fill underline outline">
         <div class="text"><label for="appearance.activeHighlight">Active tab</label></div>
-        <div class="control"><select id="appearance.activeHighlight" data-key="appearance.activeHighlight"><option value="fill">Filled</option><option value="underline">Underlined</option><option value="outline">Outlined</option></select></div>
+        <div class="control"><select id="appearance.activeHighlight" data-key="appearance.activeHighlight"><option value="fill">Filled</option><option value="underline">Underlined</option><option value="outline">Outlined</option><option value="none">None</option></select>
+          <p class="desc">None leaves only the title (and the glow) to mark it.</p></div>
+      </div>
+      <div class="row setting" id="outline-row" data-keywords="active tab outline border colour color width thickness">
+        <div class="text"><span class="label">Outline</span><p class="desc">Its colour (empty = the accent colour) and thickness.</p>
+          <p class="field-error" data-error-for="appearance.activeOutlineColor"></p><p class="field-error" data-error-for="appearance.activeOutlineWidth"></p></div>
+        <div class="control">
+          <input type="text" id="appearance.activeOutlineColor" data-key="appearance.activeOutlineColor" data-picker="text" placeholder="(accent)" size="8" spellcheck="false" aria-label="Outline colour">
+          <select id="appearance.activeOutlineWidth" data-key="appearance.activeOutlineWidth" data-type="number" aria-label="Outline thickness"><option value="1">1 px</option><option value="2">2 px</option><option value="3">3 px</option><option value="4">4 px</option></select>
+        </div>
+      </div>
+      <div class="row setting" data-keywords="tab title text colour color inactive active readable">
+        <div class="text"><span class="label">Tab title colours</span><p class="desc">The other tabs' and the active tab's titles; empty = readable on the strip automatically.</p>
+          <p class="field-error" data-error-for="appearance.tabTextColor"></p><p class="field-error" data-error-for="appearance.activeTabTextColor"></p></div>
+        <div class="control" id="tab-text-colors">
+          <input type="text" id="appearance.tabTextColor" data-key="appearance.tabTextColor" data-picker="text" placeholder="(auto)" size="8" spellcheck="false" aria-label="Other tabs">
+          <input type="text" id="appearance.activeTabTextColor" data-key="appearance.activeTabTextColor" data-picker="text" placeholder="(auto)" size="8" spellcheck="false" aria-label="Active tab">
+        </div>
       </div>
       <div class="row setting" data-keywords="accent glow active tab">
         <div class="text"><label for="appearance.accentGlow">Accent glow</label><p class="desc">A soft glow in the accent colour around the active tab.</p></div>

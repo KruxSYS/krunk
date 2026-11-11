@@ -8,6 +8,9 @@
 //! the next tab showed with nothing beneath it (black or blank for a frame or two). Now the
 //! closed tab's view stays on screen ("kept") until the next tab has painted (at most
 //! [`REVEAL_TIMEOUT_MS`]) and goes after the swap.
+//!
+//! 0.15.2: a switch to a painted tab in the background waits too. Hidden from the engine, its
+//! view has lost its frame; brought on top at once, it showed black until it rendered again.
 
 use crate::tabs::TabId;
 use crate::windows::{Op, WindowId};
@@ -64,6 +67,12 @@ impl<W: Copy + Eq + std::hash::Hash, T: Copy + Eq> Reveals<W, T> {
     /// Is `to` waiting to be shown (in any window)?
     pub fn is_waiting(&self, to: T) -> bool {
         self.waiting.values().any(|(_, t, _)| *t == to)
+    }
+
+    /// Since when (ms) `to` waits to be shown: tells a late answer for an earlier wait of the
+    /// same tab from one for this wait.
+    pub fn waiting_since(&self, to: T) -> Option<i64> {
+        self.waiting.values().find(|(_, t, _)| *t == to).map(|(_, _, since)| *since)
     }
 
     /// The tab on screen in `win` while a switch waits there.
@@ -180,8 +189,10 @@ mod tests {
         // 10 → 11 at t=1000; 11 paints at t=1200: revealed then, the timeout finds nothing.
         r.begin(1, Some(10), 11);
         r.wait(1, 10, 11, 1000);
+        assert_eq!(r.waiting_since(11), Some(1000));
         assert_eq!(r.take_if_due(11, 1200), None, "not due yet");
         assert_eq!(r.take(11), Some((1, 10)));
+        assert_eq!(r.waiting_since(11), None);
         assert_eq!(r.take_if_due(11, 1000 + REVEAL_TIMEOUT_MS), None);
         // 11 → 12 at t=2000; 12 never paints: shown at the timeout, 11 hidden.
         r.begin(1, Some(11), 12);

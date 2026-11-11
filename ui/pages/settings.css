@@ -80,9 +80,9 @@ code { font-family: Consolas, monospace; background: var(--bg); padding: 0 4px; 
 .color-picker.is-default .color-input { opacity: .6; }
 .color-picker input[type=text] { width: 84px; font-family: Consolas, monospace; }
 /* 0.15.0: the three gradient colours, one compact picker per line. */
-#gradient-colors-row .control { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
-#gradient-colors-row .color-picker { flex-wrap: nowrap; }
-#gradient-colors-row .color-picker input[type=text] { width: 96px; }
+#gradient-colors-row .control, #outline-row .control, #tab-text-colors { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+:is(#gradient-colors-row, #outline-row, #tab-text-colors) .color-picker { flex-wrap: nowrap; }
+:is(#gradient-colors-row, #outline-row, #tab-text-colors) .color-picker input[type=text] { width: 96px; }
 .wallpapers { display: grid; grid-template-columns: repeat(auto-fill, 76px); gap: 6px; width: min(100%, 412px); justify-content: end; }
 #ntp-card .row .control:has(.wallpapers) { flex: 1 1 auto; min-width: 0; justify-content: flex-end; }
 .wallpaper { padding: 0; width: 76px; height: 43px; border: 2px solid transparent; border-radius: 6px; overflow: hidden; cursor: pointer; background: var(--bg); }

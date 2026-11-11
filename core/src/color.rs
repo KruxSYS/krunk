@@ -360,6 +360,6 @@ mod tests {
         assert_eq!(json["gradient"]["stops"], serde_json::json!(["#f97316", "#ec4899", "#8b5cf6"]));
         assert!(json["gradient"]["fg"].is_string() && json["gradient"]["ombreFg"].is_string());
         assert!(serde_json::to_value(ThemeColors::default()).unwrap().get("gradient").is_none());
-        assert_eq!(with_gradient, 12);
+        assert_eq!(with_gradient, 17);
     }
 }

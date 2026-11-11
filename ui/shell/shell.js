@@ -258,14 +258,14 @@
 
   // Narrow tabs hide inactive close buttons; the active tab stays in view
   // when the row scrolls; the host gets the new hit-test map.
-  const TAB_WIDTH = 256, TAB_GAP = 2;
+  const TAB_WIDTH = 256, TAB_GAP = 2, TABS_PAD = 10; // TABS_PAD: shell.css --tabs-pad
   function layoutTabs(revealActive) {
     const box = $('tabs');
     // The row asks for every tab at full width and shrinks (evenly, through
     // the tabs' own flex-shrink) when the window is narrower.
     const n = box.children.length; // closing tabs too: the row shrinks as they do
     // With frozen widths the row is as wide as its tabs, so "+" follows the last one.
-    box.style.flexBasis = widthsFrozen ? 'auto' : n ? (n * TAB_WIDTH + (n - 1) * TAB_GAP) + 'px' : '0px';
+    box.style.flexBasis = widthsFrozen ? 'auto' : n ? (n * TAB_WIDTH + (n - 1) * TAB_GAP + 2 * TABS_PAD) + 'px' : (2 * TABS_PAD) + 'px';
     const first = box.querySelector('.tab:not(.closing)');
     box.classList.toggle('narrow', !!first && first.getBoundingClientRect().width < 100);
     updateOverflow();
@@ -1441,8 +1441,14 @@
     root.classList.toggle('square-tabs', shape === 'square');
     set('--tab-radius', shape === 'rounded' && Number.isFinite(a.tabRadius) ? a.tabRadius + 'px' : '');
     const hl = a.activeHighlight || 'fill';
-    ['fill', 'underline', 'outline'].forEach(function (s) { root.classList.toggle('hl-' + s, hl === s); });
+    ['fill', 'underline', 'outline', 'none'].forEach(function (s) { root.classList.toggle('hl-' + s, hl === s); });
     root.classList.toggle('accent-glow', !!a.accentGlow);
+    // 0.15.2: the outline's colour and width, the tab titles' colours.
+    set('--outline-c', a.activeOutlineColor);
+    set('--outline-w', Number.isFinite(a.activeOutlineWidth) ? a.activeOutlineWidth + 'px' : '');
+    set('--tab-text', a.tabTextColor);
+    set('--active-tab-text', a.activeTabTextColor);
+    root.classList.toggle('tab-text', !!a.tabTextColor);
     state.showDownloads = a.showDownloadsButton !== false;
     $('downloads').classList.toggle('off', !state.showDownloads);
     $('zoom').classList.toggle('off', a.showZoomChip === false);

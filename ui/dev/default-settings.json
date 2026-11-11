@@ -108,7 +108,11 @@
     "tabShape": "rounded",
     "tabRadius": 8,
     "activeHighlight": "fill",
-    "accentGlow": false
+    "accentGlow": false,
+    "activeOutlineColor": "",
+    "activeOutlineWidth": 2,
+    "tabTextColor": "",
+    "activeTabTextColor": ""
   },
   "ntp": {
     "background": "none",

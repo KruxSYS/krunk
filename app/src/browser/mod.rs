@@ -1642,6 +1642,28 @@ impl Browser {
         }
     }
 
+    /// 0.15.2: tab `id`, painted before but out of sight, now renders beneath the page on screen:
+    /// no `painted` or `ready` comes again, so two animation frames in the page (the first one
+    /// after it was shown has been drawn) and the settle frame tell when it may come on top. A
+    /// page that does not answer (hung, a dialog open) waits for the switch's timeout.
+    fn reveal_after_frames(&self, id: TabId, view: &View) {
+        let Some(since) = self.pending_reveal.borrow().waiting_since(id) else { return };
+        let weak = self.me.clone();
+        let frames = "new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))";
+        view.eval_json(frames, move |_| {
+            let Some(b) = weak.upgrade() else { return };
+            // An answer for an earlier wait of this tab (one timed out) does nothing.
+            if b.pending_reveal.borrow().waiting_since(id) != Some(since) {
+                return;
+            }
+            crate::ffi::cef::post_ui_delayed(REVEAL_SETTLE_MS, move || {
+                if let Some(b) = weak.upgrade() {
+                    b.reveal(id);
+                }
+            });
+        });
+    }
+
     fn activate_view(&self, win: WindowId, from: Option<TabId>, to: TabId) {
         // The tab left is still on screen: its hover-card picture now (0.15.0).
         if let Some(f) = from.filter(|f| *f != to) {
@@ -1673,6 +1695,10 @@ impl Browser {
         let old = from.filter(|f| *f != to && self.window_of(*f) == Some(win));
         let minimized = self.frame(win).is_some_and(|f| f.window.is_minimized());
         let ready = self.views.borrow().get(&to).is_some_and(|v| v.loaded_once.get());
+        // 0.15.2: a painted tab out of sight (parked, hidden from the engine) has lost its frame
+        // too: brought on top at once, its window showed black until the page rendered again
+        // (seen between two new tab pages).
+        let out_of_sight = ready && self.tab_view(to).is_some_and(|v| !v.is_visible());
         // A reveal this window was still waiting for: the page on screen is its old one. After
         // a close (`from` none) it is the closed tab's kept page (0.15.0).
         let begin = self.pending_reveal.borrow_mut().begin(win, old, to);
@@ -1682,12 +1708,15 @@ impl Browser {
         }
         let old = begin.shown.filter(|f| *f != to && self.on_screen_in(*f, win)).or(old);
         match old.and_then(|f| self.screen_view(f).map(|v| (f, v))) {
-            Some((f, above)) if !ready && !minimized => {
+            Some((f, above)) if (!ready || out_of_sight) && !minimized => {
                 self.pending_reveal.borrow_mut().wait(win, f, to, now_ms());
                 // 0.15.0: the new page renders beneath the old one (shown to the engine, so it
                 // paints and is not throttled) and comes on top once it has painted.
                 if let Some(t) = self.tab_view(to) {
                     t.show_beneath(&above);
+                    if out_of_sight {
+                        self.reveal_after_frames(to, &t);
+                    }
                 }
                 let weak = self.me.clone();
                 // (A little later than due: a timer never comes too early for its wait.)

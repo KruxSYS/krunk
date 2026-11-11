@@ -10,6 +10,9 @@ body { display: flex; flex-direction: column; background: var(--bg); }
 #tabs { display: flex; flex: 0 1 0; min-width: 0; height: 100%; align-items: flex-end; gap: 2px;
         overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
 #tabs::-webkit-scrollbar { display: none; }
+/* 0.15.2: room for the active tab's glow at both ends of the row (it clips what overflows); the
+   negative margin keeps the tabs where they were (shell.js adds the padding to the row's width). */
+#tabs { padding: 0 var(--tabs-pad); margin: 0 calc(-1 * var(--tabs-pad)); --tabs-pad: 10px; }
 /* 0.11.0 overflow: the row fades at an edge that has more tabs behind it; ‹ › scroll it and ▾
    lists every tab. They show only while the tabs do not fit. */
 #tabs.fade-left { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 28px); mask-image: linear-gradient(to right, transparent 0, #000 28px); }
@@ -95,7 +98,9 @@ body { display: flex; flex-direction: column; background: var(--bg); }
 .cap.pressed { background: var(--border); }
 .cap.close.hover { background: #c42b1c; color: #fff; }
 .cap.close.pressed { background: #c94f4f; color: #fff; }
-html.inactive .cap, html.inactive #tabs .tab:not(.active) { color: var(--fg-muted); }
+/* Low specificity (0.15.2): a styled strip's own text colour wins (the muted theme colour was
+   unreadable on a gradient while the window was in the background). */
+html.inactive .cap, html.inactive .tab:not(.active) { color: var(--fg-muted); }
 html.fullscreen #caption, html.fullscreen #drag-space { display: none; }
 
 /* ---- toolbar ---- */
@@ -122,6 +127,9 @@ html.fullscreen #caption, html.fullscreen #drag-space { display: none; }
 :root.tabs-gradient #tabstrip { background: var(--grad-fill) fixed; }
 :root.tabs-glass #tabstrip { background: var(--glass-strip); -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5); }
 :root.bar-gradient #toolbar { background: var(--grad-fill) fixed; color: var(--grad-fg); }
+:root.bar-gradient #bookmarks-bar { background: var(--grad-fill) fixed; color: var(--grad-fg); }
+:root.bar-gradient :is(.bm, .bm-more, .bm-empty) { color: inherit; }
+:root:is(.bar-gradient, .bar-glass) :is(.bm:hover, .bm.on, .bm-more:hover, .bm-more.on) { background: color-mix(in srgb, currentColor 15%, transparent); }
 :root.bar-glass #toolbar, :root.bar-glass #bookmarks-bar { background: var(--glass-bar); -webkit-backdrop-filter: blur(18px) saturate(1.5); backdrop-filter: blur(18px) saturate(1.5); }
 :root:is(.tabs-glass, .bar-glass) body {
   background: radial-gradient(34% 190% at 10% 0%, color-mix(in srgb, var(--accent) 55%, transparent), transparent 72%),
@@ -143,12 +151,15 @@ html.fullscreen #caption, html.fullscreen #drag-space { display: none; }
    accent underline or outline; on an ombre strip it shows its slice at full strength. */
 :root.bar-gradient { --on-bg: var(--grad-fill) fixed; --on-fg: var(--grad-fg); }
 :root.bar-glass { --on-bg: var(--glass-bar); }
-:root:is(.hl-underline, .hl-outline) { --on-bg: color-mix(in srgb, currentColor 11%, transparent); --on-fg: var(--strip-text); --on-ring: 0 0 transparent; }
+:root:is(.hl-underline, .hl-outline, .hl-none) { --on-bg: color-mix(in srgb, currentColor 11%, transparent); --on-fg: var(--strip-text); --on-ring: 0 0 transparent; }
 :root.hl-underline { --on-mark: linear-gradient(var(--accent), var(--accent)) center bottom / calc(100% - 16px) 3px no-repeat; }
-:root.hl-outline { --on-ring: inset 0 0 0 2px var(--accent); }
+:root.hl-outline { --on-ring: inset 0 0 0 var(--outline-w, 2px) var(--outline-c, var(--accent)); }
+:root.hl-none { --on-bg: transparent; }
 :root.tabs-ombre { --on-bg: var(--grad-fill) fixed; --on-fg: var(--grad-fg); }
 :root.accent-glow { --on-glow: 0 0 10px 1px color-mix(in srgb, var(--accent) 65%, transparent); }
-.tab.active:not(.private):not(.ghost) { background: var(--on-mark), var(--on-bg); color: var(--on-fg); }
+.tab.active:not(.private):not(.ghost) { background: var(--on-mark), var(--on-bg); color: var(--active-tab-text, var(--on-fg)); }
+/* 0.15.2: the user's colour for the other tabs' titles wins over every strip style, focused or not. */
+:root.tab-text #tabs .tab:not(.active):not(.private) { color: var(--tab-text); opacity: 1; }
 .tab.active:not(.ghost):not(.dragging):not(.settling) { box-shadow: var(--on-ring), var(--on-glow); }
 #downloads.off, #zoom.off { display: none !important; }
 #media-chip { display: inline-flex; align-items: center; gap: 2px; padding: 0 6px; height: 20px; border-radius: 10px; background: #dc2626; color: #fff; margin-right: 4px; }

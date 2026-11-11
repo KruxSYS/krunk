@@ -995,9 +995,10 @@
     accent: ['', '#2563eb', '#7c3aed', '#db2777', '#dc2626', '#ea580c', '#16a34a', '#0d9488'],
     surface: ['', '#ffffff', '#f3f4f6', '#e0e7ff', '#1f2023', '#111827', '#0f172a', '#1e1b4b'],
   };
-  // 0.15.0: the three gradient colours share a row: no swatches, a short reset, their own names.
+  // 0.15.0: the three gradient colours share a row: no swatches, a short reset, their own names
+  // (0.15.2: so do the tab title and outline colours, `text`).
   const pickers = Array.from(document.querySelectorAll('input[data-picker]')).map(function (input) {
-    const own = input.dataset.picker === 'gradient';
+    const own = input.dataset.picker === 'gradient' || input.dataset.picker === 'text';
     return ColorPicker.attach(input, { presets: PRESETS[input.dataset.picker] || [], resetLabel: own ? 'Clear' : undefined,
       label: (own && input.getAttribute('aria-label')) || input.closest('.row').querySelector('label, .label').textContent });
   });
@@ -1009,8 +1010,15 @@
     classic: { tabStyle: 'solid', toolbarStyle: 'solid', gradient: ['', '', ''], gradientAngle: 90, tabShape: 'rounded', activeHighlight: 'fill', accentGlow: false },
     sunset: { tabStyle: 'ombre', toolbarStyle: 'gradient', gradient: ['#f97316', '#ec4899', '#8b5cf6'], gradientAngle: 90, tabShape: 'rounded', activeHighlight: 'fill', accentGlow: true },
     ocean: { tabStyle: 'gradient', toolbarStyle: 'gradient', gradient: ['#0ea5e9', '', '#14b8a6'], gradientAngle: 135, tabShape: 'pill', activeHighlight: 'outline', accentGlow: false },
-    glass: { tabStyle: 'glass', toolbarStyle: 'glass', gradient: ['', '', ''], gradientAngle: 90, tabShape: 'rounded', activeHighlight: 'underline', accentGlow: true },
+    glass: { tabStyle: 'glass', toolbarStyle: 'glass', gradient: ['', '', ''], gradientAngle: 90, tabShape: 'rounded', activeHighlight: 'none', accentGlow: true },
     mono: { tabStyle: 'solid', toolbarStyle: 'solid', gradient: ['', '', ''], gradientAngle: 90, tabShape: 'square', activeHighlight: 'underline', accentGlow: false },
+    aurora: { tabStyle: 'ombre', toolbarStyle: 'gradient', gradient: ['#22d3ee', '#a78bfa', '#f472b6'], gradientAngle: 120, tabShape: 'pill', activeHighlight: 'none', accentGlow: true },
+    midnight: { tabStyle: 'gradient', toolbarStyle: 'gradient', gradient: ['#0f172a', '#1e3a8a', '#312e81'], gradientAngle: 90, tabShape: 'rounded', activeHighlight: 'underline', accentGlow: true },
+    forest: { tabStyle: 'gradient', toolbarStyle: 'gradient', gradient: ['#14532d', '#166534', '#0f766e'], gradientAngle: 90, tabShape: 'rounded', activeHighlight: 'fill', accentGlow: false },
+    ember: { tabStyle: 'gradient', toolbarStyle: 'gradient', gradient: ['#7f1d1d', '#c2410c', ''], gradientAngle: 135, tabShape: 'rounded', activeHighlight: 'underline', accentGlow: true },
+    candy: { tabStyle: 'ombre', toolbarStyle: 'gradient', gradient: ['#f9a8d4', '#c4b5fd', '#93c5fd'], gradientAngle: 90, tabShape: 'pill', activeHighlight: 'fill', accentGlow: false },
+    frost: { tabStyle: 'glass', toolbarStyle: 'glass', gradient: ['', '', ''], gradientAngle: 90, tabShape: 'pill', activeHighlight: 'outline', accentGlow: false },
+    neon: { tabStyle: 'solid', toolbarStyle: 'solid', gradient: ['', '', ''], gradientAngle: 90, tabShape: 'square', activeHighlight: 'outline', accentGlow: true },
   };
   function presetValues(p) {
     return { tabStyle: p.tabStyle, toolbarStyle: p.toolbarStyle, gradientFrom: p.gradient[0], gradientVia: p.gradient[1], gradientTo: p.gradient[2],
@@ -1029,6 +1037,7 @@
     stateHidden('gradient-colors-row', !grad);
     stateHidden('gradient-angle-row', !grad);
     stateHidden('tab-radius-row', a.tabShape !== 'rounded');
+    stateHidden('outline-row', a.activeHighlight !== 'outline');
   }
   $('appearance.preset').addEventListener('change', function () {
     const next = collect();
@@ -1038,9 +1047,10 @@
     save(next);
   });
   // The rows follow a style choice at once (before the host's reply).
-  ['appearance.tabStyle', 'appearance.toolbarStyle', 'appearance.tabShape'].forEach(function (id) {
+  ['appearance.tabStyle', 'appearance.toolbarStyle', 'appearance.tabShape', 'appearance.activeHighlight'].forEach(function (id) {
     $(id).addEventListener('change', function () {
-      renderStyleRows({ tabStyle: $('appearance.tabStyle').value, toolbarStyle: $('appearance.toolbarStyle').value, tabShape: $('appearance.tabShape').value });
+      renderStyleRows({ tabStyle: $('appearance.tabStyle').value, toolbarStyle: $('appearance.toolbarStyle').value, tabShape: $('appearance.tabShape').value,
+        activeHighlight: $('appearance.activeHighlight').value });
     });
   });
   // A colour for the new tab page also makes it the background.

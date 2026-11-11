@@ -2,6 +2,22 @@
 
 What changed in each Krunk release, newest first.
 
+## 0.15.2 — 2026-11-11
+
+- **The active tab's glow is no longer cut off** at the left of the first tab and the right of
+  the last one.
+- **Tab titles stay readable on a styled tab strip when Krunk is in the background.** With a
+  gradient strip (Ocean, for example) the titles used to turn a faint grey when the window lost
+  focus.
+- **Choose the tab titles' colours.** Settings → Appearance → Tab and toolbar style →
+  **Tab title colours**: one for the other tabs and one for the active tab (empty = automatic).
+- **Style the active tab's outline.** With **Active tab: Outlined**, pick the outline's colour
+  and its thickness (1–4 px).
+- **Active tab: None.** Leaves only the title (and the glow, if on) to mark the active tab; the
+  Glass style now uses it.
+- **The bookmarks bar follows a gradient toolbar**, as one continuous gradient with the toolbar.
+- **Seven new styles:** Aurora, Midnight, Forest, Ember, Candy, Frost and Neon.
+
 ## 0.15.1 — 2026-11-11
 
 - **Fixed: the AI agent couldn't change some settings** when the model sent a number as text,

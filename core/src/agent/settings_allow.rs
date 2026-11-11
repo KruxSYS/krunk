@@ -103,7 +103,7 @@ fn tab_shapes() -> Vec<Value> {
     names(&[TabShape::Rounded, TabShape::Square, TabShape::Pill])
 }
 fn highlights() -> Vec<Value> {
-    names(&[ActiveHighlight::Fill, ActiveHighlight::Underline, ActiveHighlight::Outline])
+    names(&[ActiveHighlight::Fill, ActiveHighlight::Underline, ActiveHighlight::Outline, ActiveHighlight::None])
 }
 fn presets() -> Vec<Value> {
     let mut v = vec![Value::String(String::new())];
@@ -143,6 +143,15 @@ static KEYS: &[Key] = &[
     Key { path: "appearance.tabRadius", kind: Kind::Int(0, 16), note: "px, for rounded tabs" },
     Key { path: "appearance.activeHighlight", kind: Kind::Choice(highlights), note: "how the active tab stands out" },
     Key { path: "appearance.accentGlow", kind: Kind::Bool, note: "a glow around the active tab" },
+    // 0.15.2
+    Key {
+        path: "appearance.activeOutlineColor",
+        kind: Kind::Color,
+        note: "the active tab's outline (activeHighlight outline); empty = the accent",
+    },
+    Key { path: "appearance.activeOutlineWidth", kind: Kind::Int(1, 4), note: "px" },
+    Key { path: "appearance.tabTextColor", kind: Kind::Color, note: "the other tabs' titles; empty = automatic" },
+    Key { path: "appearance.activeTabTextColor", kind: Kind::Color, note: "the active tab's title; empty = automatic" },
     Key { path: "defaultZoom", kind: Kind::Num(0.25, 5.0), note: "1 = 100 %" },
     Key { path: "startup", kind: Kind::Choice(startups), note: "what Krunk opens when it starts" },
     Key { path: "homepage", kind: Kind::Url, note: "an http or https address" },
@@ -611,7 +620,7 @@ mod tests {
         assert_eq!(s.appearance.preset, "sunset");
         assert_eq!(s.appearance.tab_style, BarStyle::Ombre);
         assert_eq!(s.appearance.gradient_from, "#f97316");
-        assert!(set(&mut s, "appearance.preset", json!("neon")).is_err());
+        assert!(set(&mut s, "appearance.preset", json!("plaid")).is_err());
         assert!(set(&mut s, "appearance.toolbarStyle", json!("ombre")).is_err());
         assert!(set(&mut s, "appearance.tabRadius", json!(17)).is_err());
         assert!(set(&mut s, "appearance.gradientAngle", json!(361)).is_err());
