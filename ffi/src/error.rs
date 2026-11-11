@@ -24,7 +24,14 @@ impl std::error::Error for FfiError {}
 
 impl From<lb_core::storage::DbError> for FfiError {
     fn from(e: lb_core::storage::DbError) -> Self {
-        FfiError::Database(e.to_string())
+        use lb_core::storage::DbError;
+        match e {
+            // The core reports rejected input (a URL that cannot be bookmarked, a parent that
+            // is not a folder, an unknown id) through these two: not a database failure.
+            DbError::InvalidParameterName(reason) => FfiError::Invalid(reason),
+            DbError::QueryReturnedNoRows => FfiError::Invalid("no such item".to_string()),
+            other => FfiError::Database(other.to_string()),
+        }
     }
 }
 

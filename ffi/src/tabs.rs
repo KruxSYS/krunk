@@ -167,14 +167,22 @@ impl TabModel {
         self.lock().set_closed_tabs(Vec::new());
     }
 
-    /// The recently closed list as JSON (for `kv["android.closed_tabs"]`).
+    /// The recently closed list as JSON (for `kv["android.closed_tabs"]`). Written to disk, so
+    /// without any `user:password@` part, like the session's addresses.
     pub fn closed_tabs_json(&self) -> String {
-        serde_json::to_string(&self.closed_tabs()).unwrap_or_else(|_| "[]".to_string())
+        let closed: Vec<ClosedTab> = self
+            .closed_tabs()
+            .into_iter()
+            .map(|c| ClosedTab { url: lb_core::urlclean::strip_credentials(&c.url), ..c })
+            .collect();
+        serde_json::to_string(&closed).unwrap_or_else(|_| "[]".to_string())
     }
 
+    /// Restores the stored list. Only addresses a session would restore come back (web pages
+    /// and Krunk's own pages): a reopened tab is loaded without further checks.
     pub fn restore_closed_tabs_json(&self, json: String) -> Result<(), FfiError> {
         let closed: Vec<ClosedTab> = serde_json::from_str(&json)?;
-        self.set_closed_tabs(closed);
+        self.set_closed_tabs(closed.into_iter().filter(|c| restorable(&c.url)).collect());
         Ok(())
     }
 
@@ -247,9 +255,20 @@ impl TabModel {
     /// Restores a session: every tab unloaded except the active one. Also accepts Windows'
     /// multi-window form (its flat `tabs`/`active` fields).
     pub fn restore_session_json(&self, json: String, now: i64) -> Result<Vec<TabEffect>, FfiError> {
-        let session: Session = serde_json::from_str(&json)?;
+        let mut session: Session = serde_json::from_str(&json)?;
+        // The core skips tabs it does not restore but takes `active` as an index into the
+        // stored list: with a skipped tab before it, the wrong tab would become active. The
+        // index is moved to where the active tab lands (if it is skipped itself: the next one).
+        let skipped_before = session.tabs.iter().take(session.active).filter(|t| !restorable(&t.url)).count();
+        session.active -= skipped_before;
         Ok(effects(self.lock().restore(&session, now)))
     }
+}
+
+/// What `core::tabs` restores from a session: web pages and Krunk's own pages.
+fn restorable(url: &str) -> bool {
+    let url = lb_core::pages::migrate_legacy_url(url);
+    url.starts_with("https://") || url.starts_with("http://") || lb_core::pages::Page::from_url(&url).is_some()
 }
 
 #[cfg(test)]
@@ -373,5 +392,48 @@ mod tests {
         assert!(e.contains(&TabEffect::DestroyView { id: d.id }));
         m.close_many(a.id, false, 7);
         assert!(m.count() >= 1);
+    }
+
+    #[test]
+    fn restore_keeps_the_active_tab_when_an_earlier_one_is_skipped() {
+        // A blank tab (not restorable) before the active one: B was active, B must be active.
+        let json = r#"{"tabs":[{"url":"about:blank","title":""},{"url":"https://a.example/","title":"A"},
+            {"url":"https://b.example/","title":"B"},{"url":"https://c.example/","title":"C"}],"active":2}"#;
+        let m = TabModel::new();
+        m.restore_session_json(json.into(), 1).unwrap();
+        let tabs = m.tabs();
+        assert_eq!(tabs.len(), 3);
+        let active = tabs.iter().find(|t| Some(t.id) == m.active_id()).unwrap();
+        assert_eq!(active.url, "https://b.example/");
+        // The active tab itself skipped: the next one takes over; nothing skipped: unchanged.
+        let json = r#"{"tabs":[{"url":"https://a.example/","title":"A"},{"url":"file:///x","title":""},
+            {"url":"https://c.example/","title":"C"}],"active":1}"#;
+        let m = TabModel::new();
+        m.restore_session_json(json.into(), 1).unwrap();
+        let active = m.tabs().into_iter().find(|t| Some(t.id) == m.active_id()).unwrap();
+        assert_eq!(active.url, "https://c.example/");
+        let json = r#"{"tabs":[{"url":"https://a.example/","title":"A"},{"url":"https://b.example/","title":"B"}],"active":1}"#;
+        let m = TabModel::new();
+        m.restore_session_json(json.into(), 1).unwrap();
+        let active = m.tabs().into_iter().find(|t| Some(t.id) == m.active_id()).unwrap();
+        assert_eq!(active.url, "https://b.example/");
+    }
+
+    #[test]
+    fn the_stored_closed_list_has_no_credentials_and_only_restorable_addresses() {
+        let m = TabModel::new();
+        let a = m.open("https://user:secret@a.example/path".into(), false, None, true, true, 1);
+        m.open("https://b.example/".into(), false, None, true, true, 2);
+        m.close(a.id, 3);
+        let json = m.closed_tabs_json();
+        assert!(!json.contains("secret"), "{json}");
+        assert!(json.contains("https://a.example/path"), "{json}");
+        // A stored list is not trusted: only web pages and Krunk's own pages come back.
+        let stored = r#"[{"url":"file:///data/data/org.krunk.browser/files/krunk/browser.db","title":"x","index":0},
+            {"url":"javascript:alert(1)","title":"y","index":0},{"url":"https://ok.example/","title":"ok","index":0}]"#;
+        let n = TabModel::new();
+        n.restore_closed_tabs_json(stored.into()).unwrap();
+        let urls: Vec<String> = n.closed_tabs().into_iter().map(|c| c.url).collect();
+        assert_eq!(urls, vec!["https://ok.example/".to_string()]);
     }
 }

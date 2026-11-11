@@ -594,6 +594,15 @@ mod tests {
     }
 
     #[test]
+    fn rejected_input_is_invalid_not_a_database_failure() {
+        let s = store();
+        let bad_url = s.add_bookmark(bookmarks_bar_id(), "Script".into(), "javascript:alert(1)".into());
+        assert!(matches!(bad_url, Err(FfiError::Invalid(_))), "{bad_url:?}");
+        let unknown = s.delete_bookmark(987_654);
+        assert!(matches!(unknown, Err(FfiError::Invalid(_))), "{unknown:?}");
+    }
+
+    #[test]
     fn history_titles_are_cleaned_and_bounded() {
         let s = store();
         let huge = format!("  Big\u{0007}\ttitle {}", "x".repeat(2_000_000));
