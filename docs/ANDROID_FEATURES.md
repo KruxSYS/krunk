@@ -1,0 +1,247 @@
+# Krunk for Android: feature parity matrix
+
+Cross-reference of a mobile browser's feature set against Windows Krunk 0.15.3 and the Android
+preview (0.1.0, round 1). Later rounds work through it in order.
+
+> **Category set:** derived from the round-1 brief; the operator's original 17-category list was
+> not available when this matrix was written. Please paste it and any missing rows will be added.
+
+**Columns.** *Windows Krunk*: yes / partial / no, with the README section or CHANGELOG version
+(and the `core` module when the logic is shared). *Android 0.1.0*: done / partial / roadmap /
+not planned. *Engine*: the GeckoView API that provides it, or the limitation. *Round*: the Android
+round that builds it (1 = this one; 2 = blocking + vault; 3 = downloads, permissions, media; 4 =
+account/sync; 5 = VPN, agent, release). "Google-service" rows: *not planned — conflicts with
+Krunk's no-Google-contact promise; alternative: …*, unless the operator overrides.
+
+## 1. Address bar & search
+
+| Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
+|---|---|---|---|---|
+| URL vs search decision (scheme, IP, localhost, host:port, public suffix, local suffixes) | yes — Usage › Address bar, 0.15.0; `core::urlclean::input_to_url` | done (same core function via UniFFI) | app-side | 1 |
+| Default engine DuckDuckGo; Google, Bing, Brave, Startpage, Ecosia selectable | yes — `core::settings::SearchEngine` | done | app-side | 1 |
+| Custom search engine (URL template with `%s`) | yes — `custom_search_url` | done | app-side | 1 |
+| Google search integration | selecting Google as the engine only — no Google-specific integration | done (same meaning) | — | 1 |
+| History / bookmark / typed-site suggestions, most visited first | yes — 0.5.1; `core::omnibox` | done | app-side | 1 |
+| Inline completion of the typed site | yes — 0.6.0 | partial (core computes it; the Android editor shows rows only) | — | 2 |
+| Engine search suggestions (setting, never in private tabs, no cookies) | yes — 0.15.0; `core::search_suggest` | done | app-side HTTP | 1 |
+| Tracking-parameter stripping (`utm_*`, `fbclid`, `gclid`, …) | yes — Privacy, 0.6.0; `core::urlclean` | done (typed navigations and link loads through `navigation_rewrite`) | `NavigationDelegate.onLoadRequest` | 1 |
+| Automatic HTTPS upgrade (HTTPS-first) | no (HTTPS-only mode only) | done — Gecko's HTTPS-First is on by default (verified: `http://example.com` loads as https) | Gecko default | 1 |
+| HTTPS-only mode | yes — Privacy; `settings.https_only` | done (`allowInsecureConnections = HTTPS_ONLY`) | `GeckoRuntimeSettings` | 1 |
+| Copy / paste / edit URL; paste-and-go | yes — 0.6.0 | done (platform text field menu) | — | 1 |
+| Site info / certificate popup | yes — 0.5.0; `core::certinfo` | roadmap | `SecurityInformation.certificate` | 3 |
+| Voice search | no | roadmap (Android `RecognizerIntent`, on-device where available) | — | 3 |
+| QR code scanning | no (sign-in QR only) | roadmap (needs a camera permission flow; CameraX/ML Kit-free decoder) | — | 3 |
+| Search the selection ("Search DuckDuckGo for …") | yes — 0.11.0 | roadmap (GeckoView `SelectionActionDelegate`) | `SelectionActionDelegate` | 2 |
+
+## 2. Navigation & page
+
+| Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
+|---|---|---|---|---|
+| Back, forward, reload, stop | yes — keys table | done | `GeckoSession` | 1 |
+| Home (configurable homepage) | partial — Alt+Home, no button since 0.5.0 | done (toolbar button; `settings.homepage`) | — | 1 |
+| Back/forward history menu | yes — 0.8.0; `core::navmenu` | roadmap (long-press back) | `SessionState` history | 2 |
+| Pull-to-refresh | n/a | done (nested scroll from the GeckoView) — see the report for the fallback used | `NestedScrollingChild` | 1 |
+| Progress bar, title, favicon | yes | done (favicons via the bundled `krunk-icons` extension + `/favicon.ico` fallback, stored in the shared `favicons` table) | `ProgressDelegate`, `WebExtension` messaging | 1 |
+| Security indicator (lock / "Not secure") | yes — 0.5.0 | done | `onSecurityChange` | 1 |
+| Custom error page (Krunk-styled) | partial — crash/hang page, HTTPS-only interstitial | done (`assets/error.html` from `onLoadError`, light/dark) | `NavigationDelegate.onLoadError` | 1 |
+| Find in page (count, next/previous) | yes — Ctrl+F | done | `SessionFinder` | 1 |
+| Request desktop site (per tab) | yes — user-agent presets (`core::useragents`) | done (Gecko desktop mode + viewport; the Windows UA presets are selectable in Settings › User agent) | `GeckoSessionSettings.userAgentMode` | 1 |
+| Page zoom: pinch | n/a | done (+ "force zoom" setting) | `forceUserScalableEnabled` | 1 |
+| Default zoom setting | yes — Usage › Zoom; `core::zoom` | partial — GeckoView has no page-zoom API; `default_zoom` scales text instead | `fontSizeFactor` | 2 |
+| Text scaling (system font scale / in-app) | partial — UI font only | done | `automaticFontSizeAdjustment` / `fontSizeFactor` | 1 |
+| Full-screen web content | yes — F11, 0.2.0 | done (system bars hidden, back exits) | `ContentDelegate.onFullScreen` | 1 |
+| Pointer lock (games with a mouse) | yes — `core::pointer_lock` | roadmap (unverified on Gecko Android; plan §1) | — | 3 |
+| Translate | no | roadmap (Firefox Translations is local/offline; needs the models' download flow) | `TranslationsController` | 3 |
+| Print / save as PDF | yes — Ctrl+P | roadmap | `GeckoSession.saveAsPdf`, `PrintDelegate` | 3 |
+| PDF viewer | yes — 0.11.3 | roadmap (pdf.js is built into Gecko; needs testing) | Gecko pdf.js | 3 |
+| View source | yes — 0.11.0 | roadmap | `view-source:` | 3 |
+| JavaScript dialogs (alert/confirm/prompt/leave) | yes — 0.12.4 | partial — Gecko's default prompts show; Krunk-styled `PromptDelegate` later | `PromptDelegate` | 2 |
+| Reader mode | no | roadmap | Gecko reader view | 4 |
+| Developer tools | yes — 0.3.0 | not planned on-device (remote debugging in debug builds only) | `remoteDebuggingEnabled` | — |
+
+## 3. Links & context menu
+
+| Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
+|---|---|---|---|---|
+| Open link in current tab | yes | done | — | 1 |
+| Open in new tab / private tab | yes — 0.15.3 | done (long-press menu) | `onContextMenu` | 1 |
+| Copy link, copy link text | yes (address) / no (text) | done / done (title or alt text; the engine exposes no selection) | `ContextElement` | 1 |
+| Share link, share page | no | done (Android share sheet) | — | 1 |
+| Download link / save image, open image in new tab | yes — 0.12.2 (images) | done (Android `DownloadManager`) | `ContextElement.srcUri` | 1 |
+| `window.open` / `target=_blank` into a new tab | yes | done | `onNewSession` | 1 |
+| `mailto:` handler | yes — 0.11.3 | roadmap (hand to the system mail app) | `onLoadRequest` | 2 |
+| Selected address text → open | yes — 0.15.2 | roadmap | `SelectionActionDelegate` | 2 |
+
+## 4. Tabs
+
+| Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
+|---|---|---|---|---|
+| Tab model shared with Windows (`core::tabs`) | yes | done (UniFFI `TabModel`; session JSON in `kv["session"]`, same shape) | — | 1 |
+| Lazy restore (only the active tab loads) | yes — Memory | done | — | 1 |
+| Session restore on start; restore after process death | yes — 0.3.0 | done (+ Gecko `SessionState` per tab for back/forward) | `SessionState` | 1 |
+| "Restore tabs" prompt after a crash | partial (always restores) | done | — | 1 |
+| Tab switcher grid with thumbnails, close, swipe-to-close, close all, search | tab list ▾ with filter — 0.11.0; previews on hover — 0.15.0 | done | `GeckoView.capturePixels` | 1 |
+| Tab counter in the toolbar | n/a | done | — | 1 |
+| Private tabs (no history, in-memory data, distinct theme) | yes — Usage › Private tabs | done | `usePrivateMode` | 1 |
+| Recently closed (reopen) | partial — Ctrl+Shift+T stack, memory only | done (list, persisted; a documented deviation) | — | 1 |
+| Background tab sleep / discard policy (`core::memory`) | yes — 5 min sleep, optional discard | done (`setActive(false)` / session discard; `onTrimMemory`) | `GeckoSession.setActive` | 1 |
+| Tab groups (create/rename/colour/move) | no | roadmap | — | 3 |
+| Background tab loading control | partial (`link_tabs`) | roadmap | — | 2 |
+| Pinned tabs | no | roadmap | — | 3 |
+| Duplicate, move, close others/right | yes | partial (core supports it; switcher exposes close only) | — | 2 |
+| Multiple windows | yes — 0.3.0 | not planned (phones) / roadmap for tablets | — | — |
+| Mute tab, task manager | yes — 0.6.0 | roadmap | `MediaSession` | 3 |
+
+## 5. UI & theme
+
+| Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
+|---|---|---|---|---|
+| Light / dark / follow system (Krunk palette, no Material dynamic colour) | yes | done | `preferredColorScheme` for content | 1 |
+| Bottom toolbar by default, top as an option | n/a | done (Settings › Toolbar position) | — | 1 |
+| Toolbar auto-hide on scroll | n/a | done — see report | nested scroll / `ScrollDelegate` | 1 |
+| Edge-to-edge, gesture and 3-button navigation, predictive back | n/a | done | — | 1 |
+| Landscape, tablet layout (sw600dp) | n/a | done (wider grid; two-pane settings) | — | 1 |
+| Accessibility: 48 dp targets, content descriptions, TalkBack switcher, font scale, haptics | partial on Windows | done | — | 1 |
+| Appearance customisation (accent, styles, presets) | yes — 0.7.0, 0.15.0; `core::style` | roadmap (shared `appearance` settings exist) | — | 4 |
+| Toolbar customisation | yes — 0.6.0 (toolbar items) | roadmap | — | 3 |
+| Swipe between tabs gesture | n/a | roadmap | — | 3 |
+| Keyboard shortcuts (hardware keyboard) | yes | roadmap | — | 4 |
+
+## 6. New-tab page
+
+| Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
+|---|---|---|---|---|
+| Native page with search box | yes (HTML) | done (Compose) | — | 1 |
+| Top sites by frecency (`core::frecency`) | yes | done | — | 1 |
+| Shortcuts: pin / edit / remove (shared `tiles` table) | yes — 0.6.0, 0.15.0 | done | — | 1 |
+| Recently closed row | no | done | — | 1 |
+| Built-in wallpapers (10, from `ui/shared/wallpapers`) + colour | yes — 0.7.0 | done | — | 1 |
+| Own picture as background, blur | yes — 0.7.0, 0.15.0 | roadmap (Android photo picker) | — | 2 |
+| News / Discover feed | no (Chromium feed disabled) | not planned — conflicts with Krunk's no-Google-contact promise; alternative: an optional RSS/Atom feed the user adds, in a later round | — | — |
+| Lens / visual search | no | not planned — Google Lens needs Google services; alternative: none planned | — | — |
+| Voice shortcut | no | roadmap (with voice search) | — | 3 |
+| Layout customisation (columns/rows, sections) | yes — 0.6.0 | partial (columns/rows and sections from settings; no drag reorder yet) | — | 2 |
+
+## 7. Bookmarks
+
+| Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
+|---|---|---|---|---|
+| Add (star), edit, delete, folders | yes — `core::bookmarks` | done (same SQLite tables) | — | 1 |
+| Bookmark manager with search | yes — `krunk://bookmarks` | done | — | 1 |
+| Netscape HTML import / export | yes — `core::netscape` | done (Android file picker) | — | 1 |
+| Import from other browsers | yes — 0.5.0 | roadmap (Android browsers expose no files; HTML export only) | — | — |
+| Bookmarks bar | yes — 0.4.0 | not planned on phones (folder "Bookmarks bar" is shown in the manager) | — | — |
+| Reading list | no | roadmap | — | 4 |
+| Offline saving (save page) | no | roadmap | `saveAsPdf` / WebExtension | 4 |
+| Sync | yes — 0.9.0 (beta) | roadmap (`core::sync` via UniFFI; the protocol already names `platform: android`) | — | 4 |
+
+## 8. History
+
+| Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
+|---|---|---|---|---|
+| History grouped by day, search | yes — `krunk://history` | done | `HistoryDelegate.onVisited` | 1 |
+| Delete entry, delete range, clear all | yes | done (entry, clear all; range via Clear browsing data) | — | 1 |
+| Private tabs never write history | yes | done (verified by a `visits` count) | `usePrivateMode` | 1 |
+| `:visited` styling from Krunk's history | n/a | roadmap | `HistoryDelegate.getVisited` | 2 |
+
+## 9. Settings & data
+
+| Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
+|---|---|---|---|---|
+| Settings on the shared `core::settings` fields (validated by the core, same JSON) | yes | done | — | 1 |
+| Search engine + custom URL, homepage, startup, new-tab page, theme, text size, suggestions, HTTPS-only, tracking params, tab sleep/discard, user agent | yes | done | — | 1 |
+| Toolbar position, force zoom, follow-system font (Android-only, `kv["android.settings"]`) | n/a | done | — | 1 |
+| Clear browsing data (history, cookies, cache, site data) | yes | done | `StorageController.clearData` | 1 |
+| Clear on exit | yes — `ClearOnExit` | roadmap | — | 2 |
+| Cookies and site-data list per site (`krunk://storage`) | yes — 0.2.0 | roadmap (`clearDataFromHost`; listing via a WebExtension `cookies` API) | `StorageController` | 3 |
+| Site permissions defaults and per-site list | yes — Site permissions | roadmap | `PermissionDelegate` | 3 |
+| Settings search box | yes — 0.5.0 | roadmap | — | 2 |
+| About (versions, licences, link) | yes — `krunk://about` | done | — | 1 |
+| Data location documented; backup rules (DB included, Gecko profile and vault excluded) | n/a | done (README) | — | 1 |
+| Reset settings, settings export | yes / no | roadmap | — | 3 |
+
+## 10. Downloads
+
+| Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
+|---|---|---|---|---|
+| Download page (cards, search, filters, auto-remove) | yes — 0.15.0; `core::downloads` | roadmap (hand-off to Android `DownloadManager` only in 0.1.0) | `onExternalResponse` | 3 |
+| Pause / resume / retry, multi-connection | yes — `core::segdl` | roadmap | — | 3 |
+| Open downloaded files, notifications | yes | roadmap | — | 3 |
+
+## 11. Passwords & autofill
+
+| Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
+|---|---|---|---|---|
+| Encrypted vault (`core::vault`, Argon2id + XChaCha20) | yes | roadmap (Android Keystore-wrapped key, biometric unlock) | `Autocomplete.StorageDelegate` | 2 |
+| Save / fill prompts, HTTP auth fill | yes — 0.5.0, 0.8.0 | roadmap | `Autocomplete`, `PromptDelegate` | 2 |
+| Password generator (`core::passgen`) | yes — 0.6.0 | roadmap | — | 2 |
+| Recovery phrase | yes — 0.7.0 | roadmap | — | 2 |
+| Payment cards | yes — 0.6.0 | roadmap | `Autocomplete.CreditCard` | 3 |
+| Google Password Manager | no | not planned — conflicts with Krunk's no-Google-contact promise; alternative: Krunk's vault, and Android Autofill service integration later | — | — |
+| Passkeys / WebAuthn | partial | partial — GeckoView uses Play Services FIDO when present (open question: ship without it) | GMS FIDO | — |
+
+## 12. Privacy & content blocking
+
+| Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
+|---|---|---|---|---|
+| Ad and tracker blocking (Brave engine + 7 lists + uBO resources) | yes — How it works › Ad and tracker blocking | roadmap — uBlock Origin as a bundled extension (`ensureBuiltIn` verified in 0.1.0 with the icons extension) | `WebExtensionController.ensureBuiltIn` | 2 |
+| Shield counter, per-site allow, custom lists | yes | roadmap (via uBO messaging) | — | 2 |
+| Tracking protection levels (Standard/Strict/Custom) | yes — 0.6.0; `core::protection` | roadmap (map onto Gecko ETP + uBO) | `ContentBlocking.Settings` | 2 |
+| Third-party cookie policy, referrer trimming | yes — `core::cookies` | roadmap (Gecko `cookieBehavior`, Total Cookie Protection) | `ContentBlocking` | 2 |
+| DNT / GPC headers | yes | roadmap (Gecko prefs) | — | 2 |
+| Fingerprinting protection | partial | roadmap (Gecko `privacy.resistFingerprinting` flavours) | — | 2 |
+| Custom DNS (DoH/DoT/DoQ) | yes — 0.6.0; `core::dns` | roadmap (Gecko DoH) | `network.trr.*` prefs | 3 |
+| Safe Browsing | no (switched off on Windows) | not planned — conflicts with Krunk's no-Google-contact promise; alternative: uBO's badware list (as on Windows); Gecko's Safe Browsing stays off | `ContentBlocking.SafeBrowsing` | — |
+| No telemetry, no background Krunk traffic | yes | done (the app makes no requests of its own; GeckoView has no telemetry; verified request list is a round-2 audit item) | — | 1 |
+| Private tabs | yes | done | `usePrivateMode` | 1 |
+| Session logs (`krunk://sessions`, opt-in) | yes — 0.15.0 | roadmap | — | 4 |
+
+## 13. Account & sync
+
+| Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
+|---|---|---|---|---|
+| Krunk account sign-in (device code, QR pairing) | yes — 0.8.0, 0.13.0; `core::account` | roadmap (protocol allows `platform: "android"`) | — | 4 |
+| End-to-end encrypted sync of bookmarks, history, settings, tabs, passwords | yes — 0.9.0; `core::sync` | roadmap (same data formats already in use) | — | 4 |
+
+## 14. Extensions
+
+| Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
+|---|---|---|---|---|
+| Install extensions (CRX / Web Store) | yes — 0.6.0 (own MV3 subset) | not planned as CRX; roadmap: a curated set of Firefox add-ons (WebExtensions) | `WebExtensionController.install` | 4 |
+| Bundled built-in extension (Krunk's own) | n/a | done (`krunk-icons`, favicon reporting) | `ensureBuiltIn` | 1 |
+| uBlock Origin bundled | n/a | roadmap | `ensureBuiltIn` | 2 |
+
+## 15. Media
+
+| Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
+|---|---|---|---|---|
+| Codecs (H.264/AAC, VP8/9, AV1, Opus, …) | yes — own CEF build | partial — Gecko uses the device's codecs (MediaCodec); untested in 0.1.0 | — | 3 |
+| Picture-in-Picture | yes — 0.6.0 | roadmap (Android PiP via `MediaSession.Delegate` + activity PiP) | `MediaSession` | 3 |
+| Media session / notification controls | yes — 0.11.0 | roadmap | `MediaSession` | 3 |
+| Autoplay control | no | roadmap | `autoplayDefault` | 3 |
+| DRM (Widevine) | partial — L3 opt-in | roadmap (Widevine L1/L3 through Gecko's GMP) | — | 3 |
+
+## 16. AI agent, scripts, VPN, updates, default browser
+
+| Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
+|---|---|---|---|---|
+| AI agent (BYO provider) | yes — 0.12.0 | roadmap | — | 5 |
+| Userscripts, macros | yes — 0.12.0 | roadmap (userscripts via a bundled WebExtension) | — | 5 |
+| VPN (WireGuard/OpenVPN, Krunk-only) | yes — 0.14.0 | roadmap (Android `VpnService`) | — | 5 |
+| Update channel (signed manifest) | yes — Updates | roadmap (`android-arm64` channel for the APK flavour; Play updates itself) | — | 5 |
+| Default browser flow | yes — 0.12.1 | roadmap (`RoleManager.ROLE_BROWSER` request) | — | 3 |
+| Custom Tabs for other apps | n/a | roadmap (`CustomTabsService`) | — | 4 |
+
+## 17. Platform integration
+
+| Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
+|---|---|---|---|---|
+| Open links from other apps (`VIEW` http/https, `SEND` text, web search) | yes — 0.12.1 | done (intent filters) | — | 1 |
+| Share sheet (page, link) | no | done | — | 1 |
+| Default browser (`APP_BROWSER` category) | yes | partial — selectable in Android settings; in-app prompt is round 3 | — | 3 |
+| Backup / device transfer rules | n/a | done | — | 1 |
+| Web notifications | yes | roadmap (`WebNotificationDelegate` + notification permission) | — | 3 |
+| Home-screen shortcuts / PWA install | no | roadmap (`WebAppManifest`) | — | 4 |
+| Widgets (search widget) | n/a | roadmap | — | 4 |
+| Protocol handlers (`registerProtocolHandler`) | no | roadmap | — | 4 |
+| Installer / portable mode | yes | n/a (APK; Play/F-Droid packaging is round 5) | — | 5 |

@@ -1480,6 +1480,54 @@ How to read these numbers:
 To reproduce: enable discard in Settings, start with `--sleep-test-seconds=90 --mem-report`,
 open the sites and read `memory-report.log` (steps in `docs/MANUAL_TEST.md`).
 
+## Krunk for Android (preview)
+Krunk 0.1.0 for Android is a first, installable preview of the same browser for phones and
+tablets (Android 8 and later, `arm64-v8a` devices and the `x86_64` emulator). It is built from
+this repository (`android/`, `ffi/`) and shares Krunk's Rust `core` with the Windows app: the same
+address-bar rules (DuckDuckGo by default), the same SQLite database layout for history, bookmarks,
+new-tab shortcuts and settings, the same session format and background-tab policy. Details:
+`docs/ANDROID_PLAN.md` (decisions), `docs/ANDROID_FEATURES.md` (what is there and what is not,
+feature by feature), `docs/ANDROID_DEV.md` (building and testing).
+
+**Engine.** GeckoView 160 (Firefox's engine as a library, MPL-2.0), not the system WebView and not
+a Chromium build: it lets Krunk ship uBlock Origin as a built-in extension in a later round, keeps
+private tabs and site data under the app's control, and keeps the engine independent of Google's.
+Pages therefore render with Gecko on Android and with Chromium on Windows.
+
+**What it does (0.1.0).** Browsing with a bottom (or top) toolbar that hides while you scroll,
+address bar with history, bookmark and search suggestions, automatic HTTPS, Krunk's error page,
+find in page, desktop-site switch, full screen, share, link long-press menu (new tab, private tab,
+copy, share, save image); tabs with a switcher grid, a separate private section, recently closed,
+restore after a restart or a crash, and sleeping/discarding of background tabs; a native new-tab
+page with your most visited sites, shortcuts and the built-in wallpapers; bookmarks with folders,
+search and Netscape HTML import/export; history by day; settings (search engine, homepage, start-up,
+theme, toolbar position, text size, HTTPS-only, suggestions, clear browsing data) and an About page.
+Light, dark and system themes; phone and tablet layouts; TalkBack-friendly controls.
+
+**Not there yet** (see the matrix for the planned round): ad and tracker blocking, the password
+vault, a downloads manager (downloads are handed to Android), site permissions and cookie
+controls, media controls and picture-in-picture, account and sync, VPN, the AI agent, userscripts,
+extensions, updates, Play/F-Droid packaging and release signing. The preview APKs are signed with
+a debug key: they cannot be updated in place by a later signed release.
+
+**Data and backup.** Krunk's database is `files/krunk/browser.db` in the app's private storage
+(`/data/data/org.krunk.browser/files/krunk/`); the Gecko profile (cookies, site data, caches) is
+in GeckoView's default location under the same `files/` directory. Android cloud backup and
+device-to-device transfer include `files/krunk` and exclude the Gecko profile and the future vault
+(`android/app/src/main/res/xml/backup_rules.xml`, `data_extraction_rules.xml`). `adb backup` is
+gone in current Android; on a debug build `adb shell run-as org.krunk.browser` reaches the files.
+Private tabs write nothing to the database.
+
+**Promises.** No telemetry; the app makes no network requests of its own: only the pages you
+open, search suggestions while you type (on by default, off in private tabs, can be switched off)
+and the favicon of a page you visited. The Google Play Services passkey library that GeckoView
+depends on is bundled but only used when a site asks for a passkey (open question in the plan).
+
+**Building.** `android/scripts/setup-sdk.sh` installs the pinned toolchain (`android/toolchain.lock`),
+then `cd android && ./gradlew assembleDebug` builds the Rust core for both ABIs with `cargo-ndk`,
+generates the Kotlin bindings with UniFFI and packages the APKs. `docs/ANDROID_DEV.md` has the
+emulator scripts, the tests and the known traps.
+
 ## Building from source
 The release is cross-compiled on Linux for `x86_64-pc-windows-msvc` with `cargo-xwin`. CEF's
 Rust bindings (`cef` crate) build CEF's C++ wrapper library and support only the MSVC target:

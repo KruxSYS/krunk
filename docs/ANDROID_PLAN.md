@@ -1,12 +1,39 @@
 # Krunk for Android: plan
 
-Status: proposal (no code yet). Goal: a Krunk for Android phones and tablets with the same
-promises as the desktop version:
+Status: **in progress** (round 1 delivered Android 0.1.0: toolchain, engine spike, core browsing,
+tabs, new-tab page, bookmarks/history, settings; see `docs/ANDROID_FEATURES.md` for the parity
+matrix and `docs/ANDROID_DEV.md` for the build). Goal: a Krunk for Android phones and tablets with
+the same promises as the desktop version:
 - ad and tracker blocking that also works on YouTube
 - no telemetry, and no network traffic of Krunk's own except filter and update checks
 - an encrypted password vault
 - private tabs
 - working browser games (pointer lock with a mouse, full screen)
+
+## 0. Decisions taken in round 1 (Android 0.1.0)
+
+| Decision | Value |
+|---|---|
+| Engine | **GeckoView 160.0.20261104181552** (`org.mozilla.geckoview:geckoview-omni`, release channel). Verified in the sandbox emulator: pages render, `ensureBuiltIn` installs a bundled extension, content-script native messaging works. A bump every 4 weeks is a one-line change in `android/gradle/libs.versions.toml` + `android/toolchain.lock`. |
+| Package name | `org.krunk.browser` (assumed; can be renamed before a public release) |
+| Versions | app `0.1.0` / `versionCode 1`, independent of the Windows version (core is 0.15.3) |
+| SDK levels | minSdk **26** (also GeckoView's minimum), targetSdk **35**, compileSdk **37.2** (required by GeckoView 160 and Compose 2026.09) |
+| ABIs | `arm64-v8a` (devices) and `x86_64` (emulator); per-ABI APKs plus a universal one. No `armeabi-v7a` (assumed). |
+| UI | Kotlin + Jetpack Compose, Material 3 with Krunk's own palette (no dynamic colour), bottom toolbar by default |
+| Core reuse | `core` via UniFFI 0.32 (`ffi/` crate, proc-macros): storage (same SQLite schema), omnibox/urlclean, search suggestions, settings (same JSON, validated by the core), tabs model, memory policy, frecency, Netscape import/export, user agents, wallpapers |
+| Data layout | `filesDir/krunk/browser.db`; Gecko profile at GeckoView's default under `filesDir`; Android-only settings in `kv["android.settings"]`; session in `kv["session"]` (Windows shape) plus `android.gecko_states`, `android.closed_tabs`, `android.clean_exit`; backup excludes the Gecko profile and the vault |
+| HTTPS | Gecko's HTTPS-First is on by default (`http://` upgrades automatically); the shared `https_only` setting maps to `allowInsecureConnections = HTTPS_ONLY` |
+| Favicons | a bundled WebExtension (`krunk-icons`) reports `<link rel=icon>`; the app fetches one icon per host (user-triggered page loads only) into the shared `favicons` table |
+| Play Services | GeckoView depends on `play-services-fido` (WebAuthn). Kept in 0.1.0; the build without it (`-Pkrunk.noGms=true`) compiles and browses. See open question 8. |
+
+Spike measurements (sandbox emulator, Android 16 x86_64, software GPU, 4 vCPU):
+- APK (debug, unstripped Gecko): arm64-v8a 153 MB, x86_64 161 MB, universal 274 MB. `libkrunk_ffi.so`
+  (debug, stripped) 8.6 MB per ABI; release is smaller. Most of the size is `libxul.so` (155–167 MB
+  uncompressed) and `omni.ja` (15 MB).
+- Cold start: first launch after install 12–16 s (profile creation); later cold starts 1.1 s to the
+  first frame, GeckoRuntime ready after ~100 ms, `https://example.com` loaded ~6 s after process start.
+- `ensureBuiltIn` of a bundled extension: works (installed once, persists across restarts).
+- `http://example.com` → `https://example.com/` without any Krunk code (HTTPS-First).
 
 ## 1. Engine
 
@@ -79,9 +106,9 @@ as an AAR.
   `Autocomplete` delegate. Being a system-wide Android Autofill service is a later option.
 
 ## 4. Sync
-Out of scope for this plan. Desktop has no sync either. A later design would reuse the SQLite
-formats and end-to-end-encrypt with the vault's key scheme. Manual import/export of bookmarks
-(Netscape HTML via `core::netscape`) and of the vault (encrypted file) covers moving devices.
+Desktop has end-to-end encrypted sync since 0.9.0 (`docs/sync/`); the protocol already accepts
+`platform: "android"` and `core::sync` is meant to be shared through UniFFI (round 4). Until then,
+manual import/export of bookmarks (Netscape HTML via `core::netscape`) covers moving devices.
 
 ## 5. Distribution and updates
 | Channel | Self-update | Notes |
@@ -98,9 +125,9 @@ Proposal:
 ## 6. Milestones (one experienced Android/Rust developer)
 | # | Milestone | Effort |
 |---|---|---|
-| A0 | Spike: GeckoView sample app with uBO as a built-in extension; check YouTube ads, document-start scriptlets, pointer lock with a USB/Bluetooth mouse, full screen, APK size, cold start on a mid-range phone | 1 week |
-| A1 | App skeleton: Compose chrome, tabs (GeckoSession per tab, session restore), address bar with `core::urlclean` via UniFFI, private tabs (separate runtime context) | 3 weeks |
-| A2 | Data: history, bookmarks, new-tab top sites (frecency), settings through `core` | 2 weeks |
+| A0 ✔ (round 1, without uBO) | Spike: GeckoView sample app with uBO as a built-in extension; check YouTube ads, document-start scriptlets, pointer lock with a USB/Bluetooth mouse, full screen, APK size, cold start on a mid-range phone | 1 week |
+| A1 ✔ (round 1) | App skeleton: Compose chrome, tabs (GeckoSession per tab, session restore), address bar with `core::urlclean` via UniFFI, private tabs (separate runtime context) | 3 weeks |
+| A2 ✔ (round 1) | Data: history, bookmarks, new-tab top sites (frecency), settings through `core` | 2 weeks |
 | A3 | Blocking: bundled uBO (pinned version, hash-checked like `ubo-resources.lock`), shield counter and per-site allow via the extension's messaging, uBO list updates | 2 weeks |
 | A4 | Vault: Keystore-wrapped key, unlock (password, optional biometrics), save/fill prompts through GeckoView autocomplete delegates | 3 weeks |
 | A5 | Downloads, site data/cookies screen, permissions prompts, full screen and pointer lock polish | 2 weeks |
@@ -121,5 +148,18 @@ Total: about **15–16 weeks** to a first public beta, then a GeckoView bump eve
 5. **Pointer lock:** if A0 shows Gecko on Android lacks it with a mouse, is touch-only acceptable
    for games on Android?
 6. **Shared account/sync:** wanted in a later round?
-7. **Branding/package name:** `org.krunk.browser`? It needs a domain the project controls,
-   which is also needed for `UPDATE_BASE_URL`.
+7. **Branding/package name:** `org.krunk.browser` is used (assumed); it needs a domain the
+   project controls, which is also needed for `UPDATE_BASE_URL`.
+8. **Play Services FIDO:** GeckoView 160 depends on `com.google.android.gms:play-services-fido`
+   for passkeys/WebAuthn. It is only used when a site calls WebAuthn and makes no background
+   traffic, but it is Google code in the APK. Ship with it, or exclude it (`-Pkrunk.noGms=true`
+   builds and browses fine; passkeys would then need Android's Credential Manager or be
+   unsupported)?
+9. **Feature list:** the parity matrix (`docs/ANDROID_FEATURES.md`) uses 17 categories derived
+   from the round-1 brief; the operator's original list was not available. Please paste it so
+   missing rows can be added.
+10. **Distribution channel and release signing:** not configured (0.1.0 APKs are debug-signed).
+11. **Google-dependent features** (Lens, Discover feed, Google Password Manager, Safe Browsing):
+    marked "not planned" in the matrix with alternatives; override if wanted.
+12. **Tablet coverage:** round 1 verified the sw600dp layout by resizing the phone emulator; a real
+    tablet AVD needs KVM (absent in the sandbox).
