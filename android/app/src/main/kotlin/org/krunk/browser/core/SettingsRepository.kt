@@ -8,6 +8,7 @@ import kotlinx.coroutines.withContext
 import org.krunk.ffi.AndroidSettings
 import org.krunk.ffi.KrunkStore
 import org.krunk.ffi.SettingsException
+import org.krunk.ffi.defaultSettings
 import org.krunk.ffi.settingsNewTabTarget
 import org.krunk.ffi.settingsSearchName
 import org.krunk.ffi.settingsSearchTemplate
@@ -17,7 +18,8 @@ import org.krunk.ffi.settingsSearchTemplate
  * core, same JSON as Windows); Android-only fields ride along in the same record.
  */
 class SettingsRepository(private val store: KrunkStore) {
-    private val _settings = MutableStateFlow(store.loadSettings())
+    // Unreadable settings must not stop the app from starting: the defaults apply until a save.
+    private val _settings = MutableStateFlow(runCatching { store.loadSettings() }.getOrElse { defaultSettings() })
     val settings: StateFlow<AndroidSettings> = _settings.asStateFlow()
 
     val current: AndroidSettings get() = _settings.value

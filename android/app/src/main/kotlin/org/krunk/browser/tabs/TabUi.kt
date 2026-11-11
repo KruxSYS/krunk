@@ -33,10 +33,4 @@ sealed class TabEvent {
 
     /** Typed `krunk://history` etc.: show the native screen. */
     data class OpenScreen(val page: String) : TabEvent()
-
-    /**
-     * The previous run did not end cleanly and a session is stored: offer to restore. Also
-     * exposed as state in `TabManager.restorePrompt` (the event may fire before any collector).
-     */
-    data class RestorePrompt(val tabCount: Int) : TabEvent()
 }

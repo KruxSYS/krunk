@@ -71,6 +71,9 @@
     <string name="download_confirm_yes">Download</string>
     <string name="share_chooser">Share</string>
 
+    <!-- The database could not be opened at start-up -->
+    <string name="storage_failed">Krunk could not open its data. Tabs, history and bookmarks of this session will not be kept.</string>
+
     <!-- A page whose process crashed -->
     <string name="page_crashed_title">This page stopped working</string>
     <string name="page_crashed_message">The page crashed or was closed by the system to free memory. Reload it to continue.</string>

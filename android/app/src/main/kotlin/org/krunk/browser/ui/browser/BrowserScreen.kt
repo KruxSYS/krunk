@@ -14,6 +14,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -98,6 +99,12 @@ fun BrowserScreen(vm: BrowserViewModel) {
     val downloadStarted = stringResource(R.string.download_started)
     val downloadUnsupported = stringResource(R.string.download_unsupported)
 
+    // The database could not be opened: say once that this session keeps nothing.
+    val storageFailed = stringResource(R.string.storage_failed)
+    LaunchedEffect(Unit) {
+        if (vm.core.storageError != null) snackbar.showSnackbar(storageFailed, duration = SnackbarDuration.Long)
+    }
+
     // Messages are shown from their own coroutine: the collector below must not wait the
     // seconds a snackbar stays, or the next event (a link menu) would be late.
     fun toast(msg: String) = scope.launch { snackbar.showSnackbar(msg) }
@@ -118,8 +125,6 @@ fun BrowserScreen(vm: BrowserViewModel) {
                 }
 
                 is TabEvent.OpenScreen -> Screen.forPage(ev.page)?.let { vm.push(it) }
-
-                is TabEvent.RestorePrompt -> Unit
             }
         }
     }
