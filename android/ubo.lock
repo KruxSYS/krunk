@@ -1,0 +1,10 @@
+# uBlock Origin release bundled in Krunk for Android as a built-in extension: the signed XPI from
+# the project's GitHub release, unpacked into the app's assets at build time, unmodified (GPL-3.0).
+# android/scripts/update-ubo.sh fetches and checks it; the Gradle build fails on a hash mismatch.
+# To move to a newer release: change UBO_VERSION and UBO_XPI, run `update-ubo.sh --pin`, run the
+# bump checklist in docs/ANDROID_DEV.md, commit. (Windows pins its uBO resources separately in
+# assets/filters/ubo-resources.lock.)
+UBO_VERSION=1.76.0
+UBO_ID=uBlock0@raymondhill.net
+UBO_XPI=https://github.com/gorhill/uBlock/releases/download/1.76.0/uBlock0_1.76.0.firefox.signed.xpi
+UBO_SHA256=6f20ff6749193599548770539103069c20948dfcd3e61c3089a67da7bfc3be39

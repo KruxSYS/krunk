@@ -1,4 +1,7 @@
+import com.android.build.api.artifact.SingleArtifact
+import java.security.MessageDigest
 import java.util.Properties
+import java.util.zip.ZipFile
 import javax.inject.Inject
 import org.gradle.process.ExecOperations
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
@@ -67,6 +70,90 @@ val copyWallpapers = tasks.register<Copy>("copyWallpapers") {
     into(wallpapersDst)
 }
 
+// uBlock Origin, the bundled ad and tracker blocker: the XPI pinned in ../ubo.lock is fetched and
+// hash-checked by scripts/update-ubo.sh (a mismatch fails the build), unpacked as it is into the
+// app's assets (git-ignored), and every packaged APK is compared with the XPI file by file.
+// KRUNK_UBO_LOCK / KRUNK_UBO_CACHE: see the script.
+val uboLock = file(System.getenv("KRUNK_UBO_LOCK") ?: rootDir.resolve("ubo.lock").path)
+val uboProps = Properties().apply { uboLock.inputStream().use { load(it) } }
+val uboVersion: String = uboProps.getProperty("UBO_VERSION")
+val uboXpiUrl: String = uboProps.getProperty("UBO_XPI")
+val uboCacheDir = System.getenv("KRUNK_UBO_CACHE") ?: "${System.getProperty("user.home")}/.cache/krunk/ubo"
+val uboXpi = file("$uboCacheDir/$uboVersion/${uboXpiUrl.substringAfterLast('/')}")
+val uboDst = layout.projectDirectory.dir("src/main/assets/extensions/ublock0")
+val uboAssetPrefix = "assets/extensions/ublock0/"
+
+val verifyUbo = tasks.register<Exec>("verifyUbo") {
+    group = "build"
+    description = "Fetches the pinned uBlock Origin XPI if needed and checks its SHA-256 against ubo.lock"
+    commandLine("bash", rootDir.resolve("scripts/update-ubo.sh").path, "--check")
+}
+
+val unpackUbo = tasks.register<Sync>("unpackUbo") {
+    group = "build"
+    description = "Unpacks the checked uBlock Origin XPI into the app assets, unmodified"
+    dependsOn(verifyUbo)
+    from({ zipTree(uboXpi) })
+    into(uboDst)
+}
+
+abstract class CheckUboInApkTask : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val xpi: RegularFileProperty
+
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val apkDir: DirectoryProperty
+
+    @get:Input
+    abstract val prefix: Property<String>
+
+    private fun digests(zip: ZipFile, under: String): Map<String, String> {
+        val out = HashMap<String, String>()
+        for (entry in zip.entries()) {
+            if (entry.isDirectory || !entry.name.startsWith(under)) continue
+            val md = MessageDigest.getInstance("SHA-256")
+            zip.getInputStream(entry).use { input ->
+                val buf = ByteArray(1 shl 16)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    md.update(buf, 0, n)
+                }
+            }
+            out[entry.name.removePrefix(under)] = md.digest().joinToString("") { "%02x".format(it) }
+        }
+        return out
+    }
+
+    @TaskAction
+    fun run() {
+        val want = ZipFile(xpi.get().asFile).use { digests(it, "") }
+        val apks = apkDir.get().asFile.listFiles { f -> f.name.endsWith(".apk") }.orEmpty().sortedBy { it.name }
+        if (apks.isEmpty()) throw GradleException("checkUboInApk: no APK in ${apkDir.get().asFile}")
+        for (apk in apks) {
+            val have = ZipFile(apk).use { digests(it, prefix.get()) }
+            val problems = ArrayList<String>()
+            for ((name, sum) in want) {
+                when (have[name]) {
+                    null -> problems += "missing: $name"
+                    sum -> Unit
+                    else -> problems += "changed: $name"
+                }
+            }
+            for (name in have.keys) if (name !in want) problems += "added: $name"
+            if (problems.isNotEmpty()) {
+                throw GradleException(
+                    "uBlock Origin in ${apk.name} differs from the pinned XPI (${problems.size} files): " +
+                        problems.sorted().take(10).joinToString("; "),
+                )
+            }
+            logger.lifecycle("uBlock Origin: ${want.size} files in ${apk.name} are identical to the pinned XPI")
+        }
+    }
+}
+
 // Release signing: a properties file outside the repository (storeFile, storePassword, keyAlias,
 // keyPassword), by default ~/.config/krunk/android-release.properties, or the path in
 // KRUNK_ANDROID_SIGNING. Without it a release build fails, so an APK signed with the debug key is
@@ -119,6 +206,16 @@ androidComponents {
         }
         variant.sources.jniLibs?.addGeneratedSourceDirectory(cargo, CargoBuildTask::jniLibsOut)
         variant.sources.kotlin?.addGeneratedSourceDirectory(cargo, CargoBuildTask::kotlinOut)
+
+        val variantName = variant.name.replaceFirstChar { it.uppercase() }
+        val checkUbo = tasks.register<CheckUboInApkTask>("checkUboInApk$variantName") {
+            group = "verification"
+            description = "Compares uBlock Origin inside the ${variant.name} APKs with the pinned XPI, file by file"
+            xpi.set(uboXpi)
+            apkDir.set(variant.artifacts.get(SingleArtifact.APK))
+            prefix.set(uboAssetPrefix)
+        }
+        tasks.matching { it.name == "assemble$variantName" }.configureEach { dependsOn(checkUbo) }
     }
 }
 
@@ -130,6 +227,12 @@ android {
         version = release(37) { minorApiLevel = 2 }
     }
     buildToolsVersion = "37.0.0"
+
+    // aapt's default pattern also drops every asset folder whose name starts with "_": that would
+    // remove uBlock Origin's `_locales`. This is the default without that rule.
+    androidResources {
+        ignoreAssetsPattern = "!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~"
+    }
 
     defaultConfig {
         applicationId = "org.krunk.browser"
@@ -144,6 +247,9 @@ android {
         }
         buildConfigField("String", "GECKOVIEW_VERSION", "\"${libs.versions.geckoview.get()}\"")
         buildConfigField("String", "SITE_URL", "\"https://krunk.209.wf\"")
+        buildConfigField("String", "UBO_VERSION", "\"$uboVersion\"")
+        buildConfigField("String", "UBO_ID", "\"${uboProps.getProperty("UBO_ID")}\"")
+        buildConfigField("String", "UBO_SOURCE_URL", "\"$uboXpiUrl\"")
     }
 
     splits {
@@ -249,7 +355,7 @@ tasks.register<JavaExec>("ktlintFormat") {
 }
 
 tasks.named("preBuild") {
-    dependsOn(copyWallpapers)
+    dependsOn(copyWallpapers, unpackUbo)
 }
 
 // -Pkrunk.noGms=true drops GeckoView's Google Play Services FIDO dependency (WebAuthn/passkeys
