@@ -45,7 +45,7 @@ HOST_LIB="$TARGET_DIR/debug/libkrunk_ffi.so"
 echo "[build-rust] Kotlin bindings -> $KT_OUT"
 # Both are build output folders handed over by Gradle; never delete anything else.
 for out in "$KT_OUT" "$JNI_OUT"; do
-  case "$out" in */build/*) ;; *) echo "refusing to clear $out: not inside a build folder" >&2; exit 2 ;; esac
+  [[ $out == */build/* ]] || { echo "refusing to clear $out: not inside a build folder" >&2; exit 2; }
 done
 rm -rf "$KT_OUT" "$JNI_OUT"
 mkdir -p "$KT_OUT" "$JNI_OUT"

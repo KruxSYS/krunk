@@ -81,7 +81,7 @@ flow_private_no_history() {
   menu; tap 600 $MENU_PRIVATE; wait_s 3; go "neverssl.com"; shot flow-private-no-history
   after=$(db_count "select count(*) from visits")
   echo "  visits before=$before after=$after (must be equal)"
-  case "$before" in '' | *[!0-9]*) echo "  FAILED: the visit count could not be read" >&2; return 1 ;; esac
+  [[ $before =~ ^[0-9]+$ ]] || { echo "  FAILED: the visit count could not be read" >&2; return 1; }
   [ "$before" = "$after" ] || { echo "  FAILED: a private visit was recorded" >&2; return 1; }
 }
 
