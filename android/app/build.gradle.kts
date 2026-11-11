@@ -231,6 +231,8 @@ dependencies {
     debugImplementation(libs.compose.ui.test.manifest)
 
     testImplementation(libs.junit)
+    // The JNA AAR has no desktop native library: the plain jar gives the test JVM libjnidispatch.so.
+    testImplementation(libs.jna)
     testImplementation(libs.kotlinx.coroutines.test)
 
     androidTestImplementation(platform(libs.compose.bom))

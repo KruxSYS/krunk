@@ -71,6 +71,8 @@ class SessionPersistenceTest {
         m.setTitle(b.id, "B")
         val p = m.open("https://private.example/", true, null, true, true, 3)
         m.setTitle(p.id, "Private")
+        // A private active tab is not saved, so the session's active index points at B.
+        m.activate(b.id, 4)
         val json = m.sessionJson()
         assertTrue(json.contains("\"active\":1"))
         assertFalse("private tabs are never written", json.contains("private.example"))
