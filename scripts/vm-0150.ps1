@@ -287,6 +287,90 @@ if ($Phase -eq 'ntpfix') {
   StopKrunk
 }
 
+# Final verification (after publishing): the live installer, hash-checked, installed silently;
+# then the main flows on the installed build with a fresh profile, plus three flows the pass had
+# not run (suggestions in a private tab, hover cards off, a sign-in from a background tab).
+$Inst = Join-Path $env:LOCALAPPDATA 'Programs\Krunk'
+function InstalledVersion { (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Krunk' -EA SilentlyContinue).DisplayVersion }
+if ($Phase -eq 'install') {
+  StopKrunk
+  $setup = "$K\Krunk-Setup-0.15.0-live.exe"
+  $t = Measure-Command { Invoke-WebRequest -UseBasicParsing 'https://krunk.209.wf/download/0.15.0/Krunk-Setup-0.15.0.exe' -OutFile $setup }
+  $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
+  Log "[$P] downloaded in $([int]$t.TotalSeconds) s, sha256 $hash (published 91811ec8c16646387807ea1702715fd85a864bed0bf1f4ce1e25ace3da3308fa)"
+  Log "[$P] installed before: $(InstalledVersion)"
+  if ($hash -eq '91811ec8c16646387807ea1702715fd85a864bed0bf1f4ce1e25ace3da3308fa') {
+    $proc = Start-Process -FilePath $setup -ArgumentList '/S' -PassThru
+    $proc.WaitForExit(180000) | Out-Null
+    for ($i = 0; $i -lt 60 -and (InstalledVersion) -ne '0.15.0'; $i++) { Start-Sleep 1 }
+    Get-Process Krunk -ErrorAction SilentlyContinue | Stop-Process -Force
+    Log "[$P] installer exit $($proc.ExitCode); installed now: $(InstalledVersion); Krunk.dll $((Get-FileHash "$Inst\Krunk.dll").Hash.Substring(0,16)); files $(@(Get-ChildItem -Recurse -File $Inst).Count)"
+  } else { Log "[$P] hash mismatch: not installed" }
+}
+function StartInstalled([string]$prof) {
+  $env:LOCALAPPDATA = $prof
+  Start-Process -FilePath "$Inst\Krunk.exe" -WorkingDirectory $Inst
+  for ($i = 0; $i -lt 60 -and (MainWindow) -eq [IntPtr]::Zero; $i++) { Start-Sleep -Milliseconds 500 }
+  Start-Sleep 5
+  $script:A = MainWindow
+  [U]::MoveWindow($script:A, 0, 0, 1280, 760, $true) | Out-Null; Start-Sleep 1
+  if (-not (Focus $script:A)) { Log "[$P] could not focus"; throw 'no focus' }
+  $script:c = ClientRect $script:A
+}
+function MiddleClick([int]$x, [int]$y, [int]$wait = 800) {
+  [U]::SetCursorPos($x, $y) | Out-Null; AbsMove $x $y; Start-Sleep -Milliseconds 150
+  [SI]::Mouse(0x20, 0, 0) | Out-Null; Start-Sleep -Milliseconds 60; [SI]::Mouse(0x40, 0, 0) | Out-Null; Start-Sleep -Milliseconds $wait
+}
+if ($Phase -eq 'smoke') {
+  if (-not (Get-NetTCPConnection -LocalPort 8110 -State Listen -ErrorAction SilentlyContinue)) {
+    Start-Process -FilePath $Py -ArgumentList "$K\authserve.py", '8110' -WindowStyle Hidden; Start-Sleep 2
+  }
+  $prof = "$K\p0150v"
+  StopKrunk
+  Remove-Item -Recurse -Force $prof -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Force $prof | Out-Null
+  $realLocal = $env:LOCALAPPDATA
+  StartInstalled $prof; StopKrunk
+  SetKv $prof '{ "bookmarksBar": "never" }'
+  StartInstalled $prof
+  Page 'krunk://about' 2500;                 Shot "$P-01-about"
+  Page 'https://example.com/' 3000;          Shot "$P-02-example"
+  Page 'krunk browser' 4000;                 Shot "$P-03-search"
+  Page "$W/links.html" 2500
+  # A sign-in asked by a background tab (middle-click opens it behind): the badge, then its dialog.
+  MiddleClick (X 240) (Y 146) 3000;          Shot "$P-04-background-auth-badge"
+  $t = TabPoint $A 1 2; Click $t[0] $t[1] 2000; Shot "$P-05-background-auth-dialog"
+  Keys '{ESC}' 1500
+  $t = TabPoint $A 0 2; Click $t[0] $t[1] 1500
+  Click (X 240) (Y 246) 4000;                Shot "$P-06-download"
+  Page 'krunk://downloads' 2500;             Shot "$P-07-downloads"
+  SafeKeys '^t' 2500;                        Shot "$P-08-new-tab"
+  Page 'krunk://settings#appearance' 2500;   Shot "$P-09-settings-appearance"
+  Page 'krunk://settings#general' 2500;      Shot "$P-10-settings-general"
+  Page 'krunk://history' 2500;               Shot "$P-11-history"
+  Page 'krunk://sessions' 2500;              Shot "$P-12-sessions-off"
+  # Suggestions in a private tab: none from the engine (only the local rows).
+  SafeKeys '^+n' 2500
+  Focus (MainWindow) | Out-Null
+  SafeKeys '^l' 300; SafeKeys 'why do' 100
+  Start-Sleep -Milliseconds 3000;            Shot "$P-13-private-why-do"
+  Keys '{ESC}' 300; Keys '{ESC}' 300
+  # Hover cards off: no card on a background tab.
+  StopKrunk
+  SetKv $prof '{ "tabHoverPreview": false }'
+  StartInstalled $prof
+  Page "$W/c1.html" 2000
+  SafeKeys '^t' 900; SafeGo "$W/c2.html" 2500
+  $t0 = TabPoint $A 0 2
+  MoveTo ($t0[0] - 30) ($t0[1] + 300); Start-Sleep -Milliseconds 300
+  MoveTo $t0[0] $t0[1]; Start-Sleep -Milliseconds 1400
+  Shot "$P-14-hover-off"
+  MoveTo 640 450
+  StopKrunk
+  $env:LOCALAPPDATA = $realLocal
+  Copy-Item "$prof\Krunk\krunk.log" "$Shots\$P-krunk.log"
+}
+
 # Idle CPU with session logs off and on, from the performance counters (Process.CPU could not
 # read the sandboxed engine processes from the task: it stayed at 0).
 if ($Phase -eq 'cpu') {

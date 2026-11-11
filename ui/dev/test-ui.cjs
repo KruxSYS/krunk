@@ -1126,7 +1126,9 @@ async function testPopup(browser) {
     // R18: the footer keeps space below it, and the popup asks for its full height.
     await page.waitForTimeout(40);
     const gap = await page.evaluate(() => { const f = document.querySelector('.suggest-foot').getBoundingClientRect(); const r = document.getElementById('root').getBoundingClientRect(); return Math.round(r.bottom - f.bottom); });
-    const fit = await lastSent(page, 'popupResize');
+    // The size request follows the render by a frame: wait for it (2 s at most) instead of reading at once.
+  await page.waitForFunction(() => window.__host.sent.some((m) => m.cmd === 'popupResize'), null, { timeout: 2000 }).catch(() => {});
+  const fit = await lastSent(page, 'popupResize');
     const need = await page.evaluate(() => document.getElementById('root').offsetHeight);
     check(gap >= 6 && fit && fit.height >= need, 'the suggestion list has room below its footer (' + gap + ' px) and fits its content (' + (fit && fit.height) + ' >= ' + need + ')');
   }
@@ -4176,8 +4178,12 @@ async function testJsDialogs(browser) {
     await emit(page, { event: 'popup', content: Object.assign({ kind: 'jsDialog', tabId: 4, dialogId: 1, title: 'a.example says', message: '', defaultText: '', offerBlock: false }, c) });
     await page.waitForSelector('.js-dialog #default');
     // The previous dialog's buttons match the selector until this one is rendered (0.15.0: a
-    // stale "OK" was read under load).
-    await page.waitForFunction((m) => { const e = document.getElementById('jsd-message'); return m ? e && e.textContent === m : !e; }, c.message || '');
+    // stale "OK" was read under load); "Leave site?" and "Reload site?" share their message, so
+    // the title is compared too.
+    await page.waitForFunction(([m, t]) => {
+      const e = document.getElementById('jsd-message'), h = document.getElementById('jsd-title');
+      return (m ? e && e.textContent === m : !e) && h && h.textContent === t;
+    }, [c.message || '', c.title || 'a.example says']);
   };
   // alert: OK only, the message as written (line breaks kept, markup as text).
   await show({ dialog: 'alert', dialogId: 1, message: 'Line one\nLine <b>two</b>' });
