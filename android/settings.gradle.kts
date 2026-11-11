@@ -15,13 +15,14 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
+        // GeckoView (org.mozilla.*) is published by Mozilla only: this repository serves that
+        // group and nothing else, and no other repository may serve it.
+        exclusiveContent {
+            forRepository { maven { url = uri("https://maven.mozilla.org/maven2/") } }
+            filter { includeGroupByRegex("org\\.mozilla.*") }
+        }
         google()
         mavenCentral()
-        // GeckoView (org.mozilla.geckoview) is published by Mozilla only.
-        maven {
-            url = uri("https://maven.mozilla.org/maven2/")
-            content { includeGroupByRegex("org\\.mozilla.*") }
-        }
     }
 }
 

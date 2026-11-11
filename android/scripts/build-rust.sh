@@ -38,14 +38,18 @@ cd "$SRC_DIR"
 # The host library is only read by uniffi-bindgen (and the JVM tests): always the debug build,
 # because the workspace's release profile strips it and the UniFFI metadata with it.
 echo "[build-rust] host library (debug, for the bindings generator)"
-cargo build -j"$JOBS" -p krunk_ffi
+cargo build --locked -j"$JOBS" -p krunk_ffi
 HOST_LIB="$TARGET_DIR/debug/libkrunk_ffi.so"
 [ -f "$HOST_LIB" ] || { echo "host library missing: $HOST_LIB" >&2; exit 1; }
 
 echo "[build-rust] Kotlin bindings -> $KT_OUT"
+# Both are build output folders handed over by Gradle; never delete anything else.
+for out in "$KT_OUT" "$JNI_OUT"; do
+  case "$out" in */build/*) ;; *) echo "refusing to clear $out: not inside a build folder" >&2; exit 2 ;; esac
+done
 rm -rf "$KT_OUT" "$JNI_OUT"
 mkdir -p "$KT_OUT" "$JNI_OUT"
-cargo run -j"$JOBS" -q -p krunk_ffi --features cli --bin uniffi-bindgen -- \
+cargo run --locked -j"$JOBS" -q -p krunk_ffi --features cli --bin uniffi-bindgen -- \
   generate --library "$HOST_LIB" --language kotlin --out-dir "$KT_OUT"
 [ -f "$KT_OUT/org/krunk/ffi/krunk_ffi.kt" ] || { echo "bindings were not generated" >&2; exit 1; }
 
@@ -56,7 +60,7 @@ for abi in "${abi_list[@]}"; do
   TARGET_FLAGS+=(--target "$abi")
 done
 cargo ndk "${TARGET_FLAGS[@]}" --platform "$MIN_SDK" --output-dir "$JNI_OUT" \
-  build -j"$JOBS" -p krunk_ffi "${CARGO_PROFILE_FLAG[@]}"
+  build --locked -j"$JOBS" -p krunk_ffi "${CARGO_PROFILE_FLAG[@]}"
 # Debug builds carry ~130 MB of DWARF per ABI, which AGP does not strip for debug variants: strip
 # here (the host library keeps its symbols for backtraces in JVM tests). Release builds are
 # already stripped by the workspace profile.

@@ -67,6 +67,30 @@ val copyWallpapers = tasks.register<Copy>("copyWallpapers") {
     into(wallpapersDst)
 }
 
+// Release signing: a properties file outside the repository (storeFile, storePassword, keyAlias,
+// keyPassword), by default ~/.config/krunk/android-release.properties, or the path in
+// KRUNK_ANDROID_SIGNING. Without it a release build fails, so an APK signed with the debug key is
+// never mistaken for a release; -Pkrunk.allowDebugSignedRelease=true signs with the debug key on
+// purpose (a local build of the minified variant).
+val signingPropsPath = System.getenv("KRUNK_ANDROID_SIGNING")
+    ?: "${System.getProperty("user.home")}/.config/krunk/android-release.properties"
+val signingProps = file(signingPropsPath)
+    .takeIf { it.isFile }
+    ?.let { f -> Properties().apply { f.inputStream().use { load(it) } } }
+val allowDebugSignedRelease =
+    providers.gradleProperty("krunk.allowDebugSignedRelease").map { it.toBoolean() }.getOrElse(false)
+
+gradle.taskGraph.whenReady {
+    val packagesRelease = allTasks.any { it.project == project && it.name.startsWith("packageRelease") }
+    if (packagesRelease && signingProps == null && !allowDebugSignedRelease) {
+        throw GradleException(
+            "Krunk: no Android release signing properties at $signingPropsPath. A release APK must carry the " +
+                "release key; for a local, debug-signed build of the release variant pass " +
+                "-Pkrunk.allowDebugSignedRelease=true.",
+        )
+    }
+}
+
 androidComponents {
     onVariants { variant ->
         val profile = if (variant.buildType == "release") "release" else "debug"
@@ -77,10 +101,18 @@ androidComponents {
             srcRoot.set(project.rootDir.parentFile)
             ffiSources.set(project.rootDir.parentFile.resolve("ffi/src"))
             coreSources.set(project.rootDir.parentFile.resolve("core/src"))
+            // Everything that changes the built library: manifests and profiles, the lock file,
+            // the build script and its pins, and the wallpaper list compiled into the core.
             manifests.from(
+                project.rootDir.parentFile.resolve("Cargo.toml"),
+                project.rootDir.parentFile.resolve("Cargo.lock"),
+                project.rootDir.parentFile.resolve("core/Cargo.toml"),
+                project.rootDir.parentFile.resolve("core/build.rs"),
                 project.rootDir.parentFile.resolve("ffi/Cargo.toml"),
                 project.rootDir.parentFile.resolve("ffi/uniffi.toml"),
-                project.rootDir.parentFile.resolve("Cargo.lock"),
+                project.rootDir.parentFile.resolve("ui/shared/wallpapers/wallpapers.json"),
+                project.rootDir.resolve("scripts/build-rust.sh"),
+                project.rootDir.resolve("toolchain.lock"),
             )
             jniLibsOut.set(layout.buildDirectory.dir("rust/${variant.name}/jniLibs"))
             kotlinOut.set(layout.buildDirectory.dir("rust/${variant.name}/kotlin"))
@@ -123,14 +155,7 @@ android {
         }
     }
 
-    // Release signing: a properties file outside the repository (storeFile, storePassword, keyAlias,
-    // keyPassword), by default ~/.config/krunk/android-release.properties, or the path in
-    // KRUNK_ANDROID_SIGNING. Without it the release APK is signed with the debug key (local builds).
-    val signingPropsPath = System.getenv("KRUNK_ANDROID_SIGNING")
-        ?: "${System.getProperty("user.home")}/.config/krunk/android-release.properties"
-    val signingProps = file(signingPropsPath)
-        .takeIf { it.isFile }
-        ?.let { f -> Properties().apply { f.inputStream().use { load(it) } } }
+    // Release signing: see signingProps above.
     signingConfigs {
         if (signingProps != null) {
             create("release") {
@@ -152,7 +177,7 @@ android {
             signingConfig = if (signingProps != null) {
                 signingConfigs.getByName("release")
             } else {
-                logger.warn("Krunk: no Android release signing properties; the release APK gets the debug key")
+                // Only reached with -Pkrunk.allowDebugSignedRelease=true (the task graph check above).
                 signingConfigs.getByName("debug")
             }
             isMinifyEnabled = true

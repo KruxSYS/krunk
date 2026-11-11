@@ -2,7 +2,7 @@
 # Publishes a Krunk for Android release (signed APKs) to the download server's release store.
 #
 #   dist/server/publish-android.sh VERSION (--dest DIR | --volume NAME) [--apks DIR]
-#       [--changelog FILE | --notes FILE] [--released YYYY-MM-DD] [--cert-sha256 HEX]
+#       [--changelog FILE | --notes FILE] [--released YYYY-MM-DD] [--cert-sha256 HEX] [--force]
 #
 #   VERSION       the Android app version, e.g. 0.1.0 (android/app/build.gradle.kts versionName)
 #   --apks DIR    where the APKs are (default dist/android):
@@ -15,10 +15,12 @@
 #   --released    the release date (default: the changelog section's date, else today, UTC)
 #   --cert-sha256 the expected signing certificate fingerprint (default: read from the keystore
 #                 in ~/.config/krunk/android-release.properties); every APK must carry it
+#   --force       publish VERSION again although it is already in the store (its files are
+#                 replaced; the edge cache may serve the old ones for a while)
 #
 # The APKs are signed by Gradle with Krunk's Android release key (never in a container or the
-# image); this script only checks each APK's signature and certificate with apksigner before it
-# copies anything. There is no in-app update channel yet: the website is the only distribution.
+# image); this script only checks each APK before it copies anything: signature and certificate
+# (apksigner), and that it really is VERSION of the app and not debuggable (aapt2). There is no in-app update channel yet: the website is the only distribution.
 #
 # Layout written:
 #   download/android/<VERSION>/Krunk-android-<VERSION>-<abi>-release.apk, NOTES.md, SHA256SUMS
@@ -27,12 +29,12 @@ set -euo pipefail
 ALPINE="alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f"
 ABIS="arm64-v8a universal x86_64"
 
-usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 [ $# -ge 1 ] || usage
 version=$1; shift
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../.." && pwd)
-dest="" volume="" apks="$root/dist/android" notes="" released="" cert=""
+dest="" volume="" apks="$root/dist/android" notes="" released="" cert="" force=0
 changelog="$root/CHANGELOG-android.md"
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -43,6 +45,7 @@ while [ $# -gt 0 ]; do
     --changelog) changelog=$2; shift 2 ;;
     --released) released=$2; shift 2 ;;
     --cert-sha256) cert=$2; shift 2 ;;
+    --force) force=1; shift ;;
     *) usage ;;
   esac
 done
@@ -58,14 +61,17 @@ semver='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'
 source "$root/android/toolchain.lock"
 sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/opt/android-sdk}}"
 apksigner="$sdk/build-tools/$BUILD_TOOLS/apksigner"
+aapt2="$sdk/build-tools/$BUILD_TOOLS/aapt2"
 [ -x "$apksigner" ] || { echo "apksigner not found: $apksigner (android/scripts/setup-sdk.sh)" >&2; exit 1; }
+[ -x "$aapt2" ] || { echo "aapt2 not found: $aapt2 (android/scripts/setup-sdk.sh)" >&2; exit 1; }
 
 # The expected certificate: given, or the release keystore's.
 if [ -z "$cert" ]; then
   props="${KRUNK_ANDROID_SIGNING:-$HOME/.config/krunk/android-release.properties}"
   [ -f "$props" ] || { echo "no signing properties at $props: give --cert-sha256" >&2; exit 1; }
   store=$(sed -n 's/^storeFile=//p' "$props"); pass=$(sed -n 's/^storePassword=//p' "$props"); alias=$(sed -n 's/^keyAlias=//p' "$props")
-  cert=$(keytool -list -v -keystore "$store" -storepass "$pass" -alias "$alias" 2>/dev/null | sed -n 's/^[[:space:]]*SHA256: //p' | head -1 | tr -d ':' | tr 'A-F' 'a-f')
+  # The password goes through the environment, not the command line (visible in the process list).
+  cert=$(KRUNK_STOREPASS="$pass" keytool -list -v -keystore "$store" -storepass:env KRUNK_STOREPASS -alias "$alias" 2>/dev/null | sed -n 's/^[[:space:]]*SHA256: //p' | head -1 | tr -d ':' | tr 'A-F' 'a-f')
   [ -n "$cert" ] || { echo "could not read the certificate fingerprint from $store" >&2; exit 1; }
 fi
 cert=$(printf '%s' "$cert" | tr -d ': ' | tr 'A-F' 'a-f')
@@ -103,6 +109,13 @@ for abi in $ABIS; do
   # apksigner prints one line per scheme ("Signer #1 …" or "V3.0 Signer: …"): all must match.
   got=$(sed -n 's/^.*[Ss]igner[^:]*:\{0,1\} \{0,1\}certificate SHA-256 digest: //p' <<<"$out" | tr 'A-F' 'a-f' | sort -u)
   [ "$got" = "$cert" ] || { echo "$name: signed with certificate ${got:-none}, expected $cert" >&2; exit 1; }
+  # The file must be what its name says: this app, this version, a release build.
+  badging=$("$aapt2" dump badging "$src" 2>/dev/null) || { echo "$name: aapt2 cannot read it" >&2; exit 1; }
+  pkg=$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" <<<"$badging")
+  vname=$(sed -n "s/^package: .* versionName='\([^']*\)'.*/\1/p" <<<"$badging")
+  [ "$pkg" = "$APPLICATION_ID" ] || { echo "$name: package is ${pkg:-unknown}, expected $APPLICATION_ID" >&2; exit 1; }
+  [ "$vname" = "$version" ] || { echo "$name: versionName is ${vname:-unknown}, expected $version" >&2; exit 1; }
+  if grep -q '^application-debuggable' <<<"$badging"; then echo "$name: debuggable build" >&2; exit 1; fi
   cp "$src" "$rel/$name"
   sha=$(sha256sum "$rel/$name" | cut -d' ' -f1)
   size=$(stat -c %s "$rel/$name")
@@ -134,6 +147,9 @@ python3 -I -c 'import json,sys; json.load(open(sys.argv[1]))' "$stage/download/a
 chmod -R a+rX "$stage"
 
 if [ -n "$dest" ]; then
+  if [ -e "$dest/download/android/$version" ] && [ "$force" != 1 ]; then
+    echo "$version is already published in $dest (use --force to replace it)" >&2; exit 3
+  fi
   mkdir -p "$dest/download/android/$version"
   cp -f "$rel"/* "$dest/download/android/$version/"
   cp -f "$stage/download/android.json" "$dest/download/.android.json.tmp"
@@ -141,14 +157,20 @@ if [ -n "$dest" ]; then
   where=$dest
 else
   command -v docker >/dev/null || { echo "docker is required for --volume" >&2; exit 1; }
-  tar -C "$stage" -cf - . | docker run --rm -i --network none -v "$volume:/dest" "$ALPINE" sh -eu -c '
+  # The volume must exist: docker would create an empty one for a mistyped name and "publish"
+  # into it without anyone noticing.
+  docker volume inspect "$volume" > /dev/null 2>&1 || { echo "no such Docker volume: $volume" >&2; exit 1; }
+  tar -C "$stage" -cf - . | docker run --rm -i --network none -e FORCE="$force" -v "$volume:/dest" "$ALPINE" sh -eu -c '
     mkdir -p /in && tar -C /in -xf -
     v=$(ls /in/download/android)
+    if [ -e "/dest/download/android/$v" ] && [ "$FORCE" != 1 ]; then
+      echo "$v is already published in this volume (use --force to replace it)" >&2; exit 3
+    fi
     mkdir -p "/dest/download/android/$v"
     cp -f /in/download/android/"$v"/* "/dest/download/android/$v/"
     cp -f /in/download/android.json /dest/download/.android.json.tmp
     mv -f /dest/download/.android.json.tmp /dest/download/android.json
-    chmod -R a+rX /dest'
+    chmod -R a+rX "/dest/download/android/$v" /dest/download/android.json'
   where="volume $volume"
 fi
 echo "published Krunk for Android $version to $where"

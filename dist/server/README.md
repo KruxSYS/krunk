@@ -284,14 +284,22 @@ The manifest format:
 ```sh
 (cd android && ./gradlew assembleRelease)   # signs with the Android release key, docs/ANDROID_DEV.md
 # copy the APKs to dist/android/Krunk-android-<version>-<abi>-release.apk, then:
-dist/server/publish-android.sh 0.1.0 --volume krunk_krunk-releases
+dist/server/publish-android.sh 0.1.1 --volume live-browser_krunk-releases
 ```
+- `--volume` takes the releases volume of the running stack: `<compose project>_krunk-releases`.
+  On the ai-pipe deployment that is `live-browser_krunk-releases` (a stack started by hand as
+  project `krunk` has `krunk_krunk-releases`). The volume must exist: the script refuses a name
+  Docker does not know instead of letting Docker create an empty volume for it.
 - The script takes the three APKs (`arm64-v8a`, `universal`, `x86_64`) from `dist/android`
   (`--apks DIR` for another folder).
-- It checks every APK with `apksigner` before it copies anything: APK Signature Scheme v2 or v3,
+- It checks every APK before it copies anything. With `aapt2`: the package is Krunk's, the
+  `versionName` is the version being published, and the build is not debuggable. With
+  `apksigner`: APK Signature Scheme v2 or v3,
   exactly one signer, and the certificate of the release keystore
   (`~/.config/krunk/android-release.properties`, or `--cert-sha256 HEX` on a machine without the
   key). A debug-signed APK is refused.
+- A version that is already in the store is refused (exit 3): its files would be replaced in
+  place while the edge cache may still serve the old ones. `--force` publishes it again anyway.
 - Release notes and date come from the version's section of `CHANGELOG-android.md`
   (`--changelog FILE`, `--notes FILE`, `--released YYYY-MM-DD` as for Windows).
 - It writes `download/android/<version>/` first and `download/android.json` last, renamed into
