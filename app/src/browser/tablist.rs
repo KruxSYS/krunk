@@ -28,6 +28,9 @@ impl Browser {
                 }
             }
         }
+        for t in tabs.iter_mut() {
+            t.auth_pending = self.http_auth_pending(t.id);
+        }
         Some(PopupContent::TabList { tabs, active })
     }
 

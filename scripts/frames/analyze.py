@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Analyse a framecap recording (tools/framecap): PATH.raw + PATH.csv + PATH.json.
 
-  analyze.py flash  PATH [--sheet OUT.png]     tab-switch flashes
+  analyze.py flash  PATH [--sheet OUT.png] [--black-lum L]   tab-switch flashes (white and black)
+  analyze.py selftest                          checks the flash rules on made-up frames
   analyze.py track PATH --color RRGGBB [--ease MS]   an object's path (with --ease: its distance
                                                from Krunk's eased flight curve, per frame)
   analyze.py motion PATH [--box X,Y,W,H]       a moving object (download flight)
@@ -15,6 +16,12 @@ colour's luminance is >= 245. A run of at most --flash-frames (2) white frames b
 non-white frames is a *flash* (a moment of white between two looks); a longer run is what a tab
 really shows (a blank page still loading in the light theme). Uniform frames of other colours
 are reported too. Exit code 1 if any flash.
+
+flash, black (0.15.0): a uniform frame whose colour has luminance <= --black-lum (16) is *black*.
+Krunk never shows black on purpose (the dark theme's page colour #1f2023 is about 32), so every
+run of black frames between two non-black frames is a flash, however long; black at the very start
+or end (the window not there yet, or gone) is not. Capture the page area only (below the toolbar):
+the toolbar is never black and would make the frame non-uniform.
 
 motion: the object's centroid per frame (pixels that differ from the first frame), the step
 between frames, and how even those steps are.
@@ -68,9 +75,23 @@ def uniformity(frame, tol=12):
     return close.mean(), median
 
 
-def cmd_flash(a):
-    meta, frames, times = load(a.path)
-    flashes, uniform = [], []
+def runs_of(marked, n):
+    """Runs (first, last) of consecutive frame indices in `marked` among `n` frames."""
+    marked = set(marked)
+    runs, start = [], None
+    for i in range(n):
+        w = i in marked
+        if w and start is None:
+            start = i
+        if (not w or i == n - 1) and start is not None:
+            runs.append((start, i if w else i - 1))
+            start = None
+    return runs
+
+
+def flash_report(frames, times, flash_frames=2, black_lum=16.0):
+    """The flash rules (see the module doc): white flashes, black flashes and uniform frames."""
+    flashes, blacks, uniform = [], [], []
     for i, fr in enumerate(frames):
         frac, med = uniformity(fr)
         if frac >= 0.98:
@@ -79,18 +100,36 @@ def cmd_flash(a):
             uniform.append(entry)
             if lum >= 245:
                 flashes.append(entry)
+            elif lum <= black_lum:
+                blacks.append(entry)
+    n = len(frames)
     # Runs of white frames: short ones between other frames are flashes.
-    white = [f["frame"] for f in flashes]
-    runs, start = [], None
-    for i in range(len(frames)):
-        w = i in set(white)
-        if w and start is None:
-            start = i
-        if (not w or i == len(frames) - 1) and start is not None:
-            end = i if w else i - 1
-            runs.append((start, end))
-            start = None
-    transient = [r for r in runs if r[1] - r[0] + 1 <= a.flash_frames and r[0] > 0 and r[1] < len(frames) - 1]
+    runs = runs_of([f["frame"] for f in flashes], n)
+    transient = [r for r in runs if r[1] - r[0] + 1 <= flash_frames and r[0] > 0 and r[1] < n - 1]
+    # Black between two other frames is always a flash (0.15.0).
+    black_runs = runs_of([f["frame"] for f in blacks], n)
+    black_flash = [r for r in black_runs if r[0] > 0 and r[1] < n - 1]
+    return {
+        "flash_frames": sum(r[1] - r[0] + 1 for r in transient),
+        "flashes_at": [{"frames": [r[0], r[1]], "ms": round(float(times[r[0]]), 1)} for r in transient][:50],
+        "white_frames": len(flashes),
+        "white_runs": [r[1] - r[0] + 1 for r in runs][:100],
+        "black_flash_frames": sum(r[1] - r[0] + 1 for r in black_flash),
+        "black_flashes_at": [{"frames": [r[0], r[1]], "ms": round(float(times[r[0]]), 1)} for r in black_flash][:50],
+        "black_frames": len(blacks),
+        "uniform_frames": len(uniform),
+        "white": flashes[:20],
+        "black": blacks[:20],
+        "uniform": uniform[:50],
+        "_bad": bool(transient or black_flash),
+        "_picks": [e["frame"] for e in (flashes + blacks or uniform)][:12],
+    }
+
+
+def cmd_flash(a):
+    meta, frames, times = load(a.path)
+    rep = flash_report(frames, times, a.flash_frames, a.black_lum)
+    bad, picks = rep.pop("_bad"), rep.pop("_picks")
     gaps = np.diff(times) if len(times) > 1 else np.array([0.0])
     out = {
         "recording": a.path,
@@ -98,18 +137,11 @@ def cmd_flash(a):
         "frames": int(len(frames)),
         "seconds": round(float(times[-1] - times[0]) / 1000, 2) if len(times) > 1 else 0,
         "median_frame_gap_ms": round(float(np.median(gaps)), 2),
-        "flash_frames": sum(r[1] - r[0] + 1 for r in transient),
-        "flashes_at": [{"frames": [r[0], r[1]], "ms": round(float(times[r[0]]), 1)} for r in transient][:50],
-        "white_frames": len(flashes),
-        "white_runs": [r[1] - r[0] + 1 for r in runs][:100],
-        "uniform_frames": len(uniform),
-        "white": flashes[:20],
-        "uniform": uniform[:50],
+        **rep,
     }
     print(json.dumps(out, indent=1))
-    if a.sheet and (flashes or uniform):
+    if a.sheet and picks:
         from PIL import Image
-        picks = [e["frame"] for e in (flashes or uniform)][:12]
         tiles = []
         for i in picks:
             for j in (i - 1, i, i + 1):
@@ -121,7 +153,32 @@ def cmd_flash(a):
         for k, t in enumerate(tiles):
             sheet.paste(t, ((k % cols) * tw, (k // cols) * th))
         sheet.save(a.sheet)
-    return 1 if transient else 0
+    return 1 if bad else 0
+
+
+def cmd_selftest(a):
+    """The flash rules on made-up 8×8 frames (no recording needed). Exit code 1 on a failure."""
+    def frames_of(colors):
+        return np.array([np.full((8, 8, 3), c, dtype=np.uint8) for c in colors])
+
+    page, dark_bg, white, black = (90, 120, 200), (0x1F, 0x20, 0x23), (255, 255, 255), (0, 0, 0)
+    times = lambda n: np.arange(n, dtype=float) * 16.7  # noqa: E731
+    cases = [
+        ("black frame between pages", [page, black, page], True, "black_flash_frames", 1),
+        ("long black run between pages", [page, black, black, black, black, page], True, "black_flash_frames", 4),
+        ("dark theme background is not black", [page, dark_bg, dark_bg, page], False, "black_frames", 0),
+        ("black before the window shows", [black, black, page, page], False, "black_flash_frames", 0),
+        ("white flash", [page, white, page], True, "flash_frames", 1),
+        ("long white (a blank light page) is no flash", [page, white, white, white, page], False, "flash_frames", 0),
+        ("near-black (luminance 12) counts", [page, (12, 12, 12), page], True, "black_flash_frames", 1),
+    ]
+    failed = 0
+    for name, colors, bad, key, want in cases:
+        r = flash_report(frames_of(colors), times(len(colors)))
+        ok = r["_bad"] == bad and r[key] == want
+        failed += not ok
+        print(("ok   " if ok else "FAIL ") + name + ("" if ok else " (%s=%s, bad=%s)" % (key, r[key], r["_bad"])))
+    return 1 if failed else 0
 
 
 def box_of(a, frames):
@@ -308,20 +365,23 @@ def cmd_addr(a):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("mode", choices=["flash", "motion", "bar", "track", "white", "addr"])
-    p.add_argument("path")
+    p.add_argument("mode", choices=["flash", "motion", "bar", "track", "white", "addr", "selftest"])
+    p.add_argument("path", nargs="?")
     p.add_argument("--sheet")
     p.add_argument("--box")
     p.add_argument("--color")
     p.add_argument("--tol", type=int, default=24)
     p.add_argument("--flash-frames", type=int, default=2)
+    p.add_argument("--black-lum", type=float, default=16.0, help="flash: uniform frames this dark are black")
     p.add_argument("--ease", type=float, help="track: fit Krunk's flight easing over this many ms")
     p.add_argument("--ymin", type=float, help="white: ignore rows above this screen y")
     p.add_argument("--ymax", type=float, help="white: ignore rows from this screen y on (the taskbar)")
     p.add_argument("--lum", type=float, default=235.0)
     p.add_argument("--min", type=int, default=96)
     a = p.parse_args()
-    return {"flash": cmd_flash, "motion": cmd_motion, "bar": cmd_bar, "track": cmd_track, "white": cmd_white, "addr": cmd_addr}[a.mode](a)
+    if a.mode != "selftest" and not a.path:
+        p.error("PATH is required")
+    return {"selftest": cmd_selftest, "flash": cmd_flash, "motion": cmd_motion, "bar": cmd_bar, "track": cmd_track, "white": cmd_white, "addr": cmd_addr}[a.mode](a)
 
 
 if __name__ == "__main__":

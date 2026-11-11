@@ -360,6 +360,7 @@ pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> Pop
         PopupKind::TabMenu => TAB_MENU_SIZE,
         PopupKind::NavMenu => (NAV_MENU_WIDTH, nav_menu_height(entries)),
         PopupKind::HttpAuth => (380.0, 286.0 + 38.0 * entries.min(5) as f64),
+        PopupKind::TabPreview => (TAB_PREVIEW_WIDTH, tab_preview_height(entries > 0)),
         PopupKind::BookmarkMenu => (240.0, 352.0),
         PopupKind::CaptionMenu => (250.0, 352.0),
         PopupKind::Downloads => (380.0, 420.0),
@@ -431,6 +432,31 @@ pub fn folder_popup_rect(anchor: PopupRect, items: usize, room: f64) -> PopupRec
 
 /// The tab list (0.11.0): under its "▾" button (`anchor`, shell CSS px), its right edge at the
 /// button's, as tall as `tabs` rows need (with the search field) up to a limit; the rest scrolls.
+/// 0.15.0: the tab hover card (CSS px): the picture (`TAB_PREVIEW_THUMB`, when there is one)
+/// above the title and the site, with padding (`popup.css` `.tab-preview` uses the same).
+pub const TAB_PREVIEW_WIDTH: f64 = 296.0;
+pub const TAB_PREVIEW_THUMB: (f64, f64) = (280.0, 158.0);
+
+fn tab_preview_height(thumbnail: bool) -> f64 {
+    if thumbnail {
+        66.0 + TAB_PREVIEW_THUMB.1 + 8.0
+    } else {
+        66.0
+    }
+}
+
+/// Where the hover card of the tab at `anchor` (its rect in the shell) goes: just under the
+/// tab, its left edge with the tab's, inside the shell's width (`shell_width_css`).
+pub fn tab_preview_rect(anchor: PopupRect, thumbnail: bool, shell_width_css: f64) -> PopupRect {
+    let max_x = (shell_width_css - TAB_PREVIEW_WIDTH - 4.0).max(0.0);
+    PopupRect {
+        x: anchor.x.clamp(0.0, max_x),
+        y: anchor.y + anchor.height + 4.0,
+        width: TAB_PREVIEW_WIDTH,
+        height: tab_preview_height(thumbnail),
+    }
+}
+
 pub fn tab_list_rect(anchor: PopupRect, tabs: usize) -> PopupRect {
     PopupRect {
         x: (anchor.x + anchor.width - TAB_LIST_WIDTH).max(0.0),
@@ -468,6 +494,23 @@ pub fn next_zoom(current: f64, zoom_in: bool) -> f64 {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn tab_preview_card_sits_under_its_tab_inside_the_window() {
+        use super::*;
+        let tab = PopupRect { x: 300.0, y: 6.0, width: 220.0, height: 34.0 };
+        let r = tab_preview_rect(tab, true, 1280.0);
+        assert_eq!((r.x, r.y, r.width), (300.0, 44.0, TAB_PREVIEW_WIDTH));
+        assert!(r.height > TAB_PREVIEW_THUMB.1);
+        let small = tab_preview_rect(tab, false, 1280.0);
+        assert!(small.height < r.height && small.height >= 60.0);
+        // The last tab of a narrow window: the card moves left to stay inside.
+        let r = tab_preview_rect(PopupRect { x: 560.0, ..tab }, true, 640.0);
+        assert!(r.x + r.width <= 640.0 && r.x < 560.0);
+        assert!(r.is_valid());
+        assert_eq!(prompt_rect(PopupKind::TabPreview, 1, 800.0).height, r.height);
+    }
+
     #[test]
     fn panel_split_keeps_both_sides() {
         let content = Rect { x: 0, y: 76, width: 1280, height: 700 };

@@ -621,6 +621,7 @@ fn info_of(t: &Tab) -> TabInfo {
         sleeping: !t.is_live() || t.asleep,
         audible: false,
         muted: false,
+        auth_pending: false,
     }
 }
 

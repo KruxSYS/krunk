@@ -1060,6 +1060,20 @@
   // Only the rows in view exist (a window can have hundreds of tabs).
   const TL_ROW = 34;
   const tl = { tabs: [], active: null, shown: [], sel: 0 };
+  // 0.15.0: the tab hover card: a picture of the page (not for the active tab, and only once one
+  // was taken), the title and the site. Text as text; the picture only as a JPEG data URL.
+  function renderTabPreview(c) {
+    const pic = typeof c.thumbnail === 'string' && /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(c.thumbnail) ? c.thumbnail : null;
+    return [el('div', { class: 'tab-preview' + (c.active ? ' active' : ''), id: 'tab-preview' }, [
+      pic ? el('div', { class: 'tp-thumb' }, [el('img', { src: pic, alt: '' })]) : null,
+      el('div', { class: 'tp-title', id: 'tp-title', text: c.title || 'New tab' }),
+      el('div', { class: 'tp-site', id: 'tp-site' }, [
+        c.private ? el('span', { class: 'tp-private', text: 'Private · ' }) : null,
+        c.host || c.url || '',
+      ]),
+    ])];
+  }
+
   function renderTabList(c) {
     tl.tabs = c.tabs; tl.active = c.active; tl.sel = -1;
     const search = el('input', { id: 'tl-search', class: 'tl-search', type: 'search', placeholder: 'Search tabs', 'aria-label': 'Search tabs', spellcheck: 'false', autocomplete: 'off' });
@@ -1236,7 +1250,7 @@
       return;
     }
     current = m.content;
-    const render = { menu: renderMenu, shield: renderShield, vpn: renderVpn, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, cardFill: renderCardFill, saveCard: renderSaveCard, pip: renderPip, pipVolume: renderPipVolume, extInstall: renderExtInstall, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, navMenu: renderNavMenu, httpAuth: renderHttpAuth, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit, tabList: renderTabList, unresponsive: renderUnresponsive, jsDialog: renderJsDialog }[c.kind];
+    const render = { menu: renderMenu, shield: renderShield, vpn: renderVpn, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, cardFill: renderCardFill, saveCard: renderSaveCard, pip: renderPip, pipVolume: renderPipVolume, extInstall: renderExtInstall, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, navMenu: renderNavMenu, httpAuth: renderHttpAuth, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit, tabList: renderTabList, tabPreview: renderTabPreview, unresponsive: renderUnresponsive, jsDialog: renderJsDialog }[c.kind];
     root.textContent = '';
     root.dataset.kind = c.kind;
     // The volume bar matches the engine's floating window, which is always dark.

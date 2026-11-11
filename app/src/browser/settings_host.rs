@@ -460,7 +460,7 @@ impl Browser {
         };
         // Both popup windows: the second one shows the bookmark menu over a folder dropdown
         // (0.7.2, R8: it kept the theme it was made with).
-        for slot in [PopupSlot::Main, PopupSlot::Menu] {
+        for slot in [PopupSlot::Main, PopupSlot::Menu, PopupSlot::Preview] {
             let popup = self.popup_slot(slot).borrow().as_ref().and_then(|p| p.view.clone());
             if let Some(c) = popup {
                 c.post_json(&e);

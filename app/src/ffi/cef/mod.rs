@@ -54,6 +54,9 @@ pub struct EngineConfig {
     pub switches: Vec<String>,
     /// Empty = the engine's default user agent.
     pub user_agent: String,
+    /// 0.15.0: what a browser shows before its page has painted when its own settings do not
+    /// say (`CefSettings.background_color`, ARGB): the theme's page colour, never black.
+    pub background: u32,
 }
 
 /// Starts the browser once the engine is ready; returns what must stay alive
@@ -105,6 +108,7 @@ pub fn run_engine(config: EngineConfig, start: Start) -> Result<i32, String> {
         log_severity: LogSeverity::WARNING,
         persist_session_cookies: 0,
         user_agent: CefString::from(config.user_agent.as_str()),
+        background_color: config.background,
         ..Default::default()
     };
     START.with(|s| *s.borrow_mut() = Some(start));

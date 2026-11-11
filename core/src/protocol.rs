@@ -173,6 +173,9 @@ pub enum PopupKind {
     /// A site's HTTP sign-in (Basic/Digest, 0.8.0): user name and password, the vault's logins
     /// for that origin. Opened by the host only.
     HttpAuth,
+    /// 0.15.0: the card shown while the pointer rests on a tab (title, site, a small picture
+    /// of the page). Its own popup window; it never takes the focus. Opened by the host only.
+    TabPreview,
     /// The bookmarks bar's context menu (right-click on an item, a folder or the bar).
     BookmarkMenu,
     /// Name (and address) of a bookmark or folder: edit, rename, new folder.
@@ -216,6 +219,7 @@ impl PopupKind {
                 | PopupKind::AddressSuggest
                 | PopupKind::AddressMenu
                 | PopupKind::PipVolume
+                | PopupKind::TabPreview
         )
     }
 }
@@ -499,6 +503,19 @@ pub enum PopupContent {
         locked: bool,
         failed: bool,
     },
+    /// 0.15.0: the hover card of tab `tab_id`: its title, its site (`host`, empty for Krunk's
+    /// own pages: `url` then), and a JPEG `data:` URL of the page as it was last seen (none for
+    /// the active tab, or before one was taken).
+    TabPreview {
+        tab_id: u32,
+        title: String,
+        host: String,
+        url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thumbnail: Option<String>,
+        active: bool,
+        private: bool,
+    },
     /// Right-click on the window's title bar or the empty tab strip (Krunk 0.6.0).
     CaptionMenu { maximized: bool, can_reopen: bool, can_bookmark_all: bool },
     /// The bookmarks bar's context menu: on bookmark or folder `id`, or on the bar itself
@@ -703,6 +720,7 @@ impl PopupContent {
             PopupContent::TabMenu { .. } => PopupKind::TabMenu,
             PopupContent::NavMenu { .. } => PopupKind::NavMenu,
             PopupContent::HttpAuth { .. } => PopupKind::HttpAuth,
+            PopupContent::TabPreview { .. } => PopupKind::TabPreview,
             PopupContent::CaptionMenu { .. } => PopupKind::CaptionMenu,
             PopupContent::Downloads { .. } => PopupKind::Downloads,
             PopupContent::Pip { .. } => PopupKind::Pip,
@@ -924,6 +942,15 @@ pub enum Request {
     ShowTabMenu {
         id: u32,
         rect: PopupRect,
+    },
+    /// 0.15.0: the pointer rests on tab `id` (the shell waited its delay): its hover card under
+    /// `rect` (the tab, shell CSS px). `id` none: the card goes (pointer left, click, drag,
+    /// scroll).
+    TabHover {
+        #[serde(default)]
+        id: Option<u32>,
+        #[serde(default)]
+        rect: Option<PopupRect>,
     },
     /// A choice in a tab's context menu (popup).
     TabMenuAction {
@@ -1939,6 +1966,7 @@ impl Sender {
                     | R::DuplicateTab { .. }
                     | R::TabDragOut { .. }
                     | R::ShowTabMenu { .. }
+                    | R::TabHover { .. }
                     | R::ShowNavMenu { .. }
                     | R::DevToolsDock { .. }
                     | R::DevToolsClose
@@ -2480,6 +2508,9 @@ pub struct TabInfo {
     pub audible: bool,
     #[serde(default)]
     pub muted: bool,
+    /// 0.15.0: the tab waits for an HTTP sign-in (a key badge; its dialog shows with the tab).
+    #[serde(default)]
+    pub auth_pending: bool,
 }
 
 /// The tab a drag from another window would drop: the target strip shows it in its gap.
@@ -2576,6 +2607,9 @@ pub enum Event {
     ShellConfig {
         theme: Theme,
         search_name: String,
+        /// 0.15.0: hover cards on tabs (Settings → Tabs); off: the tab's tooltip instead.
+        #[serde(default)]
+        tab_hover_preview: bool,
         /// Appearance options (CSS variables and toolbar items); absent in old messages.
         #[serde(default)]
         appearance: crate::settings::Appearance,
@@ -3572,6 +3606,39 @@ mod tests {
     }
 
     /// Every request variant survives JSON in both directions.
+    /// 0.15.0: the hover card never takes the focus and only the host opens it; the shell's
+    /// hover request parses; old tab lists (no `authPending`) still do.
+    #[test]
+    fn tab_preview_and_auth_badge() {
+        assert!(!PopupKind::TabPreview.takes_focus() && !PopupKind::TabPreview.shell_may_open());
+        let c = PopupContent::TabPreview {
+            tab_id: 2,
+            title: "T".into(),
+            host: "a.example".into(),
+            url: "https://a.example/".into(),
+            thumbnail: None,
+            active: false,
+            private: false,
+        };
+        assert_eq!(c.kind(), PopupKind::TabPreview);
+        let j = serde_json::to_value(&c).unwrap();
+        assert_eq!(j["kind"], "tabPreview");
+        assert!(j.get("thumbnail").is_none());
+        let r: Request =
+            serde_json::from_str(r#"{"cmd":"tabHover","id":4,"rect":{"x":10,"y":4,"width":200,"height":34}}"#).unwrap();
+        assert!(matches!(r, Request::TabHover { id: Some(4), rect: Some(_) }));
+        assert!(Sender::Shell.permits(&r) && !Sender::Popup.permits(&r));
+        let r: Request = serde_json::from_str(r#"{"cmd":"tabHover"}"#).unwrap();
+        assert_eq!(r, Request::TabHover { id: None, rect: None });
+        let t: TabInfo = serde_json::from_str(
+            r#"{"id":1,"title":"t","url":"u","favicon":null,"loading":false,"private":false,"sleeping":false}"#,
+        )
+        .unwrap();
+        assert!(!t.auth_pending);
+        let t = TabInfo { auth_pending: true, ..t };
+        assert_eq!(serde_json::to_value(&t).unwrap()["authPending"], true);
+    }
+
     #[test]
     fn requests_round_trip() {
         let rect = PopupRect { x: 1.0, y: 2.0, width: 3.0, height: 4.0 };
@@ -3637,6 +3704,8 @@ mod tests {
             Request::ShowPopup { popup: PopupKind::Shield, rect },
             Request::TabDragOut { id: 3, offset_x: 40.5, offset_y: 18.0, first_x: Some(6.0) },
             Request::ShowTabMenu { id: 3, rect },
+            Request::TabHover { id: Some(3), rect: Some(rect) },
+            Request::TabHover { id: None, rect: None },
             Request::ShowNavMenu { forward: true, rect },
             Request::NavToEntry { tab_id: 3, entry_id: 17 },
             Request::HttpAuthReply { tab_id: 3, username: "u".into(), password: "p".into(), entry_id: None },
@@ -4495,6 +4564,7 @@ mod tests {
             sleeping: false,
             audible: true,
             muted: false,
+            auth_pending: false,
         };
         assert!(serde_json::to_string(&info).unwrap().contains("\"audible\":true"));
         let menu = serde_json::to_value(TabAction::MuteSite).unwrap();
@@ -4981,6 +5051,7 @@ mod tests {
                     sleeping: false,
                     audible: false,
                     muted: false,
+                    auth_pending: false,
                 }],
                 active: Some(1),
             },
@@ -5008,6 +5079,7 @@ mod tests {
             Event::ShellConfig {
                 theme: Theme::Dark,
                 search_name: "DuckDuckGo".into(),
+                tab_hover_preview: true,
                 appearance: Default::default(),
                 colors: Default::default(),
             },

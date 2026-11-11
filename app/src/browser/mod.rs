@@ -93,6 +93,7 @@ mod storage;
 mod suggest;
 mod sync;
 mod tablist;
+mod tabpreview;
 mod tasks;
 mod updater;
 mod userscripts;
@@ -121,8 +122,8 @@ const UI_BACKGROUND_DARK: u32 = 0xFF1F_2023;
 /// still get white (`Emulation.setDefaultBackgroundColorOverride`, view.rs).
 const TAB_BACKGROUND_DARK: u32 = 0xFF1F_2023;
 /// How long a tab switch keeps the old page while the new view has not loaded once, and the
-/// pause after its load before the swap (R7).
-const REVEAL_TIMEOUT_MS: i64 = 1000;
+/// pause after its load before the swap (R7). 0.15.0: 500 ms (was 1000), in core.
+const REVEAL_TIMEOUT_MS: i64 = lb_core::reveal::REVEAL_TIMEOUT_MS;
 const REVEAL_SETTLE_MS: i64 = 50;
 /// How long the old page stays beneath the new one after a tab switch (0.7.3).
 const HIDE_OLD_VIEW_MS: i64 = 100;
@@ -134,6 +135,27 @@ const PAGE_DEFAULT_WHITE: u32 = 0xFFFF_FFFF;
 /// so a menu shown for the first time is never a light box in the dark theme.
 const POPUP_BACKGROUND_DARK: u32 = 0xFF2B_2D31;
 const POPUP_BACKGROUND_LIGHT: u32 = 0xFFFF_FFFF;
+
+/// What a tab view shows before its page has painted (0.15.0): the custom background colour
+/// (Settings → Appearance) when one is set, else the theme's page colour. Never black.
+fn theme_background(s: &Settings, dark: bool) -> u32 {
+    match lb_core::color::parse_hex(&s.appearance.background_color) {
+        Some((r, g, b)) => 0xFF00_0000 | (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b),
+        None if dark => TAB_BACKGROUND_DARK,
+        None => TAB_BACKGROUND_LIGHT,
+    }
+}
+
+/// The engine's default background (`CefSettings.background_color`, 0.15.0) at start: the
+/// colour of [`theme_background`] for the saved theme.
+pub fn engine_background(s: &Settings) -> u32 {
+    let dark = match s.theme {
+        lb_core::settings::Theme::Dark => true,
+        lb_core::settings::Theme::Light => false,
+        lb_core::settings::Theme::System => crate::ffi::window::system_prefers_dark(),
+    };
+    theme_background(s, dark)
+}
 
 /// Live state of a tab's browser view.
 struct TabView {
@@ -241,6 +263,8 @@ pub(super) struct Frame {
 pub(super) enum PopupSlot {
     Main,
     Menu,
+    /// The tab hover card (0.15.0): never activated, so it leaves the other two alone.
+    Preview,
     /// The volume bar next to the floating video window (0.7.0, R8).
     Pip,
 }
@@ -277,6 +301,8 @@ pub struct Browser {
     js_dialogs: js_dialogs::JsDialogHost,
     /// The floating video's volume bar (created when first needed) and its state.
     pip_popup: RefCell<Option<Popup>>,
+    /// Tab hover cards and their pictures (0.15.0).
+    preview: tabpreview::PreviewHost,
     pip_bar: RefCell<Option<pip::PipBar>>,
     /// The menu popup is being hidden by the host (its deactivation is not the user leaving).
     menu_closing: Cell<bool>,
@@ -337,6 +363,9 @@ pub struct Browser {
     /// Per window (0.11.0; one shared slot let a switch in another window cancel this one's):
     /// the tab still on screen and the tab waiting to be revealed.
     pending_reveal: RefCell<lb_core::reveal::Reveals<WindowId, TabId>>,
+    /// 0.15.0: the views of closed tabs kept on screen until the next tab of their window has
+    /// painted (`Reveals::keep`); they are no longer in `views`.
+    kept_views: RefCell<HashMap<TabId, View>>,
     /// The custom-DNS stub, once the settings asked for it.
     dns: RefCell<Option<crate::dns::Engine>>,
     /// Where the shell asked for the shield panel (it grows with its list from there).
@@ -449,6 +478,7 @@ impl Browser {
             http_auth: http_auth::HttpAuthHost::default(),
             js_dialogs: js_dialogs::JsDialogHost::default(),
             pip_popup: RefCell::new(None),
+            preview: tabpreview::PreviewHost::default(),
             pip_bar: RefCell::new(None),
             menu_closing: Cell::new(false),
             request_from: Cell::new(PopupSlot::Main),
@@ -481,6 +511,7 @@ impl Browser {
             first_url: RefCell::new(HashMap::new()),
             engine_hints: RefCell::new(None),
             pending_reveal: RefCell::new(lb_core::reveal::Reveals::default()),
+            kept_views: RefCell::new(HashMap::new()),
             dns: RefCell::new(None),
             bookmark_menu_at: Cell::new(None),
             adblock_source: Cell::new(None),
@@ -927,11 +958,14 @@ impl Browser {
 
     fn apply(&self, ops: Vec<Op>) {
         let mut exit = false;
+        // 0.15.0: a closed tab whose window shows another tab next keeps its page on screen
+        // until that one has painted (no black or blank frame between the two).
+        let handed = lb_core::reveal::handed_over(&ops);
         for op in ops {
             match op {
                 Op::CreateWindow { win, bounds, maximized } => self.create_frame(win, bounds, maximized),
                 Op::CreateView { win, tab } => self.create_view(win, tab),
-                Op::DestroyView { tab, .. } => self.destroy_view(tab),
+                Op::DestroyView { win, tab } => self.destroy_view(tab, handed.contains(&(win, tab)).then_some(win)),
                 Op::Activate { win, from, to } => self.activate_view(win, from, to),
                 Op::MoveView { tab, from, to } => self.move_view(tab, from, to),
                 Op::CloseWindow(win) => self.close_frame(win),
@@ -975,6 +1009,11 @@ impl Browser {
             i.map(|i| frames.remove(i))
         };
         let Some(frame) = frame else { return };
+        // A closed tab's page kept on screen goes with its window (0.15.0).
+        let kept = self.pending_reveal.borrow_mut().release_window(win);
+        if let Some(v) = kept.and_then(|t| self.kept_views.borrow_mut().remove(&t)) {
+            v.close();
+        }
         // Krunk's popups (menus, dropdowns, prompts) are owned by the window that last showed
         // them, and Windows destroys owned windows with their owner. Before 0.11.1 a window
         // closed by a tab merge took the popup with it, and from then on no menu opened in any
@@ -993,10 +1032,11 @@ impl Browser {
     /// another frame, or by the hidden application window when none is left.
     fn rehome_popups(&self, _closing: Window) {
         self.hide_menu_popup(false);
+        self.hide_tab_preview();
         self.hide_popup();
         let heir = self.all_frames().into_iter().map(|f| (Some(f.id), f.window)).next();
         let Some((owner, window)) = heir.or_else(|| self.app().map(|a| (None, a))) else { return };
-        for slot in [PopupSlot::Main, PopupSlot::Menu] {
+        for slot in [PopupSlot::Main, PopupSlot::Menu, PopupSlot::Preview] {
             if let Ok(mut guard) = self.popup_slot(slot).try_borrow_mut() {
                 if let Some(p) = guard.as_mut().filter(|p| p.window.exists()) {
                     p.window.set_owner(window);
@@ -1113,7 +1153,8 @@ impl Browser {
         // otherwise the tab switch that follows keeps the old page until this one has loaded
         // (R7: a new view's first frame is blank).
         let other_shown =
-            self.views.borrow().iter().any(|(t, v)| *t != id && self.window_of(*t) == Some(win) && v.view.is_visible());
+            self.views.borrow().iter().any(|(t, v)| *t != id && self.window_of(*t) == Some(win) && v.view.is_visible())
+                || self.pending_reveal.borrow().kept_tab_of(win).is_some();
         view.set_visible(active && !window.is_minimized() && !other_shown);
         self.views.borrow_mut().insert(
             id,
@@ -1192,6 +1233,10 @@ impl Browser {
             }
             b.with_tab(id, |m, t| m.set_loading(t, true));
             b.tab_changed(id);
+            // 0.15.0: the tab goes elsewhere: a sign-in it waits for is refused.
+            if !nav.redirected {
+                b.defer(move |b| b.http_auth_tab_gone(id));
+            }
             // A new page: the old one's pointer lock ends.
             b.release_pointer_of(id, lb_core::pointer_lock::Release::Navigated);
             true
@@ -1219,6 +1264,9 @@ impl Browser {
             if let Some(b) = weak.upgrade() {
                 b.ext_tab_event("tabUpdated", serde_json::json!({ "tabId": id }));
                 b.navigation_completed(id, &net_done, error.map(LoadFailure::from_net_error));
+                if error.is_none() {
+                    b.preview_loaded(id);
+                }
                 // Once per top-level navigation, when it loaded.
                 if net_done.visit_pending.replace(false) && error.is_none() {
                     b.record_visit(id);
@@ -1418,8 +1466,11 @@ impl Browser {
         });
     }
 
-    fn destroy_view(&self, id: TabId) {
+    /// `hand_over`: the tab closed and its window `win` shows another tab next (0.15.0).
+    fn destroy_view(&self, id: TabId, hand_over: Option<WindowId>) {
         self.js_dialog_tab_left(id, true);
+        self.http_auth_tab_gone(id);
+        self.preview_forget(id);
         // The last private tab: its PDFs go with it (0.11.3). (The model may have dropped the
         // tab already; the views know which are private.)
         let private_views =
@@ -1445,8 +1496,60 @@ impl Browser {
         }
         let view = self.views.borrow_mut().remove(&id);
         if let Some(v) = view {
-            v.view.close();
+            match hand_over.filter(|w| self.may_keep_on_screen(*w, id, &v.view)) {
+                Some(win) => self.keep_on_screen(win, id, v.view),
+                None => v.view.close(),
+            }
         }
+    }
+
+    /// May the closed tab `id`'s view stay on screen in `win` until the next tab has painted?
+    /// Only the page on screen (not one painting beneath it) of a window that is not minimised.
+    fn may_keep_on_screen(&self, win: WindowId, id: TabId, view: &View) -> bool {
+        let shown = self.pending_reveal.borrow().shown_in(win);
+        view.is_visible() && shown.is_none_or(|s| s == id) && self.frame(win).is_some_and(|f| !f.window.is_minimized())
+    }
+
+    /// 0.15.0: the closed tab's page stays on screen (silent, without its DevTools) until the
+    /// next tab of its window is revealed, at most a moment longer than a switch waits.
+    fn keep_on_screen(&self, win: WindowId, id: TabId, view: View) {
+        view.set_audio_muted(true);
+        if view.devtools_open() {
+            view.close_devtools();
+        }
+        let earlier = self.pending_reveal.borrow_mut().keep(win, id);
+        if let Some(e) = earlier.and_then(|e| self.kept_views.borrow_mut().remove(&e)) {
+            e.close();
+        }
+        self.kept_views.borrow_mut().insert(id, view);
+        let weak = self.me.clone();
+        crate::ffi::cef::post_ui_delayed(REVEAL_TIMEOUT_MS + HIDE_OLD_VIEW_MS + 400, move || {
+            if let Some(b) = weak.upgrade() {
+                b.release_kept(id);
+            }
+        });
+    }
+
+    /// The kept view of closed tab `id` goes (once).
+    fn release_kept(&self, id: TabId) {
+        let released = self.pending_reveal.borrow_mut().release(id);
+        let view = self.kept_views.borrow_mut().remove(&id);
+        if let Some(v) = view {
+            if !released {
+                crate::log::warning!("tab {id}: a kept view was not tracked");
+            }
+            v.close();
+        }
+    }
+
+    /// The view on screen for tab `id`: its own, or the kept view of a closed tab.
+    fn screen_view(&self, id: TabId) -> Option<View> {
+        self.tab_view(id).or_else(|| self.kept_views.try_borrow().ok()?.get(&id).cloned())
+    }
+
+    /// Is tab `id` (live, or closed and kept) in window `win`?
+    fn on_screen_in(&self, id: TabId, win: WindowId) -> bool {
+        self.window_of(id) == Some(win) || self.pending_reveal.borrow().kept_in(id) == Some(win)
     }
 
     fn popup_background(&self) -> u32 {
@@ -1457,12 +1560,10 @@ impl Browser {
         }
     }
 
+    /// 0.15.0: the custom background colour (Settings → Appearance) when one is set, else the
+    /// theme's: what a new view shows before its page has painted.
     fn tab_background(&self) -> u32 {
-        if self.frame_dark() {
-            TAB_BACKGROUND_DARK
-        } else {
-            TAB_BACKGROUND_LIGHT
-        }
+        theme_background(&self.settings.borrow(), self.frame_dark())
     }
 
     /// Shows `to` on top, then hides `from` (and its DevTools).
@@ -1477,6 +1578,11 @@ impl Browser {
         let weak = self.me.clone();
         crate::ffi::cef::post_ui_delayed(HIDE_OLD_VIEW_MS, move || {
             let Some(b) = weak.upgrade() else { return };
+            // A closed tab's kept page (0.15.0): it goes now.
+            if b.kept_views.borrow().contains_key(&from) {
+                b.release_kept(from);
+                return;
+            }
             // Switched back to it in the meantime: it stays.
             let active_again = b
                 .window_of(from)
@@ -1497,11 +1603,23 @@ impl Browser {
     /// The tab a switch waited for has loaded (or waited long enough): swap the views now.
     fn reveal(&self, to: TabId) {
         let found = self.pending_reveal.borrow_mut().take(to);
+        self.reveal_found(to, found);
+    }
+
+    /// The timeout of a switch to `to` (0.15.0: a timer of an earlier wait does nothing).
+    fn reveal_due(&self, to: TabId) {
+        let found = self.pending_reveal.borrow_mut().take_if_due(to, now_ms());
+        self.reveal_found(to, found);
+    }
+
+    fn reveal_found(&self, to: TabId, found: Option<(WindowId, TabId)>) {
         let Some((win, from)) = found else { return };
         // Still the window's active tab (else a later switch has taken over).
         if self.ws.borrow().model(win).and_then(|m| m.active().map(|t| t.id)) == Some(to) {
-            let from = Some(from).filter(|f| self.window_of(*f) == Some(win));
+            let from = Some(from).filter(|f| self.on_screen_in(*f, win));
             self.swap_views(win, from, to);
+        } else if self.kept_views.borrow().contains_key(&from) {
+            self.release_kept(from);
         }
     }
 
@@ -1520,6 +1638,10 @@ impl Browser {
     }
 
     fn activate_view(&self, win: WindowId, from: Option<TabId>, to: TabId) {
+        // The tab left is still on screen: its hover-card picture now (0.15.0).
+        if let Some(f) = from.filter(|f| *f != to) {
+            self.preview_leaving(f);
+        }
         self.close_ext_popup();
         self.sessionlog_focus();
         self.auto_pip_switch(from, to);
@@ -1546,16 +1668,27 @@ impl Browser {
         let old = from.filter(|f| *f != to && self.window_of(*f) == Some(win));
         let minimized = self.frame(win).is_some_and(|f| f.window.is_minimized());
         let ready = self.views.borrow().get(&to).is_some_and(|v| v.loaded_once.get());
-        // A reveal this window was still waiting for: the page on screen is its old one.
-        let shown = self.pending_reveal.borrow_mut().begin(win, old, to);
-        let old = shown.filter(|f| *f != to && self.window_of(*f) == Some(win)).or(old);
-        match old {
-            Some(f) if !ready && !minimized && self.tab_view(f).is_some() => {
-                self.pending_reveal.borrow_mut().wait(win, f, to);
+        // A reveal this window was still waiting for: the page on screen is its old one. After
+        // a close (`from` none) it is the closed tab's kept page (0.15.0).
+        let begin = self.pending_reveal.borrow_mut().begin(win, old, to);
+        // The tab that earlier switch waited for paints beneath no longer.
+        if let Some(v) = begin.abandoned.filter(|a| Some(*a) != begin.shown).and_then(|a| self.tab_view(a)) {
+            v.set_visible(false);
+        }
+        let old = begin.shown.filter(|f| *f != to && self.on_screen_in(*f, win)).or(old);
+        match old.and_then(|f| self.screen_view(f).map(|v| (f, v))) {
+            Some((f, above)) if !ready && !minimized => {
+                self.pending_reveal.borrow_mut().wait(win, f, to, now_ms());
+                // 0.15.0: the new page renders beneath the old one (shown to the engine, so it
+                // paints and is not throttled) and comes on top once it has painted.
+                if let Some(t) = self.tab_view(to) {
+                    t.show_beneath(&above);
+                }
                 let weak = self.me.clone();
-                crate::ffi::cef::post_ui_delayed(REVEAL_TIMEOUT_MS, move || {
+                // (A little later than due: a timer never comes too early for its wait.)
+                crate::ffi::cef::post_ui_delayed(REVEAL_TIMEOUT_MS + 10, move || {
                     if let Some(b) = weak.upgrade() {
-                        b.reveal(to);
+                        b.reveal_due(to);
                     }
                 });
             }
@@ -1565,6 +1698,8 @@ impl Browser {
         self.wake_tab(to);
         // A page that does not respond says so when its tab comes to the front (0.11.0).
         self.defer(move |b| b.show_hang_prompt(to));
+        // A sign-in the tab waits for shows again with it (0.15.0).
+        self.defer(|b| b.http_auth_reshow());
         self.layout();
         if self.cur_id() == Some(win) {
             self.focus_active();
@@ -1742,6 +1877,7 @@ impl Browser {
                 tab.audible = v.audio.get();
                 tab.muted = v.view.audio_muted();
             }
+            tab.auth_pending = self.http_auth_pending(id);
             self.post_shell_to(win, &Event::TabUpdate { tab });
             self.refresh_tab_list(win);
         }
@@ -1758,6 +1894,9 @@ impl Browser {
                         t.muted = v.view.audio_muted();
                     }
                 }
+            }
+            for t in tabs.iter_mut() {
+                t.auth_pending = self.http_auth_pending(t.id);
             }
             self.post_shell_to(win, &Event::Tabs { tabs, active });
             self.refresh_tab_list(win);
@@ -1960,11 +2099,15 @@ impl Browser {
     }
 
     fn send_shell_config(&self) {
+        if !self.settings.borrow().tab_hover_preview {
+            self.preview_clear();
+        }
         let e = {
             let s = self.settings.borrow();
             Event::ShellConfig {
                 theme: s.theme,
                 search_name: s.search_name(),
+                tab_hover_preview: s.tab_hover_preview,
                 appearance: s.appearance.clone(),
                 colors: lb_core::color::ThemeColors::from_appearance(&s.appearance),
             }
@@ -2529,7 +2672,13 @@ impl Browser {
                 }
             }
             Request::CloseTab { id } => self.close_tab(id),
-            Request::ActivateTab { id } => self.update_current(|m| m.activate(id, now)),
+            Request::ActivateTab { id } => {
+                // 0.15.0: a click on the active tab brings back its hidden sign-in dialog.
+                if self.active_id() == Some(id) {
+                    self.http_auth_reshow();
+                }
+                self.update_current(|m| m.activate(id, now))
+            }
             Request::MoveTab { id, index } => {
                 let Some(win) = self.cur_id() else { return };
                 let ops = self.ws.borrow_mut().move_tab(id, win, index as usize, now);
@@ -2646,7 +2795,8 @@ impl Browser {
                 }
             }
             // The volume bar is placed and hidden by the host only.
-            Request::HidePopup | Request::PopupResize { .. } if self.request_slot() == PopupSlot::Pip => {}
+            Request::HidePopup | Request::PopupResize { .. }
+                if matches!(self.request_slot(), PopupSlot::Pip | PopupSlot::Preview) => {}
             Request::PipVolume { tab_id, volume, muted } => self.pip_set_volume(tab_id, volume, muted),
             Request::ExtInstallReply { request_id, accept } => self.ext_install_answer(request_id, accept),
             Request::HidePopup if self.request_slot() == PopupSlot::Menu => {
@@ -2685,6 +2835,7 @@ impl Browser {
             Request::MoveBookmark { id, parent, index } if sender == Sender::Shell => {
                 self.move_bookmark_from_bar(id, parent, index)
             }
+            Request::TabHover { id, rect } => self.tab_hover(id, rect),
             Request::ShowTabMenu { id, rect } => {
                 let state = self.window_of(id).and_then(|w| {
                     let ws = self.ws.borrow();
@@ -2983,6 +3134,7 @@ impl Browser {
         match slot {
             PopupSlot::Main => &self.popup,
             PopupSlot::Menu => &self.menu_popup,
+            PopupSlot::Preview => &self.preview.popup,
             PopupSlot::Pip => &self.pip_popup,
         }
     }
@@ -2995,8 +3147,10 @@ impl Browser {
     pub(super) fn show_popup_in(&self, slot: PopupSlot, content: PopupContent, rect: Option<PopupRect>) {
         let Some(main) = self.window() else { return };
         // Another popup of Krunk's replaces an extension's (0.7.0, R21).
-        if rect.is_some() && slot != PopupSlot::Pip {
+        if rect.is_some() && !matches!(slot, PopupSlot::Pip | PopupSlot::Preview) {
             self.close_ext_popup_because("another popup opened");
+            // A menu or a prompt: the hover card goes (0.15.0).
+            self.hide_tab_preview();
         }
         // A popup window that is gone (destroyed with a window, 0.11.1) is made anew.
         let dead = self.popup_slot(slot).borrow().as_ref().is_some_and(|p| !p.window.exists());
@@ -3015,13 +3169,19 @@ impl Browser {
         let Some(popup) = guard.as_mut() else { return };
         let kind = content.kind();
         let replaced = popup.content.replace(content.clone());
-        // An open HTTP sign-in dialog replaced by anything but its own unlock prompt: its request
-        // is cancelled (later, outside this borrow; the engine may call back synchronously).
-        let auth_gone = matches!(replaced, Some(PopupContent::HttpAuth { .. }))
-            && !matches!(
-                &content,
-                PopupContent::HttpAuth { .. } | PopupContent::Unlock { purpose: UnlockPurpose::HttpAuth, .. }
-            );
+        // An open HTTP sign-in dialog replaced by anything but its own unlock prompt goes out of
+        // sight; its request waits for the tab (0.15.0; it was cancelled before).
+        let auth_gone = match &replaced {
+            Some(PopupContent::HttpAuth { tab_id, .. })
+                if !matches!(
+                    &content,
+                    PopupContent::HttpAuth { .. } | PopupContent::Unlock { purpose: UnlockPurpose::HttpAuth, .. }
+                ) =>
+            {
+                Some(*tab_id)
+            }
+            _ => None,
+        };
         // A page's dialog replaced by anything else: the page gets the dismissal's answer.
         if let Some(PopupContent::JsDialog { dialog_id: gone, .. }) = &replaced {
             let same = matches!(&content, PopupContent::JsDialog { dialog_id, .. } if dialog_id == gone);
@@ -3034,11 +3194,11 @@ impl Browser {
                 });
             }
         }
-        if auth_gone {
+        if let Some(tab) = auth_gone {
             let weak = self.me.clone();
             crate::ffi::cef::post_ui(move || {
                 if let Some(b) = weak.upgrade() {
-                    b.http_auth_dismissed();
+                    b.http_auth_hidden(tab);
                 }
             });
         }
@@ -3163,6 +3323,7 @@ impl Browser {
         let events: Rc<dyn WindowEvents> = match slot {
             PopupSlot::Main => Rc::new(PopupEvents(self.me.clone())),
             PopupSlot::Menu => Rc::new(MenuPopupEvents(self.me.clone())),
+            PopupSlot::Preview => Rc::new(tabpreview::PreviewEvents),
             PopupSlot::Pip => Rc::new(pip::PipBarEvents),
         };
         let window = match Window::create_popup(owner, events) {
@@ -3260,6 +3421,8 @@ impl Browser {
         if now_ms() < self.popup_hold_until.get() {
             return;
         }
+        // 0.15.0: a sign-in dialog only goes out of sight (it comes back with its window).
+        self.http_auth_focus_lost();
         let anchor = self
             .popup
             .try_borrow()
@@ -3337,6 +3500,11 @@ impl Browser {
         };
         if let Some(c) = &content {
             self.prompt_dismissed(c);
+        }
+        // A menu or prompt that had pushed a sign-in dialog aside is gone: it comes back (0.15.0;
+        // only for the active tab, and only while Krunk has the foreground).
+        if was_visible && !matches!(content, Some(PopupContent::HttpAuth { .. })) {
+            self.defer(|b| b.http_auth_reshow());
         }
         if was_visible {
             match owner {
@@ -3592,6 +3760,7 @@ impl WindowEvents for AppEvents {
             drag::DRAG_TIMER => b.drag_tick(),
             drag::BAR_DRAG_TIMER => b.bar_drag_timer(),
             spare::SPARE_TIMER => b.spare_timer(),
+            tabpreview::PREVIEW_TIMER => b.preview_timer(),
             segmented::PARTS_TIMER => b.parts_tick(),
             sessionlog::SAMPLE_TIMER => b.sessionlog_sample(),
             sessionlog::FLUSH_TIMER => b.sessionlog_flush(),
@@ -3676,9 +3845,11 @@ impl WindowEvents for FrameEvents {
         if active {
             b.make_current(self.win);
             b.send_nav_to(self.win);
+            b.http_auth_window_activated();
         } else {
             // Alt+Tab or a click into another window ends the lock.
             b.release_pointer(lb_core::pointer_lock::Release::WindowDeactivated);
+            b.hide_tab_preview();
         }
         b.send_window_state();
     }
