@@ -1,0 +1,37 @@
+package org.krunk.browser.ui.browser
+
+import androidx.activity.compose.LocalActivity
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+
+/**
+ * While [fullScreen] is true the status and navigation bars are hidden (immersive sticky: a
+ * swipe from the edge shows them briefly); leaving restores them. Also keeps the status bar
+ * icons readable for the current theme when not in full screen.
+ */
+@Composable
+fun SystemBarsEffect(fullScreen: Boolean, darkTheme: Boolean) {
+    val activity = LocalActivity.current
+    val view = LocalView.current
+    DisposableEffect(fullScreen, darkTheme, activity) {
+        val window = activity?.window
+        val controller = window?.let { WindowCompat.getInsetsController(it, view) }
+        if (controller != null) {
+            controller.isAppearanceLightStatusBars = !darkTheme
+            controller.isAppearanceLightNavigationBars = !darkTheme
+            if (fullScreen) {
+                controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                controller.hide(WindowInsetsCompat.Type.systemBars())
+            } else {
+                controller.show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+        onDispose {
+            if (fullScreen) controller?.show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+}

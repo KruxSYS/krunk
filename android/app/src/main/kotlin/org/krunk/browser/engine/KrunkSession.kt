@@ -44,12 +44,18 @@ data class ContextTarget(
     val srcUri: String?,
     val title: String?,
     val altText: String?,
-    val textContent: String?,
+    /** The link's visible text, when the element is (inside) a link. */
+    val linkText: String?,
     val type: Int,
 ) {
+    val isLink get() = !linkUri.isNullOrBlank()
     val isImage get() = type == GeckoSession.ContentDelegate.ContextElement.TYPE_IMAGE
     val isMedia get() = type == GeckoSession.ContentDelegate.ContextElement.TYPE_VIDEO ||
         type == GeckoSession.ContentDelegate.ContextElement.TYPE_AUDIO
+
+    /** Text worth copying for a link: its text, else its title, else the image's alt text. */
+    val copyableText: String?
+        get() = listOf(linkText, title, altText).firstOrNull { !it.isNullOrBlank() }?.trim()
 }
 
 /** Events the tab manager reacts to (history, new tabs, menus, downloads). */
@@ -148,9 +154,14 @@ class KrunkSession(
             .onFailure { Log.w(KrunkApp.TAG, "could not restore session state", it) }
     }
 
+    /**
+     * Find in page: a new [text] starts a search (every match highlighted), `null` moves to the
+     * next or previous match of the last one. Results land in [PageState.findCurrent]/[PageState.findTotal].
+     */
     fun find(text: String?, forward: Boolean) {
         var flags = 0
         if (!forward) flags = flags or GeckoSession.FINDER_FIND_BACKWARDS
+        gecko.finder.displayFlags = GeckoSession.FINDER_DISPLAY_HIGHLIGHT_ALL
         gecko.finder.find(text, flags).accept { r ->
             set { it.copy(findCurrent = r?.current ?: 0, findTotal = r?.total ?: 0) }
         }
@@ -158,6 +169,7 @@ class KrunkSession(
 
     fun clearFind() {
         gecko.finder.clear()
+        gecko.finder.displayFlags = 0
         set { it.copy(findCurrent = 0, findTotal = 0) }
     }
 
@@ -247,7 +259,14 @@ class KrunkSession(
         ) {
             listener.onContextMenu(
                 this@KrunkSession,
-                ContextTarget(element.linkUri, element.srcUri, element.title, element.altText, null, element.type),
+                ContextTarget(
+                    linkUri = element.linkUri,
+                    srcUri = element.srcUri,
+                    title = element.title,
+                    altText = element.altText,
+                    linkText = element.linkText,
+                    type = element.type,
+                ),
             )
         }
 
