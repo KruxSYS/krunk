@@ -1,6 +1,7 @@
 package org.krunk.browser.ui.browser
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -8,10 +9,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -27,6 +31,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -82,8 +87,9 @@ fun BrowserScreen(vm: BrowserViewModel) {
     BackHandler(enabled = !findActive && !editing && !fullScreen && page?.canGoBack == true) { session?.goBack() }
 
     toolbarScroll.heightPx = toolbarHeightPx
-    toolbarScroll.enabled = !editing && !findActive && !fullScreen && tab?.isNewTab == false
-    LaunchedEffect(tab?.id, editing, findActive, tab?.isNewTab) { toolbarScroll.show() }
+    val crashed = page?.crashed == true
+    toolbarScroll.enabled = !editing && !findActive && !fullScreen && tab?.isNewTab == false && !crashed
+    LaunchedEffect(tab?.id, editing, findActive, tab?.isNewTab, crashed) { toolbarScroll.show() }
     LaunchedEffect(page?.loading) { if (page?.loading != true) refreshing = false }
 
     val downloadStarted = stringResource(R.string.download_started)
@@ -117,6 +123,13 @@ fun BrowserScreen(vm: BrowserViewModel) {
             NewTabScreen(
                 vm,
                 Modifier
+                    .fillMaxSize()
+                    .padding(top = if (top) ToolbarHeight else 0.dp, bottom = if (!top) ToolbarHeight else 0.dp),
+            )
+        } else if (crashed) {
+            PageCrashed(
+                onReload = { vm.tabs.reload() },
+                modifier = Modifier
                     .fillMaxSize()
                     .padding(top = if (top) ToolbarHeight else 0.dp, bottom = if (!top) ToolbarHeight else 0.dp),
             )
@@ -286,6 +299,26 @@ fun BrowserScreen(vm: BrowserViewModel) {
                 }
             },
         )
+    }
+}
+
+/** Shown instead of the page after its process crashed or was killed by the system. */
+@Composable
+private fun PageCrashed(onReload: () -> Unit, modifier: Modifier = Modifier) {
+    Column(
+        modifier.padding(32.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(stringResource(R.string.page_crashed_title), style = MaterialTheme.typography.titleLarge)
+        Text(
+            stringResource(R.string.page_crashed_message),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 8.dp, bottom = 24.dp),
+        )
+        Button(onClick = onReload) { Text(stringResource(R.string.toolbar_reload)) }
     }
 }
 

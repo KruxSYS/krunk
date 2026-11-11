@@ -52,6 +52,12 @@ interface SessionListener {
 
     /** The page's window.close() for a tab the page opened. */
     fun onCloseRequested(session: KrunkSession)
+
+    /**
+     * The page's process crashed or was killed; the engine has already closed [session]. The
+     * tab needs a new session before it can load anything again.
+     */
+    fun onCrashed(session: KrunkSession)
 }
 
 /**
@@ -119,15 +125,8 @@ class KrunkSession(
         gecko.loadUri(ABOUT_BLANK)
     }
 
-    fun reload() {
-        if (current.crashed) {
-            val url = current.url
-            set { it.copy(crashed = false) }
-            gecko.loadUri(url)
-        } else {
-            gecko.reload()
-        }
-    }
+    /** Reloads the page. A crashed tab is not reloaded here: the tab manager gives it a new session. */
+    fun reload() = gecko.reload()
 
     fun stop() = gecko.stop()
 
@@ -280,12 +279,14 @@ class KrunkSession(
 
         override fun onCrash(session: GeckoSession) {
             Log.w(KrunkApp.TAG, "content process crashed for tab $id")
-            set { it.copy(crashed = true, loading = false, progress = 0f) }
+            set { it.crashed() }
+            listener.onCrashed(this@KrunkSession)
         }
 
         override fun onKill(session: GeckoSession) {
             Log.w(KrunkApp.TAG, "content process killed for tab $id")
-            set { it.copy(crashed = true, loading = false, progress = 0f) }
+            set { it.crashed() }
+            listener.onCrashed(this@KrunkSession)
         }
     }
 

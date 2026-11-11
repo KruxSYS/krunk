@@ -65,6 +65,13 @@ fun PageState.locationChanged(newUrl: String): PageState {
     }
 }
 
+/**
+ * The page's process crashed or was killed by the system. The engine has closed the session:
+ * nothing is loading any more, full screen is over, and the tab needs a new session to continue.
+ */
+fun PageState.crashed(): PageState =
+    copy(crashed = true, loading = false, progress = 0f, fullScreen = false, pendingUrl = null)
+
 /** A load ended. One that never committed (a download, "204 No Content", stop) leaves the old page. */
 fun PageState.pageStopped(): PageState = copy(progress = 0f, loading = false, pendingUrl = null)
 

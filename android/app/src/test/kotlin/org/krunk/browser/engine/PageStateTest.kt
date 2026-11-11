@@ -105,6 +105,19 @@ class PageStateTest {
     }
 
     @Test
+    fun aCrashEndsLoadingAndFullScreenAndKeepsTheAddress() {
+        var s = PageState().locationChanged(bank).copy(loading = true, progress = 0.4f, fullScreen = true)
+        s = s.requested(evil).crashed()
+        assertTrue(s.crashed)
+        assertFalse(s.loading)
+        assertFalse(s.fullScreen)
+        assertEquals(0f, s.progress)
+        assertEquals(bank, shown(bank, s))
+        // A new load clears the flag.
+        assertFalse(s.requested(bank).crashed)
+    }
+
+    @Test
     fun theFirstBlankPageIsIgnoredOnlyOnce() {
         var s = PageState().requested(bank).locationChanged(ABOUT_BLANK)
         assertEquals(bank, s.pendingUrl)

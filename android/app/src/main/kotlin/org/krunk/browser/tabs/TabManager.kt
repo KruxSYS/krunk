@@ -530,7 +530,15 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
     }
 
     fun reload(id: UInt? = activeId.value) {
-        id?.let { ensureSession(it)?.reload() }
+        id ?: return
+        if (sessions[id]?.current?.crashed == true) {
+            // The engine closed the crashed session: a new one restores the page and its history.
+            dropCrashedSession(id)
+            createSession(id)
+            refresh()
+        } else {
+            ensureSession(id)?.reload()
+        }
     }
 
     fun setDesktopMode(id: UInt, desktop: Boolean) {
@@ -556,7 +564,11 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         }
     }
 
-    private fun createSession(id: UInt): KrunkSession? {
+    /**
+     * A new session for a tab. With [restore] it comes back as it was (saved Gecko state, the
+     * tab's address); without, it is empty and the caller loads something else.
+     */
+    private fun createSession(id: UInt, restore: Boolean = true): KrunkSession? {
         val info = model.tab(id) ?: return null
         sessions[id]?.let { return it }
         val s = KrunkSession(
@@ -568,20 +580,37 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
             recordHistory = !info.private,
         )
         sessions[id] = s
-        geckoStates.remove(id)?.let { s.restoreState(it) }
+        val state = geckoStates.remove(id)
         val origin = loadSources.remove(id)
+        if (!restore) return s
+        state?.let { s.restoreState(it) }
         if (internalPage(info.url) == null) {
             s.load(info.url, origin?.source ?: LoadSource.USER, origin?.opener?.let { sessions[it]?.gecko })
         }
         return s
     }
 
+    /** The tab's session for a new load, created (or replaced after a crash) when needed. */
     private fun ensureSession(id: UInt): KrunkSession? {
-        sessions[id]?.let { return it }
+        sessions[id]?.let { s ->
+            if (!s.current.crashed) return s
+            // Dead after a crash: an empty new session takes the load the caller is about to do.
+            dropCrashedSession(id)
+            return createSession(id, restore = false)
+        }
         if (model.tab(id) == null) return null
         val wasLive = model.tab(id)?.live == true
         if (!wasLive) apply(model.activate(id, nowMs()))
         return sessions[id] ?: createSession(id)
+    }
+
+    /** Removes a session the engine closed after a crash, keeping its last state for a restore. */
+    private fun dropCrashedSession(id: UInt) {
+        sessions.remove(id)?.let { s ->
+            s.current.sessionState?.let { geckoStates[id] = it }
+            s.close()
+        }
+        lastSeen.remove(id)
     }
 
     private fun destroySession(id: UInt) {
@@ -701,6 +730,21 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
 
     override fun onCloseRequested(session: KrunkSession) {
         close(session.id)
+    }
+
+    override fun onCrashed(session: KrunkSession) {
+        val id = session.id
+        if (sessions[id] !== session) return
+        if (id == _activeId.value) {
+            // The tab on screen: say so and wait for the user (a page that crashes on load must
+            // not be reloaded in a loop). reload() and navigate() replace the dead session.
+            refresh()
+        } else {
+            // A background tab becomes an unloaded tab: it comes back with its history when the
+            // user returns to it.
+            unload(id)
+        }
+        scheduleSave()
     }
 
     suspend fun <T> io(block: () -> T): T = withContext(Dispatchers.IO) { block() }

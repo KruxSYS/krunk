@@ -67,6 +67,10 @@
     <string name="download_unsupported">This link cannot be downloaded</string>
     <string name="share_chooser">Share</string>
 
+    <!-- A page whose process crashed -->
+    <string name="page_crashed_title">This page stopped working</string>
+    <string name="page_crashed_message">The page crashed or was closed by the system to free memory. Reload it to continue.</string>
+
     <!-- Full screen -->
     <string name="fullscreen_hint">Press back to leave full screen</string>
 </resources>
