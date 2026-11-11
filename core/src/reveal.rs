@@ -50,7 +50,9 @@ impl<W: Copy + Eq + std::hash::Hash, T: Copy + Eq> Reveals<W, T> {
                 shown: if shown != to { Some(shown) } else { from },
                 abandoned: Some(waited).filter(|w| *w != to),
             },
-            None => Begin { shown: from.or_else(|| self.kept.get(&win).copied().filter(|k| *k != to)), abandoned: None },
+            None => {
+                Begin { shown: from.or_else(|| self.kept.get(&win).copied().filter(|k| *k != to)), abandoned: None }
+            }
         }
     }
 
