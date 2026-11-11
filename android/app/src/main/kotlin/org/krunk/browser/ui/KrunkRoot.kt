@@ -10,11 +10,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.krunk.browser.ui.bookmarks.BookmarksScreen
 import org.krunk.browser.ui.browser.BrowserScreen
 import org.krunk.browser.ui.browser.SecureWindowEffect
+import org.krunk.browser.ui.browser.SystemBarsEffect
 import org.krunk.browser.ui.history.HistoryScreen
 import org.krunk.browser.ui.settings.AboutScreen
 import org.krunk.browser.ui.settings.SettingsScreen
 import org.krunk.browser.ui.tabs.TabSwitcherScreen
 import org.krunk.browser.ui.theme.KrunkTheme
+import org.krunk.browser.ui.theme.LocalKrunkDark
 
 /** The app: theme, the screen stack and back handling. */
 @Composable
@@ -31,6 +33,9 @@ fun KrunkRoot(vm: BrowserViewModel) {
     KrunkTheme(mode = settings.theme, privateMode = activeTab?.private == true && screen == Screen.Browser) {
         Surface(Modifier.fillMaxSize()) {
             BackHandler(enabled = screens.size > 1) { vm.pop() }
+            // The browser screen sets the system bar icons for its own (possibly private) theme;
+            // every other screen needs them set for the theme it is drawn in.
+            if (screen != Screen.Browser) SystemBarsEffect(fullScreen = false, darkTheme = LocalKrunkDark.current)
             when (screen) {
                 Screen.Browser -> BrowserScreen(vm)
                 Screen.TabSwitcher -> TabSwitcherScreen(vm)

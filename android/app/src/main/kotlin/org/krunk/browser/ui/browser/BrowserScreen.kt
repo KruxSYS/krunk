@@ -367,7 +367,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
                         opener = tabId,
                     )
 
-                    ContextAction.COPY_LINK -> if (!Share.copy(context, "URL", link)) toast(copied)
+                    ContextAction.COPY_LINK -> if (!Share.copy(context, "URL", link, private)) toast(copied)
 
                     ContextAction.SHARE_LINK -> Share.text(context, link, target.copyableText, shareTitle)
 
@@ -375,6 +375,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
                             context,
                             "Text",
                             target.copyableText ?: "",
+                            private,
                         )
                     ) {
                         toast(copied)
@@ -401,7 +402,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
                         toast(if (name != null) downloadStarted.format(name) else downloadUnsupported)
                     }
 
-                    ContextAction.COPY_IMAGE_LINK -> if (!Share.copy(context, "URL", src)) toast(copied)
+                    ContextAction.COPY_IMAGE_LINK -> if (!Share.copy(context, "URL", src, private)) toast(copied)
                 }
             },
         )

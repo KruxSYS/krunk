@@ -41,8 +41,12 @@ class Omnibox(private val core: KrunkCore, private val userAgent: () -> String =
         val template = core.settings.searchTemplate
         if (!suggestWanted(typed, template)) return null
         val url = suggestUrl(engine, typed) ?: return null
-        val remote = synchronized(cache) { cache[typed] } ?: withContext(Dispatchers.IO) { fetch(url) }
-            .also { synchronized(cache) { cache[typed] = it } }
+        // Remembered per engine, and only real answers: a timeout or an offline moment must not
+        // switch suggestions off for that text.
+        val key = "$engine\n$typed"
+        val remote = synchronized(cache) { cache[key] }
+            ?: withContext(Dispatchers.IO) { fetch(url) }?.also { synchronized(cache) { cache[key] = it } }
+            ?: return null
         if (remote.isEmpty()) return null
         return mergeSearchSuggestions(rows, typed, remote, template)
     }
@@ -52,7 +56,8 @@ class Omnibox(private val core: KrunkCore, private val userAgent: () -> String =
         const val MAX_BODY = 64 * 1024
     }
 
-    private fun fetch(url: String): List<String> {
+    /** The engine's suggestions, or null when the request failed (not worth remembering). */
+    private fun fetch(url: String): List<String>? {
         return try {
             val conn = URL(url).openConnection() as HttpURLConnection
             conn.connectTimeout = 3000
@@ -61,15 +66,15 @@ class Omnibox(private val core: KrunkCore, private val userAgent: () -> String =
             conn.setRequestProperty("Accept", "application/json, text/plain, */*")
             userAgent().takeIf { it.isNotEmpty() }?.let { conn.setRequestProperty("User-Agent", it) }
             try {
-                if (conn.responseCode != 200) return emptyList()
+                if (conn.responseCode != 200) return null
                 val bytes = conn.inputStream.use { it.readCapped(MAX_BODY, maxMillis = 5_000) }
-                if (bytes == null) emptyList() else parseSuggestBody(bytes)
+                if (bytes == null) null else parseSuggestBody(bytes)
             } finally {
                 conn.disconnect()
             }
         } catch (e: Exception) {
-            Log.d(KrunkApp.TAG, "suggest: ${e.message}")
-            emptyList()
+            Log.d(KrunkApp.TAG, "suggest: ${e.javaClass.simpleName}")
+            null
         }
     }
 }

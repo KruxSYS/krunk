@@ -26,6 +26,7 @@ import org.krunk.browser.tabs.TabManager
 import org.krunk.browser.tabs.TabUi
 import org.krunk.ffi.AddressSuggestion
 import org.krunk.ffi.AndroidSettings
+import org.krunk.ffi.FfiException
 import org.krunk.ffi.bookmarkable
 
 /**
@@ -250,7 +251,13 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun toggleBookmark(): Boolean? {
         val tab = activeTab.value ?: return null
         if (!canBookmark(tab)) return null
-        val now = core.io { it.toggleBookmark(tab.url, tab.title.ifEmpty { tab.url }) }
+        // A database failure is "nothing changed", not a crash.
+        val now = try {
+            core.io { it.toggleBookmark(tab.url, tab.title.ifEmpty { tab.url }) }
+        } catch (e: FfiException) {
+            Log.w(KrunkApp.TAG, "bookmark could not be changed", e)
+            return null
+        }
         bookmarkOverride.value = tab.url to now
         return now
     }

@@ -44,6 +44,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -64,6 +65,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import org.krunk.browser.R
 import org.krunk.browser.core.Wallpapers
@@ -159,7 +161,7 @@ fun SettingsScreen(vm: BrowserViewModel) {
                         )
                     }
                 }
-                Box(Modifier.width(1.dp).fillMaxHeight().padding(vertical = 8.dp)) { HorizontalDivider() }
+                VerticalDivider(Modifier.fillMaxHeight().padding(vertical = 8.dp))
                 LazyColumn(Modifier.weight(1f).fillMaxHeight()) {
                     item { SectionBody(section, vm, settings, update, onAbout = { vm.push(Screen.About) }) }
                 }
@@ -390,7 +392,7 @@ private fun AppearanceSection(s: AndroidSettings, update: ((AndroidSettings) -> 
             value = s.textScale.toFloat(),
             range = 0.5f..2f,
             steps = 14,
-        ) { v -> update { it.copy(textScale = (v * 20).toInt() / 20.0) } }
+        ) { v -> update { it.copy(textScale = (v * 20).roundToInt() / 20.0) } }
     }
     SwitchRow(
         stringResource(R.string.settings_force_zoom),
@@ -459,7 +461,7 @@ private fun NewTabSection(s: AndroidSettings, update: ((AndroidSettings) -> Andr
             0f..80f,
             15,
         ) { v ->
-            update { it.copy(ntpImageDim = ((v / 5).toInt() * 5).toUByte()) }
+            update { it.copy(ntpImageDim = ((v / 5).roundToInt() * 5).toUByte()) }
         }
     }
     SwitchRow(stringResource(R.string.settings_ntp_show_search), null, s.ntpShowSearch) { v ->

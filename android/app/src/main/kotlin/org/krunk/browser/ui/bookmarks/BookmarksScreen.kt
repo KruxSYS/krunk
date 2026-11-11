@@ -66,6 +66,7 @@ import kotlinx.coroutines.withContext
 import org.krunk.browser.R
 import org.krunk.browser.core.BookmarksRepository
 import org.krunk.browser.core.FolderChoice
+import org.krunk.browser.core.readCapped
 import org.krunk.browser.ui.BrowserViewModel
 import org.krunk.browser.ui.newtab.SiteIcon
 import org.krunk.ffi.Bookmark
@@ -141,7 +142,10 @@ fun BookmarksScreen(vm: BrowserViewModel) {
         scope.launch {
             val html = withContext(Dispatchers.IO) {
                 runCatching {
-                    context.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }
+                    // Bounded: a mistaken pick (a video) must not be read into memory whole.
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        input.readCapped(MAX_IMPORT_BYTES, maxMillis = 60_000)?.toString(Charsets.UTF_8)
+                    }
                 }
                     .getOrNull()
             }
@@ -454,3 +458,6 @@ fun copyToClipboard(context: Context, text: String) {
     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
     cm.setPrimaryClip(ClipData.newPlainText("URL", text))
 }
+
+/** A bookmarks file larger than this is not a bookmarks file (the core refuses 64 MB anyway). */
+private const val MAX_IMPORT_BYTES = 16 * 1024 * 1024

@@ -19,7 +19,8 @@ import org.krunk.ffi.wallpapers
 object Wallpapers {
     const val ASSET_DIR = "wallpapers"
 
-    private val cache = LruCache<String, Bitmap>(4)
+    // One full-size picture (2048x1152, about 9 MB decoded): only the chosen one is on screen.
+    private val cache = LruCache<String, Bitmap>(1)
     private val thumbs = LruCache<String, Bitmap>(16)
 
     val all: List<Wallpaper> by lazy { wallpapers() }

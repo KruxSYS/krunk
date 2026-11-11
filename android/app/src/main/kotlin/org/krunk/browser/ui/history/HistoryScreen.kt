@@ -56,6 +56,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.krunk.browser.R
@@ -90,13 +91,25 @@ fun HistoryScreen(vm: BrowserViewModel) {
     var confirmClear by remember { mutableStateOf(false) }
 
     suspend fun loadMore(reset: Boolean) {
-        if (loading) return
+        // A new query always loads; only "more of the same" waits for the load under way.
+        if (loading && !reset) return
         loading = true
-        val before = if (reset) null else entries.lastOrNull()?.ts
-        val page = runCatching { repo.page(query.trim(), before) }.getOrDefault(emptyList())
-        entries = if (reset) page else entries + page.filter { p -> entries.none { it.id == p.id } }
-        exhausted = page.size < HistoryRepository.PAGE
-        loading = false
+        try {
+            val before = if (reset) null else entries.lastOrNull()?.ts
+            // A cancelled load (the query changed, the screen left) is not an empty page: it
+            // must not mark the list as finished.
+            val page = try {
+                repo.page(query.trim(), before)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                emptyList()
+            }
+            entries = if (reset) page else entries + page.filter { p -> entries.none { it.id == p.id } }
+            exhausted = page.size < HistoryRepository.PAGE
+        } finally {
+            loading = false
+        }
     }
 
     LaunchedEffect(query, generation) {

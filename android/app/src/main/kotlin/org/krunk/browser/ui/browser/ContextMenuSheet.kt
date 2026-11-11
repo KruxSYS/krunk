@@ -36,6 +36,8 @@ import androidx.compose.ui.unit.dp
 import org.krunk.browser.R
 import org.krunk.browser.engine.ContextTarget
 
+private const val MAX_SHOWN = 500
+
 /** The link / image long-press menu as a bottom sheet. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -50,8 +52,9 @@ fun ContextMenuSheet(
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = state) {
         // Scrolls: a link around an image has nine rows, more than a landscape phone shows.
         Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
-            val headline = target.copyableText ?: ""
-            val url = target.linkUri ?: target.srcUri ?: ""
+            // Bounded: a page can put megabytes into a link's text or a data: address.
+            val headline = (target.copyableText ?: "").take(MAX_SHOWN)
+            val url = (target.linkUri ?: target.srcUri ?: "").take(MAX_SHOWN)
             Column(Modifier.padding(horizontal = 24.dp, vertical = 4.dp)) {
                 if (headline.isNotEmpty()) {
                     Text(

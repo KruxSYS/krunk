@@ -1,6 +1,7 @@
 package org.krunk.browser
 
 import android.app.Application
+import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import org.krunk.browser.core.KrunkCore
@@ -30,10 +31,16 @@ class KrunkApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        Log.i(
-            TAG,
-            "Krunk ${BuildConfig.VERSION_NAME} starting (core ${coreVersion()}, GeckoView ${BuildConfig.GECKOVIEW_VERSION})",
-        )
+        // Gecko's child processes run this class too: they must not load the Rust library just
+        // to print a version.
+        val mainProcess = Build.VERSION.SDK_INT < Build.VERSION_CODES.P || getProcessName() == packageName
+        if (mainProcess) {
+            Log.i(
+                TAG,
+                "Krunk ${BuildConfig.VERSION_NAME} starting (core ${coreVersion()}, " +
+                    "GeckoView ${BuildConfig.GECKOVIEW_VERSION})",
+            )
+        }
     }
 
     override fun onTrimMemory(level: Int) {
