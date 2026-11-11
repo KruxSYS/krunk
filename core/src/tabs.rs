@@ -316,6 +316,28 @@ impl TabModel {
     }
 
     /// Ctrl+Shift+T: reopens the most recently closed tab at its old index.
+    /// The recently closed tabs, oldest first (the last entry is what [`TabModel::reopen_closed`]
+    /// reopens). Android persists this list; desktop keeps it in memory.
+    pub fn closed_tabs(&self) -> Vec<ClosedTab> {
+        self.closed.iter().cloned().collect()
+    }
+
+    /// Replaces the recently closed list (oldest first), keeping at most `CLOSED_STACK_CAP`.
+    pub fn set_closed_tabs(&mut self, closed: Vec<ClosedTab>) {
+        let skip = closed.len().saturating_sub(CLOSED_STACK_CAP);
+        self.closed = closed.into_iter().skip(skip).collect();
+    }
+
+    /// Reopens the closed tab at `index` of [`TabModel::closed_tabs`] (not only the last one).
+    pub fn reopen_closed_at(&mut self, index: usize, now: i64) -> Option<(TabId, Vec<Effect>)> {
+        if index >= self.closed.len() {
+            return None;
+        }
+        let c = self.closed.remove(index)?;
+        self.closed.push_back(c);
+        self.reopen_closed(now)
+    }
+
     pub fn reopen_closed(&mut self, now: i64) -> Option<(TabId, Vec<Effect>)> {
         let c = self.closed.pop_back()?;
         let id = self.alloc_id();

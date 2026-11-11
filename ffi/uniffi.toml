@@ -1,0 +1,6 @@
+# UniFFI bindings configuration for krunk_ffi (read by `uniffi-bindgen generate --library`).
+[bindings.kotlin]
+package_name = "org.krunk.ffi"
+cdylib_name = "krunk_ffi"
+android = true
+generate_immutable_records = true

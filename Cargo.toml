@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["core", "app", "vpn"]
+members = ["core", "app", "vpn", "ffi"]
 # The account and sync API is its own workspace (server/Cargo.toml). vendor/ holds the VPN's
 # vendored crates (vendor/README.md): path dependencies of vpn, not members (no workspace lints
 # or fmt on upstream code).

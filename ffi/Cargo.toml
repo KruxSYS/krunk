@@ -1,0 +1,29 @@
+[package]
+name = "krunk_ffi"
+description = "Krunk for Android: UniFFI bindings over the shared core (storage, omnibox, tabs, settings)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "krunk_ffi"
+# cdylib: libkrunk_ffi.so for the APK (and the host library uniffi-bindgen reads);
+# rlib: so `cargo test -p krunk_ffi` can test the wrappers directly.
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+# The bindings generator, built from the same uniffi version as the library:
+#   cargo run -p krunk_ffi --features cli --bin uniffi-bindgen -- generate --library ... --language kotlin
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["cli"]
+
+[features]
+cli = ["uniffi/cli"]
+
+[dependencies]
+lb_core = { path = "../core", package = "core" }
+uniffi = "0.32"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

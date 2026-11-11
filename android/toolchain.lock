@@ -1,0 +1,33 @@
+# Krunk for Android: pinned toolchain. Read by android/scripts/setup-sdk.sh (shell syntax,
+# KEY=value, no spaces). Gradle-side versions live in android/gradle/libs.versions.toml and
+# android/gradle/wrapper/gradle-wrapper.properties; this file is the single list a reviewer reads.
+#
+# Android SDK (sdkmanager package ids)
+PLATFORM=35
+PLATFORM_PACKAGE="platforms;android-35"
+BUILD_TOOLS=36.0.0
+NDK=30.0.16248370
+CMDLINE_TOOLS_MIN=23.0.0
+PLATFORM_TOOLS_MIN=35.0.0
+# Optional local emulator (only with --with-local-emulator; the sandbox has no KVM, see docs/ANDROID_DEV.md)
+EMULATOR=37.2.13
+SYSTEM_IMAGE="system-images;android-35;default;x86_64"
+AVD_NAME=krunk_api35
+AVD_DEVICE=pixel_6
+# JDK
+JDK_MIN=17
+# Rust side
+RUST_TARGETS=aarch64-linux-android,x86_64-linux-android
+CARGO_NDK=4.1.2
+UNIFFI=0.32.2
+# Gradle side (informational; the authoritative pins are in the Gradle files)
+GRADLE=9.8.2
+GRADLE_SHA256=d8a18a7a841dd5df825d35a685fad6f2d7f12ac0c280e57b67c27b4a520ba228
+AGP=9.4.1
+KOTLIN=2.4.21
+COMPOSE_BOM=2026.09.00
+GECKOVIEW=160.0.20261104181552
+JNA=5.19.1
+MIN_SDK=26
+TARGET_SDK=35
+APPLICATION_ID=org.krunk.browser

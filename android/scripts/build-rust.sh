@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Builds the shared core for the APK and generates its Kotlin bindings:
+#   1. host build of krunk_ffi (libkrunk_ffi.so for Linux): uniffi-bindgen reads the exported
+#      API from it, and the JVM unit tests load it through JNA
+#   2. Kotlin bindings  -> android/app/build/rust/<profile>/kotlin/org/krunk/ffi/krunk_ffi.kt
+#   3. cargo-ndk builds -> android/app/build/rust/<profile>/jniLibs/{arm64-v8a,x86_64}/libkrunk_ffi.so
+#
+# Gradle runs this (tasks cargoBuildDebug / cargoBuildRelease) before compiling; by hand:
+#   android/scripts/build-rust.sh [debug|release] [jniLibs out dir] [kotlin out dir]
+# Environment: KRUNK_ABIS (default arm64-v8a,x86_64), CARGO_BUILD_JOBS (default 4),
+#              ANDROID_HOME, and the NDK version from android/toolchain.lock.
+set -euo pipefail
+
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+ANDROID_DIR=$(cd "$HERE/.." && pwd)
+SRC_DIR=$(cd "$ANDROID_DIR/.." && pwd)
+# shellcheck disable=SC1091
+source "$ANDROID_DIR/toolchain.lock"
+
+PROFILE="${1:-debug}"
+case "$PROFILE" in
+  debug) CARGO_PROFILE_FLAG=() ;;
+  release) CARGO_PROFILE_FLAG=(--release) ;;
+  *) echo "usage: build-rust.sh [debug|release]" >&2; exit 2 ;;
+esac
+ABIS="${KRUNK_ABIS:-arm64-v8a,x86_64}"
+JOBS="${CARGO_BUILD_JOBS:-4}"
+SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/opt/android-sdk}}"
+export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$SDK/ndk/$NDK}"
+[ -d "$ANDROID_NDK_HOME" ] || { echo "NDK $NDK not found at $ANDROID_NDK_HOME (run android/scripts/setup-sdk.sh)" >&2; exit 1; }
+
+JNI_OUT="${2:-$ANDROID_DIR/app/build/rust/$PROFILE/jniLibs}"
+KT_OUT="${3:-$ANDROID_DIR/app/build/rust/$PROFILE/kotlin}"
+TARGET_DIR="${CARGO_TARGET_DIR:-$SRC_DIR/target}"
+
+cd "$SRC_DIR"
+
+echo "[build-rust] host library ($PROFILE)"
+cargo build -j"$JOBS" -p krunk_ffi "${CARGO_PROFILE_FLAG[@]}"
+HOST_LIB="$TARGET_DIR/$PROFILE/libkrunk_ffi.so"
+[ -f "$HOST_LIB" ] || { echo "host library missing: $HOST_LIB" >&2; exit 1; }
+
+echo "[build-rust] Kotlin bindings -> $KT_OUT"
+rm -rf "$KT_OUT" "$JNI_OUT"
+mkdir -p "$KT_OUT" "$JNI_OUT"
+cargo run -j"$JOBS" -q -p krunk_ffi --features cli --bin uniffi-bindgen -- \
+  generate --library "$HOST_LIB" --language kotlin --config "$SRC_DIR/ffi/uniffi.toml" --out-dir "$KT_OUT"
+[ -f "$KT_OUT/org/krunk/ffi/krunk_ffi.kt" ] || { echo "bindings were not generated" >&2; exit 1; }
+
+echo "[build-rust] Android libraries ($ABIS, $PROFILE, minSdk $MIN_SDK) -> $JNI_OUT"
+TARGET_FLAGS=()
+IFS=',' read -r -a abi_list <<< "$ABIS"
+for abi in "${abi_list[@]}"; do
+  TARGET_FLAGS+=(--target "$abi")
+done
+cargo ndk "${TARGET_FLAGS[@]}" --platform "$MIN_SDK" --output-dir "$JNI_OUT" \
+  build -j"$JOBS" -p krunk_ffi "${CARGO_PROFILE_FLAG[@]}"
+for abi in "${abi_list[@]}"; do
+  f="$JNI_OUT/$abi/libkrunk_ffi.so"
+  [ -f "$f" ] || { echo "missing $f" >&2; exit 1; }
+  printf '  %-10s %s\n' "$abi" "$(du -h "$f" | cut -f1)"
+done
+echo "[build-rust] done"

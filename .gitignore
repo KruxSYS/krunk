@@ -38,3 +38,15 @@ tools/*/target/
 
 # Wallpaper originals (regenerated from assets/wallpapers/SOURCES.txt; the WebP files are in ui/shared/wallpapers/)
 assets/wallpapers/originals/
+
+# Krunk for Android (android/, ffi/): Gradle and build outputs, native libs built by cargo-ndk,
+# generated UniFFI Kotlin, the machine-local SDK path; the APKs land in dist/android/ (dist/* above)
+android/.gradle/
+android/**/build/
+android/local.properties
+android/app/build/
+android/app/src/main/assets/wallpapers/
+android/.kotlin/
+*.apk
+*.aab
+*.hprof
