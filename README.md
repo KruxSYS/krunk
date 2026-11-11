@@ -1521,15 +1521,17 @@ Private tabs write nothing to the database.
 **Promises.** No telemetry; the app makes no network requests of its own: only the pages you
 open, search suggestions while you type (on by default, off in private tabs, can be switched off)
 and the favicon of a page you visited. The Google Play Services passkey library that GeckoView
-depends on is bundled but only used when a site asks for a passkey (open question in the plan).
+depends on is bundled (passkeys need it) and only used when a site asks for a passkey; for devices
+without Google Play services, `./gradlew assembleDebug -Pkrunk.noGms=true` builds without it.
 
-**Testing status (round 1).** The preview was exercised on the sandbox's Android 16 x86_64
-emulator: typed addresses and searches (DuckDuckGo), suggestions, the lock and "Not secure"
-indicators, the error page, find in page, the link menu and the hiding toolbar were checked with
-screenshots. The emulator's graphics stack then wedged (a system dark-mode toggle; see
-`docs/ANDROID_DEV.md`), and the software-emulated fallback was too slow to drive, so full screen,
-themes, landscape, the tab switcher, session restore, private-tab history, bookmarks, history and
-settings flows are covered by unit tests only in this round. The round report lists them.
+**Testing status (round 1).** Every feature above was exercised on the sandbox's Android 16
+x86_64 emulator with screenshots (typed addresses and searches, suggestions, the lock and "Not
+secure" indicators, the error page, find in page, the link menu, the hiding toolbar, open in new
+tab, the tab switcher with close and reopen, session restore after a force-stop, private tabs
+leaving no history, bookmarks, settings with the theme and toolbar-position switches, full screen,
+landscape and the tablet layout). The emulator's graphics stack hung twice during the round (see
+`docs/ANDROID_DEV.md`); the crash-restore prompt and Netscape import/export were covered by unit
+tests only. The round report lists each flow.
 
 **Building.** `android/scripts/setup-sdk.sh` installs the pinned toolchain (`android/toolchain.lock`),
 then `cd android && ./gradlew assembleDebug` builds the Rust core for both ABIs with `cargo-ndk`,

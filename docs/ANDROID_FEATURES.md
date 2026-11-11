@@ -3,13 +3,12 @@
 Cross-reference of a mobile browser's feature set against Windows Krunk 0.15.3 and the Android
 preview (0.1.0, round 1). Later rounds work through it in order.
 
-> **Category set:** derived from the round-1 brief; the operator's original 17-category list was
-> not available when this matrix was written. Please paste it and any missing rows will be added.
+> Categories follow the 17-group structure agreed for round 1; the operator can supply their
+> original category wording and we will re-key the rows in round 2 (mapping is mechanical).
 
 **Round-1 verification.** Items marked *done* were built and pass the unit tests; the ones
-also marked **(v)** were exercised on the emulator with a screenshot (`.pipeline/screenshots/
-android/m3-*.png`). The emulator failed mid-round (see the report), so the others are built but
-not yet exercised on a device; the next round's first job is to run `android/scripts/flows.sh`.
+also marked **(v)** were exercised on the sandbox emulator with a screenshot
+(`.pipeline/screenshots/android/`, see the round report for the flow → file list).
 
 **Columns.** *Windows Krunk*: yes / partial / no, with the README section or CHANGELOG version
 (and the `core` module when the logic is shared). *Android 0.1.0*: done / partial / roadmap /
@@ -54,7 +53,7 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | Page zoom: pinch | n/a | done (+ "force zoom" setting) | `forceUserScalableEnabled` | 1 |
 | Default zoom setting | yes — Usage › Zoom; `core::zoom` | partial — GeckoView has no page-zoom API; `default_zoom` scales text instead | `fontSizeFactor` | 2 |
 | Text scaling (system font scale / in-app) | partial — UI font only | done | `automaticFontSizeAdjustment` / `fontSizeFactor` | 1 |
-| Full-screen web content | yes — F11, 0.2.0 | done (system bars hidden, back exits) | `ContentDelegate.onFullScreen` | 1 |
+| Full-screen web content | yes — F11, 0.2.0 | done (v) (system bars hidden, back exits) | `ContentDelegate.onFullScreen` | 1 |
 | Pointer lock (games with a mouse) | yes — `core::pointer_lock` | roadmap (unverified on Gecko Android; plan §1) | — | 3 |
 | Translate | no | roadmap (Firefox Translations is local/offline; needs the models' download flow) | `TranslationsController` | 3 |
 | Print / save as PDF | yes — Ctrl+P | roadmap | `GeckoSession.saveAsPdf`, `PrintDelegate` | 3 |
@@ -82,13 +81,13 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
 |---|---|---|---|---|
 | Tab model shared with Windows (`core::tabs`) | yes | done (UniFFI `TabModel`; session JSON in `kv["session"]`, same shape) | — | 1 |
-| Lazy restore (only the active tab loads) | yes — Memory | done | — | 1 |
-| Session restore on start; restore after process death | yes — 0.3.0 | done (+ Gecko `SessionState` per tab for back/forward) | `SessionState` | 1 |
+| Lazy restore (only the active tab loads) | yes — Memory | done (v) | — | 1 |
+| Session restore on start; restore after process death | yes — 0.3.0 | done (v) (+ Gecko `SessionState` per tab for back/forward) | `SessionState` | 1 |
 | "Restore tabs" prompt after a crash | partial (always restores) | done | — | 1 |
-| Tab switcher grid with thumbnails, close, swipe-to-close, close all, search | tab list ▾ with filter — 0.11.0; previews on hover — 0.15.0 | done | `GeckoView.capturePixels` | 1 |
-| Tab counter in the toolbar | n/a | done | — | 1 |
-| Private tabs (no history, in-memory data, distinct theme) | yes — Usage › Private tabs | done | `usePrivateMode` | 1 |
-| Recently closed (reopen) | partial — Ctrl+Shift+T stack, memory only | done (list, persisted; a documented deviation) | — | 1 |
+| Tab switcher grid with thumbnails, close, swipe-to-close, close all, search | tab list ▾ with filter — 0.11.0; previews on hover — 0.15.0 | done (v) | `GeckoView.capturePixels` | 1 |
+| Tab counter in the toolbar | n/a | done (v) | — | 1 |
+| Private tabs (no history, in-memory data, distinct theme) | yes — Usage › Private tabs | done (v) | `usePrivateMode` | 1 |
+| Recently closed (reopen) | partial — Ctrl+Shift+T stack, memory only | done (v) (list, persisted; a documented deviation) | — | 1 |
 | Background tab sleep / discard policy (`core::memory`) | yes — 5 min sleep, optional discard | done (`setActive(false)` / session discard; `onTrimMemory`) | `GeckoSession.setActive` | 1 |
 | Tab groups (create/rename/colour/move) | no | roadmap | — | 3 |
 | Background tab loading control | partial (`link_tabs`) | roadmap | — | 2 |
@@ -101,11 +100,11 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 
 | Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
 |---|---|---|---|---|
-| Light / dark / follow system (Krunk palette, no Material dynamic colour) | yes | done | `preferredColorScheme` for content | 1 |
-| Bottom toolbar by default, top as an option | n/a | done (v, bottom) (Settings › Toolbar position) | — | 1 |
+| Light / dark / follow system (Krunk palette, no Material dynamic colour) | yes | done (v) | `preferredColorScheme` for content | 1 |
+| Bottom toolbar by default, top as an option | n/a | done (v) (Settings › Toolbar position) | — | 1 |
 | Toolbar auto-hide on scroll | n/a | done (v) | nested scroll / `ScrollDelegate` | 1 |
 | Edge-to-edge, gesture and 3-button navigation, predictive back | n/a | done | — | 1 |
-| Landscape, tablet layout (sw600dp) | n/a | done (wider grid; two-pane settings) | — | 1 |
+| Landscape, tablet layout (sw600dp) | n/a | done (v) (wider grid; two-pane settings) | — | 1 |
 | Accessibility: 48 dp targets, content descriptions, TalkBack switcher, font scale, haptics | partial on Windows | done | — | 1 |
 | Appearance customisation (accent, styles, presets) | yes — 0.7.0, 0.15.0; `core::style` | roadmap (shared `appearance` settings exist) | — | 4 |
 | Toolbar customisation | yes — 0.6.0 (toolbar items) | roadmap | — | 3 |
@@ -116,7 +115,7 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 
 | Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
 |---|---|---|---|---|
-| Native page with search box | yes (HTML) | done (Compose) | — | 1 |
+| Native page with search box | yes (HTML) | done (v) (Compose) | — | 1 |
 | Top sites by frecency (`core::frecency`) | yes | done | — | 1 |
 | Shortcuts: pin / edit / remove (shared `tiles` table) | yes — 0.6.0, 0.15.0 | done | — | 1 |
 | Recently closed row | no | done | — | 1 |
@@ -131,8 +130,8 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 
 | Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
 |---|---|---|---|---|
-| Add (star), edit, delete, folders | yes — `core::bookmarks` | done (same SQLite tables) | — | 1 |
-| Bookmark manager with search | yes — `krunk://bookmarks` | done | — | 1 |
+| Add (star), edit, delete, folders | yes — `core::bookmarks` | done (v: add) (same SQLite tables) | — | 1 |
+| Bookmark manager with search | yes — `krunk://bookmarks` | done (v) | — | 1 |
 | Netscape HTML import / export | yes — `core::netscape` | done (Android file picker) | — | 1 |
 | Import from other browsers | yes — 0.5.0 | roadmap (Android browsers expose no files; HTML export only) | — | — |
 | Bookmarks bar | yes — 0.4.0 | not planned on phones (folder "Bookmarks bar" is shown in the manager) | — | — |
@@ -146,16 +145,16 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 |---|---|---|---|---|
 | History grouped by day, search | yes — `krunk://history` | done | `HistoryDelegate.onVisited` | 1 |
 | Delete entry, delete range, clear all | yes | done (entry, clear all; range via Clear browsing data) | — | 1 |
-| Private tabs never write history | yes | done (verified by a `visits` count) | `usePrivateMode` | 1 |
+| Private tabs never write history | yes | done (v) (verified by a `visits` count) | `usePrivateMode` | 1 |
 | `:visited` styling from Krunk's history | n/a | roadmap | `HistoryDelegate.getVisited` | 2 |
 
 ## 9. Settings & data
 
 | Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
 |---|---|---|---|---|
-| Settings on the shared `core::settings` fields (validated by the core, same JSON) | yes | done | — | 1 |
+| Settings on the shared `core::settings` fields (validated by the core, same JSON) | yes | done (v) | — | 1 |
 | Search engine + custom URL, homepage, startup, new-tab page, theme, text size, suggestions, HTTPS-only, tracking params, tab sleep/discard, user agent | yes | done | — | 1 |
-| Toolbar position, force zoom, follow-system font (Android-only, `kv["android.settings"]`) | n/a | done | — | 1 |
+| Toolbar position, force zoom, follow-system font (Android-only, `kv["android.settings"]`) | n/a | done (v: toolbar position) | — | 1 |
 | Clear browsing data (history, cookies, cache, site data) | yes | done | `StorageController.clearData` | 1 |
 | Clear on exit | yes — `ClearOnExit` | roadmap | — | 2 |
 | Cookies and site-data list per site (`krunk://storage`) | yes — 0.2.0 | roadmap (`clearDataFromHost`; listing via a WebExtension `cookies` API) | `StorageController` | 3 |
@@ -183,7 +182,7 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | Recovery phrase | yes — 0.7.0 | roadmap | — | 2 |
 | Payment cards | yes — 0.6.0 | roadmap | `Autocomplete.CreditCard` | 3 |
 | Google Password Manager | no | not planned — conflicts with Krunk's no-Google-contact promise; alternative: Krunk's vault, and Android Autofill service integration later | — | — |
-| Passkeys / WebAuthn | partial | partial — GeckoView uses Play Services FIDO when present (open question: ship without it) | GMS FIDO | — |
+| Passkeys / WebAuthn | partial | partial — GeckoView uses Play Services FIDO when present (kept by decision; `-Pkrunk.noGms=true` builds without it for devices without Play services) | GMS FIDO | — |
 
 ## 12. Privacy & content blocking
 
@@ -198,7 +197,7 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | Custom DNS (DoH/DoT/DoQ) | yes — 0.6.0; `core::dns` | roadmap (Gecko DoH) | `network.trr.*` prefs | 3 |
 | Safe Browsing | no (switched off on Windows) | not planned — conflicts with Krunk's no-Google-contact promise; alternative: uBO's badware list (as on Windows); Gecko's Safe Browsing stays off | `ContentBlocking.SafeBrowsing` | — |
 | No telemetry, no background Krunk traffic | yes | done (the app makes no requests of its own; GeckoView has no telemetry; verified request list is a round-2 audit item) | — | 1 |
-| Private tabs | yes | done | `usePrivateMode` | 1 |
+| Private tabs | yes | done (v) | `usePrivateMode` | 1 |
 | Session logs (`krunk://sessions`, opt-in) | yes — 0.15.0 | roadmap | — | 4 |
 
 ## 13. Account & sync

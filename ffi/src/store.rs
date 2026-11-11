@@ -355,8 +355,8 @@ impl KrunkStore {
         Ok(self.lock().bookmarks_for_url(&url)?)
     }
 
-    /// Adds the page to "Other bookmarks" or removes its bookmarks; returns whether it is
-    /// bookmarked afterwards.
+    /// Adds the page to the "Bookmarks bar" folder (as the Windows star does) or removes its
+    /// bookmarks; returns whether it is bookmarked afterwards.
     pub fn toggle_bookmark(&self, url: String, title: String) -> Result<bool, FfiError> {
         Ok(self.lock().toggle_bookmark(&url, &title)?)
     }

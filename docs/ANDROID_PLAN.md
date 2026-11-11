@@ -15,7 +15,7 @@ the same promises as the desktop version:
 | Decision | Value |
 |---|---|
 | Engine | **GeckoView 160.0.20261104181552** (`org.mozilla.geckoview:geckoview-omni`, release channel). Verified in the sandbox emulator: pages render, `ensureBuiltIn` installs a bundled extension, content-script native messaging works. A bump every 4 weeks is a one-line change in `android/gradle/libs.versions.toml` + `android/toolchain.lock`. |
-| Package name | `org.krunk.browser` (assumed; can be renamed before a public release) |
+| Package name | `org.krunk.browser` (confirmed by the operator after round 1) |
 | Versions | app `0.1.0` / `versionCode 1`, independent of the Windows version (core is 0.15.3) |
 | SDK levels | minSdk **26** (also GeckoView's minimum), targetSdk **35**, compileSdk **37.2** (required by GeckoView 160 and Compose 2026.09) |
 | ABIs | `arm64-v8a` (devices) and `x86_64` (emulator); per-ABI APKs plus a universal one. No `armeabi-v7a` (assumed). |
@@ -24,7 +24,7 @@ the same promises as the desktop version:
 | Data layout | `filesDir/krunk/browser.db`; Gecko profile at GeckoView's default under `filesDir`; Android-only settings in `kv["android.settings"]`; session in `kv["session"]` (Windows shape) plus `android.gecko_states`, `android.closed_tabs`, `android.clean_exit`; backup excludes the Gecko profile and the vault |
 | HTTPS | Gecko's HTTPS-First is on by default (`http://` upgrades automatically); the shared `https_only` setting maps to `allowInsecureConnections = HTTPS_ONLY` |
 | Favicons | a bundled WebExtension (`krunk-icons`) reports `<link rel=icon>`; the app fetches one icon per host (user-triggered page loads only) into the shared `favicons` table |
-| Play Services | GeckoView depends on `play-services-fido` (WebAuthn). Kept in 0.1.0; the build without it (`-Pkrunk.noGms=true`) compiles and browses. See open question 8. |
+| Play Services | GeckoView depends on `play-services-fido` (passkeys/WebAuthn). **Kept** (operator decision); `-Pkrunk.noGms=true` builds without it for devices without Google Play services (passkeys then unsupported). |
 
 Spike measurements (sandbox emulator, Android 16 x86_64, software GPU, 4 vCPU):
 - APK (debug, unstripped Gecko): arm64-v8a 153 MB, x86_64 161 MB, universal 274 MB. `libkrunk_ffi.so`
@@ -148,17 +148,14 @@ Total: about **15–16 weeks** to a first public beta, then a GeckoView bump eve
 5. **Pointer lock:** if A0 shows Gecko on Android lacks it with a mouse, is touch-only acceptable
    for games on Android?
 6. **Shared account/sync:** wanted in a later round?
-7. **Branding/package name:** `org.krunk.browser` is used (assumed); it needs a domain the
-   project controls, which is also needed for `UPDATE_BASE_URL`.
-8. **Play Services FIDO:** GeckoView 160 depends on `com.google.android.gms:play-services-fido`
-   for passkeys/WebAuthn. It is only used when a site calls WebAuthn and makes no background
-   traffic, but it is Google code in the APK. Ship with it, or exclude it (`-Pkrunk.noGms=true`
-   builds and browses fine; passkeys would then need Android's Credential Manager or be
-   unsupported)?
-9. **Feature list:** the parity matrix (`docs/ANDROID_FEATURES.md`) uses 17 categories derived
-   from the round-1 brief; the operator's original list was not available. Please paste it so
-   missing rows can be added.
-10. **Distribution channel and release signing:** not configured (0.1.0 APKs are debug-signed).
+7. ~~Branding/package name~~ `org.krunk.browser` confirmed; the domain for `UPDATE_BASE_URL`
+   is still to be chosen with the distribution channel.
+8. ~~Play Services FIDO~~ kept (passkeys); `-Pkrunk.noGms=true` documented for devices without
+   Google Play services.
+9. **Feature list wording:** confirm/supply the original 17-category list wording so the matrix
+   headings match 1:1 (the rows re-key mechanically).
+10. **Distribution channel and release signing:** debug signing is accepted for 0.1.0; release
+    signing comes with the distribution decision in a later round.
 11. **Google-dependent features** (Lens, Discover feed, Google Password Manager, Safe Browsing):
     marked "not planned" in the matrix with alternatives; override if wanted.
 12. **Tablet coverage:** round 1 verified the sw600dp layout by resizing the phone emulator; a real

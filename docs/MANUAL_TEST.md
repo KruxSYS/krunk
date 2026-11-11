@@ -1202,11 +1202,10 @@ Verified on the emulator in round 1 (screenshots in `.pipeline/screenshots/andro
 7. **Link menu:** long-press a link → Open in new tab / private tab / Copy / Share / Copy text /
    Download. "Open in new tab" shows "New tab opened" and the counter goes to 2.
 8. **New tab page** (dark, follow-system theme).
-
-**Unverified on a device in round 1** (the emulator's graphics stack wedged twice; built and
-unit-tested only — run these first when a device is available, in this order, one flow per
-launch, `am force-stop` between flows, `pm uninstall` + cold install, never `install -r` over
-the running app):
+9.–15. below were verified in a third emulator session (cold install, one flow per launch,
+`am force-stop` between flows — the emulator's graphics stack wedges otherwise, see
+`docs/ANDROID_DEV.md`). Not exercised on a device: the `kill -9` crash prompt in 10, Netscape
+import/export in 12, HTTPS-only and Clear browsing data in 13.
 9. **Tab switcher:** the counter opens the grid; × closes a tab; swipe closes; "Reopen closed tab"
    brings it back. Includes the time-bounded thumbnail capture (`CaptureGate`, 700 ms): the
    switcher must open even when no thumbnail arrives.
