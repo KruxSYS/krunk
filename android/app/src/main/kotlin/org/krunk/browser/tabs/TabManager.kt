@@ -130,6 +130,9 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
                 onDone()
             }
         }
+        // capturePixels() completes with the next composited frame; when none comes (a paused
+        // compositor, an emulator without a GPU) the caller must not wait for it.
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ finish() }, CAPTURE_TIMEOUT_MS)
         try {
             view.capturePixels().accept(
                 { bmp ->
@@ -653,6 +656,7 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
     suspend fun <T> io(block: () -> T): T = withContext(Dispatchers.IO) { block() }
 
     companion object {
+        const val CAPTURE_TIMEOUT_MS = 700L
         const val KV_SESSION = "session"
         const val KV_CLOSED = "android.closed_tabs"
         const val KV_GECKO_STATES = "android.gecko_states"
