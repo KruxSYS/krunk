@@ -61,6 +61,7 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -94,8 +95,9 @@ fun AddressPill(
         secure = page?.secure,
         loading = page?.loading == true,
         loadError = page?.loadError != null,
+        pending = page?.pendingUrl != null,
     )
-    val text = if (tab == null || tab.isNewTab) "" else addressText(tab.displayUrl)
+    val text = if (tab == null || tab.isNewTab) "" else pillText(tab.displayUrl)
     val editLabel = stringResource(R.string.address_edit)
     Surface(
         modifier = modifier
@@ -153,14 +155,18 @@ fun AddressPill(
             Text(
                 text = text.ifEmpty { placeholder },
                 modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodyLarge,
+                // An address reads left to right in every locale, and when it does not fit its end
+                // (the registrable domain) stays: "…bank.example", never "login.ba…".
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    textDirection = if (text.isEmpty()) TextDirection.Content else TextDirection.Ltr,
+                ),
                 color = if (text.isEmpty()) {
                     MaterialTheme.colorScheme.onSurfaceVariant
                 } else {
                     MaterialTheme.colorScheme.onSurface
                 },
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                overflow = if (text.isEmpty()) TextOverflow.Ellipsis else TextOverflow.StartEllipsis,
             )
             trailing()
         }

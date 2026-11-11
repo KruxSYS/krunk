@@ -17,8 +17,13 @@ data class PageState(
     /** 0..1 while loading, 0 when idle. */
     val progress: Float = 0f,
     val loading: Boolean = false,
-    /** `null` until the first security callback (about:blank, new tab). */
+    /** `null` until the engine has reported on the page's connection (blank page, a load under way). */
     val secure: Boolean? = null,
+    /**
+     * The lock state of the committed page, set aside while a load to another site is under way
+     * (it comes back if that load never commits).
+     */
+    val secureBeforeLoad: Boolean? = null,
     val canGoBack: Boolean = false,
     val canGoForward: Boolean = false,
     val fullScreen: Boolean = false,
@@ -42,6 +47,9 @@ data class LoadError(val uri: String, val category: Int, val code: Int, val page
 
 const val ABOUT_BLANK = "about:blank"
 
+/** Scheme and authority (up to the first `/`, `?`, `#` or backslash) of a hierarchical address. */
+private val ORIGIN = Regex("""^([A-Za-z][A-Za-z0-9+.-]*)://([^/?#\\]*)""")
+
 // ----- transitions (pure; KrunkSession applies them from the engine's callbacks) -----
 
 /** The app asked the engine to load [url]. */
@@ -49,6 +57,38 @@ fun PageState.requested(url: String): PageState = copy(pendingUrl = url, loadErr
 
 /** The app parked the engine on a blank page (a native screen such as the new-tab page is shown). */
 fun PageState.parked(): PageState = copy(pendingUrl = null, loadError = null, crashed = false)
+
+/**
+ * `scheme://host:port` of a hierarchical address, lower case and without user:password, or null
+ * (`about:`, `data:`, ...). Two addresses with the same value are the same site for the lock.
+ */
+fun originOf(url: String): String? {
+    val m = ORIGIN.find(url) ?: return null
+    val host = m.groupValues[2].substringAfterLast('@')
+    if (host.isEmpty()) return null
+    return (m.groupValues[1] + "://" + host).lowercase()
+}
+
+/**
+ * A top-level load started. The lock belongs to the committed page: when the load goes to
+ * another site it is taken down until the engine reports on the new connection, so a new
+ * address can never be shown with the previous page's lock.
+ */
+fun PageState.pageStarted(startedUrl: String): PageState {
+    val from = originOf(url)
+    val sameSite = from != null && from == originOf(startedUrl)
+    return copy(
+        progress = 0.05f,
+        loading = true,
+        loadError = null,
+        crashed = false,
+        secure = if (sameSite) secure else null,
+        secureBeforeLoad = if (sameSite) secureBeforeLoad else secure ?: secureBeforeLoad,
+    )
+}
+
+/** The engine reports on the connection of the page it shows. */
+fun PageState.securityChanged(isSecure: Boolean): PageState = copy(secure = isSecure)
 
 /** The engine reports a new top-level location. */
 fun PageState.locationChanged(newUrl: String): PageState {
@@ -59,9 +99,9 @@ fun PageState.locationChanged(newUrl: String): PageState {
         // Krunk's own error page (exactly the one handed over) or the failed address itself:
         // the bar keeps the address that failed.
         err != null && (newUrl == err.uri || (err.pageUri.isNotEmpty() && newUrl == err.pageUri)) ->
-            copy(url = err.uri, pendingUrl = null, committed = true)
+            copy(url = err.uri, pendingUrl = null, committed = true, secureBeforeLoad = null)
 
-        else -> copy(url = newUrl, pendingUrl = null, loadError = null, committed = true)
+        else -> copy(url = newUrl, pendingUrl = null, loadError = null, committed = true, secureBeforeLoad = null)
     }
 }
 
@@ -73,7 +113,14 @@ fun PageState.crashed(): PageState =
     copy(crashed = true, loading = false, progress = 0f, fullScreen = false, pendingUrl = null)
 
 /** A load ended. One that never committed (a download, "204 No Content", stop) leaves the old page. */
-fun PageState.pageStopped(): PageState = copy(progress = 0f, loading = false, pendingUrl = null)
+fun PageState.pageStopped(): PageState = copy(
+    progress = 0f,
+    loading = false,
+    pendingUrl = null,
+    // Nothing committed since the lock was set aside: the old page is still shown, with its lock.
+    secure = secure ?: secureBeforeLoad,
+    secureBeforeLoad = null,
+)
 
 /**
  * The address the address bar shows for a tab.

@@ -118,6 +118,55 @@ class PageStateTest {
     }
 
     @Test
+    fun theLockIsTakenDownWhenALoadToAnotherSiteStarts() {
+        var s = PageState().locationChanged(evil).securityChanged(true)
+        // A link click or a redirect to another site: no lock until the engine reports on it.
+        s = s.pageStarted(bank)
+        assertNull(s.secure)
+        s = s.locationChanged(bank)
+        assertNull(s.secure)
+        s = s.securityChanged(true).pageStopped()
+        assertEquals(true, s.secure)
+        // The report may also arrive before the location: it is kept.
+        s = s.pageStarted(evil).securityChanged(false).locationChanged(evil).pageStopped()
+        assertEquals(false, s.secure)
+    }
+
+    @Test
+    fun theLockStaysForLoadsOnTheSameSite() {
+        var s = PageState().locationChanged(bank).securityChanged(true)
+        s = s.pageStarted("https://bank.example/account") // same site, also a reload
+        assertEquals(true, s.secure)
+        s = s.pageStarted("https://BANK.example:443/x".replace(":443", ""))
+        assertEquals(true, s.secure)
+        // Another port or scheme is another site.
+        assertNull(s.pageStarted("https://bank.example:8443/").secure)
+        assertNull(s.pageStarted("http://bank.example/").secure)
+    }
+
+    @Test
+    fun aLoadThatNeverCommitsGivesTheOldLockBack() {
+        var s = PageState().locationChanged(evil).securityChanged(true)
+        s = s.requested(bank).pageStarted(bank) // answers with a download
+        assertNull(s.secure)
+        s = s.pageStopped()
+        assertEquals(evil, s.url)
+        assertEquals(true, s.secure)
+        assertNull(s.secureBeforeLoad)
+    }
+
+    @Test
+    fun originsIgnoreCaseAndUserPart() {
+        assertEquals("https://example.com", originOf("HTTPS://Example.COM/a?b"))
+        assertEquals("https://evil.example", originOf("https://bank.example@evil.example/"))
+        assertEquals("http://example.com:8080", originOf("http://example.com:8080"))
+        assertNull(originOf("about:blank"))
+        assertNull(originOf("data:text/html,x"))
+        assertNull(originOf(""))
+        assertNull(originOf("https:///x"))
+    }
+
+    @Test
     fun theFirstBlankPageIsIgnoredOnlyOnce() {
         var s = PageState().requested(bank).locationChanged(ABOUT_BLANK)
         assertEquals(bank, s.pendingUrl)

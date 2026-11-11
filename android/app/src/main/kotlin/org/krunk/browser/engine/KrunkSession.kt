@@ -216,7 +216,7 @@ class KrunkSession(
 
     private val progress = object : GeckoSession.ProgressDelegate {
         override fun onPageStart(session: GeckoSession, url: String) {
-            set { it.copy(progress = 0.05f, loading = true, loadError = null, crashed = false) }
+            set { it.pageStarted(url) }
         }
 
         override fun onProgressChange(session: GeckoSession, progress: Int) {
@@ -231,7 +231,7 @@ class KrunkSession(
             session: GeckoSession,
             securityInfo: GeckoSession.ProgressDelegate.SecurityInformation,
         ) {
-            set { it.copy(secure = securityInfo.isSecure) }
+            set { it.securityChanged(securityInfo.isSecure) }
         }
 
         override fun onSessionStateChange(session: GeckoSession, sessionState: GeckoSession.SessionState) {
