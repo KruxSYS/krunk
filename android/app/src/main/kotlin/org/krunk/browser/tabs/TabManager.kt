@@ -32,6 +32,8 @@ import org.krunk.browser.engine.LoadPolicy
 import org.krunk.browser.engine.LoadSource
 import org.krunk.browser.engine.PageState
 import org.krunk.browser.engine.SessionListener
+import org.krunk.browser.engine.displayedUrl
+import org.krunk.browser.engine.modelUrlAfter
 import org.krunk.ffi.ClosedTab
 import org.krunk.ffi.StartupMode
 import org.krunk.ffi.TabEffect
@@ -521,7 +523,7 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
     private fun showNewTab(id: UInt) {
         model.setUrl(id, newTabUrl())
         model.setTitle(id, "")
-        sessions[id]?.load("about:blank")
+        sessions[id]?.park()
         thumbnails.remove(id)
         refresh()
         scheduleSave()
@@ -593,14 +595,15 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
 
     fun refresh() {
         val list = model.tabs().map { t ->
-            val page = sessions[t.id]?.current ?: PageState(url = t.url, title = t.title)
-            val url = if (sessions[t.id] != null && page.url.isNotEmpty() &&
-                page.url != "about:blank"
-            ) {
-                page.url
-            } else {
-                t.url
-            }
+            val session = sessions[t.id]
+            val page = session?.current ?: PageState(url = t.url, title = t.title)
+            val url = displayedUrl(
+                modelUrl = t.url,
+                modelIsInternal = internalPage(t.url) != null,
+                page = page,
+                hasSession = session != null,
+                openedByPage = session?.openedByPage == true,
+            )
             val internal = internalPage(url)
             TabUi(
                 id = t.id,
@@ -650,7 +653,8 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         val r = model.open(uri, session.private, session.id, true, true, nowMs())
         // The engine loads the new session itself: create it without a load.
         val info = model.tab(r.id) ?: return null
-        val s = KrunkSession(r.id, info.private, engine, this, errorPage, !info.private)
+        // Unopened: the engine opens the session of a new window itself.
+        val s = KrunkSession(r.id, info.private, engine, this, errorPage, !info.private, openedByPage = true)
         sessions[r.id] = s
         apply(r.effects.filterNot { it is TabEffect.CreateView })
         refresh()
@@ -677,7 +681,13 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         val st = session.current
         val prev = lastSeen.put(session.id, st)
         model.setLoading(session.id, st.loading)
-        if (st.url.isNotEmpty() && st.url != "about:blank") model.setUrl(session.id, st.url)
+        // The model follows the engine's committed location only (never a pending address, and
+        // never an address on the internal origin a page navigated to).
+        val modelUrl = model.tab(session.id)?.url
+        if (modelUrl != null) {
+            val next = modelUrlAfter(st, internalPage(modelUrl) != null, internalPage(st.url) != null)
+            if (next != null && next != modelUrl) model.setUrl(session.id, next)
+        }
         // Back/forward history and scroll position must survive a crash: persist state changes
         // too, but lazily (Gecko reports them on every scroll).
         if (!session.private && st.sessionState != null && st.sessionState != prev?.sessionState) {

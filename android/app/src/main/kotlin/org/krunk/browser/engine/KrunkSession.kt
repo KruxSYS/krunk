@@ -12,32 +12,6 @@ import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSessionSettings
 import org.mozilla.geckoview.WebRequestError
 
-/** What the UI shows for one tab's page: everything the engine reports. */
-data class PageState(
-    val url: String = "",
-    val title: String = "",
-    /** 0..1 while loading, 0 when idle. */
-    val progress: Float = 0f,
-    val loading: Boolean = false,
-    /** `null` until the first security callback (about:blank, new tab). */
-    val secure: Boolean? = null,
-    val canGoBack: Boolean = false,
-    val canGoForward: Boolean = false,
-    val fullScreen: Boolean = false,
-    val desktopMode: Boolean = false,
-    /** The last load failed with this error page shown. */
-    val loadError: LoadError? = null,
-    /** Find in page: current match index (1-based) and total. */
-    val findCurrent: Int = 0,
-    val findTotal: Int = 0,
-    /** Serialised Gecko state (back/forward list, scroll, form data) for restore. */
-    val sessionState: String? = null,
-    /** The page crashed or was killed by the OS; a reload recreates it. */
-    val crashed: Boolean = false,
-)
-
-data class LoadError(val uri: String, val category: Int, val code: Int)
-
 /** A long-pressed element (link, image, ...). */
 data class ContextTarget(
     val linkUri: String?,
@@ -91,16 +65,17 @@ class KrunkSession(
     private val listener: SessionListener,
     private val errorPage: ErrorPage,
     private val recordHistory: Boolean,
+    /**
+     * The session of a window a page opened (`target=_blank`, `window.open`). The engine opens
+     * such a session itself and refuses one that is already open, so it is handed over unopened;
+     * and its address bar shows nothing until the engine commits a location (see [displayedUrl]).
+     */
+    val openedByPage: Boolean = false,
 ) {
     val gecko: GeckoSession = engine.createSession(private)
     private val _state = MutableStateFlow(PageState())
     val state: StateFlow<PageState> = _state.asStateFlow()
     val current: PageState get() = _state.value
-
-    /** The URL a load was requested for before the engine reports it (address bar shows it). */
-    @Volatile
-    var pendingUrl: String? = null
-        private set
 
     private fun set(transform: (PageState) -> PageState) {
         _state.update(transform)
@@ -120,8 +95,7 @@ class KrunkSession(
             Log.w(KrunkApp.TAG, "tab $id: refused an address that is not a web address (source $source)")
             return
         }
-        pendingUrl = url
-        set { it.copy(url = url, loadError = null, crashed = false) }
+        set { it.requested(url) }
         val loader = GeckoSession.Loader().uri(url)
         when (source) {
             LoadSource.USER -> Unit
@@ -139,8 +113,10 @@ class KrunkSession(
         gecko.load(loader)
     }
 
-    fun loadError(uri: String, category: Int, code: Int) {
-        set { it.copy(loadError = LoadError(uri, category, code)) }
+    /** Parks the engine on a blank page while a native screen (the new-tab page) is shown. */
+    fun park() {
+        set { it.parked() }
+        gecko.loadUri(ABOUT_BLANK)
     }
 
     fun reload() {
@@ -210,15 +186,7 @@ class KrunkSession(
             perms: MutableList<GeckoSession.PermissionDelegate.ContentPermission>,
             hasUserGesture: Boolean,
         ) {
-            pendingUrl = null
-            val u = url ?: ""
-            // The error page is a data: URL of our own: keep the failed address and the error.
-            val err = current.loadError
-            if (err != null && u.startsWith("data:text/html")) {
-                set { it.copy(url = err.uri) }
-            } else {
-                set { it.copy(url = u, loadError = null) }
-            }
+            set { it.locationChanged(url ?: "") }
         }
 
         override fun onCanGoBack(session: GeckoSession, canGoBack: Boolean) {
@@ -241,8 +209,9 @@ class KrunkSession(
 
         override fun onLoadError(session: GeckoSession, uri: String?, error: WebRequestError): GeckoResult<String>? {
             val u = uri ?: ""
-            set { it.copy(loadError = LoadError(u, error.category, error.code), progress = 0f, loading = false) }
-            return GeckoResult.fromValue(errorPage.dataUri(u, error.category, error.code))
+            val page = errorPage.dataUri(u, error.category, error.code)
+            set { it.copy(loadError = LoadError(u, error.category, error.code, page), progress = 0f, loading = false) }
+            return GeckoResult.fromValue(page)
         }
     }
 
@@ -256,7 +225,7 @@ class KrunkSession(
         }
 
         override fun onPageStop(session: GeckoSession, success: Boolean) {
-            set { it.copy(progress = 0f, loading = false) }
+            set { it.pageStopped() }
         }
 
         override fun onSecurityChange(
@@ -339,7 +308,7 @@ class KrunkSession(
         gecko.progressDelegate = progress
         gecko.contentDelegate = content
         gecko.historyDelegate = history
-        gecko.open(engine.runtime)
+        if (!openedByPage) gecko.open(engine.runtime)
         engine.icons.listen(gecko) { url, icons -> listener.onIcons(this, url, icons) }
     }
 }
