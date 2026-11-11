@@ -82,11 +82,14 @@ Known traps:
   input-dispatch ANRs within seconds, so no flow completes. Use it only to check that an APK
   installs and starts. A locally started emulator registers with the local adb server, not the
   sandbox's remote one: run every `emu.sh` call with `KRUNK_LOCAL_ADB=1`.
-- **Never run `adb shell cmd uimode night yes` on the sandbox emulator.** In round 1 it wedged
-  the emulator's graphics stack (`composer3-service.ranchu` at 100 % CPU, screencap and input
-  dead); a guest `adb reboot` never finished (SurfaceFlinger did not come back) and the console
-  port for `adb emu kill` is not reachable, so only a host-side restart recovers it. Switch the
-  theme through Settings › Theme instead.
+- **The sandbox emulator's graphics stack can wedge** (`allocator-service.ranchu` and
+  `surfaceflinger` at 100 % CPU, screencap and input dead). It happened twice in round 1 while
+  Krunk was running: once after `adb shell cmd uimode night yes`, once after `adb install -r` over
+  the running app and a relaunch, so it is not tied to one command. A guest `adb reboot` does not
+  recover it (SurfaceFlinger never registers) and the console port for `adb emu kill` is not
+  reachable: only a host-side restart helps. Keep sessions short, `force-stop` the app before
+  reinstalling, switch the theme in Settings rather than through `cmd uimode`, and save
+  screenshots as you go.
 - **Two devices on adb** (an offline TV is attached too): every adb call needs `-s`; `emu.sh`
   does that. Gradle's `connectedAndroidTest` needs `ANDROID_SERIAL=emulator-5554`.
 - **Page loads are slow** on the software-GPU emulator (5–15 s); the first start after an install
