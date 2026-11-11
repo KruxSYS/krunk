@@ -143,9 +143,10 @@ impl Browser {
             Request::ExportBookmarks => self.export_bookmarks(tab, req_id),
 
             // ---- downloads ----
-            r @ (Request::GetDownloads | Request::ClearDownloads | Request::DownloadAction { .. }) => {
-                self.dispatch_downloads(tab, req_id, r)
-            }
+            r @ (Request::GetDownloads
+            | Request::QueryDownloads { .. }
+            | Request::ClearDownloads
+            | Request::DownloadAction { .. }) => self.dispatch_downloads(tab, req_id, r),
 
             other => self.not_available(sender, tab, req_id, &other),
         }

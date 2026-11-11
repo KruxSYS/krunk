@@ -717,7 +717,7 @@ impl Browser {
 
     fn agent_downloads(&self, a: args::GetDownloads) -> ToolOutcome {
         let limit = a.limit.unwrap_or(50).clamp(1, 100) as usize;
-        let mut items = self.downloads.borrow().items();
+        let mut items = self.recent_downloads(limit as u32);
         items.sort_by_key(|x| std::cmp::Reverse(x.started));
         let list: Vec<Value> = items
             .into_iter()

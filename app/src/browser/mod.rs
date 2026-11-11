@@ -32,7 +32,6 @@ use std::sync::Arc;
 const SHELL_URL: &str = "https://shell.krunk.invalid/shell.html";
 const POPUP_URL: &str = "https://shell.krunk.invalid/popup.html";
 const SESSION_KEY: &str = "session";
-const DOWNLOADS_KEY: &str = "downloads";
 /// Timer that saves the session shortly after the last tab change.
 const SESSION_TIMER: usize = 1;
 /// Zoom watcher: Ctrl+wheel and per-site zoom change the engine's zoom without telling the
@@ -846,11 +845,8 @@ impl Browser {
     /// `launch`: the addresses Krunk was started with (a link opened in another app); they open
     /// in new tabs after the restored session, or in the first window instead of its start page.
     fn restore_or_open_start(&self, launch: Vec<String>) {
-        if let Ok(Some(json)) = self.store.borrow().kv_get(DOWNLOADS_KEY) {
-            *self.downloads.borrow_mut() = Downloads::from_json(&json);
-            *self.stopped_by_close.borrow_mut() = (now_ms(), self.downloads.borrow().stopped_by_close());
-            self.remove_leftover_parts();
-        }
+        // 0.15.0: from the downloads table (storage V9).
+        self.load_downloads();
         self.clear_pdf_views();
         let (startup, homepage) = {
             let s = self.settings.borrow();
@@ -913,9 +909,7 @@ impl Browser {
     /// on (Krunk stays offline until the VPN connects or auto-connect is turned off). The saved
     /// session is kept for the next start.
     fn open_offline_start(&self, dropped_launch_urls: usize) {
-        if let Ok(Some(json)) = self.store.borrow().kv_get(DOWNLOADS_KEY) {
-            *self.downloads.borrow_mut() = Downloads::from_json(&json);
-        }
+        self.load_downloads();
         if dropped_launch_urls > 0 {
             warning!("{dropped_launch_urls} address(es) from the command line not opened: the VPN couldn't start");
         }

@@ -1696,101 +1696,6 @@ async function testBookmarks(browser) {
   check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
 }
 
-async function testDownloads(browser) {
-  console.log('downloads page');
-  const now = Date.now();
-  const items = [
-    { id: 3, url: 'https://releases.example.org/tool-2.4.1-x64.msi', fileName: 'tool-2.4.1-x64.msi', path: 'C:\\Users\\me\\Downloads\\tool-2.4.1-x64.msi', state: 'inProgress', received: 23500000, total: 61200000, started: now, reason: null },
-    { id: 2, url: 'https://arxiv.org/pdf/1234.5678?download=1&token=abc', fileName: 'paper.pdf', path: 'C:\\Users\\me\\Downloads\\paper.pdf', state: 'completed', received: 2400000, total: 2400000, started: Date.UTC(2026, 10, 5, 9, 15), finished: Date.UTC(2026, 10, 5, 9, 16), pageUrl: 'https://arxiv.org/abs/1234.5678', reason: null },
-    { id: 1, url: 'https://cdn.example.com/video.mp4', fileName: 'video.mp4', path: 'C:\\Users\\me\\Downloads\\video.mp4', state: 'interrupted', received: 1000, total: null, started: now - 120000, reason: 'Network error' },
-  ];
-  const { page, errors, external } = await openPage(browser, 'https://krunk.invalid/downloads.html', { width: 1000, height: 420 }, 1,
-    (d) => { window.__host.handlers.getDownloads = () => d; }, items);
-  await page.waitForSelector('.dl');
-  check((await page.locator('.dl').count()) === 3, 'lists 3 downloads');
-  check((await page.locator('.dl-bar').count()) === 1, 'progress bar for the running download');
-  const kinds = await page.$$eval('.dl .dl-icon', (ns) => ns.map((n) => n.dataset.kind));
-  check(JSON.stringify(kinds) === JSON.stringify(['app', 'pdf', 'video']), 'file-type icons by extension (' + kinds.join(', ') + ')');
-  check(await page.locator('.dl[data-id="2"] .url').textContent() === 'https://arxiv.org/pdf/1234.5678?download=1&token=abc', 'the full download address is shown');
-  const when2 = await page.locator('.dl[data-id="2"] .when').textContent();
-  check(/2026/.test(when2) && /finished/.test(when2), 'date and time it started and finished (' + when2 + ')');
-  check(!/finished/.test(await page.locator('.dl[data-id="1"] .when').textContent()), 'an old entry without a finish time shows the start only');
-  check(await page.locator('.dl[data-id="1"] button', { hasText: 'Retry' }).count() === 1, 'a failed download offers Retry');
-  await shot(page, 'downloads.png');
-  // Right-click: the row's menu.
-  await page.locator('.dl[data-id="2"] .name').click({ button: 'right' });
-  await page.waitForSelector('.ctx-menu');
-  const mlabels = await page.$$eval('.ctx-menu .menu-item', (ns) => ns.map((n) => n.textContent + (n.disabled ? '(off)' : '')));
-  check(JSON.stringify(mlabels) === JSON.stringify(['Open file', 'Show in folder', 'Copy download link', 'Copy page address', 'Download again', 'Remove from list', 'Delete file…']), 'context menu of a finished download (' + mlabels.join(', ') + ')');
-  await shot(page, 'downloads-context-menu.png');
-  await page.locator('.ctx-menu .menu-item', { hasText: 'Copy download link' }).click();
-  check((await lastSent(page, 'downloadAction')).action === 'copyLink' && await page.locator('.ctx-menu').count() === 0, 'Copy download link sends downloadAction{copyLink} and closes the menu');
-  await page.locator('.dl[data-id="2"] .name').click({ button: 'right' });
-  await page.locator('.ctx-menu .menu-item', { hasText: 'Delete file' }).click();
-  await page.waitForSelector('#lb-dialog-ok');
-  check((await page.textContent('.lb-dialog-text')).includes('paper.pdf'), 'Delete file asks first');
-  await page.click('#lb-dialog-ok');
-  await page.waitForTimeout(50);
-  check((await lastSent(page, 'downloadAction')).action === 'deleteFile', 'confirmed: downloadAction{deleteFile}');
-  // A failed one: no file actions, no page address known; keyboard opens the menu too.
-  await page.locator('.dl[data-id="1"]').focus();
-  await page.waitForTimeout(100); // focusing scrolls the row into view (a scroll closes menus)
-  await page.keyboard.press('Shift+F10');
-  await page.waitForSelector('.ctx-menu');
-  const flabels = await page.$$eval('.ctx-menu .menu-item', (ns) => ns.map((n) => n.textContent + (n.disabled ? '(off)' : '')));
-  check(JSON.stringify(flabels) === JSON.stringify(['Open file(off)', 'Show in folder(off)', 'Copy download link', 'Copy page address(off)', 'Retry', 'Remove from list', 'Delete file…(off)']), 'context menu of a failed download (' + flabels.join(', ') + ')');
-  await page.keyboard.press('ArrowDown');
-  await page.keyboard.press('Escape');
-  check(await page.locator('.ctx-menu').count() === 0, 'Esc closes the menu');
-  // A running one: pause (or resume) and cancel first; no file actions.
-  const rowBefore = await page.$('.dl[data-id="3"]');
-  await emit(page, { event: 'downloads', items: [Object.assign({}, items[0], { state: 'inProgress', received: 100, total: 1000, connections: 4, speed: 2048, eta: 75, partProgress: [{ done: 100, len: 250, start: 0, conn: 0 }, { done: 0, len: 250, start: 250, conn: 1 }, { done: 0, len: 250, start: 500, conn: 2 }, { done: 0, len: 250, start: 750, conn: 3 }] })].concat(items.slice(1)) });
-  await page.waitForTimeout(40);
-  check((await page.textContent('.row.dl .sub')).includes('2.0 KB/s') && (await page.textContent('.row.dl .sub')).includes('1 min left') && (await page.textContent('.row.dl .sub')).includes('4 connections'), 'the page shows speed, time left and the connections (' + await page.textContent('.row.dl .sub') + ')');
-  const segs = await page.$$eval('.row.dl .dl-segments .seg', (ns) => ns.map((n) => n.style.left + '/' + n.style.width + '/' + n.className + '/' + Number(/scaleX\(([\d.]+)\)/.exec(n.firstChild.style.transform)[1])));
-  check(segs.length === 4 && segs[0] === '0%/25%/seg c0/0.4' && segs[2] === '50%/25%/seg c2/0', 'the page places each part at its offset, coloured by connection, filled per part (' + segs.join(' ; ') + ')');
-  // A part split while it runs: the new layout shows where the pieces are.
-  await emit(page, { event: 'downloads', items: [Object.assign({}, items[0], { state: 'inProgress', received: 400, total: 1000, connections: 4, partProgress: [{ done: 250, len: 250, start: 0, conn: 0 }, { done: 100, len: 120, start: 250, conn: 1 }, { done: 0, len: 130, start: 370, conn: 0 }, { done: 50, len: 250, start: 500, conn: 2 }, { done: 0, len: 250, start: 750, conn: 3 }] })].concat(items.slice(1)) });
-  await page.waitForTimeout(40);
-  const split = await page.$$eval('.row.dl .dl-segments .seg', (ns) => ns.map((n) => n.style.left + '/' + n.style.width));
-  check(split.length === 5 && split[2] === '37%/13%', 'a split part shows as two pieces at their offsets (' + split.join(' ; ') + ')');
-  await emit(page, { event: 'downloads', items: [Object.assign({}, items[0], { state: 'inProgress', received: 100, connections: 4 })].concat(items.slice(1)) });
-  await page.waitForTimeout(50);
-  check((await page.locator('.dl[data-id="3"] .sub').textContent()).includes('4 connections'), 'a download in parts shows its connections');
-  await page.locator('.dl[data-id="3"] .name').click({ button: 'right' });
-  const rlabels = await page.$$eval('.ctx-menu .menu-item', (ns) => ns.map((n) => n.textContent + (n.disabled ? '(off)' : '')));
-  check(JSON.stringify(rlabels) === JSON.stringify(['Pause', 'Cancel', 'Copy download link', 'Copy page address(off)']), 'context menu of a running download (' + rlabels.join(', ') + ')');
-  await page.locator('.ctx-menu .menu-item', { hasText: 'Pause' }).click();
-  check((await lastSent(page, 'downloadAction')).action === 'pause', 'Pause from the menu');
-  await page.mouse.click(5, 5);
-  check(await page.locator('.ctx-menu').count() === 0, 'a click elsewhere closes the menu');
-  await page.locator('.dl[data-id="2"] button', { hasText: 'Show in folder' }).click();
-  const a = await lastSent(page, 'downloadAction');
-  check(a && a.id === 2 && a.action === 'showInFolder', 'show in folder sends downloadAction');
-  await page.locator('.dl[data-id="3"] button', { hasText: 'Cancel' }).click();
-  check((await lastSent(page, 'downloadAction')).action === 'cancel', 'cancel sends downloadAction{cancel}');
-  items[0].state = 'completed'; items[0].received = items[0].total;
-  await emit(page, { event: 'downloads', items });
-  await page.waitForTimeout(50);
-  check((await page.locator('.dl-bar, .dl-segments').count()) === 0, 'pushed update re-renders the list');
-  check(rowBefore && await rowBefore.evaluate((n) => n.isConnected && n.dataset.id === '3') === false, 'a row that changes state is rebuilt');
-  // Rows that only progress stay the same element (no flicker, hover kept).
-  const keep = await page.$('.dl[data-id="2"]');
-  await emit(page, { event: 'downloads', items });
-  await page.waitForTimeout(30);
-  check(await keep.evaluate((n) => n.isConnected), 'an unchanged row is kept in place');
-  await emit(page, { event: 'downloads', items: [] });
-  await page.waitForTimeout(30);
-  check((await page.textContent('.empty strong')) === 'No downloads yet' && await page.locator('.dl').count() === 0, 'an empty list says so');
-  await shot(page, 'downloads-empty.png');
-  await emit(page, { event: 'downloads', items });
-  await page.waitForTimeout(30);
-  await page.click('#clear');
-  check((await lastSent(page, 'clearDownloads')) !== undefined, 'clear list sends clearDownloads');
-  check(external.length === 0, 'no network requests');
-  check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
-}
-
 async function testTasks(browser) {
   console.log('task manager page');
   const rows = [
@@ -6018,7 +5923,7 @@ async function testHttpAuth(browser) {
     if (!ONLY || ONLY.includes('NewTabBackgrounds')) await testNewTabBackgrounds(browser);
     if (!ONLY || ONLY.includes('History')) await testHistory(browser);
     if (!ONLY || ONLY.includes('Bookmarks')) await testBookmarks(browser);
-    if (!ONLY || ONLY.includes('Downloads')) await testDownloads(browser);
+    // 0.15.0: Downloads (the windowed page) is in test-0150-downloads.cjs.
     if (!ONLY || ONLY.includes('Storage')) await testStorage(browser);
     if (!ONLY || ONLY.includes('StorageLarge')) await testStorageLarge(browser);
     if (!ONLY || ONLY.includes('Tasks')) await testTasks(browser);

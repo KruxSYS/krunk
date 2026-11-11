@@ -1,7 +1,7 @@
 // Krunk 0.7.0 (R9-R11): what the downloads popup and the downloads page share.
 //   DlView.kind(name)        the file-type class of a name ('archive', 'video', … 'file')
 //   DlView.icon(d)           the file-type icon of a download
-//   DlView.size(n), status(d), left(s)
+//   DlView.size(n), status(d), left(s), site(d), kindLabel(kind)
 //   DlView.bar(d)            a progress bar: one fill, or the parts of a download in parts,
 //                            each at its place in the file and coloured by its connection
 //   DlView.motion            moves the fills smoothly between the host's updates
@@ -44,6 +44,10 @@
   }
   function left(s) { return s >= 3600 ? Math.round(s / 3600) + ' h left' : s >= 60 ? Math.round(s / 60) + ' min left' : s + ' s left'; }
   function host(url) { try { return new URL(url).hostname.replace(/^www\./, ''); } catch (e) { return ''; } }
+  // 0.15.0: the site a download came from (its page, else its address), and a kind's name.
+  function site(d) { return host(d.pageUrl || '') || host(d.url); }
+  const KIND_LABELS = { archive: 'Archive', video: 'Video', audio: 'Audio', image: 'Image', pdf: 'PDF', doc: 'Document', app: 'Program', disk: 'Disk image', code: 'Code', file: 'File' };
+  function kindLabel(k) { return KIND_LABELS[k] || 'File'; }
   function status(d) {
     if (d.state === 'completed') return [size(d.total || d.received), host(d.url)].filter(Boolean).join(' · ');
     if (d.state === 'cancelled') return 'Cancelled';
@@ -151,5 +155,6 @@
     node.title = d.partProgress.length + ' parts over ' + (d.connections || new Set(d.partProgress.map(function (p) { return p.conn; })).size) + ' connections';
   }
 
-  window.DlView = { kind: kind, icon: icon, size: size, left: left, status: status, bar: bar, update: update, forget: forget, host: host };
+  window.DlView = { kind: kind, icon: icon, size: size, left: left, status: status, bar: bar, update: update, forget: forget, host: host,
+    site: site, kindLabel: kindLabel };
 })();
