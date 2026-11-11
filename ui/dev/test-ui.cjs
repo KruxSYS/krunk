@@ -4167,6 +4167,9 @@ async function testJsDialogs(browser) {
     await page.evaluate(() => { window.__host.sent.length = 0; });
     await emit(page, { event: 'popup', content: Object.assign({ kind: 'jsDialog', tabId: 4, dialogId: 1, title: 'a.example says', message: '', defaultText: '', offerBlock: false }, c) });
     await page.waitForSelector('.js-dialog #default');
+    // The previous dialog's buttons match the selector until this one is rendered (0.15.0: a
+    // stale "OK" was read under load).
+    await page.waitForFunction((m) => { const e = document.getElementById('jsd-message'); return m ? e && e.textContent === m : !e; }, c.message || '');
   };
   // alert: OK only, the message as written (line breaks kept, markup as text).
   await show({ dialog: 'alert', dialogId: 1, message: 'Line one\nLine <b>two</b>' });
