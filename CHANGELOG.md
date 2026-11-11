@@ -2,6 +2,54 @@
 
 What changed in each Krunk release, newest first.
 
+## 0.15.0 — 2026-11-11
+
+- **No more black flash when you open or close a tab.** The page you were looking at stays on
+  screen until the next tab has painted (at most half a second), and Krunk's own pages show the
+  theme's colour from their very first frame.
+- **Tab previews.** Rest the mouse on a tab for half a second to see its title, its site and a
+  small picture of the page. The pictures stay in memory only. Turn it off in Settings → General
+  → New tabs → **Preview tabs on hover**.
+- **Sign-in dialogs stay with their tab.** When a site asks for a user name and password
+  (HTTP authentication), switching to another tab or app no longer cancels it: the dialog
+  hides, the tab shows a key badge, and the dialog comes back when you return. A background
+  tab can ask too. Only Cancel, closing the tab or leaving the page cancels it.
+- **Search suggestions in the address bar.** While you type, the search engine's suggestions
+  appear below your history and bookmark matches (Google, Bing, DuckDuckGo, Brave, Startpage
+  and Ecosia). Never in private tabs. Turn them off in Settings → General → Search.
+- **Made-up domains are searched.** Text like `test.test` now searches instead of opening a
+  broken address. Real domains (`example.com`, `foo.dev`), IP addresses, `localhost`, addresses
+  with a port and local names (`.local`, `.lan`, `.internal`, `.home.arpa`) still open, and so
+  does anything you type with `http://` or `https://`.
+- **A new downloads page.** Cards grouped by Today, Yesterday and Earlier, a search box,
+  filters (in progress, done, failed), "Clear completed", and an option to remove finished
+  downloads after some days (Settings → Downloads). It stays fast with thousands of downloads,
+  and the list is no longer limited to the last 200.
+- **Session logs (off by default).** Settings → Privacy & security → **Keep session logs**
+  records, on this device only, the sites you visit, how long each tab and site is in front, and
+  Krunk's CPU use, per session. See them on `krunk://sessions`, with a timeline and a chart;
+  delete one or all, and choose how long they're kept (30 days by default). Private tabs are
+  never logged, and while it's off nothing is recorded.
+- **Tab and toolbar styles.** Settings → Appearance → Tab and toolbar style: solid, gradient (two
+  or three colours and an angle), ombre across the tabs, or glass (translucent), plus ready-made
+  styles, tab shapes (rounded, square, pill) and roundness, how the active tab stands out, and an
+  accent glow. All of it works in light and dark.
+- **New tab page tiles:** the pin, edit and remove buttons now sit together in one corner and
+  never cover the icon or the title; a pinned tile shows a filled pin there.
+- **AI agent:**
+  - **Longer answers.** The output limit is now 32,000 tokens by default (or the model's own
+    maximum when that is lower), and each provider has a **Max output tokens** setting
+    (0 = let the provider decide). When a model stops at the limit before answering, Krunk tries
+    once more with a higher limit, and the message names the limit it used.
+  - **Long scripts are no longer cut off.** A reply cut off in the middle of an action never
+    runs; the agent is told and can save long userscripts and macros in parts.
+  - The agent panel follows the light and dark theme at once.
+  - The agent can set the new tab background from a picture's https address (up to 15 MB; PNG,
+    JPEG, WebP, GIF or AVIF).
+- Known limitation: after you switch between light and dark, tabs that were already open keep
+  their old background colour for the moment before a page paints (Windows' engine views can't
+  change it); new tabs use the new one.
+
 ## 0.14.2 — 2026-11-10
 
 - **Use your local network while the VPN is connected.** A new option in Settings → Privacy &

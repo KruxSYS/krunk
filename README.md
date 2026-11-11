@@ -89,6 +89,8 @@ changed in Settings. Built-in pages:
   switches, the GPU process), with a link to Chromium's `chrome://gpu`
 - `view-source:<address>` (0.11.0): the page's source in Krunk's viewer (see below)
 - `krunk://scripts` (0.12.0): userscripts and macros with their code editor (see below)
+- `krunk://sessions` (0.15.0): your session logs, when Settings → Privacy & security → Keep
+  session logs is on (see Privacy below)
 
 Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
 
@@ -141,13 +143,31 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   Nothing is sent before you click Sign in; the saved password stays inside Krunk. Esc or Cancel
   shows the site's own 401 page. A user name and password that work are offered for saving with
   the usual "Save password?" (not in private windows). Proxy authentication is not supported yet
-  (0.8.1), and a background tab that asks is refused (reload it to sign in).
+  (0.8.1). **Since 0.15.0 the dialog belongs to its tab:** switching tabs, another app or a menu
+  only hides it; the tab shows a key badge and the dialog comes back when you return (or click
+  the tab or its badge). A background tab can ask too and waits with the badge. Only Cancel/Esc,
+  closing the tab or a new navigation in it cancels the request.
 - **Appearance (0.7.0):** colour pickers (presets, any colour, a hex field, Reset) for the
   accent, the window background, the toolbar, the tab strip and the new-tab page; changes show
   at once in every window, and text on a custom colour switches between dark and light to stay
   readable (WCAG AA where a colour allows it). The new-tab page has ten built-in wallpapers
   (made for Krunk, see THIRD-PARTY-NOTICES) besides your own picture or a colour, chosen in its
   Customize panel or in Settings → Appearance; long site titles on its tiles wrap to two lines.
+- **Tab and toolbar style (0.15.0):** Settings → Appearance → Tab and toolbar style. The tab strip
+  and the toolbar can each be solid, a gradient (two or three colours and an angle; empty
+  colours follow the accent) or glass (translucent with a blur inside Krunk's bars; the desktop
+  does not show through, because the engine's windows can't be transparent); the tab strip can
+  also be an ombre that runs across all tabs. Ready-made styles (Classic, Sunset, Ocean, Glass,
+  Mono) fill these in. Tab shape (rounded with a roundness, square, pill), the active tab
+  (filled, underlined, outlined) and an accent glow are separate. Text colour on a gradient is
+  chosen for contrast across all its colours, in light and dark. The agent can change these.
+- **Tab previews (0.15.0):** resting the mouse on a tab for half a second shows a card with its
+  title, its site and a small picture of the page (the active tab: no picture). Pictures are
+  taken only from the tab you are looking at (when you leave it, and shortly after it loads),
+  kept in memory only (at most 48) and never for background tabs. Settings → General → New tabs
+  → Preview tabs on hover turns cards and pictures off.
+- **New tab page tiles (0.15.0):** pin, edit and remove sit in one column in the tile's corner;
+  a pinned tile keeps a filled pin there.
 - **Address bar:**
   - **Selecting (0.7.0):** dragging over the address selects text (also when the bar was not
     focused), a double click selects a word, a triple click everything; the site icon drags the
@@ -157,6 +177,17 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
     typed address) first, then matching bookmarks and history pages, most visited first. Down
     and Up move through them (the bar shows the row's address), Enter or a click goes there,
     Esc closes the list and keeps what you typed; the bar keeps the focus throughout.
+  - **Search suggestions (0.15.0):** below those rows, up to five suggestions from the search
+    engine (Google, Bing, DuckDuckGo, Brave, Startpage, Ecosia; none for a custom engine), asked
+    150 ms after you stop typing; an older answer never replaces a newer one, and recent answers
+    are reused. The request carries only the typed text, without cookies, over the same
+    connection settings as pages (proxy, VPN). Never in private tabs, never for addresses.
+    Settings → General → Search → Show search suggestions (on by default).
+  - **What opens and what searches (0.15.0):** typed text opens as an address only with a scheme
+    (`http://test.test`), as an IP address, `localhost` or `name:port`, when its last part is a
+    real top-level domain (the Public Suffix List Krunk already ships) or a local suffix
+    (`.local`, `.lan`, `.internal`, `.home.arpa`). Everything else is searched: `test.test`,
+    `node.js`, `me@example.com`.
   - The lock (or the "i" on http) opens the site-information popup: whether the connection is
     secure, the protocol, the certificate chain with validity, names, algorithms and SHA-256
     fingerprints, and what is wrong with a bad certificate (the engine reports no cipher).
@@ -284,6 +315,13 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   Outlook.com, Yahoo Mail, Proton Mail or a web address with `%s` (Settings → General → Email
   links open in). A page can open at most one a second.
 - **Downloads:**
+  - **The page (0.15.0):** `krunk://downloads` lists downloads as cards grouped by Today,
+    Yesterday and Earlier, with a search box, filters (all, in progress, done, failed) and
+    "Clear completed" (files stay on disk). The list is kept in the profile database without the
+    old 200-entry limit, and the page loads only what is on screen, so thousands of entries stay
+    smooth (2,000 entries on the test VM: first rows in 32 ms, 64 fps scrolling).
+    Settings → Downloads → Remove finished downloads from the list after 1–90 days (off by
+    default).
   - **History:** `krunk://downloads` shows each download's full address, the page it came from,
     and when it started and finished. Right-click a row (or press Shift+F10 or the Menu key) for Open, Show in folder,
     Copy download link, Copy page address, Retry, Pause / Resume, Cancel, Remove from list and
@@ -776,6 +814,16 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
 - **Results are capped** at 8,000 characters (20,000 for HTML and text on request), with an offset
   to read on. Only the last two screenshots stay in the conversation.
 
+**Output limit (0.15.0).** Each provider has **Max output tokens** in Settings → AI (default
+32,000; 0 = auto: OpenAI-style providers then send no limit, Anthropic gets the model's maximum
+or 32,000). A model's known maximum (from its model list, else a small built-in table) caps it.
+When a model stops at the limit with no answer and no tool call, Krunk asks once more with twice
+the limit (up to the maximum), then says which limit stopped it. A tool call cut off by the limit
+is never run: the model is asked again with a higher limit, then told plainly that it was cut
+off. A cut-off text answer is continued once. `save_userscript` and `save_macro` take a script
+in parts (`more: true`, then the returned `draft`), up to the 200 KB script limit; it is checked
+only when the last part arrives.
+
 **The panel** is a CEF view per window on its own channel (`shell.krunk.invalid/agent.html`), docked
 right of the tab area. The frame paints and drags its splitter. Its width is a setting.
 
@@ -785,7 +833,9 @@ right of the tab area. The frame paints and drags its splitter. Its width is a s
 - **Input:** click, type_text, fill_fields, select_option, press_keys, scroll, wait_for.
 - **Page changes:** eval_js, edit_page, set_title.
 - **Tabs:** navigate, back, forward, reload, open_tab, switch_tab, close_tab, list_tabs.
-- **Settings:** get_settings, set_setting.
+- **Settings:** get_settings, set_setting, set_new_tab_background_url (0.15.0: an https picture,
+  at most 15 MB, PNG/JPEG/WebP/GIF/AVIF by its first bytes, stored like one you pick; no extra
+  confirmation, like the other settings tools).
 - **Userscripts:** list_userscripts, save_userscript, toggle_userscript.
 - **Macros:** list_macros, save_macro, run_macro.
 - **Talking to you:** ask_user, finish.
@@ -953,6 +1003,16 @@ reset.
   firewall rule needs administrator rights. Updates keep the same path
   (`%LOCALAPPDATA%\Programs\Krunk\Krunk.exe`), so your choice carries over to later versions.
 - **No background contact with Google:** see "Engine background traffic" below.
+- **Session logs (0.15.0, off by default):** Settings → Privacy & security → Keep session logs.
+  While on, Krunk records per session (from start to exit) the main-frame pages visited, how long
+  each tab and site was in front (the active tab of the focused window while Krunk is the
+  foreground app), and its CPU use every 5 s from the engine's task manager (tabs, browser, GPU
+  process, utilities; "GPU" is the GPU process's CPU, Windows gives no GPU-load figure). Events
+  are buffered in memory and written every 30 s and at exit. Private tabs are never logged; the
+  agent can't read or change the setting. `krunk://sessions` lists sessions (start, end, time,
+  top sites) and shows each with a timeline, time per site and per tab and a CPU chart; delete
+  one, clear all, keep 1 day to 1 year (30 days by default). While off, no timer runs and
+  nothing is buffered or written (idle CPU on the test VM was the same with it off and on).
 
 ### Engine background traffic
 Chromium's own services contact Google in the background. A logging-proxy audit of an idle,
@@ -1530,6 +1590,13 @@ Testing on Windows:
 - The Windows checklist is `docs/MANUAL_TEST.md`.
 
 ## Known limitations
+- **Theme colour of open tabs (0.15.0):** after switching between light and dark, tabs that were
+  already open keep the previous background colour for the moment before one of their pages
+  paints (a reload, a slow page). Krunk's tabs are windowed engine views whose pre-paint colour is
+  fixed when they are created; new tabs use the new colour. Krunk's own pages always paint the
+  theme colour from their first frame.
+- **Glass style (0.15.0)** is drawn by Krunk (translucent layers and blur inside its bars); it
+  does not show the desktop behind the window.
 - **The AI agent (0.12.0) was tested against a mock provider only.** No live provider (OpenRouter,
   OpenAI, Anthropic, Ollama or LM Studio) and no vision model was exercised before the release.
   The OpenAI-style and Anthropic request and stream formats are covered by unit tests. Also:
