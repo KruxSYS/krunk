@@ -38,8 +38,14 @@ The container:
 - `Dockerfile`, `Caddyfile`, `site/`: the image. Since 0.13.0 its build context is the
   **repository root** (compose: `context: ../..`, `dockerfile: dist/server/Dockerfile`), for
   `CHANGELOG.md`. `Dockerfile.dockerignore` is a whitelist: only `CHANGELOG.md`, `changelog.py`,
-  the Caddy files and `site/` are sent, never `target/`. By hand, from the root:
+  `stamp-assets.py`, the Caddy files and `site/` are sent, never `target/`. By hand, from the root:
   `docker build -f dist/server/Dockerfile .`
+- `stamp-assets.py`: the last step of the site build stage. It adds a content hash to every
+  link from a page to the site's own scripts, styles and images (`/app.js?v=4cdedc915a`), so
+  write those links plainly in `site/` (`/app.js`). Reason: Cloudflare replaces `no-cache` on
+  such files with its own four-hour browser cache, so after a deploy visitors got the new page
+  with the old script (on 2026-11-11 that kept the new Android download box hidden). The pages
+  themselves are not cached. A page that links to a missing script or style sheet fails the build.
 - `changelog.py`: the one `CHANGELOG.md` parser (standard library only). A pinned
   `python:3.13-alpine` build stage runs `check` (a malformed file fails the build) and `render`
   (`/changelog`); `publish-release.sh` uses `section` and `date`.

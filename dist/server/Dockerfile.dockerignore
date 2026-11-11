@@ -3,6 +3,7 @@
 *
 !CHANGELOG.md
 !dist/server/changelog.py
+!dist/server/stamp-assets.py
 !dist/server/Caddyfile
 !dist/server/cloudflare-trusted.caddy
 !dist/server/cloudflare-untrusted.caddy

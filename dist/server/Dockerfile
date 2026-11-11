@@ -5,14 +5,17 @@
 # whitelist Dockerfile.dockerignore next to this file: only CHANGELOG.md and the files below
 # are sent, never target/.
 
-# The /changelog page, generated from CHANGELOG.md. check fails the build on a malformed file.
-# Python 3.13.18.
-FROM python:3.13-alpine@sha256:1e1f6334529d1fb26a2ef619d7cffb30a7c7d7cc1cc7338ebee283a58d1aeaca AS changelog
+# The site as it is served: the static pages, the /changelog page generated from CHANGELOG.md
+# (check fails the build on a malformed file) and, last, a content hash on every link to the
+# site's own scripts, styles and images (stamp-assets.py: Cloudflare lets browsers keep those
+# for hours, so a changed file needs a changed link). Python 3.13.18.
+FROM python:3.13-alpine@sha256:1e1f6334529d1fb26a2ef619d7cffb30a7c7d7cc1cc7338ebee283a58d1aeaca AS site
 WORKDIR /build
-COPY CHANGELOG.md dist/server/changelog.py ./
-RUN mkdir /out \
-    && python3 -I changelog.py check CHANGELOG.md \
-    && python3 -I changelog.py render CHANGELOG.md /out/changelog.html
+COPY CHANGELOG.md dist/server/changelog.py dist/server/stamp-assets.py ./
+COPY dist/server/site/ /out/
+RUN python3 -I changelog.py check CHANGELOG.md \
+    && python3 -I changelog.py render CHANGELOG.md /out/changelog.html \
+    && python3 -I stamp-assets.py /out
 
 FROM caddy:2.11.8-alpine@sha256:3db3a09e418f86a8fce8de4bc0026fccd2b4cd925aef00cc7d843d9fdc75e442
 
@@ -25,8 +28,7 @@ RUN addgroup -S -g 10001 krunk \
     && setcap -r /usr/bin/caddy
 
 COPY --chown=root:root dist/server/Caddyfile dist/server/cloudflare-trusted.caddy dist/server/cloudflare-untrusted.caddy /etc/caddy/
-COPY --chown=root:root dist/server/site/ /srv/site/
-COPY --from=changelog --chown=root:root /out/changelog.html /srv/site/changelog.html
+COPY --from=site --chown=root:root /out/ /srv/site/
 
 USER 10001:10001
 EXPOSE 8080 8443
