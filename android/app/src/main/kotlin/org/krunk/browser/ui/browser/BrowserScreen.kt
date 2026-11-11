@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
@@ -16,6 +17,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -77,6 +79,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
     var geckoView by remember { mutableStateOf<NestedGeckoView?>(null) }
     var contextTarget by remember { mutableStateOf<Pair<UInt, ContextTarget>?>(null) }
     var refreshing by remember { mutableStateOf(false) }
+    var download by remember { mutableStateOf<PendingDownload?>(null) }
 
     SystemBarsEffect(fullScreen = fullScreen, darkTheme = dark)
 
@@ -94,6 +97,10 @@ fun BrowserScreen(vm: BrowserViewModel) {
 
     val downloadStarted = stringResource(R.string.download_started)
     val downloadUnsupported = stringResource(R.string.download_unsupported)
+
+    // Messages are shown from their own coroutine: the collector below must not wait the
+    // seconds a snackbar stays, or the next event (a link menu) would be late.
+    fun toast(msg: String) = scope.launch { snackbar.showSnackbar(msg) }
     LaunchedEffect(Unit) {
         vm.tabs.events.collect { ev ->
             when (ev) {
@@ -102,9 +109,12 @@ fun BrowserScreen(vm: BrowserViewModel) {
                     if (contextActions(ev.target, private).isNotEmpty()) contextTarget = ev.tabId to ev.target
                 }
 
+                // A page started this download: nothing is fetched or stored before the user
+                // said yes. One question at a time; further ones are dropped while it is open.
                 is TabEvent.Download -> {
-                    val name = Downloads.enqueue(context, ev.response)
-                    snackbar.showSnackbar(if (name != null) downloadStarted.format(name) else downloadUnsupported)
+                    val private = vm.tabs.tabs.value.firstOrNull { it.id == ev.tabId }?.private == true
+                    val asked = Downloads.describe(ev.response, private)
+                    if (download == null) download = asked else Downloads.discard(asked)
                 }
 
                 is TabEvent.OpenScreen -> Screen.forPage(ev.page)?.let { vm.push(it) }
@@ -226,6 +236,32 @@ fun BrowserScreen(vm: BrowserViewModel) {
         RestoreTabsPrompt(vm)
     }
 
+    download?.let { asked ->
+        DownloadQuestion(
+            download = asked,
+            onDownload = {
+                download = null
+                val name = Downloads.start(context, asked)
+                toast(if (name != null) downloadStarted.format(name) else downloadUnsupported)
+            },
+            onCancel = {
+                download = null
+                Downloads.discard(asked)
+            },
+        )
+    }
+
+    // A page can go full screen on any tap and then draw its own "browser": say which site it is
+    // and how to get out, every time.
+    val fullScreenHint = stringResource(R.string.fullscreen_hint)
+    val fullScreenHintSite = stringResource(R.string.fullscreen_hint_site)
+    LaunchedEffect(fullScreen) {
+        if (fullScreen) {
+            val site = pillText(tab?.url ?: "")
+            snackbar.showSnackbar(if (site.isEmpty()) fullScreenHint else fullScreenHintSite.format(site))
+        }
+    }
+
     contextTarget?.let { (tabId, target) ->
         val private = tab?.private == true
         val copied = stringResource(R.string.copied)
@@ -239,7 +275,6 @@ fun BrowserScreen(vm: BrowserViewModel) {
                 contextTarget = null
                 val link = target.linkUri ?: ""
                 val src = target.srcUri ?: ""
-                fun toast(msg: String) = scope.launch { snackbar.showSnackbar(msg) }
                 when (action) {
                     // A page chose these addresses: web addresses only, loaded on its behalf.
                     ContextAction.OPEN_NEW_TAB -> {
@@ -300,6 +335,37 @@ fun BrowserScreen(vm: BrowserViewModel) {
             },
         )
     }
+}
+
+/** Asks before a download a page started: the file name and the site it comes from. */
+@Composable
+private fun DownloadQuestion(download: PendingDownload, onDownload: () -> Unit, onCancel: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text(stringResource(R.string.download_confirm_title)) },
+        text = {
+            Column {
+                Text(download.fileName, style = MaterialTheme.typography.bodyLarge)
+                if (download.host.isNotEmpty()) {
+                    Text(
+                        stringResource(R.string.download_confirm_from, download.host),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+                if (download.private) {
+                    Text(
+                        stringResource(R.string.download_confirm_private),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 12.dp),
+                    )
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDownload) { Text(stringResource(R.string.download_confirm_yes)) } },
+        dismissButton = { TextButton(onClick = onCancel) { Text(stringResource(android.R.string.cancel)) } },
+    )
 }
 
 /** Shown instead of the page after its process crashed or was killed by the system. */
