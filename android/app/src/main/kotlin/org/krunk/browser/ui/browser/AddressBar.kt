@@ -76,9 +76,10 @@ val AddressPillHeight = 40.dp
 private val PillShape = RoundedCornerShape(20.dp)
 
 /**
- * The address as a pill: private mask, lock / "Not secure", favicon or globe, the URL (or the
- * search placeholder on the new-tab page). Tapping starts editing. [trailing] is the
- * reload/stop button.
+ * The address as a pill: private mask, lock / "not secure" sign, favicon or globe, the site (or
+ * the search placeholder on the new-tab page). Tapping starts editing. [trailing] is the
+ * reload/stop button; [compact] (a phone-width toolbar) leaves the words "Not secure" out so
+ * the site's name fits.
  */
 @Composable
 fun AddressPill(
@@ -86,6 +87,7 @@ fun AddressPill(
     placeholder: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    compact: Boolean = true,
     trailing: @Composable () -> Unit = {},
 ) {
     val page = tab?.page
@@ -129,20 +131,25 @@ fun AddressPill(
                     tint = KrunkColors.secure,
                 )
 
+                // On a phone the words "Not secure" would take the room the site's name needs
+                // (seen on the device: nothing of the host was left). The red sign says it there;
+                // the words are added where the toolbar is wide enough for both.
                 SecurityIndicator.INSECURE -> Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         Icons.Outlined.Info,
-                        contentDescription = null,
+                        contentDescription = stringResource(R.string.address_not_secure),
                         modifier = Modifier.size(16.dp),
                         tint = MaterialTheme.colorScheme.error,
                     )
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        stringResource(R.string.address_not_secure),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.error,
-                        maxLines = 1,
-                    )
+                    if (!compact) {
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            stringResource(R.string.address_not_secure),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.error,
+                            maxLines = 1,
+                        )
+                    }
                 }
 
                 SecurityIndicator.NONE -> if (text.isNotEmpty() && tab?.internalPage == null) {

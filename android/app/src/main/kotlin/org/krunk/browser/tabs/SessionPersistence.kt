@@ -51,6 +51,15 @@ object SessionPersistence {
         }
     }
 
+    /**
+     * After a tab's saved state was restored: whether its address still has to be loaded.
+     * [stateUrl] is where the state's history stands, [tabUrl] what the tab model saved. They
+     * differ when the state was saved before the engine had reported the last navigation; then
+     * the restored history is kept and the tab's address is loaded on top of it. When they agree
+     * nothing more is loaded, so the restored page keeps its scroll position and form data.
+     */
+    fun restoreNeedsLoad(stateUrl: String, tabUrl: String): Boolean = stateUrl.isEmpty() || stateUrl != tabUrl
+
     /** The new value of the unclean-start counter at start-up: reset by a clean exit. */
     fun uncleanStarts(previous: Int, cleanExit: Boolean): Int = if (cleanExit) 0 else previous.coerceAtLeast(0) + 1
 

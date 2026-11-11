@@ -127,6 +127,17 @@ class SessionPersistenceTest {
     }
 
     @Test
+    fun aRestoredStateThatIsBehindTheTabGetsTheTabsAddressLoaded() {
+        val hub = "http://10.0.0.1/h.html"
+        // The state and the tab agree: the state alone restores the page (scroll, forms).
+        assertFalse(SessionPersistence.restoreNeedsLoad(hub, hub))
+        // Saved a moment after going back: the state still stands on the page before.
+        assertTrue(SessionPersistence.restoreNeedsLoad("https://example.com/", hub))
+        // A state without a current entry restores nothing.
+        assertTrue(SessionPersistence.restoreNeedsLoad("", hub))
+    }
+
+    @Test
     fun geckoStatesFollowTheirUrls() {
         val tabs = listOf(1u to "https://a.example/", 2u to "https://b.example/", 3u to "https://c.example/")
         val saved = listOf(

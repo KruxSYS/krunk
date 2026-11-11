@@ -359,11 +359,19 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         pendingSaveDelay = Long.MAX_VALUE
         saveNow()
         scope.launch(persist) { runCatching { core.store.kvSet(KV_CLEAN_EXIT, "1") } }
+        // The page on screen may have navigated a moment ago: ask the engine for its state now
+        // and save again as soon as it arrives (see onStateChanged), not seconds later.
+        inBackground = true
+        activeSession()?.takeIf { !it.current.crashed }?.flushState()
     }
 
     fun markRunning() {
+        inBackground = false
         scope.launch(persist) { runCatching { core.store.kvSet(KV_CLEAN_EXIT, "0") } }
     }
+
+    /** Between onStop and the next onStart: the process may be killed at any time. */
+    private var inBackground = false
 
     // ----- memory policy -----
 
@@ -659,8 +667,11 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         if (!restore) return s
         // A saved state brings the page back by itself (address, back/forward list, scroll
         // position, form data). Loading the address as well would be a second, new navigation
-        // on top of it: a duplicate history entry and the restored position lost.
-        if (state != null && s.restoreState(state)) return s
+        // on top of it (a duplicate history entry, the restored position lost), so that is done
+        // only when the state is behind the tab: the engine reports its state with a delay, and
+        // a state saved right after a navigation still ends on the page before.
+        val restoredUrl = state?.let { s.restoreState(it) }
+        if (restoredUrl != null && !SessionPersistence.restoreNeedsLoad(restoredUrl, info.url)) return s
         if (internalPage(info.url) == null) {
             s.load(info.url, origin?.source ?: LoadSource.USER, origin?.opener?.let { sessions[it]?.gecko })
         }
@@ -824,7 +835,7 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         // Back/forward history and scroll position must survive a crash: persist state changes
         // too, but lazily (Gecko reports them on every scroll).
         if (!session.private && st.sessionState != null && st.sessionState != prev?.sessionState) {
-            scheduleSave(STATE_SAVE_DELAY_MS)
+            scheduleSave(if (inBackground) 0L else STATE_SAVE_DELAY_MS)
         }
         refresh()
     }

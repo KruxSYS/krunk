@@ -69,7 +69,10 @@ fun BrowserToolbar(
     val session = tab?.let { vm.tabs.session(it.id) }
     val haptic = LocalHapticFeedback.current
     val widthDp = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.width.toDp() }
-    val showHome = widthDp >= 400.dp
+    // The address needs the room on a phone: Home and the words "Not secure" appear from tablet
+    // width on (Home is in reach through the new-tab page and the homepage setting).
+    val wide = widthDp >= 600.dp
+    val showHome = wide
     var menuOpen by remember { mutableStateOf(false) }
     val placeholder = stringResource(R.string.address_placeholder, vm.settingsRepo.searchName)
 
@@ -97,6 +100,7 @@ fun BrowserToolbar(
                 placeholder = placeholder,
                 onClick = { vm.startEditing(if (tab == null || tab.isNewTab) "" else tab.displayUrl) },
                 modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+                compact = !wide,
             ) {
                 if (tab != null && !tab.isNewTab && session != null) {
                     if (page?.loading == true) {

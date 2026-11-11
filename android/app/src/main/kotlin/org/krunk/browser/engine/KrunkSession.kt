@@ -162,15 +162,24 @@ class KrunkSession(
 
     fun exitFullScreen() = gecko.exitFullScreen()
 
-    /** Restores a saved state (the engine then loads its current entry). False when it is unusable. */
-    fun restoreState(serialized: String): Boolean {
-        if (serialized.isEmpty()) return false
+    /**
+     * Restores a saved state (the engine then loads its current entry). Returns the address of
+     * that entry ("" when the state has none), or null when the state is unusable and nothing
+     * was restored. The caller compares the address with the tab's own: the engine reports its
+     * state with a delay, so a state saved right after a navigation can be one page behind.
+     */
+    fun restoreState(serialized: String): String? {
+        if (serialized.isEmpty()) return null
         val state = runCatching { GeckoSession.SessionState.fromString(serialized) }
             .onFailure { Log.w(KrunkApp.TAG, "could not restore session state", it) }
-            .getOrNull() ?: return false
+            .getOrNull() ?: return null
+        val current = runCatching { state[state.currentIndex].uri }.getOrDefault("")
         gecko.restoreState(state)
-        return true
+        return current
     }
+
+    /** Asks the engine to report its state now (it normally does so with a delay). */
+    fun flushState() = gecko.flushSessionState()
 
     /**
      * Find in page: a new [text] starts a search (every match highlighted), `null` moves to the
