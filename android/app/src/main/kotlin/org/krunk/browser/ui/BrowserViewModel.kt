@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.krunk.browser.KrunkApp
@@ -20,6 +22,7 @@ import org.krunk.browser.tabs.TabManager
 import org.krunk.browser.tabs.TabUi
 import org.krunk.ffi.AddressSuggestion
 import org.krunk.ffi.AndroidSettings
+import org.krunk.ffi.bookmarkable
 
 /** Which native screen is on top of the browser. */
 sealed class Screen {
@@ -141,6 +144,70 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
     fun goTo(url: String) {
         stopEditing()
         tabs.navigate(url)
+    }
+
+    // ----- find in page -----
+
+    private val _findActive = MutableStateFlow(false)
+    val findActive: StateFlow<Boolean> = _findActive.asStateFlow()
+    private val _findText = MutableStateFlow("")
+    val findText: StateFlow<String> = _findText.asStateFlow()
+
+    fun openFind() {
+        stopEditing()
+        _findActive.value = true
+    }
+
+    /** New search text: an empty string clears the highlights. */
+    fun findTyped(text: String) {
+        _findText.value = text
+        val s = tabs.activeSession() ?: return
+        if (text.isEmpty()) s.clearFind() else s.find(text, forward = true)
+    }
+
+    fun findNext(forward: Boolean) {
+        if (_findText.value.isEmpty()) return
+        tabs.activeSession()?.find(null, forward)
+    }
+
+    fun closeFind() {
+        if (!_findActive.value) return
+        _findActive.value = false
+        _findText.value = ""
+        tabs.activeSession()?.clearFind()
+    }
+
+    // ----- bookmarks (star state of the active page) -----
+
+    private val _bookmarkOverride = MutableStateFlow<Pair<String, Boolean>?>(null)
+
+    /**
+     * Whether the active tab's URL is bookmarked; queried again when the URL changes and when
+     * another screen (the bookmark manager may have removed it) is left.
+     */
+    val bookmarked: StateFlow<Boolean> = combine(activeTab, screens) { tab, stack -> (tab?.url ?: "") to stack.size }
+        .distinctUntilChanged()
+        .map { (url, _) ->
+            _bookmarkOverride.value = null
+            url.isNotEmpty() && bookmarkable(url) &&
+                core.io { store -> runCatching { store.isBookmarked(url) }.getOrDefault(false) }
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    /** The star state to show: the last toggle wins over the stored state for the same URL. */
+    val bookmarkedShown: StateFlow<Boolean> = combine(bookmarked, _bookmarkOverride, activeTab) { stored, over, tab ->
+        if (over != null && over.first == tab?.url) over.second else stored
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    fun canBookmark(tab: TabUi?): Boolean = tab != null && tab.url.isNotEmpty() && bookmarkable(tab.url)
+
+    /** Adds or removes the bookmark for the active page; returns the new state, null if not bookmarkable. */
+    suspend fun toggleBookmark(): Boolean? {
+        val tab = activeTab.value ?: return null
+        if (!canBookmark(tab)) return null
+        val now = core.io { it.toggleBookmark(tab.url, tab.title.ifEmpty { tab.url }) }
+        _bookmarkOverride.value = tab.url to now
+        return now
     }
 
     suspend fun updateSettings(transform: (AndroidSettings) -> AndroidSettings): Result<Unit> {
