@@ -243,6 +243,16 @@ body.pv-dark { --bg-raised: #202124; --bg-hover: #3c4043; --fg: #e8eaed; --fg-mu
   background: none; color: var(--fg-muted); font-size: 16px; line-height: 1; padding: 0; }
 .tl-close:hover { background: var(--bg-hover); color: var(--fg); }
 .tl-empty { padding: 10px 12px; color: var(--fg-muted); }
+/* The tab hover card (0.15.0): a 280×158 picture (core layout::TAB_PREVIEW_THUMB), the title
+   and the site; 296 px wide with the border (layout::TAB_PREVIEW_WIDTH). Never focused. */
+#root[data-kind="tabPreview"] { padding: 7px; }
+.tab-preview .tp-thumb { width: 280px; height: 158px; margin-bottom: 8px; border-radius: 6px; overflow: hidden;
+                         background: var(--bg); box-shadow: inset 0 0 0 1px var(--border); }
+.tab-preview .tp-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top left; }
+.tab-preview .tp-title, .tab-preview .tp-site { padding: 0 4px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tab-preview .tp-title { padding-top: 4px; height: 24px; line-height: 20px; font-weight: 600; }
+.tab-preview .tp-site { height: 22px; line-height: 18px; color: var(--fg-muted); font-size: 0.923rem; }
+.tab-preview .tp-private { color: var(--private); }
 /* A page's dialog (0.12.4): its text as the page wrote it (line breaks kept), long ones scroll. */
 .js-dialog h2 { overflow-wrap: anywhere; }
 .js-dialog .jsd-message { margin: 0 0 12px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 280px; overflow-y: auto; user-select: text; }

@@ -28,6 +28,7 @@
     const node = el('div', {
       class: 'tab', role: 'tab', 'data-id': id,
       onmousedown: function (e) {
+        hoverHide();
         if (e.button !== 0 || e.target.closest('.close, .audio')) return;
         // Double-click duplicates. Detected here rather than with dblclick: the first press
         // activates the tab and re-renders it, which can swallow a dblclick.
@@ -42,8 +43,11 @@
       onauxclick: function (e) {
         if (e.button === 1) { e.preventDefault(); closeWithMouse(id); }
       },
+      onmouseenter: function () { hoverEnter(id); },
+      onmouseleave: function () { hoverLeave(id); },
       oncontextmenu: function (e) {
         e.preventDefault();
+        hoverHide();
         LB.post('showTabMenu', { id: id, rect: { x: e.clientX, y: e.clientY, width: 240, height: 256 } });
         setPopup('tabMenu');
       },
@@ -58,7 +62,9 @@
       (t.sleeping ? ' sleeping' : '') + (node.classList.contains('opening') ? ' opening' : '') +
       (node.classList.contains('dragging') ? ' dragging' : '');
     node.setAttribute('aria-selected', active ? 'true' : 'false');
-    node.setAttribute('title', (t.private ? '[Private] ' : '') + t.title + (t.url ? '\n' + t.url : ''));
+    // 0.15.0: with hover cards the card says it; the tooltip only without them.
+    if (hoverOn()) node.removeAttribute('title');
+    else node.setAttribute('title', (t.private ? '[Private] ' : '') + t.title + (t.url ? '\n' + t.url : ''));
     node.dataset.index = index;
     // Only what changed is rebuilt (0.10.0): 0.9.0 rebuilt every tab's contents on every
     // change of any tab. The parts are kept on the node with the state they show.
@@ -92,14 +98,58 @@
     if (!!p.mark !== !!t.private) {
       p.mark = t.private ? el('span', { class: 'private-mark', title: 'Private tab' }, [svgIcon('i-mask')]) : null;
     }
+    // 0.15.0: a key while the tab waits for an HTTP sign-in (its dialog shows with the tab).
+    if (!!p.auth !== !!t.authPending) {
+      p.auth = t.authPending ? el('span', { class: 'auth-badge', title: 'This site asks you to sign in', 'aria-label': 'Sign-in waiting' }, [svgIcon('i-key')]) : null;
+    }
     const title = t.title || 'New tab';
     if (p.title.textContent !== title) p.title.textContent = title;
-    const want = [p.mark, p.icon, p.title, p.speaker, p.close].filter(Boolean);
+    const want = [p.mark, p.icon, p.title, p.auth, p.speaker, p.close].filter(Boolean);
     const have = node.childNodes;
     if (have.length !== want.length || want.some(function (n, i) { return have[i] !== n; })) {
       node.replaceChildren.apply(node, want);
     }
   }
+
+  // ---------- hover cards (0.15.0) ----------
+  // The pointer rests on a tab for HOVER_MS: the host shows its card (title, site, a picture).
+  // Moving on to another tab while it is open updates it at once; leaving the strip, a press, a
+  // drag, the wheel or a scroll hides it.
+  const HOVER_MS = 500, HOVER_LEAVE_MS = 80;
+  let hoverTimer = 0, leaveTimer = 0, hoverId = null, cardOpen = false;
+  function hoverOn() { return state.hoverPreview !== false; }
+  function hoverEnter(id) {
+    clearTimeout(leaveTimer);
+    if (!hoverOn() || document.querySelector('#tabs .tab.dragging')) return;
+    hoverId = id;
+    clearTimeout(hoverTimer);
+    if (cardOpen) sendHover();
+    else hoverTimer = setTimeout(sendHover, HOVER_MS);
+  }
+  function hoverLeave(id) {
+    if (hoverId !== id) return;
+    clearTimeout(hoverTimer);
+    hoverId = null;
+    // On to the next tab: its enter comes right after and keeps the card.
+    if (cardOpen) leaveTimer = setTimeout(hoverHide, HOVER_LEAVE_MS);
+  }
+  function sendHover() {
+    hoverTimer = 0;
+    const node = hoverId !== null && tabNodes.get(hoverId);
+    if (!node || !node.isConnected || node.classList.contains('closing')) { hoverHide(); return; }
+    cardOpen = true;
+    LB.post('tabHover', { id: hoverId, rect: rectOf(node) });
+  }
+  function hoverHide() {
+    clearTimeout(hoverTimer);
+    clearTimeout(leaveTimer);
+    hoverTimer = 0;
+    hoverId = null;
+    if (cardOpen) { cardOpen = false; LB.post('tabHover', {}); }
+  }
+  $('tabs').addEventListener('wheel', hoverHide, { passive: true });
+  $('tabs').addEventListener('scroll', function () { if (cardOpen || hoverTimer) hoverHide(); }, { passive: true });
+  window.addEventListener('blur', hoverHide);
 
   // Close button or middle click: the other tabs keep their widths for now.
   function closeWithMouse(id) {
@@ -1377,6 +1427,13 @@
     document.documentElement.classList.toggle('light', m.theme === 'light');
     // The placeholder names the default search engine (it changes with the setting).
     if (m.searchName) address.placeholder = 'Search with ' + m.searchName + ' or enter address';
+    // 0.15.0: hover cards (on unless the host says otherwise); the tooltips follow.
+    const cards = m.tabHoverPreview !== false;
+    if (cards !== hoverOn()) {
+      state.hoverPreview = cards;
+      if (!cards) hoverHide();
+      state.tabs.forEach(function (t, i) { const n = tabNodes.get(t.id); if (n) fillTabNode(n, t, i); });
+    }
     applyAppearance(m.appearance, m.colors);
   });
   // A request while the user is typing (the new tab page finished loading, the window got the
