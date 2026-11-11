@@ -31,6 +31,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import org.krunk.browser.R
 
 /** Find in page: text, "n/m", previous, next, close. Replaces the toolbar row while open. */
 @Composable
@@ -50,7 +51,10 @@ fun FindBar(
         focus.requestFocus()
         keyboard?.show()
     }
-    Surface(modifier = modifier.fillMaxWidth().height(ToolbarHeight), color = MaterialTheme.colorScheme.surfaceContainer) {
+    Surface(
+        modifier = modifier.fillMaxWidth().height(ToolbarHeight),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+    ) {
         Row(Modifier.padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.weight(1f)) {
                 if (text.isEmpty()) {

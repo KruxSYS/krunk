@@ -3,6 +3,7 @@ package org.krunk.browser.ui.browser
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Bookmarks
 import androidx.compose.material.icons.outlined.Computer
 import androidx.compose.material.icons.outlined.FindInPage
 import androidx.compose.material.icons.outlined.History
@@ -11,7 +12,6 @@ import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.StarBorder
-import androidx.compose.material.icons.outlined.Bookmarks
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -65,7 +65,9 @@ fun BrowserMenu(
         }
         HorizontalDivider()
         DropdownMenuItem(
-            text = { Text(stringResource(if (bookmarked) R.string.menu_bookmark_remove else R.string.menu_bookmark_add)) },
+            text = {
+                Text(stringResource(if (bookmarked) R.string.menu_bookmark_remove else R.string.menu_bookmark_add))
+            },
             leadingIcon = {
                 Icon(
                     if (bookmarked) Icons.Filled.Star else Icons.Outlined.StarBorder,

@@ -73,7 +73,10 @@ fun BrowserToolbar(
     var menuOpen by remember { mutableStateOf(false) }
     val placeholder = stringResource(R.string.address_placeholder, vm.settingsRepo.searchName)
 
-    Surface(modifier = modifier.fillMaxWidth().height(ToolbarHeight), color = MaterialTheme.colorScheme.surfaceContainer) {
+    Surface(
+        modifier = modifier.fillMaxWidth().height(ToolbarHeight),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+    ) {
         Row(Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { session?.goBack() }, enabled = page?.canGoBack == true) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.toolbar_back))
@@ -142,7 +145,10 @@ private fun TabCounter(count: Int, onClick: () -> Unit, onLongClick: () -> Unit)
             .size(48.dp)
             .clip(CircleShape)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-            .semantics { role = Role.Button; contentDescription = label },
+            .semantics {
+                role = Role.Button
+                contentDescription = label
+            },
         contentAlignment = Alignment.Center,
     ) {
         Box(

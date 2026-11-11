@@ -53,9 +53,9 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
@@ -102,7 +102,10 @@ fun AddressPill(
             .height(AddressPillHeight)
             .clip(PillShape)
             .clickable(onClick = onClick)
-            .semantics { role = Role.Button; contentDescription = editLabel },
+            .semantics {
+                role = Role.Button
+                contentDescription = editLabel
+            },
         shape = PillShape,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
     ) {
@@ -287,7 +290,9 @@ private fun SuggestionRow(row: AddressSuggestion, onPick: () -> Unit, onFill: ()
             Icons.Filled.Search to stringResource(R.string.suggestion_search)
 
         SuggestionKind.HISTORY -> Icons.Outlined.History to stringResource(R.string.suggestion_history)
+
         SuggestionKind.BOOKMARK -> Icons.Filled.Star to stringResource(R.string.suggestion_bookmark)
+
         SuggestionKind.URL -> Icons.Outlined.Public to null
     }
     Row(

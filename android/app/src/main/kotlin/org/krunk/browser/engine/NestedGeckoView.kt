@@ -21,7 +21,9 @@ import org.mozilla.geckoview.PanZoomController
  * unconsumed downward distance only when the page is already at its top, so pull-to-refresh
  * never fights a scroll inside the page.
  */
-open class NestedGeckoView(context: Context) : GeckoView(context), NestedScrollingChild3 {
+open class NestedGeckoView(context: Context) :
+    GeckoView(context),
+    NestedScrollingChild3 {
     private val helper = NestedScrollingChildHelper(this)
     private val consumed = IntArray(2)
     private val offsetInWindow = IntArray(2)
