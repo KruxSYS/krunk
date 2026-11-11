@@ -43,6 +43,7 @@ class GeckoEngine(context: Context) {
      * sees, text scaling (system font scale or the in-app factor), forced pinch zoom.
      */
     fun applySettings(settings: AndroidSettings) {
+        userAgent = settings.userAgent.trim()
         val rs = runtime.settings
         rs.allowInsecureConnections =
             if (settings.httpsOnly) GeckoRuntimeSettings.HTTPS_ONLY else GeckoRuntimeSettings.ALLOW_ALL
@@ -60,14 +61,18 @@ class GeckoEngine(context: Context) {
         rs.forceUserScalableEnabled = settings.forceZoom
     }
 
+    /** Settings > Advanced > User agent ("" = the engine's own); sessions are created with it. */
+    @Volatile
+    private var userAgent: String = ""
+
     /** A session for a tab. Desktop mode is toggled later per tab. */
     fun createSession(private: Boolean): GeckoSession {
-        val s = GeckoSessionSettings.Builder()
+        val builder = GeckoSessionSettings.Builder()
             .usePrivateMode(private)
             .userAgentMode(GeckoSessionSettings.USER_AGENT_MODE_MOBILE)
             .viewportMode(GeckoSessionSettings.VIEWPORT_MODE_MOBILE)
-            .build()
-        return GeckoSession(s)
+        if (userAgent.isNotEmpty()) builder.userAgentOverride(userAgent)
+        return GeckoSession(builder.build())
     }
 
     /** Clears site data. Callers close sessions first so nothing re-accumulates. */

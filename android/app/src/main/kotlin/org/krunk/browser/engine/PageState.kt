@@ -78,6 +78,9 @@ fun PageState.pageStarted(startedUrl: String): PageState {
     val from = originOf(url)
     val sameSite = from != null && from == originOf(startedUrl)
     return copy(
+        // A new document: the previous page's title is not its title (history must not record
+        // the visit under it); the page reports its own.
+        title = "",
         progress = 0.05f,
         loading = true,
         loadError = null,
@@ -160,3 +163,19 @@ fun modelUrlAfter(page: PageState, modelIsInternal: Boolean, engineUrlIsInternal
     engineUrlIsInternal -> null
     else -> page.url
 }
+
+/** The engine's visit flags (`GeckoSession.HistoryDelegate.VISIT_*`), as numbers for the JVM tests. */
+object VisitFlags {
+    const val TOP_LEVEL = 1
+    const val REDIRECT_SOURCE = 8
+    const val REDIRECT_SOURCE_PERMANENT = 16
+    const val UNRECOVERABLE_ERROR = 32
+}
+
+/**
+ * Whether a visit the engine reports goes into the history: top-level pages that loaded, and
+ * not the addresses that only redirected somewhere else (the user never saw those).
+ */
+fun isRecordableVisit(flags: Int): Boolean = flags and VisitFlags.TOP_LEVEL != 0 &&
+    flags and VisitFlags.UNRECOVERABLE_ERROR == 0 &&
+    flags and (VisitFlags.REDIRECT_SOURCE or VisitFlags.REDIRECT_SOURCE_PERMANENT) == 0

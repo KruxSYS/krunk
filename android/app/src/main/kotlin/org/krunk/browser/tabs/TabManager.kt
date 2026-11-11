@@ -10,13 +10,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -88,8 +89,11 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
 
     /** Recently closed tabs, oldest first (as the core keeps them). */
     val closedTabs: StateFlow<List<ClosedTab>> = _closedTabs.asStateFlow()
-    private val _events = MutableSharedFlow<TabEvent>(extraBufferCapacity = 16)
-    val events: SharedFlow<TabEvent> = _events.asSharedFlow()
+
+    // A channel, not a shared flow: an event raised while another screen is on top (a download
+    // answered during the tab switcher) waits for the browser screen instead of being lost.
+    private val _events = Channel<TabEvent>(capacity = 16, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    val events: Flow<TabEvent> = _events.receiveAsFlow()
     private val _restorePrompt = MutableStateFlow<RestorePromptState?>(null)
 
     /** Non-null while the crash-restore offer is open. */
@@ -387,6 +391,8 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
     private fun startMemoryPolicy() {
         scope.launch {
             core.settings.settings.collect { s ->
+                // The user-agent setting reaches the open tabs too (their next load uses it).
+                sessions.values.forEach { it.setUserAgent(s.userAgent) }
                 val testSeconds = DebugProps.long(DebugProps.SLEEP_SECONDS)
                 memory.policy = MemoryTicker.policyFor(s, testSeconds, DebugProps.flag(DebugProps.DISCARD_TEST))
                 Log.i(
@@ -465,7 +471,10 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         opener: UInt?,
         live: Boolean,
     ): UInt {
-        val r = model.open(target, private, opener, activate, live, nowMs())
+        // Tracking parameters go before the first request, also for links from other apps and
+        // from the link menu (HTTPS-only is the engine's job: it knows its exceptions).
+        val url = if (target.isEmpty() || internalPage(target) != null) target else cleaned(target)
+        val r = model.open(url, private, opener, activate, live, nowMs())
         if (source != LoadSource.USER) loadSources[r.id] = LoadOrigin(source, opener)
         apply(r.effects)
         refresh()
@@ -591,20 +600,25 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         val id = tabId ?: return
         val page = internalPage(url)
         if (page != null && page != "newtab") {
-            _events.tryEmit(TabEvent.OpenScreen(page))
+            _events.trySend(TabEvent.OpenScreen(page))
             return
         }
         if (page == "newtab") {
             showNewTab(id)
             return
         }
-        val s = core.settings.current
-        val target = navigationRewrite(url, s.stripTrackingParams, s.httpsOnly, emptyList())?.url ?: url
+        val target = cleaned(url)
         model.setUrl(id, target)
         model.setLoading(id, true)
         ensureSession(id)?.load(target)
         refresh()
         scheduleSave()
+    }
+
+    /** [url] without tracking parameters when the setting is on. */
+    private fun cleaned(url: String): String {
+        if (!core.settings.current.stripTrackingParams) return url
+        return navigationRewrite(url, true, false, emptyList())?.url ?: url
     }
 
     private fun showNewTab(id: UInt) {
@@ -712,22 +726,37 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
 
     // ----- state -----
 
+    /** What the core says about an address, remembered: asked for every tab on every refresh. */
+    private class UrlFacts(val internalPage: String?, val display: String)
+
+    private val urlFactsCache = LruMap<String, UrlFacts>(URL_FACTS_CAPACITY)
+
+    private fun urlFacts(url: String): UrlFacts {
+        urlFactsCache[url]?.let { return it }
+        val internal = internalPage(url)
+        val facts = UrlFacts(internal, if (internal != null) displayUrl(url) else url)
+        // Very long addresses (data:) are not worth keeping as keys.
+        if (url.length <= 2048) urlFactsCache[url] = facts
+        return facts
+    }
+
     fun refresh() {
         val list = model.tabs().map { t ->
             val session = sessions[t.id]
             val page = session?.current ?: PageState(url = t.url, title = t.title)
             val url = displayedUrl(
                 modelUrl = t.url,
-                modelIsInternal = internalPage(t.url) != null,
+                modelIsInternal = urlFacts(t.url).internalPage != null,
                 page = page,
                 hasSession = session != null,
                 openedByPage = session?.openedByPage == true,
             )
-            val internal = internalPage(url)
+            val facts = urlFacts(url)
+            val internal = facts.internalPage
             TabUi(
                 id = t.id,
                 url = url,
-                displayUrl = if (internal != null) displayUrl(url) else url,
+                displayUrl = facts.display,
                 title = t.title.ifEmpty { page.title },
                 private = t.private,
                 live = t.live,
@@ -748,12 +777,16 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
     override fun onVisited(session: KrunkSession, url: String) {
         if (session.private) return
         val stored = visitUrl(url, false) ?: return
-        val title = session.current.title
-        model.setUrl(session.id, url)
-        scope.launch(Dispatchers.IO) {
-            runCatching { core.store.recordVisit(stored, title, nowMs()) }
+        // The title is this document's only when the engine is already at this address (the
+        // state's title is emptied when a new document starts); otherwise the visit is stored
+        // without one and the title event fills it in.
+        val title = if (session.current.url == url) session.current.title else ""
+        val ts = nowMs()
+        // One writer for history rows: a visit and the title that follows land in that order.
+        scope.launch(persist) {
+            runCatching { core.store.recordVisit(stored, title, ts) }
+                .onFailure { Log.w(KrunkApp.TAG, "a visit could not be recorded", it) }
         }
-        scheduleSave()
     }
 
     override fun onTitleChanged(session: KrunkSession, title: String) {
@@ -761,10 +794,12 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         if (!session.private) {
             val url = session.current.url
             visitUrl(url, false)?.let { stored ->
-                scope.launch(Dispatchers.IO) { runCatching { core.store.setTitle(stored, title) } }
+                scope.launch(persist) {
+                    runCatching { core.store.setTitle(stored, title) }
+                        .onFailure { Log.w(KrunkApp.TAG, "a page title could not be stored", it) }
+                }
             }
         }
-        refresh()
         scheduleSave()
     }
 
@@ -782,11 +817,11 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
     }
 
     override fun onContextMenu(session: KrunkSession, target: ContextTarget) {
-        _events.tryEmit(TabEvent.ContextMenu(session.id, target))
+        _events.trySend(TabEvent.ContextMenu(session.id, target))
     }
 
     override fun onExternalResponse(session: KrunkSession, response: WebResponse) {
-        _events.tryEmit(TabEvent.Download(session.id, response))
+        _events.trySend(TabEvent.Download(session.id, response))
     }
 
     override fun onIcons(session: KrunkSession, pageUrl: String, icons: List<IconCandidate>) {
@@ -804,7 +839,11 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         // never an address on the internal origin a page navigated to).
         val modelUrl = model.tab(session.id)?.url
         if (modelUrl != null) {
-            val next = modelUrlAfter(st, internalPage(modelUrl) != null, internalPage(st.url) != null)
+            val next = modelUrlAfter(
+                st,
+                urlFacts(modelUrl).internalPage != null,
+                urlFacts(st.url).internalPage != null,
+            )
             if (next != null && next != modelUrl) model.setUrl(session.id, next)
         }
         // Back/forward history and scroll position must survive a crash: persist state changes
@@ -848,6 +887,7 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         const val KV_UNCLEAN_STARTS = "android.unclean_starts"
 
         const val THUMBNAIL_CAPACITY = 12
+        const val URL_FACTS_CAPACITY = 128
         const val THUMBNAIL_SCALE = 3
         const val SAVE_DELAY_MS = 500L
         const val STATE_SAVE_DELAY_MS = 3000L

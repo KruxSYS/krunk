@@ -24,6 +24,14 @@ impl KrunkStore {
 }
 
 /// One history row (a visit).
+/// A page title as history stores it: control characters removed, trimmed, at most 512
+/// characters (the tab model's limit). A page chooses its title, and an unbounded one would
+/// sit in the database and slow every address-bar query.
+fn clean_title(title: &str) -> String {
+    let clean: String = title.chars().filter(|c| !c.is_control()).take(512).collect();
+    clean.trim().to_string()
+}
+
 /// One `kv` row for [`KrunkStore::kv_set_many`].
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct KvEntry {
@@ -260,12 +268,13 @@ impl KrunkStore {
     // ----- history -----
 
     /// Records a visit (the URL as returned by `visit_url`); `None` when the URL is not recorded.
+    /// The title is cleaned and bounded ([`clean_title`]); an empty one keeps the stored title.
     pub fn record_visit(&self, url: String, title: String, ts: i64) -> Result<Option<i64>, FfiError> {
-        Ok(self.lock().record_visit(&url, &title, ts)?)
+        Ok(self.lock().record_visit(&url, &clean_title(&title), ts)?)
     }
 
     pub fn set_title(&self, url: String, title: String) -> Result<(), FfiError> {
-        Ok(self.lock().set_title(&url, &title)?)
+        Ok(self.lock().set_title(&url, &clean_title(&title))?)
     }
 
     /// Visits matching `text` (empty = all), newest first, older than `before` (ms, exclusive)
@@ -582,6 +591,27 @@ mod tests {
         assert_eq!(s.favicon("a.example".into()).unwrap().unwrap(), png.to_vec());
         assert_eq!(s.favicon("none.example".into()).unwrap(), None);
         s.vacuum().unwrap();
+    }
+
+    #[test]
+    fn history_titles_are_cleaned_and_bounded() {
+        let s = store();
+        let huge = format!("  Big\u{0007}\ttitle {}", "x".repeat(2_000_000));
+        s.record_visit("https://a.example/".into(), huge.clone(), 1_000).unwrap();
+        let row = &s.query_history(String::new(), None, 10).unwrap()[0];
+        assert_eq!(row.title.chars().count(), 510);
+        assert!(row.title.starts_with("Bigtitle x"));
+        // The later title event is bounded the same way ...
+        s.set_title("https://a.example/".into(), huge).unwrap();
+        assert_eq!(s.query_history(String::new(), None, 10).unwrap()[0].title.chars().count(), 510);
+        // ... and a visit recorded without a title keeps the one already stored.
+        s.set_title("https://a.example/".into(), "Real title".into()).unwrap();
+        s.record_visit("https://a.example/".into(), String::new(), 2_000).unwrap();
+        s.record_visit("https://a.example/".into(), " \u{0000} ".into(), 3_000).unwrap();
+        let rows = s.query_history(String::new(), None, 10).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert!(rows.iter().all(|r| r.title == "Real title"));
+        assert_eq!(clean_title("ok"), "ok");
     }
 
     #[test]

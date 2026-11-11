@@ -26,12 +26,18 @@ class Favicons(private val core: KrunkCore) {
     private val missing = HashSet<String>()
     private val inFlight = HashSet<String>()
 
-    fun cached(url: String): Bitmap? {
-        val host = hostOf(url) ?: return null
-        cache.get(host)?.let { return it }
-        if (host in missing) return null
-        return null
+    /** Hosts of addresses already asked about (the tab list asks for every tab on every refresh). */
+    private val hosts = LruMap<String, String>(256)
+
+    private fun hostFor(url: String): String? {
+        hosts[url]?.let { return it.ifEmpty { null } }
+        val host = hostOf(url)
+        if (url.length <= 2048) hosts[url] = host ?: ""
+        return host
     }
+
+    /** The icon held in memory for the address's host, if any. */
+    fun cached(url: String): Bitmap? = hostFor(url)?.let { cache.get(it) }
 
     /** Forgets every icon held in memory (the stored ones are deleted by the caller). */
     fun clear() {

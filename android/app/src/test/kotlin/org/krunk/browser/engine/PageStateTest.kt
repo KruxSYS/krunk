@@ -167,6 +167,29 @@ class PageStateTest {
     }
 
     @Test
+    fun aNewDocumentStartsWithoutThePreviousTitle() {
+        var s = PageState().locationChanged(evil).copy(title = "Evil news")
+        s = s.pageStarted(bank)
+        assertEquals("", s.title)
+        // A change inside the same document (no new load) keeps the title.
+        val spa = PageState().locationChanged(evil).copy(title = "App").locationChanged("https://evil.example/#/inbox")
+        assertEquals("App", spa.title)
+    }
+
+    @Test
+    fun onlyPagesTheUserSawAreRecordedAsVisits() {
+        assertTrue(isRecordableVisit(VisitFlags.TOP_LEVEL))
+        // A redirect's destination is a visit (the engine adds how it was reached) ...
+        assertTrue(isRecordableVisit(VisitFlags.TOP_LEVEL or 2))
+        assertTrue(isRecordableVisit(VisitFlags.TOP_LEVEL or 4))
+        // ... the addresses that only redirected are not, nor frames, nor failed loads.
+        assertFalse(isRecordableVisit(VisitFlags.TOP_LEVEL or VisitFlags.REDIRECT_SOURCE))
+        assertFalse(isRecordableVisit(VisitFlags.TOP_LEVEL or VisitFlags.REDIRECT_SOURCE_PERMANENT))
+        assertFalse(isRecordableVisit(0))
+        assertFalse(isRecordableVisit(VisitFlags.TOP_LEVEL or VisitFlags.UNRECOVERABLE_ERROR))
+    }
+
+    @Test
     fun theFirstBlankPageIsIgnoredOnlyOnce() {
         var s = PageState().requested(bank).locationChanged(ABOUT_BLANK)
         assertEquals(bank, s.pendingUrl)

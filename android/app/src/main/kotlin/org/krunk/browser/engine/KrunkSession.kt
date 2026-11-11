@@ -4,7 +4,6 @@ import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import org.krunk.browser.KrunkApp
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
@@ -79,12 +78,21 @@ class KrunkSession(
     val openedByPage: Boolean = false,
 ) {
     val gecko: GeckoSession = engine.createSession(private)
+
+    /** The user-agent setting changed: it applies to this tab's next load. */
+    fun setUserAgent(userAgent: String) {
+        gecko.settings.userAgentOverride = userAgent.trim().ifEmpty { null }
+    }
     private val _state = MutableStateFlow(PageState())
     val state: StateFlow<PageState> = _state.asStateFlow()
     val current: PageState get() = _state.value
 
+    /** Applies a change; listeners only hear about it when something really changed. */
     private fun set(transform: (PageState) -> PageState) {
-        _state.update(transform)
+        val before = _state.value
+        val after = transform(before)
+        if (after == before) return
+        _state.value = after
         listener.onStateChanged(this)
     }
 
@@ -246,8 +254,9 @@ class KrunkSession(
     private val content = object : GeckoSession.ContentDelegate {
         override fun onTitleChange(session: GeckoSession, title: String?) {
             val t = title ?: ""
-            set { it.copy(title = t) }
+            // The tab model first, so the one refresh the state change triggers shows it.
             listener.onTitleChanged(this@KrunkSession, t)
+            set { it.copy(title = t) }
         }
 
         override fun onFullScreen(session: GeckoSession, fullScreen: Boolean) {
@@ -301,10 +310,9 @@ class KrunkSession(
             lastVisitedURL: String?,
             flags: Int,
         ): GeckoResult<Boolean>? {
-            val topLevel = flags and GeckoSession.HistoryDelegate.VISIT_TOP_LEVEL != 0
-            val error = flags and GeckoSession.HistoryDelegate.VISIT_UNRECOVERABLE_ERROR != 0
-            if (recordHistory && topLevel && !error) listener.onVisited(this@KrunkSession, url)
-            return GeckoResult.fromValue(recordHistory && topLevel && !error)
+            val record = recordHistory && isRecordableVisit(flags)
+            if (record) listener.onVisited(this@KrunkSession, url)
+            return GeckoResult.fromValue(record)
         }
     }
 
