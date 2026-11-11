@@ -246,6 +246,19 @@ pub fn wallpapers() -> Vec<Wallpaper> {
         .collect()
 }
 
+/// One built-in wallpaper by id (`None` for an unknown id, as settings validation sees it).
+#[uniffi::export]
+pub fn wallpaper(id: String) -> Option<Wallpaper> {
+    lb_core::assets::wallpaper(&id).map(|w| Wallpaper { id: w.id, title: w.title, look: w.look, dim: w.dim })
+}
+
+/// Whether `text` is a colour the settings accept: `#rrggbb` or empty (the same rule the core's
+/// validation applies to `ntp.backgroundColor`).
+#[uniffi::export]
+pub fn is_hex_color(text: String) -> bool {
+    lb_core::settings::is_hex_color(&text)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,5 +330,11 @@ mod tests {
         let w = wallpapers();
         assert_eq!(w.len(), 10);
         assert!(w.iter().all(|w| w.look == "dark" || w.look == "light"));
+        assert_eq!(wallpaper("aurora".into()).map(|w| w.look), Some("dark".into()));
+        assert_eq!(wallpaper("nope".into()), None);
+        assert!(is_hex_color("#2563eb".into()));
+        assert!(is_hex_color(String::new()));
+        assert!(!is_hex_color("2563eb".into()));
+        assert!(!is_hex_color("#25".into()));
     }
 }
