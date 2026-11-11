@@ -192,12 +192,18 @@ class KrunkSession(
         var flags = 0
         if (!forward) flags = flags or GeckoSession.FINDER_FIND_BACKWARDS
         gecko.finder.displayFlags = GeckoSession.FINDER_DISPLAY_HIGHLIGHT_ALL
+        // Only the answer to the latest search counts: one that was overtaken comes back
+        // without its match count and must not replace the newer result.
+        val search = ++findSearch
         gecko.finder.find(text, flags).accept { r ->
-            set { it.copy(findCurrent = r?.current ?: 0, findTotal = r?.total ?: 0) }
+            if (search == findSearch) set { it.copy(findCurrent = r?.current ?: 0, findTotal = r?.total ?: 0) }
         }
     }
 
+    private var findSearch = 0
+
     fun clearFind() {
+        findSearch++
         gecko.finder.clear()
         gecko.finder.displayFlags = 0
         set { it.copy(findCurrent = 0, findTotal = 0) }

@@ -51,7 +51,7 @@ A fix release after a full review of the 0.1.0 code, with one changed default. I
 - **History:** visits are stored under their own page's title, and addresses that only
   redirect are not listed.
 - **Smaller fixes:** a database that cannot be opened no longer stops Krunk from starting; find
-  in page belongs to its tab; the address editor no longer shows a suggestion from the last
+  in page belongs to its tab and shows its match count also when typed fast; the address editor no longer shows a suggestion from the last
   time; mail and phone links can be copied from the link menu; a cancelled history page load no
   longer ends the list; settings dialogs scroll.
 - Known limits, unchanged: downloads are handed to Android without the page's sign-in; file,

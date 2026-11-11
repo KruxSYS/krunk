@@ -202,21 +202,45 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
         _findActive.value = true
     }
 
-    /** New search text: an empty string clears the highlights. */
+    /**
+     * New search text: an empty string clears the highlights. The search runs after a short
+     * pause in typing: the engine counts matches in the background, and a search started while
+     * the previous one is still counting came back as "0/0" although the page showed the
+     * matches (seen on the release build, M7).
+     */
     fun findTyped(text: String) {
         _findText.value = text
+        findJob?.cancel()
         val s = findSession() ?: return
-        if (text.isEmpty()) s.clearFind() else s.find(text, forward = true)
+        if (text.isEmpty()) {
+            s.clearFind()
+            return
+        }
+        findJob = viewModelScope.launch {
+            delay(FIND_TYPING_PAUSE_MS)
+            s.find(text, forward = true)
+        }
     }
 
+    private var findJob: Job? = null
+
     fun findNext(forward: Boolean) {
-        if (_findText.value.isEmpty()) return
-        findSession()?.find(null, forward)
+        val text = _findText.value
+        if (text.isEmpty()) return
+        val s = findSession() ?: return
+        // A search still waiting for the typing pause runs now (Search on the keyboard).
+        if (findJob?.isActive == true) {
+            findJob?.cancel()
+            s.find(text, forward)
+        } else {
+            s.find(null, forward)
+        }
     }
 
     /** Closes the bar and clears the highlights in the tab it searched (not in another one). */
     fun closeFind() {
         if (!_findActive.value) return
+        findJob?.cancel()
         _findActive.value = false
         _findText.value = ""
         findSession()?.clearFind()
@@ -308,5 +332,10 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
         val r = settingsRepo.update(transform)
         if (r.isSuccess) engine.applySettings(settingsRepo.current)
         return r
+    }
+
+    private companion object {
+        /** Long enough for a fast typist's next key, short enough to feel immediate. */
+        const val FIND_TYPING_PAUSE_MS = 180L
     }
 }
