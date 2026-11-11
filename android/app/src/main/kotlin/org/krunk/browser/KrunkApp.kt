@@ -49,6 +49,10 @@ class KrunkApp : Application() {
             val t = tabs
             val active = t.activeId.value
             t.tabs.value.filter { it.live && it.id != active }.forEach { t.unload(it.id) }
+            // The switcher's pictures are the next biggest thing we hold; they come back on the
+            // next capture.
+            t.thumbnails.clear()
+            t.refresh()
         }
     }
 

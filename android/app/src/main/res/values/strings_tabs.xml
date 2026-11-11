@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Tab switcher -->
+    <string name="tabs_title">Tabs</string>
+    <string name="tabs_back">Back to the page</string>
+    <string name="tabs_section_normal">Tabs</string>
+    <string name="tabs_section_private">Private</string>
+    <string name="tabs_section_count">%1$s (%2$d)</string>
+    <string name="tabs_search_hint">Search tabs</string>
+    <string name="tabs_search_clear">Clear search</string>
+    <string name="tabs_close_all">Close all tabs</string>
+    <string name="tabs_close_all_private">Close all private tabs</string>
+    <string name="tabs_close_all_title">Close all tabs?</string>
+    <plurals name="tabs_close_all_text">
+        <item quantity="one">%d tab will be closed. Closed tabs can be reopened from Recently closed.</item>
+        <item quantity="other">%d tabs will be closed. Closed tabs can be reopened from Recently closed.</item>
+    </plurals>
+    <plurals name="tabs_close_all_private_text">
+        <item quantity="one">%d private tab will be closed. Private tabs cannot be reopened.</item>
+        <item quantity="other">%d private tabs will be closed. Private tabs cannot be reopened.</item>
+    </plurals>
+    <string name="tabs_close">Close</string>
+    <string name="tabs_cancel">Cancel</string>
+    <string name="tabs_new_tab">New tab</string>
+    <string name="tabs_new_private_tab">New private tab</string>
+    <string name="tabs_untitled">New tab</string>
+    <string name="tabs_card_description">%1$s, tab</string>
+    <string name="tabs_card_description_active">%1$s, current tab</string>
+    <string name="tabs_card_description_asleep">%1$s, sleeping tab</string>
+    <string name="tabs_switch_to">Switch to this tab</string>
+    <string name="tabs_close_tab">Close %1$s</string>
+    <string name="tabs_asleep">Sleeping</string>
+    <string name="tabs_empty">No open tabs</string>
+    <string name="tabs_empty_private">No private tabs. Pages you open here leave no history.</string>
+    <string name="tabs_empty_search">No tabs match “%1$s”</string>
+
+    <!-- Recently closed -->
+    <string name="tabs_recently_closed">Recently closed</string>
+    <string name="tabs_recently_closed_empty">Nothing closed recently</string>
+    <string name="tabs_recently_closed_clear">Clear</string>
+    <string name="tabs_reopen">Reopen %1$s</string>
+
+    <!-- Crash restore prompt -->
+    <string name="restore_title">Restore tabs?</string>
+    <plurals name="restore_text">
+        <item quantity="one">Krunk did not close properly last time. Restore %d tab from the previous session?</item>
+        <item quantity="other">Krunk did not close properly last time. Restore %d tabs from the previous session?</item>
+    </plurals>
+    <string name="restore_accept">Restore</string>
+    <string name="restore_fresh">Start fresh</string>
+</resources>
