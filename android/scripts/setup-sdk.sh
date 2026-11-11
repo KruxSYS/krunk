@@ -76,8 +76,13 @@ if [ "${#to_install[@]}" -gt 0 ]; then
     missing=1
   else
     # Accept the SDK licences non-interactively (the same text the IDE shows).
-    yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
-    yes | "$SDKMANAGER" --install "${to_install[@]}"
+    yes 2>/dev/null | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+    # `yes` dies of SIGPIPE when sdkmanager exits; only sdkmanager's status matters.
+    set +o pipefail
+    yes 2>/dev/null | "$SDKMANAGER" --install "${to_install[@]}"
+    rc=${PIPESTATUS[1]}
+    set -o pipefail
+    [ "$rc" = 0 ] || { echo "  sdkmanager failed ($rc)" >&2; exit 1; }
     for p in "${to_install[@]}"; do
       sdk_pkg_present "$p" || { echo "  failed to install $p" >&2; exit 1; }
     done

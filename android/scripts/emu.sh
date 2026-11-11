@@ -15,8 +15,11 @@
 #   emu.sh adb <args...>    adb against the selected device
 #
 # Device selection: $ANDROID_SERIAL if set, else the first "emulator-*" that is online. Other attached
-# devices (the sandbox also has an offline TV) are ignored.
+# devices (the sandbox also has an offline TV) are ignored. KRUNK_LOCAL_ADB=1 talks to the local adb
+# server (ignores $ADB_SERVER_SOCKET): needed for an emulator started by this script, which
+# registers with the adb server on this machine, not with a remote one.
 set -euo pipefail
+if [ "${KRUNK_LOCAL_ADB:-0}" = 1 ]; then unset ADB_SERVER_SOCKET; fi
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ANDROID_DIR=$(cd "$HERE/.." && pwd)
@@ -72,6 +75,12 @@ cmd_start() {
   fi
   local emulator="$SDK/emulator/emulator"
   [ -x "$emulator" ] || { echo "no attached emulator and no local emulator installed (setup-sdk.sh --with-local-emulator)" >&2; exit 1; }
+  if [ -n "${ADB_SERVER_SOCKET:-}" ]; then
+    echo "ADB_SERVER_SOCKET is set ($ADB_SERVER_SOCKET): a local emulator registers with the local adb server." >&2
+    echo "Run with KRUNK_LOCAL_ADB=1 (every emu.sh call) to use it." >&2
+    exit 1
+  fi
+  "$ADB" start-server > /dev/null 2>&1 || true
   "$SDK/cmdline-tools/latest/bin/avdmanager" list avd -c | grep -qx "$AVD_NAME" || { echo "AVD $AVD_NAME missing (setup-sdk.sh --with-local-emulator)" >&2; exit 1; }
   local accel=()
   if [ ! -e /dev/kvm ]; then
