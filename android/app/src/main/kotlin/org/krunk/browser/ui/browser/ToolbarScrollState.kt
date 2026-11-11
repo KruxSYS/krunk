@@ -33,8 +33,6 @@ class ToolbarScrollState(private val scope: CoroutineScope) : NestedScrollConnec
     private val anim = Animatable(0f)
     private var settle: Job? = null
 
-    val hiddenFraction: Float get() = if (heightPx <= 0f) 0f else (offsetPx / heightPx).coerceIn(0f, 1f)
-
     override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
         if (!enabled || heightPx <= 0f || source != NestedScrollSource.UserInput) return Offset.Zero
         settle?.cancel()
@@ -60,11 +58,6 @@ class ToolbarScrollState(private val scope: CoroutineScope) : NestedScrollConnec
     }
 
     fun show() = animateTo(0f)
-
-    fun showNow() {
-        settle?.cancel()
-        offsetPx = 0f
-    }
 
     private fun animateTo(target: Float) {
         if (offsetPx == target) return

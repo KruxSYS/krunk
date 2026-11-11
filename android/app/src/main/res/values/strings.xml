@@ -1,6 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Krunk</string>
-    <string name="address_hint">Search or enter address</string>
-    <string name="go">Go</string>
 </resources>

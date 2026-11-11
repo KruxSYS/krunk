@@ -105,14 +105,6 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
     val thumbnails = LruMap<UInt, Bitmap>(THUMBNAIL_CAPACITY)
     val favicons = Favicons(core) { engine.defaultUserAgent }
 
-    /**
-     * Set by the browser screen: the GeckoView showing the active tab, so a finished page load
-     * can refresh the tab's thumbnail without a user action (optional).
-     */
-    var thumbnailView: (() -> GeckoView?)? = null
-    private var lastCaptureAt = 0L
-    private var autoCaptureJob: Job? = null
-
     private val memory = MemoryTicker(this) { Log.i(KrunkApp.TAG, it) }
 
     @Volatile
@@ -125,8 +117,6 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
     private var pendingRestore: PendingRestore? = null
 
     private class PendingRestore(val sessionJson: String, val states: List<Pair<String, String>>)
-
-    val activeTab: TabUi? get() = _activeId.value?.let { id -> _tabs.value.firstOrNull { it.id == id } }
 
     fun session(id: UInt): KrunkSession? = sessions[id]
 
@@ -172,25 +162,12 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
     }
 
     private fun storeThumbnail(id: UInt, full: Bitmap) {
-        lastCaptureAt = SystemClock.uptimeMillis()
         val w = (full.width / THUMBNAIL_SCALE).coerceAtLeast(1)
         val h = (full.height / THUMBNAIL_SCALE).coerceAtLeast(1)
         val small = Bitmap.createScaledBitmap(full, w, h, true)
         if (small !== full) full.recycle()
         thumbnails[id] = small
         if (model.tab(id) != null) refresh()
-    }
-
-    /** A page finished loading in the active tab: refresh its picture (throttled, if a view is known). */
-    private fun scheduleAutoCapture(id: UInt) {
-        if (thumbnailView == null) return
-        autoCaptureJob?.cancel()
-        autoCaptureJob = scope.launch {
-            delay(AUTO_CAPTURE_DELAY_MS)
-            if (_activeId.value != id) return@launch
-            if (SystemClock.uptimeMillis() - lastCaptureAt < AUTO_CAPTURE_MIN_GAP_MS) return@launch
-            thumbnailView?.invoke()?.let { captureThumbnail(it) }
-        }
     }
 
     // ----- startup and persistence -----
@@ -551,13 +528,6 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         saveNow()
     }
 
-    fun moveTab(id: UInt, index: Int) {
-        if (model.moveTab(id, index.toUInt())) {
-            refresh()
-            scheduleSave()
-        }
-    }
-
     /** Frees a background tab's session (memory policy); it reloads on activation. */
     fun unload(id: UInt) {
         unloadQuietly(id)
@@ -856,9 +826,6 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         if (!session.private && st.sessionState != null && st.sessionState != prev?.sessionState) {
             scheduleSave(STATE_SAVE_DELAY_MS)
         }
-        if (prev?.loading == true && !st.loading && !st.crashed && session.id == _activeId.value) {
-            scheduleAutoCapture(session.id)
-        }
         refresh()
     }
 
@@ -909,8 +876,6 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         scheduleSave()
     }
 
-    suspend fun <T> io(block: () -> T): T = withContext(Dispatchers.IO) { block() }
-
     companion object {
         const val CAPTURE_TIMEOUT_MS = 700L
         const val KV_SESSION = "session"
@@ -924,7 +889,5 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         const val THUMBNAIL_SCALE = 3
         const val SAVE_DELAY_MS = 500L
         const val STATE_SAVE_DELAY_MS = 3000L
-        const val AUTO_CAPTURE_DELAY_MS = 700L
-        const val AUTO_CAPTURE_MIN_GAP_MS = 2000L
     }
 }

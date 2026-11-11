@@ -3,9 +3,5 @@
     <!-- Krunk's palette (ui/shared/common.css). -->
     <color name="krunk_bg_light">#F3F4F6</color>
     <color name="krunk_bg_dark">#1F2023</color>
-    <color name="krunk_accent_light">#2563EB</color>
-    <color name="krunk_accent_dark">#60A5FA</color>
-    <color name="krunk_brand_orange">#FF6A3D</color>
-    <color name="krunk_brand_pink">#C2185B</color>
     <color name="ic_launcher_background">#FF6A3D</color>
 </resources>

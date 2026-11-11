@@ -60,7 +60,6 @@
     <string name="copied">Copied</string>
 
     <string name="tab_opened_background">New tab opened</string>
-    <string name="tab_switch">Switch</string>
 
     <!-- Downloads -->
     <string name="download_started">Downloading %1$s</string>

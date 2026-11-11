@@ -27,7 +27,6 @@
     <string name="tabs_card_description">%1$s, tab</string>
     <string name="tabs_card_description_active">%1$s, current tab</string>
     <string name="tabs_card_description_asleep">%1$s, sleeping tab</string>
-    <string name="tabs_switch_to">Switch to this tab</string>
     <string name="tabs_close_tab">Close %1$s</string>
     <string name="tabs_asleep">Sleeping</string>
     <string name="tabs_empty">No open tabs</string>
