@@ -87,6 +87,8 @@ body.site { background: var(--bg); }
 .lead { font-size: var(--t-lg); line-height: 1.5; color: var(--muted); margin: 0 0 var(--s5); max-width: 34em; }
 .dlcard { background: var(--card); border: 1px solid var(--border); border-radius: var(--r-lg); padding: var(--s5); box-shadow: var(--shadow-lg); max-width: 520px; }
 .dlcard .loading, .dlcard .none { margin: 0; color: var(--muted); }
+.dlcard.android { margin-top: var(--s4); }
+.dlcard .hint { margin: var(--s3) 0 0; font-size: var(--t-sm); color: var(--muted); }
 .dlcard .none { font-weight: 600; }
 .btn.big { display: flex; width: 100%; justify-content: flex-start; gap: var(--s4); min-height: 64px; padding: 12px 22px; border-radius: var(--r-md); font-size: var(--t-lg); text-align: left; }
 .btn.big .dl-main { display: block; }

@@ -117,6 +117,9 @@ manual import/export of bookmarks (Netscape HTML via `core::netscape`) covers mo
 | F-Droid | F-Droid updates it | reproducible-build requirements; Gecko-based browsers are already on F-Droid (e.g. Fennec F-Droid) |
 | Direct APK from our server | yes: `/updates/android-arm64/latest.json`, same Ed25519 key scheme as Windows, install via `PackageInstaller` (user confirms; needs "install unknown apps") | the APK signing key and the update key are separate secrets with separate custody |
 
+State (0.1.0): the signed APK is a direct download on the website (`/download/android/…`,
+`/download/android.json`); it does not update itself yet.
+
 Proposal:
 - **Play first** for reach, with the in-app update check off in that flavour.
 - An **APK flavour** with the signed update check for users who avoid Play.
@@ -154,8 +157,12 @@ Total: about **15–16 weeks** to a first public beta, then a GeckoView bump eve
    Google Play services.
 9. **Feature list wording:** confirm/supply the original 17-category list wording so the matrix
    headings match 1:1 (the rows re-key mechanically).
-10. **Distribution channel and release signing:** debug signing is accepted for 0.1.0; release
-    signing comes with the distribution decision in a later round.
+10. ~~Release signing~~ done for 0.1.0 (2026-11-11): the APKs are signed with Krunk's Android
+    release key (custody and fingerprint in `docs/ANDROID_DEV.md`) and offered on the website
+    as a direct download (`dist/server/publish-android.sh`), without an update check.
+    **Still open: the distribution channel** beyond that (Play, F-Droid, the in-app update
+    check for the APK flavour, §5). Note for Play: Play App Signing can take this key as the
+    app signing key, or a new upload key with this one kept for the website APKs.
 11. **Google-dependent features** (Lens, Discover feed, Google Password Manager, Safe Browsing):
     marked "not planned" in the matrix with alternatives; override if wanted.
 12. **Tablet coverage:** round 1 verified the sw600dp layout by resizing the phone emulator; a real

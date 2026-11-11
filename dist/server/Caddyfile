@@ -74,8 +74,16 @@
 		}
 	}
 
-	# The website's download box.
+	# The website's download boxes (Windows, and Android since the Android 0.1.0 release).
 	handle /download/release.json {
+		root * /srv/releases
+		header Cache-Control "no-cache, no-transform"
+		header Content-Type "application/json"
+		file_server {
+			hide .*
+		}
+	}
+	handle /download/android.json {
 		root * /srv/releases
 		header Cache-Control "no-cache, no-transform"
 		header Content-Type "application/json"
@@ -93,7 +101,9 @@
 		header @exe Content-Type "application/octet-stream"
 		@zip path *.zip
 		header @zip Content-Type "application/zip"
-		@binary path *.exe *.zip
+		@apk path *.apk
+		header @apk Content-Type "application/vnd.android.package-archive"
+		@binary path *.exe *.zip *.apk
 		header @binary Content-Disposition "attachment"
 		@text path *.md */SHA256SUMS
 		header @text Content-Type "text/plain; charset=utf-8"

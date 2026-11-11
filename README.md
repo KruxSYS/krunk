@@ -1487,7 +1487,18 @@ this repository (`android/`, `ffi/`) and shares Krunk's Rust `core` with the Win
 address-bar rules (DuckDuckGo by default), the same SQLite database layout for history, bookmarks,
 new-tab shortcuts and settings, the same session format and background-tab policy. Details:
 `docs/ANDROID_PLAN.md` (decisions), `docs/ANDROID_FEATURES.md` (what is there and what is not,
-feature by feature), `docs/ANDROID_DEV.md` (building and testing).
+feature by feature), `docs/ANDROID_DEV.md` (building, testing, signing and publishing),
+`CHANGELOG-android.md` (its own release notes).
+
+**Download.** The website (https://krunk.209.wf, "Download for Android") offers the signed APK:
+`Krunk-android-0.1.0-arm64-v8a-release.apk` for phones and tablets, plus a universal and an
+`x86_64` (emulator) build, with SHA-256 checksums. Android asks once to allow installs from the
+browser you downloaded it with. The APKs are signed (APK Signature Scheme v2 and v3) with Krunk's
+Android release key; its certificate's SHA-256 fingerprint is
+`C9:4B:89:15:CD:8B:39:3A:5F:C4:8B:C1:32:A6:DE:02:63:74:E7:63:37:C4:34:1C:59:DD:60:32:83:73:E6:24`
+(check with `apksigner verify --print-certs`). Later releases are signed with the same key, so
+they install over this one and keep your data. There is no update check yet: new versions appear
+on the website.
 
 **Engine.** GeckoView 160 (Firefox's engine as a library, MPL-2.0), not the system WebView and not
 a Chromium build: it lets Krunk ship uBlock Origin as a built-in extension in a later round, keeps
@@ -1507,8 +1518,9 @@ Light, dark and system themes; phone and tablet layouts; TalkBack-friendly contr
 **Not there yet** (see the matrix for the planned round): ad and tracker blocking, the password
 vault, a downloads manager (downloads are handed to Android), site permissions and cookie
 controls, media controls and picture-in-picture, account and sync, VPN, the AI agent, userscripts,
-extensions, updates, Play/F-Droid packaging and release signing. The preview APKs are signed with
-a debug key: they cannot be updated in place by a later signed release.
+extensions, an update check and Play/F-Droid packaging. Builds made without the release key
+(`./gradlew assembleRelease` on another machine, or any debug build) are signed with a debug key
+and cannot be updated in place by a published release: uninstall them first.
 
 **Data and backup.** Krunk's database is `files/krunk/browser.db` in the app's private storage
 (`/data/data/org.krunk.browser/files/krunk/`); the Gecko profile (cookies, site data, caches) is

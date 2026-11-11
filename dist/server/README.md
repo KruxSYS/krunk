@@ -9,6 +9,8 @@ A single Caddy container (`caddy:2.11.8-alpine`, pinned by digest) that serves:
 | `/pair` (0.13.0) | the phone's page for "Add a device" (`site/account/pair.html`); the token stays in the URL fragment | `no-store` |
 | `/download/release.json` | the website's download box | `no-cache` |
 | `/download/<version>/…` | `Krunk-Setup-<version>.exe`, `Krunk-win-x64.zip` (as attachments), `NOTES.md`, `SHA256SUMS` | 1 year, `immutable` |
+| `/download/android.json` (Android 0.1.0) | the website's Android download box | `no-cache` |
+| `/download/android/<version>/…` | `Krunk-android-<version>-<abi>-release.apk` (as attachments, `application/vnd.android.package-archive`), `NOTES.md`, `SHA256SUMS` | 1 year, `immutable` |
 | `/updates/win-x64/latest.json`, `latest.json.sig` | Krunk's update check (`core/src/update.rs`) | `no-cache` |
 | `/healthz` | `ok` | `no-store` |
 
@@ -46,6 +48,7 @@ The container:
 - `backup-db.sh`, `restore-db.sh`, `update-cloudflare-ips.sh` (+ the generated
   `cloudflare-*.caddy`): the account and sync API (below).
 - `publish-release.sh`: signs and publishes a release.
+- `publish-android.sh`: checks and publishes a Krunk for Android release (below).
 
 Volumes:
 - `krunk-releases`: published releases (the container's `/srv/releases`).
@@ -270,6 +273,30 @@ The manifest format:
 ```
 `latest.json.sig` holds the base64 of the 64-byte Ed25519 signature over the exact bytes of
 `latest.json`.
+
+## Publish an Android release
+```sh
+(cd android && ./gradlew assembleRelease)   # signs with the Android release key, docs/ANDROID_DEV.md
+# copy the APKs to dist/android/Krunk-android-<version>-<abi>-release.apk, then:
+dist/server/publish-android.sh 0.1.0 --volume krunk_krunk-releases
+```
+- The script takes the three APKs (`arm64-v8a`, `universal`, `x86_64`) from `dist/android`
+  (`--apks DIR` for another folder).
+- It checks every APK with `apksigner` before it copies anything: APK Signature Scheme v2 or v3,
+  exactly one signer, and the certificate of the release keystore
+  (`~/.config/krunk/android-release.properties`, or `--cert-sha256 HEX` on a machine without the
+  key). A debug-signed APK is refused.
+- Release notes and date come from the version's section of `CHANGELOG-android.md`
+  (`--changelog FILE`, `--notes FILE`, `--released YYYY-MM-DD` as for Windows).
+- It writes `download/android/<version>/` first and `download/android.json` last, renamed into
+  place. The website shows the Android box only when that file exists.
+- `android.json`: `version`, `released`, `notes`, `package`, `min_android`, `min_sdk`,
+  `signing_cert_sha256` and `files` (`name`, `abi`, `kind` = `device` / `universal` /
+  `emulator`, `label`, `url`, `size`, `sha256`). `site/app.js` makes the `device` file the button.
+- Publish only to a server whose `web` image has the `/download/android.json` route: an older
+  image would serve that file with the one-year `immutable` header of `/download/*`.
+- There is no Android update manifest yet: the app does not check for updates, and the Windows
+  manifest and its Ed25519 key are not touched.
 
 ## Checks
 ```sh

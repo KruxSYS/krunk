@@ -37,7 +37,7 @@ feature `cli`), so it always matches the `uniffi` crate version.
 ```
 cd android
 ./gradlew assembleDebug        # debug APKs: app/build/outputs/apk/debug/app-{arm64-v8a,x86_64,universal}-debug.apk
-./gradlew assembleRelease      # minified, debug-signed (release signing is not configured yet)
+./gradlew assembleRelease      # minified (R8), signed with the release key when it is configured (below)
 ```
 
 `cargoBuildDebug` / `cargoBuildRelease` run `android/scripts/build-rust.sh <profile>`: a host build
@@ -59,6 +59,40 @@ cargo clippy -p krunk_ffi --all-targets -- -D warnings && cargo fmt --check && c
 
 The JVM unit tests load the real `libkrunk_ffi.so` (host build) through JNA
 (`jna.library.path` is set in `app/build.gradle.kts`), so they exercise the Rust core directly.
+
+## Release signing and publishing
+
+**The key.** Release APKs are signed with Krunk's Android release key: a PKCS12 keystore outside
+the repository, described by a properties file (`storeFile`, `storePassword`, `keyAlias`,
+`keyPassword`). Gradle reads `~/.config/krunk/android-release.properties`, or the path in
+`KRUNK_ANDROID_SIGNING`. Without that file `assembleRelease` warns and signs with the debug key,
+so anyone can build; only the publishing machine makes installable updates.
+
+- Certificate: `CN=Krunk, O=Krunk, C=DE`, RSA 4096, valid until 2056-11-03, SHA-256
+  `C9:4B:89:15:CD:8B:39:3A:5F:C4:8B:C1:32:A6:DE:02:63:74:E7:63:37:C4:34:1C:59:DD:60:32:83:73:E6:24`.
+- Android only installs an update signed with the **same** key. If the keystore or its password
+  is lost, every user has to uninstall and reinstall (losing the app's data), so back up
+  `android-release.jks` and `android-release.properties` offline. Never commit them, never put
+  them in an image or on the server, and never generate a new key in their place.
+- It is a different secret from the Windows update-manifest key (`update-signing.key`).
+- A first key is made like this (only when none exists):
+  `keytool -genkeypair -storetype PKCS12 -keystore android-release.jks -alias krunk -keyalg RSA
+  -keysize 4096 -validity 10950 -dname "CN=Krunk, O=Krunk, C=DE"`.
+
+**A release.**
+1. Set `versionName` and raise `versionCode` in `android/app/build.gradle.kts`; add the
+   `## X.Y.Z — YYYY-MM-DD` section to `CHANGELOG-android.md` (the Windows `CHANGELOG.md` only
+   takes Windows versions: the website's build checks its headings).
+2. `cd android && ./gradlew assembleRelease`, then copy the three
+   `app/build/outputs/apk/release/app-<abi>-release.apk` to
+   `dist/android/Krunk-android-<version>-<abi>-release.apk` and refresh `SHA256SUMS`.
+3. Check: `$ANDROID_HOME/build-tools/37.0.0/apksigner verify --print-certs -v <apk>` shows v2 and
+   v3 "true" and the fingerprint above. Smoke-test the `x86_64` APK on the emulator (cold install:
+   a debug-signed copy must be uninstalled first; the release build is not debuggable, so
+   `run-as` does not work).
+4. Publish: `dist/server/publish-android.sh <version> --volume <releases volume>` (details in
+   `dist/server/README.md`, "Publish an Android release"). The script refuses APKs that are not
+   signed with the release key's certificate.
 
 ## Emulator
 

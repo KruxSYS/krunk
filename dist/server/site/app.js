@@ -110,4 +110,51 @@
     .then(function (res) { if (!res.ok) throw new Error(res.status); return res.json(); })
     .then(function (r) { render(r); usingKrunk(String(r.version)); })
     .catch(function () { none(); usingKrunk(null); });
+
+  // The Android preview (0.1.0): /download/android.json, written by publish-android.sh. The box
+  // stays hidden until a release exists; the device APK is the button, the others are links.
+  const abox = document.getElementById('download-android');
+  function renderAndroid(r) {
+    const files = Array.isArray(r.files) ? r.files.filter(function (f) { return safePath(f.url) && typeof f.name === 'string'; }) : [];
+    const device = files.find(function (f) { return f.kind === 'device'; }) || files.find(function (f) { return f.kind === 'universal'; });
+    if (!device) return;
+    const others = files.filter(function (f) { return f !== device; });
+    abox.textContent = '';
+    abox.appendChild(el('a', { class: 'btn primary big', href: safePath(device.url), download: '' }, [
+      downloadIcon(),
+      el('span', {}, [
+        el('span', { class: 'dl-main', text: 'Download for Android (preview)' }),
+        el('span', { class: 'sub', text: ['APK', size(device.size), 'Android ' + (r.min_android || '8.0') + ' or later', String(device.abi || '')].filter(Boolean).join(' · ') }),
+      ]),
+    ]));
+    const meta = el('p', { class: 'version' }, [
+      'Version ', el('strong', { text: String(r.version) }),
+      r.released ? ' · ' + String(r.released) : '',
+      safePath(r.notes) ? ' · ' : '',
+      safePath(r.notes) ? el('a', { href: safePath(r.notes), text: 'What\u2019s new' }) : null,
+    ]);
+    others.forEach(function (f) {
+      meta.appendChild(document.createTextNode(' · '));
+      meta.appendChild(el('a', { href: safePath(f.url), download: '', text: String(f.label || f.name) + (size(f.size) ? ' (' + size(f.size) + ')' : '') }));
+    });
+    abox.appendChild(meta);
+    abox.appendChild(el('p', { class: 'hint', text: 'A first preview: browsing, tabs, bookmarks, history and settings; no ad blocking, vault or sync yet. Android asks once to allow installs from the app you downloaded it with. Krunk for Android checks for no updates by itself: come back here for new versions.' }));
+    const sums = el('dl', { class: 'sums' });
+    files.forEach(function (f) {
+      sums.appendChild(el('dt', { text: String(f.name) }));
+      sums.appendChild(el('dd', {}, [el('code', { text: String(f.sha256) })]));
+    });
+    if (typeof r.signing_cert_sha256 === 'string' && /^[0-9a-f]{64}$/.test(r.signing_cert_sha256)) {
+      sums.appendChild(el('dt', { text: 'Signing certificate (SHA-256)' }));
+      sums.appendChild(el('dd', {}, [el('code', { text: r.signing_cert_sha256 })]));
+    }
+    abox.appendChild(el('details', { class: 'checksums' }, [el('summary', { text: 'SHA-256 checksums and signing key' }), sums]));
+    abox.removeAttribute('hidden');
+  }
+  if (abox) {
+    fetch('/download/android.json', { cache: 'no-cache' })
+      .then(function (res) { if (!res.ok) throw new Error(res.status); return res.json(); })
+      .then(renderAndroid)
+      .catch(function () { abox.setAttribute('hidden', ''); });
+  }
 })();

@@ -1,3 +1,4 @@
+import java.util.Properties
 import javax.inject.Inject
 import org.gradle.process.ExecOperations
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
@@ -122,13 +123,37 @@ android {
         }
     }
 
+    // Release signing: a properties file outside the repository (storeFile, storePassword, keyAlias,
+    // keyPassword), by default ~/.config/krunk/android-release.properties, or the path in
+    // KRUNK_ANDROID_SIGNING. Without it the release APK is signed with the debug key (local builds).
+    val signingProps = (System.getenv("KRUNK_ANDROID_SIGNING") ?: "${System.getProperty("user.home")}/.config/krunk/android-release.properties")
+        .let { file(it) }
+        .takeIf { it.isFile }
+        ?.let { f -> Properties().apply { f.inputStream().use { load(it) } } }
+    signingConfigs {
+        if (signingProps != null) {
+            create("release") {
+                storeFile = file(signingProps.getProperty("storeFile"))
+                storePassword = signingProps.getProperty("storePassword")
+                keyAlias = signingProps.getProperty("keyAlias")
+                keyPassword = signingProps.getProperty("keyPassword")
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix = ""
         }
         release {
-            // Release signing is not configured yet (round 1): the APK is signed with the debug key.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (signingProps != null) {
+                signingConfigs.getByName("release")
+            } else {
+                logger.warn("Krunk: no Android release signing properties; the release APK gets the debug key")
+                signingConfigs.getByName("debug")
+            }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
