@@ -27,6 +27,7 @@ typetext() { A input text "$1"; wait_s 1; }
 enter() { A input keyevent 66; }
 back() { A input keyevent 4; wait_s 1; }
 shot() { "$E" shot "$1" > /dev/null; echo "  shot $1"; }
+# Measured on the sandbox emulator with 0.1.1 (2026-11-11), both positions.
 # The toolbar row (y) and the ⋮ menu's rows (y) as laid out on this screen size: the menu opens
 # downward from a top toolbar and upward from a bottom one. A top toolbar also moves the page
 # down by its height (PAGE_SHIFT) for taps on page content.

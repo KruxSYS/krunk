@@ -175,6 +175,9 @@ class KrunkSession(
             .getOrNull() ?: return null
         val current = runCatching { state[state.currentIndex].uri }.getOrDefault("")
         gecko.restoreState(state)
+        // Until the engine reports a newer one this is the tab's state: a save or a crash in
+        // the first seconds after a restore must not find "no state" and lose the history.
+        _state.value = _state.value.copy(sessionState = serialized)
         return current
     }
 
