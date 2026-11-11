@@ -198,7 +198,7 @@ mod tests {
         r.wait(1, 12, 13, 3400);
         assert_eq!(r.take_if_due(13, 3000 + REVEAL_TIMEOUT_MS), None);
         assert_eq!(r.take_if_due(13, 3400 + REVEAL_TIMEOUT_MS), Some((1, 12)));
-        assert!(REVEAL_TIMEOUT_MS <= 500);
+        const { assert!(REVEAL_TIMEOUT_MS <= 500) };
     }
 
     #[test]

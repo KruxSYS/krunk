@@ -1688,7 +1688,8 @@ impl Browser {
                     t.show_beneath(&above);
                 }
                 let weak = self.me.clone();
-                crate::ffi::cef::post_ui_delayed(REVEAL_TIMEOUT_MS, move || {
+                // (A little later than due: a timer never comes too early for its wait.)
+                crate::ffi::cef::post_ui_delayed(REVEAL_TIMEOUT_MS + 10, move || {
                     if let Some(b) = weak.upgrade() {
                         b.reveal_due(to);
                     }
@@ -3497,6 +3498,11 @@ impl Browser {
         };
         if let Some(c) = &content {
             self.prompt_dismissed(c);
+        }
+        // A menu or prompt that had pushed a sign-in dialog aside is gone: it comes back (0.15.0;
+        // only for the active tab, and only while Krunk has the foreground).
+        if was_visible && !matches!(content, Some(PopupContent::HttpAuth { .. })) {
+            self.defer(|b| b.http_auth_reshow());
         }
         if was_visible {
             match owner {
