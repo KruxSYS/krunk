@@ -1,10 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Android < 12 cloud backup: Krunk's own database (history, bookmarks, settings, session) is
-     backed up; the Gecko profile (cookies, site data, caches) and the vault are not. -->
+<!-- Android < 12 cloud backup: only Krunk's own data directory (history, bookmarks, settings,
+     session) is backed up, minus the vault. Everything else, including the Gecko profile
+     (cookies, site data, caches), is excluded by not being included. -->
 <full-backup-content>
     <include domain="file" path="krunk" />
     <exclude domain="file" path="krunk/vault" />
-    <exclude domain="file" path="mozilla" />
-    <exclude domain="database" path="." />
-    <exclude domain="sharedpref" path="." />
 </full-backup-content>

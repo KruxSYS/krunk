@@ -47,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -77,6 +78,7 @@ fun HistoryScreen(vm: BrowserViewModel) {
     val repo = remember(vm) { HistoryRepository(vm.core.store) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val res = LocalResources.current
     val snackbar = remember { SnackbarHostState() }
 
     var searching by remember { mutableStateOf(false) }
@@ -123,7 +125,7 @@ fun HistoryScreen(vm: BrowserViewModel) {
         entries = entries.filterNot { it.id == e.id }
         scope.launch {
             runCatching { repo.delete(listOf(e.id)) }
-            snackbar.showSnackbar(context.getString(R.string.history_entry_deleted))
+            snackbar.showSnackbar(res.getString(R.string.history_entry_deleted))
         }
     }
 
@@ -220,7 +222,7 @@ fun HistoryScreen(vm: BrowserViewModel) {
                             },
                             onCopy = {
                                 copyToClipboard(context, e.url)
-                                scope.launch { snackbar.showSnackbar(context.getString(R.string.copied)) }
+                                scope.launch { snackbar.showSnackbar(res.getString(R.string.copied)) }
                             },
                             onDelete = { delete(e) },
                         )
@@ -252,7 +254,7 @@ fun HistoryScreen(vm: BrowserViewModel) {
                         runCatching { repo.clear() }
                         entries = emptyList()
                         generation++
-                        snackbar.showSnackbar(context.getString(R.string.history_cleared))
+                        snackbar.showSnackbar(res.getString(R.string.history_cleared))
                     }
                 }) { Text(stringResource(R.string.action_clear), color = MaterialTheme.colorScheme.error) }
             },

@@ -49,7 +49,8 @@ fun BrowserMenu(
     val page = tab?.page
     val hasPage = tab != null && !tab.isNewTab && tab.internalPage == null && tab.url.isNotEmpty()
     val canBookmark = vm.canBookmark(tab)
-    val closedCount = if (expanded) vm.tabs.closedTabs.value.size else 0
+    val closedTabs by vm.tabs.closedTabs.collectAsStateWithLifecycle()
+    val closedCount = closedTabs.size
     val added = stringResource(R.string.bookmark_added)
     val removed = stringResource(R.string.bookmark_removed)
     val shareTitle = stringResource(R.string.share_chooser)

@@ -55,6 +55,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -80,6 +81,7 @@ fun BookmarksScreen(vm: BrowserViewModel) {
     val repo = remember(vm) { BookmarksRepository(vm.core.store) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val res = LocalResources.current
     val snackbar = remember { SnackbarHostState() }
 
     // null = the top level (the two roots); otherwise the open folder and the way back to it.
@@ -144,16 +146,16 @@ fun BookmarksScreen(vm: BrowserViewModel) {
                     .getOrNull()
             }
             if (html == null) {
-                snackbar.showSnackbar(context.getString(R.string.bookmarks_import_failed))
+                snackbar.showSnackbar(res.getString(R.string.bookmarks_import_failed))
                 return@launch
             }
             val stats = runCatching { repo.importHtml(html) }.getOrNull()
             refresh++
             if (stats == null) {
-                snackbar.showSnackbar(context.getString(R.string.bookmarks_import_failed))
+                snackbar.showSnackbar(res.getString(R.string.bookmarks_import_failed))
             } else {
                 snackbar.showSnackbar(
-                    context.getString(
+                    res.getString(
                         R.string.bookmarks_import_result,
                         stats.bookmarks.toInt(),
                         stats.folders.toInt(),
@@ -174,7 +176,7 @@ fun BookmarksScreen(vm: BrowserViewModel) {
                 }
             }.isSuccess
             snackbar.showSnackbar(
-                context.getString(if (ok) R.string.bookmarks_export_done else R.string.bookmarks_export_failed),
+                res.getString(if (ok) R.string.bookmarks_export_done else R.string.bookmarks_export_failed),
             )
         }
     }
@@ -231,7 +233,7 @@ fun BookmarksScreen(vm: BrowserViewModel) {
                                     text = { Text(stringResource(R.string.bookmarks_export)) },
                                     onClick = {
                                         menu = false
-                                        exportLauncher.launch(context.getString(R.string.bookmarks_export_name))
+                                        exportLauncher.launch(res.getString(R.string.bookmarks_export_name))
                                     },
                                 )
                             }
@@ -274,7 +276,7 @@ fun BookmarksScreen(vm: BrowserViewModel) {
                         onOpenPrivate = { openInTab(b, true) },
                         onCopy = {
                             b.url?.let { copyToClipboard(context, it) }
-                            scope.launch { snackbar.showSnackbar(context.getString(R.string.copied)) }
+                            scope.launch { snackbar.showSnackbar(res.getString(R.string.copied)) }
                         },
                         onEdit = { editing = b.id },
                         onMove = {
@@ -291,7 +293,7 @@ fun BookmarksScreen(vm: BrowserViewModel) {
                                 scope.launch {
                                     runCatching { repo.delete(b.id) }
                                     refresh++
-                                    snackbar.showSnackbar(context.getString(R.string.bookmarks_deleted))
+                                    snackbar.showSnackbar(res.getString(R.string.bookmarks_deleted))
                                 }
                             }
                         },
@@ -342,7 +344,7 @@ fun BookmarksScreen(vm: BrowserViewModel) {
                     scope.launch {
                         runCatching { repo.delete(f.id) }
                         refresh++
-                        snackbar.showSnackbar(context.getString(R.string.bookmarks_folder_deleted))
+                        snackbar.showSnackbar(res.getString(R.string.bookmarks_folder_deleted))
                     }
                 }) { Text(stringResource(R.string.action_delete), color = MaterialTheme.colorScheme.error) }
             },
