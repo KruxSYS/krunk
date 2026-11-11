@@ -43,7 +43,8 @@ cd android
 `cargoBuildDebug` / `cargoBuildRelease` run `android/scripts/build-rust.sh <profile>`: a host build
 of `krunk_ffi` (bindings + JVM tests), `uniffi-bindgen generate --library`, then `cargo ndk` for
 `arm64-v8a` and `x86_64` into `app/build/rust/<variant>/`. Debug libraries are stripped
-(`llvm-strip`) because AGP keeps debug variants' symbols; the host library keeps them.
+(`llvm-strip`) because AGP keeps debug variants' symbols. The bindings are always generated from
+the **debug** host library: the workspace's release profile strips the UniFFI metadata.
 
 Knobs: `CARGO_BUILD_JOBS` (default 4), `KRUNK_ABIS` (default `arm64-v8a,x86_64`),
 `CARGO_TARGET_DIR`, `-Pkrunk.noGms=true` (drops GeckoView's Play Services FIDO dependency).
@@ -76,8 +77,16 @@ adb server (`ADB_SERVER_SOCKET`); `emu.sh` uses the first online `emulator-*` se
 (`ANDROID_SERIAL` overrides). Other attached devices are ignored.
 
 Known traps:
-- **No KVM in the sandbox.** A local emulator only runs with `-accel off` (software emulation):
-  10–30 minutes to boot. Prefer an attached emulator.
+- **No KVM in the sandbox.** A local emulator only runs with `-accel off` (software emulation).
+  It boots in about 6 minutes, but it is far too slow to drive: the app (and system apps) hit
+  input-dispatch ANRs within seconds, so no flow completes. Use it only to check that an APK
+  installs and starts. A locally started emulator registers with the local adb server, not the
+  sandbox's remote one: run every `emu.sh` call with `KRUNK_LOCAL_ADB=1`.
+- **Never run `adb shell cmd uimode night yes` on the sandbox emulator.** In round 1 it wedged
+  the emulator's graphics stack (`composer3-service.ranchu` at 100 % CPU, screencap and input
+  dead); a guest `adb reboot` never finished (SurfaceFlinger did not come back) and the console
+  port for `adb emu kill` is not reachable, so only a host-side restart recovers it. Switch the
+  theme through Settings › Theme instead.
 - **Two devices on adb** (an offline TV is attached too): every adb call needs `-s`; `emu.sh`
   does that. Gradle's `connectedAndroidTest` needs `ANDROID_SERIAL=emulator-5554`.
 - **Page loads are slow** on the software-GPU emulator (5–15 s); the first start after an install
@@ -88,6 +97,8 @@ Known traps:
   report ~1.1 s to the first frame.
 - Tablet layouts can be checked on the same emulator with `adb shell wm size 1600x2560` and
   `wm density 320` (reset with `wm size reset` / `wm density reset`).
+- `android/scripts/flows.sh` drives the round-1 acceptance flows over adb (one screenshot per
+  flow); its tap coordinates assume 1080×2400 at 420 dpi with the toolbar at the bottom.
 - The debug app's database can be inspected with
   `adb shell run-as org.krunk.browser sqlite3 files/krunk/browser.db "select count(*) from visits"`.
 

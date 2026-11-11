@@ -1523,6 +1523,14 @@ open, search suggestions while you type (on by default, off in private tabs, can
 and the favicon of a page you visited. The Google Play Services passkey library that GeckoView
 depends on is bundled but only used when a site asks for a passkey (open question in the plan).
 
+**Testing status (round 1).** The preview was exercised on the sandbox's Android 16 x86_64
+emulator: typed addresses and searches (DuckDuckGo), suggestions, the lock and "Not secure"
+indicators, the error page, find in page, the link menu and the hiding toolbar were checked with
+screenshots. The emulator's graphics stack then wedged (a system dark-mode toggle; see
+`docs/ANDROID_DEV.md`), and the software-emulated fallback was too slow to drive, so full screen,
+themes, landscape, the tab switcher, session restore, private-tab history, bookmarks, history and
+settings flows are covered by unit tests only in this round. The round report lists them.
+
 **Building.** `android/scripts/setup-sdk.sh` installs the pinned toolchain (`android/toolchain.lock`),
 then `cd android && ./gradlew assembleDebug` builds the Rust core for both ABIs with `cargo-ndk`,
 generates the Kotlin bindings with UniFFI and packages the APKs. `docs/ANDROID_DEV.md` has the

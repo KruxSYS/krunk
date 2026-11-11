@@ -6,6 +6,11 @@ preview (0.1.0, round 1). Later rounds work through it in order.
 > **Category set:** derived from the round-1 brief; the operator's original 17-category list was
 > not available when this matrix was written. Please paste it and any missing rows will be added.
 
+**Round-1 verification.** Items marked *done* were built and pass the unit tests; the ones
+also marked **(v)** were exercised on the emulator with a screenshot (`.pipeline/screenshots/
+android/m3-*.png`). The emulator failed mid-round (see the report), so the others are built but
+not yet exercised on a device; the next round's first job is to run `android/scripts/flows.sh`.
+
 **Columns.** *Windows Krunk*: yes / partial / no, with the README section or CHANGELOG version
 (and the `core` module when the logic is shared). *Android 0.1.0*: done / partial / roadmap /
 not planned. *Engine*: the GeckoView API that provides it, or the limitation. *Round*: the Android
@@ -17,15 +22,15 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 
 | Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
 |---|---|---|---|---|
-| URL vs search decision (scheme, IP, localhost, host:port, public suffix, local suffixes) | yes — Usage › Address bar, 0.15.0; `core::urlclean::input_to_url` | done (same core function via UniFFI) | app-side | 1 |
-| Default engine DuckDuckGo; Google, Bing, Brave, Startpage, Ecosia selectable | yes — `core::settings::SearchEngine` | done | app-side | 1 |
+| URL vs search decision (scheme, IP, localhost, host:port, public suffix, local suffixes) | yes — Usage › Address bar, 0.15.0; `core::urlclean::input_to_url` | done (v) (same core function via UniFFI) | app-side | 1 |
+| Default engine DuckDuckGo; Google, Bing, Brave, Startpage, Ecosia selectable | yes — `core::settings::SearchEngine` | done (v) | app-side | 1 |
 | Custom search engine (URL template with `%s`) | yes — `custom_search_url` | done | app-side | 1 |
 | Google search integration | selecting Google as the engine only — no Google-specific integration | done (same meaning) | — | 1 |
-| History / bookmark / typed-site suggestions, most visited first | yes — 0.5.1; `core::omnibox` | done | app-side | 1 |
+| History / bookmark / typed-site suggestions, most visited first | yes — 0.5.1; `core::omnibox` | done (v) | app-side | 1 |
 | Inline completion of the typed site | yes — 0.6.0 | partial (core computes it; the Android editor shows rows only) | — | 2 |
-| Engine search suggestions (setting, never in private tabs, no cookies) | yes — 0.15.0; `core::search_suggest` | done | app-side HTTP | 1 |
+| Engine search suggestions (setting, never in private tabs, no cookies) | yes — 0.15.0; `core::search_suggest` | done (v) | app-side HTTP | 1 |
 | Tracking-parameter stripping (`utm_*`, `fbclid`, `gclid`, …) | yes — Privacy, 0.6.0; `core::urlclean` | done (typed navigations and link loads through `navigation_rewrite`) | `NavigationDelegate.onLoadRequest` | 1 |
-| Automatic HTTPS upgrade (HTTPS-first) | no (HTTPS-only mode only) | done — Gecko's HTTPS-First is on by default (verified: `http://example.com` loads as https) | Gecko default | 1 |
+| Automatic HTTPS upgrade (HTTPS-first) | no (HTTPS-only mode only) | done (v) — Gecko's HTTPS-First is on by default (verified: `http://example.com` loads as https) | Gecko default | 1 |
 | HTTPS-only mode | yes — Privacy; `settings.https_only` | done (`allowInsecureConnections = HTTPS_ONLY`) | `GeckoRuntimeSettings` | 1 |
 | Copy / paste / edit URL; paste-and-go | yes — 0.6.0 | done (platform text field menu) | — | 1 |
 | Site info / certificate popup | yes — 0.5.0; `core::certinfo` | roadmap | `SecurityInformation.certificate` | 3 |
@@ -37,14 +42,14 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 
 | Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
 |---|---|---|---|---|
-| Back, forward, reload, stop | yes — keys table | done | `GeckoSession` | 1 |
+| Back, forward, reload, stop | yes — keys table | done (v) | `GeckoSession` | 1 |
 | Home (configurable homepage) | partial — Alt+Home, no button since 0.5.0 | done (toolbar button; `settings.homepage`) | — | 1 |
 | Back/forward history menu | yes — 0.8.0; `core::navmenu` | roadmap (long-press back) | `SessionState` history | 2 |
-| Pull-to-refresh | n/a | done (nested scroll from the GeckoView) — see the report for the fallback used | `NestedScrollingChild` | 1 |
+| Pull-to-refresh | n/a | done (nested scroll from the GeckoView; not exercised on a device) | `NestedScrollingChild` | 1 |
 | Progress bar, title, favicon | yes | done (favicons via the bundled `krunk-icons` extension + `/favicon.ico` fallback, stored in the shared `favicons` table) | `ProgressDelegate`, `WebExtension` messaging | 1 |
-| Security indicator (lock / "Not secure") | yes — 0.5.0 | done | `onSecurityChange` | 1 |
-| Custom error page (Krunk-styled) | partial — crash/hang page, HTTPS-only interstitial | done (`assets/error.html` from `onLoadError`, light/dark) | `NavigationDelegate.onLoadError` | 1 |
-| Find in page (count, next/previous) | yes — Ctrl+F | done | `SessionFinder` | 1 |
+| Security indicator (lock / "Not secure") | yes — 0.5.0 | done (v) | `onSecurityChange` | 1 |
+| Custom error page (Krunk-styled) | partial — crash/hang page, HTTPS-only interstitial | done (v) (`assets/error.html` from `onLoadError`, light/dark) | `NavigationDelegate.onLoadError` | 1 |
+| Find in page (count, next/previous) | yes — Ctrl+F | done (v) | `SessionFinder` | 1 |
 | Request desktop site (per tab) | yes — user-agent presets (`core::useragents`) | done (Gecko desktop mode + viewport; the Windows UA presets are selectable in Settings › User agent) | `GeckoSessionSettings.userAgentMode` | 1 |
 | Page zoom: pinch | n/a | done (+ "force zoom" setting) | `forceUserScalableEnabled` | 1 |
 | Default zoom setting | yes — Usage › Zoom; `core::zoom` | partial — GeckoView has no page-zoom API; `default_zoom` scales text instead | `fontSizeFactor` | 2 |
@@ -64,7 +69,7 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
 |---|---|---|---|---|
 | Open link in current tab | yes | done | — | 1 |
-| Open in new tab / private tab | yes — 0.15.3 | done (long-press menu) | `onContextMenu` | 1 |
+| Open in new tab / private tab | yes — 0.15.3 | done (v) (long-press menu) | `onContextMenu` | 1 |
 | Copy link, copy link text | yes (address) / no (text) | done / done (title or alt text; the engine exposes no selection) | `ContextElement` | 1 |
 | Share link, share page | no | done (Android share sheet) | — | 1 |
 | Download link / save image, open image in new tab | yes — 0.12.2 (images) | done (Android `DownloadManager`) | `ContextElement.srcUri` | 1 |
@@ -97,8 +102,8 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
 |---|---|---|---|---|
 | Light / dark / follow system (Krunk palette, no Material dynamic colour) | yes | done | `preferredColorScheme` for content | 1 |
-| Bottom toolbar by default, top as an option | n/a | done (Settings › Toolbar position) | — | 1 |
-| Toolbar auto-hide on scroll | n/a | done — see report | nested scroll / `ScrollDelegate` | 1 |
+| Bottom toolbar by default, top as an option | n/a | done (v, bottom) (Settings › Toolbar position) | — | 1 |
+| Toolbar auto-hide on scroll | n/a | done (v) | nested scroll / `ScrollDelegate` | 1 |
 | Edge-to-edge, gesture and 3-button navigation, predictive back | n/a | done | — | 1 |
 | Landscape, tablet layout (sw600dp) | n/a | done (wider grid; two-pane settings) | — | 1 |
 | Accessibility: 48 dp targets, content descriptions, TalkBack switcher, font scale, haptics | partial on Windows | done | — | 1 |
