@@ -98,7 +98,13 @@ fun NewTabScreen(vm: BrowserViewModel, modifier: Modifier = Modifier) {
         picture = wallpaper?.let { Wallpapers.load(context.assets, it.id) }
     }
     val scheme = MaterialTheme.colorScheme
-    val customColor = if (settings.ntpBackground == NtpBackgroundMode.COLOR) parseHexColor(settings.ntpBackgroundColor) else null
+    val customColor = if (settings.ntpBackground ==
+        NtpBackgroundMode.COLOR
+    ) {
+        parseHexColor(settings.ntpBackgroundColor)
+    } else {
+        null
+    }
     val background = customColor ?: scheme.background
     val onBackground = when {
         wallpaper != null -> if (Wallpapers.lightText(wallpaper)) Color.White else KrunkColors.fgLight
@@ -116,7 +122,8 @@ fun NewTabScreen(vm: BrowserViewModel, modifier: Modifier = Modifier) {
             tiles = runCatching { vm.core.io { it.topSites(tileCount.toUInt(), nowMs()) } }.getOrDefault(emptyList())
         }
     }
-    val closed = remember(refresh, tabList) { if (settings.ntpShowShortcuts) vm.tabs.closedTabs() else emptyList() }
+    val closedAll by vm.tabs.closedTabs.collectAsStateWithLifecycle()
+    val closed = if (settings.ntpShowShortcuts) closedAll else emptyList()
 
     var editing by remember { mutableStateOf<ShortcutEdit?>(null) }
 
@@ -442,7 +449,17 @@ private fun ShortcutDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Text(stringResource(if (edit.originalUrl == null) R.string.ntp_add_shortcut else R.string.ntp_edit_shortcut))
+            Text(
+                stringResource(
+                    if (edit.originalUrl ==
+                        null
+                    ) {
+                        R.string.ntp_add_shortcut
+                    } else {
+                        R.string.ntp_edit_shortcut
+                    },
+                ),
+            )
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

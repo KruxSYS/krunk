@@ -70,12 +70,7 @@ fun folderTitle(f: FolderChoice): String = when (f.id) {
  * after a save or delete so lists can refresh.
  */
 @Composable
-fun EditBookmarkDialog(
-    vm: BrowserViewModel,
-    bookmarkId: Long,
-    onDismiss: () -> Unit,
-    onChanged: () -> Unit = {},
-) {
+fun EditBookmarkDialog(vm: BrowserViewModel, bookmarkId: Long, onDismiss: () -> Unit, onChanged: () -> Unit = {}) {
     val repo = remember(vm) { BookmarksRepository(vm.core.store) }
     val scope = rememberCoroutineScope()
     var loaded by remember { mutableStateOf<Bookmark?>(null) }
@@ -217,15 +212,23 @@ fun FolderPicker(folders: List<FolderChoice>, selected: Long?, onSelect: (Long) 
 
 /** New folder (`existing == null`) or rename. */
 @Composable
-fun FolderNameDialog(
-    existing: String?,
-    onDismiss: () -> Unit,
-    onSave: (String) -> Unit,
-) {
+fun FolderNameDialog(existing: String?, onDismiss: () -> Unit, onSave: (String) -> Unit) {
     var name by remember { mutableStateOf(existing.orEmpty()) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(if (existing == null) R.string.bookmarks_new_folder else R.string.bookmarks_edit_folder)) },
+        title = {
+            Text(
+                stringResource(
+                    if (existing ==
+                        null
+                    ) {
+                        R.string.bookmarks_new_folder
+                    } else {
+                        R.string.bookmarks_edit_folder
+                    },
+                ),
+            )
+        },
         text = {
             OutlinedTextField(
                 value = name,
@@ -248,12 +251,7 @@ fun FolderNameDialog(
 
 /** "Move to": a radio list of every folder. */
 @Composable
-fun MoveDialog(
-    folders: List<FolderChoice>,
-    current: Long?,
-    onDismiss: () -> Unit,
-    onMove: (Long) -> Unit,
-) {
+fun MoveDialog(folders: List<FolderChoice>, current: Long?, onDismiss: () -> Unit, onMove: (Long) -> Unit) {
     var chosen by remember { mutableStateOf(current) }
     AlertDialog(
         onDismissRequest = onDismiss,

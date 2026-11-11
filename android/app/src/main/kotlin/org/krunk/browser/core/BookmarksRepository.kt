@@ -85,7 +85,13 @@ class BookmarksRepository(private val store: KrunkStore, private val io: Corouti
                 byParent.getOrPut(key) { ArrayList() } += b
             }
             fun node(b: Bookmark, depth: Int): BookmarkNode {
-                val kids = if (b.isFolder && depth < 64) byParent[b.id].orEmpty().map { node(it, depth + 1) } else emptyList()
+                val kids = if (b.isFolder &&
+                    depth < 64
+                ) {
+                    byParent[b.id].orEmpty().map { node(it, depth + 1) }
+                } else {
+                    emptyList()
+                }
                 return BookmarkNode(b, kids)
             }
             return byParent[null].orEmpty().map { node(it, 0) }

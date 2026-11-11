@@ -138,7 +138,9 @@ fun BookmarksScreen(vm: BrowserViewModel) {
         uri ?: return@rememberLauncherForActivityResult
         scope.launch {
             val html = withContext(Dispatchers.IO) {
-                runCatching { context.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) } }
+                runCatching {
+                    context.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }
+                }
                     .getOrNull()
             }
             if (html == null) {
@@ -190,7 +192,10 @@ fun BookmarksScreen(vm: BrowserViewModel) {
                 },
                 navigationIcon = {
                     IconButton(onClick = { if (!goUp()) vm.pop() }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = stringResource(R.string.action_back),
+                        )
                     }
                 },
                 actions = {
@@ -217,7 +222,9 @@ fun BookmarksScreen(vm: BrowserViewModel) {
                                     text = { Text(stringResource(R.string.bookmarks_import)) },
                                     onClick = {
                                         menu = false
-                                        importLauncher.launch(arrayOf("text/html", "application/xhtml+xml", "text/plain"))
+                                        importLauncher.launch(
+                                            arrayOf("text/html", "application/xhtml+xml", "text/plain"),
+                                        )
                                     },
                                 )
                                 DropdownMenuItem(
@@ -272,7 +279,8 @@ fun BookmarksScreen(vm: BrowserViewModel) {
                         onEdit = { editing = b.id },
                         onMove = {
                             scope.launch {
-                                folders = runCatching { repo.folders() }.getOrDefault(emptyList()).filterNot { it.id == b.id }
+                                folders =
+                                    runCatching { repo.folders() }.getOrDefault(emptyList()).filterNot { it.id == b.id }
                                 moving = b
                             }
                         },
@@ -338,7 +346,9 @@ fun BookmarksScreen(vm: BrowserViewModel) {
                     }
                 }) { Text(stringResource(R.string.action_delete), color = MaterialTheme.colorScheme.error) }
             },
-            dismissButton = { TextButton(onClick = { deleting = null }) { Text(stringResource(R.string.action_cancel)) } },
+            dismissButton = {
+                TextButton(onClick = { deleting = null }) { Text(stringResource(R.string.action_cancel)) }
+            },
         )
     }
 }

@@ -152,7 +152,10 @@ fun HistoryScreen(vm: BrowserViewModel) {
                             vm.pop()
                         }
                     }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = stringResource(R.string.action_back),
+                        )
                     }
                 },
                 actions = {
@@ -194,7 +197,12 @@ fun HistoryScreen(vm: BrowserViewModel) {
                             dayLabel(section.day, today, yesterday),
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 4.dp),
+                            modifier = Modifier.fillMaxWidth().padding(
+                                start = 16.dp,
+                                top = 16.dp,
+                                end = 16.dp,
+                                bottom = 4.dp,
+                            ),
                         )
                     }
                     items(section.entries, key = { it.id }) { e ->

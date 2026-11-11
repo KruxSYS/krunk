@@ -21,7 +21,6 @@
     <string name="field_title">Title</string>
     <string name="field_url">Address</string>
     <string name="field_folder">Folder</string>
-    <string name="copied">Link copied</string>
     <string name="error_generic">Something went wrong: %1$s</string>
 
     <!-- New tab page -->
