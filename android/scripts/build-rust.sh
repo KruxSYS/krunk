@@ -44,7 +44,7 @@ echo "[build-rust] Kotlin bindings -> $KT_OUT"
 rm -rf "$KT_OUT" "$JNI_OUT"
 mkdir -p "$KT_OUT" "$JNI_OUT"
 cargo run -j"$JOBS" -q -p krunk_ffi --features cli --bin uniffi-bindgen -- \
-  generate --library "$HOST_LIB" --language kotlin --config "$SRC_DIR/ffi/uniffi.toml" --out-dir "$KT_OUT"
+  generate --library "$HOST_LIB" --language kotlin --out-dir "$KT_OUT"
 [ -f "$KT_OUT/org/krunk/ffi/krunk_ffi.kt" ] || { echo "bindings were not generated" >&2; exit 1; }
 
 echo "[build-rust] Android libraries ($ABIS, $PROFILE, minSdk $MIN_SDK) -> $JNI_OUT"
@@ -55,9 +55,14 @@ for abi in "${abi_list[@]}"; do
 done
 cargo ndk "${TARGET_FLAGS[@]}" --platform "$MIN_SDK" --output-dir "$JNI_OUT" \
   build -j"$JOBS" -p krunk_ffi "${CARGO_PROFILE_FLAG[@]}"
+# Debug builds carry ~130 MB of DWARF per ABI, which AGP does not strip for debug variants: strip
+# here (the host library keeps its symbols for backtraces in JVM tests). Release builds are
+# already stripped by the workspace profile.
+STRIP="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
 for abi in "${abi_list[@]}"; do
   f="$JNI_OUT/$abi/libkrunk_ffi.so"
   [ -f "$f" ] || { echo "missing $f" >&2; exit 1; }
+  if [ -x "$STRIP" ]; then "$STRIP" --strip-unneeded "$f"; fi
   printf '  %-10s %s\n' "$abi" "$(du -h "$f" | cut -f1)"
 done
 echo "[build-rust] done"

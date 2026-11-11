@@ -2,10 +2,11 @@
 # KEY=value, no spaces). Gradle-side versions live in android/gradle/libs.versions.toml and
 # android/gradle/wrapper/gradle-wrapper.properties; this file is the single list a reviewer reads.
 #
-# Android SDK (sdkmanager package ids)
-PLATFORM=35
-PLATFORM_PACKAGE="platforms;android-35"
-BUILD_TOOLS=36.0.0
+# Android SDK (sdkmanager package ids). compileSdk 37.2 is forced by GeckoView 160 and Compose
+# 2026.09 (their AAR metadata); targetSdk stays 35 (app/build.gradle.kts).
+PLATFORM=37.2
+PLATFORM_PACKAGE="platforms;android-37.2"
+BUILD_TOOLS=37.0.0
 NDK=30.0.16248370
 CMDLINE_TOOLS_MIN=23.0.0
 PLATFORM_TOOLS_MIN=35.0.0

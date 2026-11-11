@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The window theme only: Compose draws the UI (ui/theme/KrunkTheme.kt). The background
+         colour matches the Compose theme so the first frame has no flash. -->
+    <style name="Theme.Krunk" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/krunk_bg_light</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>

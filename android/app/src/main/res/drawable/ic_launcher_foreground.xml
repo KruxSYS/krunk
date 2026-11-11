@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Krunk "K" (assets/brand/krunk.svg), scaled into the 108 dp adaptive-icon canvas
+     (the 256 px art maps to the inner 72 dp: x' = 18 + x * 72/256). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="256"
+    android:viewportHeight="256">
+    <group android:scaleX="0.5625" android:scaleY="0.5625" android:translateX="56" android:translateY="56">
+        <!-- stem -->
+        <path android:fillColor="#FFFFFF"
+            android:pathData="M72,50 h24 a10,10 0 0 1 10,10 v136 a10,10 0 0 1 -10,10 h-24 a10,10 0 0 1 -10,-10 v-136 a10,10 0 0 1 10,-10 z" />
+        <!-- upper arm -->
+        <path android:fillColor="#FFFFFF" android:pathData="M106,128 L160,50 L208,50 L144,128 Z" />
+        <!-- lower arm, slightly offset: the "crunch" -->
+        <path android:fillColor="#FFFFFF" android:pathData="M128,140 L154,116 L212,206 L162,206 Z" />
+    </group>
+</vector>

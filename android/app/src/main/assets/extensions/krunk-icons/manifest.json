@@ -1,0 +1,16 @@
+{
+  "manifest_version": 2,
+  "name": "Krunk icons",
+  "version": "1.0",
+  "description": "Reports each page's <link rel=icon> candidates to Krunk (favicons for tabs, history and bookmarks).",
+  "browser_specific_settings": { "gecko": { "id": "icons@krunk.org" } },
+  "permissions": ["nativeMessaging", "nativeMessagingFromContent", "geckoViewAddons"],
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}

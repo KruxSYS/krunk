@@ -46,7 +46,7 @@ pub struct SettingsFieldError {
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Error)]
 pub enum SettingsError {
     Validation { errors: Vec<SettingsFieldError> },
-    Database { message: String },
+    Database { detail: String },
 }
 
 impl fmt::Display for SettingsError {
@@ -56,7 +56,7 @@ impl fmt::Display for SettingsError {
                 let list: Vec<String> = errors.iter().map(|e| format!("{}: {}", e.field, e.message)).collect();
                 write!(f, "invalid settings: {}", list.join("; "))
             }
-            SettingsError::Database { message } => write!(f, "database: {message}"),
+            SettingsError::Database { detail } => write!(f, "database: {detail}"),
         }
     }
 }
@@ -65,6 +65,6 @@ impl std::error::Error for SettingsError {}
 
 impl From<lb_core::storage::DbError> for SettingsError {
     fn from(e: lb_core::storage::DbError) -> Self {
-        SettingsError::Database { message: e.to_string() }
+        SettingsError::Database { detail: e.to_string() }
     }
 }
