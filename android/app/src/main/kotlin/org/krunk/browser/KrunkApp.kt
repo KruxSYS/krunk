@@ -44,16 +44,15 @@ class KrunkApp : Application() {
         // free every background tab's session. UI_HIDDEN/BACKGROUND alone are not pressure.
         val pressure = level == TRIM_MEMORY_RUNNING_LOW || level == TRIM_MEMORY_RUNNING_CRITICAL ||
             level == TRIM_MEMORY_MODERATE || level == TRIM_MEMORY_COMPLETE
-        if (pressure) {
-            Log.i(TAG, "onTrimMemory($level): unloading background tabs")
-            val t = tabs
-            val active = t.activeId.value
-            t.tabs.value.filter { it.live && it.id != active }.forEach { t.unload(it.id) }
-            // The switcher's pictures are the next biggest thing we hold; they come back on the
-            // next capture.
-            t.thumbnails.clear()
-            t.refresh()
-        }
+        if (pressure) tabs.onMemoryPressure()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onLowMemory() {
+        super.onLowMemory()
+        // Android 14 and later no longer deliver the trim levels above to a running app; this
+        // callback is what is left to hear about memory pressure there.
+        if (tabsLazy.isInitialized()) tabs.onMemoryPressure()
     }
 
     companion object {

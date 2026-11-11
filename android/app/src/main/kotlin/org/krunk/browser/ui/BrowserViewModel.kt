@@ -68,6 +68,11 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
     }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
+    /** Whether any private tab is open (the tab switcher shows their pictures). */
+    val hasPrivateTabs: StateFlow<Boolean> = tabs.tabs.map { list -> list.any { it.private } }
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
     private val _screens = MutableStateFlow<List<Screen>>(listOf(Screen.Browser))
     val screens: StateFlow<List<Screen>> = _screens.asStateFlow()
     val screen: Screen get() = _screens.value.last()

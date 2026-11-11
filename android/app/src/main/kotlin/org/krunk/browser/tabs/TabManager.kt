@@ -482,9 +482,26 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
 
     /** Frees a background tab's session (memory policy); it reloads on activation. */
     fun unload(id: UInt) {
+        unloadQuietly(id)
+        refresh()
+    }
+
+    private fun unloadQuietly(id: UInt) {
         sessions[id]?.current?.sessionState?.let { geckoStates[id] = it }
         apply(model.unload(id))
         memory.wake(id)
+    }
+
+    /**
+     * The system is short of memory: background tabs give up their sessions (one private tab
+     * stays live, see [tabsToUnloadUnderPressure]) and the switcher's pictures are dropped; both
+     * come back on demand.
+     */
+    fun onMemoryPressure() {
+        val ids = tabsToUnloadUnderPressure(snapshot())
+        Log.i(KrunkApp.TAG, "memory pressure: unloading ${ids.size} background tabs")
+        ids.forEach(::unloadQuietly)
+        thumbnails.clear()
         refresh()
     }
 

@@ -19,6 +19,24 @@ data class MemoryTabSnapshot(
     val playingAudio: Boolean = false,
 )
 
+/**
+ * The tabs to unload when the system is short of memory: every live background tab, least
+ * recently used first, except that one live private tab always stays (closing the last private
+ * session ends the private browsing data, which would sign the user out of their private tabs).
+ */
+fun tabsToUnloadUnderPressure(tabs: List<MemoryTabSnapshot>): List<UInt> {
+    var livePrivate = tabs.count { it.live && it.private }
+    val out = ArrayList<UInt>()
+    for (t in tabs.filter { it.live && !it.active }.sortedBy { it.lastActive }) {
+        if (t.private) {
+            if (livePrivate <= 1) continue
+            livePrivate--
+        }
+        out += t.id
+    }
+    return out
+}
+
 /** The sessions the ticker acts on (the tab manager; a fake in tests). */
 interface MemoryHost {
     fun snapshot(): List<MemoryTabSnapshot>

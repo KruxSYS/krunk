@@ -1,5 +1,6 @@
 package org.krunk.browser.ui.browser
 
+import android.view.WindowManager
 import androidx.activity.compose.LocalActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -33,5 +34,25 @@ fun SystemBarsEffect(fullScreen: Boolean, darkTheme: Boolean) {
         onDispose {
             if (fullScreen) controller?.show(WindowInsetsCompat.Type.systemBars())
         }
+    }
+}
+
+/**
+ * While [secure] is true the window is marked secure: the system leaves it out of the Recents
+ * thumbnail and refuses screenshots and screen recording. Used while a private tab (or the tab
+ * switcher with private tabs) is on screen, so a private page is not kept by the system after
+ * the tab is gone.
+ */
+@Composable
+fun SecureWindowEffect(secure: Boolean) {
+    val activity = LocalActivity.current
+    DisposableEffect(secure, activity) {
+        val window = activity?.window
+        if (secure) {
+            window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+        onDispose { }
     }
 }

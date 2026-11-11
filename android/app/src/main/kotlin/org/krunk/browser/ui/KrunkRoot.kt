@@ -9,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.krunk.browser.ui.bookmarks.BookmarksScreen
 import org.krunk.browser.ui.browser.BrowserScreen
+import org.krunk.browser.ui.browser.SecureWindowEffect
 import org.krunk.browser.ui.history.HistoryScreen
 import org.krunk.browser.ui.settings.AboutScreen
 import org.krunk.browser.ui.settings.SettingsScreen
@@ -22,6 +23,10 @@ fun KrunkRoot(vm: BrowserViewModel) {
     val activeTab by vm.activeTab.collectAsStateWithLifecycle()
     val screens by vm.screens.collectAsStateWithLifecycle()
     val screen = screens.last()
+    val hasPrivateTabs by vm.hasPrivateTabs.collectAsStateWithLifecycle()
+
+    // Private pages stay out of the Recents thumbnail, screenshots and screen recordings.
+    SecureWindowEffect(activeTab?.private == true || (screen == Screen.TabSwitcher && hasPrivateTabs))
 
     KrunkTheme(mode = settings.theme, privateMode = activeTab?.private == true && screen == Screen.Browser) {
         Surface(Modifier.fillMaxSize()) {

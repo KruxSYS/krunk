@@ -139,4 +139,37 @@ class MemoryTickerTest {
             }
         }
     }
+
+    @Test
+    fun memoryPressureUnloadsBackgroundTabsButKeepsOnePrivateTabLive() {
+        fun snap(id: UInt, live: Boolean = true, active: Boolean = false, private: Boolean = false, last: Long = 0) =
+            MemoryTabSnapshot(id, live, active, private, last)
+        // Normal tabs: everything live in the background goes, oldest first.
+        assertEquals(
+            listOf(3u, 2u),
+            tabsToUnloadUnderPressure(
+                listOf(snap(1u, active = true), snap(2u, last = 20), snap(3u, last = 10), snap(4u, live = false)),
+            ),
+        )
+        // The only live private tab stays, whether the user is on a normal tab or not.
+        assertEquals(
+            listOf(2u),
+            tabsToUnloadUnderPressure(listOf(snap(1u, active = true), snap(2u), snap(3u, private = true))),
+        )
+        // With the private tab on screen, the other private tabs may go.
+        assertEquals(
+            listOf(2u, 3u),
+            tabsToUnloadUnderPressure(
+                listOf(snap(1u, active = true, private = true), snap(2u, private = true, last = 1), snap(3u, last = 2)),
+            ),
+        )
+        // Several private tabs in the background: all but the most recently used one.
+        assertEquals(
+            listOf(2u),
+            tabsToUnloadUnderPressure(
+                listOf(snap(1u, active = true), snap(2u, private = true, last = 1), snap(3u, private = true, last = 2)),
+            ),
+        )
+        assertEquals(emptyList<UInt>(), tabsToUnloadUnderPressure(listOf(snap(1u, active = true))))
+    }
 }
