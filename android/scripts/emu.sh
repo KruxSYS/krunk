@@ -7,7 +7,8 @@
 #   emu.sh stop             stop the local emulator started by this script (never the shared one)
 #   emu.sh wait             wait until the device has booted
 #   emu.sh serial           print the adb serial in use
-#   emu.sh shot <name>      screenshot to $KRUNK_SHOTS/<name>.png (default .pipeline/screenshots/android)
+#   emu.sh shot <name>      screenshot to $KRUNK_SHOTS/<name>.png (default .pipeline/screenshots/android);
+#                           exit 4 when none arrives within $KRUNK_SHOT_TIMEOUT (20) seconds
 #   emu.sh install [apk]    install the debug APK (default: the universal debug APK)
 #   emu.sh uninstall        remove org.krunk.browser
 #   emu.sh launch [url]     start Krunk (optionally with a URL)
@@ -121,7 +122,17 @@ cmd_stop() {
 cmd_shot() {
   local name="${1:?usage: emu.sh shot NAME}"
   mkdir -p "$SHOTS"
-  adbx exec-out screencap -p > "$SHOTS/$name.png"
+  local serial
+  serial=$(pick_serial)
+  [ -n "$serial" ] || { echo "no online emulator attached to adb (run: emu.sh start)" >&2; exit 1; }
+  # A wedged graphics stack makes screencap hang for good (or return nothing): fail fast with
+  # its own exit status so a flow script stops instead of sitting on a dead device.
+  if ! timeout "${KRUNK_SHOT_TIMEOUT:-20}" "$ADB" -s "$serial" exec-out screencap -p > "$SHOTS/$name.png" ||
+    [ ! -s "$SHOTS/$name.png" ]; then
+    rm -f "$SHOTS/$name.png"
+    echo "no screenshot within ${KRUNK_SHOT_TIMEOUT:-20} s: the device's display is not answering" >&2
+    exit 4
+  fi
   echo "$SHOTS/$name.png"
 }
 

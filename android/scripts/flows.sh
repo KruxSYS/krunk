@@ -19,14 +19,18 @@ APP=org.krunk.browser
 SLOW_FACTOR="${SLOW:-1}"
 PAGE_WAIT=$((14 * SLOW_FACTOR))
 
-A() { "$E" adb shell "$@"; }
+# Every device call is bounded: a wedged emulator must end the run, not hang it.
+A() { timeout "${KRUNK_ADB_TIMEOUT:-60}" "$E" adb shell "$@"; }
 wait_s() { sleep "$(( $1 * SLOW_FACTOR ))"; }
 tap() { A input tap "$1" "$2"; wait_s 1; }
 longpress() { A input swipe "$1" "$2" "$1" "$2" 1200; wait_s 2; }
 typetext() { A input text "$1"; wait_s 1; }
 enter() { A input keyevent 66; }
 back() { A input keyevent 4; wait_s 1; }
-shot() { "$E" shot "$1" > /dev/null; echo "  shot $1"; }
+shot() {
+  "$E" shot "$1" > /dev/null || { echo "ABORT: no screenshot for $1 (display not answering); stopping" >&2; exit 4; }
+  echo "  shot $1"
+}
 # Measured on the sandbox emulator with 0.1.1 (2026-11-11), both positions.
 # The toolbar row (y) and the ⋮ menu's rows (y) as laid out on this screen size: the menu opens
 # downward from a top toolbar and upward from a bottom one. A top toolbar also moves the page
