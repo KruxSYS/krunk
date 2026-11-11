@@ -179,7 +179,7 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
 
     // ----- bookmarks (star state of the active page) -----
 
-    private val _bookmarkOverride = MutableStateFlow<Pair<String, Boolean>?>(null)
+    private val bookmarkOverride = MutableStateFlow<Pair<String, Boolean>?>(null)
 
     /**
      * Whether the active tab's URL is bookmarked; queried again when the URL changes and when
@@ -188,14 +188,14 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
     val bookmarked: StateFlow<Boolean> = combine(activeTab, screens) { tab, stack -> (tab?.url ?: "") to stack.size }
         .distinctUntilChanged()
         .map { (url, _) ->
-            _bookmarkOverride.value = null
+            bookmarkOverride.value = null
             url.isNotEmpty() && bookmarkable(url) &&
                 core.io { store -> runCatching { store.isBookmarked(url) }.getOrDefault(false) }
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     /** The star state to show: the last toggle wins over the stored state for the same URL. */
-    val bookmarkedShown: StateFlow<Boolean> = combine(bookmarked, _bookmarkOverride, activeTab) { stored, over, tab ->
+    val bookmarkedShown: StateFlow<Boolean> = combine(bookmarked, bookmarkOverride, activeTab) { stored, over, tab ->
         if (over != null && over.first == tab?.url) over.second else stored
     }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
@@ -206,7 +206,7 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
         val tab = activeTab.value ?: return null
         if (!canBookmark(tab)) return null
         val now = core.io { it.toggleBookmark(tab.url, tab.title.ifEmpty { tab.url }) }
-        _bookmarkOverride.value = tab.url to now
+        bookmarkOverride.value = tab.url to now
         return now
     }
 
