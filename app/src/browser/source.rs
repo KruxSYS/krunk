@@ -75,7 +75,8 @@ impl Browser {
         }
     }
 
-    /// "Open in new tab/window/private tab" for a selected address on tab `id` (0.15.2). A new
+    /// "Open in new tab/window/private tab" for a link or a selected address on tab `id`, and
+    /// "Copy link address" (0.15.2). A new
     /// tab sits next to it and stays private if it is; a new window is private from a private tab.
     pub(super) fn open_selection(&self, id: TabId, how: crate::ffi::cef::OpenIn, url: &str) {
         use crate::ffi::cef::OpenIn;
@@ -95,6 +96,11 @@ impl Browser {
                 self.apply(ops);
             }
             OpenIn::PrivateTab => self.new_tab(Some(url), true),
+            OpenIn::CopyAddress => {
+                if let Some(w) = self.window() {
+                    crate::ffi::secure::copy_text(w.hwnd(), url);
+                }
+            }
         }
     }
 

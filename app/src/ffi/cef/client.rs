@@ -728,10 +728,12 @@ const MENU_INSPECT: c_int = 26501;
 const MENU_SEARCH: c_int = 26502;
 /// The image items (0.12.2), in `ImageAction::ALL`'s order from this id on.
 const MENU_IMAGE_FIRST: c_int = 26503;
-/// Selected text that is an address (0.15.2): open it in a new tab, window or private tab.
+/// A link, or selected text that is an address (0.15.2): open it in a new tab, window or
+/// private tab; copy a link's address.
 const MENU_SEL_TAB: c_int = 26520;
 const MENU_SEL_WINDOW: c_int = 26521;
 const MENU_SEL_PRIVATE: c_int = 26522;
+const MENU_SEL_COPY: c_int = 26523;
 /// CEF's own ids: Copy, and "View page source" (which opened the system text editor).
 const MENU_ID_COPY: c_int = 113;
 const MENU_ID_VIEW_SOURCE: c_int = 132;
@@ -743,6 +745,19 @@ fn image_url(p: &ContextMenuParams) -> Option<String> {
     }
     let url = CefString::from(&p.source_url()).to_string();
     (!url.is_empty()).then_some(url)
+}
+
+/// What the open items are for: the link under the pointer (`true`), else a selected address.
+fn open_target(p: &ContextMenuParams) -> Option<(String, bool)> {
+    let link = CefString::from(&p.link_url()).to_string();
+    if link.starts_with("http://") || link.starts_with("https://") {
+        return Some((link, true));
+    }
+    if !link.is_empty() {
+        return None;
+    }
+    let selection = CefString::from(&p.selection_text()).to_string();
+    lb_core::urlclean::selection_url(&selection).map(|u| (u, false))
 }
 
 /// Hands a frame's HTML (`Frame::source`) to `done` once.
@@ -781,17 +796,25 @@ wrap_context_menu_handler! {
             let image = params.as_ref().and_then(|p| image_url(p));
             // Selected text (never a password field's: the engine gives none): "Search … for"
             // after Copy, as in Chrome (0.11.0).
-            let link = params.as_ref().is_some_and(|p| !CefString::from(&p.link_url()).to_string().is_empty());
+            let target = params.as_ref().and_then(|p| open_target(p));
             let selection = params.map(|p| CefString::from(&p.selection_text()).to_string()).unwrap_or_default();
-            // A selected address (not on a link, which has the engine's own items): open it,
-            // first in the menu (0.15.2).
-            if let Some(url) = (!link).then(|| lb_core::urlclean::selection_url(&selection)).flatten() {
-                let shown = lb_core::urlclean::selection_url_label(&url);
-                let items = [
-                    (MENU_SEL_TAB, format!("Open “{shown}” in new tab")),
-                    (MENU_SEL_WINDOW, "Open in new window".to_string()),
-                    (MENU_SEL_PRIVATE, "Open in private tab".to_string()),
-                ];
+            // A link or a selected address: open it, first in the menu (0.15.2).
+            if let Some((url, link)) = target {
+                let items: &[(c_int, String)] = if link {
+                    &[
+                        (MENU_SEL_TAB, "Open link in new tab".to_string()),
+                        (MENU_SEL_WINDOW, "Open link in new window".to_string()),
+                        (MENU_SEL_PRIVATE, "Open link in private tab".to_string()),
+                        (MENU_SEL_COPY, "Copy link address".to_string()),
+                    ]
+                } else {
+                    let shown = lb_core::urlclean::selection_url_label(&url);
+                    &[
+                        (MENU_SEL_TAB, format!("Open “{shown}” in new tab")),
+                        (MENU_SEL_WINDOW, "Open in new window".to_string()),
+                        (MENU_SEL_PRIVATE, "Open in private tab".to_string()),
+                    ]
+                };
                 for (i, (id, label)) in items.iter().enumerate() {
                     m.insert_item_at(i, *id, Some(&CefString::from(label.as_str())));
                 }
@@ -848,14 +871,15 @@ wrap_context_menu_handler! {
                 }
                 return 1;
             }
-            if (MENU_SEL_TAB..=MENU_SEL_PRIVATE).contains(&command_id) {
-                let text = params.map(|p| CefString::from(&p.selection_text()).to_string()).unwrap_or_default();
+            if (MENU_SEL_TAB..=MENU_SEL_COPY).contains(&command_id) {
                 let how = match command_id {
                     MENU_SEL_TAB => super::view::OpenIn::Tab,
                     MENU_SEL_WINDOW => super::view::OpenIn::Window,
-                    _ => super::view::OpenIn::PrivateTab,
+                    MENU_SEL_PRIVATE => super::view::OpenIn::PrivateTab,
+                    _ => super::view::OpenIn::CopyAddress,
                 };
-                if let (Some(url), Some(view)) = (lb_core::urlclean::selection_url(&text), lookup(self.key)) {
+                let target = params.as_ref().and_then(|p| open_target(p));
+                if let (Some((url, _)), Some(view)) = (target, lookup(self.key)) {
                     view.ev.open_selection.with(|f| f(how, url));
                 }
                 return 1;

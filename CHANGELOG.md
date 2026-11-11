@@ -2,6 +2,11 @@
 
 What changed in each Krunk release, newest first.
 
+## 0.15.3 — 2026-11-11
+
+- **Right-click a link** for **Open link in new tab**, **Open link in new window**, **Open link in
+  private tab** and **Copy link address**.
+
 ## 0.15.2 — 2026-11-11
 
 - **No black flash when you switch to a tab in the background** (for example from one new tab

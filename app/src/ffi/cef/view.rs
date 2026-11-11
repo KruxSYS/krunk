@@ -138,12 +138,14 @@ pub struct MessageSource {
     pub frame_id: String,
 }
 
-/// Where the page context menu opens a selected address (0.15.2).
+/// Where the page context menu opens a link or a selected address (0.15.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpenIn {
     Tab,
     Window,
     PrivateTab,
+    /// "Copy link address".
+    CopyAddress,
 }
 
 /// A page asked for a new window (`window.open`, `target=_blank`).
@@ -318,7 +320,7 @@ pub(super) struct Events {
     pub search_label: Slot<SearchLabelFn>,
     /// That item was chosen: the selected text.
     pub search_selection: Slot<dyn FnMut(String)>,
-    /// "Open in new tab/window/private tab" for a selected address (0.15.2).
+    /// "Open in new tab/window/private tab" for a link or a selected address (0.15.2).
     pub open_selection: Slot<dyn FnMut(OpenIn, String)>,
     /// A page's JavaScript dialog (0.12.4); the host answers it through the responder.
     pub js_dialog: Slot<dyn FnMut(JsDialogRequest, JsDialogResponder)>,
