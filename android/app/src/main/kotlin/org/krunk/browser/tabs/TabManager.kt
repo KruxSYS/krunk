@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.os.SystemClock
 import android.util.Log
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -62,7 +63,9 @@ import org.mozilla.geckoview.WebResponse
 class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine) :
     SessionListener,
     MemoryHost {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    /** A failed background task (a favicon fetch, a save) is logged; it must not end the app. */
+    private val taskFailed = CoroutineExceptionHandler { _, e -> Log.e(KrunkApp.TAG, "tab manager task failed", e) }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + taskFailed)
 
     /** One writer for the kv rows, so an older save can never land after a newer one. */
     private val persist = Dispatchers.IO.limitedParallelism(1)

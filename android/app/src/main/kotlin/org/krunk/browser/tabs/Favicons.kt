@@ -11,6 +11,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.krunk.browser.KrunkApp
 import org.krunk.browser.core.KrunkCore
+import org.krunk.browser.core.readCapped
 import org.krunk.browser.engine.IconCandidate
 import org.krunk.ffi.hostOf
 import org.krunk.ffi.nowMs
@@ -107,8 +108,9 @@ class Favicons(private val core: KrunkCore) {
             conn.useCaches = false
             try {
                 if (conn.responseCode != 200) return null
-                val bytes = conn.inputStream.use { it.readBytes() }
-                if (bytes.size > MAX_DOWNLOAD) return null
+                // The page chose this address: never trust the size of what comes back.
+                if (conn.contentLengthLong > MAX_DOWNLOAD) return null
+                val bytes = conn.inputStream.use { it.readCapped(MAX_DOWNLOAD) } ?: return null
                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
             } finally {
                 conn.disconnect()

@@ -7,6 +7,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.krunk.browser.KrunkApp
 import org.krunk.browser.core.KrunkCore
+import org.krunk.browser.core.readCapped
 import org.krunk.ffi.AddressSuggestion
 import org.krunk.ffi.OmniboxResult
 import org.krunk.ffi.SearchEngineId
@@ -43,6 +44,11 @@ class Omnibox(private val core: KrunkCore) {
         return mergeSearchSuggestions(rows, typed, remote, template)
     }
 
+    private companion object {
+        /** The core's parser refuses more than this anyway. */
+        const val MAX_BODY = 64 * 1024
+    }
+
     private fun fetch(url: String): List<String> {
         return try {
             val conn = URL(url).openConnection() as HttpURLConnection
@@ -53,8 +59,8 @@ class Omnibox(private val core: KrunkCore) {
             conn.setRequestProperty("Cookie", "")
             try {
                 if (conn.responseCode != 200) return emptyList()
-                val bytes = conn.inputStream.use { it.readBytes() }
-                if (bytes.size > 64 * 1024) emptyList() else parseSuggestBody(bytes)
+                val bytes = conn.inputStream.use { it.readCapped(MAX_BODY, maxMillis = 5_000) }
+                if (bytes == null) emptyList() else parseSuggestBody(bytes)
             } finally {
                 conn.disconnect()
             }
