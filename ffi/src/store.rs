@@ -457,6 +457,23 @@ impl KrunkStore {
         Ok(self.lock().clear_favicons()? as u64)
     }
 
+    /// Sites where ad and tracker blocking is off (the shared `adblock_allowlist` table, the
+    /// same rows Windows uses), sorted. An entry covers the host and its subdomains.
+    pub fn allowlist(&self) -> Result<Vec<String>, FfiError> {
+        Ok(self.lock().allowlist()?)
+    }
+
+    /// Adds a site to the allow list and returns the stored form (lower case, no `*.`, no
+    /// trailing dot). Something that is not a host name is `FfiError::Invalid`.
+    pub fn allowlist_add(&self, host: String) -> Result<String, FfiError> {
+        Ok(self.lock().allowlist_add(&host, lb_core::storage::now_ms())?)
+    }
+
+    /// Removes a site from the allow list; `false` when it was not on it.
+    pub fn allowlist_remove(&self, host: String) -> Result<bool, FfiError> {
+        Ok(self.lock().allowlist_remove(&host)?)
+    }
+
     /// Compacts the database file.
     pub fn vacuum(&self) -> Result<(), FfiError> {
         Ok(self.lock().vacuum()?)
@@ -642,6 +659,32 @@ mod tests {
         s.kv_set_many(twice).unwrap();
         assert_eq!(s.kv_get("k".into()).unwrap().as_deref(), Some("2"));
         s.kv_set_many(vec![]).unwrap();
+    }
+
+    #[test]
+    fn allow_list_rows_are_normalised_kept_and_removed() {
+        let dir = std::env::temp_dir().join(format!("krunk-ffi-allow-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("browser.db").to_string_lossy().to_string();
+        {
+            let s = KrunkStore::open(path.clone()).unwrap();
+            assert!(s.allowlist().unwrap().is_empty());
+            assert_eq!(s.allowlist_add("WWW.Example.com".into()).unwrap(), "www.example.com");
+            assert_eq!(s.allowlist_add("*.news.org".into()).unwrap(), "news.org");
+            // Adding twice keeps one row.
+            s.allowlist_add("news.org".into()).unwrap();
+            assert_eq!(s.allowlist().unwrap(), vec!["news.org", "www.example.com"]);
+            assert!(matches!(s.allowlist_add("https://example.com/x".into()), Err(FfiError::Invalid(_))));
+        }
+        // The rows are in the database file: they survive closing and reopening it (app restart).
+        let s = KrunkStore::open(path).unwrap();
+        assert_eq!(s.allowlist().unwrap(), vec!["news.org", "www.example.com"]);
+        assert!(s.allowlist_remove("NEWS.org".into()).unwrap());
+        assert!(!s.allowlist_remove("news.org".into()).unwrap());
+        assert!(!s.allowlist_remove("not a host".into()).unwrap());
+        assert_eq!(s.allowlist().unwrap(), vec!["www.example.com"]);
+        drop(s);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

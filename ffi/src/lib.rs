@@ -8,6 +8,7 @@
 
 uniffi::setup_scaffolding!();
 
+mod blocker;
 mod error;
 mod memory;
 mod settings;
@@ -15,6 +16,7 @@ mod store;
 mod tabs;
 mod urls;
 
+pub use blocker::*;
 pub use error::{FfiError, SettingsError, SettingsFieldError};
 pub use memory::*;
 pub use settings::*;

@@ -9,6 +9,7 @@ import org.krunk.browser.BuildConfig
 import org.krunk.browser.KrunkApp
 import org.krunk.ffi.AndroidSettings
 import org.krunk.ffi.ThemeMode
+import org.mozilla.geckoview.ContentBlocking
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.GeckoRuntimeSettings
@@ -20,18 +21,37 @@ import org.mozilla.geckoview.StorageController
  * The one [GeckoRuntime] of the process and the settings Krunk applies to it. Private tabs use
  * the same runtime with `usePrivateMode` sessions (Gecko keeps their data in memory only).
  */
-class GeckoEngine(context: Context) {
+class GeckoEngine(context: Context, automaticUpdates: Boolean) {
     val runtime: GeckoRuntime
 
     init {
-        val settings = GeckoRuntimeSettings.Builder()
+        val builder = GeckoRuntimeSettings.Builder()
             .consoleOutput(BuildConfig.DEBUG)
             .javaScriptEnabled(true)
             .remoteDebuggingEnabled(BuildConfig.DEBUG)
             .aboutConfigEnabled(BuildConfig.DEBUG)
             // Krunk's promise: nothing of the engine's own background traffic beyond what the
-            // user triggers. Gecko has no telemetry in GeckoView builds; crash reports stay local.
-            .build()
+            // user triggers. The engine does not keep it by itself: see EngineConfig. Safe
+            // Browsing is off (it means contact with Google); tracker blocking is the bundled
+            // blocker's job, so the engine's own (whose lists come from Mozilla) is off; cookies
+            // of third parties are kept apart per site, which needs no list.
+            .contentBlocking(
+                ContentBlocking.Settings.Builder()
+                    .safeBrowsing(ContentBlocking.SafeBrowsing.NONE)
+                    .antiTracking(ContentBlocking.AntiTracking.NONE)
+                    .cookieBehavior(ContentBlocking.CookieBehavior.ACCEPT_FIRST_PARTY_AND_ISOLATE_OTHERS)
+                    .cookieBehaviorPrivateMode(ContentBlocking.CookieBehavior.ACCEPT_FIRST_PARTY_AND_ISOLATE_OTHERS)
+                    .build(),
+            )
+        try {
+            val config = EngineConfig.write(context.applicationContext.filesDir, automaticUpdates)
+            builder.configFilePath(config.absolutePath)
+        } catch (e: java.io.IOException) {
+            // Without the file the engine runs with its own defaults (background requests to
+            // Mozilla and Google). The store on the same disk is failing too in that case.
+            Log.e(KrunkApp.TAG, "engine config not written", e)
+        }
+        val settings = builder.build()
         runtime = GeckoRuntime.create(context.applicationContext, settings)
         Log.i(KrunkApp.TAG, "GeckoRuntime ready (GeckoView ${BuildConfig.GECKOVIEW_VERSION})")
     }

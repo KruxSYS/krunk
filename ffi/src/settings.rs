@@ -61,6 +61,9 @@ struct Extras {
     follow_system_font: bool,
     /// Allow pinch zoom on pages that forbid it.
     force_zoom: bool,
+    /// Update filter lists (and the engine's certificate security data) without being asked.
+    /// Off by default: nothing is fetched unless the user triggers it.
+    filter_auto_update: bool,
 }
 
 impl Default for Extras {
@@ -70,6 +73,7 @@ impl Default for Extras {
             text_scale: 1.0,
             follow_system_font: true,
             force_zoom: false,
+            filter_auto_update: false,
         }
     }
 }
@@ -90,6 +94,7 @@ impl Extras {
             text_scale: v.get("textScale").and_then(Value::as_f64).map_or(d.text_scale, clean_text_scale),
             follow_system_font: v.get("followSystemFont").and_then(Value::as_bool).unwrap_or(d.follow_system_font),
             force_zoom: v.get("forceZoom").and_then(Value::as_bool).unwrap_or(d.force_zoom),
+            filter_auto_update: v.get("filterAutoUpdate").and_then(Value::as_bool).unwrap_or(d.filter_auto_update),
         }
     }
 }
@@ -118,6 +123,8 @@ pub struct AndroidSettings {
     // Privacy (shared)
     pub https_only: bool,
     pub strip_tracking_params: bool,
+    /// Ad and tracker blocking as a whole (on Android: the bundled uBlock Origin enabled).
+    pub adblock_enabled: bool,
     // Appearance (shared)
     pub theme: ThemeMode,
     /// Default page zoom (0.25-5.0; GeckoView applies it as a text scale).
@@ -146,6 +153,9 @@ pub struct AndroidSettings {
     pub text_scale: f64,
     pub follow_system_font: bool,
     pub force_zoom: bool,
+    /// "Update automatically": filter lists and the engine's security data may be fetched
+    /// without a user action. Default off.
+    pub filter_auto_update: bool,
 }
 
 impl AndroidSettings {
@@ -170,6 +180,7 @@ impl AndroidSettings {
             search_suggestions: s.search_suggestions,
             https_only: s.https_only,
             strip_tracking_params: s.strip_tracking_params,
+            adblock_enabled: s.adblock_enabled,
             theme: match s.theme {
                 cs::Theme::System => ThemeMode::System,
                 cs::Theme::Light => ThemeMode::Light,
@@ -199,6 +210,7 @@ impl AndroidSettings {
             text_scale: extras.text_scale,
             follow_system_font: extras.follow_system_font,
             force_zoom: extras.force_zoom,
+            filter_auto_update: extras.filter_auto_update,
         }
     }
 
@@ -231,6 +243,7 @@ impl AndroidSettings {
             s.protection = protection;
         }
         s.sync_protection();
+        s.adblock_enabled = self.adblock_enabled;
         s.theme = match self.theme {
             ThemeMode::System => cs::Theme::System,
             ThemeMode::Light => cs::Theme::Light,
@@ -264,6 +277,7 @@ impl AndroidSettings {
             text_scale: clean_text_scale(self.text_scale),
             follow_system_font: self.follow_system_font,
             force_zoom: self.force_zoom,
+            filter_auto_update: self.filter_auto_update,
         };
         serde_json::to_string(&e).unwrap_or_else(|_| "{}".to_string())
     }
@@ -372,6 +386,38 @@ mod tests {
         // Shared settings stored (as by Windows or sync) but no Android row: still the default.
         store.kv_set("settings".into(), serde_json::to_string(&Settings::default()).unwrap()).unwrap();
         assert_eq!(store.load_settings().unwrap().toolbar_position, ToolbarPosition::Top);
+    }
+
+    #[test]
+    fn blocking_is_on_and_automatic_updates_are_off_by_default() {
+        let d = default_settings();
+        assert!(d.adblock_enabled);
+        assert!(!d.filter_auto_update);
+        // A store written by 0.1.1 (shared settings without a blocker choice, extras without the
+        // new key) gives the same.
+        let store = KrunkStore::in_memory().unwrap();
+        store.kv_set(EXTRAS_KEY.into(), r#"{"toolbarPosition":"bottom","textScale":1.0}"#.into()).unwrap();
+        let s = store.load_settings().unwrap();
+        assert!(s.adblock_enabled);
+        assert!(!s.filter_auto_update);
+        assert_eq!(s.toolbar_position, ToolbarPosition::Bottom);
+    }
+
+    #[test]
+    fn blocking_switch_and_automatic_updates_survive_a_reload() {
+        let store = KrunkStore::in_memory().unwrap();
+        let mut s = store.load_settings().unwrap();
+        s.adblock_enabled = false;
+        s.filter_auto_update = true;
+        store.save_settings(s).unwrap();
+        let back = store.load_settings().unwrap();
+        assert!(!back.adblock_enabled);
+        assert!(back.filter_auto_update);
+        // Turning blocking off does not touch the tracking-parameter setting.
+        assert!(back.strip_tracking_params);
+        // The shared row carries the Windows field name.
+        let shared = store.kv_get("settings".into()).unwrap().unwrap();
+        assert!(shared.contains("\"adblockEnabled\":false"), "{shared}");
     }
 
     #[test]

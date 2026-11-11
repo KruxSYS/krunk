@@ -12,3 +12,12 @@
     public static int d(...);
     public static int v(...);
 }
+
+# The engine config (EngineConfig, a YAML file given to GeckoRuntimeSettings.configFilePath) is
+# parsed by GeckoView with SnakeYAML into org.mozilla.gecko.util.DebugConfig, by reflection.
+# SnakeYAML looks up its own package and classes by name (TypeDescription.<clinit> calls
+# getPackage().getName()): renamed or repackaged it crashes the app when the runtime is created.
+-keep class org.yaml.snakeyaml.** { *; }
+-keeppackagenames org.yaml.snakeyaml.**
+-keep class org.mozilla.gecko.util.DebugConfig { *; }
+-dontwarn org.yaml.snakeyaml.**

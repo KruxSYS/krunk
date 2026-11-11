@@ -20,8 +20,9 @@ class KrunkApp : Application() {
     val core: KrunkCore by lazy { KrunkCore(this) }
 
     val engine: GeckoEngine by lazy {
-        GeckoEngine(this).also {
-            it.applySettings(core.settings.current)
+        val settings = core.settings.current
+        GeckoEngine(this, automaticUpdates = settings.filterAutoUpdate).also {
+            it.applySettings(settings)
             Log.i(TAG, "engine ready after ${SystemClock.uptimeMillis() - startedAt} ms")
         }
     }
