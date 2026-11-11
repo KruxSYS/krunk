@@ -725,6 +725,7 @@
     stateHidden('new-tab-url-row', settings.newTabPage !== 'custom');
     stateHidden('mail-custom-row', settings.mailHandler !== 'custom');
     pickers.forEach((p) => p.sync());
+    renderStyleRows(settings.appearance || {});
     renderWallpapers();
     stateHidden('discard-row', !settings.tabDiscardEnabled);
     $('download-dir').textContent = settings.downloadDir || 'Downloads (default)';
@@ -758,6 +759,7 @@
     s.dns = s.dns || { mode: 'system', resolvers: [] };
     if (dnsmode) s.dns.mode = dnsmode.value;
     collectHints(s);
+    syncStyle(s.appearance);
     // Something that is not a whole number becomes an out-of-range value, so
     // the host's validation reports the field (instead of the message failing to parse).
     ['tabSleepMinutes', 'tabDiscardMinutes', 'vaultAutolockMinutes'].forEach((k) => {
@@ -993,8 +995,53 @@
     accent: ['', '#2563eb', '#7c3aed', '#db2777', '#dc2626', '#ea580c', '#16a34a', '#0d9488'],
     surface: ['', '#ffffff', '#f3f4f6', '#e0e7ff', '#1f2023', '#111827', '#0f172a', '#1e1b4b'],
   };
+  // 0.15.0: the three gradient colours share a row: no swatches, a short reset, their own names.
   const pickers = Array.from(document.querySelectorAll('input[data-picker]')).map(function (input) {
-    return ColorPicker.attach(input, { presets: PRESETS[input.dataset.picker] || [], label: input.closest('.row').querySelector('label, .label').textContent });
+    const own = input.dataset.picker === 'gradient';
+    return ColorPicker.attach(input, { presets: PRESETS[input.dataset.picker] || [], resetLabel: own ? 'Clear' : undefined,
+      label: (own && input.getAttribute('aria-label')) || input.closest('.row').querySelector('label, .label').textContent });
+  });
+
+  // ---------- tab and toolbar styles (0.15.0) ----------
+  // The curated looks of core/src/style.rs (PRESETS; ui/dev/test-0150-theme.cjs checks they
+  // match). Choosing one copies its values; changing any of them afterwards makes it "Your own".
+  const STYLE_PRESETS = {
+    classic: { tabStyle: 'solid', toolbarStyle: 'solid', gradient: ['', '', ''], gradientAngle: 90, tabShape: 'rounded', activeHighlight: 'fill', accentGlow: false },
+    sunset: { tabStyle: 'ombre', toolbarStyle: 'gradient', gradient: ['#f97316', '#ec4899', '#8b5cf6'], gradientAngle: 90, tabShape: 'rounded', activeHighlight: 'fill', accentGlow: true },
+    ocean: { tabStyle: 'gradient', toolbarStyle: 'gradient', gradient: ['#0ea5e9', '', '#14b8a6'], gradientAngle: 135, tabShape: 'pill', activeHighlight: 'outline', accentGlow: false },
+    glass: { tabStyle: 'glass', toolbarStyle: 'glass', gradient: ['', '', ''], gradientAngle: 90, tabShape: 'rounded', activeHighlight: 'underline', accentGlow: true },
+    mono: { tabStyle: 'solid', toolbarStyle: 'solid', gradient: ['', '', ''], gradientAngle: 90, tabShape: 'square', activeHighlight: 'underline', accentGlow: false },
+  };
+  function presetValues(p) {
+    return { tabStyle: p.tabStyle, toolbarStyle: p.toolbarStyle, gradientFrom: p.gradient[0], gradientVia: p.gradient[1], gradientTo: p.gradient[2],
+      gradientAngle: p.gradientAngle, tabShape: p.tabShape, activeHighlight: p.activeHighlight, accentGlow: p.accentGlow };
+  }
+  // In collect(): the preset stays only while every value is still its own; roundedTabs
+  // mirrors the shape for older versions.
+  function syncStyle(a) {
+    if (!a) return;
+    const p = STYLE_PRESETS[a.preset];
+    if (a.preset && (!p || Object.entries(presetValues(p)).some(([k, v]) => a[k] !== v))) a.preset = '';
+    a.roundedTabs = a.tabShape !== 'square';
+  }
+  function renderStyleRows(a) {
+    const grad = ['gradient', 'ombre'].includes(a.tabStyle) || a.toolbarStyle === 'gradient';
+    stateHidden('gradient-colors-row', !grad);
+    stateHidden('gradient-angle-row', !grad);
+    stateHidden('tab-radius-row', a.tabShape !== 'rounded');
+  }
+  $('appearance.preset').addEventListener('change', function () {
+    const next = collect();
+    const p = STYLE_PRESETS[this.value];
+    if (p) Object.assign(next.appearance, presetValues(p), { roundedTabs: p.tabShape !== 'square' });
+    next.appearance.preset = p ? this.value : '';
+    save(next);
+  });
+  // The rows follow a style choice at once (before the host's reply).
+  ['appearance.tabStyle', 'appearance.toolbarStyle', 'appearance.tabShape'].forEach(function (id) {
+    $(id).addEventListener('change', function () {
+      renderStyleRows({ tabStyle: $('appearance.tabStyle').value, toolbarStyle: $('appearance.toolbarStyle').value, tabShape: $('appearance.tabShape').value });
+    });
   });
   // A colour for the new tab page also makes it the background.
   $('ntp.backgroundColor').addEventListener('change', function () {

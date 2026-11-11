@@ -172,13 +172,15 @@
         LB.request(t.pinned ? 'unpinSite' : 'pinSite', t.pinned ? { url: t.url } : { url: t.url, title: t.title }).then(load);
       });
       pinBtn.classList.add('pin');
+      pinBtn.setAttribute('aria-pressed', t.pinned ? 'true' : 'false');
+      // 0.15.0: one action cluster in the top-right corner, the pin at the corner. A pinned
+      // tile keeps its filled pin there when not hovered (no separate badge).
       const tile = el('a', { class: 'tile' + (t.pinned ? ' pinned' : ''), href: t.url, title: t.title + '\n' + t.url, draggable: 'true', 'data-url': t.url }, [
-        t.pinned ? el('span', { class: 'pinned-mark', title: 'Pinned' }, [Page.svg(Page.ICONS.pin)]) : null,
         el('span', { class: 'avatar' }, [Page.favicon(t.url, t.favicon)]),
         el('span', { class: 'label', text: t.title }),
         el('span', { class: 'tools' }, [
-          Page.iconButton('edit', 'Edit', function (e) { e.preventDefault(); openTileDialog(t); }),
           pinBtn,
+          Page.iconButton('edit', 'Edit', function (e) { e.preventDefault(); openTileDialog(t); }),
           Page.iconButton('close', 'Remove', function (e) {
             e.preventDefault();
             const req = t.pinned ? LB.request('unpinSite', { url: t.url }).then(function () { return LB.request('hideSite', { url: t.url }); })

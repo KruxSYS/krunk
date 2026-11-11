@@ -466,6 +466,8 @@ impl Browser {
                 c.post_json(&e);
             }
         }
+        // 0.15.0: the AI panels switch live too (they only got the theme at load).
+        self.agent_panels_theme(&e);
         let internal: Vec<TabId> =
             self.ws.borrow().tabs().filter(|(_, t)| Page::from_url(&t.url).is_some()).map(|(_, t)| t.id).collect();
         for id in internal {

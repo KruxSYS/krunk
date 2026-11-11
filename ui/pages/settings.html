@@ -604,7 +604,7 @@
       <div class="row setting" data-keywords="style preset look">
         <div class="text"><label for="appearance.preset">Style</label><p class="desc">A ready-made look; change any part of it below.</p>
           <p class="field-error" data-error-for="appearance.preset"></p></div>
-        <div class="control"><select id="appearance.preset" data-key="appearance.preset"><option value="">Your own</option><option value="classic">Classic</option><option value="sunset">Sunset</option><option value="ocean">Ocean</option><option value="glass">Glass</option><option value="mono">Mono</option></select></div>
+        <div class="control"><select id="appearance.preset" data-key="appearance.preset" data-own-save><option value="">Your own</option><option value="classic">Classic</option><option value="sunset">Sunset</option><option value="ocean">Ocean</option><option value="glass">Glass</option><option value="mono">Mono</option></select></div>
       </div>
       <div class="row setting" data-keywords="tab strip style solid gradient ombre glass">
         <div class="text"><label for="appearance.tabStyle">Tab strip</label></div>
@@ -615,16 +615,16 @@
           <p class="field-error" data-error-for="appearance.toolbarStyle"></p></div>
         <div class="control"><select id="appearance.toolbarStyle" data-key="appearance.toolbarStyle"><option value="solid">Solid</option><option value="gradient">Gradient</option><option value="glass">Glass</option></select></div>
       </div>
-      <div class="row setting gradient-row" data-keywords="gradient colours colors stops">
-        <div class="text"><span class="label">Gradient colours</span><p class="desc">Two or three colours; leave the middle one empty for two.</p>
+      <div class="row setting gradient-row" id="gradient-colors-row" data-keywords="gradient colours colors stops">
+        <div class="text"><span class="label">Gradient colours</span><p class="desc">Two or three colours; leave the middle one empty for two. Empty colours follow the accent colour.</p>
           <p class="field-error" data-error-for="appearance.gradientFrom"></p><p class="field-error" data-error-for="appearance.gradientVia"></p><p class="field-error" data-error-for="appearance.gradientTo"></p></div>
         <div class="control">
-          <input type="text" id="appearance.gradientFrom" data-key="appearance.gradientFrom" data-picker="accent" placeholder="#2563eb" size="8" spellcheck="false" aria-label="First colour">
-          <input type="text" id="appearance.gradientVia" data-key="appearance.gradientVia" data-picker="accent" placeholder="(none)" size="8" spellcheck="false" aria-label="Middle colour">
-          <input type="text" id="appearance.gradientTo" data-key="appearance.gradientTo" data-picker="accent" placeholder="#7c3aed" size="8" spellcheck="false" aria-label="Last colour">
+          <input type="text" id="appearance.gradientFrom" data-key="appearance.gradientFrom" data-picker="gradient" placeholder="#2563eb" size="8" spellcheck="false" aria-label="First colour">
+          <input type="text" id="appearance.gradientVia" data-key="appearance.gradientVia" data-picker="gradient" placeholder="(none)" size="8" spellcheck="false" aria-label="Middle colour">
+          <input type="text" id="appearance.gradientTo" data-key="appearance.gradientTo" data-picker="gradient" placeholder="#7c3aed" size="8" spellcheck="false" aria-label="Last colour">
         </div>
       </div>
-      <div class="row setting gradient-row" data-keywords="gradient angle direction">
+      <div class="row setting gradient-row" id="gradient-angle-row" data-keywords="gradient angle direction">
         <div class="text"><label for="appearance.gradientAngle">Gradient angle</label>
           <p class="field-error" data-error-for="appearance.gradientAngle"></p></div>
         <div class="control"><input type="range" id="appearance.gradientAngle" data-key="appearance.gradientAngle" data-type="number" min="0" max="360" step="15"></div>
