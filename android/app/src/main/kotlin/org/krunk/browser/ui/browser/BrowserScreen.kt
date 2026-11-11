@@ -28,6 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -55,11 +56,14 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.krunk.browser.R
 import org.krunk.browser.engine.BackAction
 import org.krunk.browser.engine.ContextTarget
+import org.krunk.browser.engine.ExternalLink
+import org.krunk.browser.engine.KrunkSelectionDelegate
 import org.krunk.browser.engine.KrunkSession
 import org.krunk.browser.engine.LoadSource
 import org.krunk.browser.engine.NestedGeckoView
 import org.krunk.browser.engine.backAction
 import org.krunk.browser.engine.originOf
+import org.krunk.browser.tabs.LinkOpen
 import org.krunk.browser.tabs.TabEvent
 import org.krunk.browser.ui.BrowserViewModel
 import org.krunk.browser.ui.Screen
@@ -97,6 +101,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
     var contextTarget by remember { mutableStateOf<Pair<UInt, ContextTarget>?>(null) }
     var refreshing by remember { mutableStateOf(false) }
     var download by remember { mutableStateOf<PendingDownload?>(null) }
+    var external by remember { mutableStateOf<ExternalLink?>(null) }
 
     SystemBarsEffect(fullScreen = fullScreen, darkTheme = dark)
 
@@ -147,6 +152,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
     val downloadStarted = stringResource(R.string.download_started)
     val downloadUnsupported = stringResource(R.string.download_unsupported)
     val pageUnavailable = stringResource(R.string.page_unavailable)
+    val noAppForLink = stringResource(R.string.external_no_app)
 
     // The database could not be opened: say once that this session keeps nothing.
     val storageFailed = stringResource(R.string.storage_failed)
@@ -171,6 +177,13 @@ fun BrowserScreen(vm: BrowserViewModel) {
                     val private = vm.tabs.tabs.value.firstOrNull { it.id == ev.tabId }?.private == true
                     val asked = Downloads.describe(ev.response, private)
                     if (download == null) download = asked else Downloads.discard(asked)
+                }
+
+                // A mail or phone link: straight to Android when the user tapped it, else asked
+                // first. One question at a time.
+                is TabEvent.External -> when {
+                    ev.ask -> if (external == null) external = ev.link
+                    !ExternalOpen.launch(context, ev.link) -> toast(noAppForLink)
                 }
 
                 // A krunk:// page the Windows browser has and Android does not: say so.
@@ -240,6 +253,44 @@ fun BrowserScreen(vm: BrowserViewModel) {
                         toolbarMaxPx = toolbarHeightPx,
                         onView = { geckoView = it },
                     )
+                    // The menu over selected text gets Krunk's entries (search, open address).
+                    // It needs the activity, so it is set while the page is on screen.
+                    val openLabel = stringResource(R.string.selection_open)
+                    DisposableEffect(session, context) {
+                        val activity = context.findActivity()
+                        if (activity != null) {
+                            session.gecko.selectionActionDelegate = KrunkSelectionDelegate(
+                                activity,
+                                entries = { text ->
+                                    SelectionActions.of(
+                                        text,
+                                        vm.settingsRepo.searchName,
+                                        vm.settingsRepo.searchTemplate,
+                                    ) {
+                                        openLabel.format(it)
+                                    }
+                                },
+                                open = { action ->
+                                    val private = session.private
+                                    when (action) {
+                                        // Krunk's own search address.
+                                        is SelectionAction.Search ->
+                                            vm.tabs.openTab(action.url, private = private, opener = session.id)
+
+                                        // Text from the page: a web address only, loaded on its behalf.
+                                        is SelectionAction.Open -> vm.tabs.openUntrusted(
+                                            action.url,
+                                            LoadSource.PAGE,
+                                            private = private,
+                                            activate = true,
+                                            opener = session.id,
+                                        )
+                                    }
+                                },
+                            )
+                        }
+                        onDispose { session.gecko.selectionActionDelegate = null }
+                    }
                 }
             }
 
@@ -324,6 +375,16 @@ fun BrowserScreen(vm: BrowserViewModel) {
     val pagePrompt by vm.tabs.prompt.collectAsStateWithLifecycle()
     pagePrompt?.let { PagePromptDialog(it) }
 
+    external?.let { link ->
+        ExternalLinkDialog(
+            link = link,
+            onOpen = {
+                external = null
+                if (!ExternalOpen.launch(context, link)) toast(noAppForLink)
+            },
+            onCancel = { external = null },
+        )
+    }
     download?.let { asked ->
         DownloadQuestion(
             download = asked,
@@ -370,10 +431,10 @@ fun BrowserScreen(vm: BrowserViewModel) {
                             link,
                             LoadSource.PAGE,
                             private = private,
-                            activate = false,
+                            activate = vm.tabs.linkTabInFront(LinkOpen.LINK_MENU),
                             opener = tabId,
                         )
-                        if (id != null) toast(opened)
+                        if (id != null && !vm.tabs.linkTabInFront(LinkOpen.LINK_MENU)) toast(opened)
                     }
 
                     ContextAction.OPEN_PRIVATE_TAB -> vm.tabs.openUntrusted(
@@ -408,10 +469,10 @@ fun BrowserScreen(vm: BrowserViewModel) {
                             src,
                             LoadSource.PAGE,
                             private = private,
-                            activate = false,
+                            activate = vm.tabs.linkTabInFront(LinkOpen.LINK_MENU),
                             opener = tabId,
                         )
-                        if (id != null) toast(opened)
+                        if (id != null && !vm.tabs.linkTabInFront(LinkOpen.LINK_MENU)) toast(opened)
                     }
 
                     ContextAction.SAVE_IMAGE, ContextAction.SAVE_MEDIA -> {
@@ -550,4 +611,14 @@ private fun PageView(
             view.releaseSession()
         },
     )
+}
+
+/** The activity a context belongs to (a Compose context is usually a wrapper around it). */
+private fun android.content.Context.findActivity(): android.app.Activity? {
+    var c: android.content.Context? = this
+    while (c is android.content.ContextWrapper) {
+        if (c is android.app.Activity) return c
+        c = c.baseContext
+    }
+    return null
 }

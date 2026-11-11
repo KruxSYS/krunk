@@ -1,9 +1,13 @@
 {
   "manifest_version": 2,
   "name": "Krunk guard",
-  "version": "1.0",
+  "version": "1.1",
   "description": "Krunk's own companion to the bundled blocker: keeps the blocker's network requests behind a gate, passes Krunk's settings to it through the blocker's own messaging, and removes tracking parameters from top-level navigations.",
-  "browser_specific_settings": { "gecko": { "id": "guard@krunk.org" } },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "guard@krunk.org"
+    }
+  },
   "permissions": [
     "nativeMessaging",
     "geckoViewAddons",
@@ -12,23 +16,42 @@
     "webRequestBlocking",
     "<all_urls>"
   ],
-  "background": { "scripts": ["background.js"] },
+  "background": {
+    "scripts": [
+      "rewriter.js",
+      "background.js"
+    ]
+  },
   "experiment_apis": {
     "krunkGate": {
       "schema": "gate-schema.json",
       "parent": {
-        "scopes": ["addon_parent"],
+        "scopes": [
+          "addon_parent"
+        ],
         "script": "gate-api.js",
-        "paths": [["krunkGate"]],
-        "events": ["startup"]
+        "paths": [
+          [
+            "krunkGate"
+          ]
+        ],
+        "events": [
+          "startup"
+        ]
       }
     },
     "krunkBridge": {
       "schema": "bridge-schema.json",
       "child": {
-        "scopes": ["addon_child"],
+        "scopes": [
+          "addon_child"
+        ],
         "script": "bridge-api.js",
-        "paths": [["krunkBridge"]]
+        "paths": [
+          [
+            "krunkBridge"
+          ]
+        ]
       }
     }
   }

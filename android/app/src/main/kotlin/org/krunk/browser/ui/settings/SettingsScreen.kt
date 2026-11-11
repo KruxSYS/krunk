@@ -76,6 +76,7 @@ import org.krunk.browser.core.Wallpapers
 import org.krunk.browser.ui.BrowserViewModel
 import org.krunk.browser.ui.Screen
 import org.krunk.ffi.AndroidSettings
+import org.krunk.ffi.LinkTabsMode
 import org.krunk.ffi.NewTabMode
 import org.krunk.ffi.NtpBackgroundMode
 import org.krunk.ffi.SearchEngineId
@@ -684,8 +685,26 @@ private fun TabsSection(s: AndroidSettings, update: ((AndroidSettings) -> Androi
                 "discard"
         }
     }
+    val linkTabs = listOf(
+        LinkTabsMode.AUTO to stringResource(R.string.settings_link_tabs_auto),
+        LinkTabsMode.SWITCH to stringResource(R.string.settings_link_tabs_front),
+        LinkTabsMode.BACKGROUND to stringResource(R.string.settings_link_tabs_behind),
+    )
+    Row(stringResource(R.string.settings_link_tabs), linkTabs.first { it.first == s.linkTabs }.second) {
+        pick =
+            "linkTabs"
+    }
     val choices = listOf(0, 1, 5, 15, 30, 60)
     when (pick) {
+        "linkTabs" -> ChoiceDialog(
+            stringResource(R.string.settings_link_tabs),
+            linkTabs,
+            s.linkTabs,
+            { m -> update { it.copy(linkTabs = m) } },
+        ) {
+            pick = null
+        }
+
         "sleep" -> ChoiceDialog(
             stringResource(R.string.settings_tab_sleep),
             choices.map {

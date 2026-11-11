@@ -70,6 +70,47 @@ pub fn navigation_rewrite(
         .map(|r| Rewrite { url: r.url, upgraded: r.upgraded })
 }
 
+/// What "search for the selected text" offers (the page's selection menu).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SelectionSearch {
+    /// The selection as a query: whitespace collapsed, at most 1,000 characters.
+    pub query: String,
+    /// The menu text, e.g. `Search DuckDuckGo for “krunk browser”` (the query shortened).
+    pub label: String,
+    /// The search address to open.
+    pub url: String,
+}
+
+/// The search the selection menu offers for `selection` with the engine in effect, or `None`
+/// for an empty or blank selection. `engine_name` and `search_template` come from the settings
+/// (`settings_search_name`, `settings_search_template`).
+#[uniffi::export]
+pub fn selection_search(selection: String, engine_name: String, search_template: String) -> Option<SelectionSearch> {
+    let query = urlclean::selection_query(&selection)?;
+    Some(SelectionSearch {
+        label: urlclean::selection_label(&engine_name, &query),
+        url: urlclean::search_url(&query, &search_template),
+        query,
+    })
+}
+
+/// A selected address the selection menu can open.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct SelectionAddress {
+    /// The address as the address bar would read it (http or https only).
+    pub url: String,
+    /// The address as the menu shows it: no scheme, at most 32 characters.
+    pub label: String,
+}
+
+/// The address the selected text names (one word, quotes and a sentence's final punctuation
+/// dropped), or `None` when it is not an address. Never `file:` or another scheme from a page.
+#[uniffi::export]
+pub fn selection_address(selection: String) -> Option<SelectionAddress> {
+    let url = urlclean::selection_url(&selection)?;
+    Some(SelectionAddress { label: urlclean::selection_url_label(&url), url })
+}
+
 /// The URL as the address bar shows it: internal pages as `krunk://name`, blank pages as "".
 #[uniffi::export]
 pub fn display_url(url: String) -> String {
@@ -336,5 +377,26 @@ mod tests {
         assert!(is_hex_color(String::new()));
         assert!(!is_hex_color("2563eb".into()));
         assert!(!is_hex_color("#25".into()));
+    }
+    #[test]
+    fn the_selection_menu_offers_a_search_and_an_address_by_the_cores_rules() {
+        const DDG: &str = "https://duckduckgo.com/?q={searchTerms}";
+        let s = selection_search("  krunk \n browser ".into(), "DuckDuckGo".into(), DDG.into()).unwrap();
+        assert_eq!(s.query, "krunk browser");
+        assert_eq!(s.label, "Search DuckDuckGo for “krunk browser”");
+        assert_eq!(s.url, "https://duckduckgo.com/?q=krunk+browser");
+        assert_eq!(selection_search(" \n ".into(), "DuckDuckGo".into(), DDG.into()), None);
+        // A long selection is searched in full (up to the core's limit) but shown shortened.
+        let long = selection_search("word ".repeat(40), "Brave".into(), DDG.into()).unwrap();
+        assert!(long.label.ends_with("…”"), "{}", long.label);
+        assert!(long.query.len() > 100);
+
+        let a = selection_address("(example.com/docs).".into()).unwrap();
+        assert_eq!(a.url, "https://example.com/docs");
+        assert_eq!(a.label, "example.com/docs");
+        assert_eq!(selection_address("http://10.0.0.1:8080/x".into()).unwrap().url, "http://10.0.0.1:8080/x");
+        for not_an_address in ["two words", "", "file:///etc/passwd", "javascript:alert(1)", "hello"] {
+            assert_eq!(selection_address(not_an_address.into()), None, "{not_an_address}");
+        }
     }
 }

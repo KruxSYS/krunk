@@ -358,6 +358,21 @@ tasks.named("preBuild") {
     dependsOn(copyWallpapers, unpackUbo)
 }
 
+// The krunk-guard extension's rewriter (which requests are cleaned of tracking parameters, the
+// cap, the time limit) is plain JavaScript without browser APIs: its tests run with node and are
+// part of the unit tests.
+val guardJsTest = tasks.register<Exec>("guardJsTest") {
+    group = "verification"
+    description = "Runs the tests of the krunk-guard rewriter with node"
+    inputs.dir("src/main/assets/extensions/krunk-guard")
+    inputs.dir("src/test/js")
+    commandLine("node", "--test", "src/test/js/rewriter.test.js")
+}
+
+tasks.matching { it.name == "testDebugUnitTest" || it.name == "testReleaseUnitTest" }.configureEach {
+    dependsOn(guardJsTest)
+}
+
 // -Pkrunk.noGms=true drops GeckoView's Google Play Services FIDO dependency (WebAuthn/passkeys
 // via Play Services). Tried in the A0 spike; see docs/ANDROID_PLAN.md open questions.
 val noGms = providers.gradleProperty("krunk.noGms").map { it.toBoolean() }.getOrElse(false)

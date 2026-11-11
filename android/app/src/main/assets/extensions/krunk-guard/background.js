@@ -55,49 +55,26 @@ function toBlocker(m) {
 
 // ----- tracking parameters -----
 
-// Top-level GET navigations with a query are shown to the app, which answers with the cleaned
-// address from the shared core (the same rules as on Windows) or with "" to leave it. Every
-// redirect hop passes here again. A request is rewritten at most three times; no answer within
-// 300 ms lets it through unchanged.
-const MAX_REWRITES = 3;
-const ANSWER_MS = 300;
-let strip = false;
+// rewriter.js decides which top-level requests are shown to the app and what its answer does.
 let nextQuestion = 1;
 const questions = new Map(); // id -> resolve
-const rewrites = new Map(); // requestId -> count
 
-function ask(url) {
-  return new Promise(resolve => {
-    const id = nextQuestion++;
-    const timer = setTimeout(() => {
-      questions.delete(id);
-      resolve("");
-    }, ANSWER_MS);
-    questions.set(id, answer => {
-      clearTimeout(timer);
-      resolve(answer);
-    });
-    send({ t: "rewrite", id, url });
-  });
-}
-
-browser.webRequest.onBeforeRequest.addListener(
-  details => {
-    if (!strip || details.method !== "GET" || !details.url.includes("?")) return {};
-    const count = rewrites.get(details.requestId) || 0;
-    if (count >= MAX_REWRITES) return {};
-    return ask(details.url).then(url => {
-      if (!url || url === details.url) return {};
-      rewrites.set(details.requestId, count + 1);
-      return { redirectUrl: url };
-    });
-  },
-  { urls: ["http://*/*", "https://*/*"], types: ["main_frame"] },
-  ["blocking"]
+const rewriter = KrunkRewriter.create(
+  url =>
+    new Promise(resolve => {
+      const id = nextQuestion++;
+      questions.set(id, resolve);
+      // An answer that never comes is dropped by the rewriter's own time limit.
+      setTimeout(() => questions.delete(id), 4 * KrunkRewriter.ANSWER_MS);
+      send({ t: "rewrite", id, url });
+    }),
+  { set: (fn, ms) => setTimeout(fn, ms), clear: handle => clearTimeout(handle) }
 );
-const forget = details => rewrites.delete(details.requestId);
-browser.webRequest.onCompleted.addListener(forget, { urls: ["http://*/*", "https://*/*"], types: ["main_frame"] });
-browser.webRequest.onErrorOccurred.addListener(forget, { urls: ["http://*/*", "https://*/*"], types: ["main_frame"] });
+
+const MAIN_FRAMES = { urls: ["http://*/*", "https://*/*"], types: ["main_frame"] };
+browser.webRequest.onBeforeRequest.addListener(details => rewriter.onBeforeRequest(details), MAIN_FRAMES, ["blocking"]);
+browser.webRequest.onCompleted.addListener(details => rewriter.forget(details.requestId), MAIN_FRAMES);
+browser.webRequest.onErrorOccurred.addListener(details => rewriter.forget(details.requestId), MAIN_FRAMES);
 
 // ----- app -----
 
@@ -122,7 +99,7 @@ port.onMessage.addListener(m => {
       toBlocker(m);
       break;
     case "strip":
-      strip = m.on === true;
+      rewriter.setOn(m.on === true);
       break;
     case "rewritten": {
       const answer = questions.get(m.id);

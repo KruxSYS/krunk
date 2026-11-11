@@ -40,6 +40,18 @@ pub enum NtpBackgroundMode {
     Wallpaper,
 }
 
+/// Whether a tab a link opens (the link menu's "Open in new tab", a page's new window) comes to
+/// the front. The same setting as on Windows (`linkTabs`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum LinkTabsMode {
+    /// As asked: a page's own new window in front, "Open in new tab" behind.
+    Auto,
+    /// Always in front.
+    Switch,
+    /// Always behind.
+    Background,
+}
+
 /// Android-only: where the toolbar sits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, uniffi::Enum)]
 #[serde(rename_all = "camelCase")]
@@ -145,6 +157,7 @@ pub struct AndroidSettings {
     pub tab_sleep_minutes: u32,
     pub tab_discard_enabled: bool,
     pub tab_discard_minutes: u32,
+    pub link_tabs: LinkTabsMode,
     // Advanced (shared)
     /// Empty = the engine's default user agent; else a preset's string (`ua_presets`) or custom.
     pub user_agent: String,
@@ -205,6 +218,11 @@ impl AndroidSettings {
             tab_sleep_minutes: s.tab_sleep_minutes,
             tab_discard_enabled: s.tab_discard_enabled,
             tab_discard_minutes: s.tab_discard_minutes,
+            link_tabs: match s.link_tabs {
+                cs::LinkTabs::Auto => LinkTabsMode::Auto,
+                cs::LinkTabs::Switch => LinkTabsMode::Switch,
+                cs::LinkTabs::Background => LinkTabsMode::Background,
+            },
             user_agent: s.user_agent.clone(),
             toolbar_position: extras.toolbar_position,
             text_scale: extras.text_scale,
@@ -268,6 +286,11 @@ impl AndroidSettings {
         s.tab_sleep_minutes = self.tab_sleep_minutes;
         s.tab_discard_enabled = self.tab_discard_enabled;
         s.tab_discard_minutes = self.tab_discard_minutes;
+        s.link_tabs = match self.link_tabs {
+            LinkTabsMode::Auto => cs::LinkTabs::Auto,
+            LinkTabsMode::Switch => cs::LinkTabs::Switch,
+            LinkTabsMode::Background => cs::LinkTabs::Background,
+        };
         s.user_agent = self.user_agent.trim().to_string();
     }
 
@@ -418,6 +441,19 @@ mod tests {
         // The shared row carries the Windows field name.
         let shared = store.kv_get("settings".into()).unwrap().unwrap();
         assert!(shared.contains("\"adblockEnabled\":false"), "{shared}");
+    }
+
+    #[test]
+    fn link_tabs_is_the_shared_setting() {
+        let store = KrunkStore::in_memory().unwrap();
+        let mut s = store.load_settings().unwrap();
+        assert_eq!(s.link_tabs, LinkTabsMode::Auto);
+        s.link_tabs = LinkTabsMode::Background;
+        store.save_settings(s).unwrap();
+        assert_eq!(store.load_settings().unwrap().link_tabs, LinkTabsMode::Background);
+        // Stored under the Windows name and value.
+        let shared = store.kv_get("settings".into()).unwrap().unwrap();
+        assert!(shared.contains("\"linkTabs\":\"background\""), "{shared}");
     }
 
     #[test]

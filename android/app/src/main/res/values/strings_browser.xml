@@ -76,6 +76,12 @@
     <string name="page_unavailable">This Krunk page is not available on Android yet</string>
 
     <!-- A page whose process crashed -->
+    <string name="external_mail_title">Write an email?</string>
+    <string name="external_phone_title">Open the phone app?</string>
+    <string name="external_text">This page wants to open another app for %1$s.</string>
+    <string name="external_open">Open</string>
+    <string name="external_no_app">No app on this device can open that link</string>
+    <string name="selection_open">Open %1$s</string>
     <string name="shield_sheet_title">Ad and tracker blocking</string>
     <plurals name="shield_blocked">
         <item quantity="one">%d request blocked on this page</item>

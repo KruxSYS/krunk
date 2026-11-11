@@ -64,6 +64,12 @@ interface SessionListener {
 
     /** [prompt] has its answer (from the UI, or the engine withdrew it). */
     fun onPromptClosed(session: KrunkSession, prompt: PagePrompt)
+
+    /**
+     * The page wants a `mailto:` or `tel:` link opened: hand it to Android, after asking the
+     * user when [ask] (the page did it by itself, without a tap).
+     */
+    fun onExternalLink(session: KrunkSession, link: ExternalLink, ask: Boolean)
 }
 
 /**
@@ -250,6 +256,23 @@ class KrunkSession(
             // Krunk's internal origin exists only as native screens, which the app opens itself
             // (its own loads do not pass here). A page that navigates there is refused, so it
             // cannot make the bar read krunk://... or switch the tab to the new-tab page.
+            // mailto: and tel: are not pages: Android's mail app or dialer gets them (asked
+            // first unless the user tapped the link). The engine never loads them.
+            when (val handOff = ExternalLinks.classify(request.uri, request.hasUserGesture, request.isRedirect)) {
+                HandOff.NotExternal -> Unit
+
+                HandOff.Refuse -> return GeckoResult.fromValue(AllowOrDeny.DENY)
+
+                is HandOff.Open -> {
+                    listener.onExternalLink(this@KrunkSession, handOff.link, ask = false)
+                    return GeckoResult.fromValue(AllowOrDeny.DENY)
+                }
+
+                is HandOff.Ask -> {
+                    listener.onExternalLink(this@KrunkSession, handOff.link, ask = true)
+                    return GeckoResult.fromValue(AllowOrDeny.DENY)
+                }
+            }
             val internal = internalPage(request.uri) != null
             return GeckoResult.fromValue(if (internal) AllowOrDeny.DENY else AllowOrDeny.ALLOW)
         }

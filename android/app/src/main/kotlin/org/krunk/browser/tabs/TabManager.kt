@@ -28,6 +28,7 @@ import org.krunk.browser.core.KrunkCore
 import org.krunk.browser.engine.BackAction
 import org.krunk.browser.engine.ContextTarget
 import org.krunk.browser.engine.ErrorPage
+import org.krunk.browser.engine.ExternalLink
 import org.krunk.browser.engine.GeckoEngine
 import org.krunk.browser.engine.IconCandidate
 import org.krunk.browser.engine.KrunkSession
@@ -795,8 +796,18 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         scheduleSave()
     }
 
+    override fun onExternalLink(session: KrunkSession, link: ExternalLink, ask: Boolean) {
+        // Only the tab the user is looking at may send them to another app.
+        if (session.id != _activeId.value || sessions[session.id] !== session) return
+        _events.trySend(TabEvent.External(session.id, link, ask))
+    }
+
+    /** Whether a tab a link opens comes to the front (the shared "link tabs" setting). */
+    fun linkTabInFront(how: LinkOpen): Boolean = opensInFront(core.settings.current.linkTabs, how)
+
     override fun onNewSessionRequested(session: KrunkSession, uri: String): GeckoSession? {
-        val r = model.open(uri, session.private, session.id, true, true, nowMs())
+        val front = linkTabInFront(LinkOpen.PAGE_WINDOW)
+        val r = model.open(uri, session.private, session.id, front, true, nowMs())
         // The engine loads the new session itself: create it without a load.
         val info = model.tab(r.id) ?: return null
         // Unopened: the engine opens the session of a new window itself.

@@ -31,6 +31,9 @@ sealed class TabEvent {
 
     data class Download(val tabId: UInt, val response: org.mozilla.geckoview.WebResponse) : TabEvent()
 
+    /** A `mailto:` or `tel:` link of the tab on screen, for Android's mail app or dialer. */
+    data class External(val tabId: UInt, val link: org.krunk.browser.engine.ExternalLink, val ask: Boolean) : TabEvent()
+
     /** Typed `krunk://history` etc.: show the native screen. */
     data class OpenScreen(val page: String) : TabEvent()
 }

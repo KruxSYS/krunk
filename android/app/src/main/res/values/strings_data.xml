@@ -134,6 +134,10 @@
     <string name="settings_https_only_help">Upgrade every page to HTTPS and show an error when a site has none</string>
     <string name="settings_strip_tracking">Strip tracking parameters</string>
     <string name="settings_strip_tracking_help">Remove utm_*, fbclid, gclid and similar from addresses before loading</string>
+    <string name="settings_link_tabs">Tabs opened by links</string>
+    <string name="settings_link_tabs_auto">As the page asks (its own windows in front, “Open in new tab” behind)</string>
+    <string name="settings_link_tabs_front">Always in front</string>
+    <string name="settings_link_tabs_behind">Always behind</string>
     <string name="settings_adblock">Block ads and trackers</string>
     <string name="settings_adblock_help">With uBlock Origin, built into Krunk. The shield in the address bar shows what was blocked on a page.</string>
     <string name="settings_allowed_sites">Sites with blocking off</string>
