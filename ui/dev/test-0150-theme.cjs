@@ -17,7 +17,7 @@ function lum(c) {
 }
 const contrast = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
 const mix = (a, b, t) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
-// What the host sends in `colors` for a gradient (ThemeColors::from_appearance, explicit stops).
+// What the host sends in `colors.gradient` (ThemeColors::from_appearance, explicit stops).
 function gradientColors(stops) {
   const cs = stops.map(hex);
   const pick = (list) => {
@@ -25,7 +25,7 @@ function gradientColors(stops) {
     return worst('#111827') >= worst('#ffffff') ? '#111827' : '#ffffff';
   };
   const veiled = cs.flatMap((c) => [mix(c, [0, 0, 0], 0.22), mix(c, [0, 0, 0], 0.11)]);
-  return { gradient: stops, gradientFg: pick(cs), ombreFg: pick(veiled) };
+  return { gradient: { stops: stops, fg: pick(cs), ombreFg: pick(veiled) } };
 }
 
 const TABS = [
@@ -177,13 +177,13 @@ module.exports = (h) => {
         if (l.name === 'gradient') {
           check(st.stripImg.startsWith('linear-gradient(135deg') && st.barImg.startsWith('linear-gradient(135deg') && st.barAttach === 'fixed',
             theme + ': gradient: the strip and the toolbar show one window-fixed gradient');
-          check(st.inaFg === rgbOf(colors.gradientFg) && st.barFg === rgbOf(colors.gradientFg), theme + ': gradient: inactive tabs and toolbar use the readable text (' + colors.gradientFg + ')');
+          check(st.inaFg === rgbOf(colors.gradient.fg) && st.barFg === rgbOf(colors.gradient.fg), theme + ': gradient: inactive tabs and toolbar use the readable text (' + colors.gradient.fg + ')');
           check(st.actRadius === '13px' && st.actH === 26, theme + ': pill tabs (' + st.actRadius + ', ' + st.actH + ' px)');
           check(/inset/.test(st.actShadow) && !st.actImg.startsWith('linear-gradient(135deg'), theme + ': outline highlight: an inset accent ring on a tint (' + st.actShadow + ')');
         } else if (l.name === 'ombre') {
           check(/linear-gradient\(rgba\(0, 0, 0, 0\.22\).*linear-gradient\(90deg/.test(st.inaImg), theme + ': ombre: an inactive tab shows its veiled slice of the strip gradient');
-          check(st.actImg.includes('linear-gradient(90deg') && !st.actImg.includes('rgba(0, 0, 0, 0.22)') && st.actAttach.includes('fixed') && st.actFg === rgbOf(colors.gradientFg), theme + ': ombre: the active tab shows it at full strength, joined to the gradient toolbar');
-          check(st.inaFg === rgbOf(colors.ombreFg), theme + ': ombre: inactive tab text ' + colors.ombreFg);
+          check(st.actImg.includes('linear-gradient(90deg') && !st.actImg.includes('rgba(0, 0, 0, 0.22)') && st.actAttach.includes('fixed') && st.actFg === rgbOf(colors.gradient.fg), theme + ': ombre: the active tab shows it at full strength, joined to the gradient toolbar');
+          check(st.inaFg === rgbOf(colors.gradient.ombreFg), theme + ': ombre: inactive tab text ' + colors.gradient.ombreFg);
           check((st.actShadow.match(/rgb/g) || []).length >= 2, theme + ': accent glow adds a second shadow (' + st.actShadow + ')');
           check(st.actRadius === '8px 8px 0px 0px', theme + ': rounded tabs with the default radius');
         } else if (l.name === 'ombre-solidbar') {

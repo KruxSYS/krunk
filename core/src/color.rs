@@ -155,11 +155,20 @@ pub struct ThemeColors {
     pub strip_fg: String,
     pub background: String,
     pub background_fg: String,
-    /// 0.15.0, only while a bar uses the gradient or ombre style: the gradient's stops
-    /// ([`gradient_stops`]), the text on the gradient, and the text on the veiled (inactive)
-    /// tabs of an ombre strip.
-    pub gradient: Vec<String>,
-    pub gradient_fg: String,
+    /// 0.15.0, only while a bar uses the gradient or ombre style (boxed: `Event` stays small).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gradient: Option<Box<GradientColors>>,
+}
+
+/// The gradient of the gradient and ombre styles (0.15.0) with the text drawn on it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct GradientColors {
+    /// [`gradient_stops`]
+    pub stops: Vec<String>,
+    /// The text on the gradient.
+    pub fg: String,
+    /// The text on the veiled (inactive) tabs of an ombre strip.
     pub ombre_fg: String,
 }
 
@@ -175,30 +184,22 @@ impl ThemeColors {
         let (toolbar, toolbar_fg) = pair(&a.toolbar_color);
         let (strip, strip_fg) = pair(&a.strip_color);
         let (background, background_fg) = pair(&a.background_color);
-        let mut c = ThemeColors {
-            accent,
-            accent_fg,
-            toolbar,
-            toolbar_fg,
-            strip,
-            strip_fg,
-            background,
-            background_fg,
-            ..Default::default()
-        };
         use crate::settings::BarStyle::{Gradient, Ombre};
-        if matches!(a.tab_style, Gradient | Ombre) || matches!(a.toolbar_style, Gradient | Ombre) {
-            let stops: Vec<(u8, u8, u8)> = gradient_stops(a).iter().filter_map(|s| parse_hex(s)).collect();
-            c.gradient = stops.iter().map(|s| to_hex(*s)).collect();
-            c.gradient_fg = foreground_on_all(&stops).unwrap_or(DARK_TEXT).to_string();
-            // An inactive ombre tab: the veil, lighter while hovered (half the veil).
-            let veiled: Vec<(u8, u8, u8)> = stops
-                .iter()
-                .flat_map(|s| [mix(*s, (0, 0, 0), OMBRE_VEIL), mix(*s, (0, 0, 0), OMBRE_VEIL / 2.0)])
-                .collect();
-            c.ombre_fg = foreground_on_all(&veiled).unwrap_or(DARK_TEXT).to_string();
-        }
-        c
+        let gradient =
+            (matches!(a.tab_style, Gradient | Ombre) || matches!(a.toolbar_style, Gradient | Ombre)).then(|| {
+                let stops: Vec<(u8, u8, u8)> = gradient_stops(a).iter().filter_map(|s| parse_hex(s)).collect();
+                // An inactive ombre tab: the veil, lighter while hovered (half the veil).
+                let veiled: Vec<(u8, u8, u8)> = stops
+                    .iter()
+                    .flat_map(|s| [mix(*s, (0, 0, 0), OMBRE_VEIL), mix(*s, (0, 0, 0), OMBRE_VEIL / 2.0)])
+                    .collect();
+                Box::new(GradientColors {
+                    stops: stops.iter().map(|s| to_hex(*s)).collect(),
+                    fg: foreground_on_all(&stops).unwrap_or(DARK_TEXT).to_string(),
+                    ombre_fg: foreground_on_all(&veiled).unwrap_or(DARK_TEXT).to_string(),
+                })
+            });
+        ThemeColors { accent, accent_fg, toolbar, toolbar_fg, strip, strip_fg, background, background_fg, gradient }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -309,7 +310,7 @@ mod tests {
         assert_eq!(foreground_on_all(&[(17, 24, 39), (37, 99, 235)]), Some(LIGHT_TEXT));
         // Solid and glass styles carry no gradient (the default stays empty on the wire).
         let mut a = Appearance::default();
-        assert!(ThemeColors::from_appearance(&a).gradient.is_empty());
+        assert!(ThemeColors::from_appearance(&a).gradient.is_none());
         a.toolbar_style = BarStyle::Glass;
         a.tab_style = BarStyle::Glass;
         assert!(ThemeColors::from_appearance(&a).is_empty());
@@ -343,19 +344,22 @@ mod tests {
             let c = ThemeColors::from_appearance(a);
             let styled =
                 [a.tab_style, a.toolbar_style].iter().any(|s| matches!(s, BarStyle::Gradient | BarStyle::Ombre));
-            assert_eq!(!c.gradient.is_empty(), styled, "{}", a.preset);
-            if !styled {
-                continue;
-            }
+            assert_eq!(c.gradient.is_some(), styled, "{}", a.preset);
+            let Some(g) = c.gradient else { continue };
             with_gradient += 1;
-            let stops: Vec<_> = c.gradient.iter().map(|s| parse_hex(s).unwrap()).collect();
+            let stops: Vec<_> = g.stops.iter().map(|s| parse_hex(s).unwrap()).collect();
             assert!((2..=3).contains(&stops.len()));
-            let w = worst(&c.gradient_fg, &stops);
-            assert!(w >= worst(other(&c.gradient_fg), &stops), "{:?}: the worse text", c.gradient);
-            assert!(w >= 3.0, "{:?}: {w:.2}", c.gradient);
+            let w = worst(&g.fg, &stops);
+            assert!(w >= worst(other(&g.fg), &stops), "{:?}: the worse text", g.stops);
+            assert!(w >= 3.0, "{:?}: {w:.2}", g.stops);
             let veiled: Vec<_> = stops.iter().map(|s| mix(*s, (0, 0, 0), OMBRE_VEIL)).collect();
-            assert!(worst(&c.ombre_fg, &veiled) >= 3.0, "{:?}: ombre text", c.gradient);
+            assert!(worst(&g.ombre_fg, &veiled) >= 3.0, "{:?}: ombre text", g.stops);
         }
+        // On the wire: `colors.gradient {stops, fg, ombreFg}`, absent without a gradient style.
+        let json = serde_json::to_value(ThemeColors::from_appearance(&looks[1])).unwrap();
+        assert_eq!(json["gradient"]["stops"], serde_json::json!(["#f97316", "#ec4899", "#8b5cf6"]));
+        assert!(json["gradient"]["fg"].is_string() && json["gradient"]["ombreFg"].is_string());
+        assert!(serde_json::to_value(ThemeColors::default()).unwrap().get("gradient").is_none());
         assert_eq!(with_gradient, 12);
     }
 }

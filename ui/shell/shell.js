@@ -1373,11 +1373,12 @@
       root.classList.toggle('tabs-' + s, tabStyle === s);
       root.classList.toggle('bar-' + s, barStyle === s && s !== 'ombre');
     });
-    const stops = Array.isArray(c.gradient) ? c.gradient : [];
+    const g = c.gradient || {};
+    const stops = Array.isArray(g.stops) ? g.stops : [];
     const angle = Number.isFinite(a.gradientAngle) ? a.gradientAngle : 90;
     set('--grad', stops.length > 1 ? 'linear-gradient(' + angle + 'deg, ' + stops.join(', ') + ')' : '');
-    set('--grad-fg', c.gradientFg);
-    set('--ombre-fg', c.ombreFg);
+    set('--grad-fg', g.fg);
+    set('--ombre-fg', g.ombreFg);
     const shape = a.tabShape || (a.roundedTabs === false ? 'square' : 'rounded');
     ['rounded', 'square', 'pill'].forEach(function (s) { root.classList.toggle('shape-' + s, shape === s); });
     root.classList.toggle('square-tabs', shape === 'square');
