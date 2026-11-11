@@ -65,8 +65,10 @@ The JVM unit tests load the real `libkrunk_ffi.so` (host build) through JNA
 **The key.** Release APKs are signed with Krunk's Android release key: a PKCS12 keystore outside
 the repository, described by a properties file (`storeFile`, `storePassword`, `keyAlias`,
 `keyPassword`). Gradle reads `~/.config/krunk/android-release.properties`, or the path in
-`KRUNK_ANDROID_SIGNING`. Without that file `assembleRelease` warns and signs with the debug key,
-so anyone can build; only the publishing machine makes installable updates.
+`KRUNK_ANDROID_SIGNING`. Without that file `assembleRelease` fails (since 0.1.1), so an APK with
+the debug key is never mistaken for a release; `-Pkrunk.allowDebugSignedRelease=true` builds the
+minified variant with the debug key on purpose. Only the publishing machine makes installable
+updates.
 
 - Certificate: `CN=Krunk, O=Krunk, C=DE`, RSA 4096, valid until 2056-11-03, SHA-256
   `C9:4B:89:15:CD:8B:39:3A:5F:C4:8B:C1:32:A6:DE:02:63:74:E7:63:37:C4:34:1C:59:DD:60:32:83:73:E6:24`.
@@ -90,9 +92,13 @@ so anyone can build; only the publishing machine makes installable updates.
    v3 "true" and the fingerprint above. Smoke-test the `x86_64` APK on the emulator (cold install:
    a debug-signed copy must be uninstalled first; the release build is not debuggable, so
    `run-as` does not work).
-4. Publish: `dist/server/publish-android.sh <version> --volume <releases volume>` (details in
-   `dist/server/README.md`, "Publish an Android release"). The script refuses APKs that are not
-   signed with the release key's certificate.
+4. Check the dependencies: `android/scripts/dep-audit.sh` (the release classpath against the OSV
+   database) and `cargo audit` (the crates in `cargo tree -p krunk_ffi`).
+5. Publish: `dist/server/publish-android.sh <version> --volume <releases volume>` (on the ai-pipe
+   deployment `live-browser_krunk-releases`; details in `dist/server/README.md`, "Publish an
+   Android release"). The script refuses APKs that are not signed with the release key's
+   certificate, that are not this app in this version, a version that is already published
+   (`--force`), and a volume Docker does not know.
 
 ## Emulator
 
@@ -136,7 +142,12 @@ Known traps:
   `wm density 320` (reset with `wm size reset` / `wm density reset`).
 - `android/scripts/flows.sh` drives the round-1 acceptance flows over adb (one screenshot per
   flow); its tap coordinates assume 1080×2400 at 420 dpi with the toolbar at the top (the default;
-  `TOOLBAR=bottom` for the other position).
+  `TOOLBAR=bottom` for the other position). A screenshot that does not arrive within 20 s ends
+  the run with exit 4 (the emulator's graphics stack has wedged; see above).
+- Do configuration changes (rotation, `cmd uimode`, `wm size`) **last** in an emulator session:
+  two of three wedges followed one. Leave the app with HOME and wait 3 s before `am force-stop`:
+  `onStop` arrives late on this emulator, and a stop in the foreground counts as an unclean exit
+  (from the second in a row Krunk shows "Restore tabs?").
 - The debug app's database can be inspected with
   `adb shell run-as org.krunk.browser sqlite3 files/krunk/browser.db "select count(*) from visits"`.
 

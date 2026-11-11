@@ -1481,7 +1481,7 @@ To reproduce: enable discard in Settings, start with `--sleep-test-seconds=90 --
 open the sites and read `memory-report.log` (steps in `docs/MANUAL_TEST.md`).
 
 ## Krunk for Android (preview)
-Krunk 0.1.0 for Android is a first, installable preview of the same browser for phones and
+Krunk for Android (0.1.1) is a first, installable preview of the same browser for phones and
 tablets (Android 8 and later, `arm64-v8a` devices and the `x86_64` emulator). It is built from
 this repository (`android/`, `ffi/`) and shares Krunk's Rust `core` with the Windows app: the same
 address-bar rules (DuckDuckGo by default), the same SQLite database layout for history, bookmarks,
@@ -1491,7 +1491,7 @@ feature by feature), `docs/ANDROID_DEV.md` (building, testing, signing and publi
 `CHANGELOG-android.md` (its own release notes).
 
 **Download.** The website (https://krunk.209.wf, "Download for Android") offers the signed APK:
-`Krunk-android-0.1.0-arm64-v8a-release.apk` for phones and tablets, plus a universal and an
+`Krunk-android-<version>-arm64-v8a-release.apk` for phones and tablets, plus a universal and an
 `x86_64` (emulator) build, with SHA-256 checksums. Android asks once to allow installs from the
 browser you downloaded it with. The APKs are signed (APK Signature Scheme v2 and v3) with Krunk's
 Android release key; its certificate's SHA-256 fingerprint is
@@ -1509,7 +1509,8 @@ Pages therefore render with Gecko on Android and with Chromium on Windows.
 bottom) that hides while you scroll,
 address bar with history, bookmark and search suggestions, automatic HTTPS, Krunk's error page,
 find in page, desktop-site switch, full screen, share, link long-press menu (new tab, private tab,
-copy, share, save image); tabs with a switcher grid, a separate private section, recently closed,
+copy, share, save image), page dialogs (drop-down lists, alert/confirm/prompt, HTTP sign-in) and
+links that open a new tab; tabs with a switcher grid, a separate private section, recently closed,
 restore after a restart or a crash, and sleeping/discarding of background tabs; a native new-tab
 page with your most visited sites, shortcuts and the built-in wallpapers; bookmarks with folders,
 search and Netscape HTML import/export; history by day; settings (search engine, homepage, start-up,
@@ -1517,11 +1518,13 @@ theme, toolbar position, text size, HTTPS-only, suggestions, clear browsing data
 Light, dark and system themes; phone and tablet layouts; TalkBack-friendly controls.
 
 **Not there yet** (see the matrix for the planned round): ad and tracker blocking, the password
-vault, a downloads manager (downloads are handed to Android), site permissions and cookie
+vault, a downloads manager (downloads are handed to Android after a question, without the page's
+sign-in, so files behind a login may not download), file, date and colour pickers, site permissions and cookie
 controls, media controls and picture-in-picture, account and sync, VPN, the AI agent, userscripts,
-extensions, an update check and Play/F-Droid packaging. Builds made without the release key
-(`./gradlew assembleRelease` on another machine, or any debug build) are signed with a debug key
-and cannot be updated in place by a published release: uninstall them first.
+extensions, an update check and Play/F-Droid packaging. Builds made without the release key (any
+debug build, or `./gradlew assembleRelease -Pkrunk.allowDebugSignedRelease=true` on another
+machine) are signed with a debug key and cannot be updated in place by a published release:
+uninstall them first.
 
 **Data and backup.** Krunk's database is `files/krunk/browser.db` in the app's private storage
 (`/data/data/org.krunk.browser/files/krunk/`); the Gecko profile (cookies, site data, caches) is
