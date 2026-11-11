@@ -257,14 +257,27 @@ pub struct Changed {
     pub restart: bool,
 }
 
+/// A number, also when the model sent it as a string (`"8"`; 0.15.1).
+fn number(value: &Value) -> Option<f64> {
+    value.as_f64().or_else(|| value.as_str().and_then(|s| s.trim().parse::<f64>().ok())).filter(|f| f.is_finite())
+}
+
 /// Checks `value` against the key's kind (the value itself is never echoed).
 fn check(k: &Key, value: &Value) -> Result<Value, String> {
     match k.kind {
-        Kind::Bool => value.as_bool().map(Value::Bool).ok_or_else(|| "the value must be true or false".to_string()),
+        Kind::Bool => value
+            .as_bool()
+            .or_else(|| match value.as_str().map(str::trim) {
+                Some("true") => Some(true),
+                Some("false") => Some(false),
+                _ => None,
+            })
+            .map(Value::Bool)
+            .ok_or_else(|| "the value must be true or false".to_string()),
         Kind::Int(min, max) => {
-            let n = value
-                .as_i64()
-                .or_else(|| value.as_f64().filter(|f| f.fract() == 0.0 && f.abs() < 1e15).map(|f| f as i64))
+            let n = number(value)
+                .filter(|f| f.fract() == 0.0 && f.abs() < 1e15)
+                .map(|f| f as i64)
                 .ok_or_else(|| "the value must be a whole number".to_string())?;
             if (min..=max).contains(&n) {
                 Ok(json!(n))
@@ -272,7 +285,7 @@ fn check(k: &Key, value: &Value) -> Result<Value, String> {
                 Err(format!("the value must be between {min} and {max}"))
             }
         }
-        Kind::Num(min, max) => match value.as_f64() {
+        Kind::Num(min, max) => match number(value) {
             Some(n) if n.is_finite() && (min..=max).contains(&n) => Ok(json!(n)),
             _ => Err(format!("the value must be a number between {min} and {max}")),
         },
@@ -533,12 +546,12 @@ mod tests {
             ("theme", json!(null)),
             ("searchEngine", json!("custom")),
             ("appearance.uiFontPx", json!(30)),
-            ("appearance.uiFontPx", json!("14")),
+            ("appearance.uiFontPx", json!("14.5")),
             ("appearance.uiFontPx", json!(13.5)),
             ("appearance.accent", json!("red")),
             ("appearance.accent", json!("#12345")),
             ("defaultZoom", json!(10)),
-            ("defaultZoom", json!("1")),
+            ("defaultZoom", json!("big")),
             ("tabSleepMinutes", json!(-1)),
             ("tabSleepMinutes", json!(99999)),
             ("downloadConnections", json!(0)),

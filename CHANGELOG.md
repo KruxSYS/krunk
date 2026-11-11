@@ -2,6 +2,13 @@
 
 What changed in each Krunk release, newest first.
 
+## 0.15.1 — 2026-11-11
+
+- **Fixed: the AI agent couldn't change some settings** when the model sent a number as text,
+  for example the new tab background's blur (`"8"` instead of `8`): it got "the value must be a
+  whole number". Numbers and true/false sent as text are now accepted; the allowed ranges still
+  apply.
+
 ## 0.15.0 — 2026-11-11
 
 - **No more black flash when you open or close a tab.** The page you were looking at stays on
