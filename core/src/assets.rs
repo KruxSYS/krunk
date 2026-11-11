@@ -230,6 +230,12 @@ pub fn png_data_url(png: &[u8]) -> Option<String> {
     Some(format!("data:image/png;base64,{}", base64ct::Base64::encode_string(png)))
 }
 
+/// 0.15.0: the inline `<style>` at the top of every Krunk page: html and body take the theme's
+/// background colour from the very first frame (before, Chromium's dark canvas #121212 could show
+/// for a frame). The pages' CSP allows exactly this text by its SHA-256.
+pub const FIRST_PAINT_STYLE: &str =
+    "html,body{background:#f3f4f6}@media (prefers-color-scheme:dark){html,body{background:#1f2023}}";
+
 /// Content-Security-Policy for our documents: only our own scripts and
 /// styles, no network access, no framing.
 pub fn csp(host: Host) -> &'static str {
@@ -240,8 +246,9 @@ pub fn csp(host: Host) -> &'static str {
              font-src 'self'; connect-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
         }
         Host::Pages => {
-            // krunk://extensions shows the extensions' icons (0.6.0).
-            "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: https://*.ext.krunk.invalid; \
+            // krunk://extensions shows the extensions' icons (0.6.0). 0.15.0: the pages' one
+            // inline block, the theme colour before the stylesheets ([`FIRST_PAINT_STYLE`]).
+            "default-src 'none'; script-src 'self'; style-src 'self' 'sha256-qx71rF15hsv9TAP+d8lS0a1m7Tb/DaZ1Nmz4NgE08Iw='; img-src 'self' data: https://*.ext.krunk.invalid; \
              font-src 'self'; connect-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
         }
     }
@@ -332,6 +339,30 @@ pub fn allow_navigation(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_first_paint_style_is_the_one_inline_block_and_its_hash_is_allowed() {
+        use base64ct::Encoding;
+        use sha2::{Digest, Sha256};
+        let hash = base64ct::Base64::encode_string(&Sha256::digest(super::FIRST_PAINT_STYLE.as_bytes()));
+        assert!(super::csp(super::Host::Pages).contains(&format!("'sha256-{hash}'")));
+        assert!(!super::csp(super::Host::Shell).contains("sha256-"), "the shell has no inline style");
+        let mut pages = 0;
+        for (k, body) in super::UI_ASSETS.iter().filter(|(k, _)| k.starts_with("pages/") && k.ends_with(".html")) {
+            let html = std::str::from_utf8(body).unwrap();
+            let inline: Vec<&str> =
+                html.split("<style>").skip(1).map(|t| t.split("</style>").next().unwrap()).collect();
+            if html.contains("shared/common.css") {
+                assert_eq!(inline, [super::FIRST_PAINT_STYLE], "{k}");
+                assert!(html.contains(r#"<meta name="color-scheme" content="light dark">"#), "{k}");
+                assert!(html.find("<style>") < html.find("<link rel=\"stylesheet\""), "{k}: before the stylesheets");
+                pages += 1;
+            } else {
+                assert!(inline.is_empty(), "{k}");
+            }
+        }
+        assert!(pages >= 16, "{pages}");
+    }
+
     #[test]
     fn agent_shots_only_on_the_shell_origin() {
         assert_eq!(

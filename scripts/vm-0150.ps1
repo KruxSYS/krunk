@@ -263,6 +263,30 @@ if ($Phase -eq 'sessions') {
   StopKrunk
   Copy-Item "$prof\Krunk\krunk.log" "$Shots\$P-krunk.log"
 }
+# The new-tab framecap again after the first-paint fix (0.15.0 M4): three captures in the dark
+# theme, one in the light theme, 5 × Ctrl+T each from a loaded page.
+if ($Phase -eq 'ntpfix') {
+  $prof = "$K\p0150n"
+  Fresh $prof "{ $base, `"theme`": `"dark`" }"
+  $runs = @(@(1, 'dark'), @(2, 'dark'), @(3, 'dark'), @(4, 'light'))
+  foreach ($r in $runs) {
+    StopKrunk
+    SetKv $prof "{ `"theme`": `"$($r[1])`" }"
+    StartKrunk $prof
+    Page "$W/c1.html"
+    $top = Y 80
+    $rect = "$($c.Left + 4),$top,$($c.Right - $c.Left - 8),$($c.Bottom - $top - 4)"
+    $name = "v0150-tabs-cap-newtab-fix$($r[0])-$($r[1])"
+    $cap = Capture $name 12 $rect
+    Start-Sleep -Milliseconds 800
+    for ($i = 0; $i -lt 5; $i++) { SafeKeys '^t' 1700 }
+    $cap.WaitForExit(30000) | Out-Null
+    Log "[$P] $name done"
+    for ($i = 0; $i -lt 5; $i++) { SafeKeys '^w' 500 }
+  }
+  StopKrunk
+}
+
 # Idle CPU with session logs off and on, from the performance counters (Process.CPU could not
 # read the sandboxed engine processes from the task: it stayed at 0).
 if ($Phase -eq 'cpu') {

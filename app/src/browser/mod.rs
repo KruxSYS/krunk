@@ -1252,7 +1252,12 @@ impl Browser {
                 b.tab_changed(id);
                 if !state.loading {
                     b.address_focus_loaded(id);
-                    b.first_load_done(id);
+                    // Krunk's own pages are revealed by their `ready`, sent once they have
+                    // painted (0.15.0): the load can end a frame before that (a #121212 frame
+                    // of an unstyled dark canvas on the VM).
+                    if !b.tab(id).is_some_and(|t| Page::from_url(&t.url).is_some()) {
+                        b.first_load_done(id);
+                    }
                 }
             }
         });

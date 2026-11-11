@@ -17,8 +17,16 @@ const UI = path.resolve(__dirname, '..');
 const SHOTS = process.argv[2] || null;
 // ONLY=NewTab,Settings runs those sections alone (a comma list of the test function names without 'test').
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
-const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: https://*.ext.krunk.invalid; font-src 'self'; " +
-  "connect-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+// The two policies are read from core/src/assets.rs `csp()` (0.15.0: the pages' one allows their
+// first-paint style by its hash), so this harness can't drift from what the host sends.
+const CSPS = (() => {
+  const src = fs.readFileSync(path.join(__dirname, '../../core/src/assets.rs'), 'utf8');
+  const arm = (name) => {
+    const body = src.split('Host::' + name + ' => {')[1].split('\n        }')[0];
+    return (body.match(/"((?:[^"\\]|\\\n)*)"/s)[1]).replace(/\\\n\s*/g, '');
+  };
+  return { shell: arm('Shell'), pages: arm('Pages') };
+})();
 const MIME = { html: 'text/html', css: 'text/css', js: 'text/javascript', svg: 'image/svg+xml', png: 'image/png', webp: 'image/webp', json: 'application/json' };
 
 let failures = 0;
@@ -83,7 +91,7 @@ async function route(context, external) {
     const ext = file.split('.').pop();
     await r.fulfill({
       status: 200,
-      headers: { 'content-type': MIME[ext] || 'application/octet-stream', 'content-security-policy': CSP },
+      headers: { 'content-type': MIME[ext] || 'application/octet-stream', 'content-security-policy': dir === 'pages' ? CSPS.pages : CSPS.shell },
       body: fs.readFileSync(file),
     });
   };

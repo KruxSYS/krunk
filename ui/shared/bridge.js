@@ -14,7 +14,17 @@
   }
 
   function post(cmd, args) {
-    send(Object.assign({ cmd: cmd }, args || {}));
+    const msg = Object.assign({ cmd: cmd }, args || {});
+    // 0.15.0: a Krunk page's `ready` also reveals its new tab, so it goes once the page has
+    // painted (two frames; a view that gets no frames sends it after 100 ms), never before.
+    if (cmd === 'ready' && location.hostname === 'krunk.invalid') {
+      let sent = false;
+      const go = function () { if (!sent) { sent = true; send(msg); } };
+      requestAnimationFrame(function () { requestAnimationFrame(go); });
+      setTimeout(go, 100);
+      return;
+    }
+    send(msg);
   }
 
   function request(cmd, args) {
