@@ -39,6 +39,12 @@ class GeckoEngine(context: Context) {
     val icons: IconsExtension by lazy { IconsExtension(runtime) }
 
     /**
+     * The engine's own user agent. Krunk's few requests of its own (favicons, search suggestions)
+     * carry it instead of the platform's default, which names the device model and build.
+     */
+    val defaultUserAgent: String by lazy { GeckoSession.getDefaultUserAgent() }
+
+    /**
      * Pushes the user's settings into the runtime: HTTPS-only, the colour scheme web content
      * sees, text scaling (system font scale or the in-app factor), forced pinch zoom.
      */

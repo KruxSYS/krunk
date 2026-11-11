@@ -130,7 +130,7 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
     private val _suggestions = MutableStateFlow<List<AddressSuggestion>>(emptyList())
     val suggestions: StateFlow<List<AddressSuggestion>> = _suggestions.asStateFlow()
     private var suggestJob: Job? = null
-    val omnibox = Omnibox(krunk.core)
+    val omnibox = Omnibox(krunk.core) { krunk.engine.defaultUserAgent }
 
     fun startEditing(initial: String) {
         // A new editing session starts from the address, not from the last suggestion that was

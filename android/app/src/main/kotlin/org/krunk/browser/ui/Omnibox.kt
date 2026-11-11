@@ -21,7 +21,7 @@ import org.krunk.ffi.suggestWanted
  * and, when the setting is on and the tab is not private, the engine's suggestions. The request
  * carries no cookies and uses a 3 s timeout, like Windows.
  */
-class Omnibox(private val core: KrunkCore) {
+class Omnibox(private val core: KrunkCore, private val userAgent: () -> String = { "" }) {
     private val cache = object : LinkedHashMap<String, List<String>>(32, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<String>>?): Boolean = size > 32
     }
@@ -59,7 +59,7 @@ class Omnibox(private val core: KrunkCore) {
             conn.readTimeout = 3000
             conn.useCaches = false
             conn.setRequestProperty("Accept", "application/json, text/plain, */*")
-            conn.setRequestProperty("Cookie", "")
+            userAgent().takeIf { it.isNotEmpty() }?.let { conn.setRequestProperty("User-Agent", it) }
             try {
                 if (conn.responseCode != 200) return emptyList()
                 val bytes = conn.inputStream.use { it.readCapped(MAX_BODY, maxMillis = 5_000) }

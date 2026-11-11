@@ -101,7 +101,7 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
 
     /** Pictures for the tab switcher (memory only, newest [THUMBNAIL_CAPACITY] tabs). */
     val thumbnails = LruMap<UInt, Bitmap>(THUMBNAIL_CAPACITY)
-    val favicons = Favicons(core)
+    val favicons = Favicons(core) { engine.defaultUserAgent }
 
     /**
      * Set by the browser screen: the GeckoView showing the active tab, so a finished page load

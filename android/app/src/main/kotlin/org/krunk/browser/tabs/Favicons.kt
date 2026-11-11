@@ -21,7 +21,7 @@ import org.krunk.ffi.nowMs
  * into an in-memory cache. Fetching happens only for pages the user loaded (the icon URL the
  * page itself declared, or `/favicon.ico`), never in the background.
  */
-class Favicons(private val core: KrunkCore) {
+class Favicons(private val core: KrunkCore, private val userAgent: () -> String = { "" }) {
     private val cache = LruCache<String, Bitmap>(128)
     private val missing = HashSet<String>()
     private val inFlight = HashSet<String>()
@@ -61,7 +61,8 @@ class Favicons(private val core: KrunkCore) {
 
     suspend fun fetch(pageUrl: String, icons: List<IconCandidate>, onDone: () -> Unit) {
         val host = hostOf(pageUrl) ?: return
-        if (cache.get(host) != null || host in inFlight) return
+        // A host without a usable icon is not asked again on every page load.
+        if (cache.get(host) != null || host in inFlight || host in missing) return
         if (load(host) != null) {
             onDone()
             return
@@ -74,7 +75,8 @@ class Favicons(private val core: KrunkCore) {
                 }.map { it.href } + listOf(iconFallback(pageUrl))
                 ).distinct()
             for (href in candidates.take(3)) {
-                val bmp = withContext(Dispatchers.IO) { download(href) } ?: continue
+                // Only the small copy is kept, in memory as on disk.
+                val bmp = withContext(Dispatchers.IO) { download(href)?.let(::scaled) } ?: continue
                 val png = withContext(Dispatchers.IO) { encode(bmp) }
                 if (png.size <= MAX_PNG) {
                     withContext(Dispatchers.IO) { runCatching { core.store.setFavicon(host, png, nowMs()) } }
@@ -117,13 +119,25 @@ class Favicons(private val core: KrunkCore) {
             conn.readTimeout = 5000
             conn.instanceFollowRedirects = true
             conn.setRequestProperty("Accept", "image/*")
+            // The browser's own user agent, not the platform's (which names the device model).
+            userAgent().takeIf { it.isNotEmpty() }?.let { conn.setRequestProperty("User-Agent", it) }
             conn.useCaches = false
             try {
                 if (conn.responseCode != 200) return null
                 // The page chose this address: never trust the size of what comes back.
                 if (conn.contentLengthLong > MAX_DOWNLOAD) return null
                 val bytes = conn.inputStream.use { it.readCapped(MAX_DOWNLOAD) } ?: return null
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                // A few kilobytes can describe a picture of hundreds of megabytes: look at the
+                // size first, refuse the absurd and decode the rest scaled down.
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                val sample = iconSampleSize(bounds.outWidth, bounds.outHeight) ?: return null
+                BitmapFactory.decodeByteArray(
+                    bytes,
+                    0,
+                    bytes.size,
+                    BitmapFactory.Options().apply { inSampleSize = sample },
+                )
             } finally {
                 conn.disconnect()
             }
@@ -133,16 +147,12 @@ class Favicons(private val core: KrunkCore) {
         }
     }
 
+    private fun scaled(bmp: Bitmap): Bitmap =
+        if (bmp.width > SIZE || bmp.height > SIZE) Bitmap.createScaledBitmap(bmp, SIZE, SIZE, true) else bmp
+
     private fun encode(bmp: Bitmap): ByteArray {
-        val scaled = if (bmp.width > SIZE ||
-            bmp.height > SIZE
-        ) {
-            Bitmap.createScaledBitmap(bmp, SIZE, SIZE, true)
-        } else {
-            bmp
-        }
         val out = ByteArrayOutputStream()
-        scaled.compress(Bitmap.CompressFormat.PNG, 100, out)
+        bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
         return out.toByteArray()
     }
 
@@ -150,5 +160,20 @@ class Favicons(private val core: KrunkCore) {
         const val SIZE = 32
         const val MAX_PNG = 48 * 1024
         const val MAX_DOWNLOAD = 512 * 1024
+
+        /** Icons larger than this on a side are refused undecoded. */
+        const val MAX_SIDE = 2048
+
+        /**
+         * How much to shrink an icon of [width] x [height] while decoding (a power of two, as
+         * the decoder wants it) so that it stays at or above twice the stored size, or null when
+         * the picture is not an icon at all (no size, or larger than [MAX_SIDE] on a side).
+         */
+        fun iconSampleSize(width: Int, height: Int): Int? {
+            if (width <= 0 || height <= 0 || width > MAX_SIDE || height > MAX_SIDE) return null
+            var sample = 1
+            while (width / (sample * 2) >= SIZE * 2 && height / (sample * 2) >= SIZE * 2) sample *= 2
+            return sample
+        }
     }
 }
