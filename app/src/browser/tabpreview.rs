@@ -5,7 +5,8 @@
 //!
 //! The card is its own popup window ([`PopupSlot::Preview`]): never activated, so an open
 //! sign-in or page dialog in the main popup stays where it is. The pictures are small JPEGs
-//! (`Page.captureScreenshot`, about 280 px wide) taken only from the active tab: when the user
+//! (a full-size `Page.captureScreenshot`, cut and scaled to 280 px wide with WIC on a job
+//! thread) taken only from the active tab: when the user
 //! leaves it (it stays on screen a moment after the switch) and a while after it finished
 //! loading. A background tab is never captured again. They are kept in memory only (also for
 //! private tabs), at most [`CACHE_CAP`], and dropped with their tab. With the setting off there
@@ -14,6 +15,7 @@
 use super::{Browser, PopupSlot};
 use crate::ffi::window::WindowEvents;
 use crate::log::warning;
+use base64ct::{Base64, Encoding};
 use lb_core::layout;
 use lb_core::protocol::{PopupContent, PopupRect};
 use lb_core::tabs::TabId;
@@ -28,8 +30,8 @@ pub(super) const PREVIEW_TIMER: usize = 28;
 const CAPTURE_AFTER_LOAD_MS: u32 = 1500;
 /// At most this many pictures are kept (least recently used go first).
 const CACHE_CAP: usize = 48;
-/// JPEG quality of a picture.
-const QUALITY: u32 = 60;
+/// JPEG quality of the full-size capture (the card's picture is scaled from it).
+const CAPTURE_QUALITY: u32 = 70;
 
 #[derive(Default)]
 pub(super) struct PreviewHost {
@@ -177,43 +179,29 @@ impl Browser {
         let blank = self.tab(id).is_none_or(|t| lb_core::pages::is_blank(&t.url));
         let Some(view) = self.tab_view(id).filter(|_| loaded && !blank) else { return };
         let weak = self.me.clone();
-        let view2 = view.clone();
-        view.devtools_call("Page.getLayoutMetrics", &json!({}), move |r| {
-            let Some(params) = r.ok().as_ref().and_then(capture_params) else { return };
-            view2.devtools_call("Page.captureScreenshot", &params, move |r| {
-                let Some(b) = weak.upgrade() else { return };
-                match r.ok().and_then(|mut v| v.get_mut("data").map(Value::take)) {
+        // The whole visible page as it is: no clip and no scale, which would make the engine
+        // re-render the page on screen at the small size for a frame (seen on the VM). It is cut
+        // and scaled on a job thread instead.
+        let params = json!({ "format": "jpeg", "quality": CAPTURE_QUALITY, "optimizeForSpeed": true });
+        view.devtools_call("Page.captureScreenshot", &params, move |r| {
+            let Some(b) = weak.upgrade() else { return };
+            let Some(Value::String(data)) = r.ok().and_then(|mut v| v.get_mut("data").map(Value::take)) else {
+                return warning!("tab {id}: no hover-card picture (the page may be hidden already)");
+            };
+            let Ok(jpeg) = Base64::decode_vec(&data) else { return };
+            let (tw, th) = layout::TAB_PREVIEW_THUMB;
+            b.spawn_job(
+                "tab-preview",
+                move || crate::ffi::image::thumbnail_jpeg(&jpeg, tw as u32, th as u32),
+                move |b, small| match small {
                     // A tab closed meanwhile is not cached again.
-                    Some(Value::String(data)) if b.tab(id).is_some() && b.previews_on() => {
-                        b.preview_put(id, format!("data:image/jpeg;base64,{data}"));
+                    Some(small) if b.tab(id).is_some() && b.previews_on() => {
+                        b.preview_put(id, format!("data:image/jpeg;base64,{}", Base64::encode_string(&small)));
                     }
                     Some(_) => {}
-                    None => warning!("tab {id}: no hover-card picture (the page may be hidden already)"),
-                }
-            });
+                    None => warning!("tab {id}: the hover-card picture could not be scaled"),
+                },
+            );
         });
     }
-}
-
-/// `Page.captureScreenshot` parameters for the visible part of the page, cut to the card's
-/// picture shape and scaled to its width ([`layout::TAB_PREVIEW_THUMB`]).
-fn capture_params(m: &Value) -> Option<Value> {
-    let css = m.get("cssVisualViewport")?;
-    let w = css.get("clientWidth")?.as_f64()?;
-    let h = css.get("clientHeight")?.as_f64()?;
-    if w < 16.0 || h < 16.0 {
-        return None;
-    }
-    // Device pixels per CSS pixel (the deprecated `visualViewport` is in device pixels).
-    let dev = m.get("visualViewport").and_then(|v| v.get("clientWidth")).and_then(Value::as_f64).unwrap_or(0.0);
-    let dpr = if dev > 0.0 { (dev / w).clamp(0.25, 8.0) } else { 1.0 };
-    let (tw, th) = layout::TAB_PREVIEW_THUMB;
-    let x = css.get("pageX").and_then(Value::as_f64).unwrap_or(0.0);
-    let y = css.get("pageY").and_then(Value::as_f64).unwrap_or(0.0);
-    let clip_h = h.min(w * th / tw);
-    Some(json!({
-        "format": "jpeg",
-        "quality": QUALITY,
-        "clip": { "x": x, "y": y, "width": w, "height": clip_h, "scale": (tw / (w * dpr)).min(1.0) },
-    }))
 }

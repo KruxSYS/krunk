@@ -16,13 +16,16 @@ use super::Browser;
 use crate::ffi::cef::{AuthChallenge, AuthResponder};
 use crate::log::info;
 use lb_core::http_auth::{accepted, clean_realm, Arrival, AuthTabs, ANSWER_WINDOW_MS};
-use lb_core::protocol::{AuthLogin, PopupContent, PopupKind, UnlockPurpose};
+use lb_core::protocol::{AuthLogin, PopupContent, UnlockPurpose};
 use lb_core::secret::Secret;
 use lb_core::storage::now_ms;
 use lb_core::tabs::TabId;
 use lb_core::urlclean;
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use zeroize::Zeroizing;
+
+/// How long after a tab or window activation a waiting sign-in dialog comes back.
+const RESHOW_DELAY_MS: i64 = 150;
 
 /// A challenge's answer handle, and whether it came right after a refused answer.
 #[derive(Debug)]
@@ -45,9 +48,6 @@ struct Answered {
 pub(super) struct HttpAuthHost {
     tabs: RefCell<AuthTabs<TabId, Pending>>,
     answered: RefCell<Option<Answered>>,
-    /// The dialog went because Krunk lost the foreground to another app: it comes back when a
-    /// Krunk window is activated again.
-    away: Cell<bool>,
 }
 
 impl Browser {
@@ -130,7 +130,6 @@ impl Browser {
             locked,
             failed,
         };
-        self.http_auth.away.set(false);
         self.show_prompt(content, n);
         self.http_auth.tabs.borrow_mut().set_shown(tab);
     }
@@ -215,30 +214,23 @@ impl Browser {
         self.defer(|b| b.http_auth_reshow());
     }
 
-    /// The popup lost activation while it showed the dialog (`hide_popup_by_focus_loss`): when
-    /// the foreground went to another app, the dialog comes back with Krunk's window.
-    pub(super) fn http_auth_focus_lost(&self) {
-        let showing = matches!(self.popup_kind(), Some(PopupKind::HttpAuth))
-            || self.popup.try_borrow().is_ok_and(|p| {
-                p.as_ref().is_some_and(|p| {
-                    matches!(p.content, Some(PopupContent::Unlock { purpose: UnlockPurpose::HttpAuth, .. }))
-                })
-            });
-        if showing {
-            // Looked at a moment later: the activation has settled by then.
-            self.defer(|b| {
-                if !crate::ffi::window::foreground_is_ours() {
-                    b.http_auth.away.set(true);
-                }
-            });
-        }
+    /// A Krunk window was activated: the active tab's dialog comes back, whether it went with
+    /// the foreground or had been pushed aside before (seen on the VM: back from another app,
+    /// a dialog hidden by a tab switch stayed away).
+    pub(super) fn http_auth_window_activated(&self) {
+        self.http_auth_reshow_soon();
     }
 
-    /// A Krunk window was activated: a dialog that went with the foreground comes back.
-    pub(super) fn http_auth_window_activated(&self) {
-        if self.http_auth.away.replace(false) {
-            self.defer(|b| b.http_auth_reshow());
-        }
+    /// [`Self::http_auth_reshow`] once the keyboard focus has settled. Activating a tab or a
+    /// window moves the focus (a new tab page focuses the address bar); a dialog shown at once
+    /// lost the activation to it and was hidden again (seen on the VM).
+    pub(super) fn http_auth_reshow_soon(&self) {
+        let weak = self.me.clone();
+        crate::ffi::cef::post_ui_delayed(RESHOW_DELAY_MS, move || {
+            if let Some(b) = weak.upgrade() {
+                b.http_auth_reshow();
+            }
+        });
     }
 
     /// The tab closed or its page navigates elsewhere: its sign-ins are refused.

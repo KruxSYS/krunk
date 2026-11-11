@@ -1698,8 +1698,8 @@ impl Browser {
         self.wake_tab(to);
         // A page that does not respond says so when its tab comes to the front (0.11.0).
         self.defer(move |b| b.show_hang_prompt(to));
-        // A sign-in the tab waits for shows again with it (0.15.0).
-        self.defer(|b| b.http_auth_reshow());
+        // A sign-in the tab waits for shows again with it (0.15.0), after the focus settled.
+        self.http_auth_reshow_soon();
         self.layout();
         if self.cur_id() == Some(win) {
             self.focus_active();
@@ -3421,8 +3421,6 @@ impl Browser {
         if now_ms() < self.popup_hold_until.get() {
             return;
         }
-        // 0.15.0: a sign-in dialog only goes out of sight (it comes back with its window).
-        self.http_auth_focus_lost();
         let anchor = self
             .popup
             .try_borrow()

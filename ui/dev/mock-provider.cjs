@@ -164,6 +164,14 @@ const SCENARIOS = [
   { match: /cut off script/i, steps: [() => cut('save_userscript', { source: PARTS.join('') })].concat(partSteps(1)) },
   { match: /script in parts/i, steps: partSteps(0) },
   {
+    // 0.15.0 VM pass: a live theme switch while the panel is open (the panel must follow it).
+    match: /switch to (dark|light) theme/i,
+    steps: [
+      (m) => call('set_setting', { key: 'theme', value: m[1].toLowerCase() }),
+      (m) => finish('The theme is now ' + m[1].toLowerCase() + '.'),
+    ],
+  },
+  {
     match: /background from (?:url\s+)?(https?:\/\/\S+)/i,
     steps: [
       (m) => call('set_new_tab_background_url', { url: m[1].replace(/[.,;]+$/, '') }),
