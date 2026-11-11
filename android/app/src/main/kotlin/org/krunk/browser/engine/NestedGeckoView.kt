@@ -44,7 +44,9 @@ open class NestedGeckoView(context: Context) :
 
     override fun onTouchEvent(ev: MotionEvent): Boolean {
         val event = MotionEvent.obtain(ev)
-        val eventY = event.y.toInt()
+        // Screen coordinates: with the toolbar at the top the view itself moves while the toolbar
+        // slides, and view-local positions would count that movement as finger movement.
+        val eventY = event.rawY.toInt()
         val handled: Boolean
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
