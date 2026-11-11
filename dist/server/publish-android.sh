@@ -106,10 +106,10 @@ for abi in $ABIS; do
   cp "$src" "$rel/$name"
   sha=$(sha256sum "$rel/$name" | cut -d' ' -f1)
   size=$(stat -c %s "$rel/$name")
-  kind="device"; label="Phones and tablets (arm64-v8a)"
+  kind="device"; label="arm64-v8a APK"
   case "$abi" in
-    universal) kind="universal"; label="Every supported device (arm64-v8a + x86_64)" ;;
-    x86_64) kind="emulator"; label="x86_64 devices and the Android emulator" ;;
+    universal) kind="universal"; label="Universal APK" ;;
+    x86_64) kind="emulator"; label="x86_64 APK (emulator)" ;;
   esac
   files_json="$files_json${files_json:+,}
     {\"name\": \"$name\", \"abi\": \"$abi\", \"kind\": \"$kind\", \"label\": \"$label\", \"url\": \"/download/android/$version/$name\", \"size\": $size, \"sha256\": \"$sha\"}"

@@ -120,11 +120,11 @@
     if (!device) return;
     const others = files.filter(function (f) { return f !== device; });
     abox.textContent = '';
-    abox.appendChild(el('a', { class: 'btn primary big', href: safePath(device.url), download: '' }, [
+    abox.appendChild(el('a', { class: 'btn big', href: safePath(device.url), download: '' }, [
       downloadIcon(),
       el('span', {}, [
-        el('span', { class: 'dl-main', text: 'Download for Android (preview)' }),
-        el('span', { class: 'sub', text: ['APK', size(device.size), 'Android ' + (r.min_android || '8.0') + ' or later', String(device.abi || '')].filter(Boolean).join(' · ') }),
+        el('span', { class: 'dl-main', text: 'Download for Android' }),
+        el('span', { class: 'sub', text: ['Preview', 'APK', size(device.size), 'Android ' + String(r.min_android || '8').replace(/\.0$/, '') + ' or later'].filter(Boolean).join(' · ') }),
       ]),
     ]));
     const meta = el('p', { class: 'version' }, [
@@ -138,7 +138,7 @@
       meta.appendChild(el('a', { href: safePath(f.url), download: '', text: String(f.label || f.name) + (size(f.size) ? ' (' + size(f.size) + ')' : '') }));
     });
     abox.appendChild(meta);
-    abox.appendChild(el('p', { class: 'hint', text: 'A first preview: browsing, tabs, bookmarks, history and settings; no ad blocking, vault or sync yet. Android asks once to allow installs from the app you downloaded it with. Krunk for Android checks for no updates by itself: come back here for new versions.' }));
+    abox.appendChild(el('p', { class: 'hint', text: 'A first preview for 64-bit ARM phones and tablets: browsing, tabs, bookmarks, history and settings. No ad blocking, vault or sync yet. It does not update itself: new versions appear here.' }));
     const sums = el('dl', { class: 'sums' });
     files.forEach(function (f) {
       sums.appendChild(el('dt', { text: String(f.name) }));
