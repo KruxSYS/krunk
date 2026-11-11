@@ -12,10 +12,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// Largest package Krunk unpacks (bytes, compressed and uncompressed).
-pub const MAX_PACKAGE_BYTES: usize = 64 * 1024 * 1024;
+/// Largest package Krunk accepts (bytes, the archive as downloaded; 256 MiB since 0.15.2).
+pub const MAX_PACKAGE_BYTES: usize = 256 * 1024 * 1024;
+/// Largest unpacked extension (bytes, all files together). 0.15.2: MetaMask unpacks to 84 MB,
+/// past the 64 MB that used to be the limit for both.
+pub const MAX_UNPACKED_BYTES: usize = 512 * 1024 * 1024;
 /// Most files in a package.
-pub const MAX_PACKAGE_FILES: usize = 5000;
+pub const MAX_PACKAGE_FILES: usize = 20_000;
 /// Largest manifest.
 pub const MAX_MANIFEST_BYTES: usize = 256 * 1024;
 /// An extension id: 32 letters a–p (the first 128 bits of the SHA-256 of the public key).
@@ -525,7 +528,7 @@ pub fn unzip(bytes: &[u8]) -> Result<Vec<ZipEntry>, ExtError> {
             return Err(bad(&format!("unsafe file name \"{name}\"")));
         }
         total = total.saturating_add(uncompressed);
-        if total > MAX_PACKAGE_BYTES || uncompressed > MAX_PACKAGE_BYTES {
+        if total > MAX_UNPACKED_BYTES || uncompressed > MAX_UNPACKED_BYTES {
             return Err(ExtError::TooLarge("unpacked size"));
         }
         if local + 30 > bytes.len() || bytes[local..local + 4] != [0x50, 0x4b, 0x03, 0x04] {
@@ -1624,7 +1627,11 @@ mod tests {
         let path = std::env::var("KRUNK_CRX").expect("KRUNK_CRX");
         let v = verify_crx(&std::fs::read(path).unwrap()).unwrap();
         assert!(v.store_signed, "signed by the Web Store");
-        println!("{} store-signed", v.crx.id);
+        // 0.15.2: MetaMask (84 MB unpacked) used to fail with "too large (unpacked size)".
+        let files = unzip(&v.crx.zip).unwrap();
+        let m = files.iter().find(|f| f.name == "manifest.json").expect("manifest.json");
+        Manifest::parse(&String::from_utf8_lossy(&m.data)).unwrap();
+        println!("{} store-signed, {} files", v.crx.id, files.len());
     }
 
     #[test]

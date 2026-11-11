@@ -30,7 +30,7 @@ pub use scheme::InternalResponse;
 pub use scriptlets::set_scriptlets;
 pub use view::{
     with_batched_moves, AuthChallenge, AuthResponder, ClearKinds, DownloadControl, DownloadStart, DownloadStatus,
-    DownloadUpdate, JsDialogRequest, JsDialogResponder, KeyPress, LoadingState, MessageSource, NewWindow, Role,
+    DownloadUpdate, JsDialogRequest, JsDialogResponder, KeyPress, LoadingState, MessageSource, NewWindow, OpenIn, Role,
     Scripts, View, ViewOptions,
 };
 

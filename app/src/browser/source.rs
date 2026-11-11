@@ -75,6 +75,29 @@ impl Browser {
         }
     }
 
+    /// "Open in new tab/window/private tab" for a selected address on tab `id` (0.15.2). A new
+    /// tab sits next to it and stays private if it is; a new window is private from a private tab.
+    pub(super) fn open_selection(&self, id: TabId, how: crate::ffi::cef::OpenIn, url: &str) {
+        use crate::ffi::cef::OpenIn;
+        let Some((win, private)) = self.window_of(id).and_then(|w| self.tab(id).map(|t| (w, t.private))) else {
+            return;
+        };
+        match how {
+            OpenIn::Tab => {
+                let opened = self.ws.borrow_mut().open(win, url, private, Position::AfterOpener(id), true, now_ms());
+                if let Some((_, ops)) = opened {
+                    self.apply(ops);
+                }
+            }
+            OpenIn::Window => {
+                let bounds = self.cascade_bounds();
+                let (_, _, ops) = self.ws.borrow_mut().open_window(url, private, bounds, false, now_ms());
+                self.apply(ops);
+            }
+            OpenIn::PrivateTab => self.new_tab(Some(url), true),
+        }
+    }
+
     /// The viewer asks for its source (`tab`: the viewer's tab, whose URL names the address).
     pub(super) fn source_get(&self, tab: Option<TabId>, req_id: Option<u32>) {
         let Some((url, private)) = tab.and_then(|t| self.tab(t).map(|t| (t.url.clone(), t.private))) else { return };

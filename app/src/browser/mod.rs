@@ -1434,6 +1434,12 @@ impl Browser {
             }
         });
         let weak = self.me.clone();
+        c.on_open_selection(move |how, url| {
+            if let Some(b) = weak.upgrade() {
+                b.defer(move |b| b.open_selection(id, how, &url));
+            }
+        });
+        let weak = self.me.clone();
         c.on_js_dialog(move |req, responder| {
             if let Some(b) = weak.upgrade() {
                 b.defer(move |b| b.js_dialog(id, req, responder));

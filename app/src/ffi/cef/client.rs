@@ -728,6 +728,10 @@ const MENU_INSPECT: c_int = 26501;
 const MENU_SEARCH: c_int = 26502;
 /// The image items (0.12.2), in `ImageAction::ALL`'s order from this id on.
 const MENU_IMAGE_FIRST: c_int = 26503;
+/// Selected text that is an address (0.15.2): open it in a new tab, window or private tab.
+const MENU_SEL_TAB: c_int = 26520;
+const MENU_SEL_WINDOW: c_int = 26521;
+const MENU_SEL_PRIVATE: c_int = 26522;
 /// CEF's own ids: Copy, and "View page source" (which opened the system text editor).
 const MENU_ID_COPY: c_int = 113;
 const MENU_ID_VIEW_SOURCE: c_int = 132;
@@ -777,7 +781,22 @@ wrap_context_menu_handler! {
             let image = params.as_ref().and_then(|p| image_url(p));
             // Selected text (never a password field's: the engine gives none): "Search … for"
             // after Copy, as in Chrome (0.11.0).
+            let link = params.as_ref().is_some_and(|p| !CefString::from(&p.link_url()).to_string().is_empty());
             let selection = params.map(|p| CefString::from(&p.selection_text()).to_string()).unwrap_or_default();
+            // A selected address (not on a link, which has the engine's own items): open it,
+            // first in the menu (0.15.2).
+            if let Some(url) = (!link).then(|| lb_core::urlclean::selection_url(&selection)).flatten() {
+                let shown = lb_core::urlclean::selection_url_label(&url);
+                let items = [
+                    (MENU_SEL_TAB, format!("Open “{shown}” in new tab")),
+                    (MENU_SEL_WINDOW, "Open in new window".to_string()),
+                    (MENU_SEL_PRIVATE, "Open in private tab".to_string()),
+                ];
+                for (i, (id, label)) in items.iter().enumerate() {
+                    m.insert_item_at(i, *id, Some(&CefString::from(label.as_str())));
+                }
+                m.insert_separator_at(items.len());
+            }
             // An image: Chrome's four image items first (0.12.2).
             if image.is_some() {
                 let items = lb_core::image_menu::ImageAction::ALL;
@@ -826,6 +845,18 @@ wrap_context_menu_handler! {
                 let url = params.as_ref().and_then(|p| image_url(p));
                 if let (Some(url), Some(view)) = (url, lookup(self.key)) {
                     view.ev.image_menu.with(|f| f(action, url));
+                }
+                return 1;
+            }
+            if (MENU_SEL_TAB..=MENU_SEL_PRIVATE).contains(&command_id) {
+                let text = params.map(|p| CefString::from(&p.selection_text()).to_string()).unwrap_or_default();
+                let how = match command_id {
+                    MENU_SEL_TAB => super::view::OpenIn::Tab,
+                    MENU_SEL_WINDOW => super::view::OpenIn::Window,
+                    _ => super::view::OpenIn::PrivateTab,
+                };
+                if let (Some(url), Some(view)) = (lb_core::urlclean::selection_url(&text), lookup(self.key)) {
+                    view.ev.open_selection.with(|f| f(how, url));
                 }
                 return 1;
             }

@@ -19,6 +19,11 @@ What changed in each Krunk release, newest first.
   Glass style now uses it.
 - **The bookmarks bar follows a gradient toolbar**, as one continuous gradient with the toolbar.
 - **Seven new styles:** Aurora, Midnight, Forest, Ember, Candy, Frost and Neon.
+- **Big extensions install.** MetaMask failed with "the package is too large (unpacked size)":
+  an extension may now unpack to 512 MB (was 64 MB) with up to 20,000 files, and the download
+  may be up to 256 MB.
+- **Open a selected address.** Select a web address in a page's text (like `example.com/page`)
+  and right-click: **Open in new tab**, **Open in new window** and **Open in private tab**.
 
 ## 0.15.1 — 2026-11-11
 

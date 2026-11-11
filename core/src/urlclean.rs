@@ -129,6 +129,34 @@ pub fn selection_query(selection: &str) -> Option<String> {
     (!q.is_empty()).then(|| q.chars().take(1000).collect())
 }
 
+/// The page context menu's "Open in new tab" and friends for selected text (0.15.2): the
+/// address the selection names (as the address bar reads it: `example.com/a`, `https://…`),
+/// `None` for anything else. One word only, quotes, brackets and a sentence's final `.`/`,`
+/// around it dropped; only http(s) (never `file:` from a page).
+pub fn selection_url(selection: &str) -> Option<String> {
+    let t = selection
+        .trim()
+        .trim_end_matches(['.', ',', ';', ':', '!', '?'])
+        .trim_matches(|c: char| "\"'“”‘’<>()[]{}«»".contains(c))
+        .trim_end_matches(['.', ',', ';', ':', '!', '?']);
+    if t.is_empty() || t.len() > 2048 || t.contains(char::is_whitespace) {
+        return None;
+    }
+    as_url(t).filter(|u| u.starts_with("http://") || u.starts_with("https://"))
+}
+
+/// The selected address as the menu shows it: no scheme, at most 32 characters with "…".
+pub fn selection_url_label(url: &str) -> String {
+    let bare = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://")).unwrap_or(url);
+    let bare = bare.strip_suffix('/').unwrap_or(bare);
+    let shown: String = bare.chars().take(32).collect();
+    if bare.chars().count() > 32 {
+        format!("{shown}…")
+    } else {
+        shown
+    }
+}
+
 /// "Search Google for “krunk browser”", the query shortened to 32 characters with "…".
 pub fn selection_label(engine: &str, query: &str) -> String {
     let shown: String = query.chars().take(32).collect();
@@ -658,5 +686,30 @@ mod tests {
         assert_eq!(https_upgrade("https://example.com/"), None);
         assert_eq!(https_upgrade("http://localhost:3000/"), None);
         assert_eq!(https_upgrade("http://10.0.0.1/"), None);
+    }
+
+    #[test]
+    fn selected_addresses_open_and_other_text_does_not() {
+        assert_eq!(selection_url("example.com").as_deref(), Some("https://example.com/"));
+        assert_eq!(selection_url(" (https://foo.dev/a?b=1). ").as_deref(), Some("https://foo.dev/a?b=1"));
+        assert_eq!(selection_url("“www.rust-lang.org/learn”,").as_deref(), Some("https://www.rust-lang.org/learn"));
+        assert_eq!(selection_url("http://192.168.1.1:8080/").as_deref(), Some("http://192.168.1.1:8080/"));
+        for no in [
+            "",
+            "krunk browser",
+            "test.test",
+            "notes.txt",
+            "user@example.com",
+            "file:///C:/x",
+            "javascript:alert(1)",
+            "3.14",
+        ] {
+            assert_eq!(selection_url(no), None, "{no}");
+        }
+        assert_eq!(selection_url_label("https://example.com/"), "example.com");
+        assert_eq!(
+            selection_url_label("https://example.com/a/very/long/path/that/goes/on"),
+            "example.com/a/very/long/path/tha…"
+        );
     }
 }

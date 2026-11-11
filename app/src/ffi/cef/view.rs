@@ -138,6 +138,14 @@ pub struct MessageSource {
     pub frame_id: String,
 }
 
+/// Where the page context menu opens a selected address (0.15.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenIn {
+    Tab,
+    Window,
+    PrivateTab,
+}
+
 /// A page asked for a new window (`window.open`, `target=_blank`).
 #[derive(Debug, Clone)]
 pub struct NewWindow {
@@ -310,6 +318,8 @@ pub(super) struct Events {
     pub search_label: Slot<SearchLabelFn>,
     /// That item was chosen: the selected text.
     pub search_selection: Slot<dyn FnMut(String)>,
+    /// "Open in new tab/window/private tab" for a selected address (0.15.2).
+    pub open_selection: Slot<dyn FnMut(OpenIn, String)>,
     /// A page's JavaScript dialog (0.12.4); the host answers it through the responder.
     pub js_dialog: Slot<dyn FnMut(JsDialogRequest, JsDialogResponder)>,
     /// The engine dropped the page's open dialog (navigation, close): hide it unanswered.
@@ -1539,6 +1549,10 @@ impl View {
 
     pub fn on_search_selection(&self, f: impl FnMut(String) + 'static) {
         self.0.ev.search_selection.set(Box::new(f));
+    }
+
+    pub fn on_open_selection(&self, f: impl FnMut(OpenIn, String) + 'static) {
+        self.0.ev.open_selection.set(Box::new(f));
     }
 
     pub fn on_js_dialog(&self, f: impl FnMut(JsDialogRequest, JsDialogResponder) + 'static) {

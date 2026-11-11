@@ -245,7 +245,7 @@ fn read_tree(dir: &Path) -> Result<Vec<(String, Vec<u8>)>, String> {
             }
             let bytes = std::fs::read(&p).map_err(|e| format!("{rel}: {e}"))?;
             total += bytes.len();
-            if total > ext::MAX_PACKAGE_BYTES || out.len() >= ext::MAX_PACKAGE_FILES {
+            if total > ext::MAX_UNPACKED_BYTES || out.len() >= ext::MAX_PACKAGE_FILES {
                 return Err("the folder is too large for an extension".into());
             }
             out.push((rel, bytes));
