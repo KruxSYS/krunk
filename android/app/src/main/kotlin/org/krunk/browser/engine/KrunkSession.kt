@@ -543,8 +543,12 @@ class KrunkSession(
 
     private val history = object : GeckoSession.HistoryDelegate {
         override fun onHistoryStateChange(session: GeckoSession, state: GeckoSession.HistoryDelegate.HistoryList) {
-            historyEntries = state.map { HistoryPage(it.uri, it.title) }
-            historyIndex = state.currentIndex
+            // The engine marks address and title as never null, but a page without a title
+            // (still loading, a blank page) arrives with a null one: seen on the device.
+            historyEntries = state.map { item ->
+                HistoryPage((item.uri as String?).orEmpty(), (item.title as String?).orEmpty())
+            }
+            historyIndex = state.currentIndex.coerceIn(0, maxOf(0, historyEntries.size - 1))
         }
 
         override fun onVisited(
