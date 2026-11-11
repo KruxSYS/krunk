@@ -190,28 +190,36 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
     private val _findText = MutableStateFlow("")
     val findText: StateFlow<String> = _findText.asStateFlow()
 
+    /** The tab the find bar searches: the one that was active when it opened. */
+    private var findTab: UInt? = null
+
+    private fun findSession() = findTab?.let { tabs.session(it) }
+
     fun openFind() {
         stopEditing()
+        findTab = activeTab.value?.id
         _findActive.value = true
     }
 
     /** New search text: an empty string clears the highlights. */
     fun findTyped(text: String) {
         _findText.value = text
-        val s = tabs.activeSession() ?: return
+        val s = findSession() ?: return
         if (text.isEmpty()) s.clearFind() else s.find(text, forward = true)
     }
 
     fun findNext(forward: Boolean) {
         if (_findText.value.isEmpty()) return
-        tabs.activeSession()?.find(null, forward)
+        findSession()?.find(null, forward)
     }
 
+    /** Closes the bar and clears the highlights in the tab it searched (not in another one). */
     fun closeFind() {
         if (!_findActive.value) return
         _findActive.value = false
         _findText.value = ""
-        tabs.activeSession()?.clearFind()
+        findSession()?.clearFind()
+        findTab = null
     }
 
     // ----- bookmarks (star state of the active page) -----

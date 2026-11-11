@@ -76,4 +76,62 @@ class ContextMenuItemsTest {
             actions.takeLast(3),
         )
     }
+
+    @Test
+    fun fileNamesComeFromTheHeaderOrTheAddress() {
+        assertEquals("report.pdf", downloadFileName("https://example.com/files/report.pdf?x=1#y", null))
+        assertEquals("a b.txt", downloadFileName("https://example.com/a%20b.txt", null))
+        assertEquals("download", downloadFileName("https://example.com/", null))
+        assertEquals("invoice.pdf", downloadFileName("https://example.com/get", "attachment; filename=\"invoice.pdf\""))
+        assertEquals("invoice.pdf", downloadFileName("https://example.com/get", "attachment; FILENAME=invoice.pdf"))
+        assertEquals(
+            "naïve file.txt",
+            downloadFileName(
+                "https://example.com/get",
+                "attachment; filename=x.txt; filename*=utf-8''na%C3%AFve%20file.txt",
+            ),
+        )
+    }
+
+    @Test
+    fun fileNamesCannotLeaveTheFolderOrHide() {
+        assertEquals(
+            "_.._etc_passwd",
+            downloadFileName("https://e.example/x", "attachment; filename=\"../../etc/passwd\""),
+        )
+        val traversal = downloadFileName("https://e.example/x", "attachment; filename=\"..\\\\..\\\\boot.ini\"")
+        assertFalse(traversal.contains('/') || traversal.contains('\\'))
+        assertFalse(traversal.startsWith("."))
+        assertEquals("bashrc", downloadFileName("https://e.example/x", "attachment; filename=\".bashrc\""))
+        assertEquals("download", downloadFileName("https://e.example/x", "attachment; filename=\"...\""))
+        // Trailing dots and spaces are dropped (they hide the real extension on some systems).
+        assertEquals("setup.exe", downloadFileName("https://e.example/x", "attachment; filename=\"setup.exe. .\""))
+    }
+
+    @Test
+    fun fileNamesCannotReorderOrHideTheirExtension() {
+        // A right-to-left override would show "photo‮gpj.apk" as "photoapk.jpg".
+        assertEquals(
+            "photogpj.apk",
+            downloadFileName("https://e.example/x", "attachment; filename=\"photo\u202Egpj.apk\""),
+        )
+        assertEquals(
+            "update.apk",
+            downloadFileName("https://e.example/x", "attachment; filename=\"up\u200Bdate\u0007.apk\""),
+        )
+    }
+
+    @Test
+    fun longFileNamesKeepTheirEndAndFitInBytes() {
+        val long = "文".repeat(300) + ".pdf" // 3 bytes per character
+        val name = downloadFileName("https://e.example/x", "attachment; filename=\"$long\"")
+        assertTrue(name.endsWith(".pdf"))
+        assertTrue(name.toByteArray(Charsets.UTF_8).size <= 200)
+        // A surrogate pair is never cut in two.
+        val emoji = "😀".repeat(100) + ".png"
+        val cut = downloadFileName("https://e.example/x", "attachment; filename=\"$emoji\"")
+        assertTrue(cut.endsWith(".png"))
+        assertFalse(cut.first().isLowSurrogate())
+        assertTrue(cut.toByteArray(Charsets.UTF_8).size <= 200)
+    }
 }

@@ -47,7 +47,7 @@ fun securityIndicator(
 private const val MAX_SHOWN = 2000
 
 /** Characters that reorder or hide text (bidi controls, zero-width, other controls). */
-private fun isDeceptive(c: Char): Boolean =
+internal fun isDeceptive(c: Char): Boolean =
     c < ' ' || c == '\u007f' || c in '\u0080'..'\u009f' || c in '\u200b'..'\u200f' ||
         c in '\u202a'..'\u202e' || c in '\u2066'..'\u2069' || c == '\ufeff'
 

@@ -20,7 +20,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -45,6 +48,9 @@ fun FindBar(
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // The field owns its text while it is open; a round trip through the view model would lag a
+    // keystroke behind and drop characters (as it once did in the address bar).
+    var value by remember { mutableStateOf(text) }
     val focus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     LaunchedEffect(Unit) {
@@ -57,7 +63,7 @@ fun FindBar(
     ) {
         Row(Modifier.padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.weight(1f)) {
-                if (text.isEmpty()) {
+                if (value.isEmpty()) {
                     Text(
                         stringResource(R.string.find_placeholder),
                         style = MaterialTheme.typography.bodyLarge,
@@ -67,8 +73,11 @@ fun FindBar(
                     )
                 }
                 BasicTextField(
-                    value = text,
-                    onValueChange = onText,
+                    value = value,
+                    onValueChange = {
+                        value = it
+                        onText(it)
+                    },
                     modifier = Modifier.fillMaxWidth().focusRequester(focus),
                     textStyle = LocalTextStyle.current.merge(MaterialTheme.typography.bodyLarge)
                         .copy(color = MaterialTheme.colorScheme.onSurface),
@@ -85,7 +94,7 @@ fun FindBar(
                     stringResource(R.string.find_none)
                 },
                 style = MaterialTheme.typography.labelLarge,
-                color = if (text.isNotEmpty() && total == 0) {
+                color = if (value.isNotEmpty() && total == 0) {
                     MaterialTheme.colorScheme.error
                 } else {
                     MaterialTheme.colorScheme.onSurfaceVariant

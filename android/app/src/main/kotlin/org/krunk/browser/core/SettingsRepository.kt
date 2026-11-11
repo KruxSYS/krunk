@@ -4,6 +4,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.krunk.ffi.AndroidSettings
 import org.krunk.ffi.KrunkStore
@@ -37,9 +39,11 @@ class SettingsRepository(private val store: KrunkStore) {
      * Validates and saves. On a validation failure nothing is stored and the exception carries
      * the offending fields (`SettingsException.Validation`).
      */
-    suspend fun update(transform: (AndroidSettings) -> AndroidSettings): Result<Unit> {
+    suspend fun update(transform: (AndroidSettings) -> AndroidSettings): Result<Unit> = writeLock.withLock {
+        // One change at a time, each starting from the result of the one before: two quick
+        // changes (a slider, two switches) can neither lose a field nor land out of order.
         val next = transform(current)
-        return withContext(Dispatchers.IO) {
+        withContext(Dispatchers.IO) {
             try {
                 store.saveSettings(next)
                 _settings.value = next
@@ -49,6 +53,8 @@ class SettingsRepository(private val store: KrunkStore) {
             }
         }
     }
+
+    private val writeLock = Mutex()
 
     suspend fun reload() {
         _settings.value = withContext(Dispatchers.IO) { store.loadSettings() }

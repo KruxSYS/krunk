@@ -79,21 +79,54 @@ fun downloadFileName(url: String, contentDisposition: String?, fallback: String 
 private fun fromContentDisposition(header: String?): String? {
     header ?: return null
     // RFC 6266: filename*=UTF-8''encoded wins over filename="plain".
-    val star = Regex("""filename\*\s*=\s*(?:UTF-8|utf-8)''([^;]+)""").find(header)?.groupValues?.get(1)?.trim()
+    val star = FILENAME_STAR.find(header)?.groupValues?.get(1)?.trim()
     if (!star.isNullOrEmpty()) {
         return runCatching { java.net.URLDecoder.decode(star.replace("+", "%2B"), "UTF-8") }.getOrDefault(star)
     }
-    val plain = Regex("""filename\s*=\s*(?:"([^"]*)"|([^;]+))""").find(header) ?: return null
+    val plain = FILENAME_PLAIN.find(header) ?: return null
     return (plain.groupValues[1].ifEmpty { plain.groupValues[2] }).trim().ifEmpty { null }
 }
 
+// Header parameter names are case-insensitive (RFC 6266).
+private val FILENAME_STAR = Regex("""filename\*\s*=\s*UTF-8''([^;]+)""", RegexOption.IGNORE_CASE)
+private val FILENAME_PLAIN = Regex("""filename\s*=\s*(?:"([^"]*)"|([^;]+))""", RegexOption.IGNORE_CASE)
+
+/** File systems allow 255 bytes for a name; this leaves room for the system's " (1)" suffixes. */
+private const val MAX_NAME_BYTES = 200
+
+/**
+ * A name that is safe to show and to store: no path separators, no control characters and no
+ * characters that reorder or hide text (a right-to-left override makes `photo[RLO]gpj.apk` read
+ * as `photoapk.jpg`), no leading dots (hidden files), no trailing dots or spaces, and short
+ * enough in bytes. Too long a name keeps its end, where the extension is.
+ */
 private fun sanitize(name: String, fallback: String): String {
     val cleaned = name
         .replace('\\', '_')
         .replace('/', '_')
-        .filter { it >= ' ' }
+        .filterNot(::isDeceptive)
         .trim()
         .trimStart('.')
+        .trimEnd('.', ' ')
     if (cleaned.isEmpty()) return fallback
-    return if (cleaned.length > 200) cleaned.takeLast(200) else cleaned
+    return lastBytes(cleaned, MAX_NAME_BYTES)
+}
+
+/** The end of [s] that fits into [max] UTF-8 bytes, never cutting a character in two. */
+private fun lastBytes(s: String, max: Int): String {
+    var bytes = 0
+    var start = s.length
+    while (start > 0) {
+        val cp = s.codePointBefore(start)
+        val size = when {
+            cp < 0x80 -> 1
+            cp < 0x800 -> 2
+            cp < 0x10000 -> 3
+            else -> 4
+        }
+        if (bytes + size > max) break
+        bytes += size
+        start -= Character.charCount(cp)
+    }
+    return s.substring(start).trimStart('.', ' ').ifEmpty { s.takeLast(1) }
 }

@@ -22,6 +22,9 @@ class IconsExtension(private val runtime: GeckoRuntime) {
         private set
     private val pending = mutableListOf<Pair<GeckoSession, (String, List<IconCandidate>) -> Unit>>()
 
+    @Volatile
+    private var failed = false
+
     init {
         runtime.webExtensionController
             .ensureBuiltIn(RESOURCE_URI, EXTENSION_ID)
@@ -34,13 +37,19 @@ class IconsExtension(private val runtime: GeckoRuntime) {
                         pending.clear()
                     }
                 },
-                { e -> Log.e(KrunkApp.TAG, "icons extension failed to install", e) },
+                { e ->
+                    Log.e(KrunkApp.TAG, "icons extension failed to install", e)
+                    // Nobody will ever answer: do not keep the waiting sessions alive.
+                    failed = true
+                    synchronized(pending) { pending.clear() }
+                },
             )
     }
 
     /** Delivers the icon candidates for pages loaded in [session] to [onIcons] (page URL, icons). */
     fun listen(session: GeckoSession, onIcons: (String, List<IconCandidate>) -> Unit) {
         val ext = extension
+        if (failed) return
         if (ext == null) {
             synchronized(pending) { pending += session to onIcons }
         } else {
@@ -60,17 +69,23 @@ class IconsExtension(private val runtime: GeckoRuntime) {
                 ): GeckoResult<Any>? {
                     val json = message as? JSONObject ?: return null
                     if (json.optString("type") != "icons") return null
-                    val url = json.optString("url")
+                    // The page the icons belong to is the one the engine says sent the message
+                    // (top frame only), not what the message claims.
+                    if (!sender.isTopLevel) return null
+                    val url = sender.url
                     val arr = json.optJSONArray("icons")
                     val icons = ArrayList<IconCandidate>()
                     if (arr != null) {
-                        for (i in 0 until arr.length()) {
+                        for (i in 0 until minOf(arr.length(), MAX_ICONS)) {
                             val o = arr.optJSONObject(i) ?: continue
+                            val href = o.optString("href")
+                            // Only addresses the fetcher would use; no megabyte data: icons.
+                            if (href.length > MAX_HREF || !LoadPolicy.isWebUrl(href)) continue
                             icons += IconCandidate(
-                                href = o.optString("href"),
-                                rel = o.optString("rel"),
-                                sizes = o.optString("sizes"),
-                                type = o.optString("type"),
+                                href = href,
+                                rel = o.optString("rel").take(MAX_ATTR),
+                                sizes = o.optString("sizes").take(MAX_ATTR),
+                                type = o.optString("type").take(MAX_ATTR),
                             )
                         }
                     }
@@ -86,5 +101,8 @@ class IconsExtension(private val runtime: GeckoRuntime) {
         const val EXTENSION_ID = "icons@krunk.org"
         const val RESOURCE_URI = "resource://android/assets/extensions/krunk-icons/"
         const val NATIVE_APP = "krunk"
+        private const val MAX_ICONS = 16
+        private const val MAX_HREF = 2048
+        private const val MAX_ATTR = 64
     }
 }

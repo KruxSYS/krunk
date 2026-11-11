@@ -114,6 +114,8 @@ fun BrowserScreen(vm: BrowserViewModel) {
     val loading = page?.loading == true
     val site = originOf(tab?.url ?: "")
     LaunchedEffect(tab?.id, editing, findActive, tab?.isNewTab, crashed, loading, site) { toolbarScroll.show() }
+    // The find bar belongs to the tab it was opened on.
+    LaunchedEffect(tab?.id) { vm.closeFind() }
     // Pull-to-refresh ends with the reload. It follows the session's own state, because a reload
     // can start and finish within one frame (an error page), which composition would never see.
     LaunchedEffect(refreshing, session) {
@@ -136,6 +138,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
 
     val downloadStarted = stringResource(R.string.download_started)
     val downloadUnsupported = stringResource(R.string.download_unsupported)
+    val pageUnavailable = stringResource(R.string.page_unavailable)
 
     // The database could not be opened: say once that this session keeps nothing.
     val storageFailed = stringResource(R.string.storage_failed)
@@ -162,7 +165,8 @@ fun BrowserScreen(vm: BrowserViewModel) {
                     if (download == null) download = asked else Downloads.discard(asked)
                 }
 
-                is TabEvent.OpenScreen -> Screen.forPage(ev.page)?.let { vm.push(it) }
+                // A krunk:// page the Windows browser has and Android does not: say so.
+                is TabEvent.OpenScreen -> Screen.forPage(ev.page)?.let { vm.push(it) } ?: toast(pageUnavailable)
             }
         }
     }

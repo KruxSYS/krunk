@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.krunk.browser.KrunkApp
+import org.krunk.ffi.internalPage
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
@@ -217,7 +218,13 @@ class KrunkSession(
         override fun onLoadRequest(
             session: GeckoSession,
             request: GeckoSession.NavigationDelegate.LoadRequest,
-        ): GeckoResult<AllowOrDeny>? = GeckoResult.fromValue(AllowOrDeny.ALLOW)
+        ): GeckoResult<AllowOrDeny>? {
+            // Krunk's internal origin exists only as native screens, which the app opens itself
+            // (its own loads do not pass here). A page that navigates there is refused, so it
+            // cannot make the bar read krunk://... or switch the tab to the new-tab page.
+            val internal = internalPage(request.uri) != null
+            return GeckoResult.fromValue(if (internal) AllowOrDeny.DENY else AllowOrDeny.ALLOW)
+        }
 
         override fun onNewSession(session: GeckoSession, uri: String): GeckoResult<GeckoSession>? {
             val s = listener.onNewSessionRequested(this@KrunkSession, uri) ?: return null
