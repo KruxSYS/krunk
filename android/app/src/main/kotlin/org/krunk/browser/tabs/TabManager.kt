@@ -72,6 +72,14 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
 
     fun session(id: UInt): KrunkSession? = sessions[id]
 
+    /**
+     * Takes a picture of the active tab for the tab switcher (called by the browser screen
+     * before the switcher opens and before a tab switch). Implemented by work package B.
+     */
+    fun captureThumbnail(view: org.mozilla.geckoview.GeckoView, onDone: () -> Unit = {}) {
+        onDone()
+    }
+
     fun activeSession(): KrunkSession? = _activeId.value?.let { sessions[it] }
 
     // ----- startup and persistence -----
