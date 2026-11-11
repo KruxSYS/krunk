@@ -205,12 +205,12 @@ module.exports = (h) => {
         await page.click('.chip[data-filter="all"]');
         await settle(page);
         // A new running download arrives at the top; its progress moves in place.
-        await page.evaluate(() => window.__host.dl.items.push({ id: 5000, url: 'https://new.example/big.iso', fileName: 'big.iso', path: 'C:\\dl\\big.iso', state: 'inProgress', received: 10, total: 1000, started: Date.now() + 1000, reason: null }));
+        await page.evaluate(() => window.__host.dl.items.push({ id: 5000, url: 'https://new.example/big.iso', fileName: 'big.iso', path: 'C:\\dl\\big.iso', state: 'inProgress', received: 10, total: 1000, started: window.__host.dl.now + 60000, reason: null }));
         await emit(page, { event: 'downloadsChanged', active: 1 });
         await settle(page);
         check(await page.locator('.dl[data-id="5000"][data-index="0"] .dl-bar').count() === 1, 'a new download appears at the top with its bar');
         const row = await page.$('.dl[data-id="5000"]');
-        await emit(page, { event: 'downloads', items: [{ id: 5000, url: 'https://new.example/big.iso', fileName: 'big.iso', path: 'C:\\dl\\big.iso', state: 'inProgress', received: 500, total: 1000, started: Date.now() + 1000, reason: null, speed: 100 }] });
+        await emit(page, { event: 'downloads', items: [{ id: 5000, url: 'https://new.example/big.iso', fileName: 'big.iso', path: 'C:\\dl\\big.iso', state: 'inProgress', received: 500, total: 1000, started: await page.evaluate(() => window.__host.dl.now + 60000), reason: null, speed: 100 }] });
         await page.waitForTimeout(40);
         check((await page.textContent('.dl[data-id="5000"] .sub')).startsWith('500 B of 1000 B') && await row.evaluate((n) => n.isConnected), 'its progress updates the row in place');
         check(await page.textContent('.chip[data-filter="active"] .n') === '1', 'In progress counts it');

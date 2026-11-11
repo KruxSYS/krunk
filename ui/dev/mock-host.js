@@ -113,7 +113,8 @@
           finished: started + 30000, reason: state === 'interrupted' ? 'Network error' : null, pageUrl: 'https://' + site + '/releases', private: false });
       }
     }
-    const dl = { items: list.slice(), queries: 0 };
+    // `now`: the time the list was made at (tests add newer downloads after it, whatever the clock says).
+    const dl = { items: list.slice(), queries: 0, now: now };
     host.dl = dl;
     const order = function (a, b) { return b.started - a.started || b.id - a.id; };
     const running = function (s) { return s === 'inProgress' || s === 'paused'; };
