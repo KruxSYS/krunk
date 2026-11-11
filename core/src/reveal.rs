@@ -97,6 +97,11 @@ impl<W: Copy + Eq + std::hash::Hash, T: Copy + Eq> Reveals<W, T> {
         self.kept.insert(win, tab).filter(|k| *k != tab)
     }
 
+    /// The closed tab whose view is kept on screen in `win`.
+    pub fn kept_tab_of(&self, win: W) -> Option<T> {
+        self.kept.get(&win).copied()
+    }
+
     /// The window a closed tab's view is kept on screen in.
     pub fn kept_in(&self, tab: T) -> Option<W> {
         self.kept.iter().find(|(_, k)| **k == tab).map(|(w, _)| *w)

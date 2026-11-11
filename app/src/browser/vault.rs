@@ -984,7 +984,8 @@ impl Browser {
     }
 
     /// The popup was hidden while showing `content`: a hidden prompt is a
-    /// dismissal, never a confirmation.
+    /// dismissal, never a confirmation (0.15.0: a sign-in dialog only goes out of sight; it
+    /// waits for its tab, see http_auth.rs).
     pub(super) fn prompt_dismissed(&self, content: &PopupContent) {
         match content {
             PopupContent::SavePassword { .. } => {
@@ -996,7 +997,7 @@ impl Browser {
             }
             PopupContent::Permission { prompt_id, .. } => self.permission_dismissed(*prompt_id),
             PopupContent::ExtInstall { request_id, .. } => self.ext_install_dismissed(*request_id),
-            PopupContent::HttpAuth { .. } => self.http_auth_dismissed(),
+            PopupContent::HttpAuth { tab_id, .. } => self.http_auth_hidden(*tab_id),
             PopupContent::JsDialog { dialog_id, .. } => self.js_dialog_dismissed(*dialog_id),
             PopupContent::Unlock { purpose, .. } => {
                 self.vaults.unlock_for.borrow_mut().take();
@@ -1008,7 +1009,7 @@ impl Browser {
                         self.vaults.pending_card.borrow_mut().take();
                     }
                     UnlockPurpose::Import => self.import_unlock_dismissed(),
-                    UnlockPurpose::HttpAuth => self.http_auth_dismissed(),
+                    UnlockPurpose::HttpAuth => self.http_auth_unlock_dismissed(),
                     _ => {}
                 }
             }

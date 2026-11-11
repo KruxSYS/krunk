@@ -434,6 +434,8 @@ impl std::fmt::Debug for AuthResponder {
 struct Pending {
     bounds: Option<(i32, i32, i32, i32)>,
     visible: Option<bool>,
+    /// 0.15.0: shown beneath this window (`View::show_beneath`) once the browser exists.
+    beneath: Option<isize>,
     url: Option<String>,
     focus: bool,
     close: bool,
@@ -697,7 +699,10 @@ impl View {
         if let Some(url) = pending.url {
             view.navigate(&url);
         }
-        view.set_visible(pending.visible.unwrap_or(false));
+        match pending.beneath {
+            Some(above) if pending.visible != Some(true) && view.place_beneath(HWND(above as _)) => {}
+            _ => view.set_visible(pending.visible.unwrap_or(false)),
+        }
         if pending.focus {
             view.focus();
         }
@@ -809,8 +814,48 @@ impl View {
                 }
                 host.was_hidden(i32::from(!visible));
             }
-            _ => self.0.pending.borrow_mut().visible = Some(visible),
+            _ => {
+                let mut p = self.0.pending.borrow_mut();
+                p.visible = Some(visible);
+                p.beneath = None;
+            }
         }
+    }
+
+    /// 0.15.0: shows a tab view just beneath `above` (the page still on screen): shown to the
+    /// engine, the page renders and paints its first frames out of sight, unthrottled; a later
+    /// `set_visible(true)` brings it on top with its content ready (no blank or black frame).
+    /// Before the browser exists this is remembered for its creation.
+    pub fn show_beneath(&self, above: &View) {
+        let Some(a) = above.hwnd() else { return };
+        if self.hwnd().is_some() {
+            if !self.place_beneath(a) {
+                self.set_visible(false);
+            }
+            return;
+        }
+        let mut p = self.0.pending.borrow_mut();
+        p.visible = Some(false);
+        p.beneath = Some(a.0 as isize);
+    }
+
+    /// Puts the tab view in its place right beneath window `above`; `false` when it cannot
+    /// (no place yet, not a tab, or `above` is gone).
+    fn place_beneath(&self, above: HWND) -> bool {
+        let (Some(h), Some(host), Some((x, y, w, hh))) = (self.hwnd(), self.host(), self.0.bounds.get()) else {
+            return false;
+        };
+        if self.0.role != Role::Tab {
+            return false;
+        }
+        // SAFETY: the browser's own child window and a sibling of it (or a window that is gone:
+        // the call then fails and changes nothing).
+        let ok = unsafe { SetWindowPos(h, Some(above), x, y, w, hh, SWP_NOACTIVATE | SWP_SHOWWINDOW) }.is_ok();
+        if ok {
+            self.0.parked.set(false);
+            host.was_hidden(0);
+        }
+        ok
     }
 
     /// Shown (or asked to be shown before the browser exists).

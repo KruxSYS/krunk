@@ -100,6 +100,7 @@ fn run() -> Result<i32, String> {
         log_file: dirs.root().join("cef.log"),
         switches,
         user_agent: settings.user_agent.clone(),
+        background: browser::engine_background(&settings),
     };
     info!("Krunk's switches: {}", settings.browser_arguments());
     // Before the engine launches any renderer: they get the state on their command line.
