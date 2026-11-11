@@ -1525,11 +1525,15 @@ and cannot be updated in place by a published release: uninstall them first.
 
 **Data and backup.** Krunk's database is `files/krunk/browser.db` in the app's private storage
 (`/data/data/org.krunk.browser/files/krunk/`); the Gecko profile (cookies, site data, caches) is
-in GeckoView's default location under the same `files/` directory. Android cloud backup and
-device-to-device transfer include `files/krunk` and exclude the Gecko profile and the future vault
-(`android/app/src/main/res/xml/backup_rules.xml`, `data_extraction_rules.xml`). `adb backup` is
-gone in current Android; on a debug build `adb shell run-as org.krunk.browser` reaches the files.
-Private tabs write nothing to the database.
+in GeckoView's default location under the same `files/` directory. Since 0.1.1 nothing of Krunk
+goes into Android's cloud backup: bookmarks and settings share one database file with the
+browsing history and the open tabs, so it is all or nothing, and the answer is nothing.
+Device-to-device transfer (the direct copy to a new phone, Android 12 and later) carries
+`files/krunk`; the Gecko profile is in neither
+(`android/app/src/main/res/xml/backup_rules.xml`, `data_extraction_rules.xml`). To keep bookmarks
+elsewhere, use Bookmarks › Export. `adb backup` is gone in current Android; on a debug build
+`adb shell run-as org.krunk.browser` reaches the files. Private tabs write nothing to the
+database, and their pages are kept out of the Recents thumbnail and screenshots.
 
 **Promises.** No telemetry; the app makes no network requests of its own: only the pages you
 open, search suggestions while you type (on by default, off in private tabs, can be switched off)

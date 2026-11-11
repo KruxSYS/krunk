@@ -1,8 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Android < 12 cloud backup: only Krunk's own data directory (history, bookmarks, settings,
-     session) is backed up, minus the vault. Everything else, including the Gecko profile
-     (cookies, site data, caches), is excluded by not being included. -->
+<!-- Android 8-11 (one rule set for cloud backup and device transfer): nothing of Krunk is backed
+     up. Bookmarks and settings live in the same database file as the browsing history, the open
+     tabs and their saved state (files/krunk/browser.db), so the file cannot be backed up without
+     them, and these rules cannot require an encrypted backup for it. The Gecko profile
+     (cookies, site data, caches) was never included. Use Bookmarks > Export to move bookmarks. -->
 <full-backup-content>
-    <include domain="file" path="krunk" />
-    <exclude domain="file" path="krunk/vault" />
+    <exclude domain="root" path="." />
+    <exclude domain="file" path="." />
+    <exclude domain="database" path="." />
+    <exclude domain="sharedpref" path="." />
+    <exclude domain="external" path="." />
 </full-backup-content>

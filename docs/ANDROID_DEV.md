@@ -145,5 +145,7 @@ Known traps:
 `filesDir/krunk/browser.db` is the core database (same schema as Windows: history, bookmarks,
 tiles, favicons, settings in `kv`). The Gecko profile (cookies, site data, caches) lives in
 GeckoView's default location under `filesDir`. Backup rules (`res/xml/backup_rules.xml`,
-`data_extraction_rules.xml`) include `files/krunk` and exclude the Gecko profile and
-`files/krunk/vault*`.
+`data_extraction_rules.xml`, since 0.1.1): cloud backup carries nothing (the database holds
+history and the session next to bookmarks and settings, and cannot be split); device-to-device
+transfer on Android 12+ carries `files/krunk`; the Gecko profile is in neither. A later vault
+must get its own exclude in the device-transfer rules.

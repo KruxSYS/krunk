@@ -161,7 +161,7 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | Site permissions defaults and per-site list | yes — Site permissions | roadmap | `PermissionDelegate` | 3 |
 | Settings search box | yes — 0.5.0 | roadmap | — | 2 |
 | About (versions, licences, link) | yes — `krunk://about` | done | — | 1 |
-| Data location documented; backup rules (DB included, Gecko profile and vault excluded) | n/a | done (README) | — | 1 |
+| Data location documented; backup rules (0.1.1: no cloud backup; device-to-device transfer carries the database; Gecko profile never) | n/a | done (README) | — | 1 |
 | Reset settings, settings export | yes / no | roadmap | — | 3 |
 
 ## 10. Downloads
