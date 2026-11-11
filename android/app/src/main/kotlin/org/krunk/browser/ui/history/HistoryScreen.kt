@@ -251,10 +251,12 @@ fun HistoryScreen(vm: BrowserViewModel) {
                 TextButton(onClick = {
                     confirmClear = false
                     scope.launch {
-                        runCatching { repo.clear() }
+                        // The same clearing as Settings > Clear browsing data > History.
+                        val ok = vm.clearBrowsingData(history = true).isSuccess
                         entries = emptyList()
                         generation++
-                        snackbar.showSnackbar(res.getString(R.string.history_cleared))
+                        val text = if (ok) R.string.history_cleared else R.string.settings_clear_failed
+                        snackbar.showSnackbar(res.getString(text))
                     }
                 }) { Text(stringResource(R.string.action_clear), color = MaterialTheme.colorScheme.error) }
             },

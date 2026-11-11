@@ -149,6 +149,7 @@
     <string name="settings_clear_site_data">Site data and permissions</string>
     <string name="settings_clear_site_data_help">Closes all open tabs first</string>
     <string name="settings_cleared">Browsing data cleared</string>
+    <string name="settings_clear_failed">Could not clear everything</string>
 
     <string name="settings_tab_sleep">Put tabs to sleep after</string>
     <string name="settings_tab_sleep_off">Never</string>

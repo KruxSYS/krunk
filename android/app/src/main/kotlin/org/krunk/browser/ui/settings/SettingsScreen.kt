@@ -836,7 +836,6 @@ private fun ClearDataDialog(vm: BrowserViewModel, onDismiss: () -> Unit) {
     var cookies by remember { mutableStateOf(true) }
     var cache by remember { mutableStateOf(true) }
     var siteData by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.settings_clear_data)) },
@@ -856,14 +855,9 @@ private fun ClearDataDialog(vm: BrowserViewModel, onDismiss: () -> Unit) {
         },
         confirmButton = {
             TextButton(onClick = {
-                scope.launch {
-                    if (siteData) {
-                        vm.tabs.closeAll()
-                    }
-                    if (history) vm.core.io { it.clearHistory() }
-                    vm.engine.clearData(cookies = cookies, cache = cache, siteData = siteData)
-                    onDismiss()
-                }
+                // Runs in the view model: it must finish although this dialog is gone.
+                vm.clearBrowsingDataAndReport(history, cookies, cache, siteData)
+                onDismiss()
             }) { Text(stringResource(R.string.settings_clear_data)) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) } },

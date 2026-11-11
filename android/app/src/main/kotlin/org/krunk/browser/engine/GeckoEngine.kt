@@ -2,6 +2,9 @@ package org.krunk.browser.engine
 
 import android.content.Context
 import android.util.Log
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.suspendCancellableCoroutine
 import org.krunk.browser.BuildConfig
 import org.krunk.browser.KrunkApp
 import org.krunk.ffi.AndroidSettings
@@ -78,4 +81,14 @@ class GeckoEngine(context: Context) {
         }
         return if (flags == 0L) GeckoResult.fromValue(null) else runtime.storageController.clearData(flags)
     }
+}
+
+/** Waits for a [GeckoResult] (call on the main thread, where the engine delivers it). */
+suspend fun <T> GeckoResult<T>.await(): T? = suspendCancellableCoroutine { cont ->
+    accept(
+        { value -> if (cont.isActive) cont.resume(value) },
+        { error ->
+            if (cont.isActive) cont.resumeWithException(error ?: IllegalStateException("engine request failed"))
+        },
+    )
 }

@@ -26,6 +26,9 @@ class Omnibox(private val core: KrunkCore) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<String>>?): Boolean = size > 32
     }
 
+    /** Forgets remembered engine suggestions (they echo what was typed). */
+    fun clearCache() = synchronized(cache) { cache.clear() }
+
     suspend fun local(text: String): OmniboxResult = withContext(Dispatchers.IO) {
         core.store.omniboxQuery(text, core.settings.searchTemplate)
     }

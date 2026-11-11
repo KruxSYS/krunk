@@ -33,6 +33,12 @@ class Favicons(private val core: KrunkCore) {
         return null
     }
 
+    /** Forgets every icon held in memory (the stored ones are deleted by the caller). */
+    fun clear() {
+        cache.evictAll()
+        missing.clear()
+    }
+
     /** Loads a host's icon from the store into the cache (IO). */
     suspend fun load(host: String): Bitmap? {
         cache.get(host)?.let { return it }

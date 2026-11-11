@@ -31,8 +31,6 @@ class HistoryRepository(private val store: KrunkStore, private val io: Coroutine
 
     suspend fun deleteUrl(url: String) = withContext(io) { store.deleteUrl(url) }
 
-    suspend fun clear() = withContext(io) { store.clearHistory() }
-
     companion object {
         const val PAGE = 100
 

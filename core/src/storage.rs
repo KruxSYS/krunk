@@ -467,6 +467,13 @@ impl Store {
         self.kv_set("vault_rate", &json)
     }
 
+    /// Deletes every stored favicon and returns how many there were. The table has one row per
+    /// visited host, so clearing the browsing history has to clear it too (Krunk for Android
+    /// does, 0.1.1); icons come back when their sites are visited again.
+    pub fn clear_favicons(&self) -> DbResult<usize> {
+        Ok(self.conn.execute("DELETE FROM favicons", [])?)
+    }
+
     /// Reclaims space after large deletions.
     pub fn vacuum(&self) -> DbResult<()> {
         self.conn.execute_batch("VACUUM")

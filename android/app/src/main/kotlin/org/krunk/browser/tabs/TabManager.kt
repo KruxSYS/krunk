@@ -473,6 +473,20 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         scheduleSave()
     }
 
+    /**
+     * "Clear browsing history": what the tabs keep about pages that are no longer open. The
+     * recently closed list and the icons in memory go, and the stored session is rewritten at
+     * once. Open tabs stay as they are, with their own back/forward lists.
+     */
+    fun forgetHistory() {
+        model.clearClosedTabs()
+        favicons.clear()
+        refresh()
+        saveJob?.cancel()
+        pendingSaveDelay = Long.MAX_VALUE
+        saveNow()
+    }
+
     fun moveTab(id: UInt, index: Int) {
         if (model.moveTab(id, index.toUInt())) {
             refresh()

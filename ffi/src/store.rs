@@ -425,6 +425,12 @@ impl KrunkStore {
         Ok(self.lock().has_favicon(&host)?)
     }
 
+    /// Deletes every stored favicon (part of "clear browsing history": the table names each
+    /// visited host). Returns how many were deleted.
+    pub fn clear_favicons(&self) -> Result<u64, FfiError> {
+        Ok(self.lock().clear_favicons()? as u64)
+    }
+
     /// Compacts the database file.
     pub fn vacuum(&self) -> Result<(), FfiError> {
         Ok(self.lock().vacuum()?)
@@ -558,6 +564,29 @@ mod tests {
         assert!(s.has_favicon("a.example".into()).unwrap());
         assert_eq!(s.favicon("a.example".into()).unwrap().unwrap(), png.to_vec());
         assert_eq!(s.favicon("none.example".into()).unwrap(), None);
+        s.vacuum().unwrap();
+    }
+
+    #[test]
+    fn clearing_history_and_favicons_leaves_no_visited_hosts() {
+        let s = store();
+        let png = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0];
+        for host in ["a.example", "b.example"] {
+            s.record_visit(format!("https://{host}/"), host.into(), 1_000).unwrap();
+            s.set_favicon(host.into(), png.to_vec(), 5).unwrap();
+        }
+        let kept = s.add_bookmark(bookmarks_bar_id(), "A".into(), "https://a.example/".into()).unwrap();
+        s.clear_history().unwrap();
+        // Clearing the history alone leaves one favicon row per visited host behind ...
+        assert!(s.has_favicon("b.example".into()).unwrap());
+        // ... which the Android "clear browsing history" removes as well.
+        assert_eq!(s.clear_favicons().unwrap(), 2);
+        assert!(!s.has_favicon("a.example".into()).unwrap());
+        assert!(!s.has_favicon("b.example".into()).unwrap());
+        assert_eq!(s.clear_favicons().unwrap(), 0);
+        assert_eq!(s.visit_total().unwrap(), 0);
+        // Bookmarks are not history.
+        assert!(s.bookmark(kept).unwrap().is_some());
         s.vacuum().unwrap();
     }
 }

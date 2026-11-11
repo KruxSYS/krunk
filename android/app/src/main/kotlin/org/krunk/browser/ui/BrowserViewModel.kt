@@ -1,6 +1,8 @@
 package org.krunk.browser.ui
 
 import android.app.Application
+import android.util.Log
+import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
@@ -15,9 +17,11 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.krunk.browser.KrunkApp
+import org.krunk.browser.R
 import org.krunk.browser.core.KrunkCore
 import org.krunk.browser.core.SettingsRepository
 import org.krunk.browser.engine.GeckoEngine
+import org.krunk.browser.engine.await
 import org.krunk.browser.tabs.TabManager
 import org.krunk.browser.tabs.TabUi
 import org.krunk.ffi.AddressSuggestion
@@ -222,6 +226,48 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
         val now = core.io { it.toggleBookmark(tab.url, tab.title.ifEmpty { tab.url }) }
         bookmarkOverride.value = tab.url to now
         return now
+    }
+
+    /**
+     * Settings > Clear browsing data, and History > Clear all. History means everything Krunk
+     * keeps about visited pages: visits, the favicon table (one row per visited host), the
+     * recently closed list, remembered suggestions; open tabs stay. Cookies, cache and site data
+     * are the engine's, and the call returns when it has finished. A failure is returned, not
+     * thrown.
+     */
+    suspend fun clearBrowsingData(
+        history: Boolean,
+        cookies: Boolean = false,
+        cache: Boolean = false,
+        siteData: Boolean = false,
+    ): Result<Unit> = try {
+        if (siteData) tabs.closeAll()
+        if (history) {
+            core.io { store ->
+                store.clearHistory()
+                store.clearFavicons()
+                // Rewrites the file, so the deleted rows are not left in free pages.
+                store.vacuum()
+            }
+            tabs.forgetHistory()
+            omnibox.clearCache()
+        }
+        if (cookies || cache || siteData) engine.clearData(cookies, cache, siteData).await()
+        Result.success(Unit)
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        Log.w(KrunkApp.TAG, "clearing browsing data failed", e)
+        Result.failure(e)
+    }
+
+    /** [clearBrowsingData] for the settings dialog: outlives the dialog and says how it went. */
+    fun clearBrowsingDataAndReport(history: Boolean, cookies: Boolean, cache: Boolean, siteData: Boolean) {
+        viewModelScope.launch {
+            val ok = clearBrowsingData(history, cookies, cache, siteData).isSuccess
+            val text = if (ok) R.string.settings_cleared else R.string.settings_clear_failed
+            Toast.makeText(getApplication(), text, Toast.LENGTH_SHORT).show()
+        }
     }
 
     suspend fun updateSettings(transform: (AndroidSettings) -> AndroidSettings): Result<Unit> {
