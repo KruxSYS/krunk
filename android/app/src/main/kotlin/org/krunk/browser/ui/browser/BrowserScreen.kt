@@ -299,6 +299,10 @@ fun BrowserScreen(vm: BrowserViewModel) {
         }
     }
 
+    // What the page on screen asks (alert, confirm, prompt, a list, sign-in), one at a time.
+    val pagePrompt by vm.tabs.prompt.collectAsStateWithLifecycle()
+    pagePrompt?.let { PagePromptDialog(it) }
+
     download?.let { asked ->
         DownloadQuestion(
             download = asked,

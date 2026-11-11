@@ -32,7 +32,9 @@ import org.krunk.browser.engine.IconCandidate
 import org.krunk.browser.engine.KrunkSession
 import org.krunk.browser.engine.LoadPolicy
 import org.krunk.browser.engine.LoadSource
+import org.krunk.browser.engine.PagePrompt
 import org.krunk.browser.engine.PageState
+import org.krunk.browser.engine.PromptQueue
 import org.krunk.browser.engine.SessionListener
 import org.krunk.browser.engine.displayedUrl
 import org.krunk.browser.engine.modelUrlAfter
@@ -660,6 +662,7 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
                     sessions[e.to]?.setActive(true)
                     memory.wake(e.to)
                     _activeId.value = e.to
+                    publishPrompt()
                 }
             }
         }
@@ -710,6 +713,7 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
 
     /** Removes a session the engine closed after a crash, keeping its last state for a restore. */
     private fun dropCrashedSession(id: UInt) {
+        dropPrompts(id)
         sessions.remove(id)?.let { s ->
             s.current.sessionState?.let { geckoStates[id] = it }
             s.close()
@@ -718,6 +722,7 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
     }
 
     private fun destroySession(id: UInt) {
+        dropPrompts(id)
         sessions.remove(id)?.let { s ->
             s.current.sessionState?.let { geckoStates[id] = it }
             s.close()
@@ -855,6 +860,34 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
             scheduleAutoCapture(session.id)
         }
         refresh()
+    }
+
+    // ----- page prompts -----
+
+    private val promptQueue = PromptQueue()
+    private val _prompt = MutableStateFlow<PagePrompt?>(null)
+
+    /** The page prompt to show now: the oldest one of the tab on screen, or null. */
+    val prompt: StateFlow<PagePrompt?> = _prompt.asStateFlow()
+
+    private fun publishPrompt() {
+        _prompt.value = promptQueue.current(_activeId.value)
+    }
+
+    override fun onPrompt(session: KrunkSession, prompt: PagePrompt) {
+        promptQueue.add(prompt)
+        publishPrompt()
+    }
+
+    override fun onPromptClosed(session: KrunkSession, prompt: PagePrompt) {
+        promptQueue.remove(prompt)
+        publishPrompt()
+    }
+
+    /** The tab's session is going away: nothing can answer its prompts any more. */
+    private fun dropPrompts(id: UInt) {
+        promptQueue.dropTab(id)
+        publishPrompt()
     }
 
     override fun onCloseRequested(session: KrunkSession) {

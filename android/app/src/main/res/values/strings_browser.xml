@@ -78,6 +78,17 @@
     <string name="page_crashed_title">This page stopped working</string>
     <string name="page_crashed_message">The page crashed or was closed by the system to free memory. Reload it to continue.</string>
 
+    <!-- Questions a page asks (alert, confirm, prompt, lists, HTTP sign-in) -->
+    <string name="prompt_site_says">%1$s says</string>
+    <string name="prompt_page_says">This page says</string>
+    <string name="prompt_block_more">Don\'t show more dialogs from this page</string>
+    <string name="prompt_choose">Choose</string>
+    <string name="prompt_sign_in_title">Sign in to %1$s</string>
+    <string name="prompt_sign_in_insecure">This connection is not secure: the password is sent unencrypted.</string>
+    <string name="prompt_username">User name</string>
+    <string name="prompt_password">Password</string>
+    <string name="prompt_sign_in">Sign in</string>
+
     <!-- Full screen -->
     <string name="fullscreen_hint">Press back to leave full screen</string>
     <string name="fullscreen_hint_site">%1$s is in full screen. Press back to leave.</string>

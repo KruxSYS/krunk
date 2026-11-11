@@ -57,6 +57,12 @@ interface SessionListener {
      * tab needs a new session before it can load anything again.
      */
     fun onCrashed(session: KrunkSession)
+
+    /** The page asks something (`alert`, `confirm`, `prompt`, a `<select>` list, HTTP sign-in). */
+    fun onPrompt(session: KrunkSession, prompt: PagePrompt)
+
+    /** [prompt] has its answer (from the UI, or the engine withdrew it). */
+    fun onPromptClosed(session: KrunkSession, prompt: PagePrompt)
 }
 
 /**
@@ -228,6 +234,7 @@ class KrunkSession(
 
     private val progress = object : GeckoSession.ProgressDelegate {
         override fun onPageStart(session: GeckoSession, url: String) {
+            promptThrottle.newDocument()
             set { it.pageStarted(url) }
         }
 
@@ -303,6 +310,167 @@ class KrunkSession(
         }
     }
 
+    // ----- page prompts -----
+
+    private val promptThrottle = PromptThrottle()
+
+    /** The host of the page that is asking (the dialog's title). */
+    private fun promptSite(): String = originOf(current.url)?.substringAfter("://") ?: ""
+
+    /**
+     * Shows a prompt and completes the engine's request exactly once: with the UI's answer, or
+     * with a dismissal when the engine withdraws the prompt first (the page navigated away).
+     */
+    private fun <P : GeckoSession.PromptDelegate.BasePrompt> ask(
+        prompt: P,
+        make: (answer: (GeckoSession.PromptDelegate.PromptResponse) -> Unit) -> PagePrompt,
+    ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+        val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
+        var answered = false
+        var shown: PagePrompt? = null
+        val answer: (GeckoSession.PromptDelegate.PromptResponse) -> Unit = { response ->
+            if (!answered) {
+                answered = true
+                result.complete(response)
+                shown?.let { listener.onPromptClosed(this, it) }
+            }
+        }
+        val page = make(answer)
+        shown = page
+        prompt.setDelegate(object : GeckoSession.PromptDelegate.PromptInstanceDelegate {
+            override fun onPromptDismiss(prompt: GeckoSession.PromptDelegate.BasePrompt) {
+                if (!answered) answer(prompt.dismiss())
+            }
+        })
+        listener.onPrompt(this, page)
+        return result
+    }
+
+    private val prompts = object : GeckoSession.PromptDelegate {
+        override fun onAlertPrompt(
+            session: GeckoSession,
+            prompt: GeckoSession.PromptDelegate.AlertPrompt,
+        ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+            val offerBlock = promptThrottle.next() ?: return GeckoResult.fromValue(prompt.dismiss())
+            return ask(prompt) { answer ->
+                PagePrompt.Alert(id, promptSite(), prompt.message ?: "", offerBlock) { a ->
+                    if (a == PagePrompt.Answer.BLOCK) promptThrottle.block()
+                    answer(prompt.dismiss())
+                }
+            }
+        }
+
+        override fun onButtonPrompt(
+            session: GeckoSession,
+            prompt: GeckoSession.PromptDelegate.ButtonPrompt,
+        ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+            val offerBlock = promptThrottle.next() ?: return GeckoResult.fromValue(prompt.dismiss())
+            return ask(prompt) { answer ->
+                PagePrompt.Confirm(id, promptSite(), prompt.message ?: "", offerBlock) { a ->
+                    when (a) {
+                        PagePrompt.Answer.OK ->
+                            answer(prompt.confirm(GeckoSession.PromptDelegate.ButtonPrompt.Type.POSITIVE))
+
+                        PagePrompt.Answer.CANCEL ->
+                            answer(prompt.confirm(GeckoSession.PromptDelegate.ButtonPrompt.Type.NEGATIVE))
+
+                        PagePrompt.Answer.DISMISS -> answer(prompt.dismiss())
+
+                        PagePrompt.Answer.BLOCK -> {
+                            promptThrottle.block()
+                            answer(prompt.dismiss())
+                        }
+                    }
+                }
+            }
+        }
+
+        override fun onTextPrompt(
+            session: GeckoSession,
+            prompt: GeckoSession.PromptDelegate.TextPrompt,
+        ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+            val offerBlock = promptThrottle.next() ?: return GeckoResult.fromValue(prompt.dismiss())
+            return ask(prompt) { answer ->
+                PagePrompt.Text(
+                    id,
+                    promptSite(),
+                    prompt.message ?: "",
+                    prompt.defaultValue ?: "",
+                    offerBlock,
+                ) { a, text ->
+                    if (a == PagePrompt.Answer.BLOCK) promptThrottle.block()
+                    answer(if (a == PagePrompt.Answer.OK) prompt.confirm(text) else prompt.dismiss())
+                }
+            }
+        }
+
+        override fun onAuthPrompt(
+            session: GeckoSession,
+            prompt: GeckoSession.PromptDelegate.AuthPrompt,
+        ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+            val options = prompt.authOptions
+            val onlyPassword =
+                options.flags and GeckoSession.PromptDelegate.AuthPrompt.AuthOptions.Flags.ONLY_PASSWORD != 0
+            // The server that asks, which need not be the page's own.
+            val server = options.uri?.let { originOf(it)?.substringAfter("://") } ?: promptSite()
+            return ask(prompt) { answer ->
+                PagePrompt.SignIn(
+                    tabId = id,
+                    site = server,
+                    message = prompt.message ?: "",
+                    username = options.username ?: "",
+                    onlyPassword = onlyPassword,
+                    insecure = options.uri?.startsWith("http://", ignoreCase = true) == true,
+                    onAnswer = { user, password ->
+                        answer(if (onlyPassword) prompt.confirm(password) else prompt.confirm(user, password))
+                    },
+                    onDismiss = { answer(prompt.dismiss()) },
+                )
+            }
+        }
+
+        override fun onChoicePrompt(
+            session: GeckoSession,
+            prompt: GeckoSession.PromptDelegate.ChoicePrompt,
+        ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+            val multiple = prompt.type == GeckoSession.PromptDelegate.ChoicePrompt.Type.MULTIPLE
+            val options = ArrayList<PagePrompt.Option>()
+            fun add(c: GeckoSession.PromptDelegate.ChoicePrompt.Choice, indented: Boolean) {
+                val group = c.items
+                when {
+                    c.separator -> options += PagePrompt.Option(c.id, "", separator = true)
+
+                    group != null -> {
+                        options += PagePrompt.Option(c.id, c.label, header = true)
+                        group.forEach { add(it, indented = true) }
+                    }
+
+                    else -> options += PagePrompt.Option(c.id, c.label, c.selected, c.disabled, indented = indented)
+                }
+            }
+            prompt.choices.forEach { add(it, indented = false) }
+            return ask(prompt) { answer ->
+                PagePrompt.Choice(
+                    tabId = id,
+                    site = promptSite(),
+                    message = prompt.message ?: prompt.title ?: "",
+                    multiple = multiple,
+                    options = options,
+                    onAnswer = { ids ->
+                        answer(
+                            when {
+                                multiple -> prompt.confirm(ids.toTypedArray())
+                                ids.isEmpty() -> prompt.dismiss()
+                                else -> prompt.confirm(ids.first())
+                            },
+                        )
+                    },
+                    onDismiss = { answer(prompt.dismiss()) },
+                )
+            }
+        }
+    }
+
     private val history = object : GeckoSession.HistoryDelegate {
         override fun onVisited(
             session: GeckoSession,
@@ -321,6 +489,7 @@ class KrunkSession(
         gecko.progressDelegate = progress
         gecko.contentDelegate = content
         gecko.historyDelegate = history
+        gecko.promptDelegate = prompts
         if (!openedByPage) gecko.open(engine.runtime)
         engine.icons.listen(gecko) { url, icons -> listener.onIcons(this, url, icons) }
     }
