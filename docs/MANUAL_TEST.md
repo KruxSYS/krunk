@@ -1187,3 +1187,40 @@ from 0.11.0 (staging and live). Not rerun: the other flows (their code did not c
 6. **Email links:** click a mailto: link: Windows' email app opens (or its "choose an app"
    dialog). Choose Gmail in Settings → General: the link opens Gmail's compose in a new tab.
 
+## Krunk for Android 0.1.0 (round 1)
+
+Device: the sandbox emulator (`android/scripts/emu.sh`), or any Android 8+ phone with the debug
+APK from `dist/android/`. `android/scripts/flows.sh` drives flows 1–9 over adb.
+
+Verified on the emulator in round 1 (screenshots in `.pipeline/screenshots/android/`):
+1. **Typed address:** `example.com` loads with the lock; `krunk browser` searches DuckDuckGo.
+2. **Suggestions:** typing `exa` lists history/bookmark rows and the engine's suggestions.
+3. **Not secure:** `http://neverssl.com/` shows "Not secure" in the pill.
+4. **Error page:** `https://nonexistent-host.invalid/` shows Krunk's "Can't find this site".
+5. **Find in page:** ⋮ → Find in page, `domain` → "1/2" with highlights; ∧/∨ move.
+6. **Toolbar:** a downward fling hides it, scrolling up brings it back.
+7. **Link menu:** long-press a link → Open in new tab / private tab / Copy / Share / Copy text /
+   Download. "Open in new tab" shows "New tab opened" and the counter goes to 2.
+8. **New tab page** (dark, follow-system theme).
+
+**Unverified on a device in round 1** (the emulator's graphics stack wedged twice; built and
+unit-tested only — run these first when a device is available, in this order, one flow per
+launch, `am force-stop` between flows, `pm uninstall` + cold install, never `install -r` over
+the running app):
+9. **Tab switcher:** the counter opens the grid; × closes a tab; swipe closes; "Reopen closed tab"
+   brings it back. Includes the time-bounded thumbnail capture (`CaptureGate`, 700 ms): the
+   switcher must open even when no thumbnail arrives.
+10. **Session restore:** two tabs, `adb shell am force-stop org.krunk.browser`, relaunch: both
+    tabs are back, the active one live, the other loads on activation; `kill -9` while in the
+    foreground → "Restore tabs?" on the next start.
+11. **Private tab leaves no history:** ⋮ → New private tab, load a page;
+    `adb shell run-as org.krunk.browser sqlite3 files/krunk/browser.db "select count(*) from visits"`
+    is unchanged; History shows nothing new.
+12. **Bookmarks:** ⋮ → Bookmark this page → star filled; ⋮ → Bookmarks lists it; edit, move,
+    delete; Import/Export a Netscape HTML file.
+13. **Settings:** Theme → Light/Dark applies at once; Toolbar position → Top moves the toolbar;
+    HTTPS-only on → `http://neverssl.com/` shows the HTTPS-only error page; Clear browsing data.
+14. **Full screen:** a page's full-screen button hides the system bars and the toolbar; Back exits.
+15. **Landscape** and **tablet layout** (`adb shell wm size 1600x2560`, `wm density 320`, then
+    reset): the settings screen shows the section list next to the detail.
+

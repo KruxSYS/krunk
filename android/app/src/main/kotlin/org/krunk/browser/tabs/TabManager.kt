@@ -123,16 +123,14 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
             onDone()
             return
         }
-        var done = false
-        val finish = {
-            if (!done) {
-                done = true
-                onDone()
-            }
-        }
         // capturePixels() completes with the next composited frame; when none comes (a paused
-        // compositor, an emulator without a GPU) the caller must not wait for it.
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ finish() }, CAPTURE_TIMEOUT_MS)
+        // compositor, an emulator without a GPU) the switcher must open without a picture.
+        val gate = CaptureGate(
+            CAPTURE_TIMEOUT_MS,
+            { ms, action -> android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(action, ms) },
+            onDone,
+        )
+        val finish = { gate.finish() }
         try {
             view.capturePixels().accept(
                 { bmp ->
