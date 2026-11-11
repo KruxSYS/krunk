@@ -2612,7 +2612,7 @@ pub enum Event {
         tab_hover_preview: bool,
         /// Appearance options (CSS variables and toolbar items); absent in old messages.
         #[serde(default)]
-        appearance: crate::settings::Appearance,
+        appearance: Box<crate::settings::Appearance>,
         /// The custom colours with their readable text colours (0.7.0, R3).
         #[serde(default)]
         colors: crate::color::ThemeColors,

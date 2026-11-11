@@ -4,6 +4,8 @@ What changed in each Krunk release, newest first.
 
 ## 0.15.2 — 2026-11-11
 
+- **No black flash when you switch to a tab in the background** (for example from one new tab
+  to another): the page you were looking at stays until the other tab has drawn again.
 - **The active tab's glow is no longer cut off** at the left of the first tab and the right of
   the last one.
 - **Tab titles stay readable on a styled tab strip when Krunk is in the background.** With a
