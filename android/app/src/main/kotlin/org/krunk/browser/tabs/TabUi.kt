@@ -12,8 +12,10 @@ data class TabUi(
     val displayUrl: String,
     val title: String,
     val private: Boolean,
-    /** Has a Gecko session (false = restored lazily, discarded or asleep). */
+    /** Has a Gecko session (false = restored lazily or discarded). */
     val live: Boolean,
+    /** Live but frozen by the memory policy (`setActive(false)`); wakes on activation. */
+    val asleep: Boolean = false,
     /** The `krunk://` page name when the tab shows an internal page, else null. */
     val internalPage: String?,
     val page: PageState,
@@ -32,6 +34,9 @@ sealed class TabEvent {
     /** Typed `krunk://history` etc.: show the native screen. */
     data class OpenScreen(val page: String) : TabEvent()
 
-    /** The previous run did not end cleanly and a session is stored: offer to restore. */
+    /**
+     * The previous run did not end cleanly and a session is stored: offer to restore. Also
+     * exposed as state in `TabManager.restorePrompt` (the event may fire before any collector).
+     */
     data class RestorePrompt(val tabCount: Int) : TabEvent()
 }
