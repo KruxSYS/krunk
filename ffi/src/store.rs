@@ -90,7 +90,7 @@ pub struct Tile {
     pub url: String,
     pub title: String,
     pub pinned: bool,
-    /// Frecency score (0 for pinned-only tiles).
+    /// Frecency score; pinned tiles carry infinity, so they sort before every visited site.
     pub score: f64,
 }
 
