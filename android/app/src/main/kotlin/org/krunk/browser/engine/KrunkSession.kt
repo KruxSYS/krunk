@@ -187,7 +187,14 @@ class KrunkSession(
             hasUserGesture: Boolean,
         ) {
             pendingUrl = null
-            set { it.copy(url = url ?: "", loadError = null) }
+            val u = url ?: ""
+            // The error page is a data: URL of our own: keep the failed address and the error.
+            val err = current.loadError
+            if (err != null && u.startsWith("data:text/html")) {
+                set { it.copy(url = err.uri) }
+            } else {
+                set { it.copy(url = u, loadError = null) }
+            }
         }
 
         override fun onCanGoBack(session: GeckoSession, canGoBack: Boolean) {

@@ -193,7 +193,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
                 SuggestionsPanel(
                     suggestions = suggestions,
                     onPick = { row -> vm.goTo(row.url) },
-                    onFill = { row -> vm.setTyped(row.fill.ifEmpty { row.url }) },
+                    onFill = { row -> vm.fillTyped(row.fill.ifEmpty { row.url }) },
                     onDismiss = { vm.stopEditing() },
                     modifier = Modifier.fillMaxSize(),
                 )

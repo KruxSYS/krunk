@@ -201,9 +201,15 @@ fun AddressEditor(vm: BrowserViewModel, placeholder: String, modifier: Modifier 
         focus.requestFocus()
         keyboard?.show()
     }
-    // A suggestion's "fill" arrow writes into the field from outside.
-    LaunchedEffect(typed) {
-        if (typed != value.text) value = TextFieldValue(typed, TextRange(typed.length))
+    // A suggestion's "fill" arrow writes into the field from outside (never on plain typing: a
+    // round trip through the view model would lag a keystroke behind and drop characters).
+    val fill by vm.fill.collectAsStateWithLifecycle()
+    LaunchedEffect(fill.first) {
+        if (fill.first > 0 &&
+            fill.second != value.text
+        ) {
+            value = TextFieldValue(fill.second, TextRange(fill.second.length))
+        }
     }
     Surface(
         modifier = modifier.height(AddressPillHeight),

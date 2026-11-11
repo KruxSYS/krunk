@@ -93,6 +93,15 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
     val editing: StateFlow<Boolean> = _editing.asStateFlow()
     private val _typed = MutableStateFlow("")
     val typed: StateFlow<String> = _typed.asStateFlow()
+
+    /** A suggestion's arrow writes into the editor: (sequence, text). The editor applies it once. */
+    private val _fill = MutableStateFlow(0 to "")
+    val fill: StateFlow<Pair<Int, String>> = _fill.asStateFlow()
+
+    fun fillTyped(text: String) {
+        _fill.value = (_fill.value.first + 1) to text
+        setTyped(text)
+    }
     private val _suggestions = MutableStateFlow<List<AddressSuggestion>>(emptyList())
     val suggestions: StateFlow<List<AddressSuggestion>> = _suggestions.asStateFlow()
     private var suggestJob: Job? = null
