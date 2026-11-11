@@ -28,6 +28,22 @@ import org.krunk.ffi.AddressSuggestion
 import org.krunk.ffi.AndroidSettings
 import org.krunk.ffi.bookmarkable
 
+/**
+ * Text a suggestion's arrow writes into the address editor. [sequence] is 0 while nothing is
+ * pending; the editor applies a fill once, when the sequence changes to a value above 0.
+ */
+data class AddressFill(val sequence: Int, val text: String) {
+    /** The next fill of this editing session. */
+    fun next(text: String) = AddressFill(sequence + 1, text)
+
+    /** Whether an editor showing [current] has to take this fill. */
+    fun appliesTo(current: String): Boolean = sequence > 0 && text != current
+
+    companion object {
+        val NONE = AddressFill(0, "")
+    }
+}
+
 /** Which native screen is on top of the browser. */
 sealed class Screen {
     data object Browser : Screen()
@@ -104,11 +120,11 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
     val typed: StateFlow<String> = _typed.asStateFlow()
 
     /** A suggestion's arrow writes into the editor: (sequence, text). The editor applies it once. */
-    private val _fill = MutableStateFlow(0 to "")
-    val fill: StateFlow<Pair<Int, String>> = _fill.asStateFlow()
+    private val _fill = MutableStateFlow(AddressFill.NONE)
+    val fill: StateFlow<AddressFill> = _fill.asStateFlow()
 
     fun fillTyped(text: String) {
-        _fill.value = (_fill.value.first + 1) to text
+        _fill.value = _fill.value.next(text)
         setTyped(text)
     }
     private val _suggestions = MutableStateFlow<List<AddressSuggestion>>(emptyList())
@@ -117,6 +133,9 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
     val omnibox = Omnibox(krunk.core)
 
     fun startEditing(initial: String) {
+        // A new editing session starts from the address, not from the last suggestion that was
+        // filled in (the editor applies any pending fill once when it appears).
+        _fill.value = AddressFill.NONE
         _typed.value = initial
         _editing.value = true
         querySuggestions(initial)

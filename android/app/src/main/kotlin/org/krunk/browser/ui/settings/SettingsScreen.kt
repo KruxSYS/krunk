@@ -19,8 +19,10 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
@@ -277,8 +279,16 @@ private fun GeneralSection(s: AndroidSettings, update: ((AndroidSettings) -> And
             title = stringResource(R.string.settings_search_engine),
             options = engines.map { it.id to it.name },
             selected = s.searchEngine,
-            onPick = { e -> update { it.copy(searchEngine = e) } },
-            onDismiss = { pick = null },
+            // "Custom" is only valid together with its address: without one stored, ask for it
+            // first; the address dialog then saves both.
+            onPick = { e ->
+                if (e == SearchEngineId.CUSTOM && s.customSearchUrl.isBlank()) {
+                    pick = "customUrl"
+                } else {
+                    update { it.copy(searchEngine = e) }
+                }
+            },
+            onDismiss = { if (pick == "engine") pick = null },
         )
 
         "customUrl" -> TextDialog(
@@ -291,7 +301,7 @@ private fun GeneralSection(s: AndroidSettings, update: ((AndroidSettings) -> And
             ),
             stringResource(R.string.settings_custom_search_help),
             { v ->
-                update { it.copy(customSearchUrl = v) }
+                update { it.copy(searchEngine = SearchEngineId.CUSTOM, customSearchUrl = v.trim()) }
             },
         ) {
             pick =
@@ -326,12 +336,19 @@ private fun GeneralSection(s: AndroidSettings, update: ((AndroidSettings) -> And
                 NewTabMode.CUSTOM to stringResource(R.string.settings_newtab_custom),
             ),
             selected = s.newTabPage,
-            onPick = { m -> update { it.copy(newTabPage = m) } },
-            onDismiss = { pick = null },
+            // As for the search engine: "Custom" needs its address in the same save.
+            onPick = { m ->
+                if (m == NewTabMode.CUSTOM && s.newTabUrl.isBlank()) {
+                    pick = "newtabUrl"
+                } else {
+                    update { it.copy(newTabPage = m) }
+                }
+            },
+            onDismiss = { if (pick == "newtab") pick = null },
         )
 
         "newtabUrl" -> TextDialog(stringResource(R.string.settings_newtab_url), s.newTabUrl, "https://", null, { v ->
-            update { it.copy(newTabUrl = v) }
+            update { it.copy(newTabPage = NewTabMode.CUSTOM, newTabUrl = v.trim()) }
         }) {
             pick =
                 null
@@ -691,7 +708,8 @@ private fun <T> ChoiceDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            Column {
+            // Scrolls: the user-agent list has twelve rows, more than a landscape phone shows.
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 for ((value, label) in options) {
                     androidx.compose.foundation.layout.Row(
                         Modifier

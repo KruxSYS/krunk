@@ -420,6 +420,30 @@ mod tests {
         assert_eq!(clean_text_scale(f64::INFINITY), 1.0);
     }
 
+    /// "Custom" for the search engine or for new tabs is only valid with its address, so the
+    /// settings screen saves the two together (a mode saved first is rejected and nothing changes).
+    #[test]
+    fn custom_modes_need_their_address_in_the_same_save() {
+        let store = KrunkStore::in_memory().unwrap();
+        let mut engine_only = default_settings();
+        engine_only.search_engine = SearchEngineId::Custom;
+        assert!(matches!(store.save_settings(engine_only.clone()), Err(SettingsError::Validation { .. })));
+        assert_eq!(store.load_settings().unwrap(), default_settings());
+        engine_only.custom_search_url = "https://search.example/?q=%s".into();
+        store.save_settings(engine_only).unwrap();
+        assert_eq!(store.load_settings().unwrap().search_engine, SearchEngineId::Custom);
+
+        let mut new_tab_only = store.load_settings().unwrap();
+        new_tab_only.new_tab_page = NewTabMode::Custom;
+        assert!(matches!(store.save_settings(new_tab_only.clone()), Err(SettingsError::Validation { .. })));
+        assert_eq!(store.load_settings().unwrap().new_tab_page, NewTabMode::Krunk);
+        new_tab_only.new_tab_url = "https://start.example/".into();
+        store.save_settings(new_tab_only).unwrap();
+        let back = store.load_settings().unwrap();
+        assert_eq!(back.new_tab_page, NewTabMode::Custom);
+        assert_eq!(settings_new_tab_target(back), Some("https://start.example/".into()));
+    }
+
     #[test]
     fn strip_tracking_toggle_survives_reload() {
         let store = KrunkStore::in_memory().unwrap();
