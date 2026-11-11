@@ -76,6 +76,24 @@
     <string name="page_unavailable">This Krunk page is not available on Android yet</string>
 
     <!-- A page whose process crashed -->
+    <string name="shield_sheet_title">Ad and tracker blocking</string>
+    <plurals name="shield_blocked">
+        <item quantity="one">%d request blocked on this page</item>
+        <item quantity="other">%d requests blocked on this page</item>
+    </plurals>
+    <string name="shield_blocked_many">%1$s requests blocked on this page</string>
+    <string name="shield_allowed">Blocking is off for this site</string>
+    <string name="shield_off">Blocking is switched off</string>
+    <string name="shield_off_help">Ads and trackers are not blocked on any site. You can switch blocking on in Settings, under Privacy.</string>
+    <string name="shield_unfiltered">This page was not checked</string>
+    <string name="shield_unfiltered_help">It loaded before the blocker was ready. Reload it to have it checked.</string>
+    <string name="shield_unavailable">Blocking is not available</string>
+    <string name="shield_unavailable_help">The blocker could not be started. Nothing is blocked. Restarting Krunk may help.</string>
+    <string name="shield_starting">The blocker is starting</string>
+    <string name="shield_site_switch">Block on this site</string>
+    <string name="shield_site_switch_help">The page reloads when you change this.</string>
+    <string name="shield_private_hint">Sites can be allowed from a normal tab. A site allowed there is also allowed in private tabs.</string>
+    <string name="history_list_title">Go to</string>
     <string name="page_blocked_title">Krunk blocked this page</string>
     <string name="page_blocked_message">Its address is on a filter list for ads, trackers or harmful sites. Nothing was loaded from it.</string>
     <string name="page_blocked_back">Go back</string>

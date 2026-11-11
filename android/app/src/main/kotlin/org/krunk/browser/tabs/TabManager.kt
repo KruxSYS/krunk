@@ -25,6 +25,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.krunk.browser.KrunkApp
 import org.krunk.browser.core.KrunkCore
+import org.krunk.browser.engine.BackAction
 import org.krunk.browser.engine.ContextTarget
 import org.krunk.browser.engine.ErrorPage
 import org.krunk.browser.engine.GeckoEngine
@@ -36,6 +37,7 @@ import org.krunk.browser.engine.PagePrompt
 import org.krunk.browser.engine.PageState
 import org.krunk.browser.engine.PromptQueue
 import org.krunk.browser.engine.SessionListener
+import org.krunk.browser.engine.backAction
 import org.krunk.browser.engine.blocker.AllowList
 import org.krunk.browser.engine.blocker.blockedTab
 import org.krunk.browser.engine.displayedUrl
@@ -874,6 +876,19 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
 
     override fun onCloseRequested(session: KrunkSession) {
         close(session.id)
+    }
+
+    /**
+     * Back for the page on screen (the menu's Back and the system back gesture): leaves the
+     * "blocked" panel first, else one step back in the page's history.
+     */
+    fun back(id: UInt? = activeId.value) {
+        val s = sessions[id ?: return] ?: return
+        when (backAction(s.current)) {
+            BackAction.LEAVE_BLOCKED -> leaveBlocked(id)
+            BackAction.HISTORY -> s.goBack()
+            BackAction.NONE -> Unit
+        }
     }
 
     // ----- pages the blocker stopped -----

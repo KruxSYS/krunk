@@ -22,6 +22,10 @@ import org.krunk.browser.core.KrunkCore
 import org.krunk.browser.core.SettingsRepository
 import org.krunk.browser.engine.GeckoEngine
 import org.krunk.browser.engine.await
+import org.krunk.browser.engine.blocker.AllowList
+import org.krunk.browser.engine.blocker.BlockerStatus
+import org.krunk.browser.engine.blocker.Shield
+import org.krunk.browser.engine.blocker.UpdateState
 import org.krunk.browser.tabs.TabManager
 import org.krunk.browser.tabs.TabUi
 import org.krunk.ffi.AddressSuggestion
@@ -93,6 +97,65 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
     val hasPrivateTabs: StateFlow<Boolean> = tabs.tabs.map { list -> list.any { it.private } }
         .distinctUntilChanged()
         .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    // ----- ad and tracker blocking -----
+
+    val blockerStatus: StateFlow<BlockerStatus> get() = engine.blocker.status
+
+    /** The blocker's reading per tab (count, off). */
+    val shields: StateFlow<Map<UInt, Shield>> get() = engine.blocker.shields
+    val filterUpdate: StateFlow<UpdateState> get() = engine.blocker.update
+
+    private val _allowHosts = MutableStateFlow<List<String>>(emptyList())
+
+    /** The sites where blocking is switched off (Krunk's allow list), sorted. */
+    val allowHosts: StateFlow<List<String>> = _allowHosts.asStateFlow()
+    private val _listsUpdated = MutableStateFlow<Long?>(null)
+
+    /** When a user-triggered update last brought newer filter lists (Unix ms), if ever. */
+    val listsUpdated: StateFlow<Long?> = _listsUpdated.asStateFlow()
+
+    init {
+        viewModelScope.launch { refreshBlocking() }
+        viewModelScope.launch {
+            filterUpdate.collect { if (it is UpdateState.Done) _listsUpdated.value = it.at }
+        }
+    }
+
+    private suspend fun refreshBlocking() {
+        _allowHosts.value = core.io { AllowList(it).hosts() }
+        _listsUpdated.value = core.io { store ->
+            runCatching { store.kvGet(AllowList.KV_LISTS_UPDATED)?.toLongOrNull() }.getOrNull()
+        }
+    }
+
+    /**
+     * The per-site switch of the shield's sheet: blocking off ([allowed]) or on again for the
+     * site of [url]. The blocker gets the new list, then the tab is reloaded so the page shows
+     * the change. Not offered in private tabs.
+     */
+    fun setSiteAllowed(tabId: UInt, url: String, allowed: Boolean) {
+        viewModelScope.launch {
+            core.io { store ->
+                val list = AllowList(store)
+                if (allowed) list.allow(url) else list.entryFor(url)?.let(list::remove)
+            }
+            refreshBlocking()
+            engine.blocker.allowListChanged { tabs.reload(tabId) }
+        }
+    }
+
+    /** Settings: a site is taken off the allow list (it is blocked again from its next load). */
+    fun removeAllowedSite(host: String) {
+        viewModelScope.launch {
+            core.io { AllowList(it).remove(host) }
+            refreshBlocking()
+            engine.blocker.allowListChanged()
+        }
+    }
+
+    /** Settings: "Update filter lists". */
+    fun updateFilterLists() = engine.blocker.updateNow()
 
     private val _screens = MutableStateFlow<List<Screen>>(listOf(Screen.Browser))
     val screens: StateFlow<List<Screen>> = _screens.asStateFlow()

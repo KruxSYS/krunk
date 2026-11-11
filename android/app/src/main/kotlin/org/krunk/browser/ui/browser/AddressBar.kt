@@ -73,13 +73,20 @@ import org.krunk.ffi.AddressSuggestion
 import org.krunk.ffi.SuggestionKind
 
 val AddressPillHeight = 40.dp
+
+/** The pill's layout box: the shield and reload/stop inside it get full 48 dp touch targets. */
+val AddressPillTouchHeight = 48.dp
 private val PillShape = RoundedCornerShape(20.dp)
 
 /**
- * The address as a pill: private mask, lock / "not secure" sign, favicon or globe, the site (or
- * the search placeholder on the new-tab page). Tapping starts editing. [trailing] is the
- * reload/stop button; [compact] (a phone-width toolbar) leaves the words "Not secure" out so
- * the site's name fits.
+ * The address as a pill: [leading] (the blocker's shield), private mask, lock / "not secure"
+ * sign, favicon or globe, the site (or the search placeholder on the new-tab page), [trailing]
+ * (reload/stop). Tapping the pill starts editing. [compact] (a phone-width toolbar) leaves the
+ * words "Not secure" out so the site's name fits.
+ *
+ * The pill is drawn 40 dp high inside a 48 dp layout box, so the buttons inside it are 48 dp
+ * targets without the pill growing; [hasLeading] tells whether [leading] draws something (the
+ * text then starts right after it).
  */
 @Composable
 fun AddressPill(
@@ -88,6 +95,8 @@ fun AddressPill(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     compact: Boolean = true,
+    hasLeading: Boolean = false,
+    leading: @Composable () -> Unit = {},
     trailing: @Composable () -> Unit = {},
 ) {
     val page = tab?.page
@@ -101,19 +110,27 @@ fun AddressPill(
     )
     val text = if (tab == null || tab.isNewTab) "" else pillText(tab.displayUrl)
     val editLabel = stringResource(R.string.address_edit)
-    Surface(
-        modifier = modifier
-            .height(AddressPillHeight)
-            .clip(PillShape)
-            .clickable(onClick = onClick)
-            .semantics {
-                role = Role.Button
-                contentDescription = editLabel
-            },
-        shape = PillShape,
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-    ) {
-        Row(Modifier.padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+    Box(modifier.height(AddressPillTouchHeight), contentAlignment = Alignment.Center) {
+        // The pill itself: what is drawn, and what a tap on the address hits. The row above it
+        // only takes the taps on its two buttons.
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(AddressPillHeight)
+                .clip(PillShape)
+                .clickable(onClick = onClick)
+                .semantics {
+                    role = Role.Button
+                    contentDescription = editLabel
+                },
+            shape = PillShape,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ) {}
+        Row(
+            Modifier.fillMaxWidth().padding(start = if (hasLeading) 0.dp else 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            leading()
             if (tab?.private == true) {
                 Icon(
                     Icons.Outlined.Masks,

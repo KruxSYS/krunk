@@ -507,7 +507,23 @@ class KrunkSession(
         }
     }
 
+    /** The tab's back/forward list as the engine last reported it, and the shown entry's index. */
+    var historyEntries: List<HistoryPage> = emptyList()
+        private set
+    var historyIndex: Int = 0
+        private set
+
+    /** Jumps to an entry of [historyEntries] (the long-press list of Back and Forward). */
+    fun goToHistory(index: Int) {
+        if (index in historyEntries.indices && index != historyIndex) gecko.gotoHistoryIndex(index)
+    }
+
     private val history = object : GeckoSession.HistoryDelegate {
+        override fun onHistoryStateChange(session: GeckoSession, state: GeckoSession.HistoryDelegate.HistoryList) {
+            historyEntries = state.map { HistoryPage(it.uri, it.title) }
+            historyIndex = state.currentIndex
+        }
+
         override fun onVisited(
             session: GeckoSession,
             url: String,

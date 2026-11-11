@@ -53,10 +53,12 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import org.krunk.browser.R
+import org.krunk.browser.engine.BackAction
 import org.krunk.browser.engine.ContextTarget
 import org.krunk.browser.engine.KrunkSession
 import org.krunk.browser.engine.LoadSource
 import org.krunk.browser.engine.NestedGeckoView
+import org.krunk.browser.engine.backAction
 import org.krunk.browser.engine.originOf
 import org.krunk.browser.tabs.TabEvent
 import org.krunk.browser.ui.BrowserViewModel
@@ -102,7 +104,9 @@ fun BrowserScreen(vm: BrowserViewModel) {
     BackHandler(enabled = findActive) { vm.closeFind() }
     BackHandler(enabled = !findActive && editing) { vm.stopEditing() }
     BackHandler(enabled = !findActive && !editing && fullScreen) { session?.exitFullScreen() }
-    BackHandler(enabled = !findActive && !editing && !fullScreen && page?.canGoBack == true) { session?.goBack() }
+    BackHandler(enabled = !findActive && !editing && !fullScreen && backAction(page) != BackAction.NONE) {
+        vm.tabs.back()
+    }
 
     val crashed = page?.crashed == true
     val blockedUrl = page?.blocked

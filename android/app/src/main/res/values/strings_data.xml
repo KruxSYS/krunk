@@ -134,6 +134,25 @@
     <string name="settings_https_only_help">Upgrade every page to HTTPS and show an error when a site has none</string>
     <string name="settings_strip_tracking">Strip tracking parameters</string>
     <string name="settings_strip_tracking_help">Remove utm_*, fbclid, gclid and similar from addresses before loading</string>
+    <string name="settings_adblock">Block ads and trackers</string>
+    <string name="settings_adblock_help">With uBlock Origin, built into Krunk. The shield in the address bar shows what was blocked on a page.</string>
+    <string name="settings_allowed_sites">Sites with blocking off</string>
+    <string name="settings_allowed_sites_none">None</string>
+    <plurals name="settings_allowed_sites_count">
+        <item quantity="one">%d site</item>
+        <item quantity="other">%d sites</item>
+    </plurals>
+    <string name="settings_allowed_sites_empty">Blocking is on for every site. To switch it off for a site, open the site and tap the shield.</string>
+    <string name="settings_allowed_sites_remove">Remove</string>
+    <string name="settings_done">Done</string>
+    <string name="settings_update_lists">Update filter lists</string>
+    <string name="settings_update_from_package">Lists from the app package (uBlock Origin %1$s)</string>
+    <string name="settings_update_last">Last updated %1$s</string>
+    <string name="settings_update_running">Updating…</string>
+    <string name="settings_update_failed">Nothing could be fetched. %1$s</string>
+    <string name="settings_auto_update">Update automatically</string>
+    <string name="settings_auto_update_help">Fetches newer filter lists in the background (from uBlock Origin, EasyList, AdGuard, Peter Lowe and URLhaus) and, from the next start of Krunk, certificate security data from Mozilla.</string>
+    <string name="settings_update_tradeoff">While this is off, Krunk fetches nothing in the background. That also means no updates of certificate revocation data: a certificate revoked after this version of Krunk was built may not be noticed. Safe Browsing is never used.</string>
     <string name="settings_clear_data">Clear browsing data</string>
     <string name="settings_clear_data_help">History, cookies, cache, site data</string>
     <string name="settings_clear_history">Browsing history</string>

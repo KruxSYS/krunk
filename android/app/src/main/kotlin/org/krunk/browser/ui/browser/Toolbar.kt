@@ -12,8 +12,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Refresh
@@ -43,17 +41,23 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.krunk.browser.R
+import org.krunk.browser.engine.blocker.AllowList
 import org.krunk.browser.tabs.TabUi
 import org.krunk.browser.ui.BrowserViewModel
+import org.krunk.ffi.NavItem
+import org.krunk.ffi.allowEntryFor
+import org.krunk.ffi.navMenu
 import org.krunk.ffi.newTabUrl
 
 /** The toolbar row's height (address pill plus padding); the page reserves this much. */
 val ToolbarHeight = 56.dp
 
 /**
- * Back, forward, home (when there is room), the address pill with reload/stop, the tab
- * counter and the menu. One row, [ToolbarHeight] tall, every button at least 48 dp.
+ * The address pill (with the blocker's shield and reload/stop inside it), the tab counter and
+ * the menu; from tablet width on also Home. Back and Forward are in the menu's first row and on
+ * the system back gesture. One row, [ToolbarHeight] tall, every target 48 dp ([toolbarLayout]).
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -69,29 +73,41 @@ fun BrowserToolbar(
     val session = tab?.let { vm.tabs.session(it.id) }
     val haptic = LocalHapticFeedback.current
     val widthDp = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.width.toDp() }
-    // The address needs the room on a phone: Home and the words "Not secure" appear from tablet
-    // width on (Home is in reach through the new-tab page and the homepage setting).
-    val wide = widthDp >= 600.dp
-    val showHome = wide
+    val layout = toolbarLayout(widthDp.value.toInt())
     var menuOpen by remember { mutableStateOf(false) }
+    var sheetOpen by remember { mutableStateOf(false) }
+    var historyList by remember { mutableStateOf<List<NavItem>?>(null) }
     val placeholder = stringResource(R.string.address_placeholder, vm.settingsRepo.searchName)
+    val goHome = { vm.goTo(vm.settingsRepo.current.homepage.ifBlank { newTabUrl() }) }
+
+    // The shield: the blocker's reading for this tab only.
+    val status by vm.blockerStatus.collectAsStateWithLifecycle()
+    val shields by vm.shields.collectAsStateWithLifecycle()
+    val allowHosts by vm.allowHosts.collectAsStateWithLifecycle()
+    val isPage = tab != null && !tab.isNewTab && tab.internalPage == null && session != null
+    val pageUrl = if (isPage) tab?.url.orEmpty() else ""
+    val allowedEntry = remember(allowHosts, pageUrl) {
+        AllowList.siteOf(pageUrl)?.let { allowEntryFor(allowHosts, it) }
+    }
+    val shield = shieldUi(
+        url = pageUrl,
+        isPage = isPage,
+        status = status,
+        shield = tab?.let { shields[it.id] },
+        allowedEntry = allowedEntry,
+        startedUnprotected = vm.engine.blocker.startedUnprotected,
+    )
 
     Surface(
         modifier = modifier.fillMaxWidth().height(ToolbarHeight),
         color = MaterialTheme.colorScheme.surfaceContainer,
     ) {
-        Row(Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { session?.goBack() }, enabled = page?.canGoBack == true) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.toolbar_back))
-            }
-            IconButton(onClick = { session?.goForward() }, enabled = page?.canGoForward == true) {
-                Icon(
-                    Icons.AutoMirrored.Filled.ArrowForward,
-                    contentDescription = stringResource(R.string.toolbar_forward),
-                )
-            }
-            if (showHome) {
-                IconButton(onClick = { vm.goTo(vm.settingsRepo.current.homepage.ifBlank { newTabUrl() }) }) {
+        Row(
+            Modifier.padding(horizontal = ToolbarLayout.ROW_PADDING_DP.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (layout.showHome) {
+                IconButton(onClick = goHome) {
                     Icon(Icons.Outlined.Home, contentDescription = stringResource(R.string.toolbar_home))
                 }
             }
@@ -99,16 +115,23 @@ fun BrowserToolbar(
                 tab = tab,
                 placeholder = placeholder,
                 onClick = { vm.startEditing(if (tab == null || tab.isNewTab) "" else tab.displayUrl) },
-                modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
-                compact = !wide,
+                modifier = Modifier.weight(1f).padding(horizontal = ToolbarLayout.PILL_PADDING_DP.dp),
+                compact = !layout.showNotSecureWords,
+                hasLeading = shield.mode != ShieldMode.HIDDEN,
+                leading = {
+                    if (shield.mode != ShieldMode.HIDDEN) ShieldButton(shield) { sheetOpen = true }
+                },
             ) {
                 if (tab != null && !tab.isNewTab && session != null) {
+                    // 48 dp targets inside the 40 dp pill (see AddressPill).
                     if (page?.loading == true) {
-                        IconButton(onClick = { session.stop() }, modifier = Modifier.size(40.dp)) {
+                        IconButton(onClick = { session.stop() }, modifier = Modifier.size(ToolbarLayout.BUTTON_DP.dp)) {
                             Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.toolbar_stop))
                         }
                     } else {
-                        IconButton(onClick = { vm.tabs.reload() }, modifier = Modifier.size(40.dp)) {
+                        IconButton(onClick = {
+                            vm.tabs.reload()
+                        }, modifier = Modifier.size(ToolbarLayout.BUTTON_DP.dp)) {
                             Icon(Icons.Filled.Refresh, contentDescription = stringResource(R.string.toolbar_reload))
                         }
                     }
@@ -131,10 +154,41 @@ fun BrowserToolbar(
                     onDismiss = { menuOpen = false },
                     vm = vm,
                     tab = tab,
+                    nav = navRow(page, hasSession = session != null, toolbarShowsHome = layout.showHome),
+                    onHome = goHome,
+                    onHistory = { forward ->
+                        val s = session
+                        if (s != null) {
+                            val entries = s.historyEntries.map { org.krunk.ffi.NavEntry(it.url, it.title) }
+                            historyList = navMenu(entries, s.historyIndex.toUInt(), forward).takeIf { it.isNotEmpty() }
+                        }
+                    },
                     onMessage = onMessage,
                 )
             }
         }
+    }
+
+    if (sheetOpen && tab != null) {
+        ShieldSheet(
+            ui = shield,
+            site = AllowList.siteOf(pageUrl).orEmpty(),
+            privateTab = tab.private,
+            onAllow = { allowed -> vm.setSiteAllowed(tab.id, pageUrl, allowed) },
+            onReload = { vm.tabs.reload(tab.id) },
+            onSettings = { vm.push(org.krunk.browser.ui.Screen.Settings) },
+            onDismiss = { sheetOpen = false },
+        )
+    }
+    historyList?.let { items ->
+        HistoryListDialog(
+            items = items,
+            onPick = { item ->
+                historyList = null
+                session?.goToHistory(item.index.toInt())
+            },
+            onDismiss = { historyList = null },
+        )
     }
 }
 
@@ -146,7 +200,7 @@ private fun TabCounter(count: Int, onClick: () -> Unit, onLongClick: () -> Unit)
     val color = MaterialTheme.colorScheme.onSurface
     Box(
         Modifier
-            .size(48.dp)
+            .size(ToolbarLayout.BUTTON_DP.dp)
             .clip(CircleShape)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .semantics {

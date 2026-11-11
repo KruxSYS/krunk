@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -55,18 +56,21 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
+import org.krunk.browser.BuildConfig
 import org.krunk.browser.R
 import org.krunk.browser.core.Wallpapers
 import org.krunk.browser.ui.BrowserViewModel
@@ -541,6 +545,50 @@ private fun PrivacySection(
     update: ((AndroidSettings) -> AndroidSettings) -> Unit,
 ) {
     var clear by remember { mutableStateOf(false) }
+    var allowedOpen by remember { mutableStateOf(false) }
+    val allowHosts by vm.allowHosts.collectAsStateWithLifecycle()
+    val updateState by vm.filterUpdate.collectAsStateWithLifecycle()
+    val listsUpdated by vm.listsUpdated.collectAsStateWithLifecycle()
+
+    // ----- ad and tracker blocking -----
+    SwitchRow(
+        stringResource(R.string.settings_adblock),
+        stringResource(R.string.settings_adblock_help),
+        s.adblockEnabled,
+    ) { v ->
+        update { it.copy(adblockEnabled = v) }
+    }
+    Row(
+        stringResource(R.string.settings_allowed_sites),
+        if (allowHosts.isEmpty()) {
+            stringResource(R.string.settings_allowed_sites_none)
+        } else {
+            pluralStringResource(R.plurals.settings_allowed_sites_count, allowHosts.size, allowHosts.size)
+        },
+    ) {
+        allowedOpen = true
+    }
+    Row(
+        stringResource(R.string.settings_update_lists),
+        updateLineText(updateLine(updateState, listsUpdated)),
+        enabled = updateEnabled(updateState, s.adblockEnabled),
+    ) {
+        vm.updateFilterLists()
+    }
+    SwitchRow(
+        stringResource(R.string.settings_auto_update),
+        stringResource(R.string.settings_auto_update_help),
+        s.filterAutoUpdate,
+    ) { v ->
+        update { it.copy(filterAutoUpdate = v) }
+    }
+    // The default's price, said plainly (plan decision 1).
+    ListItem(
+        headlineContent = {},
+        supportingContent = { Text(stringResource(R.string.settings_update_tradeoff)) },
+    )
+    HorizontalDivider()
+
     SwitchRow(
         stringResource(R.string.settings_https_only),
         stringResource(R.string.settings_https_only_help),
@@ -559,6 +607,56 @@ private fun PrivacySection(
         clear = true
     }
     if (clear) ClearDataDialog(vm) { clear = false }
+    if (allowedOpen) AllowedSitesDialog(allowHosts, onRemove = vm::removeAllowedSite) { allowedOpen = false }
+}
+
+/** The line under "Update filter lists": where the lists are from, or how the update goes. */
+@Composable
+private fun updateLineText(line: UpdateLine): String {
+    val format =
+        remember { java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT) }
+    val fromPackage = stringResource(R.string.settings_update_from_package, BuildConfig.UBO_VERSION)
+    return when (line) {
+        UpdateLine.FromPackage -> fromPackage
+
+        is UpdateLine.UpdatedAt -> stringResource(R.string.settings_update_last, format.format(java.util.Date(line.at)))
+
+        UpdateLine.Updating -> stringResource(R.string.settings_update_running)
+
+        is UpdateLine.Failed -> stringResource(
+            R.string.settings_update_failed,
+            line.lastUpdated?.let { stringResource(R.string.settings_update_last, format.format(java.util.Date(it))) }
+                ?: fromPackage,
+        )
+    }
+}
+
+/** The sites where blocking is switched off; each can be taken off the list. */
+@Composable
+private fun AllowedSitesDialog(hosts: List<String>, onRemove: (String) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.settings_allowed_sites)) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                if (hosts.isEmpty()) {
+                    Text(stringResource(R.string.settings_allowed_sites_empty))
+                }
+                for (host in hosts) {
+                    ListItem(
+                        headlineContent = { Text(host, maxLines = 1) },
+                        trailingContent = {
+                            TextButton(onClick = { onRemove(host) }) {
+                                Text(stringResource(R.string.settings_allowed_sites_remove))
+                            }
+                        },
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    )
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.settings_done)) } },
+    )
 }
 
 @Composable
@@ -663,13 +761,18 @@ private fun AdvancedSection(s: AndroidSettings, update: ((AndroidSettings) -> An
 // ----- rows and dialogs -----
 
 @Composable
-private fun Row(title: String, summary: String?, onClick: () -> Unit) {
+private fun Row(title: String, summary: String?, enabled: Boolean = true, onClick: () -> Unit) {
     ListItem(
         headlineContent = { Text(title) },
-        supportingContent = summary?.let { { Text(it, maxLines = 2) } },
-        modifier = Modifier.clickable(onClick = onClick),
+        supportingContent = summary?.let { { Text(it, maxLines = 3) } },
+        modifier = Modifier.clickable(
+            enabled = enabled,
+            onClick = onClick,
+        ).alpha(if (enabled) 1f else DISABLED_ROW_ALPHA),
     )
 }
+
+private const val DISABLED_ROW_ALPHA = 0.5f
 
 @Composable
 private fun SwitchRow(title: String, summary: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
@@ -677,7 +780,8 @@ private fun SwitchRow(title: String, summary: String?, checked: Boolean, onChang
         headlineContent = { Text(title) },
         supportingContent = summary?.let { { Text(it, maxLines = 3) } },
         trailingContent = { Switch(checked = checked, onCheckedChange = null) },
-        modifier = Modifier.selectable(selected = checked, role = Role.Switch) { onChange(!checked) },
+        // A switch is "on" or "off" to a screen reader, not "selected".
+        modifier = Modifier.toggleable(value = checked, role = Role.Switch, onValueChange = onChange),
     )
 }
 
@@ -887,9 +991,8 @@ private fun ClearDataDialog(vm: BrowserViewModel, onDismiss: () -> Unit) {
 @Composable
 private fun CheckRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     androidx.compose.foundation.layout.Row(
-        Modifier.fillMaxWidth().selectable(selected = checked, role = Role.Checkbox) {
-            onChange(!checked)
-        }.padding(vertical = 6.dp),
+        Modifier.fillMaxWidth().toggleable(value = checked, role = Role.Checkbox, onValueChange = onChange)
+            .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Checkbox(checked = checked, onCheckedChange = null)

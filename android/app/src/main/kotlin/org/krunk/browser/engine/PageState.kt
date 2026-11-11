@@ -52,6 +52,9 @@ data class PageState(
  */
 data class LoadError(val uri: String, val category: Int, val code: Int, val pageUri: String = "")
 
+/** One entry of a tab's back/forward list. */
+data class HistoryPage(val url: String, val title: String)
+
 const val ABOUT_BLANK = "about:blank"
 
 /** Scheme and authority (up to the first `/`, `?`, `#` or backslash) of a hierarchical address. */
@@ -137,6 +140,25 @@ fun PageState.blockedDismissed(): PageState = copy(blocked = null)
 
 /** Whether a tab showing the "blocked" panel has a page to go back to (else it is closed). */
 fun PageState.hasPageUnderBlocked(): Boolean = committed && url.isNotEmpty() && url != ABOUT_BLANK
+
+/** What "back" means for the page on screen (the menu's Back and the system back alike). */
+enum class BackAction {
+    /** Nothing to go back to inside the tab. */
+    NONE,
+
+    /** Leave Krunk's "blocked" panel for the page under it (or close a tab that never had one). */
+    LEAVE_BLOCKED,
+
+    /** One step back in the page's history. */
+    HISTORY,
+}
+
+fun backAction(page: PageState?): BackAction = when {
+    page == null -> BackAction.NONE
+    page.blocked != null -> BackAction.LEAVE_BLOCKED
+    page.canGoBack -> BackAction.HISTORY
+    else -> BackAction.NONE
+}
 
 /** A load ended. One that never committed (a download, "204 No Content", stop) leaves the old page. */
 fun PageState.pageStopped(): PageState = copy(
