@@ -30,7 +30,10 @@ class KrunkApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        Log.i(TAG, "Krunk ${BuildConfig.VERSION_NAME} starting (core ${coreVersion()}, GeckoView ${BuildConfig.GECKOVIEW_VERSION})")
+        Log.i(
+            TAG,
+            "Krunk ${BuildConfig.VERSION_NAME} starting (core ${coreVersion()}, GeckoView ${BuildConfig.GECKOVIEW_VERSION})",
+        )
     }
 
     override fun onTrimMemory(level: Int) {

@@ -4,6 +4,9 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
 import android.util.LruCache
+import java.io.ByteArrayOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.krunk.browser.KrunkApp
@@ -11,9 +14,6 @@ import org.krunk.browser.core.KrunkCore
 import org.krunk.browser.engine.IconCandidate
 import org.krunk.ffi.hostOf
 import org.krunk.ffi.nowMs
-import java.io.ByteArrayOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
 
 /**
  * Favicons by host: stored as 32 px PNG in the core `favicons` table (same as Windows), decoded
@@ -55,7 +55,11 @@ class Favicons(private val core: KrunkCore) {
         }
         inFlight += host
         try {
-            val candidates = (icons.sortedByDescending { score(it) }.map { it.href } + listOf(iconFallback(pageUrl))).distinct()
+            val candidates = (
+                icons.sortedByDescending {
+                    score(it)
+                }.map { it.href } + listOf(iconFallback(pageUrl))
+                ).distinct()
             for (href in candidates.take(3)) {
                 val bmp = withContext(Dispatchers.IO) { download(href) } ?: continue
                 val png = withContext(Dispatchers.IO) { encode(bmp) }
@@ -80,7 +84,13 @@ class Favicons(private val core: KrunkCore) {
 
     private fun score(c: IconCandidate): Int {
         val size = c.sizes.substringBefore('x').toIntOrNull() ?: 0
-        var s = if (size in 32..128) 100 + size else if (size > 128) 60 else 50
+        var s = if (size in 32..128) {
+            100 + size
+        } else if (size > 128) {
+            60
+        } else {
+            50
+        }
         if (c.type.contains("svg")) s -= 100 // BitmapFactory can't decode SVG
         if (c.rel.contains("apple")) s -= 20
         return s
@@ -110,7 +120,13 @@ class Favicons(private val core: KrunkCore) {
     }
 
     private fun encode(bmp: Bitmap): ByteArray {
-        val scaled = if (bmp.width > SIZE || bmp.height > SIZE) Bitmap.createScaledBitmap(bmp, SIZE, SIZE, true) else bmp
+        val scaled = if (bmp.width > SIZE ||
+            bmp.height > SIZE
+        ) {
+            Bitmap.createScaledBitmap(bmp, SIZE, SIZE, true)
+        } else {
+            bmp
+        }
         val out = ByteArrayOutputStream()
         scaled.compress(Bitmap.CompressFormat.PNG, 100, out)
         return out.toByteArray()

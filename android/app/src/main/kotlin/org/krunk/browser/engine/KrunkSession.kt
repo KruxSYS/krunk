@@ -48,7 +48,8 @@ data class ContextTarget(
     val type: Int,
 ) {
     val isImage get() = type == GeckoSession.ContentDelegate.ContextElement.TYPE_IMAGE
-    val isMedia get() = type == GeckoSession.ContentDelegate.ContextElement.TYPE_VIDEO || type == GeckoSession.ContentDelegate.ContextElement.TYPE_AUDIO
+    val isMedia get() = type == GeckoSession.ContentDelegate.ContextElement.TYPE_VIDEO ||
+        type == GeckoSession.ContentDelegate.ContextElement.TYPE_AUDIO
 }
 
 /** Events the tab manager reacts to (history, new tabs, menus, downloads). */
@@ -185,9 +186,10 @@ class KrunkSession(
             set { it.copy(canGoForward = canGoForward) }
         }
 
-        override fun onLoadRequest(session: GeckoSession, request: GeckoSession.NavigationDelegate.LoadRequest): GeckoResult<AllowOrDeny>? {
-            return GeckoResult.fromValue(AllowOrDeny.ALLOW)
-        }
+        override fun onLoadRequest(
+            session: GeckoSession,
+            request: GeckoSession.NavigationDelegate.LoadRequest,
+        ): GeckoResult<AllowOrDeny>? = GeckoResult.fromValue(AllowOrDeny.ALLOW)
 
         override fun onNewSession(session: GeckoSession, uri: String): GeckoResult<GeckoSession>? {
             val s = listener.onNewSessionRequested(this@KrunkSession, uri) ?: return null
@@ -214,7 +216,10 @@ class KrunkSession(
             set { it.copy(progress = 0f, loading = false) }
         }
 
-        override fun onSecurityChange(session: GeckoSession, securityInfo: GeckoSession.ProgressDelegate.SecurityInformation) {
+        override fun onSecurityChange(
+            session: GeckoSession,
+            securityInfo: GeckoSession.ProgressDelegate.SecurityInformation,
+        ) {
             set { it.copy(secure = securityInfo.isSecure) }
         }
 
@@ -234,7 +239,12 @@ class KrunkSession(
             set { it.copy(fullScreen = fullScreen) }
         }
 
-        override fun onContextMenu(session: GeckoSession, screenX: Int, screenY: Int, element: GeckoSession.ContentDelegate.ContextElement) {
+        override fun onContextMenu(
+            session: GeckoSession,
+            screenX: Int,
+            screenY: Int,
+            element: GeckoSession.ContentDelegate.ContextElement,
+        ) {
             listener.onContextMenu(
                 this@KrunkSession,
                 ContextTarget(element.linkUri, element.srcUri, element.title, element.altText, null, element.type),
@@ -261,7 +271,12 @@ class KrunkSession(
     }
 
     private val history = object : GeckoSession.HistoryDelegate {
-        override fun onVisited(session: GeckoSession, url: String, lastVisitedURL: String?, flags: Int): GeckoResult<Boolean>? {
+        override fun onVisited(
+            session: GeckoSession,
+            url: String,
+            lastVisitedURL: String?,
+            flags: Int,
+        ): GeckoResult<Boolean>? {
             val topLevel = flags and GeckoSession.HistoryDelegate.VISIT_TOP_LEVEL != 0
             val error = flags and GeckoSession.HistoryDelegate.VISIT_UNRECOVERABLE_ERROR != 0
             if (recordHistory && topLevel && !error) listener.onVisited(this@KrunkSession, url)

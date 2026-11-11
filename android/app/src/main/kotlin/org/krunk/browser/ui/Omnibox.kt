@@ -1,6 +1,8 @@
 package org.krunk.browser.ui
 
 import android.util.Log
+import java.net.HttpURLConnection
+import java.net.URL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.krunk.browser.KrunkApp
@@ -12,8 +14,6 @@ import org.krunk.ffi.mergeSearchSuggestions
 import org.krunk.ffi.parseSuggestBody
 import org.krunk.ffi.suggestUrl
 import org.krunk.ffi.suggestWanted
-import java.net.HttpURLConnection
-import java.net.URL
 
 /**
  * Address-bar suggestions: local rows from the core (history, bookmarks, the typed site's pages)
@@ -29,7 +29,11 @@ class Omnibox(private val core: KrunkCore) {
         core.store.omniboxQuery(text, core.settings.searchTemplate)
     }
 
-    suspend fun withRemote(rows: List<AddressSuggestion>, typed: String, engine: SearchEngineId): List<AddressSuggestion>? {
+    suspend fun withRemote(
+        rows: List<AddressSuggestion>,
+        typed: String,
+        engine: SearchEngineId,
+    ): List<AddressSuggestion>? {
         val template = core.settings.searchTemplate
         if (!suggestWanted(typed, template)) return null
         val url = suggestUrl(engine, typed) ?: return null

@@ -72,7 +72,10 @@ class GeckoEngine(context: Context) {
         var flags = 0L
         if (cookies) flags = flags or StorageController.ClearFlags.COOKIES
         if (cache) flags = flags or StorageController.ClearFlags.ALL_CACHES
-        if (siteData) flags = flags or StorageController.ClearFlags.SITE_DATA or StorageController.ClearFlags.PERMISSIONS
+        if (siteData) {
+            flags =
+                flags or StorageController.ClearFlags.SITE_DATA or StorageController.ClearFlags.PERMISSIONS
+        }
         return if (flags == 0L) GeckoResult.fromValue(null) else runtime.storageController.clearData(flags)
     }
 }

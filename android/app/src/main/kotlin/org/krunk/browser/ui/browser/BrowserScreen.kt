@@ -36,6 +36,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.krunk.browser.ui.BrowserViewModel
 import org.krunk.browser.ui.Screen
+import org.krunk.browser.ui.newtab.NewTabScreen
+import org.krunk.browser.ui.tabs.RestoreTabsPrompt
 import org.krunk.ffi.ToolbarPosition
 import org.mozilla.geckoview.GeckoView
 
@@ -56,9 +58,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
         if (settings.toolbarPosition == ToolbarPosition.TOP) Toolbar(vm)
         Box(Modifier.fillMaxWidth().weight(1f)) {
             if (tab?.isNewTab == true || session == null) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("New tab", style = MaterialTheme.typography.headlineSmall)
-                }
+                NewTabScreen(vm, Modifier.fillMaxSize())
             } else {
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
@@ -73,6 +73,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
         }
         if (settings.toolbarPosition == ToolbarPosition.BOTTOM) Toolbar(vm)
     }
+    RestoreTabsPrompt(vm)
 }
 
 @Composable
@@ -101,10 +102,14 @@ private fun Toolbar(vm: BrowserViewModel) {
                 Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Forward")
             }
             IconButton(onClick = { vm.tabs.reload() }) { Icon(Icons.Filled.Refresh, contentDescription = "Reload") }
-            IconButton(onClick = { vm.goTo(vm.settingsRepo.current.homepage) }) { Icon(Icons.Filled.Home, contentDescription = "Home") }
+            IconButton(onClick = {
+                vm.goTo(vm.settingsRepo.current.homepage)
+            }) { Icon(Icons.Filled.Home, contentDescription = "Home") }
             Box(Modifier.weight(1f))
             IconButton(onClick = { vm.push(Screen.TabSwitcher) }) { Text("${tabs.size}") }
-            IconButton(onClick = { vm.push(Screen.Settings) }) { Icon(Icons.Filled.MoreVert, contentDescription = "Menu") }
+            IconButton(onClick = {
+                vm.push(Screen.Settings)
+            }) { Icon(Icons.Filled.MoreVert, contentDescription = "Menu") }
         }
     }
 }

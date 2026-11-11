@@ -1,10 +1,10 @@
 package org.krunk.browser.core
 
 import android.content.Context
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.krunk.ffi.KrunkStore
-import java.io.File
 
 /**
  * The shared Rust core as the app sees it: one [KrunkStore] on `filesDir/krunk/browser.db`

@@ -1,11 +1,10 @@
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import javax.inject.Inject
 import org.gradle.process.ExecOperations
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
-    alias(libs.plugins.ktlint)
 }
 
 // The Rust side: ../scripts/build-rust.sh builds libkrunk_ffi.so for both ABIs with cargo-ndk and
@@ -60,7 +59,7 @@ abstract class CargoBuildTask : DefaultTask() {
 }
 
 // The ten built-in new-tab wallpapers come from the desktop UI files (not duplicated in git).
-val copyWallpapers by tasks.registering(Copy::class) {
+val copyWallpapers = tasks.register<Copy>("copyWallpapers") {
     group = "build"
     description = "Copies ui/shared/wallpapers into the app assets"
     from(wallpapersSrc) { include("*.webp", "wallpapers.json") }
@@ -177,12 +176,25 @@ kotlin {
     }
 }
 
-ktlint {
-    version.set(libs.versions.ktlintCli.get())
-    android.set(true)
-    filter {
-        exclude { it.file.path.contains("/build/generated/") }
-    }
+// ktlint (pinned CLI, Android style from .editorconfig): ./gradlew ktlintCheck / ktlintFormat.
+// The Gradle plugin does not see AGP 9's built-in Kotlin source sets, so the CLI runs directly.
+val ktlint: Configuration = configurations.create("ktlint")
+val ktlintPaths = listOf("src/**/*.kt", "*.kts", "!build/**")
+
+tasks.register<JavaExec>("ktlintCheck") {
+    group = "verification"
+    description = "Checks Kotlin style with ktlint"
+    classpath = ktlint
+    mainClass.set("com.pinterest.ktlint.Main")
+    args = listOf("--relative") + ktlintPaths
+}
+
+tasks.register<JavaExec>("ktlintFormat") {
+    group = "formatting"
+    description = "Fixes Kotlin style with ktlint"
+    classpath = ktlint
+    mainClass.set("com.pinterest.ktlint.Main")
+    args = listOf("--relative", "-F") + ktlintPaths
 }
 
 tasks.named("preBuild") {
@@ -194,6 +206,9 @@ tasks.named("preBuild") {
 val noGms = providers.gradleProperty("krunk.noGms").map { it.toBoolean() }.getOrElse(false)
 
 dependencies {
+    ktlint(libs.ktlint.cli) {
+        attributes { attribute(Bundling.BUNDLING_ATTRIBUTE, objects.named(Bundling.EXTERNAL)) }
+    }
     implementation(libs.geckoview) {
         if (noGms) exclude(group = "com.google.android.gms")
     }

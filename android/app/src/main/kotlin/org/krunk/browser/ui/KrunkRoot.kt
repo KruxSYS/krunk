@@ -1,15 +1,18 @@
 package org.krunk.browser.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import org.krunk.browser.ui.bookmarks.BookmarksScreen
 import org.krunk.browser.ui.browser.BrowserScreen
+import org.krunk.browser.ui.history.HistoryScreen
+import org.krunk.browser.ui.settings.AboutScreen
+import org.krunk.browser.ui.settings.SettingsScreen
+import org.krunk.browser.ui.tabs.TabSwitcherScreen
 import org.krunk.browser.ui.theme.KrunkTheme
 
 /** The app: theme, the screen stack and back handling. */
@@ -25,13 +28,12 @@ fun KrunkRoot(vm: BrowserViewModel) {
             BackHandler(enabled = screens.size > 1) { vm.pop() }
             when (screen) {
                 Screen.Browser -> BrowserScreen(vm)
-                else -> PlaceholderScreen(screen)
+                Screen.TabSwitcher -> TabSwitcherScreen(vm)
+                Screen.Bookmarks -> BookmarksScreen(vm)
+                Screen.History -> HistoryScreen(vm)
+                Screen.Settings -> SettingsScreen(vm)
+                Screen.About -> AboutScreen(vm)
             }
         }
     }
-}
-
-@Composable
-private fun PlaceholderScreen(screen: Screen) {
-    Box(Modifier.fillMaxSize()) { Text("$screen (coming in this round)") }
 }

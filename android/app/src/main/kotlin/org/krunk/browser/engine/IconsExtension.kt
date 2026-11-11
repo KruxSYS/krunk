@@ -53,7 +53,11 @@ class IconsExtension(private val runtime: GeckoRuntime) {
         session.webExtensionController.setMessageDelegate(
             ext,
             object : WebExtension.MessageDelegate {
-                override fun onMessage(nativeApp: String, message: Any, sender: WebExtension.MessageSender): GeckoResult<Any>? {
+                override fun onMessage(
+                    nativeApp: String,
+                    message: Any,
+                    sender: WebExtension.MessageSender,
+                ): GeckoResult<Any>? {
                     val json = message as? JSONObject ?: return null
                     if (json.optString("type") != "icons") return null
                     val url = json.optString("url")

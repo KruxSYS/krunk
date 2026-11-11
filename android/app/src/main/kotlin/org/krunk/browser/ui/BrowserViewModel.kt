@@ -60,7 +60,9 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
 
     val settings: StateFlow<AndroidSettings> get() = settingsRepo.settings
 
-    val activeTab: StateFlow<TabUi?> = combine(tabs.tabs, tabs.activeId) { list, id -> list.firstOrNull { it.id == id } }
+    val activeTab: StateFlow<TabUi?> = combine(tabs.tabs, tabs.activeId) { list, id ->
+        list.firstOrNull { it.id == id }
+    }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private val _screens = MutableStateFlow<List<Screen>>(listOf(Screen.Browser))

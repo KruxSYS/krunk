@@ -45,11 +45,7 @@ import org.mozilla.geckoview.WebResponse
  * (`kv["session"]`), plus Android-only Gecko state per tab, the recently closed list and a
  * clean-exit flag. Lives for the process (sessions survive activity recreation).
  */
-class TabManager(
-    context: Context,
-    val core: KrunkCore,
-    val engine: GeckoEngine,
-) : SessionListener {
+class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine) : SessionListener {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val model = TabModel()
     private val sessions = HashMap<UInt, KrunkSession>()
@@ -199,7 +195,13 @@ class TabManager(
     // ----- tab operations -----
 
     /** Opens a tab; `url` empty = the new-tab page. Returns its id. */
-    fun openTab(url: String = "", private: Boolean = false, activate: Boolean = true, opener: UInt? = null, live: Boolean = false): UInt {
+    fun openTab(
+        url: String = "",
+        private: Boolean = false,
+        activate: Boolean = true,
+        opener: UInt? = null,
+        live: Boolean = false,
+    ): UInt {
         val target = if (url.isEmpty()) (core.settings.newTabTarget ?: "") else url
         val r = model.open(target, private, opener, activate, live, nowMs())
         apply(r.effects)
@@ -226,7 +228,10 @@ class TabManager(
         val ids = model.tabs().filter { private == null || it.private == private }.map { it.id }
         val now = nowMs()
         for (id in ids) apply(model.close(id, now))
-        ids.forEach { geckoStates.remove(it); thumbnails.remove(it) }
+        ids.forEach {
+            geckoStates.remove(it)
+            thumbnails.remove(it)
+        }
         refresh()
         scheduleSave()
     }
@@ -318,7 +323,9 @@ class TabManager(
         for (e in effects) {
             when (e) {
                 is TabEffect.CreateView -> createSession(e.id)
+
                 is TabEffect.DestroyView -> destroySession(e.id)
+
                 is TabEffect.Activate -> {
                     e.from?.let { sessions[it]?.setActive(false) }
                     sessions[e.to]?.setActive(true)
@@ -367,7 +374,13 @@ class TabManager(
     fun refresh() {
         val list = model.tabs().map { t ->
             val page = sessions[t.id]?.current ?: PageState(url = t.url, title = t.title)
-            val url = if (sessions[t.id] != null && page.url.isNotEmpty() && page.url != "about:blank") page.url else t.url
+            val url = if (sessions[t.id] != null && page.url.isNotEmpty() &&
+                page.url != "about:blank"
+            ) {
+                page.url
+            } else {
+                t.url
+            }
             val internal = internalPage(url)
             TabUi(
                 id = t.id,

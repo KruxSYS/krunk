@@ -38,10 +38,16 @@ class MainActivity : ComponentActivity() {
                 app.tabs.openTab(url, activate = true, live = true)
                 vm.showBrowser()
             }
+
             Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)?.let { text ->
-                app.tabs.openTab(inputToUrl(text.trim(), app.core.settings.searchTemplate), activate = true, live = true)
+                app.tabs.openTab(
+                    inputToUrl(text.trim(), app.core.settings.searchTemplate),
+                    activate = true,
+                    live = true,
+                )
                 vm.showBrowser()
             }
+
             Intent.ACTION_WEB_SEARCH -> intent.getStringExtra("query")?.let { q ->
                 app.tabs.openTab(inputToUrl(q, app.core.settings.searchTemplate), activate = true, live = true)
                 vm.showBrowser()

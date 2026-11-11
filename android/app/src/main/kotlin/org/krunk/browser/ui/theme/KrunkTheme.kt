@@ -115,11 +115,7 @@ fun isDarkTheme(mode: ThemeMode): Boolean = when (mode) {
 }
 
 @Composable
-fun KrunkTheme(
-    mode: ThemeMode = ThemeMode.SYSTEM,
-    privateMode: Boolean = false,
-    content: @Composable () -> Unit,
-) {
+fun KrunkTheme(mode: ThemeMode = ThemeMode.SYSTEM, privateMode: Boolean = false, content: @Composable () -> Unit) {
     val dark = isDarkTheme(mode)
     val scheme = when {
         privateMode -> PrivateScheme
