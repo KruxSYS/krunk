@@ -1217,8 +1217,8 @@ import/export in 12, HTTPS-only and Clear browsing data in 13.
     is unchanged; History shows nothing new.
 12. **Bookmarks:** ⋮ → Bookmark this page → star filled; ⋮ → Bookmarks lists it; edit, move,
     delete; Import/Export a Netscape HTML file.
-13. **Settings:** Theme → Light/Dark applies at once; Toolbar position → Top moves the toolbar;
-    HTTPS-only on → `http://neverssl.com/` shows the HTTPS-only error page; Clear browsing data.
+13. **Settings:** Theme → Light/Dark applies at once; Toolbar position shows Top (the default);
+    Bottom moves the toolbar and a restart keeps it; HTTPS-only on → `http://neverssl.com/` shows the HTTPS-only error page; Clear browsing data.
 14. **Full screen:** a page's full-screen button hides the system bars and the toolbar; Back exits.
 15. **Landscape** and **tablet layout** (`adb shell wm size 1600x2560`, `wm density 320`, then
     reset): the settings screen shows the section list next to the detail.

@@ -108,7 +108,8 @@ cmd_stop() {
     local pid
     pid=$(cat "$PIDFILE")
     if kill -0 "$pid" 2> /dev/null; then
-      adbx emu kill || kill "$pid" || true
+      # Only the process this script started: "adb emu kill" could reach the shared emulator.
+      kill "$pid" || true
       echo "stopped local emulator (pid $pid)"
     fi
     rm -f "$PIDFILE"
@@ -118,7 +119,7 @@ cmd_stop() {
 }
 
 cmd_shot() {
-  local name="${1:?usage: emu.sh shot <name>}"
+  local name="${1:?usage: emu.sh shot NAME}"
   mkdir -p "$SHOTS"
   adbx exec-out screencap -p > "$SHOTS/$name.png"
   echo "$SHOTS/$name.png"
@@ -132,7 +133,8 @@ cmd_install() {
 
 cmd_launch() {
   if [ -n "${1:-}" ]; then
-    adbx shell am start -W -a android.intent.action.VIEW -d "$1" "$APP_ID"
+    # Quoted for the device shell, so "&" and ";" in a URL stay part of it.
+    adbx shell "am start -W -a android.intent.action.VIEW -d $(printf %q "$1") $APP_ID"
   else
     adbx shell am start -W -n "$APP_ID/.MainActivity"
   fi

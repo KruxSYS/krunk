@@ -135,7 +135,8 @@ Known traps:
 - Tablet layouts can be checked on the same emulator with `adb shell wm size 1600x2560` and
   `wm density 320` (reset with `wm size reset` / `wm density reset`).
 - `android/scripts/flows.sh` drives the round-1 acceptance flows over adb (one screenshot per
-  flow); its tap coordinates assume 1080×2400 at 420 dpi with the toolbar at the bottom.
+  flow); its tap coordinates assume 1080×2400 at 420 dpi with the toolbar at the top (the default;
+  `TOOLBAR=bottom` for the other position).
 - The debug app's database can be inspected with
   `adb shell run-as org.krunk.browser sqlite3 files/krunk/browser.db "select count(*) from visits"`.
 

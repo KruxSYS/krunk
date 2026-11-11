@@ -44,8 +44,8 @@ import org.krunk.browser.ui.theme.LocalKrunkDark
 import org.krunk.ffi.ToolbarPosition
 
 /**
- * The browser: the page (GeckoView, or the native new-tab page), the toolbar at the bottom or
- * the top (hides while scrolling down, via the page's nested scroll), the address editor with
+ * The browser: the page (GeckoView, or the native new-tab page), the toolbar at the top (the
+ * default) or the bottom (hides while scrolling down, via the page's nested scroll), the address editor with
  * suggestions, the find bar, the link long-press sheet, downloads, full screen, back order.
  */
 @OptIn(ExperimentalMaterial3Api::class)

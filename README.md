@@ -1505,7 +1505,8 @@ a Chromium build: it lets Krunk ship uBlock Origin as a built-in extension in a 
 private tabs and site data under the app's control, and keeps the engine independent of Google's.
 Pages therefore render with Gecko on Android and with Chromium on Windows.
 
-**What it does (0.1.0).** Browsing with a bottom (or top) toolbar that hides while you scroll,
+**What it does.** Browsing with a toolbar at the top (or, in Settings › Toolbar position, at the
+bottom) that hides while you scroll,
 address bar with history, bookmark and search suggestions, automatic HTTPS, Krunk's error page,
 find in page, desktop-site switch, full screen, share, link long-press menu (new tab, private tab,
 copy, share, save image); tabs with a switcher grid, a separate private section, recently closed,

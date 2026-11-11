@@ -19,7 +19,7 @@ the same promises as the desktop version:
 | Versions | app `0.1.0` / `versionCode 1`, independent of the Windows version (core is 0.15.3) |
 | SDK levels | minSdk **26** (also GeckoView's minimum), targetSdk **35**, compileSdk **37.2** (required by GeckoView 160 and Compose 2026.09) |
 | ABIs | `arm64-v8a` (devices) and `x86_64` (emulator); per-ABI APKs plus a universal one. No `armeabi-v7a` (assumed). |
-| UI | Kotlin + Jetpack Compose, Material 3 with Krunk's own palette (no dynamic colour), bottom toolbar by default |
+| UI | Kotlin + Jetpack Compose, Material 3 with Krunk's own palette (no dynamic colour), toolbar at the top by default since 0.1.1 (bottom as an option; 0.1.0 defaulted to the bottom) |
 | Core reuse | `core` via UniFFI 0.32 (`ffi/` crate, proc-macros): storage (same SQLite schema), omnibox/urlclean, search suggestions, settings (same JSON, validated by the core), tabs model, memory policy, frecency, Netscape import/export, user agents, wallpapers |
 | Data layout | `filesDir/krunk/browser.db`; Gecko profile at GeckoView's default under `filesDir`; Android-only settings in `kv["android.settings"]`; session in `kv["session"]` (Windows shape) plus `android.gecko_states`, `android.closed_tabs`, `android.clean_exit`; backup excludes the Gecko profile and the vault |
 | HTTPS | Gecko's HTTPS-First is on by default (`http://` upgrades automatically); the shared `https_only` setting maps to `allowInsecureConnections = HTTPS_ONLY` |
@@ -95,7 +95,7 @@ as an AAR.
 
 ## 3. User interface
 - **Recommended: Kotlin + Jetpack Compose** for the browser chrome:
-  - toolbar at the bottom (one-handed use), tab switcher grid, menus, settings, history,
+  - toolbar at the top by default, at the bottom as an option (one-handed use), tab switcher grid, menus, settings, history,
     bookmarks and password screens;
   - Material 3, dark theme, edge-to-edge, predictive back.
 - **Alternative (rejected): reuse the HTML UI** (`ui/`) in a privileged view. It saves screens,

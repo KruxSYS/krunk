@@ -101,7 +101,7 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
 |---|---|---|---|---|
 | Light / dark / follow system (Krunk palette, no Material dynamic colour) | yes | done (v) | `preferredColorScheme` for content | 1 |
-| Bottom toolbar by default, top as an option | n/a | done (v) (Settings › Toolbar position) | — | 1 |
+| Toolbar at the top by default (since 0.1.1), bottom as an option | n/a | done (v) (Settings › Toolbar position; a position stored by 0.1.0 is kept) | — | 1 |
 | Toolbar auto-hide on scroll | n/a | done (v) | nested scroll / `ScrollDelegate` | 1 |
 | Edge-to-edge, gesture and 3-button navigation, predictive back | n/a | done | — | 1 |
 | Landscape, tablet layout (sw600dp) | n/a | done (v) (wider grid; two-pane settings) | — | 1 |

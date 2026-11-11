@@ -398,8 +398,8 @@ private fun AppearanceSection(s: AndroidSettings, update: ((AndroidSettings) -> 
         "toolbar" -> ChoiceDialog(
             title = stringResource(R.string.settings_toolbar_position),
             options = listOf(
-                ToolbarPosition.BOTTOM to stringResource(R.string.settings_toolbar_bottom),
                 ToolbarPosition.TOP to stringResource(R.string.settings_toolbar_top),
+                ToolbarPosition.BOTTOM to stringResource(R.string.settings_toolbar_bottom),
             ),
             selected = s.toolbarPosition,
             onPick = { m -> update { it.copy(toolbarPosition = m) } },

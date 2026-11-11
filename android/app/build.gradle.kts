@@ -126,8 +126,9 @@ android {
     // Release signing: a properties file outside the repository (storeFile, storePassword, keyAlias,
     // keyPassword), by default ~/.config/krunk/android-release.properties, or the path in
     // KRUNK_ANDROID_SIGNING. Without it the release APK is signed with the debug key (local builds).
-    val signingProps = (System.getenv("KRUNK_ANDROID_SIGNING") ?: "${System.getProperty("user.home")}/.config/krunk/android-release.properties")
-        .let { file(it) }
+    val signingPropsPath = System.getenv("KRUNK_ANDROID_SIGNING")
+        ?: "${System.getProperty("user.home")}/.config/krunk/android-release.properties"
+    val signingProps = file(signingPropsPath)
         .takeIf { it.isFile }
         ?.let { f -> Properties().apply { f.inputStream().use { load(it) } } }
     signingConfigs {

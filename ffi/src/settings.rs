@@ -44,14 +44,15 @@ pub enum NtpBackgroundMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, uniffi::Enum)]
 #[serde(rename_all = "camelCase")]
 pub enum ToolbarPosition {
-    #[default]
     Bottom,
+    /// The default since Android 0.1.1 (0.1.0 defaulted to `Bottom`).
+    #[default]
     Top,
 }
 
 /// Android-only fields (`kv["android.settings"]`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct Extras {
     toolbar_position: ToolbarPosition,
     /// Web text scale when `follow_system_font` is off (0.5-2.0).
@@ -65,11 +66,40 @@ struct Extras {
 impl Default for Extras {
     fn default() -> Self {
         Extras {
-            toolbar_position: ToolbarPosition::Bottom,
+            toolbar_position: ToolbarPosition::default(),
             text_scale: 1.0,
             follow_system_font: true,
             force_zoom: false,
         }
+    }
+}
+
+impl Extras {
+    /// Reads the stored row field by field: a missing or unreadable field takes its default and
+    /// never resets the others, and no row at all gives the defaults. A position stored by an
+    /// earlier version is kept as it is.
+    fn from_json(json: Option<&str>) -> Extras {
+        use serde_json::Value;
+        let d = Extras::default();
+        let Some(v) = json.and_then(|j| serde_json::from_str::<Value>(j).ok()) else { return d };
+        Extras {
+            toolbar_position: v
+                .get("toolbarPosition")
+                .and_then(|p| ToolbarPosition::deserialize(p).ok())
+                .unwrap_or(d.toolbar_position),
+            text_scale: v.get("textScale").and_then(Value::as_f64).map_or(d.text_scale, clean_text_scale),
+            follow_system_font: v.get("followSystemFont").and_then(Value::as_bool).unwrap_or(d.follow_system_font),
+            force_zoom: v.get("forceZoom").and_then(Value::as_bool).unwrap_or(d.force_zoom),
+        }
+    }
+}
+
+/// The web text scale within its range; a value that is not a number becomes 1.0.
+fn clean_text_scale(scale: f64) -> f64 {
+    if scale.is_finite() {
+        scale.clamp(0.5, 2.0)
+    } else {
+        1.0
     }
 }
 
@@ -120,7 +150,7 @@ pub struct AndroidSettings {
 
 impl AndroidSettings {
     pub(crate) fn from_core(s: &Settings, extras_json: Option<&str>) -> AndroidSettings {
-        let extras: Extras = extras_json.and_then(|j| serde_json::from_str(j).ok()).unwrap_or_default();
+        let extras = Extras::from_json(extras_json);
         AndroidSettings {
             search_engine: s.search_engine.into(),
             custom_search_url: s.custom_search_url.clone(),
@@ -222,7 +252,7 @@ impl AndroidSettings {
     pub(crate) fn extras_json(&self) -> String {
         let e = Extras {
             toolbar_position: self.toolbar_position,
-            text_scale: self.text_scale.clamp(0.5, 2.0),
+            text_scale: clean_text_scale(self.text_scale),
             follow_system_font: self.follow_system_font,
             force_zoom: self.force_zoom,
         };
@@ -230,7 +260,7 @@ impl AndroidSettings {
     }
 }
 
-/// The defaults (DuckDuckGo, restore session, system theme, bottom toolbar, ...).
+/// The defaults (DuckDuckGo, restore session, system theme, toolbar at the top, ...).
 #[uniffi::export]
 pub fn default_settings() -> AndroidSettings {
     AndroidSettings::from_core(&Settings::default(), None)
@@ -275,7 +305,8 @@ mod tests {
         assert!(!d.https_only);
         assert!(d.strip_tracking_params);
         assert_eq!(d.tab_sleep_minutes, 5);
-        assert_eq!(d.toolbar_position, ToolbarPosition::Bottom);
+        assert_eq!(d.toolbar_position, ToolbarPosition::Top);
+        assert_eq!(ToolbarPosition::default(), ToolbarPosition::Top);
         assert_eq!(settings_search_template(d.clone()), "https://duckduckgo.com/?q={searchTerms}");
         assert_eq!(settings_search_name(d.clone()), "DuckDuckGo");
         assert_eq!(settings_new_tab_target(d), None);
@@ -291,7 +322,7 @@ mod tests {
         let mut s = store.load_settings().unwrap();
         s.search_engine = SearchEngineId::Google;
         s.theme = ThemeMode::Dark;
-        s.toolbar_position = ToolbarPosition::Top;
+        s.toolbar_position = ToolbarPosition::Bottom;
         s.text_scale = 1.25;
         s.follow_system_font = false;
         store.save_settings(s.clone()).unwrap();
@@ -303,8 +334,81 @@ mod tests {
         assert!(!raw.tab_hover_preview);
         assert_eq!(raw.search_engine, cs::SearchEngine::Google);
         let extras = store.kv_get(EXTRAS_KEY.into()).unwrap().unwrap();
-        assert!(extras.contains("\"toolbarPosition\":\"top\""));
+        assert!(extras.contains("\"toolbarPosition\":\"bottom\""));
         assert_eq!(settings_search_name(back), "Google");
+    }
+
+    /// What 0.1.0 wrote on any settings save: all four fields, the toolbar at the bottom.
+    const EXTRAS_0_1_0: &str =
+        r#"{"toolbarPosition":"bottom","textScale":1.0,"followSystemFont":true,"forceZoom":false}"#;
+
+    #[test]
+    fn stored_bottom_toolbar_is_kept() {
+        let store = KrunkStore::in_memory().unwrap();
+        store.kv_set(EXTRAS_KEY.into(), EXTRAS_0_1_0.into()).unwrap();
+        let s = store.load_settings().unwrap();
+        assert_eq!(s.toolbar_position, ToolbarPosition::Bottom);
+        // Saving something else does not move it either.
+        let mut changed = s.clone();
+        changed.theme = ThemeMode::Dark;
+        store.save_settings(changed).unwrap();
+        assert_eq!(store.load_settings().unwrap().toolbar_position, ToolbarPosition::Bottom);
+    }
+
+    #[test]
+    fn no_stored_extras_means_top_toolbar() {
+        let store = KrunkStore::in_memory().unwrap();
+        assert_eq!(store.kv_get(EXTRAS_KEY.into()).unwrap(), None);
+        assert_eq!(store.load_settings().unwrap().toolbar_position, ToolbarPosition::Top);
+        // Shared settings stored (as by Windows or sync) but no Android row: still the default.
+        store.kv_set("settings".into(), serde_json::to_string(&Settings::default()).unwrap()).unwrap();
+        assert_eq!(store.load_settings().unwrap().toolbar_position, ToolbarPosition::Top);
+    }
+
+    #[test]
+    fn extras_without_the_position_key_mean_top_toolbar() {
+        let store = KrunkStore::in_memory().unwrap();
+        store.kv_set(EXTRAS_KEY.into(), r#"{"textScale":1.5,"followSystemFont":false}"#.into()).unwrap();
+        let s = store.load_settings().unwrap();
+        assert_eq!(s.toolbar_position, ToolbarPosition::Top);
+        assert_eq!(s.text_scale, 1.5);
+        assert!(!s.follow_system_font);
+    }
+
+    #[test]
+    fn a_bad_extras_field_keeps_the_others() {
+        let store = KrunkStore::in_memory().unwrap();
+        // Unknown position, a scale that is not a number, a flag of the wrong type.
+        let row = r#"{"toolbarPosition":"left","textScale":null,"followSystemFont":false,"forceZoom":"yes"}"#;
+        store.kv_set(EXTRAS_KEY.into(), row.into()).unwrap();
+        let s = store.load_settings().unwrap();
+        assert_eq!(s.toolbar_position, ToolbarPosition::Top);
+        assert_eq!(s.text_scale, 1.0);
+        assert!(!s.follow_system_font);
+        assert!(!s.force_zoom);
+        // A stored position survives a broken neighbour.
+        let row = r#"{"toolbarPosition":"bottom","textScale":"big"}"#;
+        store.kv_set(EXTRAS_KEY.into(), row.into()).unwrap();
+        assert_eq!(store.load_settings().unwrap().toolbar_position, ToolbarPosition::Bottom);
+        // Not JSON at all: the defaults.
+        store.kv_set(EXTRAS_KEY.into(), "{".into()).unwrap();
+        assert_eq!(store.load_settings().unwrap(), default_settings());
+    }
+
+    #[test]
+    fn text_scale_that_is_not_a_number_is_reset() {
+        let store = KrunkStore::in_memory().unwrap();
+        let mut s = default_settings();
+        s.text_scale = f64::NAN;
+        s.toolbar_position = ToolbarPosition::Bottom;
+        s.force_zoom = true;
+        store.save_settings(s).unwrap();
+        let back = store.load_settings().unwrap();
+        assert_eq!(back.text_scale, 1.0);
+        assert_eq!(back.toolbar_position, ToolbarPosition::Bottom);
+        assert!(back.force_zoom);
+        assert_eq!(clean_text_scale(9.0), 2.0);
+        assert_eq!(clean_text_scale(f64::INFINITY), 1.0);
     }
 
     #[test]
