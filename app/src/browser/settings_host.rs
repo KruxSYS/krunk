@@ -246,6 +246,10 @@ impl Browser {
         if old.macros != new.macros {
             self.macros_settings_changed();
         }
+        // 0.15.0: session logs on/off, retention.
+        if old.session_log != new.session_log {
+            self.sessionlog_settings_changed(old, new);
+        }
         if old.vpn != new.vpn {
             self.vpn_settings_changed(old.vpn.allow_local_network != new.vpn.allow_local_network);
         }
