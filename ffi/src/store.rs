@@ -17,13 +17,20 @@ pub struct KrunkStore {
 
 impl KrunkStore {
     fn lock(&self) -> MutexGuard<'_, Store> {
-        // A panic while holding the lock leaves the data consistent (every write is a
-        // transaction), so a poisoned lock is still usable.
+        // A panic while holding the lock cannot leave a half-written transaction behind (SQLite
+        // rolls it back), so a poisoned lock is still usable. Release builds abort on a panic.
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 
 /// One history row (a visit).
+/// One `kv` row for [`KrunkStore::kv_set_many`].
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct KvEntry {
+    pub key: String,
+    pub value: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct HistoryEntry {
     /// The visit id (for `delete_visits`).
@@ -207,6 +214,13 @@ impl KrunkStore {
         Ok(self.lock().kv_set(&key, &value)?)
     }
 
+    /// Writes several rows in one transaction (all or none): rows that belong together, like
+    /// the session and its per-tab states, can never be stored out of step.
+    pub fn kv_set_many(&self, entries: Vec<KvEntry>) -> Result<(), FfiError> {
+        let rows: Vec<(&str, &str)> = entries.iter().map(|e| (e.key.as_str(), e.value.as_str())).collect();
+        Ok(self.lock().kv_set_many(&rows)?)
+    }
+
     pub fn kv_delete(&self, key: String) -> Result<(), FfiError> {
         Ok(self.lock().kv_delete(&key)?)
     }
@@ -224,7 +238,7 @@ impl KrunkStore {
 
     /// Validates and saves. Desktop-only fields already stored keep their values.
     pub fn save_settings(&self, settings: AndroidSettings) -> Result<(), SettingsError> {
-        let store = self.lock();
+        let mut store = self.lock();
         let mut core = store.load_settings()?;
         settings.apply_to_core(&mut core);
         if let Err(errors) = core.validate() {
@@ -235,8 +249,11 @@ impl KrunkStore {
                     .collect(),
             });
         }
-        store.save_settings(&core)?;
-        store.kv_set(EXTRAS_KEY, &settings.extras_json())?;
+        // Both rows or neither: a failure between them must not leave half of a change stored
+        // while the caller is told that nothing was saved.
+        let shared = serde_json::to_string(&core).map_err(|e| SettingsError::Database { detail: e.to_string() })?;
+        let extras = settings.extras_json();
+        store.kv_set_many(&[("settings", shared.as_str()), (EXTRAS_KEY, extras.as_str())])?;
         Ok(())
     }
 
@@ -565,6 +582,27 @@ mod tests {
         assert_eq!(s.favicon("a.example".into()).unwrap().unwrap(), png.to_vec());
         assert_eq!(s.favicon("none.example".into()).unwrap(), None);
         s.vacuum().unwrap();
+    }
+
+    #[test]
+    fn kv_rows_written_together_land_together() {
+        let s = store();
+        s.kv_set("session".into(), "old".into()).unwrap();
+        let rows = vec![
+            KvEntry { key: "session".into(), value: "new".into() },
+            KvEntry { key: "android.gecko_states".into(), value: "[]".into() },
+            KvEntry { key: "android.closed_tabs".into(), value: "[]".into() },
+        ];
+        s.kv_set_many(rows).unwrap();
+        assert_eq!(s.kv_get("session".into()).unwrap().as_deref(), Some("new"));
+        assert_eq!(s.kv_get("android.gecko_states".into()).unwrap().as_deref(), Some("[]"));
+        assert_eq!(s.kv_get("android.closed_tabs".into()).unwrap().as_deref(), Some("[]"));
+        // The same key twice: the last value wins, as with single writes.
+        let twice =
+            vec![KvEntry { key: "k".into(), value: "1".into() }, KvEntry { key: "k".into(), value: "2".into() }];
+        s.kv_set_many(twice).unwrap();
+        assert_eq!(s.kv_get("k".into()).unwrap().as_deref(), Some("2"));
+        s.kv_set_many(vec![]).unwrap();
     }
 
     #[test]

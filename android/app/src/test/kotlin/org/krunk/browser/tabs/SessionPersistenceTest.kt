@@ -16,28 +16,114 @@ class SessionPersistenceTest {
     @Test
     fun startupPlanPromptsOnlyAfterACrashWithoutTheRestoreSetting() {
         val count = { _: String -> 2 }
-        assertEquals(StartupPlan.Fresh, SessionPersistence.plan(StartupMode.NEW_TAB, true, null, count))
-        assertEquals(StartupPlan.Fresh, SessionPersistence.plan(StartupMode.NEW_TAB, true, session, count))
-        assertEquals(StartupPlan.Fresh, SessionPersistence.plan(StartupMode.HOMEPAGE, true, session, count))
+        assertEquals(StartupPlan.Fresh, SessionPersistence.plan(StartupMode.NEW_TAB, true, null, countTabs = count))
+        assertEquals(StartupPlan.Fresh, SessionPersistence.plan(StartupMode.NEW_TAB, true, session, countTabs = count))
+        assertEquals(StartupPlan.Fresh, SessionPersistence.plan(StartupMode.HOMEPAGE, true, session, countTabs = count))
         assertEquals(
             StartupPlan.Prompt(session, 2),
-            SessionPersistence.plan(StartupMode.NEW_TAB, false, session, count),
+            SessionPersistence.plan(StartupMode.NEW_TAB, false, session, countTabs = count),
         )
         assertEquals(
             StartupPlan.Prompt(session, 2),
-            SessionPersistence.plan(StartupMode.HOMEPAGE, false, session, count),
+            SessionPersistence.plan(StartupMode.HOMEPAGE, false, session, countTabs = count),
         )
-        // Restore-session users get their tabs back silently, crash or not.
+        // Restore-session users get their tabs back silently, also after one crash.
         assertEquals(
             StartupPlan.Restore(session),
-            SessionPersistence.plan(StartupMode.RESTORE_SESSION, false, session, count),
+            SessionPersistence.plan(StartupMode.RESTORE_SESSION, false, session, countTabs = count),
         )
         assertEquals(
             StartupPlan.Restore(session),
-            SessionPersistence.plan(StartupMode.RESTORE_SESSION, true, session, count),
+            SessionPersistence.plan(StartupMode.RESTORE_SESSION, true, session, countTabs = count),
         )
         // An empty stored session is not worth a prompt.
         assertEquals(StartupPlan.Fresh, SessionPersistence.plan(StartupMode.NEW_TAB, false, "{}") { 0 })
+    }
+
+    @Test
+    fun aSecondCrashInARowOffersTheSessionInsteadOfRestoringIt() {
+        val count = { _: String -> 2 }
+        fun plan(unclean: Int, clean: Boolean = false) = SessionPersistence.plan(
+            StartupMode.RESTORE_SESSION,
+            clean,
+            session,
+            uncleanStarts = unclean,
+            countTabs = count,
+        )
+        assertEquals(StartupPlan.Restore(session), plan(1))
+        // A page that takes the app down on load must not be reloaded on every start.
+        assertEquals(StartupPlan.Prompt(session, 2), plan(2))
+        assertEquals(StartupPlan.Prompt(session, 2), plan(5))
+        // A clean exit in between ends the series.
+        assertEquals(StartupPlan.Restore(session), plan(0, clean = true))
+        // The counter: reset by a clean exit, else one more.
+        assertEquals(0, SessionPersistence.uncleanStarts(3, cleanExit = true))
+        assertEquals(1, SessionPersistence.uncleanStarts(0, cleanExit = false))
+        assertEquals(4, SessionPersistence.uncleanStarts(3, cleanExit = false))
+        assertEquals(1, SessionPersistence.uncleanStarts(-7, cleanExit = false))
+    }
+
+    @Test
+    fun aTaskBroughtBackByTheSystemKeepsItsTabsWhateverTheStartupSetting() {
+        val count = { _: String -> 2 }
+        for (startup in listOf(StartupMode.NEW_TAB, StartupMode.HOMEPAGE, StartupMode.RESTORE_SESSION)) {
+            // Killed in the background after a clean stop: the user never left.
+            assertEquals(
+                StartupPlan.Restore(session),
+                SessionPersistence.plan(startup, true, session, restoredBySystem = true, countTabs = count),
+            )
+        }
+        // A fresh launch with the same setting still starts fresh.
+        assertEquals(
+            StartupPlan.Fresh,
+            SessionPersistence.plan(StartupMode.NEW_TAB, true, session, restoredBySystem = false, countTabs = count),
+        )
+        // Nothing stored, nothing to bring back.
+        assertEquals(
+            StartupPlan.Fresh,
+            SessionPersistence.plan(StartupMode.NEW_TAB, true, null, restoredBySystem = true, countTabs = count),
+        )
+        // In a crash loop even a system restore asks first.
+        assertEquals(
+            StartupPlan.Prompt(session, 2),
+            SessionPersistence.plan(
+                StartupMode.NEW_TAB,
+                false,
+                session,
+                uncleanStarts = 2,
+                restoredBySystem = true,
+                countTabs = count,
+            ),
+        )
+    }
+
+    /** "Close all" on the real tab model: no unloaded tab may get a session on the way. */
+    @Test
+    fun closeAllClosesBackgroundTabsFirstSoNoneIsLoadedOnTheWay() {
+        val four = """{"tabs":[{"url":"https://a.example/","title":"A"},{"url":"https://b.example/","title":"B"},""" +
+            """{"url":"https://c.example/","title":"C"},{"url":"https://d.example/","title":"D"}],"active":1}"""
+
+        fun closeAll(order: (List<UInt>, UInt?) -> List<UInt>): List<UInt> {
+            val m = TabModel()
+            m.restoreSessionJson(four, 1)
+            val before = m.tabs().map { it.id }
+            val loaded = ArrayList<UInt>()
+            for (id in order(before, m.activeId())) {
+                for (e in m.close(id, 2)) if (e is TabEffect.CreateView && e.id in before) loaded += e.id
+            }
+            // What is left is the fresh new-tab page the core opens after the last close.
+            assertEquals(1, m.tabs().size)
+            assertEquals("newtab", internalPage(m.tabs()[0].url))
+            m.destroy()
+            return loaded
+        }
+        assertEquals(emptyList<UInt>(), closeAll(SessionPersistence::closeOrder))
+        // In strip order (what 0.1.0 did) the unloaded neighbours are loaded one after the other.
+        assertTrue(closeAll { ids, _ -> ids }.isNotEmpty())
+
+        assertEquals(listOf(1u, 3u, 2u), SessionPersistence.closeOrder(listOf(1u, 2u, 3u), 2u))
+        assertEquals(listOf(1u, 2u), SessionPersistence.closeOrder(listOf(1u, 2u), null))
+        assertEquals(listOf(1u, 2u), SessionPersistence.closeOrder(listOf(1u, 2u), 9u))
     }
 
     @Test

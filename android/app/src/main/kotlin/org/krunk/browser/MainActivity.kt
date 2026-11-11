@@ -20,7 +20,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        app.tabs.start()
+        // Saved instance state means Android is bringing the task back (it killed the process in
+        // the background): the tabs return whatever the start-up setting is.
+        app.tabs.start(restoredBySystem = savedInstanceState != null)
         handleIntent(intent, fresh = savedInstanceState == null)
         setContent { KrunkRoot(vm) }
     }

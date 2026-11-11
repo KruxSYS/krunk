@@ -147,10 +147,14 @@ class KrunkSession(
 
     fun exitFullScreen() = gecko.exitFullScreen()
 
-    fun restoreState(serialized: String) {
-        runCatching { GeckoSession.SessionState.fromString(serialized) }
-            .onSuccess { st -> if (st != null) gecko.restoreState(st) }
+    /** Restores a saved state (the engine then loads its current entry). False when it is unusable. */
+    fun restoreState(serialized: String): Boolean {
+        if (serialized.isEmpty()) return false
+        val state = runCatching { GeckoSession.SessionState.fromString(serialized) }
             .onFailure { Log.w(KrunkApp.TAG, "could not restore session state", it) }
+            .getOrNull() ?: return false
+        gecko.restoreState(state)
+        return true
     }
 
     /**

@@ -36,6 +36,7 @@ import org.krunk.browser.engine.SessionListener
 import org.krunk.browser.engine.displayedUrl
 import org.krunk.browser.engine.modelUrlAfter
 import org.krunk.ffi.ClosedTab
+import org.krunk.ffi.KvEntry
 import org.krunk.ffi.StartupMode
 import org.krunk.ffi.TabEffect
 import org.krunk.ffi.TabModel
@@ -113,7 +114,11 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         private set
     private var saveJob: Job? = null
     private var pendingSaveDelay = Long.MAX_VALUE
-    private var pendingRestore: String? = null
+
+    /** The crashed session on offer ("Restore tabs?"), with its tabs' states as stored then. */
+    private var pendingRestore: PendingRestore? = null
+
+    private class PendingRestore(val sessionJson: String, val states: List<Pair<String, String>>)
 
     val activeTab: TabUi? get() = _activeId.value?.let { id -> _tabs.value.firstOrNull { it.id == id } }
 
@@ -185,37 +190,61 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
     // ----- startup and persistence -----
 
     /**
-     * Restores the stored session (startup setting `RestoreSession`, or always after a crash
-     * when the user accepts) or opens the first tab. Idempotent; runs on the caller's thread
-     * (four small kv reads) so the first tab exists before the first frame.
+     * Restores the stored session (startup setting `RestoreSession`, the system bringing the
+     * task back, or after a crash when the user accepts) or opens the first tab. Idempotent;
+     * runs on the caller's thread (a few small kv reads) so the first tab exists before the
+     * first frame. [restoredBySystem]: the activity was created with saved instance state.
+     * A store that fails here must not stop the app from starting: each read falls back.
      */
-    fun start() {
+    fun start(restoredBySystem: Boolean = false) {
         if (started) return
         started = true
         val settings = core.settings.current
-        val store = core.store
-        val cleanExit = store.kvGet(KV_CLEAN_EXIT) != "0"
-        val sessionJson = store.kvGet(KV_SESSION)
-        store.kvGet(KV_CLOSED)?.let { runCatching { model.restoreClosedTabsJson(it) } }
+        fun read(key: String): String? = runCatching { core.store.kvGet(key) }
+            .onFailure { Log.w(KrunkApp.TAG, "could not read $key", it) }
+            .getOrNull()
+        val cleanExit = read(KV_CLEAN_EXIT) != "0"
+        val unclean = SessionPersistence.uncleanStarts(read(KV_UNCLEAN_STARTS)?.toIntOrNull() ?: 0, cleanExit)
+        val sessionJson = read(KV_SESSION)
+        read(KV_CLOSED)?.let { runCatching { model.restoreClosedTabsJson(it) } }
         val now = nowMs()
         var restored = false
-        when (val plan = SessionPersistence.plan(settings.startup, cleanExit, sessionJson, ::countRestorable)) {
+        val plan = SessionPersistence.plan(
+            settings.startup,
+            cleanExit,
+            sessionJson,
+            uncleanStarts = unclean,
+            restoredBySystem = restoredBySystem,
+            countTabs = ::countRestorable,
+        )
+        when (plan) {
             StartupPlan.Fresh -> Unit
 
-            is StartupPlan.Restore -> restored = restore(plan.sessionJson, now)
+            is StartupPlan.Restore -> restored = restore(plan.sessionJson, now, null)
 
             is StartupPlan.Prompt -> {
-                Log.i(KrunkApp.TAG, "previous run did not exit cleanly: offering ${plan.tabCount} tabs")
-                pendingRestore = plan.sessionJson
+                Log.i(
+                    KrunkApp.TAG,
+                    "previous run did not exit cleanly ($unclean in a row): offering ${plan.tabCount} tabs",
+                )
+                // The offer keeps the stored session and its states as they are now: while it is
+                // open nothing overwrites them (see saveNow and markCleanExit).
+                val states = read(KV_GECKO_STATES)?.let(::decodeStates) ?: emptyList()
+                pendingRestore = PendingRestore(plan.sessionJson, states)
                 _restorePrompt.value = RestorePromptState(plan.tabCount)
-                _events.tryEmit(TabEvent.RestorePrompt(plan.tabCount))
             }
         }
         if (!restored && model.count() == 0u) {
             val url = startUrl(settings.startup)
             apply(model.open(url, false, null, true, true, now).effects)
         }
-        store.kvSet(KV_CLEAN_EXIT, "0")
+        scope.launch(persist) {
+            runCatching {
+                core.store.kvSetMany(
+                    listOf(KvEntry(KV_CLEAN_EXIT, "0"), KvEntry(KV_UNCLEAN_STARTS, unclean.toString())),
+                )
+            }
+        }
         refresh()
         startMemoryPolicy()
     }
@@ -225,7 +254,8 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         val probe = TabModel()
         return try {
             probe.restoreSessionJson(json, 0)
-            probe.tabs().count { !it.private }
+            // The core adds a new-tab page when nothing could be restored: that is not a tab to offer.
+            probe.tabs().count { !it.private && internalPage(it.url) != "newtab" }
         } catch (e: Exception) {
             0
         } finally {
@@ -235,14 +265,17 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
 
     /** The user chose "Restore" on the crash prompt. */
     fun restorePending(): Boolean {
-        val json = pendingRestore ?: return false
+        val offer = pendingRestore ?: return false
         pendingRestore = null
         _restorePrompt.value = null
         val now = nowMs()
         val onlyNewTab = _tabs.value.size == 1 && _tabs.value[0].isNewTab
         val old = if (onlyNewTab) _tabs.value[0].id else null
-        val ok = restore(json, now)
-        if (ok && old != null) apply(model.close(old, now))
+        val ok = restore(offer.sessionJson, now, offer.states)
+        if (ok && old != null) {
+            apply(model.close(old, now))
+            forget(old)
+        }
         refresh()
         scheduleSave()
         return ok
@@ -260,13 +293,16 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         else -> core.settings.newTabTarget ?: ""
     }
 
-    private fun restore(json: String, now: Long): Boolean {
+    /** [states]: the tabs' saved states when already read (a pending offer), else read from the store. */
+    private fun restore(json: String, now: Long, states: List<Pair<String, String>>?): Boolean {
         val before = model.tabs().map { it.id }.toSet()
         val effects = runCatching { model.restoreSessionJson(json, now) }
             .onFailure { Log.w(KrunkApp.TAG, "session restore failed", it) }
             .getOrNull() ?: return false
         val restoredTabs = model.tabs().filter { it.id !in before && !it.private }.map { it.id to it.url }
-        val saved = core.store.kvGet(KV_GECKO_STATES)?.let(::decodeStates) ?: emptyList()
+        val saved = states
+            ?: runCatching { core.store.kvGet(KV_GECKO_STATES) }.getOrNull()?.let(::decodeStates)
+            ?: emptyList()
         geckoStates.putAll(SessionPersistence.assignStates(restoredTabs, saved))
         apply(effects)
         return true
@@ -302,26 +338,40 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
     }
 
     fun saveNow() {
+        // An open "Restore tabs?" offer owns the stored session: saving now would replace the
+        // crashed session with the fresh one before the user has answered.
+        if (pendingRestore != null) return
         val session = model.sessionJson()
         val closed = model.closedTabsJson()
-        val states = JSONArray()
-        for (t in model.tabs()) {
-            if (t.private) continue
-            val st = sessions[t.id]?.current?.sessionState ?: geckoStates[t.id] ?: ""
-            states.put(JSONObject().put("url", t.url).put("state", st))
+        // Only references are collected here; the (possibly large) JSON is built on the writer.
+        val states = model.tabs().filter { !it.private }.map { t ->
+            t.url to (sessions[t.id]?.current?.sessionState ?: geckoStates[t.id] ?: "")
         }
-        val statesJson = states.toString()
         scope.launch(persist) {
             runCatching {
-                core.store.kvSet(KV_SESSION, session)
-                core.store.kvSet(KV_CLOSED, closed)
-                core.store.kvSet(KV_GECKO_STATES, statesJson)
+                // One transaction: the session and its states can never be stored out of step.
+                core.store.kvSetMany(
+                    listOf(
+                        KvEntry(KV_SESSION, session),
+                        KvEntry(KV_CLOSED, closed),
+                        KvEntry(KV_GECKO_STATES, encodeStates(states)),
+                    ),
+                )
             }.onFailure { Log.w(KrunkApp.TAG, "session save failed", it) }
         }
     }
 
+    private fun encodeStates(states: List<Pair<String, String>>): String {
+        val arr = JSONArray()
+        for ((url, state) in states) arr.put(JSONObject().put("url", url).put("state", state))
+        return arr.toString()
+    }
+
     /** The app is going to the background or exiting normally. */
     fun markCleanExit() {
+        // With an offer open this run has not taken over the stored session: the next start must
+        // offer it again, so the exit is not recorded as clean.
+        if (pendingRestore != null) return
         saveJob?.cancel()
         pendingSaveDelay = Long.MAX_VALUE
         saveNow()
@@ -438,7 +488,10 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
 
     /** Closes every tab, or only the normal/private ones. */
     fun closeAll(private: Boolean? = null) {
-        val ids = model.tabs().filter { private == null || it.private == private }.map { it.id }
+        val ids = SessionPersistence.closeOrder(
+            model.tabs().filter { private == null || it.private == private }.map { it.id },
+            model.activeId(),
+        )
         val now = nowMs()
         for (id in ids) {
             apply(model.close(id, now))
@@ -617,7 +670,10 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         val state = geckoStates.remove(id)
         val origin = loadSources.remove(id)
         if (!restore) return s
-        state?.let { s.restoreState(it) }
+        // A saved state brings the page back by itself (address, back/forward list, scroll
+        // position, form data). Loading the address as well would be a second, new navigation
+        // on top of it: a duplicate history entry and the restored position lost.
+        if (state != null && s.restoreState(state)) return s
         if (internalPage(info.url) == null) {
             s.load(info.url, origin?.source ?: LoadSource.USER, origin?.opener?.let { sessions[it]?.gecko })
         }
@@ -789,6 +845,7 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         const val KV_CLOSED = "android.closed_tabs"
         const val KV_GECKO_STATES = "android.gecko_states"
         const val KV_CLEAN_EXIT = "android.clean_exit"
+        const val KV_UNCLEAN_STARTS = "android.unclean_starts"
 
         const val THUMBNAIL_CAPACITY = 12
         const val THUMBNAIL_SCALE = 3

@@ -19,14 +19,30 @@ object SessionPersistence {
     /**
      * `cleanExit` is the stored clean-exit flag (absent = clean, first run); `countTabs` tells how
      * many tabs a session JSON would restore (0 = nothing worth offering).
+     *
+     * `uncleanStarts` counts the starts in a row whose previous run did not exit cleanly
+     * ([uncleanStarts]): from the second one the session is offered instead of restored, so a
+     * page that takes the app down on load cannot do it on every start.
+     *
+     * `restoredBySystem` says Android is bringing the task back after it killed the process in
+     * the background (saved instance state): the user never left, so the tabs come back whatever
+     * the start-up setting says.
      */
-    fun plan(startup: StartupMode, cleanExit: Boolean, sessionJson: String?, countTabs: (String) -> Int): StartupPlan {
+    fun plan(
+        startup: StartupMode,
+        cleanExit: Boolean,
+        sessionJson: String?,
+        uncleanStarts: Int = if (cleanExit) 0 else 1,
+        restoredBySystem: Boolean = false,
+        countTabs: (String) -> Int,
+    ): StartupPlan {
         if (sessionJson == null) return StartupPlan.Fresh
-        val wantsRestore = startup == StartupMode.RESTORE_SESSION
+        val wantsRestore = startup == StartupMode.RESTORE_SESSION || restoredBySystem
+        val crashLoop = !cleanExit && uncleanStarts >= 2
         return when {
-            wantsRestore -> StartupPlan.Restore(sessionJson)
+            wantsRestore && !crashLoop -> StartupPlan.Restore(sessionJson)
 
-            cleanExit -> StartupPlan.Fresh
+            cleanExit && !wantsRestore -> StartupPlan.Fresh
 
             else -> {
                 val n = countTabs(sessionJson)
@@ -34,6 +50,17 @@ object SessionPersistence {
             }
         }
     }
+
+    /** The new value of the unclean-start counter at start-up: reset by a clean exit. */
+    fun uncleanStarts(previous: Int, cleanExit: Boolean): Int = if (cleanExit) 0 else previous.coerceAtLeast(0) + 1
+
+    /**
+     * The order in which "close all" closes [ids]: background tabs first, the active tab last.
+     * Closing the active tab activates a neighbour, and an unloaded neighbour would get a
+     * session and start loading its page only to be closed a moment later.
+     */
+    fun closeOrder(ids: List<UInt>, active: UInt?): List<UInt> =
+        ids.filter { it != active } + ids.filter { it == active }
 
     /**
      * Pairs saved Gecko states with the restored tabs. States are saved as `(url, state)` in tab

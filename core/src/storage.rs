@@ -367,6 +367,19 @@ impl Store {
         Ok(())
     }
 
+    /// Writes several rows in one transaction: all of them or none. For rows that only make
+    /// sense together (Krunk for Android's session with its per-tab states, 0.1.1).
+    pub fn kv_set_many(&mut self, entries: &[(&str, &str)]) -> DbResult<()> {
+        let tx = self.conn.transaction()?;
+        for (key, value) in entries {
+            tx.execute(
+                "INSERT INTO kv(key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![key, value],
+            )?;
+        }
+        tx.commit()
+    }
+
     pub fn kv_delete(&self, key: &str) -> DbResult<()> {
         self.conn.execute("DELETE FROM kv WHERE key = ?1", [key])?;
         Ok(())
