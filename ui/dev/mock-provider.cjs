@@ -19,6 +19,17 @@
 //   "read this settings page" get_html and screenshot on a built-in page (refused)
 //   "read the password"       eval_js that fills (if empty) and reads the password field
 //   "loop"                    get_page_context forever (the step limit's question)
+//   0.15.0, the output limit (finish_reason "length"):
+//   "hit the output limit"    no text, finish_reason length, every time: Krunk retries once with
+//                             a higher cap, then shows the error naming the cap
+//   "output limit once"       the same once; the retry gets a text answer
+//   "long answer"             text cut by the limit; the continuation request ([Krunk] note) gets
+//                             the rest, shown as one answer
+//   "cut off script"          a save_userscript call cut mid-arguments + length (twice: the first
+//                             time Krunk retries, the second it hands the call back), then the
+//                             script in three parts (more=true, draft, last part), then finish
+//   "script in parts"         the three-part save alone, then finish
+//   "background from URL"     set_new_tab_background_url with the https address after "from"
 //   anything else             a short text answer
 // Every request is appended to the log (JSON lines: time, body), and so is every connection
 // that closes before its answer ended: the VM smoke test checks both (Stop closes the
@@ -37,11 +48,18 @@ function log(entry) {
 }
 
 // ---- reading the conversation ----
+// Krunk's own notes ("[Krunk] Your answer was cut off…", 0.15.0) are not the user's words.
+const KRUNK_NOTE = /^\[Krunk\]/;
 function lastUser(messages) {
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === 'user') return { index: i, text: textOf(messages[i].content) };
+    if (messages[i].role === 'user' && !KRUNK_NOTE.test(textOf(messages[i].content))) return { index: i, text: textOf(messages[i].content) };
   }
   return { index: -1, text: '' };
+}
+// The last message is Krunk's request to continue a cut-off answer.
+function isContinuation(messages) {
+  const m = messages[messages.length - 1];
+  return !!m && m.role === 'user' && KRUNK_NOTE.test(textOf(m.content));
 }
 function textOf(content) {
   if (typeof content === 'string') return content;
@@ -103,7 +121,55 @@ const TOOLS_TEST = [
   (m, r) => finish('Tools test done:\n\n' + r.map((x, i) => (i + 1) + '. ' + String(x).replace(/\s+/g, ' ').slice(0, 90)).join('\n')),
 ];
 
+// ---- 0.15.0: long scripts and the output limit ----
+const PARTS = [
+  [
+    '// ==UserScript==',
+    '// @name        Krunk chunked save',
+    '// @namespace   krunk-mock',
+    '// @version     1.0',
+    '// @match       *://example.com/*',
+    '// @grant       none',
+    '// ==/UserScript==',
+    '',
+  ].join('\n'),
+  "const note = document.createElement('div');\nnote.id = 'krunk-chunked';\n",
+  "note.textContent = 'Saved in three parts';\nnote.style.cssText = 'position:fixed;top:8px;right:8px;padding:6px 10px;background:#16a34a;color:#fff;z-index:99999';\ndocument.body.appendChild(note);\n",
+];
+const draftOf = (text) => (parse(text) || {}).draft || '';
+// The three-part save; `at` is the number of tool results before it.
+function partSteps(at) {
+  return [
+    () => call('save_userscript', { source: PARTS[0], more: true }),
+    (m, r) => call('save_userscript', { source: PARTS[1], draft: draftOf(r[at]), more: true }),
+    (m, r) => call('save_userscript', { source: PARTS[2], draft: draftOf(r[at]) }),
+    (m, r) => finish('Saved the userscript in three parts. Last result: ' + (r[at + 2] || '').slice(0, 200)),
+  ];
+}
+const cut = (name, a) => ({ cut: { name, args: a } });
+
 const SCENARIOS = [
+  { match: /hit the output limit/i, steps: [() => ({ length: true })] },
+  {
+    // A text answer once (keyed by the conversation's length: the retry is the same request).
+    match: /output limit once/i,
+    steps: [(m, r, body) => (onceFirst(body) ? { length: true } : { text: 'Answered after Krunk raised the output limit.' })],
+  },
+  {
+    match: /long answer/i,
+    steps: [(m, r, body) => (isContinuation(body.messages)
+      ? { text: 'and this is the rest of it, after the continuation.' }
+      : { text: 'This is the first part of a long answer, cut off by the output limit, ', length: true })],
+  },
+  { match: /cut off script/i, steps: [() => cut('save_userscript', { source: PARTS.join('') })].concat(partSteps(1)) },
+  { match: /script in parts/i, steps: partSteps(0) },
+  {
+    match: /background from (?:url\s+)?(https?:\/\/\S+)/i,
+    steps: [
+      (m) => call('set_new_tab_background_url', { url: m[1].replace(/[.,;]+$/, '') }),
+      (m, r) => finish('New tab background: ' + (r[0] || '').slice(0, 200)),
+    ],
+  },
   { match: /run the tools test/i, steps: TOOLS_TEST },
   // ---- 0.12.0 M5 ----
   {
@@ -233,6 +299,14 @@ function chunk(model, delta, finishReason) {
   return { id: 'mock', object: 'chat.completion.chunk', created: 0, model, choices: [{ index: 0, delta, finish_reason: finishReason || null }] };
 }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+// "output limit once": true the first time a conversation of this length is seen.
+const seenOnce = new Set();
+function onceFirst(body) {
+  const key = JSON.stringify((body.messages || []).map((m) => textOf(m.content)).slice(-1)) + '|' + (body.messages || []).length;
+  if (seenOnce.has(key)) return false;
+  seenOnce.add(key);
+  return true;
+}
 
 async function answer(req, res, body) {
   const model = body.model || 'mock';
@@ -254,15 +328,26 @@ async function answer(req, res, body) {
   }
   const sc = SCENARIOS.find((s) => s.match.test(words));
   const step = sc ? sc.steps[Math.min(results.length, sc.steps.length - 1)] : null;
-  const out = step ? step(words.match(sc.match), results) : { text: 'Mock provider: I got "' + words.slice(0, 100) + '".' };
+  const out = step ? step(words.match(sc.match), results, body) : { text: 'Mock provider: I got "' + words.slice(0, 100) + '".' };
   await wait(150);
-  if (out.text) {
-    for (const piece of out.text.match(/.{1,12}/gs) || []) {
+  if (out.cut) {
+    // A tool call whose arguments stop halfway, then the output limit (0.15.0).
+    const a = JSON.stringify(out.cut.args);
+    const id = 'call_' + Math.random().toString(36).slice(2, 10);
+    sse(res, chunk(model, { tool_calls: [{ index: 0, id, type: 'function', function: { name: out.cut.name, arguments: '' } }] }));
+    for (const piece of a.slice(0, Math.floor(a.length / 2)).match(/.{1,16}/gs) || []) {
+      if (closed) return;
+      sse(res, chunk(model, { tool_calls: [{ index: 0, function: { arguments: piece } }] }));
+      await wait(10);
+    }
+    sse(res, chunk(model, {}, 'length'));
+  } else if (out.text || out.length) {
+    for (const piece of (out.text || '').match(/.{1,12}/gs) || []) {
       if (closed) return;
       sse(res, chunk(model, { content: piece }));
       await wait(30);
     }
-    sse(res, chunk(model, {}, 'stop'));
+    sse(res, chunk(model, {}, out.length ? 'length' : 'stop'));
   } else {
     const a = JSON.stringify(out.tool.args);
     const id = 'call_' + Math.random().toString(36).slice(2, 10);

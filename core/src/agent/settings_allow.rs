@@ -11,8 +11,8 @@
 
 use crate::protection::Level;
 use crate::settings::{
-    is_hex_color, BookmarksBar, Density, DevToolsDock, LinkTabs, NewTabPage, NewTabPosition, NtpBackground,
-    SearchEngine, Settings, Startup, Theme, TileSource,
+    is_hex_color, ActiveHighlight, BarStyle, BookmarksBar, Density, DevToolsDock, LinkTabs, NewTabPage, NewTabPosition,
+    NtpBackground, SearchEngine, Settings, Startup, TabShape, Theme, TileSource, MAX_DOWNLOAD_AUTO_CLEAR_DAYS,
 };
 use serde::Serialize;
 use serde_json::{json, Map, Value};
@@ -91,6 +91,25 @@ fn wallpapers() -> Vec<Value> {
 fn docks() -> Vec<Value> {
     names(&[DevToolsDock::Right, DevToolsDock::Bottom])
 }
+// 0.15.0: tab and toolbar style.
+fn tab_styles() -> Vec<Value> {
+    names(&[BarStyle::Solid, BarStyle::Gradient, BarStyle::Ombre, BarStyle::Glass])
+}
+/// Ombre is for the tab strip only.
+fn toolbar_styles() -> Vec<Value> {
+    names(&[BarStyle::Solid, BarStyle::Gradient, BarStyle::Glass])
+}
+fn tab_shapes() -> Vec<Value> {
+    names(&[TabShape::Rounded, TabShape::Square, TabShape::Pill])
+}
+fn highlights() -> Vec<Value> {
+    names(&[ActiveHighlight::Fill, ActiveHighlight::Underline, ActiveHighlight::Outline])
+}
+fn presets() -> Vec<Value> {
+    let mut v = vec![Value::String(String::new())];
+    v.extend(crate::style::PRESETS.iter().map(|p| Value::String(p.id.into())));
+    v
+}
 
 static KEYS: &[Key] = &[
     Key { path: "theme", kind: Kind::Choice(themes), note: "" },
@@ -104,6 +123,26 @@ static KEYS: &[Key] = &[
     Key { path: "appearance.showDownloadsButton", kind: Kind::Bool, note: "" },
     Key { path: "appearance.showZoomChip", kind: Kind::Bool, note: "" },
     Key { path: "appearance.showExtensionsButton", kind: Kind::Bool, note: "" },
+    // 0.15.0
+    Key {
+        path: "appearance.preset",
+        kind: Kind::Choice(presets),
+        note: "a ready-made style: sets the tab and toolbar style keys below; empty = your own",
+    },
+    Key {
+        path: "appearance.tabStyle",
+        kind: Kind::Choice(tab_styles),
+        note: "ombre spreads the gradient across the tabs",
+    },
+    Key { path: "appearance.toolbarStyle", kind: Kind::Choice(toolbar_styles), note: "" },
+    Key { path: "appearance.gradientFrom", kind: Kind::Color, note: "gradient start; empty = from the accent" },
+    Key { path: "appearance.gradientVia", kind: Kind::Color, note: "gradient middle; empty = two colours" },
+    Key { path: "appearance.gradientTo", kind: Kind::Color, note: "gradient end; empty = from the accent" },
+    Key { path: "appearance.gradientAngle", kind: Kind::Int(0, 360), note: "degrees" },
+    Key { path: "appearance.tabShape", kind: Kind::Choice(tab_shapes), note: "" },
+    Key { path: "appearance.tabRadius", kind: Kind::Int(0, 16), note: "px, for rounded tabs" },
+    Key { path: "appearance.activeHighlight", kind: Kind::Choice(highlights), note: "how the active tab stands out" },
+    Key { path: "appearance.accentGlow", kind: Kind::Bool, note: "a glow around the active tab" },
     Key { path: "defaultZoom", kind: Kind::Num(0.25, 5.0), note: "1 = 100 %" },
     Key { path: "startup", kind: Kind::Choice(startups), note: "what Krunk opens when it starts" },
     Key { path: "homepage", kind: Kind::Url, note: "an http or https address" },
@@ -113,9 +152,15 @@ static KEYS: &[Key] = &[
     Key { path: "linkTabs", kind: Kind::Choice(link_tabs), note: "whether a link opened in a new tab becomes active" },
     Key { path: "bookmarksBar", kind: Kind::Choice(bookmarks_bars), note: "" },
     Key { path: "searchEngine", kind: Kind::Choice(search_engines), note: "" },
+    Key {
+        path: "searchSuggestions",
+        kind: Kind::Bool,
+        note: "suggestions from the search engine while typing (0.15.0)",
+    },
     Key { path: "tabSleepMinutes", kind: Kind::Int(0, 1440), note: "0 = never" },
     Key { path: "tabDiscardEnabled", kind: Kind::Bool, note: "unload background tabs" },
     Key { path: "tabDiscardMinutes", kind: Kind::Int(1, 1440), note: "must be longer than tabSleepMinutes" },
+    Key { path: "tabHoverPreview", kind: Kind::Bool, note: "a preview card when the pointer rests on a tab (0.15.0)" },
     Key { path: "autoPip", kind: Kind::Bool, note: "picture-in-picture when leaving a tab that plays video" },
     Key { path: "adblockEnabled", kind: Kind::Bool, note: "" },
     Key { path: "sendDnt", kind: Kind::Bool, note: "Do Not Track header" },
@@ -123,6 +168,11 @@ static KEYS: &[Key] = &[
     Key { path: "protection.level", kind: Kind::Choice(protection_levels), note: "tracking protection" },
     Key { path: "pdfInBrowser", kind: Kind::Bool, note: "" },
     Key { path: "downloadConnections", kind: Kind::Int(1, 16), note: "connections per large download" },
+    Key {
+        path: "downloadAutoClearDays",
+        kind: Kind::Int(0, MAX_DOWNLOAD_AUTO_CLEAR_DAYS as i64),
+        note: "remove finished downloads from the list after this many days; 0 = never (0.15.0)",
+    },
     Key { path: "ntp.background", kind: Kind::Choice(ntp_backgrounds), note: "new tab page background" },
     Key { path: "ntp.backgroundColor", kind: Kind::Color, note: "" },
     Key { path: "ntp.imageDim", kind: Kind::Int(0, 80), note: "percent" },
@@ -264,6 +314,12 @@ pub fn set(s: &mut Settings, key_path: &str, value: Value) -> Result<Changed, St
     if k.path.starts_with("protection.") {
         new.sync_protection();
     }
+    // 0.15.0: a preset sets the style keys, as on the settings page.
+    if k.path == "appearance.preset" {
+        if let Some(p) = crate::style::preset(&new.appearance.preset) {
+            p.apply(&mut new.appearance);
+        }
+    }
     if let Err(errs) = new.validate() {
         let msg = errs.iter().map(|e| e.message.as_str()).collect::<Vec<_>>().join("; ");
         return Err(format!("the value is not valid: {msg}"));
@@ -321,6 +377,9 @@ mod tests {
         "filterlists",
         "customlists",
         "devtoolssize",
+        // 0.15.0: the session log (what the user did and when) is private, like history; the
+        // agent can't read it or turn it on.
+        "sessionlog",
     ];
 
     /// Lower-case words of a camelCase dotted path (`tabDiscardEnabled` → tab, discard, enabled).
@@ -353,6 +412,8 @@ mod tests {
         assert!(excluded("offerSaveCards") && excluded("devtoolsSizeRight") && excluded("ai.maxSteps"));
         assert!(excluded("vaultAutolockMinutes") && excluded("headers.acceptLanguage") && excluded("dns.mode"));
         assert!(!excluded("tabDiscardEnabled") && !excluded("theme") && !excluded("autoPip"));
+        assert!(excluded("sessionLog.enabled") && excluded("sessionLog.retentionDays"));
+        assert!(!excluded("searchSuggestions") && !excluded("appearance.accentGlow"));
     }
 
     #[test]
@@ -411,6 +472,9 @@ mod tests {
             "headers",
             "passgen",
             "permissions",
+            "sessionLog",
+            "sessionLog.enabled",
+            "sessionLog.retentionDays",
             "Theme",
             "theme ",
             "",
@@ -525,6 +589,28 @@ mod tests {
         set(&mut s, "ntp.columns", json!(8)).unwrap();
         assert_eq!(s.ntp.columns, 8);
         assert_eq!(s.proxy, "socks5://127.0.0.1:9050");
+    }
+
+    #[test]
+    fn style_keys_and_presets() {
+        let mut s = Settings::default();
+        set(&mut s, "appearance.preset", json!("sunset")).unwrap();
+        assert_eq!(s.appearance.preset, "sunset");
+        assert_eq!(s.appearance.tab_style, BarStyle::Ombre);
+        assert_eq!(s.appearance.gradient_from, "#f97316");
+        assert!(set(&mut s, "appearance.preset", json!("neon")).is_err());
+        assert!(set(&mut s, "appearance.toolbarStyle", json!("ombre")).is_err());
+        assert!(set(&mut s, "appearance.tabRadius", json!(17)).is_err());
+        assert!(set(&mut s, "appearance.gradientAngle", json!(361)).is_err());
+        assert!(set(&mut s, "downloadAutoClearDays", json!(3651)).is_err());
+        set(&mut s, "downloadAutoClearDays", json!(30)).unwrap();
+        set(&mut s, "searchSuggestions", json!(false)).unwrap();
+        set(&mut s, "tabHoverPreview", json!(false)).unwrap();
+        assert_eq!((s.download_auto_clear_days, s.search_suggestions, s.tab_hover_preview), (30, false, false));
+        let got = get_all(&s);
+        assert_eq!(got["appearance.toolbarStyle"]["values"], json!(["solid", "gradient", "glass"]));
+        assert_eq!(got["appearance.preset"]["values"][0], "");
+        assert!(got.get("sessionLog.enabled").is_none());
     }
 
     #[test]

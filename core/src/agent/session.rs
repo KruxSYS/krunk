@@ -22,7 +22,16 @@
 //! * only the last 2 images stay in the history sent to the provider; tool results older than
 //!   the last 8 are shortened;
 //! * every assistant tool call in the history gets exactly one tool result (missing ones are
-//!   filled with `{"cancelled":true}`), so the history is always valid for the providers.
+//!   filled with `{"cancelled":true}`), so the history is always valid for the providers;
+//! * 0.15.0, the output limit (`max-tokens` stop): an answer with neither text nor a tool call
+//!   is asked for once more with a higher cap ([`limits::raised_max_tokens`]), then fails with
+//!   an error that names the cap used. A tool call cut off mid-arguments is never run: the
+//!   request is retried once with a higher cap, then the model is told (as the call's result)
+//!   that it was cut off and nothing ran, at most [`MAX_CUT_CALLS`] times in a row. A text
+//!   answer cut off is continued once ([`CONTINUE_NOTE`]);
+//! * 0.15.0, long scripts: `save_userscript` / `save_macro` with `more: true` keep their source
+//!   in a draft of the conversation ([`super::drafts`]); the call with the draft id and without
+//!   `more` sends the whole script to the host, which checks it only then.
 //!
 //! The user message sent to the provider is the context block, a blank line, then
 //! `User message:` and the user's text on the next line (the mock provider looks for that marker).
@@ -30,10 +39,12 @@
 //! `AgentState.steps` and `AgentContinueAsk.steps` count the tool calls of the current task;
 //! [`StepView::n`] and [`Session::steps`] count those of the whole conversation.
 
+use super::drafts::Drafts;
+use super::provider::limits;
 use super::tools::{self, Group, Offer};
 use super::{
-    context, gate, AskAnswer, AskSpec, Category, CategorySet, ChatRequest, Message, Part, Role, RunState, StepStatus,
-    StepView, StopReason, StreamEvent, ToolCall, ToolOutcome,
+    context, gate, AskAnswer, AskSpec, Category, CategorySet, ChatRequest, Message, Part, Role, RunState, ScriptKind,
+    StepStatus, StepView, StopReason, StreamEvent, ToolCall, ToolOutcome,
 };
 use crate::protocol::Event;
 use serde_json::{json, Value};
@@ -53,6 +64,11 @@ const SHORTENED_TAIL: &str = "…[shortened]";
 const CANCELLED: &str = r#"{"cancelled":true}"#;
 const NOT_OFFERED: &str = "this tool is not available for this task";
 const DENIED: &str = "the user denied access";
+/// The user message that asks for the rest of a text answer cut off by the output limit.
+pub const CONTINUE_NOTE: &str =
+    "[Krunk] Your answer was cut off at the output limit. Continue exactly where it stopped, without repeating anything.";
+/// Answers in a row with a cut-off tool call that are handed back to the model.
+pub const MAX_CUT_CALLS: u32 = 2;
 
 /// How the session is set up (from settings and the chosen model).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,7 +83,11 @@ pub struct Config {
     pub system_extra: String,
     pub userscripts: bool,
     pub macros: bool,
+    /// The requests' output cap (0 = left out: the provider's default); see
+    /// [`limits::request_max_tokens`].
     pub max_tokens: u32,
+    /// 0.15.0: the model's known output limit (it bounds a retry's higher cap).
+    pub known_max_output: Option<u32>,
 }
 
 /// Something that happened.
@@ -163,6 +183,29 @@ pub struct Session {
     task_steps: u32,
     step_limit: u32,
     task_started: u64,
+    /// 0.15.0: the higher output cap of this task after a retry; whether the current answer
+    /// was already retried; cut-off tool calls handed back in a row; the text of a cut-off
+    /// answer being continued; drafts of long scripts.
+    raise: Option<u32>,
+    raised: bool,
+    cut_calls: u32,
+    carry: String,
+    drafts: Drafts,
+}
+
+/// The arguments are whole JSON (empty counts as `{}`).
+fn complete_json(arguments: &str) -> bool {
+    let t = arguments.trim();
+    t.is_empty() || serde_json::from_str::<Value>(t).is_ok()
+}
+
+/// "its output limit (32,000 tokens)", or the provider's default when no cap was sent.
+fn limit_phrase(max_tokens: u32) -> String {
+    if max_tokens == 0 {
+        "the provider's default output limit".into()
+    } else {
+        format!("its output limit ({} tokens)", limits::thousands(max_tokens))
+    }
 }
 
 fn emit(out: &mut Vec<Action>, ev: Event) {
@@ -211,6 +254,11 @@ impl Session {
             task_steps: 0,
             step_limit: 0,
             task_started: 0,
+            raise: None,
+            raised: false,
+            cut_calls: 0,
+            carry: String::new(),
+            drafts: Drafts::default(),
         }
     }
 
@@ -265,6 +313,7 @@ impl Session {
                 self.denied = CategorySet::EMPTY;
                 self.steps = 0;
                 self.task_steps = 0;
+                self.drafts.clear();
                 emit(&mut out, Event::AgentClear);
                 self.set_state(RunState::Idle, None, &mut out);
             }
@@ -316,6 +365,8 @@ impl Session {
         self.history.push(Message::user(body));
         self.pending.clear();
         self.task_steps = 0;
+        self.raise = None;
+        self.answered();
         self.step_limit = self.cfg.max_steps.max(1);
         self.task_started = now;
         emit(out, Event::AgentMessage { role: "user".into(), text: text.to_string() });
@@ -331,8 +382,41 @@ impl Session {
             system: context::system_prompt(&self.cfg.system_extra, self.cfg.vision),
             messages: request_messages(&self.history),
             tools: tools::specs(self.offer),
-            max_tokens: self.cfg.max_tokens,
+            max_tokens: self.max_tokens(),
         }));
+    }
+
+    /// The output cap of the next request.
+    fn max_tokens(&self) -> u32 {
+        self.raise.unwrap_or(self.cfg.max_tokens)
+    }
+
+    /// An answer was handled normally: the next cut-off one gets its retry again.
+    fn answered(&mut self) {
+        self.raised = false;
+        self.cut_calls = 0;
+        self.carry.clear();
+    }
+
+    /// `Raise Max output tokens for OpenRouter in Settings → AI.`
+    fn raise_hint(&self) -> String {
+        let name = if self.cfg.provider_name.trim().is_empty() { "this provider" } else { &self.cfg.provider_name };
+        format!("Raise Max output tokens for {name} in Settings → AI.")
+    }
+
+    /// Retries the request once with a higher output cap; false when that was done already
+    /// or the cap can't go higher.
+    fn retry_higher(&mut self, why: &str, out: &mut Vec<Action>) -> bool {
+        let used = self.max_tokens();
+        let next = if self.raised { None } else { limits::raised_max_tokens(used, self.cfg.known_max_output) };
+        let Some(next) = next else { return false };
+        self.raised = true;
+        self.raise = Some(next);
+        let text = format!("{why} Trying again with up to {} tokens.", limits::thousands(next));
+        emit(out, Event::AgentMessage { role: "notice".into(), text });
+        out.push(Action::Log(format!("agent output limit: retrying with {next}")));
+        self.send(out);
+        true
     }
 
     fn on_stream(&mut self, ev: StreamEvent, out: &mut Vec<Action>) {
@@ -375,6 +459,7 @@ impl Session {
         if let Some(e) = a.error {
             return self.fail(e, now, out);
         }
+        let cut = a.stop == Some(StopReason::MaxTokens);
         if !a.calls.is_empty() {
             let mut calls: Vec<ToolCall> = a.calls.into_values().collect();
             // Every call needs a unique id for its result.
@@ -384,22 +469,91 @@ impl Session {
                     calls[i].id = format!("krunk_{base}_{i}");
                 }
             }
+            if cut && calls.iter().any(|c| !complete_json(&c.arguments)) {
+                return self.on_cut_calls(a.text, calls, now, out);
+            }
+            self.answered();
             self.history.push(Message::assistant(a.text, calls.clone()));
             self.pending = calls.into();
             self.process(now, out);
         } else if !a.text.trim().is_empty() {
-            self.history.push(Message::assistant(a.text.clone(), Vec::new()));
-            self.done(Some(a.text), now, out);
-        } else if a.stop == Some(StopReason::MaxTokens) {
-            self.fail(
-                "The model reached its output limit before it answered. Try again, or choose a model with a larger limit."
-                    .into(),
-                now,
-                out,
-            );
+            if cut && self.carry.is_empty() {
+                // Cut off: the model goes on once; the panel keeps streaming into the same message.
+                self.history.push(Message::assistant(a.text.clone(), Vec::new()));
+                self.history.push(Message::user(CONTINUE_NOTE));
+                self.carry = a.text;
+                out.push(Action::Log("agent answer cut off: continuing".into()));
+                return self.send(out);
+            }
+            let full = std::mem::take(&mut self.carry) + &a.text;
+            self.answered();
+            self.history.push(Message::assistant(a.text, Vec::new()));
+            self.done(Some(full), now, out);
+            if cut {
+                let text = format!(
+                    "The answer was cut off at {}. {}",
+                    limit_phrase(self.max_tokens()).replacen("its ", "the model's ", 1),
+                    self.raise_hint()
+                );
+                emit(out, Event::AgentMessage { role: "notice".into(), text });
+            }
+        } else if !self.carry.is_empty() {
+            // The continuation added nothing: the first part is the answer.
+            let full = std::mem::take(&mut self.carry);
+            self.answered();
+            self.done(Some(full), now, out);
+        } else if cut {
+            let used = self.max_tokens();
+            let why = format!("The model stopped at {} before answering.", limit_phrase(used));
+            if !self.retry_higher(&why, out) {
+                let message = format!("{why} {}", self.raise_hint());
+                self.fail(message, now, out);
+            }
         } else {
             self.fail("The model sent an empty answer.".into(), now, out);
         }
+    }
+
+    /// An answer cut off by the output limit in the middle of a tool call's arguments: nothing
+    /// of it runs. Retried once with a higher cap; then handed back to the model (each call
+    /// gets a result saying so) at most [`MAX_CUT_CALLS`] times in a row; then an error.
+    fn on_cut_calls(&mut self, text: String, mut calls: Vec<ToolCall>, now: u64, out: &mut Vec<Action>) {
+        let used = self.max_tokens();
+        let at = limit_phrase(used);
+        let why = format!("The model's answer was cut off at {at} in the middle of a tool call, so nothing ran.");
+        if self.retry_higher(&why, out) {
+            return;
+        }
+        if self.cut_calls >= MAX_CUT_CALLS {
+            let message = format!("{why} {}", self.raise_hint());
+            return self.fail(message, now, out);
+        }
+        self.cut_calls += 1;
+        let cut: Vec<bool> = calls.iter().map(|c| !complete_json(&c.arguments)).collect();
+        for (c, &was_cut) in calls.iter_mut().zip(&cut) {
+            if was_cut {
+                c.arguments = "{}".into();
+            }
+        }
+        self.history.push(Message::assistant(text, calls.clone()));
+        let tokens = if used == 0 { String::new() } else { format!(" ({} tokens)", limits::thousands(used)) };
+        for (c, was_cut) in calls.iter().zip(cut) {
+            let result = if was_cut {
+                format!(
+                    "this call was cut off at the output limit{tokens} before its arguments were complete, so nothing ran. \
+                     Send it again with shorter arguments; save a long userscript or macro in parts \
+                     (more=true, then the returned draft id)."
+                )
+            } else {
+                "not run: the answer was cut off at the output limit after this call; call it again if it is still needed"
+                    .to_string()
+            };
+            self.push_result(&c.id, error_json(&result));
+        }
+        let text = format!("{why} The model was asked to send it in smaller parts.");
+        emit(out, Event::AgentMessage { role: "notice".into(), text });
+        out.push(Action::Log("agent tool call cut off: handed back".into()));
+        self.send(out);
     }
 
     /// Handles the pending calls of the current answer until one has to wait (a tool runs, a
@@ -417,6 +571,14 @@ impl Session {
                 self.push_result(&call.id, error_json(NOT_OFFERED));
                 continue;
             }
+            let args = if matches!(tool.name, "save_userscript" | "save_macro") {
+                match self.script_part(&call.id, tool.name, args, out) {
+                    Some(a) => a,
+                    None => continue,
+                }
+            } else {
+                args
+            };
             match tool.group {
                 Group::Finish => {
                     let answer = args.get("answer").and_then(Value::as_str).unwrap_or_default().to_string();
@@ -473,6 +635,71 @@ impl Session {
             self.set_state(RunState::Running, None, out);
         }
         self.send(out);
+    }
+
+    /// A `save_userscript` / `save_macro` call: a part of a long script is kept here (`None`);
+    /// the last part makes the whole script the call's `source`. `draft` and `more` are taken
+    /// out of what the host gets.
+    fn script_part(
+        &mut self,
+        call_id: &str,
+        name: &'static str,
+        mut args: Value,
+        out: &mut Vec<Action>,
+    ) -> Option<Value> {
+        let more = args.get("more").and_then(Value::as_bool).unwrap_or(false);
+        let draft = args.get("draft").and_then(Value::as_str).map(str::to_string);
+        if let Some(o) = args.as_object_mut() {
+            o.remove("more");
+            o.remove("draft");
+        }
+        if !more && draft.is_none() {
+            return Some(args);
+        }
+        let kind = if name == "save_macro" { ScriptKind::Macro } else { ScriptKind::Userscript };
+        let source = args.get("source").and_then(Value::as_str).unwrap_or_default().to_string();
+        if !more {
+            return match self.drafts.finish(kind, draft.as_deref().unwrap_or_default(), &source) {
+                Ok(whole) => {
+                    args["source"] = Value::String(whole);
+                    Some(args)
+                }
+                Err(e) => {
+                    self.push_result(call_id, error_json(&e));
+                    None
+                }
+            };
+        }
+        let what = if kind == ScriptKind::Macro { "macro" } else { "userscript" };
+        let outcome = match self.drafts.append(kind, draft.as_deref(), &source) {
+            Ok(p) => {
+                let next = format!(
+                    "send the next part with draft \"{}\" and more=true, the last one with draft \"{}\" and without more",
+                    p.draft, p.draft
+                );
+                let v = json!({ "draft": p.draft, "part": p.parts, "bytes": p.bytes, "saved": false, "next": next });
+                let summary = format!("Part {} kept ({} bytes so far)", p.parts, limits::thousands(p.bytes as u32));
+                ToolOutcome::ok(v.to_string(), summary)
+            }
+            Err(e) => ToolOutcome::error(e),
+        };
+        self.steps += 1;
+        self.task_steps += 1;
+        let status = outcome.status.unwrap_or(StepStatus::Ok);
+        let step = StepView {
+            n: self.steps,
+            tool: name.to_string(),
+            label: format!("Keep a part of a long {what}"),
+            status,
+            summary: clip(&outcome.summary, 200),
+            detail: format!("{}\n\nResult:\n{}", clip(&args.to_string(), 1000), clip(&outcome.text, 500)),
+            image: None,
+            ms: 0,
+        };
+        out.push(Action::Log(format!("agent step {} {name} {} 0 ms", step.n, status_name(status))));
+        emit(out, Event::AgentStep { step });
+        self.push_result(call_id, outcome.text);
+        None
     }
 
     fn run_tool(&mut self, call_id: String, name: &'static str, args: Value, now: u64, out: &mut Vec<Action>) {
@@ -621,6 +848,7 @@ impl Session {
             Phase::Continue { .. } | Phase::Idle => {}
         }
         self.answer = Answer::default();
+        self.carry.clear();
         while let Some(rest) = self.pending.pop_front() {
             self.push_result(&rest.id, CANCELLED);
         }
@@ -788,6 +1016,9 @@ pub fn describe(name: &str, args: &Value) -> String {
         "list_tabs" => "List the tabs".into(),
         "get_settings" => "Read the settings".into(),
         "set_setting" => s("key").map_or("Change a setting".into(), |k| format!("Change the setting {k}")),
+        "set_new_tab_background_url" => {
+            host("url").map_or("Set the new tab background".into(), |h| format!("Set the new tab background from {h}"))
+        }
         "list_userscripts" => "List the userscripts".into(),
         "save_userscript" => {
             if s("id").is_some() {
@@ -829,7 +1060,8 @@ mod tests {
             system_extra: String::new(),
             userscripts: true,
             macros: true,
-            max_tokens: 4096,
+            max_tokens: 32_000,
+            known_max_output: Some(64_000),
         }
     }
 
@@ -966,7 +1198,7 @@ mod tests {
         assert_eq!(r.len(), 1);
         let r = r[0];
         assert_eq!(r.model, "test/model");
-        assert_eq!(r.max_tokens, 4096);
+        assert_eq!(r.max_tokens, 32_000);
         assert!(r.system.contains("untrusted data"));
         assert_eq!(r.messages.len(), 1);
         assert_eq!(r.messages[0].text(), "Context: tab 1 \"Shop\"\n\nUser message:\nList the links");
@@ -1420,30 +1652,207 @@ mod tests {
         assert_valid(&sends(&a)[0].messages);
     }
 
+    fn limit_stop() -> Vec<Input> {
+        vec![Input::Stream(StreamEvent::Done(StopReason::MaxTokens)), Input::StreamEnd]
+    }
+
+    fn errors(a: &[Action]) -> Vec<String> {
+        events(a)
+            .into_iter()
+            .filter_map(|e| match e {
+                Event::AgentError { message } => Some(message.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Tool calls whose last arguments were cut off by the output limit.
+    fn cut_calls(list: &[(&str, &str, &str)]) -> Vec<Input> {
+        let mut v = calls(list);
+        let at = v.len() - 2;
+        v[at] = Input::Stream(StreamEvent::Done(StopReason::MaxTokens));
+        v
+    }
+
     #[test]
-    fn empty_and_cut_off_answers() {
+    fn empty_answer_at_the_limit_retries_once_then_names_the_limit() {
         let mut s = Session::new(cfg());
         s.handle(user("x"), 0);
-        let a = feed(&mut s, vec![Input::Stream(StreamEvent::Done(StopReason::MaxTokens)), Input::StreamEnd], 1);
-        assert!(events(&a)
-            .iter()
-            .any(|e| matches!(e, Event::AgentError { message } if message.contains("output limit"))));
+        // First stop: the same request again with twice the cap (at most the known 64,000).
+        let a = feed(&mut s, limit_stop(), 1);
+        assert!(errors(&a).is_empty());
+        let r = sends(&a);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].max_tokens, 64_000);
+        assert_eq!(r[0].messages.len(), 1, "nothing of the empty answer is kept");
+        let notes = messages_of(&a, "notice");
+        assert!(notes[0].contains("32,000 tokens") && notes[0].contains("64,000"), "{notes:?}");
+        assert_eq!(s.state(), RunState::Running);
+        // Second stop: the error names the cap used and where to raise it.
+        let a = feed(&mut s, limit_stop(), 2);
+        assert!(sends(&a).is_empty());
+        assert_eq!(
+            errors(&a),
+            vec!["The model stopped at its output limit (64,000 tokens) before answering. Raise Max output tokens for Test in Settings → AI."]
+        );
         assert_eq!(s.state(), RunState::Error);
-        s.handle(user("y"), 2);
-        let a = feed(&mut s, vec![Input::Stream(StreamEvent::TextDelta("  ".into())), Input::StreamEnd], 3);
-        assert!(events(&a).iter().any(|e| matches!(e, Event::AgentError { message } if message.contains("empty"))));
-        // Text cut by the limit is still the answer.
-        s.handle(user("z"), 4);
+        // The next task starts at the configured cap again.
+        let a = s.handle(user("y"), 3);
+        assert_eq!(sends(&a)[0].max_tokens, 32_000);
+        let a = feed(&mut s, vec![Input::Stream(StreamEvent::TextDelta("  ".into())), Input::StreamEnd], 4);
+        assert!(errors(&a)[0].contains("empty"));
+    }
+
+    #[test]
+    fn no_retry_when_the_cap_is_the_models_maximum() {
+        let mut s = Session::new(Config { max_tokens: 16_384, known_max_output: Some(16_384), ..cfg() });
+        s.handle(user("x"), 0);
+        let a = feed(&mut s, limit_stop(), 1);
+        assert!(sends(&a).is_empty());
+        assert!(errors(&a)[0].starts_with("The model stopped at its output limit (16,384 tokens)"));
+        // Auto (no cap sent): the retry sends the known maximum.
+        let mut s = Session::new(Config { max_tokens: 0, known_max_output: None, ..cfg() });
+        assert_eq!(sends(&s.handle(user("x"), 0))[0].max_tokens, 0);
+        let a = feed(&mut s, limit_stop(), 1);
+        assert_eq!(sends(&a)[0].max_tokens, 32_000);
+        assert!(messages_of(&a, "notice")[0].contains("the provider's default output limit"));
+    }
+
+    #[test]
+    fn a_text_answer_cut_off_is_continued_once() {
+        let mut s = Session::new(cfg());
+        s.handle(user("z"), 0);
         let a = feed(
             &mut s,
             vec![
-                Input::Stream(StreamEvent::TextDelta("partial".into())),
+                Input::Stream(StreamEvent::TextDelta("first half, ".into())),
                 Input::Stream(StreamEvent::Done(StopReason::MaxTokens)),
                 Input::StreamEnd,
             ],
-            5,
+            1,
         );
-        assert_eq!(messages_of(&a, "assistant"), vec!["partial"]);
+        assert!(messages_of(&a, "assistant").is_empty());
+        let r = sends(&a);
+        assert_eq!(r.len(), 1);
+        let last = r[0].messages.last().unwrap();
+        assert_eq!((last.role, last.text()), (Role::User, CONTINUE_NOTE.to_string()));
+        assert_eq!(r[0].messages[r[0].messages.len() - 2].text(), "first half, ");
+        // Cut again: the answer is what came, with a notice naming the limit.
+        let a = feed(
+            &mut s,
+            vec![
+                Input::Stream(StreamEvent::TextDelta("second half".into())),
+                Input::Stream(StreamEvent::Done(StopReason::MaxTokens)),
+                Input::StreamEnd,
+            ],
+            2,
+        );
+        assert!(sends(&a).is_empty());
+        assert_eq!(messages_of(&a, "assistant"), vec!["first half, second half"]);
+        assert!(messages_of(&a, "notice")[0].contains("32,000 tokens"));
+        assert_eq!(s.state(), RunState::Done);
+        assert_valid(s.history());
+    }
+
+    #[test]
+    fn a_cut_off_tool_call_never_runs() {
+        let mut s = Session::new(cfg());
+        s.handle(user("Make a userscript"), 0);
+        let cut = r#"{"source":"// ==UserScript==
+// @name X"#;
+        // 1: retried with a higher cap, nothing runs, nothing of it is kept.
+        let a = feed(&mut s, cut_calls(&[("c1", "save_userscript", cut)]), 1);
+        assert!(runs(&a).is_empty());
+        let r = sends(&a);
+        assert_eq!((r.len(), r[0].max_tokens, r[0].messages.len()), (1, 64_000, 1));
+        assert!(messages_of(&a, "notice")[0].contains("nothing ran"));
+        // 2: still cut off (now at the model's maximum): handed back with a result saying so.
+        let a = feed(&mut s, cut_calls(&[("c0", "list_tabs", "{}"), ("c2", "save_userscript", cut)]), 2);
+        assert!(runs(&a).is_empty(), "the complete call of a cut-off answer doesn't run either");
+        let r = sends(&a);
+        assert_eq!(r.len(), 1);
+        assert_valid(&r[0].messages);
+        let n = r[0].messages.len();
+        let assistant = &r[0].messages[n - 3];
+        assert_eq!(assistant.tool_calls[1].arguments, "{}", "incomplete arguments are not sent back");
+        let results = tool_texts(&r[0].messages);
+        assert!(results[0].contains("not run"), "{results:?}");
+        assert!(results[1].contains("cut off at the output limit (64,000 tokens)") && results[1].contains("more=true"));
+        assert!(messages_of(&a, "notice")[0].contains("smaller parts"));
+        // 3: once more, then an error naming the limit.
+        let a = feed(&mut s, cut_calls(&[("c3", "save_userscript", cut)]), 3);
+        assert!(runs(&a).is_empty() && sends(&a).len() == 1);
+        let a = feed(&mut s, cut_calls(&[("c4", "save_userscript", cut)]), 4);
+        assert!(runs(&a).is_empty() && sends(&a).is_empty());
+        assert_eq!(
+            errors(&a),
+            vec!["The model's answer was cut off at its output limit (64,000 tokens) in the middle of a tool call, so nothing ran. Raise Max output tokens for Test in Settings → AI."]
+        );
+        assert_valid(s.history());
+        // Complete calls that end at the limit still run.
+        s.handle(user("again"), 5);
+        let a = feed(&mut s, cut_calls(&[("c5", "list_tabs", "{}")]), 6);
+        assert_eq!(runs(&a).len(), 1);
+    }
+
+    #[test]
+    fn long_scripts_are_saved_in_parts() {
+        let mut s = Session::new(cfg());
+        s.handle(user("Write a long userscript"), 0);
+        let head = "// ==UserScript==
+// @name Long
+// @match *://*/*
+// ==/UserScript==
+";
+        let part1 = json!({ "source": head, "more": true }).to_string();
+        // Part 1: kept, not saved: the host sees nothing.
+        let a = feed(&mut s, calls(&[("p1", "save_userscript", &part1)]), 1);
+        assert!(runs(&a).is_empty());
+        let st = steps_of(&a);
+        assert_eq!(
+            (st[0].n, st[0].status, st[0].label.as_str()),
+            (1, StepStatus::Ok, "Keep a part of a long userscript")
+        );
+        let r = sends(&a);
+        let res: Value = serde_json::from_str(&tool_texts(&r[0].messages)[0]).unwrap();
+        assert_eq!(
+            (res["draft"].as_str(), res["part"].as_u64(), res["saved"].as_bool()),
+            (Some("draft-1"), Some(1), Some(false))
+        );
+        assert_eq!(res["bytes"].as_u64(), Some(head.len() as u64));
+        // Part 2 (a wrong draft id first: an error, nothing lost).
+        let bad = json!({ "source": "x", "draft": "draft-7", "more": true }).to_string();
+        let a = feed(&mut s, calls(&[("p2x", "save_userscript", &bad)]), 2);
+        assert!(runs(&a).is_empty());
+        assert!(tool_texts(&sends(&a)[0].messages).last().unwrap().contains("no such draft"));
+        let part2 = json!({ "source": "const a = 1;
+", "draft": "draft-1", "more": true })
+        .to_string();
+        let a = feed(&mut s, calls(&[("p2", "save_userscript", &part2)]), 3);
+        assert!(runs(&a).is_empty());
+        assert_eq!(steps_of(&a)[0].summary, format!("Part 2 kept ({} bytes so far)", head.len() + 13));
+        // A macro can't finish a userscript draft.
+        let wrong = json!({ "name": "m", "source": "x", "draft": "draft-1" }).to_string();
+        let a = feed(&mut s, calls(&[("p3x", "save_macro", &wrong)]), 4);
+        assert!(runs(&a).is_empty());
+        // The last part: the host gets the whole source (and checks it only now).
+        let part3 = json!({ "source": "console.log(a);", "draft": "draft-1" }).to_string();
+        let a = feed(&mut s, calls(&[("p3", "save_userscript", &part3)]), 5);
+        let r = runs(&a);
+        assert_eq!(r.len(), 1);
+        assert_eq!(
+            r[0].2,
+            json!({ "source": format!("{head}const a = 1;
+console.log(a);") })
+        );
+        // The draft is gone once finished.
+        s.handle(done("p3", r#"{"id":"u1"}"#), 6);
+        let again = json!({ "source": "y", "draft": "draft-1" }).to_string();
+        let a = feed(&mut s, calls(&[("p4", "save_userscript", &again)]), 7);
+        assert!(runs(&a).is_empty());
+        // A plain save is unchanged.
+        let a = feed(&mut s, calls(&[("p5", "save_userscript", r#"{"source":"z","more":false}"#)]), 8);
+        assert_eq!(runs(&a)[0].2, json!({ "source": "z" }));
     }
 
     #[test]

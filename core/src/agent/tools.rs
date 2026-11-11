@@ -262,6 +262,13 @@ pub static TOOLS: &[Tool] = &[
         schema: r#"{"type":"object","properties":{"key":{"type":"string","minLength":1,"maxLength":100},"value":{}},"required":["key","value"],"additionalProperties":false}"#,
         group: Group::Settings,
     },
+    // 0.15.0
+    Tool {
+        name: "set_new_tab_background_url",
+        description: "Download a picture from an https address (PNG, JPEG, WebP, GIF or AVIF, at most 15 MB) and make it the new tab page's background, as if the user had chosen it as their own image.",
+        schema: r#"{"type":"object","properties":{"url":{"type":"string","minLength":1,"maxLength":2048}},"required":["url"],"additionalProperties":false}"#,
+        group: Group::Settings,
+    },
     Tool {
         name: "list_userscripts",
         description: "The user's userscripts: id, name, enabled, @match patterns, created by AI, last run.",
@@ -270,10 +277,12 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "save_userscript",
-        description: "Create (no id) or update a Tampermonkey-style userscript. The source must start with a ==UserScript== metadata block with @name and @match (or @include). A new script is enabled and runs on the target tab at once when it matches. Supported grants: none, GM_addStyle, GM_getValue/GM_setValue/GM_deleteValue/GM_listValues, GM_setClipboard, GM_notification, GM_openInTab. GM_xmlhttpRequest, @require and @resource are not supported.",
+        description: "Create (no id) or update a Tampermonkey-style userscript. The source must start with a ==UserScript== metadata block with @name and @match (or @include). A new script is enabled and runs on the target tab at once when it matches. Supported grants: none, GM_addStyle, GM_getValue/GM_setValue/GM_deleteValue/GM_listValues, GM_setClipboard, GM_notification, GM_openInTab. GM_xmlhttpRequest, @require and @resource are not supported. A long script (more than about 20,000 characters) goes in parts: the first with more=true, the next ones with the returned draft id and more=true, the last with the draft id and without more; it is checked and saved when the last part arrives.",
         schema: r#"{"type":"object","properties":{
             "id":{"type":"string","maxLength":64},
-            "source":{"type":"string","minLength":1,"maxLength":200000}},"required":["source"],"additionalProperties":false}"#,
+            "source":{"type":"string","minLength":1,"maxLength":200000,"description":"The script, or one part of it"},
+            "draft":{"type":"string","maxLength":64,"description":"The draft id of earlier parts: this source is appended to them"},
+            "more":{"type":"boolean","description":"true: more parts follow and nothing is saved yet"}},"required":["source"],"additionalProperties":false}"#,
         group: Group::Userscripts,
     },
     Tool {
@@ -290,12 +299,14 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "save_macro",
-        description: "Create (no id) or update a macro: JavaScript run with an async API against the active tab. API: await key.down(k,{repeat}), key.up(k), key.press(k), key.hold(k,ms); mouse.click(x,y | selector), mouse.move(x,y); type(text); wait(ms); page.eval(js); page.query(sel); tabs.open(url); tabs.switch(id); navigate(url); repeat(n | 'forever', fn); toast(msg). Keys are held until key.up or Stop. Optional hotkey like \"Ctrl+Alt+K\".",
+        description: "Create (no id) or update a macro: JavaScript run with an async API against the active tab. API: await key.down(k,{repeat}), key.up(k), key.press(k), key.hold(k,ms); mouse.click(x,y | selector), mouse.move(x,y); type(text); wait(ms); page.eval(js); page.query(sel); tabs.open(url); tabs.switch(id); navigate(url); repeat(n | 'forever', fn); toast(msg). Keys are held until key.up or Stop. Optional hotkey like \"Ctrl+Alt+K\". A long macro goes in parts like a long userscript (more=true, then the returned draft id); it is checked and saved when the last part arrives.",
         schema: r#"{"type":"object","properties":{
             "id":{"type":"string","maxLength":64},
             "name":{"type":"string","minLength":1,"maxLength":200},
-            "source":{"type":"string","minLength":1,"maxLength":200000},
-            "hotkey":{"type":"string","maxLength":40}},"required":["name","source"],"additionalProperties":false}"#,
+            "source":{"type":"string","minLength":1,"maxLength":200000,"description":"The macro, or one part of it"},
+            "hotkey":{"type":"string","maxLength":40},
+            "draft":{"type":"string","maxLength":64,"description":"The draft id of earlier parts: this source is appended to them"},
+            "more":{"type":"boolean","description":"true: more parts follow and nothing is saved yet"}},"required":["name","source"],"additionalProperties":false}"#,
         group: Group::Macros,
     },
     Tool {
@@ -662,6 +673,12 @@ pub mod args {
         pub key: String,
         pub value: Value,
     }
+    /// 0.15.0
+    #[derive(Debug, Clone, Deserialize)]
+    pub struct SetBackgroundUrl {
+        pub url: String,
+    }
+    /// `draft` and `more` (0.15.0) are taken out by the session before the host sees the call.
     #[derive(Debug, Clone, Deserialize)]
     pub struct SaveUserscript {
         pub id: Option<String>,
@@ -773,6 +790,7 @@ mod tests {
             "list_tabs",
             "get_settings",
             "set_setting",
+            "set_new_tab_background_url",
             "list_userscripts",
             "save_userscript",
             "toggle_userscript",
@@ -788,7 +806,7 @@ mod tests {
         ] {
             assert!(find(n).is_some(), "{n} is missing");
         }
-        assert_eq!(TOOLS.len(), 41);
+        assert_eq!(TOOLS.len(), 42);
     }
 
     /// No tool reaches the vault, cards, sync, the account or API keys (brief C.10).
@@ -838,6 +856,13 @@ mod tests {
         assert!(ok("get_html", json!({"max_chars":20001})).is_err());
         assert!(ok("set_setting", json!({"key":"theme","value":"dark"})).is_ok());
         assert!(ok("wait_for", json!({"ms":30001})).is_err());
+        // 0.15.0: parts of long scripts.
+        assert!(ok("save_userscript", json!({"source":"a","more":true})).is_ok());
+        assert!(ok("save_userscript", json!({"source":"a","draft":"draft-1"})).is_ok());
+        assert!(ok("save_userscript", json!({"source":"a","more":"yes"})).is_err());
+        assert!(ok("save_macro", json!({"name":"m","source":"a","draft":"draft-1","more":false})).is_ok());
+        assert!(ok("set_new_tab_background_url", json!({"url":"https://example.com/a.png"})).is_ok());
+        assert!(ok("set_new_tab_background_url", json!({})).is_err());
         // An odd key name is not echoed.
         let e = ok("query", json!({"selector":"a","<script>secret":1})).unwrap_err();
         assert!(!e.contains("secret"), "{e}");

@@ -159,6 +159,7 @@ table.exceptions th:last-child, table.exceptions td:last-child { padding-right: 
 #ai-providers .main { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
 #ai-providers .name { font-weight: 600; overflow-wrap: anywhere; }
 #ai-providers .sub { color: var(--fg-muted); font-size: 0.923rem; overflow-wrap: anywhere; }
+#ai-providers .ai-max-out { display: flex; align-items: center; gap: 6px; margin-top: 4px; } /* 0.15.0 */
 #ai-providers .ai-test-result.ok { color: #15803d; }
 #ai-providers .ai-test-result.bad { color: var(--danger); }
 :root.dark #ai-providers .ai-test-result.ok { color: #4ade80; }

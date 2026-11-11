@@ -188,6 +188,28 @@ module.exports = (h) => {
     await page.waitForTimeout(60);
     check((await row('Ollama').locator('.ai-test-result.bad').textContent()).includes('connection refused'), 'a failed Test shows the host\'s message');
 
+    // 0.15.0: Max output tokens per provider (0 = auto), saved on change.
+    {
+      const input = () => row('OpenRouter').locator('.ai-max-output');
+      check(await input().inputValue() === '32000', 'Max output tokens shows the default 32000');
+      await input().fill('0');
+      await input().blur();
+      await page.waitForTimeout(60);
+      const ps = await lastSent(page, 'aiProviderSave');
+      check(ps.provider.id === 'a1b2c300' && ps.provider.kind === 'openrouter' && ps.provider.maxOutputTokens === 0, 'a change saves the provider with maxOutputTokens 0 (auto)');
+      check(await input().inputValue() === '0', 'the row shows 0 after the save');
+      const n = await count('aiProviderSave');
+      await input().fill('2000000');
+      await input().blur();
+      await page.waitForTimeout(60);
+      check(await count('aiProviderSave') === n && await input().inputValue() === '0', 'out of range: nothing sent, the old value is back');
+      await input().fill('64000');
+      await input().blur();
+      await page.waitForTimeout(60);
+      check((await lastSent(page, 'aiProviderSave')).provider.maxOutputTokens === 64000 && await row('Ollama').locator('.ai-max-output').inputValue() === '32000', '64000 is saved for that provider only');
+      await page.locator('#ai-providers').screenshot(SHOTS_DIR(h, 'ai-settings-max-output.png'));
+    }
+
     // The model list.
     await page.click('#ai-load-models');
     await page.waitForSelector('#ai-models .ai-model');

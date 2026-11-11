@@ -127,9 +127,9 @@ impl Browser {
             name: if name.is_empty() { kind.label().to_string() } else { name.to_string() },
             base_url: if kind == ProviderKind::Custom { prov::base_url(kind, &sent.base_url) } else { String::new() },
             vision: sent.vision,
-            max_output_tokens: existing
-                .as_ref()
-                .map_or(lb_core::settings::DEFAULT_MAX_OUTPUT_TOKENS, |p| p.max_output_tokens),
+            // 0.15.0: the page's Max output tokens field (0 = auto; a page that doesn't send it
+            // gets the default). `Ai::problems` checks the range.
+            max_output_tokens: sent.max_output_tokens,
         };
         let address_changed = existing.as_ref().is_some_and(|p| p.base_url != provider.base_url);
         let r = self.try_change_settings(|s| match s.ai.providers.iter_mut().find(|p| p.id == id) {

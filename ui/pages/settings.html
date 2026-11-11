@@ -707,9 +707,10 @@
         <div class="control"><input type="checkbox" id="ai.enabled" data-key="ai.enabled"></div>
       </div>
       <fieldset id="ai-body" class="ai-body" disabled>
-        <div class="row setting column" id="ai-providers-row" data-keywords="ai provider providers openrouter openai anthropic ollama lm studio custom openai-compatible api key base url test connection">
+        <div class="row setting column" id="ai-providers-row" data-keywords="ai provider providers openrouter openai anthropic ollama lm studio custom openai-compatible api key base url test connection max output tokens limit length">
           <div class="text"><span class="label">Providers</span>
             <p class="desc">Your own account with a model provider. A key is stored encrypted on this computer and is never shown again; Krunk only says whether one is saved.</p>
+            <p class="desc">Max output tokens is the longest answer a model may give (32,000 by default, never more than the model allows; 0 = auto, the provider's own default).</p>
             <p class="field-error" data-error-for="ai.providers"></p></div>
           <div id="ai-providers" class="sublist"></div>
           <form id="ai-add-form" class="inline-form ai-add" autocomplete="off">

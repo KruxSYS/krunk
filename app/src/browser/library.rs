@@ -202,25 +202,45 @@ impl Browser {
         if !matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp" | "gif") {
             return self.reply(tab, Event::err(req_id, "Choose a PNG, JPEG, WebP or GIF file"));
         }
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(e) => {
+                warning!("new tab background: reading {} failed: {e}", path.display());
+                return self.reply(tab, Event::err(req_id, "The image could not be copied into the profile"));
+            }
+        };
+        match self.store_ntp_image(&bytes, &ext) {
+            Ok(()) => self.reply(tab, Event::ok(req_id, self.ntp_config())),
+            Err(e) => self.reply(tab, Event::err(req_id, e)),
+        }
+    }
+
+    /// Stores `bytes` as the new tab page's own image (`ntp-background-<ms>.<ext>` in the
+    /// profile), switches the background to it and removes the previous file. Shared by
+    /// "Choose image…" and the agent's `set_new_tab_background_url` (0.15.0).
+    pub(super) fn store_ntp_image(&self, bytes: &[u8], ext: &str) -> Result<(), String> {
         let name = format!("ntp-background-{}.{ext}", now_ms());
         let dest = self.dirs.root().join(&name);
-        if let Err(e) = std::fs::copy(&path, &dest) {
-            warning!("new tab background: copying {} failed: {e}", path.display());
-            return self.reply(tab, Event::err(req_id, "The image could not be copied into the profile"));
+        if let Err(e) = std::fs::write(&dest, bytes) {
+            warning!("new tab background: writing the image failed: {e}");
+            return Err("The image could not be copied into the profile".into());
         }
         let old = self.settings.borrow().ntp.image.clone();
         let mut candidate = self.settings.borrow().clone();
         candidate.ntp.image = name;
         candidate.ntp.background = lb_core::settings::NtpBackground::Image;
-        match self.save_settings_from(tab, req_id, candidate) {
+        match self.save_settings_from(None, None, candidate) {
             Ok(()) => {
                 if !old.is_empty() {
                     let _ = std::fs::remove_file(self.dirs.root().join(old));
                 }
                 info!("new tab background: image set");
-                self.reply(tab, Event::ok(req_id, self.ntp_config()));
+                Ok(())
             }
-            Err(errors) => self.reply(tab, Event::err(req_id, errors.join("; "))),
+            Err(errors) => {
+                let _ = std::fs::remove_file(&dest);
+                Err(errors.join("; "))
+            }
         }
     }
 

@@ -28,6 +28,7 @@ use super::Browser;
 use crate::ffi::cef::fetch::JobId;
 use crate::log::{info, warning};
 use lb_core::agent::context::{self, ContextInput, TabFacts};
+use lb_core::agent::provider::limits;
 use lb_core::agent::session::{Action, Config, Input, Session};
 use lb_core::agent::tools::{self as agent_tools, Offer};
 use lb_core::agent::{gate, pages as agent_pages, redact, AskAnswer, ModelChoice, ModelInfo, RunState, ScriptKind};
@@ -42,8 +43,6 @@ use std::time::Instant;
 
 /// Step screenshots kept per window.
 const MAX_SHOTS: usize = 40;
-/// Tokens a provider may answer with per request.
-const MAX_TOKENS: u32 = 4096;
 /// Models in the panel's quick switch.
 const QUICK_MODELS: usize = 50;
 /// Where the panel loads step screenshots: `/agent-shot/<token>/<n>.jpg`.
@@ -142,6 +141,10 @@ impl Browser {
         let cached = provider.and_then(|p| self.agent.models.borrow().get(&p.id).cloned());
         let info = cached.as_ref().and_then(|list| list.iter().find(|m| m.id == model));
         let vision = provider.and_then(|p| p.vision).or_else(|| info.and_then(|m| m.vision)).unwrap_or(false);
+        // 0.15.0: the provider's Max output tokens, capped by what the model is known to allow.
+        let known_max_output = limits::known_max_output(&model, info);
+        let max_tokens =
+            provider.map_or(0, |p| limits::request_max_tokens(p.kind, p.max_output_tokens, known_max_output));
         let problem = if !ai.enabled {
             Some("Turn on AI features in Settings → AI.".to_string())
         } else if provider.is_none() || model.is_empty() {
@@ -175,7 +178,8 @@ impl Browser {
             system_extra: ai.system_prompt_extra.clone(),
             userscripts: s.userscripts.enabled,
             macros: s.macros.enabled,
-            max_tokens: MAX_TOKENS,
+            max_tokens,
+            known_max_output,
         };
         Setup { cfg, provider: ai.active_provider.clone(), provider_name, models, problem }
     }

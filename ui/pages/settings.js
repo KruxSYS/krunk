@@ -505,6 +505,7 @@
           el('span', { class: 'name', text: p.name }),
           el('span', { class: 'sub', text: (AI_KINDS[p.kind] || p.kind) + (p.kind === 'custom' && p.baseUrl ? ' · ' + p.baseUrl : '') }),
           test ? el('span', { class: 'sub ai-test-result ' + (test.ok ? 'ok' : 'bad'), role: 'status', text: test.text }) : null,
+          aiMaxOutput(p),
         ]),
         el('span', { class: 'key-status' + (has ? ' saved' : ''), text: has ? 'Key saved' : 'No key' }),
         el('button', { type: 'button', class: 'btn small ai-test', text: 'Test', disabled: !on, title: on ? 'Ask the provider for its model list' : 'Turn on AI features first', onclick: function () { aiTest(p); } }),
@@ -517,6 +518,30 @@
         form.querySelector('input').focus();
       }
     });
+  }
+  // 0.15.0: the provider's output cap, saved on change (0 = auto: OpenAI-compatible providers
+  // then use their own default, Anthropic the model's maximum). The host checks the range and
+  // caps it by what the model is known to allow.
+  const AI_MAX_OUTPUT_LIMIT = 1000000;
+  function aiMaxOutput(p) {
+    const was = typeof p.maxOutputTokens === 'number' ? p.maxOutputTokens : 32000;
+    const input = el('input', { type: 'number', class: 'ai-max-output', min: '0', max: String(AI_MAX_OUTPUT_LIMIT), step: '1000', value: String(was),
+      'aria-label': 'Max output tokens for ' + p.name, title: 'The longest answer the model may give, in tokens. 0 = auto.' });
+    input.addEventListener('change', function () {
+      const n = Number(input.value);
+      if (input.value.trim() === '' || !Number.isInteger(n) || n < 0 || n > AI_MAX_OUTPUT_LIMIT) {
+        input.value = String(was);
+        Page.toast('Max output tokens is a whole number from 0 (auto) to 1,000,000');
+        return;
+      }
+      if (n === was) return;
+      LB.request('aiProviderSave', { provider: Object.assign({}, p, { maxOutputTokens: n }) }).then(function (r) {
+        settings.ai.providers = (r && r.providers) || settings.ai.providers;
+        Page.toast(n === 0 ? 'Max output tokens: auto' : 'Max output tokens: ' + n.toLocaleString('en-US'));
+        renderAiProviders();
+      }, function (e) { input.value = String(was); Page.toast(aiError(e)); });
+    });
+    return el('label', { class: 'sub ai-max-out' }, ['Max output tokens ', input]);
   }
   function aiKeyForm(p, has) {
     const input = el('input', { type: 'password', class: 'ai-key-input', autocomplete: 'off', spellcheck: 'false', placeholder: has ? 'New API key' : 'API key', 'aria-label': 'API key for ' + p.name });

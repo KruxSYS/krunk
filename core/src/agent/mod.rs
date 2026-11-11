@@ -10,13 +10,17 @@
 //! * [`redact`]: sensitive form fields, scrubbing and paging of tool results;
 //! * [`gate`]: the keyword gate for history, bookmarks, downloads and cookies;
 //! * [`settings_allow`]: the settings the agent may read and change;
-//! * [`pages`]: which addresses the agent may open or act on.
+//! * [`pages`]: which addresses the agent may open or act on;
+//! * [`drafts`] (0.15.0): long userscripts and macros saved in parts;
+//! * [`ntp_image`] (0.15.0): the checks of a new tab background downloaded for the agent.
 //!
 //! Nothing here can reach the vault, payment cards, sync or account secrets, or API keys: those
 //! types are not imported by any agent module (a test in [`tools`] checks the tool table too).
 
 pub mod context;
+pub mod drafts;
 pub mod gate;
+pub mod ntp_image;
 pub mod pages;
 pub mod provider;
 pub mod redact;
@@ -96,6 +100,9 @@ pub struct ModelInfo {
     pub tools: Option<bool>,
     /// Context window in tokens, when known.
     pub context: Option<u32>,
+    /// 0.15.0: the most tokens one answer may have, when the model list says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output: Option<u32>,
 }
 
 /// Sensitive data the agent sees only when the user asks for it (keyword gate plus a
