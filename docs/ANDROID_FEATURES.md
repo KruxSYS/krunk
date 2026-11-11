@@ -28,7 +28,7 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | History / bookmark / typed-site suggestions, most visited first | yes — 0.5.1; `core::omnibox` | done (v) | app-side | 1 |
 | Inline completion of the typed site | yes — 0.6.0 | partial (core computes it; the Android editor shows rows only) | — | 2 |
 | Engine search suggestions (setting, never in private tabs, no cookies) | yes — 0.15.0; `core::search_suggest` | done (v) | app-side HTTP | 1 |
-| Tracking-parameter stripping (`utm_*`, `fbclid`, `gclid`, …) | yes — Privacy, 0.6.0; `core::urlclean` | done (typed navigations and link loads through `navigation_rewrite`) | `NavigationDelegate.onLoadRequest` | 1 |
+| Tracking-parameter stripping (`utm_*`, `fbclid`, `gclid`, …) | yes — Privacy, 0.6.0; `core::urlclean` | partial — removed from typed addresses and from every tab Krunk opens itself (links from other apps, the link menu, bookmarks, history); link clicks and redirects inside a page are not rewritten yet (needs a request-level hook) | request-level rewriting | 1 (rest: 2) |
 | Automatic HTTPS upgrade (HTTPS-first) | no (HTTPS-only mode only) | done (v) — Gecko's HTTPS-First is on by default (verified: `http://example.com` loads as https) | Gecko default | 1 |
 | HTTPS-only mode | yes — Privacy; `settings.https_only` | done (`allowInsecureConnections = HTTPS_ONLY`) | `GeckoRuntimeSettings` | 1 |
 | Copy / paste / edit URL; paste-and-go | yes — 0.6.0 | done (platform text field menu) | — | 1 |
@@ -59,7 +59,7 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | Print / save as PDF | yes — Ctrl+P | roadmap | `GeckoSession.saveAsPdf`, `PrintDelegate` | 3 |
 | PDF viewer | yes — 0.11.3 | roadmap (pdf.js is built into Gecko; needs testing) | Gecko pdf.js | 3 |
 | View source | yes — 0.11.0 | roadmap | `view-source:` | 3 |
-| JavaScript dialogs (alert/confirm/prompt/leave) | yes — 0.12.4 | partial — Gecko's default prompts show; Krunk-styled `PromptDelegate` later | `PromptDelegate` | 2 |
+| JavaScript dialogs (alert/confirm/prompt/leave) | yes — 0.12.4 | partial — since 0.1.1: alert, confirm, prompt, `<select>` lists and HTTP sign-in as plain dialogs titled with the asking site, with a way out of dialog loops (0.1.0 had no handler, so none of these worked). Not yet: file, date/time and colour pickers, share, repost and leave-page questions | `PromptDelegate` | 1 (rest: 2) |
 | Reader mode | no | roadmap | Gecko reader view | 4 |
 | Developer tools | yes — 0.3.0 | not planned on-device (remote debugging in debug builds only) | `remoteDebuggingEnabled` | — |
 
@@ -72,7 +72,7 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | Copy link, copy link text | yes (address) / no (text) | done / done (title or alt text; the engine exposes no selection) | `ContextElement` | 1 |
 | Share link, share page | no | done (Android share sheet) | — | 1 |
 | Download link / save image, open image in new tab | yes — 0.12.2 (images) | done (Android `DownloadManager`) | `ContextElement.srcUri` | 1 |
-| `window.open` / `target=_blank` into a new tab | yes | done | `onNewSession` | 1 |
+| `window.open` / `target=_blank` into a new tab | yes | done since 0.1.1 (0.1.0 handed the engine an already open session and the new window failed); the address bar stays empty until the new window has loaded something | `onNewSession` | 1 |
 | `mailto:` handler | yes — 0.11.3 | roadmap (hand to the system mail app) | `onLoadRequest` | 2 |
 | Selected address text → open | yes — 0.15.2 | roadmap | `SelectionActionDelegate` | 2 |
 
@@ -153,7 +153,7 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
 |---|---|---|---|---|
 | Settings on the shared `core::settings` fields (validated by the core, same JSON) | yes | done (v) | — | 1 |
-| Search engine + custom URL, homepage, startup, new-tab page, theme, text size, suggestions, HTTPS-only, tracking params, tab sleep/discard, user agent | yes | done | — | 1 |
+| Search engine + custom URL, homepage, startup, new-tab page, theme, text size, suggestions, HTTPS-only, tracking params, tab sleep/discard, user agent | yes | done (0.1.1: custom search engine and custom new-tab address can be turned on, the user-agent setting is applied, "strip tracking parameters" off survives a restart) | — | 1 |
 | Toolbar position, force zoom, follow-system font (Android-only, `kv["android.settings"]`) | n/a | done (v: toolbar position) | — | 1 |
 | Clear browsing data (history, cookies, cache, site data) | yes | done | `StorageController.clearData` | 1 |
 | Clear on exit | yes — `ClearOnExit` | roadmap | — | 2 |
