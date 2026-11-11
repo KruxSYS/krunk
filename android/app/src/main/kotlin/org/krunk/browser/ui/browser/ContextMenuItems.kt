@@ -1,6 +1,7 @@
 package org.krunk.browser.ui.browser
 
 import org.krunk.browser.engine.ContextTarget
+import org.krunk.browser.engine.LoadPolicy
 
 /** One entry of the link/image long-press menu. */
 enum class ContextAction {
@@ -16,12 +17,16 @@ enum class ContextAction {
     SAVE_MEDIA,
 }
 
-/** Schemes a link menu makes sense for (no `javascript:`, `mailto:`, `tel:` ...). */
-private fun webish(uri: String?): Boolean {
-    val u = uri?.lowercase() ?: return false
-    return u.startsWith("http://") || u.startsWith("https://") || u.startsWith("data:") || u.startsWith("blob:") ||
-        u.startsWith("file:")
-}
+/**
+ * Addresses the menu opens in a tab or downloads: web addresses only. A page chooses its links'
+ * targets, and Krunk must not load a `file:`, `data:` or `blob:` address for it that the engine
+ * would refuse on a normal tap.
+ */
+private fun web(uri: String?): Boolean = uri != null && LoadPolicy.isWebUrl(uri.trim())
+
+/** An address worth copying or sharing: anything but `javascript:` (`mailto:`, `tel:`, ... included). */
+private fun copyable(uri: String?): Boolean =
+    !uri.isNullOrBlank() && !uri.trim().startsWith("javascript:", ignoreCase = true)
 
 /** Whether the Android `DownloadManager` can fetch this URL (it only speaks http/https). */
 fun downloadable(uri: String?): Boolean {
@@ -32,23 +37,27 @@ fun downloadable(uri: String?): Boolean {
 /**
  * The actions for a long-pressed element, in menu order. Links come first; an image inside a
  * link adds the image entries below. In a private tab "open in new tab" already opens a private
- * tab, so the separate private entry is left out.
+ * tab, so the separate private entry is left out. An empty list means there is nothing to offer
+ * (the sheet is not shown).
  */
 fun contextActions(target: ContextTarget, privateTab: Boolean): List<ContextAction> {
     val out = ArrayList<ContextAction>()
-    if (target.isLink && webish(target.linkUri)) {
-        out += ContextAction.OPEN_NEW_TAB
-        if (!privateTab) out += ContextAction.OPEN_PRIVATE_TAB
+    if (target.isLink && copyable(target.linkUri)) {
+        val open = web(target.linkUri)
+        if (open) {
+            out += ContextAction.OPEN_NEW_TAB
+            if (!privateTab) out += ContextAction.OPEN_PRIVATE_TAB
+        }
         out += ContextAction.COPY_LINK
         out += ContextAction.SHARE_LINK
         if (!target.copyableText.isNullOrEmpty()) out += ContextAction.COPY_LINK_TEXT
-        if (downloadable(target.linkUri)) out += ContextAction.DOWNLOAD_LINK
+        if (open) out += ContextAction.DOWNLOAD_LINK
     }
-    if (target.isImage && webish(target.srcUri)) {
+    if (target.isImage && web(target.srcUri)) {
         out += ContextAction.OPEN_IMAGE_NEW_TAB
-        if (downloadable(target.srcUri)) out += ContextAction.SAVE_IMAGE
+        out += ContextAction.SAVE_IMAGE
         out += ContextAction.COPY_IMAGE_LINK
-    } else if (target.isMedia && downloadable(target.srcUri)) {
+    } else if (target.isMedia && web(target.srcUri)) {
         out += ContextAction.SAVE_MEDIA
     }
     return out

@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.ContentCopy
@@ -46,7 +48,8 @@ fun ContextMenuSheet(
     val actions = contextActions(target, privateTab)
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = state) {
-        Column(Modifier.fillMaxWidth()) {
+        // Scrolls: a link around an image has nine rows, more than a landscape phone shows.
+        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
             val headline = target.copyableText ?: ""
             val url = target.linkUri ?: target.srcUri ?: ""
             Column(Modifier.padding(horizontal = 24.dp, vertical = 4.dp)) {

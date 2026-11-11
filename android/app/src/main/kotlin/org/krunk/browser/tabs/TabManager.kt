@@ -28,6 +28,8 @@ import org.krunk.browser.engine.ErrorPage
 import org.krunk.browser.engine.GeckoEngine
 import org.krunk.browser.engine.IconCandidate
 import org.krunk.browser.engine.KrunkSession
+import org.krunk.browser.engine.LoadPolicy
+import org.krunk.browser.engine.LoadSource
 import org.krunk.browser.engine.PageState
 import org.krunk.browser.engine.SessionListener
 import org.krunk.ffi.ClosedTab
@@ -66,6 +68,11 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
     private val sessions = HashMap<UInt, KrunkSession>()
     private val errorPage = ErrorPage(context)
     private val geckoStates = HashMap<UInt, String>()
+
+    /** Tabs whose first load is for another app or a page (kept until the session loads it). */
+    private val loadSources = HashMap<UInt, LoadOrigin>()
+
+    private data class LoadOrigin(val source: LoadSource, val opener: UInt?)
 
     private val _tabs = MutableStateFlow<List<TabUi>>(emptyList())
     val tabs: StateFlow<List<TabUi>> = _tabs.asStateFlow()
@@ -362,7 +369,7 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
 
     // ----- tab operations -----
 
-    /** Opens a tab; `url` empty = the new-tab page. Returns its id. */
+    /** Opens a tab for the user; `url` empty = the new-tab page. Returns its id. */
     fun openTab(
         url: String = "",
         private: Boolean = false,
@@ -371,7 +378,40 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         live: Boolean = false,
     ): UInt {
         val target = if (url.isEmpty()) (core.settings.newTabTarget ?: "") else url
+        return open(target, LoadSource.USER, private, activate, opener, live)
+    }
+
+    /**
+     * Opens a tab for an address that did not come from the user: another app's intent
+     * ([LoadSource.EXTERNAL_APP]) or a link or image address of a page ([LoadSource.PAGE], with
+     * the page's tab as [opener]). Only web addresses are opened, and the engine loads them
+     * without the app's privileges. Returns null when the address is refused.
+     */
+    fun openUntrusted(
+        url: String,
+        source: LoadSource,
+        private: Boolean = false,
+        activate: Boolean = true,
+        opener: UInt? = null,
+        live: Boolean = false,
+    ): UInt? {
+        if (source == LoadSource.USER || !LoadPolicy.isWebUrl(url)) {
+            Log.w(KrunkApp.TAG, "refused to open an address that is not a web address (source $source)")
+            return null
+        }
+        return open(url, source, private, activate, opener, live)
+    }
+
+    private fun open(
+        target: String,
+        source: LoadSource,
+        private: Boolean,
+        activate: Boolean,
+        opener: UInt?,
+        live: Boolean,
+    ): UInt {
         val r = model.open(target, private, opener, activate, live, nowMs())
+        if (source != LoadSource.USER) loadSources[r.id] = LoadOrigin(source, opener)
         apply(r.effects)
         refresh()
         scheduleSave()
@@ -405,6 +445,7 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
 
     private fun forget(id: UInt) {
         geckoStates.remove(id)
+        loadSources.remove(id)
         thumbnails.remove(id)
         lastSeen.remove(id)
         memory.wake(id)
@@ -526,8 +567,9 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         )
         sessions[id] = s
         geckoStates.remove(id)?.let { s.restoreState(it) }
+        val origin = loadSources.remove(id)
         if (internalPage(info.url) == null) {
-            s.load(info.url)
+            s.load(info.url, origin?.source ?: LoadSource.USER, origin?.opener?.let { sessions[it]?.gecko })
         }
         return s
     }

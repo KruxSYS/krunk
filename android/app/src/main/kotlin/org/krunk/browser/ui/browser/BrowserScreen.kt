@@ -34,6 +34,7 @@ import kotlinx.coroutines.launch
 import org.krunk.browser.R
 import org.krunk.browser.engine.ContextTarget
 import org.krunk.browser.engine.KrunkSession
+import org.krunk.browser.engine.LoadSource
 import org.krunk.browser.engine.NestedGeckoView
 import org.krunk.browser.tabs.TabEvent
 import org.krunk.browser.ui.BrowserViewModel
@@ -90,7 +91,10 @@ fun BrowserScreen(vm: BrowserViewModel) {
     LaunchedEffect(Unit) {
         vm.tabs.events.collect { ev ->
             when (ev) {
-                is TabEvent.ContextMenu -> contextTarget = ev.tabId to ev.target
+                is TabEvent.ContextMenu -> {
+                    val private = vm.tabs.tabs.value.firstOrNull { it.id == ev.tabId }?.private == true
+                    if (contextActions(ev.target, private).isNotEmpty()) contextTarget = ev.tabId to ev.target
+                }
 
                 is TabEvent.Download -> {
                     val name = Downloads.enqueue(context, ev.response)
@@ -224,13 +228,21 @@ fun BrowserScreen(vm: BrowserViewModel) {
                 val src = target.srcUri ?: ""
                 fun toast(msg: String) = scope.launch { snackbar.showSnackbar(msg) }
                 when (action) {
+                    // A page chose these addresses: web addresses only, loaded on its behalf.
                     ContextAction.OPEN_NEW_TAB -> {
-                        vm.tabs.openTab(link, private = private, activate = false, opener = tabId)
-                        toast(opened)
+                        val id = vm.tabs.openUntrusted(
+                            link,
+                            LoadSource.PAGE,
+                            private = private,
+                            activate = false,
+                            opener = tabId,
+                        )
+                        if (id != null) toast(opened)
                     }
 
-                    ContextAction.OPEN_PRIVATE_TAB -> vm.tabs.openTab(
+                    ContextAction.OPEN_PRIVATE_TAB -> vm.tabs.openUntrusted(
                         link,
+                        LoadSource.PAGE,
                         private = true,
                         activate = true,
                         opener = tabId,
@@ -255,8 +267,14 @@ fun BrowserScreen(vm: BrowserViewModel) {
                     }
 
                     ContextAction.OPEN_IMAGE_NEW_TAB -> {
-                        vm.tabs.openTab(src, private = private, activate = false, opener = tabId)
-                        toast(opened)
+                        val id = vm.tabs.openUntrusted(
+                            src,
+                            LoadSource.PAGE,
+                            private = private,
+                            activate = false,
+                            opener = tabId,
+                        )
+                        if (id != null) toast(opened)
                     }
 
                     ContextAction.SAVE_IMAGE, ContextAction.SAVE_MEDIA -> {

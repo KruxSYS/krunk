@@ -109,10 +109,34 @@ class KrunkSession(
 
     // ----- commands -----
 
-    fun load(url: String) {
+    /**
+     * Loads [url]. Only the user's own input ([LoadSource.USER]) is loaded with the app's
+     * privileges; an address from another app is loaded as an external link, and one a page
+     * supplied on behalf of that page ([referrer], when its tab is still open). Both are limited
+     * to web addresses by [LoadPolicy] before they get here; this is the second check.
+     */
+    fun load(url: String, source: LoadSource = LoadSource.USER, referrer: GeckoSession? = null) {
+        if (!LoadPolicy.allowed(url, source)) {
+            Log.w(KrunkApp.TAG, "tab $id: refused an address that is not a web address (source $source)")
+            return
+        }
         pendingUrl = url
         set { it.copy(url = url, loadError = null, crashed = false) }
-        gecko.loadUri(url)
+        val loader = GeckoSession.Loader().uri(url)
+        when (source) {
+            LoadSource.USER -> Unit
+
+            LoadSource.EXTERNAL_APP -> loader.flags(GeckoSession.LOAD_FLAGS_EXTERNAL)
+
+            LoadSource.PAGE -> if (referrer !=
+                null
+            ) {
+                loader.referrer(referrer)
+            } else {
+                loader.flags(GeckoSession.LOAD_FLAGS_EXTERNAL)
+            }
+        }
+        gecko.load(loader)
     }
 
     fun loadError(uri: String, category: Int, code: Int) {
