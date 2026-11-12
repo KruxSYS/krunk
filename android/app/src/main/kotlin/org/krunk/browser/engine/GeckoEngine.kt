@@ -105,12 +105,19 @@ class GeckoEngine(context: Context, automaticUpdates: Boolean, blockerHost: Bloc
     @Volatile
     private var userAgent: String = ""
 
-    /** A session for a tab. Desktop mode is toggled later per tab. */
-    fun createSession(private: Boolean): GeckoSession {
+    /**
+     * A session for a tab. [desktop]: the tab asks for the desktop site, so the session has the
+     * desktop user agent and viewport from the start (the user can still switch it per tab).
+     */
+    fun createSession(private: Boolean, desktop: Boolean = false): GeckoSession {
         val builder = GeckoSessionSettings.Builder()
             .usePrivateMode(private)
             .userAgentMode(GeckoSessionSettings.USER_AGENT_MODE_MOBILE)
             .viewportMode(GeckoSessionSettings.VIEWPORT_MODE_MOBILE)
+        if (desktop) {
+            builder.userAgentMode(GeckoSessionSettings.USER_AGENT_MODE_DESKTOP)
+            builder.viewportMode(GeckoSessionSettings.VIEWPORT_MODE_DESKTOP)
+        }
         if (userAgent.isNotEmpty()) builder.userAgentOverride(userAgent)
         return GeckoSession(builder.build())
     }

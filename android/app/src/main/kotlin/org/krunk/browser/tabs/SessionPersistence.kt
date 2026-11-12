@@ -77,8 +77,19 @@ object SessionPersistence {
      * position when the URL matches, else the first unused entry with the same URL. When every
      * count matches but URLs differ (credentials stripped, legacy origins migrated) positions win.
      */
-    fun assignStates(tabs: List<Pair<UInt, String>>, saved: List<Pair<String, String>>): Map<UInt, String> {
-        val out = HashMap<UInt, String>()
+    fun assignStates(tabs: List<Pair<UInt, String>>, saved: List<Pair<String, String>>): Map<UInt, String> =
+        assignSaved(tabs, saved) { it.isNotEmpty() }
+
+    /**
+     * The pairing of [assignStates] for any saved value; [worth] says whether a value has
+     * anything to give back to a tab (an empty state has not).
+     */
+    fun <T> assignSaved(
+        tabs: List<Pair<UInt, String>>,
+        saved: List<Pair<String, T>>,
+        worth: (T) -> Boolean,
+    ): Map<UInt, T> {
+        val out = HashMap<UInt, T>()
         val used = BooleanArray(saved.size)
         tabs.forEachIndexed { i, (id, url) ->
             val pos = saved.getOrNull(i)
@@ -88,11 +99,11 @@ object SessionPersistence {
             }
             if (idx >= 0) {
                 used[idx] = true
-                if (saved[idx].second.isNotEmpty()) out[id] = saved[idx].second
+                if (worth(saved[idx].second)) out[id] = saved[idx].second
             }
         }
         if (out.isEmpty() && tabs.size == saved.size) {
-            tabs.forEachIndexed { i, (id, _) -> if (saved[i].second.isNotEmpty()) out[id] = saved[i].second }
+            tabs.forEachIndexed { i, (id, _) -> if (worth(saved[i].second)) out[id] = saved[i].second }
         }
         return out
     }

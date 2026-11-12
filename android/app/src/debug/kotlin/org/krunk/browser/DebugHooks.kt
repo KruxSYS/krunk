@@ -27,6 +27,8 @@ import org.krunk.browser.engine.blocker.BlockerController
  *   blocker --es channel C --es msg JSON     one message to the blocker (e.g. to force its
  *                                  auto-update on for the gate test)
  *   guard-disable                  disable the guard extension (the "guard lost" test)
+ *   recreate-session               throw the active tab's engine session away and give the tab a
+ *                                  new one, as after a discard or a crash of the page's process
  */
 object DebugHooks {
     private const val ACTION = "org.krunk.browser.DEBUG"
@@ -37,7 +39,13 @@ object DebugHooks {
         ContextCompat.registerReceiver(
             context,
             object : BroadcastReceiver() {
-                override fun onReceive(c: Context, intent: Intent) = run(intent, engine, core)
+                override fun onReceive(c: Context, intent: Intent) {
+                    if (intent.getStringExtra("cmd") == "recreate-session") {
+                        recreateSession(c.applicationContext as KrunkApp)
+                    } else {
+                        run(intent, engine, core)
+                    }
+                }
             },
             IntentFilter(ACTION),
             ContextCompat.RECEIVER_EXPORTED,
@@ -46,6 +54,17 @@ object DebugHooks {
 
     private fun say(text: String) {
         Log.i(BlockerController.GUARD_TAG, "debug: $text")
+    }
+
+    /** The active tab gets a new session through the tab manager's own path (crash recovery). */
+    private fun recreateSession(app: KrunkApp) {
+        val tabs = app.tabs
+        val id = tabs.activeId.value
+        if (!tabs.started || id == null || !tabs.recreateSession(id)) {
+            say("recreate-session: no active tab with a session")
+            return
+        }
+        say("recreate-session: tab $id has a new session, desktop=${tabs.session(id)?.current?.desktopMode}")
     }
 
     private fun run(intent: Intent, engine: GeckoEngine, core: KrunkCore) {

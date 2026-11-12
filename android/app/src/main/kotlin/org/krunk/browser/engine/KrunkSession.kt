@@ -91,14 +91,19 @@ class KrunkSession(
      * and its address bar shows nothing until the engine commits a location (see [displayedUrl]).
      */
     val openedByPage: Boolean = false,
+    /**
+     * The tab asks for the desktop site ("Request desktop site"). A new session of such a tab
+     * starts with the desktop user agent and viewport, so its first load is already a desktop one.
+     */
+    desktopMode: Boolean = false,
 ) {
-    val gecko: GeckoSession = engine.createSession(private)
+    val gecko: GeckoSession = engine.createSession(private, desktopMode)
 
     /** The user-agent setting changed: it applies to this tab's next load. */
     fun setUserAgent(userAgent: String) {
         gecko.settings.userAgentOverride = userAgent.trim().ifEmpty { null }
     }
-    private val _state = MutableStateFlow(PageState())
+    private val _state = MutableStateFlow(PageState(desktopMode = desktopMode))
     val state: StateFlow<PageState> = _state.asStateFlow()
     val current: PageState get() = _state.value
 

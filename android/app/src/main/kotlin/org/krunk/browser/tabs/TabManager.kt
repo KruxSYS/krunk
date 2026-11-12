@@ -84,6 +84,9 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
     private val errorPage = ErrorPage(context)
     private val geckoStates = HashMap<UInt, String>()
 
+    /** "Request desktop site" per tab: it outlives the tab's sessions (see [DesktopModes]). */
+    private val desktop = DesktopModes()
+
     /** Tabs whose first load is for another app or a page (kept until the session loads it). */
     private val loadSources = HashMap<UInt, LoadOrigin>()
 
@@ -122,7 +125,7 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
     /** The crashed session on offer ("Restore tabs?"), with its tabs' states as stored then. */
     private var pendingRestore: PendingRestore? = null
 
-    private class PendingRestore(val sessionJson: String, val states: List<Pair<String, String>>)
+    private class PendingRestore(val sessionJson: String, val states: List<SavedTabState>)
 
     fun session(id: UInt): KrunkSession? = sessions[id]
 
@@ -284,7 +287,7 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
     }
 
     /** [states]: the tabs' saved states when already read (a pending offer), else read from the store. */
-    private fun restore(json: String, now: Long, states: List<Pair<String, String>>?): Boolean {
+    private fun restore(json: String, now: Long, states: List<SavedTabState>?): Boolean {
         val before = model.tabs().map { it.id }.toSet()
         val effects = runCatching { model.restoreSessionJson(json, now) }
             .onFailure { Log.w(KrunkApp.TAG, "session restore failed", it) }
@@ -293,21 +296,29 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         val saved = states
             ?: runCatching { core.store.kvGet(KV_GECKO_STATES) }.getOrNull()?.let(::decodeStates)
             ?: emptyList()
-        geckoStates.putAll(SessionPersistence.assignStates(restoredTabs, saved))
+        // Before the sessions are created: each one starts with its tab's state and mode.
+        for ((id, row) in assignSavedTabs(restoredTabs, saved)) {
+            if (row.state.isNotEmpty()) geckoStates[id] = row.state
+            desktop[id] = row.desktop
+        }
         apply(effects)
         return true
     }
 
-    private fun decodeStates(raw: String): List<Pair<String, String>> = runCatching {
+    private fun decodeStates(raw: String): List<SavedTabState> = runCatching {
         val arr = JSONArray(raw)
         (0 until arr.length()).map { i ->
             when (val item = arr.opt(i)) {
-                is JSONObject -> item.optString("url", "") to item.optString("state", "")
+                is JSONObject -> SavedTabState(
+                    item.optString("url", ""),
+                    item.optString("state", ""),
+                    item.optBoolean("desktop", false),
+                )
 
                 // The first builds stored a bare array of states.
-                is String -> "" to item
+                is String -> SavedTabState("", item)
 
-                else -> "" to ""
+                else -> SavedTabState("", "")
             }
         }
     }.getOrDefault(emptyList())
@@ -335,7 +346,7 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         val closed = model.closedTabsJson()
         // Only references are collected here; the (possibly large) JSON is built on the writer.
         val states = model.tabs().filter { !it.private }.map { t ->
-            t.url to (sessions[t.id]?.current?.sessionState ?: geckoStates[t.id] ?: "")
+            SavedTabState(t.url, sessions[t.id]?.current?.sessionState ?: geckoStates[t.id] ?: "", desktop[t.id])
         }
         scope.launch(persist) {
             runCatching {
@@ -351,9 +362,14 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         }
     }
 
-    private fun encodeStates(states: List<Pair<String, String>>): String {
+    private fun encodeStates(states: List<SavedTabState>): String {
         val arr = JSONArray()
-        for ((url, state) in states) arr.put(JSONObject().put("url", url).put("state", state))
+        for (row in states) {
+            val item = JSONObject().put("url", row.url).put("state", row.state)
+            // Written only when set: the row of a tab with the mobile site is as it always was.
+            if (row.desktop) item.put("desktop", true)
+            arr.put(item)
+        }
         return arr.toString()
     }
 
@@ -489,6 +505,29 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         scheduleSave()
     }
 
+    /**
+     * "Duplicate": a copy right after the tab, with the same address, the same privacy and the
+     * same desktop mode (the core's rule; the copy becomes the active tab). Returns its id.
+     */
+    fun duplicate(id: UInt): UInt? {
+        val r = model.duplicate(id, nowMs()) ?: return null
+        desktop.copy(id, r.id)
+        apply(r.effects)
+        refresh()
+        scheduleSave()
+        return r.id
+    }
+
+    /** "Close other tabs": the other tabs of the same kind, never across the private boundary. */
+    fun closeOthers(id: UInt) {
+        val others = model.otherTabsOf(id)
+        if (others.isEmpty()) return
+        apply(model.closeOtherTabs(id, nowMs()))
+        others.forEach(::forget)
+        refresh()
+        scheduleSave()
+    }
+
     /** Closes every tab, or only the normal/private ones. */
     fun closeAll(private: Boolean? = null) {
         val ids = SessionPersistence.closeOrder(
@@ -506,6 +545,7 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
 
     private fun forget(id: UInt) {
         geckoStates.remove(id)
+        desktop.forget(id)
         loadSources.remove(id)
         thumbnails.remove(id)
         lastSeen.remove(id)
@@ -621,16 +661,33 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         id ?: return
         if (sessions[id]?.current?.crashed == true) {
             // The engine closed the crashed session: a new one restores the page and its history.
-            dropCrashedSession(id)
-            createSession(id)
-            refresh()
+            recreateSession(id)
         } else {
             ensureSession(id)?.reload()
         }
     }
 
-    fun setDesktopMode(id: UInt, desktop: Boolean) {
-        sessions[id]?.setDesktopMode(desktop)
+    /**
+     * Throws the tab's session away and gives the tab a new one that restores the page, its
+     * history and its desktop mode: what a reload does after the page's process crashed, and
+     * what happens to a discarded tab when the user comes back to it. False without a session.
+     * (Also the debug build's `recreate-session` command, for the device checks.)
+     */
+    fun recreateSession(id: UInt): Boolean {
+        if (sessions[id] == null) return false
+        dropCrashedSession(id)
+        createSession(id)
+        refresh()
+        return true
+    }
+
+    /** "Request desktop site" for a tab: remembered for the tab, applied to its session now. */
+    fun setDesktopMode(id: UInt, on: Boolean) {
+        if (model.tab(id) == null) return
+        desktop[id] = on
+        sessions[id]?.setDesktopMode(on)
+        refresh()
+        scheduleSave()
     }
 
     // ----- effects -----
@@ -667,6 +724,7 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
             listener = this,
             errorPage = errorPage,
             recordHistory = !info.private,
+            desktopMode = desktop[id],
         )
         sessions[id] = s
         val state = geckoStates.remove(id)
@@ -736,7 +794,8 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
     fun refresh() {
         val list = model.tabs().map { t ->
             val session = sessions[t.id]
-            val page = session?.current ?: PageState(url = t.url, title = t.title)
+            val page = session?.current
+                ?: PageState(url = t.url, title = t.title, desktopMode = desktop[t.id])
             val url = displayedUrl(
                 modelUrl = t.url,
                 modelIsInternal = urlFacts(t.url).internalPage != null,

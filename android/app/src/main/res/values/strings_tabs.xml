@@ -29,6 +29,12 @@
     <string name="tabs_card_description_asleep">%1$s, sleeping tab</string>
     <string name="tabs_close_tab">Close %1$s</string>
     <string name="tabs_asleep">Sleeping</string>
+    <!-- Tab card menu (long press). tabs_menu_open ends TalkBack's "Double-tap and hold to …". -->
+    <string name="tabs_menu_open">show tab options</string>
+    <string name="tabs_menu_duplicate">Duplicate</string>
+    <string name="tabs_menu_close_others">Close other tabs</string>
+    <string name="tabs_menu_close_others_private">Close other private tabs</string>
+    <string name="tabs_menu_close">Close tab</string>
     <string name="tabs_empty">No open tabs</string>
     <string name="tabs_empty_private">No private tabs. Pages you open here leave no history.</string>
     <string name="tabs_empty_search">No tabs match “%1$s”</string>

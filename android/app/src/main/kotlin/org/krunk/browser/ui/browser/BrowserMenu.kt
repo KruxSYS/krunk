@@ -51,7 +51,10 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -181,6 +184,11 @@ fun BrowserMenu(
             leadingIcon = { Icon(Icons.Outlined.Computer, contentDescription = null) },
             trailingIcon = {
                 Checkbox(checked = page?.desktopMode == true, onCheckedChange = null, enabled = hasPage)
+            },
+            // The row is the check box: TalkBack (and a UI dump) get "checked" / "not checked".
+            modifier = Modifier.semantics {
+                role = Role.Checkbox
+                toggleableState = ToggleableState(page?.desktopMode == true)
             },
             enabled = hasPage,
             onClick = {

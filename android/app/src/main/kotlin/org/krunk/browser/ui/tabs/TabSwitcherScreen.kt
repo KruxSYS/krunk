@@ -1,8 +1,10 @@
 package org.krunk.browser.ui.tabs
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -55,6 +57,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
@@ -63,6 +66,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -91,7 +95,8 @@ fun tabMatches(tab: TabUi, query: String): Boolean {
 /**
  * The tab switcher: a grid of cards (thumbnail or favicon placeholder, title, close), two
  * sections (normal and Private, the latter in the private theme), search, close all, recently
- * closed and a new-tab button. Swiping a card sideways closes it.
+ * closed and a new-tab button. Swiping a card sideways closes it; a long press opens its menu
+ * (Duplicate, Close other tabs, Close tab).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -222,9 +227,19 @@ fun TabSwitcherScreen(vm: BrowserViewModel) {
                             modifier = Modifier.fillMaxSize(),
                         ) {
                             items(shown, key = { it.id.toLong() }) { tab ->
-                                TabCard(tab, active = tab.id == activeId, onSelect = {
-                                    select(tab)
-                                }, onClose = { close(tab) })
+                                TabCard(
+                                    tab,
+                                    active = tab.id == activeId,
+                                    // "Other tabs" are the others of this list (normal or private).
+                                    canCloseOthers = section.size > 1,
+                                    onSelect = { select(tab) },
+                                    onClose = { close(tab) },
+                                    onDuplicate = { vm.tabs.duplicate(tab.id) },
+                                    onCloseOthers = {
+                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        vm.tabs.closeOthers(tab.id)
+                                    },
+                                )
                             }
                         }
                     }
@@ -278,8 +293,17 @@ private fun CloseAllDialog(private: Boolean, count: Int, onDismiss: () -> Unit, 
     )
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun TabCard(tab: TabUi, active: Boolean, onSelect: () -> Unit, onClose: () -> Unit) {
+private fun TabCard(
+    tab: TabUi,
+    active: Boolean,
+    canCloseOthers: Boolean,
+    onSelect: () -> Unit,
+    onClose: () -> Unit,
+    onDuplicate: () -> Unit,
+    onCloseOthers: () -> Unit,
+) {
     val title = tab.title.ifBlank {
         if (tab.isNewTab || tab.displayUrl.isBlank()) {
             stringResource(R.string.tabs_untitled)
@@ -295,6 +319,10 @@ private fun TabCard(tab: TabUi, active: Boolean, onSelect: () -> Unit, onClose: 
         },
         title,
     )
+    var menu by remember { mutableStateOf(false) }
+    val actions = tabCardActions(tab.private, canCloseOthers, onDuplicate, onCloseOthers, onClose)
+    val menuLabel = stringResource(R.string.tabs_menu_open)
+    val shape = CardDefaults.shape
     val dismissState = rememberSwipeToDismissBoxState()
     SwipeToDismissBox(
         state = dismissState,
@@ -302,11 +330,22 @@ private fun TabCard(tab: TabUi, active: Boolean, onSelect: () -> Unit, onClose: 
         onDismiss = { value -> if (value != SwipeToDismissBoxValue.Settled) onClose() },
     ) {
         Card(
-            onClick = onSelect,
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(0.72f)
-                .semantics { contentDescription = description },
+                // A tap opens the tab; a long press opens the card's menu. TalkBack gets the
+                // menu's entries as actions on the card as well.
+                .clip(shape)
+                .combinedClickable(
+                    onLongClickLabel = menuLabel,
+                    onLongClick = { menu = true },
+                    onClick = onSelect,
+                )
+                .semantics {
+                    contentDescription = description
+                    customActions = actions.forAccessibility()
+                },
+            shape = shape,
             border = if (active) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
         ) {
@@ -379,6 +418,7 @@ private fun TabCard(tab: TabUi, active: Boolean, onSelect: () -> Unit, onClose: 
                 }
             }
         }
+        TabCardMenu(menu, actions) { menu = false }
     }
 }
 
