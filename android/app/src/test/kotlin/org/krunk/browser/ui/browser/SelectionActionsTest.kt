@@ -49,4 +49,17 @@ class SelectionActionsTest {
         assertTrue(of("a".repeat(SelectionActions.MAX_SELECTION + 1)).isEmpty())
         assertEquals(1, of("a".repeat(SelectionActions.MAX_SELECTION)).size)
     }
+
+    @Test
+    fun krunksEntriesComeBeforeSelectAllSoTheyAreNotBehindMoreOptions() {
+        val engine = listOf("PROCESS_TEXT", "CUT", "COPY", "PASTE", "SELECT_ALL", "UNSELECT")
+        assertEquals(
+            listOf("PROCESS_TEXT", "CUT", "COPY", "PASTE", "OPEN", "SEARCH", "SELECT_ALL", "UNSELECT"),
+            SelectionActions.placed(engine, listOf("OPEN", "SEARCH"), "SELECT_ALL"),
+        )
+        assertEquals(
+            listOf("COPY", "OPEN", "SEARCH"),
+            SelectionActions.placed(listOf("COPY"), listOf("OPEN", "SEARCH"), "SELECT_ALL"),
+        )
+    }
 }

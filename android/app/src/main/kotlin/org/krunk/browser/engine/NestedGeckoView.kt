@@ -38,6 +38,9 @@ open class NestedGeckoView(context: Context) :
     /** Off while the page is in full screen: the toolbar is gone, nothing to move. */
     var nestedScrollAllowed = true
 
+    /** Called when the user lifts a finger from the page (a tap or the end of a drag). */
+    var onTouchUp: (() -> Unit)? = null
+
     init {
         isNestedScrollingEnabled = true
     }
@@ -84,6 +87,7 @@ open class NestedGeckoView(context: Context) :
             }
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (event.actionMasked == MotionEvent.ACTION_UP) onTouchUp?.invoke()
                 if (hasNestedScrollingParent()) {
                     // The holder forwards flings as Compose pre/post-fling, which is what settles
                     // the toolbar and releases the pull-to-refresh indicator.

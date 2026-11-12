@@ -602,6 +602,7 @@ private fun PageView(
                 if (view.session != null) view.releaseSession()
                 view.setSession(session.gecko)
             }
+            view.onTouchUp = session::touched
             view.nestedScrollAllowed = !fullScreen
             val max = if (fullScreen) 0 else toolbarMaxPx.toInt()
             view.setDynamicToolbarMaxHeight(max)

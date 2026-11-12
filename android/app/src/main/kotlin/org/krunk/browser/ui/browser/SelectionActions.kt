@@ -39,4 +39,10 @@ object SelectionActions {
         selectionSearch(selection, engineName, searchTemplate)?.let { out += SelectionAction.Search(it.label, it.url) }
         return out
     }
+
+    /** The engine's menu actions with Krunk's [mine] placed before [before] (at the end without it). */
+    fun placed(engine: List<String>, mine: List<String>, before: String): List<String> {
+        val at = engine.indexOf(before).let { if (it < 0) engine.size else it }
+        return engine.take(at) + mine + engine.drop(at)
+    }
 }

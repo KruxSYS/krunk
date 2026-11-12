@@ -50,6 +50,26 @@ class ExternalLinkTest {
     }
 
     @Test
+    fun aTapCountsOnlyForTwoSecondsWhateverTheEngineSays() {
+        // The engine still reported a gesture when a script opened tel: 8 s after a tap.
+        val link = ExternalLink(ExternalKind.PHONE, "tel:+15551234", "+15551234")
+        fun at(ms: Long?) = ExternalLinks.classify("tel:+15551234", userGesture = true, msSinceTouch = ms)
+        assertEquals(HandOff.Open(link), at(0))
+        assertEquals(HandOff.Open(link), at(150))
+        assertEquals(HandOff.Open(link), at(ExternalLinks.TAP_WINDOW_MS))
+        assertEquals(HandOff.Ask(link), at(ExternalLinks.TAP_WINDOW_MS + 1))
+        assertEquals(HandOff.Ask(link), at(8_000))
+        // A page that was never touched, and a clock that went backwards.
+        assertEquals(HandOff.Ask(link), at(null))
+        assertEquals(HandOff.Ask(link), at(-5))
+        // A recent touch without the engine's gesture is not a tap on the link either.
+        assertEquals(
+            HandOff.Ask(link),
+            ExternalLinks.classify("tel:+15551234", userGesture = false, msSinceTouch = 100),
+        )
+    }
+
+    @Test
     fun everythingElseStaysWithTheEngine() {
         for (uri in listOf(
             "https://example.com/",

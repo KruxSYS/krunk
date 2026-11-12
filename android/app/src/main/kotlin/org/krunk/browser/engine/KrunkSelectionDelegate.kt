@@ -3,6 +3,7 @@ package org.krunk.browser.engine
 import android.app.Activity
 import android.view.MenuItem
 import org.krunk.browser.ui.browser.SelectionAction
+import org.krunk.browser.ui.browser.SelectionActions
 import org.mozilla.geckoview.BasicSelectionActionDelegate
 import org.mozilla.geckoview.GeckoSession
 
@@ -31,7 +32,16 @@ class KrunkSelectionDelegate(
         super.onShowActionRequest(session, selection)
     }
 
-    override fun getAllActions(): Array<String> = super.getAllActions() + arrayOf(ACTION_OPEN, ACTION_SEARCH)
+    /**
+     * Krunk's two come before "Select all": the floating menu shows only what fits and puts the
+     * rest behind "More options", and the entries of other apps (read aloud, translate) would
+     * otherwise take the visible places.
+     */
+    override fun getAllActions(): Array<String> = SelectionActions.placed(
+        super.getAllActions().toList(),
+        listOf(ACTION_OPEN, ACTION_SEARCH),
+        GeckoSession.SelectionActionDelegate.ACTION_SELECT_ALL,
+    ).toTypedArray()
 
     override fun isActionAvailable(id: String): Boolean = when (id) {
         ACTION_OPEN, ACTION_SEARCH -> entry(id) != null

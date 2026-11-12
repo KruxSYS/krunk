@@ -31,10 +31,18 @@ object ExternalLinks {
     private val PHONE = Regex("""^[+]?[0-9()\-.*# ]{1,40}$""")
 
     /**
-     * [uri] is what the page wants to load; [userGesture] whether the user tapped for it;
-     * [redirect] whether a server redirect led here (never treated as a tap).
+     * How long after a touch on the page a link counts as tapped. The engine's own "user
+     * gesture" flag stays set long after a tap (a script got the dialer opened 8 s after one
+     * on the device), so Krunk also asks how long ago the page was really touched.
      */
-    fun classify(uri: String, userGesture: Boolean, redirect: Boolean = false): HandOff {
+    const val TAP_WINDOW_MS = 2_000L
+
+    /**
+     * [uri] is what the page wants to load; [userGesture] whether the engine saw a user gesture
+     * for it; [redirect] whether a server redirect led here (never treated as a tap);
+     * [msSinceTouch] how long ago the user last touched the page (null: never).
+     */
+    fun classify(uri: String, userGesture: Boolean, redirect: Boolean = false, msSinceTouch: Long? = 0): HandOff {
         val scheme = uri.substringBefore(':', "").lowercase()
         if (scheme != "mailto" && scheme != "tel") return HandOff.NotExternal
         if (uri.length > MAX_URI || uri.any { it.isISOControl() }) return HandOff.Refuse
@@ -43,7 +51,8 @@ object ExternalLinks {
             "mailto" -> mail(rest)
             else -> phone(rest)
         } ?: return HandOff.Refuse
-        return if (userGesture && !redirect) HandOff.Open(link) else HandOff.Ask(link)
+        val tapped = userGesture && !redirect && msSinceTouch != null && msSinceTouch in 0..TAP_WINDOW_MS
+        return if (tapped) HandOff.Open(link) else HandOff.Ask(link)
     }
 
     /** `mailto:` with an address, or with only fields (`mailto:?subject=...`). */

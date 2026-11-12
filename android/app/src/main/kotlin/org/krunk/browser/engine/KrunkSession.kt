@@ -1,5 +1,6 @@
 package org.krunk.browser.engine
 
+import android.os.SystemClock
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -223,6 +224,14 @@ class KrunkSession(
 
     private var closed = false
 
+    /** When the user last lifted a finger from this tab's page (uptime ms; 0 = never). */
+    private var lastTouchAt = 0L
+
+    /** The page view reports a finished touch (see [ExternalLinks.TAP_WINDOW_MS]). */
+    fun touched() {
+        lastTouchAt = SystemClock.uptimeMillis()
+    }
+
     fun close() {
         closed = true
         engine.blocker.detach(id)
@@ -258,7 +267,9 @@ class KrunkSession(
             // cannot make the bar read krunk://... or switch the tab to the new-tab page.
             // mailto: and tel: are not pages: Android's mail app or dialer gets them (asked
             // first unless the user tapped the link). The engine never loads them.
-            when (val handOff = ExternalLinks.classify(request.uri, request.hasUserGesture, request.isRedirect)) {
+            val sinceTouch = lastTouchAt.takeIf { it > 0 }?.let { SystemClock.uptimeMillis() - it }
+            val handOff = ExternalLinks.classify(request.uri, request.hasUserGesture, request.isRedirect, sinceTouch)
+            when (handOff) {
                 HandOff.NotExternal -> Unit
 
                 HandOff.Refuse -> return GeckoResult.fromValue(AllowOrDeny.DENY)
