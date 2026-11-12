@@ -13,6 +13,7 @@
 //!
 //! Outbound messages are [`Event`]s.
 
+use crate::agent::scratch::ScratchView;
 use crate::agent::{AskSpec, Category, ModelChoice, RunState, ScriptCard, ScriptKind, StepView};
 use crate::downloads::DownloadItem;
 use crate::keys::Command;
@@ -1731,6 +1732,19 @@ pub enum Request {
     AgentStop,
     /// "New conversation".
     AgentNew,
+    /// 0.16.0: Show on the card of a password Krunk generated for the agent (`agentPassword`):
+    /// the reply carries it, for this window's panel only.
+    AgentPasswordShow {
+        id: u32,
+    },
+    /// 0.16.0: Copy on that card: the password goes to the clipboard like one copied on the
+    /// passwords page (kept out of the clipboard history, cleared after 30 s).
+    AgentPasswordCopy {
+        id: u32,
+    },
+    /// 0.16.0: Clear in the panel's scratchpad view: the agent's notes and plan of this
+    /// conversation are dropped.
+    AgentScratchClear,
     AgentAnswer {
         ask: u32,
         #[serde(default)]
@@ -1738,7 +1752,8 @@ pub enum Request {
         #[serde(default)]
         other: Option<String>,
     },
-    /// Allow or deny a sensitive category (history, bookmarks, downloads, cookies).
+    /// Allow or deny a sensitive category (history, bookmarks, downloads, cookies; 0.16.0:
+    /// entering a password on the site the question named).
     AgentConsent {
         ask: u32,
         allow: bool,
@@ -2328,6 +2343,9 @@ impl Sender {
                 R::AgentSend { .. }
                     | R::AgentStop
                     | R::AgentNew
+                    | R::AgentScratchClear
+                    | R::AgentPasswordShow { .. }
+                    | R::AgentPasswordCopy { .. }
                     | R::AgentAnswer { .. }
                     | R::AgentConsent { .. }
                     | R::AgentContinue { .. }
@@ -2902,6 +2920,10 @@ pub enum Event {
         ask: u32,
         category: Category,
         label: String,
+        /// 0.16.0, `passwords`: the site (origin) the password would be entered on; the
+        /// answer holds for it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        site: Option<String>,
     },
     AgentContinueAsk {
         ask: u32,
@@ -2916,6 +2938,21 @@ pub enum Event {
     },
     /// "New conversation": empty the panel.
     AgentClear,
+    /// 0.16.0: Krunk generated a password for the agent's `fill_password` and filled it in on
+    /// `site`. The card shows it masked: the value itself is not in this event, it stays in the
+    /// browser process until the user presses Show (`agentPasswordShow`) or Copy.
+    AgentPassword {
+        id: u32,
+        site: String,
+        /// Characters of the password, and the fields it went into.
+        length: u32,
+        fields: u32,
+    },
+    /// 0.16.0: the agent's scratchpad as it is now (the plan and the notes with their text),
+    /// sent whenever it changes. In memory only, like the conversation.
+    AgentScratch {
+        scratch: ScratchView,
+    },
     /// To krunk://scripts: the lists changed (reload them).
     ScriptsChanged,
     /// To krunk://scripts while recording a hotkey: the chord pressed and why it can't be used.
@@ -3181,6 +3218,9 @@ mod tests {
             (r#"{"cmd":"agentSend","text":"List the links"}"#, &[Sender::Agent]),
             (r#"{"cmd":"agentStop"}"#, &[Sender::Agent]),
             (r#"{"cmd":"agentNew"}"#, &[Sender::Agent]),
+            (r#"{"cmd":"agentScratchClear"}"#, &[Sender::Agent]),
+            (r#"{"cmd":"agentPasswordShow","id":1}"#, &[Sender::Agent]),
+            (r#"{"cmd":"agentPasswordCopy","id":1}"#, &[Sender::Agent]),
             (r#"{"cmd":"agentAnswer","ask":1,"choices":[0,2],"other":"x"}"#, &[Sender::Agent]),
             (r#"{"cmd":"agentConsent","ask":2,"allow":false}"#, &[Sender::Agent]),
             (r#"{"cmd":"agentContinue","ask":3,"go":true}"#, &[Sender::Agent]),
@@ -3358,12 +3398,37 @@ mod tests {
         assert!(j.starts_with(r#"{"event":"agentStep","step":{"n":2,"tool":"click""#), "{j}");
         let j = Event::AgentState { state: RunState::Stopped, steps: 3, ms: Some(40) }.to_json();
         assert_eq!(j, r#"{"event":"agentState","state":"stopped","steps":3,"ms":40}"#);
-        let j = Event::AgentConsentAsk { ask: 1, category: Category::History, label: "your browsing history".into() }
-            .to_json();
-        assert!(j.contains(r#""category":"history""#), "{j}");
+        let j = Event::AgentConsentAsk {
+            ask: 1,
+            category: Category::History,
+            label: "your browsing history".into(),
+            site: None,
+        }
+        .to_json();
+        assert!(j.contains(r#""category":"history""#) && !j.contains("site"), "{j}");
+        // 0.16.0: the password question names the site; the card's event has no value.
+        let j = Event::AgentConsentAsk {
+            ask: 2,
+            category: Category::Passwords,
+            label: Category::Passwords.label().into(),
+            site: Some("https://shop.example".into()),
+        }
+        .to_json();
+        assert!(j.contains(r#""category":"passwords""#) && j.ends_with(r#""site":"https://shop.example"}"#), "{j}");
+        let j = Event::AgentPassword { id: 3, site: "https://shop.example".into(), length: 20, fields: 2 }.to_json();
+        assert_eq!(j, r#"{"event":"agentPassword","id":3,"site":"https://shop.example","length":20,"fields":2}"#);
         assert_eq!(Event::ScriptsChanged.to_json(), r#"{"event":"scriptsChanged"}"#);
         let j = Event::AgentButton { visible: true, open: false }.to_json();
         assert_eq!(j, r#"{"event":"agentButton","visible":true,"open":false}"#);
+        // 0.16.0: the scratchpad view.
+        let mut scratch = crate::agent::scratch::Scratch::default();
+        scratch.note_write("found", "a<b>", false).unwrap();
+        scratch.plan_set(&[]).unwrap();
+        let j = Event::AgentScratch { scratch: scratch.view() }.to_json();
+        assert_eq!(
+            j,
+            r#"{"event":"agentScratch","scratch":{"plan":[],"notes":[{"name":"found","bytes":4,"content":"a<b>"}],"bytes":4}}"#
+        );
     }
 
     #[test]

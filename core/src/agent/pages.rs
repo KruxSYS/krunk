@@ -82,9 +82,41 @@ pub fn may_act(url: &str) -> Result<(), &'static str> {
     }
 }
 
+/// 0.16.0, `fill_password`: the site (origin, like `https://example.com`) of a tab that shows
+/// `url`, if a password may be entered there: a web page the agent may act on. The consent
+/// names it, and the password is entered only while the tab is still on it.
+pub fn password_site(url: &str) -> Option<String> {
+    may_act(url).ok()?;
+    let u = Url::parse(url.trim()).ok()?;
+    if !matches!(u.scheme(), "http" | "https") {
+        return None;
+    }
+    match u.origin() {
+        o @ url::Origin::Tuple(..) => Some(o.ascii_serialization()),
+        url::Origin::Opaque(_) => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn password_sites() {
+        assert_eq!(password_site("https://Shop.Example/signup?x=1#f").as_deref(), Some("https://shop.example"));
+        assert_eq!(password_site("http://localhost:8094/signup.html").as_deref(), Some("http://localhost:8094"));
+        assert_eq!(password_site("https://example.com:443/").as_deref(), Some("https://example.com"));
+        for no in [
+            "about:blank",
+            "",
+            "krunk://passwords",
+            "https://krunk.invalid/settings.html",
+            "file:///c:/x.html",
+            "data:text/html,x",
+        ] {
+            assert_eq!(password_site(no), None, "{no}");
+        }
+    }
 
     #[test]
     fn navigate_table() {

@@ -3173,6 +3173,9 @@ impl Browser {
             r @ (Request::AgentSend { .. }
             | Request::AgentStop
             | Request::AgentNew
+            | Request::AgentScratchClear
+            | Request::AgentPasswordShow { .. }
+            | Request::AgentPasswordCopy { .. }
             | Request::AgentAnswer { .. }
             | Request::AgentConsent { .. }
             | Request::AgentContinue { .. }

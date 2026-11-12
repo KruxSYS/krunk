@@ -412,6 +412,30 @@ pub fn scrub(text: &str, secrets: &[Zeroizing<String>]) -> String {
     scrub_cards(&first)
 }
 
+/// A secret in the forms a page or an address can show it in: as it is, HTML-escaped (an
+/// attribute or text in `get_html`), as a form or URL value (`+` or `%20` for a space) and as
+/// the inside of a JSON string. For [`scrub`], when the browser itself knows a secret that must
+/// not reach the model (0.16.0: a password it generated for `fill_password`).
+pub fn secret_forms(secret: &str) -> Vec<Zeroizing<String>> {
+    let form: String = url::form_urlencoded::byte_serialize(secret.as_bytes()).collect();
+    let json = Zeroizing::new(serde_json::to_string(secret).unwrap_or_default());
+    let forms = [
+        secret.to_string(),
+        secret.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;"),
+        form.replace('+', "%20"),
+        form,
+        json.get(1..json.len().saturating_sub(1)).unwrap_or_default().to_string(),
+    ];
+    let mut out: Vec<Zeroizing<String>> = Vec::new();
+    for f in forms {
+        let f = Zeroizing::new(f);
+        if !f.is_empty() && !out.contains(&f) {
+            out.push(f);
+        }
+    }
+    out
+}
+
 /// Replaces Luhn-valid card numbers (see [`scrub`]).
 fn scrub_cards(text: &str) -> String {
     let b = text.as_bytes();
@@ -520,6 +544,35 @@ impl Paged {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 0.16.0: a password the browser generated is cut out in every form a page shows it in.
+    #[test]
+    fn secret_forms_cover_html_urls_and_json() {
+        let pw = "aB3!#$%&*+-=?@^_~";
+        let forms = secret_forms(pw);
+        let got: Vec<&str> = forms.iter().map(|f| f.as_str()).collect();
+        assert_eq!(got, vec![pw, "aB3!#$%&amp;*+-=?@^_~", "aB3%21%23%24%25%26*%2B-%3D%3F%40%5E_%7E"]);
+        let page = format!(
+            r#"<input value="aB3!#$%&amp;*+-=?@^_~"> /log?password=aB3%21%23%24%25%26*%2B-%3D%3F%40%5E_%7E&x=1 {{"v":"{pw}"}}"#
+        );
+        let clean = scrub(&page, &forms);
+        assert_eq!(clean, r#"<input value="[redacted]"> /log?password=[redacted]&x=1 {"v":"[redacted]"}"#);
+        // A space and a quote: both URL forms, and the JSON form.
+        let odd = secret_forms("my \"pass\" word");
+        let got: Vec<&str> = odd.iter().map(|f| f.as_str()).collect();
+        assert_eq!(
+            got,
+            vec![
+                "my \"pass\" word",
+                "my &quot;pass&quot; word",
+                "my%20%22pass%22%20word",
+                "my+%22pass%22+word",
+                "my \\\"pass\\\" word"
+            ]
+        );
+        assert!(secret_forms("").is_empty());
+        assert_eq!(secret_forms("plain123").len(), 1);
+    }
 
     const VISA: &str = "4111111111111111";
     const AMEX: &str = "378282246310005";

@@ -31,7 +31,19 @@
 //!   answer cut off is continued once ([`CONTINUE_NOTE`]);
 //! * 0.15.0, long scripts: `save_userscript` / `save_macro` with `more: true` keep their source
 //!   in a draft of the conversation ([`super::drafts`]); the call with the draft id and without
-//!   `more` sends the whole script to the host, which checks it only then.
+//!   `more` sends the whole script to the host, which checks it only then;
+//! * 0.16.0, the scratchpad ([`super::scratch`]): its tools (`note_*`, `plan_*`) are answered
+//!   here, each as a step with a result, and never reach the host. Every request carries the
+//!   plan and the notes' index at the end of the system prompt ([`Scratch::block`]), so they
+//!   outlive the shortening of old tool results. It is cleared by `New` and by `ScratchClear`
+//!   (the panel's Clear). Its text is in memory only: log lines never carry it;
+//! * 0.16.0, `fill_password` (offered through the gate like the sensitive data): the session
+//!   first asks the host which site the target tab shows (`Action::TargetSite`, answered with
+//!   `Input::TargetSite`); the first use on a site asks the user, naming it, and the answer
+//!   holds for that site for the rest of the conversation. The allowed site goes to the host
+//!   with the call (`origin`), which enters the password only while the tab is still on it. A
+//!   password in the arguments is never in a step's label or detail (its length stands in),
+//!   and never in a log line.
 //!
 //! The user message sent to the provider is the context block, a blank line, then
 //! `User message:` and the user's text on the next line (the mock provider looks for that marker).
@@ -41,6 +53,7 @@
 
 use super::drafts::Drafts;
 use super::provider::limits;
+use super::scratch::Scratch;
 use super::tools::{self, Group, Offer};
 use super::{
     context, gate, AskAnswer, AskSpec, Category, CategorySet, ChatRequest, Message, Part, Role, RunState, ScriptKind,
@@ -48,7 +61,7 @@ use super::{
 };
 use crate::protocol::Event;
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 /// The marker between the context block and the user's own words.
 pub const USER_MARKER: &str = "User message:";
@@ -114,6 +127,12 @@ pub enum Input {
     Stop,
     /// "New conversation": stop, then forget everything.
     New,
+    /// 0.16.0: the host's answer to [`Action::TargetSite`]: the origin of the target tab's page
+    /// (`None`: no web page a password could be entered on).
+    TargetSite { call_id: String, origin: Option<String> },
+    /// 0.16.0: the panel's Clear in the scratchpad view: the notes and the plan of this
+    /// conversation go; the conversation itself and a running task stay.
+    ScratchClear,
 }
 
 /// What the host has to do.
@@ -125,6 +144,9 @@ pub enum Action {
     CancelRequest,
     /// Run a tool. `args` are validated; `step` is its step number.
     RunTool { call_id: String, name: &'static str, args: Value, step: u32 },
+    /// 0.16.0: tell the session which site the window's target tab shows now
+    /// ([`Input::TargetSite`] with this call id): `fill_password` asks the user about that site.
+    TargetSite { call_id: String },
     /// Cancel the running tool (its result is no longer wanted).
     CancelTool,
     /// Release every key and mouse button a tool or agent-started macro holds.
@@ -155,8 +177,11 @@ enum Phase {
     Tool { call_id: String, step: StepView, started: u64 },
     /// An `ask_user` question is open.
     Ask { ask: u32, call_id: String, spec: AskSpec },
-    /// A gated tool waits for Allow/Deny.
-    Consent { ask: u32, call_id: String, name: &'static str, args: Value, category: Category },
+    /// A gated tool waits for Allow/Deny. `site` (0.16.0, `fill_password`): the answer is
+    /// about this site only.
+    Consent { ask: u32, call_id: String, name: &'static str, args: Value, category: Category, site: Option<String> },
+    /// 0.16.0: `fill_password` waits for the host to say which site the target tab shows.
+    Site { call_id: String, name: &'static str, args: Value },
     /// The step limit was reached: "continue?".
     Continue { ask: u32 },
 }
@@ -172,6 +197,9 @@ pub struct Session {
     /// Consent decisions of this conversation.
     allowed: CategorySet,
     denied: CategorySet,
+    /// 0.16.0: the sites (origins) on which the user allowed or denied entering a password.
+    sites_allowed: BTreeSet<String>,
+    sites_denied: BTreeSet<String>,
     /// The tools of the current task.
     offer: Offer,
     phase: Phase,
@@ -191,6 +219,8 @@ pub struct Session {
     cut_calls: u32,
     carry: String,
     drafts: Drafts,
+    /// 0.16.0: the model's notes and plan (in memory only).
+    scratch: Scratch,
 }
 
 /// The arguments are whole JSON (empty counts as `{}`).
@@ -246,6 +276,8 @@ impl Session {
             history: Vec::new(),
             allowed: CategorySet::EMPTY,
             denied: CategorySet::EMPTY,
+            sites_allowed: BTreeSet::new(),
+            sites_denied: BTreeSet::new(),
             offer: Offer { userscripts: false, macros: false, gated: CategorySet::EMPTY },
             phase: Phase::Idle,
             answer: Answer::default(),
@@ -259,6 +291,7 @@ impl Session {
             cut_calls: 0,
             carry: String::new(),
             drafts: Drafts::default(),
+            scratch: Scratch::default(),
         }
     }
 
@@ -291,6 +324,11 @@ impl Session {
         &self.history
     }
 
+    /// The conversation's scratchpad (0.16.0).
+    pub fn scratch(&self) -> &Scratch {
+        &self.scratch
+    }
+
     /// Handles one input; `now_ms` is a monotonic clock for step durations.
     pub fn handle(&mut self, input: Input, now_ms: u64) -> Vec<Action> {
         let mut out = Vec::new();
@@ -304,6 +342,7 @@ impl Session {
             Input::ToolDone { call_id, outcome } => self.on_tool_done(&call_id, outcome, now_ms, &mut out),
             Input::Answer { ask, answer } => self.on_answer(ask, answer, now_ms, &mut out),
             Input::Consent { ask, allow } => self.on_consent(ask, allow, now_ms, &mut out),
+            Input::TargetSite { call_id, origin } => self.on_site(&call_id, origin, now_ms, &mut out),
             Input::Continue { ask, go } => self.on_continue(ask, go, now_ms, &mut out),
             Input::Stop => self.stop(now_ms, &mut out),
             Input::New => {
@@ -311,11 +350,21 @@ impl Session {
                 self.history.clear();
                 self.allowed = CategorySet::EMPTY;
                 self.denied = CategorySet::EMPTY;
+                self.sites_allowed.clear();
+                self.sites_denied.clear();
                 self.steps = 0;
                 self.task_steps = 0;
                 self.drafts.clear();
+                self.scratch.clear();
                 emit(&mut out, Event::AgentClear);
+                emit(&mut out, Event::AgentScratch { scratch: self.scratch.view() });
                 self.set_state(RunState::Idle, None, &mut out);
+            }
+            Input::ScratchClear => {
+                // Also while a task runs: the model sees an empty scratchpad in its next request.
+                self.scratch.clear();
+                out.push(Action::Log("agent scratchpad cleared".into()));
+                emit(&mut out, Event::AgentScratch { scratch: self.scratch.view() });
             }
         }
         out
@@ -377,9 +426,14 @@ impl Session {
     fn send(&mut self, out: &mut Vec<Action>) {
         self.answer = Answer::default();
         self.phase = Phase::Requesting;
+        // The scratchpad as it is now goes with every request, after everything else in the
+        // system prompt (the one place all provider formats have): old tool results are
+        // shortened below, the plan and the notes' index never are.
+        let mut system = context::system_prompt(&self.cfg.system_extra, self.cfg.vision);
+        system.push_str(&self.scratch.block());
         out.push(Action::Send(ChatRequest {
             model: self.cfg.model.clone(),
-            system: context::system_prompt(&self.cfg.system_extra, self.cfg.vision),
+            system,
             messages: request_messages(&self.history),
             tools: tools::specs(self.offer),
             max_tokens: self.max_tokens(),
@@ -608,6 +662,28 @@ impl Session {
                     self.phase = Phase::Ask { ask: id, call_id: call.id, spec };
                     return self.set_state(RunState::Asking, None, out);
                 }
+                Group::Scratch => {
+                    let run = self.scratch.run(tool.name, &args);
+                    self.local_step(&call.id, tool.name, describe(tool.name, &args), &args, run.outcome, out);
+                    if run.changed {
+                        emit(out, Event::AgentScratch { scratch: self.scratch.view() });
+                    }
+                    continue;
+                }
+                Group::Sensitive(Category::Passwords) => {
+                    if let Err(e) = password_call(&args) {
+                        self.push_result(&call.id, error_json(e));
+                        continue;
+                    }
+                    // The question names the site and the answer holds for it: the host says
+                    // where the target tab is now (`on_site` goes on).
+                    if self.state != RunState::Running {
+                        self.set_state(RunState::Running, None, out);
+                    }
+                    out.push(Action::TargetSite { call_id: call.id.clone() });
+                    self.phase = Phase::Site { call_id: call.id, name: tool.name, args };
+                    return;
+                }
                 Group::Sensitive(category) => {
                     if self.denied.contains(category) {
                         self.push_result(&call.id, error_json(DENIED));
@@ -615,8 +691,10 @@ impl Session {
                     }
                     if !self.allowed.contains(category) {
                         let id = self.next_ask();
-                        emit(out, Event::AgentConsentAsk { ask: id, category, label: category.label().into() });
-                        self.phase = Phase::Consent { ask: id, call_id: call.id, name: tool.name, args, category };
+                        let label = category.label().into();
+                        emit(out, Event::AgentConsentAsk { ask: id, category, label, site: None });
+                        self.phase =
+                            Phase::Consent { ask: id, call_id: call.id, name: tool.name, args, category, site: None };
                         return self.set_state(RunState::Asking, None, out);
                     }
                     return self.run_tool(call.id, tool.name, args, now, out);
@@ -683,13 +761,30 @@ impl Session {
             }
             Err(e) => ToolOutcome::error(e),
         };
+        self.local_step(call_id, name, format!("Keep a part of a long {what}"), &args, outcome, out);
+        None
+    }
+
+    /// A call the session answered itself (a part of a long script, a scratchpad tool): a
+    /// finished step in the panel and a result for the model, like a host tool's. The log line
+    /// has the tool's name and status only; the arguments (a note's text, a script's source)
+    /// are in the panel's step detail and nowhere else.
+    fn local_step(
+        &mut self,
+        call_id: &str,
+        name: &'static str,
+        label: String,
+        args: &Value,
+        outcome: ToolOutcome,
+        out: &mut Vec<Action>,
+    ) {
         self.steps += 1;
         self.task_steps += 1;
         let status = outcome.status.unwrap_or(StepStatus::Ok);
         let step = StepView {
             n: self.steps,
             tool: name.to_string(),
-            label: format!("Keep a part of a long {what}"),
+            label,
             status,
             summary: clip(&outcome.summary, 200),
             detail: format!("{}\n\nResult:\n{}", clip(&args.to_string(), 1000), clip(&outcome.text, 500)),
@@ -699,7 +794,6 @@ impl Session {
         out.push(Action::Log(format!("agent step {} {name} {} 0 ms", step.n, status_name(status))));
         emit(out, Event::AgentStep { step });
         self.push_result(call_id, outcome.text);
-        None
     }
 
     fn run_tool(&mut self, call_id: String, name: &'static str, args: Value, now: u64, out: &mut Vec<Action>) {
@@ -714,7 +808,7 @@ impl Session {
             label: describe(name, &args),
             status: StepStatus::Running,
             summary: String::new(),
-            detail: clip(&args.to_string(), 1000),
+            detail: shown_args(name, &args),
             image: None,
             ms: 0,
         };
@@ -775,15 +869,61 @@ impl Session {
         if !matches!(self.phase, Phase::Consent { ask: a, .. } if a == ask) {
             return;
         }
-        let Phase::Consent { call_id, name, args, category, .. } = std::mem::take(&mut self.phase) else { return };
+        let Phase::Consent { call_id, name, args, category, site, .. } = std::mem::take(&mut self.phase) else {
+            return;
+        };
+        // A site's answer (a password) holds for that site, a category's for the category.
+        match (allow, site) {
+            (true, Some(site)) => {
+                self.sites_allowed.insert(site);
+            }
+            (true, None) => self.allowed.insert(category),
+            (false, Some(site)) => {
+                self.sites_denied.insert(site);
+            }
+            (false, None) => self.denied.insert(category),
+        }
         if allow {
-            self.allowed.insert(category);
             self.run_tool(call_id, name, args, now, out);
         } else {
-            self.denied.insert(category);
             self.push_result(&call_id, error_json(DENIED));
             self.set_state(RunState::Running, None, out);
             self.process(now, out);
+        }
+    }
+
+    /// The host said which site the target tab shows: `fill_password` runs if the user allowed
+    /// that site before, is refused if the user denied it, and asks otherwise. The site goes
+    /// along as `origin`; the host enters nothing if the tab has left it by then (and nothing
+    /// at all without a web page: the empty origin).
+    fn on_site(&mut self, call_id: &str, origin: Option<String>, now: u64, out: &mut Vec<Action>) {
+        if !matches!(&self.phase, Phase::Site { call_id: c, .. } if c == call_id) {
+            return; // stopped meanwhile
+        }
+        let Phase::Site { call_id, name, mut args } = std::mem::take(&mut self.phase) else { return };
+        let site = origin.map(|o| o.trim().to_string()).filter(|o| !o.is_empty());
+        args["origin"] = json!(site.clone().unwrap_or_default());
+        match site {
+            Some(site) if self.sites_denied.contains(&site) => {
+                self.push_result(&call_id, error_json(DENIED));
+                self.process(now, out);
+            }
+            Some(site) if !self.sites_allowed.contains(&site) => {
+                let id = self.next_ask();
+                let category = Category::Passwords;
+                emit(
+                    out,
+                    Event::AgentConsentAsk {
+                        ask: id,
+                        category,
+                        label: category.label().into(),
+                        site: Some(clip(&site, 300)),
+                    },
+                );
+                self.phase = Phase::Consent { ask: id, call_id, name, args, category, site: Some(site) };
+                self.set_state(RunState::Asking, None, out);
+            }
+            _ => self.run_tool(call_id, name, args, now, out),
         }
     }
 
@@ -844,7 +984,9 @@ impl Session {
                 emit(out, Event::AgentStep { step });
                 self.push_result(&call_id, CANCELLED);
             }
-            Phase::Ask { call_id, .. } | Phase::Consent { call_id, .. } => self.push_result(&call_id, CANCELLED),
+            Phase::Ask { call_id, .. } | Phase::Consent { call_id, .. } | Phase::Site { call_id, .. } => {
+                self.push_result(&call_id, CANCELLED)
+            }
             Phase::Continue { .. } | Phase::Idle => {}
         }
         self.answer = Answer::default();
@@ -857,6 +999,33 @@ impl Session {
         out.push(Action::Log("agent stopped".into()));
         self.set_state(RunState::Stopped, self.elapsed(now), out);
     }
+}
+
+/// 0.16.0: is a `fill_password` call usable? (Checked before the user is asked anything.)
+fn password_call(args: &Value) -> Result<(), &'static str> {
+    let given = args.get("password").and_then(Value::as_str).is_some_and(|p| !p.is_empty());
+    match args.get("mode").and_then(Value::as_str) {
+        Some("generate") if given => Err("mode generate takes no password: Krunk creates it, and you never see it"),
+        Some("provided") if !given => Err("mode provided needs password: the one the user gave you"),
+        _ => Ok(()),
+    }
+}
+
+/// A call's arguments as the panel's step detail shows them. A password (`fill_password`) is
+/// never shown, also when the user gave it: its length stands in for it.
+fn shown_args(name: &str, args: &Value) -> String {
+    let Some(o) = args.as_object().filter(|_| name == "fill_password") else {
+        return clip(&args.to_string(), 1000);
+    };
+    let mut shown = serde_json::Map::new();
+    for (k, v) in o {
+        let v = match (k.as_str(), v.as_str()) {
+            ("password", Some(p)) => json!(format!("({} characters, not shown)", p.chars().count())),
+            _ => v.clone(),
+        };
+        shown.insert(k.clone(), v);
+    }
+    clip(&Value::Object(shown).to_string(), 1000)
 }
 
 /// Makes the history valid for the providers: every assistant tool call is followed by exactly
@@ -1041,7 +1210,26 @@ pub fn describe(name: &str, args: &Value) -> String {
         "get_cookies_for_site" => {
             s("site").map_or("Read a site's cookies".into(), |x| format!("Read the cookies of {x}"))
         }
+        // 0.16.0: never anything of the password, not even its length.
+        "fill_password" => match args.get("mode").and_then(Value::as_str) {
+            Some("generate") => "Create a strong password and enter it".into(),
+            _ => "Enter the password you gave".into(),
+        },
         "finish" => "Finish".into(),
+        // 0.16.0, the scratchpad: a note's name, never its text or the plan's.
+        "note_write" => {
+            let verb = if args.get("mode").and_then(Value::as_str) == Some("append") { "Add to" } else { "Write" };
+            s("name").map_or(format!("{verb} a note"), |x| format!("{verb} the note {x}"))
+        }
+        "note_read" => s("name").map_or("Read a note".into(), |x| format!("Read the note {x}")),
+        "note_delete" => s("name").map_or("Delete a note".into(), |x| format!("Delete the note {x}")),
+        "note_list" => "List the notes".into(),
+        "plan_set" => match args.get("items").and_then(Value::as_array).map_or(0, Vec::len) {
+            0 => "Clear the plan".into(),
+            1 => "Set the plan (1 item)".into(),
+            k => format!("Set the plan ({k} items)"),
+        },
+        "plan_update" => n("index").map_or("Update a plan item".into(), |i| format!("Update plan item {i}")),
         other => clip(other, 40),
     }
 }
@@ -1447,8 +1635,9 @@ mod tests {
         let (ask, cat) = events(&a)
             .into_iter()
             .find_map(|e| match e {
-                Event::AgentConsentAsk { ask, category, label } => {
+                Event::AgentConsentAsk { ask, category, label, site } => {
                     assert_eq!(label, "your browsing history");
+                    assert_eq!(*site, None);
                     Some((*ask, *category))
                 }
                 _ => None,
@@ -1524,6 +1713,223 @@ mod tests {
         assert!(!events(&a).iter().any(|e| matches!(e, Event::AgentConsentAsk { .. })));
         assert_eq!(tool_texts(&sends(&a)[0].messages).last().unwrap(), r#"{"error":"the user denied access"}"#);
         assert_eq!(s.steps(), 1);
+    }
+
+    // ---- 0.16.0: fill_password ----
+
+    /// The call ids the session asked the target tab's site for.
+    fn site_asks(a: &[Action]) -> Vec<String> {
+        a.iter()
+            .filter_map(|x| match x {
+                Action::TargetSite { call_id } => Some(call_id.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn site(id: &str, origin: &str) -> Input {
+        Input::TargetSite { call_id: id.into(), origin: Some(origin.into()) }
+    }
+
+    /// The open consent question: its id and the site it names.
+    fn consent_of(a: &[Action]) -> Option<(u32, Category, Option<String>)> {
+        events(a).into_iter().find_map(|e| match e {
+            Event::AgentConsentAsk { ask, category, site, .. } => Some((*ask, *category, site.clone())),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn fill_password_is_offered_only_on_request() {
+        let mut s = Session::new(cfg());
+        // Not asked for: not offered, and a call is refused without reaching anyone.
+        let a = s.handle(user("Fill in the form"), 0);
+        assert!(!sends(&a)[0].tools.iter().any(|t| t.name == "fill_password"));
+        let a = feed(&mut s, calls(&[("p", "fill_password", r#"{"mode":"generate"}"#)]), 1);
+        assert!(runs(&a).is_empty() && site_asks(&a).is_empty() && consent_of(&a).is_none());
+        assert_eq!(tool_texts(&sends(&a)[0].messages), vec![r#"{"error":"this tool is not available for this task"}"#]);
+        feed(&mut s, text("I can't enter passwords."), 2);
+        // Asked for: offered for that task only.
+        let a = s.handle(user("Create an account here with a strong password"), 3);
+        assert!(sends(&a)[0].tools.iter().any(|t| t.name == "fill_password"));
+        assert!(!sends(&a)[0].tools.iter().any(|t| t.name == "get_history"));
+        feed(&mut s, text("Done."), 4);
+        let a = s.handle(user("now list the links"), 5);
+        assert!(!sends(&a)[0].tools.iter().any(|t| t.name == "fill_password"));
+    }
+
+    #[test]
+    fn fill_password_asks_per_site_first() {
+        let mut s = Session::new(cfg());
+        s.handle(user("Sign up here with a generated password"), 0);
+        // The call: nothing runs and nothing is asked until the host said where the tab is.
+        let a = feed(&mut s, calls(&[("p1", "fill_password", r##"{"mode":"generate","selector":"#f"}"##)]), 1);
+        assert_eq!(site_asks(&a), vec!["p1"]);
+        assert!(runs(&a).is_empty() && consent_of(&a).is_none() && steps_of(&a).is_empty());
+        assert!(s.is_busy() && s.state() == RunState::Running);
+        // An answer for another call is not it.
+        assert!(s.handle(site("other", "https://evil.example"), 2).is_empty());
+        // The question names the site.
+        let a = s.handle(site("p1", "https://shop.example"), 2);
+        let (ask, category, named) = consent_of(&a).unwrap();
+        assert_eq!((category, named.as_deref()), (Category::Passwords, Some("https://shop.example")));
+        assert!(runs(&a).is_empty());
+        assert_eq!(s.state(), RunState::Asking);
+        // Allow: the tool runs, with the allowed site for the host to hold the tab to.
+        let a = s.handle(Input::Consent { ask, allow: true }, 3);
+        assert_eq!(
+            runs(&a),
+            vec![(
+                "p1".into(),
+                "fill_password",
+                json!({"mode":"generate","selector":"#f","origin":"https://shop.example"}),
+                1
+            )]
+        );
+        assert_eq!(steps_of(&a)[0].label, "Create a strong password and enter it");
+        let host = r##"{"filled":2,"fields":["#pw","#pw2"],"generated":true,"length":20}"##;
+        let a =
+            s.handle(Input::ToolDone { call_id: "p1".into(), outcome: ToolOutcome::ok(host, "Filled 2 fields") }, 4);
+        assert_eq!(tool_texts(&sends(&a)[0].messages), vec![host], "the model gets what the host said: no value");
+        // The same site again in this conversation: no question.
+        let a = feed(&mut s, calls(&[("p2", "fill_password", r#"{"mode":"generate"}"#)]), 5);
+        assert_eq!(site_asks(&a), vec!["p2"]);
+        let a = s.handle(site("p2", "https://shop.example"), 6);
+        assert!(consent_of(&a).is_none());
+        assert_eq!(runs(&a)[0].2, json!({"mode":"generate","origin":"https://shop.example"}));
+        s.handle(done("p2", "{}"), 7);
+        // Another site (the tab went elsewhere): its own question; Deny holds for that site.
+        feed(&mut s, calls(&[("p3", "fill_password", r#"{"mode":"generate"}"#)]), 8);
+        let a = s.handle(site("p3", "https://other.example"), 9);
+        let (ask2, _, named) = consent_of(&a).unwrap();
+        assert_eq!(named.as_deref(), Some("https://other.example"));
+        assert!(ask2 > ask);
+        let a = s.handle(Input::Consent { ask: ask2, allow: false }, 10);
+        assert!(runs(&a).is_empty());
+        assert_eq!(tool_texts(&sends(&a)[0].messages).last().unwrap(), r#"{"error":"the user denied access"}"#);
+        feed(&mut s, calls(&[("p4", "fill_password", r#"{"mode":"generate"}"#)]), 11);
+        let a = s.handle(site("p4", "https://other.example"), 12);
+        assert!(consent_of(&a).is_none() && runs(&a).is_empty(), "denied stays denied for that site");
+        assert_eq!(sends(&a).len(), 1);
+        // ... while the allowed site still works.
+        feed(&mut s, calls(&[("p5", "fill_password", r#"{"mode":"generate"}"#)]), 13);
+        assert_eq!(runs(&s.handle(site("p5", "https://shop.example"), 14)).len(), 1);
+        s.handle(done("p5", "{}"), 15);
+        feed(&mut s, text("Done."), 16);
+        assert_eq!(s.steps(), 3);
+        assert_valid(s.history());
+        // The history consent is its own thing; New forgets the sites.
+        s.handle(Input::New, 17);
+        s.handle(user("register with a password"), 18);
+        feed(&mut s, calls(&[("p6", "fill_password", r#"{"mode":"generate"}"#)]), 19);
+        let a = s.handle(site("p6", "https://shop.example"), 20);
+        assert!(consent_of(&a).is_some(), "a new conversation asks again");
+    }
+
+    #[test]
+    fn fill_password_without_a_web_page_and_stop() {
+        let mut s = Session::new(cfg());
+        s.handle(user("set a new password here"), 0);
+        // No web page in the tab: no question; the host gets an empty origin and refuses.
+        feed(&mut s, calls(&[("p1", "fill_password", r#"{"mode":"generate"}"#)]), 1);
+        let a = s.handle(Input::TargetSite { call_id: "p1".into(), origin: None }, 2);
+        assert!(consent_of(&a).is_none());
+        assert_eq!(runs(&a)[0].2, json!({"mode":"generate","origin":""}));
+        s.handle(Input::ToolDone { call_id: "p1".into(), outcome: ToolOutcome::refused("no web page") }, 3);
+        // Calls that can't work are answered before anyone is asked.
+        let a = feed(
+            &mut s,
+            calls(&[
+                ("b1", "fill_password", r#"{"mode":"generate","password":"my-own-idea"}"#),
+                ("b2", "fill_password", r#"{"mode":"provided"}"#),
+                ("b3", "fill_password", r#"{"mode":"provided","password":"x","origin":"https://a.example"}"#),
+            ]),
+            4,
+        );
+        assert!(site_asks(&a).is_empty() && runs(&a).is_empty());
+        let texts = tool_texts(&sends(&a)[0].messages);
+        let n = texts.len();
+        assert!(texts[n - 3].contains("mode generate takes no password") && !texts[n - 3].contains("my-own-idea"));
+        assert!(texts[n - 2].contains("mode provided needs password"));
+        assert!(texts[n - 1].contains("origin is not a known argument"), "the model can't name the site itself");
+        // Stop while the site is being asked for, and while the user is being asked.
+        let a = feed(
+            &mut s,
+            calls(&[("p2", "fill_password", r#"{"mode":"generate"}"#), ("c", "click", r##"{"selector":"#go"}"##)]),
+            5,
+        );
+        assert_eq!(site_asks(&a), vec!["p2"]);
+        let a = s.handle(Input::Stop, 6);
+        assert_eq!(states(&a), vec![RunState::Stopped]);
+        assert_valid(s.history());
+        assert!(s.handle(site("p2", "https://shop.example"), 7).is_empty(), "the late answer is ignored");
+        s.handle(user("enter a password again"), 8);
+        feed(&mut s, calls(&[("p3", "fill_password", r#"{"mode":"generate"}"#)]), 9);
+        let a = s.handle(site("p3", "https://shop.example"), 10);
+        let (ask, _, _) = consent_of(&a).unwrap();
+        s.handle(Input::Stop, 11);
+        assert!(s.handle(Input::Consent { ask, allow: true }, 12).is_empty(), "a late Allow allows nothing");
+        assert_valid(s.history());
+        s.handle(user("password please"), 13);
+        feed(&mut s, calls(&[("p4", "fill_password", r#"{"mode":"generate"}"#)]), 14);
+        assert!(consent_of(&s.handle(site("p4", "https://shop.example"), 15)).is_some());
+    }
+
+    /// A password the user gave goes to the host with the call and, as part of the
+    /// conversation, to the provider. It is in no log line, no step label, detail or summary,
+    /// and no other event.
+    #[test]
+    fn a_provided_password_is_shown_nowhere() {
+        const MARK: &str = "hunter2-KRUNK-PW-MARKER";
+        let mut s = Session::new(cfg());
+        let mut all = s.handle(user("Log in here, my password is in the next message"), 0);
+        let call = json!({ "mode": "provided", "password": MARK, "selector": "#pw" }).to_string();
+        all.extend(feed(&mut s, calls(&[("p", "fill_password", &call)]), 1));
+        all.extend(s.handle(site("p", "https://shop.example"), 2));
+        let (ask, _, _) = consent_of(&all).unwrap();
+        all.extend(s.handle(Input::Consent { ask, allow: true }, 3));
+        let host = r##"{"filled":1,"fields":["#pw"],"length":23}"##;
+        all.extend(s.handle(
+            Input::ToolDone { call_id: "p".into(), outcome: ToolOutcome::ok(host, "Entered the password") },
+            4,
+        ));
+        // Once more on the allowed site, then a denied one, Stop and a failure.
+        all.extend(feed(&mut s, calls(&[("p2", "fill_password", &call)]), 5));
+        all.extend(s.handle(site("p2", "https://shop.example"), 6));
+        all.extend(s.handle(Input::ToolDone { call_id: "p2".into(), outcome: ToolOutcome::refused("refused") }, 7));
+        all.extend(feed(&mut s, calls(&[("p3", "fill_password", &call)]), 8));
+        let a = s.handle(site("p3", "https://other.example"), 9);
+        let (ask, _, _) = consent_of(&a).unwrap();
+        all.extend(a);
+        all.extend(s.handle(Input::Consent { ask, allow: false }, 10));
+        all.extend(feed(&mut s, calls(&[("p4", "fill_password", &call)]), 11));
+        all.extend(s.handle(Input::Stop, 12));
+
+        // The host got it (it has to enter it), with the allowed site.
+        let r = runs(&all);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].2, json!({"mode":"provided","password":MARK,"selector":"#pw","origin":"https://shop.example"}));
+        // Everything the panel shows and everything logged.
+        for line in logs(&all) {
+            assert!(!line.contains(MARK) && !line.contains("hunter2"), "{line}");
+        }
+        assert_eq!(logs(&all)[0], "agent step 1 fill_password ok 1 ms");
+        let st = steps_of(&all);
+        assert_eq!(st.len(), 4, "two steps, each running and finished");
+        for x in &st {
+            assert_eq!(x.label, "Enter the password you gave");
+            assert!(!x.detail.contains(MARK) && !x.summary.contains(MARK), "{}", x.detail);
+            assert!(x.detail.contains("(23 characters, not shown)") && x.detail.contains("#pw"), "{}", x.detail);
+        }
+        for e in events(&all) {
+            let shown = e.to_json();
+            assert!(!shown.contains(MARK), "an event for the panel has the password: {shown}");
+        }
+        // Only two kinds of action carry it at all: the tool run and the provider request.
+        for x in &all {
+            let has = format!("{x:?}").contains(MARK);
+            assert!(!has || matches!(x, Action::RunTool { .. } | Action::Send(_)), "{x:?}");
+        }
     }
 
     #[test]
@@ -1855,6 +2261,299 @@ console.log(a);") })
         assert_eq!(runs(&a)[0].2, json!({ "source": "z" }));
     }
 
+    // ---- 0.16.0: the scratchpad ----
+
+    fn scratch_views(a: &[Action]) -> Vec<crate::agent::scratch::ScratchView> {
+        events(a)
+            .into_iter()
+            .filter_map(|e| match e {
+                Event::AgentScratch { scratch } => Some(scratch.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The scratchpad block of a request's system prompt.
+    fn block_of(r: &ChatRequest) -> &str {
+        use crate::agent::scratch::{BLOCK_END, BLOCK_START};
+        let start = r.system.rfind(BLOCK_START).expect("the request has a scratchpad block");
+        assert!(r.system.trim_end().ends_with(BLOCK_END), "the block is the end of the system prompt");
+        &r.system[start..]
+    }
+
+    #[test]
+    fn scratchpad_tools_are_answered_here() {
+        let mut s = Session::new(Config { userscripts: false, macros: false, ..cfg() });
+        let a = s.handle(user("Compare the prices"), 0);
+        let r = sends(&a)[0];
+        let names: Vec<_> = r.tools.iter().map(|t| t.name.as_str()).collect();
+        for t in ["note_write", "note_read", "note_delete", "note_list", "plan_set", "plan_update"] {
+            assert!(names.contains(&t), "{t} is always offered");
+        }
+        assert!(block_of(r).contains("is empty: no plan and no notes"));
+        // Three calls in one answer: all answered at once, nothing for the host, one request.
+        let a = feed(
+            &mut s,
+            calls(&[
+                ("p", "plan_set", r#"{"items":[{"text":"Open the shop"},{"text":"Collect prices","state":"doing"}]}"#),
+                ("w", "note_write", r#"{"name":"prices","content":"apple 1.20\npear 2.00"}"#),
+                ("u", "plan_update", r#"{"index":1,"state":"done"}"#),
+            ]),
+            5,
+        );
+        assert!(runs(&a).is_empty(), "scratchpad tools never reach the host");
+        let st = steps_of(&a);
+        assert_eq!(st.len(), 3);
+        assert_eq!(
+            st.iter().map(|x| (x.n, x.tool.as_str(), x.status, x.label.as_str())).collect::<Vec<_>>(),
+            vec![
+                (1, "plan_set", StepStatus::Ok, "Set the plan (2 items)"),
+                (2, "note_write", StepStatus::Ok, "Write the note prices"),
+                (3, "plan_update", StepStatus::Ok, "Update plan item 1"),
+            ]
+        );
+        assert_eq!(st[1].summary, "Wrote note prices (20 bytes)");
+        assert!(
+            st[1].detail.contains("apple 1.20") && st[1].detail.contains("Result:"),
+            "the panel's detail has the args"
+        );
+        assert_eq!(
+            logs(&a),
+            vec![
+                "agent step 1 plan_set ok 0 ms",
+                "agent step 2 note_write ok 0 ms",
+                "agent step 3 plan_update ok 0 ms"
+            ]
+        );
+        // The panel's view follows every change.
+        let views = scratch_views(&a);
+        assert_eq!(views.len(), 3);
+        let last = views.last().unwrap();
+        assert_eq!(
+            (last.plan.len(), last.plan[0].state.name(), last.notes[0].content.as_str()),
+            (2, "done", "apple 1.20\npear 2.00")
+        );
+        assert_eq!(s.steps(), 3);
+        // The next request: the results, and the block with the plan and the index.
+        let r = sends(&a);
+        assert_eq!(r.len(), 1);
+        assert_valid(&r[0].messages);
+        let texts = tool_texts(&r[0].messages);
+        assert_eq!(texts[0], r#"{"items":2,"ok":true}"#);
+        assert!(texts[1].contains(r#""bytes":20"#) && texts[2].contains(r#""state":"done""#), "{texts:?}");
+        let b = block_of(r[0]);
+        assert!(b.contains("1. [done] \"Open the shop\"") && b.contains("2. [doing] \"Collect prices\""), "{b}");
+        assert!(b.contains("- prices (20 bytes): \"apple 1.20\"") && !b.contains("pear"), "{b}");
+        // Reading changes nothing (no new view); errors are results the model can adapt to.
+        let a = feed(
+            &mut s,
+            calls(&[
+                ("r", "note_read", r#"{"name":"prices"}"#),
+                ("x", "note_read", r#"{"name":"nope"}"#),
+                ("l", "note_list", "{}"),
+                ("bad", "note_write", r#"{"name":"a b","content":"x"}"#),
+                ("inv", "plan_update", r#"{"index":0,"state":"done"}"#),
+            ]),
+            6,
+        );
+        assert!(runs(&a).is_empty() && scratch_views(&a).is_empty());
+        let st = steps_of(&a);
+        assert_eq!(
+            st.iter().map(|x| x.status).collect::<Vec<_>>(),
+            vec![StepStatus::Ok, StepStatus::Error, StepStatus::Ok, StepStatus::Error],
+            "a call the schema refuses is no step"
+        );
+        let texts = tool_texts(&sends(&a)[0].messages);
+        assert_eq!(texts[3], "apple 1.20\npear 2.00");
+        assert!(texts[4].contains("no note with this name") && texts[6].contains("1 to 64 characters"), "{texts:?}");
+        assert!(texts[7].contains("index must be at least 1"), "{}", texts[7]);
+        assert_eq!(logs(&a)[1], "agent step 5 note_read error 0 ms");
+        // finish after scratchpad calls in the same answer still ends the task.
+        let a = feed(
+            &mut s,
+            calls(&[("d", "note_delete", r#"{"name":"prices"}"#), ("f", "finish", r#"{"answer":"Done."}"#)]),
+            7,
+        );
+        assert_eq!(messages_of(&a, "assistant"), vec!["Done."]);
+        assert_eq!(s.state(), RunState::Done);
+        assert_eq!(s.scratch().note_count(), 0);
+        assert_valid(s.history());
+        // The plan is still there for the next task of the conversation.
+        let a = s.handle(user("And now?"), 8);
+        assert!(block_of(sends(&a)[0]).contains("1. [done] \"Open the shop\""));
+    }
+
+    #[test]
+    fn scratchpad_calls_count_as_steps() {
+        let mut s = Session::new(Config { max_steps: 2, ..cfg() });
+        s.handle(user("note a lot"), 0);
+        let a = feed(
+            &mut s,
+            calls(&[
+                ("a", "note_write", r#"{"name":"a","content":"1"}"#),
+                ("b", "note_write", r#"{"name":"b","content":"2"}"#),
+            ]),
+            1,
+        );
+        assert!(sends(&a).is_empty(), "the step limit asks before the next request");
+        assert_eq!(states(&a), vec![RunState::MaxSteps]);
+        assert!(events(&a).iter().any(|e| matches!(e, Event::AgentContinueAsk { steps: 2, .. })));
+        assert_eq!(s.scratch().note_count(), 2);
+    }
+
+    #[test]
+    fn the_scratchpad_survives_trimming() {
+        let mut s = Session::new(cfg());
+        s.handle(user("a long task"), 0);
+        let long = format!("FIRST-LINE-OF-THE-NOTE\n{}", "n".repeat(3000));
+        let write = json!({ "name": "findings", "content": long }).to_string();
+        feed(
+            &mut s,
+            calls(&[("w", "note_write", &write), ("p", "plan_set", r#"{"items":[{"text":"Keep going"}]}"#)]),
+            1,
+        );
+        feed(&mut s, calls(&[("r0", "note_read", r#"{"name":"findings"}"#)]), 2);
+        // Many long results later the note_read result is one of the old, shortened ones.
+        let mut last = Vec::new();
+        for n in 0..KEEP_TOOL_RESULTS + 2 {
+            let id = format!("t{n}");
+            feed(&mut s, calls(&[(&id, "get_text", "{}")]), 3);
+            last = s.handle(done(&id, &"x".repeat(2000)), 4);
+        }
+        let r = sends(&last)[0];
+        let texts = tool_texts(&r.messages);
+        let read = texts.iter().find(|t| t.starts_with("FIRST-LINE-OF-THE-NOTE")).unwrap();
+        assert!(read.ends_with(SHORTENED_TAIL), "the old note_read result was shortened");
+        let b = block_of(r);
+        assert!(b.contains("1. [todo] \"Keep going\""), "{b}");
+        assert!(b.contains("- findings (3,023 bytes): \"FIRST-LINE-OF-THE-NOTE\""), "{b}");
+        // The body comes back whole on request.
+        let a = feed(&mut s, calls(&[("r1", "note_read", r#"{"name":"findings"}"#)]), 5);
+        assert_eq!(tool_texts(&sends(&a)[0].messages).last().unwrap(), &long);
+    }
+
+    #[test]
+    fn the_scratchpad_is_cleared_by_new_and_by_clear() {
+        let mut s = Session::new(cfg());
+        s.handle(user("first"), 0);
+        feed(
+            &mut s,
+            calls(&[
+                ("w", "note_write", r#"{"name":"n","content":"x"}"#),
+                ("p", "plan_set", r#"{"items":[{"text":"One"}]}"#),
+            ]),
+            1,
+        );
+        assert!(!s.scratch().is_empty());
+        // Clear while the task runs: the conversation and the task stay, the scratchpad goes.
+        let a = s.handle(Input::ScratchClear, 2);
+        assert_eq!(scratch_views(&a), vec![crate::agent::scratch::ScratchView::default()]);
+        assert_eq!(logs(&a), vec!["agent scratchpad cleared"]);
+        assert!(sends(&a).is_empty() && states(&a).is_empty());
+        assert!(s.is_busy() && s.scratch().is_empty() && s.history().len() == 4);
+        // The model sees it empty in its next request.
+        let a = feed(&mut s, calls(&[("l", "note_list", "{}")]), 3);
+        let r = sends(&a)[0];
+        assert!(block_of(r).contains("is empty: no plan and no notes"));
+        assert!(tool_texts(&r.messages).last().unwrap().starts_with(r#"{"limits":"#));
+        // New forgets it with the conversation.
+        feed(&mut s, calls(&[("w2", "note_write", r#"{"name":"n2","content":"y"}"#)]), 4);
+        assert_eq!(s.scratch().note_count(), 1);
+        let a = s.handle(Input::New, 5);
+        assert!(s.scratch().is_empty());
+        let at = |want: &Event| events(&a).iter().position(|e| *e == want).unwrap();
+        let empty = Event::AgentScratch { scratch: Default::default() };
+        assert!(at(&Event::AgentClear) < at(&empty), "the panel's view is emptied after the conversation");
+        let a = s.handle(user("second"), 6);
+        assert!(block_of(sends(&a)[0]).contains("is empty"));
+        // Clear while idle is fine too.
+        assert_eq!(scratch_views(&s.handle(Input::ScratchClear, 7)).len(), 1);
+    }
+
+    /// Nothing of the scratchpad may reach the disk. What the session hands to the host is all
+    /// there is: a note's or the plan's text must be in no log line (the only thing of a
+    /// conversation the host writes to a file) and in no tool run by the host; it is only in
+    /// the provider requests and in the panel's events (step detail, scratchpad view).
+    #[test]
+    fn scratchpad_text_never_reaches_the_log_or_the_host() {
+        const MARK: &str = "KRUNK-SCRATCH-MARKER-7f3a91";
+        let mut s = Session::new(Config { max_steps: 6, ..cfg() });
+        let mut all = s.handle(user("Collect the prices"), 0);
+        let write = json!({ "name": "found", "content": format!("{MARK} in a note\nline two {MARK}") }).to_string();
+        let append = json!({ "name": "found", "content": format!("\n{MARK} appended"), "mode": "append" }).to_string();
+        let plan = json!({ "items": [{ "text": format!("{MARK} in the plan") }, { "text": "second", "id": "b" }] })
+            .to_string();
+        let update = json!({ "id": "b", "text": format!("{MARK} in an update"), "state": "doing" }).to_string();
+        let too_big = json!({ "name": "big", "content": format!("{MARK}{}", "x".repeat(40_000)) }).to_string();
+        let bad_name = json!({ "name": format!("{MARK} name"), "content": "x" }).to_string();
+        all.extend(feed(
+            &mut s,
+            calls(&[
+                ("1", "note_write", &write),
+                ("2", "note_write", &append),
+                ("3", "plan_set", &plan),
+                ("4", "plan_update", &update),
+                ("5", "note_read", r#"{"name":"found"}"#),
+                ("6", "note_list", "{}"),
+                ("7", "note_write", &too_big),
+                ("8", "note_write", &bad_name),
+            ]),
+            1,
+        ));
+        // The step limit, Continue, a host tool, Stop, Clear, a failed request and New on top.
+        let ask = events(&all)
+            .into_iter()
+            .find_map(|e| match e {
+                Event::AgentContinueAsk { ask, .. } => Some(*ask),
+                _ => None,
+            })
+            .unwrap();
+        all.extend(s.handle(Input::Continue { ask, go: true }, 2));
+        all.extend(feed(&mut s, calls(&[("9", "get_text", "{}"), ("10", "note_delete", r#"{"name":"found"}"#)]), 3));
+        all.extend(s.handle(done("9", "page text"), 4));
+        all.extend(feed(&mut s, calls(&[("11", "note_write", &write), ("12", "wait_for", r#"{"ms":5000}"#)]), 5));
+        all.extend(s.handle(Input::Stop, 6));
+        all.extend(s.handle(user("again"), 7));
+        all.extend(s.handle(Input::StreamFailed(format!("the provider said {MARK}")), 8));
+        all.extend(s.handle(Input::ScratchClear, 9));
+        all.extend(s.handle(Input::New, 10));
+
+        // The marker really went through: requests and the panel's views had it.
+        assert!(sends(&all).iter().any(|r| block_of(r).contains(MARK)), "the block carries the plan");
+        assert!(scratch_views(&all).iter().any(|v| v.notes.iter().any(|n| n.content.contains(MARK))));
+        assert!(steps_of(&all).iter().any(|st| st.detail.contains(MARK)));
+        // The log: step numbers, tool names, statuses and times only.
+        let l = logs(&all);
+        assert!(l.len() >= 14, "{l:?}");
+        for line in &l {
+            assert!(!line.contains(MARK), "a log line has scratchpad text: {line}");
+            assert!(!line.contains("found") && !line.contains("in a note"), "{line}");
+        }
+        // The host never runs a scratchpad tool and never gets its text in another tool's args.
+        for (_, name, args, _) in runs(&all) {
+            assert!(matches!(name, "get_text" | "wait_for"), "{name} reached the host");
+            assert!(!args.to_string().contains(MARK));
+        }
+        // Labels and summaries (also what a screen reader hears) have names and sizes only;
+        // error results name the limit, not the text.
+        for st in steps_of(&all) {
+            assert!(!st.summary.contains(MARK), "{}", st.summary);
+            assert!(st.tool != "note_write" || st.n == 8 || !st.label.contains(MARK), "{}", st.label);
+        }
+        let errors: Vec<_> = steps_of(&all).into_iter().filter(|st| st.status == StepStatus::Error).collect();
+        assert_eq!(errors.len(), 2);
+        assert!(errors[0].summary.contains("32 KiB") && errors[1].summary.contains("1 to 64 characters"));
+        // Whatever else the session hands to the host, of any kind: only the provider request
+        // and the panel's events carry the text.
+        for x in &all {
+            let carries = matches!(x, Action::Send(_) | Action::Emit(_));
+            assert!(carries || !format!("{x:?}").contains(MARK), "{x:?}");
+        }
+        // After New nothing of it is left in the session.
+        assert!(s.scratch().is_empty() && s.history().is_empty());
+        assert!(!format!("{s:?}").contains(MARK), "the session holds no scratchpad text after New");
+    }
+
     #[test]
     fn new_conversation() {
         let mut s = Session::new(cfg());
@@ -2044,10 +2743,34 @@ console.log(a);") })
         assert_eq!(d("edit_page", json!({"action":"remove","selector":".ad"})), "Remove .ad");
         assert_eq!(d("set_setting", json!({"key":"theme","value":"dark"})), "Change the setting theme");
         assert_eq!(d("switch_tab", json!({"tab_id":3})), "Switch to tab 3");
+        // 0.16.0: the scratchpad's labels name the note, never its text.
+        assert_eq!(d("note_write", json!({"name":"prices","content":"SECRET"})), "Write the note prices");
+        assert_eq!(
+            d("note_write", json!({"name":"prices","content":"SECRET","mode":"append"})),
+            "Add to the note prices"
+        );
+        assert_eq!(d("note_read", json!({"name":"prices"})), "Read the note prices");
+        assert_eq!(d("note_delete", json!({"name":"prices"})), "Delete the note prices");
+        assert_eq!(d("note_list", json!({})), "List the notes");
+        assert_eq!(d("plan_set", json!({"items":[{"text":"SECRET"},{"text":"b"}]})), "Set the plan (2 items)");
+        assert_eq!(d("plan_set", json!({"items":[]})), "Clear the plan");
+        assert_eq!(d("plan_update", json!({"index":2,"text":"SECRET"})), "Update plan item 2");
+        assert_eq!(d("plan_update", json!({"id":"b","state":"done"})), "Update a plan item");
+        // 0.16.0: fill_password shows nothing of the password.
+        assert_eq!(d("fill_password", json!({"mode":"generate"})), "Create a strong password and enter it");
+        assert_eq!(d("fill_password", json!({"mode":"provided","password":"hunter2"})), "Enter the password you gave");
+        assert_eq!(shown_args("click", &json!({"selector":"#a"})), r##"{"selector":"#a"}"##);
+        assert_eq!(
+            shown_args("fill_password", &json!({"mode":"provided","password":"hunter2","origin":"https://a.example"})),
+            r#"{"mode":"provided","origin":"https://a.example","password":"(7 characters, not shown)"}"#
+        );
         let long = describe("click", &json!({"selector": "x".repeat(100)}));
         assert!(long.chars().count() <= 67, "{long}");
         for t in super::super::tools::TOOLS {
-            assert!(!describe(t.name, &json!({})).is_empty(), "{}", t.name);
+            let label = describe(t.name, &json!({}));
+            assert!(!label.is_empty(), "{}", t.name);
+            // Every tool has a label of its own (the fallback is the tool's name).
+            assert_ne!(label, t.name, "{} has no label", t.name);
         }
     }
 }

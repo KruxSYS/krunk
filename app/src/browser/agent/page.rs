@@ -10,12 +10,18 @@
 //!
 //! Every tool first asks the probe for the current values of password and card fields
 //! (`secrets`): they stay in this process (as `Zeroizing`) and are cut out of every result.
+//!
+//! 0.16.0: `fill_password` is the one tool that writes password fields (the probe's
+//! `fillPassword`), for a password Krunk generates here or one the user gave. The session
+//! offers it only on the user's request and passes the site the user allowed; the value is
+//! held as `Zeroizing`, is in no outcome and no log line, and the call that carries it to the
+//! page is wiped afterwards.
 
 use super::super::cdp::CdpUser;
 use super::super::input::{KeyAction as InputKey, MouseButton};
 use super::super::Browser;
 use crate::ffi::cef::{post_ui_delayed, View};
-use crate::log::warning;
+use crate::log::{info, warning};
 use base64ct::{Base64, Encoding};
 use lb_core::agent::tools::args::{self, Button, EditAction, KeyAction};
 use lb_core::agent::tools::{Offer, RESULT_CAP, RESULT_CAP_MAX, TOOL_TIMEOUT_MS, WAIT_MAX_MS};
@@ -27,7 +33,7 @@ use lb_core::windows::WindowId;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 /// The probe's isolated world.
 const WORLD: &str = "krunk-agent";
@@ -43,6 +49,34 @@ const NAV_POLL_MS: i64 = 100;
 const ERROR_MAX: usize = 1_000;
 
 type ProbeDone = Box<dyn FnOnce(Result<Value, String>)>;
+
+/// The probe function that takes a password (0.16.0).
+const FILL_PASSWORD: &str = "fillPassword";
+
+/// A probe call's arguments. Those of [`FILL_PASSWORD`] hold a password: their strings are
+/// wiped when the call is over.
+struct ProbeArgs {
+    value: Value,
+    secret: bool,
+}
+
+impl Drop for ProbeArgs {
+    fn drop(&mut self) {
+        if self.secret {
+            wipe_strings(&mut self.value);
+        }
+    }
+}
+
+/// Overwrites every string in `v` (a JSON value that held a secret).
+fn wipe_strings(v: &mut Value) {
+    match v {
+        Value::String(s) => s.zeroize(),
+        Value::Array(a) => a.iter_mut().for_each(wipe_strings),
+        Value::Object(o) => o.values_mut().for_each(wipe_strings),
+        _ => {}
+    }
+}
 
 /// One page tool call: what each of its steps needs.
 struct Call {
@@ -230,12 +264,13 @@ impl Browser {
         if func.is_empty() || !func.bytes().all(|b| b.is_ascii_alphanumeric()) {
             return done(Err("no such probe function".into()));
         }
-        let args = if args.is_array() { args } else { json!([args]) };
+        let value = if args.is_array() { args } else { json!([args]) };
+        let args = ProbeArgs { value, secret: func == FILL_PASSWORD };
         self.probe_call(tab, func.to_string(), args, true, Box::new(done));
     }
 
     /// [`Browser::agent_probe`]; `retry`: a context found gone is made again once.
-    fn probe_call(&self, tab: TabId, func: String, args: Value, retry: bool, done: ProbeDone) {
+    fn probe_call(&self, tab: TabId, func: String, args: ProbeArgs, retry: bool, done: ProbeDone) {
         let Some(view) = self.tab_view(tab) else { return done(Err("The tab is gone".into())) };
         // Page (frame tree, isolated worlds) and Runtime: held while the tab lives.
         if !self.cdp_has(tab, CdpUser::Agent) {
@@ -298,9 +333,20 @@ impl Browser {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn probe_eval(&self, tab: TabId, view: &View, ctx: i64, func: String, args: Value, retry: bool, done: ProbeDone) {
-        let expression = format!("__krunkProbe.{func}(...{args})");
-        let params = json!({ "contextId": ctx, "expression": expression, "returnByValue": true, "awaitPromise": true });
+    fn probe_eval(
+        &self,
+        tab: TabId,
+        view: &View,
+        ctx: i64,
+        func: String,
+        args: ProbeArgs,
+        retry: bool,
+        done: ProbeDone,
+    ) {
+        let expression = Zeroizing::new(format!("__krunkProbe.{func}(...{})", args.value));
+        let mut params =
+            json!({ "contextId": ctx, "expression": expression.as_str(), "returnByValue": true, "awaitPromise": true });
+        let secret = args.secret;
         let weak = self.me.clone();
         view.devtools_call("Runtime.evaluate", &params, move |r| {
             let failed = match &r {
@@ -329,6 +375,10 @@ impl Browser {
             let value = value.unwrap_or(Value::Null);
             done(Ok(if func == "context" { with_outline(value) } else { value }));
         });
+        // The call is on its way: this copy of a password in it is not needed any more.
+        if secret {
+            wipe_strings(&mut params);
+        }
     }
 
     /// Runs a page tool (`Group::Page`) for window `win`'s agent on its target tab. The caller
@@ -539,6 +589,13 @@ impl Browser {
             "set_title" => {
                 let p = parse!(args::SetTitle);
                 self.page_probe_checked(c, "setTitle", json!([p.title]), |_, c, v| c.ok(&v, "Title set"));
+            }
+            "fill_password" => {
+                let p = parse!(args::FillPassword);
+                // The typed arguments own the password now (wiped when dropped).
+                let mut a = a;
+                wipe_strings(&mut a);
+                self.tool_fill_password(c, p);
             }
             _ => c.fail("This is not a page tool."),
         }
@@ -861,6 +918,99 @@ impl Browser {
                 return c.refuse("refused: password/card field");
             }
             send(b, c);
+        });
+    }
+
+    // ------------------------------------------------------------ passwords (0.16.0)
+
+    /// `fill_password`: the one tool that writes password fields. The session offers it only
+    /// when the user's message asked for a password, and the user allowed `p.origin` for it:
+    /// nothing is entered unless the tab still shows that site. The value is never part of the
+    /// outcome.
+    fn tool_fill_password(&self, c: Call, p: args::FillPassword) {
+        let Some(site) = pages::password_site(&c.url).filter(|s| !p.origin.is_empty() && *s == p.origin) else {
+            return c.refuse(
+                "Nothing was entered: the tab does not show the site the user allowed. Look at the page and call \
+                 fill_password again.",
+            );
+        };
+        match p.mode {
+            args::PasswordMode::Provided => match p.password.filter(|pw| !pw.is_empty()) {
+                Some(pw) => self.fill_password_fields(c, pw, p.selector, None),
+                None => c.fail("password is missing"),
+            },
+            args::PasswordMode::Generate => {
+                // A dry run first (nothing is written): which fields would it be, and is this a
+                // form where a new password is chosen? The same test as for the dropdown's "Use
+                // a strong password".
+                let selector = p.selector;
+                let params = json!([Value::Null, selector, true]);
+                self.page_probe_checked(c, FILL_PASSWORD, params, move |b, c, v| {
+                    if v["fields"].as_array().is_none_or(Vec::is_empty) {
+                        return c.fail(
+                            "No field for a new password was found. Give the selector of the new-password field or \
+                             of its form.",
+                        );
+                    }
+                    let autocomplete = v["autocomplete"].as_str().unwrap_or_default();
+                    let passwords = v["passwords"].as_u64().unwrap_or(0).min(u64::from(u32::MAX)) as u32;
+                    let text = v["formText"].as_str().unwrap_or_default();
+                    if !lb_core::passgen::wants_new_password(autocomplete, passwords, text) {
+                        return c.refuse(
+                            "Nothing was entered: this does not look like a form where a new password is chosen \
+                             (sign-up or change password). A generated password is only entered there.",
+                        );
+                    }
+                    let settings = b.settings.borrow().passgen.clone();
+                    match lb_core::passgen::generate(settings.length, settings.symbols) {
+                        Ok(pw) => b.fill_password_fields(c, pw, selector, Some(site)),
+                        Err(_) => {
+                            warning!("window {}: agent step {}: no password generated", c.win, c.step);
+                            c.fail("Krunk could not generate a password.")
+                        }
+                    }
+                });
+            }
+        }
+    }
+
+    /// Writes `pw` into the password fields the probe picks. `generated`: the site of a
+    /// password Krunk made: it is handed to the password manager like one chosen with "Use a
+    /// strong password" (sending the form saves it, or asks) and kept for the panel's card.
+    fn fill_password_fields(
+        &self,
+        mut c: Call,
+        pw: Zeroizing<String>,
+        selector: Option<String>,
+        generated: Option<String>,
+    ) {
+        // The probe never echoes the value; should a page's error text hold it, it is cut out.
+        c.secrets.push(pw.clone());
+        let params = json!([pw.as_str(), selector, generated.is_some()]);
+        self.page_probe_checked(c, FILL_PASSWORD, params, move |b, c, v| {
+            let filled = v["filled"].as_u64().unwrap_or(0).min(100) as u32;
+            if filled == 0 {
+                return c.fail("No password field was filled.");
+            }
+            let fields = v.get("fields").cloned().unwrap_or_else(|| json!([]));
+            let length = pw.chars().count();
+            let what = if filled == 1 { "1 field".to_string() } else { format!("{filled} fields") };
+            let Some(site) = generated else {
+                let v = json!({ "filled": filled, "fields": fields, "length": length });
+                return c.ok(&v, format!("Entered the password into {what}"));
+            };
+            info!("window {}: agent step {}: generated password filled ({what})", c.win, c.step);
+            b.remember_generated(c.tab, &site, pw.clone());
+            b.agent_keep_password(c.win, &site, pw, filled);
+            let note = if c.private {
+                "The user sees the password in the panel. You can't read it. Krunk does not save passwords from \
+                 private tabs."
+            } else {
+                "The user sees the password in the panel. You can't read it. Krunk's password manager saves it, \
+                 or offers to, when the form is sent."
+            };
+            let v = json!({ "filled": filled, "fields": fields, "generated": true, "length": length, "note": note });
+            c.ok(&v, format!("Created a password and entered it into {what}"));
         });
     }
 

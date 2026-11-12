@@ -28,10 +28,14 @@ pub enum Group {
     Macros,
     /// `ask_user`: handled by the session, not the host.
     Ask,
-    /// History, bookmarks, downloads, cookies: offered only through the gate.
+    /// History, bookmarks, downloads, cookies: offered only through the gate. 0.16.0:
+    /// `fill_password` too (`Category::Passwords`).
     Sensitive(Category),
     /// `finish`: handled by the session.
     Finish,
+    /// 0.16.0: the scratchpad's notes and plan ([`super::scratch`]): handled by the session,
+    /// always offered, never seen by the host.
+    Scratch,
 }
 
 pub struct Tool {
@@ -135,7 +139,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "type_text",
-        description: "Type text with key events into the focused element, or into the element matching the selector (focused first). Optionally press Enter afterwards. Refused for password and card fields.",
+        description: "Type text with key events into the focused element, or into the element matching the selector (focused first). Optionally press Enter afterwards. Refused for password and card fields (a password is entered only with fill_password, which you get when the user asks for it).",
         schema: r#"{"type":"object","properties":{
             "text":{"type":"string","maxLength":5000},
             "selector":{"type":"string","maxLength":1000},
@@ -144,7 +148,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "fill_fields",
-        description: "Set the values of several fields at once (CSS selector -> value) and fire input and change events. Password and card fields are refused.",
+        description: "Set the values of several fields at once (CSS selector -> value) and fire input and change events. Password and card fields are refused (a password is entered only with fill_password, which you get when the user asks for it).",
         schema: r#"{"type":"object","properties":{
             "fields":{"type":"object","additionalProperties":{"type":"string","maxLength":5000},"minProperties":1,"maxProperties":50}},
             "required":["fields"],"additionalProperties":false}"#,
@@ -325,6 +329,59 @@ pub static TOOLS: &[Tool] = &[
             "allow_other":{"type":"boolean"}},"required":["question","options"],"additionalProperties":false}"#,
         group: Group::Ask,
     },
+    // 0.16.0: the scratchpad. The schemas' bounds are loose on purpose: the exact limits are
+    // checked by `scratch`, whose errors name them.
+    Tool {
+        name: "note_write",
+        description: "Write a note in your scratchpad, your working memory for this conversation (kept in memory only, never saved). mode \"replace\" (the default) sets the note's content, \"append\" adds to its end as it is. Use notes for intermediate findings and extracted data. Limits: 64 notes, 32 KiB per note, 256 KiB in total; a name is 1 to 64 characters of letters, digits, '-', '_' and '.'.",
+        schema: r#"{"type":"object","properties":{
+            "name":{"type":"string","minLength":1,"maxLength":200},
+            "content":{"type":"string","maxLength":200000},
+            "mode":{"type":"string","enum":["replace","append"]}},"required":["name","content"],"additionalProperties":false}"#,
+        group: Group::Scratch,
+    },
+    Tool {
+        name: "note_read",
+        description: "Read a note of your scratchpad back (its text, paged like get_text: offset and max_chars for a long note).",
+        schema: r#"{"type":"object","properties":{
+            "name":{"type":"string","minLength":1,"maxLength":200},
+            "offset":{"type":"integer","minimum":0,"description":"Character offset to continue a truncated result"},
+            "max_chars":{"type":"integer","minimum":1,"maximum":20000}},"required":["name"],"additionalProperties":false}"#,
+        group: Group::Scratch,
+    },
+    Tool {
+        name: "note_delete",
+        description: "Delete a note of your scratchpad.",
+        schema: r#"{"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":200}},"required":["name"],"additionalProperties":false}"#,
+        group: Group::Scratch,
+    },
+    Tool {
+        name: "note_list",
+        description: "The notes of your scratchpad: name, size in bytes and first line of each, and the limits.",
+        schema: EMPTY,
+        group: Group::Scratch,
+    },
+    Tool {
+        name: "plan_set",
+        description: "Set your plan for the task: replaces the whole list (an empty list clears it). Each item has a text and a state: todo (the default), doing, done or dropped; an optional id of your own (else its position, \"1\", \"2\", …). Limits: 100 items of at most 300 characters each. The plan comes back to you with every request.",
+        schema: r#"{"type":"object","properties":{
+            "items":{"type":"array","maxItems":1000,"items":{"type":"object","properties":{
+                "text":{"type":"string","maxLength":5000},
+                "state":{"type":"string","enum":["todo","doing","done","dropped"]},
+                "id":{"type":"string","maxLength":200}},"required":["text"],"additionalProperties":false}}},
+            "required":["items"],"additionalProperties":false}"#,
+        group: Group::Scratch,
+    },
+    Tool {
+        name: "plan_update",
+        description: "Change one item of your plan, found by index (1 is the first item) or by id: a new state (todo, doing, done, dropped), a new text (at most 300 characters), or both.",
+        schema: r#"{"type":"object","properties":{
+            "index":{"type":"integer","minimum":1,"maximum":1000},
+            "id":{"type":"string","maxLength":200},
+            "state":{"type":"string","enum":["todo","doing","done","dropped"]},
+            "text":{"type":"string","maxLength":5000}},"additionalProperties":false}"#,
+        group: Group::Scratch,
+    },
     Tool {
         name: "get_history",
         description: "The user's browsing history (newest first), optionally filtered by words in the title or address.",
@@ -353,6 +410,17 @@ pub static TOOLS: &[Tool] = &[
         description: "Cookies stored for a site (name, domain, path, expiry, flags, value shortened).",
         schema: r#"{"type":"object","properties":{"site":{"type":"string","minLength":1,"maxLength":253}},"required":["site"],"additionalProperties":false}"#,
         group: Group::Sensitive(Category::Cookies),
+    },
+    // 0.16.0: the one tool that writes password fields. Gated like the sensitive data: offered
+    // only when the user's message asks for a password, and the user allows the site first.
+    Tool {
+        name: "fill_password",
+        description: "Enter a password into the page's password field(s). You have this tool only because the user's message asks for a password to be created or entered; the user confirms the site first. mode \"generate\": Krunk creates a strong password and fills it into the new-password field and its confirmation of a sign-up or change-password form. You never see it: the user gets it in the panel, and Krunk's password manager saves it (or offers to) when the form is sent. mode \"provided\": enters a password the user gave you in this conversation; pass it as password, exactly as given. selector: a password field or its form (default: the form of the focused password field, else the page's only form with password fields). The result says which fields were filled, never the value. Card fields are never written, and every other tool still refuses password fields.",
+        schema: r#"{"type":"object","properties":{
+            "mode":{"type":"string","enum":["generate","provided"]},
+            "password":{"type":"string","minLength":1,"maxLength":1000,"description":"mode provided only: the password the user gave"},
+            "selector":{"type":"string","maxLength":1000}},"required":["mode"],"additionalProperties":false}"#,
+        group: Group::Sensitive(Category::Passwords),
     },
     Tool {
         name: "finish",
@@ -512,6 +580,7 @@ pub fn parse_call(name: &str, arguments: &str) -> Result<(&'static Tool, Value),
 /// Typed arguments, parsed from validated JSON with `serde_json::from_value`.
 pub mod args {
     use super::*;
+    use crate::agent::scratch::ItemState;
     use std::collections::BTreeMap;
 
     #[derive(Debug, Clone, Default, Deserialize)]
@@ -732,6 +801,65 @@ pub mod args {
     pub struct Finish {
         pub answer: String,
     }
+    // 0.16.0: the scratchpad.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+    #[serde(rename_all = "lowercase")]
+    pub enum NoteMode {
+        #[default]
+        Replace,
+        Append,
+    }
+    #[derive(Debug, Clone, Deserialize)]
+    pub struct NoteWrite {
+        pub name: String,
+        pub content: String,
+        #[serde(default)]
+        pub mode: NoteMode,
+    }
+    #[derive(Debug, Clone, Deserialize)]
+    pub struct NoteRead {
+        pub name: String,
+        #[serde(default)]
+        pub offset: usize,
+        pub max_chars: Option<usize>,
+    }
+    #[derive(Debug, Clone, Deserialize)]
+    pub struct NoteName {
+        pub name: String,
+    }
+    #[derive(Debug, Clone, Deserialize)]
+    pub struct PlanSetItem {
+        pub text: String,
+        pub state: Option<ItemState>,
+        pub id: Option<String>,
+    }
+    #[derive(Debug, Clone, Deserialize)]
+    pub struct PlanSet {
+        pub items: Vec<PlanSetItem>,
+    }
+    /// 0.16.0. `origin` is not the model's: the session adds the site the user allowed, and
+    /// the host enters the password only while the tab is still on it.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+    #[serde(rename_all = "lowercase")]
+    pub enum PasswordMode {
+        Generate,
+        Provided,
+    }
+    #[derive(Clone, Deserialize)]
+    pub struct FillPassword {
+        pub mode: PasswordMode,
+        pub password: Option<zeroize::Zeroizing<String>>,
+        pub selector: Option<String>,
+        #[serde(default)]
+        pub origin: String,
+    }
+    #[derive(Debug, Clone, Default, Deserialize)]
+    pub struct PlanUpdate {
+        pub index: Option<usize>,
+        pub id: Option<String>,
+        pub state: Option<ItemState>,
+        pub text: Option<String>,
+    }
 
     /// Typed parse of validated arguments.
     pub fn parse<T: for<'de> Deserialize<'de>>(v: &Value) -> Result<T, String> {
@@ -803,16 +931,31 @@ mod tests {
             "get_downloads",
             "get_cookies_for_site",
             "finish",
+            // 0.16.0: the scratchpad.
+            "note_write",
+            "note_read",
+            "note_delete",
+            "note_list",
+            "plan_set",
+            "plan_update",
+            // 0.16.0: passwords on request.
+            "fill_password",
         ] {
             assert!(find(n).is_some(), "{n} is missing");
         }
-        assert_eq!(TOOLS.len(), 42);
+        assert_eq!(TOOLS.len(), 49);
     }
 
-    /// No tool reaches the vault, cards, sync, the account or API keys (brief C.10).
+    /// No tool reaches the vault, cards, sync, the account or API keys (brief C.10). 0.16.0:
+    /// `fill_password` is the one tool about passwords: it only writes (its arguments are a
+    /// mode, a password to enter and a selector), and it is gated.
     #[test]
     fn no_tool_reaches_secrets() {
-        for t in TOOLS {
+        let fp = find("fill_password").unwrap();
+        assert_eq!(fp.group, Group::Sensitive(Category::Passwords));
+        let props: Vec<String> = fp.parameters()["properties"].as_object().unwrap().keys().cloned().collect();
+        assert_eq!(props, ["mode", "password", "selector"]);
+        for t in TOOLS.iter().filter(|t| t.name != "fill_password") {
             let text = format!("{} {}", t.name, t.schema).to_lowercase();
             for bad in
                 ["vault", "passw", "card", "payment", "sync", "account", "token", "api_key", "apikey", "recovery"]
@@ -827,9 +970,20 @@ mod tests {
         let none = Offer { userscripts: false, macros: false, gated: CategorySet::EMPTY };
         let names: Vec<_> = offered(none).iter().map(|t| t.name).collect();
         assert!(names.contains(&"click") && names.contains(&"finish") && names.contains(&"ask_user"));
-        for hidden in ["save_userscript", "run_macro", "get_history", "get_cookies_for_site"] {
+        // 0.16.0: the scratchpad is always offered.
+        let scratch: Vec<_> = TOOLS.iter().filter(|t| t.group == Group::Scratch).map(|t| t.name).collect();
+        assert_eq!(scratch, ["note_write", "note_read", "note_delete", "note_list", "plan_set", "plan_update"]);
+        assert!(scratch.iter().all(|n| names.contains(n)));
+        for hidden in ["save_userscript", "run_macro", "get_history", "get_cookies_for_site", "fill_password"] {
             assert!(!names.contains(&hidden), "{hidden}");
         }
+        // 0.16.0: entering a password is offered through the gate only, like the sensitive data.
+        let asked = Offer { gated: super::super::gate::requested("sign up with a strong password"), ..none };
+        assert!(is_offered("fill_password", asked) && !is_offered("get_history", asked));
+        assert!(!is_offered(
+            "fill_password",
+            Offer { gated: super::super::gate::requested("fill in the form"), ..none }
+        ));
         let mut gated = CategorySet::EMPTY;
         gated.insert(Category::History);
         let o = Offer { gated, ..none };
@@ -863,6 +1017,32 @@ mod tests {
         assert!(ok("save_macro", json!({"name":"m","source":"a","draft":"draft-1","more":false})).is_ok());
         assert!(ok("set_new_tab_background_url", json!({"url":"https://example.com/a.png"})).is_ok());
         assert!(ok("set_new_tab_background_url", json!({})).is_err());
+        // 0.16.0, the scratchpad: the schema bounds are loose (the exact limits and their errors
+        // are `scratch`'s), the shapes are checked.
+        assert!(ok("note_write", json!({"name":"n","content":"x".repeat(40_000)})).is_ok());
+        assert!(ok("note_write", json!({"name":"n","content":"x","mode":"prepend"})).is_err());
+        assert!(ok("note_write", json!({"name":"n"})).unwrap_err().contains("content is missing"));
+        assert!(ok("note_read", json!({"name":"n","offset":10,"max_chars":20000})).is_ok());
+        assert!(ok("note_read", json!({"name":"n","max_chars":20001})).is_err());
+        assert!(ok("note_delete", json!({})).is_err());
+        assert!(ok("note_list", json!({})).is_ok());
+        assert!(ok("plan_set", json!({"items":[{"text":"a"},{"text":"b","state":"doing","id":"x"}]})).is_ok());
+        assert!(ok("plan_set", json!({"items":[]})).is_ok());
+        assert!(ok("plan_set", json!({"items":[{"state":"todo"}]})).unwrap_err().contains("items[0].text is missing"));
+        assert!(ok("plan_set", json!({"items":[{"text":"a","state":"started"}]})).is_err());
+        assert!(ok("plan_set", json!({"items":[{"text":"a","note":"b"}]})).is_err());
+        assert!(ok("plan_update", json!({"index":2,"state":"done"})).is_ok());
+        assert!(ok("plan_update", json!({"id":"x","text":"new"})).is_ok());
+        assert!(ok("plan_update", json!({"index":0,"state":"done"})).is_err());
+        // 0.16.0: fill_password. `origin` is the session's to add, not the model's.
+        assert!(ok("fill_password", json!({"mode":"generate"})).is_ok());
+        assert!(ok("fill_password", json!({"mode":"provided","password":"x","selector":"#pw"})).is_ok());
+        assert!(ok("fill_password", json!({})).unwrap_err().contains("mode is missing"));
+        assert!(ok("fill_password", json!({"mode":"read"})).is_err());
+        assert!(ok("fill_password", json!({"mode":"provided","password":""})).is_err());
+        assert!(ok("fill_password", json!({"mode":"generate","origin":"https://a.example"})).is_err());
+        let e = ok("fill_password", json!({"mode":"provided","password":"SECRET".repeat(200)})).unwrap_err();
+        assert!(e.contains("password is too long") && !e.contains("SECRET"), "{e}");
         // An odd key name is not echoed.
         let e = ok("query", json!({"selector":"a","<script>secret":1})).unwrap_err();
         assert!(!e.contains("secret"), "{e}");
@@ -884,5 +1064,17 @@ mod tests {
         let (_, v) = parse_call("click", r#"{"x":10,"y":20,"button":"right"}"#).unwrap();
         let c: args::Click = args::parse(&v).unwrap();
         assert_eq!((c.x, c.button), (Some(10.0), args::Button::Right));
+        let (t, v) = parse_call("note_write", r#"{"name":"n","content":"x","mode":"append"}"#).unwrap();
+        assert_eq!(t.group, Group::Scratch);
+        let w: args::NoteWrite = args::parse(&v).unwrap();
+        assert_eq!((w.name.as_str(), w.mode), ("n", args::NoteMode::Append));
+        let mut v = parse_call("fill_password", r#"{"mode":"provided","password":"pw"}"#).unwrap().1;
+        v["origin"] = json!("https://a.example");
+        let f: args::FillPassword = args::parse(&v).unwrap();
+        assert_eq!((f.mode, f.password.as_deref().map(String::as_str)), (args::PasswordMode::Provided, Some("pw")));
+        assert_eq!((f.origin.as_str(), f.selector), ("https://a.example", None));
+        let (_, v) = parse_call("plan_set", r#"{"items":[{"text":"a","state":"dropped"}]}"#).unwrap();
+        let p: args::PlanSet = args::parse(&v).unwrap();
+        assert_eq!(p.items[0].state, Some(crate::agent::scratch::ItemState::Dropped));
     }
 }

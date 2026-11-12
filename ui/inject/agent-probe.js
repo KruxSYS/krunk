@@ -7,6 +7,11 @@
 // It never puts the value of a password or payment-card field into a result: those are
 // blanked, refused or masked. `secrets()` is the one exception: it hands the current values
 // to the browser process only, which removes them from every tool result.
+//
+// 0.16.0: `fillPassword()` is the one function that writes password fields (never card fields,
+// never anything else), for the agent's `fill_password` tool. The browser calls it only when
+// the user's message asked for a password and the user allowed the site. It returns which
+// fields it filled, never the value.
 (function (rulesIn) {
   'use strict';
   if (globalThis.__krunkProbe) return globalThis.__krunkProbe;
@@ -722,6 +727,125 @@
     return { title: document.title };
   }
 
+  // ---- 0.16.0: fill_password ----
+
+  function isPasswordInput(el) {
+    return !!el && el.nodeType === 1 && el.localName === 'input' && (el.getAttribute('type') || '').toLowerCase() === 'password';
+  }
+
+  // A payment-card field by its autocomplete token or its names. A security code is often an
+  // <input type=password>: it is never written, whatever its type.
+  function cardLike(el) {
+    if (/(^|\s)cc-/i.test(el.getAttribute('autocomplete') || '')) return true;
+    for (var i = 0; i < R.nameAttributes.length; i++) {
+      var a = el.getAttribute(R.nameAttributes[i]);
+      if (a && nameRe.test(a)) return true;
+    }
+    return false;
+  }
+
+  // The visible, enabled password fields of a form (or of a document or any other element).
+  function passwordInputs(scope) {
+    return Array.prototype.filter.call(scope.querySelectorAll('input[type="password" i]'), function (f) {
+      return !f.disabled && isVisible(f);
+    });
+  }
+
+  // Does `el` take the password one already has (and so not a new one)? By its autocomplete
+  // token, else by "current", "old" or "existing" as a word (or before "pass") in its name, id
+  // or label.
+  var OLD_PASSWORD = /(^|[^a-z])(current|old|existing)([^a-z]|$|pass)/i;
+  function currentPassword(el) {
+    var ac = (el.getAttribute('autocomplete') || '').toLowerCase();
+    if (/(^|\s)(current-password|one-time-code)(\s|$)/.test(ac)) return true;
+    if (/(^|\s)new-password(\s|$)/.test(ac)) return false;
+    return OLD_PASSWORD.test([el.getAttribute('name') || '', el.id || '', labelOf(el)].join(' '));
+  }
+
+  var NOT_PASSWORD = 'refused: fill_password only writes password fields';
+  var CARD_FIELD = 'refused: card field';
+
+  // Writes `value` into password fields with the native setter plus input and change events.
+  // `value` null: a dry run that writes nothing and reports the fields and what the browser
+  // needs to judge the form (`generated`).
+  //
+  // Which fields: the selector's matches (a field, or a form or other element: its password
+  // fields), else the focused password field, else the page's password fields when they are all
+  // in one form.
+  // - `generated` (a new password): every visible password field of that field's form that can
+  //   take a new password, so the confirmation too; not a current-password or one-time-code
+  //   field, not a read-only one.
+  // - otherwise (a password the user gave): exactly the fields named; without a selector the
+  //   focused one or the page's only one.
+  // Anything that is not an <input type=password>, and any card field, is refused and then
+  // nothing is written at all.
+  function fillPassword(value, sel, generated) {
+    var dry = value === null || value === undefined;
+    var start;
+    if (sel) {
+      start = queryAll(String(sel));   // throws on a bad selector: reported to the agent
+      if (!start.length) return { error: 'no element matches the selector' };
+    } else if (isPasswordInput(deepActive())) {
+      start = [deepActive()];
+    } else {
+      var all = [], ds = docs();
+      for (var i = 0; i < ds.length; i++) all = all.concat(passwordInputs(ds[i]));
+      if (!all.length) return { error: 'the page has no visible password field' };
+      for (var j = 1; j < all.length; j++) {
+        if ((all[j].form || all[j].ownerDocument) !== (all[0].form || all[0].ownerDocument)) {
+          return { error: 'the page has password fields in several forms: give the selector of the field or of its form' };
+        }
+      }
+      if (!generated && all.length > 1) return { error: 'the form has several password fields: give the selector of the one to fill' };
+      start = [all[0]];
+    }
+    var targets = [];
+    var facts = {};
+    if (generated) {
+      var first = start[0];
+      if (first.localName === 'input' && !isPasswordInput(first)) return { refused: NOT_PASSWORD };
+      if (isPasswordInput(first) && cardLike(first)) return { refused: CARD_FIELD };
+      var scope = first.localName === 'input' ? (first.form || first.ownerDocument) : first;
+      var fields = passwordInputs(scope);
+      targets = fields.filter(function (f) { return !cardLike(f) && !currentPassword(f) && !f.readOnly; });
+      // What login.js reports for the "Use a strong password" offer, for the same check.
+      var root = scope.nodeType === 9 ? (scope.body || scope.documentElement) : scope;
+      var text = (root.textContent || '') + ' ' + Array.prototype.map.call(root.querySelectorAll('button, input[type="submit"]'), function (b) { return b.value || b.textContent || ''; }).join(' ');
+      var lead = targets[0] || (isPasswordInput(first) ? first : null);
+      facts = {
+        autocomplete: lead ? (lead.getAttribute('autocomplete') || '').slice(0, 32) : '',
+        passwords: fields.length,
+        formText: text.replace(/\s+/g, ' ').trim().slice(0, 300),
+      };
+    } else {
+      start.forEach(function (el) {
+        if (el.localName === 'input') targets.push(el);
+        else Array.prototype.push.apply(targets, passwordInputs(el));
+      });
+      if (!targets.length) return { error: 'there is no password field there' };
+      for (var k = 0; k < targets.length; k++) {
+        var t = targets[k];
+        if (!isPasswordInput(t)) return { refused: NOT_PASSWORD };
+        if (cardLike(t)) return { refused: CARD_FIELD };
+        if (t.disabled || t.readOnly) return { error: 'the password field is disabled or read-only' };
+      }
+    }
+    var selectors = targets.map(selectorOf);
+    if (dry) {
+      facts.fields = selectors;
+      return facts;
+    }
+    if (!targets.length) return { error: 'no field for a new password was found' };
+    var v = String(value);
+    // Not focused: a focused password field opens Krunk's own login suggestions.
+    targets.forEach(function (f) {
+      setValue(f, v);
+      fire(f, 'input');
+      fire(f, 'change');
+    });
+    return { filled: targets.length, fields: selectors };
+  }
+
   // The current values of the sensitive fields (for the browser's scrub of tool results only).
   function secrets() {
     var out = [];
@@ -835,7 +959,7 @@
     context: context, html: html, text: text, query: query, links: links, forms: forms, media: media,
     box: box, fill: fill, select: select, focus: focus, focusedSensitive: focusedSensitive,
     scroll: scroll, waitFor: waitFor, edit: edit, setTitle: setTitle, secrets: secrets, mask: mask,
-    now: now,
+    now: now, fillPassword: fillPassword,
   });
   Object.defineProperty(globalThis, '__krunkProbe', { value: api, writable: false, configurable: false, enumerable: false });
   return api;

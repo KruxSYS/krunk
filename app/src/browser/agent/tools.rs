@@ -143,10 +143,15 @@ impl Browser {
         };
         match tool.group {
             Group::Page => self.agent_page_tool(win, tool.name, args, done),
-            // The session answers these itself.
-            Group::Ask | Group::Finish => done(ToolOutcome::error(format!("{name} is not a browser tool"))),
+            // The session answers these itself (0.16.0: the scratchpad too; its notes and plan
+            // never come here).
+            Group::Ask | Group::Finish | Group::Scratch => {
+                done(ToolOutcome::error(format!("{name} is not a browser tool")))
+            }
             // AI may have gone off since the call was made.
             _ if !self.ai_enabled() => done(ToolOutcome::refused("AI features are turned off")),
+            // 0.16.0: fill_password is gated like the sensitive data but works on the page.
+            Group::Sensitive(Category::Passwords) => self.agent_page_tool(win, tool.name, args, done),
             Group::Browser => self.agent_browser_tool(win, tool.name, &args, done),
             Group::Settings if tool.name == "set_new_tab_background_url" => self.agent_ntp_background(win, &args, done),
             Group::Settings => done(self.agent_settings_tool(tool.name, &args)),
@@ -678,6 +683,8 @@ impl Browser {
                 Ok(a) => self.agent_cookies(win, a, done),
                 Err(e) => done(ToolOutcome::error(e)),
             },
+            // A page tool (`run_agent_tool` sends it there).
+            Category::Passwords => done(ToolOutcome::error("fill_password is not available here")),
         }
     }
 
