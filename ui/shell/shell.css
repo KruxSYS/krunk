@@ -45,8 +45,6 @@ body { display: flex; flex-direction: column; background: var(--bg); }
 #tabs.no-anim .tab { transition: none; }
 .tab:hover { background: var(--bg-hover); }
 .tab.active { background: var(--bg-raised); color: var(--fg); box-shadow: 0 -1px 0 var(--border) inset; }
-.tab.private { color: var(--private); }
-.tab.private.active { background: var(--private-bg); }
 .tab.sleeping .title, .tab.sleeping .favicon { opacity: .55; }
 /* The dragged tab follows the cursor at once (no transform transition), raised above the others. */
 .tab.dragging { z-index: 2; transition: flex-basis .16s ease, min-width .16s ease, padding .16s ease, opacity .16s ease, transform 0s; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
@@ -54,7 +52,6 @@ body { display: flex; flex-direction: column; background: var(--bg); }
 /* A tab dragged from another window, in the gap where it would land (0.11.1). */
 .tab.ghost { pointer-events: none; background: var(--bg-raised); color: var(--fg);
   box-shadow: inset 0 0 0 2px var(--accent), 0 2px 8px rgba(0,0,0,.25); }
-.tab.ghost.private { color: var(--private); }
 .tab.drop-before::before, .tab.drop-after::after {
   content: ""; position: absolute; top: 4px; bottom: 4px; width: 2px; background: var(--accent);
 }
@@ -67,7 +64,7 @@ body { display: flex; flex-direction: column; background: var(--bg); }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 .tab .title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.tab .private-mark { display: flex; color: var(--private); }
+.tab .private-mark { display: flex; }
 /* 0.15.0: the tab waits for an HTTP sign-in: a key on an accent disc (light and dark). */
 .tab .auth-badge { display: flex; align-items: center; justify-content: center; width: 18px; height: 18px; flex: none;
                    border-radius: 50%; background: var(--accent-soft); color: var(--accent); }
@@ -145,8 +142,8 @@ html.fullscreen #caption, html.fullscreen #drag-space { display: none; }
 :root:is(.tabs-gradient, .tabs-glass) .tab:not(.active):hover, :root:is(.tabs-gradient, .tabs-glass) #tabstrip > .tb:hover:not(:disabled),
 :root:is(.tabs-gradient, .tabs-glass) .cap.hover:not(.close), :root:is(.bar-gradient, .bar-glass) #toolbar > .tb:hover:not(:disabled),
 :root:is(.bar-gradient, .bar-glass) #toolbar > .tb.on, :root:is(.bar-gradient, .bar-glass) #ext-actions .tb:hover { background: color-mix(in srgb, currentColor 15%, transparent); }
-:root:is(.tabs-gradient, .tabs-ombre, .bar-gradient) .tab:not(.private) :is(.close, .audio) { color: inherit; }
-:root:is(.tabs-gradient, .tabs-ombre, .bar-gradient) .tab:not(.private) :is(.close, .audio):hover { background: color-mix(in srgb, currentColor 18%, transparent); color: inherit; }
+:root:is(.tabs-gradient, .tabs-ombre, .bar-gradient) .tab :is(.close, .audio) { color: inherit; }
+:root:is(.tabs-gradient, .tabs-ombre, .bar-gradient) .tab :is(.close, .audio):hover { background: color-mix(in srgb, currentColor 18%, transparent); color: inherit; }
 /* The active tab: filled with the toolbar's surface (so it joins the toolbar), or a tint with an
    accent underline or outline; on an ombre strip it shows its slice at full strength. */
 :root.bar-gradient { --on-bg: var(--grad-fill) fixed; --on-fg: var(--grad-fg); }
@@ -158,8 +155,31 @@ html.fullscreen #caption, html.fullscreen #drag-space { display: none; }
 :root.tabs-ombre { --on-bg: var(--grad-fill) fixed; --on-fg: var(--grad-fg); }
 :root.accent-glow { --on-glow: 0 0 10px 1px color-mix(in srgb, var(--accent) 65%, transparent); }
 .tab.active:not(.private):not(.ghost) { background: var(--on-mark), var(--on-bg); color: var(--active-tab-text, var(--on-fg)); }
-/* 0.15.2: the user's colour for the other tabs' titles wins over every strip style, focused or not. */
-:root.tab-text #tabs .tab:not(.active):not(.private) { color: var(--tab-text); opacity: 1; }
+/* 0.15.2: the user's colour for the other tabs' titles wins over every strip style, focused or not
+   (0.16.0: on private tabs too). */
+:root.tab-text #tabs .tab:not(.active) { color: var(--tab-text); opacity: 1; }
+/* 0.16.0: private tabs. The title's colour per state comes from the host (core::color picks
+   the first purple, or else plain text colour, that reaches WCAG AA on what is drawn behind
+   that state; shell.js sets --private-l-* for the light theme and --private-d-* for the dark
+   one). The fallbacks are the colours of the default look. A private tab lies flat on the
+   strip (no ombre slice, no dimming in a background window); hovered on a gradient or glass
+   strip it gets a veil that keeps the title readable; active, it is filled with --private-bg.
+   The mask icon and the buttons on a styled strip take the title's colour. */
+:root { --private-fg: var(--private-l-fg, var(--private)); --private-hover-fg: var(--private-l-hover-fg, var(--private));
+  --private-hover-bg: var(--private-l-hover-bg, var(--bg-hover)); --private-active-fg: var(--private-l-active-fg, var(--private));
+  --private-ghost-fg: var(--private-l-ghost-fg, var(--private)); }
+:root.dark { --private-fg: var(--private-d-fg, #a78bfa); --private-hover-fg: var(--private-d-hover-fg, #c4b5fd);
+  --private-hover-bg: var(--private-d-hover-bg, var(--bg-hover)); --private-active-fg: var(--private-d-active-fg, #a78bfa);
+  --private-ghost-fg: var(--private-d-ghost-fg, #a78bfa); }
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) { --private-fg: var(--private-d-fg, #a78bfa); --private-hover-fg: var(--private-d-hover-fg, #c4b5fd);
+    --private-hover-bg: var(--private-d-hover-bg, var(--bg-hover)); --private-active-fg: var(--private-d-active-fg, #a78bfa);
+    --private-ghost-fg: var(--private-d-ghost-fg, #a78bfa); }
+}
+.tab.private, html.inactive .tab.private:not(.active) { color: var(--private-fg); }
+:root .tab.private:not(.active):hover { background: var(--private-hover-bg); color: var(--private-hover-fg); }
+.tab.private.active { background: var(--private-bg); color: var(--active-tab-text, var(--private-active-fg)); }
+.tab.ghost.private, html.inactive .tab.ghost.private { color: var(--private-ghost-fg); }
 .tab.active:not(.ghost):not(.dragging):not(.settling) { box-shadow: var(--on-ring), var(--on-glow); }
 #downloads.off, #zoom.off { display: none !important; }
 #media-chip { display: inline-flex; align-items: center; gap: 2px; padding: 0 6px; height: 20px; border-radius: 10px; background: #dc2626; color: #fff; margin-right: 4px; }

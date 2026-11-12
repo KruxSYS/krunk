@@ -1449,6 +1449,17 @@
     set('--tab-text', a.tabTextColor);
     set('--active-tab-text', a.activeTabTextColor);
     root.classList.toggle('tab-text', !!a.tabTextColor);
+    // 0.16.0: the private tabs' title colours for both themes (core::color chose each for
+    // contrast with what is behind that state of the tab; shell.css picks the theme's).
+    const pv = c.private || {};
+    [['light', 'l'], ['dark', 'd']].forEach(function (t) {
+      const p = pv[t[0]] || {}, v = '--private-' + t[1] + '-';
+      set(v + 'fg', p.fg);
+      set(v + 'hover-fg', p.hoverFg);
+      set(v + 'hover-bg', p.hoverBg);
+      set(v + 'active-fg', p.activeFg);
+      set(v + 'ghost-fg', p.ghostFg);
+    });
     state.showDownloads = a.showDownloadsButton !== false;
     $('downloads').classList.toggle('off', !state.showDownloads);
     $('zoom').classList.toggle('off', a.showZoomChip === false);

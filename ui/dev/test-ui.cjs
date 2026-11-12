@@ -5980,7 +5980,8 @@ async function testHttpAuth(browser) {
     // 0.14.0: the VPN (test-vpn.cjs; its MeasureVpn runs only when ONLY names it).
     // 0.15.0: one file per work package (test-0150-<wp>.cjs).
     for (const f of ['test-ai-panel.cjs', 'test-ai-settings.cjs', 'test-scripts.cjs', 'test-agent-probe.cjs', 'test-vpn.cjs',
-      'test-0150-tabs.cjs', 'test-0150-agent.cjs', 'test-0150-theme.cjs', 'test-0150-address.cjs', 'test-0150-downloads.cjs', 'test-0150-sessions.cjs']) {
+      'test-0150-tabs.cjs', 'test-0150-agent.cjs', 'test-0150-theme.cjs', 'test-0150-address.cjs', 'test-0150-downloads.cjs', 'test-0150-sessions.cjs',
+      'test-0160-private.cjs']) {
       const file = path.join(__dirname, f);
       if (!fs.existsSync(file)) continue;
       const tests = require(file)({ openPage, check, sent, lastSent, emit, shot, acceptInPage, settleTabs, SHOTS, UI });
