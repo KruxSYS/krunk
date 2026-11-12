@@ -63,8 +63,8 @@ object EngineConfig {
     /**
      * Removes what an earlier Remote Settings sync left in the engine's profile under [filesDir]
      * (0.1.x synced at every start; so does a profile on which automatic updates were once on).
-     * Called before the runtime is created whenever automatic updates are off; returns how many
-     * files and folders went.
+     * Called before the runtime is created when [mustDropRemoteSettingsStore] says so; returns
+     * how many files and folders went.
      *
      * Why: parts of the engine read some of these collections with signature verification at
      * every start. With downloaded data in the store that means fetching the signature's
@@ -81,6 +81,32 @@ object EngineConfig {
             .flatMap { dir -> dir.listFiles { f -> REMOTE_SETTINGS_IDB_NAME in f.name }.orEmpty().toList() }
         return stale.count { it.deleteRecursively() }
     }
+
+    /**
+     * Whether the store has to be cleared at this start: automatic updates are off now, and the
+     * last start was not already one with them off ([lastStart] is what [rememberStart] wrote
+     * then; null for the first start of this version, which is how an upgrade from 0.1.x looks).
+     * Not at every start: the engine creates its (empty) database again each time, and taking
+     * files away under it is only worth it when they can hold downloaded data.
+     */
+    fun mustDropRemoteSettingsStore(lastStart: String?, automaticUpdates: Boolean): Boolean =
+        !automaticUpdates && lastStart != STARTED_QUIET
+
+    /** Reads what [rememberStart] wrote at the last start; null when there is none. */
+    fun lastStart(filesDir: File): String? = try {
+        File(filesDir, START_MARKER).takeIf { it.isFile }?.readText()?.trim()
+    } catch (_: java.io.IOException) {
+        null
+    }
+
+    /** Notes for the next start whether this one ran with automatic updates. */
+    fun rememberStart(filesDir: File, automaticUpdates: Boolean) {
+        File(filesDir, START_MARKER).writeText(if (automaticUpdates) STARTED_UPDATING else STARTED_QUIET)
+    }
+
+    private const val START_MARKER = "krunk-engine.updates"
+    private const val STARTED_QUIET = "off"
+    private const val STARTED_UPDATING = "on"
 
     /** GeckoView keeps its profiles here, under the app's files folder. */
     private const val PROFILES_DIR = "mozilla"

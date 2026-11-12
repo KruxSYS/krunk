@@ -116,4 +116,41 @@ class EngineConfigTest {
             files.deleteRecursively()
         }
     }
+
+    @Test
+    fun theStoreIsClearedOncePerChangeNotAtEveryStart() {
+        val files = java.nio.file.Files.createTempDirectory("krunk-engine").toFile()
+        try {
+            // The first start of this version (an upgrade from 0.1.x looks like this): clear.
+            assertEquals(null, EngineConfig.lastStart(files))
+            assertTrue(
+                EngineConfig.mustDropRemoteSettingsStore(EngineConfig.lastStart(files), automaticUpdates = false),
+            )
+            EngineConfig.rememberStart(files, automaticUpdates = false)
+            // Every later start with automatic updates off: leave the engine's files alone.
+            assertFalse(
+                EngineConfig.mustDropRemoteSettingsStore(EngineConfig.lastStart(files), automaticUpdates = false),
+            )
+            // With automatic updates on the engine may sync: never clear.
+            assertFalse(
+                EngineConfig.mustDropRemoteSettingsStore(EngineConfig.lastStart(files), automaticUpdates = true),
+            )
+            EngineConfig.rememberStart(files, automaticUpdates = true)
+            assertFalse(
+                EngineConfig.mustDropRemoteSettingsStore(EngineConfig.lastStart(files), automaticUpdates = true),
+            )
+            // Switched off again: what that sync downloaded goes at the next start, once.
+            assertTrue(
+                EngineConfig.mustDropRemoteSettingsStore(EngineConfig.lastStart(files), automaticUpdates = false),
+            )
+            EngineConfig.rememberStart(files, automaticUpdates = false)
+            assertFalse(
+                EngineConfig.mustDropRemoteSettingsStore(EngineConfig.lastStart(files), automaticUpdates = false),
+            )
+            // An unreadable note counts as "not known": clear.
+            assertTrue(EngineConfig.mustDropRemoteSettingsStore("garbage", automaticUpdates = false))
+        } finally {
+            files.deleteRecursively()
+        }
+    }
 }

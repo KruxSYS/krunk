@@ -3,7 +3,8 @@
 #   a3.sh gate [test...]     the blocker's gate and start order:
 #                            idle | allow | blocked | update | starts | hold | off | guardlost | noguard
 #                            (no test = all, in that order). Run at every uBlock Origin or GeckoView bump.
-#                            Extra, not in "all": idle10 (the 10-minute capture and one page load)
+#                            Extra, not in "all": idle10 (the 10-minute capture and one page load),
+#                            afterupdate (the first start after a list update), startlinks (8 cold starts by a link)
 #   a3.sh ui [test...]       through the real UI: toolbar | menu | shield | private | settings
 #   a3.sh links [test...]    rewrite | handoff | selection
 #   a3.sh prompts [test...]  date time datetime month week colour leave repost share file photo recreate
@@ -116,8 +117,39 @@ t_relupdate() { # a user-started update through Settings, captured: only the fil
   local hosts other=""; hosts=$(grep -oE "sni [^ ]+" "$EV/gate-relupdate-pcap-summary.txt" | cut -d' ' -f2 | sort -u | tr '\n' ' ')
   local h; for h in $hosts; do case " $LIST_HOSTS " in *" $h "*) ;; *) other="$other $h" ;; esac; done
   check "update: only the filter lists' hosts were contacted ($hosts; others:${other:- none})" '[ -n "$hosts" ] && [ -z "$other" ]'
+  # The update's connections are closed by the engine up to two minutes later (a few FIN packets to the same addresses).
+  cap_start gate-relupdate-closing; sleep 120; front relupdate-closing || return; cap_stop gate-relupdate-closing > /dev/null
+  local ips_update ips_closing new=""; ips_update=$(grep -oE "^ +[0-9.-]+s +[0-9a-f.:]+" "$EV/gate-relupdate-pcap-summary.txt" | awk '{print $2}' | sort -u)
+  ips_closing=$(grep -oE "^ +[0-9.-]+s +[0-9a-f.:]+" "$EV/gate-relupdate-closing-pcap-summary.txt" | awk '{print $2}' | sort -u)
+  for h in $ips_closing; do echo "$ips_update" | grep -qxF "$h" || new="$new $h"; done
+  check "after the update: no new connection ($(packets gate-relupdate-closing) packets closing the update's connections; new addresses:${new:- none})" '[ -z "$new" ] && ! grep -qE "sni|quic" "$EV/gate-relupdate-closing-pcap-summary.txt"'
   cap_start gate-relupdate-after; sleep 60; front relupdate-after || return; cap_stop gate-relupdate-after > /dev/null
-  check "after the update: quiet again (60 s, $(packets gate-relupdate-after) packets)" '[ "$(packets gate-relupdate-after)" = 0 ]'
+  check "then quiet again (60 s, $(packets gate-relupdate-after) packets)" '[ "$(packets gate-relupdate-after)" = 0 ]'
+}
+
+t_afterupdate() { # the first start after a list update: the blocker has new lists to compile; the first page must still be filtered
+  fresh "$APK"; launch 15; front afterupdate || return; wait_ready 20   # a fresh install: the update brings new lists for certain
+  privacy || return; tapto text "Update filter lists" 3
+  local n=0; until dump && has text "Last updated" --contains; do n=$((n + 1)); [ "$n" -gt 40 ] && break; sleep 3; done
+  check "update from Settings: done" 'has text "Last updated" --contains'
+  back 2; sleep 20; stop_clean; A "logcat -c"
+  local t; t=$(now); view "$B/ads.html" 12; front afterupdate-start || return; dump; shot gate-afterupdate-first-page; save gate-afterupdate
+  grep -oE "blocker ready after.*" "$EV/gate-afterupdate-logcat.txt" | tail -1 | sed 's/^/  start after the update: /'
+  check "first start after an update: the first page is filtered ($(served "$t"))" '[ "$(served "$t")" = "/ads.html /ok.png " ]'
+  check "first start after an update: the shield counts 5 and does not warn ($(echo "$UI" | grep -oE "content-desc=\"[^\"]*(block|Block)[^\"]*\"" | head -1))" 'has desc "5 requests blocked on this page"'
+}
+
+t_startlinks() { # cold starts by a link from another app: every first page filtered; how long the blocker takes each time
+  local i t ms slow=0 unfiltered=0 times=""
+  launch 8; front startlinks || return; wait_ready 20
+  for i in 1 2 3 4 5 6 7 8; do
+    stop_clean; A "logcat -c"; t=$(now); view "$B/ads.html" 14; alive || break; dump
+    ms=$(glog | grep -oE "blocker ready after [0-9]+" | tail -1 | grep -oE "[0-9]+$"); times="$times ${ms:-?}"
+    [ "${ms:-0}" -gt 5000 ] && slow=$((slow + 1))
+    { [ "$(served "$t")" = "/ads.html /ok.png " ] && has desc "5 requests blocked on this page"; } || { unfiltered=$((unfiltered + 1)); shot "gate-startlinks-unfiltered-$i"; glog > "$EV/gate-startlinks-unfiltered-$i-logcat.txt"; echo "  start $i: served $(served "$t"); $(echo "$UI" | grep -oE 'content-desc="[^"]*(block|Block)[^"]*"' | head -1)"; }
+  done
+  echo "  blocker ready after (ms):$times; slower than 5 s: $slow of 8"
+  check "8 cold starts by a link: the first page is filtered every time ($unfiltered not)" '[ "$unfiltered" = 0 ]'
 }
 
 t_allow() { # 4: count and "off" title; allow list set, read back, effective after reload
@@ -155,7 +187,8 @@ for label in ('Open once','Go back'):
   view "https://googleads.g.doubleclick.net/pagead/x" 8; cap_start gate-blocked-once
   # shellcheck disable=SC2086
   tap $once 8; shot gate-blocked-3-open-once; cap_stop gate-blocked-once > /dev/null
-  check "open once: the address is then requested" 'grep -q "sni googleads.g.doubleclick.net" "$EV/gate-blocked-once-pcap-summary.txt"'
+  # Over TLS the capture shows the host's name; over QUIC (HTTP/3, once the engine has learnt the host offers it) only that a connection was made.
+  dump; check "open once: the address is then requested ($(grep -oE "sni [^ ]+|quic/udp-443" "$EV/gate-blocked-once-pcap-summary.txt" | sort -u | tr '\n' ' '))" 'grep -qE "sni googleads.g.doubleclick.net|quic/udp-443" "$EV/gate-blocked-once-pcap-summary.txt" && ! has text "Open once"'
   save gate-blocked
 }
 
@@ -783,6 +816,7 @@ t_rows() { # F-52 switch rows, F-61 reload target, the "tabs opened by links" se
 }
 
 # ----- upgrade from the published release (release APKs: no debug hooks; the emulator's root reads the files) -----
+Q="'"   # a single quote for SQL inside the checks' own single-quoted conditions
 db() { A "su 0 sqlite3 /data/data/$PKG/files/krunk/browser.db \"$1\"" 2> /dev/null | tr -d '\r'; }
 t_upgrade() { # 0.1.1 with tabs, a bookmark, history and a changed setting; 0.2.0 over it: all kept, blocking on, allow kept, nothing from a private tab
   local old="${KRUNK_OLD_APK:?the published APK to upgrade from}" t
@@ -792,7 +826,7 @@ t_upgrade() { # 0.1.1 with tabs, a bookmark, history and a changed setting; 0.2.
   view "$B/links.html" 10; view "$B/ads.html" 10; dump; shot upgrade-1-old-version
   menu; tapui text "Bookmark this page" 3; dump
   menu; tapui text "Settings" 3; tapui text "Search engine" 2; tapui text "Startpage" 2; dump; shot upgrade-2-old-settings
-  check "0.1.1: state made (3 tabs, a bookmark, history, search engine Startpage)" 'has text "Startpage" && [ "$(db "select count(*) from bookmarks where url like \"%ads.html\"")" = 1 ] && [ "$(db "select count(*) from urls where url like \"%18080/%\"")" -ge 2 ]'
+  check "0.1.1: state made (3 tabs, a bookmark, history, search engine Startpage)" 'has text "Startpage" && [ "$(db "select count(*) from bookmarks where url like ${Q}%ads.html${Q}")" = 1 ] && [ "$(db "select count(*) from urls where url like ${Q}%18080/%${Q}")" -ge 2 ]'
   local hist marks; hist=$(db "select count(*) from visits"); marks=$(db "select count(*) from bookmarks")
   back 2; stop_clean
   T "$E" adb install -r "$APK" 2>&1 | tail -1
@@ -833,7 +867,7 @@ t_upgrade() { # 0.1.1 with tabs, a bookmark, history and a changed setting; 0.2.
   check "after the private tab: Settings lists no site with blocking off" 'has text "None" || has text "0 sites" || ! has text "1 site"'
   back 2
   local traces; traces=$(A "su 0 sh -c \"cat /data/data/$PKG/files/krunk/browser.db /data/data/$PKG/files/krunk/browser.db-wal 2>/dev/null | strings | grep -c googleads.g.doubleclick\"" | tr -d "[:space:]")
-  check "after the private tab: nothing in the allow table, the address nowhere in Krunk's database ($traces places; $(db "select count(*) from urls where url like \"%doubleclick%\"") history rows)" '[ -z "$(db "select * from adblock_allowlist")" ] && [ "$(db "select count(*) from urls where url like \"%doubleclick%\"")" = 0 ] && [ "$traces" = 0 ]'
+  check "after the private tab: nothing in the allow table, the address nowhere in Krunk's database ($traces places; $(db "select count(*) from urls where url like ${Q}%doubleclick%${Q}") history rows)" '[ -z "$(db "select * from adblock_allowlist")" ] && [ "$(db "select count(*) from urls where url like ${Q}%doubleclick%${Q}")" = 0 ] && [ "$traces" = 0 ]'
   # "Open once" is the blocker's own short memory (not Krunk's, not stored): say how long it lasts after the private tab is gone.
   local now_s; while :; do now_s=$(( $(date +%s) - open_at )); [ "$now_s" -ge 150 ] && break; sleep 10; done
   view "$blocked" 8; dump; now_s=$(( $(date +%s) - open_at )); shot upgrade-9-blocked-again

@@ -54,19 +54,23 @@ class GeckoEngine(context: Context, automaticUpdates: Boolean, blockerHost: Bloc
                     .cookieBehaviorPrivateMode(ContentBlocking.CookieBehavior.ACCEPT_FIRST_PARTY_AND_ISOLATE_OTHERS)
                     .build(),
             )
-        if (!automaticUpdates) {
-            // Before the engine starts: nothing of an earlier Remote Settings sync may be left
-            // for it to verify against Mozilla's servers (see EngineConfig).
-            try {
-                val dropped = EngineConfig.dropRemoteSettingsStore(context.applicationContext.filesDir)
+        // Before the engine starts: nothing of an earlier Remote Settings sync may be left for it
+        // to verify against Mozilla's servers (see EngineConfig). Once per change, not per start.
+        val files = context.applicationContext.filesDir
+        try {
+            if (EngineConfig.mustDropRemoteSettingsStore(EngineConfig.lastStart(files), automaticUpdates)) {
+                val dropped = EngineConfig.dropRemoteSettingsStore(files)
                 if (dropped >
                     0
                 ) {
                     Log.i(KrunkApp.TAG, "engine: removed $dropped files of an earlier Remote Settings sync")
                 }
-            } catch (e: SecurityException) {
-                Log.w(KrunkApp.TAG, "engine: could not remove the Remote Settings store: ${e.javaClass.simpleName}")
             }
+            EngineConfig.rememberStart(files, automaticUpdates)
+        } catch (e: java.io.IOException) {
+            Log.w(KrunkApp.TAG, "engine: Remote Settings store not checked: ${e.javaClass.simpleName}")
+        } catch (e: SecurityException) {
+            Log.w(KrunkApp.TAG, "engine: Remote Settings store not checked: ${e.javaClass.simpleName}")
         }
         try {
             val config = EngineConfig.write(context.applicationContext.filesDir, automaticUpdates)
