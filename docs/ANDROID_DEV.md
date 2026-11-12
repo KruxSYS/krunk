@@ -117,9 +117,29 @@ contents. Two traps: GeckoView parses the file with SnakeYAML, which R8 breaks w
 rules in `proguard-rules.pro` (the release build then crashes at start); and a capture that
 shows 0 packets proves nothing unless the app is verifiably running in the foreground.
 
+A profile that has synced Remote Settings before (every 0.1.x install; or one on which "Update
+automatically" was on) needs one more step: parts of the engine read some collections with
+signature verification at start, and with downloaded data in the store that fetches a certificate
+chain from `content-signature-2.cdn.mozilla.net` before any extension runs. `GeckoEngine` therefore
+removes the store (the `remote-settings` IndexedDB in the profile) before the runtime is created,
+once per change: on the first start of a version that has the note file `krunk-engine.updates`
+missing, and on the first start after automatic updates were switched off
+(`EngineConfig.mustDropRemoteSettingsStore`). The upgrade test (`a3.sh upgrade`, with the last
+published APK as `KRUNK_OLD_APK`) captures the first start after the upgrade and fails on any
+packet that is not the restored page's.
+
 The gate in `krunk-guard` is the second line: an observer on every request cancels uBlock Origin's
 own requests unless an update the user started is running, and cancels requests the engine
 itself starts outside a page.
+
+**Start order and the engine's late start-up.** Page loads wait until the guard has reported in
+and the blocker filters (`engine/blocker/BlockerStart.kt`, at most 10 s). GeckoView starts the
+background scripts of already installed extensions "late", when its first window has had an idle
+moment; on about one cold start in eight that came only with the first page load, which Krunk was
+holding, so the page waited the full 10 s. The guard's privileged start-up hook
+(`gate-api.js`, `onStartup`) therefore starts its own background at once with the engine's
+`wakeupBackground()`; uBlock Origin's background is woken by the bridge's first message.
+`a3.sh gate startlinks` (eight cold starts by a link, with the time each) is the check.
 
 ## Device checks (`android/scripts/a3/`)
 
@@ -129,6 +149,8 @@ android/scripts/a3/a3.sh gate            # the blocker's gate and start order (s
 android/scripts/a3/a3.sh ui | links | prompts | themes | small
 REL=1 android/scripts/a3/a3.sh gate      # the same against the release APK
 android/scripts/a3/a3.sh gate idle10     # the 10-minute idle capture and one page load
+KRUNK_OLD_APK=<published x86_64 APK> android/scripts/a3/a3.sh upgrade
+android/scripts/a3/a3.sh config          # 360 dp width and rotation; last, they can wedge the emulator
 ```
 
 - The tests find controls with `uiautomator dump` (`uix.py`), read what reached the network from
@@ -145,6 +167,10 @@ android/scripts/a3/a3.sh gate idle10     # the 10-minute idle capture and one pa
 - `navigator.share` needs a secure context. `adb reverse` ends at the adb server's host, so the
   share test runs a relay on the device (`toybox nc`, `localhost:18081` to the test server).
 - Separate test groups with Home, 3 seconds, then `am force-stop`.
+- Do not edit `a3.sh` while a run is in progress: bash reads the file as it goes.
+- In a capture summary (`pcap_summary.py`) a destination with "syn" opened a new connection; one
+  without got only packets of a connection that was already open (keep-alive, closing). After a
+  list update the engine keeps the connections for a few minutes.
 
 ## Release signing and publishing
 

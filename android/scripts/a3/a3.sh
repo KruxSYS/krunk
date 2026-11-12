@@ -10,6 +10,7 @@
 #   a3.sh prompts [test...]  date time datetime month week colour leave repost share file photo recreate
 #   a3.sh themes             styles and accent (picker, toolbar, switcher, light and dark, private)
 #   a3.sh small [test...]    switcher | desktop | rows
+#   a3.sh config [test...]   rotate | width360: configuration changes; run them last (they can wedge the emulator's display)
 #   a3.sh upgrade            the published APK ($KRUNK_OLD_APK) with data, then this release installed over it
 # REL=1 tests the release APK instead of the debug one. A release build has no debug hooks, so
 # checks that read the blocker's internal state are skipped by name ("SKIP ... (needs a debug
@@ -107,7 +108,15 @@ t_idle10() { # acceptance: fresh install, 10 minutes idle: 0 packets; then one p
   check "the page load: packets only to the test server ($(packets gate-idle10-page) packets)" '[ "$(packets gate-idle10-page)" -gt 0 ] && ! grep -E "sni|quic" "$EV/gate-idle10-page-pcap-summary.txt" && [ "$(grep -cE "^ +[0-9.]+s +[0-9a-f.:]+" "$EV/gate-idle10-page-pcap-summary.txt")" = "$(grep -cE "^ +[0-9.]+s +${KRUNK_TEST_HOST:-10.250.136.3}:18080" "$EV/gate-idle10-page-pcap-summary.txt")" ]'
 }
 
-LIST_HOSTS="cdn.jsdelivr.net filters.adtidy.org malware-filter.gitlab.io pgl.yoyo.org publicsuffix.org ublockorigin.github.io ublockorigin.pages.dev"
+# Every host uBlock Origin's own catalogue (assets.json in the pinned package) names as a source or mirror of a list.
+LIST_HOSTS=$(python3 -I -c '
+import json, sys, urllib.parse
+hosts = set()
+for asset in json.load(open(sys.argv[1])).values():
+    urls = asset.get("contentURL") or []
+    urls = (urls if isinstance(urls, list) else [urls]) + (asset.get("cdnURLs") or [])
+    hosts.update(urllib.parse.urlsplit(u).hostname for u in urls if isinstance(u, str) and u.startswith("http"))
+print(" ".join(sorted(hosts)))' "$SRC/android/app/src/main/assets/extensions/ublock0/assets/assets.json" 2> /dev/null)
 t_relupdate() { # a user-started update through Settings, captured: only the filter lists' hosts are contacted
   launch 8; front relupdate || return; wait_ready 20
   cap_start gate-relupdate; privacy || return; tapto text "Update filter lists" 3; dump; check "update from Settings: running" 'has text "Updating…"'
@@ -116,15 +125,10 @@ t_relupdate() { # a user-started update through Settings, captured: only the fil
   sleep 5; cap_stop gate-relupdate > /dev/null; back 2
   local hosts other=""; hosts=$(grep -oE "sni [^ ]+" "$EV/gate-relupdate-pcap-summary.txt" | cut -d' ' -f2 | sort -u | tr '\n' ' ')
   local h; for h in $hosts; do case " $LIST_HOSTS " in *" $h "*) ;; *) other="$other $h" ;; esac; done
-  check "update: only the filter lists' hosts were contacted ($hosts; others:${other:- none})" '[ -n "$hosts" ] && [ -z "$other" ]'
-  # The update's connections are closed by the engine up to two minutes later (a few FIN packets to the same addresses).
-  cap_start gate-relupdate-closing; sleep 120; front relupdate-closing || return; cap_stop gate-relupdate-closing > /dev/null
-  local ips_update ips_closing new=""; ips_update=$(grep -oE "^ +[0-9.-]+s +[0-9a-f.:]+" "$EV/gate-relupdate-pcap-summary.txt" | awk '{print $2}' | sort -u)
-  ips_closing=$(grep -oE "^ +[0-9.-]+s +[0-9a-f.:]+" "$EV/gate-relupdate-closing-pcap-summary.txt" | awk '{print $2}' | sort -u)
-  for h in $ips_closing; do echo "$ips_update" | grep -qxF "$h" || new="$new $h"; done
-  check "after the update: no new connection ($(packets gate-relupdate-closing) packets closing the update's connections; new addresses:${new:- none})" '[ -z "$new" ] && ! grep -qE "sni|quic" "$EV/gate-relupdate-closing-pcap-summary.txt"'
-  cap_start gate-relupdate-after; sleep 60; front relupdate-after || return; cap_stop gate-relupdate-after > /dev/null
-  check "then quiet again (60 s, $(packets gate-relupdate-after) packets)" '[ "$(packets gate-relupdate-after)" = 0 ]'
+  check "update: only hosts from uBlock Origin's own list catalogue were contacted ($hosts; others:${other:- none})" '[ -n "$LIST_HOSTS" ] && [ -n "$hosts" ] && [ -z "$other" ]'
+  # The engine keeps the update's connections for a few minutes and then closes them (a few packets each, no new connection).
+  cap_start gate-relupdate-after; sleep 200; front relupdate-after || return; cap_stop gate-relupdate-after > /dev/null
+  check "after the update: no new connection for 200 s ($(packets gate-relupdate-after) packets, all on connections that were open: keep-alive and closing)" '! grep -qE "syn|sni|quic|dns|http " "$EV/gate-relupdate-after-pcap-summary.txt"'
 }
 
 t_afterupdate() { # the first start after a list update: the blocker has new lists to compile; the first page must still be filtered
@@ -878,6 +882,34 @@ t_upgrade() { # 0.1.1 with tabs, a bookmark, history and a changed setting; 0.2.
   save upgrade
 }
 
+# ----- configuration changes (last in a session) -----
+t_width360() { # requirement 11 on a real 360 dp wide screen: 1080 px at 480 dpi
+  A "logcat -c"; view "$B/links.html" 8; front width360 || return; ready "1 link with utm_source, fbclid" || bad "width360: the test page did not load"
+  A "wm density 480"; sleep 6; alive || return; front width360-480 || { A "wm density reset"; return; }
+  dump; shot config-width360 || { A "wm density reset"; exit 4; }
+  local pill; pill=$(echo "$UI" | python3 -I "$HERE/uix.py" size desc "Edit address" | cut -d' ' -f1)
+  echo "  $(A "wm density" | tr '\n' ' ') $(A "wm size" | tr '\n' ' ')"
+  check "360 dp wide screen: the address field is $(python3 -I -c 'import sys; p = int(sys.argv[1]); print("%d of 1080 px = %.1f dp of 360 dp = %.1f %%" % (p, p / 3.0, p * 100 / 1080))' "${pill:-0}")" '[ "${pill:-0}" -ge 648 ]'
+  check "360 dp: reload, tab counter and menu are still there, the page is shown" 'has desc Reload && has desc "Tabs:" --contains && has desc Menu && has text "1 link with utm_source, fbclid"'
+  check "360 dp: reload's target is 48 dp (144 px at 480 dpi): $(echo "$UI" | python3 -I "$HERE/uix.py" size desc Reload --clickable)" '[ "$(echo "$UI" | python3 -I "$HERE/uix.py" size desc Reload --clickable)" = "144 144" ]'
+  menu; dump; shot config-width360-menu; check "360 dp: the menu's first row has Back, Forward and Home" 'has desc Back && has desc Forward && has desc Home'; back 2
+  A "wm density reset"; sleep 5; alive || return; dump
+  check "density reset: Krunk is still there with the page" 'has text "1 link with utm_source, fbclid" && has desc Menu'
+  save config-width360
+}
+t_rotate() { # rotation: the page, the toolbar and an open dialog survive
+  A "logcat -c"; view "$B/p-date.html" 8; front rotate || return; ready "open picker" || bad "rotate: the test page did not load"
+  A "settings put system accelerometer_rotation 0"; A "settings put system user_rotation 1"; sleep 6; alive || return
+  front rotate-landscape || { A "settings put system user_rotation 0"; return; }
+  dump; shot config-rotate-1-landscape || { A "settings put system user_rotation 0"; exit 4; }
+  check "landscape: the page and the toolbar are there" 'has text "open picker" && has desc "Edit address" && has desc Menu'
+  open_picker; dump; check "landscape: a page prompt opens" 'has text "$SITE asks for a date"'
+  A "settings put system user_rotation 0"; sleep 6; alive || return; dump; shot config-rotate-2-portrait-with-dialog
+  check "back to portrait with the dialog open: it is still there and answers" 'has text "$SITE asks for a date"'
+  tapui text "Cancel" 2; dump; check "the page is unchanged and still answers" 'st "value=\[2026-11-12\]" && st "changes=0" && page_alive'
+  save config-rotate
+}
+
 case "${1:-}" in
   gate)
     shift
@@ -922,6 +954,15 @@ case "${1:-}" in
     A "svc power stayon true"
     for t in "${@:-switcher desktop rows}"; do
       for one in $t; do echo "== $one $(date -u +%T)"; "t_$one"; A "input keyevent KEYCODE_HOME"; sleep 3; A "am force-stop $PKG"; sleep 1; done
+    done
+    echo "passed $PASS, failed $FAIL, skipped $SKIP"
+    [ "$FAIL" = 0 ]
+    ;;
+  config)
+    shift
+    A "svc power stayon true"
+    for t in "${@:-width360 rotate}"; do
+      for one in $t; do echo "== $one $(date -u +%T)"; "t_$one"; A "wm density reset"; A "settings put system user_rotation 0"; A "input keyevent KEYCODE_HOME"; sleep 3; A "am force-stop $PKG"; sleep 1; done
     done
     echo "passed $PASS, failed $FAIL, skipped $SKIP"
     [ "$FAIL" = 0 ]

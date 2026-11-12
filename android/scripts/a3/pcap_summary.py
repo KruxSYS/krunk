@@ -3,7 +3,9 @@
 
 Only packets the app's UID *sent* are in such a capture. For each destination the script prints
 packet and byte counts, the time of the first packet (seconds after the capture's first packet,
-or after --t0 HH:MM:SS UTC), and the names seen: TLS SNI, HTTP Host + request line, DNS queries.
+or after --t0 HH:MM:SS UTC), and what was seen: a new TCP connection (SYN), TLS SNI, HTTP Host +
+request line, DNS queries. A destination without any of these got only packets of a connection
+that was open before the capture began (keep-alive, closing).
 
 Usage: python3 -I pcap_summary.py capture.pcap [--t0 HH:MM:SS] [--skip-host IP[:PORT]]...
 No third-party modules (the sandbox has neither tshark nor scapy).
@@ -110,6 +112,8 @@ def main():
         if proto == 6 and len(l4) >= 20:
             port = struct.unpack_from(">H", l4, 2)[0]
             payload = l4[(l4[12] >> 4) * 4 :]
+            if l4[13] & 0x12 == 0x02:  # SYN without ACK: the app opens a connection
+                names.append("syn (new connection)")
             s = sni_of(payload)
             if s:
                 names.append("sni " + s)
