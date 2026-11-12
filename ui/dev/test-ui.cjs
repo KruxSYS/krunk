@@ -381,7 +381,7 @@ async function testShell(browser) {
 
   // The press on ⋮ while its menu is open deactivates the popup: the host sends popupClosed
   // before the click arrives. The click must close, not reopen (3 clicks: open, closed, open).
-  check(await page.locator('#home').count() === 0, 'the Home button is gone (0.5)');
+  check(await page.locator('#home').count() === 1 && await page.locator('#home').isHidden(), 'no Home button unless Settings turns it on (0.5 removed it; 0.16.0 has it as an option, off by default)');
   // The site icon opens the lock popup under itself; a second click closes it.
   await page.click('#site-icon');
   const si = await lastSent(page, 'showPopup');
