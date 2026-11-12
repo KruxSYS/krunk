@@ -182,6 +182,16 @@ label.opt input { margin: 0; accent-color: var(--accent); flex: none; }
 .badge { flex: none; padding: 0 6px; border-radius: 8px; font-size: 11px; line-height: 17px; background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--fg); }
 .badge.off { background: color-mix(in srgb, var(--fg) 12%, transparent); color: var(--fg-muted); }
 .card.script .acts { margin-top: 0; }
+/* 0.16.0: a password Krunk generated for the agent */
+.card.password .card-q { margin-bottom: 8px; }
+.pw-row { display: flex; align-items: center; gap: 6px; }
+.pw-value { flex: 1; min-width: 0; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg-raised);
+            font: 12px/1.5 Consolas, "Cascadia Mono", ui-monospace, monospace; overflow-wrap: anywhere; user-select: all; }
+.pw-value.masked { letter-spacing: 1px; overflow: hidden; white-space: nowrap; user-select: none; color: var(--fg-muted); }
+.pw-row .btn { flex: none; padding: 4px 10px; }
+.pw-note { margin-top: 6px; color: var(--fg-muted); font-size: 12px; }
+.pw-status { margin-top: 2px; font-size: 12px; min-height: 0; }
+.pw-status:empty { display: none; }
 
 /* ---- footer ---- */
 #foot { flex: none; padding: 6px 8px 8px; border-top: 1px solid var(--border); }

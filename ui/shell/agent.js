@@ -570,11 +570,15 @@
   LB.on('agentConsentAsk', function (m) {
     if (typeof m.ask !== 'number') return;
     const what = m.label || m.category || 'some of your data';
-    questionCard('consent' + m.ask, 'consent', 'lock', 'The agent wants to read ' + what + '. Allow?', function (box, done) {
+    // 0.16.0: entering a password is allowed per site; the question names it.
+    const password = m.category === 'passwords';
+    const site = typeof m.site === 'string' && m.site ? m.site : 'this site';
+    const question = password ? 'The agent wants to enter a password on ' + site + '. Allow?' : 'The agent wants to read ' + what + '. Allow?';
+    questionCard('consent' + m.ask, 'consent', 'lock', question, function (box, done) {
       const acts = el('div', 'acts');
       acts.appendChild(button('btn primary', 'Allow', function () {
         LB.post('agentConsent', { ask: m.ask, allow: true });
-        done('Allowed for this conversation');
+        done(password ? 'Allowed on this site for this conversation' : 'Allowed for this conversation');
       }));
       acts.appendChild(button('btn', 'Deny', function () {
         LB.post('agentConsent', { ask: m.ask, allow: false });
@@ -650,6 +654,74 @@
     fillScript(card, c);
     append(card);
     announce(card.querySelector('.script-name').textContent);
+  });
+
+  // ---------- password card (0.16.0) ----------
+  // A password Krunk generated for the agent's fill_password. The event has no value: the card
+  // shows dots, Show asks the host for it (`agentPasswordShow`, the reply is for this panel
+  // only) and Hide drops it again; Copy lets the host put it on the clipboard.
+
+  LB.on('agentPassword', function (m) {
+    if (typeof m.id !== 'number') return;
+    finishLive();
+    const site = typeof m.site === 'string' && m.site ? m.site : 'this site';
+    const length = Math.max(8, Math.min(32, Number(m.length) || 12));
+    const fields = Number(m.fields) || 0;
+    const card = el('div', 'card password');
+    card.setAttribute('role', 'group');
+    const title = el('div', 'card-q');
+    title.appendChild(icon('lock'));
+    const tt = el('span', null, 'Krunk created a password for ' + site);
+    tt.id = 'pw-' + m.id;
+    card.setAttribute('aria-labelledby', tt.id);
+    title.appendChild(tt);
+    card.appendChild(title);
+    const row = el('div', 'pw-row');
+    const value = el('code', 'pw-value masked');
+    const status = el('div', 'pw-status');
+    status.setAttribute('role', 'status');
+    let shown = false;
+    function mask() {
+      shown = false;
+      value.textContent = '\u2022'.repeat(length);
+      value.classList.add('masked');
+      value.setAttribute('aria-label', 'Password hidden');
+      show.textContent = 'Show';
+    }
+    const show = button('btn pw-show', 'Show', function () {
+      if (shown) { mask(); return; }
+      show.disabled = true;
+      LB.request('agentPasswordShow', { id: m.id }).then(function (d) {
+        show.disabled = false;
+        if (!d || typeof d.password !== 'string') { status.textContent = 'The password is no longer kept.'; return; }
+        shown = true;
+        value.textContent = d.password;
+        value.classList.remove('masked');
+        value.removeAttribute('aria-label');
+        show.textContent = 'Hide';
+        status.textContent = '';
+      }, function (e) {
+        show.disabled = false;
+        status.textContent = (e && e.message) || 'The password could not be shown.';
+      });
+    });
+    const copy = button('btn pw-copy', 'Copy', function () {
+      LB.request('agentPasswordCopy', { id: m.id }).then(function () {
+        status.textContent = 'Copied. Krunk clears the clipboard after 30 seconds.';
+      }, function (e) {
+        status.textContent = (e && e.message) || 'The password could not be copied.';
+      });
+    });
+    row.appendChild(value);
+    row.appendChild(show);
+    row.appendChild(copy);
+    card.appendChild(row);
+    card.appendChild(el('div', 'pw-note', 'Entered into ' + (fields === 1 ? '1 field' : fields + ' fields') +
+      '. When you send the form, Krunk saves it with your passwords or asks you. Until then it is only kept here, for this conversation.'));
+    card.appendChild(status);
+    mask();
+    append(card);
+    announce(tt.textContent);
   });
 
   // ---------- run state ----------
