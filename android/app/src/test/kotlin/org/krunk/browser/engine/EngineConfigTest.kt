@@ -78,4 +78,42 @@ class EngineConfigTest {
             dir.deleteRecursively()
         }
     }
+
+    @Test
+    fun anEarlierRemoteSettingsSyncIsRemovedAndNothingElse() {
+        val files = java.nio.file.Files.createTempDirectory("krunk-engine").toFile()
+        try {
+            val profile = java.io.File(files, "mozilla/wns7zrb4.default")
+            val idb = java.io.File(profile, "storage/permanent/chrome/idb")
+            java.io.File(idb, "3870112724rsegmnoittet-es.files").mkdirs()
+            java.io.File(idb, "3870112724rsegmnoittet-es.files/1").writeText("attachment")
+            val store = listOf("sqlite", "sqlite-wal", "sqlite-shm").map {
+                java.io.File(idb, "3870112724rsegmnoittet-es.$it")
+            }
+            store.forEach { it.writeText("x") }
+            // What must stay: another database of the engine, a site's storage, certificate data, Krunk's own files.
+            val keep = listOf(
+                java.io.File(idb, "1657114595AmcateirvtiSty.sqlite"),
+                java.io.File(profile, "storage/default/https+++example.com/idb/123rsegmnoittet-es.sqlite"),
+                java.io.File(profile, "security_state/20261018-0-compat.filter.delta"),
+                java.io.File(profile, "cert9.db"),
+                java.io.File(files, "krunk/browser.db"),
+                java.io.File(files, "krunk-engine.yaml"),
+            )
+            keep.forEach {
+                it.parentFile!!.mkdirs()
+                it.writeText("keep")
+            }
+            assertEquals(4, EngineConfig.dropRemoteSettingsStore(files))
+            assertTrue(store.none { it.exists() })
+            assertFalse(java.io.File(idb, "3870112724rsegmnoittet-es.files").exists())
+            assertTrue(keep.all { it.exists() })
+            // Nothing to do the second time, on a profile that never synced, or before a profile exists.
+            assertEquals(0, EngineConfig.dropRemoteSettingsStore(files))
+            assertEquals(0, EngineConfig.dropRemoteSettingsStore(java.io.File(files, "krunk")))
+            assertEquals(0, EngineConfig.dropRemoteSettingsStore(java.io.File(files, "missing")))
+        } finally {
+            files.deleteRecursively()
+        }
+    }
 }

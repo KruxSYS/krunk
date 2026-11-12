@@ -60,6 +60,41 @@ object EngineConfig {
         PREF_GATE_ENGINE to if (automaticUpdates) "allow" else engineGate,
     )
 
+    /**
+     * Removes what an earlier Remote Settings sync left in the engine's profile under [filesDir]
+     * (0.1.x synced at every start; so does a profile on which automatic updates were once on).
+     * Called before the runtime is created whenever automatic updates are off; returns how many
+     * files and folders went.
+     *
+     * Why: parts of the engine read some of these collections with signature verification at
+     * every start. With downloaded data in the store that means fetching the signature's
+     * certificate chain from `content-signature-2.cdn.mozilla.net`, before any extension runs
+     * and so before the request gate exists. It was seen on the first start after an upgrade
+     * from 0.1.1. With an empty store they fall back to the data inside the app package and ask
+     * nobody. Downloaded certificate data (`security_state`, the certificate database) is a
+     * different store and stays.
+     */
+    fun dropRemoteSettingsStore(filesDir: File): Int {
+        val profiles = File(filesDir, PROFILES_DIR).listFiles { f -> f.isDirectory }.orEmpty()
+        val stale = profiles
+            .map { File(it, REMOTE_SETTINGS_IDB_DIR) }
+            .flatMap { dir -> dir.listFiles { f -> REMOTE_SETTINGS_IDB_NAME in f.name }.orEmpty().toList() }
+        return stale.count { it.deleteRecursively() }
+    }
+
+    /** GeckoView keeps its profiles here, under the app's files folder. */
+    private const val PROFILES_DIR = "mozilla"
+
+    /** The engine's own (not a site's) IndexedDB databases inside a profile. */
+    private const val REMOTE_SETTINGS_IDB_DIR = "storage/permanent/chrome/idb"
+
+    /**
+     * How IndexedDB spells the database "remote-settings" in its file names: the name's letters
+     * taken alternately from both ends, after a number (`3870112724rsegmnoittet-es.sqlite`, its
+     * `-wal` and `-shm`, and the `.files` folder).
+     */
+    private const val REMOTE_SETTINGS_IDB_NAME = "rsegmnoittet-es"
+
     /** The file's content. */
     fun yaml(automaticUpdates: Boolean, engineGate: String = ENGINE_GATE_DEFAULT): String = buildString {
         val env = env(automaticUpdates)

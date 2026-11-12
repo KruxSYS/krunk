@@ -9,6 +9,7 @@
 #   a3.sh prompts [test...]  date time datetime month week colour leave repost share file photo recreate
 #   a3.sh themes             styles and accent (picker, toolbar, switcher, light and dark, private)
 #   a3.sh small [test...]    switcher | desktop | rows
+#   a3.sh upgrade            the published APK ($KRUNK_OLD_APK) with data, then this release installed over it
 # REL=1 tests the release APK instead of the debug one. A release build has no debug hooks, so
 # checks that read the blocker's internal state are skipped by name ("SKIP ... (needs a debug
 # build)") and the tests that are only possible with the hooks are replaced by ones that go through
@@ -781,6 +782,67 @@ t_rows() { # F-52 switch rows, F-61 reload target, the "tabs opened by links" se
   save small-rows
 }
 
+# ----- upgrade from the published release (release APKs: no debug hooks; the emulator's root reads the files) -----
+db() { A "su 0 sqlite3 /data/data/$PKG/files/krunk/browser.db \"$1\"" 2> /dev/null | tr -d '\r'; }
+t_upgrade() { # 0.1.1 with tabs, a bookmark, history and a changed setting; 0.2.0 over it: all kept, blocking on, allow kept, nothing from a private tab
+  local old="${KRUNK_OLD_APK:?the published APK to upgrade from}" t
+  A "input keyevent KEYCODE_HOME"; sleep 1; A "am force-stop $PKG"; T "$E" uninstall > /dev/null 2>&1
+  T "$E" adb install "$old" 2>&1 | tail -1; A "logcat -c"; launch 20; front upgrade-old || return
+  echo "  installed: $(A "dumpsys package $PKG" | grep -m1 -oE "versionName=[^ ]+")"
+  view "$B/links.html" 10; view "$B/ads.html" 10; dump; shot upgrade-1-old-version
+  menu; tapui text "Bookmark this page" 3; dump
+  menu; tapui text "Settings" 3; tapui text "Search engine" 2; tapui text "Startpage" 2; dump; shot upgrade-2-old-settings
+  check "0.1.1: state made (3 tabs, a bookmark, history, search engine Startpage)" 'has text "Startpage" && [ "$(db "select count(*) from bookmarks where url like \"%ads.html\"")" = 1 ] && [ "$(db "select count(*) from urls where url like \"%18080/%\"")" -ge 2 ]'
+  local hist marks; hist=$(db "select count(*) from visits"); marks=$(db "select count(*) from bookmarks")
+  back 2; stop_clean
+  T "$E" adb install -r "$APK" 2>&1 | tail -1
+  check "0.2.0 installed over it: $(A "dumpsys package $PKG" | grep -m1 -oE "versionName=[^ ]+")" 'A "dumpsys package $PKG" | grep -q "versionName=0.2.0"'
+  A "logcat -c"; t=$(now); cap_start upgrade-first-start; launch 25; front upgrade-new || return; dump; shot upgrade-3-first-start
+  check "upgrade start: the restored page is filtered ($(served "$t")) and the shield counts 5" '[ "$(served "$t")" = "/ads.html /ok.png " ] && has desc "5 requests blocked on this page"'
+  check "upgrade start: the three tabs are back" 'has desc "Tabs: 3 open" --contains'
+  sleep 20; cap_stop upgrade-first-start > /dev/null; save upgrade-first-start
+  grep -oE "blocker ready after.*" "$EV/upgrade-first-start-logcat.txt" | tail -1 | sed 's/^/  upgrade start: /'
+  check "upgrade start: packets only to the test server ($(packets upgrade-first-start) packets)" '[ "$(packets upgrade-first-start)" -gt 0 ] && ! grep -E "sni|quic" "$EV/upgrade-first-start-pcap-summary.txt"'
+  check "history and bookmarks are kept ($hist visits, $marks bookmarks before)" '[ "$(db "select count(*) from visits")" -ge "$hist" ] && [ "$(db "select count(*) from bookmarks")" = "$marks" ]'
+  menu; tapui text "Bookmarks" 3; tapui text "Other bookmarks" 2; dump; has text "Ad test" || { back 2; tapui text "Bookmarks bar" 2; dump; }
+  shot upgrade-4-bookmarks; check "the bookmark is in the manager" 'has text "Ad test"'; back 2; back 2
+  menu; tapui text "History" 3; dump; shot upgrade-5-history; check "the history lists the pages visited with 0.1.1" 'has text "Ad test" && has text "Links"'; back 2
+  to_settings; dump; shot upgrade-6-settings; check "the changed setting is kept (search engine Startpage)" 'has text "Startpage"'
+  scrollto text "Block ads and trackers"; dump; check "blocking is on by default after the upgrade" '[ "$(attr text "Block ads and trackers" checked --clickable)" = true ]'
+  scrollto text "Update automatically"; dump; check "automatic updates are off by default after the upgrade" '[ "$(attr text "Update automatically" checked --clickable)" = false ]'
+  back 2
+  # A per-site allow made in 0.2.0 is kept over a restart.
+  tapui desc "5 requests blocked on this page" 2; t=$(now); tapui text "Block on this site" 10; dump; shot upgrade-7-allowed
+  check "allow in 0.2.0: the page reloads unfiltered ($(served "$t" | wc -w) requests)" '[ "$(served "$t" | wc -w)" = 7 ] && has desc "Blocking is off for this site"'
+  stop_clean; t=$(now); launch 15; front upgrade-restart || return; sleep 5; dump
+  check "allow: still set after a restart ($(served "$t" | wc -w) requests; stored: $(db "select * from adblock_allowlist" | tr '\n' ' '))" '[ "$(served "$t" | wc -w)" = 7 ] && has desc "Blocking is off for this site" && [ -n "$(db "select * from adblock_allowlist")" ]'
+  tapui desc "Blocking is off for this site" 2; tapui text "Block on this site" 10; dump
+  check "allow removed again: filtered, nothing stored" 'has desc "5 requests blocked on this page" && [ -z "$(db "select * from adblock_allowlist")" ]'
+  # A private tab: no allow switch; "Open once" on a blocked address is the only allow there is, and it leaves nothing behind.
+  local blocked="https://googleads.g.doubleclick.net/pagead/x"
+  menu; tapui text "New private tab" 4; tapui desc "Edit address" 2; A "input text '$B/ads.html'"; A "input keyevent 66"; sleep 10
+  tapui desc "5 requests blocked on this page" 2; dump
+  check "private tab: the sheet has no allow switch" '! has text "Block on this site" && has text "5 requests blocked on this page"'
+  back 2; tapui desc "Edit address" 2; A "input text '$blocked'"; A "input keyevent 66"; sleep 8; dump
+  check "private tab: a blocked address shows Krunk's page" 'has text "Open once"'
+  tapui text "Open once" 8; dump; check "private tab: Open once goes on to the address" '! has text "Open once"'
+  tapui desc "Tabs:" 3 --contains; tapui text "Private (1)" 2; tapui desc "Close " 3 --contains; dump
+  check "the private tab is closed" 'has text "Private (0)"'
+  back 2; local open_at; open_at=$(date +%s)
+  to_settings; scrollto text "Sites with blocking off"; dump; shot upgrade-8-after-private
+  check "after the private tab: Settings lists no site with blocking off" 'has text "None" || has text "0 sites" || ! has text "1 site"'
+  back 2
+  local traces; traces=$(A "su 0 sh -c \"cat /data/data/$PKG/files/krunk/browser.db /data/data/$PKG/files/krunk/browser.db-wal 2>/dev/null | strings | grep -c googleads.g.doubleclick\"" | tr -d "[:space:]")
+  check "after the private tab: nothing in the allow table, the address nowhere in Krunk's database ($traces places; $(db "select count(*) from urls where url like \"%doubleclick%\"") history rows)" '[ -z "$(db "select * from adblock_allowlist")" ] && [ "$(db "select count(*) from urls where url like \"%doubleclick%\"")" = 0 ] && [ "$traces" = 0 ]'
+  # "Open once" is the blocker's own short memory (not Krunk's, not stored): say how long it lasts after the private tab is gone.
+  local now_s; while :; do now_s=$(( $(date +%s) - open_at )); [ "$now_s" -ge 150 ] && break; sleep 10; done
+  view "$blocked" 8; dump; now_s=$(( $(date +%s) - open_at )); shot upgrade-9-blocked-again
+  check "${now_s} s after the private tab was closed, without a restart: the address is blocked again" 'has text "Open once"'
+  stop_clean; launch 12; view "$blocked" 8; dump
+  check "after a restart the address is blocked as well" 'has text "Open once"'
+  save upgrade
+}
+
 case "${1:-}" in
   gate)
     shift
@@ -826,6 +888,11 @@ case "${1:-}" in
     for t in "${@:-switcher desktop rows}"; do
       for one in $t; do echo "== $one $(date -u +%T)"; "t_$one"; A "input keyevent KEYCODE_HOME"; sleep 3; A "am force-stop $PKG"; sleep 1; done
     done
+    echo "passed $PASS, failed $FAIL, skipped $SKIP"
+    [ "$FAIL" = 0 ]
+    ;;
+  upgrade)
+    A "svc power stayon true"; REL=1; APK=$RELEASE_APK; echo "== upgrade $(date -u +%T)"; t_upgrade; A "input keyevent KEYCODE_HOME"; sleep 3; A "am force-stop $PKG"
     echo "passed $PASS, failed $FAIL, skipped $SKIP"
     [ "$FAIL" = 0 ]
     ;;
