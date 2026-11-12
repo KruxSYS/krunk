@@ -1229,8 +1229,9 @@ impl View {
             }
         };
         let Some(h) = self.host() else { return fail(done, "the page is not open") };
-        let Some(value) = parse_json(Some(&CefString::from(params.to_string().as_str())), JsonParserOptions::RFC)
-        else {
+        // Wiped when done: the agent's fill_password sends a password in a call (0.16.0).
+        let text = zeroize::Zeroizing::new(params.to_string());
+        let Some(value) = parse_json(Some(&CefString::from(text.as_str())), JsonParserOptions::RFC) else {
             return fail(done, "bad parameters");
         };
         let Some(mut dict) = value.dictionary() else { return fail(done, "bad parameters") };

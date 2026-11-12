@@ -51,6 +51,15 @@ impl Browser {
         }
     }
 
+    /// Posts a reply built by hand (one that carries a secret in a wiped buffer) to window
+    /// `win`'s panel.
+    pub(super) fn post_panel_json(&self, win: WindowId, json: &str) {
+        let view = self.panel.panels.borrow().get(&win).filter(|p| p.ready).map(|p| p.view.clone());
+        if let Some(v) = view {
+            v.post_json(json);
+        }
+    }
+
     /// The window whose panel sent the request being dispatched: the current window (its
     /// message made it current).
     pub(super) fn agent_request_window(&self) -> Option<WindowId> {

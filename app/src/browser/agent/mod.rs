@@ -20,6 +20,11 @@
 //! panel's `agentScratch` event; all go with the window. The per-tab media log of the plan is
 //! not kept here: the engine reports no network events to the browser without the Network
 //! domain, so `list_media` relies on the page's own resource timing (read by the probe).
+//!
+//! 0.16.0, `fill_password` (`page.rs`): a password Krunk generates is kept here per window for
+//! the panel's card (Show and Copy) until the conversation ends. It never goes to the session:
+//! the tool's outcome has no value, and every outcome and context block is scrubbed of the
+//! passwords generated in this conversation before the session (and so the model) sees it.
 
 mod page;
 pub(super) mod provider;
@@ -41,6 +46,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 use std::time::Instant;
+use zeroize::Zeroizing;
 
 /// Step screenshots kept per window.
 const MAX_SHOTS: usize = 40;
@@ -50,6 +56,8 @@ const QUICK_MODELS: usize = 50;
 const SHOT_PREFIX: &str = "/agent-shot/";
 /// How long the automatic context waits for the page before it goes without it.
 const CONTEXT_WAIT_MS: i64 = 3000;
+/// Generated passwords kept per conversation (for the panel's cards and the scrub).
+const MAX_PASSWORDS: usize = 32;
 
 /// One window's agent.
 struct AgentWin {
@@ -69,6 +77,10 @@ struct AgentWin {
     send_gen: u64,
     /// When Stop was asked (for the "stopped in N ms" log line).
     stop_at: Option<Instant>,
+    /// 0.16.0: the passwords Krunk generated for this conversation's `fill_password` calls, by
+    /// the id of their card in the panel.
+    passwords: Vec<(u32, Zeroizing<String>)>,
+    next_password: u32,
 }
 
 impl AgentWin {
@@ -84,6 +96,8 @@ impl AgentWin {
             tool: None,
             send_gen: 0,
             stop_at: None,
+            passwords: Vec::new(),
+            next_password: 0,
         }
     }
 }
@@ -254,6 +268,9 @@ impl Browser {
         let reloaded = !self.agent.loaded.borrow_mut().insert(win);
         self.agent_ensure(win);
         if reloaded {
+            if let Some(w) = self.agent.wins.borrow_mut().get_mut(&win) {
+                w.passwords.clear();
+            }
             self.agent_input(win, Input::New);
             self.post_panel(win, &Event::AgentClear);
         }
@@ -309,6 +326,10 @@ impl Browser {
 
     /// A request from window `win`'s panel (`agent*` commands).
     pub(super) fn agent_request(&self, win: WindowId, req_id: Option<u32>, request: Request) {
+        // Its reply carries a secret: built and posted on its own.
+        if let Request::AgentPasswordShow { id } = request {
+            return self.agent_password_show(win, req_id, id);
+        }
         let result: Result<(), String> = match request {
             Request::AgentSend { text } => {
                 self.agent_send(win, text);
@@ -326,6 +347,7 @@ impl Browser {
                 if let Some(w) = self.agent.wins.borrow_mut().get_mut(&win) {
                     w.send_gen += 1;
                     w.shots.clear();
+                    w.passwords.clear();
                 }
                 self.post_panel(win, &Event::AgentClear);
                 self.agent_input(win, Input::New);
@@ -335,6 +357,11 @@ impl Browser {
                 self.agent_input(win, Input::ScratchClear);
                 Ok(())
             }
+            Request::AgentPasswordCopy { id } => match self.agent_password(win, id) {
+                Some(pw) if self.copy_secret(&pw) => Ok(()),
+                Some(_) => Err("Could not access the clipboard".into()),
+                None => Err("This password is no longer kept.".into()),
+            },
             Request::AgentAnswer { ask, choices, other } => {
                 self.agent_input(win, Input::Answer { ask, answer: AskAnswer { choices, other } });
                 Ok(())
@@ -385,6 +412,48 @@ impl Browser {
                 self.post_panel(win, &Event::AgentError { message: e });
             }
         }
+    }
+
+    // ------------------------------------------------------------ generated passwords (0.16.0)
+
+    /// The generated password of card `id` in window `win`'s panel.
+    fn agent_password(&self, win: WindowId, id: u32) -> Option<Zeroizing<String>> {
+        let wins = self.agent.wins.borrow();
+        wins.get(&win)?.passwords.iter().find(|(n, _)| *n == id).map(|(_, pw)| pw.clone())
+    }
+
+    /// Show on a password card: the value goes to that window's panel only, in a wiped buffer.
+    fn agent_password_show(&self, win: WindowId, req_id: Option<u32>, id: u32) {
+        match self.agent_password(win, id) {
+            Some(pw) => self.post_panel_json(win, &super::vault::secret_reply(req_id, &pw, None)),
+            None => self.post_panel(win, &Event::err(req_id, "This password is no longer kept.")),
+        }
+    }
+
+    /// Keeps a password Krunk generated for `fill_password` on `site` and shows its card in
+    /// the panel (masked: the event has no value).
+    pub(super) fn agent_keep_password(&self, win: WindowId, site: &str, password: Zeroizing<String>, fields: u32) {
+        let length = password.chars().count() as u32;
+        let id = {
+            let mut wins = self.agent.wins.borrow_mut();
+            let Some(w) = wins.get_mut(&win) else { return };
+            w.next_password += 1;
+            w.passwords.push((w.next_password, password));
+            if w.passwords.len() > MAX_PASSWORDS {
+                w.passwords.remove(0);
+            }
+            w.next_password
+        };
+        self.post_panel(win, &Event::AgentPassword { id, site: site.to_string(), length, fields });
+    }
+
+    /// The passwords generated in window `win`'s conversation, in every form a page or an
+    /// address can show them: cut out of whatever goes to the model.
+    fn agent_generated(&self, win: WindowId) -> Vec<Zeroizing<String>> {
+        let wins = self.agent.wins.borrow();
+        wins.get(&win)
+            .map(|w| w.passwords.iter().flat_map(|(_, pw)| redact::secret_forms(pw)).collect())
+            .unwrap_or_default()
     }
 
     /// The panel's quick switch: the active provider and model (saved like any setting).
@@ -487,8 +556,9 @@ impl Browser {
         let target = self.agent_target(win);
         let build = move |b: &Browser, page: Option<serde_json::Value>, note: Option<String>| {
             let input = ContextInput { tab, tabs, page, page_note: note, tools };
-            // Card-like digit runs in titles or the selection never leave either.
-            let text = redact::scrub(&context::context_block(&input), &[]);
+            // Card-like digit runs in titles or the selection never leave either, nor does a
+            // password Krunk generated in this conversation (an address or title may show it).
+            let text = redact::scrub(&context::context_block(&input), &b.agent_generated(win));
             done(b, text);
         };
         let Some(target) = target else {
@@ -576,6 +646,11 @@ impl Browser {
                             }
                         }),
                     );
+                }
+                Action::TargetSite { call_id } => {
+                    // 0.16.0, fill_password: the site its consent names (queued like any input).
+                    let origin = self.agent_target(win).and_then(|t| agent_pages::password_site(&t.url));
+                    self.agent_input(win, Input::TargetSite { call_id, origin });
                 }
                 Action::CancelTool => {
                     if let Some(w) = self.agent.wins.borrow_mut().get_mut(&win) {
@@ -671,6 +746,14 @@ impl Browser {
 
     /// A tool ended: its outcome goes to the session if it is still the running tool.
     fn agent_tool_done(&self, win: WindowId, gen: u64, call_id: String, outcome: lb_core::agent::ToolOutcome) {
+        // 0.16.0: whatever tool it was, a password Krunk generated in this conversation is not
+        // in what the model (and the step log) gets.
+        let mut outcome = outcome;
+        let known = self.agent_generated(win);
+        if !known.is_empty() {
+            outcome.text = redact::scrub(&outcome.text, &known);
+            outcome.summary = redact::scrub(&outcome.summary, &known);
+        }
         let live = self.agent.wins.borrow_mut().get_mut(&win).is_some_and(|w| {
             let live = w.tool_gen == gen && w.tool.as_ref().is_some_and(|(id, _)| *id == call_id);
             if live {

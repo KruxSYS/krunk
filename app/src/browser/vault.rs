@@ -106,7 +106,7 @@ pub(super) fn vault_error_message(e: &VaultError) -> String {
 
 /// A reply carrying a secret, built in a zeroizing buffer (the generic
 /// `Event::ok` would leave unwiped copies in a serde_json::Value).
-fn secret_reply(req_id: Option<u32>, secret: &str, note: Option<&str>) -> Zeroizing<String> {
+pub(super) fn secret_reply(req_id: Option<u32>, secret: &str, note: Option<&str>) -> Zeroizing<String> {
     let mut out = Zeroizing::new(String::with_capacity(secret.len() + note.map_or(0, str::len) + 80));
     out.push_str("{\"event\":\"reply\",\"reqId\":");
     match req_id {
@@ -832,6 +832,21 @@ impl Browser {
             return;
         }
         self.store_pending(p);
+    }
+
+    /// Puts a secret on the clipboard the way a password copied on the passwords page goes
+    /// there: kept out of the clipboard history and cleared after 30 s. (0.16.0: for the agent
+    /// panel's password card.)
+    pub(super) fn copy_secret(&self, value: &str) -> bool {
+        let Some(w) = self.app() else { return false };
+        match secure::copy_private(w.hwnd(), value) {
+            Some(seq) => {
+                self.vaults.clipboard_seq.set(Some(seq));
+                w.set_timer(CLIPBOARD_TIMER, CLIPBOARD_CLEAR_MS);
+                true
+            }
+            None => false,
+        }
     }
 
     pub(super) fn remember_generated(&self, tab: TabId, origin: &str, password: Zeroizing<String>) {

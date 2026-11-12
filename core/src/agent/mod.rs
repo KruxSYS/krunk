@@ -8,7 +8,8 @@
 //! * [`session`]: the conversation state machine (`Input` in, `Action`s out);
 //! * [`context`]: the automatic context block and the system prompt;
 //! * [`redact`]: sensitive form fields, scrubbing and paging of tool results;
-//! * [`gate`]: the keyword gate for history, bookmarks, downloads and cookies;
+//! * [`gate`]: the keyword gate for history, bookmarks, downloads, cookies and (0.16.0)
+//!   entering passwords;
 //! * [`settings_allow`]: the settings the agent may read and change;
 //! * [`pages`]: which addresses the agent may open or act on;
 //! * [`drafts`] (0.15.0): long userscripts and macros saved in parts;
@@ -17,6 +18,9 @@
 //!
 //! Nothing here can reach the vault, payment cards, sync or account secrets, or API keys: those
 //! types are not imported by any agent module (a test in [`tools`] checks the tool table too).
+//! 0.16.0: one tool, `fill_password`, writes password fields, on the user's explicit request
+//! and after the user allowed the site; it reads nothing, and a password Krunk generates for it
+//! never passes through this module.
 
 pub mod context;
 pub mod drafts;
@@ -108,7 +112,8 @@ pub struct ModelInfo {
 }
 
 /// Sensitive data the agent sees only when the user asks for it (keyword gate plus a
-/// per-conversation Allow/Deny).
+/// per-conversation Allow/Deny). 0.16.0: `Passwords` is not data it sees but something it may
+/// do on request, entering a password (`fill_password`); its Allow/Deny is per site.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Category {
@@ -116,10 +121,12 @@ pub enum Category {
     Bookmarks,
     Downloads,
     Cookies,
+    Passwords,
 }
 
 impl Category {
-    pub const ALL: [Category; 4] = [Category::History, Category::Bookmarks, Category::Downloads, Category::Cookies];
+    pub const ALL: [Category; 5] =
+        [Category::History, Category::Bookmarks, Category::Downloads, Category::Cookies, Category::Passwords];
 
     fn bit(self) -> u8 {
         1 << (self as u8)
@@ -131,6 +138,7 @@ impl Category {
             Category::Bookmarks => "your bookmarks",
             Category::Downloads => "your downloads list",
             Category::Cookies => "cookies of a site",
+            Category::Passwords => "entering a password on a site",
         }
     }
 }
@@ -453,6 +461,9 @@ mod tests {
         s.insert(Category::History);
         assert!(s.contains(Category::Cookies) && !s.contains(Category::Bookmarks));
         assert_eq!(s.iter().collect::<Vec<_>>(), vec![Category::History, Category::Cookies]);
+        let all: CategorySet = Category::ALL.into_iter().collect();
+        assert_eq!(all.iter().count(), 5);
+        assert_eq!(serde_json::to_string(&Category::Passwords).unwrap(), "\"passwords\"");
     }
 
     #[test]
