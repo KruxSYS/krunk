@@ -3,6 +3,8 @@ target/
 build/
 out/
 bin/
+# ...but not a crate's `src/bin` (the UniFFI bindings generator the Android build runs).
+!ffi/src/bin/
 obj/
 dist/*
 # ...except the update/download server's sources (Docker/Caddy, see dist/server/README.md)
