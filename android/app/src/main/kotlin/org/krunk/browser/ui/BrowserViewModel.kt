@@ -122,6 +122,11 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Reads the allow list and the last update time again (the Privacy settings do on opening). */
+    fun reloadBlocking() {
+        viewModelScope.launch { refreshBlocking() }
+    }
+
     private suspend fun refreshBlocking() {
         _allowHosts.value = core.io { AllowList(it).hosts() }
         _listsUpdated.value = core.io { store ->

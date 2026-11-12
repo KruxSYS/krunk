@@ -47,6 +47,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -550,6 +551,9 @@ private fun PrivacySection(
     val allowHosts by vm.allowHosts.collectAsStateWithLifecycle()
     val updateState by vm.filterUpdate.collectAsStateWithLifecycle()
     val listsUpdated by vm.listsUpdated.collectAsStateWithLifecycle()
+
+    // What is shown is what is stored, whoever changed it last.
+    LaunchedEffect(Unit) { vm.reloadBlocking() }
 
     // ----- ad and tracker blocking -----
     SwitchRow(
