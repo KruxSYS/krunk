@@ -5,8 +5,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import org.krunk.browser.tabs.DebugProps
 import org.krunk.browser.ui.bookmarks.BookmarksScreen
 import org.krunk.browser.ui.browser.BrowserScreen
 import org.krunk.browser.ui.browser.SecureWindowEffect
@@ -28,7 +30,8 @@ fun KrunkRoot(vm: BrowserViewModel) {
     val hasPrivateTabs by vm.hasPrivateTabs.collectAsStateWithLifecycle()
 
     // Private pages stay out of the Recents thumbnail, screenshots and screen recordings.
-    SecureWindowEffect(activeTab?.private == true || (screen == Screen.TabSwitcher && hasPrivateTabs))
+    val showPrivate = remember { DebugProps.flag(DebugProps.SHOW_PRIVATE) } // debug builds only
+    SecureWindowEffect(!showPrivate && (activeTab?.private == true || (screen == Screen.TabSwitcher && hasPrivateTabs)))
 
     KrunkTheme(
         mode = settings.theme,

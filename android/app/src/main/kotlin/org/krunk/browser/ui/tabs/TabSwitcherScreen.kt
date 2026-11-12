@@ -130,7 +130,7 @@ fun TabSwitcherScreen(vm: BrowserViewModel) {
         vm.tabs.close(tab.id)
     }
 
-    KrunkTheme(mode = settings.theme, privateMode = privateSection) {
+    KrunkTheme(mode = settings.theme, privateMode = privateSection, appearance = settings.appearance) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Scaffold(
                 containerColor = MaterialTheme.colorScheme.background,

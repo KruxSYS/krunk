@@ -14,6 +14,12 @@ object DebugProps {
     /** Another address for the `krunk-guard` extension (a missing one: a start without the guard). */
     const val GUARD_URI = "debug.krunk.guard_uri"
 
+    /**
+     * `1`: private tabs can be screenshotted (the window is not marked secure), for the device
+     * checks of how a private tab looks. A release build always keeps them out of screenshots.
+     */
+    const val SHOW_PRIVATE = "debug.krunk.show_private"
+
     fun get(name: String): String? {
         if (!BuildConfig.DEBUG) return null
         return runCatching {

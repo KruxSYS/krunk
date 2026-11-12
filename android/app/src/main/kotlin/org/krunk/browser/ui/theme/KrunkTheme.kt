@@ -21,7 +21,6 @@ import org.krunk.ffi.ThemeAppearance
 import org.krunk.ffi.ThemeHighlight
 import org.krunk.ffi.ThemeMode
 import org.krunk.ffi.ToolbarFill
-import org.krunk.ffi.defaultSettings
 import org.krunk.ffi.resolveTheme
 
 /** Krunk's palette (ui/shared/common.css). Material dynamic colour is off on purpose. */
@@ -150,20 +149,14 @@ fun isDarkTheme(mode: ThemeMode): Boolean = when (mode) {
 
 /**
  * Krunk's theme: light or dark by [mode], the fixed private look for a private tab, and the
- * user's style and accent from the shared appearance settings ([appearance]; null draws Krunk's
- * own look, for previews).
+ * user's style and accent from the shared appearance settings ([appearance]). No default for
+ * [appearance] on purpose: a screen that sets up its own theme (the tab switcher does, for its
+ * private list) must pass the user's, or it silently falls back to Krunk's own look.
  */
 @Composable
-fun KrunkTheme(
-    mode: ThemeMode = ThemeMode.SYSTEM,
-    privateMode: Boolean = false,
-    appearance: ThemeAppearance? = null,
-    content: @Composable () -> Unit,
-) {
+fun KrunkTheme(mode: ThemeMode, privateMode: Boolean, appearance: ThemeAppearance, content: @Composable () -> Unit) {
     val dark = isDarkTheme(mode)
-    val theme = remember(appearance, dark, privateMode) {
-        resolveTheme(appearance ?: defaultSettings().appearance, dark, privateMode)
-    }
+    val theme = remember(appearance, dark, privateMode) { resolveTheme(appearance, dark, privateMode) }
     val scheme = remember(theme) { colorSchemeOf(theme) }
     val style = remember(theme) { styleOf(theme) }
     CompositionLocalProvider(

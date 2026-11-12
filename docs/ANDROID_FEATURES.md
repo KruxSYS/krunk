@@ -106,7 +106,7 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | Edge-to-edge, gesture and 3-button navigation, predictive back | n/a | done | — | 1 |
 | Landscape, tablet layout (sw600dp) | n/a | done (v) (wider grid; two-pane settings) | — | 1 |
 | Accessibility: 48 dp targets, content descriptions, TalkBack switcher, font scale, haptics | partial on Windows | done | — | 1 |
-| Appearance customisation (accent, styles, presets) | yes — 0.7.0, 0.15.0; `core::style` | roadmap (shared `appearance` settings exist) | — | 4 |
+| Appearance customisation (accent, styles, presets) | yes — 0.7.0, 0.15.0; `core::style` | done (v) (0.2.0, pulled forward from round 4: Settings › Appearance › Style offers the twelve styles of `core::style` with a drawn preview each, and Accent colour seven named colours or any other. Mapped: accent, toolbar fill (solid, gradient along the toolbar, glass as a tint without blur), shape of the address field and the tab cards, how the active tab card is marked. Not on Android: glow, density, tab radius, UI font, strip and tab text colours, a gradient's exact angle (only its side), and editing a style's single values; a look made by hand on Windows is drawn but shown as "Default". Private tabs keep one fixed look in every style. Contrast (text 4.5:1, icons 3:1) is tested for every style in light, dark and private with 17 accents) | app-side; colours resolved in `ffi/src/theme.rs` | 2 |
 | Toolbar customisation | yes — 0.6.0 (toolbar items) | roadmap | — | 3 |
 | Swipe between tabs gesture | n/a | roadmap | — | 3 |
 | Keyboard shortcuts (hardware keyboard) | yes | roadmap | — | 4 |
