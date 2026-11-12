@@ -438,6 +438,17 @@ pub fn tab_menu_rect(x: f64, y: f64) -> PopupRect {
     PopupRect { x, y, width: TAB_MENU_SIZE.0, height: TAB_MENU_SIZE.1 }
 }
 
+/// The context menu of an extension's toolbar icon (CSS px, 0.16.0): five items (30 px each)
+/// and two separators (11 px), plus padding and border. An upper bound: the popup fits its
+/// height (an extension without an options page has four items, and "Remove …?" is a second
+/// step of its own height).
+pub const EXT_MENU_SIZE: (f64, f64) = (260.0, 192.0);
+
+/// Where an extension icon's context menu opens: at the click (CSS px of the shell).
+pub fn ext_menu_rect(x: f64, y: f64) -> PopupRect {
+    PopupRect { x, y, width: EXT_MENU_SIZE.0, height: EXT_MENU_SIZE.1 }
+}
+
 /// The shield panel at `anchor` (the rect the shell asked for, under the shield button):
 /// with `rows` blocked addresses listed it is wider and taller, its right edge staying put.
 pub fn shield_rect(anchor: PopupRect, rows: usize) -> PopupRect {
@@ -499,6 +510,7 @@ pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> Pop
         PopupKind::AddressMenu => (230.0, 260.0),
         PopupKind::Update => (360.0, 150.0),
         PopupKind::TabMenu => TAB_MENU_SIZE,
+        PopupKind::ExtMenu => EXT_MENU_SIZE,
         PopupKind::NavMenu => (NAV_MENU_WIDTH, nav_menu_height(entries)),
         PopupKind::HttpAuth => (380.0, 286.0 + 38.0 * entries.min(5) as f64),
         PopupKind::TabPreview => (TAB_PREVIEW_WIDTH, tab_preview_height(entries > 0)),
@@ -974,6 +986,21 @@ mod tests {
         let r = prompt_rect(PopupKind::Menu, 0, 1280.0);
         assert_eq!((r.width, r.height), (280.0, 700.0));
         assert!(r.is_valid());
+    }
+
+    /// 0.16.0: an extension icon's context menu opens at the click, like the tab menu.
+    #[test]
+    fn extension_menu_opens_at_the_click() {
+        let r = ext_menu_rect(912.5, 58.0);
+        assert_eq!((r.x, r.y, r.width, r.height), (912.5, 58.0, EXT_MENU_SIZE.0, EXT_MENU_SIZE.1));
+        assert!(r.is_valid());
+        // Five 30 px items, two 11 px separators, 6 px padding and a 1 px border all round, and
+        // room to spare for the rounding of a scaled font.
+        assert!(EXT_MENU_SIZE.1 >= 5.0 * 30.0 + 2.0 * 11.0 + 14.0);
+        let p = prompt_rect(PopupKind::ExtMenu, 0, 1280.0);
+        assert_eq!((p.width, p.height), EXT_MENU_SIZE, "one size for both ways to ask");
+        // Near the bottom of a low window the host places it above the click (a Point anchor).
+        assert_eq!(PopupKind::ExtMenu.anchor(), PopupAnchor::Point);
     }
 
     #[test]

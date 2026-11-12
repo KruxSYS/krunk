@@ -112,6 +112,43 @@
     ];
   }
 
+  // Right-click on an extension's toolbar icon (0.16.0). The host built the content from the
+  // installed extension (its name, whether it has an options page, whether it is on); the popup
+  // only says which item was chosen. Uninstall asks first, in this same popup: "Remove <name>?"
+  // replaces the menu and only its Remove button sends the choice. Esc, Cancel and a click
+  // elsewhere leave the extension installed.
+  function renderExtMenu(c) {
+    const act = (action) => { LB.post('extMenuAction', { id: c.id, action: action }); close(); };
+    const name = item(c.name, '', () => act('details'));
+    name.classList.add('ext-name');
+    name.title = c.name;
+    const uninstall = item('Uninstall…', '', function () {
+      root.textContent = '';
+      root.appendChild(el('div', { class: 'panel ext-remove', role: 'alertdialog', 'aria-labelledby': 'ext-remove-title' }, [
+        el('h2', { id: 'ext-remove-title', text: 'Remove ' + c.name + '?' }),
+        el('p', { text: 'Its files and its stored data are deleted.' }),
+        el('div', { class: 'row' }, [
+          el('button', { class: 'btn', id: 'ext-remove-cancel', onclick: () => close(), text: 'Cancel' }),
+          el('button', { class: 'btn danger', id: 'ext-remove-ok', onclick: () => act('uninstall'), text: 'Remove' }),
+        ]),
+      ]));
+      // Cancel has the focus: Enter never removes by accident.
+      document.getElementById('ext-remove-cancel').focus();
+      fit();
+    });
+    uninstall.classList.add('danger');
+    uninstall.id = 'ext-uninstall';
+    return [
+      name,
+      sep(),
+      c.hasOptions ? item('Options', '', () => act('options')) : null,
+      item('Manage extensions', '', () => act('manage')),
+      sep(),
+      item('Disable', '', () => act('disable'), !c.enabled),
+      uninstall,
+    ];
+  }
+
   // Right-click on Back or Forward (0.8.0): the tab's earlier pages (newest first) or later ones,
   // then "Show full history". A click jumps to exactly that page; arrows, Home/End, Enter and
   // Esc work from the keyboard.
@@ -594,7 +631,7 @@
   }
   // Content whose height depends on its items: the window is opened with an upper bound
   // and fitted right after the render (the ⋮ menu used to leave a gap at the bottom).
-  const FITS = { vpn: true, extInstall: true, suggest: true, cardFill: true, menu: true, tabMenu: true, navMenu: true, httpAuth: true, bookmarkMenu: true, siteInfo: true, addressMenu: true, captionMenu: true, downloads: true, permission: true, passwordSaved: true, pip: true, bookmarkFolder: true, jsDialog: true };
+  const FITS = { vpn: true, extInstall: true, suggest: true, cardFill: true, menu: true, tabMenu: true, extMenu: true, navMenu: true, httpAuth: true, bookmarkMenu: true, siteInfo: true, addressMenu: true, captionMenu: true, downloads: true, permission: true, passwordSaved: true, pip: true, bookmarkFolder: true, jsDialog: true };
 
 
   // Login suggestions under a focused field: the matching usernames (with the host for a
@@ -1269,7 +1306,7 @@
       return;
     }
     current = m.content;
-    const render = { menu: renderMenu, shield: renderShield, vpn: renderVpn, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, cardFill: renderCardFill, saveCard: renderSaveCard, pip: renderPip, pipVolume: renderPipVolume, extInstall: renderExtInstall, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, navMenu: renderNavMenu, httpAuth: renderHttpAuth, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit, tabList: renderTabList, tabPreview: renderTabPreview, unresponsive: renderUnresponsive, jsDialog: renderJsDialog }[c.kind];
+    const render = { menu: renderMenu, shield: renderShield, vpn: renderVpn, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, cardFill: renderCardFill, saveCard: renderSaveCard, pip: renderPip, pipVolume: renderPipVolume, extInstall: renderExtInstall, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, extMenu: renderExtMenu, navMenu: renderNavMenu, httpAuth: renderHttpAuth, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit, tabList: renderTabList, tabPreview: renderTabPreview, unresponsive: renderUnresponsive, jsDialog: renderJsDialog }[c.kind];
     root.textContent = '';
     root.dataset.kind = c.kind;
     // The volume bar matches the engine's floating window, which is always dark.

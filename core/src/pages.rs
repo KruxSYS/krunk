@@ -310,6 +310,21 @@ mod tests {
         assert_eq!(Page::from_display("krunk://gpu"), Some(Page::Gpu));
     }
 
+    /// 0.16.0: `krunk://extensions#<id>` shows one extension (the name in the menu of its
+    /// toolbar icon). An extension id is as long as a section may be, and all of it is kept.
+    #[test]
+    fn an_extension_id_is_a_section_of_the_extensions_page() {
+        let id = "abcdefghijklmnopabcdefghijklmnop";
+        assert!(crate::ext::valid_id(id) && valid_section(id));
+        assert_eq!(Page::Extensions.url_with_section(Some(id)), format!("https://krunk.invalid/extensions.html#{id}"));
+        assert_eq!(
+            Page::from_display_with_section(&format!("krunk://extensions#{id}")),
+            Some((Page::Extensions, Some(id.to_string())))
+        );
+        assert!(Page::Extensions.single_instance(), "an open extensions page is switched to and sent there");
+        assert_eq!(Page::from_url(&Page::Extensions.url_with_section(Some(id))), Some(Page::Extensions));
+    }
+
     #[test]
     fn round_trips() {
         for p in Page::ALL {

@@ -22,7 +22,7 @@ use crate::log::{info, warning};
 use lb_core::ext::{self, Installed, Manifest};
 use lb_core::pages::Page;
 use lb_core::protocol::Channel;
-use lb_core::protocol::{Event, ExtAction, PopupRect};
+use lb_core::protocol::{Event, ExtAction, ExtMenuAction, PopupContent, PopupRect};
 use lb_core::storage::now_ms;
 use lb_core::{assets, layout};
 use serde_json::{json, Value};
@@ -913,6 +913,50 @@ impl Browser {
     pub(super) fn ext_send_actions(&self) {
         let actions = self.ext_actions();
         self.post_shell(&Event::ExtActions { actions });
+    }
+
+    /// Right-click on an extension's toolbar button (0.16.0): its menu at the click. The shell
+    /// only names the extension; what the menu says (the name, whether there is an options
+    /// page, on or off) is read from the installed extension here.
+    pub(super) fn show_ext_menu(&self, ext_id: &str, rect: PopupRect) {
+        if !rect.is_valid() || !ext::valid_id(ext_id) {
+            return;
+        }
+        let content = self.ext.exts.borrow().iter().find(|e| e.installed.id == ext_id).map(|e| PopupContent::ExtMenu {
+            id: e.installed.id.clone(),
+            name: e.installed.name.clone(),
+            has_options: e.manifest.options().is_some(),
+            enabled: e.installed.enabled,
+        });
+        match content {
+            Some(c) => self.show_popup(c, Some(layout::ext_menu_rect(rect.x, rect.y))),
+            None => warning!("extension menu: {ext_id} is not installed"),
+        }
+    }
+
+    /// A choice in that menu. The popup is not trusted with the id: only the menu the host has
+    /// open acts, for the extension it was built for (`ext::menu_may_act`), and only while that
+    /// extension is still installed. Disable and Uninstall go through the handlers of
+    /// krunk://extensions, so the toolbar and open extension pages follow as they do there.
+    pub(super) fn ext_menu_action(&self, ext_id: &str, action: ExtMenuAction) {
+        let from_its_menu = self
+            .popup
+            .try_borrow()
+            .ok()
+            .is_some_and(|p| p.as_ref().is_some_and(|p| p.open() && ext::menu_may_act(p.content.as_ref(), ext_id)));
+        self.hide_popup();
+        let installed = self.ext.exts.borrow().iter().any(|e| e.installed.id == ext_id);
+        if !from_its_menu || !installed {
+            warning!("extension menu: a choice for an extension whose menu is not open was refused ({action:?})");
+            return;
+        }
+        match action {
+            ExtMenuAction::Details => self.open_page_at(Page::Extensions, Some(ext_id)),
+            ExtMenuAction::Options => self.ext_open_options(ext_id),
+            ExtMenuAction::Manage => self.open_page(Page::Extensions),
+            ExtMenuAction::Disable => self.ext_set(ext_id, Some(false), None),
+            ExtMenuAction::Uninstall => self.ext_remove(ext_id),
+        }
     }
 
     /// The toolbar button: the popup, or `action.onClicked` to the background.

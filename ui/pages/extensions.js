@@ -2,11 +2,19 @@
 // list), which chrome.* APIs they use and whether Krunk provides them, enable/disable, allow
 // in private tabs, options, remove; install from a zip/crx file, an unpacked folder or a
 // Chrome Web Store address.
+// 0.16.0: `krunk://extensions#<id>` shows that extension: its card scrolled into view, marked,
+// with its details open (the name in the menu of an extension's toolbar icon leads here).
 (function () {
   'use strict';
   const el = LB.el;
   const $ = (id) => document.getElementById(id);
   let list = [];
+  // The extension asked for by the address: its card is marked and its details stay open
+  // across updates of the list; `reveal`: scroll to it at the next render that has it (the
+  // list arrives after the page).
+  let target = null;
+  let reveal = false;
+  let loaded = false;
 
   function showError(text) { $('error').textContent = text || ''; $('error').hidden = !text; }
   function showStatus(text) { $('status').textContent = text || ''; $('status').hidden = !text; }
@@ -44,7 +52,7 @@
         } }),
         'Allow in private tabs',
       ]);
-      const details = el('details', { class: 'more' }, [
+      const details = el('details', { class: 'more', open: x.id === target ? true : null }, [
         el('summary', { text: 'Details' }),
         el('dl', {}, [
           el('dt', { text: 'Reaches' }), el('dd', {}, x.scope.length ? x.scope.map((s) => el('span', { class: 'tag' + (s.allSites ? ' warn' : ''), text: s.text, title: s.pattern })) : ['No web pages']),
@@ -62,7 +70,7 @@
           el('dt', { text: 'Permissions' }), el('dd', { text: x.permissions.length ? x.permissions.join(', ') : 'none' }),
         ]),
       ]);
-      box.appendChild(el('article', { class: 'card ext' + (x.enabled ? '' : ' disabled') + (unsupported.length ? ' partial' : ''), 'data-id': x.id }, [
+      box.appendChild(el('article', { class: 'card ext' + (x.enabled ? '' : ' disabled') + (unsupported.length ? ' partial' : '') + (x.id === target ? ' target' : ''), 'data-id': x.id }, [
         el('div', { class: 'top' }, [
           el('div', { class: 'icon' }, [x.icon ? el('img', { src: x.icon, alt: '' }) : el('span', { class: 'puzzle', 'aria-hidden': 'true' })]),
           el('div', { class: 'title' }, [el('h2', { class: 'name', text: x.name }), el('span', { class: 'version', text: 'Version ' + x.version })]),
@@ -82,9 +90,28 @@
         ]),
       ]));
     });
+    const card = reveal && box.querySelector('.ext.target');
+    if (card) {
+      reveal = false;
+      card.scrollIntoView({ block: 'center' });
+    }
   }
 
-  function update(l) { if (Array.isArray(l)) { list = l; render(); } else if (l && Array.isArray(l.extensions)) { list = l.extensions; render(); } else { showError('Unexpected reply: ' + JSON.stringify(l).slice(0, 200)); } }
+  // The address names an extension (ids are 32 letters a–p; anything else is ignored). The
+  // fragment is then dropped from the address: asking for the same extension again is a change
+  // of the address again (a navigation to the address already shown would not tell the page).
+  function route() {
+    const id = location.hash.slice(1);
+    if (!id) return;
+    history.replaceState(null, '', location.pathname);
+    if (!/^[a-p]{32}$/.test(id)) return;
+    target = id;
+    reveal = true;
+    // (Before the list has arrived there is nothing to draw: not the "no extensions" card.)
+    if (loaded) render();
+  }
+
+  function update(l) { if (Array.isArray(l)) { list = l; loaded = true; render(); } else if (l && Array.isArray(l.extensions)) { list = l.extensions; loaded = true; render(); } else { showError('Unexpected reply: ' + JSON.stringify(l).slice(0, 200)); } }
   function load() { LB.request('extList').then(update, (err) => showError(err.message)); }
 
   function installed(r) {
@@ -103,6 +130,8 @@
     LB.request('extInstallUrl', { url: url }).then(function (r) { $('url').value = ''; installed(r); }, function (err) { showStatus(''); showError(err.message); });
   });
   LB.on('extChanged', function (m) { update(m.extensions); });
+  window.addEventListener('hashchange', route);
+  route();
   LB.post('ready');
   load();
 })();

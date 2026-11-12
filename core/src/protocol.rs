@@ -189,6 +189,8 @@ pub enum PopupKind {
     JsDialog,
     /// The VPN button's popup (0.14.0): state, profile picker, Connect / Disconnect.
     Vpn,
+    /// The context menu of an extension's toolbar icon (right-click, 0.16.0).
+    ExtMenu,
 }
 
 impl PopupKind {
@@ -217,9 +219,11 @@ impl PopupKind {
     pub fn anchor(self) -> crate::layout::PopupAnchor {
         use crate::layout::PopupAnchor;
         match self {
-            PopupKind::TabMenu | PopupKind::BookmarkMenu | PopupKind::CaptionMenu | PopupKind::AddressMenu => {
-                PopupAnchor::Point
-            }
+            PopupKind::TabMenu
+            | PopupKind::BookmarkMenu
+            | PopupKind::CaptionMenu
+            | PopupKind::AddressMenu
+            | PopupKind::ExtMenu => PopupAnchor::Point,
             PopupKind::BookmarkFolder
             | PopupKind::TabList
             | PopupKind::AddressSuggest
@@ -267,6 +271,21 @@ pub enum TabAction {
     /// Mute or unmute every tab of this tab's site, and remember it for the site.
     MuteSite,
     UnmuteSite,
+}
+
+/// What the context menu of an extension's toolbar icon can do (0.16.0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ExtMenuAction {
+    /// krunk://extensions with this extension's details shown.
+    Details,
+    /// Its options page (offered only when it has one).
+    Options,
+    /// krunk://extensions.
+    Manage,
+    Disable,
+    /// Removes it with its files and stored data. The menu asks "Remove <name>?" first.
+    Uninstall,
 }
 
 /// What the bookmarks bar's context menu can do.
@@ -506,6 +525,10 @@ pub enum PopupContent {
         #[serde(default)]
         has_site: bool,
     },
+    /// The context menu of extension `id`'s toolbar icon (0.16.0). The host fills it in from
+    /// the installed extension: `has_options`: it has an options page; `enabled`: it is on
+    /// (only then "Disable" applies).
+    ExtMenu { id: String, name: String, has_options: bool, enabled: bool },
     /// The downloads button's popup: the most recent downloads first.
     Downloads { items: Vec<crate::downloads::DownloadItem> },
     /// Back's (`forward: false`) or Forward's history menu of tab `tab_id` (0.8.0).
@@ -738,6 +761,7 @@ impl PopupContent {
             PopupContent::Unlock { .. } => PopupKind::Unlock,
             PopupContent::Update { .. } => PopupKind::Update,
             PopupContent::TabMenu { .. } => PopupKind::TabMenu,
+            PopupContent::ExtMenu { .. } => PopupKind::ExtMenu,
             PopupContent::NavMenu { .. } => PopupKind::NavMenu,
             PopupContent::HttpAuth { .. } => PopupKind::HttpAuth,
             PopupContent::TabPreview { .. } => PopupKind::TabPreview,
@@ -1611,6 +1635,19 @@ pub enum Request {
         id: String,
         rect: PopupRect,
     },
+    /// The shell: right-click on an extension's toolbar button: its context menu at `rect`
+    /// (the click, shell CSS px; 0.16.0).
+    ShowExtMenu {
+        id: String,
+        rect: PopupRect,
+    },
+    /// A choice in that menu (popup). Apart from krunk://extensions' own requests below this is
+    /// the only way to disable or remove an extension; the host acts only for the extension
+    /// whose menu it has open.
+    ExtMenuAction {
+        id: String,
+        action: ExtMenuAction,
+    },
     /// krunk://extensions (0.6.0).
     ExtList,
     ExtInstallFile,
@@ -2009,6 +2046,7 @@ impl Sender {
                     | R::WindowControl { .. }
                     | R::ShowPopup { .. }
                     | R::ExtAction { .. }
+                    | R::ShowExtMenu { .. }
                     | R::AddressSuggest { .. }
                     | R::AddressSuggestSelect { .. }
                     | R::AddressSuggestPick { .. }
@@ -2043,6 +2081,7 @@ impl Sender {
                     | R::ActivateTab { .. }
                     | R::CloseTab { .. }
                     | R::TabMenuAction { .. }
+                    | R::ExtMenuAction { .. }
                     | R::NavToEntry { .. }
                     | R::HttpAuthReply { .. }
                     | R::HttpAuthCancel { .. }
@@ -3692,6 +3731,8 @@ mod tests {
             Request::Stop,
             Request::Home { new_tab: false },
             Request::Home { new_tab: true },
+            Request::ShowExtMenu { id: "abcdefghijklmnopabcdefghijklmnop".into(), rect },
+            Request::ExtMenuAction { id: "abcdefghijklmnopabcdefghijklmnop".into(), action: ExtMenuAction::Uninstall },
             Request::OpenUrl { url: "https://b.example/".into(), new_tab: true },
             Request::OpenPage { page: "settings".into(), section: None },
             Request::OpenPage { page: "settings".into(), section: Some("privacy".into()) },
@@ -4901,6 +4942,74 @@ mod tests {
         for p in Page::ALL.iter() {
             assert!(!Sender::Page(*p).permits(&home), "{p:?}");
         }
+    }
+
+    /// 0.16.0: the context menu of an extension's toolbar icon, after the tab menu's pattern:
+    /// the shell asks for it, only the popup sends a choice, and krunk://extensions keeps its
+    /// own requests to itself.
+    #[test]
+    fn extension_menu_is_shown_by_the_shell_and_answered_by_the_popup() {
+        let id = "abcdefghijklmnopabcdefghijklmnop";
+        let show =
+            Request::ShowExtMenu { id: id.into(), rect: PopupRect { x: 900.0, y: 60.0, width: 260.0, height: 185.0 } };
+        let action = Request::ExtMenuAction { id: id.into(), action: ExtMenuAction::Disable };
+        assert!(Sender::Shell.permits(&show) && !Sender::Popup.permits(&show));
+        assert!(Sender::Popup.permits(&action));
+        assert!(!Sender::Shell.permits(&action), "menu choices come from the popup");
+        for s in [Sender::Ext, Sender::Agent] {
+            assert!(!s.permits(&show) && !s.permits(&action), "{s:?}");
+        }
+        for p in Page::ALL.iter() {
+            assert!(!Sender::Page(*p).permits(&show) && !Sender::Page(*p).permits(&action), "{p:?}");
+        }
+        // The management requests stay with krunk://extensions: neither the shell nor the popup
+        // may send them.
+        for r in [
+            Request::ExtSet { id: id.into(), enabled: Some(false), private: None },
+            Request::ExtRemove { id: id.into() },
+            Request::ExtOpenOptions { id: id.into() },
+        ] {
+            assert!(Sender::Page(Page::Extensions).permits(&r));
+            assert!(!Sender::Shell.permits(&r) && !Sender::Popup.permits(&r), "{r:?}");
+        }
+        let parsed = parse_request(
+            Sender::Shell,
+            &format!(r#"{{"cmd":"showExtMenu","id":"{id}","rect":{{"x":900,"y":60,"width":260,"height":185}}}}"#),
+        )
+        .unwrap();
+        assert_eq!(parsed.request, show);
+        for (name, action) in [
+            ("details", ExtMenuAction::Details),
+            ("options", ExtMenuAction::Options),
+            ("manage", ExtMenuAction::Manage),
+            ("disable", ExtMenuAction::Disable),
+            ("uninstall", ExtMenuAction::Uninstall),
+        ] {
+            let json = format!(r#"{{"cmd":"extMenuAction","id":"{id}","action":"{name}"}}"#);
+            assert_eq!(
+                parse_request(Sender::Popup, &json).unwrap().request,
+                Request::ExtMenuAction { id: id.into(), action }
+            );
+            assert!(parse_request(Sender::Shell, &json).is_err(), "{name}");
+            assert!(parse_request(Sender::Page(Page::Extensions), &json).is_err(), "{name}");
+        }
+        assert!(
+            parse_request(Sender::Popup, &format!(r#"{{"cmd":"extMenuAction","id":"{id}","action":"enable"}}"#))
+                .is_err(),
+            "nothing but the menu's items"
+        );
+        let menu =
+            PopupContent::ExtMenu { id: id.into(), name: "Dark Reader".into(), has_options: true, enabled: true };
+        assert_eq!(menu.kind(), PopupKind::ExtMenu);
+        assert_eq!(menu.toggle_anchor(), None);
+        let json = serde_json::to_string(&menu).unwrap();
+        assert!(
+            json.contains(r#""kind":"extMenu""#) && json.contains(r#""hasOptions":true"#) && json.contains(id),
+            "{json}"
+        );
+        assert!(!PopupKind::ExtMenu.shell_may_open(), "the shell asks with showExtMenu, not showPopup");
+        assert!(PopupKind::ExtMenu.takes_focus(), "Esc and Tab work in it");
+        assert_eq!(PopupKind::ExtMenu.anchor(), crate::layout::PopupAnchor::Point, "a context menu: at the click");
     }
 
     #[test]

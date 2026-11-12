@@ -28,6 +28,8 @@
 .ext .reach.all { color: var(--danger); font-weight: 600; }
 .ext .reach.none { color: var(--fg-muted); }
 .ext .partial-note { margin: 0; font-size: 0.923rem; color: color-mix(in srgb, #d97706 75%, var(--fg)); }
+/* 0.16.0: the extension the address asked for (krunk://extensions#<id>). */
+.card.ext.target { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .ext.disabled .icon, .ext.disabled .title, .ext.disabled .desc, .ext.disabled .reach { opacity: 0.55; }
 .ext .more { text-align: left; margin: 0; }
 .ext .more summary { cursor: pointer; color: var(--fg-muted); font-size: 0.923rem; display: list-item; width: fit-content; }

@@ -1046,6 +1046,8 @@
   // ---------- popups (menu, shield) ----------
   // 0.6.0: the enabled extensions' toolbar buttons (icon from the extension's origin, a
   // badge, the title). A click sends the button's rect: the host opens the popup under it.
+  // 0.16.0: a right-click asks for the extension's menu at the click (its page, Options,
+  // Manage extensions, Disable, Uninstall), like a tab's menu: the host fills it in.
   LB.on('extActions', function (m) {
     const box = $('ext-actions');
     box.textContent = '';
@@ -1059,6 +1061,11 @@
       b.addEventListener('click', function () {
         const r = b.getBoundingClientRect();
         LB.post('extAction', { id: a.id, rect: { x: r.left, y: r.top, width: r.width, height: r.height } });
+      });
+      b.addEventListener('contextmenu', function (e) {
+        e.preventDefault();
+        LB.post('showExtMenu', { id: a.id, rect: { x: e.clientX, y: e.clientY, width: 260, height: 192 } });
+        setPopup('extMenu');
       });
       box.appendChild(b);
     });

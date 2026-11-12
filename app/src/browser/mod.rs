@@ -3074,6 +3074,8 @@ impl Browser {
             Request::PipPick { tab_id, index } => self.pip_pick(tab_id, index),
             Request::Ext { ext, op, data } => self.ext_page_request(tab, req_id, &ext, &op, data),
             Request::ExtAction { id, rect } => self.ext_action_clicked(&id, rect),
+            Request::ShowExtMenu { id, rect } => self.show_ext_menu(&id, rect),
+            Request::ExtMenuAction { id, action } => self.ext_menu_action(&id, action),
             Request::ExtList => self.reply(tab, Event::ok(req_id, self.ext_list_json())),
             Request::ExtInstallFile => self.ext_install_file(tab, req_id),
             Request::ExtInstallFolder => self.ext_install_folder(tab, req_id),
@@ -3389,6 +3391,7 @@ impl Browser {
                     PopupKind::Menu
                         | PopupKind::NavMenu
                         | PopupKind::TabMenu
+                        | PopupKind::ExtMenu
                         | PopupKind::BookmarkFolder
                         | PopupKind::BookmarkMenu
                         | PopupKind::CaptionMenu

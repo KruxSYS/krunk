@@ -75,6 +75,14 @@ pub fn valid_id(id: &str) -> bool {
     id.len() == ID_LEN && id.bytes().all(|b| (b'a'..=b'p').contains(&b))
 }
 
+/// May a choice from the popup view act on extension `id` (0.16.0)? Only while the popup
+/// shows the context menu the host built for that very extension: the view also shows other
+/// content (the ⋮ menu, prompts), and the id in the request comes from it.
+pub fn menu_may_act(open: Option<&crate::protocol::PopupContent>, id: &str) -> bool {
+    use crate::protocol::PopupContent;
+    valid_id(id) && matches!(open, Some(PopupContent::ExtMenu { id: shown, .. }) if shown == id)
+}
+
 /// Chrome's id of a public key (DER, SubjectPublicKeyInfo): the first 16 bytes of its
 /// SHA-256, each nibble mapped to `a`–`p`.
 pub fn id_from_public_key(der: &[u8]) -> String {
@@ -1436,6 +1444,29 @@ mod tests {
                 .is_ok(),
             "BOM and unknown keys"
         );
+    }
+
+    /// 0.16.0: a choice from an extension icon's menu counts only while that menu is open.
+    #[test]
+    fn only_the_open_menu_of_that_extension_acts() {
+        use crate::protocol::PopupContent;
+        let a = "abcdefghijklmnopabcdefghijklmnop";
+        let b = "ponmlkjihgfedcbaponmlkjihgfedcba";
+        let menu =
+            |id: &str| PopupContent::ExtMenu { id: id.into(), name: "X".into(), has_options: false, enabled: true };
+        assert!(menu_may_act(Some(&menu(a)), a));
+        assert!(!menu_may_act(Some(&menu(a)), b), "another extension's id from the popup");
+        assert!(!menu_may_act(None, a), "no popup open");
+        let tab = PopupContent::TabMenu {
+            tab_id: 1,
+            can_move: true,
+            can_close_right: false,
+            muted_site: false,
+            has_site: true,
+        };
+        assert!(!menu_may_act(Some(&tab), a), "another menu is open");
+        assert!(!menu_may_act(Some(&menu("../x")), "../x"), "not an extension id");
+        assert!(!menu_may_act(Some(&menu("")), ""));
     }
 
     #[test]

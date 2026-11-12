@@ -603,6 +603,17 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
     the same id (remove that one first);
   - `default_locale` must be a locale name. Extensions are stored under
   `%LOCALAPPDATA%\Krunk\extensions`; Remove deletes the files and the stored data.
+  - **Right-click an extension's toolbar icon** (0.16.0) for its menu: the extension's name
+    (opens `krunk://extensions#<id>`: its card marked, scrolled into view, Details open),
+    **Options** (only with an options page), **Manage extensions**, **Disable** and
+    **Uninstall…**, which first asks "Remove <name>?" in the same popup (Remove / Cancel; Esc
+    or a click elsewhere cancels). It is built like the tab menu: the shell sends only the id
+    and the click (`showExtMenu`), the host reads the name, the options page and the state
+    from the installed extension (`PopupContent::ExtMenu`), and the popup answers with
+    `extMenuAction`. The host acts only while that extension's menu is the open popup
+    (`core::ext::menu_may_act`) and the extension is installed, through the same code as the
+    switch and Remove on `krunk://extensions`; the page's own requests (`extSet`,
+    `extRemove`, `extOpenOptions`) are still accepted from that page only.
 - **Protected content (Widevine)** (0.6.0; Settings → Privacy & security, off by default,
   restart): lets sites play DRM media with Google's Widevine module. Krunk does not bundle
   it: when the setting is on, the engine's component updater downloads it from Google
@@ -755,8 +766,8 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
   handler, so it has no privileged channel. Only tab views can be inspected: the shell and
   popup have no context menu and DevTools commands act on the active tab.
 - **Popup:** one extra view in an owned `WS_POPUP` tool window, re-owned by the window it opens
-  for. It shows the main menu, the tab menu, the shield panel and the save-password and
-  fill-login prompts.
+  for. It shows the main menu, the tab menu, the menu of an extension's toolbar icon (0.16.0),
+  the shield panel and the save-password and fill-login prompts.
   - It is created on first use and then hidden and reused, never more than one.
   - It uses the default profile, never a private one.
   - The shell sends the popup's rectangle in CSS pixels. The host converts it to screen pixels

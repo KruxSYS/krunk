@@ -117,6 +117,12 @@ body.pv-dark { --bg-raised: #202124; --bg-hover: #3c4043; --fg: #e8eaed; --fg-mu
 .item.danger:not(:disabled) { color: var(--danger); }
 .item.danger .micon { color: var(--danger); }
 .item:disabled .micon { opacity: .5; }
+/* 0.16.0: an extension icon's menu: its name leads; "Remove <name>?" is its second step. */
+.item.ext-name .label { font-weight: 600; }
+.panel.ext-remove h2 { overflow-wrap: anywhere; }
+.panel.ext-remove p { color: var(--fg-muted); }
+.btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn.danger:hover { filter: brightness(1.08); }
 /* Bookmark editor. */
 .bookmark-edit .field { display: block; margin: 0 0 8px; }
 .bookmark-edit .field span { display: block; margin: 0 0 3px; color: var(--fg-muted); font-size: 0.923rem; }
