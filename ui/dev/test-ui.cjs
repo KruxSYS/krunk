@@ -932,7 +932,9 @@ async function testPopup(browser) {
   {
     const fitMenu = await lastSent(page, 'popupResize');
     const want = await page.evaluate(() => document.getElementById('root').offsetHeight + 2);
-    check(fitMenu && fitMenu.height === want && want < 620 && want > 400, 'the menu asks for exactly its content height (' + (fitMenu && fitMenu.height) + ' = #root + borders, below the 620 bound)');
+    // (0.16.0: one 30 px row more, Session usage. With the update item's 41 px it stays within
+    // the 700 px the window is first asked for.)
+    check(fitMenu && fitMenu.height === want && want <= 700 - 41 && want > 400, 'the menu asks for exactly its content height (' + (fitMenu && fitMenu.height) + ' = #root + borders, within the 700 bound less the update item)');
   }
   await page.waitForSelector('.item');
   check(await page.locator('#zoom-value').textContent() === '125%', 'menu shows zoom');

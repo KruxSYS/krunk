@@ -781,7 +781,7 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
     only as far as they must; lists (a bookmark folder, address suggestions, the tab list) stay
     under their control and scroll. Content higher than the room at its anchor first gets
     compact rows, and scrolls when even the whole work area is too low (a 1080p display at
-    175 % has 569 px of it; the ⋮ menu needs 658).
+    175 % has 569 px of it; the ⋮ menu needs 688 since 0.16.0's Session usage row, 658 before).
   - **Hide rules:** the popup hides on deactivate, Escape, a click elsewhere (another view gets
     focus), its window's move, resize or minimize, and tab switch or close. A prompt hidden this
     way counts as dismissed, never confirmed.
