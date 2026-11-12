@@ -30,6 +30,12 @@
 //                             script in three parts (more=true, draft, last part), then finish
 //   "script in parts"         the three-part save alone, then finish
 //   "background from URL"     set_new_tab_background_url with the https address after "from"
+//   0.16.0, the scratchpad (answered inside Krunk; nothing of it may reach the disk):
+//   "scratchpad test WORD"    note_write (a note holding WORD, the marker to search the data
+//                             folder for afterwards), plan_set (its first item holds WORD too),
+//                             note_read, plan_update, then finish with what note_read gave
+//   "scratchpad limit"        note_write of exactly 32 KiB (accepted), one more byte appended
+//                             (refused: the error names the limit), then finish with both results
 //   anything else             a short text answer
 // Every request is appended to the log (JSON lines: time, body), and so is every connection
 // that closes before its answer ended: the VM smoke test checks both (Stop closes the
@@ -149,6 +155,29 @@ function partSteps(at) {
 const cut = (name, a) => ({ cut: { name, args: a } });
 
 const SCENARIOS = [
+  // ---- 0.16.0: the scratchpad ----
+  {
+    match: /scratchpad test\s+(\S+)/i,
+    steps: [
+      (m) => call('note_write', { name: 'findings', content: 'marker ' + m[1] + '\nwritten by the mock provider' }),
+      (m) => call('plan_set', { items: [
+        { text: 'Write the note with ' + m[1], state: 'done' },
+        { text: 'Read the note back', state: 'doing', id: 'read' },
+        { text: 'Finish' },
+      ] }),
+      () => call('note_read', { name: 'findings' }),
+      () => call('plan_update', { id: 'read', state: 'done' }),
+      (m, r) => finish('Scratchpad test done. The note says:\n\n' + (r[2] || '')),
+    ],
+  },
+  {
+    match: /scratchpad limit/i,
+    steps: [
+      () => call('note_write', { name: 'big', content: 'x'.repeat(32 * 1024) }),
+      () => call('note_write', { name: 'big', content: 'y', mode: 'append' }),
+      (m, r) => finish('32 KiB: ' + (r[0] || '').slice(0, 200) + '\n\nOne byte more: ' + (r[1] || '').slice(0, 300)),
+    ],
+  },
   { match: /hit the output limit/i, steps: [() => ({ length: true })] },
   {
     // A text answer once (keyed by the conversation's length: the retry is the same request).
