@@ -572,7 +572,23 @@
   }
   // The popup asks the host for the height its content needs: #root's height (the body is
   // pinned to the window's height, so it cannot shrink) plus the body's 1px borders.
-  function fit() { LB.post('popupResize', { height: Math.max(root.offsetHeight, root.scrollHeight) + 2 }); }
+  function contentHeight() { return Math.max(root.offsetHeight, root.scrollHeight) + 2; }
+  function fit() { squeeze(); LB.post('popupResize', { height: contentHeight() }); }
+  // 0.15.4: before it sends content the host says how much room (CSS px) there is at the
+  // popup's anchor: under its button, or above or below the click for a context menu. Content
+  // that is higher (a 1080p display at 150 % or more, a small screen, a window low on the
+  // screen) first gets compact rows. If that is not enough the host moves the window up, and
+  // when even the whole screen is too low the content scrolls in it. Before, the window was
+  // cut off at the screen's edge and its last items could not be reached. Only for content
+  // that sets its own height (FITS); 0 = a list that scrolls under its control anyway.
+  let roomMax = 0;
+  LB.on('popupRoom', function (m) { roomMax = m.max > 0 ? m.max : 0; });
+  function squeeze() {
+    root.classList.remove('dense', 'scroll');
+    if (!roomMax || !current || !FITS[current.kind] || current.kind === 'bookmarkFolder') return;
+    if (contentHeight() > roomMax) root.classList.add('dense');
+    if (contentHeight() > roomMax) root.classList.add('scroll');
+  }
   // Content whose height depends on its items: the window is opened with an upper bound
   // and fitted right after the render (the ⋮ menu used to leave a gap at the bottom).
   const FITS = { vpn: true, extInstall: true, suggest: true, cardFill: true, menu: true, tabMenu: true, navMenu: true, httpAuth: true, bookmarkMenu: true, siteInfo: true, addressMenu: true, captionMenu: true, downloads: true, permission: true, passwordSaved: true, pip: true, bookmarkFolder: true, jsDialog: true };
@@ -1217,7 +1233,7 @@
     const seq = m.seq;
     requestAnimationFrame(function () {
       // The content's own height, not the scrolling box's (it is capped at the window).
-      const height = FITS[c.kind] ? Math.max(root.offsetHeight, root.scrollHeight) + 2 : null;
+      const height = FITS[c.kind] ? contentHeight() : null;
       requestAnimationFrame(function () { LB.post('popupShown', { seq: seq, height: height }); });
     });
     return true;
@@ -1256,6 +1272,7 @@
     // The volume bar matches the engine's floating window, which is always dark.
     document.body.classList.toggle('pv-dark', c.kind === 'pipVolume');
     (render ? render(c) : []).forEach((n) => n && root.appendChild(n));
+    squeeze();
     const first = document.getElementById('master') || document.getElementById('bm-name') || document.getElementById('default') || root.querySelector('button:not([disabled])');
     // The first item, never "‹ Back" (Enter would leave the folder just opened).
     const firstItem = c.kind === 'bookmarkFolder' && first && first.id === 'folder-back' ? (root.querySelector('button.item:not(#folder-back)') || first) : first;

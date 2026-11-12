@@ -55,6 +55,15 @@ pub trait WindowEvents {
     fn suspending(&self) {}
     /// Windows switched between light and dark app mode.
     fn system_theme_changed(&self) {}
+    /// The window's DPI changed (the display's scale was changed, or the window moved to a
+    /// monitor with another scale). A frame has taken the rectangle Windows suggests by now;
+    /// its size in pixels may be the same as before (maximized on a display of the same
+    /// resolution), so nothing else says that the layout has to be done again.
+    fn dpi_changed(&self) {}
+    /// The displays changed (resolution, scale, arrangement, the taskbar's size): sent to
+    /// every top-level window. A frame's DPI may be another one now without `dpi_changed`
+    /// having said so.
+    fn display_changed(&self) {}
     /// Frameless main window: what is at this client point (physical px)?
     fn frame_hit(&self, _x: i32, _y: i32) -> Hit {
         Hit::Client
@@ -214,6 +223,31 @@ fn app_icon(
     }
 }
 
+/// A frame's icons at its own DPI (0.15.4): the class icons are made for the system DPI of the
+/// moment Krunk started, which is the wrong size on a monitor with another scale (blurred in
+/// the taskbar and in Alt+Tab).
+fn set_icons(hwnd: HWND) {
+    use windows::Win32::UI::HiDpi::GetSystemMetricsForDpi;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        LoadImageW, SendMessageW, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LR_SHARED, SM_CXICON, SM_CXSMICON,
+        WM_SETICON,
+    };
+    let dpi = Window(hwnd).dpi();
+    // SAFETY: loading shared icon resources of our own exe and handing them to our own
+    // window; a shared icon is owned by the system and never destroyed by us.
+    unsafe {
+        let Ok(instance) = GetModuleHandleW(None) else { return };
+        for (which, metric) in [(ICON_BIG, SM_CXICON), (ICON_SMALL, SM_CXSMICON)] {
+            let size = GetSystemMetricsForDpi(metric, dpi);
+            if let Ok(h) =
+                LoadImageW(Some(instance.into()), w!("MAINICON"), IMAGE_ICON, size, size, LR_DEFAULTCOLOR | LR_SHARED)
+            {
+                SendMessageW(hwnd, WM_SETICON, Some(WPARAM(which as usize)), Some(LPARAM(h.0 as isize)));
+            }
+        }
+    }
+}
+
 impl Window {
     /// Creates and shows the main browser window. It is shown before the
     /// engine starts so it gets the foreground (the engine's start-up would
@@ -264,6 +298,22 @@ impl Window {
                 0,
                 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
             );
+            set_icons(hwnd);
+            // No saved place: the default size is in DIP, for the monitor Windows chose, and
+            // inside its work area (0.15.4; 1280 x 860 physical pixels before).
+            if rect.is_none() {
+                let w = Window(hwnd);
+                let at = w.rect();
+                let work = Window::work_area_at(at.x + at.width / 2, at.y + at.height / 2);
+                let to = lb_core::layout::default_window(
+                    lb_core::layout::Rect { x: at.x, y: at.y, width: at.width, height: at.height },
+                    w.scale(),
+                    lb_core::layout::Rect { x: work.x, y: work.y, width: work.width, height: work.height },
+                );
+                if (to.x, to.y, to.width, to.height) != (at.x, at.y, at.width, at.height) {
+                    w.move_to(ScreenRect { x: to.x, y: to.y, width: to.width, height: to.height });
+                }
+            }
             if show {
                 let _ = ShowWindow(hwnd, SW_SHOW);
             }
@@ -540,12 +590,15 @@ impl Window {
 
     /// DPI scale factor (1.0 = 96 DPI).
     pub fn scale(self) -> f64 {
+        lb_core::dpi::Scale::from_dpi(self.dpi()).factor()
+    }
+
+    /// The DPI of the monitor the window is on (96 = 100 %; 96 for a window that is gone).
+    pub fn dpi(self) -> u32 {
         // SAFETY: valid window handle.
-        let dpi = unsafe { GetDpiForWindow(self.0) };
-        if dpi == 0 {
-            1.0
-        } else {
-            f64::from(dpi) / 96.0
+        match unsafe { GetDpiForWindow(self.0) } {
+            0 => 96,
+            dpi => dpi,
         }
     }
 
@@ -1231,6 +1284,29 @@ extern "system" fn main_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
             }
             r
         }
+        WM_DPICHANGED => {
+            // A frame takes the rectangle Windows suggests for the new DPI (the same size in
+            // DIP), gets its icons for that DPI, and then lays everything out again: the
+            // rectangle can be the one it already has, and then no WM_SIZE follows.
+            // SAFETY: lparam points to a RECT for this message; our own window.
+            unsafe {
+                let r = &*(lparam.0 as *const RECT);
+                let _ = SetWindowPos(
+                    hwnd,
+                    None,
+                    r.left,
+                    r.top,
+                    r.right - r.left,
+                    r.bottom - r.top,
+                    SWP_NOZORDER | SWP_NOACTIVATE,
+                );
+            }
+            set_icons(hwnd);
+            if let Some(ev) = events(hwnd) {
+                ev.dpi_changed();
+            }
+            LRESULT(0)
+        }
         _ => wndproc(hwnd, msg, wparam, lparam),
     }
 }
@@ -1265,6 +1341,12 @@ pub fn stop_following() {
 /// The smallest window (DIP), also WM_GETMINMAXINFO's answer.
 const MIN_WIDTH_DIP: f64 = 480.0;
 const MIN_HEIGHT_DIP: f64 = 320.0;
+
+/// The smallest window in pixels at the window's scale.
+fn min_size(hwnd: HWND) -> (i32, i32) {
+    let s = lb_core::dpi::Scale::from_dpi(Window(hwnd).dpi());
+    (s.px(MIN_WIDTH_DIP), s.px(MIN_HEIGHT_DIP))
+}
 
 /// An edge or corner drag in progress: the hit code, the window rect and the cursor at the press.
 struct Sizing {
@@ -1319,8 +1401,7 @@ fn sizing_move(hwnd: HWND) {
         let _ = GetCursorPos(&mut cursor);
     }
     let (dx, dy) = (cursor.x - at.x, cursor.y - at.y);
-    let scale = Window(hwnd).scale();
-    let (min_w, min_h) = ((MIN_WIDTH_DIP * scale) as i32, (MIN_HEIGHT_DIP * scale) as i32);
+    let (min_w, min_h) = min_size(hwnd);
     let mut r = start;
     let left = matches!(edge, HTLEFT | HTTOPLEFT | HTBOTTOMLEFT);
     let right = matches!(edge, HTRIGHT | HTTOPRIGHT | HTBOTTOMRIGHT);
@@ -1631,19 +1712,12 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
             unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
         }
         WM_DPICHANGED => {
-            // Resize to the rectangle Windows suggests for the new DPI.
-            // SAFETY: lparam points to a RECT for this message.
-            unsafe {
-                let r = &*(lparam.0 as *const RECT);
-                let _ = SetWindowPos(
-                    hwnd,
-                    None,
-                    r.left,
-                    r.top,
-                    r.right - r.left,
-                    r.bottom - r.top,
-                    SWP_NOZORDER | SWP_NOACTIVATE,
-                );
+            // Popup and application windows (frames: `main_wndproc`) do not take the
+            // rectangle Windows suggests: their owner sizes them for the monitor they are
+            // shown on, each time they are shown (0.15.4; a popup used to be resized here a
+            // second time, by a rectangle that knows nothing of its content).
+            if let Some(ev) = ev {
+                ev.dpi_changed();
             }
             LRESULT(0)
         }
@@ -1651,8 +1725,8 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
             // SAFETY: lparam points to a MINMAXINFO for this message.
             unsafe {
                 let mmi = &mut *(lparam.0 as *mut MINMAXINFO);
-                let scale = f64::from(GetDpiForWindow(hwnd).max(96)) / 96.0;
-                mmi.ptMinTrackSize = POINT { x: (MIN_WIDTH_DIP * scale) as i32, y: (MIN_HEIGHT_DIP * scale) as i32 };
+                let (x, y) = min_size(hwnd);
+                mmi.ptMinTrackSize = POINT { x, y };
             }
             LRESULT(0)
         }
@@ -1662,10 +1736,19 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                 // SAFETY: for WM_SETTINGCHANGE lParam is null or a NUL-terminated wide string.
                 unsafe { PCWSTR(lparam.0 as *const u16).to_string() }.is_ok_and(|s| s == "ImmersiveColorSet")
             };
-            if changed {
-                if let Some(ev) = ev {
+            if let Some(ev) = ev {
+                if changed {
                     ev.system_theme_changed();
                 }
+                // Also what Windows sends when the work area or the scale changes.
+                ev.display_changed();
+            }
+            // SAFETY: default processing.
+            unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+        }
+        windows::Win32::UI::WindowsAndMessaging::WM_DISPLAYCHANGE => {
+            if let Some(ev) = ev {
+                ev.display_changed();
             }
             // SAFETY: default processing.
             unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
@@ -1763,30 +1846,36 @@ fn is_class(hwnd: HWND, class: PCWSTR) -> bool {
     n > 0 && buf[..n] == *want
 }
 
-/// The work area of every monitor (screen pixels), the primary one first.
-pub fn monitor_work_areas() -> Vec<ScreenRect> {
+/// Every monitor's work area with its DPI (96 = 100 %), the primary monitor first.
+pub fn monitors() -> Vec<(ScreenRect, u32)> {
     use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR};
+    use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
     extern "system" fn each(mon: HMONITOR, _: HDC, _: *mut RECT, data: LPARAM) -> windows::core::BOOL {
         // SAFETY: `data` is the Vec below, alive for the whole call; the struct is sized.
         unsafe {
-            let out = &mut *(data.0 as *mut Vec<(bool, ScreenRect)>);
+            let out = &mut *(data.0 as *mut Vec<(bool, ScreenRect, u32)>);
             let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
             if GetMonitorInfoW(mon, &mut mi).as_bool() {
                 let r = mi.rcWork;
                 let primary = mi.dwFlags & 1 != 0; // MONITORINFOF_PRIMARY
+                let (mut dx, mut dy) = (96u32, 96u32);
+                if GetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &mut dx, &mut dy).is_err() || dx == 0 {
+                    dx = 96;
+                }
                 out.push((
                     primary,
                     ScreenRect { x: r.left, y: r.top, width: r.right - r.left, height: r.bottom - r.top },
+                    dx,
                 ));
             }
         }
         true.into()
     }
-    let mut found: Vec<(bool, ScreenRect)> = Vec::new();
+    let mut found: Vec<(bool, ScreenRect, u32)> = Vec::new();
     // SAFETY: the callback only appends to `found`.
     let _ = unsafe { EnumDisplayMonitors(None, None, Some(each), LPARAM(&mut found as *mut _ as isize)) };
-    found.sort_by_key(|(primary, _)| !primary);
-    found.into_iter().map(|(_, r)| r).collect()
+    found.sort_by_key(|(primary, _, _)| !primary);
+    found.into_iter().map(|(_, r, dpi)| (r, dpi)).collect()
 }
 
 /// `windows` sorted by z-order, topmost first (hidden ones left out).

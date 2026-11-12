@@ -687,6 +687,13 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
   Krunk or the update prompt use the current window.
 - **Shell:** a view strip at the top of each window showing its tab strip and toolbar. Its
   height is fixed: 76 DIP, scaled by that window's DPI.
+- **Display scaling:** Krunk is per-monitor DPI aware. Layout constants are in DIP and are
+  converted with the scale of the window they belong to at the moment of placing
+  (`core::dpi::Scale`). When a window's scale changes (the display setting, or another monitor)
+  it is laid out again, its pages are told, and popups sized for the old scale close
+  (`Browser::frame_dpi_changed`). A window without a saved place opens at 1280 × 860 DIP, never
+  larger than the screen; saved bounds carry the DPI they were saved at. What was wrong before
+  0.15.4, the rules for new UI code and how it is checked: [docs/DPI.md](docs/DPI.md).
 - **Tabs:** one browser per *live* tab, laid out below the shell. Restored tabs stay unloaded
   until they are activated. Pages that open windows (`window.open`, `target=_blank`) get a new
   tab next to them; `window.open` keeps its opener.
@@ -741,8 +748,15 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
   - It is created on first use and then hidden and reused, never more than one.
   - It uses the default profile, never a private one.
   - The shell sends the popup's rectangle in CSS pixels. The host converts it to screen pixels
-    with the window's DPI (`GetDpiForWindow` + `ClientToScreen`) and clamps it to the monitor
+    with the window's DPI (`GetDpiForWindow` + `ClientToScreen`) and keeps it inside the monitor
     work area (`core::layout::popup_screen_rect`).
+  - Since 0.15.4 a popup is placed again once it has reported its content's height
+    (`core::layout::place_popup`), by what it hangs on (`PopupKind::anchor`): a context menu
+    opens above the click when there is no room below; the ⋮ menu, prompts and dialogs move up
+    only as far as they must; lists (a bookmark folder, address suggestions, the tab list) stay
+    under their control and scroll. Content higher than the room at its anchor first gets
+    compact rows, and scrolls when even the whole work area is too low (a 1080p display at
+    175 % has 569 px of it; the ⋮ menu needs 658).
   - **Hide rules:** the popup hides on deactivate, Escape, a click elsewhere (another view gets
     focus), its window's move, resize or minimize, and tab switch or close. A prompt hidden this
     way counts as dismissed, never confirmed.
@@ -1616,6 +1630,13 @@ What it does:
    deletes `*.md` from the program folder before copying (0.2.x shipped README.md and
    SECURITY.md); it never touches the data folder.
 
+For a quick test build, `scripts/build-dist.sh --fast` uses the `fast` profile (the release
+settings without whole-program LTO, incremental, every core): `target/fast-dist/Krunk-win-x64`,
+no installer and no zip, about a minute after a change in `app/` instead of the release build's
+ten. `KRUNK_DIST=target/fast-dist KRUNK_APP=apptest scripts/vm.sh deploy` puts it on the test
+machine next to the release build. With `sccache` installed the build scripts use it, so
+compiled dependencies are shared between target directories.
+
 Requirements (versions used for the release):
 - Rust stable (1.87 or newer; built with 1.99.1) with `rustup target add x86_64-pc-windows-msvc`
 - `cargo install cargo-xwin --version 0.23.1`
@@ -1682,6 +1703,12 @@ The app's own unit tests (DPAPI, message escaping) run on Windows:
 Testing on Windows:
 - `scripts/vm.sh` deploys `dist/Krunk-win-x64` to a Windows test machine over SSH and
   drives it (start, stop, screenshots, keys, clicks).
+- `scripts/vm-dpi-run.sh OUTDIR 1280x800:100 1920x1080:150 1920x1080:175 3840x2160:250
+  1920x1080:150:rt` checks the layout at display scales (0.15.4): per mode it switches the
+  test machine's display (`scripts/vm-display.ps1`; always back to 1280×800 at 100 %), takes
+  about forty screenshots (`scripts/vm-dpi-shots.ps1`) and logs window, view and popup
+  rectangles, hit-test codes and the page's `devicePixelRatio`; `:rt` changes the scale while
+  Krunk runs, normal and maximized. See [docs/DPI.md](docs/DPI.md).
 - `scripts/vm-sandbox.ps1` shows the integrity level and token of every Krunk process.
 - `scripts/vm-engine-check.ps1` shows which engine DLLs each process loaded and whether any
   `msedgewebview2.exe` was started by Krunk.
@@ -1837,8 +1864,9 @@ Testing on Windows:
 - **What was blocked** lists requests, not elements hidden by cosmetic filters. When the
   filter text can't be recovered (a list changed since the request), only the list is named.
 - **Several monitors:** windows remember their position on any monitor and are moved back on
-  screen if that monitor is gone. Dragging across monitors with different scaling was not
-  tested (the test machine has one monitor, at up to 125 %).
+  screen if that monitor is gone. Dragging a window between monitors with different scaling
+  was not tested: the test machine has one monitor. It is the same code as a scale change
+  while Krunk runs, which is tested since 0.15.4 at 100 to 250 % (`docs/DPI.md`).
 - **Not tested for 0.3.0 and 0.4.0** (the Windows 11 test VM can't do them):
   - **two monitors:** the VM has one;
   - **display scaling above 125 %:** the VM allows at most 125 %;

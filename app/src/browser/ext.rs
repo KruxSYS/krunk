@@ -983,7 +983,7 @@ impl Browser {
             return;
         }
         // The largest size first (hidden): the page measures its body and reports.
-        view.set_bounds(0, 0, (POPUP_MAX.0 * scale) as i32, (POPUP_MAX.1 * scale) as i32);
+        view.set_bounds(0, 0, (POPUP_MAX.0 * scale).round() as i32, (POPUP_MAX.1 * scale).round() as i32);
         let popup =
             ExtPopup { window, view, ext: ext_id.to_string(), anchor, scale, shown: false, opened_at: now_ms() };
         *self.ext.popup.borrow_mut() = Some(popup);

@@ -188,6 +188,12 @@ html.fullscreen #caption, html.fullscreen #drag-space { display: none; }
 #star.bookmarked .icon { fill: #f59e0b; stroke: #f59e0b; }
 #omnibox { flex: 1; display: flex; align-items: center; gap: 6px; height: 32px; margin: 0 6px; padding: 0 4px 0 10px;
            background: var(--bg); border: 1px solid transparent; border-radius: 16px; }
+/* 0.15.4: in a narrow window the address field gives way first (the omnibox may shrink below
+   its content), then the optional buttons go (shell.js fitToolbar). The ⋮ menu never leaves. */
+#omnibox { min-width: 0; }
+#toolbar.tight-1 #ext-actions { display: none; }
+#toolbar.tight-2 #zoom, #toolbar.tight-2 #star { display: none; }
+#toolbar.tight-3 #downloads, #toolbar.tight-3 #vpn, #toolbar.tight-3 #agent { display: none; }
 #omnibox:focus-within { border-color: var(--accent); background: var(--bg-raised); }
 #omnibox.private { background: var(--private-bg); }
 #address-wrap { flex: 1; min-width: 0; position: relative; display: flex; align-items: center; align-self: stretch; }

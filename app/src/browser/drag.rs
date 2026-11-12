@@ -35,7 +35,7 @@ const STRIP_SLACK_DIP: f64 = 8.0;
 /// Where the first tab of a new window starts (CSS px), if its shell hasn't reported yet.
 const FIRST_TAB_X_DIP: f64 = 8.0;
 /// New windows ("New window", "Move to new window") open this far down-right of the current one.
-const CASCADE_PX: i32 = 32;
+const CASCADE_DIP: f64 = 32.0;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct TabDrag {
@@ -76,8 +76,10 @@ pub(super) struct BarDrag {
 impl Browser {
     /// The restored rectangle of the current window, moved down-right: where a new window opens.
     pub(super) fn cascade_bounds(&self) -> Option<Bounds> {
-        let (r, _) = self.window()?.placement();
-        Some(Bounds { x: r.x + CASCADE_PX, y: r.y + CASCADE_PX, width: r.width, height: r.height })
+        let w = self.window()?;
+        let (r, _) = w.placement();
+        let step = lb_core::dpi::Scale::new(w.scale()).px(CASCADE_DIP);
+        Some(Bounds { x: r.x + step, y: r.y + step, width: r.width, height: r.height })
     }
 
     /// Ctrl+N / "New window": a new window with a new-tab page.
@@ -148,8 +150,8 @@ impl Browser {
             // The new window's only tab starts where a row that does not scroll starts.
             let first_tab = first_x.filter(|x| x.is_finite()).unwrap_or(FIRST_TAB_X_DIP).clamp(0.0, 400.0);
             let grab = (
-                client_dx + ((first_tab + offset_x.clamp(0.0, 400.0)) * scale) as i32,
-                client_dy + (offset_y.clamp(0.0, 200.0) * scale) as i32,
+                client_dx + ((first_tab + offset_x.clamp(0.0, 400.0)) * scale).round() as i32,
+                client_dy + (offset_y.clamp(0.0, 200.0) * scale).round() as i32,
             );
             let bounds = Bounds { x: cx - grab.0, y: cy - grab.1, width: normal.width, height: normal.height };
             let detached = self.ws.borrow_mut().detach(tab, Some(bounds), false, now_ms());

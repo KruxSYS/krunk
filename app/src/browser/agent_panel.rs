@@ -58,6 +58,11 @@ impl Browser {
     }
 
     /// The toolbar button and Ctrl+Shift+Space: show or hide the current window's panel.
+    /// The panel's view in window `win`, if it has one (open or closed).
+    pub(super) fn agent_panel_view(&self, win: WindowId) -> Option<View> {
+        self.panel.panels.borrow().get(&win).map(|p| p.view.clone())
+    }
+
     pub(super) fn toggle_agent(&self) {
         if !self.ai_enabled() {
             return;

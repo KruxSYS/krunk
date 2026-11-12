@@ -61,12 +61,13 @@ impl Browser {
         // The button from the shell's hit map, else the toolbar's right end.
         let target = f.hit_map.borrow().as_ref().map(|m| m.downloads).filter(|r| r.width > 0.0);
         let (tx, ty) = match (target, shell) {
-            (Some(r), _) => f
+            (Some(r), _) => f.window.client_to_screen(
+                ((r.x + r.width / 2.0) * scale).round() as i32,
+                ((r.y + r.height / 2.0) * scale).round() as i32,
+            ),
+            (None, Some(s)) => f
                 .window
-                .client_to_screen(((r.x + r.width / 2.0) * scale) as i32, ((r.y + r.height / 2.0) * scale) as i32),
-            (None, Some(s)) => {
-                f.window.client_to_screen(s.x + s.width - (60.0 * scale) as i32, s.y + (56.0 * scale) as i32)
-            }
+                .client_to_screen(s.x + s.width - (60.0 * scale).round() as i32, s.y + (56.0 * scale).round() as i32),
             (None, None) => return self.post_shell_to(win, &lb_core::protocol::Event::DownloadStarted),
         };
         let mut slot = self.flight.overlay.borrow_mut();

@@ -117,7 +117,7 @@ impl Browser {
         };
         let (w, h) = o.size_of(&spec);
         let cursor = Some(cursor::position());
-        let (rect, right) = overlay::status_rect(page, w, h, cursor, (f64::from(NEAR_DIP) * scale) as i32);
+        let (rect, right) = overlay::status_rect(page, w, h, cursor, (f64::from(NEAR_DIP) * scale).round() as i32);
         if fresh || right != self.status.on_right.get() || !o.is_visible() {
             self.status.on_right.set(right);
             o.show(&spec, rect.x, rect.y, 255);

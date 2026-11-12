@@ -764,6 +764,15 @@ impl View {
         true
     }
 
+    /// The frame's DPI changed (0.15.4): the engine reads the screen's scale again and lays
+    /// the page out for the view's size, also when that size in pixels did not change.
+    pub fn scale_changed(&self) {
+        for host in [self.host(), self.0.devtools.borrow().as_ref().and_then(|b| b.host())].into_iter().flatten() {
+            host.notify_screen_info_changed();
+            host.was_resized();
+        }
+    }
+
     pub fn set_bounds(&self, x: i32, y: i32, width: i32, height: i32) {
         let (width, height) = (width.max(0), height.max(0));
         self.0.bounds.set(Some((x, y, width, height)));

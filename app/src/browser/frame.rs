@@ -4,6 +4,7 @@
 
 use super::Browser;
 use crate::ffi::window::Hit;
+use crate::log::info;
 use lb_core::frame::{self, HitMap};
 use lb_core::pages::Page;
 use lb_core::protocol::Event;
@@ -48,6 +49,64 @@ impl Browser {
             f64::from(width) / scale,
             w.is_maximized(),
         )
+    }
+
+    /// Frame `win` is on another scale now (0.15.4): the display's scale was changed while
+    /// Krunk runs, or the window went to a monitor with another one. Windows has resized the
+    /// frame to the same size in DIP, but that can be the very rectangle it had (maximized on
+    /// displays of the same resolution), so nothing else lays it out again.
+    pub(super) fn frame_dpi_changed(&self, win: WindowId) {
+        let Some(f) = self.frame(win) else { return };
+        f.dpi.set(f.window.dpi());
+        info!("window {win}: display scale {:.0} %", f.window.scale() * 100.0);
+        // What was sized and placed for the old scale goes: it opens again in the right size.
+        self.hide_popup();
+        self.close_ext_popup_because("the display scale changed");
+        self.hide_tab_preview();
+        self.hide_status();
+        self.hide_hint();
+        self.layout_frame(&f);
+        // Every view of the frame reads the scale again, the hidden ones too.
+        let mut views: Vec<crate::ffi::cef::View> = f.shell.borrow().iter().cloned().collect();
+        let tabs: Vec<TabId> =
+            self.ws.borrow().model(win).map(|m| m.tabs().iter().map(|t| t.id).collect()).unwrap_or_default();
+        views.extend(tabs.into_iter().filter_map(|id| self.tab_view(id)));
+        views.extend(self.agent_panel_view(win));
+        for v in views {
+            v.scale_changed();
+        }
+        // The frame's own parts (the DevTools splitter and strip, the colour between views).
+        f.window.invalidate();
+        self.pass_shell_hit_tests(win);
+        self.send_window_state();
+        self.reapply_pointer();
+        self.schedule_session_save();
+    }
+
+    /// Every frame whose DPI is not the one it was laid out for is laid out again. Windows
+    /// tells a frame about a new DPI (`WM_DPICHANGED`), but a maximized one first gets its new
+    /// size (the taskbar grows with the scale) while it still reports the old DPI, and the
+    /// rectangle suggested with the DPI message is then the one it already has.
+    pub(super) fn check_frame_scales(&self) {
+        for f in self.all_frames() {
+            if f.window.dpi() != f.dpi.get() {
+                self.frame_dpi_changed(f.id);
+            }
+        }
+    }
+
+    /// The displays changed: check now, and again once Windows has settled (the messages of a
+    /// scale change arrive over about a second).
+    pub(super) fn check_frame_scales_soon(&self) {
+        self.check_frame_scales();
+        for ms in [250, 1200] {
+            let weak = self.me.clone();
+            crate::ffi::cef::post_ui_delayed(ms, move || {
+                if let Some(b) = weak.upgrade() {
+                    b.check_frame_scales();
+                }
+            });
+        }
     }
 
     /// Each frame's shell shows its own maximized, active and full-screen state.

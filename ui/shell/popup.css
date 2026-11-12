@@ -6,6 +6,12 @@ body { background: var(--bg-raised); border: 1px solid var(--border); border-rad
 .item:hover, .item:focus-visible { background: var(--bg-hover); outline: none; }
 .item .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item .kbd { color: var(--fg-muted); font-size: 0.923rem; }
+/* 0.15.4: content higher than the screen's work area (popup.js squeeze()): compact rows, and
+   scrolling when that is not enough. Never in effect when the content fits. */
+#root.dense { padding: 4px 6px; }
+#root.dense .item { height: 24px; }
+#root.dense .sep { margin: 2px 4px; }
+#root.scroll { max-height: calc(100vh - 2px); overflow-y: auto; scrollbar-width: thin; }
 .panel-title { padding: 8px 12px 4px; font-weight: 600; font-size: 0.9rem; color: var(--fg-muted, #555); }
 /* Two lines per video (0.12.1): the row grows with them (a fixed 30 px item let a video's
    size and state run into the next video's name). */

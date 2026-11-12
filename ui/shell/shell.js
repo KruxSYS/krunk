@@ -398,6 +398,32 @@
     LB.post('hitMap', { map: map });
   }
   new ResizeObserver(function () { layoutTabs(true); }).observe($('tabstrip'));
+  // 0.15.4: a narrow window (the minimum size, a quarter of a small display, a large scale):
+  // the address field shrinks first; when less than 120 px of it are left the optional
+  // buttons go, in this order: extension icons, the zoom chip and the bookmark star, then
+  // downloads / VPN / AI. Back, Forward, Reload, the shield and the ⋮ menu always stay (the
+  // menu used to be pushed out of the window).
+  function fitToolbar() {
+    const tb = $('toolbar');
+    const before = tb.className;
+    tb.classList.remove('tight-1', 'tight-2', 'tight-3');
+    if ($('omnibox').offsetParent !== null) {
+      for (let i = 1; i <= 3 && $('address-wrap').offsetWidth < 120; i++) tb.classList.add('tight-' + i);
+    }
+    if (tb.className !== before) reportHitMap();
+  }
+  let fitToolbarQueued = false;
+  function fitToolbarSoon() {
+    if (fitToolbarQueued) return;
+    fitToolbarQueued = true;
+    requestAnimationFrame(function () { fitToolbarQueued = false; fitToolbar(); });
+  }
+  new ResizeObserver(fitToolbarSoon).observe($('toolbar'));
+  // A button that appears or goes (an extension, the zoom chip, the find bar) changes the room
+  // too. The toolbar's own class is what fitToolbar sets: not a reason to run again.
+  new MutationObserver(function (records) {
+    if (records.some(function (r) { return r.target !== $('toolbar') || r.type === 'childList'; })) fitToolbarSoon();
+  }).observe($('toolbar'), { subtree: true, childList: true, attributes: true, attributeFilter: ['hidden', 'class'] });
   $('tabs').addEventListener('scroll', function () { updateOverflow(); reportHitMap(); });
   // Tabs slide while they animate: the layout (narrow mode, scrolling) and the host's hit map
   // follow when they settle.

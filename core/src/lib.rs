@@ -16,6 +16,7 @@ pub mod cookies;
 pub mod default_browser;
 pub mod dns;
 pub mod downloads;
+pub mod dpi;
 pub mod ext;
 pub mod favicon_probe;
 pub mod filterlists;

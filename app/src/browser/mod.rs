@@ -211,12 +211,47 @@ pub(super) struct Popup {
     /// Content posted and not painted yet: the window shows (or moves) once the popup
     /// answers `PopupShown` for it (0.11.0).
     pending: Option<PendingShow>,
+    /// What the shown content was asked to hang on (0.15.4): its place is worked out again
+    /// from this whenever the popup reports its content's height.
+    placed: Option<Placed>,
 }
 
 impl Popup {
     /// Open, or about to open for content being painted.
     pub(super) fn open(&self) -> bool {
         self.pending.is_some() || self.window.is_visible()
+    }
+}
+
+/// A popup's anchor: the rectangle it was asked for (shell CSS px), with the window origin,
+/// scale and work area of that moment.
+#[derive(Clone, Copy)]
+pub(super) struct Placed {
+    css: PopupRect,
+    anchor: layout::PopupAnchor,
+    scale: f64,
+    origin: (i32, i32),
+    work: layout::Rect,
+}
+
+impl Placed {
+    /// The popup's window rectangle for content `height_css` high.
+    pub(super) fn rect_for(&self, height_css: f64) -> ScreenRect {
+        let r = layout::place_popup(
+            self.css,
+            height_css.clamp(40.0, PopupRect::MAX),
+            self.anchor,
+            self.scale,
+            self.origin,
+            self.work,
+        )
+        .rect;
+        ScreenRect { x: r.x, y: r.y, width: r.width, height: r.height }
+    }
+
+    /// The height (CSS px) the content can have without leaving its anchor.
+    fn room_css(&self) -> f64 {
+        layout::popup_room(self.css, self.anchor, self.scale, self.origin, self.work)
     }
 }
 
@@ -256,6 +291,9 @@ pub(super) struct Frame {
     bar: Cell<bool>,
     /// The zoom factor the toolbar shows (the zoom watcher pushes a change).
     last_zoom: Cell<f64>,
+    /// The DPI the frame was last laid out for (0.15.4): a change is noticed even when
+    /// Windows sends no DPI message for it (`check_frame_scales`).
+    dpi: Cell<u32>,
 }
 
 /// Which popup window: the shared one, or the menu over it.
@@ -716,6 +754,7 @@ impl Browser {
             active: Cell::new(true),
             bar: Cell::new(false),
             last_zoom: Cell::new(1.0),
+            dpi: Cell::new(window.dpi()),
         });
         window.set_events(Rc::new(FrameEvents { b: self.me.clone(), win }));
         self.frames.borrow_mut().push(frame.clone());
@@ -889,30 +928,42 @@ impl Browser {
         let saved: Option<SessionV2> =
             self.store.borrow().kv_get(SESSION_KEY).ok().flatten().and_then(|j| serde_json::from_str(&j).ok());
         let now = now_ms();
-        let areas: Vec<layout::Rect> = crate::ffi::window::monitor_work_areas()
+        let monitors: Vec<layout::Monitor> = crate::ffi::window::monitors()
             .into_iter()
-            .map(|a| layout::Rect { x: a.x, y: a.y, width: a.width, height: a.height })
+            .map(|(a, dpi)| layout::Monitor {
+                work: layout::Rect { x: a.x, y: a.y, width: a.width, height: a.height },
+                dpi,
+            })
             .collect();
-        let fit = |b: Bounds| {
-            let r = layout::fit_to_monitors(layout::Rect { x: b.x, y: b.y, width: b.width, height: b.height }, &areas);
+        // On a visible monitor, and with the size in DIP it was saved with (0.15.4).
+        let fit = |b: Bounds, dpi: Option<u32>| {
+            let saved = layout::Rect { x: b.x, y: b.y, width: b.width, height: b.height };
+            let r = layout::restore_window(saved, dpi, &monitors);
             Bounds { x: r.x, y: r.y, width: r.width, height: r.height }
         };
         let mut launch = launch.into_iter();
         let ops = {
             let mut ws = self.ws.borrow_mut();
             let restored = match (startup, &saved) {
-                (Startup::RestoreSession, Some(session)) => ws.restore(session, now, fit),
+                (Startup::RestoreSession, Some(session)) => ws.restore(session, now, &fit),
                 _ => Vec::new(),
             };
+            // Without restored tabs the window still opens where the last one was (0.15.4):
+            // it used to get the default size at every start.
+            let (bounds, maximized) = saved
+                .as_ref()
+                .and_then(|s| s.windows().get(s.focused_index()).cloned())
+                .map(|w| (w.bounds.map(|b| fit(b, w.dpi)), w.maximized))
+                .unwrap_or((None, false));
             if !restored.is_empty() {
                 info!("session restored: {} window(s)", ws.len());
                 restored
             } else if let Some(first) = launch.next() {
-                ws.open_window(&first, false, None, false, now).2
+                ws.open_window(&first, false, bounds, maximized, now).2
             } else if startup == Startup::Homepage && !homepage.is_empty() {
-                ws.open_window(&homepage, false, None, false, now).2
+                ws.open_window(&homepage, false, bounds, maximized, now).2
             } else {
-                ws.open_window("", false, None, false, now).2
+                ws.open_window("", false, bounds, maximized, now).2
             }
         };
         // Restored tabs show their favicons from the local cache (no network).
@@ -2192,9 +2243,13 @@ impl Browser {
         let session = ws.session(|win| match frames.iter().find(|f| f.id == win) {
             Some(f) => {
                 let (r, maximized) = f.window.placement();
-                (Some(Bounds { x: r.x, y: r.y, width: r.width, height: r.height }), maximized)
+                lb_core::windows::Placement {
+                    bounds: Some(Bounds { x: r.x, y: r.y, width: r.width, height: r.height }),
+                    maximized,
+                    dpi: Some(f.window.dpi()),
+                }
             }
-            None => (None, false),
+            None => lb_core::windows::Placement::default(),
         });
         drop(ws);
         if let Ok(json) = serde_json::to_string(&session) {
@@ -3243,6 +3298,7 @@ impl Browser {
             });
         }
         let mut seq = None;
+        let mut room = None;
         if let Some(rect) = rect {
             // Shown for the current window: it belongs to that frame now.
             let owner = self.cur_id();
@@ -3251,15 +3307,16 @@ impl Browser {
                 popup.owner = owner;
             }
             let scale = main.scale();
+            let dpi = lb_core::dpi::Scale::new(scale);
             let origin = main.client_to_screen(0, 0);
-            let work = Window::work_area_at(origin.0 + (rect.x * scale) as i32, origin.1);
-            let r = layout::popup_screen_rect(
-                rect,
-                scale,
-                origin,
-                layout::Rect { x: work.x, y: work.y, width: work.width, height: work.height },
-            );
+            // The monitor the anchor is on (a window can span two).
+            let work = Window::work_area_at(origin.0 + dpi.px_floor(rect.x), origin.1 + dpi.px_floor(rect.y.max(0.0)));
+            let work = layout::Rect { x: work.x, y: work.y, width: work.width, height: work.height };
+            let r = layout::popup_screen_rect(rect, scale, origin, work);
             let target = ScreenRect { x: r.x, y: r.y, width: r.width, height: r.height };
+            let placed = Placed { css: rect, anchor: kind.anchor(), scale, origin, work };
+            popup.placed = Some(placed);
+            room = Some(placed.room_css());
             let focus = kind.takes_focus();
             popup.window.set_activatable(focus);
             // The window shows the new content from its first frame (0.11.0): it opens (or
@@ -3327,6 +3384,9 @@ impl Browser {
         }
         if popup.ready {
             if let Some(c) = &popup.view {
+                if let Some(max) = room {
+                    c.post_json(&Event::PopupRoom { max }.to_json());
+                }
                 c.post_json(&Event::Popup { content, seq }.to_json());
             }
         }
@@ -3345,9 +3405,17 @@ impl Browser {
         }
         let mut r = pending.rect;
         if let Some(h) = height_css.filter(|h| h.is_finite()) {
-            let work = Window::work_area_at(r.x, r.y);
-            let max = (work.y + work.height - r.y).max(40);
-            r.height = ((h.clamp(40.0, 4096.0) * main.scale()).round() as i32).min(max);
+            match p.placed {
+                // At its anchor with the content's real height: under its control or at the
+                // click when it fits there, moved (a context menu: turned upwards) when not,
+                // and as high as the work area, scrolling, when it fits nowhere (0.15.4).
+                Some(placed) => r = placed.rect_for(h),
+                None => {
+                    let work = Window::work_area_at(r.x, r.y);
+                    let max = (work.y + work.height - r.y).max(40);
+                    r.height = ((h.clamp(40.0, 4096.0) * main.scale()).round() as i32).min(max);
+                }
+            }
         }
         p.window.show_at(r, pending.focus);
         if let Some(c) = &p.view {
@@ -3427,8 +3495,15 @@ impl Browser {
         let (w, h) = window.client_size();
         c.set_bounds(0, 0, w, h);
         c.set_visible(window.is_visible());
-        *self.popup_slot(slot).borrow_mut() =
-            Some(Popup { window, view: Some(c), ready: false, content: None, owner: None, pending: None });
+        *self.popup_slot(slot).borrow_mut() = Some(Popup {
+            window,
+            view: Some(c),
+            ready: false,
+            content: None,
+            owner: None,
+            pending: None,
+            placed: None,
+        });
         true
     }
 
@@ -3438,13 +3513,17 @@ impl Browser {
             let Some(p) = guard.as_mut() else { return };
             p.ready = true;
             if p.open() {
-                p.content.clone().zip(p.view.clone()).map(|(content, c)| (content, c, p.pending.map(|x| x.seq)))
+                let room = p.placed.map(|x| x.room_css());
+                p.content.clone().zip(p.view.clone()).map(|(content, c)| (content, c, p.pending.map(|x| x.seq), room))
             } else {
                 None
             }
         };
-        if let Some((content, c, seq)) = pending {
+        if let Some((content, c, seq, room)) = pending {
             let focus = content.kind().takes_focus();
+            if let Some(max) = room {
+                c.post_json(&Event::PopupRoom { max }.to_json());
+            }
             c.post_json(&Event::Popup { content, seq }.to_json());
             if focus && seq.is_none() {
                 c.focus();
@@ -3762,6 +3841,12 @@ impl WindowEvents for AppEvents {
         }
     }
 
+    fn display_changed(&self) {
+        if let Some(b) = self.0.upgrade() {
+            b.check_frame_scales_soon();
+        }
+    }
+
     fn session_locked(&self) {
         if let Some(b) = self.0.upgrade() {
             b.lock_vault("Windows session locked");
@@ -3963,10 +4048,28 @@ impl WindowEvents for FrameEvents {
         b.hide_status();
         b.hide_hint();
         if let Some(f) = b.frame(self.win) {
-            b.layout_frame(&f);
+            // A new size can come with a new scale (0.15.4).
+            if f.window.dpi() != f.dpi.get() {
+                b.frame_dpi_changed(self.win);
+            } else {
+                b.layout_frame(&f);
+            }
         }
         b.reapply_pointer();
         b.schedule_session_save();
+    }
+
+    fn display_changed(&self) {
+        if let Some(b) = self.b.upgrade() {
+            b.check_frame_scales_soon();
+        }
+    }
+
+    fn dpi_changed(&self) {
+        // Unless the resize that came with the message has done it already.
+        if let Some(b) = self.b.upgrade() {
+            b.check_frame_scales();
+        }
     }
 
     fn minimized(&self, minimized: bool) {

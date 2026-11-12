@@ -211,6 +211,26 @@ impl PopupKind {
     /// popup window (a no-activate window gets no such signal when the page
     /// it covers already had focus). (The "Press Esc" hint is not a popup:
     /// it is a native overlay, see `overlay`.)
+    /// What the popup hangs on (0.15.4): the context menus open at the click and may go above
+    /// it; lists stay under their control and scroll; everything else (the ⋮ menu, prompts,
+    /// dialogs) is shown whole, moved up if it must be.
+    pub fn anchor(self) -> crate::layout::PopupAnchor {
+        use crate::layout::PopupAnchor;
+        match self {
+            PopupKind::TabMenu | PopupKind::BookmarkMenu | PopupKind::CaptionMenu | PopupKind::AddressMenu => {
+                PopupAnchor::Point
+            }
+            PopupKind::BookmarkFolder
+            | PopupKind::TabList
+            | PopupKind::AddressSuggest
+            | PopupKind::Suggest
+            | PopupKind::CardFill
+            | PopupKind::TabPreview
+            | PopupKind::PipVolume => PopupAnchor::Keep,
+            _ => PopupAnchor::Drop,
+        }
+    }
+
     pub fn takes_focus(self) -> bool {
         !matches!(
             self,
@@ -2638,6 +2658,13 @@ pub enum Event {
         content: PopupContent,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         seq: Option<u64>,
+    },
+    /// To the popup view, before the content it is about (0.15.4): the height (CSS px) the
+    /// content can have at its anchor (`layout::popup_room`; 0: no limit to care about).
+    /// Content that is higher is made compact, and scrolls if the window it then gets is
+    /// still lower than it.
+    PopupRoom {
+        max: f64,
     },
     /// To the popup view: its window was hidden; drop the content so that it can never show
     /// again with the next one.

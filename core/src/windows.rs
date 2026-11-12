@@ -37,6 +37,18 @@ pub struct WindowSession {
     pub bounds: Option<Bounds>,
     #[serde(default)]
     pub maximized: bool,
+    /// The DPI of the window's monitor when `bounds` were saved (0.15.4; absent in older
+    /// sessions): on a monitor with another scale the window keeps its size in DIP.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dpi: Option<u32>,
+}
+
+/// Where a window is, for the saved session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Placement {
+    pub bounds: Option<Bounds>,
+    pub maximized: bool,
+    pub dpi: Option<u32>,
 }
 
 /// The saved session (kv `"session"` in browser.db), version 2: every window.
@@ -70,7 +82,7 @@ impl SessionV2 {
         if self.tabs.is_empty() {
             return Vec::new();
         }
-        vec![WindowSession { tabs: self.tabs.clone(), active: self.active, bounds: None, maximized: false }]
+        vec![WindowSession { tabs: self.tabs.clone(), active: self.active, bounds: None, maximized: false, dpi: None }]
     }
 
     /// Which of [`SessionV2::windows`] was used last.
@@ -421,7 +433,7 @@ impl Workspace {
 
     /// The session: every window with saved tabs (windows with only private tabs are left
     /// out), its place from `placement`, and the window used last.
-    pub fn session(&self, placement: impl Fn(WindowId) -> (Option<Bounds>, bool)) -> SessionV2 {
+    pub fn session(&self, placement: impl Fn(WindowId) -> Placement) -> SessionV2 {
         let mut windows = Vec::new();
         let mut focused = None;
         let current = self.current();
@@ -433,8 +445,8 @@ impl Workspace {
             if Some(e.id) == current {
                 focused = Some(windows.len());
             }
-            let (bounds, maximized) = placement(e.id);
-            windows.push(WindowSession { tabs: s.tabs, active: s.active, bounds, maximized });
+            let Placement { bounds, maximized, dpi } = placement(e.id);
+            windows.push(WindowSession { tabs: s.tabs, active: s.active, bounds, maximized, dpi });
         }
         let focused = focused.unwrap_or(windows.len().saturating_sub(1));
         let (tabs, active) = windows.get(focused).map(|w| (w.tabs.clone(), w.active)).unwrap_or_default();
@@ -444,7 +456,7 @@ impl Workspace {
     /// Restores every window of a session (`fit` keeps each one on a visible monitor). The
     /// window used last is restored last, so it is in front and current. Nothing to restore:
     /// no ops.
-    pub fn restore(&mut self, session: &SessionV2, now: i64, fit: impl Fn(Bounds) -> Bounds) -> Vec<Op> {
+    pub fn restore(&mut self, session: &SessionV2, now: i64, fit: impl Fn(Bounds, Option<u32>) -> Bounds) -> Vec<Op> {
         let windows = session.windows();
         let focused = session.focused_index();
         let mut order: Vec<usize> = (0..windows.len()).filter(|i| *i != focused).collect();
@@ -455,7 +467,7 @@ impl Workspace {
         for i in order {
             let w = &windows[i];
             let s = Session { tabs: w.tabs.clone(), active: w.active };
-            out.extend(self.restore_window(&s, w.bounds.map(&fit), w.maximized, now).1);
+            out.extend(self.restore_window(&s, w.bounds.map(|b| fit(b, w.dpi)), w.maximized, now).1);
         }
         out
     }
@@ -690,7 +702,7 @@ mod tests {
         assert_eq!(windows[0].tabs.len(), 3);
         assert_eq!((windows[0].active, windows[0].bounds, windows[0].maximized), (2, None, false));
         let mut ws = Workspace::new();
-        let out = ws.restore(&s, 0, |b| b);
+        let out = ws.restore(&s, 0, |b, _| b);
         assert_eq!(ws.len(), 1);
         let w = ws.current().unwrap();
         assert_eq!(out[0], Op::CreateWindow { win: w, bounds: None, maximized: false });
@@ -701,7 +713,7 @@ mod tests {
         assert_eq!(ws.model(w).unwrap().active().unwrap().url, "https://b.example/");
         // Nothing at all (or garbage): nothing to restore.
         assert!(SessionV2::default().windows().is_empty());
-        assert!(Workspace::new().restore(&SessionV2::default(), 0, |b| b).is_empty());
+        assert!(Workspace::new().restore(&SessionV2::default(), 0, |b, _| b).is_empty());
     }
 
     #[test]
@@ -712,8 +724,16 @@ mod tests {
         let (w3, _, _) = ws.open_window("https://p.example/", true, None, false, 0);
         ws.focus(w1);
         let place = |w: WindowId| match w {
-            1 => (Some(Bounds { x: 10, y: 20, width: 900, height: 700 }), false),
-            _ => (Some(Bounds { x: 1930, y: 40, width: 800, height: 600 }), true),
+            1 => Placement {
+                bounds: Some(Bounds { x: 10, y: 20, width: 900, height: 700 }),
+                maximized: false,
+                dpi: Some(144),
+            },
+            _ => Placement {
+                bounds: Some(Bounds { x: 1930, y: 40, width: 800, height: 600 }),
+                maximized: true,
+                dpi: None,
+            },
         };
         let s = ws.session(place);
         assert_eq!(s.version, SESSION_VERSION);
@@ -722,7 +742,13 @@ mod tests {
         assert_eq!(s.tabs, s.windows[0].tabs, "the 0.2.x copy is the window used last");
         assert_eq!(s.active, s.windows[0].active);
         assert!(s.windows[1].maximized);
+        assert_eq!((s.windows[0].dpi, s.windows[1].dpi), (Some(144), None));
         let json = serde_json::to_string(&s).unwrap();
+        assert_eq!(json.matches("\"dpi\"").count(), 1, "only where it is known: {json}");
+        // A session written by 0.15.3 (no dpi) still reads.
+        let old_format: SessionV2 = serde_json::from_str(&json.replace(",\"dpi\":144", "")).unwrap();
+        assert_eq!(old_format.windows[0].dpi, None);
+        assert_eq!(old_format.windows[0].bounds, s.windows[0].bounds);
         // 0.2.x reads only tabs/active: that still parses as its Session.
         let old: Session = serde_json::from_str(&json).unwrap();
         assert_eq!(old.tabs.len(), 3);
@@ -731,7 +757,16 @@ mod tests {
         assert_eq!(back, s);
         let mut fresh = Workspace::new();
         // The second monitor is gone: fit moves that window.
-        let out = fresh.restore(&back, 0, |b| if b.x > 1900 { Bounds { x: 0, ..b } } else { b });
+        let seen = std::cell::RefCell::new(Vec::new());
+        let out = fresh.restore(&back, 0, |b, dpi| {
+            seen.borrow_mut().push(dpi);
+            if b.x > 1900 {
+                Bounds { x: 0, ..b }
+            } else {
+                b
+            }
+        });
+        assert_eq!(*seen.borrow(), vec![None, Some(144)], "each window's bounds come with the DPI they were saved at");
         let created: Vec<&Op> = out.iter().filter(|o| matches!(o, Op::CreateWindow { .. })).collect();
         assert_eq!(created.len(), 2);
         // The window used last comes last (in front) and is current.

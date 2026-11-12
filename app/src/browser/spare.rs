@@ -137,6 +137,7 @@ impl Browser {
             active: Cell::new(true),
             bar: Cell::new(false),
             last_zoom: Cell::new(1.0),
+            dpi: Cell::new(window.dpi()),
         });
         window.set_events(Rc::new(FrameEvents { b: self.me.clone(), win }));
         self.frames.borrow_mut().push(frame);

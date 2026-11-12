@@ -1,5 +1,6 @@
 //! Window layout math (pure, so it is testable without Windows).
 
+use crate::dpi::Scale;
 use crate::protocol::{PopupKind, PopupRect};
 use crate::settings::DevToolsDock;
 
@@ -24,11 +25,7 @@ pub fn shell_height(scale: f64, bookmarks_bar: bool) -> i32 {
 }
 
 fn sane_scale(scale: f64) -> f64 {
-    if scale.is_finite() && (0.5..=8.0).contains(&scale) {
-        scale
-    } else {
-        1.0
-    }
+    Scale::new(scale).factor()
 }
 
 /// A point this far above or below the bookmarks bar still counts as over it (a drag
@@ -65,6 +62,85 @@ pub fn popup_screen_rect(css: PopupRect, scale: f64, origin: (i32, i32), work: R
     x = x.clamp(work.x, work.x + work.width - w);
     y = y.clamp(work.y, work.y + work.height - h);
     Rect { x, y, width: w, height: h }
+}
+
+/// What a popup hangs on, which decides where it goes when the room under its anchor is too
+/// small for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PopupAnchor {
+    /// Under a control, all of it to be seen (the ⋮ menu, a prompt under the toolbar, a
+    /// dialog): it moves up just as far as it must.
+    Drop,
+    /// At a point (a context menu at the click): it opens above the point when there is no
+    /// room below it, as Windows' own menus do.
+    Point,
+    /// A list under the control it belongs to (a bookmark folder, the address suggestions,
+    /// the tab list): it stays there, as high as the room below allows, and scrolls.
+    Keep,
+}
+
+/// Where a popup goes, and whether its content has to scroll there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PopupPlace {
+    pub rect: Rect,
+    /// The work area is lower than the content: the popup takes the whole height and scrolls.
+    pub scrolls: bool,
+}
+
+/// Places a popup whose content is `content_height` CSS px high (measured by the popup; `css`
+/// carries where the shell or the host asked for it and its width). Like
+/// [`popup_screen_rect`] it never leaves the monitor's work area, but it keeps the anchor in
+/// mind (0.15.4): at 150 % and more, or on a small display, a menu is often taller than the
+/// room under its button.
+pub fn place_popup(
+    css: PopupRect,
+    content_height: f64,
+    anchor: PopupAnchor,
+    scale: f64,
+    origin: (i32, i32),
+    work: Rect,
+) -> PopupPlace {
+    let s = Scale::new(scale);
+    let work_w = work.width.max(1);
+    let work_h = work.height.max(1);
+    let want = s.px(content_height.clamp(1.0, PopupRect::MAX)).max(1);
+    let bottom = work.y + work_h;
+    if anchor == PopupAnchor::Keep {
+        // Where the rectangle asked for goes (its height is the caller's upper bound, already
+        // cut to the room below where that matters), and no higher than the room from there.
+        let r = popup_screen_rect(css, scale, origin, work);
+        let h = want.min((bottom - r.y).max(1));
+        return PopupPlace { rect: Rect { height: h, ..r }, scrolls: h < want };
+    }
+    let w = s.px(css.width).clamp(1, work_w);
+    let x = (origin.0 + s.px(css.x)).clamp(work.x, work.x + work_w - w);
+    let top = (origin.1 + s.px(css.y)).clamp(work.y, bottom - 1);
+    let (y, h) = if want <= bottom - top {
+        (top, want)
+    } else if anchor == PopupAnchor::Point && want <= top - work.y {
+        (top - want, want)
+    } else if want <= work_h {
+        (bottom - want, want)
+    } else {
+        (work.y, work_h)
+    };
+    PopupPlace { rect: Rect { x, y, width: w, height: h }, scrolls: h < want }
+}
+
+/// The height (CSS px) a popup at `css` can have without leaving its anchor: the room below
+/// it; for a context menu the larger of the room below and above the click. Content higher
+/// than this is made compact by the popup before it is placed. 0 for a list that stays under
+/// its control and scrolls anyway.
+pub fn popup_room(css: PopupRect, anchor: PopupAnchor, scale: f64, origin: (i32, i32), work: Rect) -> f64 {
+    let s = Scale::new(scale);
+    let bottom = work.y + work.height.max(1);
+    let top = (origin.1 + s.px(css.y)).clamp(work.y, bottom - 1);
+    let px = match anchor {
+        PopupAnchor::Drop => bottom - top,
+        PopupAnchor::Point => (bottom - top).max(top - work.y),
+        PopupAnchor::Keep => 0,
+    };
+    s.dip(px)
 }
 
 /// Where host-initiated prompts (save/fill password) appear: under the
@@ -289,6 +365,68 @@ pub fn fit_to_monitors(rect: Rect, work_areas: &[Rect]) -> Rect {
     let x = rect.x.clamp(target.x, target.x + target.width - width);
     let y = rect.y.clamp(target.y, target.y + target.height - height);
     Rect { x, y, width, height }
+}
+
+/// The size of a browser window that has no saved place (DIP; 0.15.4: it was 1280 x 860
+/// physical pixels, a quarter of that area at 200 %).
+pub const DEFAULT_WINDOW_DIP: (f64, f64) = (1280.0, 860.0);
+
+/// A new window without a saved place: Windows put it at `chosen` (its own cascade). It gets
+/// the default size at its monitor's `scale`, never larger than the work area, and lies
+/// inside it.
+pub fn default_window(chosen: Rect, scale: f64, work: Rect) -> Rect {
+    let s = Scale::new(scale);
+    let width = s.px(DEFAULT_WINDOW_DIP.0).min(work.width).max(1);
+    let height = s.px(DEFAULT_WINDOW_DIP.1).min(work.height).max(1);
+    Rect {
+        x: chosen.x.clamp(work.x, work.x + work.width - width),
+        y: chosen.y.clamp(work.y, work.y + work.height - height),
+        width,
+        height,
+    }
+}
+
+/// A monitor: its work area (screen pixels) and its DPI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Monitor {
+    pub work: Rect,
+    pub dpi: u32,
+}
+
+/// Where a saved window goes now (0.15.4). `saved_dpi` is the DPI of its monitor when it was
+/// saved (`None`: saved by 0.15.3 or older, taken as unchanged). On a monitor whose scale
+/// changed since, it keeps its size in DIP, as Windows does for a running window; it is never
+/// larger than the work area it is on, and stays reachable ([`fit_to_monitors`]).
+pub fn restore_window(saved: Rect, saved_dpi: Option<u32>, monitors: &[Monitor]) -> Rect {
+    let works: Vec<Rect> = monitors.iter().map(|m| m.work).collect();
+    let on = |r: &Rect| {
+        monitors.iter().max_by_key(|m| {
+            let w = (r.x + r.width).min(m.work.x + m.work.width) - r.x.max(m.work.x);
+            let h = (r.y + r.height).min(m.work.y + m.work.height) - r.y.max(m.work.y);
+            i64::from(w.max(0)) * i64::from(h.max(0))
+        })
+    };
+    let mut r = saved;
+    let mut rescaled = false;
+    if let (Some(from), Some(m)) = (saved_dpi, on(&saved)) {
+        if from != m.dpi && from >= 48 && m.dpi >= 48 {
+            let (to, from) = (Scale::from_dpi(m.dpi), Scale::from_dpi(from));
+            r.width = to.rescale(saved.width, from).max(1);
+            r.height = to.rescale(saved.height, from).max(1);
+            rescaled = true;
+        }
+    }
+    let mut r = fit_to_monitors(r, &works);
+    if let Some(m) = on(&r) {
+        let too_big = r.width > m.work.width || r.height > m.work.height;
+        r.width = r.width.min(m.work.width).max(1);
+        r.height = r.height.min(m.work.height).max(1);
+        if rescaled || too_big {
+            r.x = r.x.clamp(m.work.x, m.work.x + m.work.width - r.width);
+            r.y = r.y.clamp(m.work.y, m.work.y + m.work.height - r.height);
+        }
+    }
+    r
 }
 
 /// The tab context menu (CSS px): seven items (30 px each) and two separators (11 px), plus
@@ -605,6 +743,216 @@ mod tests {
         // Larger than the screen: shrunk to fit.
         let r = popup_screen_rect(PopupRect { x: 0.0, y: 0.0, width: 4000.0, height: 4000.0 }, 1.0, (0, 0), work);
         assert_eq!((r.width, r.height), (1920, 1040));
+    }
+
+    /// The work areas (physical pixels) the DPI passes run on: a taskbar of 48 DIP.
+    fn work_of(width: i32, height: i32, scale: f64) -> Rect {
+        Rect { x: 0, y: 0, width, height: height - (48.0 * scale).round() as i32 }
+    }
+
+    #[test]
+    fn a_popup_that_fits_stays_at_its_anchor_at_every_scale() {
+        // The tab menu (240 x 287 CSS px) at a click 48,18 into a window at 8,8 DIP.
+        for (w, h, scale) in [
+            (1280, 800, 1.0),
+            (1280, 800, 1.25),
+            (1920, 1080, 1.5),
+            (1920, 1080, 1.75),
+            (3840, 2160, 2.0),
+            (3840, 2160, 2.5),
+        ] {
+            let s = Scale::new(scale);
+            let origin = (s.px(8.0), s.px(8.0));
+            let css = PopupRect { x: 48.0, y: 18.0, width: 240.0, height: 256.0 };
+            for anchor in [PopupAnchor::Drop, PopupAnchor::Point, PopupAnchor::Keep] {
+                let p = place_popup(css, 287.0, anchor, scale, origin, work_of(w, h, scale));
+                assert_eq!(
+                    p.rect,
+                    Rect {
+                        x: origin.0 + s.px(48.0),
+                        y: origin.1 + s.px(18.0),
+                        width: s.px(240.0),
+                        height: s.px(287.0)
+                    },
+                    "{scale}"
+                );
+                assert!(!p.scrolls);
+            }
+        }
+    }
+
+    #[test]
+    fn at_100_percent_placement_is_what_it_was() {
+        // Same answer as the clamp of 0.15.3 whenever the content fits the work area.
+        let work = Rect { x: 0, y: 0, width: 1280, height: 752 };
+        for (css, h) in [
+            (PopupRect { x: 992.0, y: 72.0, width: 280.0, height: 670.0 }, 658.0),
+            (PopupRect { x: 992.0, y: 300.0, width: 280.0, height: 670.0 }, 658.0),
+            (PopupRect { x: 40.0, y: 600.0, width: 240.0, height: 352.0 }, 287.0),
+        ] {
+            let old = popup_screen_rect(PopupRect { height: h, ..css }, 1.0, (0, 0), work);
+            assert_eq!(place_popup(css, h, PopupAnchor::Drop, 1.0, (0, 0), work).rect, old);
+        }
+    }
+
+    #[test]
+    fn a_context_menu_opens_above_the_click_when_there_is_no_room_below() {
+        let work = work_of(1920, 1080, 1.5); // 1920 x 1008
+        let css = PopupRect { x: 300.0, y: 560.0, width: 240.0, height: 352.0 };
+        // 560 CSS px down a window at the top: 840 px; 287 CSS px = 431 px do not fit below.
+        let p = place_popup(css, 287.0, PopupAnchor::Point, 1.5, (0, 0), work);
+        assert_eq!(p.rect, Rect { x: 450, y: 840 - 431, width: 360, height: 431 });
+        assert!(!p.scrolls);
+        // A dropdown under a control moves up only as far as it must.
+        let p = place_popup(css, 287.0, PopupAnchor::Drop, 1.5, (0, 0), work);
+        assert_eq!(p.rect, Rect { x: 450, y: 1008 - 431, width: 360, height: 431 });
+        // No room above either: moved up like a dropdown, the whole menu on screen.
+        let low = Rect { x: 0, y: 0, width: 1920, height: 500 };
+        let p = place_popup(PopupRect { y: 150.0, ..css }, 287.0, PopupAnchor::Point, 1.5, (0, 0), low);
+        assert_eq!((p.rect.y, p.rect.height, p.scrolls), (500 - 431, 431, false));
+    }
+
+    #[test]
+    fn a_popup_taller_than_the_work_area_fills_it_and_scrolls() {
+        // The ⋮ menu of 0.15.3 (658 CSS px) on a 1920x1080 display at 175 %: 1152 px of
+        // content, 996 px of work area. It used to be cut off (Settings, About and Exit
+        // unreachable).
+        let work = work_of(1920, 1080, 1.75);
+        assert_eq!(work.height, 996);
+        let css = PopupRect { x: 660.0, y: 72.0, width: 280.0, height: 670.0 };
+        let p = place_popup(css, 658.0, PopupAnchor::Drop, 1.75, (26, 14), work);
+        assert_eq!(p.rect, Rect { x: 26 + 1155, y: 0, width: 490, height: 996 });
+        assert!(p.scrolls);
+        // The same content made compact by the popup (545 CSS px) fits without scrolling.
+        let p = place_popup(css, 545.0, PopupAnchor::Drop, 1.75, (26, 14), work);
+        assert_eq!((p.rect.y + p.rect.height, p.rect.height, p.scrolls), (996, 954, false));
+    }
+
+    #[test]
+    fn a_list_stays_under_its_control_and_scrolls() {
+        // A bookmark folder with 40 entries (1214 CSS px) under the bar of a maximized
+        // window, 1920x1080 at 100 %: the host asked for the room below (928 px).
+        let work = work_of(1920, 1080, 1.0);
+        let css = PopupRect { x: 8.0, y: 104.0, width: 360.0, height: 920.0 };
+        let p = place_popup(css, 1214.0, PopupAnchor::Keep, 1.0, (0, 0), work);
+        assert_eq!(p.rect, Rect { x: 8, y: 104, width: 360, height: 928 }, "never over the bar it hangs from");
+        assert!(p.scrolls);
+        // Exactly what 0.15.3 did: the asked rectangle clamped, then the content's height up
+        // to the work area's bottom.
+        for (css, h, scale) in [
+            (PopupRect { x: 147.0, y: 70.0, width: 644.0, height: 274.0 }, 198.0, 1.0),
+            (PopupRect { x: 8.0, y: 104.0, width: 360.0, height: 134.0 }, 134.0, 1.75),
+            (PopupRect { x: 500.0, y: 600.0, width: 380.0, height: 500.0 }, 700.0, 1.25),
+        ] {
+            let work = work_of(1920, 1080, scale);
+            let old = popup_screen_rect(css, scale, (10, 10), work);
+            let old_h = ((h * scale).round() as i32).min(work.y + work.height - old.y);
+            let p = place_popup(css, h, PopupAnchor::Keep, scale, (10, 10), work);
+            assert_eq!(p.rect, Rect { height: old_h, ..old }, "{css:?} at {scale}");
+        }
+    }
+
+    #[test]
+    fn the_room_a_popup_has_at_its_anchor() {
+        // The ⋮ menu of a maximized window, 1920x1080: under the toolbar at 72 CSS px.
+        let css = PopupRect { x: 990.0, y: 72.0, width: 280.0, height: 670.0 };
+        let room = |scale: f64, anchor| popup_room(css, anchor, scale, (0, 0), work_of(1920, 1080, scale));
+        assert_eq!(room(1.0, PopupAnchor::Drop), 960.0);
+        assert_eq!(room(1.5, PopupAnchor::Drop), 600.0, "less than the menu's 658: it becomes compact and stays put");
+        assert!((room(1.75, PopupAnchor::Drop) - 497.14).abs() < 0.01);
+        assert_eq!(room(1.5, PopupAnchor::Keep), 0.0);
+        // A context menu low on the screen has the room above the click.
+        let low = PopupRect { x: 300.0, y: 560.0, width: 240.0, height: 352.0 };
+        assert_eq!(popup_room(low, PopupAnchor::Point, 1.5, (0, 0), work_of(1920, 1080, 1.5)), 560.0);
+        assert_eq!(popup_room(low, PopupAnchor::Drop, 1.5, (0, 0), work_of(1920, 1080, 1.5)), 112.0);
+    }
+
+    #[test]
+    fn placement_never_leaves_the_work_area() {
+        let works = [
+            Rect { x: 0, y: 0, width: 1280, height: 752 },
+            Rect { x: -2560, y: -300, width: 2560, height: 1392 },
+            Rect { x: 1920, y: 0, width: 3840, height: 2040 },
+            Rect { x: 0, y: 0, width: 300, height: 200 },
+        ];
+        for work in works {
+            for scale in [1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0] {
+                for anchor in [PopupAnchor::Drop, PopupAnchor::Point, PopupAnchor::Keep] {
+                    for (x, y) in [(-500.0, -500.0), (0.0, 0.0), (600.0, 90.0), (4000.0, 4000.0)] {
+                        for h in [1.0, 40.0, 287.0, 658.0, 4096.0, f64::NAN] {
+                            let css = PopupRect { x, y, width: 280.0, height: 100.0 };
+                            let p = place_popup(css, h, anchor, scale, (work.x + 50, work.y + 20), work);
+                            let r = p.rect;
+                            assert!(r.width >= 1 && r.height >= 1, "{r:?}");
+                            assert!(r.x >= work.x && r.x + r.width <= work.x + work.width, "{r:?} in {work:?}");
+                            assert!(r.y >= work.y && r.y + r.height <= work.y + work.height, "{r:?} in {work:?}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_new_window_has_the_same_dip_size_at_every_scale() {
+        // Windows' cascade put it at 100,100 (and at 44,44 times the scale on the VM).
+        let chosen = Rect { x: 100, y: 100, width: 1280, height: 860 };
+        // 100 % on a display with room: exactly what 0.15.3 made.
+        assert_eq!(default_window(chosen, 1.0, work_of(1920, 1080, 1.0)), chosen);
+        // 3840 x 2160 at 200 % and 250 %: 0.15.3 opened 1280 x 860 px there (640 x 430 and
+        // 512 x 344 DIP).
+        assert_eq!(
+            default_window(chosen, 2.0, work_of(3840, 2160, 2.0)),
+            Rect { x: 100, y: 100, width: 2560, height: 1720 }
+        );
+        let r = default_window(chosen, 2.5, work_of(3840, 2160, 2.5));
+        assert_eq!((r.width, r.height), (3200, 2040), "860 DIP is 2150 px: limited to the work area");
+        assert_eq!((r.x, r.y), (100, 0));
+        // 1920 x 1080 at 175 %: 2240 x 1505 px wanted, the work area is 1920 x 996.
+        let r = default_window(Rect { x: 220, y: 220, ..chosen }, 1.75, work_of(1920, 1080, 1.75));
+        assert_eq!(r, Rect { x: 0, y: 0, width: 1920, height: 996 });
+        // The VM's 1280 x 800 at 100 %: no longer hanging under the taskbar.
+        let r = default_window(Rect { x: 0, y: 0, ..chosen }, 1.0, work_of(1280, 800, 1.0));
+        assert_eq!(r, Rect { x: 0, y: 0, width: 1280, height: 752 });
+    }
+
+    #[test]
+    fn a_saved_window_keeps_its_dip_size_when_the_scale_changed() {
+        let m = |w: i32, h: i32, dpi: u32| Monitor { work: work_of(w, h, f64::from(dpi) / 96.0), dpi };
+        let saved = Rect { x: 8, y: 8, width: 960, height: 560 };
+        // Same scale, or a session from before 0.15.4: untouched.
+        assert_eq!(restore_window(saved, Some(96), &[m(1920, 1080, 96)]), saved);
+        assert_eq!(restore_window(saved, None, &[m(1920, 1080, 144)]), saved);
+        // Saved at 100 %, the display is at 150 % now: 1440 x 840, same place.
+        assert_eq!(
+            restore_window(saved, Some(96), &[m(1920, 1080, 144)]),
+            Rect { x: 8, y: 8, width: 1440, height: 840 }
+        );
+        // And back.
+        assert_eq!(
+            restore_window(Rect { x: 8, y: 8, width: 1440, height: 840 }, Some(144), &[m(1920, 1080, 96)]),
+            saved
+        );
+        // Grown past the work area: limited to it and moved inside.
+        let big = Rect { x: 300, y: 200, width: 1500, height: 800 };
+        assert_eq!(restore_window(big, Some(96), &[m(1920, 1080, 168)]), Rect { x: 0, y: 0, width: 1920, height: 996 });
+        // Two monitors: the scale of the one the window is on counts.
+        let two = [m(1920, 1080, 96), Monitor { work: Rect { x: 1920, y: 0, width: 3840, height: 2040 }, dpi: 240 }];
+        let on_right = Rect { x: 2000, y: 100, width: 1000, height: 700 };
+        assert_eq!(restore_window(on_right, Some(192), &two), Rect { x: 2000, y: 100, width: 1250, height: 875 });
+        assert_eq!(restore_window(saved, Some(96), &two), saved);
+        // A monitor that is gone: onto the first one, as before.
+        let gone = Rect { x: 6000, y: 100, width: 1000, height: 700 };
+        let r = restore_window(gone, Some(96), &[m(1920, 1080, 96)]);
+        assert!(r.x + r.width <= 1920 && r.x >= 0, "{r:?}");
+        // No monitors reported: nothing to go by.
+        assert_eq!(restore_window(saved, Some(96), &[]), saved);
+        // A larger-than-screen window saved at the same scale only shrinks.
+        let huge = Rect { x: -8, y: -8, width: 4000, height: 3000 };
+        assert_eq!(
+            restore_window(huge, Some(96), &[m(1920, 1080, 96)]),
+            Rect { x: 0, y: 0, width: 1920, height: 1032 }
+        );
     }
 
     #[test]

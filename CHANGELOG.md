@@ -3,6 +3,39 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.15.4 — 2026-11-12
+
+Display scaling. Krunk at 125 % and more (and with the scale changed while it runs) had layout
+faults that 100 % never showed; what was wrong and how it is checked now is in `docs/DPI.md`.
+
+- **Fixed: changing the display scale while Krunk is maximized broke the layout.** After a
+  change of "Scale" in Windows' display settings, or when the maximized window ended up on a
+  monitor with another scale (a laptop and its dock), the tab strip and the toolbar kept their
+  old height: at a larger scale the bookmarks bar was cut off, at a smaller one a blank band
+  stayed under it, until the window was resized. Krunk now lays a window out again whenever
+  its scale changes, tells the pages, and closes menus that were sized for the old scale.
+- **Fixed: the ⋮ menu was cut off on smaller screens.** On a 1920×1080 display at 150 % or
+  175 %, and on smaller displays at 125 %, the menu was higher than the screen: it jumped to
+  the top, over the tab strip, and Settings, About Krunk and Exit were below the edge and could
+  not be reached. A menu that is higher than the screen now gets more compact rows, and scrolls
+  if that is still not enough. This holds for every menu and prompt of Krunk.
+- **Context menus open upwards** (tab, bookmark and title-bar menus) when there is no room
+  below the click, instead of covering it.
+- **Fixed: new windows were tiny at 200 % and more.** A window without a saved size was
+  1280 × 860 physical pixels: a quarter of the intended area at 200 %, close to the minimum
+  size at 250 %. It is now the same size at every scale and never larger than the screen
+  (on small displays its lower edge used to sit under the taskbar).
+- **The window keeps its size when the scale changes between two starts**, and comes back
+  inside the screen if it no longer fits.
+- **The window's size and place are remembered in every start-up mode.** With "Open a new tab"
+  or "Open the homepage" Krunk started in the default size every time; only "Continue where
+  you left off" kept it.
+- **Fixed: in a very narrow window the ⋮ button was pushed out of the toolbar.** The address
+  field now shrinks first; if there is still no room, extension icons, the zoom indicator and
+  bookmark star, and then the downloads, VPN and AI buttons step aside. Back, Forward, Reload,
+  the shield and ⋮ always stay.
+- Sharper taskbar and Alt+Tab icons on a monitor whose scale differs from the main one.
+
 ## 0.15.3 — 2026-11-11
 
 - **Right-click a link** for **Open link in new tab**, **Open link in new window**, **Open link in

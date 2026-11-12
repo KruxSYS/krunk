@@ -34,6 +34,23 @@ impl Browser {
         let guard = self.popup_slot(self.request_slot()).borrow();
         let Some(p) = guard.as_ref().filter(|p| p.window.is_visible() && p.pending.is_none()) else { return };
         let r = p.window.rect();
+        // From its anchor again (0.15.4): content that grew past the room below moves up
+        // instead of being cut off at the work area's edge.
+        if let Some(placed) = p.placed {
+            let to = placed.rect_for(height_css);
+            if (to.x, to.y, to.width, to.height) == (r.x, r.y, r.width, r.height) {
+                return;
+            }
+            if (to.x, to.y, to.width) == (r.x, r.y, r.width) {
+                p.window.resize_height(to.height);
+            } else {
+                p.window.move_to(to);
+            }
+            if let Some(c) = &p.view {
+                c.set_bounds(0, 0, to.width, to.height);
+            }
+            return;
+        }
         let work = crate::ffi::window::Window::work_area_at(r.x, r.y);
         let max = (work.y + work.height - r.y).max(40);
         let h = ((height_css.clamp(40.0, 4096.0) * scale).round() as i32).min(max);

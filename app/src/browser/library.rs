@@ -446,8 +446,8 @@ impl Browser {
         let Some(main) = self.window() else { return 600.0 };
         let scale = main.scale().max(0.5);
         let origin = main.client_to_screen(0, 0);
-        let bottom = origin.1 + ((anchor.y + anchor.height + 2.0) * scale) as i32;
-        let work = crate::ffi::window::Window::work_area_at(origin.0 + (anchor.x * scale) as i32, bottom);
+        let bottom = origin.1 + ((anchor.y + anchor.height + 2.0) * scale).round() as i32;
+        let work = crate::ffi::window::Window::work_area_at(origin.0 + (anchor.x * scale).floor() as i32, bottom);
         f64::from((work.y + work.height - bottom).max(0)) / scale - 8.0
     }
 
