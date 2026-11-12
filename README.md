@@ -1875,6 +1875,9 @@ Testing on Windows:
   BSD-2) through the `openvpn-connect` crates (MPL-2.0), vendored unchanged apart from the patches
   listed in `vendor/README.md`; `boringtun` (BSD-3-Clause) and `smoltcp` (0BSD). Their notices
   are in `vpn/THIRD-PARTY-NOTICES.txt`, appended to `THIRD-PARTY-NOTICES.txt` in the download.
+- **Krunk for Android:** its components and their licences (GeckoView, uBlock Origin and the
+  filter lists inside it, the Android libraries) are in `android/THIRD-PARTY-NOTICES.md` and in
+  the app under Settings › About. The uBlock Origin release is named in `android/ubo.lock` only.
 - **No third-party editor or Markdown library (0.12.0).** The code editor of `krunk://scripts`
   (`ui/shared/editor.js`, `jstok.js`), the agent panel's Markdown renderer
   (`ui/shell/markdown.js`) and the SSE parser are Krunk's own code. Nothing new is bundled.
