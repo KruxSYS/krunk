@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs VM scripts and collects shots: run.sh OUTDIR name|script|sed-expr ...
-cd /work/projects/browser/src
+cd "$(dirname "$0")/.."
 out=$1; shift
 for spec in "$@"; do
   IFS='|' read -r name script sub <<< "$spec"

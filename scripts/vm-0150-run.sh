@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 phase=$1; extra=${2:-}
-out=/work/projects/browser/.pipeline/evidence-0.15.0/vm
+out=$(cd .. && pwd)/.pipeline/evidence-0.15.0/vm
 mkdir -p "$out"
 scripts/vm.sh put scripts/vm-0150.ps1 C:/pipeline/krunk/vm-0150.ps1
 w=$(mktemp --suffix=.ps1)

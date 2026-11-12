@@ -5,7 +5,7 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 src=$here/../../..
 COMMIT=1386415be8fef2f6b6bbdbe1828872471c5d802a
-work=${SPEEDOMETER_DIR:-/work/projects/browser/analysis/speedometer-3.1}
+work=${SPEEDOMETER_DIR:-$(cd "$(dirname "$0")/../../../.." && pwd)/analysis/speedometer-3.1}
 if [ ! -d "$work/.git" ]; then
   git clone -q --depth 1 -b release/3.1 https://github.com/WebKit/Speedometer.git "$work"
 fi
