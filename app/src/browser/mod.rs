@@ -945,7 +945,7 @@ impl Browser {
         let ops = {
             let mut ws = self.ws.borrow_mut();
             let restored = match (startup, &saved) {
-                (Startup::RestoreSession, Some(session)) => ws.restore(session, now, &fit),
+                (Startup::RestoreSession, Some(session)) => ws.restore(session, now, fit),
                 _ => Vec::new(),
             };
             // Without restored tabs the window still opens where the last one was (0.15.4):
