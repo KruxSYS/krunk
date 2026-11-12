@@ -64,6 +64,19 @@ Known limits: custom filter lists and protection levels come later; a file you g
 copied inside Krunk's storage for the upload (removed when the tab closes); whole folders cannot
 be uploaded; moving tabs in the switcher is not there yet. Each APK is about 7 MB larger.
 
+Known issues:
+
+- **Address bar empty although a page is shown** (seen once in testing, not seen again in eleven
+  further tries; to be looked at for 0.2.1). What was done: Settings › Privacy › "Block ads and
+  trackers" switched off, back to the browser, and about four seconds later a link opened from
+  another app. The page loaded, unfiltered as set, but the address bar showed "Search … or enter
+  address" and no shield instead of the site. Nothing wrong was shown; the site's name was
+  missing.
+- **"Open once" lasts a little longer than the tab.** When you open a blocked address once, the
+  blocker remembers that for up to about two minutes, in memory only. This also holds for a
+  private tab: for that time after the tab is closed the same address opens in a normal tab too.
+  Nothing is stored, Settings lists nothing, and a restart ends it at once.
+
 ## 0.1.1 — 2026-11-11
 
 A fix release after a full review of the 0.1.0 code, with one changed default. It installs over
