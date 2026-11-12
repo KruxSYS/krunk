@@ -1,6 +1,7 @@
 package org.krunk.browser.ui.browser
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
@@ -18,6 +19,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -29,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -46,6 +49,7 @@ import org.krunk.browser.R
 import org.krunk.browser.engine.blocker.AllowList
 import org.krunk.browser.tabs.TabUi
 import org.krunk.browser.ui.BrowserViewModel
+import org.krunk.browser.ui.theme.LocalKrunkStyle
 import org.krunk.ffi.NavItem
 import org.krunk.ffi.allowEntryFor
 import org.krunk.ffi.navMenu
@@ -98,9 +102,13 @@ fun BrowserToolbar(
         startedUnprotected = vm.engine.blocker.startedUnprotected,
     )
 
+    // The theme's toolbar: a plain surface, a gradient or the tinted glass, with its own colour
+    // for text and icons (the address field inside brings its own, see AddressPill).
+    val style = LocalKrunkStyle.current
     Surface(
-        modifier = modifier.fillMaxWidth().height(ToolbarHeight),
-        color = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = modifier.fillMaxWidth().height(ToolbarHeight).background(style.toolbar),
+        color = Color.Transparent,
+        contentColor = style.toolbarText,
     ) {
         Row(
             Modifier.padding(horizontal = ToolbarLayout.ROW_PADDING_DP.dp),
@@ -197,7 +205,7 @@ fun BrowserToolbar(
 @Composable
 private fun TabCounter(count: Int, onClick: () -> Unit, onLongClick: () -> Unit) {
     val label = stringResource(R.string.toolbar_tabs, count)
-    val color = MaterialTheme.colorScheme.onSurface
+    val color = LocalContentColor.current
     Box(
         Modifier
             .size(ToolbarLayout.BUTTON_DP.dp)

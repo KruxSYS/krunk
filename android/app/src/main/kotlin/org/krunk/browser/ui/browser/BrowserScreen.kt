@@ -70,6 +70,7 @@ import org.krunk.browser.ui.Screen
 import org.krunk.browser.ui.newtab.NewTabScreen
 import org.krunk.browser.ui.tabs.RestoreTabsPrompt
 import org.krunk.browser.ui.theme.LocalKrunkDark
+import org.krunk.browser.ui.theme.LocalKrunkStyle
 import org.krunk.ffi.ToolbarPosition
 
 /**
@@ -103,7 +104,10 @@ fun BrowserScreen(vm: BrowserViewModel) {
     var download by remember { mutableStateOf<PendingDownload?>(null) }
     var external by remember { mutableStateOf<ExternalLink?>(null) }
 
-    SystemBarsEffect(fullScreen = fullScreen, darkTheme = dark)
+    // With the toolbar at the top the strip behind the status bar is filled like the toolbar: a
+    // dark gradient there needs light status icons even in the light theme.
+    val style = LocalKrunkStyle.current
+    SystemBarsEffect(fullScreen = fullScreen, darkTheme = dark, darkStatusBar = if (top) style.stripDark else dark)
 
     // Back, in order: find bar, address editing, full screen, page history; else the activity.
     BackHandler(enabled = findActive) { vm.closeFind() }
@@ -202,7 +206,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
                 Modifier
                     .fillMaxWidth()
                     .windowInsetsTopHeight(WindowInsets.safeDrawing)
-                    .background(MaterialTheme.colorScheme.surfaceContainer),
+                    .background(style.toolbar),
             )
         }
         // Everything stays inside the safe area: the page is moved down by the visible toolbar and
@@ -344,7 +348,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
                         // Its own background: without one the page (or the toolbar) shows around the field.
                         Modifier
                             .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surfaceContainer)
+                            .background(style.toolbar)
                             .height(ToolbarHeight)
                             .padding(horizontal = 8.dp),
                         contentAlignment = Alignment.Center,

@@ -30,7 +30,11 @@ fun KrunkRoot(vm: BrowserViewModel) {
     // Private pages stay out of the Recents thumbnail, screenshots and screen recordings.
     SecureWindowEffect(activeTab?.private == true || (screen == Screen.TabSwitcher && hasPrivateTabs))
 
-    KrunkTheme(mode = settings.theme, privateMode = activeTab?.private == true && screen == Screen.Browser) {
+    KrunkTheme(
+        mode = settings.theme,
+        privateMode = activeTab?.private == true && screen == Screen.Browser,
+        appearance = settings.appearance,
+    ) {
         Surface(Modifier.fillMaxSize()) {
             BackHandler(enabled = screens.size > 1) { vm.pop() }
             // The browser screen sets the system bar icons for its own (possibly private) theme;

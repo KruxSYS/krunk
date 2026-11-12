@@ -37,6 +37,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -74,7 +75,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.krunk.browser.R
 import org.krunk.browser.tabs.TabUi
 import org.krunk.browser.ui.BrowserViewModel
+import org.krunk.browser.ui.theme.CardMark
 import org.krunk.browser.ui.theme.KrunkTheme
+import org.krunk.browser.ui.theme.LocalKrunkStyle
+import org.krunk.browser.ui.theme.ThemeStyles
 import org.krunk.ffi.hostOf
 
 /** Grid columns for the switcher: phones two, sw600dp tablets three, wide tablets four. */
@@ -322,7 +326,10 @@ private fun TabCard(
     var menu by remember { mutableStateOf(false) }
     val actions = tabCardActions(tab.private, canCloseOthers, onDuplicate, onCloseOthers, onClose)
     val menuLabel = stringResource(R.string.tabs_menu_open)
-    val shape = CardDefaults.shape
+    val style = LocalKrunkStyle.current
+    val shape = style.cardShape
+    // How the theme's style marks the active tab's card (fill, underline, outline or the title).
+    val mark = ThemeStyles.cardMark(style.highlight, active)
     val dismissState = rememberSwipeToDismissBoxState()
     SwipeToDismissBox(
         state = dismissState,
@@ -346,12 +353,20 @@ private fun TabCard(
                     customActions = actions.forAccessibility()
                 },
             shape = shape,
-            border = if (active) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
+            border = if (mark == CardMark.OUTLINE) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
         ) {
             Column(Modifier.fillMaxSize()) {
+                val titleColor = when (mark) {
+                    CardMark.FILL -> style.onAccent
+                    CardMark.TITLE, CardMark.UNDERLINE -> MaterialTheme.colorScheme.primary
+                    else -> LocalContentColor.current
+                }
                 Row(
-                    Modifier.fillMaxWidth().padding(start = 10.dp, top = 2.dp, bottom = 2.dp),
+                    Modifier
+                        .fillMaxWidth()
+                        .then(if (mark == CardMark.FILL) Modifier.background(style.accent) else Modifier)
+                        .padding(start = 10.dp, top = 2.dp, bottom = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Favicon(tab, 16.dp)
@@ -361,19 +376,33 @@ private fun TabCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.labelLarge,
+                        color = titleColor,
                         modifier = Modifier.weight(1f),
                     )
                     if (tab.asleep) {
                         Icon(
                             Icons.Filled.Bedtime,
                             contentDescription = stringResource(R.string.tabs_asleep),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            tint = if (mark ==
+                                CardMark.FILL
+                            ) {
+                                style.onAccent
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
                             modifier = Modifier.size(14.dp),
                         )
                     }
                     IconButton(onClick = onClose) {
-                        Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.tabs_close_tab, title))
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = stringResource(R.string.tabs_close_tab, title),
+                            tint = if (mark == CardMark.FILL) style.onAccent else LocalContentColor.current,
+                        )
                     }
+                }
+                if (mark == CardMark.UNDERLINE) {
+                    Box(Modifier.fillMaxWidth().height(3.dp).background(MaterialTheme.colorScheme.primary))
                 }
                 Box(
                     Modifier

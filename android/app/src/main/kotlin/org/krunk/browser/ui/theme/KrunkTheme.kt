@@ -1,15 +1,28 @@
 package org.krunk.browser.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.unit.dp
+import org.krunk.ffi.ResolvedTheme
+import org.krunk.ffi.ThemeAppearance
+import org.krunk.ffi.ThemeHighlight
 import org.krunk.ffi.ThemeMode
+import org.krunk.ffi.ToolbarFill
+import org.krunk.ffi.defaultSettings
+import org.krunk.ffi.resolveTheme
 
 /** Krunk's palette (ui/shared/common.css). Material dynamic colour is off on purpose. */
 object KrunkColors {
@@ -41,67 +54,88 @@ object KrunkColors {
     val brandPink = Color(0xFFC2185B)
 }
 
-private val LightScheme: ColorScheme = lightColorScheme(
-    primary = KrunkColors.accentLight,
-    onPrimary = KrunkColors.accentFgLight,
-    primaryContainer = Color(0xFFDBEAFE),
-    onPrimaryContainer = Color(0xFF1E3A8A),
-    secondary = KrunkColors.fgMutedLight,
-    onSecondary = Color.White,
-    background = KrunkColors.bgLight,
-    onBackground = KrunkColors.fgLight,
-    surface = KrunkColors.bgLight,
-    onSurface = KrunkColors.fgLight,
-    surfaceVariant = KrunkColors.bgHoverLight,
-    onSurfaceVariant = KrunkColors.fgMutedLight,
-    surfaceContainer = KrunkColors.bgRaisedLight,
-    surfaceContainerHigh = KrunkColors.bgHoverLight,
-    surfaceContainerHighest = KrunkColors.borderLight,
-    surfaceContainerLow = KrunkColors.bgRaisedLight,
-    surfaceContainerLowest = Color.White,
-    outline = KrunkColors.borderLight,
-    outlineVariant = KrunkColors.bgHoverLight,
-    error = KrunkColors.danger,
-    onError = Color.White,
+/** The Material colours of a resolved theme (`ffi/src/theme.rs` checks their contrast). */
+fun colorSchemeOf(t: ResolvedTheme): ColorScheme {
+    fun c(hex: String) = Color(ThemeStyles.argb(hex))
+    val base = if (t.dark) darkColorScheme() else lightColorScheme()
+    return base.copy(
+        primary = c(t.primary),
+        onPrimary = c(t.onPrimary),
+        primaryContainer = c(t.primaryContainer),
+        onPrimaryContainer = c(t.onPrimaryContainer),
+        secondary = c(t.textMuted),
+        onSecondary = c(t.background),
+        background = c(t.background),
+        onBackground = c(t.text),
+        surface = c(t.background),
+        onSurface = c(t.text),
+        surfaceVariant = c(t.surfaceHover),
+        onSurfaceVariant = c(t.textMuted),
+        surfaceContainer = c(t.surfaceRaised),
+        surfaceContainerHigh = c(t.surfaceHover),
+        surfaceContainerHighest = c(t.border),
+        surfaceContainerLow = c(t.surfaceRaised),
+        surfaceContainerLowest = c(t.surfaceLowest),
+        outline = c(t.border),
+        outlineVariant = c(t.surfaceHover),
+        error = c(t.error),
+        onError = c(t.onError),
+    )
+}
+
+/**
+ * What a theme adds to the Material colours: the toolbar's fill and the colours on it, the
+ * address field, the accent as chosen (for fills), and the style's shapes.
+ */
+@Immutable
+data class KrunkStyle(
+    /** The toolbar's fill, also drawn behind the status bar when the toolbar is at the top. */
+    val toolbar: Brush,
+    /** Text and icons on the toolbar. */
+    val toolbarText: Color,
+    /** The toolbar is not the plain surface (a gradient or the tinted glass). */
+    val toolbarStyled: Boolean,
+    /** The strip behind the status bar, filled like the toolbar, is dark: light status icons. */
+    val stripDark: Boolean,
+    val pill: Color,
+    val pillText: Color,
+    /** The lock of a secure page, readable on the address field. */
+    val secure: Color,
+    /** The accent for filled areas and what is drawn on it. */
+    val accent: Color,
+    val onAccent: Color,
+    val pillShape: Shape,
+    val cardShape: Shape,
+    val highlight: ThemeHighlight,
 )
 
-private val DarkScheme: ColorScheme = darkColorScheme(
-    primary = KrunkColors.accentDark,
-    onPrimary = KrunkColors.accentFgDark,
-    primaryContainer = Color(0xFF1E3A8A),
-    onPrimaryContainer = Color(0xFFDBEAFE),
-    secondary = KrunkColors.fgMutedDark,
-    onSecondary = KrunkColors.bgDark,
-    background = KrunkColors.bgDark,
-    onBackground = KrunkColors.fgDark,
-    surface = KrunkColors.bgDark,
-    onSurface = KrunkColors.fgDark,
-    surfaceVariant = KrunkColors.bgHoverDark,
-    onSurfaceVariant = KrunkColors.fgMutedDark,
-    surfaceContainer = KrunkColors.bgRaisedDark,
-    surfaceContainerHigh = KrunkColors.bgHoverDark,
-    surfaceContainerHighest = KrunkColors.borderDark,
-    surfaceContainerLow = KrunkColors.bgRaisedDark,
-    surfaceContainerLowest = Color(0xFF17181B),
-    outline = KrunkColors.borderDark,
-    outlineVariant = KrunkColors.bgHoverDark,
-    error = Color(0xFFF87171),
-    onError = Color(0xFF450A0A),
-)
+fun styleOf(t: ResolvedTheme): KrunkStyle {
+    fun c(hex: String) = Color(ThemeStyles.argb(hex))
+    val fill = ThemeStyles.leftToRight(t.toolbarColors, t.toolbarAngle.toInt()).map { Color(it) }
+    return KrunkStyle(
+        toolbar = if (fill.size >
+            1
+        ) {
+            Brush.horizontalGradient(fill)
+        } else {
+            SolidColor(fill.firstOrNull() ?: c(t.surfaceRaised))
+        },
+        toolbarText = c(t.toolbarText),
+        toolbarStyled = t.toolbarFill != ToolbarFill.SOLID,
+        stripDark = t.statusStripDark,
+        pill = c(t.pill),
+        pillText = c(t.pillText),
+        secure = c(t.secure),
+        accent = c(t.accent),
+        onAccent = c(t.onAccent),
+        pillShape = RoundedCornerShape(ThemeStyles.pillCornerDp(t.shape).dp),
+        cardShape = RoundedCornerShape(ThemeStyles.cardCornerDp(t.shape).dp),
+        highlight = t.highlight,
+    )
+}
 
-/** Private tabs: the same dark scheme tinted with Krunk's private purple. */
-private val PrivateScheme: ColorScheme = DarkScheme.copy(
-    primary = Color(0xFFC4B5FD),
-    onPrimary = Color(0xFF2E1065),
-    primaryContainer = KrunkColors.privateAccent,
-    onPrimaryContainer = Color(0xFFEDE9FE),
-    background = Color(0xFF1B1526),
-    surface = Color(0xFF1B1526),
-    surfaceContainer = Color(0xFF2A2140),
-    surfaceContainerLow = Color(0xFF2A2140),
-    surfaceContainerHigh = KrunkColors.privateBgDark,
-    surfaceVariant = KrunkColors.privateBgDark,
-)
+/** The style of the theme in effect (see [KrunkTheme]). */
+val LocalKrunkStyle = staticCompositionLocalOf<KrunkStyle> { error("KrunkTheme is missing") }
 
 /** Whether the current theme is dark (for icons that are not Material colours). */
 val LocalKrunkDark = staticCompositionLocalOf { false }
@@ -114,15 +148,29 @@ fun isDarkTheme(mode: ThemeMode): Boolean = when (mode) {
     ThemeMode.DARK -> true
 }
 
+/**
+ * Krunk's theme: light or dark by [mode], the fixed private look for a private tab, and the
+ * user's style and accent from the shared appearance settings ([appearance]; null draws Krunk's
+ * own look, for previews).
+ */
 @Composable
-fun KrunkTheme(mode: ThemeMode = ThemeMode.SYSTEM, privateMode: Boolean = false, content: @Composable () -> Unit) {
+fun KrunkTheme(
+    mode: ThemeMode = ThemeMode.SYSTEM,
+    privateMode: Boolean = false,
+    appearance: ThemeAppearance? = null,
+    content: @Composable () -> Unit,
+) {
     val dark = isDarkTheme(mode)
-    val scheme = when {
-        privateMode -> PrivateScheme
-        dark -> DarkScheme
-        else -> LightScheme
+    val theme = remember(appearance, dark, privateMode) {
+        resolveTheme(appearance ?: defaultSettings().appearance, dark, privateMode)
     }
-    CompositionLocalProvider(LocalKrunkDark provides (dark || privateMode), LocalKrunkPrivate provides privateMode) {
+    val scheme = remember(theme) { colorSchemeOf(theme) }
+    val style = remember(theme) { styleOf(theme) }
+    CompositionLocalProvider(
+        LocalKrunkDark provides theme.dark,
+        LocalKrunkPrivate provides privateMode,
+        LocalKrunkStyle provides style,
+    ) {
         MaterialTheme(colorScheme = scheme, content = content)
     }
 }

@@ -34,11 +34,13 @@ import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -69,6 +71,7 @@ import org.krunk.browser.R
 import org.krunk.browser.tabs.TabUi
 import org.krunk.browser.ui.BrowserViewModel
 import org.krunk.browser.ui.theme.KrunkColors
+import org.krunk.browser.ui.theme.LocalKrunkStyle
 import org.krunk.ffi.AddressSuggestion
 import org.krunk.ffi.SuggestionKind
 
@@ -76,7 +79,6 @@ val AddressPillHeight = 40.dp
 
 /** The pill's layout box: the shield and reload/stop inside it get full 48 dp touch targets. */
 val AddressPillTouchHeight = 48.dp
-private val PillShape = RoundedCornerShape(20.dp)
 
 /**
  * The address as a pill: [leading] (the blocker's shield), private mask, lock / "not secure"
@@ -110,6 +112,7 @@ fun AddressPill(
     )
     val text = if (tab == null || tab.isNewTab) "" else pillText(tab.displayUrl)
     val editLabel = stringResource(R.string.address_edit)
+    val style = LocalKrunkStyle.current
     Box(modifier.height(AddressPillTouchHeight), contentAlignment = Alignment.Center) {
         // The pill itself: what is drawn, and what a tap on the address hits. The row above it
         // only takes the taps on its two buttons.
@@ -117,15 +120,37 @@ fun AddressPill(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(AddressPillHeight)
-                .clip(PillShape)
+                .clip(style.pillShape)
                 .clickable(onClick = onClick)
                 .semantics {
                     role = Role.Button
                     contentDescription = editLabel
                 },
-            shape = PillShape,
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            shape = style.pillShape,
+            color = style.pill,
         ) {}
+        // What lies on the field is drawn in the field's colours, not in the toolbar's (a
+        // gradient toolbar has white icons; the field under them is light).
+        CompositionLocalProvider(LocalContentColor provides style.pillText) {
+            PillContent(tab, text, placeholder, indicator, compact, hasLeading, leading, trailing)
+        }
+    }
+}
+
+/** The row on the address field: shield, lock or site icon, the site's name, reload or stop. */
+@Composable
+private fun PillContent(
+    tab: TabUi?,
+    text: String,
+    placeholder: String,
+    indicator: SecurityIndicator,
+    compact: Boolean,
+    hasLeading: Boolean,
+    leading: @Composable () -> Unit,
+    trailing: @Composable () -> Unit,
+) {
+    val style = LocalKrunkStyle.current
+    run {
         Row(
             Modifier.fillMaxWidth().padding(start = if (hasLeading) 0.dp else 12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -145,7 +170,7 @@ fun AddressPill(
                     Icons.Filled.Lock,
                     contentDescription = stringResource(R.string.address_secure),
                     modifier = Modifier.size(16.dp),
-                    tint = KrunkColors.secure,
+                    tint = style.secure,
                 )
 
                 // On a phone the words "Not secure" would take the room the site's name needs
@@ -184,11 +209,7 @@ fun AddressPill(
                 style = MaterialTheme.typography.bodyLarge.copy(
                     textDirection = if (text.isEmpty()) TextDirection.Content else TextDirection.Ltr,
                 ),
-                color = if (text.isEmpty()) {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                } else {
-                    MaterialTheme.colorScheme.onSurface
-                },
+                color = if (text.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else style.pillText,
                 maxLines = 1,
                 overflow = if (text.isEmpty()) TextOverflow.Ellipsis else TextOverflow.StartEllipsis,
             )
@@ -239,8 +260,9 @@ fun AddressEditor(vm: BrowserViewModel, placeholder: String, modifier: Modifier 
     }
     Surface(
         modifier = modifier.height(AddressPillHeight),
-        shape = PillShape,
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = LocalKrunkStyle.current.pillShape,
+        color = LocalKrunkStyle.current.pill,
+        contentColor = LocalKrunkStyle.current.pillText,
     ) {
         Row(Modifier.padding(start = 14.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(
@@ -268,7 +290,7 @@ fun AddressEditor(vm: BrowserViewModel, placeholder: String, modifier: Modifier 
                     },
                     modifier = Modifier.fillMaxWidth().focusRequester(focus),
                     textStyle = LocalTextStyle.current.merge(MaterialTheme.typography.bodyLarge)
-                        .copy(color = MaterialTheme.colorScheme.onSurface),
+                        .copy(color = LocalKrunkStyle.current.pillText),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(
