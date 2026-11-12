@@ -143,6 +143,9 @@ setting.
   Page text, HTML and screenshots are sent only when the model asks for them.
 - **History, bookmarks, downloads and cookies** are sent only when the user's message asks for
   them in words and the user clicks Allow (once per conversation).
+- **The scratchpad (0.16.0)** is the model's own notes and plan. Like the rest of the
+  conversation it goes to that provider and nowhere else: the plan and the list of notes (name,
+  size, first line) with every request, a note's text when the model reads it back.
 
 **Never available to the agent.**
 - The password vault, generated passwords, payment cards, the recovery phrase, sync keys,
@@ -172,7 +175,19 @@ setting.
 - **Keys:** stored DPAPI-protected (current user, Krunk's own entropy) in the `ai_keys` table,
   unwrapped only for one request, never synced, exported, logged or sent to a view.
 - **Conversations:** in memory only.
-- **The log:** tool names, statuses and times only.
+- **The scratchpad (0.16.0):** in memory only, per conversation. It is held by the window's
+  session in the browser process and shown in that window's panel; its tools are answered inside
+  the session and never reach the code that touches pages, files or settings. Nothing of it is
+  written to the profile, the log or session restore. "New conversation" and the panel's Clear
+  empty it; it is gone when the window closes. Limits: 64 notes, 32 KiB per note, 256 KiB in
+  total, 100 plan items of 300 characters.
+  - Its text is model output and may repeat what a page said. In the requests it sits in a
+    marked block at the end of the system prompt, quoted line by line as data, and the prompt
+    says it is not instructions. The panel renders it as text, never as HTML.
+- **The log:** tool names, statuses and times only: never a note's or the plan's text.
+- **Crash dumps:** Krunk itself writes none (no crash reporter and no dump handler are set up).
+  Windows can keep its own crash data if error reporting or local dumps are configured, and
+  memory can reach the page file, as with any program.
 
 **Userscripts and macros run code the user (or the agent, when asked) wrote.**
 - Userscripts run in the page's main world, never on Krunk's own pages, and in private tabs only

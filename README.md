@@ -511,6 +511,12 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
     it held are released. The model indicator in the panel switches between the provider's
     models. "+" starts a new conversation. A conversation belongs to its window, is kept in
     memory only, and is gone when the window closes.
+  - **Scratchpad (0.16.0):** on longer tasks the agent keeps a plan (each item to do, doing, done
+    or dropped) and named notes with what it found on the way, so it doesn't lose them when the
+    conversation gets long. The notepad button in the panel's header shows them, updated while
+    it works; click a note to read it. **Clear** empties the scratchpad of this conversation at
+    once. It is kept in memory only: nothing of it is written to disk, and it is gone with a new
+    conversation or when the window closes.
   - **What it can do:** read the page (text, HTML, links, forms, media, screenshots), click,
     type, fill forms, choose options, press keys, scroll, wait, run JavaScript in the page, edit
     the page, change its title, open, switch and close tabs, go back, forward and reload, save a
@@ -794,8 +800,9 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
     and answers go in, actions come out;
   - `provider` and `sse`: OpenAI-style requests for OpenRouter, OpenAI and custom servers;
     Anthropic's Messages API; the streamed answers;
-  - `tools`: 41 tools with their JSON schemas and argument checks;
+  - `tools`: 48 tools with their JSON schemas and argument checks;
   - `context`: the context block and the system prompt;
+  - `scratch` (0.16.0): the scratchpad's notes and plan;
   - `redact`, `gate`, `settings_allow` and `pages`: the privacy rules below.
 - `app/src/browser/agent/` carries the actions out. Provider calls are engine URL requests from
   the browser process (`ffi/cef/fetch.rs`: POST, a streamed body, an idle timeout, cancel). They go
@@ -824,6 +831,29 @@ off. A cut-off text answer is continued once. `save_userscript` and `save_macro`
 in parts (`more: true`, then the returned `draft`), up to the 200 KB script limit; it is checked
 only when the last part arrives.
 
+**Scratchpad (0.16.0).** The agent's working memory for a long task: named notes and a plan.
+- **Tools:** `note_write` (replace or append), `note_read` (paged like `get_text`), `note_delete`,
+  `note_list`; `plan_set` (the whole list) and `plan_update` (one item by index or id; states
+  todo, doing, done, dropped). They are always offered and are answered inside the session
+  (`core::agent::scratch`): a step in the panel and a result for the model, but the host never
+  sees them.
+- **Limits:** 64 notes, 32 KiB per note, 256 KiB of notes in total, names of 1–64 characters out
+  of letters, digits, `-`, `_` and `.`; 100 plan items of at most 300 characters. An error names
+  the limit and never repeats the content.
+- **It survives the trimming.** Old tool results are shortened in the requests, so every request
+  carries the scratchpad as it is now, in a marked block at the end of the system prompt
+  (`<<<SCRATCHPAD … SCRATCHPAD>>>`; the one place all three provider formats share): the plan in
+  full and the notes' index (name, size, first line). The plan's texts and the first lines are
+  quoted on one line each, as data. A note's text comes back with `note_read`.
+- **Per conversation, in memory only.** It lives in the window's session next to the
+  conversation: "New conversation" and the panel's Clear empty it, and it goes with the window.
+  Nothing of it is written to the profile, `krunk.log` (step lines carry the tool's name and
+  status only; a core test drives every scratchpad tool with a marker and checks each log
+  line) or session restore.
+- **The panel's view** gets the whole scratchpad as an `agentScratch` event after every change and
+  renders it as text. Clear sends `agentScratchClear`; the agent sees an empty scratchpad in its
+  next request, also in the middle of a task.
+
 **The panel** is a CEF view per window on its own channel (`shell.krunk.invalid/agent.html`), docked
 right of the tab area. The frame paints and drags its splitter. Its width is a setting.
 
@@ -839,6 +869,7 @@ right of the tab area. The frame paints and drags its splitter. Its width is a s
 - **Userscripts:** list_userscripts, save_userscript, toggle_userscript.
 - **Macros:** list_macros, save_macro, run_macro.
 - **Talking to you:** ask_user, finish.
+- **Scratchpad (0.16.0):** note_write, note_read, note_delete, note_list, plan_set, plan_update.
 - **Asked for in words only:** get_history, get_bookmarks, get_downloads, get_cookies_for_site.
 
 **Privacy and redaction.**
@@ -863,8 +894,11 @@ right of the tab area. The frame paints and drags its splitter. Its width is a s
 - **History, bookmarks, downloads and cookies** are offered only when the user's message names
   them (an English keyword gate in `core::agent::gate`), and after Allow once per conversation.
   They are never in the context block.
-- **Memory and logs.** Conversations are in memory only. The log holds step and tool names,
-  statuses and times only, never content, addresses or keys.
+- **Memory and logs.** Conversations and the scratchpad (0.16.0) are in memory only. The log holds
+  step and tool names, statuses and times only, never content, addresses, keys, or a note's or
+  the plan's text. Krunk itself writes no crash dumps: it sets up no crash reporter and no dump
+  handler. (Windows can keep its own crash data if error reporting or local dumps are set up,
+  and memory can reach the page file, as with any program.)
 
 **API keys** are stored DPAPI-protected (current user, Krunk's own entropy) in the `ai_keys` table.
 - A key is unwrapped only for the request that needs it, then wiped.
@@ -876,7 +910,8 @@ right of the tab area. The frame paints and drags its splitter. Its width is a s
 - **Shell:** `toggleAgent`, `stopMacros`.
 - **Agent panel** (sender `Agent`): `agentSend`, `agentStop`, `agentNew`, `agentAnswer`,
   `agentConsent`, `agentContinue`, `agentSelectModel`, `agentModels`, `agentClose`,
-  `agentOpenScript`, `agentToggleScript`, `openUrl` (web addresses only).
+  `agentOpenScript`, `agentToggleScript`, `agentScratchClear` (0.16.0), `openUrl` (web addresses
+  only).
 - **Macro runner** (sender `Runner`): `macroCall`, `macroDone`.
 - **Settings page:** `aiProviderSave`, `aiProviderRemove`, `aiKeySet`, `aiKeyRemove`, `aiTest`,
   `aiModels`, `aiStatus`.
@@ -884,7 +919,8 @@ right of the tab area. The frame paints and drags its splitter. Its width is a s
   `scriptExport`, `scriptRunNow`, `scriptCheck`, `macroSave`, `macroDelete`, `macroToggle`,
   `macroRun`, `macroStop`, `hotkeyCheck`, `hotkeyRecord`.
 - **Events to the panel:** `agentConfig`, `agentState`, `agentDelta`, `agentMessage`, `agentStep`,
-  `agentAsk`, `agentConsentAsk`, `agentContinueAsk`, `agentScript`, `agentError`, `agentClear`.
+  `agentAsk`, `agentConsentAsk`, `agentContinueAsk`, `agentScript`, `agentError`, `agentClear`,
+  `agentScratch` (0.16.0).
 - **Events to the shell:** `agentButton`, `macroRunning`, `toast`.
 - **Events to the scripts page:** `scriptsChanged`, `hotkeyRecorded`, `macroState`.
 - Pages have no channel into the agent. The panel and runner documents are on the shell origin,
