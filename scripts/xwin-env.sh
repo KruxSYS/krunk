@@ -20,3 +20,8 @@ export XWIN_VERSION=17
 export XWIN_CRT_VERSION=14.44.17.14
 export XWIN_SDK_VERSION=10.0.26100
 
+# Compiled dependencies are shared between target directories (worktrees, the fast and the
+# release profile after a clean) when sccache is installed; without it nothing changes.
+if [ -z "${RUSTC_WRAPPER:-}" ] && command -v sccache >/dev/null 2>&1; then
+  export RUSTC_WRAPPER=sccache
+fi

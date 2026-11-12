@@ -8,6 +8,8 @@
 #                                    check also accepts http://) -> target/dev-dist/, never dist/
 #   scripts/build-dist.sh --probe    release build with the perf-probe feature (KRUNK_PERF_OFF
 #                                    switches page scripts off, for benchmarks) -> target/probe-dist/
+#   scripts/build-dist.sh --fast     quick test build (profile "fast": no LTO, incremental, all
+#                                    cores) -> target/fast-dist/, folder and zip only, never dist/
 #
 # UPDATE_BASE_URL (default https://krunk.209.wf, the live server) is where the update check looks
 # and what the installer names as the homepage, and
@@ -28,8 +30,9 @@ case "${1:-}" in
   --debug) profile=debug ;;
   --dev) dist="$root/target/dev-dist"; features=(--features dev-updates) ;;
   --probe) dist="$root/target/probe-dist"; features=(--features perf-probe) ;;
+  --fast) profile=fast; dist="$root/target/fast-dist" ;;
   "") ;;
-  *) echo "usage: $0 [--debug | --dev | --probe]" >&2; exit 2 ;;
+  *) echo "usage: $0 [--debug | --dev | --probe | --fast]" >&2; exit 2 ;;
 esac
 
 # The update server, also passed to build.rs (app/build.rs has the same default).
@@ -41,6 +44,7 @@ source "$root/scripts/xwin-env.sh"
 target=x86_64-pc-windows-msvc
 args=(--target "$target" -p app --lib "${features[@]}")
 [ "$profile" = release ] && args+=(--release)
+[ "$profile" = fast ] && args+=(--profile fast)
 cargo xwin build "${args[@]}"
 
 out="$dist/Krunk-win-x64"
@@ -141,6 +145,13 @@ if [ -n "$stray_md" ]; then
   echo "error: Markdown files in the package (remove them or stop copying them):" >&2
   echo "$stray_md" >&2
   exit 1
+fi
+
+# A test build stops here: the folder is all the VM needs (scripts/vm.sh deploy copies
+# Krunk.dll and Krunk.exe over an installed folder with the same engine).
+if [ "$profile" = fast ]; then
+  echo "CEF $CEF_VERSION (Chromium $CHROMIUM_VERSION), fast test build: $out"
+  exit 0
 fi
 
 # Per-user installer (NSIS, see installer/krunk.nsi).

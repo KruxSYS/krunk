@@ -5,7 +5,10 @@
 # C:\pipeline\krunk\task.ps1.
 #
 #   scripts/vm.sh deploy                 install dist/Krunk-win-x64 as C:\pipeline\krunk\app
-#                                        (full zip on a new CEF version, else just our DLL)
+#                                        (full zip on a new CEF version, else just our DLL).
+#                                        KRUNK_DIST=target/fast-dist takes another build,
+#                                        KRUNK_APP=app154 another folder on the VM (made as a
+#                                        copy of app when it does not exist yet)
 #   scripts/vm.sh ps1 FILE.ps1           run a PowerShell script on the desktop (waits)
 #   scripts/vm.sh start [ARGS...]        launch Krunk.exe on the desktop
 #   scripts/vm.sh stop                   close Krunk (WM_CLOSE, then kill)
@@ -26,7 +29,8 @@ ssh() { command ssh "${SSHOPTS[@]}" "$@"; }
 scp() { command scp "${SSHOPTS[@]}" "$@"; }
 DIR='C:\pipeline\krunk'
 FWD='C:/pipeline/krunk'
-APP="$DIR\\app"
+APPNAME=${KRUNK_APP:-app}
+APP="$DIR\\$APPNAME"
 
 run_ps1() { # local file
   scp -q "$1" "$VM:$FWD/task.ps1"
@@ -38,24 +42,27 @@ tmp=$(mktemp --suffix=.ps1)
 trap 'rm -f "$tmp"' EXIT
 case "${1:-}" in
   deploy)
-    dist="$(dirname "$0")/../dist"
+    dist="${KRUNK_DIST:-$(dirname "$0")/../dist}"
     # shellcheck source=/dev/null
     source "$(dirname "$0")/../cef.lock"
     ssh "$VM" "Get-Process Krunk -ErrorAction SilentlyContinue | Stop-Process -Force" >/dev/null || true
     # The marker is the archive's SHA-256, not the CEF version: 0.5.2 switched to a self-built
     # engine of the same version.
-    have=$(ssh "$VM" "Get-Content -ErrorAction SilentlyContinue '$FWD/app/.cef-version'" | tr -d '\r' || true)
+    if [ "$APPNAME" != app ]; then
+      ssh "$VM" "if (-not (Test-Path '$FWD/$APPNAME')) { Copy-Item -Recurse '$FWD/app' '$FWD/$APPNAME' }" >/dev/null
+    fi
+    have=$(ssh "$VM" "Get-Content -ErrorAction SilentlyContinue '$FWD/$APPNAME/.cef-version'" | tr -d '\r' || true)
     if [ "$have" = "$CEF_SHA256" ]; then
       for f in Krunk.dll Krunk.exe THIRD-PARTY-NOTICES.txt; do
-        scp -q "$dist/Krunk-win-x64/$f" "$VM:$FWD/app/$f"
+        scp -q "$dist/Krunk-win-x64/$f" "$VM:$FWD/$APPNAME/$f"
       done
       echo "deployed Krunk.dll (CEF $CEF_VERSION already installed)"
     else
       scp -q "$dist/Krunk-win-x64.zip" "$VM:$FWD/Krunk-win-x64.zip"
-      ssh "$VM" "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '$FWD/app';
+      ssh "$VM" "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '$FWD/$APPNAME';
         Expand-Archive -Force '$FWD/Krunk-win-x64.zip' '$FWD/unpack';
-        Move-Item '$FWD/unpack/Krunk-win-x64' '$FWD/app'; Remove-Item -Recurse -Force '$FWD/unpack';
-        Remove-Item '$FWD/Krunk-win-x64.zip'; Set-Content '$FWD/app/.cef-version' '$CEF_SHA256'" >/dev/null
+        Move-Item '$FWD/unpack/Krunk-win-x64' '$FWD/$APPNAME'; Remove-Item -Recurse -Force '$FWD/unpack';
+        Remove-Item '$FWD/Krunk-win-x64.zip'; Set-Content '$FWD/$APPNAME/.cef-version' '$CEF_SHA256'" >/dev/null
       echo "deployed the full folder (CEF $CEF_VERSION, archive $CEF_SHA256)"
     fi ;;
   ps1) run_ps1 "$2" ;;

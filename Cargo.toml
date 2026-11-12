@@ -19,6 +19,16 @@ strip = true
 panic = "abort"
 codegen-units = 1
 
+# Test builds for the VM (scripts/build-dist.sh --fast): the release settings without
+# whole-program LTO, on every core and incremental. A change in app/ rebuilds in about a
+# minute instead of the release build's ten. Never shipped.
+[profile.fast]
+inherits = "release"
+lto = false
+opt-level = 1
+codegen-units = 256
+incremental = true
+
 # Optimize dependencies in dev/test builds: Argon2 with 64 MiB and compiling
 # the full filter lists are painfully slow unoptimized.
 [profile.dev.package."*"]
