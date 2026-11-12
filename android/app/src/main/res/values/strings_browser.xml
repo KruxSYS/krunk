@@ -117,6 +117,31 @@
     <string name="prompt_username">User name</string>
     <string name="prompt_password">Password</string>
     <string name="prompt_sign_in">Sign in</string>
+    <string name="prompt_this_page">This page</string>
+    <string name="prompt_date_title">%1$s asks for a date</string>
+    <string name="prompt_time_title">%1$s asks for a time</string>
+    <string name="prompt_month_title">%1$s asks for a month</string>
+    <string name="prompt_week_title">%1$s asks for a week</string>
+    <string name="prompt_week_label">Week %1$d, %2$d</string>
+    <string name="prompt_colour_title">%1$s asks for a colour</string>
+    <string name="colour_hex_label">Colour, like #336699</string>
+    <string name="prompt_clear">Clear</string>
+    <string name="prompt_next">Next</string>
+    <string name="prompt_previous_year">Previous year</string>
+    <string name="prompt_next_year">Next year</string>
+    <string name="prompt_photo_title">%1$s asks for a photo</string>
+    <string name="prompt_photo_take">Take a photo</string>
+    <string name="prompt_photo_choose">Choose a file</string>
+    <string name="prompt_leave_title">Leave this page?</string>
+    <string name="prompt_leave_title_site">Leave %1$s?</string>
+    <string name="prompt_leave_text">Changes you made on this page may not be saved.</string>
+    <string name="prompt_leave">Leave</string>
+    <string name="prompt_stay">Stay</string>
+    <string name="prompt_repost_title">Send the form again?</string>
+    <string name="prompt_repost_text">To show this page, Krunk has to send %1$s the same information again. This can repeat an action, such as an order or a payment.</string>
+    <string name="prompt_repost_text_page">To show this page, Krunk has to send the same information again. This can repeat an action, such as an order or a payment.</string>
+    <string name="prompt_repost_send">Send again</string>
+    <string name="prompt_share_title">Share from %1$s</string>
 
     <!-- Full screen -->
     <string name="fullscreen_hint">Press back to leave full screen</string>

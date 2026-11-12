@@ -84,4 +84,103 @@ class PagePromptTest {
         assertFalse(t.blocked)
         assertEquals(false, t.next())
     }
+
+    @Test
+    fun aFileFieldGetsThePickedFilesOrNone() {
+        val got = ArrayList<List<String>>()
+        var none = 0
+        fun file(multiple: Boolean) =
+            PagePrompt.File(1u, "s", FileRequest(multiple, listOf("image/png"), camera = false), {
+                got +=
+                    it
+            }, { none++ })
+        file(multiple = true).answer(listOf("content://a/1", "content://a/2"))
+        assertEquals(listOf(listOf("content://a/1", "content://a/2")), got)
+        // A field for one file gets one, whatever the picker returned.
+        file(multiple = false).answer(listOf("content://a/1", "content://a/2"))
+        assertEquals(listOf("content://a/1"), got.last())
+        // A picker closed without a choice, Back, and the tab going away all give the page no file.
+        file(multiple = true).answer(emptyList())
+        file(multiple = false).dismiss()
+        val queue = PromptQueue()
+        queue.add(file(multiple = false))
+        queue.dropTab(1u)
+        assertEquals(3, none)
+        assertEquals(2, got.size)
+    }
+
+    @Test
+    fun aDateFieldIsAnsweredClearedOrLeftAsItWas() {
+        val got = ArrayList<String>()
+        var unchanged = 0
+        fun date() = PagePrompt.DateTime(1u, "s", DateKind.DATE, "2026-11-12", "", "", { got += it }, { unchanged++ })
+        date().answer("2026-12-24")
+        date().clear()
+        date().dismiss()
+        assertEquals(listOf("2026-12-24", ""), got)
+        assertEquals(1, unchanged)
+    }
+
+    @Test
+    fun dismissingLeavePageStaysAndDismissingRepostDoesNotSend() {
+        val leave = ArrayList<Boolean>()
+        PagePrompt.LeavePage(1u, "s") { leave += it }.answer(true)
+        PagePrompt.LeavePage(1u, "s") { leave += it }.answer(false)
+        PagePrompt.LeavePage(1u, "s") { leave += it }.dismiss()
+        assertEquals(listOf(true, false, false), leave)
+        val send = ArrayList<Boolean>()
+        PagePrompt.Repost(1u, "s") { send += it }.answer(true)
+        PagePrompt.Repost(1u, "s") { send += it }.dismiss()
+        assertEquals(listOf(true, false), send)
+        // A closed tab's prompts take the same way out.
+        val queue = PromptQueue()
+        queue.add(PagePrompt.LeavePage(7u, "s") { leave += it })
+        queue.add(PagePrompt.Repost(7u, "s") { send += it })
+        queue.dropTab(7u)
+        assertEquals(false, leave.last())
+        assertEquals(false, send.last())
+        assertEquals(0, queue.size)
+    }
+
+    @Test
+    fun aDismissedShareIsAborted() {
+        val got = ArrayList<ShareOutcome>()
+        PagePrompt.Share(1u, "s", "Title", "text") { got += it }.result(ShareOutcome.SHARED)
+        PagePrompt.Share(1u, "s", "Title", "text") { got += it }.dismiss()
+        assertEquals(listOf(ShareOutcome.SHARED, ShareOutcome.ABORTED), got)
+    }
+
+    @Test
+    fun aColourFieldIsAnsweredOrLeftAsItWas() {
+        val got = ArrayList<String>()
+        var unchanged = 0
+        fun colour() = PagePrompt.Colour(1u, "s", "#336699", emptyList(), { got += it }, { unchanged++ })
+        colour().answer("#ff0000")
+        colour().dismiss()
+        assertEquals(listOf("#ff0000"), got)
+        assertEquals(1, unchanged)
+    }
+
+    @Test
+    fun aPromptIsTitledWithTheSiteThatAsks() {
+        assertEquals("example.com", promptSiteOf("https://example.com/path?q=1#top"))
+        assertEquals("example.com", promptSiteOf("HTTPS://EXAMPLE.com"))
+        assertEquals("10.250.136.3:18080", promptSiteOf("http://10.250.136.3:18080/pickers.html"))
+        assertEquals("[::1]:8080", promptSiteOf("http://[::1]:8080/"))
+        // A page cannot borrow another site's name with a user part or a look-alike path.
+        assertEquals("evil.example", promptSiteOf("https://bank.example@evil.example/login"))
+        assertEquals("evil.example", promptSiteOf("https://bank.example:pw@evil.example/"))
+        assertEquals("evil.example", promptSiteOf("https://evil.example/https://bank.example/"))
+        assertEquals("evil.example", promptSiteOf("https://evil.example\\@bank.example/"))
+        // No site: the title says "This page".
+        for (none in listOf(
+            "",
+            "about:blank",
+            "file:///sdcard/page.html",
+            "data:text/html,<p>x",
+            "javascript:alert(1)",
+        )) {
+            assertEquals(none, "", promptSiteOf(none))
+        }
+    }
 }

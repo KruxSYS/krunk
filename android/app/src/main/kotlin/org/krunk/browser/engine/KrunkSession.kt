@@ -2,6 +2,7 @@ package org.krunk.browser.engine
 
 import android.os.SystemClock
 import android.util.Log
+import android.webkit.MimeTypeMap
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -235,6 +236,7 @@ class KrunkSession(
     fun close() {
         closed = true
         engine.blocker.detach(id)
+        engine.uploads.clearTab(id)
         gecko.close()
     }
 
@@ -385,7 +387,7 @@ class KrunkSession(
     private val promptThrottle = PromptThrottle()
 
     /** The host of the page that is asking (the dialog's title). */
-    private fun promptSite(): String = originOf(current.url)?.substringAfter("://") ?: ""
+    private fun promptSite(): String = promptSiteOf(current.url)
 
     /**
      * Shows a prompt and completes the engine's request exactly once: with the UI's answer, or
@@ -539,6 +541,120 @@ class KrunkSession(
                 )
             }
         }
+
+        override fun onFilePrompt(
+            session: GeckoSession,
+            prompt: GeckoSession.PromptDelegate.FilePrompt,
+        ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+            // A whole folder (`webkitdirectory`) is not offered: the page gets no file.
+            if (prompt.type == GeckoSession.PromptDelegate.FilePrompt.Type.FOLDER) {
+                return GeckoResult.fromValue(prompt.dismiss())
+            }
+            val request = FileRequests.of(
+                multiple = prompt.type == GeckoSession.PromptDelegate.FilePrompt.Type.MULTIPLE,
+                accept = prompt.mimeTypes?.toList().orEmpty(),
+                capture = prompt.capture != GeckoSession.PromptDelegate.FilePrompt.Capture.NONE,
+            ) { MimeTypeMap.getSingleton().getMimeTypeFromExtension(it) }
+            return ask(prompt) { answer ->
+                PagePrompt.File(
+                    tabId = id,
+                    site = promptSite(),
+                    request = request,
+                    onAnswer = { uris ->
+                        // The engine reads plain files: it gets Krunk's own copies (see Uploads).
+                        engine.uploads.copy(id, uris) { copies ->
+                            answer(
+                                when {
+                                    copies.isEmpty() || closed -> prompt.dismiss()
+                                    request.multiple -> prompt.confirm(engine.appContext, copies.toTypedArray())
+                                    else -> prompt.confirm(engine.appContext, copies.first())
+                                },
+                            )
+                        }
+                    },
+                    onDismiss = { answer(prompt.dismiss()) },
+                )
+            }
+        }
+
+        override fun onDateTimePrompt(
+            session: GeckoSession,
+            prompt: GeckoSession.PromptDelegate.DateTimePrompt,
+        ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+            val kind = when (prompt.type) {
+                GeckoSession.PromptDelegate.DateTimePrompt.Type.DATE -> DateKind.DATE
+                GeckoSession.PromptDelegate.DateTimePrompt.Type.TIME -> DateKind.TIME
+                GeckoSession.PromptDelegate.DateTimePrompt.Type.DATETIME_LOCAL -> DateKind.DATE_TIME
+                GeckoSession.PromptDelegate.DateTimePrompt.Type.MONTH -> DateKind.MONTH
+                GeckoSession.PromptDelegate.DateTimePrompt.Type.WEEK -> DateKind.WEEK
+                else -> return GeckoResult.fromValue(prompt.dismiss())
+            }
+            return ask(prompt) { answer ->
+                PagePrompt.DateTime(
+                    tabId = id,
+                    site = promptSite(),
+                    kind = kind,
+                    value = prompt.defaultValue.orEmpty(),
+                    min = prompt.minValue.orEmpty(),
+                    max = prompt.maxValue.orEmpty(),
+                    onAnswer = { answer(prompt.confirm(it)) },
+                    onDismiss = { answer(prompt.dismiss()) },
+                )
+            }
+        }
+
+        override fun onColorPrompt(
+            session: GeckoSession,
+            prompt: GeckoSession.PromptDelegate.ColorPrompt,
+        ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> = ask(prompt) { answer ->
+            PagePrompt.Colour(
+                tabId = id,
+                site = promptSite(),
+                value = prompt.defaultValue.orEmpty(),
+                suggested = prompt.predefinedValues?.toList().orEmpty(),
+                onAnswer = { answer(prompt.confirm(it)) },
+                onDismiss = { answer(prompt.dismiss()) },
+            )
+        }
+
+        override fun onBeforeUnloadPrompt(
+            session: GeckoSession,
+            prompt: GeckoSession.PromptDelegate.BeforeUnloadPrompt,
+        ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> = ask(prompt) { answer ->
+            PagePrompt.LeavePage(id, promptSite()) { leave ->
+                answer(prompt.confirm(if (leave) AllowOrDeny.ALLOW else AllowOrDeny.DENY))
+            }
+        }
+
+        override fun onRepostConfirmPrompt(
+            session: GeckoSession,
+            prompt: GeckoSession.PromptDelegate.RepostConfirmPrompt,
+        ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> = ask(prompt) { answer ->
+            PagePrompt.Repost(id, promptSite()) { send ->
+                answer(prompt.confirm(if (send) AllowOrDeny.ALLOW else AllowOrDeny.DENY))
+            }
+        }
+
+        override fun onSharePrompt(
+            session: GeckoSession,
+            prompt: GeckoSession.PromptDelegate.SharePrompt,
+        ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+            val text = Shares.text(prompt.text, prompt.uri)
+                ?: return GeckoResult.fromValue(prompt.confirm(GeckoSession.PromptDelegate.SharePrompt.Result.FAILURE))
+            return ask(prompt) { answer ->
+                PagePrompt.Share(id, promptSite(), prompt.title.orEmpty().take(MAX_SHARE_TITLE), text) { outcome ->
+                    answer(
+                        prompt.confirm(
+                            when (outcome) {
+                                ShareOutcome.SHARED -> GeckoSession.PromptDelegate.SharePrompt.Result.SUCCESS
+                                ShareOutcome.ABORTED -> GeckoSession.PromptDelegate.SharePrompt.Result.ABORT
+                                ShareOutcome.FAILED -> GeckoSession.PromptDelegate.SharePrompt.Result.FAILURE
+                            },
+                        ),
+                    )
+                }
+            }
+        }
     }
 
     /** The tab's back/forward list as the engine last reported it, and the shown entry's index. */
@@ -585,3 +701,6 @@ class KrunkSession(
         engine.blocker.attach(id, gecko)
     }
 }
+
+/** A page's title for a share is a label, not content: bounded. */
+private const val MAX_SHARE_TITLE = 200

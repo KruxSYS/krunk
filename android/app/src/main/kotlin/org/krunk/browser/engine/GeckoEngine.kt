@@ -28,7 +28,14 @@ class GeckoEngine(context: Context, automaticUpdates: Boolean, blockerHost: Bloc
     /** The ad and tracker blocker; started with the runtime, before any tab exists. */
     val blocker: BlockerController
 
+    /** Copies of the files pages are given through file fields. */
+    val uploads = Uploads(context)
+
+    /** For the engine calls that want one (handing a picked file to a page). */
+    val appContext: Context = context.applicationContext
+
     init {
+        uploads.clearAll()
         val builder = GeckoRuntimeSettings.Builder()
             .consoleOutput(BuildConfig.DEBUG)
             .javaScriptEnabled(true)

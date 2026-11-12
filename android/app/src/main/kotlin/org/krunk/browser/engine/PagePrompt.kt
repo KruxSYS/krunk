@@ -1,11 +1,20 @@
 package org.krunk.browser.engine
 
 /**
+ * The site named in a prompt's title: host and port of the page that asks, without the scheme
+ * and without any `user@` part (so `https://bank.example@evil.example/` reads "evil.example").
+ * Empty for a page without a site (a local file, `about:blank`, `data:`): the title then says
+ * "This page".
+ */
+fun promptSiteOf(url: String): String = originOf(url)?.substringAfter("://").orEmpty()
+
+/**
  * A question a page asks through the browser: `alert`, `confirm`, `prompt`, a `<select>` list or
  * an HTTP sign-in. The engine waits for the answer; the UI gives exactly one, through the
  * prompt's own function or [dismiss]. Pure data: the engine side lives in `KrunkSession`.
  *
- * File, date/time and colour pickers are not handled yet (they are dismissed by the engine).
+ * Since 0.2.0 also a file field, the date, time and colour fields, "leave this page?", "send the form
+ * again?" and `navigator.share()`. A folder upload is not handled (the engine dismisses it).
  */
 sealed class PagePrompt {
     /** The tab whose page asks. */
@@ -95,6 +104,103 @@ sealed class PagePrompt {
         fun answer(ids: List<String>) = onAnswer(ids)
 
         override fun dismiss() = onDismiss()
+    }
+
+    /**
+     * A file field (`<input type=file>`). Answered with the picked documents' addresses
+     * (`content:` or `file:`), or dismissed, which gives the page no file.
+     */
+    class File(
+        override val tabId: UInt,
+        override val site: String,
+        val request: FileRequest,
+        private val onAnswer: (uris: List<String>) -> Unit,
+        private val onDismiss: () -> Unit,
+    ) : PagePrompt() {
+        /**
+         * The system's picker (or the camera) was started for this prompt. The UI may be built
+         * again while it is open (rotation); it must not be started twice.
+         */
+        var launched = false
+
+        fun answer(uris: List<String>) =
+            if (uris.isEmpty()) onDismiss() else onAnswer(if (request.multiple) uris else uris.take(1))
+
+        override fun dismiss() = onDismiss()
+    }
+
+    /**
+     * A date or time field. [value], [min] and [max] are in the field's own format (see
+     * [DateValues]) and may be empty or unreadable. Answering "" clears the field; dismissing
+     * leaves it as it was.
+     */
+    class DateTime(
+        override val tabId: UInt,
+        override val site: String,
+        val kind: DateKind,
+        val value: String,
+        val min: String,
+        val max: String,
+        private val onAnswer: (String) -> Unit,
+        private val onDismiss: () -> Unit,
+    ) : PagePrompt() {
+        fun answer(value: String) = onAnswer(value)
+
+        fun clear() = onAnswer("")
+
+        override fun dismiss() = onDismiss()
+    }
+
+    /**
+     * A colour field. [value] is the field's colour (`#rrggbb`), [suggested] the colours the
+     * page lists for it, possibly none. Dismissing leaves the field as it was.
+     */
+    class Colour(
+        override val tabId: UInt,
+        override val site: String,
+        val value: String,
+        val suggested: List<String>,
+        private val onAnswer: (String) -> Unit,
+        private val onDismiss: () -> Unit,
+    ) : PagePrompt() {
+        fun answer(colour: String) = onAnswer(colour)
+
+        override fun dismiss() = onDismiss()
+    }
+
+    /** "Leave this page?" (`beforeunload`). Dismissing stays on the page. */
+    class LeavePage(
+        override val tabId: UInt,
+        override val site: String,
+        private val onAnswer: (leave: Boolean) -> Unit,
+    ) : PagePrompt() {
+        fun answer(leave: Boolean) = onAnswer(leave)
+
+        override fun dismiss() = onAnswer(false)
+    }
+
+    /** Going back or reloading would send a form again. Dismissing does not send it. */
+    class Repost(override val tabId: UInt, override val site: String, private val onAnswer: (send: Boolean) -> Unit) :
+        PagePrompt() {
+        fun answer(send: Boolean) = onAnswer(send)
+
+        override fun dismiss() = onAnswer(false)
+    }
+
+    /** `navigator.share()`: [text] is what goes to Android's share sheet (see [Shares.text]). */
+    class Share(
+        override val tabId: UInt,
+        override val site: String,
+        val title: String,
+        val text: String,
+        private val onResult: (ShareOutcome) -> Unit,
+    ) : PagePrompt() {
+        /** The share sheet was opened for this prompt (see [File.launched]). */
+        var launched = false
+
+        fun result(outcome: ShareOutcome) = onResult(outcome)
+
+        override fun dismiss() = onResult(ShareOutcome.ABORTED)
     }
 
     /**

@@ -37,6 +37,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import org.krunk.browser.R
 import org.krunk.browser.engine.PagePrompt
+import org.krunk.browser.ui.components.ColorPickerDialog
+import org.krunk.browser.ui.components.HexColor
 
 /** What a page may put into a dialog: bounded, so megabytes of text cannot stall the layout. */
 private const val MAX_MESSAGE = 4000
@@ -45,7 +47,8 @@ private fun String.bounded(): String = if (length > MAX_MESSAGE) take(MAX_MESSAG
 
 /**
  * The dialog for a [PagePrompt]. The title always names the site that asks (never Krunk), the
- * page's text is plain text, and Back or a tap outside dismisses without an answer.
+ * page's text is plain text, and Back or a tap outside dismisses without an answer. A file
+ * field and a share go to Android's own picker and share sheet (see `PagePromptPickers.kt`).
  */
 @Composable
 fun PagePromptDialog(prompt: PagePrompt) {
@@ -66,6 +69,24 @@ fun PagePromptDialog(prompt: PagePrompt) {
             is PagePrompt.SignIn -> SignInDialog(prompt)
 
             is PagePrompt.Choice -> ChoiceDialog(prompt)
+
+            is PagePrompt.File -> FilePromptUi(prompt)
+
+            is PagePrompt.DateTime -> DateTimePromptDialog(prompt)
+
+            is PagePrompt.Colour -> ColorPickerDialog(
+                title = stringResource(R.string.prompt_colour_title, askingSite(prompt)),
+                initial = prompt.value,
+                swatches = HexColor.swatches(prompt.suggested, prompt.value),
+                onPick = prompt::answer,
+                onDismiss = prompt::dismiss,
+            )
+
+            is PagePrompt.LeavePage -> LeavePageDialog(prompt)
+
+            is PagePrompt.Repost -> RepostDialog(prompt)
+
+            is PagePrompt.Share -> SharePromptUi(prompt)
         }
     }
 }
