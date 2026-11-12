@@ -31,13 +31,15 @@ shot() {
   "$E" shot "$1" > /dev/null || { echo "ABORT: no screenshot for $1 (display not answering); stopping" >&2; exit 4; }
   echo "  shot $1"
 }
-# Measured on the sandbox emulator with 0.1.1 (2026-11-11), both positions.
+# Measured on the sandbox emulator with 0.2.0 (2026-11-12), both positions: the menu has a row
+# of icons (Back, Forward, Home) above "New tab" since 0.2.0, which moved the rows of a menu
+# that opens downward by 129 px; the toolbar's own targets did not move.
 # The toolbar row (y) and the ⋮ menu's rows (y) as laid out on this screen size: the menu opens
 # downward from a top toolbar and upward from a bottom one. A top toolbar also moves the page
 # down by its height (PAGE_SHIFT) for taps on page content.
 case "${TOOLBAR:-top}" in
-  top) TB_Y=210; MENU_SHIFT=-493; PAGE_SHIFT=147 ;;
-  bottom) TB_Y=2263; MENU_SHIFT=0; PAGE_SHIFT=0 ;;
+  top) TB_Y=210; MENU_SHIFT=-364; PAGE_SHIFT=147 ;;
+  bottom) TB_Y=2265; MENU_SHIFT=0; PAGE_SHIFT=0 ;;
   *) echo "TOOLBAR must be top or bottom" >&2; exit 2 ;;
 esac
 MENU_NEW_TAB=$((850 + MENU_SHIFT)); MENU_PRIVATE=$((977 + MENU_SHIFT)); MENU_BOOKMARK=$((1106 + MENU_SHIFT))
