@@ -18,6 +18,8 @@
     stepRows: new Map(), // step n -> row
     asks: new Map(),     // open cards: key -> close(reason)
     scripts: new Map(),  // kind:id -> card
+    scratch: { plan: [], notes: [], bytes: 0 }, // 0.16.0: the agent's plan and notes
+    openNotes: new Set(), // names of the notes shown expanded
   };
 
   // ---------- small helpers ----------
@@ -147,6 +149,113 @@
   });
   $('new').addEventListener('click', function () { LB.post('agentNew'); input.focus(); });
   $('close').addEventListener('click', function () { LB.post('agentClose'); });
+
+  // ---------- scratchpad (0.16.0) ----------
+  // The agent's plan and notes of this conversation, as the host last sent them (`agentScratch`
+  // after every change). All of it is model output, possibly copied from a page: text nodes only.
+
+  const PLAN_STATES = { todo: 'To do', doing: 'Doing', done: 'Done', dropped: 'Dropped' };
+
+  function sizeText(bytes) {
+    if (bytes === 1) return '1 byte';
+    if (bytes < 1024) return bytes + ' bytes';
+    return (bytes / 1024).toFixed(bytes < 10240 ? 1 : 0) + ' KiB';
+  }
+
+  function cleanScratch(v) {
+    const out = { plan: [], notes: [], bytes: 0 };
+    if (!v || typeof v !== 'object') return out;
+    (Array.isArray(v.plan) ? v.plan : []).forEach(function (p) {
+      if (!p || typeof p.text !== 'string') return;
+      out.plan.push({ id: String(p.id == null ? '' : p.id), text: p.text, state: PLAN_STATES[p.state] ? p.state : 'todo' });
+    });
+    (Array.isArray(v.notes) ? v.notes : []).forEach(function (n) {
+      if (!n || typeof n.name !== 'string') return;
+      const content = typeof n.content === 'string' ? n.content : '';
+      out.notes.push({ name: n.name, content: content, bytes: typeof n.bytes === 'number' ? n.bytes : content.length });
+    });
+    out.bytes = typeof v.bytes === 'number' ? v.bytes : out.notes.reduce(function (a, n) { return a + n.bytes; }, 0);
+    return out;
+  }
+
+  function renderScratch() {
+    const sc = st.scratch;
+    const any = sc.plan.length > 0 || sc.notes.length > 0;
+    const parts = [];
+    if (sc.plan.length) parts.push(sc.plan.length === 1 ? '1 plan item' : sc.plan.length + ' plan items');
+    if (sc.notes.length) parts.push((sc.notes.length === 1 ? '1 note' : sc.notes.length + ' notes') + ', ' + sizeText(sc.bytes));
+    const summary = parts.join(' · ');
+    const b = $('scratch-btn');
+    b.classList.toggle('has', any);
+    const label = "Scratchpad: the agent's plan and notes" + (any ? ' (' + parts.join(', ') + ')' : '');
+    b.title = label;
+    b.setAttribute('aria-label', label);
+    $('sp-size').textContent = summary;
+    $('sp-empty').hidden = any;
+    $('sp-clear').disabled = !any;
+
+    $('sp-plan-box').hidden = !sc.plan.length;
+    const plan = $('sp-plan');
+    plan.textContent = '';
+    sc.plan.forEach(function (p) {
+      const li = el('li', 'sp-item ' + p.state);
+      li.appendChild(el('span', 'sp-state', PLAN_STATES[p.state]));
+      li.appendChild(el('span', 'sp-text', p.text));
+      plan.appendChild(li);
+    });
+
+    $('sp-notes-box').hidden = !sc.notes.length;
+    const names = new Set(sc.notes.map(function (n) { return n.name; }));
+    Array.from(st.openNotes).forEach(function (n) { if (!names.has(n)) st.openNotes.delete(n); });
+    const notes = $('sp-notes');
+    // The focus stays on a note's row when the list is drawn again under it.
+    const focused = document.activeElement && document.activeElement.classList.contains('sp-note-head')
+      ? document.activeElement.dataset.name : null;
+    notes.textContent = '';
+    sc.notes.forEach(function (n) {
+      const open = st.openNotes.has(n.name);
+      const row = el('div', 'sp-note');
+      const head = el('button', 'sp-note-head');
+      head.type = 'button';
+      head.dataset.name = n.name;
+      head.setAttribute('aria-expanded', open ? 'true' : 'false');
+      head.appendChild(el('span', 'sp-note-name', n.name));
+      head.appendChild(el('span', 'sp-note-size', sizeText(n.bytes)));
+      head.appendChild(icon('chevron', 'chev'));
+      const body = el('pre', 'sp-note-body' + (n.content ? '' : ' blank'), n.content || '(empty)');
+      body.hidden = !open;
+      head.addEventListener('click', function () {
+        const show = body.hidden;
+        body.hidden = !show;
+        head.setAttribute('aria-expanded', show ? 'true' : 'false');
+        if (show) st.openNotes.add(n.name); else st.openNotes.delete(n.name);
+      });
+      row.appendChild(head);
+      row.appendChild(body);
+      notes.appendChild(row);
+      if (focused === n.name) head.focus({ preventScroll: true });
+    });
+  }
+
+  function openScratch(open) {
+    $('scratch').hidden = !open;
+    $('scratch-btn').setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+
+  LB.on('agentScratch', function (m) {
+    st.scratch = cleanScratch(m.scratch);
+    renderScratch();
+  });
+  $('scratch-btn').addEventListener('click', function () { openScratch($('scratch').hidden); });
+  // Clear asks nothing: the host drops the notes and the plan and confirms with an empty
+  // `agentScratch`; the view is emptied at once.
+  $('sp-clear').addEventListener('click', function () {
+    LB.post('agentScratchClear');
+    st.scratch = cleanScratch(null);
+    st.openNotes.clear();
+    renderScratch();
+    $('scratch-btn').focus();
+  });
 
   // ---------- messages ----------
 
@@ -592,6 +701,9 @@
     st.scripts.clear();
     st.asks.clear();
     st.steps = 0;
+    st.scratch = cleanScratch(null);
+    st.openNotes.clear();
+    renderScratch();
     Array.from(log.children).forEach(function (n) { if (n.id !== 'empty') n.remove(); });
     $('empty').hidden = false;
     $('announce').textContent = '';
@@ -630,6 +742,7 @@
   });
 
   renderConfig();
+  renderScratch();
   renderStatus();
   input.focus();
   LB.post('ready');

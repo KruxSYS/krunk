@@ -24,16 +24,34 @@
   <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
   <symbol id="i-question" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.5a2.5 2.5 0 0 1 4.8 1c0 1.7-2.4 2-2.4 3.5M12 16.6v.1"/></symbol>
   <symbol id="i-steps" viewBox="0 0 24 24"><path d="M5 7h14M5 12h14M5 17h9"/></symbol>
+  <symbol id="i-notes" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="16" rx="2"/><path d="M9 9h6M9 13h6M9 17h3"/></symbol>
 </svg>
 <header id="head">
   <button id="model" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="models" title="Switch the model">
     <svg class="icon"><use href="#i-agent"/></svg><span id="model-name">No model</span><svg class="icon chev"><use href="#i-chevron"/></svg>
   </button>
+  <button id="scratch-btn" class="hb" type="button" title="Scratchpad: the agent's plan and notes" aria-label="Scratchpad: the agent's plan and notes" aria-expanded="false" aria-controls="scratch"><svg class="icon"><use href="#i-notes"/></svg></button>
   <button id="new" class="hb" type="button" title="New conversation" aria-label="New conversation"><svg class="icon"><use href="#i-plus"/></svg></button>
   <button id="close" class="hb" type="button" title="Close (Ctrl+Shift+Space)" aria-label="Close the agent panel"><svg class="icon"><use href="#i-close"/></svg></button>
 </header>
 <div id="models" role="listbox" aria-label="Models" tabindex="-1" hidden></div>
 <div id="problem" role="status" hidden><span id="problem-text"></span> <span>Set up a provider in Settings → AI.</span></div>
+<section id="scratch" aria-label="Scratchpad" hidden>
+  <div class="sp-head">
+    <h1 class="sp-title">Scratchpad</h1>
+    <span id="sp-size" class="sp-size"></span>
+    <button id="sp-clear" class="btn" type="button" title="Remove the plan and the notes of this conversation">Clear</button>
+  </div>
+  <p id="sp-empty" class="sp-empty">Nothing yet. On longer tasks the agent keeps its plan and its notes here. They are kept in memory only and go with the conversation.</p>
+  <div id="sp-plan-box" hidden>
+    <h2 class="sp-h">Plan</h2>
+    <ol id="sp-plan"></ol>
+  </div>
+  <div id="sp-notes-box" hidden>
+    <h2 class="sp-h">Notes</h2>
+    <div id="sp-notes"></div>
+  </div>
+</section>
 <main id="log" aria-label="Conversation" tabindex="-1">
   <div id="empty">
     <p class="empty-title">What should the agent do?</p>
