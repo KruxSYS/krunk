@@ -15,6 +15,7 @@ mod navmenu;
 mod settings;
 mod store;
 mod tabs;
+mod theme;
 mod urls;
 
 pub use blocker::*;
@@ -24,6 +25,7 @@ pub use navmenu::*;
 pub use settings::*;
 pub use store::*;
 pub use tabs::*;
+pub use theme::*;
 pub use urls::*;
 
 /// The shared core's version (the Windows release it came from), e.g. `0.15.3`.

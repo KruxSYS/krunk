@@ -141,6 +141,8 @@ pub struct AndroidSettings {
     pub theme: ThemeMode,
     /// Default page zoom (0.25-5.0; GeckoView applies it as a text scale).
     pub default_zoom: f64,
+    /// The style and the accent colour (`theme.rs`).
+    pub appearance: crate::ThemeAppearance,
     // New-tab page (shared)
     pub ntp_background: NtpBackgroundMode,
     pub ntp_background_color: String,
@@ -200,6 +202,7 @@ impl AndroidSettings {
                 cs::Theme::Dark => ThemeMode::Dark,
             },
             default_zoom: s.default_zoom,
+            appearance: crate::ThemeAppearance::from_core(&s.appearance),
             ntp_background: match s.ntp.background {
                 cs::NtpBackground::None => NtpBackgroundMode::None,
                 cs::NtpBackground::Color => NtpBackgroundMode::Color,
@@ -268,6 +271,7 @@ impl AndroidSettings {
             ThemeMode::Dark => cs::Theme::Dark,
         };
         s.default_zoom = self.default_zoom;
+        self.appearance.apply_to_core(&mut s.appearance);
         s.ntp.background = match self.ntp_background {
             NtpBackgroundMode::None => cs::NtpBackground::None,
             NtpBackgroundMode::Color => cs::NtpBackground::Color,
