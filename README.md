@@ -521,9 +521,23 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
     type, fill forms, choose options, press keys, scroll, wait, run JavaScript in the page, edit
     the page, change its title, open, switch and close tabs, go back, forward and reload, save a
     screenshot to Downloads, change some settings, and write userscripts and macros.
-  - **What it can't do:** see or use passwords, payment cards, the password vault, sync or account
-    data, or API keys. Password and card fields are redacted and refused. It can't read or act on
-    Krunk's own pages, and can't open the passwords, sync, site-data and storage pages at all.
+  - **What it can't do:** see passwords, payment cards, the password vault, sync or account
+    data, or API keys. Password and card fields are redacted, and its normal tools refuse them.
+    It can't read or act on Krunk's own pages, and can't open the passwords, sync, site-data and
+    storage pages at all.
+  - **Passwords, only when you ask (0.16.0):** when your message asks for a password to be
+    created or entered ("sign up here with a strong password", "create an account", "log in
+    with the password …"), the agent may enter one, and Krunk asks you first, naming the site
+    (once per site in a conversation).
+    - **A new password** is made by Krunk's own generator, not by the AI, and goes into the
+      form's password field and its confirmation. The AI never sees it. A card in the panel
+      keeps it for you, hidden until you press **Show**, with **Copy** (cleared from the
+      clipboard after 30 seconds); when you send the form, Krunk saves the login like one made
+      with "Use a strong password", or asks.
+    - **A password you give** in your message is entered as it is. It is part of your message,
+      so it goes to your AI provider: prefer a generated one.
+    - Without such a request nothing changes: the agent can't touch password fields. It never
+      reads a password and never writes card fields.
   - **Asking first:** your history, bookmarks, downloads list and a site's cookies are offered to
     it only when your message asks for them in words ("history", "bookmarks", "downloads",
     "cookies"), and you click Allow the first time in each conversation.
@@ -800,7 +814,7 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
     and answers go in, actions come out;
   - `provider` and `sse`: OpenAI-style requests for OpenRouter, OpenAI and custom servers;
     Anthropic's Messages API; the streamed answers;
-  - `tools`: 48 tools with their JSON schemas and argument checks;
+  - `tools`: 49 tools with their JSON schemas and argument checks;
   - `context`: the context block and the system prompt;
   - `scratch` (0.16.0): the scratchpad's notes and plan;
   - `redact`, `gate`, `settings_allow` and `pages`: the privacy rules below.
@@ -870,11 +884,13 @@ right of the tab area. The frame paints and drags its splitter. Its width is a s
 - **Macros:** list_macros, save_macro, run_macro.
 - **Talking to you:** ask_user, finish.
 - **Scratchpad (0.16.0):** note_write, note_read, note_delete, note_list, plan_set, plan_update.
-- **Asked for in words only:** get_history, get_bookmarks, get_downloads, get_cookies_for_site.
+- **Asked for in words only:** get_history, get_bookmarks, get_downloads, get_cookies_for_site,
+  fill_password (0.16.0).
 
 **Privacy and redaction.**
 - **No code path to secrets.** No tool, setting key or schema reaches the vault, payment cards,
-  sync, the account or API keys; a core test checks the tool table.
+  sync, the account or API keys; a core test checks the tool table. One tool, `fill_password`
+  (0.16.0), writes password fields on request and reads nothing (see "Passwords on request").
 - **Settings.** Settings change only through an explicit allow-list (`core::agent::settings_allow`).
   It holds appearance, start-up, new tabs, search engine, tab sleep, ad blocking, DNT/GPC, PDFs,
   download connections, DevTools dock, and userscripts and macros on/off. The vault, cards,
@@ -894,6 +910,48 @@ right of the tab area. The frame paints and drags its splitter. Its width is a s
 - **History, bookmarks, downloads and cookies** are offered only when the user's message names
   them (an English keyword gate in `core::agent::gate`), and after Allow once per conversation.
   They are never in the context block.
+- **Passwords on request (0.16.0).** By default nothing changes: the agent can't read, type,
+  fill or edit a password field. One tool, `fill_password`, writes password fields:
+  - **When it exists.** Only for a task whose message asks for a password to be created or
+    entered. The gate (`core::agent::gate`, English) looks for a word starting with `password`,
+    `passcode` or `passphrase`; `signup`, `register`, `registers`, `registering`,
+    `registration`; "sign up" ("sign me up"); "create/make … account" within three words, or
+    "new account". "Log in" alone is not enough. Without it the tool is not offered and a call
+    is refused.
+  - **Consent per site.** The session asks the host for the target tab's origin
+    (`core::agent::pages::password_site`: an http or https page, never one of Krunk's own),
+    and the first use on that origin in a conversation asks the user, naming it. Allow or Deny
+    holds for that site until the conversation ends. The allowed origin travels with the call,
+    and the host enters nothing unless the tab still shows it.
+  - **`generate`.** The browser makes the password with `core::passgen` (Settings → Passwords:
+    length and symbols). It is entered only on a form where a new password is chosen, by the
+    same test as the dropdown's "Use a strong password" (`passgen::wants_new_password`), into
+    every visible password field of that form that can take a new one: so the confirmation
+    too, but not a current-password or one-time-code field and not a read-only one. The tool's
+    result has the number of fields and their selectors, never the value: the model does not
+    see it. It is handed to the vault's save flow (`remember_generated`: sending the form saves
+    the login with an Undo toast when the vault is open, else "Save password?"; nothing in
+    private tabs).
+  - **The card.** The window's agent keeps the generated password in memory until the
+    conversation ends. The panel gets an `agentPassword` event without the value and shows it
+    masked; **Show** asks for it (`agentPasswordShow`, answered to that panel only from a wiped
+    buffer), **Copy** lets the browser put it on the clipboard like a password copied on
+    `krunk://passwords` (kept out of the clipboard history, cleared after 30 s).
+  - **`provided`.** The model passes on a password the user gave in the conversation, into the
+    field(s) named by a selector, or the focused or only password field. That password is part
+    of the conversation and so of the requests to the provider; Krunk keeps it out of the step
+    log (the detail shows its length) and out of `krunk.log`.
+  - **The probe** has one function for it, `fillPassword`: it writes `input[type=password]`
+    fields only, with the native value setter and `input` and `change` events, and refuses
+    card fields (a security code is often typed as a password) and everything else. All other
+    functions refuse password fields as before.
+  - **No leaks.** The value is in no step label, detail or summary, in no log line and in no
+    tool result. After the fill every result is scrubbed as before (the fields are password
+    fields, so `secrets()` reports them), and on top every tool result and context block of
+    the conversation is scrubbed of the passwords generated in it, as they are, HTML-escaped
+    and URL-encoded: a site that shows the password in its page or puts it in an address
+    doesn't hand it to the model. In the browser the value is held in wiped buffers
+    (`Zeroizing`), and the DevTools call that carries it to the page is wiped after sending.
 - **Memory and logs.** Conversations and the scratchpad (0.16.0) are in memory only. The log holds
   step and tool names, statuses and times only, never content, addresses, keys, or a note's or
   the plan's text. Krunk itself writes no crash dumps: it sets up no crash reporter and no dump
@@ -910,8 +968,8 @@ right of the tab area. The frame paints and drags its splitter. Its width is a s
 - **Shell:** `toggleAgent`, `stopMacros`.
 - **Agent panel** (sender `Agent`): `agentSend`, `agentStop`, `agentNew`, `agentAnswer`,
   `agentConsent`, `agentContinue`, `agentSelectModel`, `agentModels`, `agentClose`,
-  `agentOpenScript`, `agentToggleScript`, `agentScratchClear` (0.16.0), `openUrl` (web addresses
-  only).
+  `agentOpenScript`, `agentToggleScript`, `agentScratchClear`, `agentPasswordShow`,
+  `agentPasswordCopy` (0.16.0), `openUrl` (web addresses only).
 - **Macro runner** (sender `Runner`): `macroCall`, `macroDone`.
 - **Settings page:** `aiProviderSave`, `aiProviderRemove`, `aiKeySet`, `aiKeyRemove`, `aiTest`,
   `aiModels`, `aiStatus`.
@@ -919,8 +977,8 @@ right of the tab area. The frame paints and drags its splitter. Its width is a s
   `scriptExport`, `scriptRunNow`, `scriptCheck`, `macroSave`, `macroDelete`, `macroToggle`,
   `macroRun`, `macroStop`, `hotkeyCheck`, `hotkeyRecord`.
 - **Events to the panel:** `agentConfig`, `agentState`, `agentDelta`, `agentMessage`, `agentStep`,
-  `agentAsk`, `agentConsentAsk`, `agentContinueAsk`, `agentScript`, `agentError`, `agentClear`,
-  `agentScratch` (0.16.0).
+  `agentAsk`, `agentConsentAsk` (0.16.0: with the `site` for a password), `agentContinueAsk`,
+  `agentScript`, `agentError`, `agentClear`, `agentScratch` and `agentPassword` (0.16.0).
 - **Events to the shell:** `agentButton`, `macroRunning`, `toast`.
 - **Events to the scripts page:** `scriptsChanged`, `hotkeyRecorded`, `macroState`.
 - Pages have no channel into the agent. The panel and runner documents are on the shell origin,
@@ -1361,6 +1419,9 @@ open, the login is saved without asking and a toast offers **Undo** (deletes the
 or puts the previous password back) and **Edit** (opens the entry on krunk://passwords);
 otherwise the usual "Save password?" prompt appears. Nothing is offered in private tabs.
 
+The AI agent's `fill_password` (0.16.0, only when you ask it for a password) uses the same
+generator and the same save flow; see "AI agent, userscripts and macros".
+
 ### Payment methods
 
 The vault also keeps payment cards (0.6.0): the number, expiry, name on the card, a nickname
@@ -1743,6 +1804,13 @@ Testing on Windows:
   - Cross-origin iframes (such as a payment provider's card form) are not read. Beyond masking
     the ones that look like payment forms in screenshots, nothing is redacted there.
   - The agent doesn't act on Krunk's own pages.
+  - `fill_password` (0.16.0) reaches the password fields of the page and of its same-origin
+    frames, not a login form inside another site's frame.
+  - A password Krunk generated is cut out of what the agent reads as text. A screenshot is a
+    picture: password fields are masked in it, but a page that prints the password as plain
+    text would show it there.
+  - A password you type into a message for the agent goes to your AI provider with that
+    message.
 - **Not tested on Windows in 0.12.0:**
   - the agent tools press_keys, forward, toggle_userscript, list_userscripts, list_macros,
     get_downloads and get_cookies_for_site;

@@ -143,13 +143,18 @@ setting.
   Page text, HTML and screenshots are sent only when the model asks for them.
 - **History, bookmarks, downloads and cookies** are sent only when the user's message asks for
   them in words and the user clicks Allow (once per conversation).
+- **Passwords (0.16.0).** A password Krunk generates for the agent is never sent: the model
+  gets the number of fields that were filled. A password the user types into a message for
+  the agent to enter is part of that message and goes to the provider with it.
 - **The scratchpad (0.16.0)** is the model's own notes and plan. Like the rest of the
   conversation it goes to that provider and nowhere else: the plan and the list of notes (name,
   size, first line) with every request, a note's text when the model reads it back.
 
 **Never available to the agent.**
-- The password vault, generated passwords, payment cards, the recovery phrase, sync keys,
+- The password vault and its saved logins, payment cards, the recovery phrase, sync keys,
   account tokens and API keys: no tool or setting key reaches them (a core test checks this).
+- The value of any password field, and a password Krunk generates for it (below): it can ask
+  for one to be entered, it can never read one.
 - Krunk's own pages: it can't read, script, click or screenshot them, and can't open the
   passwords, sync, site-data and storage pages at all.
 - Settings outside an explicit allow-list (the vault, sync, account, AI, proxy, DNS, flags,
@@ -163,6 +168,52 @@ setting.
 - Screenshots mask them.
 - **Limit:** cross-origin iframes are not inspected. Only those that look like payment forms are
   covered in screenshots.
+
+**Passwords on request (0.16.0).** The rule above stays the default: the agent can't read,
+type, fill or edit a password field. What is allowed, and when:
+- **One tool writes password fields: `fill_password`.** It never reads one, and it never
+  writes a card field (also not a security code that is typed as a password) or any other
+  field.
+- **Only on the user's request.** The tool is offered to the model only for a task whose
+  message asks for a password to be created or entered: a word starting with `password`,
+  `passcode` or `passphrase`; `signup`, `register`, `registers`, `registering`,
+  `registration`; "sign up"; "create/make … account" or "new account" (English only). "Log in"
+  alone is not enough. Otherwise the tool does not exist for the model, and a call is refused.
+- **Only after the user allowed the site.** Before the first use on a site in a conversation
+  Krunk asks, naming the site's origin (scheme, host and port). Allow or Deny holds for that
+  site until the conversation ends. The call carries the allowed origin, and nothing is entered
+  unless the tab shows a page of that origin when the tool runs (http or https only, never one
+  of Krunk's own pages).
+- **A generated password** is made in the browser process by Krunk's generator. It is entered
+  only on a form where a new password is chosen (the test of "Use a strong password"), into
+  the new-password field and its confirmation, not into a current-password, one-time-code or
+  read-only field.
+  - The model never gets it: the tool's result has the number of fields and their selectors.
+  - It is kept in memory for the conversation, for the card in that window's panel: masked
+    until the user presses Show (then sent to that panel only), and copied by the browser on
+    Copy (kept out of the clipboard history, cleared after 30 s).
+  - It is handed to the password manager's normal save flow: sending the form saves the login
+    (with Undo) when the vault is open, otherwise Krunk asks; nothing is saved from private
+    tabs.
+  - Every later tool result and context block of the conversation is scrubbed of it, as it
+    is, HTML-escaped and URL-encoded, besides the usual scrub of the page's password fields.
+- **A password the user gave** in the conversation is passed on by the model, into the field
+  the selector names or the focused or only password field. The model knows it, as it knows
+  the rest of the message, and so does the provider. Krunk shows only its length in the step
+  log.
+- **Never in a log or a step.** The value is in no `krunk.log` line, no step label, detail or
+  summary and no tool result. In the browser process it is held in wiped buffers, and the
+  DevTools call that carries it to the page is wiped after sending.
+- **Limits.**
+  - The engine's own copy of that DevTools message is not wiped by Krunk.
+  - Screenshots mask password fields, but they are pictures: a page that prints the password
+    as plain text would show it to a model that takes images.
+  - The scrub of a generated password matches it as text in three spellings; a page that
+    transforms it (splits or encodes it some other way) and shows that is not caught.
+  - A prompt injection could ask the model to enter a password on another site: the user is
+    asked for each site. A password the user gave is known to the model, which a page could
+    steer to put it elsewhere with its normal tools: give the agent only a password you would
+    send to your provider, and prefer a generated one.
 
 **Prompt injection.**
 - The system prompt marks page content and tool results as data, not instructions.
