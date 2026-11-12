@@ -1,0 +1,13 @@
+<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width, initial-scale=1">
+<title>Prompt: file field (one file)</title>
+<style>body{font:20px sans-serif;margin:16px} button,input,a{font-size:20px;min-height:48px;margin:6px 0;display:block} #s{font:16px monospace;white-space:pre-wrap;background:#eee;padding:8px;margin-top:16px}</style>
+<script src="p.js"></script>
+<h3>file field (one file)</h3>
+<input id=f type=file><button id=o>open picker</button><script>addEventListener("load", () => { const f = document.getElementById("f"); let changes = 0, cancels = 0;
+f.addEventListener("cancel", () => { cancels++; show({ cancels }); });
+f.addEventListener("change", async () => { changes++; const files = [...f.files];
+  show({ changes, files: files.length, names: files.map(x => x.name + ":" + x.size + ":" + x.type).join(",") });
+  for (const x of files) { const head = (await x.slice(0, 24).text()).replace(/[^ -~]/g, "."); show({ head });
+    await fetch("/post?upload=" + encodeURIComponent(x.name) + "&size=" + x.size, { method: "POST", body: x }); show({ uploaded: x.name }); } });
+document.getElementById("o").onclick = () => f.showPicker(); show({ changes, cancels }); })</script>
+<pre id=s></pre>

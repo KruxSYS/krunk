@@ -1,0 +1,25 @@
+<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width, initial-scale=1">
+<title>Ad test</title>
+<style>body{font:18px sans-serif;margin:16px} .ad-slot,.ad-unit{background:#c00;color:#fff;padding:12px;margin:8px 0} #r{font-size:22px;font-weight:bold} li{margin:4px 0}</style>
+<h2>Ad and tracker test page</h2>
+<p>5 requests match generic rules of the bundled lists, 1 does not. 2 boxes match cosmetic rules.</p>
+<div class="ad-slot">AD BOX 1 (.ad-slot)</div>
+<div class="ad-unit">AD BOX 2 (.ad-unit)</div>
+<p id=r>running…</p><ul id=l></ul>
+<script>
+const items=[
+ ['script','/adfx.loader.bind.js?v=1','EasyList'],
+ ['img','/ads/acctid=7/banner.png','EasyList'],
+ ['img','/img/a-tracking-pixel.gif','EasyPrivacy'],
+ ['script','/js/site-click-tracker.js','EasyPrivacy'],
+ ['fetch','/_owa.gif?x=1','EasyPrivacy'],
+ ['img','/ok.png','control']];
+let done=0,loaded=0,blocked=0;const l=document.getElementById('l');
+function fin(i,ok){const li=document.createElement('li');li.textContent=(ok?'LOADED  ':'BLOCKED ')+items[i][1]+' ('+items[i][2]+')';li.style.color=ok?'#060':'#a00';l.appendChild(li);
+ done++;ok?loaded++:blocked++;if(done==items.length)setTimeout(sum,1500);}
+function sum(){let hid=0;for(const e of document.querySelectorAll('.ad-slot,.ad-unit'))if(getComputedStyle(e).display=='none')hid++;
+ document.getElementById('r').textContent='loaded '+loaded+', blocked '+blocked+' of '+items.length+'; boxes hidden '+hid+'/2';}
+items.forEach((it,i)=>{const u=it[1]+(it[1].includes('?')?'&':'?')+'t='+Date.now();
+ if(it[0]=='fetch'){fetch(u).then(()=>fin(i,true),()=>fin(i,false));return;}
+ const e=document.createElement(it[0]);e.onload=()=>fin(i,true);e.onerror=()=>fin(i,false);e.src=u;if(it[0]=='img'){e.width=1;e.height=1;}document.body.appendChild(e);});
+</script>

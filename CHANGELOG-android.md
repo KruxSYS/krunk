@@ -3,6 +3,67 @@
 What changed in each Krunk for Android release, newest first. The Windows browser's list is
 `CHANGELOG.md`.
 
+## 0.2.0 — 2026-11-12
+
+Ad and tracker blocking, a quieter engine, a wider address bar and themes. It installs over 0.1.0
+and 0.1.1 and keeps tabs, bookmarks, history and settings.
+
+- **Fixed: 0.1.0 and 0.1.1 contacted Mozilla and Google in the background.** Without anyone
+  asking, the engine fetched Mozilla's Remote Settings (certificate data, lists) and ran a
+  connectivity check, and it asked Google's Safe Browsing service for list updates although Safe
+  Browsing was set to "off". Krunk promises no background traffic, so this was a bug. 0.2.0
+  switches all three off and checks it with a packet capture: after a fresh install Krunk sends
+  nothing until you open a page.
+  - What that costs: the engine no longer receives updates of certificate revocation data (CRLite)
+    or of preloaded intermediate certificates, and there is no Safe Browsing warning page. A
+    certificate revoked after this version of Krunk was built is not known to it.
+  - Settings › Privacy › "Update automatically" (off by default) turns the daily filter-list
+    updates and Mozilla's Remote Settings on together, from the next start. Safe Browsing and the
+    connectivity check stay off in every case.
+- **Ad and tracker blocking.** uBlock Origin 1.76.0 is built in, unmodified, as an engine
+  extension, with the filter lists that come inside it (EasyList, EasyPrivacy, uBlock Origin's own
+  lists, Peter Lowe's list, the malicious-URL list). It blocks requests and hides the leftovers on
+  the page, in normal and private tabs.
+  - The **shield** in the address bar shows how many requests were blocked on the page. Tap it to
+    switch blocking off for that site; the choice is kept. In a private tab the sheet shows the
+    count and no switch, so a private visit leaves no entry.
+  - An address that is itself on a list shows Krunk's page with "Go back" and "Open once".
+  - Filter lists are not updated behind your back: Settings › Privacy › "Update filter lists"
+    fetches them when you ask (from the lists' own hosts), or "Update automatically" does it daily.
+  - When Krunk starts, pages wait a few seconds until the blocker is ready, so the first page is
+    filtered too. If it is not ready after 10 seconds the page loads and the shield says so.
+  - Blocking can be switched off as a whole in Settings › Privacy.
+- **Tracking parameters** (`utm_…`, `fbclid`, `gclid` and the rest of Krunk's list) are now also
+  removed from links you tap inside a page and from redirects, not only from addresses you type.
+  Forms that are sent (POST) are never changed.
+- **Toolbar.** Back and Forward moved into the ⋮ menu, as its first row together with Home; a
+  long press on either lists the pages to go to. The address bar takes the room: about two
+  thirds of the toolbar on a small phone. Android's back gesture still goes back in the page's
+  history. Reload and stop have a full-size touch target.
+- **Themes.** Settings › Appearance › Style offers the twelve styles of the Windows browser, each
+  with a small preview, and Accent colour seven colours or any other. A style sets the toolbar's
+  fill (plain, gradient, tinted), the corners of the address bar and the tab cards, and how the
+  current tab is marked in the switcher. Light, dark and "follow the system" work as before, and
+  private tabs keep their own dark look in every style. Text and icons are checked for contrast in
+  every style. Without a style nothing changes, except that the current tab's card now has a
+  filled title instead of a border.
+- **Pages can ask for more:** files (Android's file picker, one or several, by type; a field that
+  asks for a photo can use the camera app), dates, times, weeks and months, colours, "leave this
+  page?", "send the form again?" and sharing through Android's share sheet. Krunk's own dialogs
+  name the site that asks; closing any of them answers the page, so none hangs.
+- **Links:** mail and phone links open Android's mail and phone apps (after a tap at once,
+  otherwise Krunk asks first). Selected text can be searched, and a selected address opened, from
+  the menu over the selection. Settings › Tabs › "Tabs opened by links" decides whether such tabs
+  come to the front.
+- **Tabs:** a long press on a tab in the switcher offers Duplicate, Close other tabs and Close
+  tab. "Request desktop site" now stays with the tab when Android or a crash made Krunk rebuild
+  the page, and over a restart.
+- **About** lists uBlock Origin and its filter lists with their licences.
+
+Known limits: custom filter lists and protection levels come later; a file you give to a page is
+copied inside Krunk's storage for the upload (removed when the tab closes); whole folders cannot
+be uploaded; moving tabs in the switcher is not there yet. Each APK is about 7 MB larger.
+
 ## 0.1.1 — 2026-11-11
 
 A fix release after a full review of the 0.1.0 code, with one changed default. It installs over

@@ -1,0 +1,7 @@
+<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width, initial-scale=1">
+<title>Prompt: leave page</title>
+<style>body{font:20px sans-serif;margin:16px} button,input,a{font-size:20px;min-height:48px;margin:6px 0;display:block} #s{font:16px monospace;white-space:pre-wrap;background:#eee;padding:8px;margin-top:16px}</style>
+<script src="p.js"></script>
+<h3>leave page</h3>
+<button id=o>arm</button><a id=a href="landing.html?id=1">go away</a><script>addEventListener("load", () => { document.getElementById("o").onclick = () => { window.onbeforeunload = e => { e.preventDefault(); e.returnValue = "x"; return "x"; }; show({ armed: 1 }); }; show({ armed: 0 }); })</script>
+<pre id=s></pre>

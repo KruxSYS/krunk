@@ -1,0 +1,10 @@
+<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width, initial-scale=1">
+<title>User agent</title><style>body{font:18px sans-serif;margin:16px} p{word-break:break-all}</style>
+<h3>User agent</h3><p id=ua></p><p id=kind></p><p id=w></p>
+<script>
+const ua = navigator.userAgent;
+document.getElementById('ua').textContent = ua;
+document.getElementById('kind').textContent = 'kind=' + (/Android|Mobile/.test(ua) ? 'mobile' : 'desktop');
+document.getElementById('w').textContent = 'width=' + innerWidth;
+fetch('/report?page=ua&kind=' + (/Android|Mobile/.test(ua) ? 'mobile' : 'desktop')).catch(() => {});
+</script>

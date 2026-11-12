@@ -1,7 +1,8 @@
 # Krunk for Android: plan
 
-Status: **in progress** (round 1 delivered Android 0.1.0: toolchain, engine spike, core browsing,
-tabs, new-tab page, bookmarks/history, settings; see `docs/ANDROID_FEATURES.md` for the parity
+Status: **in progress** (round 1 delivered Android 0.1.0 and 0.1.1: toolchain, engine spike, core
+browsing, tabs, new-tab page, bookmarks/history, settings; round 2 so far delivered 0.2.0: ad and
+tracker blocking with uBlock Origin (milestone A3), a quiet engine, themes; see `docs/ANDROID_FEATURES.md` for the parity
 matrix and `docs/ANDROID_DEV.md` for the build). Goal: a Krunk for Android phones and tablets with
 the same promises as the desktop version:
 - ad and tracker blocking that also works on YouTube
@@ -25,6 +26,26 @@ the same promises as the desktop version:
 | HTTPS | Gecko's HTTPS-First is on by default (`http://` upgrades automatically); the shared `https_only` setting maps to `allowInsecureConnections = HTTPS_ONLY` |
 | Favicons | a bundled WebExtension (`krunk-icons`) reports `<link rel=icon>`; the app fetches one icon per host (user-triggered page loads only) into the shared `favicons` table |
 | Play Services | GeckoView depends on `play-services-fido` (passkeys/WebAuthn). **Kept** (operator decision); `-Pkrunk.noGms=true` builds without it for devices without Google Play services (passkeys then unsupported). |
+
+### Decisions taken for Android 0.2.0 (A3, 2026-11-11)
+
+Decided by the development director at the plan review on the operator's behalf; the first and the
+last change what users get and should be confirmed by the operator.
+
+| Decision | Value |
+|---|---|
+| Blocker | **uBlock Origin 1.76.0**, the project's signed Firefox release, built in **unmodified** as a GeckoView extension (`ensureBuiltIn`). Pinned in `android/ubo.lock` (version, file address, SHA-256); the build fails on a hash mismatch and compares every file in the APK with the release. Windows stays on its own pin (`assets/filters/ubo-resources.lock`, 1.75.4) |
+| How Krunk drives it | A second built-in extension of Krunk's own, `krunk-guard`. Built-in extensions are privileged, so it may use experiment APIs: a request observer that cancels uBlock Origin's own requests unless the user started an update (the gate), and a bridge that sends uBlock Origin's own messages from one of its own pages (ready, allow list, update, settings). Nothing is written into uBlock Origin's files, pages or storage. Managed storage, external messaging and content scripts in its pages do not exist on Android (spike) |
+| Fail closed | The guard is installed and ready before the blocker is installed; without a working guard the blocker is never enabled and blocking is shown as unavailable. `a3.sh gate` checks this at every uBlock Origin or GeckoView bump |
+| Engine background traffic | **All off by default** (decision "A+"): Mozilla Remote Settings (`MOZ_REMOTE_SETTINGS_DISABLED`), the connectivity and captive-portal checks, Safe Browsing list updates, the add-on blocklist, the region lookup. Applied through an engine config file. 0.1.0 and 0.1.1 did send these. Cost: no CRLite or intermediate-certificate updates, no Safe Browsing |
+| "Update automatically" | One switch in Settings › Privacy, **off by default**: daily filter-list updates and Mozilla Remote Settings together, from the next start. Safe Browsing and the connectivity check stay off in every case |
+| Filter-list updates | Only when the user asks (Settings › Privacy) or with the switch above; the lists inside the package work without any network |
+| Start | Page loads wait until the blocker filters (measured 2 to 3 s on the emulator, 6 to 7 s on the first start after install or upgrade), at most 10 s; then they load and the shield warns. Krunk's own screens appear at once |
+| Per-site allow | Stored in the shared `adblock_allowlist` table and written to uBlock Origin's trusted sites. **No allow switch in private tabs** (the sheet shows the count); "Open once" on a blocked page is allowed there (in memory, 2 minutes) |
+| Shield | Inside the address field, with the count; Home sits in the menu's first row on phones |
+| Tracking parameters | Request-level rewriting in `krunk-guard` (`webRequest`, top-level GET only), rules from `core::urlclean` |
+| Themes | The twelve styles of `core::style` and the accent, resolved in `ffi/src/theme.rs`; shape and active-tab mark are mapped, a gradient runs along the toolbar, private tabs keep one fixed look |
+| 0.1.x | No separate fix release: the 0.2.0 changelog opens with the plain statement that 0.1.0 and 0.1.1 contacted Mozilla and Google in the background |
 
 Spike measurements (sandbox emulator, Android 16 x86_64, software GPU, 4 vCPU):
 - APK (debug, unstripped Gecko): arm64-v8a 153 MB, x86_64 161 MB, universal 274 MB. `libkrunk_ffi.so`
@@ -131,7 +152,7 @@ Proposal:
 | A0 ✔ (round 1, without uBO) | Spike: GeckoView sample app with uBO as a built-in extension; check YouTube ads, document-start scriptlets, pointer lock with a USB/Bluetooth mouse, full screen, APK size, cold start on a mid-range phone | 1 week |
 | A1 ✔ (round 1) | App skeleton: Compose chrome, tabs (GeckoSession per tab, session restore), address bar with `core::urlclean` via UniFFI, private tabs (separate runtime context) | 3 weeks |
 | A2 ✔ (round 1) | Data: history, bookmarks, new-tab top sites (frecency), settings through `core` | 2 weeks |
-| A3 | Blocking: bundled uBO (pinned version, hash-checked like `ubo-resources.lock`), shield counter and per-site allow via the extension's messaging, uBO list updates | 2 weeks |
+| A3 ✔ (0.2.0) | Blocking: bundled uBO (pinned version, hash-checked like `ubo-resources.lock`), shield counter and per-site allow via the extension's messaging, uBO list updates on request. Custom lists and protection levels moved to round 3 | 2 weeks |
 | A4 | Vault: Keystore-wrapped key, unlock (password, optional biometrics), save/fill prompts through GeckoView autocomplete delegates | 3 weeks |
 | A5 | Downloads, site data/cookies screen, permissions prompts, full screen and pointer lock polish | 2 weeks |
 | A6 | Release: signing, Play listing and APK channel with `update` (android-arm64), crash-free QA on 4–5 devices (Android 10–16, phone + tablet, arm64 + x86_64 emulator) | 2–3 weeks |
@@ -145,9 +166,13 @@ Total: about **15–16 weeks** to a first public beta, then a GeckoView bump eve
 2. **Minimum Android version:** recent GeckoView releases no longer support Android 5–7, so
    API 26 (Android 8) is the likely floor anyway; confirm in A0 against the pinned GeckoView.
 3. **ABIs:** arm64-v8a only (smaller), or also armeabi-v7a for old devices?
-4. **uBO as a built-in extension:** confirm with uBO's licence (GPL-3.0) that bundling it in the
-   APK is fine. It is GPL software shipped unmodified next to an MIT app, as on desktop with its
-   lists; we must publish its source and version.
+4. ~~uBO as a built-in extension~~ closed with 0.2.0: uBlock Origin (GPL-3.0) ships as its own
+   signed release file, unmodified, as a separate program next to the MIT app (aggregation, as on
+   desktop with its lists); Krunk talks to it only through its messages. Its version and source
+   are published: the release is named in `android/ubo.lock`, the app's About screen and
+   `android/THIRD-PARTY-NOTICES.md` list it with its licence and the lists inside it, the licence
+   text is in the APK, and the build proves the APK's copy equals the release. One note for the
+   operator: Peter Lowe's list inside it asks for non-commercial use.
 5. **Pointer lock:** if A0 shows Gecko on Android lacks it with a mouse, is touch-only acceptable
    for games on Android?
 6. **Shared account/sync:** wanted in a later round?

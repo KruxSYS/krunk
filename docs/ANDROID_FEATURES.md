@@ -10,6 +10,13 @@ preview (0.1.0, round 1). Later rounds work through it in order.
 also marked **(v)** were exercised on the sandbox emulator with a screenshot
 (`.pipeline/screenshots/android/`, see the round report for the flow → file list).
 
+**Round 2 (0.2.0).** Rows changed by Android 0.2.0 say so. **(v)** there means: checked on the
+sandbox emulator by the scripted device tests of that release (`a3.sh`, 211 checks on the debug
+build, the release build checked again before publishing; evidence in
+`.pipeline/evidence-android-0.2.0/`). The vault rows stay with their round but were not part of
+0.2.0. The column heading "Android 0.1.0" is kept for the table's shape; the cells state the
+current release.
+
 **Columns.** *Windows Krunk*: yes / partial / no, with the README section or CHANGELOG version
 (and the `core` module when the logic is shared). *Android 0.1.0*: done / partial / roadmap /
 not planned. *Engine*: the GeckoView API that provides it, or the limitation. *Round*: the Android
@@ -28,28 +35,28 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | History / bookmark / typed-site suggestions, most visited first | yes — 0.5.1; `core::omnibox` | done (v) | app-side | 1 |
 | Inline completion of the typed site | yes — 0.6.0 | partial (core computes it; the Android editor shows rows only) | — | 2 |
 | Engine search suggestions (setting, never in private tabs, no cookies) | yes — 0.15.0; `core::search_suggest` | done (v) | app-side HTTP | 1 |
-| Tracking-parameter stripping (`utm_*`, `fbclid`, `gclid`, …) | yes — Privacy, 0.6.0; `core::urlclean` | partial — removed from typed addresses and from every tab Krunk opens itself (links from other apps, the link menu, bookmarks, history); link clicks and redirects inside a page are not rewritten yet (needs a request-level hook) | request-level rewriting | 1 (rest: 2) |
+| Tracking-parameter stripping (`utm_*`, `fbclid`, `gclid`, …) | yes — Privacy, 0.6.0; `core::urlclean` | done (v) (0.2.0: also removed from links clicked inside a page and from redirects, by request-level rewriting in Krunk's own extension (`krunk-guard`, `webRequest` on top-level GET navigations only; the answer comes from `core::urlclean` through the app, at most three rewrites per navigation, a slow answer lets the request pass). POST requests and sub-resources are never touched; the setting that controls stripping on Windows controls it here. Since 0.1.x: typed addresses and every tab Krunk opens itself) | `WebExtension` `webRequest` + native messaging | 1, 2 |
 | Automatic HTTPS upgrade (HTTPS-first) | no (HTTPS-only mode only) | done (v) — Gecko's HTTPS-First is on by default (verified: `http://example.com` loads as https) | Gecko default | 1 |
 | HTTPS-only mode | yes — Privacy; `settings.https_only` | done (`allowInsecureConnections = HTTPS_ONLY`) | `GeckoRuntimeSettings` | 1 |
 | Copy / paste / edit URL; paste-and-go | yes — 0.6.0 | done (platform text field menu) | — | 1 |
 | Site info / certificate popup | yes — 0.5.0; `core::certinfo` | roadmap | `SecurityInformation.certificate` | 3 |
 | Voice search | no | roadmap (Android `RecognizerIntent`, on-device where available) | — | 3 |
 | QR code scanning | no (sign-in QR only) | roadmap (needs a camera permission flow; CameraX/ML Kit-free decoder) | — | 3 |
-| Search the selection ("Search DuckDuckGo for …") | yes — 0.11.0 | roadmap (GeckoView `SelectionActionDelegate`) | `SelectionActionDelegate` | 2 |
+| Search the selection ("Search DuckDuckGo for …") | yes — 0.11.0 | done (v) (0.2.0: "Search DuckDuckGo for …" in the menu over selected text, next to Copy; a new tab with the same privacy; the label and address come from `core`) | `SelectionActionDelegate` | 2 |
 
 ## 2. Navigation & page
 
 | Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
 |---|---|---|---|---|
 | Back, forward, reload, stop | yes — keys table | done (v) | `GeckoSession` | 1 |
-| Home (configurable homepage) | partial — Alt+Home, no button since 0.5.0 | done (toolbar button; `settings.homepage`) | — | 1 |
-| Back/forward history menu | yes — 0.8.0; `core::navmenu` | roadmap (long-press back) | `SessionState` history | 2 |
+| Home (configurable homepage) | partial — Alt+Home, no button since 0.5.0 | done (v) (`settings.homepage`; since 0.2.0 Home is in the first row of the ⋮ menu on phones and a toolbar button from tablet width) | — | 1 |
+| Back/forward history menu | yes — 0.8.0; `core::navmenu` | done (v) (0.2.0: Back and Forward moved from the toolbar into the first row of the ⋮ menu, enabled from the page's history; a long press lists the earlier or later pages (`core::navmenu` through `ffi::nav_menu`). The system back gesture is unchanged) | `SessionState` history | 2 |
 | Pull-to-refresh | n/a | done (nested scroll from the GeckoView; not exercised on a device) | `NestedScrollingChild` | 1 |
 | Progress bar, title, favicon | yes | done (favicons via the bundled `krunk-icons` extension + `/favicon.ico` fallback, stored in the shared `favicons` table) | `ProgressDelegate`, `WebExtension` messaging | 1 |
 | Security indicator (lock / "Not secure") | yes — 0.5.0 | done (v) | `onSecurityChange` | 1 |
 | Custom error page (Krunk-styled) | partial — crash/hang page, HTTPS-only interstitial | done (v) (`assets/error.html` from `onLoadError`, light/dark) | `NavigationDelegate.onLoadError` | 1 |
 | Find in page (count, next/previous) | yes — Ctrl+F | done (v) | `SessionFinder` | 1 |
-| Request desktop site (per tab) | yes — user-agent presets (`core::useragents`) | done (Gecko desktop mode + viewport; the Windows UA presets are selectable in Settings › User agent) | `GeckoSessionSettings.userAgentMode` | 1 |
+| Request desktop site (per tab) | yes — user-agent presets (`core::useragents`) | done (v) (Gecko desktop mode + viewport; the Windows UA presets are selectable in Settings › User agent. Since 0.2.0 the mode belongs to the tab: it survives a recreated engine session (crash, discard) and, for normal tabs, a restart) | `GeckoSessionSettings.userAgentMode` | 1 |
 | Page zoom: pinch | n/a | done (+ "force zoom" setting) | `forceUserScalableEnabled` | 1 |
 | Default zoom setting | yes — Usage › Zoom; `core::zoom` | partial — GeckoView has no page-zoom API; `default_zoom` scales text instead | `fontSizeFactor` | 2 |
 | Text scaling (system font scale / in-app) | partial — UI font only | done | `automaticFontSizeAdjustment` / `fontSizeFactor` | 1 |
@@ -59,7 +66,7 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | Print / save as PDF | yes — Ctrl+P | roadmap | `GeckoSession.saveAsPdf`, `PrintDelegate` | 3 |
 | PDF viewer | yes — 0.11.3 | roadmap (pdf.js is built into Gecko; needs testing) | Gecko pdf.js | 3 |
 | View source | yes — 0.11.0 | roadmap | `view-source:` | 3 |
-| JavaScript dialogs (alert/confirm/prompt/leave) | yes — 0.12.4 | partial — since 0.1.1: alert, confirm, prompt, `<select>` lists and HTTP sign-in as plain dialogs titled with the asking site, with a way out of dialog loops (0.1.0 had no handler, so none of these worked). Not yet: file, date/time and colour pickers, share, repost and leave-page questions | `PromptDelegate` | 1 (rest: 2) |
+| JavaScript dialogs (alert/confirm/prompt/leave) | yes — 0.12.4 | done (v) (0.1.1: alert, confirm, prompt, `<select>` lists and HTTP sign-in, titled with the asking site, with a way out of dialog loops. 0.2.0: file fields through Android's document picker (one or several files, `accept`; a `capture` field offers the camera app, no permission), date, time, datetime-local, week and month fields, colour fields, "leave this page?", "send the form again?" and `navigator.share` through the share sheet. Every way out answers the page. Not offered: folder upload) | `PromptDelegate` | 1, 2 |
 | Reader mode | no | roadmap | Gecko reader view | 4 |
 | Developer tools | yes — 0.3.0 | not planned on-device (remote debugging in debug builds only) | `remoteDebuggingEnabled` | — |
 
@@ -73,8 +80,8 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | Share link, share page | no | done (Android share sheet) | — | 1 |
 | Download link / save image, open image in new tab | yes — 0.12.2 (images) | done (Android `DownloadManager`) | `ContextElement.srcUri` | 1 |
 | `window.open` / `target=_blank` into a new tab | yes | done since 0.1.1 (0.1.0 handed the engine an already open session and the new window failed); the address bar stays empty until the new window has loaded something | `onNewSession` | 1 |
-| `mailto:` handler | yes — 0.11.3 | roadmap (hand to the system mail app) | `onLoadRequest` | 2 |
-| Selected address text → open | yes — 0.15.2 | roadmap | `SelectionActionDelegate` | 2 |
+| `mailto:` handler | yes — 0.11.3 | done (v) (0.2.0: `mailto:` and `tel:` links go to Android's mail and phone apps: at once after a tap (within 2 s), otherwise Krunk asks first, naming the address or number. `intent:` and other app links are not handed over) | `onLoadRequest` | 2 |
+| Selected address text → open | yes — 0.15.2 | done (v) (0.2.0: "Open example.com/docs" in the same menu when the selection is one web address; never in a password field) | `SelectionActionDelegate` | 2 |
 
 ## 4. Tabs
 
@@ -90,9 +97,9 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | Recently closed (reopen) | partial — Ctrl+Shift+T stack, memory only | done (v) (list, persisted; a documented deviation) | — | 1 |
 | Background tab sleep / discard policy (`core::memory`) | yes — 5 min sleep, optional discard | done (`setActive(false)` / session discard; `onTrimMemory`) | `GeckoSession.setActive` | 1 |
 | Tab groups (create/rename/colour/move) | no | roadmap | — | 3 |
-| Background tab loading control | partial (`link_tabs`) | roadmap | — | 2 |
+| Background tab loading control | partial (`link_tabs`) | done (v) (0.2.0: Settings › Tabs › "Tabs opened by links": as the page asks, always in front, always behind; the shared `link_tabs` setting) | — | 2 |
 | Pinned tabs | no | roadmap | — | 3 |
-| Duplicate, move, close others/right | yes | partial (core supports it; switcher exposes close only) | — | 2 |
+| Duplicate, move, close others/right | yes | partial (v) (0.2.0: a long press on a tab card offers Duplicate, Close other tabs and Close tab, also as accessibility actions; "others" are the other tabs of the same kind, never across the private boundary. Moving tabs: round 3) | — | 2 (move: 3) |
 | Multiple windows | yes — 0.3.0 | not planned (phones) / roadmap for tablets | — | — |
 | Mute tab, task manager | yes — 0.6.0 | roadmap | `MediaSession` | 3 |
 
@@ -105,7 +112,7 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | Toolbar auto-hide on scroll | n/a | done (v) | nested scroll / `ScrollDelegate` | 1 |
 | Edge-to-edge, gesture and 3-button navigation, predictive back | n/a | done | — | 1 |
 | Landscape, tablet layout (sw600dp) | n/a | done (v) (wider grid; two-pane settings) | — | 1 |
-| Accessibility: 48 dp targets, content descriptions, TalkBack switcher, font scale, haptics | partial on Windows | done | — | 1 |
+| Accessibility: 48 dp targets, content descriptions, TalkBack switcher, font scale, haptics | partial on Windows | done (0.2.0: reload/stop and the shield have 48 dp targets inside the address field; switch and check rows are one node announced as on/off; the "Request desktop site" row announces its state) | — | 1 |
 | Appearance customisation (accent, styles, presets) | yes — 0.7.0, 0.15.0; `core::style` | done (v) (0.2.0, pulled forward from round 4: Settings › Appearance › Style offers the twelve styles of `core::style` with a drawn preview each, and Accent colour seven named colours or any other. Mapped: accent, toolbar fill (solid, gradient along the toolbar, glass as a tint without blur), shape of the address field and the tab cards, how the active tab card is marked. Not on Android: glow, density, tab radius, UI font, strip and tab text colours, a gradient's exact angle (only its side), and editing a style's single values; a look made by hand on Windows is drawn but shown as "Default". Private tabs keep one fixed look in every style. Contrast (text 4.5:1, icons 3:1) is tested for every style in light, dark and private with 17 accents) | app-side; colours resolved in `ffi/src/theme.rs` | 2 |
 | Toolbar customisation | yes — 0.6.0 (toolbar items) | roadmap | — | 3 |
 | Swipe between tabs gesture | n/a | roadmap | — | 3 |
@@ -160,7 +167,7 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | Cookies and site-data list per site (`krunk://storage`) | yes — 0.2.0 | roadmap (`clearDataFromHost`; listing via a WebExtension `cookies` API) | `StorageController` | 3 |
 | Site permissions defaults and per-site list | yes — Site permissions | roadmap | `PermissionDelegate` | 3 |
 | Settings search box | yes — 0.5.0 | roadmap | — | 2 |
-| About (versions, licences, link) | yes — `krunk://about` | done | — | 1 |
+| About (versions, licences, link) | yes — `krunk://about` | done (0.2.0: lists uBlock Origin with the bundled version and the filter lists inside it with their licences) | — | 1 |
 | Data location documented; backup rules (0.1.1: no cloud backup; device-to-device transfer carries the database; Gecko profile never) | n/a | done (README) | — | 1 |
 | Reset settings, settings export | yes / no | roadmap | — | 3 |
 
@@ -188,15 +195,15 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 
 | Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
 |---|---|---|---|---|
-| Ad and tracker blocking (Brave engine + 7 lists + uBO resources) | yes — How it works › Ad and tracker blocking | roadmap — uBlock Origin as a bundled extension (`ensureBuiltIn` verified in 0.1.0 with the icons extension) | `WebExtensionController.ensureBuiltIn` | 2 |
-| Shield counter, per-site allow, custom lists | yes | roadmap (via uBO messaging) | — | 2 |
-| Tracking protection levels (Standard/Strict/Custom) | yes — 0.6.0; `core::protection` | roadmap (map onto Gecko ETP + uBO) | `ContentBlocking.Settings` | 2 |
-| Third-party cookie policy, referrer trimming | yes — `core::cookies` | roadmap (Gecko `cookieBehavior`, Total Cookie Protection) | `ContentBlocking` | 2 |
-| DNT / GPC headers | yes | roadmap (Gecko prefs) | — | 2 |
-| Fingerprinting protection | partial | roadmap (Gecko `privacy.resistFingerprinting` flavours) | — | 2 |
+| Ad and tracker blocking (Brave engine + 7 lists + uBO resources) | yes — How it works › Ad and tracker blocking | done (v) (0.2.0: uBlock Origin 1.76.0, its signed release built in unmodified as a GeckoView extension (`android/ubo.lock`, every file in the APK compared with the release at build time). It filters requests and hides page elements with the lists inside its package, in normal and private tabs, from the first page on: page loads wait for it at start (a few seconds; after 10 s they go ahead and the shield warns). A second extension of Krunk's own (`krunk-guard`) keeps uBlock Origin off the network unless the user starts an update, and drives it through its own messages. Blocking can be switched off in Settings › Privacy. A blocked top-level address shows Krunk's page with "Open once") | `WebExtensionController.ensureBuiltIn`; privileged experiment APIs of the built-in guard extension | 2 |
+| Shield counter, per-site allow, custom lists | yes | partial (v) (0.2.0: the shield in the address field shows how many requests were blocked on the page; its sheet has the per-site switch (stored in the shared `adblock_allowlist` table, kept over restarts) and, in private tabs, the count without a switch. Settings › Privacy lists the allowed sites. Custom lists: round 3) | `WebExtension.ActionDelegate`; uBlock Origin's own messages | 2 (custom lists: 3) |
+| Tracking protection levels (Standard/Strict/Custom) | yes — 0.6.0; `core::protection` | roadmap (one design over the engine's settings and uBlock Origin's lists, after blocking has shipped) | `ContentBlocking.Settings` | 3 |
+| Third-party cookie policy, referrer trimming | yes — `core::cookies` | partial (0.2.0: cookies are "first party, others isolated per site" (Gecko's Total Cookie Protection behaviour), fixed, no setting yet; referrer trimming: roadmap) | `ContentBlocking` | 2 (setting: 3) |
+| DNT / GPC headers | yes | roadmap (Gecko prefs) | — | 3 |
+| Fingerprinting protection | partial | roadmap (Gecko `privacy.resistFingerprinting` flavours) | — | 3 |
 | Custom DNS (DoH/DoT/DoQ) | yes — 0.6.0; `core::dns` | roadmap (Gecko DoH) | `network.trr.*` prefs | 3 |
-| Safe Browsing | no (switched off on Windows) | not planned — conflicts with Krunk's no-Google-contact promise; alternative: uBO's badware list (as on Windows); Gecko's Safe Browsing stays off | `ContentBlocking.SafeBrowsing` | — |
-| No telemetry, no background Krunk traffic | yes | done (the app makes no requests of its own; GeckoView has no telemetry; verified request list is a round-2 audit item) | — | 1 |
+| Safe Browsing | no (switched off on Windows) | not planned — conflicts with Krunk's no-Google-contact promise; alternative: uBlock Origin's badware and malware lists. **0.1.0 and 0.1.1 did contact Google's Safe Browsing update service in the background although the setting was "off" (fixed in 0.2.0, verified by packet capture).** There is no Safe Browsing warning page in Krunk for Android | `ContentBlocking.SafeBrowsing` | — |
+| No telemetry, no background Krunk traffic | yes | done (v) since 0.2.0 — **0.1.0 and 0.1.1 were not quiet:** the engine contacted Mozilla (Remote Settings, a connectivity check) and Google (Safe Browsing list updates) in the background. 0.2.0 switches these off with an engine configuration file and checks it with a packet capture per app UID: no packet in 10 minutes after a fresh install, and none on later starts. The price: without Remote Settings the engine gets no updates of certificate revocation data (CRLite) and of preloaded intermediate certificates, and there is no Safe Browsing. Settings › Privacy › "Update automatically" (off by default) turns the filter-list updates and Mozilla's Remote Settings on together; Safe Browsing and the connectivity check stay off in every case | engine config file (`GeckoRuntimeSettings.configFilePath`), `ContentBlocking.Settings` | 1, 2 |
 | Private tabs | yes | done (v) | `usePrivateMode` | 1 |
 | Session logs (`krunk://sessions`, opt-in) | yes — 0.15.0 | roadmap | — | 4 |
 
@@ -213,7 +220,7 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 |---|---|---|---|---|
 | Install extensions (CRX / Web Store) | yes — 0.6.0 (own MV3 subset) | not planned as CRX; roadmap: a curated set of Firefox add-ons (WebExtensions) | `WebExtensionController.install` | 4 |
 | Bundled built-in extension (Krunk's own) | n/a | done (`krunk-icons`, favicon reporting) | `ensureBuiltIn` | 1 |
-| uBlock Origin bundled | n/a | roadmap | `ensureBuiltIn` | 2 |
+| uBlock Origin bundled | n/a | done (v) (0.2.0: see "Ad and tracker blocking"; version, release file and SHA-256 in `android/ubo.lock`, licences in `android/THIRD-PARTY-NOTICES.md` and under Settings › About) | `ensureBuiltIn` | 2 |
 
 ## 15. Media
 

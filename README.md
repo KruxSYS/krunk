@@ -1481,7 +1481,7 @@ To reproduce: enable discard in Settings, start with `--sleep-test-seconds=90 --
 open the sites and read `memory-report.log` (steps in `docs/MANUAL_TEST.md`).
 
 ## Krunk for Android (preview)
-Krunk for Android (0.1.1) is a first, installable preview of the same browser for phones and
+Krunk for Android (0.2.0) is an installable preview of the same browser for phones and
 tablets (Android 8 and later, `arm64-v8a` devices and the `x86_64` emulator). It is built from
 this repository (`android/`, `ffi/`) and shares Krunk's Rust `core` with the Windows app: the same
 address-bar rules (DuckDuckGo by default), the same SQLite database layout for history, bookmarks,
@@ -1501,25 +1501,48 @@ they install over this one and keep your data. There is no update check yet: new
 on the website.
 
 **Engine.** GeckoView 160 (Firefox's engine as a library, MPL-2.0), not the system WebView and not
-a Chromium build: it lets Krunk ship uBlock Origin as a built-in extension in a later round, keeps
+a Chromium build: it lets Krunk run uBlock Origin itself as a built-in extension, keeps
 private tabs and site data under the app's control, and keeps the engine independent of Google's.
 Pages therefore render with Gecko on Android and with Chromium on Windows.
 
+**Ad and tracker blocking (since 0.2.0).** uBlock Origin 1.76.0 is built in, unmodified (its
+signed release, pinned in `android/ubo.lock` and compared file by file at build time), with the
+filter lists inside it. The shield in the address bar shows what was blocked on a page and
+switches blocking off per site; private tabs are filtered too. Krunk's own small extension keeps
+uBlock Origin off the network: filter lists are updated when you ask in Settings › Privacy, or
+daily if you turn "Update automatically" on. Tracking parameters are removed from typed
+addresses, from links you tap and from redirects.
+
+**No background traffic, and what that costs.** After a fresh install Krunk for Android sends
+nothing until you open a page (checked with a packet capture of the app's traffic). 0.1.0 and
+0.1.1 did not keep that promise: the engine contacted Mozilla (Remote Settings, a connectivity
+check) and Google (Safe Browsing list updates) in the background. 0.2.0 switches these off. The
+price: the engine gets no updates of certificate revocation data (CRLite) or of preloaded
+intermediate certificates, and there is no Safe Browsing warning page. "Update automatically"
+(off by default) turns Mozilla's Remote Settings on together with the filter-list updates; Safe
+Browsing and the connectivity check stay off in every case.
+
 **What it does.** Browsing with a toolbar at the top (or, in Settings › Toolbar position, at the
-bottom) that hides while you scroll,
+bottom) that hides while you scroll: a wide address bar with the shield, the tab counter and the
+menu, whose first row has Back, Forward and Home (long press for the page list);
 address bar with history, bookmark and search suggestions, automatic HTTPS, Krunk's error page,
-find in page, desktop-site switch, full screen, share, link long-press menu (new tab, private tab,
-copy, share, save image), page dialogs (drop-down lists, alert/confirm/prompt, HTTP sign-in) and
-links that open a new tab; tabs with a switcher grid, a separate private section, recently closed,
-restore after a restart or a crash, and sleeping/discarding of background tabs; a native new-tab
+find in page, desktop-site switch (kept per tab), full screen, share, link long-press menu (new
+tab, private tab, copy, share, save image), search or open selected text, mail and phone links,
+page dialogs (drop-down lists, alert/confirm/prompt, HTTP sign-in, file, date, time and colour
+pickers, "leave page?", "send again?", sharing) and
+links that open a new tab; tabs with a switcher grid (long press: duplicate, close others), a
+separate private section, recently closed,
+restore after a restart or a crash, and sleeping/discarding of background tabs; the twelve styles
+and the accent colour of the Windows browser (Settings › Appearance); a native new-tab
 page with your most visited sites, shortcuts and the built-in wallpapers; bookmarks with folders,
 search and Netscape HTML import/export; history by day; settings (search engine, homepage, start-up,
 theme, toolbar position, text size, HTTPS-only, suggestions, clear browsing data) and an About page.
 Light, dark and system themes; phone and tablet layouts; TalkBack-friendly controls.
 
-**Not there yet** (see the matrix for the planned round): ad and tracker blocking, the password
+**Not there yet** (see the matrix for the planned round): custom filter lists and protection
+levels, the password
 vault, a downloads manager (downloads are handed to Android after a question, without the page's
-sign-in, so files behind a login may not download), file, date and colour pickers, site permissions and cookie
+sign-in, so files behind a login may not download), site permissions and cookie
 controls, media controls and picture-in-picture, account and sync, VPN, the AI agent, userscripts,
 extensions, an update check and Play/F-Droid packaging. Builds made without the release key (any
 debug build, or `./gradlew assembleRelease -Pkrunk.allowDebugSignedRelease=true` on another

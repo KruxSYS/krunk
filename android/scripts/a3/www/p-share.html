@@ -1,0 +1,8 @@
+<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width, initial-scale=1">
+<title>Prompt: navigator.share</title>
+<style>body{font:20px sans-serif;margin:16px} button,input,a{font-size:20px;min-height:48px;margin:6px 0;display:block} #s{font:16px monospace;white-space:pre-wrap;background:#eee;padding:8px;margin-top:16px}</style>
+<script src="p.js"></script>
+<h3>navigator.share</h3>
+<button id=o>share</button><script>addEventListener("load", () => { let n = 0; document.getElementById("o").onclick = () => { n++; show({ asked: n, result: "waiting" });
+navigator.share({ title: "Krunk test", text: "Shared text", url: location.origin + "/landing.html?id=7" }).then(() => show({ result: "shared" }), e => show({ result: e.name })); }; show({ asked: 0 }); })</script>
+<pre id=s></pre>

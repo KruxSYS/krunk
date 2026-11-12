@@ -1,0 +1,8 @@
+<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width, initial-scale=1">
+<title>Hand-off</title><style>body{font:20px sans-serif;margin:16px} a,button{display:block;padding:18px;margin:14px 0;background:#eef;font-size:20px}</style>
+<h2>Mail and phone links</h2>
+<a id=m href="mailto:info@example.com?subject=Hello">1 mailto link (tap)</a>
+<a id=t href="tel:+49 30 1234567">2 tel link (tap)</a>
+<button id=s onclick="setTimeout(()=>{location.href='tel:+15551234'},8000)">3 tel by script, 8 s after the tap (the engine counts a tap for 5 s)</button>
+<a id=i href="intent://scan/#Intent;scheme=zxing;package=com.example;end">4 intent: link (not handed over)</a>
+<p id=o>still on the page</p>
