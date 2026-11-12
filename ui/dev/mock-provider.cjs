@@ -36,10 +36,26 @@
 //                             note_read, plan_update, then finish with what note_read gave
 //   "scratchpad limit"        note_write of exactly 32 KiB (accepted), one more byte appended
 //                             (refused: the error names the limit), then finish with both results
+//   0.16.0, passwords on request (the keyword gate offers fill_password; Krunk asks about the site):
+//   "create an account with a generated password"
+//                             fill_password {mode: generate} (on scripts/vm-www/8094/signup.html:
+//                             the new-password field and its confirmation), then finish with
+//                             the tool's result. The scenario can't know the password: Krunk
+//                             makes it and never sends it here (check with --absent, below)
+//   "log in with password X"  fill_password {mode: provided, password: X}, then finish with the
+//                             tool's result (X is in the requests: the user typed it)
 //   anything else             a short text answer
 // Every request is appended to the log (JSON lines: time, body), and so is every connection
 // that closes before its answer ended: the VM smoke test checks both (Stop closes the
 // connection; the password value never appears in a request).
+//
+// Checking a log afterwards (no server is started; exit code 0 = not found, 1 = found):
+//   node ui/dev/mock-provider.cjs --log FILE --absent VALUE [--absent VALUE2 …]
+//   node ui/dev/mock-provider.cjs --log FILE --absent-form 'VALUE as in a form address'
+// looks for VALUE in every logged request: as it is, as a JSON string, HTML-escaped and
+// URL-encoded. For the generated password: take it from the panel's card (Copy, then the
+// clipboard) or from the address after sending signup.html's form (`password=…`, with
+// --absent-form), and run the check on the provider's log.
 'use strict';
 const http = require('http');
 const fs = require('fs');
@@ -52,6 +68,43 @@ const LOG = opt('--log', '/tmp/mock-provider.jsonl');
 function log(entry) {
   fs.appendFileSync(LOG, JSON.stringify(Object.assign({ t: new Date().toISOString() }, entry)) + '\n');
 }
+
+// ---- --absent / --absent-form: is a value in any logged request? (0.16.0) ----
+// The forms a value can take on its way into a request body (which the log holds as JSON).
+function formsOf(value) {
+  const html = value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const url = encodeURIComponent(value).replace(/[!'()*~]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+  const form = url.replace(/%20/g, '+').replace(/%2A/g, '*');
+  const out = new Set();
+  for (const f of [value, html, encodeURIComponent(value), url, form]) {
+    out.add(f);
+    const once = JSON.stringify(f).slice(1, -1); // inside a JSON string of the log
+    out.add(once);
+    out.add(JSON.stringify(once).slice(1, -1)); // inside JSON text that is itself a string (a tool result)
+  }
+  return Array.from(out).filter(Boolean);
+}
+function checkAbsent() {
+  const values = [];
+  args.forEach((a, i) => {
+    if (a === '--absent' && args[i + 1] !== undefined) values.push(args[i + 1]);
+    if (a === '--absent-form' && args[i + 1] !== undefined) values.push(decodeURIComponent(args[i + 1].replace(/\+/g, ' ')));
+  });
+  if (!values.length) return false;
+  let lines = [];
+  try { lines = fs.readFileSync(LOG, 'utf8').split('\n').filter(Boolean); } catch (e) { console.error('cannot read ' + LOG + ': ' + e.message); process.exit(2); }
+  const requests = lines.filter((l) => l.includes('"post":"/v1/chat/completions"')).length;
+  let hits = 0;
+  values.forEach((value, n) => {
+    const forms = formsOf(value);
+    lines.forEach((line, i) => {
+      if (forms.some((f) => line.includes(f))) { hits++; console.log('FOUND value ' + (n + 1) + ' in line ' + (i + 1) + ' of ' + LOG); }
+    });
+  });
+  console.log(requests + ' requests in ' + lines.length + ' log lines checked for ' + values.length + ' value(s): ' + (hits ? hits + ' line(s) contain one' : 'not found'));
+  process.exit(hits ? 1 : 0);
+}
+checkAbsent();
 
 // ---- reading the conversation ----
 // Krunk's own notes ("[Krunk] Your answer was cut off…", 0.15.0) are not the user's words.
@@ -155,6 +208,21 @@ function partSteps(at) {
 const cut = (name, a) => ({ cut: { name, args: a } });
 
 const SCENARIOS = [
+  // ---- 0.16.0: passwords on request ----
+  {
+    match: /create an account with a generated password/i,
+    steps: [
+      () => call('fill_password', { mode: 'generate' }),
+      (m, r) => finish('The sign-up form has a new password. fill_password said: ' + (r[0] || '').slice(0, 500)),
+    ],
+  },
+  {
+    match: /log in with (?:the )?password\s+(\S+)/i,
+    steps: [
+      (m) => call('fill_password', { mode: 'provided', password: m[1] }),
+      (m, r) => finish('I entered the password you gave. fill_password said: ' + (r[0] || '').slice(0, 500)),
+    ],
+  },
   // ---- 0.16.0: the scratchpad ----
   {
     match: /scratchpad test\s+(\S+)/i,
