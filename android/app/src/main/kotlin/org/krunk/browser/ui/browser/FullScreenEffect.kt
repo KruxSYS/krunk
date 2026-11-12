@@ -15,15 +15,20 @@ import androidx.core.view.WindowInsetsControllerCompat
  * icons readable for the current theme when not in full screen.
  */
 @Composable
-fun SystemBarsEffect(fullScreen: Boolean, darkTheme: Boolean, darkStatusBar: Boolean = darkTheme) {
+fun SystemBarsEffect(
+    fullScreen: Boolean,
+    darkTheme: Boolean,
+    darkStatusBar: Boolean = darkTheme,
+    darkNavigationBar: Boolean = darkTheme,
+) {
     val activity = LocalActivity.current
     val view = LocalView.current
-    DisposableEffect(fullScreen, darkTheme, darkStatusBar, activity) {
+    DisposableEffect(fullScreen, darkStatusBar, darkNavigationBar, activity) {
         val window = activity?.window
         val controller = window?.let { WindowCompat.getInsetsController(it, view) }
         if (controller != null) {
             controller.isAppearanceLightStatusBars = !darkStatusBar
-            controller.isAppearanceLightNavigationBars = !darkTheme
+            controller.isAppearanceLightNavigationBars = !darkNavigationBar
             if (fullScreen) {
                 controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
                 controller.hide(WindowInsetsCompat.Type.systemBars())

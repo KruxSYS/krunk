@@ -55,6 +55,22 @@ object ThemeStyles {
         ThemeShape.SQUARE -> 6
     }
 
+    /**
+     * The corner radius in dp of another field of [heightDp] (the new-tab page's search box):
+     * fully round like the address field, or square with it.
+     */
+    fun fieldCornerDp(shape: ThemeShape, heightDp: Int): Int = when (shape) {
+        ThemeShape.ROUNDED, ThemeShape.PILL -> heightDp / 2
+        ThemeShape.SQUARE -> pillCornerDp(shape)
+    }
+
+    /** The corner radius in dp of a 56 dp shortcut tile on the new-tab page ("Rounded": as it was). */
+    fun tileCornerDp(shape: ThemeShape): Int = when (shape) {
+        ThemeShape.ROUNDED -> 14
+        ThemeShape.SQUARE -> 4
+        ThemeShape.PILL -> 28
+    }
+
     /** A tab card's corner radius in dp. */
     fun cardCornerDp(shape: ThemeShape): Int = when (shape) {
         ThemeShape.ROUNDED -> 12

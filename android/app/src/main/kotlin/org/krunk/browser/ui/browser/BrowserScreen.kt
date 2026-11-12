@@ -10,9 +10,11 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -104,10 +106,16 @@ fun BrowserScreen(vm: BrowserViewModel) {
     var download by remember { mutableStateOf<PendingDownload?>(null) }
     var external by remember { mutableStateOf<ExternalLink?>(null) }
 
-    // With the toolbar at the top the strip behind the status bar is filled like the toolbar: a
-    // dark gradient there needs light status icons even in the light theme.
+    // The strip behind the status bar (toolbar at the top) or behind the navigation bar (toolbar
+    // at the bottom) is filled like the toolbar: a dark gradient there needs light system icons
+    // even in the light theme.
     val style = LocalKrunkStyle.current
-    SystemBarsEffect(fullScreen = fullScreen, darkTheme = dark, darkStatusBar = if (top) style.stripDark else dark)
+    SystemBarsEffect(
+        fullScreen = fullScreen,
+        darkTheme = dark,
+        darkStatusBar = if (top) style.stripDark else dark,
+        darkNavigationBar = if (top) dark else style.stripDark,
+    )
 
     // Back, in order: find bar, address editing, full screen, page history; else the activity.
     BackHandler(enabled = findActive) { vm.closeFind() }
@@ -206,6 +214,16 @@ fun BrowserScreen(vm: BrowserViewModel) {
                 Modifier
                     .fillMaxWidth()
                     .windowInsetsTopHeight(WindowInsets.safeDrawing)
+                    .background(style.toolbar),
+            )
+        }
+        // With the toolbar at the bottom the same goes for the area behind the navigation bar.
+        if (!top && chromeVisible) {
+            Spacer(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .windowInsetsBottomHeight(WindowInsets.navigationBars)
                     .background(style.toolbar),
             )
         }

@@ -20,6 +20,7 @@ import org.krunk.ffi.ResolvedTheme
 import org.krunk.ffi.ThemeAppearance
 import org.krunk.ffi.ThemeHighlight
 import org.krunk.ffi.ThemeMode
+import org.krunk.ffi.ThemeShape
 import org.krunk.ffi.ToolbarFill
 import org.krunk.ffi.resolveTheme
 
@@ -105,6 +106,8 @@ data class KrunkStyle(
     val onAccent: Color,
     val pillShape: Shape,
     val cardShape: Shape,
+    /** The style's corners, for the other fields and tiles (see [ThemeStyles]). */
+    val shape: ThemeShape,
     val highlight: ThemeHighlight,
 )
 
@@ -129,6 +132,7 @@ fun styleOf(t: ResolvedTheme): KrunkStyle {
         onAccent = c(t.onAccent),
         pillShape = RoundedCornerShape(ThemeStyles.pillCornerDp(t.shape).dp),
         cardShape = RoundedCornerShape(ThemeStyles.cardCornerDp(t.shape).dp),
+        shape = t.shape,
         highlight = t.highlight,
     )
 }

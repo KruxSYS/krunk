@@ -58,6 +58,23 @@ class ThemeStylesTest {
     }
 
     @Test
+    fun theNewTabPagesSearchBoxAndTilesFollowTheStylesCorners() {
+        // "Rounded" is how they have always been drawn.
+        assertEquals(28, ThemeStyles.fieldCornerDp(ThemeShape.ROUNDED, 56))
+        assertEquals(14, ThemeStyles.tileCornerDp(ThemeShape.ROUNDED))
+        assertEquals(28, ThemeStyles.fieldCornerDp(ThemeShape.PILL, 56))
+        assertEquals(28, ThemeStyles.tileCornerDp(ThemeShape.PILL))
+        assertEquals(ThemeStyles.pillCornerDp(ThemeShape.SQUARE), ThemeStyles.fieldCornerDp(ThemeShape.SQUARE, 56))
+        assertTrue(ThemeStyles.tileCornerDp(ThemeShape.SQUARE) < 8)
+        for (shape in ThemeShape.entries) {
+            assertEquals(
+                ThemeStyles.pillCornerDp(shape),
+                ThemeStyles.fieldCornerDp(shape, 40),
+            )
+        }
+    }
+
+    @Test
     fun theActiveCardIsMarkedInEveryStyleAndNoOtherCardIs() {
         assertEquals(CardMark.FILL, ThemeStyles.cardMark(ThemeHighlight.FILL, active = true))
         assertEquals(CardMark.UNDERLINE, ThemeStyles.cardMark(ThemeHighlight.UNDERLINE, active = true))

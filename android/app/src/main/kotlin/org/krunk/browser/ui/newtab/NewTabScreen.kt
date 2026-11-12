@@ -70,6 +70,8 @@ import org.krunk.browser.R
 import org.krunk.browser.core.Wallpapers
 import org.krunk.browser.ui.BrowserViewModel
 import org.krunk.browser.ui.theme.KrunkColors
+import org.krunk.browser.ui.theme.LocalKrunkStyle
+import org.krunk.browser.ui.theme.ThemeStyles
 import org.krunk.ffi.NtpBackgroundMode
 import org.krunk.ffi.Tile
 import org.krunk.ffi.bookmarkable
@@ -242,8 +244,10 @@ private fun SearchBox(vm: BrowserViewModel, engineName: String) {
     } else {
         stringResource(R.string.ntp_search_hint, engineName)
     }
+    // The search box and the tiles take the style's corners, like the address field.
+    val boxShape = RoundedCornerShape(ThemeStyles.fieldCornerDp(LocalKrunkStyle.current.shape, SEARCH_BOX_DP).dp)
     Surface(
-        shape = RoundedCornerShape(28.dp),
+        shape = boxShape,
         color = MaterialTheme.colorScheme.surfaceContainer,
         tonalElevation = 2.dp,
         shadowElevation = 2.dp,
@@ -255,7 +259,7 @@ private fun SearchBox(vm: BrowserViewModel, engineName: String) {
             singleLine = true,
             placeholder = { Text(hint, maxLines = 1, overflow = TextOverflow.Ellipsis) },
             leadingIcon = { Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.action_search)) },
-            shape = RoundedCornerShape(28.dp),
+            shape = boxShape,
             colors = TextFieldDefaults.colors(
                 focusedIndicatorColor = Color.Transparent,
                 unfocusedIndicatorColor = Color.Transparent,
@@ -344,7 +348,7 @@ private fun SiteTile(
         ) {
             Box {
                 Surface(
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(ThemeStyles.tileCornerDp(LocalKrunkStyle.current.shape).dp),
                     color = MaterialTheme.colorScheme.surfaceContainer,
                     tonalElevation = 1.dp,
                     modifier = Modifier.size(56.dp),
@@ -420,7 +424,7 @@ private fun AddTile(onAdd: () -> Unit, textColor: Color, mutedColor: Color) {
             .padding(vertical = 8.dp, horizontal = 4.dp),
     ) {
         Surface(
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(ThemeStyles.tileCornerDp(LocalKrunkStyle.current.shape).dp),
             color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.6f),
             modifier = Modifier.size(56.dp),
         ) {
@@ -509,3 +513,6 @@ fun parseHexColor(text: String): Color? {
     val rgb = text.substring(1).toLongOrNull(16) ?: return null
     return Color((0xFF000000L or rgb).toInt())
 }
+
+/** The search box's height (Material's text field), for its style-dependent corners. */
+private const val SEARCH_BOX_DP = 56
