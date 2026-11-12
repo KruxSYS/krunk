@@ -1,0 +1,41 @@
+<!doctype html>
+<!-- DPI test page (scripts/vm-dpi-shots.ps1). The title carries what the page sees
+     (devicePixelRatio, viewport size), so the VM script reads it from the window title. A red
+     hairline runs round the viewport: all four sides must be visible and touch Krunk's own
+     chrome without a gap. Keys: a = alert, c = confirm, g = geolocation prompt. -->
+<html><head><meta charset="utf-8"><title>DPI</title>
+<style>
+  html, body { margin: 0; height: 100%; font: 15px "Segoe UI", sans-serif; background: #fff; color: #111; }
+  body::before { content: ""; position: fixed; inset: 0; border: 1px solid #e11; pointer-events: none; z-index: 9; }
+  /* Fixed positions (CSS px from the viewport's corner), so the VM script can aim at them:
+     link 28,150  words 28,200  input 28,250  select 240,250  image 28,300. */
+  main > * { position: absolute; left: 28px; margin: 0; }
+  #h { top: 20px; } #o { top: 80px; } .rule { top: 112px; } #lp { top: 150px; } #w { top: 200px; }
+  #i { top: 250px; width: 160px; } #s { top: 250px; left: 240px; } #im { top: 300px; }
+  .rule { height: 16px; background: repeating-linear-gradient(90deg, #111 0 1px, #fff 1px 2px); width: 200px; }
+  a { font-size: 18px; }
+  input, select { font: inherit; padding: 4px 8px; box-sizing: border-box; height: 32px; }
+  #far { position: fixed; right: 8px; bottom: 8px; background: #111; color: #fff; padding: 2px 8px; }
+</style></head><body><main>
+<h1 id="h">DPI test page</h1>
+<p id="o"></p>
+<div class="rule" title="1 CSS px lines"></div>
+<p id="lp"><a id="l" href="https://example.com/a/rather/long/link/for/the/status/bubble?with=a&query=string">A link for the status bubble and the link menu</a></p>
+<p id="w">Some words to select: the quick brown fox jumps over the lazy dog.</p>
+<input id="i" value="text field" title="A tooltip on the text field"><select id="s"><option>First option</option><option>Second option</option><option>Third option</option><option>Fourth option</option></select>
+<img id="im" alt="probe" src="probe.png" width="96" height="96">
+</main><div id="far">bottom right corner</div>
+<script>
+function show() {
+  var t = 'DPI dpr=' + devicePixelRatio + ' iw=' + innerWidth + ' ih=' + innerHeight + ' sw=' + screen.width + ' sh=' + screen.height + ' aw=' + screen.availWidth + ' ah=' + screen.availHeight;
+  document.title = t; document.getElementById('o').textContent = t;
+}
+show(); addEventListener('resize', show); matchMedia('(resolution: ' + devicePixelRatio + 'dppx)').addEventListener('change', show);
+setInterval(show, 500);
+addEventListener('keydown', function (e) {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key === 'a') alert('An alert from the DPI test page.\nSecond line.');
+  if (e.key === 'c') confirm('Confirm from the DPI test page?');
+  if (e.key === 'g') navigator.geolocation.getCurrentPosition(function () {}, function () {});
+});
+</script></body></html>
