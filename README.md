@@ -161,6 +161,30 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   Mono) fill these in. Tab shape (rounded with a roundness, square, pill), the active tab
   (filled, underlined, outlined) and an accent glow are separate. Text colour on a gradient is
   chosen for contrast across all its colours, in light and dark. The agent can change these.
+- **Private tabs on every style (0.16.0):** the title and the mask icon of a private tab are
+  drawn in the first of Krunk's private purple `#6d28d9`, lighter purples (`#a78bfa`, `#c4b5fd`,
+  `#ddd6fe`, `#ede9fe`), darker ones (`#5b21b6`, `#4c1d95`, `#2e1065`), white, the dark text
+  colour and black that reaches a contrast of 4.5:1 (WCAG AA) on everything drawn behind that
+  state of the tab, in the light and in the dark theme:
+  - an inactive private tab lies flat on the strip (it is no slice of an ombre): the strip's or
+    the window's colour, every point of a gradient strip, or the glass strip over its accent
+    backdrop;
+  - under the mouse it is filled with the theme's hover colour; on a gradient or glass strip
+    with a 15 % veil of black or white instead, whichever keeps the title readable (the title
+    keeps its colour where that still reads);
+  - the active private tab keeps its purple fill;
+  - a window in the background uses the same colours (private tabs are not dimmed there).
+
+  Where the purple already read (the light theme's Classic, for one) nothing changed. A gradient
+  of your own that runs through mid-tones of very different lightness has no colour that reaches
+  4.5:1 everywhere; the title then gets the best of the list. **Tab title colours** (Settings →
+  Appearance → Tab and toolbar style, 0.15.2) apply to private tabs too. The colours are computed
+  in `core/src/color.rs` (`PrivateTabColors`) and sent to the shell with `shellConfig`
+  (`colors.private.light` / `.dark`); the shell only sets CSS variables. Every style, theme and
+  state with its measured ratio is in `docs/private-tab-contrast.md`; that table and
+  `ui/dev/private-tab-colors.json` are generated
+  (`LB_UPDATE_FIXTURES=1 cargo test -p core --lib color::`), and `ui/dev/test-0160-private.cjs`
+  draws the shell with those colours and measures the contrast from the pixels.
 - **Tab previews (0.15.0):** resting the mouse on a tab for half a second shows a card with its
   title, its site and a small picture of the page (the active tab: no picture). Pictures are
   taken only from the tab you are looking at (when you leave it, and shortly after it loads),
