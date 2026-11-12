@@ -5988,7 +5988,7 @@ async function testHttpAuth(browser) {
     // 0.16.0: Session usage, the Home button, the extension icons' context menu (test-0160-menus.cjs).
     for (const f of ['test-ai-panel.cjs', 'test-ai-settings.cjs', 'test-scripts.cjs', 'test-agent-probe.cjs', 'test-vpn.cjs',
       'test-0150-tabs.cjs', 'test-0150-agent.cjs', 'test-0150-theme.cjs', 'test-0150-address.cjs', 'test-0150-downloads.cjs', 'test-0150-sessions.cjs',
-      'test-dpi.cjs', 'test-0160-menus.cjs']) {
+      'test-dpi.cjs', 'test-0160-menus.cjs', 'test-0160-private.cjs']) {
       const file = path.join(__dirname, f);
       if (!fs.existsSync(file)) continue;
       const tests = require(file)({ openPage, check, sent, lastSent, emit, shot, acceptInPage, settleTabs, SHOTS, UI });

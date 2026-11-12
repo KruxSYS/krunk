@@ -2200,7 +2200,7 @@ impl Browser {
                 search_name: s.search_name(),
                 tab_hover_preview: s.tab_hover_preview,
                 appearance: Box::new(s.appearance.clone()),
-                colors: lb_core::color::ThemeColors::from_appearance(&s.appearance),
+                colors: lb_core::color::ThemeColors::for_shell(&s.appearance),
             }
         };
         self.post_shell(&e);
