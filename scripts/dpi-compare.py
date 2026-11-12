@@ -6,7 +6,8 @@ screenshot: "is the layout at 100 % what it was?"
 
 For every screenshot name both runs have, it counts the pixels that differ and prints the
 bounding box of the difference. Left out of the comparison: the taskbar (clock, and the Krunk
-button's state) and anything inside MASKS (a blinking caret, the version on krunk://about).
+button's state), the corner where Windows draws its activation watermark, and anything inside
+MASKS (a blinking caret, the version on krunk://about).
 With OUT_DIR, differing screenshots get a side-by-side picture with the difference marked.
 A tolerance of 8 per channel ignores the noise of text anti-aliasing between two starts.
 """
@@ -20,6 +21,9 @@ from PIL import Image, ImageChops, ImageDraw
 before, after = sys.argv[1], sys.argv[2]
 out = sys.argv[3] if len(sys.argv) > 3 else None
 TASKBAR_DIP = 48
+# Windows' "Activate Windows" watermark comes and goes on the test VM; it is drawn over
+# everything in the lower right corner (fractions of the screen).
+WATERMARK = (0.74, 0.82, 1.0, 0.95)
 # name pattern -> rectangles (x0, y0, x1, y1) in fractions of the screen to ignore
 MASKS = {
     r"page-about$": [(0.0, 0.0, 1.0, 1.0)],
@@ -55,6 +59,7 @@ for key in sorted(set(a) | set(b)):
     d = ImageChops.difference(ia, ib).convert("L").point(lambda v: 255 if v > 8 else 0)
     draw = ImageDraw.Draw(d)
     draw.rectangle([0, h - int(TASKBAR_DIP * scale), w, h], fill=0)
+    draw.rectangle([int(WATERMARK[0] * w), int(WATERMARK[1] * h), int(WATERMARK[2] * w), int(WATERMARK[3] * h)], fill=0)
     for pat, rects in MASKS.items():
         if re.search(pat, key):
             for x0, y0, x1, y1 in rects:
@@ -63,7 +68,7 @@ for key in sorted(set(a) | set(b)):
     if box is None:
         same += 1
         continue
-    count = sum(1 for v in d.getdata() if v)
+    count = d.histogram()[255]
     diff += 1
     print(f"{key}: {count} px differ, in {box[0]},{box[1]} - {box[2]},{box[3]}")
     if out:

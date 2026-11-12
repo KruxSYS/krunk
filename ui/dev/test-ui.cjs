@@ -821,7 +821,10 @@ async function testShellFrame(browser) {
   const hm = (await lastSent(page, 'hitMap')).map;
   check(hm.stripHeight === 36, 'hit map: tab row height 36');
   const band = hm.interactive.find((r) => r.width > 700);
-  check(band && Math.abs(band.x + band.width - (6 + 3 * 256 + 2 * 2)) < 2, 'hit map: tabs band ends after the last tab (' + JSON.stringify(band) + ')');
+  // Since 0.15.2 the band reaches up to 10 px past the last tab: the room #tabs keeps for the
+  // active tab's glow (it overlaps the gap before "+", which is interactive anyway).
+  const lastTabEnd = 6 + 3 * 256 + 2 * 2;
+  check(band && band.x + band.width >= lastTabEnd - 2 && band.x + band.width <= lastTabEnd + 10, 'hit map: tabs band ends after the last tab, within its glow room (' + JSON.stringify(band) + ')');
   check(Math.abs(hm.close.x + hm.close.width - 1280) < 0.5 && hm.close.width === 46 && hm.close.y === 0, 'hit map: close button at the right edge, 46 wide');
   check(hm.maximize.x + hm.maximize.width === hm.close.x && hm.minimize.x + hm.minimize.width === hm.maximize.x, 'hit map: minimize, maximize, close side by side');
   const plus = await page.locator('#newtab').boundingBox();

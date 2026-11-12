@@ -5,9 +5,16 @@ What changed in each Krunk release, newest first. Krunk for Android has its own 
 
 ## 0.15.4 — 2026-11-12
 
-Display scaling. Krunk at 125 % and more (and with the scale changed while it runs) had layout
-faults that 100 % never showed; what was wrong and how it is checked now is in `docs/DPI.md`.
+Display scaling. With Windows' Text size setting above 100 %, at display scales of 125 % and
+more, and when the scale changed while Krunk ran, the layout had faults that a plain 100 %
+display never showed. What was wrong and how it is checked now is in `docs/DPI.md`.
 
+- **Fixed: Windows' "Text size" setting broke the whole layout.** With Settings →
+  Accessibility → Text size above 100 %, Krunk drew its tab strip, toolbar and menus larger
+  but still placed them as for 100 %: the bookmarks bar disappeared under the page, menus
+  opened in the wrong place and were cut off, and the minimize, maximize and close buttons
+  did not react where they were drawn. Krunk now lays everything out for the scale it really
+  draws at, which is the display's scale times Text size.
 - **Fixed: changing the display scale while Krunk is maximized broke the layout.** After a
   change of "Scale" in Windows' display settings, or when the maximized window ended up on a
   monitor with another scale (a laptop and its dock), the tab strip and the toolbar kept their

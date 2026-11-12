@@ -712,7 +712,9 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
   height is fixed: 76 DIP, scaled by that window's DPI.
 - **Display scaling:** Krunk is per-monitor DPI aware. Layout constants are in DIP and are
   converted with the scale of the window they belong to at the moment of placing
-  (`core::dpi::Scale`). When a window's scale changes (the display setting, or another monitor)
+  (`core::dpi::Scale`). That scale is the one the engine draws at: the monitor's DPI scale
+  times Windows' "Text size" setting; the shell reports its `devicePixelRatio` and the host
+  follows it. When a window's scale changes (the display setting, or another monitor)
   it is laid out again, its pages are told, and popups sized for the old scale close
   (`Browser::frame_dpi_changed`). A window without a saved place opens at 1280 × 860 DIP, never
   larger than the screen; saved bounds carry the DPI they were saved at. What was wrong before

@@ -945,7 +945,7 @@ impl Browser {
         let ops = {
             let mut ws = self.ws.borrow_mut();
             let restored = match (startup, &saved) {
-                (Startup::RestoreSession, Some(session)) => ws.restore(session, now, &fit),
+                (Startup::RestoreSession, Some(session)) => ws.restore(session, now, fit),
                 _ => Vec::new(),
             };
             // Without restored tabs the window still opens where the last one was (0.15.4):
@@ -3012,6 +3012,11 @@ impl Browser {
             Request::HitMap { map } => {
                 if let Some(win) = self.cur_id() {
                     self.set_hit_map(win, map);
+                }
+            }
+            Request::ShellScale { dpr } => {
+                if let Some(win) = self.cur_id() {
+                    self.shell_scale_reported(win, dpr);
                 }
             }
             Request::WindowControl { action } => {

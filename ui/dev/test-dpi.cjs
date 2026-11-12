@@ -183,6 +183,15 @@ module.exports = function ({ openPage, check, sent, lastSent, emit, shot }) {
       await page.waitForTimeout(350);
       const r = await page.evaluate(overlapScript);
       const tag = w + ' CSS px at ' + s * 100 + ' %';
+      // The host lays out with the scale the shell reports (the engine's, which includes
+      // Windows' "Text size"): told at load, and again with every window state.
+      const told = (await sent(page)).filter((m) => m.cmd === 'shellScale');
+      check(told.length >= 1 && told.every((m) => m.dpr === s), tag + ': the shell reports its devicePixelRatio (' + JSON.stringify(told.map((m) => m.dpr)) + ')');
+      if (w === 1097) {
+        await emit(page, { event: 'windowState', maximized: true, active: true, fullscreen: false });
+        await page.waitForTimeout(50);
+        check((await sent(page)).filter((m) => m.cmd === 'shellScale').length === told.length + 1, tag + ': and again when the host announces a window state');
+      }
       check(r.problems.length === 0, tag + ': nothing in the tab row or the toolbar overlaps or leaves its row (' + r.problems.join('; ') + ')');
       check(r.caption === 0, tag + ': the close button ends at the window edge');
       check(r.address >= 100 || r.tight === 3, tag + ': the address field keeps a usable width, or every optional button is gone (' + r.address + ' px, ' + r.shown + ')');

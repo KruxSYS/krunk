@@ -9,9 +9,17 @@ Windows never stretches it. This page says what went wrong at scales above 100 %
 
 | Unit | Where | Notes |
 |---|---|---|
-| **DIP** (1/96 inch) | every layout constant in `core/src/layout.rs` and `core/src/frame.rs` (`*_DIP`), the shell's and the popups' CSS pixels | a CSS pixel of Krunk's own UI is one DIP (their zoom is always 1) |
+| **DIP** | every layout constant in `core/src/layout.rs` and `core/src/frame.rs` (`*_DIP`), the shell's and the popups' CSS pixels | a CSS pixel of Krunk's own UI is one DIP (their zoom is always 1) |
 | **Physical pixel** | window and view rectangles, mouse positions, monitor work areas, everything Win32 takes or gives | `Rect`, `ScreenRect`, `Bounds` |
-| **Scale** | `Window::scale()` = `GetDpiForWindow / 96` | 1.0, 1.25, 1.5, 1.75, 2.0, 2.5 … |
+| **Scale** | `Window::scale()`: physical pixels per DIP, **the scale the engine draws at** | the monitor's DPI scale (`GetDpiForWindow / 96`: 1.0, 1.25, 1.5 …) **times Windows' "Text size"** (1.0 to 2.25) |
+
+The engine's device scale factor is not the window's DPI alone. Chromium multiplies in the
+accessibility setting **Settings → Accessibility → Text size**: at Text size 150 % on a 100 %
+display, `devicePixelRatio` is 1.5 in every view while `GetDpiForWindow` still says 96. The
+shell tells the host its `devicePixelRatio` (`Request::ShellScale`), so the host follows
+whatever the engine really uses; before the shell has loaded, the host reads the setting
+itself (`HKCU\Software\Microsoft\Accessibility\TextScaleFactor`, `ffi::window::ui_factor`).
+Windows' own metrics (frame thickness, icon sizes) follow the DPI only: `Window::raw_dpi()`.
 
 `core/src/dpi.rs` (`Scale`) is the one place that converts: `px` rounds to the nearest pixel,
 `px_floor` and `px_ceil` are for the cases that want another rounding on purpose, `dip` goes
@@ -25,7 +33,18 @@ runs). Most of the host already scaled correctly: the shell strip, the page boun
 tests of the caption buttons and the popups' sizes were right at every scale when Krunk was
 started at that scale. These were not:
 
-1. **A scale change while Krunk is maximized left the old layout.** Windows first gives a
+1. **Windows' "Text size" was ignored.** With Text size above 100 % the engine draws
+   everything larger, but every DIP-to-pixel conversion of the host used the window's DPI
+   only. Measured at Text size 150 % on a 1920x1080 display at 100 % (0.15.3): the shell strip
+   was 104 px high for content that needs 156 px (the bookmarks bar was not visible at all);
+   the ⋮ menu's window was 280x658 px for content of 420x987 px, and it opened 572 px to the
+   left of its button; the tab menu was 240x287 px instead of 360x431; the caption buttons'
+   hit areas were where the buttons would be at 100 %. This is "the whole layout breaks",
+   and it needs no unusual display: only that slider.
+   *Fix:* `Window::scale()` is the engine's scale (see Units); frames notice a change of it
+   like a change of DPI.
+
+2. **A scale change while Krunk is maximized left the old layout.** Windows first gives a
    maximized window its new size (the taskbar grows with the scale), at a moment when the
    window still reports its old DPI, so the frame was laid out for the old scale. The DPI
    message (`WM_DPICHANGED`) follows with a suggested rectangle, which for a maximized window
@@ -43,7 +62,7 @@ started at that scale. These were not:
    display change (`check_frame_scales`), so a missing or early message cannot leave a stale
    layout.
 
-2. **Popups were clamped to the work area and cut off.** A popup window was placed with an
+3. **Popups were clamped to the work area and cut off.** A popup window was placed with an
    upper bound for its height and pushed into the monitor's work area; content that did not
    fit was clipped (`overflow: hidden`). The ⋮ menu needs 658 CSS px. A 1920x1080 display has
    672 px of work area at 150 %, 569 px at 175 %, and the VM's 1280x800 has 592 px at 125 %:
@@ -56,14 +75,14 @@ started at that scale. These were not:
    (`Event::PopupRoom`): content higher than that gets compact rows (24 px instead of 30),
    and scrolls when that is still not enough (`ui/shell/popup.js` `squeeze`).
 
-3. **The default window size was in physical pixels.** A window without a saved place was
+4. **The default window size was in physical pixels.** A window without a saved place was
    1280x860 pixels: 640x430 DIP at 200 %, 512x344 DIP at 250 % (just above the minimum size,
    with a cramped toolbar), and higher than the work area on small displays (the VM's 800 px
    high display at 100 %, a 1080p display at 175 %), so its bottom edge was under the taskbar.
    *Fix:* `layout::default_window`: 1280x860 DIP at the monitor's scale, never larger than
    its work area, moved inside it.
 
-4. **Saved window bounds carried no DPI.** A session saved at one scale and restored at
+5. **Saved window bounds carried no DPI.** A session saved at one scale and restored at
    another gave a window of the same pixel size: too small or too large by the ratio of the
    scales. *Fix:* the session stores the DPI with each window's bounds (`WindowSession.dpi`,
    absent in older sessions), and `layout::restore_window` keeps the size in DIP, limits it to
@@ -71,12 +90,12 @@ started at that scale. These were not:
    start-up mode now, not only with "Continue where you left off" (a new-tab or home-page
    start always got the default size).
 
-5. **Popup windows took Windows' suggested rectangle on a DPI change.** Popups and the hidden
+6. **Popup windows took Windows' suggested rectangle on a DPI change.** Popups and the hidden
    application window shared the frames' `WM_DPICHANGED` handler and were resized by a
    rectangle that knows nothing of their content. *Fix:* only frames take the suggested
    rectangle; a popup is sized by its owner each time it is shown.
 
-6. **Smaller things:** the minimum window size and a few positions were truncated instead of
+7. **Smaller things:** the minimum window size and a few positions were truncated instead of
    rounded (one pixel off at 125 % and 175 %); the window icons were loaded once for the
    system DPI (blurred in the taskbar on a monitor with another scale); in a window at its
    minimum width the ⋮ button was pushed partly out of the toolbar (the address field could
@@ -87,8 +106,9 @@ started at that scale. These were not:
 
 - Sizes and positions are constants in DIP; convert at the moment of placing, with the scale
   of the window the thing belongs to (`Window::scale()`), through `core::dpi::Scale`. Never
-  cache a scale, never use the system DPI (`GetSystemMetrics`, `GetDeviceCaps`): use the
-  `…ForDpi` functions with the window's DPI.
+  cache a scale, and never derive one from `GetDpiForWindow` yourself: that misses "Text
+  size". Never use the system DPI (`GetSystemMetrics`, `GetDeviceCaps`): for Windows' own
+  metrics use the `…ForDpi` functions with `Window::raw_dpi()`.
 - Edges that must meet are positions rounded once and subtracted (`layout::split`,
   `panel_split`), not rounded sizes added up.
 - Anything that stays on screen across a scale change must be re-placed or closed in
@@ -97,8 +117,8 @@ started at that scale. These were not:
   let `layout::place_popup` decide where it goes. Do not assume the work area is higher than
   the content: 448 CSS px (a 1280x720 display at 150 %) is a real work area.
 - Saved geometry needs the DPI it was saved at.
-- Test at 125 % and 175 % (fractional scales show rounding mistakes) and at a scale change
-  with the window maximized.
+- Test at 125 % and 175 % (fractional scales show rounding mistakes), at a scale change with
+  the window maximized, and with Text size at 150 %.
 
 ## Checking
 
@@ -114,6 +134,8 @@ started at that scale. These were not:
   a page sees (`devicePixelRatio`, viewport), read from the title of `dpi.html`. `:rt` is the
   pass that changes the scale while Krunk runs (normal and maximized) and restarts at another
   scale.
+- `scripts/vm-dpi-extra.ps1 -Phase text` sets Text size to 150 % (and restores it) and logs the
+  view and popup rectangles; `-Phase narrow` checks the toolbar from the minimum window size up.
 
 ## Not verified
 
@@ -121,3 +143,9 @@ started at that scale. These were not:
   the same code path as a scale change (`WM_DPICHANGED`, then the same handler), which is
   tested, and the per-monitor placement logic has unit tests with two monitors.
 - Scales above 250 %.
+- Changing Text size while Krunk runs. Windows' Settings page could not be driven by the
+  test script; the registry value alone tells no running program. Krunk starts correctly at
+  any Text size (tested at 150 %), and a change while it runs goes through code that is
+  tested for display-scale changes: the shell reports its new `devicePixelRatio`, and the
+  host re-reads the setting when Windows announces a settings change.
+- An extension's popup at scales above 100 % (no extension is installed in the DPI pass).

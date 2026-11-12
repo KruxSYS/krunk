@@ -1156,9 +1156,10 @@ impl View {
         if p.x < 0 || p.y < 0 || p.x >= r.right || p.y >= r.bottom {
             return None;
         }
+        // The view's CSS pixels: the DPI scale times "Text size" (as `Window::scale`).
         // SAFETY: plain query.
         let dpi = unsafe { windows::Win32::UI::HiDpi::GetDpiForWindow(hwnd) }.max(96);
-        let scale = f64::from(dpi) / 96.0;
+        let scale = lb_core::dpi::Scale::new(f64::from(dpi) / 96.0 * crate::ffi::window::ui_factor()).factor();
         Some(((f64::from(p.x) / scale) as i32, (f64::from(p.y) / scale) as i32))
     }
 

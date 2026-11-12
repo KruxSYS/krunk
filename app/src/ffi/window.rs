@@ -232,7 +232,7 @@ fn set_icons(hwnd: HWND) {
         LoadImageW, SendMessageW, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LR_SHARED, SM_CXICON, SM_CXSMICON,
         WM_SETICON,
     };
-    let dpi = Window(hwnd).dpi();
+    let dpi = Window(hwnd).raw_dpi();
     // SAFETY: loading shared icon resources of our own exe and handing them to our own
     // window; a shared icon is owned by the system and never destroyed by us.
     unsafe {
@@ -588,13 +588,24 @@ impl Window {
         (r.right - r.left, r.bottom - r.top)
     }
 
-    /// DPI scale factor (1.0 = 96 DPI).
+    /// The scale the engine draws this window's views at: physical pixels per CSS pixel of
+    /// Krunk's own UI (1.0 at 100 %). It is the monitor's DPI scale times Windows' "Text
+    /// size" (see [`ui_factor`]), which is what `devicePixelRatio` says in the shell. Every
+    /// conversion between DIP and pixels uses this.
     pub fn scale(self) -> f64 {
-        lb_core::dpi::Scale::from_dpi(self.dpi()).factor()
+        lb_core::dpi::Scale::new(f64::from(self.raw_dpi()) / 96.0 * ui_factor()).factor()
     }
 
-    /// The DPI of the monitor the window is on (96 = 100 %; 96 for a window that is gone).
+    /// [`Window::scale`] as a DPI value (96 = 100 %): what a layout was made for, and what
+    /// saved window bounds are marked with.
     pub fn dpi(self) -> u32 {
+        lb_core::dpi::Scale::new(self.scale()).dpi()
+    }
+
+    /// The DPI of the monitor the window is on, as Windows reports it (96 = 100 %; 96 for a
+    /// window that is gone): for Windows' own metrics (`GetSystemMetricsForDpi`), which do not
+    /// follow "Text size".
+    pub fn raw_dpi(self) -> u32 {
         // SAFETY: valid window handle.
         match unsafe { GetDpiForWindow(self.0) } {
             0 => 96,
@@ -1344,7 +1355,7 @@ const MIN_HEIGHT_DIP: f64 = 320.0;
 
 /// The smallest window in pixels at the window's scale.
 fn min_size(hwnd: HWND) -> (i32, i32) {
-    let s = lb_core::dpi::Scale::from_dpi(Window(hwnd).dpi());
+    let s = lb_core::dpi::Scale::new(Window(hwnd).scale());
     (s.px(MIN_WIDTH_DIP), s.px(MIN_HEIGHT_DIP))
 }
 
@@ -1846,7 +1857,8 @@ fn is_class(hwnd: HWND, class: PCWSTR) -> bool {
     n > 0 && buf[..n] == *want
 }
 
-/// Every monitor's work area with its DPI (96 = 100 %), the primary monitor first.
+/// Every monitor's work area with the DPI Krunk's views have on it (96 = 100 %; the monitor's
+/// DPI times "Text size", as [`Window::dpi`]), the primary monitor first.
 pub fn monitors() -> Vec<(ScreenRect, u32)> {
     use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR};
     use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
@@ -1875,7 +1887,9 @@ pub fn monitors() -> Vec<(ScreenRect, u32)> {
     // SAFETY: the callback only appends to `found`.
     let _ = unsafe { EnumDisplayMonitors(None, None, Some(each), LPARAM(&mut found as *mut _ as isize)) };
     found.sort_by_key(|(primary, _, _)| !primary);
-    found.into_iter().map(|(_, r, dpi)| (r, dpi)).collect()
+    // As `Window::dpi` counts: with the "Text size" factor.
+    let k = ui_factor();
+    found.into_iter().map(|(_, r, dpi)| (r, lb_core::dpi::Scale::new(f64::from(dpi) / 96.0 * k).dpi())).collect()
 }
 
 /// `windows` sorted by z-order, topmost first (hidden ones left out).
@@ -2070,6 +2084,68 @@ pub fn windows_build() -> u32 {
     }
     let n = (size as usize / 2).saturating_sub(1).min(buf.len());
     String::from_utf16_lossy(&buf[..n]).trim_end_matches('\0').parse().unwrap_or(0)
+}
+
+/// Windows' "Text size" (Settings → Accessibility → Text size, 100 % to 225 %) as a factor.
+/// The engine multiplies it into its device scale factor: at Text size 150 % on a 100 %
+/// display the shell, the popups and the pages are drawn at 1.5, although the window's DPI is
+/// still 96. Krunk's layout must use the same number (0.15.4: it used the DPI alone, so the
+/// tab strip was laid out too low for its content, popups were placed and sized for the wrong
+/// scale and clicks on the caption buttons missed).
+fn read_text_scale() -> f64 {
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
+    let mut value: u32 = 100;
+    let mut size = std::mem::size_of::<u32>() as u32;
+    // SAFETY: reading a DWORD into a properly sized local.
+    let r = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            w!("Software\\Microsoft\\Accessibility"),
+            w!("TextScaleFactor"),
+            RRF_RT_REG_DWORD,
+            None,
+            Some(&mut value as *mut u32 as *mut std::ffi::c_void),
+            Some(&mut size),
+        )
+    };
+    if r.is_ok() {
+        f64::from(value.clamp(100, 225)) / 100.0
+    } else {
+        1.0
+    }
+}
+
+/// The factor between a window's DPI scale and the scale the engine draws at, in thousandths
+/// (0 = not read yet). Normally Windows' "Text size"; corrected by what the shell reports as
+/// its `devicePixelRatio` ([`set_ui_factor`]), so anything else that changes the engine's
+/// scale (a forced device scale factor among the user's engine flags) is followed too.
+static UI_FACTOR: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub fn ui_factor() -> f64 {
+    use std::sync::atomic::Ordering;
+    match UI_FACTOR.load(Ordering::Relaxed) {
+        0 => {
+            let k = read_text_scale();
+            UI_FACTOR.store((k * 1000.0).round() as u32, Ordering::Relaxed);
+            k
+        }
+        k => f64::from(k) / 1000.0,
+    }
+}
+
+/// Sets the factor (from the engine's own report). True if it changed.
+pub fn set_ui_factor(k: f64) -> bool {
+    use std::sync::atomic::Ordering;
+    if !k.is_finite() || !(0.25..=8.0).contains(&k) {
+        return false;
+    }
+    let new = (k * 1000.0).round() as u32;
+    UI_FACTOR.swap(new, Ordering::Relaxed) != new
+}
+
+/// Reads "Text size" again (Windows announced a settings change). True if it changed.
+pub fn refresh_ui_factor() -> bool {
+    set_ui_factor(read_text_scale())
 }
 
 /// Does Windows use dark mode for apps? (`AppsUseLightTheme` = 0)
