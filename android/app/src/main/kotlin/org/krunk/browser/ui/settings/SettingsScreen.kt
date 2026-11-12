@@ -86,6 +86,8 @@ import org.krunk.ffi.StartupMode
 import org.krunk.ffi.ThemeMode
 import org.krunk.ffi.ToolbarPosition
 import org.krunk.ffi.searchEngines
+import org.krunk.ffi.themeWithAccent
+import org.krunk.ffi.themeWithPreset
 import org.krunk.ffi.uaPresets
 import org.krunk.ffi.wallpapers
 
@@ -375,6 +377,8 @@ private fun AppearanceSection(s: AndroidSettings, update: ((AndroidSettings) -> 
             ThemeMode.DARK -> stringResource(R.string.settings_theme_dark)
         },
     ) { pick = "theme" }
+    Row(stringResource(R.string.settings_style), styleName(s.appearance)) { pick = "style" }
+    Row(stringResource(R.string.settings_accent), accentName(s.appearance)) { pick = "accent" }
     Row(
         stringResource(R.string.settings_toolbar_position),
         if (s.toolbarPosition ==
@@ -417,6 +421,18 @@ private fun AppearanceSection(s: AndroidSettings, update: ((AndroidSettings) -> 
             ),
             selected = s.theme,
             onPick = { m -> update { it.copy(theme = m) } },
+            onDismiss = { pick = null },
+        )
+
+        "style" -> StylePickerDialog(
+            current = s.appearance,
+            onPick = { id -> update { it.copy(appearance = themeWithPreset(it.appearance, id)) } },
+            onDismiss = { pick = null },
+        )
+
+        "accent" -> AccentPickerDialog(
+            current = s.appearance,
+            onPick = { colour -> update { it.copy(appearance = themeWithAccent(it.appearance, colour)) } },
             onDismiss = { pick = null },
         )
 
