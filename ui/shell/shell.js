@@ -401,8 +401,8 @@
   // 0.15.4: a narrow window (the minimum size, a quarter of a small display, a large scale):
   // the address field shrinks first; when less than 120 px of it are left the optional
   // buttons go, in this order: extension icons, the zoom chip and the bookmark star, then
-  // downloads / VPN / AI. Back, Forward, Reload, the shield and the ⋮ menu always stay (the
-  // menu used to be pushed out of the window).
+  // Home (0.16.0) / downloads / VPN / AI. Back, Forward, Reload, the shield and the ⋮ menu
+  // always stay (the menu used to be pushed out of the window).
   function fitToolbar() {
     const tb = $('toolbar');
     const before = tb.className;
@@ -793,6 +793,15 @@
   });
   $('reload').addEventListener('click', function () {
     LB.post(state.nav && state.nav.loading ? 'stop' : 'reload');
+  });
+  // 0.16.0: the Home button (Settings → Appearance, hidden by default). A click is Alt+Home:
+  // the homepage, or the new tab page when none is set; Ctrl+click or a middle-click opens it
+  // in a new tab. The host knows the address: the shell only asks.
+  $('home').addEventListener('click', function (e) { LB.post('home', { newTab: !!e.ctrlKey }); });
+  // A middle press never starts the engine's autoscroll here (it would take the release).
+  $('home').addEventListener('mousedown', function (e) { if (e.button === 1) e.preventDefault(); });
+  $('home').addEventListener('auxclick', function (e) {
+    if (e.button === 1) { e.preventDefault(); LB.post('home', { newTab: true }); }
   });
   $('newtab').addEventListener('click', function () { LB.post('newTab', {}); });
   $('star').addEventListener('click', function () { LB.post('toggleBookmark'); });
@@ -1477,6 +1486,8 @@
     root.classList.toggle('tab-text', !!a.tabTextColor);
     state.showDownloads = a.showDownloadsButton !== false;
     $('downloads').classList.toggle('off', !state.showDownloads);
+    // 0.16.0: the Home button, only when asked for (older hosts send no such key).
+    $('home').hidden = a.showHomeButton !== true;
     $('zoom').classList.toggle('off', a.showZoomChip === false);
     state.appearance = a;
     reportHitMap();

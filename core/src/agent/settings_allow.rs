@@ -123,6 +123,12 @@ static KEYS: &[Key] = &[
     Key { path: "appearance.showDownloadsButton", kind: Kind::Bool, note: "" },
     Key { path: "appearance.showZoomChip", kind: Kind::Bool, note: "" },
     Key { path: "appearance.showExtensionsButton", kind: Kind::Bool, note: "" },
+    // 0.16.0
+    Key {
+        path: "appearance.showHomeButton",
+        kind: Kind::Bool,
+        note: "a Home button after Reload; it opens `homepage` (the new tab page when that is empty)",
+    },
     // 0.15.0
     Key {
         path: "appearance.preset",

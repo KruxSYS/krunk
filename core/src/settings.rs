@@ -179,6 +179,10 @@ pub struct Appearance {
     pub show_downloads_button: bool,
     pub show_zoom_chip: bool,
     pub show_extensions_button: bool,
+    /// 0.16.0: a Home button after Reload (off by default). It goes where Alt+Home goes
+    /// ([`Settings::home_target`]). Not the top-level `showHomeButton` of 0.4, which 0.5
+    /// removed and which is still ignored.
+    pub show_home_button: bool,
     /// 0.15.0: how the tab strip is filled (`ombre` spreads the gradient across the strip).
     pub tab_style: BarStyle,
     /// 0.15.0: how the toolbar is filled (`ombre` is not offered for it).
@@ -256,6 +260,7 @@ impl Default for Appearance {
             show_downloads_button: true,
             show_zoom_chip: true,
             show_extensions_button: true,
+            show_home_button: false,
             tab_style: BarStyle::Solid,
             toolbar_style: BarStyle::Solid,
             gradient_from: String::new(),
@@ -948,6 +953,17 @@ impl Settings {
 
     pub fn search_template(&self) -> &str {
         self.search_engine.template().unwrap_or(&self.custom_search_url)
+    }
+
+    /// Where Home goes (Alt+Home and the Home button, 0.16.0): the homepage, or Krunk's new tab
+    /// page when none is set.
+    pub fn home_target(&self) -> String {
+        let home = self.homepage.trim();
+        if home.is_empty() {
+            crate::pages::Page::NewTab.url()
+        } else {
+            home.to_string()
+        }
     }
 
     /// What a new tab opens: `None` for Krunk's new tab page, else the address.
@@ -1650,20 +1666,56 @@ mod tests {
         assert!(json.contains(r#""bookmarksBar":"newTab""#) && !json.contains("showBookmarksBar"), "{json}");
     }
 
-    /// 0.4 and earlier had a Home button with `showHomeButton`; 0.5 removed it.
-    /// Old files still load, the field is ignored, and saving drops it.
+    /// 0.4 and earlier had a Home button with a top-level `showHomeButton`; 0.5 removed it.
+    /// Old files still load, that field is ignored, and saving drops it. 0.16.0 has a Home
+    /// button again, as `appearance.showHomeButton` (off by default): the old top-level key
+    /// neither turns it on nor comes back at the top level, so this no longer forbids the name
+    /// anywhere in the file, only outside `appearance`.
     #[test]
     fn home_button_setting_is_ignored_and_dropped() {
         let old = Settings::from_json_lenient(
-            r#"{"showHomeButton":false,"homepage":"https://a.example/","theme":"dark","startup":"homepage"}"#,
+            r#"{"showHomeButton":true,"homepage":"https://a.example/","theme":"dark","startup":"homepage"}"#,
         );
         assert_eq!(old.homepage, "https://a.example/");
         assert_eq!(old.theme, Theme::Dark);
         assert_eq!(old.startup, Startup::Homepage);
+        assert!(!old.appearance.show_home_button, "the 0.4 key does not turn the 0.16.0 button on");
         let strict: Settings = serde_json::from_str(r#"{"showHomeButton":true}"#).unwrap();
         assert_eq!(strict, Settings::default());
-        let json = serde_json::to_string(&old).unwrap();
-        assert!(!json.contains("showHomeButton") && !json.contains("homeButton"), "{json}");
+        let json: serde_json::Value = serde_json::to_value(&old).unwrap();
+        let top = json.as_object().unwrap();
+        assert!(top.keys().all(|k| k != "showHomeButton" && k != "homeButton"), "{json}");
+        assert_eq!(json["appearance"]["showHomeButton"], serde_json::json!(false), "{json}");
+        // The one place the name is written: once, inside `appearance`.
+        assert_eq!(json.to_string().matches("showHomeButton").count(), 1, "{json}");
+        assert!(!json.to_string().contains("homeButton"), "{json}");
+    }
+
+    /// 0.16.0: the Home button's setting is off by default, lives in `appearance`, and files
+    /// from before it load with it off.
+    #[test]
+    fn home_button_is_an_appearance_setting_off_by_default() {
+        assert!(!Settings::default().appearance.show_home_button);
+        let on: Settings = serde_json::from_str(r#"{"appearance":{"showHomeButton":true}}"#).unwrap();
+        assert!(on.appearance.show_home_button);
+        assert_eq!(on.validate(), Ok(()));
+        let before: Settings = serde_json::from_str(r##"{"appearance":{"accent":"#16a34a"}}"##).unwrap();
+        assert!(!before.appearance.show_home_button);
+        let back: Settings = serde_json::from_str(&serde_json::to_string(&on).unwrap()).unwrap();
+        assert_eq!(back, on);
+    }
+
+    /// Alt+Home and the Home button: the homepage, or the new tab page when it is empty.
+    #[test]
+    fn home_goes_to_the_homepage_or_the_new_tab_page() {
+        let d = Settings::default();
+        assert_eq!(d.home_target(), "https://duckduckgo.com/", "the default homepage is unchanged");
+        let s = Settings { homepage: "https://start.example/".into(), ..Settings::default() };
+        assert_eq!(s.home_target(), "https://start.example/");
+        for empty in ["", "  "] {
+            let s = Settings { homepage: empty.into(), ..Settings::default() };
+            assert_eq!(s.home_target(), crate::pages::Page::NewTab.url(), "{empty:?}");
+        }
     }
 
     #[test]

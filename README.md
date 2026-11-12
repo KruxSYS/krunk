@@ -102,7 +102,7 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
 | Ctrl+Tab / Ctrl+Shift+Tab, Ctrl+1…8, Ctrl+9 | Next / previous tab, tab by position, last tab |
 | Ctrl+L, Alt+D, F6 | Address bar |
 | F5 / Ctrl+R, Ctrl+F5 / Ctrl+Shift+R | Reload, reload bypassing the cache |
-| Alt+Left / Alt+Right, Alt+Home | Back / forward, home page (there is no Home button) |
+| Alt+Left / Alt+Right, Alt+Home | Back / forward, home page (the Home button is optional: Settings → Appearance, 0.16.0) |
 | Ctrl+D | Bookmark this page |
 | Ctrl+U | View page source (0.11.0) |
 | Ctrl+H, Ctrl+Shift+O, Ctrl+J | History, bookmarks, downloads (switches to the page if it is already open) |
@@ -153,6 +153,15 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   readable (WCAG AA where a colour allows it). The new-tab page has ten built-in wallpapers
   (made for Krunk, see THIRD-PARTY-NOTICES) besides your own picture or a colour, chosen in its
   Customize panel or in Settings → Appearance; long site titles on its tiles wrap to two lines.
+- **Toolbar items:** Settings → Appearance shows or hides the downloads button, the zoom
+  indicator, the extensions button and (0.16.0, off by default) the **Home button**
+  (`appearance.showHomeButton`). The Home button sits after Reload; a click does what Alt+Home
+  does: it opens the home page, or the new tab page when the home page is empty. Ctrl+click or
+  a middle-click opens it in a new tab. The **Home page** field under the switch is the same
+  setting as General → On startup → Homepage (`homepage`; `https://duckduckgo.com/` by
+  default): editing either one changes both. The change shows at once in every window. In a
+  window too narrow for everything the Home button goes in the last step, with downloads, VPN
+  and AI; Back, Forward and Reload stay.
 - **Tab and toolbar style (0.15.0):** Settings → Appearance → Tab and toolbar style. The tab strip
   and the toolbar can each be solid, a gradient (two or three colours and an angle; empty
   colours follow the accent) or glass (translucent with a blur inside Krunk's bars; the desktop

@@ -98,6 +98,7 @@
     "showDownloadsButton": true,
     "showZoomChip": true,
     "showExtensionsButton": true,
+    "showHomeButton": false,
     "tabStyle": "solid",
     "toolbarStyle": "solid",
     "gradientFrom": "",

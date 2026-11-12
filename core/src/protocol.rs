@@ -807,6 +807,13 @@ pub enum Request {
     Forward,
     Reload,
     Stop,
+    /// The Home button (0.16.0): the homepage, or the new tab page when none is set, in the
+    /// active tab (what Alt+Home does) or, with `new_tab` (middle-click, Ctrl+click), in a new
+    /// tab in front.
+    Home {
+        #[serde(default)]
+        new_tab: bool,
+    },
     /// Opens an http(s) or built-in URL (bookmarks bar, page links).
     OpenUrl {
         url: String,
@@ -1996,6 +2003,7 @@ impl Sender {
                     | R::Forward
                     | R::Reload
                     | R::Stop
+                    | R::Home { .. }
                     | R::ToggleBookmark
                     | R::HitMap { .. }
                     | R::WindowControl { .. }
@@ -3682,6 +3690,8 @@ mod tests {
             Request::Forward,
             Request::Reload,
             Request::Stop,
+            Request::Home { new_tab: false },
+            Request::Home { new_tab: true },
             Request::OpenUrl { url: "https://b.example/".into(), new_tab: true },
             Request::OpenPage { page: "settings".into(), section: None },
             Request::OpenPage { page: "settings".into(), section: Some("privacy".into()) },
@@ -4869,6 +4879,28 @@ mod tests {
                 .is_err());
         }
         assert!(!PopupKind::TabMenu.shell_may_open(), "the shell asks with showTabMenu, not showPopup");
+    }
+
+    /// 0.16.0: the Home button. Only the shell asks; a plain click is Alt+Home.
+    #[test]
+    fn home_requests_are_shell_only() {
+        let parsed = parse_request(Sender::Shell, r#"{"cmd":"home"}"#).unwrap();
+        assert_eq!(parsed.request, Request::Home { new_tab: false });
+        let parsed = parse_request(Sender::Shell, r#"{"cmd":"home","newTab":true}"#).unwrap();
+        assert_eq!(parsed.request, Request::Home { new_tab: true });
+        assert!(
+            parse_request(Sender::Shell, r#"{"cmd":"home","url":"https://evil.example/"}"#).is_err(),
+            "the target is the host's setting, never the sender's"
+        );
+        let home = Request::Home { new_tab: true };
+        assert_eq!(Sender::Shell.permits(&home), Sender::Shell.permits(&Request::Reload));
+        for s in [Sender::Popup, Sender::Ext, Sender::Agent] {
+            assert!(!s.permits(&home), "{s:?}");
+            assert!(parse_request(s, r#"{"cmd":"home"}"#).is_err(), "{s:?}");
+        }
+        for p in Page::ALL.iter() {
+            assert!(!Sender::Page(*p).permits(&home), "{p:?}");
+        }
     }
 
     #[test]

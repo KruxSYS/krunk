@@ -774,10 +774,9 @@
     document.querySelectorAll('.field-error[data-error-for]').forEach((p) => { p.textContent = ''; });
     document.querySelectorAll('.invalid').forEach((i) => i.classList.remove('invalid'));
     (errors || []).forEach(function (e) {
-      const p = document.querySelector('.field-error[data-error-for="' + e.field + '"]');
-      if (p) p.textContent = e.message;
-      const input = document.querySelector('[data-key="' + e.field + '"]');
-      if (input) input.classList.add('invalid');
+      // (All of them: a setting with two fields shows its error at both, 0.16.0.)
+      document.querySelectorAll('.field-error[data-error-for="' + e.field + '"]').forEach((p) => { p.textContent = e.message; });
+      document.querySelectorAll('[data-key="' + e.field + '"]').forEach((input) => input.classList.add('invalid'));
     });
   }
 
@@ -1088,6 +1087,21 @@
   });
 
   // ---------- other controls ----------
+  // 0.16.0: one setting may have two fields (the home page: General → On startup, and next to
+  // the Home button's switch in Appearance). What is typed into one shows in the other at once,
+  // so collect() reads the same value from both, whichever comes last in the page.
+  function mirror(input) {
+    document.querySelectorAll('[data-key="' + input.dataset.key + '"]').forEach(function (other) {
+      if (other === input) return;
+      if (input.type === 'checkbox') other.checked = input.checked;
+      else other.value = input.value;
+    });
+  }
+  document.querySelectorAll('[data-key]').forEach(function (input) {
+    input.addEventListener('input', function () { mirror(input); });
+    // (Before the listener below, which saves: a change without an input event counts too.)
+    input.addEventListener('change', function () { mirror(input); });
+  });
   document.querySelectorAll('[data-key], input[name=startup], input[name=theme], input[name=plevel]').forEach(function (input) {
     // (Fields with their own save: the new tab page colour also switches the background.)
     if (input.dataset.ownSave !== undefined) return;

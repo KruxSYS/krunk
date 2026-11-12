@@ -215,7 +215,7 @@
         </div>
       </div>
       <div class="row setting" data-keywords="homepage home page alt+home">
-        <div class="text"><label for="homepage">Homepage</label><p class="desc">Opened at startup in that mode, and by Alt+Home.</p>
+        <div class="text"><label for="homepage">Homepage</label><p class="desc">Opened at startup in that mode, by Alt+Home and by the Home button (Appearance); empty opens the new tab page there.</p>
           <p class="field-error" data-error-for="homepage"></p></div>
         <div class="control wide"><input type="text" id="homepage" data-key="homepage" placeholder="https://…" spellcheck="false"></div>
       </div>
@@ -592,6 +592,15 @@
       <div class="row setting" data-keywords="toolbar items show hide downloads button">
         <div class="text"><label for="appearance.showDownloadsButton">Show the downloads button</label><p class="desc">Ctrl+J opens the downloads either way.</p></div>
         <div class="control"><input type="checkbox" id="appearance.showDownloadsButton" data-key="appearance.showDownloadsButton"></div>
+      </div>
+      <div class="row setting" data-keywords="home button toolbar homepage toolbar items show hide">
+        <div class="text"><label for="appearance.showHomeButton">Show the Home button</label><p class="desc">After Reload. A click opens the home page; Ctrl+click or a middle-click opens it in a new tab. Alt+Home works either way.</p></div>
+        <div class="control"><input type="checkbox" id="appearance.showHomeButton" data-key="appearance.showHomeButton"></div>
+      </div>
+      <div class="row setting" data-keywords="home button toolbar homepage home page address alt+home">
+        <div class="text"><label for="home-address">Home page</label><p class="desc">Where the Home button and Alt+Home go; empty opens the new tab page. The same setting as General → On startup → Homepage.</p>
+          <p class="field-error" data-error-for="homepage"></p></div>
+        <div class="control wide"><input type="text" id="home-address" data-key="homepage" placeholder="https://…" spellcheck="false"></div>
       </div>
       <div class="row setting" data-keywords="toolbar items show hide zoom indicator chip">
         <div class="text"><label for="appearance.showZoomChip">Show the zoom indicator</label></div>

@@ -193,7 +193,7 @@ html.fullscreen #caption, html.fullscreen #drag-space { display: none; }
 #omnibox { min-width: 0; }
 #toolbar.tight-1 #ext-actions { display: none; }
 #toolbar.tight-2 #zoom, #toolbar.tight-2 #star { display: none; }
-#toolbar.tight-3 #downloads, #toolbar.tight-3 #vpn, #toolbar.tight-3 #agent { display: none; }
+#toolbar.tight-3 #home, #toolbar.tight-3 #downloads, #toolbar.tight-3 #vpn, #toolbar.tight-3 #agent { display: none; }
 #omnibox:focus-within { border-color: var(--accent); background: var(--bg-raised); }
 #omnibox.private { background: var(--private-bg); }
 #address-wrap { flex: 1; min-width: 0; position: relative; display: flex; align-items: center; align-self: stretch; }

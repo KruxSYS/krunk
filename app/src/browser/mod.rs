@@ -2428,6 +2428,32 @@ impl Browser {
         self.navigate_tab(id, url);
     }
 
+    /// Home (Alt+Home, the Home button of 0.16.0): the homepage, or the new tab page when none
+    /// is set (`Settings::home_target`), in the active tab; `new_tab` (the button's
+    /// middle-click or Ctrl+click): in a new tab in front. `from_button`: the shell had the
+    /// focus, so it goes on to where it belongs: the page, with the address bar showing the
+    /// new address (as after a bookmark opened from the bar), or the address bar when Home is
+    /// the new tab page (as in any new tab).
+    fn go_home(&self, new_tab: bool, from_button: bool) {
+        let target = self.settings.borrow().home_target();
+        if new_tab {
+            self.new_tab(Some(&target), false);
+        } else {
+            self.navigate_active(&target);
+        }
+        if !from_button {
+            return;
+        }
+        if Page::from_url(&target) == Some(Page::NewTab) {
+            let active = self.active_id();
+            if let Some(id) = active {
+                self.hold_address_focus(id);
+            }
+        } else if !new_tab {
+            self.focus_page_after_navigation();
+        }
+    }
+
     /// Built-in pages replace a new-tab page, otherwise open in a new tab. A page needed only
     /// once (downloads, history, settings …) that is already open is switched to instead, in
     /// whichever window it is.
@@ -2537,11 +2563,7 @@ impl Browser {
             Command::Stop => self.active_do(|c| c.stop()),
             Command::Back => self.active_do(|c| c.go_back()),
             Command::Forward => self.active_do(|c| c.go_forward()),
-            Command::Home => {
-                let home = self.settings.borrow().homepage.clone();
-                let target = if home.is_empty() { Page::NewTab.url() } else { home };
-                self.navigate_active(&target);
-            }
+            Command::Home => self.go_home(false, false),
             Command::ZoomIn => self.zoom(ZoomAction::In),
             Command::ZoomOut => self.zoom(ZoomAction::Out),
             Command::ZoomReset => self.zoom(ZoomAction::Reset),
@@ -2846,6 +2868,7 @@ impl Browser {
             Request::Forward => self.run_command(Command::Forward),
             Request::Reload => self.run_command(Command::Reload),
             Request::Stop => self.run_command(Command::Stop),
+            Request::Home { new_tab } => self.go_home(new_tab, true),
             // The agent panel opens links of its answers: web addresses only.
             Request::OpenUrl { url, .. }
                 if sender == Sender::Agent

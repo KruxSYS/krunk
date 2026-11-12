@@ -702,8 +702,9 @@ and keeps the typed text, a second Esc leaves the bar. A click on a row opens it
 selected, Enter searches or opens the typed address as before (`vm-051-omnibox.ps1`).
 
 ### Toolbar and bookmarks bar
-1. No Home button; Alt+Home still opens the home page. Click ⋮, the shield and the lock three
-   times each: open, closed, open.
+1. No Home button (since 0.16.0: none by default; Settings → Appearance → Show the Home button
+   adds one after Reload); Alt+Home still opens the home page. Click ⋮, the shield and the lock
+   three times each: open, closed, open.
 2. Navigate while the address bar has the focus (click into it, then click a bookmark): the bar
    shows the new address. Type something, then navigate from a bookmark: the typed text is
    replaced.
