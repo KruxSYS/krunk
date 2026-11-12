@@ -143,8 +143,11 @@ impl Browser {
         };
         match tool.group {
             Group::Page => self.agent_page_tool(win, tool.name, args, done),
-            // The session answers these itself.
-            Group::Ask | Group::Finish => done(ToolOutcome::error(format!("{name} is not a browser tool"))),
+            // The session answers these itself (0.16.0: the scratchpad too; its notes and plan
+            // never come here).
+            Group::Ask | Group::Finish | Group::Scratch => {
+                done(ToolOutcome::error(format!("{name} is not a browser tool")))
+            }
             // AI may have gone off since the call was made.
             _ if !self.ai_enabled() => done(ToolOutcome::refused("AI features are turned off")),
             Group::Browser => self.agent_browser_tool(win, tool.name, &args, done),

@@ -13,6 +13,7 @@
 //!
 //! Outbound messages are [`Event`]s.
 
+use crate::agent::scratch::ScratchView;
 use crate::agent::{AskSpec, Category, ModelChoice, RunState, ScriptCard, ScriptKind, StepView};
 use crate::downloads::DownloadItem;
 use crate::keys::Command;
@@ -1660,6 +1661,9 @@ pub enum Request {
     AgentStop,
     /// "New conversation".
     AgentNew,
+    /// 0.16.0: Clear in the panel's scratchpad view: the agent's notes and plan of this
+    /// conversation are dropped.
+    AgentScratchClear,
     AgentAnswer {
         ask: u32,
         #[serde(default)]
@@ -2253,6 +2257,7 @@ impl Sender {
                 R::AgentSend { .. }
                     | R::AgentStop
                     | R::AgentNew
+                    | R::AgentScratchClear
                     | R::AgentAnswer { .. }
                     | R::AgentConsent { .. }
                     | R::AgentContinue { .. }
@@ -2834,6 +2839,11 @@ pub enum Event {
     },
     /// "New conversation": empty the panel.
     AgentClear,
+    /// 0.16.0: the agent's scratchpad as it is now (the plan and the notes with their text),
+    /// sent whenever it changes. In memory only, like the conversation.
+    AgentScratch {
+        scratch: ScratchView,
+    },
     /// To krunk://scripts: the lists changed (reload them).
     ScriptsChanged,
     /// To krunk://scripts while recording a hotkey: the chord pressed and why it can't be used.
@@ -3099,6 +3109,7 @@ mod tests {
             (r#"{"cmd":"agentSend","text":"List the links"}"#, &[Sender::Agent]),
             (r#"{"cmd":"agentStop"}"#, &[Sender::Agent]),
             (r#"{"cmd":"agentNew"}"#, &[Sender::Agent]),
+            (r#"{"cmd":"agentScratchClear"}"#, &[Sender::Agent]),
             (r#"{"cmd":"agentAnswer","ask":1,"choices":[0,2],"other":"x"}"#, &[Sender::Agent]),
             (r#"{"cmd":"agentConsent","ask":2,"allow":false}"#, &[Sender::Agent]),
             (r#"{"cmd":"agentContinue","ask":3,"go":true}"#, &[Sender::Agent]),
@@ -3282,6 +3293,15 @@ mod tests {
         assert_eq!(Event::ScriptsChanged.to_json(), r#"{"event":"scriptsChanged"}"#);
         let j = Event::AgentButton { visible: true, open: false }.to_json();
         assert_eq!(j, r#"{"event":"agentButton","visible":true,"open":false}"#);
+        // 0.16.0: the scratchpad view.
+        let mut scratch = crate::agent::scratch::Scratch::default();
+        scratch.note_write("found", "a<b>", false).unwrap();
+        scratch.plan_set(&[]).unwrap();
+        let j = Event::AgentScratch { scratch: scratch.view() }.to_json();
+        assert_eq!(
+            j,
+            r#"{"event":"agentScratch","scratch":{"plan":[],"notes":[{"name":"found","bytes":4,"content":"a<b>"}],"bytes":4}}"#
+        );
     }
 
     #[test]

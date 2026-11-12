@@ -31,7 +31,12 @@
 //!   answer cut off is continued once ([`CONTINUE_NOTE`]);
 //! * 0.15.0, long scripts: `save_userscript` / `save_macro` with `more: true` keep their source
 //!   in a draft of the conversation ([`super::drafts`]); the call with the draft id and without
-//!   `more` sends the whole script to the host, which checks it only then.
+//!   `more` sends the whole script to the host, which checks it only then;
+//! * 0.16.0, the scratchpad ([`super::scratch`]): its tools (`note_*`, `plan_*`) are answered
+//!   here, each as a step with a result, and never reach the host. Every request carries the
+//!   plan and the notes' index at the end of the system prompt ([`Scratch::block`]), so they
+//!   outlive the shortening of old tool results. It is cleared by `New` and by `ScratchClear`
+//!   (the panel's Clear). Its text is in memory only: log lines never carry it.
 //!
 //! The user message sent to the provider is the context block, a blank line, then
 //! `User message:` and the user's text on the next line (the mock provider looks for that marker).
@@ -41,6 +46,7 @@
 
 use super::drafts::Drafts;
 use super::provider::limits;
+use super::scratch::Scratch;
 use super::tools::{self, Group, Offer};
 use super::{
     context, gate, AskAnswer, AskSpec, Category, CategorySet, ChatRequest, Message, Part, Role, RunState, ScriptKind,
@@ -114,6 +120,9 @@ pub enum Input {
     Stop,
     /// "New conversation": stop, then forget everything.
     New,
+    /// 0.16.0: the panel's Clear in the scratchpad view: the notes and the plan of this
+    /// conversation go; the conversation itself and a running task stay.
+    ScratchClear,
 }
 
 /// What the host has to do.
@@ -191,6 +200,8 @@ pub struct Session {
     cut_calls: u32,
     carry: String,
     drafts: Drafts,
+    /// 0.16.0: the model's notes and plan (in memory only).
+    scratch: Scratch,
 }
 
 /// The arguments are whole JSON (empty counts as `{}`).
@@ -259,6 +270,7 @@ impl Session {
             cut_calls: 0,
             carry: String::new(),
             drafts: Drafts::default(),
+            scratch: Scratch::default(),
         }
     }
 
@@ -291,6 +303,11 @@ impl Session {
         &self.history
     }
 
+    /// The conversation's scratchpad (0.16.0).
+    pub fn scratch(&self) -> &Scratch {
+        &self.scratch
+    }
+
     /// Handles one input; `now_ms` is a monotonic clock for step durations.
     pub fn handle(&mut self, input: Input, now_ms: u64) -> Vec<Action> {
         let mut out = Vec::new();
@@ -314,8 +331,16 @@ impl Session {
                 self.steps = 0;
                 self.task_steps = 0;
                 self.drafts.clear();
+                self.scratch.clear();
                 emit(&mut out, Event::AgentClear);
+                emit(&mut out, Event::AgentScratch { scratch: self.scratch.view() });
                 self.set_state(RunState::Idle, None, &mut out);
+            }
+            Input::ScratchClear => {
+                // Also while a task runs: the model sees an empty scratchpad in its next request.
+                self.scratch.clear();
+                out.push(Action::Log("agent scratchpad cleared".into()));
+                emit(&mut out, Event::AgentScratch { scratch: self.scratch.view() });
             }
         }
         out
@@ -377,9 +402,14 @@ impl Session {
     fn send(&mut self, out: &mut Vec<Action>) {
         self.answer = Answer::default();
         self.phase = Phase::Requesting;
+        // The scratchpad as it is now goes with every request, after everything else in the
+        // system prompt (the one place all provider formats have): old tool results are
+        // shortened below, the plan and the notes' index never are.
+        let mut system = context::system_prompt(&self.cfg.system_extra, self.cfg.vision);
+        system.push_str(&self.scratch.block());
         out.push(Action::Send(ChatRequest {
             model: self.cfg.model.clone(),
-            system: context::system_prompt(&self.cfg.system_extra, self.cfg.vision),
+            system,
             messages: request_messages(&self.history),
             tools: tools::specs(self.offer),
             max_tokens: self.max_tokens(),
@@ -608,6 +638,14 @@ impl Session {
                     self.phase = Phase::Ask { ask: id, call_id: call.id, spec };
                     return self.set_state(RunState::Asking, None, out);
                 }
+                Group::Scratch => {
+                    let run = self.scratch.run(tool.name, &args);
+                    self.local_step(&call.id, tool.name, describe(tool.name, &args), &args, run.outcome, out);
+                    if run.changed {
+                        emit(out, Event::AgentScratch { scratch: self.scratch.view() });
+                    }
+                    continue;
+                }
                 Group::Sensitive(category) => {
                     if self.denied.contains(category) {
                         self.push_result(&call.id, error_json(DENIED));
@@ -683,13 +721,30 @@ impl Session {
             }
             Err(e) => ToolOutcome::error(e),
         };
+        self.local_step(call_id, name, format!("Keep a part of a long {what}"), &args, outcome, out);
+        None
+    }
+
+    /// A call the session answered itself (a part of a long script, a scratchpad tool): a
+    /// finished step in the panel and a result for the model, like a host tool's. The log line
+    /// has the tool's name and status only; the arguments (a note's text, a script's source)
+    /// are in the panel's step detail and nowhere else.
+    fn local_step(
+        &mut self,
+        call_id: &str,
+        name: &'static str,
+        label: String,
+        args: &Value,
+        outcome: ToolOutcome,
+        out: &mut Vec<Action>,
+    ) {
         self.steps += 1;
         self.task_steps += 1;
         let status = outcome.status.unwrap_or(StepStatus::Ok);
         let step = StepView {
             n: self.steps,
             tool: name.to_string(),
-            label: format!("Keep a part of a long {what}"),
+            label,
             status,
             summary: clip(&outcome.summary, 200),
             detail: format!("{}\n\nResult:\n{}", clip(&args.to_string(), 1000), clip(&outcome.text, 500)),
@@ -699,7 +754,6 @@ impl Session {
         out.push(Action::Log(format!("agent step {} {name} {} 0 ms", step.n, status_name(status))));
         emit(out, Event::AgentStep { step });
         self.push_result(call_id, outcome.text);
-        None
     }
 
     fn run_tool(&mut self, call_id: String, name: &'static str, args: Value, now: u64, out: &mut Vec<Action>) {
@@ -1042,6 +1096,20 @@ pub fn describe(name: &str, args: &Value) -> String {
             s("site").map_or("Read a site's cookies".into(), |x| format!("Read the cookies of {x}"))
         }
         "finish" => "Finish".into(),
+        // 0.16.0, the scratchpad: a note's name, never its text or the plan's.
+        "note_write" => {
+            let verb = if args.get("mode").and_then(Value::as_str) == Some("append") { "Add to" } else { "Write" };
+            s("name").map_or(format!("{verb} a note"), |x| format!("{verb} the note {x}"))
+        }
+        "note_read" => s("name").map_or("Read a note".into(), |x| format!("Read the note {x}")),
+        "note_delete" => s("name").map_or("Delete a note".into(), |x| format!("Delete the note {x}")),
+        "note_list" => "List the notes".into(),
+        "plan_set" => match args.get("items").and_then(Value::as_array).map_or(0, Vec::len) {
+            0 => "Clear the plan".into(),
+            1 => "Set the plan (1 item)".into(),
+            k => format!("Set the plan ({k} items)"),
+        },
+        "plan_update" => n("index").map_or("Update a plan item".into(), |i| format!("Update plan item {i}")),
         other => clip(other, 40),
     }
 }
@@ -1855,6 +1923,300 @@ console.log(a);") })
         assert_eq!(runs(&a)[0].2, json!({ "source": "z" }));
     }
 
+    // ---- 0.16.0: the scratchpad ----
+
+    fn scratch_views(a: &[Action]) -> Vec<crate::agent::scratch::ScratchView> {
+        events(a)
+            .into_iter()
+            .filter_map(|e| match e {
+                Event::AgentScratch { scratch } => Some(scratch.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The scratchpad block of a request's system prompt.
+    fn block_of(r: &ChatRequest) -> &str {
+        use crate::agent::scratch::{BLOCK_END, BLOCK_START};
+        let start = r.system.rfind(BLOCK_START).expect("the request has a scratchpad block");
+        assert!(r.system.trim_end().ends_with(BLOCK_END), "the block is the end of the system prompt");
+        &r.system[start..]
+    }
+
+    #[test]
+    fn scratchpad_tools_are_answered_here() {
+        let mut s = Session::new(Config { userscripts: false, macros: false, ..cfg() });
+        let a = s.handle(user("Compare the prices"), 0);
+        let r = sends(&a)[0];
+        let names: Vec<_> = r.tools.iter().map(|t| t.name.as_str()).collect();
+        for t in ["note_write", "note_read", "note_delete", "note_list", "plan_set", "plan_update"] {
+            assert!(names.contains(&t), "{t} is always offered");
+        }
+        assert!(block_of(r).contains("is empty: no plan and no notes"));
+        // Three calls in one answer: all answered at once, nothing for the host, one request.
+        let a = feed(
+            &mut s,
+            calls(&[
+                ("p", "plan_set", r#"{"items":[{"text":"Open the shop"},{"text":"Collect prices","state":"doing"}]}"#),
+                ("w", "note_write", r#"{"name":"prices","content":"apple 1.20\npear 2.00"}"#),
+                ("u", "plan_update", r#"{"index":1,"state":"done"}"#),
+            ]),
+            5,
+        );
+        assert!(runs(&a).is_empty(), "scratchpad tools never reach the host");
+        let st = steps_of(&a);
+        assert_eq!(st.len(), 3);
+        assert_eq!(
+            st.iter().map(|x| (x.n, x.tool.as_str(), x.status, x.label.as_str())).collect::<Vec<_>>(),
+            vec![
+                (1, "plan_set", StepStatus::Ok, "Set the plan (2 items)"),
+                (2, "note_write", StepStatus::Ok, "Write the note prices"),
+                (3, "plan_update", StepStatus::Ok, "Update plan item 1"),
+            ]
+        );
+        assert_eq!(st[1].summary, "Wrote note prices (20 bytes)");
+        assert!(
+            st[1].detail.contains("apple 1.20") && st[1].detail.contains("Result:"),
+            "the panel's detail has the args"
+        );
+        assert_eq!(
+            logs(&a),
+            vec![
+                "agent step 1 plan_set ok 0 ms",
+                "agent step 2 note_write ok 0 ms",
+                "agent step 3 plan_update ok 0 ms"
+            ]
+        );
+        // The panel's view follows every change.
+        let views = scratch_views(&a);
+        assert_eq!(views.len(), 3);
+        let last = views.last().unwrap();
+        assert_eq!(
+            (last.plan.len(), last.plan[0].state.name(), last.notes[0].content.as_str()),
+            (2, "done", "apple 1.20\npear 2.00")
+        );
+        assert_eq!(s.steps(), 3);
+        // The next request: the results, and the block with the plan and the index.
+        let r = sends(&a);
+        assert_eq!(r.len(), 1);
+        assert_valid(&r[0].messages);
+        let texts = tool_texts(&r[0].messages);
+        assert_eq!(texts[0], r#"{"items":2,"ok":true}"#);
+        assert!(texts[1].contains(r#""bytes":20"#) && texts[2].contains(r#""state":"done""#), "{texts:?}");
+        let b = block_of(r[0]);
+        assert!(b.contains("1. [done] \"Open the shop\"") && b.contains("2. [doing] \"Collect prices\""), "{b}");
+        assert!(b.contains("- prices (20 bytes): \"apple 1.20\"") && !b.contains("pear"), "{b}");
+        // Reading changes nothing (no new view); errors are results the model can adapt to.
+        let a = feed(
+            &mut s,
+            calls(&[
+                ("r", "note_read", r#"{"name":"prices"}"#),
+                ("x", "note_read", r#"{"name":"nope"}"#),
+                ("l", "note_list", "{}"),
+                ("bad", "note_write", r#"{"name":"a b","content":"x"}"#),
+                ("inv", "plan_update", r#"{"index":0,"state":"done"}"#),
+            ]),
+            6,
+        );
+        assert!(runs(&a).is_empty() && scratch_views(&a).is_empty());
+        let st = steps_of(&a);
+        assert_eq!(
+            st.iter().map(|x| x.status).collect::<Vec<_>>(),
+            vec![StepStatus::Ok, StepStatus::Error, StepStatus::Ok, StepStatus::Error],
+            "a call the schema refuses is no step"
+        );
+        let texts = tool_texts(&sends(&a)[0].messages);
+        assert_eq!(texts[3], "apple 1.20\npear 2.00");
+        assert!(texts[4].contains("no note with this name") && texts[6].contains("1 to 64 characters"), "{texts:?}");
+        assert!(texts[7].contains("index must be at least 1"), "{}", texts[7]);
+        assert_eq!(logs(&a)[1], "agent step 5 note_read error 0 ms");
+        // finish after scratchpad calls in the same answer still ends the task.
+        let a = feed(
+            &mut s,
+            calls(&[("d", "note_delete", r#"{"name":"prices"}"#), ("f", "finish", r#"{"answer":"Done."}"#)]),
+            7,
+        );
+        assert_eq!(messages_of(&a, "assistant"), vec!["Done."]);
+        assert_eq!(s.state(), RunState::Done);
+        assert_eq!(s.scratch().note_count(), 0);
+        assert_valid(s.history());
+        // The plan is still there for the next task of the conversation.
+        let a = s.handle(user("And now?"), 8);
+        assert!(block_of(sends(&a)[0]).contains("1. [done] \"Open the shop\""));
+    }
+
+    #[test]
+    fn scratchpad_calls_count_as_steps() {
+        let mut s = Session::new(Config { max_steps: 2, ..cfg() });
+        s.handle(user("note a lot"), 0);
+        let a = feed(
+            &mut s,
+            calls(&[
+                ("a", "note_write", r#"{"name":"a","content":"1"}"#),
+                ("b", "note_write", r#"{"name":"b","content":"2"}"#),
+            ]),
+            1,
+        );
+        assert!(sends(&a).is_empty(), "the step limit asks before the next request");
+        assert_eq!(states(&a), vec![RunState::MaxSteps]);
+        assert!(events(&a).iter().any(|e| matches!(e, Event::AgentContinueAsk { steps: 2, .. })));
+        assert_eq!(s.scratch().note_count(), 2);
+    }
+
+    #[test]
+    fn the_scratchpad_survives_trimming() {
+        let mut s = Session::new(cfg());
+        s.handle(user("a long task"), 0);
+        let long = format!("FIRST-LINE-OF-THE-NOTE\n{}", "n".repeat(3000));
+        let write = json!({ "name": "findings", "content": long }).to_string();
+        feed(
+            &mut s,
+            calls(&[("w", "note_write", &write), ("p", "plan_set", r#"{"items":[{"text":"Keep going"}]}"#)]),
+            1,
+        );
+        feed(&mut s, calls(&[("r0", "note_read", r#"{"name":"findings"}"#)]), 2);
+        // Many long results later the note_read result is one of the old, shortened ones.
+        let mut last = Vec::new();
+        for n in 0..KEEP_TOOL_RESULTS + 2 {
+            let id = format!("t{n}");
+            feed(&mut s, calls(&[(&id, "get_text", "{}")]), 3);
+            last = s.handle(done(&id, &"x".repeat(2000)), 4);
+        }
+        let r = sends(&last)[0];
+        let texts = tool_texts(&r.messages);
+        let read = texts.iter().find(|t| t.starts_with("FIRST-LINE-OF-THE-NOTE")).unwrap();
+        assert!(read.ends_with(SHORTENED_TAIL), "the old note_read result was shortened");
+        let b = block_of(r);
+        assert!(b.contains("1. [todo] \"Keep going\""), "{b}");
+        assert!(b.contains("- findings (3,023 bytes): \"FIRST-LINE-OF-THE-NOTE\""), "{b}");
+        // The body comes back whole on request.
+        let a = feed(&mut s, calls(&[("r1", "note_read", r#"{"name":"findings"}"#)]), 5);
+        assert_eq!(tool_texts(&sends(&a)[0].messages).last().unwrap(), &long);
+    }
+
+    #[test]
+    fn the_scratchpad_is_cleared_by_new_and_by_clear() {
+        let mut s = Session::new(cfg());
+        s.handle(user("first"), 0);
+        feed(
+            &mut s,
+            calls(&[
+                ("w", "note_write", r#"{"name":"n","content":"x"}"#),
+                ("p", "plan_set", r#"{"items":[{"text":"One"}]}"#),
+            ]),
+            1,
+        );
+        assert!(!s.scratch().is_empty());
+        // Clear while the task runs: the conversation and the task stay, the scratchpad goes.
+        let a = s.handle(Input::ScratchClear, 2);
+        assert_eq!(scratch_views(&a), vec![crate::agent::scratch::ScratchView::default()]);
+        assert_eq!(logs(&a), vec!["agent scratchpad cleared"]);
+        assert!(sends(&a).is_empty() && states(&a).is_empty());
+        assert!(s.is_busy() && s.scratch().is_empty() && s.history().len() == 4);
+        // The model sees it empty in its next request.
+        let a = feed(&mut s, calls(&[("l", "note_list", "{}")]), 3);
+        let r = sends(&a)[0];
+        assert!(block_of(r).contains("is empty: no plan and no notes"));
+        assert!(tool_texts(&r.messages).last().unwrap().starts_with(r#"{"limits":"#));
+        // New forgets it with the conversation.
+        feed(&mut s, calls(&[("w2", "note_write", r#"{"name":"n2","content":"y"}"#)]), 4);
+        assert_eq!(s.scratch().note_count(), 1);
+        let a = s.handle(Input::New, 5);
+        assert!(s.scratch().is_empty());
+        let at = |want: &Event| events(&a).iter().position(|e| *e == want).unwrap();
+        let empty = Event::AgentScratch { scratch: Default::default() };
+        assert!(at(&Event::AgentClear) < at(&empty), "the panel's view is emptied after the conversation");
+        let a = s.handle(user("second"), 6);
+        assert!(block_of(sends(&a)[0]).contains("is empty"));
+        // Clear while idle is fine too.
+        assert_eq!(scratch_views(&s.handle(Input::ScratchClear, 7)).len(), 1);
+    }
+
+    /// Nothing of the scratchpad may reach the disk. What the session hands to the host is all
+    /// there is: a note's or the plan's text must be in no log line (the only thing of a
+    /// conversation the host writes to a file) and in no tool run by the host; it is only in
+    /// the provider requests and in the panel's events (step detail, scratchpad view).
+    #[test]
+    fn scratchpad_text_never_reaches_the_log_or_the_host() {
+        const MARK: &str = "KRUNK-SCRATCH-MARKER-7f3a91";
+        let mut s = Session::new(Config { max_steps: 6, ..cfg() });
+        let mut all = s.handle(user("Collect the prices"), 0);
+        let write = json!({ "name": "found", "content": format!("{MARK} in a note\nline two {MARK}") }).to_string();
+        let append = json!({ "name": "found", "content": format!("\n{MARK} appended"), "mode": "append" }).to_string();
+        let plan = json!({ "items": [{ "text": format!("{MARK} in the plan") }, { "text": "second", "id": "b" }] })
+            .to_string();
+        let update = json!({ "id": "b", "text": format!("{MARK} in an update"), "state": "doing" }).to_string();
+        let too_big = json!({ "name": "big", "content": format!("{MARK}{}", "x".repeat(40_000)) }).to_string();
+        let bad_name = json!({ "name": format!("{MARK} name"), "content": "x" }).to_string();
+        all.extend(feed(
+            &mut s,
+            calls(&[
+                ("1", "note_write", &write),
+                ("2", "note_write", &append),
+                ("3", "plan_set", &plan),
+                ("4", "plan_update", &update),
+                ("5", "note_read", r#"{"name":"found"}"#),
+                ("6", "note_list", "{}"),
+                ("7", "note_write", &too_big),
+                ("8", "note_write", &bad_name),
+            ]),
+            1,
+        ));
+        // The step limit, Continue, a host tool, Stop, Clear, a failed request and New on top.
+        let ask = events(&all)
+            .into_iter()
+            .find_map(|e| match e {
+                Event::AgentContinueAsk { ask, .. } => Some(*ask),
+                _ => None,
+            })
+            .unwrap();
+        all.extend(s.handle(Input::Continue { ask, go: true }, 2));
+        all.extend(feed(&mut s, calls(&[("9", "get_text", "{}"), ("10", "note_delete", r#"{"name":"found"}"#)]), 3));
+        all.extend(s.handle(done("9", "page text"), 4));
+        all.extend(feed(&mut s, calls(&[("11", "note_write", &write), ("12", "wait_for", r#"{"ms":5000}"#)]), 5));
+        all.extend(s.handle(Input::Stop, 6));
+        all.extend(s.handle(user("again"), 7));
+        all.extend(s.handle(Input::StreamFailed(format!("the provider said {MARK}")), 8));
+        all.extend(s.handle(Input::ScratchClear, 9));
+        all.extend(s.handle(Input::New, 10));
+
+        // The marker really went through: requests and the panel's views had it.
+        assert!(sends(&all).iter().any(|r| block_of(r).contains(MARK)), "the block carries the plan");
+        assert!(scratch_views(&all).iter().any(|v| v.notes.iter().any(|n| n.content.contains(MARK))));
+        assert!(steps_of(&all).iter().any(|st| st.detail.contains(MARK)));
+        // The log: step numbers, tool names, statuses and times only.
+        let l = logs(&all);
+        assert!(l.len() >= 14, "{l:?}");
+        for line in &l {
+            assert!(!line.contains(MARK), "a log line has scratchpad text: {line}");
+            assert!(!line.contains("found") && !line.contains("in a note"), "{line}");
+        }
+        // The host never runs a scratchpad tool and never gets its text in another tool's args.
+        for (_, name, args, _) in runs(&all) {
+            assert!(matches!(name, "get_text" | "wait_for"), "{name} reached the host");
+            assert!(!args.to_string().contains(MARK));
+        }
+        // Labels and summaries (also what a screen reader hears) have names and sizes only;
+        // error results name the limit, not the text.
+        for st in steps_of(&all) {
+            assert!(!st.summary.contains(MARK), "{}", st.summary);
+            assert!(st.tool != "note_write" || st.n == 8 || !st.label.contains(MARK), "{}", st.label);
+        }
+        let errors: Vec<_> = steps_of(&all).into_iter().filter(|st| st.status == StepStatus::Error).collect();
+        assert_eq!(errors.len(), 2);
+        assert!(errors[0].summary.contains("32 KiB") && errors[1].summary.contains("1 to 64 characters"));
+        // Every other action is one of the kinds checked above (nothing new carries text out).
+        for x in &all {
+            match x {
+                Action::Send(_) | Action::Emit(_) | Action::Log(_) | Action::RunTool { .. } => {}
+                Action::CancelRequest | Action::CancelTool | Action::ReleaseInput => {}
+            }
+        }
+        // After New nothing of it is left in the session.
+        assert!(s.scratch().is_empty() && s.history().is_empty());
+        assert!(!format!("{s:?}").contains(MARK), "the session holds no scratchpad text after New");
+    }
+
     #[test]
     fn new_conversation() {
         let mut s = Session::new(cfg());
@@ -2044,10 +2406,26 @@ console.log(a);") })
         assert_eq!(d("edit_page", json!({"action":"remove","selector":".ad"})), "Remove .ad");
         assert_eq!(d("set_setting", json!({"key":"theme","value":"dark"})), "Change the setting theme");
         assert_eq!(d("switch_tab", json!({"tab_id":3})), "Switch to tab 3");
+        // 0.16.0: the scratchpad's labels name the note, never its text.
+        assert_eq!(d("note_write", json!({"name":"prices","content":"SECRET"})), "Write the note prices");
+        assert_eq!(
+            d("note_write", json!({"name":"prices","content":"SECRET","mode":"append"})),
+            "Add to the note prices"
+        );
+        assert_eq!(d("note_read", json!({"name":"prices"})), "Read the note prices");
+        assert_eq!(d("note_delete", json!({"name":"prices"})), "Delete the note prices");
+        assert_eq!(d("note_list", json!({})), "List the notes");
+        assert_eq!(d("plan_set", json!({"items":[{"text":"SECRET"},{"text":"b"}]})), "Set the plan (2 items)");
+        assert_eq!(d("plan_set", json!({"items":[]})), "Clear the plan");
+        assert_eq!(d("plan_update", json!({"index":2,"text":"SECRET"})), "Update plan item 2");
+        assert_eq!(d("plan_update", json!({"id":"b","state":"done"})), "Update a plan item");
         let long = describe("click", &json!({"selector": "x".repeat(100)}));
         assert!(long.chars().count() <= 67, "{long}");
         for t in super::super::tools::TOOLS {
-            assert!(!describe(t.name, &json!({})).is_empty(), "{}", t.name);
+            let label = describe(t.name, &json!({}));
+            assert!(!label.is_empty(), "{}", t.name);
+            // Every tool has a label of its own (the fallback is the tool's name).
+            assert_ne!(label, t.name, "{} has no label", t.name);
         }
     }
 }

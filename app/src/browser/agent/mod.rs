@@ -15,10 +15,11 @@
 //! the session.
 //!
 //! In memory only: the conversation, the step screenshots (at most 40 per window, served to
-//! that window's panel under a random 128-bit token) and the consent decisions; all go with
-//! the window. The per-tab media log of the plan is not kept here: the engine reports no
-//! network events to the browser without the Network domain, so `list_media` relies on the
-//! page's own resource timing (read by the probe).
+//! that window's panel under a random 128-bit token), the consent decisions and (0.16.0) the
+//! scratchpad, which lives in the session and never passes through this module except as the
+//! panel's `agentScratch` event; all go with the window. The per-tab media log of the plan is
+//! not kept here: the engine reports no network events to the browser without the Network
+//! domain, so `list_media` relies on the page's own resource timing (read by the probe).
 
 mod page;
 pub(super) mod provider;
@@ -328,6 +329,10 @@ impl Browser {
                 }
                 self.post_panel(win, &Event::AgentClear);
                 self.agent_input(win, Input::New);
+                Ok(())
+            }
+            Request::AgentScratchClear => {
+                self.agent_input(win, Input::ScratchClear);
                 Ok(())
             }
             Request::AgentAnswer { ask, choices, other } => {

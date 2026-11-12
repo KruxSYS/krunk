@@ -12,6 +12,7 @@
 //! * [`settings_allow`]: the settings the agent may read and change;
 //! * [`pages`]: which addresses the agent may open or act on;
 //! * [`drafts`] (0.15.0): long userscripts and macros saved in parts;
+//! * [`scratch`] (0.16.0): the scratchpad, the model's notes and plan (in memory only);
 //! * [`ntp_image`] (0.15.0): the checks of a new tab background downloaded for the agent.
 //!
 //! Nothing here can reach the vault, payment cards, sync or account secrets, or API keys: those
@@ -24,6 +25,7 @@ pub mod ntp_image;
 pub mod pages;
 pub mod provider;
 pub mod redact;
+pub mod scratch;
 pub mod session;
 pub mod settings_allow;
 pub mod sse;

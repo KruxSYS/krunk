@@ -436,6 +436,16 @@ pub fn system_prompt(extra: &str, vision: bool) -> String {
          - After an action, check that it worked (read the page again or wait_for a change).\n\
          - When you need a decision or a detail only the user knows, use ask_user with short \
          options instead of guessing.\n\
+         - For a task with several steps, write a plan first with plan_set and keep it current \
+         with plan_update (states: todo, doing, done, dropped). Keep what you find on the way \
+         in notes with note_write: intermediate findings, extracted data, addresses, what is \
+         still open. That is your scratchpad. In a long task Krunk shortens old tool results, \
+         but the scratchpad stays: the block at the end of these instructions always shows the \
+         current plan and the list of notes, and note_read gives a note's text back (note_list, \
+         note_delete). Write down what you will need later before it gets old. The scratchpad \
+         is kept in memory for this conversation only: it is gone when the conversation ends \
+         or the user clears it, and the user can look at it. So put what the user should keep \
+         into your final answer, and never put passwords or card numbers into a note.\n\
          - Keep going until the task is done, then call finish with a short answer in Markdown \
          (or answer in plain text without a tool call). Say plainly what you did and what did not \
          work.\n\
@@ -602,6 +612,19 @@ mod tests {
         // A malformed probe answer counts as missing.
         let c = ContextInput { page: Some(json!({"outline": "nope"})), ..sample() };
         assert!(context_block(&c).contains("Page details:"));
+    }
+
+    /// 0.16.0: the prompt says when and how to use the scratchpad, by the tools' names.
+    #[test]
+    fn system_prompt_explains_the_scratchpad() {
+        let p = system_prompt("", true);
+        for t in super::super::tools::TOOLS.iter().filter(|t| t.group == super::super::tools::Group::Scratch) {
+            assert!(p.contains(t.name), "{} is not explained", t.name);
+        }
+        for want in ["todo, doing, done, dropped", "shortens old tool results", "in memory for this conversation only"]
+        {
+            assert!(p.contains(want), "{want}");
+        }
     }
 
     #[test]
