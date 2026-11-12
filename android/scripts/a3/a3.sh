@@ -6,6 +6,7 @@
 #                            Extra, not in "all": idle10 (the 10-minute capture and one page load),
 #                            afterupdate (the first start after a list update), startlinks (8 cold starts by a link)
 #   a3.sh ui [test...]       through the real UI: toolbar | menu | shield | private | settings
+#                            Extra, not in "all": realsite (one real site with the shield's count)
 #   a3.sh links [test...]    rewrite | handoff | selection
 #   a3.sh prompts [test...]  date time datetime month week colour leave repost share file photo recreate
 #   a3.sh themes             styles and accent (picker, toolbar, switcher, light and dark, private)
@@ -335,6 +336,21 @@ t_shield() { # count for this page; sheet with count, site and the switch; allow
   check "allow removed in the sheet: blocked again, count 5" 'has desc "5 requests blocked on this page"'
   view "$B/links.html" 8; dump; check "navigation: the count starts again (0 on the next page)" 'has desc "0 requests blocked on this page"'
   save ui-shield
+}
+
+t_realsite() { # one real site: it loads, and the shield counts what was blocked on it
+  local site n="" url
+  launch 8; front realsite || return; wait_ready 20
+  for site in "${KRUNK_REAL_SITE:-https://www.theguardian.com/international}" "https://edition.cnn.com/"; do
+    A "logcat -c"; view "$site" 25; front realsite-page || return; dump
+    n=$(echo "$UI" | grep -oE 'content-desc="[0-9.,k]+ requests? blocked on this page"' | head -1 | grep -oE '^content-desc="[0-9.,k]+' | grep -oE '[0-9.,k]+$')
+    url=$site; [ -n "$n" ] && [ "$n" != 0 ] && break
+  done
+  shot ui-realsite; save ui-realsite
+  check "a real site ($url): the page is shown and the shield counts what was blocked ($n requests)" '[ -n "$n" ] && [ "$n" != 0 ] && has desc "Edit address"'
+  tapui desc "requests blocked on this page" 3 --contains; dump; shot ui-realsite-sheet
+  check "its sheet names the site and has the switch" 'has text "Block on this site" && has text "requests blocked on this page" --contains'
+  back 2
 }
 
 t_private() { # private tab: blocked like a normal tab; the sheet has a hint and no switch
@@ -883,12 +899,42 @@ t_upgrade() { # 0.1.1 with tabs, a bookmark, history and a changed setting; 0.2.
 }
 
 # ----- configuration changes (last in a session) -----
+pill_px() { # pill_px SHOT Y: "left right width" of the address field as drawn in that pixel row (the default light theme's field colour)
+  convert "$EV/$1.png" -crop "1080x1+0+$2" -depth 8 txt:- 2> /dev/null | python3 -I -c '
+import re, sys
+row = {}
+for line in sys.stdin:
+    m = re.match(r"(\d+),0: .*#([0-9A-Fa-f]{6})", line)
+    if m:
+        row[int(m.group(1))] = tuple(int(m.group(2)[i:i + 2], 16) for i in (0, 2, 4))
+field = lambda c: all(abs(v - w) <= 3 for v, w in zip(c, (0xE5, 0xE7, 0xEB)))
+plain = lambda c: all(v >= 0xFC for v in c)   # the toolbar around the field
+xs = sorted(row)
+left = next((x for x in xs if field(row[x])), None)
+if left is None:
+    print("0 0 0"); sys.exit()
+right, gap = left, 0
+for x in xs:
+    if x <= left:
+        continue
+    if field(row[x]):
+        right, gap = x, 0
+    elif plain(row[x]):
+        gap += 1
+        if gap >= 20:   # the field has ended: what follows (the tab counter) is not part of it
+            break
+    else:
+        gap = 0         # an icon or a letter on the field
+print(left, right, right - left + 1)'
+}
 t_width360() { # requirement 11 on a real 360 dp wide screen: 1080 px at 480 dpi
   A "logcat -c"; view "$B/links.html" 8; front width360 || return; ready "1 link with utm_source, fbclid" || bad "width360: the test page did not load"
   A "wm density 480"; sleep 6; alive || return; front width360-480 || { A "wm density reset"; return; }
   dump; shot config-width360 || { A "wm density reset"; exit 4; }
-  local pill; pill=$(echo "$UI" | python3 -I "$HERE/uix.py" size desc "Edit address" | cut -d' ' -f1)
-  echo "  $(A "wm density" | tr '\n' ' ') $(A "wm size" | tr '\n' ' ')"
+  # Measured in the screenshot, across the field's middle row: at this density the accessibility node of the
+  # address field covers only the part between the shield and the reload button (456 px), not the drawn field.
+  local pill node; pill=$(pill_px config-width360 220 | cut -d' ' -f3); node=$(echo "$UI" | python3 -I "$HERE/uix.py" size desc "Edit address" | cut -d' ' -f1)
+  echo "  $(A "wm density" | tr '\n' ' ') $(A "wm size" | tr '\n' ' '); field as drawn: $(pill_px config-width360 220) (left right width, px); its accessibility node: $node px"
   check "360 dp wide screen: the address field is $(python3 -I -c 'import sys; p = int(sys.argv[1]); print("%d of 1080 px = %.1f dp of 360 dp = %.1f %%" % (p, p / 3.0, p * 100 / 1080))' "${pill:-0}")" '[ "${pill:-0}" -ge 648 ]'
   check "360 dp: reload, tab counter and menu are still there, the page is shown" 'has desc Reload && has desc "Tabs:" --contains && has desc Menu && has text "1 link with utm_source, fbclid"'
   check "360 dp: reload's target is 48 dp (144 px at 480 dpi): $(echo "$UI" | python3 -I "$HERE/uix.py" size desc Reload --clickable)" '[ "$(echo "$UI" | python3 -I "$HERE/uix.py" size desc Reload --clickable)" = "144 144" ]'
