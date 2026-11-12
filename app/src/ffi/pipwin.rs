@@ -102,15 +102,13 @@ impl PipWindow {
         ScreenRect { x: r.left, y: r.top, width: r.right - r.left, height: r.bottom - r.top }
     }
 
-    /// DPI scale factor (1.0 = 96 DPI).
+    /// The scale the engine draws the floating window at: its DPI scale times Windows' "Text
+    /// size" (as `Window::scale`).
     pub fn scale(self) -> f64 {
         // SAFETY: plain query; 0 for an invalid handle.
         let dpi = unsafe { GetDpiForWindow(self.0) };
-        if dpi == 0 {
-            1.0
-        } else {
-            f64::from(dpi) / 96.0
-        }
+        let raw = if dpi == 0 { 1.0 } else { f64::from(dpi) / 96.0 };
+        lb_core::dpi::Scale::new(raw * super::window::ui_factor()).factor()
     }
 
     /// Delivers its moves, the wheel and hovering to `events` until it is destroyed or

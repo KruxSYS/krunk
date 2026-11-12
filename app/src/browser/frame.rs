@@ -83,6 +83,31 @@ impl Browser {
         self.schedule_session_save();
     }
 
+    /// The shell of frame `win` says at which scale the engine draws it (`devicePixelRatio`).
+    /// That is the truth the layout has to follow. Usually it is what Krunk worked out itself
+    /// (the monitor's DPI scale times Windows' "Text size"); when it is not (the setting was
+    /// just changed, or the user forces a device scale factor with an engine flag), the factor
+    /// is corrected and every frame is laid out again.
+    pub(super) fn shell_scale_reported(&self, win: WindowId, dpr: f64) {
+        let Some(f) = self.frame(win) else { return };
+        if !dpr.is_finite() || !(0.25..=16.0).contains(&dpr) {
+            return;
+        }
+        let display = f64::from(f.window.raw_dpi()) / 96.0;
+        let factor = dpr / display;
+        if (factor - crate::ffi::window::ui_factor()).abs() < 0.005 {
+            return;
+        }
+        if crate::ffi::window::set_ui_factor(factor) {
+            info!(
+                "window {win}: the engine draws at {:.0} % (display scale {:.0} %): laying out for that",
+                dpr * 100.0,
+                display * 100.0
+            );
+            self.check_frame_scales();
+        }
+    }
+
     /// Every frame whose DPI is not the one it was laid out for is laid out again. Windows
     /// tells a frame about a new DPI (`WM_DPICHANGED`), but a maximized one first gets its new
     /// size (the taskbar grows with the scale) while it still reports the old DPI, and the
@@ -98,11 +123,14 @@ impl Browser {
     /// The displays changed: check now, and again once Windows has settled (the messages of a
     /// scale change arrive over about a second).
     pub(super) fn check_frame_scales_soon(&self) {
+        // "Text size" may be what changed: it is part of every frame's scale.
+        crate::ffi::window::refresh_ui_factor();
         self.check_frame_scales();
         for ms in [250, 1200] {
             let weak = self.me.clone();
             crate::ffi::cef::post_ui_delayed(ms, move || {
                 if let Some(b) = weak.upgrade() {
+                    crate::ffi::window::refresh_ui_factor();
                     b.check_frame_scales();
                 }
             });

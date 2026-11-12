@@ -63,7 +63,7 @@ for key in sorted(set(a) | set(b)):
     if box is None:
         same += 1
         continue
-    count = sum(1 for v in d.getdata() if v)
+    count = d.histogram()[255]
     diff += 1
     print(f"{key}: {count} px differ, in {box[0]},{box[1]} - {box[2]},{box[3]}")
     if out:

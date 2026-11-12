@@ -2991,6 +2991,11 @@ impl Browser {
                     self.set_hit_map(win, map);
                 }
             }
+            Request::ShellScale { dpr } => {
+                if let Some(win) = self.cur_id() {
+                    self.shell_scale_reported(win, dpr);
+                }
+            }
             Request::WindowControl { action } => {
                 if let Some(w) = self.window() {
                     w.control(action);

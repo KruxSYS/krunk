@@ -386,6 +386,25 @@ pub fn default_window(chosen: Rect, scale: f64, work: Rect) -> Rect {
     }
 }
 
+/// How far a new window opens down-right of the current one (DIP).
+pub const CASCADE_DIP: f64 = 32.0;
+
+/// Where a new window opens next to the current one (`from`, its restored rectangle): the
+/// same size, one step down and to the right. A step that would leave the work area starts
+/// again at its top or left edge (0.15.4: a window nearly as high as the screen, the usual
+/// case at 150 % and more, used to be pushed under the taskbar).
+pub fn cascade_window(from: Rect, scale: f64, work: Rect) -> Rect {
+    let step = Scale::new(scale).px(CASCADE_DIP);
+    let (mut x, mut y) = (from.x + step, from.y + step);
+    if x + from.width > work.x + work.width {
+        x = work.x;
+    }
+    if y + from.height > work.y + work.height {
+        y = work.y;
+    }
+    Rect { x, y, ..from }
+}
+
 /// A monitor: its work area (screen pixels) and its DPI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Monitor {
@@ -914,6 +933,34 @@ mod tests {
         // The VM's 1280 x 800 at 100 %: no longer hanging under the taskbar.
         let r = default_window(Rect { x: 0, y: 0, ..chosen }, 1.0, work_of(1280, 800, 1.0));
         assert_eq!(r, Rect { x: 0, y: 0, width: 1280, height: 752 });
+    }
+
+    #[test]
+    fn a_new_window_cascades_inside_the_work_area() {
+        let work = work_of(1920, 1080, 1.75); // 1920 x 996
+                                              // Room for the step: down-right by 32 DIP.
+        let from = Rect { x: 14, y: 14, width: 1200, height: 700 };
+        assert_eq!(cascade_window(from, 1.75, work), Rect { x: 70, y: 70, ..from });
+        assert_eq!(cascade_window(from, 1.0, work), Rect { x: 46, y: 46, ..from });
+        // The 960 x 560 DIP window of the DPI pass at 175 % (1680 x 980 px): no room below.
+        let tall = Rect { x: 14, y: 14, width: 1680, height: 980 };
+        let r = cascade_window(tall, 1.75, work);
+        assert_eq!((r.x, r.width, r.height), (70, 1680, 980));
+        assert!(r.y >= 0 && r.y + r.height <= 996 && r.y != tall.y, "{r:?}");
+        // A window that fills the work area can only open in the same place.
+        let full = Rect { x: 0, y: 0, width: 1920, height: 996 };
+        assert_eq!(cascade_window(full, 1.75, work), full);
+        // Never outside, wherever the current window is.
+        for from in [
+            tall,
+            full,
+            Rect { x: 1500, y: 600, width: 900, height: 700 },
+            Rect { x: -300, y: -50, width: 800, height: 600 },
+        ] {
+            let r = cascade_window(from, 1.75, work);
+            assert!(r.x + r.width <= 1920 || r.width > 1920, "{r:?}");
+            assert!(r.y + r.height <= 996 || r.height > 996, "{r:?}");
+        }
     }
 
     #[test]

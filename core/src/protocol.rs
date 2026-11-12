@@ -935,6 +935,13 @@ pub enum Request {
     HitMap {
         map: crate::frame::HitMap,
     },
+    /// The shell's `devicePixelRatio` (0.15.4): the scale the engine really draws Krunk's UI
+    /// at. It is the window's DPI scale times Windows' "Text size", or whatever else changed
+    /// the engine's scale; the host lays out with it. Sent when the shell loads, when the
+    /// value changes and when the host announces a new window state.
+    ShellScale {
+        dpr: f64,
+    },
     /// Minimize, maximize/restore or close the window (keyboard use of the
     /// caption buttons; mouse clicks on them are handled natively).
     WindowControl {
@@ -1998,6 +2005,7 @@ impl Sender {
                     | R::Stop
                     | R::ToggleBookmark
                     | R::HitMap { .. }
+                    | R::ShellScale { .. }
                     | R::WindowControl { .. }
                     | R::ShowPopup { .. }
                     | R::ExtAction { .. }
@@ -3402,7 +3410,9 @@ mod tests {
             "minimize":{"x":0,"y":0,"width":46,"height":36},"maximize":{"x":46,"y":0,"width":46,"height":36},
             "close":{"x":92,"y":0,"width":46,"height":36}}}"#;
         let control = r#"{"cmd":"windowControl","action":"close"}"#;
-        for msg in [map, control] {
+        let scale = r#"{"cmd":"shellScale","dpr":1.5}"#;
+        assert_eq!(parse_request(Sender::Shell, scale).unwrap().request, Request::ShellScale { dpr: 1.5 });
+        for msg in [map, control, scale] {
             assert!(parse_request(Sender::Shell, msg).is_ok());
             assert_eq!(parse_request(Sender::Popup, msg), Err(ProtocolError::Forbidden));
             for p in Page::ALL {

@@ -236,7 +236,8 @@ try {
   Surface 'tabmenu' { $tp = TabPoint $script:A 0; RightClick $tp[0] $tp[1] 1000 }
   Surface 'pagemenu' { RightClick (PX 200) (PY 205) 1000 }
   Surface 'linkmenu' { RightClick (PX 80) (PY 162) 1000 }
-XX
+  Page 'krunk://settings' 3000 'Settings'
+  Snap 'settings'
   Page "$W/dpi.html"
   Surface 'ai' { SafeKeys '^+ ' 2000; Geo 'ai' } { SafeKeys '^+ ' 800 }
   Surface 'alert' { Click (PX 500) (PY 380) 300; Keys 'a' 1500 } { Keys '{ENTER}' 600 }

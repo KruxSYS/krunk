@@ -34,8 +34,6 @@ const DRAG_TICK_MS: u32 = 15;
 const STRIP_SLACK_DIP: f64 = 8.0;
 /// Where the first tab of a new window starts (CSS px), if its shell hasn't reported yet.
 const FIRST_TAB_X_DIP: f64 = 8.0;
-/// New windows ("New window", "Move to new window") open this far down-right of the current one.
-const CASCADE_DIP: f64 = 32.0;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct TabDrag {
@@ -78,8 +76,13 @@ impl Browser {
     pub(super) fn cascade_bounds(&self) -> Option<Bounds> {
         let w = self.window()?;
         let (r, _) = w.placement();
-        let step = lb_core::dpi::Scale::new(w.scale()).px(CASCADE_DIP);
-        Some(Bounds { x: r.x + step, y: r.y + step, width: r.width, height: r.height })
+        let work = crate::ffi::window::Window::work_area_at(r.x + r.width / 2, r.y + r.height / 2);
+        let to = lb_core::layout::cascade_window(
+            lb_core::layout::Rect { x: r.x, y: r.y, width: r.width, height: r.height },
+            w.scale(),
+            lb_core::layout::Rect { x: work.x, y: work.y, width: work.width, height: work.height },
+        );
+        Some(Bounds { x: to.x, y: to.y, width: to.width, height: to.height })
     }
 
     /// Ctrl+N / "New window": a new window with a new-tab page.

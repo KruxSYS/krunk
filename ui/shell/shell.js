@@ -398,6 +398,18 @@
     LB.post('hitMap', { map: map });
   }
   new ResizeObserver(function () { layoutTabs(true); }).observe($('tabstrip'));
+  // 0.15.4: the host lays the window out in physical pixels and needs the scale the engine
+  // really draws at. That is this page's devicePixelRatio (the shell is never zoomed): the
+  // display's scale times Windows' "Text size", which the host cannot see in the window's DPI.
+  // Told at load, on every change, and whenever the host announces a window state.
+  function reportScale() { LB.post('shellScale', { dpr: window.devicePixelRatio }); }
+  (function watchScale() {
+    matchMedia('(resolution: ' + window.devicePixelRatio + 'dppx)').addEventListener('change', function () {
+      reportScale();
+      watchScale();
+    }, { once: true });
+  })();
+  reportScale();
   // 0.15.4: a narrow window (the minimum size, a quarter of a small display, a large scale):
   // the address field shrinks first; when less than 120 px of it are left the optional
   // buttons go, in this order: extension icons, the zoom chip and the bookmark star, then
@@ -462,6 +474,7 @@
     $('win-max').title = m.maximized ? 'Restore' : 'Maximize';
     $('win-max').setAttribute('aria-label', $('win-max').title);
     reportHitMap();
+    reportScale();
   });
 
   function svgIcon(name, cls) {
