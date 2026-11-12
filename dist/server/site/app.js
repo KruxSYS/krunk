@@ -111,7 +111,7 @@
     .then(function (r) { render(r); usingKrunk(String(r.version)); })
     .catch(function () { none(); usingKrunk(null); });
 
-  // The Android preview (0.1.0): /download/android.json, written by publish-android.sh. The box
+  // The Android preview: /download/android.json, written by publish-android.sh. The box
   // stays hidden until a release exists; the device APK is the button, the others are links.
   const abox = document.getElementById('download-android');
   function renderAndroid(r) {
@@ -138,7 +138,7 @@
       meta.appendChild(el('a', { href: safePath(f.url), download: '', text: String(f.label || f.name) + (size(f.size) ? ' (' + size(f.size) + ')' : '') }));
     });
     abox.appendChild(meta);
-    abox.appendChild(el('p', { class: 'hint', text: 'A first preview for 64-bit ARM phones and tablets: browsing, tabs, bookmarks, history and settings. No ad blocking, vault or sync yet. It does not update itself: new versions appear here.' }));
+    abox.appendChild(el('p', { class: 'hint', text: 'A preview for 64-bit ARM phones and tablets: browsing with ad and tracker blocking (uBlock Origin built in), tabs, bookmarks, history, themes and settings. No vault or sync yet. It does not update itself: new versions appear here.' }));
     const sums = el('dl', { class: 'sums' });
     files.forEach(function (f) {
       sums.appendChild(el('dt', { text: String(f.name) }));
