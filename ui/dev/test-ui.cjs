@@ -367,7 +367,7 @@ async function testShell(browser) {
   // Menu popup open/close.
   await page.click('#menu');
   const sp = await lastSent(page, 'showPopup');
-  check(sp && sp.popup === 'menu' && sp.rect.width === 280 && sp.rect.height === 670 && sp.rect.x >= 0 && sp.rect.y > 60, 'menu sends showPopup with a rect below the toolbar (670 is the upper bound with the 0.7.2 update item; the popup fits itself)');
+  check(sp && sp.popup === 'menu' && sp.rect.width === 280 && sp.rect.height === 700 && sp.rect.x >= 0 && sp.rect.y > 60, 'menu sends showPopup with a rect below the toolbar (700 is the upper bound with the 0.7.2 update item and 0.16.0\'s Session usage; the popup fits itself)');
   check(await page.locator('#menu.on').count() === 1, 'menu button highlighted while open');
   await page.click('#menu');
   check((await lastSent(page, 'hidePopup')) !== undefined, 'clicking menu again sends hidePopup');
@@ -5442,13 +5442,13 @@ async function testTabWindows(browser) {
   check((await lastSent(page, 'command')).command.command === 'newWindow', 'main menu New window sends command{newWindow}');
   check(await page.locator('.item.update-item').count() === 0, 'no update item without an update');
   // 0.7.2 (R13): "Update available – Krunk X.Y.Z" first; it asks for the update prompt.
-  await page.setViewportSize({ width: 280, height: 670 });
+  await page.setViewportSize({ width: 280, height: 700 });
   await emit(page, { event: 'popup', content: { kind: 'menu', zoom: 1, canReopen: false, update: '0.7.9' } });
   await page.waitForTimeout(30);
   const firstItem = page.locator('.item').first();
   check((await firstItem.textContent()).includes('Update available – Krunk 0.7.9') && await page.locator('.item.update-item .update-dot').count() === 1, 'the update item is the first one, with a dot');
   check(await page.evaluate(() => { const l = document.querySelector('.item.update-item .label'); return l.scrollWidth <= l.clientWidth; }), 'the update item is not shortened');
-  check(await page.evaluate(() => document.getElementById('root').getBoundingClientRect().bottom <= 670), 'the menu with the update item fits 280x670');
+  check(await page.evaluate(() => document.getElementById('root').getBoundingClientRect().bottom <= 700), 'the menu with the update item fits 280x700');
   await shot(page, 'popup-menu-update.png');
   const hidesBefore = (await sent(page)).filter((x) => x.cmd === 'hidePopup').length;
   await firstItem.click();
@@ -5980,9 +5980,10 @@ async function testHttpAuth(browser) {
     // 0.14.0: the VPN (test-vpn.cjs; its MeasureVpn runs only when ONLY names it).
     // 0.15.0: one file per work package (test-0150-<wp>.cjs).
     // 0.15.4: display scales and small work areas (test-dpi.cjs).
+    // 0.16.0: Session usage, the Home button, the extension icons' context menu (test-0160-menus.cjs).
     for (const f of ['test-ai-panel.cjs', 'test-ai-settings.cjs', 'test-scripts.cjs', 'test-agent-probe.cjs', 'test-vpn.cjs',
       'test-0150-tabs.cjs', 'test-0150-agent.cjs', 'test-0150-theme.cjs', 'test-0150-address.cjs', 'test-0150-downloads.cjs', 'test-0150-sessions.cjs',
-      'test-dpi.cjs']) {
+      'test-dpi.cjs', 'test-0160-menus.cjs']) {
       const file = path.join(__dirname, f);
       if (!fs.existsSync(file)) continue;
       const tests = require(file)({ openPage, check, sent, lastSent, emit, shot, acceptInPage, settleTabs, SHOTS, UI });

@@ -70,6 +70,9 @@
       item('Downloads', 'Ctrl+J', () => command('downloads')),
       item('Passwords & payments', '', () => openPage('passwords')),
       item('Cookies and site data', '', () => openPage('storage')),
+      // 0.16.0: the session logs (time per site and tab, CPU per session). The page itself
+      // offers to turn the logging on while it is off.
+      item('Session usage', '', () => openPage('sessions')),
       item('Extensions', '', () => openPage('extensions')),
       item('Scripts and macros', '', () => openPage('scripts')),
       sep(),

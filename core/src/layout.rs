@@ -483,7 +483,10 @@ pub fn prompt_rect(kind: PopupKind, entries: usize, shell_width_css: f64) -> Pop
     let (w, h) = match kind {
         PopupKind::SavePassword => (360.0, 196.0),
         PopupKind::Fill => (340.0, 110.0 + 42.0 * entries.clamp(1, 6) as f64),
-        PopupKind::Menu => (280.0, 670.0),
+        // The size the window is first asked for (the menu with its update item fits; 0.16.0:
+        // one row more, Session usage); the popup then reports its content's height and the
+        // host places it again. The shell asks with the same size (shell.js POPUP_SIZES).
+        PopupKind::Menu => (280.0, 700.0),
         PopupKind::Shield => (300.0, 226.0),
         PopupKind::SiteInfo => (360.0, 260.0),
         PopupKind::Suggest | PopupKind::CardFill => (300.0, 160.0),
@@ -962,6 +965,15 @@ mod tests {
         assert!(r.is_valid());
         assert!(prompt_rect(PopupKind::Fill, 3, 1200.0).height > prompt_rect(PopupKind::Fill, 1, 1200.0).height);
         assert!(prompt_rect(PopupKind::Fill, 99, 200.0).is_valid());
+    }
+
+    /// 0.16.0: the ⋮ menu got a row (Session usage): the size it is asked for is one 30 px item
+    /// higher than 0.15's 670.
+    #[test]
+    fn main_menu_is_asked_for_with_a_row_more() {
+        let r = prompt_rect(PopupKind::Menu, 0, 1280.0);
+        assert_eq!((r.width, r.height), (280.0, 700.0));
+        assert!(r.is_valid());
     }
 
     #[test]

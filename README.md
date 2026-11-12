@@ -90,7 +90,7 @@ changed in Settings. Built-in pages:
 - `view-source:<address>` (0.11.0): the page's source in Krunk's viewer (see below)
 - `krunk://scripts` (0.12.0): userscripts and macros with their code editor (see below)
 - `krunk://sessions` (0.15.0): your session logs, when Settings → Privacy & security → Keep
-  session logs is on (see Privacy below)
+  session logs is on (see Privacy below); ⋮ → **Session usage** opens it (0.16.0)
 
 Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
 
@@ -205,6 +205,9 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   - Drag the site icon or the (unfocused) address onto the bookmarks bar or into a folder to
     bookmark the page there; selected text dropped on the bar is bookmarked if it is a URL.
   - The ⋮ menu, the shield and the lock toggle: a click on the button closes an open popup.
+    The ⋮ menu lists the pages (History, Bookmarks, Downloads, Passwords & payments, Cookies
+    and site data, **Session usage** (0.16.0: `krunk://sessions`, which offers to turn the
+    logging on while it is off), Extensions, Scripts and macros).
   - The address of the link under the mouse shows at the bottom left of the page (bottom right
     when the mouse is there), as in Chrome.
 - **Window:** there is no title bar. Drag the window by empty space in the tab row, and
@@ -1025,8 +1028,10 @@ reset.
   are buffered in memory and written every 30 s and at exit. Private tabs are never logged; the
   agent can't read or change the setting. `krunk://sessions` lists sessions (start, end, time,
   top sites) and shows each with a timeline, time per site and per tab and a CPU chart; delete
-  one, clear all, keep 1 day to 1 year (30 days by default). While off, no timer runs and
-  nothing is buffered or written (idle CPU on the test VM was the same with it off and on).
+  one, clear all, keep 1 day to 1 year (30 days by default). ⋮ → **Session usage** opens the
+  page (0.16.0); while logging is off it says so and offers to turn it on. While off, no timer
+  runs and nothing is buffered or written (idle CPU on the test VM was the same with it off and
+  on).
 
 ### Engine background traffic
 Chromium's own services contact Google in the background. A logging-proxy audit of an idle,
