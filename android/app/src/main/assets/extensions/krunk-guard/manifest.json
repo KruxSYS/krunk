@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Krunk guard",
-  "version": "1.1",
+  "version": "1.2",
   "description": "Krunk's own companion to the bundled blocker: keeps the blocker's network requests behind a gate, passes Krunk's settings to it through the blocker's own messaging, and removes tracking parameters from top-level navigations.",
   "browser_specific_settings": {
     "gecko": {

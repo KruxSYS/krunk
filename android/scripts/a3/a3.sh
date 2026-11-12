@@ -145,8 +145,9 @@ t_startlinks() { # cold starts by a link from another app: every first page filt
   for i in 1 2 3 4 5 6 7 8; do
     stop_clean; A "logcat -c"; t=$(now); view "$B/ads.html" 14; alive || break; dump
     ms=$(glog | grep -oE "blocker ready after [0-9]+" | tail -1 | grep -oE "[0-9]+$"); times="$times ${ms:-?}"
-    [ "${ms:-0}" -gt 5000 ] && slow=$((slow + 1))
-    { [ "$(served "$t")" = "/ads.html /ok.png " ] && has desc "5 requests blocked on this page"; } || { unfiltered=$((unfiltered + 1)); shot "gate-startlinks-unfiltered-$i"; glog > "$EV/gate-startlinks-unfiltered-$i-logcat.txt"; echo "  start $i: served $(served "$t"); $(echo "$UI" | grep -oE 'content-desc="[^"]*(block|Block)[^"]*"' | head -1)"; }
+    [ "${ms:-0}" -gt 5000 ] && { slow=$((slow + 1)); T "$E" adb logcat -d -v time > "$EV/gate-startlinks-slow-$i-logcat-full.txt"; glog > "$EV/gate-startlinks-slow-$i-logcat.txt"; }
+    # The restored tab may be the same page: what counts is that nothing but the page and its control image was fetched.
+    { [ -z "$(served "$t" | tr ' ' '\n' | grep -vxE "/ads.html|/ok.png|")" ] && has desc "5 requests blocked on this page"; } || { unfiltered=$((unfiltered + 1)); shot "gate-startlinks-unfiltered-$i"; glog > "$EV/gate-startlinks-unfiltered-$i-logcat.txt"; echo "  start $i: served $(served "$t"); $(echo "$UI" | grep -oE 'content-desc="[^"]*(block|Block)[^"]*"' | head -1)"; }
   done
   echo "  blocker ready after (ms):$times; slower than 5 s: $slow of 8"
   check "8 cold starts by a link: the first page is filtered every time ($unfiltered not)" '[ "$unfiltered" = 0 ]'

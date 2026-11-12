@@ -15,7 +15,7 @@
  * background page runs, and the gate starts closed: nothing has to be sent to it first. The
  * start-up state comes from two prefs Krunk writes into the engine's config file.
  */
-/* globals ExtensionAPI, ExtensionCommon, Services, Ci, Cr */
+/* globals ExtensionAPI, ExtensionCommon, Services, Ci, Cr, ChromeUtils */
 "use strict";
 
 const BLOCKER_ID = "uBlock0@raymondhill.net";
@@ -123,11 +123,37 @@ function uninstall() {
   gate.stopping = null;
 }
 
+/* The engine starts the background scripts of extensions that are already installed "late": when
+ * its first window has had an idle moment. On about one start in eight (seen on the emulator)
+ * that moment did not come before a page loaded, and Krunk holds page loads until this
+ * extension's background has reported in: the first page then waited the full ten seconds.
+ * So the background is started now, the way any event for the extension would start it. The
+ * call is the engine's own (what a waiting web request or a message does); it does nothing when
+ * the background is already running. Tried again shortly after, in case the engine has not
+ * prepared the background's start yet when this script's start-up hook runs.
+ */
+function wakeBackground(extension) {
+  const wake = () => {
+    try {
+      if (!extension.hasShutdown && typeof extension.wakeupBackground === "function") {
+        Promise.resolve(extension.wakeupBackground()).catch(() => {});
+      }
+    } catch (e) {
+      // Not fatal: the engine's late start-up or the first page load starts it as before.
+    }
+  };
+  Services.tm.dispatchToMainThread(wake);
+  const { setTimeout } = ChromeUtils.importESModule("resource://gre/modules/Timer.sys.mjs");
+  setTimeout(wake, 400);
+  setTimeout(wake, 1500);
+}
+
 const stateJson = () => JSON.stringify({ blockerOpen: gate.blockerOpen, engine: gate.engine });
 
 this.krunkGate = class extends ExtensionAPI {
   onStartup() {
     install();
+    wakeBackground(this.extension);
   }
 
   onShutdown() {
