@@ -63,9 +63,15 @@ dump() { A "uiautomator dump ${WIN:+--windows} /sdcard/ui.xml" > /dev/null 2>&1;
 has() { echo "$UI" | python3 -I "$HERE/uix.py" has "$@"; }                  # has text|desc VALUE [--contains]
 attr() { echo "$UI" | python3 -I "$HERE/uix.py" attr "$@"; }                # attr text|desc VALUE ATTRIBUTE
 tapui() { # tapui text|desc VALUE [wait] [--contains]: dump, find, tap; fails the test when it is not there
-  dump; local xy; xy=$(echo "$UI" | python3 -I "$HERE/uix.py" find "$1" "$2" ${4:-}) || { bad "no '$2' on screen"; return 1; }
+  dump; local xy; xy=$(echo "$UI" | python3 -I "$HERE/uix.py" find "$1" "$2" ${4:-}) || { missing "$2"; return 1; }
   # shellcheck disable=SC2086
   tap $xy "${3:-2}"
+}
+MISSED=0
+missing() { # a control the test wanted is not on screen: fail, and keep what was there instead (screenshot, nodes, log)
+  MISSED=$((MISSED + 1)); local name; name="missing-$(date -u +%H%M%S)-$MISSED"
+  bad "no '$1' on screen (kept: $name.png, $name-nodes.txt, $name-logcat.txt)"
+  shot "$name" || true; echo "$UI" | python3 -I "$HERE/uix.py" list > "$EV/$name-nodes.txt"; T "$E" adb logcat -d -v time -s Krunk:I KrunkGuard:I KrunkNav:I > "$EV/$name-logcat.txt"
 }
 longtap() { dump; local xy; xy=$(echo "$UI" | python3 -I "$HERE/uix.py" find "$1" "$2") || { bad "no '$2' on screen"; return 1; }
   # shellcheck disable=SC2086
