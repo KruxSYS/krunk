@@ -66,8 +66,8 @@ be uploaded; moving tabs in the switcher is not there yet. Each APK is about 7 M
 
 Known issues:
 
-- **Address bar empty although a page is shown** (seen once in testing, not seen again in eleven
-  further tries; to be looked at for 0.2.1). What was done: Settings › Privacy › "Block ads and
+- **Address bar empty although a page is shown** (seen once in testing and not again when the same
+  steps were repeated, once by script and once by hand; to be looked at for 0.2.1). What was done: Settings › Privacy › "Block ads and
   trackers" switched off, back to the browser, and about four seconds later a link opened from
   another app. The page loaded, unfiltered as set, but the address bar showed "Search … or enter
   address" and no shield instead of the site. Nothing wrong was shown; the site's name was
