@@ -516,11 +516,13 @@ impl Browser {
             Some(Value::Array(a)) => a.first().and_then(|s| s.as_str()).unwrap_or("").to_string(),
             _ => String::new(),
         };
+        let given = !url.is_empty();
         let url = if url.is_empty() { Page::NewTab.url() } else { self.ext_resolve_url(ext_id, &url) };
         let own = url.starts_with(&format!("{}/", ext::origin(ext_id)));
         let small = matches!(data.get("type").and_then(|t| t.as_str()), Some("popup" | "panel"));
         if !(small && own) {
-            if !assets::allow_navigation(Channel::Tab, "", &url, true, false) {
+            // An address the extension gives is not the host's: its own pages and the web.
+            if given && !lb_core::ext_guard::may_open(ext_id, &url) {
                 return Err("That address cannot be opened.".into());
             }
             self.open_url(&url, true, false);
@@ -760,7 +762,8 @@ impl Browser {
     /// Runs files or code in a tab and answers with the result (by value; a promise is
     /// awaited). `world: "MAIN"` runs in the page's own world, else in the extension's world.
     /// Either way the tab must have the extension's world: that is where Krunk decided the
-    /// extension may run (not on Krunk's own pages, private tabs only when allowed).
+    /// extension may run (not on Krunk's own pages or local files, private tabs only when
+    /// allowed), and the extension needs host access to the document (`ext_script_target`).
     pub(super) fn ext_execute_script(
         &self,
         caller: &Caller,
@@ -769,8 +772,10 @@ impl Browser {
     ) -> Option<Result<Value, String>> {
         let tab = data.get("tabId").and_then(|t| t.as_u64()).map(|t| t as TabId).or_else(|| self.active_id());
         let Some(tab) = tab else { return Some(Err("no tab".into())) };
-        let Some(context) = self.ext_context(tab, ext_id) else {
-            return Some(Err("The tab has no extension world (not a web page, or not allowed there).".into()));
+        let main = data.get("world").and_then(|w| w.as_str()) == Some("MAIN");
+        let context = match self.ext_script_target(tab, ext_id, main) {
+            Ok(context) => context,
+            Err(e) => return Some(Err(e)),
         };
         let found = self
             .ext
@@ -804,7 +809,6 @@ impl Browser {
         if code.is_empty() {
             return Some(Err("nothing to run".into()));
         }
-        let main = data.get("world").and_then(|w| w.as_str()) == Some("MAIN");
         let mut params =
             json!({ "expression": code, "returnByValue": true, "awaitPromise": true, "userGesture": true });
         if !main {

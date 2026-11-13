@@ -124,7 +124,7 @@ pub fn main_bundle(ext_id: &str, scripts: &[MainScript]) -> String {
     let mut out = String::new();
     out.push_str("(function () {\n");
     out.push_str(
-        "if (!/^(https?|file):$/.test(location.protocol) || /(^|\\.)krunk\\.invalid$/.test(location.hostname)) return;\n",
+        "if (!/^https?:$/.test(location.protocol) || /(^|\\.)krunk\\.invalid$/.test(location.hostname)) return;\n",
     );
     out.push_str(MAIN_MATCHER);
     for s in scripts {
@@ -160,7 +160,7 @@ const MAIN_MATCHER: &str = r#"function __krunkGlob(p, t) {
   return pi === p.length;
 }
 function __krunkMatch(pattern, url) {
-  if (pattern === '<all_urls>') return /^(https?|file):$/.test(location.protocol);
+  if (pattern === '<all_urls>') return /^https?:$/.test(location.protocol);
   var m = /^(\*|https?|file|ftp):\/\/([^/]*)(\/.*)?$/.exec(pattern); if (!m) return false;
   var u; try { u = new URL(url); } catch (e) { return false; }
   var scheme = u.protocol.replace(':', '');

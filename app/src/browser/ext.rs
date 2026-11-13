@@ -197,6 +197,9 @@ pub(super) struct ExtHost {
     scripts: RefCell<HashMap<TabId, Vec<String>>>,
     bindings: RefCell<HashMap<TabId, std::collections::HashSet<String>>>,
     contexts: RefCell<HashMap<TabId, Vec<ExtContext>>>,
+    /// `activeTab`: the tab and the origin of its page when the user last clicked the
+    /// extension's button. The grant ends when the tab shows another origin.
+    active_tab: RefCell<HashMap<String, (TabId, String)>>,
     /// A package waiting for the install confirmation (0.7.0, R20).
     pending_install: RefCell<Option<PendingInstall>>,
     /// The extension whose popup closed last, and when (ms): the toolbar click that closed it
@@ -253,6 +256,7 @@ impl ExtHost {
             scripts: RefCell::new(HashMap::new()),
             bindings: RefCell::new(HashMap::new()),
             contexts: RefCell::new(HashMap::new()),
+            active_tab: RefCell::new(HashMap::new()),
         }
     }
 }
@@ -758,6 +762,60 @@ impl Browser {
         mine.iter().find(|c| c.main).or(mine.first()).map(|c| c.id)
     }
 
+    /// Where `scripting.executeScript` / `insertCSS` of `ext_id` run in a tab: the extension's
+    /// world there, when the extension may touch the document. As for content scripts the
+    /// document must be one the manifest's host patterns cover (the origin the engine reported
+    /// for that world), or the user's click on the extension's button granted `activeTab` for
+    /// it. `main_world`: the script goes to the top frame's own world, so that frame's world
+    /// must be the one checked.
+    fn ext_script_target(&self, tab: TabId, ext_id: &str, main_world: bool) -> Result<i64, String> {
+        let found = {
+            let contexts = self.ext.contexts.borrow();
+            let mine: Vec<&ExtContext> =
+                contexts.get(&tab).map(|l| l.iter().filter(|c| c.ext == ext_id).collect()).unwrap_or_default();
+            mine.iter().find(|c| c.main).or(mine.first()).map(|c| (c.id, c.main, c.origin.clone()))
+        };
+        let Some((context, main, origin)) = found else {
+            return Err("The tab has no extension world (not a web page, or not allowed there).".into());
+        };
+        if main_world && !main {
+            return Err("The tab's top frame has no extension world (not a web page, or not allowed there).".into());
+        }
+        let by_manifest = self
+            .ext
+            .exts
+            .borrow()
+            .iter()
+            .any(|e| e.installed.id == ext_id && lb_core::ext_guard::host_access(&e.manifest, &origin));
+        let by_click = || self.ext.active_tab.borrow().get(ext_id).is_some_and(|(t, o)| *t == tab && *o == origin);
+        if !by_manifest && !by_click() {
+            return Err(lb_core::ext_guard::NO_HOST_ACCESS.into());
+        }
+        Ok(context)
+    }
+
+    /// The user clicked the extension's button: with the `activeTab` permission the extension
+    /// may script the page the active tab shows now.
+    fn ext_grant_active_tab(&self, ext_id: &str) {
+        let wants = self
+            .ext
+            .exts
+            .borrow()
+            .iter()
+            .any(|e| e.installed.id == ext_id && e.manifest.permissions.iter().any(|p| p == "activeTab"));
+        let Some(tab) = self.active_id().filter(|_| wants) else { return };
+        let origin = self
+            .ext
+            .contexts
+            .borrow()
+            .get(&tab)
+            .and_then(|l| l.iter().find(|c| c.ext == ext_id && c.main).map(|c| c.origin.clone()))
+            .or_else(|| self.tab(tab).and_then(|t| lb_core::urlclean::origin_of(&t.url)));
+        if let Some(origin) = origin {
+            self.ext.active_tab.borrow_mut().insert(ext_id.to_string(), (tab, origin));
+        }
+    }
+
     /// Delivers JSON to the content world of a tab (a reply or an event).
     fn ext_deliver_content(&self, tab: TabId, context: i64, json: &Value) {
         let Some(view) = self.tab_view(tab) else { return };
@@ -1104,6 +1162,7 @@ impl Browser {
             info!("extension {}: popup stays closed (its button was the click away)", self.ext_name(ext_id));
             return;
         }
+        self.ext_grant_active_tab(ext_id);
         match popup {
             Some(p) => self.open_ext_popup(ext_id, &p, rect),
             None => {
@@ -1366,11 +1425,18 @@ impl Browser {
                     .unwrap_or(Value::Null),
             }),
             "tabs.create" => {
-                let url = get_str("url").unwrap_or_else(|| lb_core::pages::Page::NewTab.url());
-                let url = self.ext_resolve_url(ext_id, &url);
-                if !assets::allow_navigation(Channel::Tab, "", &url, true, false) {
-                    return Some(Err("That address cannot be opened.".into()));
-                }
+                // An address the extension gives is not the host's (no local file, none of
+                // Krunk's pages); without one it is a new tab.
+                let url = match get_str("url") {
+                    Some(url) => {
+                        let url = self.ext_resolve_url(ext_id, &url);
+                        if !lb_core::ext_guard::may_open(ext_id, &url) {
+                            return Some(Err("That address cannot be opened.".into()));
+                        }
+                        url
+                    }
+                    None => lb_core::pages::Page::NewTab.url(),
+                };
                 let active = data.get("active").and_then(|a| a.as_bool()).unwrap_or(true);
                 self.open_url(&url, true, false);
                 let id = self.active_id();
@@ -1384,7 +1450,7 @@ impl Browser {
                 let Some(id) = id else { return Some(Err("No active tab.".into())) };
                 if let Some(url) = data.pointer("/props/url").and_then(|u| u.as_str()) {
                     let url = self.ext_resolve_url(ext_id, url);
-                    if !assets::allow_navigation(Channel::Tab, "", &url, true, false) {
+                    if !lb_core::ext_guard::may_open(ext_id, &url) {
                         return Some(Err("That address cannot be opened.".into()));
                     }
                     if let Some(v) = self.tab_view(id) {
@@ -1976,9 +2042,7 @@ impl Browser {
         else {
             return Err("no tab".into());
         };
-        let Some(context) = self.ext_context(tab, ext_id) else {
-            return Err("The tab has no extension world (not a web page, or not allowed there).".into());
-        };
+        let context = self.ext_script_target(tab, ext_id, false)?;
         let found = self
             .ext
             .exts

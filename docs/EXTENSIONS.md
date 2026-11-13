@@ -218,6 +218,16 @@ where the extension may run and never on Krunk's own pages; `scripting.*` needs 
   world, and `sender.origin` is that origin (`core::ext_guard::content_sender`). The tab's
   address is not used: it already names the next page while a navigation is pending. The
   information only ever reaches the same extension.
+* An address an extension gives to `tabs.create`, `tabs.update` or `windows.create` is not
+  the host's: its own pages and `http(s)` only, no local file, none of Krunk's pages, no other
+  extension's page (`core::ext_guard::may_open`). Without an address it is a new tab.
+* No content scripts, MAIN-world scripts or `scripting.*` on `file:` documents (Chrome's
+  default without "Allow access to file URLs"; a `file://*/*` pattern is accepted and unused).
+* `scripting.executeScript` / `insertCSS` need host access to the document: a host pattern in
+  `host_permissions` / `permissions` that covers the origin the engine reports for the world
+  the script runs in (content script `matches` grant nothing), or `activeTab` after the user
+  clicked the extension's button, for that tab while it stays on that origin. `world: "MAIN"`
+  needs the top frame's world.
 * Sandboxed pages are the one place with `unsafe-eval`: unique origin, no API.
 * Ports per extension are capped (2048), registered scripts (100), windows (8), errors (50).
 
