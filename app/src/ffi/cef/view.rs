@@ -1220,46 +1220,76 @@ impl View {
 
     /// Calls a DevTools protocol method on this browser (fire and forget).
     pub fn devtools_method(&self, method: &str, params: &serde_json::Value) {
-        self.send_devtools(method, params, None);
+        self.send_devtools(method, params, None, DEVTOOLS_TIMEOUT_MS);
     }
 
     /// Calls a DevTools protocol method; `done` gets the result object or
     /// the error (also when the browser is gone or no answer came in time).
     pub fn devtools_call(&self, method: &str, params: &serde_json::Value, done: impl FnOnce(DevToolsResult) + 'static) {
-        self.send_devtools(method, params, Some(Box::new(done)));
+        self.send_devtools(method, params, Some(Box::new(done)), DEVTOOLS_TIMEOUT_MS);
+    }
+
+    /// As [`View::devtools_call`], for a call that may take long (0.19.0: a scan of a large
+    /// WebAssembly memory): `done` gets the time-out error after `timeout_ms`.
+    pub fn devtools_call_for(
+        &self,
+        method: &str,
+        params: &serde_json::Value,
+        timeout_ms: i64,
+        done: impl FnOnce(DevToolsResult) + 'static,
+    ) {
+        self.send_devtools(method, params, Some(Box::new(done)), timeout_ms);
     }
 
     /// Calls a DevTools method on an attached target's session (flat mode: a worker or an
     /// out-of-process frame the page auto-attached, 0.7.0). Fire and forget; failures are
     /// logged.
     pub fn devtools_session_method(&self, session_id: &str, method: &str, params: &serde_json::Value) {
-        let Some(h) = self.host() else { return };
+        let what = format!("{method} (session {})", &session_id[..session_id.len().min(8)]);
+        self.devtools_session_call(session_id, method, params, DEVTOOLS_TIMEOUT_MS, move |r| match r {
+            Ok(_) => crate::log::info!("DevTools {what}: ok"),
+            Err(e) => crate::log::warning!("DevTools {what}: {e}"),
+        });
+    }
+
+    /// A DevTools method on an attached target's session whose result is wanted (0.19.0: the
+    /// WASM inspector in a worker). `done` always runs: with the result, the error, or after
+    /// the time limit.
+    pub fn devtools_session_call(
+        &self,
+        session_id: &str,
+        method: &str,
+        params: &serde_json::Value,
+        timeout_ms: i64,
+        done: impl FnOnce(DevToolsResult) + 'static,
+    ) {
+        let Some(h) = self.host() else { return done(Err("the page is not open".into())) };
         if self.0.devtools_observer.borrow().is_none() {
             let mut observer = client::devtools_observer(self.0.key);
             *self.0.devtools_observer.borrow_mut() = h.add_dev_tools_message_observer(Some(&mut observer));
         }
         let id = self.0.devtools_id.get() + 1;
         self.0.devtools_id.set(id);
-        let what = format!("{method} (session {})", &session_id[..session_id.len().min(8)]);
-        let logged = what.clone();
-        self.0.devtools_calls.borrow_mut().insert(
-            id,
-            (
-                what,
-                Some(Box::new(move |r: DevToolsResult| match r {
-                    Ok(_) => crate::log::info!("DevTools {logged}: ok"),
-                    Err(e) => crate::log::warning!("DevTools {logged}: {e}"),
-                })),
-            ),
-        );
+        self.0.devtools_calls.borrow_mut().insert(id, (format!("{method} (session)"), Some(Box::new(done))));
         let message = serde_json::json!({ "id": id, "sessionId": session_id, "method": method, "params": params });
         if h.send_dev_tools_message(Some(message.to_string().as_bytes())) == 0 {
-            self.0.devtools_calls.borrow_mut().remove(&id);
             crate::log::warning!("DevTools method {method} (session) could not be sent");
+            if let Some((_, Some(done))) = self.0.devtools_calls.borrow_mut().remove(&id) {
+                done(Err("the engine refused the call".into()));
+            }
+            return;
         }
+        let key = self.0.key;
+        super::post_ui_delayed(timeout_ms, move || {
+            let late = lookup(key).and_then(|v| v.devtools_calls.borrow_mut().remove(&id));
+            if let Some((method, Some(done))) = late {
+                crate::log::warning!("DevTools method {method} timed out");
+                done(Err("no answer from the engine".into()));
+            }
+        });
     }
 
-    fn send_devtools(&self, method: &str, params: &serde_json::Value, done: Option<DevToolsDone>) {
+    fn send_devtools(&self, method: &str, params: &serde_json::Value, done: Option<DevToolsDone>, timeout_ms: i64) {
         let fail = |done: Option<DevToolsDone>, why: &str| {
             if let Some(d) = done {
                 d(Err(why.to_string()));
@@ -1287,7 +1317,7 @@ impl View {
         }
         if waits {
             let key = self.0.key;
-            super::post_ui_delayed(DEVTOOLS_TIMEOUT_MS, move || {
+            super::post_ui_delayed(timeout_ms, move || {
                 let late = lookup(key).and_then(|v| v.devtools_calls.borrow_mut().remove(&id));
                 if let Some((method, Some(done))) = late {
                     crate::log::warning!("DevTools method {method} timed out");

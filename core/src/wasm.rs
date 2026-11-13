@@ -348,6 +348,82 @@ impl WasmReq {
 /// found by `Runtime.queryObjects` and a request.
 pub const CALL_FUNCTION: &str = "function (found, req) { return this.call(found, req); }";
 
+/// Context numbers: 0 is the page itself, a same-process frame has its DevTools execution
+/// context's number, a dedicated worker `WORKER_CTX_BASE` plus the order it was attached in.
+pub const WORKER_CTX_BASE: u32 = 1_000_000;
+
+/// A DevTools call for a scan may take this long (ms); the others the usual ten seconds.
+pub const SCAN_TIMEOUT_MS: i64 = 120_000;
+
+/// What the inspector can't reach, as the page, the API and the tools say it.
+pub const UNREACHABLE: &str = "Not reachable: frames of other sites (they run in another process), service workers \
+     and shared workers, and a page that is paused in the DevTools debugger.";
+
+impl WasmReq {
+    /// The request scans a memory (a long call).
+    pub fn is_scan(&self) -> bool {
+        matches!(self, WasmReq::Scan { .. } | WasmReq::Next { .. })
+    }
+}
+
+/// May the page at `url` be inspected: a web page or a local file, never one of Krunk's own
+/// pages (or an extension's).
+pub fn inspectable(url: &str) -> bool {
+    let Ok(u) = url::Url::parse(url.trim()) else { return false };
+    match u.scheme() {
+        "file" => true,
+        "http" | "https" => crate::agent::pages::may_act(url).is_ok(),
+        _ => false,
+    }
+}
+
+/// The expression that makes a context's probe instance (the host keeps the object's handle;
+/// the page gets no reference). `hook_key`: the property the document-start hook left its
+/// instance under, taken (and removed) instead when it is there.
+pub fn make_expression(hook_key: Option<&str>) -> String {
+    let probe = crate::assets::inject_script("wasm-probe.js").trim().trim_end_matches(';');
+    let key = serde_json::to_string(&hook_key).unwrap_or_else(|_| "null".into());
+    format!(
+        "(function(){{var k={key};try{{var p=k&&globalThis[k];if(p){{delete globalThis[k];return p;}}}}catch(e){{}}\
+         return ({probe}\n)(globalThis);}})()"
+    )
+}
+
+/// The document-start script of the fallback: a probe instance that hooks `WebAssembly`
+/// before any page script runs, left under `hook_key` (not enumerable) until the host takes it.
+pub fn hook_script(hook_key: &str) -> String {
+    let probe = crate::assets::inject_script("wasm-probe.js").trim().trim_end_matches(';');
+    let key = serde_json::to_string(hook_key).unwrap_or_else(|_| "\"\"".into());
+    format!(
+        "(function(){{try{{var p=({probe}\n)(globalThis);p.hook();\
+         Object.defineProperty(globalThis,{key},{{value:p,configurable:true,enumerable:false,writable:false}});\
+         }}catch(e){{}}}})();"
+    )
+}
+
+/// The engine's answer when a probe's handle (or its context) is gone: the page navigated.
+pub fn handle_lost(error: &str) -> bool {
+    let e = error.to_ascii_lowercase();
+    e.contains("could not find object")
+        || e.contains("cannot find context")
+        || e.contains("execution context was destroyed")
+        || e.contains("invalid remote object id")
+        || e.contains("object reference chain")
+        || e.contains("session with given id not found")
+}
+
+/// A thrown error's text for the caller (`exceptionDetails` of a DevTools answer).
+pub fn exception_message(details: &serde_json::Value) -> String {
+    let text = details
+        .pointer("/exception/description")
+        .and_then(|d| d.as_str())
+        .map(|d| d.lines().next().unwrap_or("").to_string())
+        .or_else(|| details.get("text").and_then(|t| t.as_str()).map(str::to_string))
+        .unwrap_or_else(|| "the probe failed".into());
+    let text = text.strip_prefix("Error: ").unwrap_or(&text);
+    text.chars().take(300).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -401,6 +477,25 @@ mod tests {
         }
         let many: Vec<_> = (0..=MAX_WATCH).map(|_| json!({"mem": 0, "where": 0, "type": "i32"})).collect();
         assert!(p(json!({"op": "watch", "entries": many})).is_err());
+    }
+
+    #[test]
+    fn pages_expressions_and_errors() {
+        assert!(inspectable("https://game.example/play") && inspectable("file:///C:/x/index.html"));
+        for no in ["https://krunk.invalid/settings.html", "about:blank", "chrome://gpu", "devtools://devtools/x", ""] {
+            assert!(!inspectable(no), "{no}");
+        }
+        let make = make_expression(Some("k1"));
+        assert!(make.contains("var k=\"k1\"") && make.contains("maxScanBytes") && make.ends_with("(globalThis);})()"));
+        assert!(make_expression(None).contains("var k=null"));
+        let hook = hook_script("k1");
+        assert!(hook.contains("p.hook()") && hook.contains("enumerable:false"));
+        assert!(handle_lost("Could not find object with given id") && handle_lost("Cannot find context with specified id"));
+        assert!(!handle_lost("address 5 + 4 is past the end of the memory"));
+        let d = json!({"text": "Uncaught (in promise)", "exception": {"description": "Error: no memory 3\n    at mem"}});
+        assert_eq!(exception_message(&d), "no memory 3");
+        let scan = json!({"op": "scan", "mem": 0, "type": "i32", "kind": "unknown"});
+        assert!(p(scan).unwrap().is_scan() && !WasmReq::List {}.is_scan());
     }
 
     #[test]

@@ -210,7 +210,17 @@
     if (typeof req.epsilon === 'number' && req.epsilon >= 0) return req.epsilon;
     return d.get === 'getFloat32' ? 1e-3 : 1e-9;
   }
-  function yieldNow() { return new P(function (ok) { later(ok, 0); }); }
+  // A scan yields through a message channel where there is one: a hidden tab's timers are
+  // throttled (one per second and worse), and the inspector's own tab hides the inspected one.
+  const MC = G.MessageChannel;
+  function yieldNow() {
+    return new P(function (ok) {
+      if (!MC) return later(ok, 0);
+      const ch = new MC();
+      ch.port1.onmessage = function () { ch.port1.close(); ok(); };
+      ch.port2.postMessage(0);
+    });
+  }
 
   async function firstScan(req) {
     const m = mem(req.mem);
