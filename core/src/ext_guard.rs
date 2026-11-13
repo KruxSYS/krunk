@@ -64,6 +64,115 @@ pub fn host_access(m: &crate::ext::Manifest, origin: &str) -> bool {
     })
 }
 
+// ------------------------------------------------------------------ who may load an extension's files
+
+/// The path of a request on an extension's origin as it is compared with the manifest's lists
+/// (`sandbox.pages`, `web_accessible_resources`): percent-decoded like the file that is served
+/// (`ext::resolve_file`), without leading slashes, and in lower case (the profile is on a
+/// file system that ignores case, so `/Page.html` and `/p%61ge.html` are `page.html`).
+pub fn package_path(url_path: &str) -> String {
+    crate::ext::percent_decode(url_path).trim_start_matches('/').to_lowercase()
+}
+
+/// A path as a manifest writes it (a file name or a glob), for the comparison with
+/// [`package_path`].
+pub fn manifest_path(p: &str) -> String {
+    p.trim_start_matches('/').to_lowercase()
+}
+
+/// What decides who may load an extension's files, from its manifest.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WebAccess {
+    /// `web_accessible_resources`: (resource globs, the sites they are for).
+    entries: Vec<(Vec<String>, Vec<crate::ext::MatchPattern>)>,
+    /// Style sheets of content scripts: the shim links them into the page.
+    css: Vec<String>,
+    /// The manifest has sandboxed pages (their documents have an opaque origin).
+    sandbox: bool,
+}
+
+impl WebAccess {
+    /// `scripts`: the extension's content scripts, the manifest's and the registered ones.
+    pub fn new(m: &crate::ext::Manifest, scripts: &[crate::ext::ContentScript]) -> WebAccess {
+        let strings = |v: Option<&serde_json::Value>| -> Vec<String> {
+            v.and_then(|a| a.as_array())
+                .map(|a| a.iter().filter_map(|s| s.as_str().map(str::to_string)).collect())
+                .unwrap_or_default()
+        };
+        // Manifest V3 entries only (`{ resources, matches }`); an entry for other extensions
+        // only (`extension_ids`) opens nothing to the web.
+        let entries = m
+            .web_accessible_resources
+            .iter()
+            .filter(|e| e.is_object())
+            .map(|e| {
+                (
+                    strings(e.get("resources")).iter().map(|r| manifest_path(r)).collect::<Vec<_>>(),
+                    strings(e.get("matches"))
+                        .iter()
+                        .filter_map(|p| crate::ext::MatchPattern::parse(p))
+                        .map(|p| crate::ext::MatchPattern { path: "/*".into(), ..p })
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .filter(|(resources, sites)| !resources.is_empty() && !sites.is_empty())
+            .collect();
+        WebAccess {
+            entries,
+            css: scripts.iter().flat_map(|s| s.css.iter().map(|f| manifest_path(f))).collect(),
+            sandbox: m.sandbox.as_ref().is_some_and(|s| !s.pages.is_empty()),
+        }
+    }
+
+    /// Is the file listed under `web_accessible_resources` for some site? Such a file is
+    /// served with `Access-Control-Allow-Origin: *` and may be the target of a redirect.
+    pub fn web_accessible(&self, url_path: &str) -> bool {
+        let path = package_path(url_path);
+        self.entries.iter().any(|(resources, _)| resources.iter().any(|r| crate::ext::glob_match(r, &path)))
+    }
+
+    /// May a document of `site` (a web origin; `None`: an opaque one) load the file?
+    fn open_to(&self, path: &str, site: Option<&str>) -> bool {
+        if self.css.iter().any(|c| c == path) {
+            return true;
+        }
+        self.entries.iter().any(|(resources, sites)| {
+            resources.iter().any(|r| crate::ext::glob_match(r, path))
+                && sites.iter().any(|p| match site {
+                    Some(origin) => p.matches(&format!("{origin}/")),
+                    // An opaque origin (a sandboxed frame, a data: document) has no address:
+                    // what every site may load it may load too.
+                    None => p.is_all_sites() && matches!(p.scheme.as_str(), "*" | "https"),
+                })
+        })
+    }
+}
+
+/// May a request in a tab for `url` (a file of extension `ext_id`) be answered? `initiator`
+/// is the origin of the document that asks, as the engine reports it (empty for the browser's
+/// own navigations: the address bar, a tab the host opened, history), `top_url` the tab's
+/// address. The extension's own documents and Krunk's pages (icons on krunk://extensions) load
+/// anything; a web page, by a sub-resource, a frame, `fetch`, a link or `window.open`, only
+/// what `web_accessible_resources` lists for its origin (and the content scripts' style
+/// sheets); another extension nothing.
+pub fn request_allowed(access: &WebAccess, ext_id: &str, url: &str, initiator: &str, top_url: &str) -> bool {
+    let own = crate::ext::origin(ext_id);
+    let initiator = initiator.trim_end_matches('/');
+    if initiator.is_empty() || initiator == own || initiator == crate::pages::PAGES_ORIGIN {
+        return true;
+    }
+    let Ok(u) = url::Url::parse(url) else { return false };
+    let path = package_path(u.path());
+    if initiator == "null" {
+        // The extension's own sandboxed page (an opaque origin) in a tab of the extension
+        // loads its scripts.
+        return (access.sandbox && top_url.starts_with(&format!("{own}/"))) || access.open_to(&path, None);
+    }
+    let web = url::Url::parse(initiator)
+        .is_ok_and(|i| matches!(i.scheme(), "http" | "https") && i.host_str().is_some_and(|h| !krunk_host(h)));
+    web && access.open_to(&path, Some(initiator))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -72,6 +181,61 @@ mod tests {
 
     fn manifest(rest: &str) -> crate::ext::Manifest {
         crate::ext::Manifest::parse(&format!(r#"{{"manifest_version":3,"name":"T","version":"1"{rest}}}"#)).unwrap()
+    }
+
+    #[test]
+    fn a_web_page_loads_only_web_accessible_resources() {
+        // A wallet's manifest: one widget for one site, a sandboxed page, style sheets.
+        let m = manifest(
+            r#","web_accessible_resources":[{"resources":["cashtag-widget.html","img/*.png"],"matches":["https://x.com/*","https://*.twitter.com/*"]},
+                {"resources":["/Open/*"],"matches":["<all_urls>"]},{"resources":["for-extensions.js"],"extension_ids":["*"]},"legacy.js"],
+              "sandbox":{"pages":["snaps/index.html"]},
+              "content_scripts":[{"matches":["https://*/*"],"js":["c.js"],"css":["css/page.css"]}]"#,
+        );
+        let access = WebAccess::new(&m, &m.content_scripts);
+        let own = crate::ext::origin(ID);
+        let file = |p: &str| format!("{own}/{p}");
+        let ask = |p: &str, initiator: &str, top: &str| request_allowed(&access, ID, &file(p), initiator, top);
+        // The extension's own documents, the host's navigations, Krunk's extensions page.
+        for initiator in [own.as_str(), "", "https://krunk.invalid"] {
+            assert!(ask("home.html", initiator, "") && ask("scripts/background.js", initiator, ""), "{initiator}");
+        }
+        // A site: what is listed for it, whatever the spelling of the path.
+        assert!(ask("cashtag-widget.html", "https://x.com", "https://x.com/home"));
+        assert!(ask("Cashtag-Widget.html?a=1", "https://x.com", ""));
+        assert!(ask("c%61shtag-widget.html", "https://x.com", ""));
+        assert!(ask("img/logo.png", "https://mobile.twitter.com", ""));
+        assert!(ask("open/any/file.js", "https://example.org", "") && ask("open/a.js", "http://localhost:8094", ""));
+        assert!(ask("css/page.css", "https://example.org", ""), "a content script's style sheet");
+        for (path, initiator) in [
+            ("cashtag-widget.html", "https://evil.example"),
+            ("cashtag-widget.html", "http://x.com"),
+            ("home.html", "https://x.com"),
+            ("manifest.json", "https://x.com"),
+            ("scripts/background.js", "https://example.org"),
+            ("h%6Fme.html", "https://x.com"),
+            ("for-extensions.js", "https://example.org"),
+            ("legacy.js", "https://example.org"),
+            ("snaps/index.html", "https://example.org"),
+        ] {
+            assert!(!ask(path, initiator, &format!("{initiator}/")), "{path} from {initiator}");
+        }
+        // Another extension, and Krunk's shell, are not sites.
+        let other = crate::ext::origin("ponmlkjihgfedcbaponmlkjihgfedcba");
+        assert!(!ask("open/a.js", &other, "") && !ask("home.html", &other, ""));
+        assert!(!ask("open/a.js", "file://", ""));
+        // Opaque origins: the extension's sandboxed page in its own tab; elsewhere only what
+        // every site may load.
+        assert!(ask("snaps/bundle.js", "null", &file("home.html")));
+        assert!(!ask("snaps/bundle.js", "null", "https://evil.example/"));
+        assert!(ask("open/a.js", "null", "https://evil.example/") && !ask("img/logo.png", "null", "https://x.com/"));
+        let plain = WebAccess::new(&manifest(""), &[]);
+        assert!(!request_allowed(&plain, ID, &file("a.js"), "null", &file("home.html")), "no sandboxed pages");
+        // CORS and redirects: listed for some site.
+        assert!(access.web_accessible("/cashtag-widget.html") && access.web_accessible("/IMG/a.png"));
+        assert!(access.web_accessible("/open/x") && !access.web_accessible("/home.html"));
+        assert!(!access.web_accessible("/css/page.css") && !access.web_accessible("/for-extensions.js"));
+        assert_eq!(package_path("//S%61ndbox/Page.HTML"), "sandbox/page.html");
     }
 
     #[test]

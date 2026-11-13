@@ -228,6 +228,23 @@ where the extension may run and never on Krunk's own pages; `scripting.*` needs 
   the script runs in (content script `matches` grant nothing), or `activeTab` after the user
   clicked the extension's button, for that tab while it stays on that origin. `world: "MAIN"`
   needs the top frame's world.
+* **`web_accessible_resources`** is enforced (`core::ext_guard::WebAccess`, `request_allowed`)
+  by the tabs' network policy, which knows the origin that asks (the engine's request
+  initiator). The extension's own documents, the host's own navigations (address bar, tabs the
+  host or the extension opened, history) and Krunk's pages load any file. A web page — by a
+  sub-resource, a frame, `fetch`, a link, `location` or `window.open` — gets only what a
+  Manifest V3 entry lists for its origin (`matches`), plus the style sheets of content scripts
+  (the shim links them into the page). Another extension gets nothing. A server's redirect
+  leads to an extension page only when it is listed. `Access-Control-Allow-Origin: *` is sent
+  with listed files only. The action popup, offscreen documents, the extension's windows and
+  the background worker are not tabs and are not affected.
+  A content script's `fetch()` of a file of its own extension (GET, up to 8 MiB) is answered
+  by the host through the world's binding, listed or not, as Chrome allows it; the page's own
+  `fetch` cannot use that. `XMLHttpRequest` and elements a content script adds to the page
+  (`<img>`, `<script>`, `<iframe>`) are the page's requests and need a listed resource, as in
+  Chrome. Remaining gap: a sandboxed page of the extension has an opaque origin, so in a tab
+  whose address is the extension's a request from an opaque origin is let through when the
+  manifest has sandboxed pages.
 * Sandboxed pages are the one place with `unsafe-eval`: unique origin, no API.
 * Ports per extension are capped (2048), registered scripts (100), windows (8), errors (50).
 

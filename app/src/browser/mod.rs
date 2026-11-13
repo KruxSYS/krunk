@@ -1262,6 +1262,8 @@ impl Browser {
             }
             let current = committed_nav.borrow().clone();
             let allow = assets::allow_navigation(Channel::Tab, &current, &nav.url, host, nav.redirected);
+            // A server's redirect to an extension's page: only to a web-accessible one (0.17.0).
+            let allow = allow && (!nav.redirected || b.ext_redirect_allowed(&nav.url));
             if !allow {
                 info!("tab {id}: blocked navigation to an internal or unsupported URL");
                 // A tab that shows nothing yet (a popup whose first address was refused) shows

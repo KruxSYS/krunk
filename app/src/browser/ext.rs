@@ -36,6 +36,8 @@ use runtime::{End, ExtWindow, HiddenPage};
 
 /// Largest file served from a package.
 const MAX_FILE_BYTES: u64 = 32 * 1024 * 1024;
+/// Largest file of its extension a content script reads with `fetch` (it travels as text).
+const MAX_SCRIPT_READ_BYTES: u64 = 8 * 1024 * 1024;
 /// The Web Store download limit and timeout.
 const MAX_CRX_BYTES: usize = ext::MAX_PACKAGE_BYTES;
 const CRX_TIMEOUT_MS: i32 = 60_000;
@@ -486,6 +488,18 @@ impl Browser {
 
     pub(super) fn ext_rebuild_bundles(&self) {
         let shim = assets::inject_script("ext-content.js");
+        // Who may load each extension's files from a tab: the tabs' network policy reads it.
+        self.net.set_ext_access(
+            self.ext
+                .exts
+                .borrow()
+                .iter()
+                .map(|e| {
+                    let access = lb_core::ext_guard::WebAccess::new(&e.manifest, &self.ext_content_scripts(e));
+                    (e.installed.id.clone(), access)
+                })
+                .collect(),
+        );
         // One bundle per extension, for its own world (0.11.7, audit C4). An extension with
         // the `scripting` permission gets a world even without content scripts, for
         // `scripting.executeScript` (it used to borrow the shared world). 0.17.0: scripts
@@ -1389,6 +1403,11 @@ impl Browser {
             "storage.get" | "storage.set" | "storage.remove" | "storage.clear" | "storage.bytes" => {
                 self.ext_storage_op(ext_id, op, &data)
             }
+            // A content script's `fetch` of a file of its own extension.
+            "resource.read" => match caller {
+                Caller::Content { .. } => self.ext_read_resource(ext_id, &get_str("url").unwrap_or_default()),
+                Caller::Page { .. } => Err("chrome.resource.read is not provided by Krunk".into()),
+            },
             "runtime.sendMessage" => return self.ext_route_message(caller, ext_id, &data, None),
             "respond" => {
                 self.ext_respond(ext_id, &data);
@@ -2115,7 +2134,7 @@ impl Browser {
         use std::borrow::Cow;
         let id = ext::id_of_url(url)?;
         let path = url::Url::parse(url).ok()?.path().to_string();
-        let (root, background, messages, fresh, sandbox_csp) = {
+        let (root, background, messages, fresh, sandbox_csp, web_accessible) = {
             let exts = self.ext.exts.borrow();
             let e = exts.iter().find(|e| e.installed.id == id)?;
             (
@@ -2125,15 +2144,19 @@ impl Browser {
                 e.fresh,
                 lb_core::ext_runtime::is_sandbox_page(&e.manifest, &path)
                     .then(|| lb_core::ext_runtime::sandbox_csp(&e.manifest)),
+                lb_core::ext_guard::WebAccess::new(&e.manifest, &[]).web_accessible(&path),
             )
         };
+        // Other origins may read only what `web_accessible_resources` lists (the tabs' network
+        // policy decides which of them may ask at all).
+        let cors = if web_accessible { "\r\nAccess-Control-Allow-Origin: *" } else { "" };
         // A sandboxed page (manifest `sandbox.pages`, 0.17.0) gets the sandbox policy: a
         // unique origin, no extension API, and the manifest's (or Chrome's default) script rules.
         let csp = sandbox_csp.unwrap_or_else(|| ext::PAGE_CSP.to_string());
         let headers = |mime: &str| {
             format!(
                 "Content-Type: {mime}\r\nContent-Security-Policy: {csp}\r\nX-Content-Type-Options: nosniff\r\n\
-                 Referrer-Policy: no-referrer\r\nCache-Control: no-cache\r\nAccess-Control-Allow-Origin: *"
+                 Referrer-Policy: no-referrer\r\nCache-Control: no-cache{cors}"
             )
         };
         let generated = |mime: &str, body: String| {
@@ -2200,6 +2223,41 @@ impl Browser {
             headers: headers(ext::mime_for(&rel)),
             body: Cow::Owned(body),
         })
+    }
+
+    /// May a server's redirect lead a tab to `url`? Not to an extension's page unless
+    /// `web_accessible_resources` lists it (the redirecting site is not known here; a request
+    /// that names its initiator is checked by the tabs' network policy).
+    pub(super) fn ext_redirect_allowed(&self, url: &str) -> bool {
+        let Some(id) = ext::id_of_url(url) else { return true };
+        let path = url::Url::parse(url).map(|u| u.path().to_string()).unwrap_or_default();
+        self.ext
+            .exts
+            .borrow()
+            .iter()
+            .find(|e| e.installed.id == id)
+            .is_none_or(|e| lb_core::ext_guard::WebAccess::new(&e.manifest, &[]).web_accessible(&path))
+    }
+
+    /// A content script reads a file of its own extension (`fetch` in the isolated world goes
+    /// through here): the request itself would be the page's, and a page gets only
+    /// web-accessible resources. The file as `{ mime, body }` (base64).
+    fn ext_read_resource(&self, ext_id: &str, url: &str) -> Result<Value, String> {
+        let failed = || "Failed to fetch".to_string();
+        let (id, rel) = ext::resolve_file(&lb_core::ext_runtime::krunk_url(url)).ok_or_else(failed)?;
+        if id != ext_id {
+            return Err(failed());
+        }
+        let root =
+            self.ext.exts.borrow().iter().find(|e| e.installed.id == ext_id).map(|e| e.root.clone()).ok_or_else(failed)?;
+        let file = ext::file_path(&root, &rel);
+        let meta = std::fs::metadata(&file).map_err(|_| failed())?;
+        if !meta.is_file() || meta.len() > MAX_SCRIPT_READ_BYTES {
+            return Err(failed());
+        }
+        let body = std::fs::read(&file).map_err(|_| failed())?;
+        use base64ct::Encoding;
+        Ok(json!({ "mime": ext::mime_for(&rel), "body": base64ct::Base64::encode_string(&body) }))
     }
 
     // ------------------------------------------------------------ installation
