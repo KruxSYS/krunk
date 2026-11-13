@@ -739,7 +739,9 @@ mod tests {
         let s = p(json!({"op": "setGlobal", "inst": 1, "export": 4, "value": 42})).unwrap();
         assert_eq!(s.to_json(), json!({"op": "setGlobal", "inst": 1, "export": 4, "value": 42}));
         assert!(s.writes() && !s.is_scan());
-        for value in [json!(-1), json!(2.5), json!("42"), json!(" -9223372036854775808 "), json!("18446744073709551615")] {
+        for value in
+            [json!(-1), json!(2.5), json!("42"), json!(" -9223372036854775808 "), json!("18446744073709551615")]
+        {
             assert!(p(json!({"op": "setGlobal", "inst": 0, "export": 0, "value": value})).is_ok(), "{value}");
         }
         for value in [json!("0x10"), json!("0XFFFFFFFFFFFFFFFF"), json!("1e3"), json!("NaN"), json!("-Infinity")] {
@@ -785,7 +787,9 @@ mod tests {
         ] {
             assert!(probe.contains(&format!("{name}: {n},")), "{name} is {n} in wasm-probe.js");
         }
-        assert!(probe.contains("function call(found, req, more)") && CALL_FUNCTION.contains("this.call(found, req, more)"));
+        assert!(
+            probe.contains("function call(found, req, more)") && CALL_FUNCTION.contains("this.call(found, req, more)")
+        );
         assert_eq!(survey_request(), json!({"op": "survey"}));
         for op in ["survey", "instances", "globals", "setGlobal"] {
             assert!(probe.contains(&format!("case '{op}':")), "the probe knows {op}");
