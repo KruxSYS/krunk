@@ -90,7 +90,7 @@ case "${1:-}" in
     sed -i "s/'checkout_pgo_profiles': False/'checkout_pgo_profiles': True/" .gclient
     cat .gclient
     (cd src && git checkout -- build/vs_toolchain.py)
-    gclient sync --nohooks --with_branch_heads --revision src@refs/tags/$CHROMIUM_VERSION --jobs 8
+    gclient sync --nohooks --with_branch_heads --revision src@refs/tags/$CHROMIUM_VERSION --jobs ${GCLIENT_JOBS:-8}
     # No FUSE here: Chromium's vs_toolchain.py would mount the toolchain through ciopfs for a
     # case-insensitive view. Skip that (local, idempotent edit) and fix the case with casefix.py.
     python3 - <<'EOF'
