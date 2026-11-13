@@ -2,7 +2,7 @@
 """Krunk 0.18.0: a server whose responses hang on purpose, for the stuck-loads measurements
 (docs/NETWORK.md). Standard library only; one thread per connection; HTTP/1.1 with keep-alive.
 
-    python hangserve.py [--port 8120] [--bind 0.0.0.0] [--log hangserve.log]
+    python hangserve.py [--port 8120] [--bind 127.0.0.1] [--log hangserve.log]
 
 Paths (every one takes any extra query, so `&i=3` makes a distinct URL):
   /hang                 the request is read, nothing is ever answered (until the client closes)
@@ -185,7 +185,7 @@ def main():
     global LOGFILE
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--port", type=int, default=8120)
-    ap.add_argument("--bind", default="0.0.0.0")
+    ap.add_argument("--bind", default="127.0.0.1")
     ap.add_argument("--log", default="")
     a = ap.parse_args()
     if a.log:
