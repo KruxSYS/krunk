@@ -40,6 +40,13 @@
 .ext .more dd { margin: 0; display: flex; flex-wrap: wrap; gap: 4px; overflow-wrap: anywhere; }
 .ext .more dd.mono { font-family: ui-monospace, Consolas, monospace; font-size: 0.846rem; }
 .ext .more dd.unsupported ul { margin: 0; padding-left: 16px; }
+/* 0.17.0: errors of the extension's own contexts. */
+.ext .error-note { margin: 0; font-size: 0.923rem; color: var(--danger); }
+.ext .more dt.err { color: var(--danger); font-weight: 600; }
+.ext .more dd.errors ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; max-height: 260px; overflow: auto; width: 100%; }
+.ext .more dd.errors li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; }
+.ext .more dd.errors code { font-family: ui-monospace, Consolas, monospace; font-size: 0.846rem; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.ext .more dd.errors .where, .ext .more dd.errors .times { color: var(--fg-muted); font-size: 0.846rem; }
 .tag { font-size: 0.846rem; padding: 1px 8px; border-radius: 999px; background: var(--bg-hover); }
 .tag.off { opacity: 0.6; }
 .tag.warn { background: color-mix(in srgb, var(--danger) 16%, var(--bg-raised)); color: var(--fg); }

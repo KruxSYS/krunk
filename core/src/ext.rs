@@ -1000,33 +1000,31 @@ pub fn valid_locale(name: &str) -> bool {
 
 /// The `chrome.*` namespaces Krunk's shim provides (fully or in part).
 pub const SUPPORTED_APIS: &[&str] =
-    &["runtime", "storage", "tabs", "action", "i18n", "alarms", "extension", "windows", "scripting"];
+    &["runtime", "storage", "tabs", "action", "i18n", "alarms", "extension", "windows", "scripting", "offscreen", "permissions"];
 /// Namespaces Krunk never provides, with the reason the install summary shows.
 pub const REFUSED_APIS: &[(&str, &str)] = &[
-    ("webRequest", "blocking network interception (use declarativeNetRequest static rules)"),
+    ("webRequest", "network interception (listeners are accepted and never called; use declarativeNetRequest static rules)"),
     ("debugger", "the DevTools protocol of other tabs"),
     ("nativeMessaging", "native programs"),
     ("declarativeNetRequest.updateDynamicRules", "dynamic network rules"),
     ("declarativeNetRequest.updateSessionRules", "session network rules"),
     ("declarativeNetRequest.updateEnabledRulesets", "switching rulesets at runtime"),
-    ("management", "other extensions"),
+    ("management", "other extensions (only getSelf is provided)"),
     ("proxy", "the proxy settings"),
     ("privacy", "the privacy settings"),
     ("contentSettings", "site settings"),
-    ("cookies", "cookies of other sites"),
+    ("cookies", "cookies of other sites (nothing is found, nothing is set)"),
     ("history", "the browsing history"),
     ("bookmarks", "the bookmarks"),
     ("downloads", "downloads"),
     ("identity", "Google accounts"),
     ("webNavigation", "navigation events"),
     ("sidePanel", "a side panel"),
-    ("offscreen", "offscreen documents"),
     ("tabCapture", "tab capture"),
     ("desktopCapture", "screen capture"),
-    ("notifications", "system notifications"),
+    ("notifications", "system notifications (accepted, nothing is shown)"),
     ("contextMenus", "context-menu items"),
     ("commands", "keyboard commands"),
-    ("permissions", "runtime permission changes"),
     ("tts", "speech"),
     ("gcm", "push messages"),
 ];
