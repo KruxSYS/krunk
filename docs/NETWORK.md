@@ -177,9 +177,9 @@ Raw output: `.pipeline/evidence-0.18.0/before/` (Krunk 0.17.0) and `after/` (0.1
 | Scenario | Krunk 0.17.0 | 0.18.0 |
 |---|---|---|
 | Same address, never answers; B in a background tab, 1 s later | B at **21.0** | B at **1.0** |
-| The same with B in a second window, both in front | B not at the server after 1 s either (DevTools: request sent at 1.0, no response) | as above (same code path) |
 | Same address, never answers; B 3 s later | (as the first row) | B at **3.0** |
 | Same address, answer after 8 s, `no-store`; B 1 s later | A done 8.1, B at 8.1, done **16.1** | unchanged at a gap of exactly 1 s (the bypass starts after 1 s of waiting) |
+| The same with B in a **second window**, both windows in front | B at 8.0, done **16.2** (as in a background tab) | not measured again (same code path) |
 | The same, B 3 s later | B waits for A (as above) | B at **3.0**, done 11.0 |
 | Same address, answer after 8 s, cacheable; B 1 s later | one request, both done 8.1 | unchanged (shared on purpose) |
 | Same address, headers at once, body after 8 s, `no-store` | B at 1.0, done 9.0 | unchanged (never held up) |
@@ -191,7 +191,9 @@ What this says about the cause: DevTools shows tab B's request as sent the momen
 (`requestWillBeSent` at the gap) in every row, so nothing in Krunk holds it back before the
 network stack; another address on the same host is not delayed, so it is per address (the
 cache's one-writer rule, 20 s) in the first group and per host (six connections) in the
-second; a foreground window behaves like a background tab, so tab throttling is not involved;
+second; a second foreground window behaves like a background tab (measured for the slow `no-store`
+answer; the never-answering case was not measured cleanly with two windows), so tab
+throttling is not involved;
 the blocker and the VPN were not on the path (plain loopback HTTP, VPN off).
 
 New in 0.18.0 for the last row: before Krunk itself navigates or reloads a tab (address bar,
