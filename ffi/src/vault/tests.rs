@@ -673,6 +673,64 @@ fn destroy_removes_the_vault_and_its_side_file() {
     assert_eq!(v.summaries(), Err(VaultFfiError::NoVault));
 }
 
+/// A wrapper that presses "Lock now" while an unlock is at work (the wrapper is called in the
+/// middle of it, outside the object's lock).
+struct LocksMeanwhile(Mutex<Option<Arc<KrunkVault>>>);
+
+impl KeyWrapper for LocksMeanwhile {
+    fn name(&self) -> &'static str {
+        "none"
+    }
+    fn protect(&self, data: &[u8]) -> Result<Vec<u8>, String> {
+        Ok(data.to_vec())
+    }
+    fn unprotect(&self, data: &[u8]) -> Result<Zeroizing<Vec<u8>>, String> {
+        if let Some(v) = self.0.lock().unwrap().as_ref() {
+            assert_eq!(v.state(), VaultState::Locked, "state() answers during an unlock");
+            v.lock();
+        }
+        Ok(Zeroizing::new(data.to_vec()))
+    }
+}
+
+#[test]
+fn a_lock_during_an_unlock_wins() {
+    let dir = TestDir::new("lock-race");
+    let first = dir.open();
+    first.create(s(PW), T0).unwrap();
+    let key = first.unlock_key().unwrap();
+    drop(first);
+
+    let wrapper = Arc::new(LocksMeanwhile(Mutex::new(None)));
+    struct Shared(Arc<LocksMeanwhile>);
+    impl KeyWrapper for Shared {
+        fn name(&self) -> &'static str {
+            self.0.name()
+        }
+        fn protect(&self, data: &[u8]) -> Result<Vec<u8>, String> {
+            self.0.protect(data)
+        }
+        fn unprotect(&self, data: &[u8]) -> Result<Zeroizing<Vec<u8>>, String> {
+            self.0.unprotect(data)
+        }
+    }
+    let v = dir.open_with(Box::new(Shared(wrapper.clone())));
+    v.unlock(s(PW), T0).unwrap();
+    assert_eq!(v.state(), VaultState::Unlocked);
+    v.lock();
+
+    *wrapper.0.lock().unwrap() = Some(v.clone());
+    assert_eq!(v.unlock(s(PW), T0), Err(VaultFfiError::Locked));
+    assert_eq!(v.state(), VaultState::Locked);
+    assert_eq!(v.unlock_with_key(key), Err(VaultFfiError::Locked));
+    assert_eq!(v.state(), VaultState::Locked);
+    assert_eq!(v.retry_wait_ms(T0), 0, "the password was right");
+    // (The wrapper and the vault hold each other: undone so both are freed.)
+    *wrapper.0.lock().unwrap() = None;
+    v.unlock(s(PW), T0).unwrap();
+    assert_eq!(v.state(), VaultState::Unlocked);
+}
+
 // ------------------------------------------------------------------------------ the exported path
 
 /// What Kotlin's Keystore wrapper is to the library: an implementation of the exported trait.

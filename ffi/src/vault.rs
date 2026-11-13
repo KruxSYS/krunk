@@ -286,6 +286,8 @@ struct Inner {
     last_used: i64,
     /// Used since `last_used` by a call that carries no time.
     used_since: bool,
+    /// How often `lock` was called (see `opened`).
+    locks: u64,
 }
 
 /// The password vault. One per app; methods take `&self`, the lock is internal.
@@ -327,6 +329,7 @@ impl KrunkVault {
                 hints_tried: false,
                 last_used: 0,
                 used_since: false,
+                locks: 0,
             }),
             turn: Mutex::new(()),
         })
@@ -408,8 +411,9 @@ impl KrunkVault {
         }
     }
 
-    /// Takes over a freshly opened vault.
-    fn opened(&self, inner: &mut Inner, vault: Vault, now: Option<i64>) {
+    /// Takes over a freshly opened vault, unless `lock` was called since the caller read `locks`
+    /// (a "Lock now" during the slow key derivation wins: the vault is dropped again).
+    fn opened(&self, inner: &mut Inner, vault: Vault, now: Option<i64>, locks: u64) -> VaultResult<()> {
         inner.vault = Some(vault);
         match now {
             Some(now) => {
@@ -422,6 +426,12 @@ impl KrunkVault {
         self.refresh_hints(inner);
         // Best effort: the vault is open either way, and the limiter is right in memory.
         let _ = self.persist(inner);
+        if inner.locks != locks {
+            inner.vault = None;
+            inner.used_since = false;
+            return Err(VaultFfiError::Locked);
+        }
+        Ok(())
     }
 
     fn missing(&self) -> VaultFfiError {
@@ -521,6 +531,7 @@ impl KrunkVault {
             return Err(VaultFfiError::AlreadyExists);
         }
         std::fs::create_dir_all(&self.dir).map_err(|e| VaultFfiError::Io { detail: e.to_string() })?;
+        let locks = self.inner().locks;
         // The key derivation runs without `inner`, so `state()` answers meanwhile.
         let vault = Vault::create(&path, &password, self.params, self.wrapper())?;
         let mut inner = self.inner();
@@ -528,7 +539,8 @@ impl KrunkVault {
         inner.state = StateFile::default();
         inner.hints = None;
         inner.hints_tried = false;
-        self.opened(&mut inner, vault, Some(now));
+        // Locked meanwhile: the vault was made all the same.
+        let _ = self.opened(&mut inner, vault, Some(now), locks);
         Ok(())
     }
 
@@ -538,7 +550,7 @@ impl KrunkVault {
         let password = Zeroizing::new(password);
         let _turn = self.turn();
         let path = self.vault_path();
-        {
+        let locks = {
             let inner = self.inner();
             if !core_vault::exists(&path) {
                 return Err(VaultFfiError::NoVault);
@@ -547,15 +559,15 @@ impl KrunkVault {
             if wait_ms > 0 {
                 return Err(VaultFfiError::RateLimited { wait_ms });
             }
-        }
+            inner.locks
+        };
         // The key derivation (about a second) runs without `inner`.
         let opened = Vault::open(&path, &password, self.wrapper());
         let mut inner = self.inner();
         match opened {
             Ok(vault) => {
                 inner.state.rate.record_success();
-                self.opened(&mut inner, vault, Some(now));
-                Ok(())
+                self.opened(&mut inner, vault, Some(now), locks)
             }
             Err(VaultError::WrongPassword) => {
                 inner.state.rate.record_failure(now);
@@ -587,10 +599,10 @@ impl KrunkVault {
             return Err(VaultFfiError::WrongPassword);
         }
         fixed.copy_from_slice(&key);
+        let locks = self.inner().locks;
         let vault = Vault::open_with_key(&path, &fixed, self.wrapper())?;
         let mut inner = self.inner();
-        self.opened(&mut inner, vault, None);
-        Ok(())
+        self.opened(&mut inner, vault, None, locks)
     }
 
     /// The key that unlocks this vault without the password, until the password changes. For
@@ -600,9 +612,11 @@ impl KrunkVault {
         self.read(|v| Ok(v.unlock_key().to_vec()))
     }
 
-    /// Locks: drops the open vault, which wipes its keys and entries.
+    /// Locks: drops the open vault, which wipes its keys and entries. An unlock that is still
+    /// deriving its key ends locked too (it reports `Locked`).
     pub fn lock(&self) {
         let mut inner = self.inner();
+        inner.locks = inner.locks.wrapping_add(1);
         inner.vault = None;
         inner.used_since = false;
     }
