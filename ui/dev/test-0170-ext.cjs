@@ -331,6 +331,8 @@ module.exports = function ({ openPage, check }) {
     check(s.unsupported, 'the "Not in Krunk" list is still there');
     // Open details stay open when the list is drawn again with one more error.
     await page.click('.ext[data-id="' + ID + '"] details.more summary');
+    await page.waitForFunction((id) => document.querySelector('.ext[data-id="' + id + '"] details.more').open, ID);
+    await page.waitForTimeout(50);
     exts[0].errors = errs.concat([{ message: 'Uncaught (in promise) Error: third', source: 'popup.js:9', context: 'popup', count: 1 }]);
     await page.evaluate((l) => window.__host.emit({ event: 'extChanged', extensions: l }), exts);
     s = await st();

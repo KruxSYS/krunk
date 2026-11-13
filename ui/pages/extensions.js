@@ -15,6 +15,9 @@
   let target = null;
   let reveal = false;
   let loaded = false;
+  // Details that are open stay open when the list is drawn again (0.17.0: it is, whenever an
+  // extension reports an error). Asking for another extension by the address starts afresh.
+  const opened = new Set();
 
   function showError(text) { $('error').textContent = text || ''; $('error').hidden = !text; }
   function showStatus(text) { $('status').textContent = text || ''; $('status').hidden = !text; }
@@ -31,9 +34,6 @@
   // actions below.
   function render() {
     const box = $('list');
-    // Details the user opened stay open when the list is drawn again (0.17.0: it is, whenever
-    // an extension reports an error).
-    const open = Array.prototype.map.call(box.querySelectorAll('.ext details.more[open]'), (d) => d.closest('.ext').getAttribute('data-id'));
     box.textContent = '';
     $('empty').hidden = list.length > 0;
     list.forEach(function (x) {
@@ -58,7 +58,9 @@
         } }),
         'Allow in private tabs',
       ]);
-      const details = el('details', { class: 'more', open: (x.id === target || open.indexOf(x.id) >= 0) ? true : null }, [
+      const details = el('details', { class: 'more', open: (x.id === target || opened.has(x.id)) ? true : null, ontoggle: (e) => {
+        if (e.target.open) opened.add(x.id); else opened.delete(x.id);
+      } }, [
         el('summary', { text: 'Details' }),
         el('dl', {}, [
           el('dt', { text: 'Reaches' }), el('dd', {}, x.scope.length ? x.scope.map((s) => el('span', { class: 'tag' + (s.allSites ? ' warn' : ''), text: s.text, title: s.pattern })) : ['No web pages']),
@@ -121,6 +123,7 @@
     if (!/^[a-p]{32}$/.test(id)) return;
     target = id;
     reveal = true;
+    opened.clear();
     // (Before the list has arrived there is nothing to draw: not the "no extensions" card.)
     if (loaded) render();
   }
