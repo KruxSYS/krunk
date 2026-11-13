@@ -27,6 +27,7 @@ pub mod history;
 pub mod http_auth;
 pub mod image_menu;
 pub mod import;
+pub mod inflight;
 pub mod integrity;
 pub mod js_dialog;
 pub mod keys;

@@ -32,6 +32,10 @@ async function scenario(name, fn) {
   const ctx = await chromium.launchPersistentContext(dir, { headless: true });
   const rows = [];
   try {
+    // A first load, so the browser's start-up is not in the numbers.
+    const warm = await ctx.newPage();
+    await warm.goto(H + '/nocache?warm=' + name);
+    await warm.close();
     let zero = 0, t0 = Date.now(), starts = 0;
     const api = {
       // Time zero: call it once the tabs exist, right before tab A starts.
@@ -74,6 +78,32 @@ const SCENARIOS = {
     await s.until(WATCH);
     const at = await s.arrivals('/hang?m=' + s.m);
     s.row('tab B, same URL, started at 1.0: its request at the server', nth(at, 1), at.length + ' request(s) arrived in ' + WATCH + ' s');
+  },
+  // Krunk's way round it (0.18.0): tab B's request says `Cache-Control: no-cache`, as a hard
+  // reload does; the cache then starts a new entry instead of waiting for tab A's.
+  'nav-same-url-hang-no-cache-header': async (s) => {
+    const u = H + '/hang?m=' + s.m;
+    const a = await s.ctx.newPage(), b = await s.ctx.newPage();
+    await b.setExtraHTTPHeaders({ 'Cache-Control': 'no-cache', Pragma: 'no-cache' });
+    await s.start();
+    s.go(a, u, 14);
+    await s.until(1);
+    s.go(b, u, 12);
+    await s.until(12);
+    const at = await s.arrivals('/hang?m=' + s.m);
+    s.row('tab B, same URL with `Cache-Control: no-cache`, started at 1.0: its request at the server', nth(at, 1), 'watched until 12.0');
+  },
+  'nav-same-url-slow-headers-no-cache-header': async (s) => {
+    const u = H + '/slow-headers?s=8&nostore=1&m=' + s.m;
+    const a = await s.ctx.newPage(), b = await s.ctx.newPage();
+    await b.setExtraHTTPHeaders({ 'Cache-Control': 'no-cache', Pragma: 'no-cache' });
+    await s.start();
+    const pa = s.go(a, u);
+    await s.until(1);
+    const tb = await s.go(b, u);
+    s.row('tab A (answer after 8 s, no-store)', await pa, 'done');
+    const at = await s.arrivals('m=' + s.m);
+    s.row('tab B, same URL with `Cache-Control: no-cache`, started at 1.0', tb, at.length + ' requests at the server (second at ' + r1(nth(at, 1)) + ')');
   },
   // The same, with an answer after 8 s that may be cached.
   'nav-same-url-slow-headers': async (s) => {
@@ -179,7 +209,12 @@ const SCENARIOS = {
     const b = await chromium.launch({ headless: true });
     const version = b.version();
     await b.close();
-    const all = await Promise.all(Object.entries(SCENARIOS).map(([name, fn]) => scenario(name, fn)));
+    // Three browsers at a time: more of them delay each other's first requests.
+    const todo = Object.entries(SCENARIOS), all = new Array(todo.length);
+    let next = 0;
+    await Promise.all([0, 1, 2].map(async () => {
+      while (next < todo.length) { const i = next++; all[i] = await scenario(todo[i][0], todo[i][1]); }
+    }));
     console.log('Chromium ' + version + ' (Playwright), ' + os.platform() + ', ' + new Date().toISOString().slice(0, 10) + '\n');
     console.log('| Scenario | What | Seconds | Notes |\n|---|---|---|---|');
     if (process.env.HANG_LOG) fs.writeFileSync(process.env.HANG_LOG, (await events()).map((e) => e.t.toFixed(3) + ' ' + e.ev + ' conn ' + e.conn + ' ' + e.path + ' ' + e.note).join('\n') + '\n');
