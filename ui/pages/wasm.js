@@ -415,6 +415,20 @@
       if (state.scan !== sc) return;
       card.hidden = false;
       const body = $('results');
+      $('results-more').hidden = !(r.count > r.rows.length && state.shown < MAX_SHOWN);
+      // The same addresses as shown (the usual case, once a second): only the values change.
+      // Rows that are replaced under the pointer would swallow a click on Watch or Hex.
+      const shown = body.querySelectorAll('tr[data-addr]');
+      if (body._scan === sc.id && r.rows.length && shown.length === r.rows.length && r.rows.every(function (row, i) { return shown[i].getAttribute('data-addr') === String(row.addr); })) {
+        r.rows.forEach(function (row, i) {
+          const cells = shown[i].children;
+          cells[1].textContent = show(row.value);
+          cells[1].className = 'mono value' + (String(row.value) !== String(row.previous) ? ' changed' : '');
+          cells[2].textContent = show(row.previous);
+        });
+        return;
+      }
+      body._scan = sc.id;
       body.textContent = '';
       if (!r.rows.length) body.appendChild(el('tr', {}, [el('td', { colspan: '4', class: 'none', text: 'No address left. Start a new scan.' })]));
       r.rows.forEach(function (row) {

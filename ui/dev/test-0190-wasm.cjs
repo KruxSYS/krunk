@@ -79,6 +79,13 @@ module.exports = function ({ openPage, check, lastSent, emit, shot, UI }) {
     check((await page.textContent('#scan-status')).startsWith('1 address found'), 'next scan narrows to 1 address');
     check((await page.textContent('#results tr .value')) === '90' && (await page.locator('#results td.changed').count()) === 0, 'the row shows the value now and before');
 
+    // The list refreshes once a second: the row stays the same element (a click on it is not lost).
+    await page.evaluate(() => { window.__row = document.querySelector('#results tr[data-addr]'); window.__dv().setInt32(0x400, 91, true); });
+    await page.waitForFunction(() => document.querySelector('#results tr .value').textContent === '91');
+    check(await page.evaluate(() => window.__row === document.querySelector('#results tr[data-addr]')) && (await page.locator('#results td.changed').count()) === 1, 'a refresh changes the values in place (the row is not rebuilt), a changed value is marked');
+    await page.evaluate(() => window.__dv().setInt32(0x400, 90, true));
+    await page.waitForFunction(() => document.querySelector('#results tr .value').textContent === '90');
+
     // Watch it, write 999, freeze it.
     await page.click('#results .to-watch');
     await page.waitForFunction(() => { const i = document.querySelector('#watch input.value'); return i && i.value === '90'; });
