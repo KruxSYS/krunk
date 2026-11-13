@@ -80,6 +80,24 @@ function (extId, manifest, messages, logAll) {
   }
   function shown(args) { return Array.prototype.map.call(args, show).join(' ').slice(0, 2000); }
   function report(e) { send('log', { level: 'error', text: show(e).slice(0, 2000) }); }
+  // fetch() of the extension's own files: the request would be the page's, and a page gets
+  // only web-accessible resources (0.17.0); the host reads the file for this world instead.
+  var ownFiles = ['https://' + extId + '.ext.krunk.invalid/', 'chrome-extension://' + extId + '/'], pageFetch = window.fetch;
+  if (typeof pageFetch === 'function') window.fetch = function (input, init) {
+    var url = '', method = 'GET';
+    try {
+      url = new URL(typeof input === 'string' ? input : (input && input.url) || String(input), location.href).href;
+      method = String((init && init.method) || (input && typeof input === 'object' && input.method) || 'GET').toUpperCase();
+    } catch (e) { url = ''; }
+    if (method !== 'GET' || !ownFiles.some(function (p) { return url.indexOf(p) === 0; })) return pageFetch.apply(window, arguments);
+    return call('resource.read', { url: url.split('#')[0] }).then(function (r) {
+      var bin = atob(r.body), bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      var response = new Response(bytes, { status: 200, headers: { 'Content-Type': r.mime } });
+      try { Object.defineProperty(response, 'url', { value: url }); } catch (e) { /* the address stays empty */ }
+      return response;
+    }, function () { throw new TypeError('Failed to fetch'); });
+  };
   function cb(promise, callback) {
     if (typeof callback === 'function') { promise.then(function (v) { callback(v); }, function (e) { runtime.lastError = { message: String(e && e.message || e) }; try { callback(); } finally { runtime.lastError = undefined; } }); }
     return promise;

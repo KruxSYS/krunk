@@ -199,7 +199,6 @@ impl Browser {
         match caller {
             Caller::Content { tab, context, .. } => {
                 let t = self.ext_tab_json(ext_id, *tab);
-                let top_url = self.views.borrow().get(tab).map(|v| v.net.top_url()).unwrap_or_default();
                 let (known_main, origin) = self
                     .ext
                     .contexts
@@ -208,26 +207,17 @@ impl Browser {
                     .and_then(|l| l.iter().find(|c| c.id == *context).map(|c| (c.main, c.origin.clone())))
                     .unwrap_or((false, String::new()));
                 // The frame says whether it is the top one and what its address is (it is the
-                // extension's own world: it can only mislead itself); a sub-frame's address
-                // must be on the origin the engine reported for that world.
+                // extension's own world: it can only mislead itself); the address, the top
+                // frame's too, must be on the origin the engine reported for that world. The
+                // tab's address is not used: it is the pending navigation's as soon as one
+                // starts, while the old document's script still runs.
                 let says_top = data.pointer("/src/top").and_then(|t| t.as_bool());
                 let says_url = data.pointer("/src/url").and_then(|u| u.as_str()).unwrap_or("");
                 let main = known_main || says_top == Some(true);
-                let url = if main {
-                    top_url
-                } else if !says_url.is_empty()
-                    && lb_core::urlclean::origin_of(says_url).is_some_and(|o| o == origin)
-                    && says_url.len() <= 4096
-                {
-                    says_url.to_string()
-                } else if origin.contains("://") {
-                    format!("{origin}/")
-                } else {
-                    String::new()
-                };
+                let (url, origin) = lb_core::ext_guard::content_sender(&origin, says_url);
                 json!({
                     "id": ext_id, "tab": t, "url": url, "frameId": if main { 0 } else { *context },
-                    "origin": lb_core::urlclean::origin_of(&url), "documentLifecycle": "active",
+                    "origin": origin, "documentLifecycle": "active",
                 })
             }
             Caller::Page { end, .. } => {
@@ -526,11 +516,13 @@ impl Browser {
             Some(Value::Array(a)) => a.first().and_then(|s| s.as_str()).unwrap_or("").to_string(),
             _ => String::new(),
         };
+        let given = !url.is_empty();
         let url = if url.is_empty() { Page::NewTab.url() } else { self.ext_resolve_url(ext_id, &url) };
         let own = url.starts_with(&format!("{}/", ext::origin(ext_id)));
         let small = matches!(data.get("type").and_then(|t| t.as_str()), Some("popup" | "panel"));
         if !(small && own) {
-            if !assets::allow_navigation(Channel::Tab, "", &url, true, false) {
+            // An address the extension gives is not the host's: its own pages and the web.
+            if given && !lb_core::ext_guard::may_open(ext_id, &url) {
                 return Err("That address cannot be opened.".into());
             }
             self.open_url(&url, true, false);
@@ -672,6 +664,8 @@ impl Browser {
         }
         self.ext.ports.borrow_mut().drop_ext(ext_id);
         self.ext.pending.borrow_mut().retain(|_, (owner, _, _)| owner != ext_id);
+        // The code that starts next chooses its storage access levels itself.
+        self.ext.storage_access.borrow_mut().retain(|key, _| !key.starts_with(&format!("{ext_id}/")));
     }
 
     /// Krunk is closing: the extensions' windows and offscreen documents go with it.
@@ -770,7 +764,8 @@ impl Browser {
     /// Runs files or code in a tab and answers with the result (by value; a promise is
     /// awaited). `world: "MAIN"` runs in the page's own world, else in the extension's world.
     /// Either way the tab must have the extension's world: that is where Krunk decided the
-    /// extension may run (not on Krunk's own pages, private tabs only when allowed).
+    /// extension may run (not on Krunk's own pages or local files, private tabs only when
+    /// allowed), and the extension needs host access to the document (`ext_script_target`).
     pub(super) fn ext_execute_script(
         &self,
         caller: &Caller,
@@ -779,8 +774,10 @@ impl Browser {
     ) -> Option<Result<Value, String>> {
         let tab = data.get("tabId").and_then(|t| t.as_u64()).map(|t| t as TabId).or_else(|| self.active_id());
         let Some(tab) = tab else { return Some(Err("no tab".into())) };
-        let Some(context) = self.ext_context(tab, ext_id) else {
-            return Some(Err("The tab has no extension world (not a web page, or not allowed there).".into()));
+        let main = data.get("world").and_then(|w| w.as_str()) == Some("MAIN");
+        let context = match self.ext_script_target(tab, ext_id, main) {
+            Ok(context) => context,
+            Err(e) => return Some(Err(e)),
         };
         let found = self
             .ext
@@ -814,7 +811,6 @@ impl Browser {
         if code.is_empty() {
             return Some(Err("nothing to run".into()));
         }
-        let main = data.get("world").and_then(|w| w.as_str()) == Some("MAIN");
         let mut params =
             json!({ "expression": code, "returnByValue": true, "awaitPromise": true, "userGesture": true });
         if !main {
@@ -852,7 +848,8 @@ impl Browser {
     /// on krunk://extensions (in memory, capped; open pages are told at most once a second).
     pub(super) fn ext_error(&self, ext_id: &str, message: &str, file: &str, line: u64, context: &str) {
         let name = self.ext_name(ext_id);
-        let short: String = message.chars().take(500).collect();
+        // In the log: capped, on one line, and not more than so many lines a minute.
+        let short = lb_core::ext_guard::log_text(message, 500);
         let changed = {
             let mut errors = self.ext.errors.borrow_mut();
             rt::push_error(errors.entry(ext_id.to_string()).or_default(), ext_id, message, file, line, context)
@@ -860,9 +857,12 @@ impl Browser {
         if !changed {
             return;
         }
-        if file.is_empty() {
+        // Over the limit it is not in the log; the list on krunk://extensions has it.
+        let logged = self.ext_may_log(ext_id, "error");
+        if logged && file.is_empty() {
             warning!("extension {name}: {short} [{context}]");
-        } else {
+        } else if logged {
+            let file = lb_core::ext_guard::log_text(file, 200);
             warning!("extension {name}: {short} [{context}, {file}:{line}]");
         }
         if !self.ext.errors_dirty.replace(true) {
@@ -874,6 +874,25 @@ impl Browser {
                 }
             });
         }
+    }
+
+    /// May another line of this kind about the extension go to krunk.log now? A limit per
+    /// extension, kind and minute (`ext_guard::LogBudget`): an extension (or a page that makes
+    /// its content script talk) cannot fill the log. With `KRUNK_EXT_LOG=1` nothing is dropped.
+    pub(super) fn ext_may_log(&self, ext_id: &str, kind: &'static str) -> bool {
+        use lb_core::ext_guard::LogVerdict;
+        if log_all() {
+            return true;
+        }
+        let verdict = self.ext.log_budget.borrow_mut().entry((ext_id.to_string(), kind)).or_default().take(now_ms());
+        if verdict == LogVerdict::Last {
+            warning!(
+                "extension {}: {} \"{kind}\" lines in a minute: the rest of this minute is not logged",
+                self.ext_name(ext_id),
+                lb_core::ext_guard::LOG_LINES_PER_MINUTE
+            );
+        }
+        verdict != LogVerdict::Drop
     }
 
     /// An uncaught error in a content-script world (`Runtime.exceptionThrown`): only the

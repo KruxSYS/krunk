@@ -302,6 +302,23 @@ module.exports = function ({ openPage, check }) {
     check(r.answered && r.answered.data.data === 'two' && r.empty && r.empty.data.empty === true, 'sendResponse answers; listeners that do not answer say so');
     check(r.message && r.message.data.src && r.message.data.src.top === true, 'sendMessage says which frame it is from');
     check(!!r.logged, 'console.error of the world is reported');
+    // fetch() of the extension's own file goes to the host (the page's request would need a
+    // web-accessible resource); any other fetch is the page's as before.
+    const f = await page.evaluate(async ({ id }) => {
+      const reads = [];
+      window['__krunkExt_' + id] = (json) => {
+        const m = JSON.parse(json);
+        if (m.cmd !== 'resource.read') return;
+        reads.push(m.data.url);
+        window.__krunkExtDeliver(JSON.stringify({ ext: id, reply: m.id, data: { mime: 'application/json', body: btoa('{"ok":1}') } }));
+      };
+      const own = await fetch(chrome.runtime.getURL('data/x.json'));
+      const other = await (await fetch('/other')).text();
+      const posted = await (await fetch(chrome.runtime.getURL('data/x.json'), { method: 'POST' })).text();
+      return { reads: reads, json: await own.json(), type: own.headers.get('content-type'), url: own.url, other: other, posted: posted };
+    }, { id: ID });
+    check(f.reads.length === 1 && f.reads[0] === ORIGIN + '/data/x.json' && f.json.ok === 1 && f.type === 'application/json' && f.url === f.reads[0], 'fetch of the extension\'s own file is read by the host (' + JSON.stringify(f) + ')');
+    check(/web page/.test(f.other) && /web page/.test(f.posted), 'another fetch (and a POST) is the page\'s own request');
     check(errors.length === 0, 'no errors (' + errors.join('; ') + ')');
     await context.close();
   }

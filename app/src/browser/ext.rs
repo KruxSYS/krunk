@@ -36,6 +36,8 @@ use runtime::{End, ExtWindow, HiddenPage};
 
 /// Largest file served from a package.
 const MAX_FILE_BYTES: u64 = 32 * 1024 * 1024;
+/// Largest file of its extension a content script reads with `fetch` (it travels as text).
+const MAX_SCRIPT_READ_BYTES: u64 = 8 * 1024 * 1024;
 /// The Web Store download limit and timeout.
 const MAX_CRX_BYTES: usize = ext::MAX_PACKAGE_BYTES;
 const CRX_TIMEOUT_MS: i32 = 60_000;
@@ -167,6 +169,9 @@ pub(super) struct ExtHost {
     /// install). Each goes into the extension's own world (0.11.7, audit C4).
     bundles: RefCell<(Bundles, Bundles)>,
     storage: RefCell<HashMap<String, serde_json::Map<String, Value>>>,
+    /// `storage.<area>.setAccessLevel`, by "<id>/<area>": may content scripts use the area?
+    /// In memory; the extension sets it again when it starts.
+    storage_access: RefCell<HashMap<String, bool>>,
     backgrounds: RefCell<HashMap<String, Background>>,
     popup: RefCell<Option<ExtPopup>>,
     /// Messages waiting for `respond`, with the extension that may answer them and how many
@@ -192,11 +197,16 @@ pub(super) struct ExtHost {
     /// Errors of the extensions' contexts, by extension (in memory).
     errors: RefCell<HashMap<String, Vec<lb_core::ext_runtime::ExtError>>>,
     errors_dirty: Cell<bool>,
+    /// Log lines the extensions caused in this minute, by extension and kind of line.
+    log_budget: RefCell<HashMap<(String, &'static str), lb_core::ext_guard::LogBudget>>,
     /// Per tab: the identifiers of the installed bundle scripts, and the extensions whose
     /// bindings are added.
     scripts: RefCell<HashMap<TabId, Vec<String>>>,
     bindings: RefCell<HashMap<TabId, std::collections::HashSet<String>>>,
     contexts: RefCell<HashMap<TabId, Vec<ExtContext>>>,
+    /// `activeTab`: the tab and the origin of its page when the user last clicked the
+    /// extension's button. The grant ends when the tab shows another origin.
+    active_tab: RefCell<HashMap<String, (TabId, String)>>,
     /// A package waiting for the install confirmation (0.7.0, R20).
     pending_install: RefCell<Option<PendingInstall>>,
     /// The extension whose popup closed last, and when (ms): the toolbar click that closed it
@@ -233,6 +243,7 @@ impl ExtHost {
             exts: RefCell::new(Vec::new()),
             bundles: RefCell::new((Vec::new(), Vec::new())),
             storage: RefCell::new(HashMap::new()),
+            storage_access: RefCell::new(HashMap::new()),
             backgrounds: RefCell::new(HashMap::new()),
             popup: RefCell::new(None),
             pending: RefCell::new(HashMap::new()),
@@ -248,11 +259,13 @@ impl ExtHost {
             registered: RefCell::new(HashMap::new()),
             errors: RefCell::new(HashMap::new()),
             errors_dirty: Cell::new(false),
+            log_budget: RefCell::new(HashMap::new()),
             pending_install: RefCell::new(None),
             popup_closed: RefCell::new((String::new(), 0)),
             scripts: RefCell::new(HashMap::new()),
             bindings: RefCell::new(HashMap::new()),
             contexts: RefCell::new(HashMap::new()),
+            active_tab: RefCell::new(HashMap::new()),
         }
     }
 }
@@ -331,6 +344,26 @@ fn normalize_entries(mut files: Vec<(String, Vec<u8>)>) -> Vec<(String, Vec<u8>)
         }
     }
     files
+}
+
+/// A request's path as the file system names the file it opens, relative to the package: what
+/// is compared with the manifest's lists (`sandbox.pages`, `web_accessible_resources`).
+/// Decoded and in lower case (`ext_guard::package_path`); for a file that exists the name comes
+/// from the file system, which also opens a file by its short name (`SANDBO~1.HTM`) or with
+/// trailing spaces.
+fn listed_path(root: &Path, url_path: &str) -> String {
+    let rel = lb_core::ext_guard::package_path(url_path);
+    let real = || {
+        if !ext::safe_relative_path(&rel) {
+            return None;
+        }
+        let root = std::fs::canonicalize(root).ok()?;
+        let file = std::fs::canonicalize(ext::file_path(&root, &rel)).ok()?;
+        let inside = file.strip_prefix(&root).ok()?;
+        let names: Vec<String> = inside.components().map(|c| c.as_os_str().to_string_lossy().to_lowercase()).collect();
+        Some(names.join("/"))
+    };
+    real().unwrap_or(rel)
 }
 
 /// The DevTools events `ext_devtools_event` handles.
@@ -496,6 +529,18 @@ impl Browser {
 
     pub(super) fn ext_rebuild_bundles(&self) {
         let shim = assets::inject_script("ext-content.js");
+        // Who may load each extension's files from a tab: the tabs' network policy reads it.
+        self.net.set_ext_access(
+            self.ext
+                .exts
+                .borrow()
+                .iter()
+                .map(|e| {
+                    let access = lb_core::ext_guard::WebAccess::new(&e.manifest, &self.ext_content_scripts(e));
+                    (e.installed.id.clone(), access)
+                })
+                .collect(),
+        );
         // One bundle per extension, for its own world (0.11.7, audit C4). An extension with
         // the `scripting` permission gets a world even without content scripts, for
         // `scripting.executeScript` (it used to borrow the shared world). 0.17.0: scripts
@@ -748,7 +793,10 @@ impl Browser {
                 let payload = params.get("payload").and_then(|p| p.as_str()).unwrap_or("");
                 let Ok(msg) = serde_json::from_str::<Value>(payload) else { return };
                 let cmd = msg.get("cmd").and_then(|c| c.as_str()).unwrap_or("").to_string();
-                info!("tab {tab}: extension {} call {cmd}", self.ext_name(&ext_id));
+                if self.ext_may_log(&ext_id, "call") {
+                    let shown = lb_core::ext_guard::log_text(&cmd, 60);
+                    info!("tab {tab}: extension {} call {shown}", self.ext_name(&ext_id));
+                }
                 let data = msg.get("data").cloned().unwrap_or(Value::Null);
                 let req = msg.get("id").and_then(|i| i.as_u64());
                 let enabled = self.ext.exts.borrow().iter().any(|e| e.installed.id == ext_id && e.installed.enabled);
@@ -770,6 +818,60 @@ impl Browser {
         let contexts = self.ext.contexts.borrow();
         let mine: Vec<&ExtContext> = contexts.get(&tab)?.iter().filter(|c| c.ext == ext_id).collect();
         mine.iter().find(|c| c.main).or(mine.first()).map(|c| c.id)
+    }
+
+    /// Where `scripting.executeScript` / `insertCSS` of `ext_id` run in a tab: the extension's
+    /// world there, when the extension may touch the document. As for content scripts the
+    /// document must be one the manifest's host patterns cover (the origin the engine reported
+    /// for that world), or the user's click on the extension's button granted `activeTab` for
+    /// it. `main_world`: the script goes to the top frame's own world, so that frame's world
+    /// must be the one checked.
+    fn ext_script_target(&self, tab: TabId, ext_id: &str, main_world: bool) -> Result<i64, String> {
+        let found = {
+            let contexts = self.ext.contexts.borrow();
+            let mine: Vec<&ExtContext> =
+                contexts.get(&tab).map(|l| l.iter().filter(|c| c.ext == ext_id).collect()).unwrap_or_default();
+            mine.iter().find(|c| c.main).or(mine.first()).map(|c| (c.id, c.main, c.origin.clone()))
+        };
+        let Some((context, main, origin)) = found else {
+            return Err("The tab has no extension world (not a web page, or not allowed there).".into());
+        };
+        if main_world && !main {
+            return Err("The tab's top frame has no extension world (not a web page, or not allowed there).".into());
+        }
+        let by_manifest = self
+            .ext
+            .exts
+            .borrow()
+            .iter()
+            .any(|e| e.installed.id == ext_id && lb_core::ext_guard::host_access(&e.manifest, &origin));
+        let by_click = || self.ext.active_tab.borrow().get(ext_id).is_some_and(|(t, o)| *t == tab && *o == origin);
+        if !by_manifest && !by_click() {
+            return Err(lb_core::ext_guard::NO_HOST_ACCESS.into());
+        }
+        Ok(context)
+    }
+
+    /// The user clicked the extension's button: with the `activeTab` permission the extension
+    /// may script the page the active tab shows now.
+    fn ext_grant_active_tab(&self, ext_id: &str) {
+        let wants = self
+            .ext
+            .exts
+            .borrow()
+            .iter()
+            .any(|e| e.installed.id == ext_id && e.manifest.permissions.iter().any(|p| p == "activeTab"));
+        let Some(tab) = self.active_id().filter(|_| wants) else { return };
+        let origin = self
+            .ext
+            .contexts
+            .borrow()
+            .get(&tab)
+            .and_then(|l| l.iter().find(|c| c.ext == ext_id && c.main).map(|c| c.origin.clone()))
+            .or_else(|| self.tab(tab).and_then(|t| lb_core::urlclean::origin_of(&t.url)));
+        if let Some(origin) = origin {
+            self.ext.active_tab.borrow_mut().insert(ext_id.to_string(), (tab, origin));
+        }
     }
 
     /// Delivers JSON to the content world of a tab (a reply or an event).
@@ -812,7 +914,8 @@ impl Browser {
     ) {
         let origin = self.ext.request_origin.borrow().clone();
         if origin.as_deref() != Some(ext_id) {
-            warning!("extension request for {ext_id} from another origin refused");
+            let shown = lb_core::ext_guard::log_text(ext_id, ext::ID_LEN);
+            warning!("extension request for {shown} from another origin refused");
             return;
         }
         // Which of the extension's contexts: a tab, or the view the message came through.
@@ -830,7 +933,8 @@ impl Browser {
             End::Tab(_) | End::Content { .. } => true,
         };
         if !own_view {
-            warning!("extension request for {ext_id} from another extension's view refused");
+            let shown = lb_core::ext_guard::log_text(ext_id, ext::ID_LEN);
+            warning!("extension request for {shown} from another extension's view refused");
             return;
         }
         // A sandboxed page (manifest `sandbox.pages`) has no extension API, as in Chrome.
@@ -842,14 +946,14 @@ impl Browser {
             .and_then(|u| url::Url::parse(u).ok())
             .map(|u| u.path().to_string())
             .unwrap_or_default();
-        let sandboxed = self
-            .ext
-            .exts
-            .borrow()
-            .iter()
-            .any(|e| e.installed.id == ext_id && lb_core::ext_runtime::is_sandbox_page(&e.manifest, &path));
+        let sandboxed = self.ext.exts.borrow().iter().any(|e| {
+            e.installed.id == ext_id && lb_core::ext_runtime::is_sandbox_page(&e.manifest, &listed_path(&e.root, &path))
+        });
         if sandboxed {
-            warning!("extension {}: a sandboxed page asked for chrome.{op}: refused", self.ext_name(ext_id));
+            if self.ext_may_log(ext_id, "call") {
+                let shown = lb_core::ext_guard::log_text(op, 60);
+                warning!("extension {}: a sandboxed page asked for chrome.{shown}: refused", self.ext_name(ext_id));
+            }
             return;
         }
         let Some(view) = self.ext_end_view(&end) else { return };
@@ -1045,8 +1149,8 @@ impl Browser {
             .borrow()
             .iter()
             .find(|e| e.installed.id == ext_id)
-            .map(|e| e.installed.name.clone())
-            .unwrap_or_else(|| ext_id.to_string())
+            .map(|e| lb_core::ext_guard::log_text(&e.installed.name, 75))
+            .unwrap_or_else(|| lb_core::ext_guard::log_text(ext_id, ext::ID_LEN))
     }
 
     // ------------------------------------------------------------ the action button and popup
@@ -1118,6 +1222,7 @@ impl Browser {
             info!("extension {}: popup stays closed (its button was the click away)", self.ext_name(ext_id));
             return;
         }
+        self.ext_grant_active_tab(ext_id);
         match popup {
             Some(p) => self.open_ext_popup(ext_id, &p, rect),
             None => {
@@ -1324,8 +1429,8 @@ impl Browser {
                     self.ext_error(ext_id, &text, &file, line, caller.end().context_name());
                 } else if runtime::log_all() {
                     // KRUNK_EXT_LOG=1: every console level of the extension's contexts.
-                    let text: String = text.chars().take(2000).collect();
-                    let level: String = get_str("level").unwrap_or_default().chars().take(8).collect();
+                    let text = lb_core::ext_guard::log_text(&text, 2000);
+                    let level = lb_core::ext_guard::log_text(&get_str("level").unwrap_or_default(), 8);
                     info!("extension {}: [{} {level}] {text}", self.ext_name(ext_id), caller.end().context_name());
                 }
                 Ok(Value::Null)
@@ -1335,7 +1440,7 @@ impl Browser {
                 return None;
             }
             "unsupported" => {
-                let api: String = get_str("api").unwrap_or_default().chars().take(80).collect();
+                let api = lb_core::ext_guard::log_text(&get_str("api").unwrap_or_default(), 80);
                 // Not an API: bundlers and promise code probe objects for these.
                 if api.starts_with("__") || api == "default" || api == "toJSON" || api.is_empty() {
                     return Some(Ok(Value::Null));
@@ -1351,8 +1456,32 @@ impl Browser {
                 Ok(Value::Null)
             }
             "storage.get" | "storage.set" | "storage.remove" | "storage.clear" | "storage.bytes" => {
-                self.ext_storage_op(ext_id, op, &data)
+                // A content script uses the session area only when the extension opened it.
+                let area = data.get("area").and_then(|a| a.as_str()).unwrap_or("local");
+                if matches!(caller, Caller::Content { .. }) && !self.ext_storage_open(ext_id, area) {
+                    Err(lb_core::ext_guard::STORAGE_NOT_ALLOWED.into())
+                } else {
+                    self.ext_storage_op(ext_id, op, &data)
+                }
             }
+            // From the extension's pages and background only (trusted contexts).
+            "storage.setAccessLevel" => {
+                let area = get_str("area").unwrap_or_default();
+                let level = lb_core::ext_guard::parse_access_level(&get_str("accessLevel").unwrap_or_default());
+                match (caller, level) {
+                    (Caller::Content { .. }, _) => Err(lb_core::ext_guard::STORAGE_NOT_ALLOWED.into()),
+                    (_, Some(open)) if matches!(area.as_str(), "local" | "sync" | "session") => {
+                        self.ext.storage_access.borrow_mut().insert(Self::ext_storage_key(ext_id, &area), open);
+                        Ok(Value::Null)
+                    }
+                    _ => Err("Invalid access level or storage area.".into()),
+                }
+            }
+            // A content script's `fetch` of a file of its own extension.
+            "resource.read" => match caller {
+                Caller::Content { .. } => self.ext_read_resource(ext_id, &get_str("url").unwrap_or_default()),
+                Caller::Page { .. } => Err("chrome.resource.read is not provided by Krunk".into()),
+            },
             "runtime.sendMessage" => return self.ext_route_message(caller, ext_id, &data, None),
             "respond" => {
                 self.ext_respond(ext_id, &data);
@@ -1389,11 +1518,18 @@ impl Browser {
                     .unwrap_or(Value::Null),
             }),
             "tabs.create" => {
-                let url = get_str("url").unwrap_or_else(|| lb_core::pages::Page::NewTab.url());
-                let url = self.ext_resolve_url(ext_id, &url);
-                if !assets::allow_navigation(Channel::Tab, "", &url, true, false) {
-                    return Some(Err("That address cannot be opened.".into()));
-                }
+                // An address the extension gives is not the host's (no local file, none of
+                // Krunk's pages); without one it is a new tab.
+                let url = match get_str("url") {
+                    Some(url) => {
+                        let url = self.ext_resolve_url(ext_id, &url);
+                        if !lb_core::ext_guard::may_open(ext_id, &url) {
+                            return Some(Err("That address cannot be opened.".into()));
+                        }
+                        url
+                    }
+                    None => lb_core::pages::Page::NewTab.url(),
+                };
                 let active = data.get("active").and_then(|a| a.as_bool()).unwrap_or(true);
                 self.open_url(&url, true, false);
                 let id = self.active_id();
@@ -1407,7 +1543,7 @@ impl Browser {
                 let Some(id) = id else { return Some(Err("No active tab.".into())) };
                 if let Some(url) = data.pointer("/props/url").and_then(|u| u.as_str()) {
                     let url = self.ext_resolve_url(ext_id, url);
-                    if !assets::allow_navigation(Channel::Tab, "", &url, true, false) {
+                    if !lb_core::ext_guard::may_open(ext_id, &url) {
                         return Some(Err("That address cannot be opened.".into()));
                     }
                     if let Some(v) = self.tab_view(id) {
@@ -1798,6 +1934,12 @@ impl Browser {
         format!("{ext_id}/{area}")
     }
 
+    /// May the extension's content scripts use this storage area (and hear its changes)?
+    fn ext_storage_open(&self, ext_id: &str, area: &str) -> bool {
+        let set = self.ext.storage_access.borrow().get(&Self::ext_storage_key(ext_id, area)).copied();
+        lb_core::ext_guard::storage_open_to_content(area, set)
+    }
+
     fn ext_storage_load(&self, ext_id: &str, area: &str) {
         let key = Self::ext_storage_key(ext_id, area);
         if self.ext.storage.borrow().contains_key(&key) {
@@ -1824,9 +1966,10 @@ impl Browser {
             }
         }
         let _ = std::fs::create_dir_all(self.ext_dir());
-        if let Err(e) =
-            std::fs::write(self.ext_dir().join(format!("{ext_id}.storage.json")), Value::Object(file).to_string())
-        {
+        // A synced temporary file next to it, then a rename: a crash in the middle leaves the
+        // old file, not half of the new one.
+        let path = self.ext_dir().join(format!("{ext_id}.storage.json"));
+        if let Err(e) = lb_core::vault::write_atomic(&path, Value::Object(file).to_string().as_bytes()) {
             warning!("extension {ext_id}: storage not saved: {e}");
         }
     }
@@ -1880,6 +2023,13 @@ impl Browser {
                 }
                 "storage.set" => {
                     if let Some(Value::Object(items)) = data.get("items") {
+                        // Checked before anything is stored (a refused `set` changes nothing):
+                        // 10 MiB as in Chrome; with `unlimitedStorage` the local area has a
+                        // hard cap instead (it is held in memory and written as one file).
+                        let limit = lb_core::ext_guard::storage_limit(area, unlimited);
+                        if !lb_core::ext_guard::storage_set_fits(map, items, limit) {
+                            return Err(lb_core::ext_guard::QUOTA_EXCEEDED.into());
+                        }
                         for (k, v) in items {
                             let old = map.insert(k.clone(), v.clone());
                             let mut c = json!({ "newValue": v });
@@ -1887,14 +2037,6 @@ impl Browser {
                                 c["oldValue"] = o;
                             }
                             changes.insert(k.clone(), c);
-                        }
-                    }
-                    // 10 MiB, as in Chrome, unless the manifest asks for `unlimitedStorage`
-                    // (0.17.0); the session area is memory only and has the same limit.
-                    if !unlimited || area != "local" {
-                        let size: usize = map.iter().map(|(k, v)| k.len() + v.to_string().len()).sum();
-                        if size > 10 * 1024 * 1024 {
-                            return Err("QUOTA_BYTES quota exceeded".into());
                         }
                     }
                     Value::Null
@@ -1930,13 +2072,16 @@ impl Browser {
             }
             let data = json!({ "changes": changes, "area": area });
             self.ext_send_pages(ext_id, "storageChanged", data.clone());
-            // The extension's content worlds in every tab (only its own, C4).
+            // The extension's content worlds in every tab (only its own, C4), when content
+            // scripts may use the area at all (the session area: only once it was opened).
+            let open = self.ext_storage_open(ext_id, area);
             let targets: Vec<(TabId, i64)> = self
                 .ext
                 .contexts
                 .borrow()
                 .iter()
                 .flat_map(|(t, l)| l.iter().filter(|c| c.ext == ext_id).map(move |c| (*t, c.id)))
+                .filter(|_| open)
                 .collect();
             let msg = json!({ "ext": ext_id, "event": "storageChanged", "changes": data["changes"], "area": area });
             for (tab, ctx) in targets {
@@ -1999,9 +2144,7 @@ impl Browser {
         else {
             return Err("no tab".into());
         };
-        let Some(context) = self.ext_context(tab, ext_id) else {
-            return Err("The tab has no extension world (not a web page, or not allowed there).".into());
-        };
+        let context = self.ext_script_target(tab, ext_id, false)?;
         let found = self
             .ext
             .exts
@@ -2074,7 +2217,7 @@ impl Browser {
         use std::borrow::Cow;
         let id = ext::id_of_url(url)?;
         let path = url::Url::parse(url).ok()?.path().to_string();
-        let (root, background, messages, fresh, sandbox_csp) = {
+        let (root, background, messages, fresh, sandbox_csp, web_accessible) = {
             let exts = self.ext.exts.borrow();
             let e = exts.iter().find(|e| e.installed.id == id)?;
             (
@@ -2082,17 +2225,21 @@ impl Browser {
                 e.manifest.background_script().map(|(s, m)| (s.to_string(), m)),
                 e.messages_json.clone(),
                 e.fresh,
-                lb_core::ext_runtime::is_sandbox_page(&e.manifest, &path)
+                lb_core::ext_runtime::is_sandbox_page(&e.manifest, &listed_path(&e.root, &path))
                     .then(|| lb_core::ext_runtime::sandbox_csp(&e.manifest)),
+                lb_core::ext_guard::WebAccess::new(&e.manifest, &[]).web_accessible(&path),
             )
         };
+        // Other origins may read only what `web_accessible_resources` lists (the tabs' network
+        // policy decides which of them may ask at all).
+        let cors = if web_accessible { "\r\nAccess-Control-Allow-Origin: *" } else { "" };
         // A sandboxed page (manifest `sandbox.pages`, 0.17.0) gets the sandbox policy: a
         // unique origin, no extension API, and the manifest's (or Chrome's default) script rules.
         let csp = sandbox_csp.unwrap_or_else(|| ext::PAGE_CSP.to_string());
         let headers = |mime: &str| {
             format!(
                 "Content-Type: {mime}\r\nContent-Security-Policy: {csp}\r\nX-Content-Type-Options: nosniff\r\n\
-                 Referrer-Policy: no-referrer\r\nCache-Control: no-cache\r\nAccess-Control-Allow-Origin: *"
+                 Referrer-Policy: no-referrer\r\nCache-Control: no-cache{cors}"
             )
         };
         let generated = |mime: &str, body: String| {
@@ -2159,6 +2306,64 @@ impl Browser {
             headers: headers(ext::mime_for(&rel)),
             body: Cow::Owned(body),
         })
+    }
+
+    /// May a server's redirect lead a tab to `url`? Not to an extension's page unless
+    /// `web_accessible_resources` lists it (the redirecting site is not known here; a request
+    /// that names its initiator is checked by the tabs' network policy).
+    pub(super) fn ext_redirect_allowed(&self, url: &str) -> bool {
+        let Some(id) = ext::id_of_url(url) else { return true };
+        let path = url::Url::parse(url).map(|u| u.path().to_string()).unwrap_or_default();
+        self.ext
+            .exts
+            .borrow()
+            .iter()
+            .find(|e| e.installed.id == id)
+            .is_none_or(|e| lb_core::ext_guard::WebAccess::new(&e.manifest, &[]).web_accessible(&path))
+    }
+
+    /// May the host open `url` in a new tab for the document tab `opener` shows (a link
+    /// opened with Ctrl or the middle button, "Open in new tab")? The host's navigation names no
+    /// initiator, so an extension's page is checked here: for its own pages and Krunk's any,
+    /// for a web page only what `web_accessible_resources` lists for it.
+    pub(super) fn ext_link_allowed(&self, opener: TabId, url: &str) -> bool {
+        let Some(id) = ext::id_of_url(url) else { return true };
+        let from = self.views.borrow().get(&opener).map(|v| v.net.committed.borrow().clone()).unwrap_or_default();
+        if from.starts_with(&format!("{}/", ext::origin(&id))) || Page::from_url(&from).is_some() {
+            return true;
+        }
+        let Some(origin) = lb_core::urlclean::origin_of(&from) else { return false };
+        self.ext.exts.borrow().iter().find(|e| e.installed.id == id).is_none_or(|e| {
+            let access = lb_core::ext_guard::WebAccess::new(&e.manifest, &[]);
+            lb_core::ext_guard::request_allowed(&access, &id, url, &origin, "")
+        })
+    }
+
+    /// A content script reads a file of its own extension (`fetch` in the isolated world goes
+    /// through here): the request itself would be the page's, and a page gets only
+    /// web-accessible resources. The file as `{ mime, body }` (base64).
+    fn ext_read_resource(&self, ext_id: &str, url: &str) -> Result<Value, String> {
+        let failed = || "Failed to fetch".to_string();
+        let (id, rel) = ext::resolve_file(&lb_core::ext_runtime::krunk_url(url)).ok_or_else(failed)?;
+        if id != ext_id {
+            return Err(failed());
+        }
+        let root = self
+            .ext
+            .exts
+            .borrow()
+            .iter()
+            .find(|e| e.installed.id == ext_id)
+            .map(|e| e.root.clone())
+            .ok_or_else(failed)?;
+        let file = ext::file_path(&root, &rel);
+        let meta = std::fs::metadata(&file).map_err(|_| failed())?;
+        if !meta.is_file() || meta.len() > MAX_SCRIPT_READ_BYTES {
+            return Err(failed());
+        }
+        let body = std::fs::read(&file).map_err(|_| failed())?;
+        use base64ct::Encoding;
+        Ok(json!({ "mime": ext::mime_for(&rel), "body": base64ct::Base64::encode_string(&body) }))
     }
 
     // ------------------------------------------------------------ installation

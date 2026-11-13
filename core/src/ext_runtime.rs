@@ -77,11 +77,13 @@ pub fn krunk_url(url: &str) -> String {
 pub const DEFAULT_SANDBOX_CSP: &str =
     "sandbox allow-scripts allow-forms allow-popups allow-modals; script-src 'self' 'unsafe-inline' 'unsafe-eval'; child-src 'self';";
 
-/// Is `path` (in the package, without a leading slash) one of the manifest's sandboxed pages?
+/// Is `path` (a request's path on the extension's origin) one of the manifest's sandboxed pages?
 /// Sandboxed pages run in a unique origin, without extension APIs, under their own CSP.
+/// The path is compared as the file is found: percent-decoded and without regard to case
+/// (`/s%61ndbox.html` and `/Sandbox.html` are `sandbox.html` on disk).
 pub fn is_sandbox_page(m: &Manifest, path: &str) -> bool {
-    let path = path.trim_start_matches('/');
-    m.sandbox.as_ref().is_some_and(|s| s.pages.iter().any(|p| glob_match(p.trim_start_matches('/'), path)))
+    let path = crate::ext_guard::package_path(path);
+    m.sandbox.as_ref().is_some_and(|s| s.pages.iter().any(|p| glob_match(&crate::ext_guard::manifest_path(p), &path)))
 }
 
 /// The CSP of the manifest's sandboxed pages (`content_security_policy.sandbox`). It always
@@ -124,7 +126,7 @@ pub fn main_bundle(ext_id: &str, scripts: &[MainScript]) -> String {
     let mut out = String::new();
     out.push_str("(function () {\n");
     out.push_str(
-        "if (!/^(https?|file):$/.test(location.protocol) || /(^|\\.)krunk\\.invalid$/.test(location.hostname)) return;\n",
+        "if (!/^https?:$/.test(location.protocol) || /(^|\\.)krunk\\.invalid$/.test(location.hostname)) return;\n",
     );
     out.push_str(MAIN_MATCHER);
     for s in scripts {
@@ -160,7 +162,7 @@ const MAIN_MATCHER: &str = r#"function __krunkGlob(p, t) {
   return pi === p.length;
 }
 function __krunkMatch(pattern, url) {
-  if (pattern === '<all_urls>') return /^(https?|file):$/.test(location.protocol);
+  if (pattern === '<all_urls>') return /^https?:$/.test(location.protocol);
   var m = /^(\*|https?|file|ftp):\/\/([^/]*)(\/.*)?$/.exec(pattern); if (!m) return false;
   var u; try { u = new URL(url); } catch (e) { return false; }
   var scheme = u.protocol.replace(':', '');

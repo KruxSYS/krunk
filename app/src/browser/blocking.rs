@@ -23,7 +23,7 @@ use lb_core::storage::now_ms;
 use lb_core::tabs::TabId;
 use lb_core::urlclean::{self, LoadFailure, RewriteOptions};
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering::Relaxed};
 use std::sync::{mpsc, Arc, Mutex, OnceLock, RwLock};
@@ -131,9 +131,26 @@ pub(super) struct NetShared {
     /// 0.14.0: the VPN should run and neither it nor its stand-in is the engine's proxy: every
     /// web request is refused (only Krunk's own pages load).
     offline: AtomicBool,
+    /// 0.17.0: who may load each installed extension's files from a tab
+    /// (`web_accessible_resources`), by extension id.
+    ext_access: RwLock<Arc<HashMap<String, lb_core::ext_guard::WebAccess>>>,
 }
 
 impl NetShared {
+    pub fn set_ext_access(&self, access: HashMap<String, lb_core::ext_guard::WebAccess>) {
+        if let Ok(mut a) = self.ext_access.write() {
+            *a = Arc::new(access);
+        }
+    }
+
+    /// May a tab's request for a file of an extension be answered (IO thread)? An unknown
+    /// extension has no files: the answer is "not found" anyway.
+    fn ext_request_allowed(&self, url: &str, initiator: &str, top_url: &str) -> bool {
+        let Some(id) = lb_core::ext::id_of_url(url) else { return true };
+        let Ok(access) = self.ext_access.read() else { return false };
+        access.get(&id).is_none_or(|a| lb_core::ext_guard::request_allowed(a, &id, url, initiator, top_url))
+    }
+
     pub fn engine(&self) -> Option<Arc<Blocker>> {
         self.engine.read().ok()?.clone()
     }
@@ -298,6 +315,14 @@ impl RequestPolicy for TabPolicy {
                 NetVerdict::Block
             };
         }
+        // An extension's files (0.17.0): its own documents load them, a web page only what the
+        // manifest lists under `web_accessible_resources` for it.
+        if req.url.contains(lb_core::ext::HOST_SUFFIX) {
+            let top = self.tab.top_url.lock().map(|t| t.clone()).unwrap_or_default();
+            if !self.net.ext_request_allowed(req.url, req.initiator, &top) {
+                return NetVerdict::Block;
+            }
+        }
         let own_host =
             || urlclean::host_of(req.url).is_some_and(|h| h == "krunk.invalid" || h.ends_with(".krunk.invalid"));
         if self.net.offline.load(Relaxed) && blocker::is_filterable(req.url) && !own_host() {
@@ -398,6 +423,9 @@ pub(super) struct TabNet {
     pub css: RefCell<String>,
     pub generichide: Cell<bool>,
     pub exceptions: RefCell<HashSet<String>>,
+    /// The address of the document the tab shows (the engine's last address change), not of
+    /// a navigation that only started.
+    pub committed: RefCell<String>,
     /// HTTPS-only: the http:// URL the current navigation was upgraded from.
     pub upgraded_from: RefCell<Option<String>>,
     /// The (https URL, http URL) of an upgrade we just issued.
@@ -422,6 +450,7 @@ impl TabNet {
             css: RefCell::new(String::new()),
             generichide: Cell::new(false),
             exceptions: RefCell::new(HashSet::new()),
+            committed: RefCell::new(String::new()),
             upgraded_from: RefCell::new(None),
             pending_upgrade: RefCell::new(None),
             rewriting: Cell::new(false),

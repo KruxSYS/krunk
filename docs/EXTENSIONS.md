@@ -169,8 +169,13 @@ DevTools binding of the content world), never by the message.
 * **Sandboxed pages** (manifest `sandbox.pages`): served with the manifest's
   `content_security_policy.sandbox` (or Chrome's default), always starting with `sandbox`, so
   they have a unique origin; they get no extension API (the host refuses their requests).
-* `storage.session` (memory), `storage.local` without the 10 MiB limit with the
-  `unlimitedStorage` permission (requests up to 64 MiB), `management.getSelf`,
+  Which page is sandboxed is decided on the path as the file is found (percent-decoded,
+  without regard to case, by the file system's own name for an existing file), the same form
+  every comparison with a manifest list uses (`core::ext_guard::package_path`).
+* `storage.session` (memory), `storage.local` up to 256 MiB instead of 10 MiB with the
+  `unlimitedStorage` permission (requests up to 64 MiB); a `set` over the limit is refused
+  whole with "QUOTA_BYTES quota exceeded", and the file is replaced by a rename of a synced
+  temporary file. `management.getSelf`,
   `permissions.getAll/contains/request`, `i18n.getAcceptLanguages`, `runtime.getContexts`.
 
 ## Stand-ins and absences
@@ -202,6 +207,11 @@ The shims report them (they wrap `console.error` and listen for `error` and
 engine (`Runtime.exceptionThrown`, the extensions' worlds only). Page console output of web
 pages is still not logged.
 
+Text an extension supplies reaches krunk.log capped and on one line (control characters
+become spaces: no forged log lines), and at most 120 lines per extension, kind (errors,
+content-script calls) and minute; the Errors list is not affected, and `KRUNK_EXT_LOG=1`
+lifts the limit.
+
 ## Security
 
 Unchanged: extension pages and the worker run under `script-src 'self' 'wasm-unsafe-eval'`
@@ -214,9 +224,45 @@ where the extension may run and never on Krunk's own pages; `scripting.*` needs 
 * MAIN-world scripts run in the page's world like any page script: they get no binding and no
   API, and the page can see what they define (as in Chrome).
 * A content world reports whether it is the top frame and its address for `sender`; the host
-  uses its own knowledge for the top frame and accepts a sub-frame's address only on the
-  origin the engine reported for that world. The information only ever reaches the same
-  extension.
+  accepts the address (the top frame's too) only on the origin the engine reported for that
+  world, and `sender.origin` is that origin (`core::ext_guard::content_sender`). The tab's
+  address is not used: it already names the next page while a navigation is pending. The
+  information only ever reaches the same extension.
+* An address an extension gives to `tabs.create`, `tabs.update` or `windows.create` is not
+  the host's: its own pages and `http(s)` only, no local file, none of Krunk's pages, no other
+  extension's page (`core::ext_guard::may_open`). Without an address it is a new tab.
+* No content scripts, MAIN-world scripts or `scripting.*` on `file:` documents (Chrome's
+  default without "Allow access to file URLs"; a `file://*/*` pattern is accepted and unused).
+* `scripting.executeScript` / `insertCSS` need host access to the document: a host pattern in
+  `host_permissions` / `permissions` that covers the origin the engine reports for the world
+  the script runs in (content script `matches` grant nothing), or `activeTab` after the user
+  clicked the extension's button, for that tab while it stays on that origin. `world: "MAIN"`
+  needs the top frame's world.
+* **`web_accessible_resources`** is enforced (`core::ext_guard::WebAccess`, `request_allowed`)
+  by the tabs' network policy, which knows the origin that asks (the engine's request
+  initiator). The extension's own documents, the host's own navigations (address bar, tabs the
+  host or the extension opened, history) and Krunk's pages load any file. A web page — by a
+  sub-resource, a frame, `fetch`, a link, `location` or `window.open` — gets only what a
+  Manifest V3 entry lists for its origin (`matches`), plus the style sheets of content scripts
+  (the shim links them into the page). Another extension gets nothing. A server's redirect
+  leads to an extension page only when it is listed, and a link the host opens in a new tab
+  for a page (Ctrl or middle click, "Open in new tab") is checked against the document the
+  opener shows. `Access-Control-Allow-Origin: *` is sent
+  with listed files only. The action popup, offscreen documents, the extension's windows and
+  the background worker are not tabs and are not affected.
+  A content script's `fetch()` of a file of its own extension (GET, up to 8 MiB) is answered
+  by the host through the world's binding, listed or not, as Chrome allows it; the page's own
+  `fetch` cannot use that. `XMLHttpRequest` and elements a content script adds to the page
+  (`<img>`, `<script>`, `<iframe>`) are the page's requests and need a listed resource, as in
+  Chrome. Remaining gap: a sandboxed page of the extension has an opaque origin, so in a tab
+  whose address is the extension's a request from an opaque origin is let through when the
+  manifest has sandboxed pages.
+* `storage.session` is for the extension's pages and background (Chrome's `TRUSTED_CONTEXTS`):
+  a content script's calls are refused ("Access to storage is not allowed from this context.")
+  and it hears no changes of that area, until a page or the background calls
+  `storage.session.setAccessLevel({ accessLevel: "TRUSTED_AND_UNTRUSTED_CONTEXTS" })`
+  (kept in memory, per extension and area, until the extension restarts; `local` and `sync`
+  can be closed the same way).
 * Sandboxed pages are the one place with `unsafe-eval`: unique origin, no API.
 * Ports per extension are capped (2048), registered scripts (100), windows (8), errors (50).
 

@@ -115,15 +115,16 @@ pub fn id_of_url(url: &str) -> Option<String> {
 /// May an extension's content world in a document of `origin` (CDP's
 /// `ExecutionContextDescription.origin`) be used: messages, deliveries, `scripting.*`
 /// (0.11.7, audit C1)? The world is created in every document of a tab, Krunk's own pages
-/// included. Those, extension pages and the engine's own pages are refused; anything else is
-/// as before (web pages, `file:`, opaque origins).
+/// included. Those, extension pages, the engine's own pages and local files (`file:`; Chrome's
+/// default without "Allow access to file URLs") are refused; anything else is as before (web
+/// pages, opaque origins).
 pub fn content_context_allowed(origin: &str) -> bool {
     let origin = origin.trim();
     let Ok(u) = url::Url::parse(origin) else {
         // "null", "" or "://": an opaque origin (a data: or sandboxed document).
         return true;
     };
-    if matches!(u.scheme(), "chrome" | "chrome-extension" | "chrome-untrusted" | "devtools") {
+    if matches!(u.scheme(), "chrome" | "chrome-extension" | "chrome-untrusted" | "devtools" | "file") {
         return false;
     }
     match u.host_str() {
@@ -933,7 +934,7 @@ pub fn resolve_file(url: &str) -> Option<(String, String)> {
     Some((id, path))
 }
 
-fn percent_decode(s: &str) -> String {
+pub(crate) fn percent_decode(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
@@ -1410,6 +1411,8 @@ mod tests {
             "chrome://gpu",
             "devtools://devtools",
             "chrome-extension://abc",
+            "file://",
+            "file:///C:/Users/me/secret.txt",
         ] {
             assert!(!content_context_allowed(refused), "{refused}");
         }
@@ -1418,7 +1421,6 @@ mod tests {
             "http://localhost:8094",
             "https://krunk.invalid.example.com",
             "https://notkrunk.invalid.test",
-            "file://",
             "null",
             "",
             "://",
