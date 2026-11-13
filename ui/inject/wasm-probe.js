@@ -10,16 +10,28 @@
 // - `found`: `WebAssembly.Memory` objects found since the last call (from `Runtime.queryObjects`,
 //   or from the document-start hook below). They join the instance's registry, where each
 //   memory gets a stable number; requests name memories by that number.
-// - `req.op`: list, read, write, bytes, writeBytes, scan, next, results, discard, freeze,
-//   unfreeze, frozen, watch, resolve.
+//   `WebAssembly.Instance` objects (the third argument `more`, or mixed into `found`) join a
+//   second registry the same way; the memories an instance exports are adopted with it.
+// - `req.op`: list, instances, survey (both), globals, setGlobal, read, write, bytes,
+//   writeBytes, scan, next, results, discard, freeze, unfreeze, frozen, watch, resolve.
 //
 // Values: i8 u8 i16 u16 i32 u32 f32 f64 as numbers; i64 u64 as decimal strings (JSON has no
 // 64-bit integers); bytes as arrays of 0..255; utf8 and utf16 as strings. Little-endian, as
 // WebAssembly is. `memory.grow` replaces a memory's buffer: every operation reads `mem.buffer`
-// again. Shared memories (SharedArrayBuffer) work the same way.
+// again, and a scan that gave the page time in between takes the buffer again before it goes on.
+// Shared memories (SharedArrayBuffer) work the same way.
+//
+// Instances: each export has a name, a kind (function, memory, table, global, tag) and its place
+// in the exports (`index`; requests name an exported global by instance number and index, never
+// by a property name). An exported memory says which listed memory it is (`mem`). An exported
+// global has its type (i32 i64 f32 f64 v128 funcref externref), whether it is mutable, and its
+// value (i64 as a decimal string). JavaScript does not say a global's type: the probe finds it
+// by linking the global into one-import modules it compiles itself (a wrong type is a
+// LinkError); nothing is written to the global for that.
 //
 // `hook()` (userscripts; the host's fallback): wraps WebAssembly.Memory, instantiate,
-// instantiateStreaming and Instance so memories made from then on are found without DevTools.
+// instantiateStreaming and Instance so memories and instances made from then on are found
+// without DevTools.
 (function (scope) {
   'use strict';
   const G = scope || globalThis;
@@ -43,6 +55,9 @@
     maxFreezes: 256,
     maxWatch: 256,
     maxPointerDepth: 8,
+    maxInstances: 256, // instances kept (the first ones found)
+    maxExports: 2000, // exports listed per instance (memories, globals, tables and tags first)
+    maxNameChars: 200, // an export's name is cut to this
     sliceMs: 30, // a scan yields to the page after this much work
   });
 
@@ -63,14 +78,37 @@
 
   // ---------------------------------------------------------------- registry
   const mems = []; // index = memory number
+  const insts = []; // index = instance number
+  // The constructors as they were when the probe was made (the hook replaces them later).
+  // (Another probe's hook may already be there: its `Instance` shares the prototype, whose
+  // `constructor` is still the engine's.)
+  const protoCtor = function (C) { try { const c = C.prototype.constructor; return typeof c === 'function' && c.prototype === C.prototype ? c : C; } catch (_) { return C; } };
+  const RealInstance = WA && WA.Instance && protoCtor(WA.Instance), RealModule = WA && WA.Module, RealGlobal = WA && WA.Global;
+  const RealMemoryC = WA && WA.Memory, RealTable = WA && WA.Table, RealTag = WA && WA.Tag;
+  const own = G.WeakSet ? new G.WeakSet() : null; // the instances the probe makes itself (type checks)
+  function isA(x, C) { try { return typeof C === 'function' && x instanceof C; } catch (_) { return false; } }
+  function adoptMem(m) {
+    if (!m || mems.indexOf(m) >= 0) return;
+    try { if (!(m.buffer instanceof ArrayBuffer) && !(G.SharedArrayBuffer && m.buffer instanceof G.SharedArrayBuffer)) return; } catch (_) { return; }
+    mems.push(m);
+  }
+  function adoptInst(x) {
+    if (insts.indexOf(x) >= 0 || (own && own.has(x))) return;
+    let ex;
+    try { ex = x.exports; } catch (_) { return; }
+    if (!ex || typeof ex !== 'object') return;
+    if (insts.length < LIMITS.maxInstances) insts.push(x);
+    // Its memories are listed even where the memory query found nothing (the hook).
+    try { for (const k in ex) if (isA(ex[k], RealMemoryC)) adoptMem(ex[k]); } catch (_) { /* odd exports */ }
+  }
   function adopt(found) {
     if (!found) return;
     const list = isArr(found) ? found : [found];
     for (let i = 0; i < list.length; i++) {
-      const m = list[i];
-      if (!m || mems.indexOf(m) >= 0) continue;
-      try { if (!(m.buffer instanceof ArrayBuffer) && !(G.SharedArrayBuffer && m.buffer instanceof G.SharedArrayBuffer)) continue; } catch (_) { continue; }
-      mems.push(m);
+      const x = list[i];
+      if (!x) continue;
+      if (isA(x, RealInstance)) adoptInst(x);
+      else adoptMem(x);
     }
   }
   function mem(n) {
@@ -88,6 +126,136 @@
       out.push({ mem: i, bytes: len, pages: len / 65536, shared: isShared(mems[i]) });
     }
     return out;
+  }
+
+  // ---------------------------------------------------------------- instances
+  // A global's type and mutability: the one-import module `(import "m" "g" (global <mut> <type>))`
+  // links only with a global of exactly that type.
+  const GLOBAL_TYPES = [['i32', 0x7f], ['i64', 0x7e], ['f32', 0x7d], ['f64', 0x7c], ['v128', 0x7b], ['funcref', 0x70], ['externref', 0x6f]];
+  const typeMods = {};
+  const globalInfo = G.WeakMap ? new G.WeakMap() : null;
+  function links(g, code, mut) {
+    const key = code * 2 + mut;
+    let mod = typeMods[key];
+    if (mod === undefined) {
+      try { mod = new RealModule(new U8([0, 97, 115, 109, 1, 0, 0, 0, 2, 8, 1, 1, 109, 1, 103, 3, code, mut])); } catch (_) { mod = null; }
+      typeMods[key] = mod;
+    }
+    if (!mod) return null; // WebAssembly can't be compiled here (a content security policy)
+    try { const i = new RealInstance(mod, { m: { g: g } }); if (own) own.add(i); return true; } catch (_) { return false; }
+  }
+  function describeGlobal(g) {
+    let info = globalInfo && globalInfo.get(g);
+    if (info) return info;
+    info = null;
+    for (let t = 0; t < GLOBAL_TYPES.length && !info; t++) {
+      for (let mut = 0; mut < 2; mut++) {
+        const ok = links(g, GLOBAL_TYPES[t][1], mut);
+        if (ok === null) { t = GLOBAL_TYPES.length; break; }
+        if (ok) { info = { type: GLOBAL_TYPES[t][0], mutable: mut === 1 }; break; }
+      }
+    }
+    if (!info) {
+      // No check by linking: what the value itself says. `mutable: null` = not known.
+      let v;
+      try { v = g.value; } catch (_) { v = undefined; }
+      info = { type: typeof v === 'bigint' ? 'i64' : typeof v === 'number' ? 'number' : 'other', mutable: null };
+    }
+    if (globalInfo) globalInfo.set(g, info);
+    return info;
+  }
+  function globalValue(g, info) {
+    if (info.type !== 'i32' && info.type !== 'i64' && info.type !== 'f32' && info.type !== 'f64' && info.type !== 'number') return null;
+    let v;
+    try { v = g.value; } catch (_) { return null; }
+    if (typeof v === 'bigint') return v.toString();
+    if (typeof v !== 'number') return null;
+    return isFinite(v) ? v : String(v); // NaN and the infinities as text (JSON has none)
+  }
+  function cut(name) { const s = String(name); return s.length > LIMITS.maxNameChars ? s.slice(0, LIMITS.maxNameChars) + '…' : s; }
+  function kindOf(x) {
+    if (typeof x === 'function') return 'function';
+    if (isA(x, RealMemoryC)) return 'memory';
+    if (isA(x, RealGlobal)) return 'global';
+    if (isA(x, RealTable)) return 'table';
+    if (isA(x, RealTag)) return 'tag';
+    return 'other';
+  }
+  function inst(n) {
+    const x = insts[n];
+    if (!x) fail('no instance ' + n + ' (list the memories first)');
+    return x;
+  }
+  // The exports in their order: [name, value].
+  function exportsOf(x) {
+    const ex = x.exports, names = Object.keys(ex), list = [];
+    for (let i = 0; i < names.length; i++) list.push([names[i], ex[names[i]]]);
+    return list;
+  }
+  function describeExport(e, index) {
+    const kind = kindOf(e[1]);
+    const row = { index: index, name: cut(e[0]), kind: kind };
+    if (kind === 'memory') {
+      const n = mems.indexOf(e[1]);
+      if (n >= 0) row.mem = n;
+    } else if (kind === 'global') {
+      const info = describeGlobal(e[1]);
+      row.type = info.type; row.mutable = info.mutable; row.value = globalValue(e[1], info);
+    } else if (kind === 'table') {
+      try { row.length = e[1].length; } catch (_) { /* no length */ }
+    }
+    return row;
+  }
+  function instances() {
+    const out = [];
+    for (let n = 0; n < insts.length; n++) {
+      const row = { inst: n, counts: { function: 0, memory: 0, table: 0, global: 0, tag: 0, other: 0 }, exports: [], omitted: 0 };
+      try {
+        const list = exportsOf(insts[n]);
+        const funcs = [];
+        for (let i = 0; i < list.length; i++) {
+          const kind = kindOf(list[i][1]);
+          row.counts[kind]++;
+          if (kind === 'function') funcs.push(i);
+          else if (row.exports.length < LIMITS.maxExports) row.exports.push(describeExport(list[i], i));
+          else row.omitted++;
+        }
+        for (let j = 0; j < funcs.length; j++) {
+          if (row.exports.length < LIMITS.maxExports) row.exports.push({ index: funcs[j], name: cut(list[funcs[j]][0]), kind: 'function' });
+          else row.omitted++;
+        }
+      } catch (e) { row.error = String(e && e.message || e); }
+      out.push(row);
+    }
+    return out;
+  }
+  function globals(req) {
+    const list = exportsOf(inst(req.inst)), out = [];
+    for (let i = 0; i < list.length && out.length < LIMITS.maxExports; i++) {
+      if (kindOf(list[i][1]) === 'global') out.push(describeExport(list[i], i));
+    }
+    return out;
+  }
+  function setGlobal(req) {
+    const list = exportsOf(inst(req.inst));
+    const e = list[req.export];
+    if (typeof req.export !== 'number' || !e || kindOf(e[1]) !== 'global') fail('export ' + req.export + ' of instance ' + req.inst + ' is not a global');
+    const g = e[1], info = describeGlobal(g);
+    if (info.mutable === false) fail('the global ' + cut(e[0]) + ' is not mutable');
+    let raw;
+    const text = typeof req.value === 'number' ? req.value : String(req.value).trim();
+    if (info.type === 'i64') {
+      try { raw = BI(typeof text === 'number' ? Math.trunc(text) : text); } catch (_) { fail('not a whole number: ' + req.value); }
+      if (raw < -(BI(1) << BI(63)) || raw >= (BI(1) << BI(64))) fail(req.value + ' is out of range for i64');
+    } else if (info.type === 'i32' || info.type === 'f32' || info.type === 'f64' || info.type === 'number') {
+      raw = typeof text === 'number' ? text : (text === '' ? NaN : Number(text));
+      if (info.type === 'i32') {
+        if (!isFinite(raw) || Math.floor(raw) !== raw) fail('not a whole number: ' + req.value);
+        if (raw < -2147483648 || raw > 4294967295) fail(req.value + ' is out of range for i32');
+      } else if (raw !== raw && text !== 'NaN') fail('not a number: ' + req.value);
+    } else fail('a ' + info.type + ' global can\'t be written from here');
+    try { g.value = raw; } catch (err) { fail('the global ' + cut(e[0]) + ' can\'t be written: ' + String(err && err.message || err)); }
+    return { inst: req.inst, export: req.export, type: info.type, value: globalValue(g, info) };
   }
 
   // ---------------------------------------------------------------- values
@@ -246,20 +414,28 @@
     }
     const addrs = [];
     let prev = [];
-    const fast = values(v, d, align, limit);
+    // While the scan gives the page time, the page may grow the memory: a memory that is not
+    // shared then has a new buffer and the old one is detached. The scan goes on in the new
+    // one, up to the size it started with.
+    let fast = values(v, d, align, limit);
     let t0 = now();
     if (fast) {
-      const arr = fast.arr, n = arr.length;
+      let arr = fast.arr;
+      const n = arr.length;
       for (let i = 0; i < n; i++) {
         const x = arr[i];
         if (test(x)) {
           if (addrs.length >= LIMITS.maxResults) { s.truncated = true; break; }
           addrs.push(i * fast.step); prev.push(x);
         }
-        if ((i & 0xfffff) === 0 && now() - t0 > LIMITS.sliceMs) { s.progress = i / n; await yieldNow(); t0 = now(); }
+        if ((i & 0xfffff) === 0 && now() - t0 > LIMITS.sliceMs) {
+          s.progress = i / n; await yieldNow(); t0 = now();
+          if (m.buffer !== arr.buffer) { fast = values(view(m), d, align, limit); arr = fast.arr; }
+        }
       }
     } else {
-      const dv = v.dv, get = d.get;
+      let dv = v.dv;
+      const get = d.get;
       const end = limit - d.size;
       for (let a = 0; a <= end; a += align) {
         const x = dv[get](a, true);
@@ -267,7 +443,10 @@
           if (addrs.length >= LIMITS.maxResults) { s.truncated = true; break; }
           addrs.push(a); prev.push(x);
         }
-        if ((a & 0xfffff) === 0 && now() - t0 > LIMITS.sliceMs) { s.progress = a / end; await yieldNow(); t0 = now(); }
+        if ((a & 0xfffff) === 0 && now() - t0 > LIMITS.sliceMs) {
+          s.progress = a / end; await yieldNow(); t0 = now();
+          if (m.buffer !== dv.buffer) dv = new DV(m.buffer);
+        }
       }
     }
     s.addrs = new U32(addrs);
@@ -305,7 +484,10 @@
       default: fail('unknown next-scan kind ' + kind + ' (exact, range, changed, unchanged, increased, decreased, increasedBy, decreasedBy)');
     }
     const addrs = [], prev = [];
-    const get = d.get, dv = v.dv, len = v.len;
+    const get = d.get;
+    let dv = v.dv, len = v.len;
+    // After giving the page time: the buffer of now (see firstScan). A memory only grows.
+    const again = function () { if (m.buffer !== dv.buffer) { dv = new DV(m.buffer); len = dv.byteLength; } };
     let t0 = now();
     if (s.snapshot) {
       const snap = new DV(s.snapshot.buffer);
@@ -316,7 +498,7 @@
           if (addrs.length >= LIMITS.maxResults) { s.truncated = true; break; }
           addrs.push(a); prev.push(x);
         }
-        if ((a & 0xfffff) === 0 && now() - t0 > LIMITS.sliceMs) { s.progress = a / end; await yieldNow(); t0 = now(); }
+        if ((a & 0xfffff) === 0 && now() - t0 > LIMITS.sliceMs) { s.progress = a / end; await yieldNow(); t0 = now(); again(); }
       }
       s.snapshot = null;
     } else {
@@ -326,7 +508,7 @@
         if (a + d.size > len) continue;
         const x = dv[get](a, true);
         if (test(x, oldPrev[i])) { addrs.push(a); prev.push(x); }
-        if ((i & 0xfffff) === 0 && i && now() - t0 > LIMITS.sliceMs) { await yieldNow(); t0 = now(); }
+        if ((i & 0xfffff) === 0 && i && now() - t0 > LIMITS.sliceMs) { await yieldNow(); t0 = now(); again(); }
       }
     }
     s.addrs = new U32(addrs);
@@ -404,6 +586,10 @@
     if (!req || typeof req.op !== 'string') fail('a request {op, …}');
     switch (req.op) {
       case 'list': return list();
+      case 'instances': return instances();
+      case 'survey': return { memories: list(), instances: instances() };
+      case 'globals': return globals(req);
+      case 'setGlobal': return setGlobal(req);
       case 'limits': return LIMITS;
       case 'read': { const v = view(mem(req.mem)); const a = resolve(v, req.where !== undefined ? req.where : req.addr); return { addr: a, value: readAt(v, a, req.type, req.length) }; }
       case 'write': { const v = view(mem(req.mem)); const a = resolve(v, req.where !== undefined ? req.where : req.addr); return { addr: a, written: writeAt(v, a, req.type, req.value) }; }
@@ -426,12 +612,13 @@
       default: fail('unknown op ' + req.op);
     }
   }
-  function call(found, req) {
+  function call(found, req, more) {
     adopt(found);
+    adopt(more);
     return P.resolve().then(function () { return run(req); });
   }
 
-  // Memories made from now on are found without DevTools (userscripts; the host's fallback).
+  // Memories and instances made from now on are found without DevTools (userscripts; the host's fallback).
   let hooked = false;
   function hook() {
     if (hooked || !WA) return;
@@ -439,8 +626,8 @@
     const RealMemory = WA.Memory;
     const keep = function (x) {
       try {
-        if (x instanceof RealMemory) adopt(x);
-        else if (x && x.exports) { const ex = x.exports; for (const k in ex) if (ex[k] instanceof RealMemory) adopt(ex[k]); }
+        if (x instanceof RealMemory) adoptMem(x);
+        else if (isA(x, RealInstance)) adoptInst(x);
         else if (x && x.instance) keep(x.instance);
       } catch (_) { /* not ours to inspect */ }
       return x;
@@ -453,7 +640,6 @@
       Mem.prototype = RealMemory.prototype;
       Object.defineProperty(RealMemory.prototype, 'constructor', { value: Mem, writable: true, configurable: true });
       WA.Memory = Mem;
-      const RealInstance = WA.Instance;
       const Inst = function Instance(module, imports) {
         if (!new.target) throw new TypeError("Constructor WebAssembly.Instance requires 'new'");
         const inst = Reflect.construct(RealInstance, [module, imports], new.target === Inst ? RealInstance : new.target);

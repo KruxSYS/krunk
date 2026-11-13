@@ -177,6 +177,193 @@ async function run(check) {
   const wasm = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 5, 3, 1, 0, 1, 7, 7, 1, 3, 109, 101, 109, 2, 0]);
   await scope.WebAssembly.instantiate(wasm);
   check((await H.call(null, { op: 'list' })).length === 2, 'instantiate: an exported memory is found');
+  await runInstances(check);
+  await runGrow(check, false);
+  await runGrow(check, true);
+  await runGrowDuringScan(check);
+}
+
+// Instances: their exports, which listed memory an exported memory is, globals with type and value.
+async function runInstances(check) {
+  const { fixtureBytes } = require('./wasm-fixture.cjs');
+  const P = make();
+  const lone = new WebAssembly.Memory({ initial: 1 });
+  const mod = new WebAssembly.Module(new Uint8Array(fixtureBytes()));
+  const a = new WebAssembly.Instance(mod), b = new WebAssembly.Instance(mod);
+  let sv = await P.call([lone, b.exports.memory, a.exports.memory], { op: 'survey' }, [a, b, a]);
+  check(sv.memories.length === 3 && sv.instances.length === 2, 'survey: 3 memories and 2 instances (an instance found twice is one)');
+  const ia = sv.instances[0], ib = sv.instances[1];
+  const ex = (i, n) => i.exports.find((e) => e.name === n);
+  check(ex(ia, 'memory').kind === 'memory' && ex(ia, 'memory').mem === 2 && ex(ib, 'memory').mem === 1, 'an exported memory names the listed memory it is (instance 0: memory 2, instance 1: memory 1)');
+  check(!sv.instances.some((i) => i.exports.some((e) => e.mem === 0)), 'a memory no instance exports stays listed, tied to none');
+  check(JSON.stringify(ia.counts) === JSON.stringify({ function: 1, memory: 1, table: 1, global: 5, tag: 0, other: 0 }) && ia.omitted === 0, 'the exports are counted by kind (' + JSON.stringify(ia.counts) + ')');
+  check(ex(ia, 'f').kind === 'function' && ex(ia, 'f').index === 6 && ex(ia, 'tbl').kind === 'table' && ex(ia, 'tbl').length === 1, 'function and table exports, with their place in the exports');
+  check(ia.exports[ia.exports.length - 1].kind === 'function', 'functions are listed last');
+  const g = (n) => { const e = ex(ia, n); return [e.kind, e.type, e.mutable, e.value].join(' '); };
+  check(g('g_i32') === 'global i32 true 7' && g('g_i64') === 'global i64 true -5' && g('g_f32') === 'global f32 true 1.5' && g('g_f64') === 'global f64 true 2.25',
+    'mutable globals: exact type and value, i64 as a decimal string (' + [g('g_i32'), g('g_i64'), g('g_f32'), g('g_f64')].join(', ') + ')');
+  check(g('c_i32') === 'global i32 false 1024', 'an immutable global: i32, not mutable, 1024');
+  check(a.exports.g_i32.value === 7 && a.exports.g_f32.value === 1.5, 'finding the types wrote nothing');
+  sv = await P.call(null, { op: 'survey' });
+  check(sv.instances.length === 2, 'the modules the probe links for the type check are not listed as instances');
+  check((await P.call(null, { op: 'instances' })).length === 2 && (await P.call(null, { op: 'list' })).length === 3, 'instances and list give the two halves');
+
+  // Globals: read again, write.
+  a.exports.g_i32.value = 8;
+  let gl = await P.call(null, { op: 'globals', inst: 0 });
+  check(gl.length === 5 && gl[0].name === 'g_i32' && gl[0].index === 1 && gl[0].value === 8, 'globals: the current values of an instance\'s globals');
+  let w = await P.call(null, { op: 'setGlobal', inst: 0, export: 1, value: 42 });
+  check(a.exports.g_i32.value === 42 && b.exports.g_i32.value === 7 && w.value === 42 && w.type === 'i32', 'setGlobal writes a mutable i32 global of that instance only');
+  await P.call(null, { op: 'setGlobal', inst: 0, export: 1, value: '0x10' });
+  check(a.exports.g_i32.value === 16, 'a value may come as text (0x10)');
+  w = await P.call(null, { op: 'setGlobal', inst: 0, export: 2, value: '9007199254740993' });
+  check(a.exports.g_i64.value === 9007199254740993n && w.value === '9007199254740993', 'an i64 global from a decimal string, exactly');
+  w = await P.call(null, { op: 'setGlobal', inst: 0, export: 3, value: 0.1 });
+  check(w.value === Math.fround(0.1) && a.exports.g_f32.value === Math.fround(0.1), 'an f32 global reads back as the f32 it holds');
+  await P.call(null, { op: 'setGlobal', inst: 1, export: 4, value: -2.5 });
+  check(b.exports.g_f64.value === -2.5, 'an f64 global');
+  const refused = async (req) => P.call(null, req).then(() => '', (e) => e.message);
+  check(/not mutable/.test(await refused({ op: 'setGlobal', inst: 0, export: 5, value: 1 })) && a.exports.c_i32.value === 1024, 'an immutable global is not written');
+  check(/not a global/.test(await refused({ op: 'setGlobal', inst: 0, export: 0, value: 1 })) && /not a global/.test(await refused({ op: 'setGlobal', inst: 0, export: 6, value: 1 }))
+    && /not a global/.test(await refused({ op: 'setGlobal', inst: 0, export: 99, value: 1 })), 'a memory, a function or no export at that place: refused');
+  check(/whole number/.test(await refused({ op: 'setGlobal', inst: 0, export: 1, value: 1.5 })) && /out of range/.test(await refused({ op: 'setGlobal', inst: 0, export: 1, value: 4294967296 }))
+    && /whole number/.test(await refused({ op: 'setGlobal', inst: 0, export: 2, value: 'abc' })) && /not a number/.test(await refused({ op: 'setGlobal', inst: 0, export: 4, value: 'abc' })), 'values that do not fit the global\'s type are refused');
+  check(/no instance 9/.test(await refused({ op: 'globals', inst: 9 })), 'an instance that is not listed: no instance 9');
+
+  // Caps: many exports, long names.
+  const big = { exports: {} };
+  Object.setPrototypeOf(big, WebAssembly.Instance.prototype);
+  for (let i = 0; i < 2500; i++) big.exports['fn' + i] = function () {};
+  big.exports['x'.repeat(500)] = a.exports.g_i32;
+  const capped = (await P.call(null, { op: 'instances' }, [big]))[2];
+  check(capped.exports.length === 2000 && capped.omitted === 501 && capped.counts.function === 2500 && capped.exports[0].kind === 'global' && capped.exports[0].name.length === 201,
+    'at most 2000 exports are listed per instance (globals first, the rest counted), names cut to 200 characters');
+
+  // The hook: instances made after it, by the constructor and by instantiate.
+  const scope = { WebAssembly: { Memory: WebAssembly.Memory, Instance: WebAssembly.Instance, Module: WebAssembly.Module, Global: WebAssembly.Global, Table: WebAssembly.Table, Tag: WebAssembly.Tag,
+    instantiate: WebAssembly.instantiate }, Promise, Uint8Array, Uint32Array, Float64Array, Int8Array, Int16Array, Uint16Array, Int32Array, Float32Array, DataView, BigInt, BigInt64Array, BigUint64Array,
+    setTimeout, setInterval, clearInterval, performance, TextEncoder, TextDecoder, SharedArrayBuffer, WeakSet, WeakMap };
+  const H = make(scope);
+  H.hook();
+  const viaNew = new scope.WebAssembly.Instance(mod);
+  check(viaNew instanceof WebAssembly.Instance, 'hooked Instance still makes real instances');
+  await scope.WebAssembly.instantiate(new Uint8Array(fixtureBytes()));
+  await scope.WebAssembly.instantiate(mod);
+  const hs = await H.call(null, { op: 'survey' });
+  check(hs.instances.length === 3 && hs.memories.length === 3 && hs.instances.every((i, n) => i.exports.find((e) => e.kind === 'memory').mem === n),
+    'the hook finds instances from new Instance, instantiate(bytes) and instantiate(module), each with its memory');
+  check(hs.instances[0].exports.find((e) => e.name === 'g_f64').type === 'f64', 'and their globals');
+  // A second probe in a hooked scope (the host's, after a userscript's): still the engine's constructor.
+  const H2 = make(scope);
+  const h2 = await H2.call(null, { op: 'instances' }, [viaNew]);
+  check(h2[0].exports.find((e) => e.name === 'g_i64').type === 'i64' && (await H.call(null, { op: 'instances' })).length === 3, 'a second probe\'s type checks do not show up as instances of the hooked one');
+  // Where WebAssembly can't be compiled (a content security policy): what the values say.
+  const noCompile = Object.assign({}, scope, { WebAssembly: Object.assign({}, scope.WebAssembly, { Module: function () { throw new Error('blocked'); } }) });
+  const N = make(noCompile);
+  const ng = (await N.call(null, { op: 'instances' }, [a]))[0].exports;
+  check(ng.find((e) => e.name === 'g_i64').type === 'i64' && ng.find((e) => e.name === 'g_f64').type === 'number' && ng.find((e) => e.name === 'g_f64').mutable === null && ng.find((e) => e.name === 'g_f64').value === 2.25,
+    'without compiling: i64 or "number", mutability unknown, the value all the same');
+}
+
+// memory.grow: a memory the probe holds stays usable in every operation; what was found before
+// the growth stays valid; addresses past the old size become valid.
+async function runGrow(check, shared) {
+  const tag = shared ? 'grow (shared): ' : 'grow: ';
+  const P = make();
+  const mem = new WebAssembly.Memory({ initial: 1, maximum: 8, shared: shared });
+  const dv = () => new DataView(mem.buffer);
+  const OLD = 65536, FAR = OLD + 4096; // FAR is past the end until the memory grows
+  dv().setInt32(1024, 100, true);
+  dv().setInt32(2048, 100, true);
+  dv().setUint32(300, FAR, true); // a pointer to where there is no memory yet
+  await P.call([mem], { op: 'list' });
+  const refused = async (req) => P.call(null, req).then(() => '', (e) => e.message);
+  check(/past the end/.test(await refused({ op: 'read', mem: 0, addr: FAR, type: 'i32' })) && /past the end/.test(await refused({ op: 'read', mem: 0, where: { base: 300, offsets: [8] }, type: 'i32' })),
+    tag + 'before: an address past the end is refused, directly and through a pointer');
+  const s = await P.call(null, { op: 'scan', mem: 0, type: 'i32', kind: 'exact', value: 100 });
+  const u = await P.call(null, { op: 'scan', mem: 0, type: 'i32', kind: 'unknown' });
+  const fr = await P.call(null, { op: 'freeze', mem: 0, addr: 2048, type: 'i32', value: 555 });
+  const old = mem.buffer;
+
+  mem.grow(2);
+  check(mem.buffer !== old && mem.buffer.byteLength === 3 * OLD && (shared || old.byteLength === 0), tag + 'the memory has a new buffer of 3 pages' + (shared ? '' : ' (the old one is detached)'));
+  const l = await P.call(null, { op: 'list' });
+  check(l.length === 1 && l[0].pages === 3 && l[0].bytes === 3 * OLD && l[0].shared === shared, tag + 'list: the same memory number, 3 pages');
+  check((await P.call(null, { op: 'read', mem: 0, addr: 1024, type: 'i32' })).value === 100, tag + 'read: an old address holds its value');
+  await P.call(null, { op: 'write', mem: 0, addr: FAR + 8, type: 'i32', value: 4242 });
+  check(dv().getInt32(FAR + 8, true) === 4242 && (await P.call(null, { op: 'read', mem: 0, addr: FAR + 8, type: 'i32' })).value === 4242, tag + 'write and read past the old size');
+  const viaPtr = await P.call(null, { op: 'read', mem: 0, where: { base: 300, offsets: [8] }, type: 'i32' });
+  check(viaPtr.addr === FAR + 8 && viaPtr.value === 4242, tag + 'a pointer path into the new pages resolves');
+  await P.call(null, { op: 'writeBytes', mem: 0, addr: 3 * OLD - 2, bytes: [0xAB, 0xCD] });
+  const hx = await P.call(null, { op: 'bytes', mem: 0, addr: 3 * OLD - 16, length: 256 });
+  check(hx.size === 3 * OLD && hx.bytes.length === 16 && hx.bytes[14] === 0xAB && hx.bytes[15] === 0xCD, tag + 'hex window: the last bytes of the grown memory, read and written');
+  await P.call(null, { op: 'write', mem: 0, addr: 3 * OLD - 16, type: 'utf8', value: 'grown' });
+  check((await P.call(null, { op: 'read', mem: 0, addr: 3 * OLD - 16, type: 'utf8', length: 5 })).value === 'grown', tag + 'text in the new pages');
+
+  // The result list from before the growth.
+  let rows = (await P.call(null, { op: 'results', scan: s.scan })).rows;
+  check(rows.length === 2 && rows[0].addr === 1024 && rows[0].value === 100 && rows[1].addr === 2048 && rows[1].value === 555, tag + 'the result list from before shows the values of now');
+  dv().setInt32(1024, 90, true);
+  const n = await P.call(null, { op: 'next', scan: s.scan, kind: 'decreased' });
+  rows = (await P.call(null, { op: 'results', scan: s.scan })).rows;
+  check(n.count === 1 && rows[0].addr === 1024 && rows[0].value === 90 && rows[0].previous === 90, tag + 'a next scan on it compares against the values before the growth');
+  const un = await P.call(null, { op: 'next', scan: u.scan, kind: 'changed' });
+  const urows = (await P.call(null, { op: 'results', scan: u.scan })).rows.map((r) => r.addr);
+  check(un.count === 2 && urows[0] === 1024 && urows[1] === 2048, tag + 'a snapshot from before, then "changed": the two values that changed (' + urows + ')');
+
+  // Freezes: the one from before goes on in the new buffer; a new one past the old size.
+  dv().setInt32(2048, 1, true);
+  const far = await P.call(null, { op: 'freeze', mem: 0, where: { base: 300, offsets: [8] }, type: 'i32', value: 777 });
+  dv().setInt32(FAR + 8, 2, true);
+  await new Promise((ok) => setTimeout(ok, 130));
+  check(dv().getInt32(2048, true) === 555, tag + 'a freeze from before is still written back');
+  check(far.addr === FAR + 8 && dv().getInt32(FAR + 8, true) === 777, tag + 'a freeze through a pointer into the new pages');
+  mem.grow(1);
+  dv().setInt32(2048, 1, true);
+  dv().setInt32(FAR + 8, 2, true);
+  await new Promise((ok) => setTimeout(ok, 130));
+  const fz = await P.call(null, { op: 'frozen' });
+  check(dv().getInt32(2048, true) === 555 && dv().getInt32(FAR + 8, true) === 777 && fz.length === 2 && fz.every((f) => !f.error), tag + 'and both after a second growth, without errors');
+  await P.call(null, { op: 'unfreeze', freeze: fr.freeze });
+  await P.call(null, { op: 'unfreeze', freeze: far.freeze });
+
+  // Watch entries and a new scan.
+  const w = await P.call(null, { op: 'watch', entries: [{ mem: 0, addr: 1024, type: 'i32' }, { mem: 0, addr: FAR + 8, type: 'i32' }, { mem: 0, where: { base: 300, offsets: [8] }, type: 'i32' }, { mem: 0, addr: 4 * OLD, type: 'u8' }] });
+  check(w[0].value === 90 && w[1].value === 777 && w[2].addr === FAR + 8 && /past the end/.test(w[3].error), tag + 'watch: old and new addresses, and the new end');
+  const g = await P.call(null, { op: 'scan', mem: 0, type: 'i32', kind: 'exact', value: 777 });
+  check(g.count === 1 && g.scannedBytes === 4 * OLD, tag + 'a new scan covers all 4 pages');
+}
+
+// The page grows the memory while a scan has given it time (scans work in slices).
+async function runGrowDuringScan(check) {
+  for (const shared of [false, true]) {
+    const mem = new WebAssembly.Memory({ initial: 4, maximum: 16, shared: shared });
+    let yields = 0, clock = 0;
+    // A clock that makes every slice end at once, and a page that grows the memory each time it gets to run.
+    const scope = Object.assign({}, globalThis, { WebAssembly, Promise, Uint8Array, Uint32Array, Float64Array, Int8Array, Int16Array, Uint16Array, Int32Array, Float32Array, DataView, BigInt,
+      BigInt64Array, BigUint64Array, TextEncoder, TextDecoder, SharedArrayBuffer, WeakSet, WeakMap, setInterval, clearInterval, MessageChannel: undefined,
+      performance: { now: () => (clock += 100) },
+      setTimeout: (f, ms) => setTimeout(() => { yields++; if (mem.buffer.byteLength < 12 * 65536) mem.grow(1); f(); }, ms) });
+    const P = make(scope);
+    const END = 4 * 65536 - 8;
+    new DataView(mem.buffer).setInt32(END, 123456789, true);
+    new DataView(mem.buffer).setInt32(1001, 123456789, true); // not aligned
+    await P.call([mem], { op: 'list' });
+    const tag = 'grow during a scan' + (shared ? ' (shared): ' : ': ');
+    yields = 0;
+    const a = await P.call(null, { op: 'scan', mem: 0, type: 'i32', kind: 'exact', value: 123456789 });
+    const ar = (await P.call(null, { op: 'results', scan: a.scan })).rows;
+    check(yields >= 1 && a.count === 1 && ar[0].addr === END && ar[0].value === 123456789, tag + 'the aligned scan goes on in the new buffer and finds the value at the end (' + a.count + ' found, ' + yields + ' pauses)');
+    yields = 0;
+    const before = mem.buffer.byteLength;
+    const b = await P.call(null, { op: 'scan', mem: 0, type: 'i32', kind: 'exact', value: 123456789, align: 1 });
+    check(yields >= 1 && b.count === 2 && b.scannedBytes === before && mem.buffer.byteLength > before, tag + 'the byte-wise scan too, over the size it started with (' + b.count + ' found)');
+    yields = 0;
+    const u = await P.call(null, { op: 'scan', mem: 0, type: 'i32', kind: 'unknown' });
+    new DataView(mem.buffer).setInt32(END, 5, true);
+    const un = await P.call(null, { op: 'next', scan: u.scan, kind: 'changed' });
+    check(yields >= 1 && un.count === 1, tag + 'the next scan after a snapshot too (' + un.count + ' changed, ' + yields + ' pauses)');
+  }
 }
 
 module.exports = function ({ check }) {
