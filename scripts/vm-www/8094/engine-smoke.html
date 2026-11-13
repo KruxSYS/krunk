@@ -1,0 +1,16 @@
+<!doctype html><meta charset="utf-8"><title>smoke</title>
+<!-- Engine regression smoke (0.18.0): proprietary codecs and background-tab timer throttling.
+     The title is "ticks/s N <visible|hidden>": a 100 ms interval counted per second. -->
+<body style="font:16px sans-serif"><video id="v" src="test-h264-aac.mp4" muted autoplay loop width="320"></video><pre id="o"></pre><script>
+var v = document.getElementById('v'), o = document.getElementById('o'), ticks = 0, last = [];
+setInterval(function () { ticks++; }, 100);
+setInterval(function () {
+  last.push(ticks + (document.hidden ? 'h' : 'v')); if (last.length > 12) last.shift();
+  document.title = 'ticks/s ' + ticks + ' ' + (document.hidden ? 'hidden' : 'visible'); ticks = 0;
+  o.textContent = 'H.264+AAC  ' + v.canPlayType('video/mp4; codecs="avc1.42E01E, mp4a.40.2"') +
+    '\nHEVC       ' + v.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"') +
+    '\nAC-3       ' + v.canPlayType('audio/mp4; codecs="ac-3"') +
+    '\nvideo      ' + v.videoWidth + 'x' + v.videoHeight + ' currentTime ' + v.currentTime.toFixed(1) + ' error ' + (v.error ? v.error.code : 'none') +
+    '\nticks per second, newest last (v visible, h hidden): ' + last.join(' ');
+}, 1000);
+</script>

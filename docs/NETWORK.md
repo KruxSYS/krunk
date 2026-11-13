@@ -139,7 +139,7 @@ reload sends. The cache then starts a new entry for it instead of queueing (rows
 - `krunk.log` says so the first twenty times: `tab 12: a script request goes around the cache
   (another tab waits for an answer for the same address)`.
 
-### Sixteen connections per host (engine patch, not built yet)
+### Sixteen connections per host (engine patch, in the 0.18.0 engine)
 
 `scripts/cef-build/patches/chromium-sockets-per-host.patch` raises the limit from 6 to 16. It
 **only mitigates**: sixteen hung requests block a host just as six do, and a page that holds
@@ -150,8 +150,7 @@ as before; the extra ten are there for navigations, scripts, styles and fetches.
 trade-off: a few servers limit connections per client address and may refuse the eleventh;
 Firefox and Chrome both use 6. The limit through one proxy stays 128.
 
-The patch takes effect with the next engine build (`scripts/cef-build/README.md`); until then
-Krunk's engine has Chromium's six.
+The patch is in the engine since 0.18.0 (`cef.lock`).
 
 ### Seeing it: krunk://tasks and krunk.log
 
@@ -184,7 +183,8 @@ Raw output: `.pipeline/evidence-0.18.0/before/` (Krunk 0.17.0) and `after/` (0.1
 | Same address, answer after 8 s, cacheable; B 1 s later | one request, both done 8.1 | unchanged (shared on purpose) |
 | Same address, headers at once, body after 8 s, `no-store` | B at 1.0, done 9.0 | unchanged (never held up) |
 | Another address on the same host while A hangs | B at 1.0 | unchanged |
-| A's page holds six requests that never answer; B navigates to that host | B **never** at the server (watched 14 s) | unchanged until the engine build with 16 connections per host |
+| A's page holds six requests that never answer; B navigates to that host | B **never** at the server (watched 14 s) | B at **2.0** (the moment it navigates): the rebuilt engine opens 16 connections per host |
+| A's page holds **sixteen** such requests; B navigates to that host | (blocked at six already) | B never at the server (watched 14 s): the limit moved, it did not go; reloading A (which stops its 24 unanswered requests) frees the host |
 | The tab that holds the six is itself sent elsewhere on that host (address bar) | **never** at the server (watched 40 s): the tab cannot leave | the six are closed and the new address is at the server at once |
 
 What this says about the cause: DevTools shows tab B's request as sent the moment B navigates
@@ -202,6 +202,6 @@ Reload, Home, a bookmark), a tab that waits for six or more answers has its load
 for one of the connections its own page holds. `krunk.log`: `tab 1: 7 requests without an
 answer are stopped before the tab goes on`. A link clicked in the page itself is not covered.
 
-Still open on Windows: the 16-connection engine patch (needs the engine build), the
-`krunk://tasks` Pending column and the 30 s log line (unit and UI tests only), and the open
+Checked on Windows since: the 16-connection engine (rows above, `.pipeline/evidence-0.18.0/engine/`),
+the `krunk://tasks` Pending column and the 30 s log line (`after/s03`, `s04`). Still open: the
 question under "Downloads in parts".
