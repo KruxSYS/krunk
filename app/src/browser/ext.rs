@@ -1005,6 +1005,13 @@ impl Browser {
     /// Chrome, an extension's pages and background are exempt from CORS for the hosts its
     /// manifest names. Only the extension's own origin is ever the source, so its content
     /// scripts (which run in web origins) gain nothing.
+    ///
+    /// **No effect on network responses with this engine (0.17.0):** CEF 156 consults the
+    /// allow-list only for responses the application serves itself and in the renderer; the
+    /// network service's own CORS check does not see it (measured on Windows: a fetch from an
+    /// extension's background to a server without `Access-Control-Allow-Origin` still fails
+    /// with `MissingAllowOriginHeader`). The entries are kept because they are harmless and
+    /// the engine patch planned for 0.18.0 feeds exactly this list to the network service.
     fn ext_sync_cors(&self) {
         let wanted: HashMap<String, Vec<lb_core::ext_runtime::CorsGrant>> = self
             .ext
