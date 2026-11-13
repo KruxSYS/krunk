@@ -1117,7 +1117,13 @@ impl Browser {
                     return c.fail("stopped");
                 }
                 match r {
-                    Ok(v) => {
+                    Ok(mut v) => {
+                        // The tools list memories only (the instances are the inspector page's).
+                        for ctx in v.get_mut("contexts").and_then(Value::as_array_mut).into_iter().flatten() {
+                            if let Some(o) = ctx.as_object_mut() {
+                                o.remove("instances");
+                            }
+                        }
                         let summary = lb_core::wasm::agent_summary(name, &v);
                         c.ok(&v, summary)
                     }

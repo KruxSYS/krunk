@@ -4,10 +4,11 @@
 //! How the memories are reached, without touching the page's globals: per inspected tab and
 //! context the host makes one probe instance (`ui/inject/wasm-probe.js`) with
 //! `Runtime.evaluate` and keeps only its DevTools handle (object group `krunk-wasm`); the
-//! `WebAssembly.Memory` objects are found with `Runtime.queryObjects` on
-//! `WebAssembly.Memory.prototype` (on `list` and when a probe is new: the query makes the
-//! engine collect garbage, too costly for every read) and handed to the probe with
-//! `Runtime.callFunctionOn`. The probe numbers them; requests name memories by number.
+//! `WebAssembly.Memory` and `WebAssembly.Instance` objects are found with
+//! `Runtime.queryObjects` on the two prototypes (on `list` and when a probe is new: the query
+//! makes the engine collect garbage, too costly for every read) and handed to the probe with
+//! `Runtime.callFunctionOn`. The probe numbers them; requests name memories and instances by
+//! number, an instance's exported global by its place in the exports.
 //!
 //! Contexts: 0 is the page (the main frame's main world); frames of the same process have
 //! their execution context's number (`Runtime.executionContextCreated`, default worlds only);
@@ -39,7 +40,8 @@ use std::collections::HashMap;
 
 /// The probes' handles.
 const GROUP: &str = "krunk-wasm";
-/// The handles of a query (the prototype, the array of memories): released after each call.
+/// The handles of a query (the prototypes, the arrays of memories and instances): released
+/// after each call.
 const QUERY_GROUP: &str = "krunk-wasm-found";
 /// The usual DevTools time limit.
 const CALL_TIMEOUT_MS: i64 = 10_000;
@@ -277,7 +279,7 @@ impl Browser {
             let Some(target) = self.wasm_target(tab, *ctx) else { continue };
             let params = json!({
                 "objectId": probe, "functionDeclaration": wasm::CALL_FUNCTION,
-                "arguments": [{ "value": null }, { "value": reset }], "silent": true,
+                "arguments": [{ "value": null }, { "value": reset }, { "value": null }], "silent": true,
             });
             self.wasm_cdp(&view, &target, "Runtime.callFunctionOn", params, CALL_TIMEOUT_MS, |_| {});
             if let Target::Worker(s) = &target {
@@ -429,18 +431,21 @@ impl Browser {
         let weak = self.me.clone();
         let each: WasmDone = Box::new(move |r| {
             let Some(b) = weak.upgrade() else { return done(Err("Krunk is closing".into())) };
-            let mut row = json!({ "ctx": ctx, "kind": kind, "url": url });
+            let mut row = json!({ "ctx": ctx, "kind": kind, "url": url, "memories": [], "instances": [] });
             match r {
-                Ok(v) => row["memories"] = v,
-                Err(e) => {
-                    row["memories"] = json!([]);
-                    row["error"] = json!(e);
+                Ok(mut v) => {
+                    for key in ["memories", "instances"] {
+                        if v[key].is_array() {
+                            row[key] = v[key].take();
+                        }
+                    }
                 }
+                Err(e) => row["error"] = json!(e),
             }
             out.push(row);
             b.wasm_list_next(tab, left, out, done);
         });
-        let req = json!({ "op": "list" });
+        let req = wasm::survey_request();
         self.wasm_run(Job { tab, ctx, target, req, query: true, timeout: CALL_TIMEOUT_MS, retried: false, done: each });
     }
 
@@ -450,7 +455,7 @@ impl Browser {
         match probe {
             None => self.wasm_make_probe(&view, job),
             Some(probe) if job.query => self.wasm_query(&view, probe, job),
-            Some(probe) => self.wasm_invoke(&view, probe, None, job),
+            Some(probe) => self.wasm_invoke(&view, probe, [None, None], job),
         }
     }
 
@@ -483,44 +488,59 @@ impl Browser {
         });
     }
 
-    /// Finds the context's `WebAssembly.Memory` objects and hands them to the probe with the
-    /// request.
+    /// Finds the context's `WebAssembly.Memory` and `WebAssembly.Instance` objects and hands
+    /// them to the probe with the request.
     fn wasm_query(&self, view: &View, probe: String, job: Job) {
-        let params = json!({
-            "expression": "WebAssembly.Memory.prototype",
-            "objectGroup": QUERY_GROUP, "returnByValue": false, "silent": true,
-        });
         let weak = self.me.clone();
-        let target = job.target.clone();
-        self.wasm_cdp(view, &target, "Runtime.evaluate", params, CALL_TIMEOUT_MS, move |r| {
+        let (tab, target) = (job.tab, job.target.clone());
+        self.wasm_find(view, tab, target.clone(), wasm::MEMORY_PROTOTYPE, move |memories| {
             let Some(b) = weak.upgrade() else { return job.fail("Krunk is closing") };
-            let Some(view) = b.tab_view(job.tab) else { return job.fail("The tab is gone.") };
-            let proto = match object_id(r) {
-                Ok(id) => id,
-                // A context without WebAssembly (or one that is gone: the call says so).
-                Err(_) => return b.wasm_invoke(&view, probe, None, job),
-            };
-            let params = json!({ "prototypeObjectId": proto, "objectGroup": QUERY_GROUP });
+            let Some(view) = b.tab_view(tab) else { return job.fail("The tab is gone.") };
             let weak = b.me.clone();
-            let target = job.target.clone();
-            b.wasm_cdp(&view, &target, "Runtime.queryObjects", params, CALL_TIMEOUT_MS, move |r| {
+            b.wasm_find(&view, tab, target, wasm::INSTANCE_PROTOTYPE, move |instances| {
                 let Some(b) = weak.upgrade() else { return job.fail("Krunk is closing") };
-                let Some(view) = b.tab_view(job.tab) else { return job.fail("The tab is gone.") };
-                let found =
-                    r.ok().and_then(|v| v.pointer("/objects/objectId").and_then(Value::as_str).map(str::to_string));
-                b.wasm_invoke(&view, probe, found, job);
+                let Some(view) = b.tab_view(tab) else { return job.fail("The tab is gone.") };
+                b.wasm_invoke(&view, probe, [memories, instances], job);
             });
         });
     }
 
-    fn wasm_invoke(&self, view: &View, probe: String, found: Option<String>, job: Job) {
-        let first = match &found {
+    /// The handle of the array of a context's objects with the prototype `prototype` evaluates
+    /// to. None: a context without WebAssembly, or one that is gone (the probe's call says so).
+    fn wasm_find(
+        &self,
+        view: &View,
+        tab: TabId,
+        target: Target,
+        prototype: &'static str,
+        done: impl FnOnce(Option<String>) + 'static,
+    ) {
+        let params = json!({
+            "expression": prototype,
+            "objectGroup": QUERY_GROUP, "returnByValue": false, "silent": true,
+        });
+        let weak = self.me.clone();
+        let query_target = target.clone();
+        self.wasm_cdp(view, &target, "Runtime.evaluate", params, CALL_TIMEOUT_MS, move |r| {
+            let (Some(b), Ok(proto)) = (weak.upgrade(), object_id(r)) else { return done(None) };
+            let Some(view) = b.tab_view(tab) else { return done(None) };
+            let params = json!({ "prototypeObjectId": proto, "objectGroup": QUERY_GROUP });
+            b.wasm_cdp(&view, &query_target, "Runtime.queryObjects", params, CALL_TIMEOUT_MS, move |r| {
+                done(r.ok().and_then(|v| v.pointer("/objects/objectId").and_then(Value::as_str).map(str::to_string)));
+            });
+        });
+    }
+
+    /// Calls the probe with the request; `found`: the arrays of memories and of instances a
+    /// query just gave.
+    fn wasm_invoke(&self, view: &View, probe: String, found: [Option<String>; 2], job: Job) {
+        let arg = |id: &Option<String>| match id {
             Some(id) => json!({ "objectId": id }),
             None => json!({ "value": null }),
         };
         let params = json!({
             "objectId": probe, "functionDeclaration": wasm::CALL_FUNCTION,
-            "arguments": [first, { "value": job.req }],
+            "arguments": [arg(&found[0]), { "value": job.req }, arg(&found[1])],
             "returnByValue": true, "awaitPromise": true, "silent": true,
         });
         let weak = self.me.clone();

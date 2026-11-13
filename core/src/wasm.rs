@@ -13,6 +13,15 @@ pub const MAX_PAGE: u32 = 1000;
 pub const MAX_FREEZES: u32 = 256;
 pub const MAX_WATCH: usize = 256;
 pub const MAX_POINTER_DEPTH: usize = 8;
+/// Instances kept per context, exports listed per instance, characters of an export's name
+/// (the same numbers as `maxInstances`, `maxExports`, `maxNameChars` in wasm-probe.js).
+pub const MAX_INSTANCES: u32 = 256;
+pub const MAX_EXPORTS: u32 = 2000;
+pub const MAX_NAME_CHARS: usize = 200;
+/// An export's place in its instance's exports is below this (the engine's own limit).
+pub const MAX_EXPORT_INDEX: u32 = 1_000_000;
+/// Text of a global's new value (a number, decimal or 0x…).
+pub const MAX_GLOBAL_VALUE_CHARS: usize = 64;
 /// Text of a value (numbers, 64-bit integers as decimal, strings for utf8/utf16).
 pub const MAX_VALUE_CHARS: usize = 64 * 1024;
 
@@ -110,8 +119,23 @@ pub struct WatchEntry {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase", deny_unknown_fields)]
 pub enum WasmReq {
-    /// The memories found (number, size, shared or not).
+    /// The memories found (number, size, shared or not). The host answers with every context's
+    /// memories and instances.
     List {},
+    /// The instances the context's probe knows (no new search): their exports by name, kind and
+    /// place; which listed memory an exported memory is; exported globals with type and value.
+    Instances {},
+    /// The exported globals of instance `inst`, with their values now.
+    Globals {
+        inst: u32,
+    },
+    /// Writes a mutable exported global: `export` is its place in the instance's exports (as
+    /// listed; never a name). The probe checks the value against the global's type.
+    SetGlobal {
+        inst: u32,
+        export: u32,
+        value: serde_json::Value,
+    },
     Read {
         mem: u32,
         #[serde(rename = "where")]
@@ -257,6 +281,37 @@ fn check_value(ty: ValueType, v: &serde_json::Value) -> Result<(), String> {
     }
 }
 
+/// A global's new value: a number, or its text (decimal, a 64-bit integer, 0x…). The global's
+/// type is known next to it only: the probe refuses what does not fit.
+fn check_global_value(v: &serde_json::Value) -> Result<(), String> {
+    use serde_json::Value as V;
+    match v {
+        V::Number(n) if n.as_f64().is_some_and(f64::is_finite) => Ok(()),
+        V::String(s) if s.chars().count() <= MAX_GLOBAL_VALUE_CHARS => {
+            let t = s.trim();
+            let hex = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X"));
+            let ok = match hex {
+                Some(h) => !h.is_empty() && h.len() <= 16 && h.bytes().all(|b| b.is_ascii_hexdigit()),
+                None => t.parse::<i64>().is_ok() || t.parse::<u64>().is_ok() || t.parse::<f64>().is_ok(),
+            };
+            if ok {
+                Ok(())
+            } else {
+                Err(format!("not a number: {t}"))
+            }
+        }
+        _ => Err("the value must be a number".into()),
+    }
+}
+
+fn check_instance(inst: u32) -> Result<(), String> {
+    if inst < MAX_INSTANCES {
+        Ok(())
+    } else {
+        Err(format!("no instance {inst} (at most {MAX_INSTANCES} are kept)"))
+    }
+}
+
 fn check_where(w: &Where) -> Result<(), String> {
     match w {
         Where::Addr(_) => Ok(()),
@@ -283,6 +338,14 @@ impl WasmReq {
 
     pub fn check(&self) -> Result<(), String> {
         match self {
+            WasmReq::Globals { inst } => check_instance(*inst),
+            WasmReq::SetGlobal { inst, export, value } => {
+                check_instance(*inst)?;
+                if *export >= MAX_EXPORT_INDEX {
+                    return Err("no such export".into());
+                }
+                check_global_value(value)
+            }
             WasmReq::Read { at, ty, length, .. } => {
                 check_where(at)?;
                 check_length(*ty, *length)
@@ -354,15 +417,28 @@ impl WasmReq {
         serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
     }
 
-    /// The request changes memory (the agent's step log says so).
+    /// The request changes memory or a global (the agent's step log says so).
     pub fn writes(&self) -> bool {
-        matches!(self, WasmReq::Write { .. } | WasmReq::WriteBytes { .. } | WasmReq::Freeze { .. })
+        matches!(
+            self,
+            WasmReq::Write { .. } | WasmReq::WriteBytes { .. } | WasmReq::Freeze { .. } | WasmReq::SetGlobal { .. }
+        )
     }
 }
 
-/// The DevTools function the host calls on its probe instance (`this`) with the memories
-/// found by `Runtime.queryObjects` and a request.
-pub const CALL_FUNCTION: &str = "function (found, req) { return this.call(found, req); }";
+/// The DevTools function the host calls on its probe instance (`this`) with the memories and
+/// the instances found by `Runtime.queryObjects` (two arrays, or null) and a request.
+pub const CALL_FUNCTION: &str = "function (found, req, more) { return this.call(found, req, more); }";
+
+/// The expressions whose objects the host looks for in a context (`Runtime.queryObjects` takes
+/// a prototype): the memories, then the instances.
+pub const MEMORY_PROTOTYPE: &str = "WebAssembly.Memory.prototype";
+pub const INSTANCE_PROTOTYPE: &str = "WebAssembly.Instance.prototype";
+
+/// What the host asks a context's probe for `list`: `{memories, instances}`.
+pub fn survey_request() -> serde_json::Value {
+    serde_json::json!({ "op": "survey" })
+}
 
 /// Context numbers: 0 is the page itself, a same-process frame has its DevTools execution
 /// context's number, a dedicated worker `WORKER_CTX_BASE` plus the order it was attached in.
@@ -650,6 +726,71 @@ mod tests {
         assert_eq!(agent_summary("wasm_scan", &json!({"scan": 1, "count": 1})), "The scan found 1 address");
         let found = json!({"contexts": [{"memories": [{}, {}]}, {"memories": []}]});
         assert_eq!(agent_summary("wasm_memories", &found), "Found 2 WebAssembly memories");
+    }
+
+    #[test]
+    fn instance_requests_round_trip_and_are_checked() {
+        assert_eq!(p(json!({"op": "instances"})).unwrap(), WasmReq::Instances {});
+        assert_eq!(p(json!({"op": "instances"})).unwrap().to_json(), json!({"op": "instances"}));
+        let g = p(json!({"op": "globals", "inst": 3})).unwrap();
+        assert_eq!(g, WasmReq::Globals { inst: 3 });
+        assert_eq!(g.to_json(), json!({"op": "globals", "inst": 3}));
+        assert!(!g.writes() && !g.is_scan());
+        let s = p(json!({"op": "setGlobal", "inst": 1, "export": 4, "value": 42})).unwrap();
+        assert_eq!(s.to_json(), json!({"op": "setGlobal", "inst": 1, "export": 4, "value": 42}));
+        assert!(s.writes() && !s.is_scan());
+        for value in [json!(-1), json!(2.5), json!("42"), json!(" -9223372036854775808 "), json!("18446744073709551615")] {
+            assert!(p(json!({"op": "setGlobal", "inst": 0, "export": 0, "value": value})).is_ok(), "{value}");
+        }
+        for value in [json!("0x10"), json!("0XFFFFFFFFFFFFFFFF"), json!("1e3"), json!("NaN"), json!("-Infinity")] {
+            assert!(p(json!({"op": "setGlobal", "inst": 0, "export": 0, "value": value})).is_ok(), "{value}");
+        }
+        for bad in [
+            json!({"op": "instances", "inst": 0}),
+            json!({"op": "globals"}),
+            json!({"op": "globals", "inst": -1}),
+            json!({"op": "globals", "inst": MAX_INSTANCES}),
+            json!({"op": "globals", "inst": 0, "name": "g"}),
+            json!({"op": "setGlobal", "inst": 0, "export": 0}),
+            json!({"op": "setGlobal", "inst": 0, "value": 1}),
+            json!({"op": "setGlobal", "inst": 0, "export": "g_i32", "value": 1}),
+            json!({"op": "setGlobal", "inst": 0, "name": "g_i32", "value": 1}),
+            json!({"op": "setGlobal", "inst": MAX_INSTANCES, "export": 0, "value": 1}),
+            json!({"op": "setGlobal", "inst": 0, "export": MAX_EXPORT_INDEX, "value": 1}),
+            json!({"op": "setGlobal", "inst": 0, "export": 0, "value": "abc"}),
+            json!({"op": "setGlobal", "inst": 0, "export": 0, "value": "0x"}),
+            json!({"op": "setGlobal", "inst": 0, "export": 0, "value": "0x10000000000000000"}),
+            json!({"op": "setGlobal", "inst": 0, "export": 0, "value": ""}),
+            json!({"op": "setGlobal", "inst": 0, "export": 0, "value": "1".repeat(MAX_GLOBAL_VALUE_CHARS + 1)}),
+            json!({"op": "setGlobal", "inst": 0, "export": 0, "value": [1]}),
+            json!({"op": "setGlobal", "inst": 0, "export": 0, "value": null}),
+            json!({"op": "setGlobal", "inst": 0, "export": 0, "value": true}),
+            json!({"op": "survey"}),
+        ] {
+            assert!(p(bad.clone()).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_probe_has_the_same_limits_and_takes_what_the_host_sends() {
+        let probe = crate::assets::inject_script("wasm-probe.js");
+        for (name, n) in [
+            ("maxInstances", u64::from(MAX_INSTANCES)),
+            ("maxExports", u64::from(MAX_EXPORTS)),
+            ("maxNameChars", MAX_NAME_CHARS as u64),
+            ("maxPointerDepth", MAX_POINTER_DEPTH as u64),
+            ("maxFreezes", u64::from(MAX_FREEZES)),
+            ("maxWatch", MAX_WATCH as u64),
+            ("maxPage", u64::from(MAX_PAGE)),
+        ] {
+            assert!(probe.contains(&format!("{name}: {n},")), "{name} is {n} in wasm-probe.js");
+        }
+        assert!(probe.contains("function call(found, req, more)") && CALL_FUNCTION.contains("this.call(found, req, more)"));
+        assert_eq!(survey_request(), json!({"op": "survey"}));
+        for op in ["survey", "instances", "globals", "setGlobal"] {
+            assert!(probe.contains(&format!("case '{op}':")), "the probe knows {op}");
+        }
+        assert!(MEMORY_PROTOTYPE.ends_with("Memory.prototype") && INSTANCE_PROTOTYPE.ends_with("Instance.prototype"));
     }
 
     #[test]
