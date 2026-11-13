@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 /// Maximum size of a privileged message (settings JSON is the largest).
 pub const MAX_REQUEST_BYTES: usize = 256 * 1024;
 /// Requests from extension pages (0.6.0) may be larger: `chrome.storage` values.
-pub const MAX_EXT_REQUEST_BYTES: usize = 8 * 1024 * 1024;
+pub const MAX_EXT_REQUEST_BYTES: usize = 64 * 1024 * 1024;
 /// Maximum size of a message from web content.
 pub const MAX_CONTENT_BYTES: usize = 64 * 1024;
 /// Class/id tokens a page may report for generic cosmetic filtering.

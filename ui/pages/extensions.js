@@ -31,6 +31,9 @@
   // actions below.
   function render() {
     const box = $('list');
+    // Details the user opened stay open when the list is drawn again (0.17.0: it is, whenever
+    // an extension reports an error).
+    const open = Array.prototype.map.call(box.querySelectorAll('.ext details.more[open]'), (d) => d.closest('.ext').getAttribute('data-id'));
     box.textContent = '';
     $('empty').hidden = list.length > 0;
     list.forEach(function (x) {
@@ -40,6 +43,9 @@
         : el('p', { class: 'reach none', text: 'Does not read or change web pages' });
       const unsupported = x.apis.filter((a) => !a.supported).concat(x.runtimeUnsupported.map((a) => ({ api: a, supported: false, reason: 'reached for at runtime; not provided' })));
       const supported = x.apis.filter((a) => a.supported);
+      // 0.17.0: what went wrong in the extension's own contexts since Krunk started (uncaught
+      // errors, rejected promises, console.error), newest first.
+      const errors = (x.errors || []).slice().reverse();
       const sw = el('label', { class: 'switch', title: x.enabled ? 'Turn off' : 'Turn on' }, [
         el('input', { type: 'checkbox', role: 'switch', 'data-key': 'enabled', 'data-id': x.id, 'aria-label': (x.enabled ? 'Turn off ' : 'Turn on ') + x.name, checked: x.enabled ? true : null, onchange: (e) => {
           LB.request('extSet', { id: x.id, enabled: e.target.checked }).then(update, (err) => showError(err.message));
@@ -52,19 +58,26 @@
         } }),
         'Allow in private tabs',
       ]);
-      const details = el('details', { class: 'more', open: x.id === target ? true : null }, [
+      const details = el('details', { class: 'more', open: (x.id === target || open.indexOf(x.id) >= 0) ? true : null }, [
         el('summary', { text: 'Details' }),
         el('dl', {}, [
           el('dt', { text: 'Reaches' }), el('dd', {}, x.scope.length ? x.scope.map((s) => el('span', { class: 'tag' + (s.allSites ? ' warn' : ''), text: s.text, title: s.pattern })) : ['No web pages']),
           el('dt', { text: 'Parts' }), el('dd', {}, [
             el('span', { class: 'tag' + (x.contentScripts ? '' : ' off'), text: x.contentScripts ? x.contentScripts + ' content script' + (x.contentScripts > 1 ? 's' : '') : 'no content scripts' }),
-            el('span', { class: 'tag' + (x.hasBackground ? '' : ' off'), text: x.hasBackground ? 'background page' : 'no background' }),
+            el('span', { class: 'tag' + (x.hasBackground ? '' : ' off'), text: x.hasBackground ? 'background worker' : 'no background' }),
             el('span', { class: 'tag' + (x.hasPopup ? '' : ' off'), text: x.hasPopup ? 'toolbar popup' : 'no popup' }),
             (x.dnrTranslated || x.dnrSkipped) ? el('span', { class: 'tag', text: x.dnrTranslated + ' network rule' + (x.dnrTranslated === 1 ? '' : 's') + (x.dnrSkipped ? ' (' + x.dnrSkipped + ' not translated)' : '') }) : null,
           ]),
           el('dt', { text: 'Uses' }), el('dd', { text: supported.length ? supported.map((a) => 'chrome.' + a.api).join(', ') : 'No chrome.* APIs' }),
           unsupported.length ? el('dt', { class: 'warn', text: 'Not in Krunk' }) : null,
           unsupported.length ? el('dd', { class: 'unsupported' }, [el('ul', {}, unsupported.map((a) => el('li', {}, [el('code', { text: 'chrome.' + a.api }), a.reason ? ' — ' + a.reason.replace(/^not provided: /, '') : ''])))]) : null,
+          errors.length ? el('dt', { class: 'err', text: 'Errors' }) : null,
+          errors.length ? el('dd', { class: 'errors' }, [el('ul', {}, errors.map((e) => el('li', {}, [
+            el('span', { class: 'tag', text: e.context }),
+            el('code', { text: e.message }),
+            e.source ? el('span', { class: 'where', text: e.source }) : null,
+            e.count > 1 ? el('span', { class: 'times', text: '×' + e.count }) : null,
+          ])))]) : null,
           el('dt', { text: 'Source' }), el('dd', { text: sourceText(x.source) }),
           el('dt', { text: 'Id' }), el('dd', { class: 'mono', text: x.id }),
           el('dt', { text: 'Permissions' }), el('dd', { text: x.permissions.length ? x.permissions.join(', ') : 'none' }),
@@ -79,6 +92,7 @@
         x.description ? el('p', { class: 'desc', text: x.description }) : null,
         reach,
         unsupported.length ? el('p', { class: 'partial-note', text: 'Some of what it uses is not in Krunk (' + unsupported.length + '): see Details.' }) : null,
+        errors.length ? el('p', { class: 'error-note', text: errors.length === 1 ? 'It reported an error: see Details.' : 'It reported ' + errors.length + ' errors: see Details.' }) : null,
         details,
         el('div', { class: 'foot' }, [
           priv,

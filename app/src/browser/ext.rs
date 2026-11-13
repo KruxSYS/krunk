@@ -31,6 +31,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+mod runtime;
+use runtime::{End, ExtWindow, HiddenPage};
+
 /// Largest file served from a package.
 const MAX_FILE_BYTES: u64 = 32 * 1024 * 1024;
 /// The Web Store download limit and timeout.
@@ -38,6 +41,9 @@ const MAX_CRX_BYTES: usize = ext::MAX_PACKAGE_BYTES;
 const CRX_TIMEOUT_MS: i32 = 60_000;
 /// A message to a receiver that never answers is dropped after this.
 const MESSAGE_TIMEOUT_MS: i64 = 30_000;
+/// A background worker that has not run its script after this long gets its queued events
+/// anyway (0.17.0; a large service worker imports many files).
+const BACKGROUND_START_MS: i64 = 60_000;
 /// The action popup's size until the page reports its own, and its bounds.
 const POPUP_DEFAULT: (f64, f64) = (360.0, 240.0);
 const POPUP_MAX: (f64, f64) = (800.0, 600.0);
@@ -58,6 +64,9 @@ pub(super) struct LoadedExt {
     pub badge_color: String,
     /// APIs the extension reached for at runtime that Krunk does not provide.
     pub runtime_unsupported: Vec<String>,
+    /// Installed or updated in this run and not started since: its service worker gets the
+    /// `install` and `activate` events once (0.17.0).
+    pub fresh: bool,
 }
 
 impl LoadedExt {
@@ -103,18 +112,31 @@ struct ExtContext {
     unique: String,
     main: bool,
     ext: String,
+    /// The frame's origin as the engine reports it.
+    origin: String,
 }
 
 /// Content-script bundles: (extension id, script).
-type Bundles = Vec<(String, String)>;
+/// `main`: for the page's own world (`world: "MAIN"`), without an API.
+type Bundles = Vec<(String, String, bool)>;
 
 /// Who asked, so the answer finds its way back.
 #[derive(Clone)]
 enum Caller {
     /// A content script: the tab, the world's context and the script's request id.
     Content { tab: TabId, context: i64, req: u64 },
-    /// An extension page in a view (background, popup) or a tab (options).
-    Page { view: View, req: Option<u32> },
+    /// An extension page in a view (background, popup, offscreen document, window) or a tab.
+    Page { view: View, req: Option<u32>, end: End },
+}
+
+impl Caller {
+    /// Which of the extension's contexts this is.
+    fn end(&self) -> End {
+        match self {
+            Caller::Content { tab, context, .. } => End::Content { tab: *tab, context: *context },
+            Caller::Page { end, .. } => end.clone(),
+        }
+    }
 }
 
 /// The action popup window.
@@ -122,6 +144,7 @@ struct ExtPopup {
     window: Window,
     view: View,
     ext: String,
+    url: String,
     anchor: ScreenRect,
     scale: f64,
     /// Shown once the page has loaded (a browser created inside an already active window
@@ -146,13 +169,29 @@ pub(super) struct ExtHost {
     storage: RefCell<HashMap<String, serde_json::Map<String, Value>>>,
     backgrounds: RefCell<HashMap<String, Background>>,
     popup: RefCell<Option<ExtPopup>>,
-    /// Messages waiting for `respond`, with the extension that may answer them.
-    pending: RefCell<HashMap<u64, (String, Caller)>>,
+    /// Messages waiting for `respond`, with the extension that may answer them and how many
+    /// receivers have not answered yet.
+    pending: RefCell<HashMap<u64, (String, Caller, lb_core::ext_runtime::Broadcast)>>,
     next_id: Cell<u64>,
     /// Alarm generations (a cleared alarm's timer finds a newer generation and stops).
     alarms: RefCell<HashMap<String, (u64, Value)>>,
-    /// The extension id of the page whose request is being dispatched.
+    /// The extension id of the page whose request is being dispatched, that page's address,
+    /// and which of the extension's own views it came through (`None`: a tab).
     pub(super) request_origin: RefCell<Option<String>>,
+    pub(super) request_url: RefCell<Option<String>>,
+    request_from: RefCell<Option<End>>,
+    /// Open ports (0.17.0).
+    ports: RefCell<lb_core::ext_runtime::PortTable<End>>,
+    /// Offscreen documents, by extension.
+    offscreen: RefCell<HashMap<String, HiddenPage>>,
+    /// The extensions' own windows, by `chrome.windows` id.
+    windows: RefCell<HashMap<u32, ExtWindow>>,
+    next_window: Cell<u32>,
+    /// Content scripts registered at runtime, by extension: (script id, script).
+    registered: RefCell<HashMap<String, Vec<(String, ext::ContentScript)>>>,
+    /// Errors of the extensions' contexts, by extension (in memory).
+    errors: RefCell<HashMap<String, Vec<lb_core::ext_runtime::ExtError>>>,
+    errors_dirty: Cell<bool>,
     /// Per tab: the identifiers of the installed bundle scripts, and the extensions whose
     /// bindings are added.
     scripts: RefCell<HashMap<TabId, Vec<String>>>,
@@ -200,6 +239,15 @@ impl ExtHost {
             next_id: Cell::new(1),
             alarms: RefCell::new(HashMap::new()),
             request_origin: RefCell::new(None),
+            request_url: RefCell::new(None),
+            request_from: RefCell::new(None),
+            ports: RefCell::new(Default::default()),
+            offscreen: RefCell::new(HashMap::new()),
+            windows: RefCell::new(HashMap::new()),
+            next_window: Cell::new(runtime::FIRST_EXT_WINDOW),
+            registered: RefCell::new(HashMap::new()),
+            errors: RefCell::new(HashMap::new()),
+            errors_dirty: Cell::new(false),
             pending_install: RefCell::new(None),
             popup_closed: RefCell::new((String::new(), 0)),
             scripts: RefCell::new(HashMap::new()),
@@ -273,6 +321,7 @@ fn normalize_entries(mut files: Vec<(String, Vec<u8>)>) -> Vec<(String, Vec<u8>)
 
 /// The DevTools events `ext_devtools_event` handles.
 const DEVTOOLS_EVENTS: &[&str] = &[
+    "Runtime.exceptionThrown",
     "Target.attachedToTarget",
     "Runtime.executionContextCreated",
     "Runtime.executionContextDestroyed",
@@ -338,6 +387,7 @@ impl Browser {
             badge: String::new(),
             badge_color: String::new(),
             runtime_unsupported: Vec::new(),
+            fresh: false,
         })
     }
 
@@ -430,43 +480,62 @@ impl Browser {
         }
     }
 
-    fn ext_rebuild_bundles(&self) {
+    pub(super) fn ext_rebuild_bundles(&self) {
         let shim = assets::inject_script("ext-content.js");
         // One bundle per extension, for its own world (0.11.7, audit C4). An extension with
         // the `scripting` permission gets a world even without content scripts, for
-        // `scripting.executeScript` (it used to borrow the shared world).
+        // `scripting.executeScript` (it used to borrow the shared world). 0.17.0: scripts
+        // registered at runtime count like the manifest's, and `world: "MAIN"` scripts get a
+        // second bundle for the page's own world.
         let build = |private: bool| -> Bundles {
             let exts = self.ext.exts.borrow();
-            exts.iter()
-                .filter(|e| e.installed.enabled && (!private || e.installed.allowed_in_private))
-                .filter(|e| !e.manifest.content_scripts.is_empty() || ext::may_use_scripting(&e.manifest))
-                .map(|e| ext::BundledExtension {
-                    id: e.installed.id.clone(),
-                    manifest_json: serde_json::to_string(&e.manifest).unwrap_or_else(|_| "{}".into()),
-                    messages_json: e.messages_json.clone(),
-                    scripts: e
-                        .manifest
-                        .content_scripts
-                        .iter()
-                        .filter(|cs| cs.world.as_deref() != Some("MAIN"))
-                        .map(|cs| ext::BundledScript {
-                            id: e.installed.id.clone(),
-                            matches: cs.matches.clone(),
-                            exclude_matches: cs.exclude_matches.clone(),
-                            all_frames: cs.all_frames,
-                            run_at: cs.run_at.clone().unwrap_or_else(|| "document_idle".into()),
-                            js: cs
-                                .js
-                                .iter()
-                                .filter_map(|f| std::fs::read_to_string(ext::file_path(&e.root, f)).ok())
-                                .map(|src| format!("{src}\n//# sourceURL={}/{}", ext::origin(&e.installed.id), "cs"))
-                                .collect(),
-                            css: cs.css.clone(),
-                        })
-                        .collect(),
-                })
-                .map(|b| (b.id.clone(), ext::content_bundle(shim, std::slice::from_ref(&b))))
-                .collect()
+            let mut out = Bundles::new();
+            for e in exts.iter().filter(|e| e.installed.enabled && (!private || e.installed.allowed_in_private)) {
+                let scripts = self.ext_content_scripts(e);
+                let id = &e.installed.id;
+                let read = |f: &String| {
+                    std::fs::read_to_string(ext::file_path(&e.root, f))
+                        .ok()
+                        .map(|src| format!("{src}\n//# sourceURL={}/{}", ext::origin(id), f.trim_start_matches('/')))
+                };
+                let is_main = |cs: &ext::ContentScript| cs.world.as_deref() == Some("MAIN");
+                if scripts.iter().any(|cs| !is_main(cs)) || ext::may_use_scripting(&e.manifest) {
+                    let bundled = ext::BundledExtension {
+                        id: id.clone(),
+                        manifest_json: serde_json::to_string(&e.manifest).unwrap_or_else(|_| "{}".into()),
+                        messages_json: e.messages_json.clone(),
+                        scripts: scripts
+                            .iter()
+                            .filter(|cs| !is_main(cs))
+                            .map(|cs| ext::BundledScript {
+                                id: id.clone(),
+                                matches: cs.matches.clone(),
+                                exclude_matches: cs.exclude_matches.clone(),
+                                all_frames: cs.all_frames,
+                                run_at: cs.run_at.clone().unwrap_or_else(|| "document_idle".into()),
+                                js: cs.js.iter().filter_map(read).collect(),
+                                css: cs.css.clone(),
+                            })
+                            .collect(),
+                    };
+                    out.push((id.clone(), ext::content_bundle(shim, std::slice::from_ref(&bundled)), false));
+                }
+                let main: Vec<lb_core::ext_runtime::MainScript> = scripts
+                    .iter()
+                    .filter(|cs| is_main(cs) && !cs.js.is_empty())
+                    .map(|cs| lb_core::ext_runtime::MainScript {
+                        matches: cs.matches.clone(),
+                        exclude_matches: cs.exclude_matches.clone(),
+                        all_frames: cs.all_frames,
+                        run_at: cs.run_at.clone().unwrap_or_else(|| "document_idle".into()),
+                        js: cs.js.iter().filter_map(read).collect(),
+                    })
+                    .collect();
+                if !main.is_empty() {
+                    out.push((id.clone(), lb_core::ext_runtime::main_bundle(id, &main), true));
+                }
+            }
+            out
         };
         let bundles = (build(false), build(true));
         let same = *self.ext.bundles.borrow() == bundles;
@@ -495,7 +564,8 @@ impl Browser {
             view.devtools_method("Page.removeScriptToEvaluateOnNewDocument", &json!({ "identifier": old }));
         }
         // Bindings of extensions that have no bundle here any more.
-        let wanted: std::collections::HashSet<String> = bundles.iter().map(|(id, _)| id.clone()).collect();
+        let wanted: std::collections::HashSet<String> =
+            bundles.iter().filter(|(_, _, main)| !main).map(|(id, _, _)| id.clone()).collect();
         if let Some(bound) = self.ext.bindings.borrow_mut().get_mut(&tab) {
             for id in bound.iter().filter(|id| !wanted.contains(*id)) {
                 view.devtools_method("Runtime.removeBinding", &json!({ "name": ext::binding_name(id) }));
@@ -517,16 +587,21 @@ impl Browser {
         // The Page domain (the scripts added below run on new documents only while it is on)
         // and the Runtime domain (contexts, binding calls).
         self.cdp_use(tab, view, super::cdp::CdpUser::Ext);
-        for (id, bundle) in bundles {
+        for (id, bundle, main) in bundles {
             let world = ext::world_name(&id);
-            if self.ext.bindings.borrow_mut().entry(tab).or_default().insert(id.clone()) {
+            if !main && self.ext.bindings.borrow_mut().entry(tab).or_default().insert(id.clone()) {
                 view.devtools_method(
                     "Runtime.addBinding",
                     &json!({ "name": ext::binding_name(&id), "executionContextName": world }),
                 );
             }
             let weak = self.me.clone();
-            let params = json!({ "source": bundle, "worldName": world, "runImmediately": true });
+            // The page's own world for `world: "MAIN"` scripts: no world name, no binding.
+            let params = if main {
+                json!({ "source": bundle, "runImmediately": true })
+            } else {
+                json!({ "source": bundle, "worldName": world, "runImmediately": true })
+            };
             view.devtools_call("Page.addScriptToEvaluateOnNewDocument", &params, move |r| {
                 let Some(b) = weak.upgrade() else { return };
                 match r {
@@ -561,6 +636,7 @@ impl Browser {
     }
 
     pub(super) fn ext_detach_tab(&self, tab: TabId) {
+        self.ext_context_gone(|e| matches!(e, End::Tab(t) | End::Content { tab: t, .. } if *t == tab));
         self.ext.scripts.borrow_mut().remove(&tab);
         self.ext.bindings.borrow_mut().remove(&tab);
         self.ext.contexts.borrow_mut().remove(&tab);
@@ -571,6 +647,7 @@ impl Browser {
         match method {
             // A worker or frame paused for "Send client hints" off (0.7.0, `hints`).
             "Target.attachedToTarget" => self.hints_target_attached(tab, params),
+            "Runtime.exceptionThrown" => self.ext_content_exception(tab, params),
             "Runtime.executionContextCreated" => {
                 let Some(ctx) = params.get("context") else { return };
                 let Some(ext_id) = ctx.get("name").and_then(|n| n.as_str()).and_then(ext::ext_of_world) else {
@@ -592,6 +669,7 @@ impl Browser {
                     unique,
                     main: false,
                     ext: ext_id,
+                    origin: origin.to_string(),
                 });
                 // Which frame: the main one gets tabs.sendMessage.
                 if let Some(view) = self.tab_view(tab) {
@@ -611,13 +689,26 @@ impl Browser {
             "Runtime.executionContextDestroyed" => {
                 let id = params.get("executionContextId").and_then(|i| i.as_i64());
                 let unique = params.get("executionContextUniqueId").and_then(|u| u.as_str()).map(str::to_string);
+                let mut gone: Vec<i64> = Vec::new();
                 if let Some(list) = self.ext.contexts.borrow_mut().get_mut(&tab) {
                     list.retain(|c| {
-                        Some(c.id) != id && (unique.is_none() || Some(c.unique.as_str()) != unique.as_deref())
+                        let keep =
+                            Some(c.id) != id && (unique.is_none() || Some(c.unique.as_str()) != unique.as_deref());
+                        if !keep {
+                            gone.push(c.id);
+                        }
+                        keep
                     });
+                }
+                // The frame navigated or went away: its ports close (0.17.0).
+                if !gone.is_empty() {
+                    self.ext_context_gone(
+                        |e| matches!(e, End::Content { tab: t, context } if *t == tab && gone.contains(context)),
+                    );
                 }
             }
             "Runtime.executionContextsCleared" => {
+                self.ext_context_gone(|e| matches!(e, End::Content { tab: t, .. } if *t == tab));
                 self.ext.contexts.borrow_mut().remove(&tab);
             }
             "Runtime.bindingCalled" => {
@@ -683,7 +774,7 @@ impl Browser {
                 };
                 self.ext_deliver_content(*tab, *context, &msg);
             }
-            Caller::Page { view, req } => {
+            Caller::Page { view, req, .. } => {
                 let ev = match result {
                     Ok(data) => Event::ok(*req, data),
                     Err(e) => Event::err(*req, e),
@@ -709,26 +800,48 @@ impl Browser {
             warning!("extension request for {ext_id} from another origin refused");
             return;
         }
-        let view = match tab {
-            Some(t) => self.tab_view(t),
-            None => self.ext_page_view(ext_id),
+        // Which of the extension's contexts: a tab, or the view the message came through.
+        let end = match tab {
+            Some(t) => End::Tab(t),
+            None => match self.ext.request_from.borrow().clone() {
+                Some(end) => end,
+                None => return,
+            },
         };
-        let Some(view) = view else { return };
-        let caller = Caller::Page { view, req: req_id };
+        // A view only ever speaks for the extension it was made for.
+        let own_view = match &end {
+            End::Background(id) | End::Popup(id) | End::Offscreen(id) => id == ext_id,
+            End::Window(w) => self.ext.windows.borrow().get(w).is_some_and(|x| x.ext == ext_id),
+            End::Tab(_) | End::Content { .. } => true,
+        };
+        if !own_view {
+            warning!("extension request for {ext_id} from another extension's view refused");
+            return;
+        }
+        // A sandboxed page (manifest `sandbox.pages`) has no extension API, as in Chrome.
+        let path = self
+            .ext
+            .request_url
+            .borrow()
+            .as_deref()
+            .and_then(|u| url::Url::parse(u).ok())
+            .map(|u| u.path().to_string())
+            .unwrap_or_default();
+        let sandboxed = self
+            .ext
+            .exts
+            .borrow()
+            .iter()
+            .any(|e| e.installed.id == ext_id && lb_core::ext_runtime::is_sandbox_page(&e.manifest, &path));
+        if sandboxed {
+            warning!("extension {}: a sandboxed page asked for chrome.{op}: refused", self.ext_name(ext_id));
+            return;
+        }
+        let Some(view) = self.ext_end_view(&end) else { return };
+        let caller = Caller::Page { view, req: req_id, end };
         if let Some(result) = self.ext_op(&caller, ext_id, op, data) {
             self.ext_reply(&caller, ext_id, result);
         }
-    }
-
-    /// The view a page request without a tab came from: the popup if it shows this
-    /// extension, else its background.
-    fn ext_page_view(&self, ext_id: &str) -> Option<View> {
-        if let Some(p) = self.ext.popup.borrow().as_ref().filter(|p| p.ext == ext_id) {
-            if self.ext_request_from_popup.get() {
-                return Some(p.view.clone());
-            }
-        }
-        self.ext.backgrounds.borrow().get(ext_id).map(|bg| bg.view.clone())
     }
 
     fn ext_send_background(&self, ext_id: &str, kind: &str, data: Value) {
@@ -757,11 +870,11 @@ impl Browser {
         }
     }
 
-    /// An event to every page of the extension (background and open popup).
+    /// An event to every page context of the extension (the background, the popup, an
+    /// offscreen document, its windows and its pages in tabs).
     fn ext_send_pages(&self, ext_id: &str, kind: &str, data: Value) {
-        self.ext_send_background(ext_id, kind, data.clone());
-        if let Some(p) = self.ext.popup.borrow().as_ref().filter(|p| p.ext == ext_id) {
-            p.view.post_json(&Event::Ext { ext: ext_id.to_string(), kind: kind.to_string(), data }.to_json());
+        for end in self.ext_page_ends(ext_id) {
+            self.ext_send_end(&end, ext_id, kind, data.clone());
         }
     }
 
@@ -796,14 +909,9 @@ impl Browser {
                 return;
             }
         };
-        let view = self.ext_view(ext_id, false);
-        let weak = self.me.clone();
-        let id_owned = ext_id.to_string();
-        view.on_load_finished(move |_| {
-            if let Some(b) = weak.upgrade() {
-                b.ext_background_ready(&id_owned);
-            }
-        });
+        // Queued events go out when the worker says its script ran (`bgReady`), not when this
+        // relay page loaded (0.17.0).
+        let view = self.ext_view(ext_id, End::Background(ext_id.to_string()));
         let url = format!("{}/_krunk/background.html", ext::origin(ext_id));
         if let Err(e) = view.start(window.hwnd(), &url) {
             warning!("extension {ext_id}: background page: {e}");
@@ -811,6 +919,24 @@ impl Browser {
             return;
         }
         view.set_bounds(0, 0, 2, 2);
+        // A worker that never says so (nothing was served, the engine refused it): the reason
+        // is worth an error, and the queued events must not wait for ever.
+        let weak = self.me.clone();
+        let id_owned = ext_id.to_string();
+        crate::ffi::cef::post_ui_delayed(BACKGROUND_START_MS, move || {
+            let Some(b) = weak.upgrade() else { return };
+            let waiting = b.ext.backgrounds.borrow().get(&id_owned).is_some_and(|bg| !bg.ready);
+            if waiting {
+                b.ext_error(
+                    &id_owned,
+                    "The background worker did not finish starting within a minute.",
+                    "",
+                    0,
+                    "background",
+                );
+                b.ext_background_ready(&id_owned);
+            }
+        });
         info!("extension {}: background page started", self.ext_name(ext_id));
         self.ext
             .backgrounds
@@ -819,15 +945,19 @@ impl Browser {
     }
 
     fn ext_stop_background(&self, ext_id: &str) {
-        if let Some(bg) = self.ext.backgrounds.borrow_mut().remove(ext_id) {
+        let bg = self.ext.backgrounds.borrow_mut().remove(ext_id);
+        if let Some(bg) = bg {
+            self.ext_context_gone(|e| *e == End::Background(ext_id.to_string()));
             bg.view.close();
             bg.window.destroy();
             info!("extension {}: background page stopped", self.ext_name(ext_id));
         }
     }
 
-    /// A view for an extension page (background or popup) of `ext_id`: own origin only.
-    fn ext_view(&self, ext_id: &str, popup: bool) -> View {
+    /// A view for an extension page of `ext_id` (the background's relay page, the popup, an
+    /// offscreen document, a window): own origin only. `end`: which context its requests are.
+    fn ext_view(&self, ext_id: &str, end: End) -> View {
+        let popup = matches!(end, End::Popup(_));
         let view = View::new(ViewOptions {
             role: Role::Popup,
             menu: Menu::None,
@@ -851,12 +981,11 @@ impl Browser {
             ok
         });
         let weak = self.me.clone();
-        let from_popup = popup;
         view.on_message(move |source, json| {
             if let Some(b) = weak.upgrade() {
-                b.ext_request_from_popup.set(from_popup);
+                *b.ext.request_from.borrow_mut() = Some(end.clone());
                 b.on_ui_message(Channel::Ext, None, source, json);
-                b.ext_request_from_popup.set(false);
+                *b.ext.request_from.borrow_mut() = None;
             }
         });
         let weak = self.me.clone();
@@ -1003,7 +1132,7 @@ impl Browser {
                 return;
             }
         };
-        let view = self.ext_view(ext_id, true);
+        let view = self.ext_view(ext_id, End::Popup(ext_id.to_string()));
         // Esc closes it (0.7.0, R21); the page sees the key first only if it handles it itself.
         let weak = self.me.clone();
         view.on_key(move |key| {
@@ -1030,7 +1159,7 @@ impl Browser {
         // The largest size first (hidden): the page measures its body and reports.
         view.set_bounds(0, 0, (POPUP_MAX.0 * scale).round() as i32, (POPUP_MAX.1 * scale).round() as i32);
         let popup =
-            ExtPopup { window, view, ext: ext_id.to_string(), anchor, scale, shown: false, opened_at: now_ms() };
+            ExtPopup { window, view, ext: ext_id.to_string(), url, anchor, scale, shown: false, opened_at: now_ms() };
         *self.ext.popup.borrow_mut() = Some(popup);
         info!("extension {}: popup loading", self.ext_name(ext_id));
     }
@@ -1131,6 +1260,7 @@ impl Browser {
         if let Some(p) = taken {
             info!("extension {}: popup {why}", self.ext_name(&p.ext));
             *self.ext.popup_closed.borrow_mut() = (p.ext.clone(), now_ms());
+            self.ext_context_gone(|e| *e == End::Popup(p.ext.clone()));
             p.view.close();
             p.window.destroy();
         }
@@ -1142,19 +1272,48 @@ impl Browser {
     fn ext_op(&self, caller: &Caller, ext_id: &str, op: &str, data: Value) -> Option<Result<Value, String>> {
         let get_str = |k: &str| data.get(k).and_then(|v| v.as_str()).map(str::to_string);
         let result: Result<Value, String> = match op {
-            "ready" => Ok(Value::Null),
+            "ready" => {
+                // A new document in this context (a page loaded or reloaded): the ports of
+                // the one before it are gone.
+                let end = caller.end();
+                if !matches!(end, End::Content { .. } | End::Background(_)) {
+                    self.ext_context_gone(|e| *e == end);
+                }
+                Ok(Value::Null)
+            }
+            // The background worker ran its script: its listeners exist, queued events go.
+            "bgReady" => {
+                if caller.end() == End::Background(ext_id.to_string()) {
+                    if let Some(e) = self.ext.exts.borrow_mut().iter_mut().find(|e| e.installed.id == ext_id) {
+                        e.fresh = false;
+                    }
+                    self.ext_background_ready(ext_id);
+                }
+                Ok(Value::Null)
+            }
             "log" => {
                 let text = get_str("text").unwrap_or_default();
-                let text: String = text.chars().take(500).collect();
                 if get_str("level").as_deref() == Some("error") {
-                    warning!("extension {}: {text}", self.ext_name(ext_id));
+                    // krunk.log and the extension's Errors list (0.17.0).
+                    let file = get_str("file").unwrap_or_default();
+                    let line = data.get("line").and_then(|l| l.as_u64()).unwrap_or(0);
+                    self.ext_error(ext_id, &text, &file, line, caller.end().context_name());
                 } else {
+                    let text: String = text.chars().take(500).collect();
                     info!("extension {}: {text}", self.ext_name(ext_id));
                 }
                 Ok(Value::Null)
             }
+            "port.open" | "port.accept" | "port.post" | "port.close" => {
+                self.ext_port_op(caller, ext_id, op, &data);
+                return None;
+            }
             "unsupported" => {
                 let api: String = get_str("api").unwrap_or_default().chars().take(80).collect();
+                // Not an API: bundlers and promise code probe objects for these.
+                if api.starts_with("__") || api == "default" || api == "toJSON" || api.is_empty() {
+                    return Some(Ok(Value::Null));
+                }
                 let name = self.ext_name(ext_id);
                 let mut exts = self.ext.exts.borrow_mut();
                 if let Some(e) = exts.iter_mut().find(|e| e.installed.id == ext_id) {
@@ -1168,26 +1327,21 @@ impl Browser {
             "storage.get" | "storage.set" | "storage.remove" | "storage.clear" | "storage.bytes" => {
                 self.ext_storage_op(ext_id, op, &data)
             }
-            "runtime.sendMessage" => {
-                let message = data.get("message").cloned().unwrap_or(Value::Null);
-                return self.ext_route_message(caller, ext_id, message, None);
-            }
+            "runtime.sendMessage" => return self.ext_route_message(caller, ext_id, &data, None),
             "respond" => {
-                let id = data.get("id").and_then(|i| i.as_u64()).unwrap_or(0);
-                // Only the extension the message went to may answer it (0.11.7, audit C4).
-                let target = {
-                    let mut pending = self.ext.pending.borrow_mut();
-                    match pending.get(&id) {
-                        Some((owner, _)) if owner == ext_id => pending.remove(&id).map(|(_, c)| c),
-                        _ => None,
-                    }
-                };
-                if let Some(target) = target {
-                    let reply = data.get("data").cloned().unwrap_or(Value::Null);
-                    self.ext_reply(&target, ext_id, Ok(reply));
-                }
-                Ok(Value::Null)
+                self.ext_respond(ext_id, &data);
+                return None;
             }
+            "runtime.getContexts" => Ok(self.ext_contexts_json(ext_id, &data)),
+            "offscreen.createDocument" => self.ext_offscreen_create(ext_id, &get_str("url").unwrap_or_default()),
+            "offscreen.closeDocument" => {
+                if self.ext_offscreen_close(ext_id) {
+                    Ok(Value::Null)
+                } else {
+                    Err("No current offscreen document.".into())
+                }
+            }
+            "offscreen.hasDocument" => Ok(json!(self.ext.offscreen.borrow().contains_key(ext_id))),
             "tabs.query" => Ok(Value::Array(self.ext_tabs_query(ext_id, &data))),
             "tabs.get" => {
                 let id = data.get("tabId").and_then(|i| i.as_u64()).unwrap_or(0) as TabId;
@@ -1199,6 +1353,7 @@ impl Browser {
             }
             "tabs.getCurrent" => Ok(match caller {
                 Caller::Content { tab, .. } => self.ext_tab_json(ext_id, *tab),
+                Caller::Page { end: End::Tab(t), .. } => self.ext_tab_json(ext_id, *t),
                 Caller::Page { view, .. } => self
                     .views
                     .borrow()
@@ -1257,17 +1412,22 @@ impl Browser {
                 let Some(id) = data.get("tabId").and_then(|i| i.as_u64()).map(|i| i as TabId) else {
                     return Some(Err("tabs.sendMessage needs a tab id".into()));
                 };
-                let message = data.get("message").cloned().unwrap_or(Value::Null);
-                return self.ext_route_message(caller, ext_id, message, Some(id));
+                return self.ext_route_message(caller, ext_id, &data, Some(id));
             }
             "runtime.openOptionsPage" => {
                 self.ext_open_options(ext_id);
                 Ok(Value::Null)
             }
             "runtime.reload" => {
-                self.ext_stop_background(ext_id);
-                self.ext_sync_backgrounds();
-                Ok(Value::Null)
+                // Not from inside the request of a view that is about to close.
+                let id = ext_id.to_string();
+                self.defer(move |b| {
+                    b.close_ext_popup();
+                    b.ext_close_contexts(&id);
+                    b.ext_stop_background(&id);
+                    b.ext_sync_backgrounds();
+                });
+                return None;
             }
             "action.setTitle"
             | "action.setPopup"
@@ -1338,11 +1498,59 @@ impl Browser {
                 self.ext.alarms.borrow_mut().retain(|k, _| !k.starts_with(&format!("{ext_id}/")));
                 Ok(json!(true))
             }
-            "windows.getCurrent" => Ok(self.ext_window_json(self.cur_id())),
+            // A page in one of the extension's own windows is in that window.
+            "windows.getCurrent" => Ok(match caller.end() {
+                End::Window(id) => self.ext_own_window_json(id),
+                End::Tab(t) => self.ext_window_json(self.window_of(t)),
+                _ => self.ext_window_json(self.cur_id()),
+            }),
+            "windows.getLastFocused" => Ok(self.ext_window_json(self.cur_id())),
             "windows.getAll" => {
-                Ok(Value::Array(self.all_frames().iter().map(|f| self.ext_window_json(Some(f.id))).collect()))
+                let mut all: Vec<Value> = self.all_frames().iter().map(|f| self.ext_window_json(Some(f.id))).collect();
+                all.extend(self.ext_own_windows(ext_id).into_iter().map(|id| self.ext_own_window_json(id)));
+                Ok(Value::Array(all))
             }
-            "scripting.executeScript" | "scripting.insertCSS" => self.ext_scripting(ext_id, op, &data),
+            "windows.get" | "windows.update" | "windows.remove" => {
+                let id = data.get("windowId").and_then(|i| i.as_u64()).unwrap_or(u64::MAX);
+                match (self.ext_owns_window(ext_id, id), op) {
+                    (Some(own), "windows.get") => Ok(self.ext_own_window_json(own)),
+                    (Some(own), "windows.update") => {
+                        Ok(self.ext_window_update(own, data.get("info").unwrap_or(&Value::Null)))
+                    }
+                    (Some(own), _) => {
+                        self.defer(move |b| b.ext_window_close(own));
+                        Ok(Value::Null)
+                    }
+                    (None, "windows.remove") => Err(format!("No window with id: {id}.")),
+                    (None, _) => match self.all_frames().iter().find(|f| u64::from(f.id) == id) {
+                        Some(f) => {
+                            if op == "windows.update"
+                                && data.pointer("/info/focused").and_then(|f| f.as_bool()) == Some(true)
+                            {
+                                f.window.bring_to_front();
+                            }
+                            Ok(self.ext_window_json(Some(f.id)))
+                        }
+                        None => Err(format!("No window with id: {id}.")),
+                    },
+                }
+            }
+            "windows.create" => self.ext_window_create(ext_id, &data),
+            // `window.close()` of a page that has a view or a tab of its own.
+            "closeSelf" => {
+                match caller.end() {
+                    End::Window(id) => self.defer(move |b| b.ext_window_close(id)),
+                    End::Popup(_) => self.defer(|b| b.close_ext_popup_because("closed by its page")),
+                    End::Tab(t) => self.defer(move |b| b.close_tab(t)),
+                    _ => {}
+                }
+                return None;
+            }
+            "scripting.executeScript" => return self.ext_execute_script(caller, ext_id, &data),
+            "scripting.insertCSS" => self.ext_scripting(ext_id, op, &data),
+            "scripting.registerContentScripts"
+            | "scripting.getRegisteredContentScripts"
+            | "scripting.unregisterContentScripts" => self.ext_register_scripts(ext_id, op, &data),
             "permissions.getAll" => {
                 let exts = self.ext.exts.borrow();
                 let e = exts.iter().find(|e| e.installed.id == ext_id);
@@ -1364,14 +1572,18 @@ impl Browser {
             "popupSize" => {
                 let w = data.get("width").and_then(|v| v.as_f64()).unwrap_or(POPUP_DEFAULT.0);
                 let h = data.get("height").and_then(|v| v.as_f64()).unwrap_or(POPUP_DEFAULT.1);
-                let mine = self.ext.popup.borrow().as_ref().is_some_and(|p| p.ext == ext_id);
+                // Every page says its size; only the action popup's matters.
+                let mine = caller.end() == End::Popup(ext_id.to_string())
+                    && self.ext.popup.borrow().as_ref().is_some_and(|p| p.ext == ext_id);
                 if mine {
                     self.show_ext_popup_sized(w, h);
                 }
                 Ok(Value::Null)
             }
             "closePopup" => {
-                if self.ext.popup.borrow().as_ref().is_some_and(|p| p.ext == ext_id) {
+                if caller.end() == End::Popup(ext_id.to_string())
+                    && self.ext.popup.borrow().as_ref().is_some_and(|p| p.ext == ext_id)
+                {
                     self.close_ext_popup_because("Escape");
                 }
                 Ok(Value::Null)
@@ -1394,10 +1606,14 @@ impl Browser {
 
     /// `chrome.runtime.getURL`-style resolution of a relative address.
     fn ext_resolve_url(&self, ext_id: &str, url: &str) -> String {
+        // An address the extension built itself in Chrome's form is its page here.
+        let url = &lb_core::ext_runtime::krunk_url(url);
         if url.contains("://") || url.starts_with("about:") || url.starts_with("krunk://") {
             lb_core::pages::Page::from_display(url).map(|p| p.url()).unwrap_or_else(|| url.to_string())
         } else {
-            format!("{}/{}", ext::origin(ext_id), url.trim_start_matches('/'))
+            // Normalized ("./page.html" is "page.html"): the address is compared later.
+            let joined = format!("{}/{}", ext::origin(ext_id), url.trim_start_matches('/'));
+            url::Url::parse(&joined).map(String::from).unwrap_or(joined)
         }
     }
 
@@ -1426,7 +1642,21 @@ impl Browser {
     fn ext_window_json(&self, win: Option<super::WindowId>) -> Value {
         match win {
             Some(w) => {
-                json!({ "id": w, "focused": self.cur_id() == Some(w), "incognito": false, "type": "normal", "state": "normal", "alwaysOnTop": false })
+                let mut win = json!({ "id": w, "focused": self.cur_id() == Some(w), "incognito": false, "type": "normal", "state": "normal", "alwaysOnTop": false });
+                // Where it is, in DIP (0.17.0): extensions place their own windows by it.
+                if let Some(f) = self.frame(w) {
+                    let (r, s) = (f.window.rect(), f.window.scale().max(0.1));
+                    win["left"] = json!((f64::from(r.x) / s).round());
+                    win["top"] = json!((f64::from(r.y) / s).round());
+                    win["width"] = json!((f64::from(r.width) / s).round());
+                    win["height"] = json!((f64::from(r.height) / s).round());
+                    if f.window.is_minimized() {
+                        win["state"] = json!("minimized");
+                    } else if f.window.is_maximized() {
+                        win["state"] = json!("maximized");
+                    }
+                }
+                win
             }
             None => Value::Null,
         }
@@ -1536,58 +1766,6 @@ impl Browser {
 
     // ------------------------------------------------------------ messaging
 
-    /// `runtime.sendMessage` (to the extension's pages) or `tabs.sendMessage` (to a tab's
-    /// content world). The answer arrives with `respond`.
-    fn ext_route_message(
-        &self,
-        caller: &Caller,
-        ext_id: &str,
-        message: Value,
-        to_tab: Option<TabId>,
-    ) -> Option<Result<Value, String>> {
-        let id = self.ext.next_id.get();
-        self.ext.next_id.set(id + 1);
-        let sender = match caller {
-            Caller::Content { tab, .. } => {
-                let t = self.ext_tab_json(ext_id, *tab);
-                let url = self.views.borrow().get(tab).map(|v| v.net.top_url()).unwrap_or_default();
-                json!({ "id": ext_id, "tab": t, "url": url, "frameId": 0, "origin": lb_core::urlclean::origin_of(&url) })
-            }
-            Caller::Page { .. } => json!({ "id": ext_id, "url": ext::origin(ext_id), "origin": ext::origin(ext_id) }),
-        };
-        match to_tab {
-            Some(tab) => {
-                let Some(context) = self.ext_context(tab, ext_id) else {
-                    return Some(Err("Could not establish connection. Receiving end does not exist.".into()));
-                };
-                self.ext.pending.borrow_mut().insert(id, (ext_id.to_string(), caller.clone()));
-                let msg = json!({ "ext": ext_id, "event": "message", "id": id, "data": message, "from": ext::origin(ext_id) });
-                self.ext_deliver_content(tab, context, &msg);
-            }
-            None => {
-                let has_pages = self.ext.backgrounds.borrow().contains_key(ext_id)
-                    || self.ext.popup.borrow().as_ref().is_some_and(|p| p.ext == ext_id);
-                if !has_pages {
-                    return Some(Err("Could not establish connection. Receiving end does not exist.".into()));
-                }
-                self.ext.pending.borrow_mut().insert(id, (ext_id.to_string(), caller.clone()));
-                self.ext_send_pages(ext_id, "message", json!({ "id": id, "data": message, "sender": sender }));
-            }
-        }
-        // A receiver that never answers: the caller gets undefined, as in Chrome.
-        let weak = self.me.clone();
-        let ext_owned = ext_id.to_string();
-        crate::ffi::cef::post_ui_delayed(MESSAGE_TIMEOUT_MS, move || {
-            if let Some(b) = weak.upgrade() {
-                let target = b.ext.pending.borrow_mut().remove(&id);
-                if let Some((_, target)) = target {
-                    b.ext_reply(&target, &ext_owned, Ok(Value::Null));
-                }
-            }
-        });
-        None
-    }
-
     // ------------------------------------------------------------ storage
 
     fn ext_storage_key(ext_id: &str, area: &str) -> String {
@@ -1641,6 +1819,12 @@ impl Browser {
             _ => None,
         };
         let mut changes = serde_json::Map::new();
+        let unlimited = self
+            .ext
+            .exts
+            .borrow()
+            .iter()
+            .any(|e| e.installed.id == ext_id && lb_core::ext_runtime::unlimited_storage(&e.manifest));
         let result = {
             let mut st = self.ext.storage.borrow_mut();
             let map = st.entry(key).or_default();
@@ -1679,9 +1863,13 @@ impl Browser {
                             changes.insert(k.clone(), c);
                         }
                     }
-                    let size: usize = map.iter().map(|(k, v)| k.len() + v.to_string().len()).sum();
-                    if size > 10 * 1024 * 1024 {
-                        return Err("QUOTA_BYTES quota exceeded".into());
+                    // 10 MiB, as in Chrome, unless the manifest asks for `unlimitedStorage`
+                    // (0.17.0); the session area is memory only and has the same limit.
+                    if !unlimited || area != "local" {
+                        let size: usize = map.iter().map(|(k, v)| k.len() + v.to_string().len()).sum();
+                        if size > 10 * 1024 * 1024 {
+                            return Err("QUOTA_BYTES quota exceeded".into());
+                        }
                     }
                     Value::Null
                 }
@@ -1859,33 +2047,66 @@ impl Browser {
         use crate::ffi::cef::InternalResponse;
         use std::borrow::Cow;
         let id = ext::id_of_url(url)?;
-        let (root, background, messages) = {
+        let path = url::Url::parse(url).ok()?.path().to_string();
+        let (root, background, messages, fresh, sandbox_csp) = {
             let exts = self.ext.exts.borrow();
             let e = exts.iter().find(|e| e.installed.id == id)?;
-            (e.root.clone(), e.manifest.background_script().map(|(s, m)| (s.to_string(), m)), e.messages_json.clone())
-        };
-        let headers = |mime: &str| {
-            format!(
-                "Content-Type: {mime}\r\nContent-Security-Policy: {}\r\nX-Content-Type-Options: nosniff\r\n\
-                 Referrer-Policy: no-referrer\r\nCache-Control: no-cache\r\nAccess-Control-Allow-Origin: *",
-                ext::PAGE_CSP
+            (
+                e.root.clone(),
+                e.manifest.background_script().map(|(s, m)| (s.to_string(), m)),
+                e.messages_json.clone(),
+                e.fresh,
+                lb_core::ext_runtime::is_sandbox_page(&e.manifest, &path)
+                    .then(|| lb_core::ext_runtime::sandbox_csp(&e.manifest)),
             )
         };
-        let path = url::Url::parse(url).ok()?.path().to_string();
-        if path == "/_krunk/background.html" {
-            let (script, module) = background?;
-            let body = format!(
-                "<!doctype html><html><head><meta charset=\"utf-8\"><title>{id} background</title></head><body>\
-                 <script{} src=\"/{}\"></script></body></html>",
-                if module { " type=\"module\"" } else { "" },
-                script.trim_start_matches('/')
-            );
-            return Some(InternalResponse {
+        // A sandboxed page (manifest `sandbox.pages`, 0.17.0) gets the sandbox policy: a
+        // unique origin, no extension API, and the manifest's (or Chrome's default) script rules.
+        let csp = sandbox_csp.unwrap_or_else(|| ext::PAGE_CSP.to_string());
+        let headers = |mime: &str| {
+            format!(
+                "Content-Type: {mime}\r\nContent-Security-Policy: {csp}\r\nX-Content-Type-Options: nosniff\r\n\
+                 Referrer-Policy: no-referrer\r\nCache-Control: no-cache\r\nAccess-Control-Allow-Origin: *"
+            )
+        };
+        let generated = |mime: &str, body: String| {
+            Some(InternalResponse {
                 status: 200,
                 reason: "OK",
-                headers: headers("text/html; charset=utf-8"),
+                headers: headers(mime),
                 body: Cow::Owned(body.into_bytes()),
-            });
+            })
+        };
+        // The background (0.17.0): a relay page (the shim in it starts the worker), what the
+        // relay needs to know, and the worker's bootstrap next to the service worker's script.
+        if path == "/_krunk/background.html" {
+            background.as_ref()?;
+            return generated(
+                "text/html; charset=utf-8",
+                format!("<!doctype html><html><head><meta charset=\"utf-8\"><title>{id} background</title></head><body></body></html>"),
+            );
+        }
+        if path == "/_krunk/background.json" {
+            let (script, module) = background?;
+            let boot = lb_core::ext_runtime::worker_boot_path(&script);
+            return generated(
+                "application/json",
+                json!({ "boot": boot, "module": module, "install": fresh }).to_string(),
+            );
+        }
+        if let Some((script, module)) = &background {
+            if path == lb_core::ext_runtime::worker_boot_path(script) {
+                let shim = assets::inject_script("ext-page.js");
+                return generated(
+                    "text/javascript; charset=utf-8",
+                    lb_core::ext_runtime::worker_bootstrap(
+                        assets::inject_script("ext-worker.js"),
+                        shim,
+                        script,
+                        *module,
+                    ),
+                );
+            }
         }
         if path == "/_krunk/messages.json" {
             let body = if messages.is_empty() { "{}".to_string() } else { messages };
@@ -1985,6 +2206,15 @@ impl Browser {
             skipped,
             if unsupported.is_empty() { String::new() } else { format!("; not provided: {}", unsupported.join(", ")) }
         );
+        // An update starts the new code: the running background (old files) and what it had
+        // open go first. The new worker gets `install` and `activate` (0.17.0).
+        self.ext_close_contexts(&id);
+        self.ext_stop_background(&id);
+        self.ext.registered.borrow_mut().remove(&id);
+        self.ext.errors.borrow_mut().remove(&id);
+        if let Some(e) = self.ext.exts.borrow_mut().iter_mut().find(|e| e.installed.id == id) {
+            e.fresh = true;
+        }
         self.ext_apply_all(true);
         let reason = if was.is_some() { "update" } else { "install" };
         self.ext_send_background(
@@ -2297,14 +2527,19 @@ impl Browser {
         }
         if enabled == Some(false) {
             self.close_ext_popup();
+            self.ext_close_contexts(id);
+            self.ext.registered.borrow_mut().remove(id);
         }
         self.ext_apply_all(true);
     }
 
     pub(super) fn ext_remove(&self, id: &str) {
         let name = self.ext_name(id);
+        self.ext_close_contexts(id);
         self.ext_stop_background(id);
         self.close_ext_popup();
+        self.ext.registered.borrow_mut().remove(id);
+        self.ext.errors.borrow_mut().remove(id);
         self.ext.exts.borrow_mut().retain(|e| e.installed.id != id);
         self.ext.alarms.borrow_mut().retain(|k, _| !k.starts_with(&format!("{id}/")));
         self.ext.storage.borrow_mut().retain(|k, _| !k.starts_with(&format!("{id}/")));
@@ -2317,6 +2552,7 @@ impl Browser {
     /// krunk://extensions' list.
     pub(super) fn ext_list_json(&self) -> Value {
         let exts = self.ext.exts.borrow();
+        let errors = self.ext.errors.borrow();
         Value::Array(
             exts.iter()
                 .map(|e| {
@@ -2341,6 +2577,7 @@ impl Browser {
                         "contentScripts": e.manifest.content_scripts.len(),
                         "icon": e.manifest.icon().map(|p| format!("{}/{}", e.origin(), p.trim_start_matches('/'))),
                         "permissions": e.manifest.api_permissions(),
+                        "errors": errors.get(&i.id).cloned().unwrap_or_default(),
                     })
                 })
                 .collect(),

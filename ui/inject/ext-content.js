@@ -5,9 +5,14 @@
 // caller from the binding, and one extension can't reach another's globals. The host answers
 // with `__krunkExtDeliver(json)` evaluated in this world. Nothing here is visible to the
 // page's own scripts (the isolated world has its own globals).
+//
+// 0.17.0: `chrome` and `browser` are globals of the world (scripts used to get them as function
+// arguments only, so `globalThis.chrome` and bundlers' feature tests found nothing), ports
+// (`runtime.connect`, `onConnect` for `tabs.connect`), and a message is answered as "no
+// listener" / "no answer" so the host can tell the sender what Chrome would.
 function (extId, manifest, messages) {
   'use strict';
-  var pending = {}, nextId = 1, listeners = { message: [], storage: [] };
+  var pending = {}, nextId = 1, listeners = { message: [], storage: [], connect: [] };
   var deliver = window.__krunkExtDeliver;
   if (!deliver) {
     var byExt = {};
@@ -22,10 +27,26 @@ function (extId, manifest, messages) {
     else if (m.event === 'message') {
       // A message from the extension's background or popup to this tab.
       var responded = false, async = false;
-      var sendResponse = function (r) { if (responded) return; responded = true; call('respond', { id: m.id, data: r === undefined ? null : r }); };
-      listeners.message.forEach(function (l) { try { if (l(m.data, { id: extId, url: m.from || '' }, sendResponse) === true) async = true; } catch (e) { report(e); } });
-      if (!async && !responded) sendResponse(null);
-    } else if (m.event === 'storageChanged') {
+      var done = function (how) { if (responded) return; responded = true; send('respond', how); };
+      var sendResponse = function (r) { done({ id: m.id, data: r === undefined ? null : r }); };
+      if (!listeners.message.length) { done({ id: m.id, none: true }); return; }
+      var sender = m.sender || { id: extId, url: m.from || '' };
+      listeners.message.slice().forEach(function (l) {
+        try {
+          var r = l(m.data, sender, sendResponse);
+          if (r === true) async = true;
+          else if (r && typeof r.then === 'function') { async = true; r.then(sendResponse, function (e) { report(e); done({ id: m.id, empty: true }); }); }
+        } catch (e) { report(e); }
+      });
+      if (!async) done({ id: m.id, empty: true });
+    } else if (m.event === 'portConnect') {
+      if (!listeners.connect.length) { send('port.close', { id: m.port }); return; }
+      var port = makePort(m.port, m.name || '', m.sender || { id: extId });
+      send('port.accept', { id: m.port });
+      listeners.connect.slice().forEach(function (l) { try { l(port); } catch (e) { report(e); } });
+    } else if (m.event === 'portMessage') { if (ports[m.port]) ports[m.port].message(m.data); }
+    else if (m.event === 'portDisconnect') { if (ports[m.port]) ports[m.port].closed(m.error); }
+    else if (m.event === 'storageChanged') {
       listeners.storage.forEach(function (l) { try { l(m.changes, m.area); } catch (e) { report(e); } });
     }
   });
@@ -40,14 +61,69 @@ function (extId, manifest, messages) {
       catch (e) { delete pending[id]; reject(new Error('Krunk: the extension binding is not available')); }
     });
   }
-  function report(e) { send('log', { level: 'error', text: String(e && e.stack || e) }); }
+  function report(e) { var text; try { text = String(e && (e.stack || e.message) || e); } catch (x) { text = 'error'; } send('log', { level: 'error', text: text.slice(0, 2000) }); }
   function cb(promise, callback) {
-    if (typeof callback === 'function') { promise.then(function (v) { callback(v); }, function (e) { chrome.runtime.lastError = { message: String(e.message || e) }; try { callback(); } finally { chrome.runtime.lastError = undefined; } }); }
+    if (typeof callback === 'function') { promise.then(function (v) { callback(v); }, function (e) { runtime.lastError = { message: String(e && e.message || e) }; try { callback(); } finally { runtime.lastError = undefined; } }); }
     return promise;
+  }
+  // Which frame this is, for `sender` (the host checks a sub-frame's address against the
+  // origin the engine reported for this world).
+  function src() { return { top: window.top === window, url: String(location.href).slice(0, 4096) }; }
+  // console.error of this world (its own console object; the page's is another one) goes to
+  // the extension's Errors list.
+  if (window.console && typeof console.error === 'function') {
+    var consoleError = console.error;
+    try {
+      console.error = function () {
+        try { report(Array.prototype.map.call(arguments, function (a) { return a && (a.stack || a.message) || (typeof a === 'object' ? JSON.stringify(a) : String(a)); }).join(' ')); } catch (x) { /* a value that cannot be shown */ }
+        return consoleError.apply(this, arguments);
+      };
+    } catch (x) { /* a frozen console */ }
+  }
+  // Ports: the same as in ext-page.js (the host keeps the table).
+  var ports = {}, portSeq = 0, rand = window.crypto;
+  function portId() {
+    var a = new Uint32Array(2); rand.getRandomValues(a);
+    return 'p' + a[0].toString(36) + a[1].toString(36) + '_' + (++portSeq);
+  }
+  function portEvent() {
+    var ls = [];
+    return {
+      api: {
+        addListener: function (fn) { if (typeof fn === 'function' && ls.indexOf(fn) < 0) ls.push(fn); },
+        removeListener: function (fn) { var i = ls.indexOf(fn); if (i >= 0) ls.splice(i, 1); },
+        hasListener: function (fn) { return ls.indexOf(fn) >= 0; },
+        hasListeners: function () { return ls.length > 0; }
+      },
+      fire: function (a, b) { ls.slice().forEach(function (l) { try { l(a, b); } catch (e) { report(e); } }); }
+    };
+  }
+  function makePort(id, name, sender) {
+    var open = true, onMessage = portEvent(), onDisconnect = portEvent();
+    var port = {
+      name: name,
+      postMessage: function (msg) {
+        if (!open) throw new Error('Attempting to use a disconnected port object');
+        send('port.post', { id: id, data: msg === undefined ? null : msg });
+      },
+      disconnect: function () { if (!open) return; open = false; delete ports[id]; send('port.close', { id: id }); },
+      onMessage: onMessage.api,
+      onDisconnect: onDisconnect.api
+    };
+    if (sender) port.sender = sender;
+    ports[id] = {
+      message: function (data) { if (open) onMessage.fire(data, port); },
+      closed: function (error) {
+        if (!open) return; open = false; delete ports[id];
+        if (error) runtime.lastError = { message: error };
+        try { onDisconnect.fire(port); } finally { runtime.lastError = undefined; }
+      }
+    };
+    return port;
   }
   function event(kind) {
     return {
-      addListener: function (fn) { if (typeof fn === 'function') listeners[kind].push(fn); },
+      addListener: function (fn) { if (typeof fn === 'function' && listeners[kind].indexOf(fn) < 0) listeners[kind].push(fn); },
       removeListener: function (fn) { listeners[kind] = listeners[kind].filter(function (x) { return x !== fn; }); },
       hasListener: function (fn) { return listeners[kind].indexOf(fn) >= 0; },
       hasListeners: function () { return listeners[kind].length > 0; }
@@ -75,11 +151,16 @@ function (extId, manifest, messages) {
       var args = Array.prototype.slice.call(arguments);
       var callback = typeof args[args.length - 1] === 'function' ? args.pop() : null;
       var message = (args.length >= 2 && typeof args[0] === 'string' && args[0].length === 32) ? args[1] : args[0];
-      return cb(call('runtime.sendMessage', { message: message === undefined ? null : message }), callback);
+      return cb(call('runtime.sendMessage', { message: message === undefined ? null : message, src: src() }), callback);
     },
-    connect: function () { send('unsupported', { api: 'runtime.connect' }); throw new Error('Krunk: chrome.runtime.connect (ports) is not provided; use sendMessage'); },
+    connect: function (a, b) {
+      var o = (a && typeof a === 'object') ? a : (b || {}), id = portId(), name = String(o.name || '');
+      var port = makePort(id, name, null);
+      send('port.open', { id: id, name: name, src: src() });
+      return port;
+    },
     onMessage: event('message'),
-    onConnect: noop(),
+    onConnect: event('connect'),
     onInstalled: noop(),
     onStartup: noop(),
     getPlatformInfo: function (callback) { return cb(Promise.resolve({ os: 'win', arch: 'x86-64', nacl_arch: 'x86-64' }), callback); }
@@ -107,7 +188,12 @@ function (extId, manifest, messages) {
   // Anything else is reported once as unsupported and returns undefined (a TypeError in the
   // extension, not a silent no-op that hides the gap).
   var reported = {};
-  var proxied = typeof Proxy === 'function' ? new Proxy(chrome, { get: function (t, k) { if (k in t) return t[k]; if (typeof k === 'string' && !reported[k]) { reported[k] = true; send('unsupported', { api: k }); } return undefined; } }) : chrome;
+  var proxied = typeof Proxy === 'function' ? new Proxy(chrome, { get: function (t, k) { if (k in t) return t[k]; if (typeof k === 'string' && k !== 'then' && !reported[k]) { reported[k] = true; send('unsupported', { api: k }); } return undefined; } }) : chrome;
+  // Globals of this world only (the page's world has its own `chrome`, if any).
+  try {
+    Object.defineProperty(window, 'chrome', { value: proxied, configurable: true, writable: true });
+    Object.defineProperty(window, 'browser', { value: proxied, configurable: true, writable: true });
+  } catch (e) { /* the scripts still get them as arguments */ }
   var runAt = { document_start: 0, document_end: 1, document_idle: 2 };
   function matches(pattern, url) {
     // The same rules as core::ext::MatchPattern (scheme, host with *. prefix, path glob).
@@ -148,7 +234,7 @@ function (extId, manifest, messages) {
       };
       var go = function () {
         if (css.length) addCss();
-        try { body(proxied, proxied); } catch (e) { report(e); }
+        try { body.call(window, proxied, proxied); } catch (e) { report(e); }
       };
       var stage = runAt[when] === undefined ? 2 : runAt[when];
       if (stage === 0 || document.readyState === 'complete' || (stage === 1 && document.readyState !== 'loading')) go();

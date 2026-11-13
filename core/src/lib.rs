@@ -18,6 +18,7 @@ pub mod dns;
 pub mod downloads;
 pub mod dpi;
 pub mod ext;
+pub mod ext_runtime;
 pub mod favicon_probe;
 pub mod filterlists;
 pub mod frame;
