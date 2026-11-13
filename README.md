@@ -129,6 +129,10 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   Back or Forward that many times; "Show full history" opens `krunk://history`. Up/Down, Home/End,
   Enter and Esc work in the menu. A disabled button shows no menu. The list is read from the
   engine each time and is never stored (also not in private windows).
+  Middle-click an entry (0.18.0) to open it in a new background tab next to this one; the new
+  tab gets this tab's whole back/forward list with that entry current, this tab stays where it
+  is and the menu stays open. A private tab's copy is private. (With an engine that lacks
+  Krunk's `chromium-clone-navigation.patch` the new tab opens the entry's address only.)
 - **Dropdowns keep the page still (0.8.0):** while a `<select>` list, a datalist's suggestions or
   one of Krunk's menus (⋮, the history menus, tab and bookmark menus) is open, the mouse wheel
   over the page does nothing, so the list stays where its field is; the wheel over the list
