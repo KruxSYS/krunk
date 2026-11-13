@@ -128,6 +128,41 @@ scan from the page and scripts, 10 s for an agent tool; `wasm_watch` 32 entries)
 `the_probe_has_the_same_limits_and_takes_what_the_host_sends` keeps the numbers of the probe and
 of core the same.
 
+## Shown on Windows (2026-11-13, second round: scripts, agent, the open points)
+
+Evidence in `.pipeline/evidence-0.19.0/vm/` (screenshots `z…png`; `z03-krunk-log.txt`,
+`z05-z09-krunk-log.txt`, `z10-z14-krunk-log.txt` from krunk.log; `z-mock.jsonl`, the mock
+provider's full log, and `z-mock-requests.txt`, one line per request). The AI provider was the
+mock (`ui/dev/mock-provider.cjs` behind `ssh -R`, profile set up by `scripts/vm-0190.ps1`).
+Points (a), (b) and the next scan of (c) ran on the build of commit "krunk://wasm: UTF-16 watch
+entries"; Back in (c) and all of (d) on the build one fix later (the workers asked for anew).
+
+| Point | What was done | Evidence |
+|---|---|---|
+| (a) a user script with `GM.wasm` | `scripts/vm-www/wasm-game/hold-the-health.user.js` (the example of `docs/WASM_INSPECTOR.md`) imported in `krunk://scripts` with **Import .user.js…**; the list shows it with the tag **WASM memory**. On the game: health 100; after the first Hit the script's next scan finds the address, writes 500 and freezes it; three more hits: still 500 | `z01-scripts-page`, `z02-script-imported`, `z03a-script-game-before`, `z03b-script-game-after-first-hit`, `z03-script-game-after-hits`, `z03-krunk-log.txt` |
+| (b) the agent's tools | "find the health value in the wasm game and set it to 999, then freeze it": `wasm_memories`, `wasm_scan` first, click Hit, `wasm_scan` next, `wasm_results`, `wasm_write`, `wasm_freeze`; two hits by hand afterwards: 999 | `z05-agent-asked`, `z06-agent-frozen-after-hits` |
+| (b) every tool | "wasm tools tour": 50 tool calls (the step question after 30 answered with Continue): all nine tools, every scan kind, a pointer path, `wasm_watch`, an address past the end refused then read after Grow, the thirteen types written and read back, `wasm_global` read and write (the game shows `__stack_pointer` 1048560) | `z07a-agent-tour-30-steps`, `z07-agent-tour`, `z05-z09-krunk-log.txt` (`agent step … wasm_… ok`) |
+| (b) the agent writes a `GM.wasm` script | "write a userscript that keeps the gold": `save_userscript`; the panel shows "Created userscript: Keep the gold"; after a reload of the game and two clicks on Spend: gold 9999 | `z08-agent-saved-script`, `z09-agent-script-after-reload` |
+| (c) a next scan after Grow (page) | scan 100, Hit, Decreased (1 address), Grow (18 pages), Unchanged: `1 address found`, `0x100004`, 90 | `z10a-decreased-before-grow`, `z10-next-scan-after-grow` |
+| (c) Back to a page with a worker | inspector open on `index.html?worker` (worker listed); the tab goes to `index.html?c2`: only the page's memory, no stale worker; Back: the worker's memory and instance are listed again | `z11a-on-worker-page`, `z11b-next-page-no-stale-worker`, `z11c-back-on-worker-page`, `z11-back-to-worker-page`, `z10-z14-krunk-log.txt` |
+| (d) same-process frame | `wasm-game/frame.html` (the game in a same-origin iframe): Memory 0 and Instance 0 listed as `Frame …/index.html?framed` | `z12a-frame-page`, `z12-frame` |
+| (d) shared memory | `wasm-game/shared.html`: `64 KiB · 1 page · shared`; scan i32 2024 → `0x40` | `z13-shared` |
+| (d) hook-and-reload | "Hook WebAssembly and reload the tab" on the game: the tab reloads, "The hook is on", the memory and the instance are listed (krunk.log: `WASM inspector hook installed, reloading`). The screen does not tell which of the two ways found them: both feed the list | `z14-hook`, `z10-z14-krunk-log.txt` |
+
+Found by this round and fixed: after Back to a page with a worker the inspector listed nothing
+(the engine names a worker once; the host now asks for the tab's workers anew when memories are
+listed and nothing is held in a worker); the mock provider's tour kept its results itself (Krunk
+shortens older tool results).
+
+Not run on Windows: `GM.wasm` and the tools in a worker or a frame (`ctx` other than 0); growth
+of a shared memory; the refusal of the tools while a password field holds a value (core and
+earlier agent tests only); `GM.wasm` beyond what the two scripts call (`memories`, `scan`,
+`next`, `results`, `write`, `freeze`): the other functions are tested in Node only
+(`test-wasm-agent.cjs`, `test-wasm-probe.cjs`); a real model provider (the mock only).
+
+Known cost: while a page with a worker sits in the tab's back/forward cache, the first listing
+after each navigation waits 3 seconds for that sleeping worker.
+
 ## Checklist for a run in Krunk on the Windows VM
 
 Page: `http://<host serving scripts/vm-www>/wasm-game/index.html` (the title starts
