@@ -629,19 +629,31 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   extension's popup closes on Esc, a click anywhere outside it, a tab switch or when another
   program comes to the front. What runs:
   content scripts (in an isolated world of web pages, with `matches`, `exclude_matches`,
-  `run_at`, `all_frames`, CSS), a background page built around the service worker,
-  the toolbar button with its popup and badge, options pages, and the `chrome.runtime`
-  (messaging, `getURL`, `getManifest`, `openOptionsPage`), `storage` (local/sync/session,
-  `onChanged`), `tabs` (query/get/create/update/remove/reload/sendMessage, `onUpdated`,
-  `onActivated`, `onRemoved`), `action`, `alarms`, `i18n`, `scripting` (`executeScript`,
-  `insertCSS`), `windows` and `permissions.getAll` APIs. Static `declarativeNetRequest`
-  rulesets become filter rules of the ad blocker (`block` and `allow`; `redirect` and
-  `upgradeScheme` rules are counted as "not translated"). Never provided: blocking
-  `webRequest`, `debugger`, native messaging, dynamic or session rules and switching
-  rulesets at runtime, `cookies`, `history`, `bookmarks`, `downloads`, `identity`,
-  `contextMenus`, `notifications` and the rest; the page lists what each extension asked
-  for and whether Krunk has it, and the log says when an extension reaches for something
-  missing. **Isolation:** extensions never run on Krunk's own pages or the shell, not in
+  `run_at`, `all_frames`, CSS; since 0.17.0 also `world: "MAIN"`), the background service
+  worker (since 0.17.0 a real worker), the toolbar button with its popup and badge, options
+  pages, and these `chrome.*` APIs:
+
+  | API | What Krunk provides |
+  |---|---|
+  | `runtime` | `sendMessage`/`onMessage` between all of the extension's contexts, **ports** (`connect`, `onConnect`, 0.17.0), `getURL`, `getManifest`, `id`, `onInstalled`, `onStartup`, `openOptionsPage`, `reload`, `getPlatformInfo`, `getContexts`, `setUninstallURL` (accepted) |
+  | `storage` | `local`, `sync` (local only), `session`, `onChanged`; no 10 MiB limit with `unlimitedStorage` |
+  | `tabs` | `query`, `get`, `getCurrent`, `create`, `update`, `remove`, `reload`, `sendMessage`, `connect`, `onUpdated`, `onActivated`, `onRemoved` |
+  | `windows` | `getCurrent`, `getLastFocused`, `getAll`, `get`, `update`, `remove`, `create` (type `popup`: a small window with a page of the extension; else a tab), `onRemoved`, `onFocusChanged` |
+  | `scripting` | `executeScript` (files or `func` + `args`, real results, `world: "MAIN"`), `insertCSS`, `registerContentScripts`, `getRegisteredContentScripts`, `unregisterContentScripts` |
+  | `action`, `alarms`, `i18n` | as before |
+  | `offscreen` | `createDocument`, `closeDocument`, `hasDocument` (one hidden page) |
+  | `permissions`, `management` | `getAll`/`contains`/`request`; `getSelf` |
+  | `declarativeNetRequest` | static rulesets become filter rules of the ad blocker (`block` and `allow`; `redirect` and `upgradeScheme` rules are counted as "not translated") |
+  | `notifications`, `cookies`, `webRequest` | stand-ins: calls resolve (nothing is shown, no cookies are found), listeners are never called |
+
+  Never provided: `debugger`, native messaging, dynamic or session rules and switching
+  rulesets at runtime, `history`, `bookmarks`, `downloads`, `identity`, `sidePanel`,
+  `contextMenus`, messaging between extensions and the rest; the page lists what each
+  extension asked for and whether Krunk has it (**Not in Krunk**), and since 0.17.0 the
+  errors of its contexts (**Errors**: uncaught errors, rejected promises and `console.error`
+  of the background, popup, pages and content scripts, also in `krunk.log`). How the runtime
+  works, why MetaMask did not load before 0.17.0 and what is still missing:
+  [docs/EXTENSIONS.md](docs/EXTENSIONS.md). **Isolation:** extensions never run on Krunk's own pages or the shell, not in
   private tabs unless "Allow in private tabs" is on, and their pages live on their own
   origin `https://<id>.ext.krunk.invalid`; the scope list on `krunk://extensions` shows
   which sites each one may read and change. Since 0.11.7:
