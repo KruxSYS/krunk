@@ -1244,6 +1244,18 @@ wrap_dev_tools_message_observer! {
         key: u64,
     }
     impl DevToolsMessageObserver {
+        /// The raw message, before CEF parses it. CEF's parser knows `{"id":N,"result":{…}}`
+        /// only: the answer to a call in an attached target's session ends in `,"sessionId":"…"}`
+        /// and would be dropped (0.19.0: found on Windows; the WASM inspector's calls into a
+        /// worker never came back). Those are taken here (1 = handled).
+        fn on_dev_tools_message(&self, _browser: Option<&mut Browser>, message: Option<&[u8]>) -> c_int {
+            let Some((id, result)) = lb_core::wasm::session_answer(message.unwrap_or_default()) else { return 0 };
+            if let Some(view) = lookup(self.key) {
+                view.devtools_session_result(id, result);
+            }
+            1
+        }
+
         fn on_dev_tools_method_result(
             &self,
             _browser: Option<&mut Browser>,

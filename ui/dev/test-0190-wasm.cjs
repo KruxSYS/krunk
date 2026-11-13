@@ -170,6 +170,11 @@ module.exports = function ({ openPage, check, lastSent, emit, shot, UI }) {
     check((await page.locator('#hex .hx-row').count()) === 1, 'grow: the hex view reaches the last row of the grown memory');
     await page.locator('#watch .remove').nth(2).click();
 
+    // The header follows the tab (a game writes its state into its title).
+    await page.evaluate(() => { window.__info.title = 'A game, health 90'; });
+    await page.waitForFunction(() => document.getElementById('tab-title').textContent === 'A game, health 90' && document.title === 'WASM – A game, health 90');
+    check(await page.locator('#scan-first').isDisabled() && await page.locator('#scan-next').isEnabled(), 'the header follows the tab\'s title; the controls stay as they were');
+
     // Instances: exports, which memory is whose, globals.
     const rows = page.locator('#instances .inst-row');
     check((await rows.count()) === 1 && (await rows.locator('.name').textContent()) === 'Instance 0', 'instances: the list has the instance');

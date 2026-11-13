@@ -493,6 +493,28 @@ pub fn hook_script(hook_key: &str) -> String {
     )
 }
 
+/// The answer to a call made in an attached target's session (flat mode), from the raw DevTools
+/// message: `{"id":7,"result":{…},"sessionId":"…"}` or `…"error":{…}…`. The engine's embedding
+/// layer delivers results only in the form `{"id":7,"result":{…}}` and drops these (it takes
+/// everything after `"result":` for the result), so the host reads them itself. None: not an
+/// answer of a session (an event, or the page's own session).
+pub fn session_answer(message: &[u8]) -> Option<(i32, Result<serde_json::Value, String>)> {
+    // Cheap for the many messages that are not: the engine writes the session last.
+    const KEY: &[u8] = b"\"sessionId\":\"";
+    let tail = &message[message.len().saturating_sub(160)..];
+    if !tail.windows(KEY.len()).any(|w| w == KEY) {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_slice(message).ok()?;
+    v.get("sessionId")?.as_str()?;
+    let id = i32::try_from(v.get("id")?.as_i64()?).ok()?;
+    if let Some(e) = v.get("error") {
+        let text = e.get("message").and_then(|m| m.as_str()).unwrap_or("the engine refused the call");
+        return Some((id, Err(text.chars().take(300).collect())));
+    }
+    Some((id, Ok(v.get("result").cloned().unwrap_or(serde_json::Value::Null))))
+}
+
 /// The engine's answer when a probe's handle (or its context) is gone: the page navigated.
 pub fn handle_lost(error: &str) -> bool {
     let e = error.to_ascii_lowercase();
@@ -795,6 +817,31 @@ mod tests {
             assert!(probe.contains(&format!("case '{op}':")), "the probe knows {op}");
         }
         assert!(MEMORY_PROTOTYPE.ends_with("Memory.prototype") && INSTANCE_PROTOTYPE.ends_with("Instance.prototype"));
+    }
+
+    #[test]
+    fn answers_of_a_worker_session_are_read_from_the_raw_message() {
+        let ok = br#"{"id":7,"result":{"result":{"type":"object","objectId":"1.2.3"}},"sessionId":"5B2F67CE7CC7C7183FB9A7F7F39CFA13"}"#;
+        let (id, r) = session_answer(ok).unwrap();
+        assert_eq!((id, r.unwrap()["result"]["objectId"].as_str().map(str::to_string)), (7, Some("1.2.3".into())));
+        let err =
+            br#"{"id":8,"error":{"code":-32000,"message":"Cannot find context with specified id"},"sessionId":"AB"}"#;
+        let (id, r) = session_answer(err).unwrap();
+        assert_eq!(id, 8);
+        assert!(handle_lost(&r.unwrap_err()));
+        assert_eq!(session_answer(br#"{"id":9,"result":{},"sessionId":"AB"}"#).unwrap().1.unwrap(), json!({}));
+        // The page's own session, events (also a session's), text that only looks like it.
+        for no in [
+            &br#"{"id":7,"result":{"result":{"type":"string","value":"x"}}}"#[..],
+            br#"{"method":"Runtime.consoleAPICalled","params":{},"sessionId":"AB"}"#,
+            br#"{"id":7,"result":{"result":{"type":"string","value":"\"sessionId\":\"AB\""}}}"#,
+            br#"{"id":7,"result":{},"sessionId":5}"#,
+            br#"{"id":"7","result":{},"sessionId":"AB"}"#,
+            br#"{"id":7,"result":{},"sessionId":"AB""#,
+            b"",
+        ] {
+            assert!(session_answer(no).is_none(), "{}", String::from_utf8_lossy(no));
+        }
     }
 
     #[test]

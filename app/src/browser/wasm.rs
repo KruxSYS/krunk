@@ -45,6 +45,10 @@ const GROUP: &str = "krunk-wasm";
 const QUERY_GROUP: &str = "krunk-wasm-found";
 /// The usual DevTools time limit.
 const CALL_TIMEOUT_MS: i64 = 10_000;
+/// Making a probe and looking for a context's objects are short calls: a context that does not
+/// answer them (a worker that hangs, a paused page) is reported after this long, so the list
+/// of the others is not held up.
+const SETUP_TIMEOUT_MS: i64 = 3_000;
 /// At most this many contexts are listed.
 const MAX_CONTEXTS: usize = 32;
 
@@ -114,9 +118,12 @@ impl Job {
 }
 
 /// The engine's errors, as a user reads them.
-fn friendly(e: String) -> String {
+fn friendly(e: String, target: &Target) -> String {
     if e.contains("no answer from the engine") {
-        "The page did not answer in time (is it paused in the DevTools debugger?).".into()
+        match target {
+            Target::Worker(_) => "The worker did not answer in time.".into(),
+            _ => "The page did not answer in time (is it paused in the DevTools debugger?).".into(),
+        }
     } else if wasm::handle_lost(&e) {
         "The page changed; list the memories again.".into()
     } else {
@@ -473,11 +480,14 @@ impl Browser {
         });
         let weak = self.me.clone();
         let target = job.target.clone();
-        self.wasm_cdp(view, &target, "Runtime.evaluate", params, CALL_TIMEOUT_MS, move |r| {
+        self.wasm_cdp(view, &target, "Runtime.evaluate", params, SETUP_TIMEOUT_MS, move |r| {
             let Some(b) = weak.upgrade() else { return job.fail("Krunk is closing") };
             let id = match object_id(r) {
                 Ok(id) => id,
-                Err(e) => return job.fail(friendly(e)),
+                Err(e) => {
+                    let why = friendly(e, &job.target);
+                    return job.fail(why);
+                }
             };
             match b.wasm.sessions.borrow_mut().get_mut(&job.tab) {
                 Some(s) => s.probes.insert(job.ctx, id),
@@ -521,10 +531,11 @@ impl Browser {
         });
         let weak = self.me.clone();
         let query_target = target.clone();
-        self.wasm_cdp(view, &target, "Runtime.evaluate", params, CALL_TIMEOUT_MS, move |r| {
+        self.wasm_cdp(view, &target, "Runtime.evaluate", params, SETUP_TIMEOUT_MS, move |r| {
             let (Some(b), Ok(proto)) = (weak.upgrade(), object_id(r)) else { return done(None) };
             let Some(view) = b.tab_view(tab) else { return done(None) };
             let params = json!({ "prototypeObjectId": proto, "objectGroup": QUERY_GROUP });
+            // (The query collects garbage first: the full time.)
             b.wasm_cdp(&view, &query_target, "Runtime.queryObjects", params, CALL_TIMEOUT_MS, move |r| {
                 done(r.ok().and_then(|v| v.pointer("/objects/objectId").and_then(Value::as_str).map(str::to_string)));
             });
@@ -569,7 +580,10 @@ impl Browser {
                     job.retried = true;
                     b.wasm_run(job);
                 }
-                Err(e) => job.fail(friendly(e)),
+                Err(e) => {
+                    let why = friendly(e, &job.target);
+                    job.fail(why)
+                }
             }
         });
     }
@@ -605,7 +619,7 @@ impl Browser {
                     if let Some(s) = b.wasm.sessions.borrow_mut().get_mut(&tab) {
                         s.hook = None;
                     }
-                    return done(Err(friendly(e)));
+                    return done(Err(friendly(e, &Target::Page)));
                 }
             };
             if let Some(s) = b.wasm.sessions.borrow_mut().get_mut(&tab) {

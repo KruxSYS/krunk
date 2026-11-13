@@ -100,23 +100,45 @@
     ['hook', 'scan-first', 'add-watch', 'hex-go', 'hex-prev', 'hex-next', 'watch-import'].forEach(function (id) { $(id).disabled = !state.ok; });
     if (!state.ok) { $('scan-next').disabled = true; $('scan-new').disabled = true; }
   }
+  function showTab(r) {
+    const title = r.open ? (r.title || r.url) : '';
+    if ($('tab-title').textContent !== title) $('tab-title').textContent = title;
+    if ($('tab-url').textContent !== (r.open ? r.url : '')) $('tab-url').textContent = r.open ? r.url : '';
+    if (r.open && document.title !== 'WASM – ' + title) document.title = 'WASM – ' + title;
+    state.tab = { open: !!r.open, inspectable: !!r.inspectable, url: r.url };
+  }
+  // The tab's title and address as they are now (a game writes its state into the title; the
+  // tab may navigate). What the page can do changes only when the tab closes or leaves the web.
+  function followTab() {
+    return LB.request('wasmInfo').then(function (r) {
+      const was = state.tab;
+      if (was && (was.open !== !!r.open || was.inspectable !== !!r.inspectable)) return loadInfo().then(find);
+      showTab(r);
+    }, function () {});
+  }
   function loadInfo() {
     return LB.request('wasmInfo').then(function (r) {
       $('unreachable').textContent = r.unreachable || '';
-      $('tab-title').textContent = r.open ? (r.title || r.url) : '';
-      $('tab-url').textContent = r.open ? r.url : '';
+      showTab(r);
       $('private').hidden = !r.private;
       $('hook').hidden = !!r.hook;
       $('hook-on').hidden = !r.hook;
-      if (r.open) document.title = 'WASM – ' + (r.title || r.url);
       if (!r.open) problem('The tab this page was opened from has closed.');
       else if (!r.inspectable) problem('Only web pages can be inspected: the tab shows one of Krunk\'s own pages or an empty page.');
       else problem('');
       return r;
     }, function (e) { problem(e.message); return null; });
   }
+  // One search at a time: a context that does not answer holds its answer back for seconds.
   function find() {
     if (!state.ok) return Promise.resolve();
+    if (state.finding) return state.finding;
+    const done = function () { state.finding = null; };
+    state.finding = findNow();
+    state.finding.then(done, done);
+    return state.finding;
+  }
+  function findNow() {
     return call(0, { op: 'list' }).then(function (r) {
       state.contexts = r.contexts || [];
       const all = [];
@@ -681,7 +703,9 @@
     return !state.sel || state.instLost || state.watch.some(function (w) { return /^no memory/.test(w.error); });
   }
   function tick() {
-    if (document.hidden || !state.ok) return;
+    if (document.hidden) return;
+    followTab();
+    if (!state.ok) return;
     ticks++;
     if (lostTrack() && ticks % 3 === 0 && !state.scanning) find();
     if (state.watch.length) refreshWatch();

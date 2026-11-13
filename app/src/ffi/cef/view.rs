@@ -1724,6 +1724,14 @@ impl ViewInner {
         }
     }
 
+    /// The answer to a call in an attached target's session ([`View::devtools_session_call`]).
+    pub(super) fn devtools_session_result(&self, id: i32, result: DevToolsResult) {
+        let done = self.devtools_calls.borrow_mut().remove(&id);
+        if let Some((_, Some(done))) = done {
+            done(result);
+        }
+    }
+
     pub(super) fn devtools_result(&self, id: i32, success: bool, result: &[u8]) {
         let Some((method, done)) = self.devtools_calls.borrow_mut().remove(&id) else { return };
         if !success {
