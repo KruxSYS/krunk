@@ -1,5 +1,6 @@
 package org.krunk.browser.ui
 
+import android.app.Application
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
@@ -7,6 +8,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.krunk.browser.tabs.DebugProps
 import org.krunk.browser.ui.bookmarks.BookmarksScreen
@@ -19,6 +21,9 @@ import org.krunk.browser.ui.settings.SettingsScreen
 import org.krunk.browser.ui.tabs.TabSwitcherScreen
 import org.krunk.browser.ui.theme.KrunkTheme
 import org.krunk.browser.ui.theme.LocalKrunkDark
+import org.krunk.browser.ui.vault.VaultScreen
+import org.krunk.browser.ui.vault.VaultSecureFlag
+import org.krunk.browser.ui.vault.vaultPort
 
 /** The app: theme, the screen stack and back handling. */
 @Composable
@@ -31,7 +36,11 @@ fun KrunkRoot(vm: BrowserViewModel) {
 
     // Private pages stay out of the Recents thumbnail, screenshots and screen recordings.
     val showPrivate = remember { DebugProps.flag(DebugProps.SHOW_PRIVATE) } // debug builds only
-    SecureWindowEffect(!showPrivate && (activeTab?.private == true || (screen == Screen.TabSwitcher && hasPrivateTabs)))
+    val privateOnScreen = activeTab?.private == true || (screen == Screen.TabSwitcher && hasPrivateTabs)
+    // So does everything of the vault: its screen and each unlock, picker and save dialog (they
+    // count themselves in VaultSecureFlag). The debug switch above is for private pages only.
+    val vaultOnScreen by VaultSecureFlag.secure.collectAsStateWithLifecycle()
+    SecureWindowEffect((!showPrivate && privateOnScreen) || screen == Screen.Vault || vaultOnScreen)
 
     KrunkTheme(
         mode = settings.theme,
@@ -45,11 +54,21 @@ fun KrunkRoot(vm: BrowserViewModel) {
             if (screen != Screen.Browser) SystemBarsEffect(fullScreen = false, darkTheme = LocalKrunkDark.current)
             when (screen) {
                 Screen.Browser -> BrowserScreen(vm)
+
                 Screen.TabSwitcher -> TabSwitcherScreen(vm)
+
                 Screen.Bookmarks -> BookmarksScreen(vm)
+
                 Screen.History -> HistoryScreen(vm)
+
                 Screen.Settings -> SettingsScreen(vm)
+
                 Screen.About -> AboutScreen(vm)
+
+                Screen.Vault -> {
+                    val app = LocalContext.current.applicationContext as? Application
+                    if (app != null) VaultScreen(vm, vaultPort(app))
+                }
             }
         }
     }

@@ -21,6 +21,7 @@ import androidx.compose.material.icons.outlined.Computer
 import androidx.compose.material.icons.outlined.FindInPage
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Masks
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.Settings
@@ -208,6 +209,10 @@ fun BrowserMenu(
         Item(stringResource(R.string.menu_history), Icons.Outlined.History) {
             onDismiss()
             vm.push(Screen.History)
+        }
+        Item(stringResource(R.string.menu_passwords), Icons.Outlined.Key) {
+            onDismiss()
+            vm.push(Screen.Vault)
         }
         Item(stringResource(R.string.menu_settings), Icons.Outlined.Settings) {
             onDismiss()
