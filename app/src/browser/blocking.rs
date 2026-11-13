@@ -131,10 +131,11 @@ pub(super) struct NetShared {
     /// 0.14.0: the VPN should run and neither it nor its stand-in is the engine's proxy: every
     /// web request is refused (only Krunk's own pages load).
     offline: AtomicBool,
-<<<<<<< HEAD
     /// 0.17.0: who may load each installed extension's files from a tab
     /// (`web_accessible_resources`), by extension id.
     ext_access: RwLock<Arc<HashMap<String, lb_core::ext_guard::WebAccess>>>,
+    /// 0.18.0: the requests under way, of all tabs (`lb_core::inflight`).
+    inflight: Mutex<lb_core::inflight::InFlight>,
 }
 
 impl NetShared {
@@ -150,12 +151,8 @@ impl NetShared {
         let Some(id) = lb_core::ext::id_of_url(url) else { return true };
         let Ok(access) = self.ext_access.read() else { return false };
         access.get(&id).is_none_or(|a| lb_core::ext_guard::request_allowed(a, &id, url, initiator, top_url))
-=======
-    /// 0.18.0: the requests under way, of all tabs (`lb_core::inflight`).
-    inflight: Mutex<lb_core::inflight::InFlight>,
-}
+    }
 
-impl NetShared {
     /// The tab closed: its requests are forgotten.
     pub fn forget_tab(&self, tab: TabId) {
         if let Ok(mut f) = self.inflight.lock() {
@@ -166,7 +163,6 @@ impl NetShared {
     /// The lines for krunk.log about requests pending too long (rate-limited there).
     pub fn slow_requests(&self, now: i64) -> Vec<lb_core::inflight::SlowReport> {
         self.inflight.lock().map(|mut f| f.slow(now)).unwrap_or_default()
->>>>>>> worktree-agent-a7c5735d83a74d2e2
     }
 
     pub fn engine(&self) -> Option<Arc<Blocker>> {
