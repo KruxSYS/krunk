@@ -10,11 +10,9 @@ Measured with `scripts/vm-www/hang-measure.cjs` against `scripts/vm-www/hangserv
 (a server whose answers hang on purpose, port 8120), in **Chromium 155.0.8059.12 (Playwright's
 build) on Linux, 2026-11-13**, each scenario in a fresh profile, HTTP/1.1 over plain TCP.
 
-**Not measured: Krunk itself on Windows.** Both mechanisms below live in Chromium's network
-stack (`net/`), which Krunk's engine (CEF 156 / Chromium 156.0.8078.80) shares, and the two
-constants were read in Krunk's own engine sources (see "Mechanisms"); but the numbers are
-Chromium's on Linux, and Krunk's mitigations (below) have not run against them. "To do on
-Windows" at the end lists the re-measurement.
+**Measured again in Krunk on Windows (2026-11-13)**, see "Krunk on Windows: before and after"
+below: the same numbers, so both mechanisms are the engine's and not Krunk's request hooks,
+the background-tab throttling patch, the blocker or a proxy.
 
 Times are seconds after tab A started. "at the server" is the moment the server's access log
 shows the request, so it tells waiting inside the browser from waiting for the server.
@@ -169,17 +167,39 @@ Krunk's engine has Chromium's six.
   the same tab and host once in ten minutes.
 - The list is bounded (4096 requests) and forgets a tab's requests when the tab closes.
 
-## To do on Windows (not done here)
+## Krunk on Windows: before and after
 
-1. Copy `scripts/vm-www/hangserve.py` to the VM and start it (`python hangserve.py`); use
-   `127.0.0.1:8120` and `localhost:8120` as the two hosts.
-2. Rows 1, 5: open `http://127.0.0.1:8120/hang?x=1` in one tab and again in a second tab a
-   few seconds later; the server's log should show the second request at once (with the
-   mitigation) instead of after 20 s, and `krunk.log` the "goes around the cache" line. Same
-   with `/slow-headers?s=8&nostore=1`.
-3. Rows 8, 9: open `http://127.0.0.1:8120/page?n=6&u=%2Fhang`, then `http://127.0.0.1:8120/ok`
-   in a second tab. With the current engine it hangs until the first tab is closed; with the
-   patched engine it loads, and `/page?n=16&u=%2Fhang` blocks it again.
-4. `krunk://tasks` should show `6` and a growing age for the first tab; `krunk.log` the 30 s
-   line with `127.0.0.1` and no path.
-5. The open question under "Downloads in parts".
+Windows VM, `hangserve.py` on 127.0.0.1:8120, Krunk's fast test build with its DevTools port
+(`.pipeline/tools/net/hang-krunk.mjs`: tab A navigates, tab B follows after the gap; times are
+when the request **reached the server**, in seconds after A's, from the server's own log).
+Raw output: `.pipeline/evidence-0.18.0/before/` (Krunk 0.17.0) and `after/` (0.18.0 code).
+
+| Scenario | Krunk 0.17.0 | 0.18.0 |
+|---|---|---|
+| Same address, never answers; B in a background tab, 1 s later | B at **21.0** | B at **1.0** |
+| The same with B in a second window, both in front | B not at the server after 1 s either (DevTools: request sent at 1.0, no response) | as above (same code path) |
+| Same address, never answers; B 3 s later | (as the first row) | B at **3.0** |
+| Same address, answer after 8 s, `no-store`; B 1 s later | A done 8.1, B at 8.1, done **16.1** | unchanged at a gap of exactly 1 s (the bypass starts after 1 s of waiting) |
+| The same, B 3 s later | B waits for A (as above) | B at **3.0**, done 11.0 |
+| Same address, answer after 8 s, cacheable; B 1 s later | one request, both done 8.1 | unchanged (shared on purpose) |
+| Same address, headers at once, body after 8 s, `no-store` | B at 1.0, done 9.0 | unchanged (never held up) |
+| Another address on the same host while A hangs | B at 1.0 | unchanged |
+| A's page holds six requests that never answer; B navigates to that host | B **never** at the server (watched 14 s) | unchanged until the engine build with 16 connections per host |
+| The tab that holds the six is itself sent elsewhere on that host (address bar) | **never** at the server (watched 40 s): the tab cannot leave | the six are closed and the new address is at the server at once |
+
+What this says about the cause: DevTools shows tab B's request as sent the moment B navigates
+(`requestWillBeSent` at the gap) in every row, so nothing in Krunk holds it back before the
+network stack; another address on the same host is not delayed, so it is per address (the
+cache's one-writer rule, 20 s) in the first group and per host (six connections) in the
+second; a foreground window behaves like a background tab, so tab throttling is not involved;
+the blocker and the VPN were not on the path (plain loopback HTTP, VPN off).
+
+New in 0.18.0 for the last row: before Krunk itself navigates or reloads a tab (address bar,
+Reload, Home, a bookmark), a tab that waits for six or more answers has its loads stopped
+(`Browser::free_stuck_connections`), because its next request to the same host would wait
+for one of the connections its own page holds. `krunk.log`: `tab 1: 7 requests without an
+answer are stopped before the tab goes on`. A link clicked in the page itself is not covered.
+
+Still open on Windows: the 16-connection engine patch (needs the engine build), the
+`krunk://tasks` Pending column and the 30 s log line (unit and UI tests only), and the open
+question under "Downloads in parts".
