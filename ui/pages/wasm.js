@@ -1,7 +1,8 @@
 // krunk://wasm: the WASM memory inspector for the tab this page was opened from (⋮ menu →
 // WASM memory inspector). The host bound the page to that tab; requests name no tab. Every
 // request goes to the probe next to the memories (ui/inject/wasm-probe.js) as
-// {op, …}: list, scan, next, results, read, write, freeze, watch, bytes, writeBytes.
+// {op, …}: list, globals, setGlobal, scan, next, results, read, write, freeze, watch, bytes,
+// writeBytes.
 (function () {
   'use strict';
   const el = LB.el;
@@ -19,6 +20,7 @@
     ok: false, // bound to an open web page
     contexts: [],
     sel: null, // {ctx, mem, bytes}
+    inst: null, // {ctx, inst}: the instance whose exports are shown
     scan: null, // {ctx, mem, id, type, count, snapshot}
     scanning: false,
     shown: PAGE,
@@ -116,12 +118,34 @@
       state.contexts.forEach(function (c) { (c.memories || []).forEach(function (m) { all.push({ ctx: c.ctx, mem: m.mem, bytes: m.bytes }); }); });
       const cur = state.sel && all.find(function (m) { return m.ctx === state.sel.ctx && m.mem === state.sel.mem; });
       state.sel = cur || all[0] || null;
+      const insts = [];
+      state.contexts.forEach(function (c) { (c.instances || []).forEach(function (i) { insts.push({ ctx: c.ctx, inst: i.inst }); }); });
+      const curInst = state.inst && insts.find(function (i) { return i.ctx === state.inst.ctx && i.inst === state.inst.inst; });
+      state.inst = curInst || insts[0] || null;
+      state.instLost = false;
       renderMemories();
+      renderInstances();
       selected();
     }).catch(function (e) {
       $('memories').textContent = '';
       $('memories').appendChild(el('div', { class: 'empty', text: e.message }));
     });
+  }
+  // "export "memory" of instance 1": the instances of the context that export this memory.
+  function ownersOf(c, mem) {
+    const out = [];
+    (c.instances || []).forEach(function (i) {
+      (i.exports || []).forEach(function (e) { if (e.kind === 'memory' && e.mem === mem) out.push('export "' + e.name + '" of instance ' + i.inst); });
+    });
+    return out;
+  }
+  function selectMemory(ctx, mem) {
+    const c = state.contexts.find(function (x) { return x.ctx === ctx; });
+    const m = c && (c.memories || []).find(function (x) { return x.mem === mem; });
+    if (!m) return;
+    state.sel = { ctx: ctx, mem: mem, bytes: m.bytes };
+    renderMemories();
+    selected();
   }
   function renderMemories() {
     const box = $('memories');
@@ -134,11 +158,12 @@
         box.appendChild(el('div', {
           class: 'mem-row' + (on ? ' selected' : ''), role: 'button', tabindex: '0', 'data-ctx': String(c.ctx), 'data-mem': String(m.mem),
           'aria-pressed': on ? 'true' : 'false',
-          onclick: function () { state.sel = { ctx: c.ctx, mem: m.mem, bytes: m.bytes }; renderMemories(); selected(); },
+          onclick: function () { selectMemory(c.ctx, m.mem); },
           onkeydown: function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } },
         }, [
           el('span', { class: 'name', text: 'Memory ' + m.mem }),
           el('span', { class: 'where', text: KIND[c.kind] + (c.kind === 'page' ? '' : ' ' + c.url), title: c.url }),
+          el('span', { class: 'owner', text: ownersOf(c, m.mem).join(', ') }),
           el('span', { class: 'size', text: sizeText(m.bytes) + (m.shared ? ' · shared' : '') }),
         ]));
       });
@@ -146,6 +171,133 @@
     });
     if (!any) box.insertBefore(el('div', { class: 'empty', text: 'No WebAssembly memory found in this tab (yet). Start the game or app, then choose Find memories.' }), box.firstChild);
   }
+
+  // ---------- instances: exports, memories, globals ----------
+  const KINDS = [['function', 'function', 'functions'], ['memory', 'memory', 'memories'], ['global', 'global', 'globals'], ['table', 'table', 'tables'], ['tag', 'tag', 'tags']];
+  const MAX_NAMES = 60;
+  function instOf(s) {
+    const c = s && state.contexts.find(function (x) { return x.ctx === s.ctx; });
+    const i = c && (c.instances || []).find(function (x) { return x.inst === s.inst; });
+    return i ? { c: c, i: i } : null;
+  }
+  function countsText(i) {
+    const parts = [];
+    KINDS.forEach(function (k) { const n = (i.counts || {})[k[0]] || 0; if (n) parts.push(n.toLocaleString() + ' ' + (n === 1 ? k[1] : k[2])); });
+    return parts.length ? parts.join(' · ') : 'no exports';
+  }
+  function selectInstance(ctx, inst) {
+    state.inst = { ctx: ctx, inst: inst };
+    // Its memory becomes the memory scanned and shown.
+    const found = instOf(state.inst);
+    const m = found && (found.i.exports || []).find(function (e) { return e.kind === 'memory' && e.mem !== undefined; });
+    renderInstances();
+    if (m) selectMemory(ctx, m.mem);
+  }
+  function renderInstances() {
+    const box = $('instances');
+    box.textContent = '';
+    let any = false;
+    state.contexts.forEach(function (c) {
+      (c.instances || []).forEach(function (i) {
+        any = true;
+        const on = state.inst && state.inst.ctx === c.ctx && state.inst.inst === i.inst;
+        const mems = (i.exports || []).filter(function (e) { return e.kind === 'memory' && e.mem !== undefined; })
+          .map(function (e) { return 'Memory ' + e.mem; });
+        box.appendChild(el('div', {
+          class: 'inst-row' + (on ? ' selected' : ''), role: 'button', tabindex: '0', 'data-ctx': String(c.ctx), 'data-inst': String(i.inst),
+          'aria-pressed': on ? 'true' : 'false',
+          onclick: function () { selectInstance(c.ctx, i.inst); },
+          onkeydown: function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } },
+        }, [
+          el('span', { class: 'name', text: 'Instance ' + i.inst }),
+          el('span', { class: 'where', text: KIND[c.kind] + (c.kind === 'page' ? '' : ' ' + c.url) + (i.error ? ': ' + i.error : ''), title: c.url }),
+          el('span', { class: 'size', text: countsText(i) + (mems.length ? ' · ' + mems.join(', ') : '') }),
+        ]));
+      });
+    });
+    if (!any) box.appendChild(el('div', { class: 'empty', text: 'No WebAssembly instance found in this tab (yet). A memory can exist without one.' }));
+    renderInstance();
+  }
+  // The chosen instance: its memories (links), its globals (a table), the names of the rest.
+  function renderInstance() {
+    const found = instOf(state.inst);
+    $('instance-card').hidden = !found;
+    if (!found) return;
+    const i = found.i, c = found.c, exports = i.exports || [];
+    $('instance-name').textContent = 'Instance ' + i.inst + (c.kind === 'page' ? '' : ' (' + KIND[c.kind].toLowerCase() + ')');
+    const mems = $('instance-memories');
+    mems.textContent = '';
+    exports.filter(function (e) { return e.kind === 'memory'; }).forEach(function (e) {
+      if (e.mem === undefined) { mems.appendChild(el('span', { class: 'muted', text: 'export "' + e.name + '": a memory that is not listed ' })); return; }
+      mems.appendChild(el('button', { class: 'link-btn mem-link', 'data-mem': String(e.mem), text: 'export "' + e.name + '" = Memory ' + e.mem,
+        title: 'Scan and show this memory', onclick: function () { selectMemory(c.ctx, e.mem); } }));
+    });
+    const body = $('globals');
+    body.textContent = '';
+    const globals = exports.filter(function (e) { return e.kind === 'global'; });
+    if (!globals.length) body.appendChild(el('tr', {}, [el('td', { colspan: '3', class: 'none', text: 'This instance exports no global.' })]));
+    globals.forEach(function (g) {
+      const writable = g.mutable !== false && ['i32', 'i64', 'f32', 'f64', 'number'].indexOf(g.type) >= 0;
+      let cell;
+      if (writable) {
+        const input = el('input', { type: 'text', class: 'value gvalue', spellcheck: 'false', 'aria-label': 'Value of ' + g.name, title: 'Type a value and press Enter to write it' });
+        input.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') { e.preventDefault(); writeGlobal(state.inst, g, input); }
+          if (e.key === 'Escape') { input.blur(); }
+        });
+        cell = el('td', {}, [input]);
+      } else {
+        cell = el('td', { class: 'mono gconst' });
+      }
+      body.appendChild(el('tr', { 'data-export': String(g.index) }, [
+        el('td', { class: 'mono gname', text: g.name }),
+        el('td', { class: 'mono gtype', text: g.type + (g.mutable === false ? ' (constant)' : g.mutable === null ? ' (mutable?)' : '') }),
+        cell,
+      ]));
+    });
+    paintGlobals(globals);
+    const others = [];
+    KINDS.forEach(function (k) {
+      if (k[0] === 'memory' || k[0] === 'global') return;
+      const list = exports.filter(function (e) { return e.kind === k[0]; });
+      const n = (i.counts || {})[k[0]] || 0;
+      if (!n) return;
+      const names = list.slice(0, MAX_NAMES).map(function (e) { return e.name + (e.length !== undefined ? ' (' + e.length + ')' : ''); });
+      others.push(n.toLocaleString() + ' ' + (n === 1 ? k[1] : k[2]) + ': ' + names.join(', ') + (n > names.length ? ', …' : ''));
+    });
+    $('instance-others').textContent = others.join('. ') + (others.length ? '.' : '');
+  }
+  // The values, without touching a field the user is typing in.
+  function paintGlobals(globals) {
+    globals.forEach(function (g) {
+      const row = $('globals').querySelector('tr[data-export="' + g.index + '"]');
+      if (!row) return;
+      const text = g.value === null || g.value === undefined ? '–' : String(g.value);
+      const input = row.querySelector('input.gvalue');
+      if (input) { if (document.activeElement !== input) input.value = g.value === null || g.value === undefined ? '' : text; } else row.querySelector('.gconst').textContent = text;
+    });
+  }
+  function refreshGlobals() {
+    const s = state.inst, found = instOf(s);
+    if (!found || !(found.i.counts || {}).global) return Promise.resolve();
+    return call(s.ctx, { op: 'globals', inst: s.inst }).then(function (list) {
+      if (state.inst !== s) return;
+      (list || []).forEach(function (g) {
+        const e = (found.i.exports || []).find(function (x) { return x.index === g.index && x.kind === 'global'; });
+        if (e) e.value = g.value;
+      });
+      state.instLost = false;
+      paintGlobals(list || []);
+    }, function (e) { state.instLost = /^no instance/.test(e.message); });
+  }
+  function writeGlobal(s, g, input) {
+    const t = input.value.trim();
+    if (t === '') { Page.toast('Type a value'); return; }
+    // Floats as numbers, integers as typed (decimal or 0x…; a 64-bit integer keeps every digit).
+    const value = (g.type === 'f32' || g.type === 'f64') && isFinite(Number(t)) ? Number(t) : t;
+    call(s.ctx, { op: 'setGlobal', inst: s.inst, export: g.index, value: value }).then(function () { input.blur(); return refreshGlobals(); }).catch(fail);
+  }
+
   function selected() {
     const s = state.sel;
     $('scan-memory').textContent = s ? memName(s) : '';
@@ -422,9 +574,17 @@
       h.addr = at;
       h.bytes = r.bytes || [];
       h.size = r.size || 0;
-      s.bytes = h.size || s.bytes;
+      if (h.size && h.size !== s.bytes) grew(s, h.size);
       hexRender();
     }).catch(function (e) { h.bytes = []; hexRender(); $('hex-status').textContent = e.message; });
+  }
+  // The memory has another size than the list says (memory.grow): the list and the titles follow.
+  function grew(s, bytes) {
+    s.bytes = bytes;
+    const c = state.contexts.find(function (x) { return x.ctx === s.ctx; });
+    const m = c && (c.memories || []).find(function (x) { return x.mem === s.mem; });
+    if (m) { m.bytes = bytes; m.pages = bytes / 65536; renderMemories(); }
+    $('hex-memory').textContent = memName(s) + ', ' + sizeText(bytes);
   }
   function hexRender() {
     const h = state.hex;
@@ -513,13 +673,14 @@
   // listed again; the old scan is gone with the old document.
   let ticks = 0;
   function lostTrack() {
-    return !state.sel || state.watch.some(function (w) { return /^no memory/.test(w.error); });
+    return !state.sel || state.instLost || state.watch.some(function (w) { return /^no memory/.test(w.error); });
   }
   function tick() {
     if (document.hidden || !state.ok) return;
     ticks++;
     if (lostTrack() && ticks % 3 === 0 && !state.scanning) find();
     if (state.watch.length) refreshWatch();
+    if (state.inst) refreshGlobals();
     if (state.scan && !state.scanning) loadResults();
     if ($('hex-live').checked && state.sel && !state.hex.lo) hexLoad(state.hex.addr);
   }

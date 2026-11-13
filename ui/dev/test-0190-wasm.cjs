@@ -1,17 +1,23 @@
 // Krunk 0.19.0: krunk://wasm (the WASM memory inspector) and its ⋮ menu row. The mock host
 // answers `wasmCall` with the real probe (ui/inject/wasm-probe.js) over a WebAssembly.Memory
-// made in the test page, so the page's scan, watch, freeze and hex paths run for real.
+// made in the test page, so the page's scan, watch, freeze and hex paths run for real; and over
+// an instance of the fixture module (wasm-fixture.cjs) for the Instances list and its globals.
 // Hooked into test-ui.cjs (ONLY=WasmPage,WasmMenu).
 'use strict';
 const fs = require('fs');
 const path = require('path');
 
-module.exports = function ({ openPage, check, lastSent, emit, shot }) {
+module.exports = function ({ openPage, check, lastSent, emit, shot, UI }) {
   const PROBE = fs.readFileSync(path.join(__dirname, '..', 'inject', 'wasm-probe.js'), 'utf8').trim().replace(/;$/, '');
+  const FIXTURE = require('./wasm-fixture.cjs').fixtureBytes();
 
   function setup(arg) {
     const memory = new WebAssembly.Memory({ initial: 1 });
     const probe = (0, eval)('(' + arg.probe + ')')(globalThis);
+    // (Compiling needs 'wasm-unsafe-eval': the first load, under the page's own policy, has no instance.)
+    let instance = null;
+    try { instance = new WebAssembly.Instance(new WebAssembly.Module(new Uint8Array(arg.fixture))); } catch (_) { /* the page's policy */ }
+    window.__inst = instance;
     window.__mem = memory;
     window.__dv = () => new DataView(memory.buffer);
     window.__probe = probe;
@@ -26,9 +32,10 @@ module.exports = function ({ openPage, check, lastSent, emit, shot }) {
     h.wasmHook = (m) => { window.__info.hook = m.on; return { hook: m.on }; };
     h.wasmCall = (m) => {
       if (m.req.op === 'list') {
-        return probe.call([memory], { op: 'list' }).then((mems) => ({ contexts: [
-          { ctx: 0, kind: 'page', url: 'https://game.example/play', memories: mems },
-          { ctx: 1000001, kind: 'worker', url: 'https://game.example/worker.js', memories: [], error: 'The page did not answer in time' },
+        // As the host does: the memories and the instances a query found, then the probe's survey.
+        return probe.call(instance ? [memory, instance.exports.memory] : [memory], { op: 'survey' }, instance ? [instance] : null).then((sv) => ({ contexts: [
+          { ctx: 0, kind: 'page', url: 'https://game.example/play', memories: sv.memories, instances: sv.instances },
+          { ctx: 1000001, kind: 'worker', url: 'https://game.example/worker.js', memories: [], instances: [], error: 'The page did not answer in time' },
         ], unreachable: 'x' }));
       }
       return probe.call(null, m.req);
@@ -37,8 +44,18 @@ module.exports = function ({ openPage, check, lastSent, emit, shot }) {
 
   async function testWasmPage(browser) {
     console.log('0.19.0: WASM memory inspector page');
-    const { page, errors } = await openPage(browser, 'https://krunk.invalid/wasm.html', { width: 1000, height: 900 }, 1, setup, { probe: PROBE });
+    const { page, errors } = await openPage(browser, 'https://krunk.invalid/wasm.html', { width: 1000, height: 900 }, 1, setup, { probe: PROBE, fixture: FIXTURE });
     await page.waitForSelector('.mem-row');
+    // The mock's instance lives in the inspector page itself (in Krunk it lives in the inspected
+    // tab), and Krunk's pages may not compile WebAssembly: this one document is served again
+    // with 'wasm-unsafe-eval' added to the policy it came with.
+    check(await page.evaluate(() => window.__inst === null), 'krunk://wasm itself can\'t compile WebAssembly (its content security policy)');
+    const policy = (await page.reload()).headers()['content-security-policy'];
+    await page.context().route('https://krunk.invalid/wasm.html', (r) => r.fulfill({ status: 200,
+      headers: { 'content-type': 'text/html', 'content-security-policy': policy.replace("script-src 'self'", "script-src 'self' 'wasm-unsafe-eval'") },
+      body: fs.readFileSync(path.join(UI, 'pages', 'wasm.html')) }));
+    await page.reload();
+    await page.waitForSelector('.inst-row');
     check((await page.textContent('#tab-title')) === 'A game' && (await page.textContent('#tab-url')) === 'https://game.example/play', 'shows the tab it is bound to');
     check((await page.textContent('.mem-row .name')) === 'Memory 0' && (await page.textContent('.mem-row .size')).startsWith('64 KiB'), 'lists the memory with its size');
     check((await page.locator('.mem-row.selected').count()) === 1, 'the first memory is chosen');
@@ -123,6 +140,72 @@ module.exports = function ({ openPage, check, lastSent, emit, shot }) {
     await page.waitForFunction(() => document.querySelector('#hex .hx-row .o').textContent === '00000900');
     check(true, 'the next page of the window');
     await shot(page, 'wasm.png');
+
+    // memory.grow: the memory keeps its number, the scan's results, the watch list and the freeze.
+    await page.fill('#add-where', '0x10010');
+    await page.click('#add-watch');
+    await page.waitForFunction(() => { const i = document.querySelectorAll('#watch input.value')[2]; return i && /past the end/.test(i.placeholder); });
+    check(true, 'grow: before it, an address past the end of the memory says so');
+    await page.evaluate(() => { window.__mem.grow(1); window.__dv().setInt32(0x10010, 4242, true); });
+    await page.waitForFunction(() => { const i = document.querySelectorAll('#watch input.value')[2]; return i && i.value === '4242'; });
+    check(true, 'grow: the watch entry past the old size now reads the value there');
+    await page.waitForFunction(() => document.querySelector('.mem-row .size').textContent.startsWith('128 KiB') && document.getElementById('hex-memory').textContent.includes('128 KiB'));
+    check((await page.locator('.mem-row.selected .name').textContent()) === 'Memory 0', 'grow: the memory list and the hex view show the new size (128 KiB), the same memory stays chosen');
+    check((await page.textContent('#results tr .addr')) === '0x400' && (await page.textContent('#results tr .value')) === '999', 'grow: the result list from before is still there, with the value of now');
+    await page.evaluate(() => window.__dv().setInt32(0x400, 5, true));
+    await page.waitForFunction(() => window.__dv().getInt32(0x400, true) === 999);
+    check(true, 'grow: the frozen value is still written back, in the new buffer');
+    await page.selectOption('#scan-kind', 'increased');
+    await page.click('#scan-next');
+    await page.waitForFunction(() => document.getElementById('scan-status').textContent.startsWith('1 address found'));
+    check((await page.locator('#results tr[data-addr]').count()) === 1, 'grow: a next scan on the old results works (increased: 90 before, 999 now)');
+    const far = page.locator('#watch input.value').nth(2);
+    await far.fill('7');
+    await far.press('Enter');
+    await page.waitForFunction(() => window.__dv().getInt32(0x10010, true) === 7);
+    check(true, 'grow: writing past the old size');
+    await page.fill('#hex-goto', '0x1FFF0');
+    await page.click('#hex-go');
+    await page.waitForFunction(() => { const o = document.querySelector('#hex .hx-row .o'); return o && o.textContent === '0001FFF0'; });
+    check((await page.locator('#hex .hx-row').count()) === 1, 'grow: the hex view reaches the last row of the grown memory');
+    await page.locator('#watch .remove').nth(2).click();
+
+    // Instances: exports, which memory is whose, globals.
+    const rows = page.locator('#instances .inst-row');
+    check((await rows.count()) === 1 && (await rows.locator('.name').textContent()) === 'Instance 0', 'instances: the list has the instance');
+    check((await rows.locator('.size').textContent()) === '1 function · 1 memory · 5 globals · 1 table · Memory 1', 'instances: its exports by kind, and its memory (' + (await rows.locator('.size').textContent()) + ')');
+    const owners = await page.locator('.mem-row .owner').allTextContents();
+    check(owners.length === 2 && owners[0] === '' && owners[1] === 'export "memory" of instance 0', 'instances: memory 1 is instance 0\'s export "memory"; memory 0 belongs to no instance and stays listed');
+    await rows.click();
+    await page.waitForFunction(() => document.getElementById('scan-memory').textContent === 'Memory 1');
+    check((await page.locator('#memories .mem-row.selected .name').textContent()) === 'Memory 1' && (await page.textContent('#hex-memory')).startsWith('Memory 1, 64 KiB'), 'instances: choosing the instance chooses its memory');
+    check((await page.textContent('#instance-memories .mem-link')) === 'export "memory" = Memory 1', 'instances: the instance names its memory');
+    const grow = (n) => page.locator('#globals tr[data-export="' + n + '"]');
+    check((await page.locator('#globals tr[data-export]').count()) === 5 && (await grow(1).locator('.gname').textContent()) === 'g_i32' && (await grow(1).locator('.gtype').textContent()) === 'i32'
+      && (await grow(1).locator('input.gvalue').inputValue()) === '7', 'globals: the table lists them with type and value (g_i32: i32, 7)');
+    check((await grow(2).locator('input.gvalue').inputValue()) === '-5' && (await grow(3).locator('.gtype').textContent()) === 'f32' && (await grow(4).locator('input.gvalue').inputValue()) === '2.25', 'globals: i64, f32 and f64');
+    check((await grow(5).locator('.gtype').textContent()) === 'i32 (constant)' && (await grow(5).locator('.gconst').textContent()) === '1024' && (await grow(5).locator('input').count()) === 0, 'globals: an immutable one is shown, not editable');
+    await grow(1).locator('input.gvalue').fill('42');
+    await grow(1).locator('input.gvalue').press('Enter');
+    await page.waitForFunction(() => window.__inst.exports.g_i32.value === 42);
+    check((await lastSent(page, 'wasmCall')).req.op !== undefined && (await page.evaluate(() => window.__host.sent.filter((m) => m.cmd === 'wasmCall' && m.req.op === 'setGlobal').map((m) => JSON.stringify(m.req))[0])) === '{"op":"setGlobal","inst":0,"export":1,"value":"42"}',
+      'globals: Enter writes a mutable global (by the instance\'s number and the export\'s place)');
+    await grow(2).locator('input.gvalue').fill('9007199254740993');
+    await grow(2).locator('input.gvalue').press('Enter');
+    await page.waitForFunction(() => window.__inst.exports.g_i64.value === 9007199254740993n);
+    check(true, 'globals: a 64-bit value keeps every digit');
+    await page.evaluate(() => { window.__inst.exports.g_f64.value = 9.5; });
+    await page.waitForFunction(() => document.querySelector('#globals tr[data-export="4"] input.gvalue').value === '9.5');
+    check(true, 'globals: a value the page changes shows up');
+    await grow(1).locator('input.gvalue').fill('1.5');
+    await grow(1).locator('input.gvalue').press('Enter');
+    await page.waitForFunction(() => /whole number/.test(document.body.textContent));
+    check(await page.evaluate(() => window.__inst.exports.g_i32.value === 42), 'globals: a value that does not fit the type is refused with the reason');
+    await grow(1).locator('input.gvalue').press('Escape');
+    check((await page.textContent('#instance-others')) === '1 function: f. 1 table: tbl (1).', 'instances: the other exports by name (' + (await page.textContent('#instance-others')) + ')');
+    await shot(page, 'wasm-instances.png');
+    await page.locator('#memories .mem-row').first().click();
+    await page.waitForFunction(() => document.getElementById('scan-memory').textContent === 'Memory 0');
 
     // New scan; unknown initial value.
     await page.click('#scan-new');

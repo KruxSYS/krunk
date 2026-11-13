@@ -27,6 +27,15 @@
     <button id="hook" class="link-btn">Hook WebAssembly and reload the tab</button><span id="hook-on" hidden> The hook is on:
     memories are caught as the page makes them. <button id="hook-off" class="link-btn">Remove the hook and reload</button></span></p>
 
+  <h2>Instances</h2>
+  <div class="card" id="instances"><div class="empty">Looking for WebAssembly instances…</div></div>
+  <div class="card scroll-x" id="instance-card" hidden>
+    <div class="inst-head"><span id="instance-name" class="name"></span> <span id="instance-memories"></span></div>
+    <table class="grid" id="globals-table"><thead><tr><th>Exported global</th><th>Type</th><th>Value</th></tr></thead>
+      <tbody id="globals"></tbody></table>
+    <p id="instance-others" class="muted small inst-others"></p>
+  </div>
+
   <h2>Scan <span id="scan-memory" class="muted small"></span></h2>
   <div class="card pad">
     <div class="bar" id="scan-bar">
@@ -71,7 +80,9 @@
   </div>
   <p class="muted note">Values are little-endian, as WebAssembly stores them. A frozen value is written back about 20 times
     a second by the page's own timers (slower while its tab is in the background). Scans, freezes and this list live
-    in memory only: they end with the tab. Nothing here hides the inspection from the page.</p>
+    in memory only: they end with the tab. Nothing here hides the inspection from the page. A memory that grows
+    (<code>memory.grow</code>) keeps its number, its scans, its watch entries and its frozen values. A global's value is
+    written when you press Enter; mutable globals only.</p>
 </div>
 
 <dialog id="io">

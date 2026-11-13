@@ -22,13 +22,20 @@ h2 { display: flex; align-items: baseline; gap: 14px; margin: 24px 0 8px; font-s
 .bar input[hidden] { display: none; }
 #scan-status { margin: 8px 0 0; }
 
-.mem-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-top: 1px solid var(--border); cursor: pointer; }
-.mem-row:first-child { border-top: 0; }
-.mem-row:hover { background: var(--bg-hover); }
-.mem-row.selected { box-shadow: inset 3px 0 0 var(--accent); }
-.mem-row .name { font-weight: 600; white-space: nowrap; }
-.mem-row .where { flex: 1; min-width: 0; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mem-row .size { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.mem-row, .inst-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-top: 1px solid var(--border); cursor: pointer; }
+.mem-row:first-child, .inst-row:first-child { border-top: 0; }
+.mem-row:hover, .inst-row:hover { background: var(--bg-hover); }
+.mem-row.selected, .inst-row.selected { box-shadow: inset 3px 0 0 var(--accent); }
+.mem-row .name, .inst-row .name { font-weight: 600; white-space: nowrap; }
+.mem-row .where, .inst-row .where { flex: 1; min-width: 0; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mem-row .size, .inst-row .size { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.mem-row .owner { color: var(--fg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.inst-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.inst-head .name { font-weight: 600; }
+.inst-head .link-btn { margin-right: 12px; }
+.inst-others { margin: 0; padding: 8px 12px; overflow-wrap: anywhere; }
+.inst-others:empty { display: none; }
+table.grid input.gvalue { max-width: 260px; }
 .ctx-note { padding: 6px 12px; border-top: 1px solid var(--border); color: var(--fg-muted); font-size: 0.923rem; overflow-wrap: anywhere; }
 
 table.grid { width: 100%; border-collapse: collapse; font-size: 0.923rem; }
@@ -67,6 +74,7 @@ label.check { display: flex; align-items: center; gap: 6px; }
 
 @media (max-width: 560px) {
   .page { padding: 16px 10px 48px; }
-  .mem-row { flex-wrap: wrap; }
-  .mem-row .where { flex-basis: 100%; order: 3; }
+  .mem-row, .inst-row { flex-wrap: wrap; }
+  .mem-row .where, .inst-row .where { flex-basis: 100%; order: 3; }
+  .mem-row .owner { flex-basis: 100%; order: 4; }
 }
