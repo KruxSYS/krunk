@@ -110,6 +110,11 @@ outside git; the archive is kept with the release artifacts (`CEF_ARTIFACT` in `
   Krunk uses it for a middle-click in the Back/Forward menus; without the patch the host opens
   the entry's address only and says so once in `krunk.log`. Not yet compiled: written against
   the 156.0.8078.80 sources, it applies cleanly (`patch -p1 --dry-run`).
+- `chromium-sockets-per-host.patch` (0.18.0, Chromium checkout): at most 16 connections to one
+  host instead of 6 (`g_max_sockets_per_group` in `net/socket/client_socket_pool_manager.cc`;
+  WebSockets keep 255, a proxy 128). Six requests that never finish no longer block every tab's
+  loads from that host; sixteen still do (`docs/NETWORK.md`). Not yet built: it applies cleanly
+  to the 156.0.8078.80 sources (`patch -p1 --dry-run`).
 - `krunk-windowed-hidden.patch`: `CefBrowserHost::WasHidden` works for windowed (Alloy)
   browsers. The native Aura delegate hides or shows the WebContents' own aura window; the
   occlusion tracker then reports it HIDDEN and `WebContentsViewAura` calls `WasHidden()` itself,

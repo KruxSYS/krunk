@@ -1465,6 +1465,26 @@ How it works (`vpn/`, `app/src/browser/vpn.rs`):
   falls back to TCP), OpenVPN profiles with a client certificate in a separate file (inline
   `<cert>`/`<key>` work), and the proxy-related Chromium switches in Advanced.
 
+### Stuck page loads (0.18.0)
+
+Two things in the engine's network stack let one hung request hold up others, in any tab:
+a request for an address that another request is still fetching waits for that one's answer,
+up to 20 s (the HTTP cache), and a host gets at most six connections, so six requests that
+never finish (or six open streams) block everything else for that host. Both were measured;
+the table, the mechanisms and what was not measured (Krunk itself on Windows) are in
+[docs/NETWORK.md](docs/NETWORK.md).
+
+- **Around the cache:** a request for an address that another tab has been waiting on for a
+  second is sent with `Cache-Control: no-cache` (as a hard reload), so it does not queue
+  behind the other one.
+- **Sixteen connections per host** instead of six, with the next engine build
+  (`chromium-sockets-per-host.patch`). It gives room; it does not cure a site that never
+  answers.
+- **krunk://tasks** shows each renderer's **Pending** requests and the age of the oldest
+  (`6 (45 s)`); the tab with many old ones is the one to close.
+- **krunk.log** gets a line for requests pending over 30 s: the tab, the host (never the
+  address or its query; nothing for a private tab), the kind and the number. Rate-limited.
+
 ### Request headers
 
 Settings → Advanced → Request headers (0.6.0) edits what every request says about the
