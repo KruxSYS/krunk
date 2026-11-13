@@ -837,6 +837,35 @@ impl Vault {
     fn open_str(path: &Path, text: &str, password: &str, wrapper: &dyn KeyWrapper) -> VResult<Vault> {
         let (file, params, salt) = Self::parse_file(text, wrapper)?;
         let kek = derive_kek(password, &salt, params)?;
+        Self::open_parsed(path, file, params, salt, kek, wrapper)
+    }
+
+    /// Unlocks the vault at `path` with the key [`Vault::unlock_key`] gave earlier instead of the
+    /// master password (no Argon2 run). A key that is not this file's (another vault, or the
+    /// password changed since) is `WrongPassword`. Krunk for Android 0.3.0, biometric unlock.
+    pub fn open_with_key(path: &Path, key: &[u8; KEY_LEN], wrapper: &dyn KeyWrapper) -> VResult<Vault> {
+        let text = Zeroizing::new(std::fs::read_to_string(path).map_err(|e| VaultError::Io(e.to_string()))?);
+        let (file, params, salt) = Self::parse_file(&text, wrapper)?;
+        Self::open_parsed(path, file, params, salt, Zeroizing::new(*key), wrapper)
+    }
+
+    /// A copy of the key the master password derives (the KEK), for [`Vault::open_with_key`].
+    /// It opens this vault until the master password changes, so the caller must keep it as
+    /// carefully as the password: Android stores it only encrypted under a key-store key that
+    /// needs the user's biometric authentication for every use. Wiped on drop.
+    pub fn unlock_key(&self) -> Zeroizing<[u8; KEY_LEN]> {
+        self.kek.clone()
+    }
+
+    /// The parsed file opened with the key the password derives.
+    fn open_parsed(
+        path: &Path,
+        file: VaultFile,
+        params: KdfParams,
+        salt: [u8; SALT_LEN],
+        kek: Zeroizing<[u8; KEY_LEN]>,
+        wrapper: &dyn KeyWrapper,
+    ) -> VResult<Vault> {
         // Key check: wrong password (or tampered salt/params) fails here.
         let check = open_sealed(&kek, &file.check, AAD_CHECK).ok_or(VaultError::WrongPassword)?;
         if check.as_slice() != CHECK_PLAINTEXT {
@@ -2212,6 +2241,61 @@ mod tests {
         // Strictly increasing up to the cap.
         let delays: Vec<u64> = (1..=8).map(RateLimiter::delay_after).collect();
         assert!(delays.windows(2).all(|w| w[0] < w[1] || w[1] == RateLimiter::MAX_DELAY_MS));
+    }
+
+    // ------------------------------------------------- unlock key (Android 0.3.0, biometric)
+
+    #[test]
+    fn the_unlock_key_reopens_the_vault_until_the_password_changes() {
+        let dir = TestDir::new("unlock-key");
+        let mut v = fast_vault(&dir);
+        let key = v.unlock_key();
+        let again = Vault::open_with_key(&dir.file(), &key, &NoWrap).unwrap();
+        assert_eq!(again.entries().len(), 2);
+        assert_eq!(again.for_origin("https://bank.example/")[0].password.as_str(), SECRET);
+        assert!(again.verify_password(PW), "the reopened vault has the same key");
+        assert_eq!(*again.unlock_key(), *key);
+        drop(again);
+
+        // A wrong key is a wrong password, and leaves the file alone.
+        let before = std::fs::read(dir.file()).unwrap();
+        let mut wrong = *key;
+        wrong[0] ^= 1;
+        assert_eq!(Vault::open_with_key(&dir.file(), &wrong, &NoWrap).unwrap_err(), VaultError::WrongPassword);
+        assert_eq!(Vault::open_with_key(&dir.file(), &[0u8; 32], &NoWrap).unwrap_err(), VaultError::WrongPassword);
+        assert_eq!(std::fs::read(dir.file()).unwrap(), before);
+
+        // A vault opened by key can be changed and saved like any other.
+        let mut by_key = Vault::open_with_key(&dir.file(), &key, &NoWrap).unwrap();
+        by_key.save_login("https://new.example/", "carol", z("x-pass-1"), 5, &NoWrap).unwrap();
+        drop(by_key);
+        assert_eq!(Vault::open(&dir.file(), PW, &NoWrap).unwrap().entries().len(), 3);
+
+        // After a password change the old key no longer opens the vault; the new one does.
+        v.change_password(PW, "new password 123", &NoWrap).unwrap();
+        assert_eq!(Vault::open_with_key(&dir.file(), &key, &NoWrap).unwrap_err(), VaultError::WrongPassword);
+        let new_key = v.unlock_key();
+        assert_ne!(*new_key, *key);
+        assert_eq!(Vault::open_with_key(&dir.file(), &new_key, &NoWrap).unwrap().entries().len(), 2);
+    }
+
+    #[test]
+    fn the_unlock_key_path_still_needs_the_key_wrapper() {
+        struct Failing;
+        impl KeyWrapper for Failing {
+            fn name(&self) -> &'static str {
+                "none"
+            }
+            fn protect(&self, data: &[u8]) -> Result<Vec<u8>, String> {
+                Ok(data.to_vec())
+            }
+            fn unprotect(&self, _: &[u8]) -> Result<Zeroizing<Vec<u8>>, String> {
+                Err("key gone".into())
+            }
+        }
+        let dir = TestDir::new("unlock-key-wrap");
+        let key = fast_vault(&dir).unlock_key();
+        assert_eq!(Vault::open_with_key(&dir.file(), &key, &Failing).unwrap_err(), VaultError::Wrap("key gone".into()));
     }
 
     // ---------------------------------------------------------------- format 4 (0.9.0, S5)
