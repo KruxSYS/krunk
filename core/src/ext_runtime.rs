@@ -689,6 +689,8 @@ mod tests {
         for bad in [
             "file:///*",
             "file://*/*",
+            // A pattern that must grant nothing, not a connection.
+            // nosemgrep: javascript.lang.security.detect-insecure-websocket.detect-insecure-websocket
             "ws://a.test/*",
             "wss://*/*",
             "ftp://a.test/*",

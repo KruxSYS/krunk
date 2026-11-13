@@ -112,7 +112,9 @@ fn outgoing(request: &mut Request) -> Outgoing {
             let n = e.bytes_count();
             let start = out.len();
             out.resize(start + n, 0u8);
-            // SAFETY: `out` has `n` writable bytes from `start`.
+            // SAFETY: `out` has `n` writable bytes from `start` (resized just above), and CEF
+            // writes at most the `n` it is given.
+            // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
             let got = e.bytes(n, unsafe { out.as_mut_ptr().add(start) });
             out.truncate(start + got.min(n));
         }
