@@ -41,6 +41,9 @@ const MAX_CRX_BYTES: usize = ext::MAX_PACKAGE_BYTES;
 const CRX_TIMEOUT_MS: i32 = 60_000;
 /// A message to a receiver that never answers is dropped after this.
 const MESSAGE_TIMEOUT_MS: i64 = 30_000;
+/// A background worker that has not run its script after this long gets its queued events
+/// anyway (0.17.0; a large service worker imports many files).
+const BACKGROUND_START_MS: i64 = 60_000;
 /// The action popup's size until the page reports its own, and its bounds.
 const POPUP_DEFAULT: (f64, f64) = (360.0, 240.0);
 const POPUP_MAX: (f64, f64) = (800.0, 600.0);
@@ -805,6 +808,16 @@ impl Browser {
                 None => return,
             },
         };
+        // A view only ever speaks for the extension it was made for.
+        let own_view = match &end {
+            End::Background(id) | End::Popup(id) | End::Offscreen(id) => id == ext_id,
+            End::Window(w) => self.ext.windows.borrow().get(w).is_some_and(|x| x.ext == ext_id),
+            End::Tab(_) | End::Content { .. } => true,
+        };
+        if !own_view {
+            warning!("extension request for {ext_id} from another extension's view refused");
+            return;
+        }
         // A sandboxed page (manifest `sandbox.pages`) has no extension API, as in Chrome.
         let path = self
             .ext
@@ -906,6 +919,24 @@ impl Browser {
             return;
         }
         view.set_bounds(0, 0, 2, 2);
+        // A worker that never says so (nothing was served, the engine refused it): the reason
+        // is worth an error, and the queued events must not wait for ever.
+        let weak = self.me.clone();
+        let id_owned = ext_id.to_string();
+        crate::ffi::cef::post_ui_delayed(BACKGROUND_START_MS, move || {
+            let Some(b) = weak.upgrade() else { return };
+            let waiting = b.ext.backgrounds.borrow().get(&id_owned).is_some_and(|bg| !bg.ready);
+            if waiting {
+                b.ext_error(
+                    &id_owned,
+                    "The background worker did not finish starting within a minute.",
+                    "",
+                    0,
+                    "background",
+                );
+                b.ext_background_ready(&id_owned);
+            }
+        });
         info!("extension {}: background page started", self.ext_name(ext_id));
         self.ext
             .backgrounds
@@ -1580,7 +1611,9 @@ impl Browser {
         if url.contains("://") || url.starts_with("about:") || url.starts_with("krunk://") {
             lb_core::pages::Page::from_display(url).map(|p| p.url()).unwrap_or_else(|| url.to_string())
         } else {
-            format!("{}/{}", ext::origin(ext_id), url.trim_start_matches('/'))
+            // Normalized ("./page.html" is "page.html"): the address is compared later.
+            let joined = format!("{}/{}", ext::origin(ext_id), url.trim_start_matches('/'));
+            url::Url::parse(&joined).map(String::from).unwrap_or(joined)
         }
     }
 

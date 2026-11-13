@@ -665,6 +665,20 @@ impl Browser {
         self.ext.pending.borrow_mut().retain(|_, (owner, _, _)| owner != ext_id);
     }
 
+    /// Krunk is closing: the extensions' windows and offscreen documents go with it.
+    pub(in crate::browser) fn ext_shutdown(&self) {
+        let windows: Vec<ExtWindow> = self.ext.windows.borrow_mut().drain().map(|(_, w)| w).collect();
+        for w in windows {
+            w.view.close();
+            w.window.destroy();
+        }
+        let pages: Vec<HiddenPage> = self.ext.offscreen.borrow_mut().drain().map(|(_, p)| p).collect();
+        for p in pages {
+            p.view.close();
+            p.window.destroy();
+        }
+    }
+
     // ------------------------------------------------------------ content scripts registered at runtime
 
     /// The extension's content scripts: the manifest's, then those it registered

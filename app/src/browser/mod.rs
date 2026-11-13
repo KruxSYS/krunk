@@ -3766,6 +3766,9 @@ impl Browser {
                 s.close();
             }
         }
+        // 0.17.0: extensions' own windows and offscreen documents (top-level windows of their
+        // own: nothing else closes them).
+        self.ext_shutdown();
         self.drop_spare();
         // 0.14.0: the VPN ends with Krunk (the engine keeps pointing at its closed proxy, so
         // nothing goes direct while the last requests end).

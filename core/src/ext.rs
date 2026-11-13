@@ -999,11 +999,25 @@ pub fn valid_locale(name: &str) -> bool {
 // ------------------------------------------------------------------ API survey
 
 /// The `chrome.*` namespaces Krunk's shim provides (fully or in part).
-pub const SUPPORTED_APIS: &[&str] =
-    &["runtime", "storage", "tabs", "action", "i18n", "alarms", "extension", "windows", "scripting", "offscreen", "permissions"];
+pub const SUPPORTED_APIS: &[&str] = &[
+    "runtime",
+    "storage",
+    "tabs",
+    "action",
+    "i18n",
+    "alarms",
+    "extension",
+    "windows",
+    "scripting",
+    "offscreen",
+    "permissions",
+];
 /// Namespaces Krunk never provides, with the reason the install summary shows.
 pub const REFUSED_APIS: &[(&str, &str)] = &[
-    ("webRequest", "network interception (listeners are accepted and never called; use declarativeNetRequest static rules)"),
+    (
+        "webRequest",
+        "network interception (listeners are accepted and never called; use declarativeNetRequest static rules)",
+    ),
     ("debugger", "the DevTools protocol of other tabs"),
     ("nativeMessaging", "native programs"),
     ("declarativeNetRequest.updateDynamicRules", "dynamic network rules"),
