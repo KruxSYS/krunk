@@ -71,6 +71,8 @@ const SUPPORTED_GM: &[&str] = &[
     "notification",
     "openInTab",
     "info",
+    // 0.19.0: the WASM memory inspector (`GM.wasm.read(…)` and the others, all promises).
+    "wasm",
 ];
 
 /// Grants that need no function from us.
@@ -313,7 +315,7 @@ fn add_call(reg: &str, s: &LoaderScript, force: bool) -> String {
     };
     format!(
         "{reg}.add({}, function (GM_info, GM_addStyle, GM_getValue, GM_setValue, GM_deleteValue, GM_listValues, \
-         GM_setClipboard, GM_notification, GM_openInTab, GM, unsafeWindow) {{\n{}\n}});\n",
+         GM_setClipboard, GM_notification, GM_openInTab, GM, unsafeWindow, GM_wasm) {{\n{}\n}});\n",
         js_json(&entry),
         s.source
     )
@@ -410,6 +412,57 @@ pub enum GmCall {
         nonce: String,
         script: String,
     },
+    /// 0.19.0, `GM.wasm`: a request to the WASM inspector of the script's own tab. `id` numbers
+    /// the script's waiting promise (the host answers with [`gm_reply`]); `body` is JSON
+    /// `{ctx, req}` ([`wasm_body`]).
+    Wasm {
+        nonce: String,
+        script: String,
+        id: String,
+        body: String,
+    },
+}
+
+/// The body of a `GM.wasm` call: the context and the checked request.
+pub fn wasm_body(body: &str) -> Result<(u32, crate::wasm::WasmReq), String> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Body {
+        #[serde(default)]
+        ctx: u32,
+        req: serde_json::Value,
+    }
+    if body.len() > crate::protocol::MAX_REQUEST_BYTES {
+        return Err("the request is too large".into());
+    }
+    let b: Body = serde_json::from_str(body).map_err(|_| "not a valid request".to_string())?;
+    Ok((b.ctx, crate::wasm::WasmReq::parse(&b.req)?))
+}
+
+/// A script may use `GM.wasm`.
+pub fn grants_wasm(meta: &Meta) -> bool {
+    meta.grants.iter().any(|g| g == "GM.wasm" || g == "GM_wasm")
+}
+
+/// The name of the loader's reply function on `window` (not enumerable, not replaceable; it
+/// answers only to the tab's nonce). It exists only in documents where a script with a
+/// promise API (`GM.wasm`) runs.
+pub fn reply_key(binding: &str) -> String {
+    format!("{binding}R")
+}
+
+/// The expression that settles promise `id` of a script in the document it is evaluated in:
+/// resolved with `result`, or rejected with the error text.
+pub fn gm_reply(binding: &str, nonce: &str, id: u32, result: &Result<serde_json::Value, String>) -> String {
+    let (ok, payload) = match result {
+        Ok(v) => (true, js_json(v)),
+        Err(e) => (false, js_json(e)),
+    };
+    let key = js_json(&reply_key(binding));
+    format!(
+        "(function(){{var f=window[{key}];if(typeof f==='function')f({}, {id}, {ok}, {payload});}})()",
+        js_json(nonce)
+    )
 }
 
 impl GmCall {
@@ -425,6 +478,7 @@ impl GmCall {
             | GmCall::Clipboard { nonce, .. }
             | GmCall::Notify { nonce, .. }
             | GmCall::OpenTab { nonce, .. }
+            | GmCall::Wasm { nonce, .. }
             | GmCall::Ran { nonce, .. } => nonce,
         }
     }
@@ -436,6 +490,7 @@ impl GmCall {
             | GmCall::Clipboard { script, .. }
             | GmCall::Notify { script, .. }
             | GmCall::OpenTab { script, .. }
+            | GmCall::Wasm { script, .. }
             | GmCall::Ran { script, .. } => script,
         }
     }
@@ -449,6 +504,7 @@ impl GmCall {
             GmCall::Notify { .. } => "notify",
             GmCall::OpenTab { .. } => "openTab",
             GmCall::Ran { .. } => "ran",
+            GmCall::Wasm { .. } => "wasm",
         }
     }
 }
@@ -717,6 +773,36 @@ mod tests {
         let block: String = meta_lines.iter().map(|l| format!("// {l}\n")).collect();
         let source = format!("// ==UserScript==\n{block}// ==/UserScript==\n{body}\n");
         LoaderScript { id: id.into(), meta: parse_meta(&source).unwrap(), source, values: Vec::new() }
+    }
+
+    /// 0.19.0: `GM.wasm` is a grant like the others; its calls carry a promise id and a
+    /// checked request, and the host's answer names the tab's nonce.
+    #[test]
+    fn gm_wasm_grant_call_and_reply() {
+        let m = parse_meta(&src("// @name W\n// @match *://*/*\n// @grant GM.wasm\n")).unwrap();
+        assert!(m.warnings.is_empty(), "{:?}", m.warnings);
+        assert!(grants_wasm(&m));
+        let m2 = parse_meta(&src("// @name W\n// @match *://*/*\n// @grant GM_wasm\n")).unwrap();
+        assert!(m2.warnings.is_empty() && grants_wasm(&m2));
+        assert!(!grants_wasm(&parse_meta(&src("// @name W\n// @match *://*/*\n// @grant GM_addStyle\n")).unwrap()));
+        let call = GmCall::parse(
+            r#"{"nonce":"n","script":"s1","op":"wasm","id":"7","body":"{\"ctx\":0,\"req\":{\"op\":\"read\",\"mem\":0,\"where\":1024,\"type\":\"i32\"}}"}"#,
+        )
+        .unwrap();
+        let GmCall::Wasm { id, body, .. } = &call else { panic!("{call:?}") };
+        assert_eq!((id.as_str(), call.op(), call.nonce(), call.script()), ("7", "wasm", "n", "s1"));
+        let (ctx, req) = wasm_body(body).unwrap();
+        assert_eq!(ctx, 0);
+        assert_eq!(req.to_json()["where"], 1024);
+        assert!(wasm_body(r#"{"req":{"op":"eval"}}"#).is_err());
+        assert!(wasm_body(r#"{"ctx":0,"req":{"op":"list"},"tab":3}"#).is_err(), "a script names no tab");
+        let ok = gm_reply("__krunkUS_ab", "nonce1", 7, &Ok(serde_json::json!({"value": "a\u{2028}b"})));
+        assert!(
+            ok.contains(r#"window["__krunkUS_abR"]"#) && ok.contains(r#"f("nonce1", 7, true, {"value":"a\u2028b"})"#),
+            "{ok}"
+        );
+        let err = gm_reply("__krunkUS_ab", "nonce1", 8, &Err("no memory 3".into()));
+        assert!(err.contains(r#"f("nonce1", 8, false, "no memory 3")"#), "{err}");
     }
 
     const BINDING: &str = "__krunkUS_0123456789abcdef";

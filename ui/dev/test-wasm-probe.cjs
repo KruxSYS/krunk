@@ -11,7 +11,61 @@ function make(scope) {
   return new Function('scope', 'return (' + src + ')(scope);')(scope || globalThis);
 }
 
+// GM.wasm in the userscript loader (ui/inject/userscript-loader.js): the call a script makes,
+// what goes to the host through the binding, and how the host's answer settles the promise.
+async function runLoader(check) {
+  const vm = require('vm');
+  const src = fs.readFileSync(path.join(__dirname, '../inject/userscript-loader.js'), 'utf8').trim().replace(/;$/, '');
+  const BINDING = '__krunkUS_test', NONCE = 'nonce-1';
+  const sent = [];
+  const window = { setTimeout: setTimeout, requestIdleCallback: undefined };
+  window.top = window;
+  window[BINDING] = (t) => { sent.push(JSON.parse(t)); };
+  const sandbox = { window: window, location: { href: 'https://game.example/play', protocol: 'https:', hostname: 'game.example' },
+    document: { readyState: 'complete' }, console: console, URL: URL, JSON: JSON, Object: Object, Reflect: Reflect, Promise: Promise, Error: Error };
+  const reg = vm.runInNewContext('(' + src + ')', sandbox)(BINDING, NONCE, '0.19.0', ['s1', 's2']);
+  const entry = (id, grants) => ({ id: id, name: id, matches: ['*://*/*'], includes: [], excludes: [], runAt: 0, noframes: false, force: false, grants: grants, info: {}, values: [] });
+  let granted = null, plain = null;
+  reg.add(entry('s1', ['GM.wasm']), function () { granted = arguments; });
+  reg.add(entry('s2', ['GM_addStyle']), function () { plain = arguments; });
+  reg.go();
+  const GM = granted[9], GM_wasm = granted[11];
+  check(granted.length === 12 && GM.wasm === GM_wasm && typeof GM_wasm.read === 'function', 'loader: a script with @grant GM.wasm gets GM.wasm (and GM_wasm, the last argument)');
+  check(plain[9].wasm === undefined && plain[11] === undefined, 'loader: a script without the grant gets neither');
+  check(['memories', 'read', 'write', 'scan', 'next', 'results', 'freeze', 'unfreeze'].every((n) => typeof GM_wasm[n] === 'function'), 'loader: memories, read, write, scan, next, results, freeze, unfreeze');
+  const key = BINDING + 'R';
+  const d = Object.getOwnPropertyDescriptor(window, key);
+  check(d && !d.enumerable && !d.writable && !d.configurable && window[BINDING] === undefined, 'loader: the reply function can be neither listed nor replaced; the binding is gone from window');
+
+  const read = GM_wasm.read({ mem: 0, addr: 1024, type: 'i32', junk: 1 });
+  const call = sent.find((m) => m.op === 'wasm');
+  const body = JSON.parse(call.body);
+  check(call.nonce === NONCE && call.script === 's1' && call.id === '1', 'loader: the call carries the nonce, the script and a promise number');
+  check(JSON.stringify(body) === JSON.stringify({ ctx: 0, req: { op: 'read', mem: 0, type: 'i32', where: 1024 } }), 'loader: read {mem, addr, type} goes out as the probe\'s request, unknown fields dropped (' + call.body + ')');
+  let settled = false;
+  read.then(() => { settled = true; });
+  window[key]('wrong', 1, true, { addr: 1024, value: 666 });
+  await new Promise((r) => setTimeout(r, 5));
+  check(!settled, 'loader: an answer without the nonce (page code) settles nothing');
+  window[key](NONCE, 1, true, { addr: 1024, value: 100 });
+  check((await read) === 100, 'loader: the host\'s answer resolves read() with the value');
+  const bad = GM_wasm.write({ mem: 9, where: { base: 300, offsets: [8] }, type: 'i32', value: 1, ctx: 1000001 });
+  const call2 = sent.filter((m) => m.op === 'wasm')[1];
+  check(JSON.parse(call2.body).ctx === 1000001 && JSON.parse(call2.body).req.where.base === 300, 'loader: ctx and a pointer path pass through');
+  window[key](NONCE, 2, false, 'no memory 9');
+  check((await bad.then(() => '', (e) => e.message)) === 'no memory 9', 'loader: an error rejects the promise');
+  const un = GM_wasm.unfreeze(3);
+  check(JSON.parse(sent.filter((m) => m.op === 'wasm')[2].body).req.freeze === 3, 'loader: unfreeze takes the freeze\'s number');
+  window[key](NONCE, 3, true, { unfrozen: true });
+  check((await un) === true, 'loader: unfreeze resolves true');
+  const mems = GM_wasm.memories();
+  window[key](NONCE, 4, true, { contexts: [{ ctx: 0, kind: 'page', url: 'u', memories: [{ mem: 0, bytes: 65536, pages: 1, shared: false }] }, { ctx: 7, kind: 'frame', url: 'f', memories: [] }] });
+  const list = await mems;
+  check(list.length === 1 && list[0].ctx === 0 && list[0].mem === 0 && list[0].bytes === 65536 && list[0].kind === 'page', 'loader: memories() is a flat list');
+}
+
 async function run(check) {
+  await runLoader(check);
   const P = make();
   const mem = new WebAssembly.Memory({ initial: 2, maximum: 64 });
   const dv = new DataView(mem.buffer);

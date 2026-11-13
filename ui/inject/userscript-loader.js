@@ -112,6 +112,82 @@
     try { send(t + '}'); } catch (_) { /* the binding is gone */ }
   }
 
+  // 0.19.0, calls with an answer (GM.wasm): each waits in `pending` under a number; the host
+  // settles it by calling the reply function below with the tab's nonce (page code can find
+  // the function, but can neither replace it nor name the nonce). It is defined only when a
+  // script with such a grant runs in this document.
+  const pending = create(null);
+  let pendingSeq = 0, pendingCount = 0, replyReady = false;
+  const ErrorCtor = Error, defineProperty = Object.defineProperty;
+  function replyFunction() {
+    if (replyReady) return;
+    replyReady = true;
+    try {
+      defineProperty(window, binding + 'R', { enumerable: false, configurable: false, writable: false, value: function (n, id, ok, payload) {
+        if (n !== nonce || !(id in pending)) return;
+        const p = pending[id];
+        delete pending[id];
+        pendingCount--;
+        if (ok) p[0](payload); else p[1](new ErrorCtor(String(payload)));
+      } });
+    } catch (_) { /* calls then fail with a time-out on the host side: nothing to settle */ }
+  }
+  function ask(id, op, body) {
+    return new P(function (ok, fail) {
+      if (typeof send !== 'function') { fail(new ErrorCtor('GM.' + op + ' is not available here')); return; }
+      if (pendingCount >= 64) { fail(new ErrorCtor('too many GM.' + op + ' calls are waiting')); return; }
+      let text;
+      try { text = str(body); } catch (e) { fail(e); return; }
+      const n = ++pendingSeq;
+      pending[n] = [ok, fail];
+      pendingCount++;
+      post(id, op, ['id', n, 'body', text]);
+    });
+  }
+  // GM.wasm: the WASM memory inspector of this tab. Every function returns a promise.
+  // `o.ctx` names a frame or worker as memories() lists them (default: the page).
+  function wasmApi(s) {
+    const pick = function (op, o, names) {
+      const src = o !== null && typeof o === 'object' ? o : {};
+      const req = { op: op };
+      for (let i = 0; i < names.length; i++) if (src[names[i]] !== undefined) req[names[i]] = src[names[i]];
+      if (names.indexOf('where') >= 0 && req.where === undefined && src.addr !== undefined) req.where = src.addr;
+      return ask(s.id, 'wasm', { ctx: src.ctx === undefined ? 0 : src.ctx, req: req });
+    };
+    return freeze({
+      // [{ctx, kind: 'page' | 'frame' | 'worker', url, mem, bytes, pages, shared}]
+      memories: function () {
+        return pick('list', null, []).then(function (r) {
+          const out = [];
+          for (let i = 0; i < r.contexts.length; i++) {
+            const c = r.contexts[i];
+            for (let j = 0; j < c.memories.length; j++) {
+              const m = c.memories[j];
+              out[out.length] = { ctx: c.ctx, kind: c.kind, url: c.url, mem: m.mem, bytes: m.bytes, pages: m.pages, shared: m.shared };
+            }
+          }
+          return out;
+        });
+      },
+      // {mem, addr | where: {base, offsets}, type, length?} -> the value
+      read: function (o) { return pick('read', o, ['mem', 'where', 'type', 'length']).then(function (r) { return r.value; }); },
+      // {mem, addr | where, type, value} -> the number of bytes written
+      write: function (o) { return pick('write', o, ['mem', 'where', 'type', 'value']).then(function (r) { return r.written; }); },
+      // {mem, type, kind: exact | range | bigger | smaller | unknown, value?, to?, align?, epsilon?} -> {scan, count, …}
+      scan: function (o) { return pick('scan', o, ['mem', 'type', 'kind', 'value', 'to', 'align', 'epsilon']); },
+      // {scan, kind: exact | range | changed | unchanged | increased | decreased | increasedBy | decreasedBy, value?, to?}
+      next: function (o) { return pick('next', o, ['scan', 'kind', 'value', 'to']); },
+      // {scan, offset?, limit?} -> {count, rows: [{addr, value, previous}]}
+      results: function (o) { return pick('results', o, ['scan', 'offset', 'limit']); },
+      // {mem, addr | where, type, value?} -> the freeze's number
+      freeze: function (o) { return pick('freeze', o, ['mem', 'where', 'type', 'value']).then(function (r) { return r.freeze; }); },
+      // the freeze's number (or {freeze, ctx}) -> true when it was frozen
+      unfreeze: function (o) {
+        return pick('unfreeze', typeof o === 'number' ? { freeze: o } : o, ['freeze']).then(function (r) { return r.unfrozen; });
+      },
+    });
+  }
+
   // A <style> in the document; when the page's CSP refuses inline styles, a constructed
   // stylesheet instead (CSP doesn't apply to those).
   function addStyle(css) {
@@ -134,7 +210,7 @@
   }
 
   // The arguments of a script's function: GM_info, the GM_* functions (undefined unless
-  // granted), GM and unsafeWindow.
+  // granted), GM, unsafeWindow and GM_wasm.
   function api(s) {
     const granted = function (n) { return s.grants.indexOf('GM_' + n) >= 0 || s.grants.indexOf('GM.' + n) >= 0; };
     const vals = create(null);
@@ -187,8 +263,15 @@
         };
       }
     }
+    let wasm;
+    if (granted('wasm')) {
+      replyFunction();
+      wasm = wasmApi(s);
+      gm.wasm = wasm;
+    }
     args[args.length] = gm;
     args[args.length] = window;
+    args[args.length] = wasm;
     return args;
   }
 
