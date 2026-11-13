@@ -244,7 +244,8 @@ module.exports = (h) => {
 
   // core/src/style.rs PRESETS, read from the source (the settings page mirrors them).
   function rustPresets() {
-    const src = fs.readFileSync(path.join(__dirname, '..', '..', 'core', 'src', 'style.rs'), 'utf8');
+    // Line comments out first: one inside a preset (0.15.2) made the pattern run into the next.
+    const src = fs.readFileSync(path.join(__dirname, '..', '..', 'core', 'src', 'style.rs'), 'utf8').replace(/\/\/[^\n]*/g, '');
     const out = {};
     const re = /Preset \{\s*id: "(\w+)",[\s\S]*?tab_style: BarStyle::(\w+),\s*toolbar_style: BarStyle::(\w+),\s*gradient: \[([^\]]*)\],\s*gradient_angle: (\d+),\s*tab_shape: TabShape::(\w+),\s*active_highlight: ActiveHighlight::(\w+),\s*accent_glow: (true|false),/g;
     const lc = (s) => s[0].toLowerCase() + s.slice(1);
@@ -261,7 +262,7 @@ module.exports = (h) => {
     console.log('0.15.0 theme: Settings style card');
     const defaults = JSON.parse(fs.readFileSync(path.join(__dirname, 'default-settings.json'), 'utf8'));
     const presets = rustPresets();
-    check(Object.keys(presets).length === 5, 'read the five presets from core/src/style.rs (' + Object.keys(presets).join(', ') + ')');
+    check(Object.keys(presets).length === 12, 'read the twelve presets from core/src/style.rs (' + Object.keys(presets).join(', ') + ')');
     for (const theme of ['light', 'dark']) {
       const { page, errors, external } = await openPage(browser, 'https://krunk.invalid/settings.html#appearance', { width: 1000, height: 1400 }, 1, styleSettingsMock,
         Object.assign({}, defaults, { theme: theme }));
