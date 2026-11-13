@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 out=$1; shift
 for spec in "$@"; do
   IFS='|' read -r name script sub <<< "$spec"
-  d=$out/$name; mkdir -p $d; rm -f $d/*
+  d=$out/$name; mkdir -p $d /tmp/vmrun; rm -f $d/*
   if [ -n "$sub" ]; then sed "$sub" scripts/$script > /tmp/vmrun/$name.ps1; else cp scripts/$script /tmp/vmrun/$name.ps1; fi
   scripts/vm.sh sh "Remove-Item C:/pipeline/krunk/shots/* -Force -ErrorAction SilentlyContinue" >/dev/null </dev/null
   start=$(date +%s)

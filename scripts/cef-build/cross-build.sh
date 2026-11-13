@@ -7,11 +7,11 @@
 #   scripts/cef-build/cross-build.sh build        Krunk's CEF patches (patches/*.patch), logo, ninja
 #   scripts/cef-build/cross-build.sh distrib      minimal distribution archive
 #
-# Everything lives under $CEF_BUILD_ROOT (default /work/cef-build), outside the repository. No
+# Everything lives under $CEF_BUILD_ROOT (default /work/projects/extra/browser/.pipeline/cef-build), outside the repository. No
 # FUSE is needed: the toolchain's case problem is handled by casefix.py (see README.md).
 set -euo pipefail
 
-ROOT=${CEF_BUILD_ROOT:-/work/cef-build}
+ROOT=${CEF_BUILD_ROOT:-/work/projects/extra/browser/.pipeline/cef-build}
 CEF_BRANCH=8078                    # Chromium 156
 CEF_COMMIT=cf671c0                 # CEF 156.0.15
 CEF_VERSION=156.0.15
@@ -107,7 +107,7 @@ EOF
     python3 src/build/vs_toolchain.py update --force
     tc=$(python3 src/build/vs_toolchain.py get_toolchain_dir | sed -n 's/^vs_path = "\(.*\)"$/\1/p')
     echo "toolchain dir: $tc"
-    python3 "$(dirname "$0")/casefix.py" "$tc" "$SRC/third_party/llvm-build/Release+Asserts" "$ROOT/casefix"
+    python3 "$REPO/scripts/cef-build/casefix.py" "$tc" "$SRC/third_party/llvm-build/Release+Asserts" "$ROOT/casefix"
     ;;
   configure)
     toolchain_env

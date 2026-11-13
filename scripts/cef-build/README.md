@@ -37,7 +37,7 @@ done because the Windows test VM is far too small to build Chromium. It needs:
   Nothing is written inside the toolchain directory itself: Chromium hashes its file list and
   would re-extract the package (directory symlinks are not part of that list).
 
-Steps (`cross-build.sh` does them; every step is idempotent, all paths under `/work/cef-build`
+Steps (`cross-build.sh` does them; every step is idempotent, all paths under `/work/projects/extra/browser/.pipeline/cef-build`
 = `$CEF_BUILD_ROOT`, outside the repository):
 
 1. `checkout`: depot_tools + CEF's `automate-git.py --branch=8078 --checkout=cf671c0
@@ -46,7 +46,7 @@ Steps (`cross-build.sh` does them; every step is idempotent, all paths under `/w
    in a retry loop (no `--delete_unversioned_trees` once `src/cef` is in place), then copy
    `chromium_git/cef` to `chromium/src/cef`. Run `ensure_bootstrap` in
    `chromium_git/depot_tools` once (the `gn` wrapper needs its bundled Python).
-2. `toolchain`: put the package in `/work/cef-build/toolchain/`; the step sets
+2. `toolchain`: put the package in `/work/projects/extra/browser/.pipeline/cef-build/toolchain/`; the step sets
    `DEPOT_TOOLS_WIN_TOOLCHAIN_BASE_URL` and `GYP_MSVS_HASH_3bfcb536c8=<package hash>`, adds
    `target_os = ['win']` and `checkout_pgo_profiles: True` to `.gclient`, re-syncs (the
    Windows-only deps, clang's Windows runtime library and the win64 PGO profile only come with
@@ -89,7 +89,7 @@ instead of `v8_context_snapshot.bin`; the only cost is a few milliseconds slower
 creation. `app/src/ffi/cef/entry.rs` accepts either file and `scripts/build-dist.sh` ships
 whichever the archive contains.
 
-Everything under `/work/cef-build` (checkout, build tree, toolchain package, archive) stays
+Everything under `/work/projects/extra/browser/.pipeline/cef-build` (checkout, build tree, toolchain package, archive) stays
 outside git; the archive is kept with the release artifacts (`CEF_ARTIFACT` in `cef.lock`).
 
 **Krunk's patches** (`patches/`, since 0.10.0):
