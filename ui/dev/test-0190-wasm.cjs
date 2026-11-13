@@ -117,7 +117,8 @@ module.exports = function ({ openPage, check, lastSent, emit, shot }) {
     await page.keyboard.type('7F');
     await page.waitForFunction(() => new Uint8Array(window.__mem.buffer)[0x800] === 0x7f);
     check((await page.textContent('#hex .b[data-a="2048"]')) === '7F', 'typing two hex digits writes the byte');
-    check((await page.getAttribute('#hex .b.here', 'data-a')) === '2049', 'the caret moves on');
+    await page.waitForFunction(() => { const h = document.querySelector('#hex .b.here'); return h && h.getAttribute('data-a') === '2049'; });
+    check(true, 'the caret moves on');
     await page.click('#hex-next');
     await page.waitForFunction(() => document.querySelector('#hex .hx-row .o').textContent === '00000900');
     check(true, 'the next page of the window');

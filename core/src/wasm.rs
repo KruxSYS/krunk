@@ -598,6 +598,15 @@ mod tests {
         assert!(make_expression(None).contains("var k=null"));
         let hook = hook_script("k1");
         assert!(hook.contains("p.hook()") && hook.contains("enumerable:false"));
+        // ui/dev/test-wasm-e2e.cjs runs these very strings in Chromium when it is given them.
+        if let Ok(dir) = std::env::var("KRUNK_WASM_EXPR_OUT") {
+            let dir = std::path::Path::new(&dir);
+            std::fs::write(dir.join("make-hooked.js"), &make).unwrap();
+            std::fs::write(dir.join("make.js"), make_expression(None)).unwrap();
+            std::fs::write(dir.join("hook.js"), &hook).unwrap();
+            let reply = crate::userscripts::gm_reply("__krunkUS_e2e", "nonce-e2e", 1, &Ok(json!({"value": 7})));
+            std::fs::write(dir.join("reply.js"), reply).unwrap();
+        }
         assert!(
             handle_lost("Could not find object with given id") && handle_lost("Cannot find context with specified id")
         );

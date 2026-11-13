@@ -98,6 +98,54 @@ async function inspector(send) {
     });
     check(hooked.l.length === 1 && hooked.s.count >= 1, 'hook: memory listed and scannable (' + JSON.stringify(hooked) + ')');
 
+    // The host's own strings (core::wasm::make_expression / hook_script and the GM.wasm
+    // reply), written by `KRUNK_WASM_EXPR_OUT=<dir> cargo test -p core --lib wasm::tests::pages`.
+    const EXPR = process.env.KRUNK_WASM_EXPR_OUT;
+    if (EXPR && fs.existsSync(path.join(EXPR, 'make.js'))) {
+      console.log('0.19.0: the host\'s expressions, as core builds them');
+      const read = (f) => fs.readFileSync(path.join(EXPR, f), 'utf8');
+      const fn = 'function (found, req) { return this.call(found, req); }';
+      const callOn = async (c, objectId, found, req) => {
+        const r = await c.send('Runtime.callFunctionOn', { objectId, functionDeclaration: fn,
+          arguments: [found ? { objectId: found } : { value: null }, { value: req }], returnByValue: true, awaitPromise: true, silent: true });
+        if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception.description);
+        return r.result.value;
+      };
+      // Without the hook: make.js, then queryObjects.
+      const p4 = await browser.newPage();
+      await p4.goto(base + 'index.html');
+      await p4.waitForFunction(() => /health=100/.test(document.title));
+      const c4 = await p4.context().newCDPSession(p4);
+      const made = await c4.send('Runtime.evaluate', { expression: read('make.js'), objectGroup: 'krunk-wasm', returnByValue: false, silent: true });
+      check(!made.exceptionDetails && !!made.result.objectId, 'make_expression(None) gives a probe handle');
+      check((await callOn(c4, made.result.objectId, null, { op: 'list' })).length === 0, 'a new probe knows no memory before the query');
+      const proto = await c4.send('Runtime.evaluate', { expression: 'WebAssembly.Memory.prototype', objectGroup: 'krunk-wasm-found', returnByValue: false, silent: true });
+      const found = await c4.send('Runtime.queryObjects', { prototypeObjectId: proto.result.objectId, objectGroup: 'krunk-wasm-found' });
+      check((await callOn(c4, made.result.objectId, found.objects.objectId, { op: 'list' })).length === 1, 'with the queried memories: listed');
+      check((await callOn(c4, made.result.objectId, null, { op: 'read', mem: 0, where: 0, type: 'u8' })).addr === 0, 'later calls need no query');
+      // A navigation: the handle is gone, and the engine's words are the ones core looks for.
+      await p4.reload();
+      const lost = await callOn(c4, made.result.objectId, null, { op: 'list' }).then(() => '', (e) => String(e.message));
+      check(/could not find object|cannot find context|execution context was destroyed|invalid remote object/i.test(lost), 'after a reload the handle is lost, in words handle_lost() knows (' + lost.slice(0, 80) + ')');
+      // With the hook: hook.js at document start, make-hooked.js takes its instance over.
+      const p5 = await browser.newPage();
+      const c5 = await p5.context().newCDPSession(p5);
+      await c5.send('Page.enable');
+      await c5.send('Page.addScriptToEvaluateOnNewDocument', { source: read('hook.js') });
+      await p5.goto(base + 'index.html');
+      await p5.waitForFunction(() => /health=100/.test(document.title));
+      check(await p5.evaluate(() => Object.keys(window).indexOf('k1') < 0 && Object.getOwnPropertyNames(window).indexOf('k1') >= 0), 'the hook leaves its probe under a non-enumerable property');
+      const taken = await c5.send('Runtime.evaluate', { expression: read('make-hooked.js'), objectGroup: 'krunk-wasm', returnByValue: false, silent: true });
+      const hl = await callOn(c5, taken.result.objectId, null, { op: 'list' });
+      check(hl.length === 1, 'the host takes the hooked probe over: its memory is listed without a query (' + JSON.stringify(hl) + ')');
+      check(await p5.evaluate(() => Object.getOwnPropertyNames(window).indexOf('k1') < 0), 'the property is gone once taken');
+      // The GM.wasm reply expression runs and does nothing where no loader waits.
+      const rep = await c5.send('Runtime.evaluate', { expression: read('reply.js'), silent: true, returnByValue: true });
+      check(!rep.exceptionDetails, 'gm_reply() is a valid expression');
+    } else {
+      console.log('(the host\'s expressions were not given: set KRUNK_WASM_EXPR_OUT)');
+    }
+
     // Worker: flattened auto-attach, the probe in the worker's own context.
     console.log('0.19.0: the worker variant (auto-attach session)');
     const p3 = await browser.newPage();

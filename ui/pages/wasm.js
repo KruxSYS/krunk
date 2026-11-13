@@ -249,7 +249,15 @@
         ]));
       });
       $('results-more').hidden = !(r.count > r.rows.length && state.shown < MAX_SHOWN);
-    }).catch(function () { /* the next tick tries again */ });
+    }).catch(function (e) {
+      // The document the scan belonged to is gone.
+      if (state.scan === sc && /^no scan/.test(e.message)) {
+        state.scan = null;
+        card.hidden = true;
+        $('scan-status').textContent = 'The page reloaded: the scan is gone. Start a new one.';
+        scanControls();
+      }
+    });
   }
 
   // ---------- the watch list ----------
@@ -501,8 +509,16 @@
   }
 
   // ---------- start ----------
+  // The page reloaded or navigated: its probe is new and knows no memory until they are
+  // listed again; the old scan is gone with the old document.
+  let ticks = 0;
+  function lostTrack() {
+    return !state.sel || state.watch.some(function (w) { return /^no memory/.test(w.error); });
+  }
   function tick() {
     if (document.hidden || !state.ok) return;
+    ticks++;
+    if (lostTrack() && ticks % 3 === 0 && !state.scanning) find();
     if (state.watch.length) refreshWatch();
     if (state.scan && !state.scanning) loadResults();
     if ($('hex-live').checked && state.sel && !state.hex.lo) hexLoad(state.hex.addr);
