@@ -169,8 +169,10 @@ DevTools binding of the content world), never by the message.
 * **Sandboxed pages** (manifest `sandbox.pages`): served with the manifest's
   `content_security_policy.sandbox` (or Chrome's default), always starting with `sandbox`, so
   they have a unique origin; they get no extension API (the host refuses their requests).
-* `storage.session` (memory), `storage.local` without the 10 MiB limit with the
-  `unlimitedStorage` permission (requests up to 64 MiB), `management.getSelf`,
+* `storage.session` (memory), `storage.local` up to 256 MiB instead of 10 MiB with the
+  `unlimitedStorage` permission (requests up to 64 MiB); a `set` over the limit is refused
+  whole with "QUOTA_BYTES quota exceeded", and the file is replaced by a rename of a synced
+  temporary file. `management.getSelf`,
   `permissions.getAll/contains/request`, `i18n.getAcceptLanguages`, `runtime.getContexts`.
 
 ## Stand-ins and absences

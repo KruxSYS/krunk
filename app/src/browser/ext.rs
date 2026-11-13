@@ -1886,9 +1886,10 @@ impl Browser {
             }
         }
         let _ = std::fs::create_dir_all(self.ext_dir());
-        if let Err(e) =
-            std::fs::write(self.ext_dir().join(format!("{ext_id}.storage.json")), Value::Object(file).to_string())
-        {
+        // A synced temporary file next to it, then a rename: a crash in the middle leaves the
+        // old file, not half of the new one.
+        let path = self.ext_dir().join(format!("{ext_id}.storage.json"));
+        if let Err(e) = lb_core::vault::write_atomic(&path, Value::Object(file).to_string().as_bytes()) {
             warning!("extension {ext_id}: storage not saved: {e}");
         }
     }
@@ -1942,6 +1943,13 @@ impl Browser {
                 }
                 "storage.set" => {
                     if let Some(Value::Object(items)) = data.get("items") {
+                        // Checked before anything is stored (a refused `set` changes nothing):
+                        // 10 MiB as in Chrome; with `unlimitedStorage` the local area has a
+                        // hard cap instead (it is held in memory and written as one file).
+                        let limit = lb_core::ext_guard::storage_limit(area, unlimited);
+                        if !lb_core::ext_guard::storage_set_fits(map, items, limit) {
+                            return Err(lb_core::ext_guard::QUOTA_EXCEEDED.into());
+                        }
                         for (k, v) in items {
                             let old = map.insert(k.clone(), v.clone());
                             let mut c = json!({ "newValue": v });
@@ -1949,14 +1957,6 @@ impl Browser {
                                 c["oldValue"] = o;
                             }
                             changes.insert(k.clone(), c);
-                        }
-                    }
-                    // 10 MiB, as in Chrome, unless the manifest asks for `unlimitedStorage`
-                    // (0.17.0); the session area is memory only and has the same limit.
-                    if !unlimited || area != "local" {
-                        let size: usize = map.iter().map(|(k, v)| k.len() + v.to_string().len()).sum();
-                        if size > 10 * 1024 * 1024 {
-                            return Err("QUOTA_BYTES quota exceeded".into());
                         }
                     }
                     Value::Null

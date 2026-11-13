@@ -173,6 +173,41 @@ pub fn request_allowed(access: &WebAccess, ext_id: &str, url: &str, initiator: &
     web && access.open_to(&path, Some(initiator))
 }
 
+// ------------------------------------------------------------------ chrome.storage quota
+
+/// `chrome.storage` `QUOTA_BYTES` of an area, as in Chrome.
+pub const STORAGE_QUOTA_BYTES: usize = 10 * 1024 * 1024;
+/// The most `chrome.storage.local` holds with the `unlimitedStorage` permission: the area is
+/// kept in memory and written as one file.
+pub const STORAGE_HARD_CAP_BYTES: usize = 256 * 1024 * 1024;
+/// Chrome's error when a `set` would go over the quota.
+pub const QUOTA_EXCEEDED: &str = "QUOTA_BYTES quota exceeded";
+
+/// The most an area may hold. `unlimited`: the manifest has `unlimitedStorage` (it lifts the
+/// quota of the local area only).
+pub fn storage_limit(area: &str, unlimited: bool) -> usize {
+    if unlimited && area == "local" {
+        STORAGE_HARD_CAP_BYTES
+    } else {
+        STORAGE_QUOTA_BYTES
+    }
+}
+
+/// Would the area still be within `limit` after `set(items)`? Asked before anything is
+/// stored: a refused `set` changes nothing. Sizes as Chrome counts them: the key plus the
+/// JSON of the value.
+pub fn storage_set_fits(
+    area: &serde_json::Map<String, serde_json::Value>,
+    items: &serde_json::Map<String, serde_json::Value>,
+    limit: usize,
+) -> bool {
+    let size = |(k, v): (&String, &serde_json::Value)| k.len() + v.to_string().len();
+    let now: usize = area.iter().map(size).sum();
+    let replaced: usize = area.iter().filter(|(k, _)| items.contains_key(*k)).map(size).sum();
+    let added: usize = items.iter().map(size).sum();
+    now - replaced + added <= limit
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,6 +271,22 @@ mod tests {
         assert!(access.web_accessible("/open/x") && !access.web_accessible("/home.html"));
         assert!(!access.web_accessible("/css/page.css") && !access.web_accessible("/for-extensions.js"));
         assert_eq!(package_path("//S%61ndbox/Page.HTML"), "sandbox/page.html");
+    }
+
+    #[test]
+    fn a_set_over_the_quota_is_refused_before_it_is_stored() {
+        let map = |v: serde_json::Value| v.as_object().cloned().unwrap();
+        let area = map(serde_json::json!({ "a": "12345", "b": [1, 2, 3] })); // 1+7 + 1+7 = 16
+        assert!(storage_set_fits(&area, &map(serde_json::json!({ "c": 1 })), 18));
+        assert!(!storage_set_fits(&area, &map(serde_json::json!({ "c": 12 })), 18));
+        // A replaced value counts once.
+        assert!(storage_set_fits(&area, &map(serde_json::json!({ "a": "1234567" })), 18));
+        assert!(!storage_set_fits(&area, &map(serde_json::json!({ "a": "12345678" })), 18));
+        assert!(storage_set_fits(&area, &map(serde_json::json!({})), 16) && !storage_set_fits(&area, &map(serde_json::json!({})), 15));
+        assert_eq!(storage_limit("local", false), STORAGE_QUOTA_BYTES);
+        assert_eq!(storage_limit("local", true), STORAGE_HARD_CAP_BYTES);
+        assert_eq!(storage_limit("session", true), STORAGE_QUOTA_BYTES);
+        assert_eq!(storage_limit("sync", true), STORAGE_QUOTA_BYTES);
     }
 
     #[test]
