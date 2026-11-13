@@ -62,6 +62,64 @@ async function runLoader(check) {
   window[key](NONCE, 4, true, { contexts: [{ ctx: 0, kind: 'page', url: 'u', memories: [{ mem: 0, bytes: 65536, pages: 1, shared: false }] }, { ctx: 7, kind: 'frame', url: 'f', memories: [] }] });
   const list = await mems;
   check(list.length === 1 && list[0].ctx === 0 && list[0].mem === 0 && list[0].bytes === 65536 && list[0].kind === 'page', 'loader: memories() is a flat list');
+
+  // Every function: what goes to the host (the probe's request, which core::wasm checks) and what the promise gives.
+  const wasmCalls = () => sent.filter((m) => m.op === 'wasm');
+  let seq = 4;
+  const round = async (promise, answer) => {
+    const c = wasmCalls()[seq];
+    seq++;
+    window[key](NONCE, seq, true, answer);
+    return { body: JSON.parse(c.body), value: await promise };
+  };
+  const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === 'object' ? Object.keys(v).sort().reduce((o, k) => { o[k] = canon(v[k]); return o; }, {}) : v);
+  const same = (a, b) => JSON.stringify(canon(a)) === JSON.stringify(canon(b));
+  check(['instances', 'globals', 'setGlobal', 'bytes', 'watch', 'frozen', 'discard'].every((n) => typeof GM_wasm[n] === 'function'), 'loader: instances, globals, setGlobal, bytes, watch, frozen, discard');
+  let r = await round(GM_wasm.instances(), { contexts: [{ ctx: 0, kind: 'page', url: 'u', memories: [], instances: [] },
+    { ctx: 1000001, kind: 'worker', url: 'w.js', memories: [], instances: [{ inst: 0, counts: { function: 1, global: 1 }, exports: [{ index: 0, name: 'g', kind: 'global', type: 'i32', mutable: true, value: 7 }], omitted: 0 }] }] });
+  check(same(r.body, { ctx: 0, req: { op: 'list' } }) && r.value.length === 1 && r.value[0].ctx === 1000001 && r.value[0].kind === 'worker' && r.value[0].inst === 0 && r.value[0].exports[0].value === 7,
+    'loader: instances() asks for the list and gives a flat list with each instance\'s context (a worker\'s too)');
+  r = await round(GM_wasm.globals({ inst: 1, ctx: 1000001 }), [{ index: 1, name: 'g', type: 'i32', mutable: true, value: 8 }]);
+  check(same(r.body, { ctx: 1000001, req: { op: 'globals', inst: 1 } }) && r.value[0].value === 8, 'loader: globals({inst, ctx})');
+  r = await round(GM_wasm.setGlobal({ inst: 0, export: 4, value: '42', name: 'ignored' }), { inst: 0, export: 4, type: 'i32', value: 42 });
+  check(same(r.body, { ctx: 0, req: { op: 'setGlobal', inst: 0, export: 4, value: '42' } }) && r.value === 42, 'loader: setGlobal({inst, export, value}) gives the value afterwards (a name is not sent)');
+  r = await round(GM_wasm.bytes({ mem: 0, addr: 4096 }), { addr: 4096, bytes: [1, 2], size: 65536 });
+  check(same(r.body, { ctx: 0, req: { op: 'bytes', mem: 0, addr: 4096, length: 256 } }) && r.value.bytes.length === 2 && r.value.size === 65536, 'loader: bytes({mem, addr}) reads a 256-byte window by default');
+  r = await round(GM_wasm.watch([{ mem: 0, addr: 1024, type: 'i32' }, { mem: 0, where: { base: 300, offsets: [8] }, type: 'f32' }, { mem: 0, addr: 64, type: 'utf8', length: 16, label: 'x' }], 7), [{ addr: 1024, value: 1 }, { addr: 16008, value: 2 }, { error: 'e' }]);
+  check(same(r.body, { ctx: 7, req: { op: 'watch', entries: [{ mem: 0, where: 1024, type: 'i32' }, { mem: 0, where: { base: 300, offsets: [8] }, type: 'f32' }, { mem: 0, where: 64, type: 'utf8', length: 16 }] } }) && r.value.length === 3,
+    'loader: watch(entries, ctx) sends addresses and pointer paths as the probe\'s entries');
+  r = await round(GM_wasm.frozen(), [{ freeze: 1, mem: 0, where: 1024, type: 'i32', value: 999, error: '' }]);
+  check(same(r.body, { ctx: 0, req: { op: 'frozen' } }) && r.value[0].freeze === 1, 'loader: frozen()');
+  r = await round(GM_wasm.discard(3), { discarded: true });
+  check(same(r.body, { ctx: 0, req: { op: 'discard', scan: 3 } }) && r.value === true, 'loader: discard(scan)');
+  // The ones that were there, each with its request.
+  r = await round(GM_wasm.scan({ mem: 0, type: 'i32', kind: 'range', value: 1, to: 9, align: 4, junk: 1 }), { scan: 1, count: 2 });
+  check(same(r.body, { ctx: 0, req: { op: 'scan', mem: 0, type: 'i32', kind: 'range', value: 1, to: 9, align: 4 } }) && r.value.count === 2, 'loader: scan (range)');
+  r = await round(GM_wasm.scan({ mem: 0, type: 'f32', kind: 'unknown' }), { scan: 2, count: 100, snapshot: true });
+  check(same(r.body, { ctx: 0, req: { op: 'scan', mem: 0, type: 'f32', kind: 'unknown' } }) && r.value.snapshot === true, 'loader: scan (unknown initial value)');
+  for (const kind of ['changed', 'unchanged', 'increased', 'decreased']) {
+    r = await round(GM_wasm.next({ scan: 2, kind: kind }), { scan: 2, count: 1 });
+    check(same(r.body, { ctx: 0, req: { op: 'next', scan: 2, kind: kind } }) && r.value.count === 1, 'loader: next (' + kind + ')');
+  }
+  r = await round(GM_wasm.next({ scan: 2, kind: 'exact', value: 90, ctx: 1000001 }), { scan: 2, count: 1 });
+  check(same(r.body, { ctx: 1000001, req: { op: 'next', scan: 2, kind: 'exact', value: 90 } }), 'loader: next (exact, in a worker)');
+  r = await round(GM_wasm.results({ scan: 2, offset: 100, limit: 10 }), { scan: 2, count: 1, rows: [{ addr: 1024, value: 90, previous: 100 }] });
+  check(same(r.body, { ctx: 0, req: { op: 'results', scan: 2, offset: 100, limit: 10 } }) && r.value.rows[0].addr === 1024, 'loader: results');
+  r = await round(GM_wasm.freeze({ mem: 0, where: { base: 300, offsets: [8] }, type: 'i32', value: 999 }), { freeze: 5, addr: 16008, value: 999 });
+  check(same(r.body, { ctx: 0, req: { op: 'freeze', mem: 0, where: { base: 300, offsets: [8] }, type: 'i32', value: 999 } }) && r.value === 5, 'loader: freeze through a pointer path gives the freeze\'s number');
+  for (const t of [['bytes', [1, 2, 255]], ['utf8', 'héllo'], ['utf16', 'hé'], ['i64', '-5'], ['u8', 255], ['f64', 2.5]]) {
+    r = await round(GM_wasm.write({ mem: 0, addr: 8, type: t[0], value: t[1] }), { addr: 8, written: 3 });
+    check(same(r.body, { ctx: 0, req: { op: 'write', mem: 0, where: 8, type: t[0], value: t[1] } }) && r.value === 3, 'loader: write ' + t[0]);
+  }
+  r = await round(GM_wasm.read({ mem: 0, addr: 8, type: 'utf16', length: 4 }), { addr: 8, value: 'hé' });
+  check(same(r.body, { ctx: 0, req: { op: 'read', mem: 0, where: 8, type: 'utf16', length: 4 } }) && r.value === 'hé', 'loader: read utf16 with a length');
+  // What the loader sends is what core accepts: the bodies of this run are the ones in
+  // wasm-loader-cases.json, which the core test gm_wasm_bodies_from_the_shared_file passes through
+  // userscripts::wasm_body (UPDATE_CASES=1 rewrites the file after a change of the API).
+  const bodies = wasmCalls().map((m) => canon(JSON.parse(m.body)));
+  const casesFile = path.join(__dirname, 'wasm-loader-cases.json');
+  if (process.env.UPDATE_CASES) fs.writeFileSync(casesFile, JSON.stringify({ about: 'The bodies GM.wasm sends for the calls of test-wasm-probe.cjs (runLoader), in order. Core accepts each (userscripts::wasm_body).', bodies: bodies }, null, 1) + '\n');
+  check(same(JSON.parse(fs.readFileSync(casesFile, 'utf8')).bodies, bodies), 'loader: the ' + bodies.length + ' bodies sent are the ones core is tested with (wasm-loader-cases.json)');
 }
 
 async function run(check) {

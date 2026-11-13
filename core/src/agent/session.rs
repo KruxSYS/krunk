@@ -1176,6 +1176,11 @@ pub fn describe(name: &str, args: &Value) -> String {
             n("addr").map_or("Freeze a memory value".into(), |a| format!("Freeze the value at 0x{:X}", a as u64))
         }
         "wasm_unfreeze" => "Unfreeze a memory value".into(),
+        "wasm_watch" => "Read the watched memory values".into(),
+        "wasm_global" => match args.get("value") {
+            None | Some(Value::Null) => "Read the WebAssembly globals".into(),
+            Some(_) => "Write a WebAssembly global".into(),
+        },
         "edit_page" => {
             let sel = s("selector").unwrap_or_else(|| "the page".into());
             match args.get("action").and_then(Value::as_str) {

@@ -1,0 +1,275 @@
+{
+ "about": "The bodies GM.wasm sends for the calls of test-wasm-probe.cjs (runLoader), in order. Core accepts each (userscripts::wasm_body).",
+ "bodies": [
+  {
+   "ctx": 0,
+   "req": {
+    "mem": 0,
+    "op": "read",
+    "type": "i32",
+    "where": 1024
+   }
+  },
+  {
+   "ctx": 1000001,
+   "req": {
+    "mem": 9,
+    "op": "write",
+    "type": "i32",
+    "value": 1,
+    "where": {
+     "base": 300,
+     "offsets": [
+      8
+     ]
+    }
+   }
+  },
+  {
+   "ctx": 0,
+   "req": {
+    "freeze": 3,
+    "op": "unfreeze"
+   }
+  },
+  {
+   "ctx": 0,
+   "req": {
+    "op": "list"
+   }
+  },
+  {
+   "ctx": 0,
+   "req": {
+    "op": "list"
+   }
+  },
+  {
+   "ctx": 1000001,
+   "req": {
+    "inst": 1,
+    "op": "globals"
+   }
+  },
+  {
+   "ctx": 0,
+   "req": {
+    "export": 4,
+    "inst": 0,
+    "op": "setGlobal",
+    "value": "42"
+   }
+  },
+  {
+   "ctx": 0,
+   "req": {
+    "addr": 4096,
+    "length": 256,
+    "mem": 0,
+    "op": "bytes"
+   }
+  },
+  {
+   "ctx": 7,
+   "req": {
+    "entries": [
+     {
+      "mem": 0,
+      "type": "i32",
+      "where": 1024
+     },
+     {
+      "mem": 0,
+      "type": "f32",
+      "where": {
+       "base": 300,
+       "offsets": [
+        8
+       ]
+      }
+     },
+     {
+      "length": 16,
+      "mem": 0,
+      "type": "utf8",
+      "where": 64
+     }
+    ],
+    "op": "watch"
+   }
+  },
+  {
+   "ctx": 0,
+   "req": {
+    "op": "frozen"
+   }
+  },
+  {
+   "ctx": 0,
+   "req": {
+    "op": "discard",
+    "scan": 3
+   }
+  },
+  {
+   "ctx": 0,
+   "req": {
+    "align": 4,
+    "kind": "range",
+    "mem": 0,
+    "op": "scan",
+    "to": 9,
+    "type": "i32",
+    "value": 1
+   }
+  },
+  {
+   "ctx": 0,
+   "req": {
+    "kind": "unknown",
+    "mem": 0,
+    "op": "scan",
+    "type": "f32"
+   }
+  },
+  {
+   "ctx": 0,
+   "req": {
+    "kind": "changed",
+    "op": "next",
+    "scan": 2
+   }
+  },
+  {
+   "ctx": 0,
+   "req": {
+    "kind": "unchanged",
+    "op": "next",
+    "scan": 2
+   }
+  },
+  {
+   "ctx": 0,
+   "req": {
+    "kind": "increased",
+    "op": "next",
+    "scan": 2
+   }
+  },
+  {
+   "ctx": 0,
+   "req": {
+    "kind": "decreased",
+    "op": "next",
+    "scan": 2
+   }
+  },
+  {
+   "ctx": 1000001,
+   "req": {
+    "kind": "exact",
+    "op": "next",
+    "scan": 2,
+    "value": 90
+   }
+  },
+  {
+   "ctx": 0,
+   "req": {
+    "limit": 10,
+    "offset": 100,
+    "op": "results",
+    "scan": 2
+   }
+  },
+  {
+   "ctx": 0,
+   "req": {
+    "mem": 0,
+    "op": "freeze",
+    "type": "i32",
+    "value": 999,
+    "where": {
+     "base": 300,
+     "offsets": [
+      8
+     ]
+    }
+   }
+  },
+  {
+   "ctx": 0,
+   "req": {
+    "mem": 0,
+    "op": "write",
+    "type": "bytes",
+    "value": [
+     1,
+     2,
+     255
+    ],
+    "where": 8
+   }
+  },
+  {
+   "ctx": 0,
+   "req": {
+    "mem": 0,
+    "op": "write",
+    "type": "utf8",
+    "value": "héllo",
+    "where": 8
+   }
+  },
+  {
+   "ctx": 0,
+   "req": {
+    "mem": 0,
+    "op": "write",
+    "type": "utf16",
+    "value": "hé",
+    "where": 8
+   }
+  },
+  {
+   "ctx": 0,
+   "req": {
+    "mem": 0,
+    "op": "write",
+    "type": "i64",
+    "value": "-5",
+    "where": 8
+   }
+  },
+  {
+   "ctx": 0,
+   "req": {
+    "mem": 0,
+    "op": "write",
+    "type": "u8",
+    "value": 255,
+    "where": 8
+   }
+  },
+  {
+   "ctx": 0,
+   "req": {
+    "mem": 0,
+    "op": "write",
+    "type": "f64",
+    "value": 2.5,
+    "where": 8
+   }
+  },
+  {
+   "ctx": 0,
+   "req": {
+    "length": 4,
+    "mem": 0,
+    "op": "read",
+    "type": "utf16",
+    "where": 8
+   }
+  }
+ ]
+}

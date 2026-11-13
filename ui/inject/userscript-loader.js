@@ -169,6 +169,46 @@
           return out;
         });
       },
+      // [{ctx, kind, url, inst, counts: {function, memory, global, table, tag}, exports: [{index, name, kind,
+      //   mem? (a memory: its number in memories()), type?, mutable?, value? (a global), length? (a table)}]}]
+      instances: function () {
+        return pick('list', null, []).then(function (r) {
+          const out = [];
+          for (let i = 0; i < r.contexts.length; i++) {
+            const c = r.contexts[i], list = c.instances || [];
+            for (let j = 0; j < list.length; j++) {
+              const x = list[j];
+              out[out.length] = { ctx: c.ctx, kind: c.kind, url: c.url, inst: x.inst, counts: x.counts, exports: x.exports, omitted: x.omitted };
+            }
+          }
+          return out;
+        });
+      },
+      // {inst, ctx?} -> [{index, name, type, mutable, value}]: the instance's exported globals now
+      globals: function (o) { return pick('globals', o, ['inst']); },
+      // {inst, export (the global's index), value, ctx?} -> the value it has afterwards
+      setGlobal: function (o) { return pick('setGlobal', o, ['inst', 'export', 'value']).then(function (r) { return r.value; }); },
+      // {mem, addr, length?} -> {addr, bytes: [0..255], size (of the memory)}: a window of raw bytes
+      bytes: function (o) {
+        const src = o !== null && typeof o === 'object' ? o : {};
+        return pick('bytes', { ctx: src.ctx, mem: src.mem, addr: src.addr, length: src.length === undefined ? 256 : src.length }, ['mem', 'addr', 'length']);
+      },
+      // [{mem, addr | where, type, length?}] (and the context as a second argument) -> [{addr, value} | {error}]
+      watch: function (entries, ctx) {
+        const list = [];
+        for (let i = 0; entries && i < entries.length; i++) {
+          const e = entries[i] || {}, x = { mem: e.mem, where: e.where !== undefined ? e.where : e.addr, type: e.type };
+          if (e.length !== undefined) x.length = e.length;
+          list[i] = x;
+        }
+        return pick('watch', { ctx: ctx, entries: list }, ['entries']);
+      },
+      // {ctx?} -> [{freeze, mem, where, type, value, error}]: what is frozen in that context
+      frozen: function (o) { return pick('frozen', o, []); },
+      // the scan's number (or {scan, ctx}) -> true when it was there; scans end by themselves after 8 newer ones
+      discard: function (o) {
+        return pick('discard', typeof o === 'number' ? { scan: o } : o, ['scan']).then(function (r) { return r.discarded; });
+      },
       // {mem, addr | where: {base, offsets}, type, length?} -> the value
       read: function (o) { return pick('read', o, ['mem', 'where', 'type', 'length']).then(function (r) { return r.value; }); },
       // {mem, addr | where, type, value} -> the number of bytes written

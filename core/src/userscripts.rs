@@ -805,6 +805,26 @@ mod tests {
         assert!(err.contains(r#"f("nonce1", 8, false, "no memory 3")"#), "{err}");
     }
 
+    /// Every `GM.wasm` function's body, as the loader really sends it (the Node test of the
+    /// loader compares its bodies with this file), is a request core accepts.
+    #[test]
+    fn gm_wasm_bodies_from_the_shared_file() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../ui/dev/wasm-loader-cases.json");
+        let doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let bodies = doc["bodies"].as_array().unwrap();
+        let mut ops = std::collections::BTreeSet::new();
+        for b in bodies {
+            // (One body of the loader's test names a memory that is not there: still well-formed.)
+            let (ctx, req) = wasm_body(&b.to_string()).unwrap_or_else(|e| panic!("{b}: {e}"));
+            assert_eq!(u64::from(ctx), b["ctx"].as_u64().unwrap());
+            ops.insert(req.to_json()["op"].as_str().unwrap().to_string());
+        }
+        let all = ["bytes", "discard", "freeze", "frozen", "globals", "list", "next", "read", "results", "scan"];
+        for op in all.iter().chain(&["setGlobal", "unfreeze", "watch", "write"]) {
+            assert!(ops.contains(*op), "no GM.wasm body for {op}");
+        }
+    }
+
     const BINDING: &str = "__krunkUS_0123456789abcdef";
     const NONCE: &str = "00112233445566778899aabbccddeeff";
 

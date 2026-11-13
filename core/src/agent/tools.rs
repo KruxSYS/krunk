@@ -426,7 +426,7 @@ pub static TOOLS: &[Tool] = &[
     // pages, not while a password or card field holds a value; results capped and scrubbed).
     Tool {
         name: "wasm_memories",
-        description: "The WebAssembly memories of the page (games and apps compiled to WASM keep their state there): per context (the page, same-process frames, dedicated workers) each memory's number and size. Frames of other sites, service workers and shared workers are not reachable. Like eval_js, the wasm_* tools are not available on Krunk's own pages or while a password or card field holds a value. Typical use: wasm_scan for a value the page shows, change it in the page, wasm_scan mode next until few addresses are left, then wasm_write or wasm_freeze.",
+        description: "The WebAssembly memories and instances of the page (games and apps compiled to WASM keep their state there): per context (the page, same-process frames, dedicated workers) each memory's number and size, and each instance's number, which memories it exports, its exported globals (export number, name, type, mutable, value) and its first function names. Frames of other sites, service workers and shared workers are not reachable. Like eval_js, the wasm_* tools are not available on Krunk's own pages or while a password or card field holds a value. Typical use: wasm_scan for a value the page shows, change it in the page, wasm_scan mode next until few addresses are left, then wasm_write or wasm_freeze.",
         schema: EMPTY,
         group: Group::Page,
     },
@@ -450,8 +450,8 @@ pub static TOOLS: &[Tool] = &[
             "mem":{"type":"integer","minimum":0},
             "addr":{"type":"integer","minimum":0,"maximum":4294967295,"description":"Byte address in the memory"},
             "offsets":{"type":"array","maxItems":8,"items":{"type":"integer"},"description":"Pointer path: for each offset, the 32-bit pointer at the address is read and the offset added"},
-            "type":{"type":"string","enum":["i8","u8","i16","u16","i32","u32","i64","u64","f32","f64","utf8","utf16"]},
-            "value":{"type":["number","string"],"description":"A number (i64/u64: a decimal string; utf8/utf16: the text)"}},"required":["mem","addr","type","value"],"additionalProperties":false}"#,
+            "type":{"type":"string","enum":["i8","u8","i16","u16","i32","u32","i64","u64","f32","f64","bytes","utf8","utf16"]},
+            "value":{"type":["number","string","array"],"items":{"type":"integer","minimum":0,"maximum":255},"description":"A number (i64/u64: a decimal string; utf8/utf16: the text; bytes: an array of 0..255, at most 65536)"}},"required":["mem","addr","type","value"],"additionalProperties":false}"#,
         group: Group::Page,
     },
     Tool {
@@ -488,6 +488,29 @@ pub static TOOLS: &[Tool] = &[
             "offsets":{"type":"array","maxItems":8,"items":{"type":"integer"},"description":"Pointer path: for each offset, the 32-bit pointer at the address is read and the offset added"},
             "type":{"type":"string","enum":["i8","u8","i16","u16","i32","u32","i64","u64","f32","f64"]},
             "value":{"type":["number","string"],"description":"A number (i64/u64: a decimal string; utf8/utf16: the text)"}},"required":["mem","addr","type"],"additionalProperties":false}"#,
+        group: Group::Page,
+    },
+    Tool {
+        name: "wasm_watch",
+        description: "Read several places of a WebAssembly memory in one call (at most 32): each entry is an address or a pointer path with a type, like wasm_read. Gives, in the same order, {addr, value} or {error} per entry. Use it to look at the values you found again, also after the memory grew (addresses stay valid).",
+        schema: r#"{"type":"object","properties":{
+            "ctx":{"type":"integer","minimum":0,"description":"Context from wasm_memories (default 0: the page)"},
+            "entries":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"object","properties":{
+                "mem":{"type":"integer","minimum":0},
+                "addr":{"type":"integer","minimum":0,"maximum":4294967295},
+                "offsets":{"type":"array","maxItems":8,"items":{"type":"integer"}},
+                "type":{"type":"string","enum":["i8","u8","i16","u16","i32","u32","i64","u64","f32","f64","bytes","utf8","utf16"]},
+                "length":{"type":"integer","minimum":0,"maximum":65536}},"required":["mem","addr","type"],"additionalProperties":false}}},"required":["entries"],"additionalProperties":false}"#,
+        group: Group::Page,
+    },
+    Tool {
+        name: "wasm_global",
+        description: "The exported globals of a WebAssembly instance (inst from wasm_memories). Without value: their export number, name, type, mutable and value now. With export and value: write that global (mutable i32, i64, f32 and f64 globals only; i64 as a decimal string).",
+        schema: r#"{"type":"object","properties":{
+            "ctx":{"type":"integer","minimum":0,"description":"Context from wasm_memories (default 0: the page)"},
+            "inst":{"type":"integer","minimum":0,"maximum":255},
+            "export":{"type":"integer","minimum":0,"description":"The global's export number, from wasm_memories or this tool"},
+            "value":{"type":["number","string"]}},"required":["inst"],"additionalProperties":false}"#,
         group: Group::Page,
     },
     Tool {
@@ -1024,10 +1047,12 @@ mod tests {
             "wasm_results",
             "wasm_freeze",
             "wasm_unfreeze",
+            "wasm_watch",
+            "wasm_global",
         ] {
             assert!(find(n).is_some(), "{n} is missing");
         }
-        assert_eq!(TOOLS.len(), 56);
+        assert_eq!(TOOLS.len(), 58);
     }
 
     /// No tool reaches the vault, cards, sync, the account or API keys (brief C.10). 0.16.0:

@@ -546,6 +546,43 @@ pub fn exception_message(details: &serde_json::Value) -> String {
 
 /// The agent's `wasm_*` tools at most give this many scan results per call.
 pub const AGENT_MAX_RESULTS: u64 = 200;
+/// `wasm_watch` reads at most this many entries per call.
+pub const AGENT_MAX_WATCH: usize = 32;
+/// `wasm_memories` names at most this many functions and globals per instance (the counts
+/// say how many there are).
+pub const AGENT_MAX_NAMES: usize = 40;
+
+/// The host's `list` answer as the agent's `wasm_memories` gets it: per instance its number,
+/// the counts by kind, which memories it exports, its globals (place, name, type, mutable,
+/// value) and the first function names; nothing else of the export lists (a module may
+/// export thousands of functions).
+pub fn agent_trim_instances(list: &mut serde_json::Value) {
+    use serde_json::{json, Value};
+    for ctx in list.get_mut("contexts").and_then(Value::as_array_mut).into_iter().flatten() {
+        for inst in ctx.get_mut("instances").and_then(Value::as_array_mut).into_iter().flatten() {
+            let exports = inst.get("exports").and_then(Value::as_array).cloned().unwrap_or_default();
+            let of = |kind: &str| exports.iter().filter(|e| e["kind"] == kind).cloned().collect::<Vec<_>>();
+            let memories: Vec<Value> =
+                of("memory").iter().map(|e| json!({ "name": e["name"], "mem": e["mem"] })).collect();
+            let globals: Vec<Value> = of("global")
+                .iter()
+                .take(AGENT_MAX_NAMES)
+                .map(|e| {
+                    json!({
+                        "export": e["index"], "name": e["name"], "type": e["type"],
+                        "mutable": e["mutable"], "value": e["value"],
+                    })
+                })
+                .collect();
+            let functions: Vec<Value> =
+                of("function").iter().take(AGENT_MAX_NAMES).map(|e| e["name"].clone()).collect();
+            *inst = json!({
+                "inst": inst["inst"], "counts": inst["counts"],
+                "memories": memories, "globals": globals, "functions": functions,
+            });
+        }
+    }
+}
 
 /// A `wasm_*` tool call of the AI agent as the context and the probe's request (`None`: not
 /// one of these tools). The arguments passed the tool's schema.
@@ -558,8 +595,37 @@ pub fn agent_request(tool: &str, args: &serde_json::Value) -> Option<Result<(u32
         Some(o) if !o.is_empty() => json!({ "base": args.get("addr"), "offsets": o }),
         _ => args.get("addr").cloned().unwrap_or(Value::Null),
     };
+    // One watch entry of the tool as the probe's.
+    let entry = |e: &Value| {
+        let at = match e.get("offsets").and_then(Value::as_array) {
+            Some(o) if !o.is_empty() => json!({ "base": e.get("addr"), "offsets": o }),
+            _ => e.get("addr").cloned().unwrap_or(Value::Null),
+        };
+        let mut out = json!({ "mem": e.get("mem"), "where": at, "type": e.get("type"), "length": e.get("length") });
+        if let Some(o) = out.as_object_mut() {
+            o.retain(|_, v| !v.is_null());
+        }
+        out
+    };
     let mut req = match tool {
         "wasm_memories" => json!({ "op": "list" }),
+        "wasm_watch" => {
+            let entries = args.get("entries").and_then(Value::as_array).cloned().unwrap_or_default();
+            if entries.is_empty() || entries.len() > AGENT_MAX_WATCH {
+                return Some(Err(format!("entries: 1 to {AGENT_MAX_WATCH} addresses")));
+            }
+            json!({ "op": "watch", "entries": entries.iter().map(entry).collect::<Vec<_>>() })
+        }
+        // Without a value: the instance's globals. With one: write the global at `export`.
+        "wasm_global" => match args.get("value") {
+            None | Some(Value::Null) => json!({ "op": "globals", "inst": get("inst") }),
+            Some(v) => {
+                if args.get("export").is_none() {
+                    return Some(Err("writing a global needs export (its number in the instance's list)".into()));
+                }
+                json!({ "op": "setGlobal", "inst": get("inst"), "export": get("export"), "value": v })
+            }
+        },
         "wasm_read" => {
             json!({ "op": "read", "mem": get("mem"), "where": at(), "type": get("type"), "length": get("length") })
         }
@@ -632,6 +698,15 @@ pub fn agent_summary(tool: &str, result: &serde_json::Value) -> String {
         "wasm_results" => format!("Read {} addresses", result["rows"].as_array().map_or(0, Vec::len)),
         "wasm_freeze" => "Froze the value".into(),
         "wasm_unfreeze" => "Unfroze the value".into(),
+        "wasm_watch" => match result.as_array().map_or(0, Vec::len) {
+            1 => "Read 1 value".into(),
+            n => format!("Read {n} values"),
+        },
+        "wasm_global" if result.is_array() => match result.as_array().map_or(0, Vec::len) {
+            1 => "Read 1 global".into(),
+            n => format!("Read {n} globals"),
+        },
+        "wasm_global" => "Wrote the global".into(),
         _ => "Done".into(),
     }
 }
@@ -850,6 +925,61 @@ mod tests {
         ] {
             assert!(session_answer(no).is_none(), "{}", String::from_utf8_lossy(no));
         }
+    }
+
+    /// Every operation of the agent's tools, from the file the Node check of the mock
+    /// provider's scenarios reads too (`ui/dev/wasm-agent-cases.json`).
+    #[test]
+    fn agent_cases_from_the_shared_file() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../ui/dev/wasm-agent-cases.json");
+        let doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let cases = doc["cases"].as_array().unwrap();
+        assert!(cases.len() >= 45);
+        for c in cases {
+            let tool = c["tool"].as_str().unwrap();
+            let got = agent_request(tool, &c["args"]).unwrap_or_else(|| panic!("{tool} is a wasm tool"));
+            match c.get("error").and_then(|e| e.as_str()) {
+                Some(part) => {
+                    let e = got.expect_err(&c.to_string());
+                    assert!(e.contains(part), "{c}: {e}");
+                }
+                None => {
+                    // (The arguments are ones the tool's schema lets through.)
+                    let t = crate::agent::tools::find(tool).unwrap();
+                    crate::agent::tools::validate(t, &c["args"]).unwrap_or_else(|e| panic!("{c}: {e}"));
+                    let (ctx, req) = got.unwrap_or_else(|e| panic!("{c}: {e}"));
+                    assert_eq!(u64::from(ctx), c["ctx"].as_u64().unwrap(), "{c}");
+                    assert_eq!(req.to_json(), c["req"], "{c}");
+                }
+            }
+        }
+        // Each tool is in the file, and each of the tools of the agent's list is one of these.
+        for t in crate::agent::tools::TOOLS.iter().filter(|t| t.name.starts_with("wasm_")) {
+            assert!(cases.iter().any(|c| c["tool"] == t.name), "{} has no case", t.name);
+        }
+        assert_eq!(crate::agent::tools::TOOLS.iter().filter(|t| t.name.starts_with("wasm_")).count(), 9);
+    }
+
+    #[test]
+    fn the_agent_gets_a_short_form_of_the_instances() {
+        let mut exports = vec![
+            json!({"index": 0, "name": "memory", "kind": "memory", "mem": 2}),
+            json!({"index": 1, "name": "g", "kind": "global", "type": "i32", "mutable": true, "value": 7}),
+        ];
+        exports.extend((0..500).map(|i| json!({"index": i + 2, "name": format!("f{i}"), "kind": "function"})));
+        let mut list = json!({"contexts": [{"ctx": 0, "kind": "page", "url": "u", "memories": [{"mem": 2}], "instances": [
+            {"inst": 0, "counts": {"function": 500, "memory": 1, "global": 1}, "exports": exports, "omitted": 0}]}]});
+        agent_trim_instances(&mut list);
+        let inst = &list["contexts"][0]["instances"][0];
+        assert_eq!(inst["memories"], json!([{"name": "memory", "mem": 2}]));
+        assert_eq!(inst["globals"], json!([{"export": 1, "name": "g", "type": "i32", "mutable": true, "value": 7}]));
+        assert_eq!(inst["functions"].as_array().unwrap().len(), AGENT_MAX_NAMES);
+        assert_eq!(inst["counts"]["function"], 500);
+        assert!(inst.get("exports").is_none());
+        assert_eq!(list["contexts"][0]["memories"], json!([{"mem": 2}]));
+        assert_eq!(agent_summary("wasm_watch", &json!([{"addr": 1, "value": 2}])), "Read 1 value");
+        assert_eq!(agent_summary("wasm_global", &json!([{}, {}])), "Read 2 globals");
+        assert_eq!(agent_summary("wasm_global", &json!({"value": 1})), "Wrote the global");
     }
 
     #[test]

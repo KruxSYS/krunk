@@ -1118,12 +1118,8 @@ impl Browser {
                 }
                 match r {
                     Ok(mut v) => {
-                        // The tools list memories only (the instances are the inspector page's).
-                        for ctx in v.get_mut("contexts").and_then(Value::as_array_mut).into_iter().flatten() {
-                            if let Some(o) = ctx.as_object_mut() {
-                                o.remove("instances");
-                            }
-                        }
+                        // The instances in their short form (a module may export thousands of names).
+                        lb_core::wasm::agent_trim_instances(&mut v);
                         let summary = lb_core::wasm::agent_summary(name, &v);
                         c.ok(&v, summary)
                     }
