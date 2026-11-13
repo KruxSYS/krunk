@@ -199,7 +199,6 @@ impl Browser {
         match caller {
             Caller::Content { tab, context, .. } => {
                 let t = self.ext_tab_json(ext_id, *tab);
-                let top_url = self.views.borrow().get(tab).map(|v| v.net.top_url()).unwrap_or_default();
                 let (known_main, origin) = self
                     .ext
                     .contexts
@@ -208,26 +207,17 @@ impl Browser {
                     .and_then(|l| l.iter().find(|c| c.id == *context).map(|c| (c.main, c.origin.clone())))
                     .unwrap_or((false, String::new()));
                 // The frame says whether it is the top one and what its address is (it is the
-                // extension's own world: it can only mislead itself); a sub-frame's address
-                // must be on the origin the engine reported for that world.
+                // extension's own world: it can only mislead itself); the address, the top
+                // frame's too, must be on the origin the engine reported for that world. The
+                // tab's address is not used: it is the pending navigation's as soon as one
+                // starts, while the old document's script still runs.
                 let says_top = data.pointer("/src/top").and_then(|t| t.as_bool());
                 let says_url = data.pointer("/src/url").and_then(|u| u.as_str()).unwrap_or("");
                 let main = known_main || says_top == Some(true);
-                let url = if main {
-                    top_url
-                } else if !says_url.is_empty()
-                    && lb_core::urlclean::origin_of(says_url).is_some_and(|o| o == origin)
-                    && says_url.len() <= 4096
-                {
-                    says_url.to_string()
-                } else if origin.contains("://") {
-                    format!("{origin}/")
-                } else {
-                    String::new()
-                };
+                let (url, origin) = lb_core::ext_guard::content_sender(&origin, says_url);
                 json!({
                     "id": ext_id, "tab": t, "url": url, "frameId": if main { 0 } else { *context },
-                    "origin": lb_core::urlclean::origin_of(&url), "documentLifecycle": "active",
+                    "origin": origin, "documentLifecycle": "active",
                 })
             }
             Caller::Page { end, .. } => {

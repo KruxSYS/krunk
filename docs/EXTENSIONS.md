@@ -214,9 +214,10 @@ where the extension may run and never on Krunk's own pages; `scripting.*` needs 
 * MAIN-world scripts run in the page's world like any page script: they get no binding and no
   API, and the page can see what they define (as in Chrome).
 * A content world reports whether it is the top frame and its address for `sender`; the host
-  uses its own knowledge for the top frame and accepts a sub-frame's address only on the
-  origin the engine reported for that world. The information only ever reaches the same
-  extension.
+  accepts the address (the top frame's too) only on the origin the engine reported for that
+  world, and `sender.origin` is that origin (`core::ext_guard::content_sender`). The tab's
+  address is not used: it already names the next page while a navigation is pending. The
+  information only ever reaches the same extension.
 * Sandboxed pages are the one place with `unsafe-eval`: unique origin, no API.
 * Ports per extension are capped (2048), registered scripts (100), windows (8), errors (50).
 
