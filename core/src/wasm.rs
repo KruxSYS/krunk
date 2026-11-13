@@ -130,8 +130,16 @@ pub enum WasmReq {
         value: serde_json::Value,
     },
     /// The hex view: `length` bytes from `addr`.
-    Bytes { mem: u32, addr: u32, length: u32 },
-    WriteBytes { mem: u32, addr: u32, bytes: Vec<u8> },
+    Bytes {
+        mem: u32,
+        addr: u32,
+        length: u32,
+    },
+    WriteBytes {
+        mem: u32,
+        addr: u32,
+        bytes: Vec<u8>,
+    },
     Scan {
         mem: u32,
         #[serde(rename = "type")]
@@ -161,8 +169,12 @@ pub enum WasmReq {
         #[serde(default = "default_page")]
         limit: u32,
     },
-    Progress { scan: u32 },
-    Discard { scan: u32 },
+    Progress {
+        scan: u32,
+    },
+    Discard {
+        scan: u32,
+    },
     Freeze {
         mem: u32,
         #[serde(rename = "where")]
@@ -173,9 +185,13 @@ pub enum WasmReq {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         value: Option<serde_json::Value>,
     },
-    Unfreeze { freeze: u32 },
+    Unfreeze {
+        freeze: u32,
+    },
     Frozen {},
-    Watch { entries: Vec<WatchEntry> },
+    Watch {
+        entries: Vec<WatchEntry>,
+    },
     /// Ends every scan and freeze of the tab (the inspector page's Reset).
     Reset {},
 }
@@ -490,9 +506,12 @@ mod tests {
         assert!(make_expression(None).contains("var k=null"));
         let hook = hook_script("k1");
         assert!(hook.contains("p.hook()") && hook.contains("enumerable:false"));
-        assert!(handle_lost("Could not find object with given id") && handle_lost("Cannot find context with specified id"));
+        assert!(
+            handle_lost("Could not find object with given id") && handle_lost("Cannot find context with specified id")
+        );
         assert!(!handle_lost("address 5 + 4 is past the end of the memory"));
-        let d = json!({"text": "Uncaught (in promise)", "exception": {"description": "Error: no memory 3\n    at mem"}});
+        let d =
+            json!({"text": "Uncaught (in promise)", "exception": {"description": "Error: no memory 3\n    at mem"}});
         assert_eq!(exception_message(&d), "no memory 3");
         let scan = json!({"op": "scan", "mem": 0, "type": "i32", "kind": "unknown"});
         assert!(p(scan).unwrap().is_scan() && !WasmReq::List {}.is_scan());

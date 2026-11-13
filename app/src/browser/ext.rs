@@ -274,6 +274,7 @@ fn normalize_entries(mut files: Vec<(String, Vec<u8>)>) -> Vec<(String, Vec<u8>)
 /// The DevTools events `ext_devtools_event` handles.
 const DEVTOOLS_EVENTS: &[&str] = &[
     "Target.attachedToTarget",
+    "Target.detachedFromTarget",
     "Runtime.executionContextCreated",
     "Runtime.executionContextDestroyed",
     "Runtime.executionContextsCleared",
@@ -568,6 +569,8 @@ impl Browser {
     }
 
     fn ext_devtools_event(&self, tab: TabId, method: &str, params: &Value) {
+        // 0.19.0: the WASM inspector keeps the tab's frame worlds and workers.
+        self.wasm_devtools_event(tab, method, params);
         match method {
             // A worker or frame paused for "Send client hints" off (0.7.0, `hints`).
             "Target.attachedToTarget" => self.hints_target_attached(tab, params),

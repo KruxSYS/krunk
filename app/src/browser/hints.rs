@@ -26,20 +26,24 @@ impl Browser {
     pub(super) fn hints_attach(&self, tab: TabId) {
         let Some(view) = self.tab_view(tab) else { return };
         let off = self.hints_off();
-        if !off && !self.hints_attached.borrow().contains(&tab) {
+        // 0.19.0: the WASM inspector reaches a tab's dedicated workers through the same
+        // sessions (not paused at their start for it).
+        let want = off || self.wasm_wants_workers(tab);
+        if !want && !self.hints_attached.borrow().contains(&tab) {
             return;
         }
-        if off {
+        if want {
             self.hints_attached.borrow_mut().insert(tab);
         } else {
             self.hints_attached.borrow_mut().remove(&tab);
+            self.wasm_workers_forget(tab);
         }
         // Workers only: an out-of-process frame paused this way did not resume in CEF; frames
         // need no help (their requests follow the override, nohints.js runs in them).
-        let params = if off {
+        let params = if want {
             json!({
                 "autoAttach": true,
-                "waitForDebuggerOnStart": true,
+                "waitForDebuggerOnStart": off,
                 "flatten": true,
                 "filter": [{ "type": "iframe", "exclude": true }, { "type": "page", "exclude": true }, {}],
             })

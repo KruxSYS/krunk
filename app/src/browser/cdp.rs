@@ -19,6 +19,8 @@ pub(super) enum CdpUser {
     Userscripts = 2,
     Agent = 4,
     ScriptsPage = 8,
+    /// The WASM memory inspector (0.19.0).
+    Wasm = 16,
 }
 
 #[derive(Default)]
@@ -59,6 +61,7 @@ impl Browser {
         };
         if last {
             view.devtools_method("Runtime.disable", &json!({}));
+            self.wasm_contexts_forget(tab);
             view.devtools_method("Page.disable", &json!({}));
         }
         had
@@ -71,5 +74,6 @@ impl Browser {
     /// The tab's browser is new (or gone): no domain is on.
     pub(super) fn cdp_forget(&self, tab: TabId) {
         self.cdp.users.borrow_mut().remove(&tab);
+        self.wasm_contexts_forget(tab);
     }
 }

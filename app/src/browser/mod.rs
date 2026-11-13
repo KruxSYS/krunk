@@ -98,6 +98,7 @@ mod tasks;
 mod updater;
 mod userscripts;
 mod vpn;
+mod wasm;
 
 pub use power::PowerOptions;
 use power::{MEMREPORT_TIMER, POWER_TIMER};
@@ -387,6 +388,8 @@ pub struct Browser {
     panel: agent_panel::PanelHost,
     agent: agent::AgentHost,
     cdp: cdp::CdpHost,
+    /// The WASM memory inspector's sessions (0.19.0).
+    wasm: wasm::WasmHost,
     userscripts: userscripts::UserscriptHost,
     macros: macros::MacroHost,
     input: input::InputHost,
@@ -542,6 +545,7 @@ impl Browser {
             panel: agent_panel::PanelHost::default(),
             agent: agent::AgentHost::default(),
             cdp: cdp::CdpHost::default(),
+            wasm: wasm::WasmHost::default(),
             userscripts: userscripts::UserscriptHost::default(),
             macros: macros::MacroHost::default(),
             input: input::InputHost::default(),
@@ -1414,6 +1418,7 @@ impl Browser {
         c.on_created(move || {
             if let Some(b) = weak.upgrade() {
                 b.cdp_forget(id);
+                b.wasm_tab_created(id);
                 b.ext_tab_created(id);
                 b.userscripts_tab_created(id);
                 b.hints_attach(id);
@@ -1528,6 +1533,7 @@ impl Browser {
         self.agent_tab_gone(id);
         self.macro_tab_gone(id);
         self.input_tab_gone(id);
+        self.wasm_tab_gone(id);
         self.cdp_forget(id);
         self.hints_attached.borrow_mut().remove(&id);
         self.pointer.hints.borrow_mut().forget(id);
@@ -3146,6 +3152,10 @@ impl Browser {
             | Request::SiteCookieSet { .. }
             | Request::SiteCookiesDelete { .. }) => self.dispatch_site_data(tab, req_id, r),
             Request::OpenSiteData => self.open_site_data(),
+            r @ (Request::WasmInfo {} | Request::WasmCall { .. } | Request::WasmHook { .. }) => {
+                self.dispatch_wasm(tab, req_id, r)
+            }
+            Request::OpenWasm => self.open_wasm(),
             Request::HangReply { tab_id, wait } => self.hang_reply(tab_id, wait),
             Request::JsDialogReply { dialog_id, accept, text, block } => {
                 self.js_dialog_reply(dialog_id, accept, text, block)

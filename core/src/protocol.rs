@@ -3545,7 +3545,10 @@ mod tests {
             }
         }
         assert!(parse_request(wasm, r#"{"cmd":"wasmCall","req":{"op":"eval","code":"1"}}"#).is_err());
-        assert_eq!(parse_request(wasm, r#"{"cmd":"openUrl","url":"https://a.example/"}"#), Err(ProtocolError::Forbidden));
+        assert_eq!(
+            parse_request(wasm, r#"{"cmd":"openUrl","url":"https://a.example/"}"#),
+            Err(ProtocolError::Forbidden)
+        );
         assert!(parse_request(Sender::Popup, r#"{"cmd":"openWasm"}"#).is_ok());
         assert_eq!(parse_request(Sender::Shell, r#"{"cmd":"openWasm"}"#), Err(ProtocolError::Forbidden));
         assert_eq!(parse_request(wasm, r#"{"cmd":"openWasm"}"#), Err(ProtocolError::Forbidden));

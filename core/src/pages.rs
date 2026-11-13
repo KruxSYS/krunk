@@ -118,10 +118,7 @@ impl Page {
     /// sensitive-data gate). 0.15.0: the session logs (a record of the user's browsing).
     /// 0.19.0: the WASM inspector (the agent has its own gated `wasm_*` tools).
     pub fn agent_forbidden(self) -> bool {
-        matches!(
-            self,
-            Page::Passwords | Page::Sync | Page::SiteData | Page::Storage | Page::Sessions | Page::Wasm
-        )
+        matches!(self, Page::Passwords | Page::Sync | Page::SiteData | Page::Storage | Page::Sessions | Page::Wasm)
     }
 
     /// The real URL loaded in the tab.

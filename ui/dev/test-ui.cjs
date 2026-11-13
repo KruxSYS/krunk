@@ -5989,7 +5989,9 @@ async function testHttpAuth(browser) {
     // private tab titles (test-0160-private.cjs); the agent's scratchpad and passwords (test-0160-agent.cjs).
     for (const f of ['test-ai-panel.cjs', 'test-ai-settings.cjs', 'test-scripts.cjs', 'test-agent-probe.cjs', 'test-vpn.cjs',
       'test-0150-tabs.cjs', 'test-0150-agent.cjs', 'test-0150-theme.cjs', 'test-0150-address.cjs', 'test-0150-downloads.cjs', 'test-0150-sessions.cjs',
-      'test-dpi.cjs', 'test-0160-menus.cjs', 'test-0160-private.cjs', 'test-0160-agent.cjs']) {
+      'test-dpi.cjs', 'test-0160-menus.cjs', 'test-0160-private.cjs', 'test-0160-agent.cjs',
+      // 0.19.0: the WASM memory inspector (its probe in Node, the page and the menu row).
+      'test-wasm-probe.cjs', 'test-0190-wasm.cjs']) {
       const file = path.join(__dirname, f);
       if (!fs.existsSync(file)) continue;
       const tests = require(file)({ openPage, check, sent, lastSent, emit, shot, acceptInPage, settleTabs, SHOTS, UI });
