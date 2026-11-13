@@ -60,7 +60,10 @@ function call(cmd, data) {
   return new Promise(function (resolve, reject) {
     var id = nextId++;
     pending[id] = { resolve: resolve, reject: reject };
-    host.postMessage({ cmd: 'ext', ext: extId, op: cmd, reqId: id, data: data === undefined ? null : data });
+    // A call the host does not take (over the bridge's size limit, not cloneable) fails; it
+    // must not wait for an answer that never comes.
+    try { host.postMessage({ cmd: 'ext', ext: extId, op: cmd, reqId: id, data: data === undefined ? null : data }); }
+    catch (err) { delete pending[id]; reject(new Error(cmd + ': ' + (err && err.message || 'the call could not be sent'))); }
   });
 }
 function each(kind, fn) { listeners[kind].slice().forEach(function (l) { try { fn(l); } catch (err) { report(err); } }); }
@@ -182,7 +185,12 @@ var runtime = {
   lastError: undefined,
   // Krunk's address of the file (https://<id>.ext.krunk.invalid/…): the one that loads here.
   // Senders are reported in Chrome's form (chrome-extension://<id>/…), see docs/EXTENSIONS.md.
-  getURL: function (p) { return 'https://' + extId + '.ext.krunk.invalid/' + String(p || '').replace(/^\/+/, ''); },
+  // In the background worker the address is in Chrome's form: there it is compared with
+  // `sender.url` and tab addresses, which the host reports in that form (an extension that
+  // lets only its own pages talk to it: `[getURL('/popup.html')].includes(sender.url)`).
+  // The worker's fetch and importScripts and the host's tabs/windows calls take that form.
+  // In pages the address is the one the engine can load (image and frame sources).
+  getURL: function (p) { return (inWorker ? 'chrome-extension://' + extId + '/' : 'https://' + extId + '.ext.krunk.invalid/') + String(p || '').replace(/^\/+/, ''); },
   getManifest: function () { return JSON.parse(JSON.stringify(manifest)); },
   sendMessage: function () {
     var args = Array.prototype.slice.call(arguments);
@@ -412,6 +420,22 @@ if (G.console && typeof G.console.error === 'function') {
   });
 }
 if (inWorker) {
+  // The extension's own files by their Chrome address (see runtime.getURL): loaded from where
+  // Krunk serves them.
+  (function () {
+    var chromeBase = 'chrome-extension://' + extId + '/', krunkBase = 'https://' + extId + '.ext.krunk.invalid/';
+    var own = function (u) { return typeof u === 'string' && u.indexOf(chromeBase) === 0 ? krunkBase + u.slice(chromeBase.length) : u; };
+    var nativeFetch = G.fetch, nativeImport = G.importScripts;
+    if (typeof nativeFetch === 'function') G.fetch = function (input, init) {
+      if (typeof input === 'string') input = own(input);
+      else if (input && typeof input.href === 'string' && typeof input.url !== 'string') input = own(input.href);
+      return nativeFetch.call(G, input, init);
+    };
+    if (typeof nativeImport === 'function') G.importScripts = function () {
+      var urls = []; for (var i = 0; i < arguments.length; i++) urls.push(own(String(arguments[i])));
+      return nativeImport.apply(G, urls);
+    };
+  })();
   // The service worker's own globals (a dedicated worker has none of them). The worker is
   // started "activated": Krunk has no installing or waiting phase. `install` and `activate`
   // are dispatched on the first start after an installation or update only.

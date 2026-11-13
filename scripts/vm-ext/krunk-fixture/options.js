@@ -59,10 +59,13 @@ function run() {
       var changed = new Promise(function (resolve) { var l = function (c, area) { if (area === 'session' && c.selfKey) { chrome.storage.onChanged.removeListener(l); resolve(c.selfKey.newValue); } }; chrome.storage.onChanged.addListener(l); });
       return chrome.storage.session.set({ selfKey: 'v1' }).then(function () { return withTimeout(changed, 3000, 'storage.onChanged'); }).then(function (v) {
         check(v === 'v1', 'storage: session area and onChanged in an extension page in a tab', text(v));
-        var big = new Array(11 * 1024 * 1024 + 1).join('x');
-        return chrome.storage.local.set({ selfBig: big }).then(function () { return chrome.storage.local.getBytesInUse('selfBig'); }).then(function (n) {
-          check(n > 10 * 1024 * 1024, 'storage: unlimitedStorage (11 MiB in one value)', String(n));
-          return chrome.storage.local.remove('selfBig');
+        // Three values of 4 MiB (one call carries at most 8 MiB): together over the 10 MiB
+        // quota that `unlimitedStorage` lifts.
+        var big = new Array(4 * 1024 * 1024 + 1).join('x');
+        return withTimeout(chrome.storage.local.set({ selfBig1: big }).then(function () { return chrome.storage.local.set({ selfBig2: big }); }).then(function () { return chrome.storage.local.set({ selfBig3: big }); })
+          .then(function () { return chrome.storage.local.getBytesInUse(['selfBig1', 'selfBig2', 'selfBig3']); }), 20000, 'storage beyond 10 MiB').then(function (n) {
+          check(n > 10 * 1024 * 1024, 'storage: unlimitedStorage (12 MiB in three values)', String(n));
+          return chrome.storage.local.remove(['selfBig1', 'selfBig2', 'selfBig3']);
         });
       });
     });

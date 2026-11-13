@@ -278,6 +278,11 @@ const SHIELD_RECENT: usize = 6;
 struct TabShared {
     /// URL of the top-level navigation in progress or loaded.
     top_url: Mutex<String>,
+    /// The address (without fragment) of a navigation the host itself started and allowed:
+    /// the address bar, a tab the host opened, an extension's Options. Its document request
+    /// may be for an extension's page whatever initiator the engine reports (0.17.0: it
+    /// reports an opaque one for a new tab, and the page stayed blank).
+    host_nav: Mutex<String>,
     /// The last top-level requests and the `Referer` the engine sent with each (a download
     /// fetched in parts sends the same one).
     navigations: Mutex<std::collections::VecDeque<(String, String)>>,
@@ -319,7 +324,9 @@ impl RequestPolicy for TabPolicy {
         // manifest lists under `web_accessible_resources` for it.
         if req.url.contains(lb_core::ext::HOST_SUFFIX) {
             let top = self.tab.top_url.lock().map(|t| t.clone()).unwrap_or_default();
-            if !self.net.ext_request_allowed(req.url, req.initiator, &top) {
+            let by_host = req.resource_type == 0
+                && self.tab.host_nav.lock().is_ok_and(|h| !h.is_empty() && *h == without_fragment(req.url));
+            if !by_host && !self.net.ext_request_allowed(req.url, req.initiator, &top) {
                 return NetVerdict::Block;
             }
         }
@@ -412,6 +419,10 @@ impl RequestPolicy for TabPolicy {
 }
 
 /// Per-tab network state (UI thread), with the part shared with the IO thread.
+fn without_fragment(url: &str) -> &str {
+    url.split('#').next().unwrap_or(url)
+}
+
 pub(super) struct TabNet {
     io: Arc<TabShared>,
     net: Arc<NetShared>,
@@ -441,6 +452,14 @@ pub(super) struct TabNet {
 }
 
 impl TabNet {
+    /// A top-level navigation passed the navigation rules: remembered when the host started
+    /// it, forgotten otherwise (see `TabShared::host_nav`).
+    pub fn note_navigation(&self, url: &str, host: bool) {
+        if let Ok(mut h) = self.io.host_nav.lock() {
+            *h = if host { without_fragment(url).to_string() } else { String::new() };
+        }
+    }
+
     pub fn new(net: Arc<NetShared>) -> TabNet {
         TabNet {
             io: Arc::new(TabShared::default()),

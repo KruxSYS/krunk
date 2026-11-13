@@ -1279,6 +1279,9 @@ impl Browser {
                 }
                 return false;
             }
+            if !nav.redirected {
+                net_start.note_navigation(&nav.url, host);
+            }
             if let Some(rewritten) = b.navigation_starting(&net_start, &nav.url, nav.redirected) {
                 // Cancel and restart at the cleaned/upgraded URL.
                 b.defer(move |b| b.navigate_tab(id, &rewritten));

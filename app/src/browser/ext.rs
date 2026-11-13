@@ -607,15 +607,22 @@ impl Browser {
         if !same {
             let views: Vec<(TabId, View, bool)> =
                 self.views.borrow().iter().map(|(id, v)| (*id, v.view.clone(), v.view.is_private())).collect();
+            // For documents to come only. The documents the tabs show keep the scripts they
+            // were loaded with, as in Chrome (a new extension's content scripts start with the
+            // next load): running the bundles again in them started every content script and
+            // every MAIN-world script a second time (0.17.0: a wallet's page provider twice,
+            // its streams crossed, and the page lost the connection to the extension).
             for (id, view, private) in views {
-                self.ext_install_bundle(id, &view, private);
+                self.ext_install_bundle(id, &view, private, false);
             }
         }
     }
 
     /// Installs (or replaces) the bundles in a tab: each extension's in its own isolated world,
     /// with its own binding.
-    fn ext_install_bundle(&self, tab: TabId, view: &View, private: bool) {
+    /// `now`: also in the document the tab shows (a tab that was just created: its first
+    /// document may have started).
+    fn ext_install_bundle(&self, tab: TabId, view: &View, private: bool, now: bool) {
         let bundles = {
             let b = self.ext.bundles.borrow();
             if private {
@@ -662,9 +669,9 @@ impl Browser {
             let weak = self.me.clone();
             // The page's own world for `world: "MAIN"` scripts: no world name, no binding.
             let params = if main {
-                json!({ "source": bundle, "runImmediately": true })
+                json!({ "source": bundle, "runImmediately": now })
             } else {
-                json!({ "source": bundle, "worldName": world, "runImmediately": true })
+                json!({ "source": bundle, "worldName": world, "runImmediately": now })
             };
             view.devtools_call("Page.addScriptToEvaluateOnNewDocument", &params, move |r| {
                 let Some(b) = weak.upgrade() else { return };
@@ -696,7 +703,7 @@ impl Browser {
     pub(super) fn ext_tab_created(&self, tab: TabId) {
         let Some(view) = self.tab_view(tab) else { return };
         self.ext.bindings.borrow_mut().remove(&tab);
-        self.ext_install_bundle(tab, &view, view.is_private());
+        self.ext_install_bundle(tab, &view, view.is_private(), true);
     }
 
     pub(super) fn ext_detach_tab(&self, tab: TabId) {
