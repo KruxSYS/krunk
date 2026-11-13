@@ -1623,6 +1623,24 @@ pub enum Request {
     },
     /// From the shield panel: open the site-data page for the active tab.
     OpenSiteData,
+
+    // ---- the WASM memory inspector (krunk://wasm, 0.19.0; bound by the host to the tab it
+    // was opened from; requests name no tab) ----
+    /// The inspected tab (title, address, whether it is still open) and the hook's state.
+    WasmInfo {},
+    /// A request to the probe in one of the tab's contexts (`ctx` 0: the page itself; the
+    /// others as `list` names them: same-process frames and dedicated workers).
+    WasmCall {
+        #[serde(default)]
+        ctx: u32,
+        req: crate::wasm::WasmReq,
+    },
+    /// The fallback: hook `WebAssembly` at document start (or stop doing so) and reload the tab.
+    WasmHook {
+        on: bool,
+    },
+    /// From the ⋮ menu: open the inspector for the active tab.
+    OpenWasm,
     /// The suggestion dropdown (popup): fill entry `entry_id` into frame `frame_id` of tab
     /// `tab_id`. The host re-checks the tab, the frame and the entry's origin.
     SuggestPick {
@@ -2037,7 +2055,7 @@ impl Sender {
             // The panel opens links of the agent's answers (http(s), checked by the host); the
             // runner opens tabs only through its own API.
             return match self {
-                Sender::Page(Page::SiteData) | Sender::Runner => false,
+                Sender::Page(Page::SiteData | Page::Wasm) | Sender::Runner => false,
                 Sender::Agent => matches!(req, R::OpenUrl { .. }),
                 _ => true,
             };
@@ -2127,6 +2145,7 @@ impl Sender {
                     | R::Zoom { .. }
                     | R::ShieldAllowSite { .. }
                     | R::OpenSiteData
+                    | R::OpenWasm
                     | R::SavePasswordReply { .. }
                     | R::PasswordSavedUndo { .. }
                     | R::PasswordSavedEdit { .. }
@@ -2384,6 +2403,7 @@ impl Sender {
                     | R::SiteDataClear { .. }
                     | R::SiteCookiesDelete { .. }
             ),
+            Sender::Page(Page::Wasm) => matches!(req, R::WasmInfo {} | R::WasmCall { .. } | R::WasmHook { .. }),
             Sender::Page(Page::HttpsOnly) => matches!(req, R::HttpsOnlyProceed { .. }),
             Sender::Page(Page::Adblock) => matches!(
                 req,
@@ -3511,6 +3531,24 @@ mod tests {
         assert!(parse_request(sd, r#"{"cmd":"siteDataSet","area":"indexedDb","key":"k","value":"v"}"#).is_err());
         // Opening it is the popup's (shield panel) business only.
         assert!(parse_request(Sender::Popup, r#"{"cmd":"openSiteData"}"#).is_ok());
+        // 0.19.0: the WASM inspector's commands belong to its page; the popup's menu opens it.
+        let wasm = Sender::Page(Page::Wasm);
+        for msg in [
+            r#"{"cmd":"wasmInfo"}"#,
+            r#"{"cmd":"wasmCall","req":{"op":"list"}}"#,
+            r#"{"cmd":"wasmCall","ctx":3,"req":{"op":"read","mem":0,"where":{"base":8,"offsets":[4]},"type":"f32"}}"#,
+            r#"{"cmd":"wasmHook","on":true}"#,
+        ] {
+            assert!(parse_request(wasm, msg).is_ok(), "{msg}");
+            for s in senders(wasm) {
+                assert_eq!(parse_request(s, msg), Err(ProtocolError::Forbidden), "{s:?} {msg}");
+            }
+        }
+        assert!(parse_request(wasm, r#"{"cmd":"wasmCall","req":{"op":"eval","code":"1"}}"#).is_err());
+        assert_eq!(parse_request(wasm, r#"{"cmd":"openUrl","url":"https://a.example/"}"#), Err(ProtocolError::Forbidden));
+        assert!(parse_request(Sender::Popup, r#"{"cmd":"openWasm"}"#).is_ok());
+        assert_eq!(parse_request(Sender::Shell, r#"{"cmd":"openWasm"}"#), Err(ProtocolError::Forbidden));
+        assert_eq!(parse_request(wasm, r#"{"cmd":"openWasm"}"#), Err(ProtocolError::Forbidden));
         assert_eq!(parse_request(Sender::Shell, r#"{"cmd":"openSiteData"}"#), Err(ProtocolError::Forbidden));
         assert_eq!(parse_request(sd, r#"{"cmd":"openSiteData"}"#), Err(ProtocolError::Forbidden));
     }

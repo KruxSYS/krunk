@@ -1084,7 +1084,7 @@
     });
   });
 
-  const POPUP_SIZES = { menu: [280, 700], shield: [300, 226], siteInfo: [360, 260], downloads: [380, 420], pip: [340, 300], vpn: [320, 330] };
+  const POPUP_SIZES = { menu: [280, 730], shield: [300, 226], siteInfo: [360, 260], downloads: [380, 420], pip: [340, 300], vpn: [320, 330] };
   // The press on the button deactivates the open popup, which closes it before the click
   // arrives (the host then says popupClosed). The click must not reopen it: the press
   // remembers what was open. The host has the same guard (lb_core::toggle).

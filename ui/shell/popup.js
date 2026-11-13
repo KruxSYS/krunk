@@ -85,6 +85,8 @@
       item('Find in page…', 'Ctrl+F', () => command('find')),
       item('Print…', 'Ctrl+P', () => command('print')),
       item('Developer tools', 'F12', () => command('devTools')),
+      // 0.19.0: the WASM memory inspector for the page in this tab.
+      item('WASM memory inspector', '', () => { LB.post('openWasm'); close(); }),
       item('Picture-in-Picture', 'Alt+P', () => command('pictureInPicture'), !c.hasVideo),
       sep(),
       item('Settings', '', () => openPage('settings')),

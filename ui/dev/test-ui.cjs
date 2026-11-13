@@ -367,7 +367,7 @@ async function testShell(browser) {
   // Menu popup open/close.
   await page.click('#menu');
   const sp = await lastSent(page, 'showPopup');
-  check(sp && sp.popup === 'menu' && sp.rect.width === 280 && sp.rect.height === 700 && sp.rect.x >= 0 && sp.rect.y > 60, 'menu sends showPopup with a rect below the toolbar (700 is the upper bound with the 0.7.2 update item and 0.16.0\'s Session usage; the popup fits itself)');
+  check(sp && sp.popup === 'menu' && sp.rect.width === 280 && sp.rect.height === 730 && sp.rect.x >= 0 && sp.rect.y > 60, 'menu sends showPopup with a rect below the toolbar (730 is the upper bound; 0.19.0 added the WASM memory inspector; with the 0.7.2 update item and 0.16.0\'s Session usage; the popup fits itself)');
   check(await page.locator('#menu.on').count() === 1, 'menu button highlighted while open');
   await page.click('#menu');
   check((await lastSent(page, 'hidePopup')) !== undefined, 'clicking menu again sends hidePopup');
@@ -934,7 +934,7 @@ async function testPopup(browser) {
     const want = await page.evaluate(() => document.getElementById('root').offsetHeight + 2);
     // (0.16.0: one 30 px row more, Session usage. With the update item's 41 px it stays within
     // the 700 px the window is first asked for.)
-    check(fitMenu && fitMenu.height === want && want <= 700 - 41 && want > 400, 'the menu asks for exactly its content height (' + (fitMenu && fitMenu.height) + ' = #root + borders, within the 700 bound less the update item)');
+    check(fitMenu && fitMenu.height === want && want <= 730 - 41 && want > 400, 'the menu asks for exactly its content height (' + (fitMenu && fitMenu.height) + ' = #root + borders, within the 730 bound less the update item)');
   }
   await page.waitForSelector('.item');
   check(await page.locator('#zoom-value').textContent() === '125%', 'menu shows zoom');
@@ -5447,13 +5447,13 @@ async function testTabWindows(browser) {
   check((await lastSent(page, 'command')).command.command === 'newWindow', 'main menu New window sends command{newWindow}');
   check(await page.locator('.item.update-item').count() === 0, 'no update item without an update');
   // 0.7.2 (R13): "Update available – Krunk X.Y.Z" first; it asks for the update prompt.
-  await page.setViewportSize({ width: 280, height: 700 });
+  await page.setViewportSize({ width: 280, height: 730 });
   await emit(page, { event: 'popup', content: { kind: 'menu', zoom: 1, canReopen: false, update: '0.7.9' } });
   await page.waitForTimeout(30);
   const firstItem = page.locator('.item').first();
   check((await firstItem.textContent()).includes('Update available – Krunk 0.7.9') && await page.locator('.item.update-item .update-dot').count() === 1, 'the update item is the first one, with a dot');
   check(await page.evaluate(() => { const l = document.querySelector('.item.update-item .label'); return l.scrollWidth <= l.clientWidth; }), 'the update item is not shortened');
-  check(await page.evaluate(() => document.getElementById('root').getBoundingClientRect().bottom <= 700), 'the menu with the update item fits 280x700');
+  check(await page.evaluate(() => document.getElementById('root').getBoundingClientRect().bottom <= 730), 'the menu with the update item fits 280x730');
   await shot(page, 'popup-menu-update.png');
   const hidesBefore = (await sent(page)).filter((x) => x.cmd === 'hidePopup').length;
   await firstItem.click();
@@ -5621,7 +5621,7 @@ async function testAccountCard(browser) {
     check(errors.length === 0, theme + ': no console errors (' + errors.join(' | ') + ')');
   }
   // The ⋮ menu's account item.
-  const { page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 280, height: 700 }, 1);
+  const { page, errors } = await openPage(browser, 'https://shell.krunk.invalid/popup.html', { width: 280, height: 730 }, 1);
   await page.evaluate(() => { window.__host.autoSimulate = false; });
   await emit(page, { event: 'popup', content: { kind: 'menu', zoom: 1, canReopen: false, account: '' } });
   await page.waitForSelector('.item');
@@ -5635,7 +5635,7 @@ async function testAccountCard(browser) {
   check(label.t === 'Signed in as a-rather-long-address.for.testing@example.org' && label.sw >= label.cw, 'menu: "Signed in as …", shortened if long');
   await shot(page, 'menu-account.png');
   const fit = await lastSent(page, 'popupResize');
-  check(fit && fit.height < 700, 'menu: still fits (' + (fit && fit.height) + ')');
+  check(fit && fit.height < 730, 'menu: still fits (' + (fit && fit.height) + ')');
   await emit(page, { event: 'popup', content: { kind: 'menu', zoom: 1, canReopen: false } });
   await page.waitForTimeout(60);
   check(await page.locator('.item.account-item').count() === 0, 'menu: no account item in a private window');

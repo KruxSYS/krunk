@@ -610,6 +610,7 @@ fn page_title(p: Page) -> &'static str {
         Page::About => "About Krunk",
         Page::Storage => "Cookies and site data",
         Page::SiteData => "Site data",
+        Page::Wasm => "WASM memory inspector",
         Page::Adblock => "Ad blocking",
         Page::HttpsOnly => "Not secure",
         Page::Gpu => "Graphics",
