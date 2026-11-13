@@ -260,11 +260,25 @@ impl ExtHost {
 struct BackgroundEvents;
 impl WindowEvents for BackgroundEvents {}
 
-struct ExtPopupEvents;
+struct ExtPopupEvents(std::rc::Weak<Browser>);
 impl WindowEvents for ExtPopupEvents {
     // Activation and focus bounce between the popup, its browser view and the main window
-    // while it opens, so they decide nothing (0.7.0, R21): `ext_popup_tick` watches the mouse
-    // and the foreground window instead.
+    // while it opens, so they decide nothing about closing it (0.7.0, R21): `ext_popup_tick`
+    // watches the mouse and the foreground window instead.
+
+    /// The popup window itself got the keyboard focus (it was activated by a click on it, or
+    /// Windows gave it back): the page in it gets it, so typing goes to its fields (0.17.0).
+    fn got_focus(&self) {
+        if let Some(b) = self.0.upgrade() {
+            b.defer(|b| {
+                let view =
+                    b.ext.popup.try_borrow().ok().and_then(|p| p.as_ref().filter(|p| p.shown).map(|p| p.view.clone()));
+                if let Some(view) = view {
+                    view.focus();
+                }
+            });
+        }
+    }
 }
 
 fn read_json(path: &Path) -> Option<Value> {
@@ -1126,7 +1140,7 @@ impl Browser {
             width: (rect.width * scale).round() as i32,
             height: (rect.height * scale).round() as i32,
         };
-        let window = match Window::create_popup(f.window, Rc::new(ExtPopupEvents)) {
+        let window = match Window::create_popup(f.window, Rc::new(ExtPopupEvents(self.me.clone()))) {
             Ok(w) => w,
             Err(e) => {
                 warning!("extension popup: {e}");
@@ -1220,6 +1234,15 @@ impl Browser {
         p.window.set_activatable(true);
         p.window.show_at(ScreenRect { x: r.x, y: r.y, width: r.width, height: r.height }, true);
         p.view.set_bounds(0, 0, r.width, r.height);
+    }
+
+    /// Is an extension's popup shown, or being shown right now (its slot is borrowed by the
+    /// code that activates it)? Then the activation it takes from the frame is wanted.
+    pub(super) fn ext_popup_has_activation(&self) -> bool {
+        match self.ext.popup.try_borrow() {
+            Ok(p) => p.as_ref().is_some_and(|p| p.shown),
+            Err(_) => true,
+        }
     }
 
     pub(super) fn ext_popup_open(&self) -> bool {
