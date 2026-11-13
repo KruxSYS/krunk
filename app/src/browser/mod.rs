@@ -1334,8 +1334,10 @@ impl Browser {
             }
         });
         let weak = self.me.clone();
+        let net_address = net.clone();
         c.on_address(move |url| {
             committed.replace(url.clone());
+            net_address.committed.replace(url.clone());
             if let Some(b) = weak.upgrade() {
                 // The engine's empty first document of a tab on its way to another page (edited
                 // headers start blank) is not the tab's address: the bar never shows it (R1).
@@ -2347,7 +2349,7 @@ impl Browser {
             return self.open_mailto(opener, url);
         }
         let ok = url.starts_with("https://") || url.starts_with("http://");
-        if !ok {
+        if !ok || !self.ext_link_allowed(opener, url) {
             return;
         }
         let Some(win) = self.window_of(opener) else { return };
@@ -2368,6 +2370,9 @@ impl Browser {
     /// Opens `url` (any URL the host may load, e.g. a viewer's file:) in a new tab in front,
     /// next to tab `opener`.
     fn open_tab_after(&self, opener: TabId, url: &str) {
+        if !self.ext_link_allowed(opener, url) {
+            return;
+        }
         let Some(win) = self.window_of(opener) else { return };
         let private = self.tab(opener).is_some_and(|t| t.private);
         let opened = self.ws.borrow_mut().open(win, url, private, Position::AfterOpener(opener), true, now_ms());

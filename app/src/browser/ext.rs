@@ -2299,6 +2299,23 @@ impl Browser {
             .is_none_or(|e| lb_core::ext_guard::WebAccess::new(&e.manifest, &[]).web_accessible(&path))
     }
 
+    /// May the host open `url` in a new tab for the document tab `opener` shows (a link
+    /// opened with Ctrl or the middle button, "Open in new tab")? The host's navigation names no
+    /// initiator, so an extension's page is checked here: for its own pages and Krunk's any,
+    /// for a web page only what `web_accessible_resources` lists for it.
+    pub(super) fn ext_link_allowed(&self, opener: TabId, url: &str) -> bool {
+        let Some(id) = ext::id_of_url(url) else { return true };
+        let from = self.views.borrow().get(&opener).map(|v| v.net.committed.borrow().clone()).unwrap_or_default();
+        if from.starts_with(&format!("{}/", ext::origin(&id))) || Page::from_url(&from).is_some() {
+            return true;
+        }
+        let Some(origin) = lb_core::urlclean::origin_of(&from) else { return false };
+        self.ext.exts.borrow().iter().find(|e| e.installed.id == id).is_none_or(|e| {
+            let access = lb_core::ext_guard::WebAccess::new(&e.manifest, &[]);
+            lb_core::ext_guard::request_allowed(&access, &id, url, &origin, "")
+        })
+    }
+
     /// A content script reads a file of its own extension (`fetch` in the isolated world goes
     /// through here): the request itself would be the page's, and a page gets only
     /// web-accessible resources. The file as `{ mime, body }` (base64).

@@ -245,7 +245,9 @@ where the extension may run and never on Krunk's own pages; `scripting.*` needs 
   sub-resource, a frame, `fetch`, a link, `location` or `window.open` — gets only what a
   Manifest V3 entry lists for its origin (`matches`), plus the style sheets of content scripts
   (the shim links them into the page). Another extension gets nothing. A server's redirect
-  leads to an extension page only when it is listed. `Access-Control-Allow-Origin: *` is sent
+  leads to an extension page only when it is listed, and a link the host opens in a new tab
+  for a page (Ctrl or middle click, "Open in new tab") is checked against the document the
+  opener shows. `Access-Control-Allow-Origin: *` is sent
   with listed files only. The action popup, offscreen documents, the extension's windows and
   the background worker are not tabs and are not affected.
   A content script's `fetch()` of a file of its own extension (GET, up to 8 MiB) is answered

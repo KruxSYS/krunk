@@ -423,6 +423,9 @@ pub(super) struct TabNet {
     pub css: RefCell<String>,
     pub generichide: Cell<bool>,
     pub exceptions: RefCell<HashSet<String>>,
+    /// The address of the document the tab shows (the engine's last address change), not of
+    /// a navigation that only started.
+    pub committed: RefCell<String>,
     /// HTTPS-only: the http:// URL the current navigation was upgraded from.
     pub upgraded_from: RefCell<Option<String>>,
     /// The (https URL, http URL) of an upgrade we just issued.
@@ -447,6 +450,7 @@ impl TabNet {
             css: RefCell::new(String::new()),
             generichide: Cell::new(false),
             exceptions: RefCell::new(HashSet::new()),
+            committed: RefCell::new(String::new()),
             upgraded_from: RefCell::new(None),
             pending_upgrade: RefCell::new(None),
             rewriting: Cell::new(false),
