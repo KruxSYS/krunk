@@ -1,0 +1,19 @@
+--- a/net/socket/client_socket_pool_manager.cc
++++ b/net/socket/client_socket_pool_manager.cc
+@@ -51,9 +51,15 @@
+ // than normal other connections. Use a limit of 255, so the limit for wss will
+ // be the same as the limit for ws. Also note that Firefox uses a limit of 200.
+ // See http://crbug.com/486800
++//
++// Krunk: 16 instead of 6. Six requests that never get an answer (or six open
++// event streams) took every connection to their host, and no tab could load
++// anything from it until one ended. Sixteen is room, not a cure. Low-priority
++// requests stay at six per host (ResourceScheduler's delayable limit), so
++// ordinary page loads open about as many connections as before.
+ std::array<size_t, kSocketPoolTypesSize> g_max_sockets_per_group =
+     std::to_array<size_t>({
+-        6,   // kNormal
++        16,  // kNormal
+         255  // kWebSocket
+     });
+ 

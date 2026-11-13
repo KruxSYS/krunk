@@ -169,6 +169,11 @@
         b.insertBefore(svg, b.firstChild);
       }
       b.addEventListener('click', function () { LB.post('navToEntry', { tabId: c.tabId, entryId: it.entryId }); close(); });
+      // 0.18.0: middle-click opens the entry in a new background tab with this tab's
+      // back/forward list; the menu stays open (like a bookmark folder's).
+      b.addEventListener('auxclick', function (e) {
+        if (e.button === 1) { e.preventDefault(); LB.post('navToEntryNewTab', { tabId: c.tabId, entryId: it.entryId }); }
+      });
       return b;
     });
     return [el('div', { class: 'nav-menu', role: 'menu', 'aria-label': c.forward ? 'Forward history' : 'Back history' },

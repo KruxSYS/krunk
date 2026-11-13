@@ -20,6 +20,12 @@
     return (i ? n.toFixed(1) : Math.round(n)) + ' ' + u[i];
   }
   function rate(n) { return n ? size(n) + '/s' : '–'; }
+  // Requests under way: "3", and "3 (45 s)" / "1 (2 min)" once the oldest waits over 5 s.
+  function pending(r) {
+    if (!r.pending) return '–';
+    const s = Math.floor((r.pendingOldestMs || 0) / 1000);
+    return r.pending + (s < 5 ? '' : s < 120 ? ' (' + s + ' s)' : ' (' + Math.floor(s / 60) + ' min)');
+  }
 
   function sorted() {
     const out = rows.slice();
@@ -50,6 +56,7 @@
         el('td', { class: 'num', text: size(r.private) }),
         el('td', { class: 'num', text: r.cpu.toFixed(1) + ' %' }),
         el('td', { class: 'num', text: rate(r.network) }),
+        el('td', { class: 'num pending' + (r.pending && r.pendingOldestMs >= 30000 ? ' slow' : ''), text: pending(r) }),
         el('td', { class: 'num', text: r.pid === null || r.pid === undefined ? '–' : String(r.pid) }),
       ]);
       tr.addEventListener('click', function () { selected = r.id; render(); });
@@ -65,7 +72,7 @@
   document.querySelectorAll('th.sortable').forEach(function (th) {
     th.addEventListener('click', function () {
       const key = th.dataset.sort;
-      if (sortKey === key) sortDesc = !sortDesc; else { sortKey = key; sortDesc = ['memory', 'workingSet', 'private', 'cpu', 'network'].includes(key); }
+      if (sortKey === key) sortDesc = !sortDesc; else { sortKey = key; sortDesc = ['memory', 'workingSet', 'private', 'cpu', 'network', 'pending'].includes(key); }
       document.querySelectorAll('th.sortable').forEach((h) => { h.classList.toggle('sorted', h === th); h.classList.toggle('desc', h === th && sortDesc); h.classList.toggle('asc', h === th && !sortDesc); });
       render();
     });

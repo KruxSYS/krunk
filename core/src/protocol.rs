@@ -1027,6 +1027,12 @@ pub enum Request {
         tab_id: u32,
         entry_id: i64,
     },
+    /// Middle-click in a history menu (popup, 0.18.0): open that entry in a new background tab
+    /// next to tab `tab_id`, with a copy of the tab's back/forward list; `tab_id` stays where it is.
+    NavToEntryNewTab {
+        tab_id: u32,
+        entry_id: i64,
+    },
     /// The HTTP sign-in dialog's answer (popup, 0.8.0): typed credentials, or a saved login
     /// (`entry_id`; the host then takes its user name and password from the vault).
     HttpAuthReply {
@@ -2106,6 +2112,7 @@ impl Sender {
                     | R::TabMenuAction { .. }
                     | R::ExtMenuAction { .. }
                     | R::NavToEntry { .. }
+                    | R::NavToEntryNewTab { .. }
                     | R::HttpAuthReply { .. }
                     | R::HttpAuthCancel { .. }
                     | R::HttpAuthUnlock { .. }
@@ -5260,6 +5267,14 @@ mod tests {
         );
         let parsed = parse_request(Sender::Popup, r#"{"cmd":"navToEntry","tabId":2,"entryId":9}"#).unwrap();
         assert_eq!(parsed.request, Request::NavToEntry { tab_id: 2, entry_id: 9 });
+        // 0.18.0: middle-click opens the entry in a new tab; the popup only, like the jump.
+        let clone = parse_request(Sender::Popup, r#"{"cmd":"navToEntryNewTab","tabId":2,"entryId":9}"#).unwrap();
+        assert_eq!(clone.request, Request::NavToEntryNewTab { tab_id: 2, entry_id: 9 });
+        assert!(!Sender::Shell.permits(&clone.request) && !Sender::Ext.permits(&clone.request));
+        for page in Page::ALL {
+            assert!(!Sender::Page(page).permits(&clone.request), "{page:?}");
+        }
+        assert!(parse_request(Sender::Popup, r#"{"cmd":"navToEntryNewTab","tabId":2,"entryId":9,"url":"x"}"#).is_err());
         assert!(parse_request(Sender::Popup, r#"{"cmd":"navToEntry","tabId":2,"entryId":9,"url":"x"}"#).is_err());
         let menu = PopupContent::NavMenu {
             tab_id: 2,

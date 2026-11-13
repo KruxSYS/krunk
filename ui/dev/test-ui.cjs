@@ -5988,9 +5988,10 @@ async function testHttpAuth(browser) {
     // 0.16.0: Session usage, the Home button, the extension icons' context menu (test-0160-menus.cjs);
     // private tab titles (test-0160-private.cjs); the agent's scratchpad and passwords (test-0160-agent.cjs).
     // 0.17.0: the extension runtime: the background worker, ports, the content shim, the Errors list (test-0170-ext.cjs).
+    // 0.18.0: the history menus' middle-click and krunk://tasks' pending requests (test-0180-net.cjs).
     for (const f of ['test-ai-panel.cjs', 'test-ai-settings.cjs', 'test-scripts.cjs', 'test-agent-probe.cjs', 'test-vpn.cjs',
       'test-0150-tabs.cjs', 'test-0150-agent.cjs', 'test-0150-theme.cjs', 'test-0150-address.cjs', 'test-0150-downloads.cjs', 'test-0150-sessions.cjs',
-      'test-dpi.cjs', 'test-0160-menus.cjs', 'test-0160-private.cjs', 'test-0160-agent.cjs', 'test-0170-ext.cjs']) {
+      'test-dpi.cjs', 'test-0160-menus.cjs', 'test-0160-private.cjs', 'test-0160-agent.cjs', 'test-0170-ext.cjs', 'test-0180-net.cjs']) {
       const file = path.join(__dirname, f);
       if (!fs.existsSync(file)) continue;
       const tests = require(file)({ openPage, check, sent, lastSent, emit, shot, acceptInPage, settleTabs, SHOTS, UI });

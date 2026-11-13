@@ -134,6 +134,8 @@ pub(super) struct NetShared {
     /// 0.17.0: who may load each installed extension's files from a tab
     /// (`web_accessible_resources`), by extension id.
     ext_access: RwLock<Arc<HashMap<String, lb_core::ext_guard::WebAccess>>>,
+    /// 0.18.0: the requests under way, of all tabs (`lb_core::inflight`).
+    inflight: Mutex<lb_core::inflight::InFlight>,
 }
 
 impl NetShared {
@@ -149,6 +151,18 @@ impl NetShared {
         let Some(id) = lb_core::ext::id_of_url(url) else { return true };
         let Ok(access) = self.ext_access.read() else { return false };
         access.get(&id).is_none_or(|a| lb_core::ext_guard::request_allowed(a, &id, url, initiator, top_url))
+    }
+
+    /// The tab closed: its requests are forgotten.
+    pub fn forget_tab(&self, tab: TabId) {
+        if let Ok(mut f) = self.inflight.lock() {
+            f.drop_tab(tab);
+        }
+    }
+
+    /// The lines for krunk.log about requests pending too long (rate-limited there).
+    pub fn slow_requests(&self, now: i64) -> Vec<lb_core::inflight::SlowReport> {
+        self.inflight.lock().map(|mut f| f.slow(now)).unwrap_or_default()
     }
 
     pub fn engine(&self) -> Option<Arc<Blocker>> {
@@ -293,6 +307,9 @@ struct TabShared {
     blocked: AtomicU32,
     /// Bytes received by this tab's requests (the task manager's network rate).
     received: AtomicU64,
+    /// The tab's id (0 until the view belongs to a tab) and whether it is private.
+    id: AtomicU32,
+    private: AtomicBool,
 }
 
 /// The network policy of one tab (runs on the IO thread).
@@ -387,6 +404,36 @@ impl RequestPolicy for TabPolicy {
 
     fn loaded(&self, bytes: u64) {
         self.tab.received.fetch_add(bytes, Relaxed);
+    }
+
+    fn started(&self, id: u64, req: &NetRequest<'_>, get: bool) -> bool {
+        let (tab, private) = (self.tab.id.load(Relaxed), self.tab.private.load(Relaxed));
+        let Ok(mut f) = self.net.inflight.lock() else { return false };
+        let around = f.start(id, tab, private, req.url, get, req.resource_type, now_ms());
+        drop(f);
+        if around {
+            // The first few in the log (no address: the tab says enough).
+            static LOGGED: AtomicU32 = AtomicU32::new(0);
+            if LOGGED.fetch_add(1, Relaxed) < 20 {
+                info!(
+                    "tab {tab}: a {} request goes around the cache (another tab waits for an answer for the same address)",
+                    lb_core::inflight::kind_name(req.resource_type)
+                );
+            }
+        }
+        around
+    }
+
+    fn answered(&self, id: u64) {
+        if let Ok(mut f) = self.net.inflight.lock() {
+            f.answered(id);
+        }
+    }
+
+    fn finished(&self, id: u64) {
+        if let Ok(mut f) = self.net.inflight.lock() {
+            f.finish(id);
+        }
     }
 
     fn cookie_allowed(&self, url: &str) -> bool {
@@ -486,6 +533,18 @@ impl TabNet {
 
     pub fn blocked(&self) -> u32 {
         self.io.blocked.load(Relaxed)
+    }
+
+    /// The view belongs to tab `id` now (its requests are counted for it, 0.18.0).
+    pub fn set_tab(&self, id: TabId, private: bool) {
+        self.io.id.store(id, Relaxed);
+        self.io.private.store(private, Relaxed);
+    }
+
+    /// The tab's requests under way and the age of the oldest.
+    pub fn pending(&self, now: i64) -> lb_core::inflight::Pending {
+        let id = self.io.id.load(Relaxed);
+        self.net.inflight.lock().map(|f| f.pending(id, now)).unwrap_or_default()
     }
 
     /// Bytes this tab's requests received so far.
@@ -1114,7 +1173,23 @@ impl Browser {
 
     /// Navigates a specific tab as the host. No borrow is held while the
     /// engine runs: it may call back into the browser synchronously.
+    /// Before the host navigates or reloads a tab: a page that waits for six or more answers
+    /// may hold all of a host's connections, and the tab's own next request to that host
+    /// would queue behind them for ever (measured on Windows, docs/NETWORK.md). Stopping the
+    /// page's loads frees them.
+    pub(super) fn free_stuck_connections(&self, id: TabId) {
+        let stuck = self.views.borrow().get(&id).and_then(|v| {
+            let p = v.net.pending(lb_core::storage::now_ms());
+            (p.waiting >= lb_core::inflight::STUCK_WAITING).then(|| (v.view.clone(), p.waiting))
+        });
+        if let Some((view, waiting)) = stuck {
+            info!("tab {id}: {waiting} requests without an answer are stopped before the tab goes on");
+            view.stop();
+        }
+    }
+
     pub(super) fn navigate_tab(&self, id: TabId, url: &str) {
+        self.free_stuck_connections(id);
         let view = self.views.borrow().get(&id).map(|v| {
             v.host_navigation.set(true);
             v.view.clone()

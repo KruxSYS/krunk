@@ -101,6 +101,20 @@ outside git; the archive is kept with the release artifacts (`CEF_ARTIFACT` in `
   turns them off while the session is active and drops its pending metadata, position and
   artwork. Chrome would show "Playing media in incognito" there. Media keys don't control a
   private tab's media either.
+- `chromium-clone-navigation.patch` (0.18.0, Chromium checkout): the DevTools command
+  `Page.krunkCloneNavigationFrom {targetId, entryId}`. Called on a tab that has loaded nothing
+  yet (`about:blank`), it copies the back/forward list of the page `targetId` into it
+  (`NavigationController::CopyStateFrom`, as Chrome's "Duplicate tab") and makes `entryId`
+  current, which loads it. It refuses the same page, a page of another profile (a private
+  tab's list never reaches a normal one), an unknown entry and a tab that already has a list.
+  Krunk uses it for a middle-click in the Back/Forward menus; without the patch the host opens
+  the entry's address only and says so once in `krunk.log`. Not yet compiled: written against
+  the 156.0.8078.80 sources, it applies cleanly (`patch -p1 --dry-run`).
+- `chromium-sockets-per-host.patch` (0.18.0, Chromium checkout): at most 16 connections to one
+  host instead of 6 (`g_max_sockets_per_group` in `net/socket/client_socket_pool_manager.cc`;
+  WebSockets keep 255, a proxy 128). Six requests that never finish no longer block every tab's
+  loads from that host; sixteen still do (`docs/NETWORK.md`). Not yet built: it applies cleanly
+  to the 156.0.8078.80 sources (`patch -p1 --dry-run`).
 - `krunk-windowed-hidden.patch`: `CefBrowserHost::WasHidden` works for windowed (Alloy)
   browsers. The native Aura delegate hides or shows the WebContents' own aura window; the
   occlusion tracker then reports it HIDDEN and `WebContentsViewAura` calls `WasHidden()` itself,
