@@ -1,0 +1,98 @@
+<!doctype html>
+<!-- Wallet test page (Krunk 0.17.0): what a dapp sees of an installed wallet extension.
+     Shows whether window.ethereum exists (the wallet's MAIN-world content script defines it),
+     and has buttons for eth_requestAccounts (the wallet's connect prompt) and personal_sign
+     (its signature prompt). Every result is page text and also in document.title, so a test
+     harness can read it without scripting the page:
+       "dapp: no provider" · "dapp: provider" · "dapp: accounts 0x…" · "dapp: signed 0x…"
+       · "dapp: error <code> <message>" -->
+<html lang="en"><head><meta charset="utf-8"><title>dapp: loading</title>
+<style>
+  body { font: 16px system-ui, sans-serif; margin: 24px; max-width: 760px; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; }
+  dt { color: #555; } dd { margin: 0; font-family: ui-monospace, Consolas, monospace; overflow-wrap: anywhere; }
+  button { font: inherit; padding: 6px 14px; margin: 4px 8px 4px 0; }
+  #log { background: #f3f3f3; padding: 8px; white-space: pre-wrap; font-family: ui-monospace, Consolas, monospace; font-size: 13px; min-height: 3em; }
+  .ok { color: #0a7a2f; } .bad { color: #b00020; }
+</style></head>
+<body>
+<h1>Wallet test page (localhost:8094)</h1>
+<dl>
+  <dt>window.ethereum</dt><dd id="provider">checking…</dd>
+  <dt>isMetaMask</dt><dd id="ismm">–</dd>
+  <dt>EIP-6963 providers</dt><dd id="eip6963">none announced</dd>
+  <dt>Chain</dt><dd id="chain">–</dd>
+  <dt>Accounts</dt><dd id="accounts">–</dd>
+  <dt>Signature</dt><dd id="signature">–</dd>
+  <dt>Last error</dt><dd id="error">–</dd>
+</dl>
+<p>
+  <button id="connect">eth_requestAccounts</button>
+  <button id="sign">personal_sign</button>
+  <button id="chainid">eth_chainId</button>
+</p>
+<p>Message to sign: <code id="message">Krunk dapp test message</code></p>
+<div id="log"></div>
+<script>
+  var $ = function (id) { return document.getElementById(id); };
+  var accounts = [];
+  function log(line) { $('log').textContent += new Date().toISOString().slice(11, 23) + ' ' + line + '\n'; }
+  function state(title) { document.title = 'dapp: ' + title; log(title); }
+  function fail(what, e) {
+    var text = (e && e.code !== undefined ? e.code + ' ' : '') + (e && e.message || String(e));
+    $('error').textContent = what + ': ' + text; $('error').className = 'bad';
+    state('error ' + text);
+  }
+  function hex(text) { return '0x' + Array.prototype.map.call(new TextEncoder().encode(text), function (b) { return ('0' + b.toString(16)).slice(-2); }).join(''); }
+  function provider() { return window.ethereum; }
+  function showProvider() {
+    var p = provider();
+    $('provider').textContent = p ? 'present (' + typeof p.request + ' request)' : 'undefined';
+    $('provider').className = p ? 'ok' : 'bad';
+    $('ismm').textContent = p ? String(p.isMetaMask === true) : '–';
+    return !!p;
+  }
+  // The provider is defined at document_start by the wallet's script; a late one (an
+  // extension enabled after the page loaded) is announced with this event.
+  window.addEventListener('ethereum#initialized', function () { if (showProvider()) state('provider'); });
+  var announced = [];
+  window.addEventListener('eip6963:announceProvider', function (e) {
+    var name = e.detail && e.detail.info && e.detail.info.name || '?';
+    if (announced.indexOf(name) < 0) announced.push(name);
+    $('eip6963').textContent = announced.join(', ');
+  });
+  window.dispatchEvent(new Event('eip6963:requestProvider'));
+  // What the page saw before any of its own scripts waited: the document_start requirement.
+  var atStart = typeof window.ethereum !== 'undefined';
+  log('window.ethereum at the first page script: ' + (atStart ? 'present' : 'undefined'));
+  function settle() {
+    if (showProvider()) {
+      state('provider');
+      provider().on && provider().on('accountsChanged', function (a) { accounts = a || []; $('accounts').textContent = accounts.join(', ') || '(none)'; });
+    } else state('no provider');
+  }
+  if (atStart) settle(); else window.addEventListener('load', function () { setTimeout(settle, 500); });
+
+  $('connect').onclick = function () {
+    if (!provider()) return fail('eth_requestAccounts', new Error('window.ethereum is undefined'));
+    state('connecting');
+    provider().request({ method: 'eth_requestAccounts' }).then(function (a) {
+      accounts = a || [];
+      $('accounts').textContent = accounts.join(', ') || '(none)'; $('accounts').className = accounts.length ? 'ok' : 'bad';
+      state('accounts ' + accounts.join(','));
+    }, function (e) { fail('eth_requestAccounts', e); });
+  };
+  $('sign').onclick = function () {
+    if (!provider()) return fail('personal_sign', new Error('window.ethereum is undefined'));
+    if (!accounts.length) return fail('personal_sign', new Error('connect first (eth_requestAccounts)'));
+    state('signing');
+    provider().request({ method: 'personal_sign', params: [hex($('message').textContent), accounts[0]] }).then(function (sig) {
+      $('signature').textContent = sig; $('signature').className = 'ok';
+      state('signed ' + sig);
+    }, function (e) { fail('personal_sign', e); });
+  };
+  $('chainid').onclick = function () {
+    if (!provider()) return fail('eth_chainId', new Error('window.ethereum is undefined'));
+    provider().request({ method: 'eth_chainId' }).then(function (id) { $('chain').textContent = id; state('chain ' + id); }, function (e) { fail('eth_chainId', e); });
+  };
+</script></body></html>

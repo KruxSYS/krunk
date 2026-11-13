@@ -115,15 +115,16 @@ pub fn id_of_url(url: &str) -> Option<String> {
 /// May an extension's content world in a document of `origin` (CDP's
 /// `ExecutionContextDescription.origin`) be used: messages, deliveries, `scripting.*`
 /// (0.11.7, audit C1)? The world is created in every document of a tab, Krunk's own pages
-/// included. Those, extension pages and the engine's own pages are refused; anything else is
-/// as before (web pages, `file:`, opaque origins).
+/// included. Those, extension pages, the engine's own pages and local files (`file:`; Chrome's
+/// default without "Allow access to file URLs") are refused; anything else is as before (web
+/// pages, opaque origins).
 pub fn content_context_allowed(origin: &str) -> bool {
     let origin = origin.trim();
     let Ok(u) = url::Url::parse(origin) else {
         // "null", "" or "://": an opaque origin (a data: or sandboxed document).
         return true;
     };
-    if matches!(u.scheme(), "chrome" | "chrome-extension" | "chrome-untrusted" | "devtools") {
+    if matches!(u.scheme(), "chrome" | "chrome-extension" | "chrome-untrusted" | "devtools" | "file") {
         return false;
     }
     match u.host_str() {
@@ -174,6 +175,14 @@ pub struct Manifest {
     pub minimum_chrome_version: Option<String>,
     pub content_security_policy: Option<serde_json::Value>,
     pub commands: Option<serde_json::Value>,
+    /// Pages that run sandboxed (unique origin, no extension APIs, their own CSP; 0.17.0).
+    pub sandbox: Option<Sandbox>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", default)]
+pub struct Sandbox {
+    pub pages: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -925,7 +934,7 @@ pub fn resolve_file(url: &str) -> Option<(String, String)> {
     Some((id, path))
 }
 
-fn percent_decode(s: &str) -> String {
+pub(crate) fn percent_decode(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
@@ -991,34 +1000,46 @@ pub fn valid_locale(name: &str) -> bool {
 // ------------------------------------------------------------------ API survey
 
 /// The `chrome.*` namespaces Krunk's shim provides (fully or in part).
-pub const SUPPORTED_APIS: &[&str] =
-    &["runtime", "storage", "tabs", "action", "i18n", "alarms", "extension", "windows", "scripting"];
+pub const SUPPORTED_APIS: &[&str] = &[
+    "runtime",
+    "storage",
+    "tabs",
+    "action",
+    "i18n",
+    "alarms",
+    "extension",
+    "windows",
+    "scripting",
+    "offscreen",
+    "permissions",
+];
 /// Namespaces Krunk never provides, with the reason the install summary shows.
 pub const REFUSED_APIS: &[(&str, &str)] = &[
-    ("webRequest", "blocking network interception (use declarativeNetRequest static rules)"),
+    (
+        "webRequest",
+        "network interception (listeners are accepted and never called; use declarativeNetRequest static rules)",
+    ),
     ("debugger", "the DevTools protocol of other tabs"),
     ("nativeMessaging", "native programs"),
     ("declarativeNetRequest.updateDynamicRules", "dynamic network rules"),
     ("declarativeNetRequest.updateSessionRules", "session network rules"),
     ("declarativeNetRequest.updateEnabledRulesets", "switching rulesets at runtime"),
-    ("management", "other extensions"),
+    ("management", "other extensions (only getSelf is provided)"),
     ("proxy", "the proxy settings"),
     ("privacy", "the privacy settings"),
     ("contentSettings", "site settings"),
-    ("cookies", "cookies of other sites"),
+    ("cookies", "cookies of other sites (nothing is found, nothing is set)"),
     ("history", "the browsing history"),
     ("bookmarks", "the bookmarks"),
     ("downloads", "downloads"),
     ("identity", "Google accounts"),
     ("webNavigation", "navigation events"),
     ("sidePanel", "a side panel"),
-    ("offscreen", "offscreen documents"),
     ("tabCapture", "tab capture"),
     ("desktopCapture", "screen capture"),
-    ("notifications", "system notifications"),
+    ("notifications", "system notifications (accepted, nothing is shown)"),
     ("contextMenus", "context-menu items"),
     ("commands", "keyboard commands"),
-    ("permissions", "runtime permission changes"),
     ("tts", "speech"),
     ("gcm", "push messages"),
 ];
@@ -1229,6 +1250,8 @@ pub struct BundledExtension {
     pub manifest_json: String,
     pub messages_json: String,
     pub scripts: Vec<BundledScript>,
+    /// Every console level of the world goes to the log, not only errors (`KRUNK_EXT_LOG=1`).
+    pub log_all: bool,
 }
 
 /// Builds the script that `Page.addScriptToEvaluateOnNewDocument` installs in an isolated
@@ -1238,7 +1261,9 @@ pub struct BundledExtension {
 /// bundle for its UI views anyway.
 pub fn content_bundle(shim: &str, exts: &[BundledExtension]) -> String {
     let mut out = String::with_capacity(shim.len() + 4096);
-    out.push_str("(function () {\n'use strict';\n");
+    // Not strict (0.17.0): content scripts run as Chrome runs them, as plain scripts. The shim
+    // is strict on its own.
+    out.push_str("(function () {\n");
     out.push_str(
         "if (!/^https?:$/.test(location.protocol) || /(^|\\.)krunk\\.invalid$/.test(location.hostname)) return;\n",
     );
@@ -1247,10 +1272,11 @@ pub fn content_bundle(shim: &str, exts: &[BundledExtension]) -> String {
     out.push_str(";\n");
     for e in exts {
         out.push_str(&format!(
-            "(function () {{ var ext = __krunkShim({id}, {manifest}, {messages});\n",
+            "(function () {{ var ext = __krunkShim({id}, {manifest}, {messages}, {log});\n",
             id = json_str(&e.id),
             manifest = e.manifest_json,
             messages = if e.messages_json.is_empty() { "{}" } else { &e.messages_json },
+            log = e.log_all,
         ));
         for s in &e.scripts {
             out.push_str(&format!(
@@ -1261,10 +1287,18 @@ pub fn content_bundle(shim: &str, exts: &[BundledExtension]) -> String {
                 run_at = json_str(&s.run_at),
                 css = serde_json::to_string(&s.css).unwrap_or_else(|_| "[]".into()),
             ));
+            // The files of one entry are one body (0.17.0): what the first declares (`const`,
+            // `class`, functions) the next ones see, as in Chrome, where they share the world's
+            // global scope. A file in strict mode keeps that to itself: it gets its own function.
             for src in &s.js {
-                out.push_str("try {\n");
-                out.push_str(src);
-                out.push_str("\n} catch (e) { ext.report(e); }\n");
+                if starts_strict(src) {
+                    out.push_str("(function () {\n");
+                    out.push_str(src);
+                    out.push_str("\n}).call(this);\n");
+                } else {
+                    out.push_str(src);
+                    out.push_str("\n;\n");
+                }
             }
             out.push_str("});\n");
         }
@@ -1272,6 +1306,21 @@ pub fn content_bundle(shim: &str, exts: &[BundledExtension]) -> String {
     }
     out.push_str("})();\n");
     out
+}
+
+/// Does a script start with the `"use strict"` directive (after comments and blank lines)?
+pub fn starts_strict(src: &str) -> bool {
+    let mut rest = src.trim_start_matches('\u{feff}').trim_start();
+    loop {
+        if let Some(r) = rest.strip_prefix("//") {
+            rest = r.split_once('\n').map(|(_, r)| r).unwrap_or("").trim_start();
+        } else if let Some(r) = rest.strip_prefix("/*") {
+            rest = r.split_once("*/").map(|(_, r)| r).unwrap_or("").trim_start();
+        } else {
+            break;
+        }
+    }
+    rest.starts_with("'use strict'") || rest.starts_with("\"use strict\"")
 }
 
 fn json_str(s: &str) -> String {
@@ -1362,6 +1411,8 @@ mod tests {
             "chrome://gpu",
             "devtools://devtools",
             "chrome-extension://abc",
+            "file://",
+            "file:///C:/Users/me/secret.txt",
         ] {
             assert!(!content_context_allowed(refused), "{refused}");
         }
@@ -1370,7 +1421,6 @@ mod tests {
             "http://localhost:8094",
             "https://krunk.invalid.example.com",
             "https://notkrunk.invalid.test",
-            "file://",
             "null",
             "",
             "://",
@@ -1398,6 +1448,7 @@ mod tests {
             id: id.into(),
             manifest_json: "{}".into(),
             messages_json: String::new(),
+            log_all: false,
             scripts: vec![],
         };
         let b = content_bundle("function () {}", std::slice::from_ref(&e));
@@ -1696,7 +1747,7 @@ mod tests {
         let names: Vec<&str> = uses.iter().map(|u| u.api.as_str()).collect();
         assert_eq!(names, vec!["declarativeNetRequest.updateDynamicRules", "runtime", "storage", "tabs", "webRequest"]);
         assert!(uses.iter().filter(|u| u.supported).count() == 3);
-        assert!(uses.iter().any(|u| u.api == "webRequest" && u.reason.contains("blocking network")));
+        assert!(uses.iter().any(|u| u.api == "webRequest" && u.reason.contains("network interception")));
         let msgs = serde_json::json!({"appName": {"message": "Dark Reader"}, "desc": {"message": "d"}});
         assert_eq!(localize("__MSG_appName__: __MSG_desc__ __MSG_missing__", &msgs), "Dark Reader: d ");
         assert_eq!(mime_for("a/b.JS"), "text/javascript; charset=utf-8");
@@ -1767,6 +1818,7 @@ mod tests {
             id: "a".repeat(32),
             manifest_json: "{\"name\":\"x\"}".into(),
             messages_json: String::new(),
+            log_all: false,
             scripts: vec![BundledScript {
                 id: "a".repeat(32),
                 matches: vec!["<all_urls>".into()],
@@ -1783,5 +1835,32 @@ mod tests {
                 && b.contains("ext.run([\"<all_urls>\"], [], false, \"document_idle\", [\"cs.css\"]")
         );
         assert!(b.contains("console.log(1)") && b.starts_with("(function () {"));
+    }
+
+    #[test]
+    fn files_of_an_entry_share_declarations_unless_strict() {
+        assert!(starts_strict("\u{feff}// c\n/* d */ 'use strict'; var a;"));
+        assert!(starts_strict("\"use strict\";"));
+        assert!(!starts_strict("var a = 'use strict';"));
+        assert!(!starts_strict("(()=>{\"use strict\";})()"));
+        let e = BundledExtension {
+            id: "a".repeat(32),
+            manifest_json: "{}".into(),
+            messages_json: String::new(),
+            log_all: false,
+            scripts: vec![BundledScript {
+                id: "a".repeat(32),
+                matches: vec!["<all_urls>".into()],
+                exclude_matches: vec![],
+                all_frames: false,
+                run_at: "document_idle".into(),
+                js: vec!["const shared = 1".into(), "'use strict'; var own = shared;".into()],
+                css: vec![],
+            }],
+        };
+        let b = content_bundle("function (id) { return { run: function () {} }; }", &[e]);
+        // Not in a block of its own, and no forced strict mode for the bundle.
+        assert!(b.contains("function (chrome, browser) {\nconst shared = 1\n;\n(function () {\n'use strict'; var own = shared;\n}).call(this);"));
+        assert!(!b.starts_with("(function () {\n'use strict'") && !b.contains("try {"));
     }
 }

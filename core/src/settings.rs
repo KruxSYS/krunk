@@ -1976,6 +1976,24 @@ mod tests {
         assert_eq!(old.vpn, VpnSettings::default());
     }
 
+    /// The engine's DevTools port is a test-harness switch (cargo feature `devtools-port` of
+    /// the app, `KRUNK_DEVTOOLS_PORT`): only the `--fast` test build may contain it, never a
+    /// release, and no feature is on by default.
+    #[test]
+    fn devtools_port_is_only_in_the_fast_test_build() {
+        let script = include_str!("../../scripts/build-dist.sh");
+        let lines: Vec<&str> = script.lines().filter(|l| l.contains("devtools-port")).collect();
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].trim_start().starts_with("--fast)"), "{}", lines[0]);
+        assert!(lines[0].contains("target/fast-dist"), "the fast build never writes to dist/: {}", lines[0]);
+        let manifest = include_str!("../../app/Cargo.toml");
+        assert!(manifest.contains("\ndevtools-port = []\n"));
+        assert!(!manifest.lines().any(|l| l.trim_start().starts_with("default")), "no default features");
+        // And the switch itself stays refused in the user's extra flags.
+        assert!(validate_flags("--remote-debugging-port=9222").is_err());
+        assert!(validate_flags("--remote-allow-origins=*").is_err());
+    }
+
     #[test]
     fn dangerous_flags_rejected() {
         for bad in [

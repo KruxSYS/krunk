@@ -15,3 +15,5 @@ table.tasks tbody tr.selected td.kind, table.tasks tbody tr.selected td.title .t
 table.tasks td.title { max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
 table.tasks td.title .tabs { color: var(--fg-muted); font-size: 0.923rem; }
 table.tasks td.kind { color: var(--fg-muted); }
+/* 0.18.0: requests pending for over 30 s. */
+table.tasks td.pending.slow { color: var(--danger); font-weight: 600; }

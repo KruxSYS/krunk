@@ -443,7 +443,6 @@ pub struct Browser {
     /// Extensions (0.6.0).
     ext: ext::ExtHost,
     /// The extension request being dispatched came from the action popup (not the background).
-    ext_request_from_popup: Cell<bool>,
     /// `krunk://sitedata` tabs and the site each was opened for.
     site_data: RefCell<HashMap<TabId, storage::SiteDataBinding>>,
     /// Pointer lock and full screen.
@@ -576,7 +575,6 @@ impl Browser {
             address_focus: Cell::new(None),
             auto_pip_tab: Cell::new(None),
             ext: ext::ExtHost::new(),
-            ext_request_from_popup: Cell::new(false),
             site_data: RefCell::new(HashMap::new()),
             pointer: pointer::PointerHost::default(),
             updates: updater::UpdateHost::new(dirs.update_status()),
@@ -1213,6 +1211,7 @@ impl Browser {
             self.views.borrow().iter().any(|(t, v)| *t != id && self.window_of(*t) == Some(win) && v.view.is_visible())
                 || self.pending_reveal.borrow().kept_tab_of(win).is_some();
         view.set_visible(active && !window.is_minimized() && !other_shown);
+        net.set_tab(id, self.tab(id).is_some_and(|t| t.private));
         self.views.borrow_mut().insert(
             id,
             TabView {
@@ -1268,6 +1267,8 @@ impl Browser {
             }
             let current = committed_nav.borrow().clone();
             let allow = assets::allow_navigation(Channel::Tab, &current, &nav.url, host, nav.redirected);
+            // A server's redirect to an extension's page: only to a web-accessible one (0.17.0).
+            let allow = allow && (!nav.redirected || b.ext_redirect_allowed(&nav.url));
             if !allow {
                 info!("tab {id}: blocked navigation to an internal or unsupported URL");
                 // A tab that shows nothing yet (a popup whose first address was refused) shows
@@ -1282,6 +1283,9 @@ impl Browser {
                     });
                 }
                 return false;
+            }
+            if !nav.redirected {
+                net_start.note_navigation(&nav.url, host);
             }
             if let Some(rewritten) = b.navigation_starting(&net_start, &nav.url, nav.redirected) {
                 // Cancel and restart at the cleaned/upgraded URL.
@@ -1325,6 +1329,7 @@ impl Browser {
         c.on_load_finished(move |error| {
             if let Some(b) = weak.upgrade() {
                 b.ext_tab_event("tabUpdated", serde_json::json!({ "tabId": id }));
+                b.ext_tab_left_page(id);
                 b.navigation_completed(id, &net_done, error.map(LoadFailure::from_net_error));
                 if error.is_none() {
                     b.preview_loaded(id);
@@ -1337,8 +1342,10 @@ impl Browser {
             }
         });
         let weak = self.me.clone();
+        let net_address = net.clone();
         c.on_address(move |url| {
             committed.replace(url.clone());
+            net_address.committed.replace(url.clone());
             if let Some(b) = weak.upgrade() {
                 // The engine's empty first document of a tab on its way to another page (edited
                 // headers start blank) is not the tab's address: the bar never shows it (R1).
@@ -1546,6 +1553,7 @@ impl Browser {
             v.close();
         }
         let view = self.views.borrow_mut().remove(&id);
+        self.net.forget_tab(id);
         if let Some(v) = view {
             match hand_over.filter(|w| self.may_keep_on_screen(*w, id, &v.view)) {
                 Some(win) => self.keep_on_screen(win, id, v.view),
@@ -2352,7 +2360,7 @@ impl Browser {
             return self.open_mailto(opener, url);
         }
         let ok = url.starts_with("https://") || url.starts_with("http://");
-        if !ok {
+        if !ok || !self.ext_link_allowed(opener, url) {
             return;
         }
         let Some(win) = self.window_of(opener) else { return };
@@ -2373,6 +2381,9 @@ impl Browser {
     /// Opens `url` (any URL the host may load, e.g. a viewer's file:) in a new tab in front,
     /// next to tab `opener`.
     fn open_tab_after(&self, opener: TabId, url: &str) {
+        if !self.ext_link_allowed(opener, url) {
+            return;
+        }
         let Some(win) = self.window_of(opener) else { return };
         let private = self.tab(opener).is_some_and(|t| t.private);
         let opened = self.ws.borrow_mut().open(win, url, private, Position::AfterOpener(opener), true, now_ms());
@@ -2548,8 +2559,12 @@ impl Browser {
             Command::SelectTab(i) => self.update_current(|m| m.activate_index(usize::from(i), now)),
             Command::LastTab => self.update_current(|m| m.activate_last(now)),
             Command::FocusAddressBar => self.focus_address_bar(),
-            Command::Reload => self.active_do(|c| c.reload()),
-            Command::HardReload => self.active_do(|c| c.hard_reload()),
+            Command::Reload | Command::HardReload => {
+                if let Some(id) = self.active_id() {
+                    self.free_stuck_connections(id);
+                }
+                self.active_do(|c| if cmd == Command::Reload { c.reload() } else { c.hard_reload() });
+            }
             Command::Stop => self.active_do(|c| c.stop()),
             Command::Back => self.active_do(|c| c.go_back()),
             Command::Forward => self.active_do(|c| c.go_forward()),
@@ -2631,8 +2646,10 @@ impl Browser {
         match protocol::parse_request(sender, json) {
             Ok(env) => {
                 *self.ext.request_origin.borrow_mut() = lb_core::ext::id_of_url(&source.url);
+                *self.ext.request_url.borrow_mut() = Some(source.url.clone());
                 self.dispatch(sender, None, env);
                 *self.ext.request_origin.borrow_mut() = None;
+                *self.ext.request_url.borrow_mut() = None;
             }
             Err(e) => warning!("rejected {sender:?} message: {e}"),
         }
@@ -2643,8 +2660,10 @@ impl Browser {
             Ok(Source::Privileged(sender)) => match protocol::parse_request(sender, json) {
                 Ok(env) => {
                     *self.ext.request_origin.borrow_mut() = lb_core::ext::id_of_url(&source.url);
+                    *self.ext.request_url.borrow_mut() = Some(source.url.clone());
                     self.dispatch(sender, Some(id), env);
                     *self.ext.request_origin.borrow_mut() = None;
+                    *self.ext.request_url.borrow_mut() = None;
                 }
                 Err(e) => warning!("tab {id}: rejected {sender:?} message: {e}"),
             },
@@ -2973,6 +2992,7 @@ impl Browser {
             Request::HttpAuthCancel { tab_id } => self.http_auth_cancel(tab_id),
             Request::HttpAuthUnlock { tab_id } => self.http_auth_unlock(tab_id),
             Request::NavToEntry { tab_id, entry_id } => self.nav_to_entry(tab_id, entry_id),
+            Request::NavToEntryNewTab { tab_id, entry_id } => self.nav_to_entry_new_tab(tab_id, entry_id),
             Request::TabMenuAction { id, action } => {
                 self.hide_popup();
                 match action {
@@ -3773,6 +3793,9 @@ impl Browser {
                 s.close();
             }
         }
+        // 0.17.0: extensions' own windows and offscreen documents (top-level windows of their
+        // own: nothing else closes them).
+        self.ext_shutdown();
         self.drop_spare();
         // 0.14.0: the VPN ends with Krunk (the engine keeps pointing at its closed proxy, so
         // nothing goes direct while the last requests end).
@@ -4036,7 +4059,10 @@ impl WindowEvents for FrameEvents {
         let Ok(popup) = b.popup.try_borrow() else { return };
         let showing = popup.as_ref().is_some_and(|p| p.open());
         drop(popup);
-        let passive = !showing;
+        // An extension's popup keeps the activation it was given (0.17.0): its page may have
+        // fields to type in (a wallet's password). It used to be taken back at once, so
+        // every key went to the page underneath.
+        let passive = !showing && !b.ext_popup_has_activation();
         if passive {
             let win = self.win;
             b.defer(move |b| {

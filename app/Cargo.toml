@@ -22,6 +22,9 @@ dev-updates = []
 # off, to measure what each costs (Speedometer, R24). scripts/build-dist.sh --probe only, never
 # in a release.
 perf-probe = []
+# KRUNK_DEVTOOLS_PORT=<port> opens the engine's DevTools port on 127.0.0.1 (test harness:
+# console and network of every target). scripts/build-dist.sh --fast only, never in a release.
+devtools-port = []
 
 [dependencies]
 lb_core = { path = "../core", package = "core" }

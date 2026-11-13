@@ -458,6 +458,12 @@ impl Browser {
     fn open_keeping_dropdown(&self, url: &str) {
         self.popup_hold_until.set(now_ms() + 600);
         self.open_in_background(url);
+        self.refocus_dropdown();
+    }
+
+    /// A tab opened behind an open dropdown took the activation from it: it gets it back
+    /// (bookmark folders 0.11.0; history menus 0.18.0).
+    pub(super) fn refocus_dropdown(&self) {
         let weak = self.me.clone();
         crate::ffi::cef::post_ui_delayed(120, move || {
             let Some(b) = weak.upgrade() else { return };

@@ -35,6 +35,10 @@ impl Browser {
     /// Every 2 s: the engine's unresponsive flag of each live tab.
     pub(super) fn hang_tick(&self) {
         let now = now_ms();
+        // 0.18.0: requests pending for over 30 s (docs/NETWORK.md): the tab, the host, how many.
+        for r in self.net.slow_requests(now) {
+            info!("{}", r.line());
+        }
         let states: Vec<(TabId, bool, bool)> = self
             .views
             .borrow()

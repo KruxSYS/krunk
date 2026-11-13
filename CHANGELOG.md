@@ -3,6 +3,47 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.17.0 — 2026-11-13
+
+- **MetaMask works.** It installed before but never started. Tested with MetaMask 13.56 from
+  the Chrome Web Store, with a throw-away wallet: set-up completes, the toolbar popup unlocks
+  after a restart, pages get `window.ethereum`, a site can connect (`eth_requestAccounts`) and
+  ask for a signature (`personal_sign`); MetaMask's own connect and signature windows open as
+  small Krunk windows.
+- **Why it did not load.** Krunk ran an extension's background "service worker" as a script
+  in a hidden page. MetaMask checks `self.serviceWorker.state` first and stopped right there;
+  its popup waited for a connection (`chrome.runtime.connect`) that Krunk did not have; and
+  the script that gives pages `window.ethereum` (a content script for the page's own world)
+  was left out. All three are fixed for every extension, not for MetaMask by name: the
+  background is a real worker with `importScripts`, there are message ports between
+  background, popup, pages and content scripts, and `world: "MAIN"` content scripts run at
+  document start. Also new: offscreen documents, popup-type windows, `storage.session`,
+  `unlimitedStorage`, `scripting.registerContentScripts`. Details: `docs/EXTENSIONS.md`.
+- **Extensions can reach the servers their manifest names.** As in Chrome, an extension's
+  background and pages may fetch from its permitted hosts even when the server sends no
+  cross-origin headers (Krunk relays these requests itself; without that MetaMask showed
+  "Security check unavailable" on every signature). No cookies are sent with them and
+  responses are not streamed.
+- **Errors of an extension are shown.** `krunk://extensions` lists what an extension's
+  background, popup, pages and content scripts reported (uncaught errors, rejected promises,
+  `console.error`), so "installed but does nothing" can be looked into.
+- **Dark Reader's settings open again** from its toolbar button and Options (they stayed at
+  "Loading").
+- **Safer extensions.** A review of the new code found seven weaknesses, all fixed before this
+  release: a content script's sender is the page it really runs in (not a page the tab was
+  only on its way to); extensions cannot open local files or Krunk's own pages, and
+  `scripting.executeScript` needs access to the site; web pages can load only the extension
+  files the extension offers them (`web_accessible_resources`); an extension's stored data
+  is written safely (a crash can no longer lose a wallet's vault) and has a size limit;
+  `storage.session` stays out of web pages; sandboxed extension pages cannot be reached
+  unsandboxed; an extension cannot flood the log.
+- **Changed, as in Chrome:** a newly installed or enabled extension starts on a page with
+  the page's next load, not in pages that are already open.
+- Known limits: requests an extension makes to its servers carry no cookies and no extension
+  origin; hardware wallets were not tried; MetaMask was tested with one version and with the
+  flows above only (no transaction was sent). An extension page opened in a tab shows Krunk's
+  address for it (`https://<id>.ext.krunk.invalid/…`).
+
 ## 0.16.0 — 2026-11-13
 
 - **Right-click in the AI panel.** The panel now has the same context menu as pages: Cut, Copy,

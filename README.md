@@ -131,6 +131,10 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   Back or Forward that many times; "Show full history" opens `krunk://history`. Up/Down, Home/End,
   Enter and Esc work in the menu. A disabled button shows no menu. The list is read from the
   engine each time and is never stored (also not in private windows).
+  Middle-click an entry (0.18.0) to open it in a new background tab next to this one; the new
+  tab gets this tab's whole back/forward list with that entry current, this tab stays where it
+  is and the menu stays open. A private tab's copy is private. (With an engine that lacks
+  Krunk's `chromium-clone-navigation.patch` the new tab opens the entry's address only.)
 - **Dropdowns keep the page still (0.8.0):** while a `<select>` list, a datalist's suggestions or
   one of Krunk's menus (⋮, the history menus, tab and bookmark menus) is open, the mouse wheel
   over the page does nothing, so the list stays where its field is; the wheel over the list
@@ -632,19 +636,35 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   extension's popup closes on Esc, a click anywhere outside it, a tab switch or when another
   program comes to the front. What runs:
   content scripts (in an isolated world of web pages, with `matches`, `exclude_matches`,
-  `run_at`, `all_frames`, CSS), a background page built around the service worker,
-  the toolbar button with its popup and badge, options pages, and the `chrome.runtime`
-  (messaging, `getURL`, `getManifest`, `openOptionsPage`), `storage` (local/sync/session,
-  `onChanged`), `tabs` (query/get/create/update/remove/reload/sendMessage, `onUpdated`,
-  `onActivated`, `onRemoved`), `action`, `alarms`, `i18n`, `scripting` (`executeScript`,
-  `insertCSS`), `windows` and `permissions.getAll` APIs. Static `declarativeNetRequest`
-  rulesets become filter rules of the ad blocker (`block` and `allow`; `redirect` and
-  `upgradeScheme` rules are counted as "not translated"). Never provided: blocking
-  `webRequest`, `debugger`, native messaging, dynamic or session rules and switching
-  rulesets at runtime, `cookies`, `history`, `bookmarks`, `downloads`, `identity`,
-  `contextMenus`, `notifications` and the rest; the page lists what each extension asked
-  for and whether Krunk has it, and the log says when an extension reaches for something
-  missing. **Isolation:** extensions never run on Krunk's own pages or the shell, not in
+  `run_at`, `all_frames`, CSS; since 0.17.0 also `world: "MAIN"`), the background service
+  worker (since 0.17.0 a real worker), the toolbar button with its popup and badge, options
+  pages, and these `chrome.*` APIs:
+
+  | API | What Krunk provides |
+  |---|---|
+  | `runtime` | `sendMessage`/`onMessage` between all of the extension's contexts, **ports** (`connect`, `onConnect`, 0.17.0), `getURL`, `getManifest`, `id`, `onInstalled`, `onStartup`, `openOptionsPage`, `reload`, `getPlatformInfo`, `getContexts`, `setUninstallURL` (accepted) |
+  | `storage` | `local`, `sync` (local only), `session`, `onChanged`; no 10 MiB limit with `unlimitedStorage` |
+  | `tabs` | `query`, `get`, `getCurrent`, `create`, `update`, `remove`, `reload`, `sendMessage`, `connect`, `onUpdated`, `onActivated`, `onRemoved` |
+  | `windows` | `getCurrent`, `getLastFocused`, `getAll`, `get`, `update`, `remove`, `create` (type `popup`: a small window with a page of the extension; else a tab), `onRemoved`, `onFocusChanged` |
+  | `scripting` | `executeScript` (files or `func` + `args`, real results, `world: "MAIN"`), `insertCSS`, `registerContentScripts`, `getRegisteredContentScripts`, `unregisterContentScripts` |
+  | `action`, `alarms`, `i18n` | as before |
+  | `offscreen` | `createDocument`, `closeDocument`, `hasDocument` (one hidden page) |
+  | `permissions`, `management` | `getAll`/`contains`/`request`; `getSelf` |
+  | `declarativeNetRequest` | static rulesets become filter rules of the ad blocker (`block` and `allow`; `redirect` and `upgradeScheme` rules are counted as "not translated") |
+  | `notifications`, `cookies`, `webRequest` | stand-ins: calls resolve (nothing is shown, no cookies are found), listeners are never called |
+
+  Never provided: `debugger`, native messaging, dynamic or session rules and switching
+  rulesets at runtime, `history`, `bookmarks`, `downloads`, `identity`, `sidePanel`,
+  `contextMenus`, messaging between extensions and the rest; the page lists what each
+  extension asked for and whether Krunk has it (**Not in Krunk**), and since 0.17.0 the
+  errors of its contexts (**Errors**: uncaught errors, rejected promises and `console.error`
+  of the background, popup, pages and content scripts, also in `krunk.log`). How the runtime
+  works, why MetaMask did not load before 0.17.0 and what is still missing:
+  [docs/EXTENSIONS.md](docs/EXTENSIONS.md). Since 0.17.0 an extension's background and pages
+  reach the hosts its manifest names past CORS, as in Chrome (Krunk relays those requests:
+  no cookies, no streaming). Tested on Windows with MetaMask 13.56 (set-up, unlock after a
+  restart, `window.ethereum`, connect, `personal_sign`), Dark Reader 4.9 and uBlock Origin
+  Lite; not tested: sending a transaction, hardware wallets, other wallets. **Isolation:** extensions never run on Krunk's own pages or the shell, not in
   private tabs unless "Allow in private tabs" is on, and their pages live on their own
   origin `https://<id>.ext.krunk.invalid`; the scope list on `krunk://extensions` shows
   which sites each one may read and change. Since 0.11.7:
@@ -1567,6 +1587,26 @@ How it works (`vpn/`, `app/src/browser/vpn.rs`):
 - Not supported: a manual proxy at the same time (Settings refuses it), UDP through the VPN (QUIC
   falls back to TCP), OpenVPN profiles with a client certificate in a separate file (inline
   `<cert>`/`<key>` work), and the proxy-related Chromium switches in Advanced.
+
+### Stuck page loads (0.18.0)
+
+Two things in the engine's network stack let one hung request hold up others, in any tab:
+a request for an address that another request is still fetching waits for that one's answer,
+up to 20 s (the HTTP cache), and a host gets at most six connections, so six requests that
+never finish (or six open streams) block everything else for that host. Both were measured;
+the table, the mechanisms and what was not measured (Krunk itself on Windows) are in
+[docs/NETWORK.md](docs/NETWORK.md).
+
+- **Around the cache:** a request for an address that another tab has been waiting on for a
+  second is sent with `Cache-Control: no-cache` (as a hard reload), so it does not queue
+  behind the other one.
+- **Sixteen connections per host** instead of six, with the next engine build
+  (`chromium-sockets-per-host.patch`). It gives room; it does not cure a site that never
+  answers.
+- **krunk://tasks** shows each renderer's **Pending** requests and the age of the oldest
+  (`6 (45 s)`); the tab with many old ones is the one to close.
+- **krunk.log** gets a line for requests pending over 30 s: the tab, the host (never the
+  address or its query; nothing for a private tab), the kind and the number. Rate-limited.
 
 ### Request headers
 

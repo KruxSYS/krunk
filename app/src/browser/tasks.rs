@@ -31,6 +31,9 @@ pub(super) struct TaskRow {
     pub private: u64,
     /// Bytes per second received by the task's tabs since the previous sample.
     pub network: u64,
+    /// The tabs' requests under way (0.18.0) and the age of the oldest in milliseconds.
+    pub pending: u32,
+    pub pending_oldest_ms: i64,
     pub killable: bool,
     pub tabs: Vec<TaskTab>,
 }
@@ -68,6 +71,8 @@ impl Browser {
         let mut tabs_of: HashMap<i64, Vec<TaskTab>> = HashMap::new();
         let mut pid_of: HashMap<i64, u32> = HashMap::new();
         let mut bytes_of: HashMap<i64, u64> = HashMap::new();
+        let mut pending_of: HashMap<i64, (u32, i64)> = HashMap::new();
+        let now_ms = lb_core::storage::now_ms();
         {
             let views = self.views.borrow();
             let ws = self.ws.borrow();
@@ -83,6 +88,9 @@ impl Browser {
                     pid_of.insert(task, pid);
                 }
                 *bytes_of.entry(task).or_default() += v.net.received();
+                let p = v.net.pending(now_ms);
+                let e = pending_of.entry(task).or_default();
+                *e = (e.0 + p.count, e.1.max(p.oldest_ms));
             }
         }
         // Processes by kind for the tasks without a renderer: the browser, GPU and utilities.
@@ -117,6 +125,7 @@ impl Browser {
                 }
                 None => 0,
             };
+            let (pending, pending_oldest_ms) = pending_of.get(&t.id).copied().unwrap_or_default();
             rows.push(TaskRow {
                 id: t.id,
                 kind: t.kind.name(),
@@ -127,6 +136,8 @@ impl Browser {
                 working_set: mem.working_set,
                 private: mem.private,
                 network,
+                pending,
+                pending_oldest_ms,
                 killable: t.killable && t.kind != TaskKind::Browser,
                 tabs: tabs_of.remove(&t.id).unwrap_or_default(),
             });

@@ -7,11 +7,11 @@
 #   scripts/cef-build/cross-build.sh build        Krunk's CEF patches (patches/*.patch), logo, ninja
 #   scripts/cef-build/cross-build.sh distrib      minimal distribution archive
 #
-# Everything lives under $CEF_BUILD_ROOT (default /work/cef-build), outside the repository. No
+# Everything lives under $CEF_BUILD_ROOT (default /work/projects/extra/browser/.pipeline/cef-build), outside the repository. No
 # FUSE is needed: the toolchain's case problem is handled by casefix.py (see README.md).
 set -euo pipefail
 
-ROOT=${CEF_BUILD_ROOT:-/work/cef-build}
+ROOT=${CEF_BUILD_ROOT:-/work/projects/extra/browser/.pipeline/cef-build}
 CEF_BRANCH=8078                    # Chromium 156
 CEF_COMMIT=cf671c0                 # CEF 156.0.15
 CEF_VERSION=156.0.15
@@ -90,7 +90,7 @@ case "${1:-}" in
     sed -i "s/'checkout_pgo_profiles': False/'checkout_pgo_profiles': True/" .gclient
     cat .gclient
     (cd src && git checkout -- build/vs_toolchain.py)
-    gclient sync --nohooks --with_branch_heads --revision src@refs/tags/$CHROMIUM_VERSION --jobs 8
+    gclient sync --nohooks --with_branch_heads --revision src@refs/tags/$CHROMIUM_VERSION --jobs ${GCLIENT_JOBS:-8}
     # No FUSE here: Chromium's vs_toolchain.py would mount the toolchain through ciopfs for a
     # case-insensitive view. Skip that (local, idempotent edit) and fix the case with casefix.py.
     python3 - <<'EOF'
@@ -107,7 +107,7 @@ EOF
     python3 src/build/vs_toolchain.py update --force
     tc=$(python3 src/build/vs_toolchain.py get_toolchain_dir | sed -n 's/^vs_path = "\(.*\)"$/\1/p')
     echo "toolchain dir: $tc"
-    python3 "$(dirname "$0")/casefix.py" "$tc" "$SRC/third_party/llvm-build/Release+Asserts" "$ROOT/casefix"
+    python3 "$REPO/scripts/cef-build/casefix.py" "$tc" "$SRC/third_party/llvm-build/Release+Asserts" "$ROOT/casefix"
     ;;
   configure)
     toolchain_env

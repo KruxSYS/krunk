@@ -37,7 +37,7 @@ done because the Windows test VM is far too small to build Chromium. It needs:
   Nothing is written inside the toolchain directory itself: Chromium hashes its file list and
   would re-extract the package (directory symlinks are not part of that list).
 
-Steps (`cross-build.sh` does them; every step is idempotent, all paths under `/work/cef-build`
+Steps (`cross-build.sh` does them; every step is idempotent, all paths under `/work/projects/extra/browser/.pipeline/cef-build`
 = `$CEF_BUILD_ROOT`, outside the repository):
 
 1. `checkout`: depot_tools + CEF's `automate-git.py --branch=8078 --checkout=cf671c0
@@ -46,7 +46,7 @@ Steps (`cross-build.sh` does them; every step is idempotent, all paths under `/w
    in a retry loop (no `--delete_unversioned_trees` once `src/cef` is in place), then copy
    `chromium_git/cef` to `chromium/src/cef`. Run `ensure_bootstrap` in
    `chromium_git/depot_tools` once (the `gn` wrapper needs its bundled Python).
-2. `toolchain`: put the package in `/work/cef-build/toolchain/`; the step sets
+2. `toolchain`: put the package in `/work/projects/extra/browser/.pipeline/cef-build/toolchain/`; the step sets
    `DEPOT_TOOLS_WIN_TOOLCHAIN_BASE_URL` and `GYP_MSVS_HASH_3bfcb536c8=<package hash>`, adds
    `target_os = ['win']` and `checkout_pgo_profiles: True` to `.gclient`, re-syncs (the
    Windows-only deps, clang's Windows runtime library and the win64 PGO profile only come with
@@ -89,7 +89,7 @@ instead of `v8_context_snapshot.bin`; the only cost is a few milliseconds slower
 creation. `app/src/ffi/cef/entry.rs` accepts either file and `scripts/build-dist.sh` ships
 whichever the archive contains.
 
-Everything under `/work/cef-build` (checkout, build tree, toolchain package, archive) stays
+Everything under `/work/projects/extra/browser/.pipeline/cef-build` (checkout, build tree, toolchain package, archive) stays
 outside git; the archive is kept with the release artifacts (`CEF_ARTIFACT` in `cef.lock`).
 
 **Krunk's patches** (`patches/`, since 0.10.0):
@@ -101,6 +101,20 @@ outside git; the archive is kept with the release artifacts (`CEF_ARTIFACT` in `
   turns them off while the session is active and drops its pending metadata, position and
   artwork. Chrome would show "Playing media in incognito" there. Media keys don't control a
   private tab's media either.
+- `chromium-clone-navigation.patch` (0.18.0, Chromium checkout): the DevTools command
+  `Page.krunkCloneNavigationFrom {targetId, entryId}`. Called on a tab that has loaded nothing
+  yet (`about:blank`), it copies the back/forward list of the page `targetId` into it
+  (`NavigationController::CopyStateFrom`, as Chrome's "Duplicate tab") and makes `entryId`
+  current, which loads it. It refuses the same page, a page of another profile (a private
+  tab's list never reaches a normal one), an unknown entry and a tab that already has a list.
+  Krunk uses it for a middle-click in the Back/Forward menus; without the patch the host opens
+  the entry's address only and says so once in `krunk.log`. Not yet compiled: written against
+  the 156.0.8078.80 sources, it applies cleanly (`patch -p1 --dry-run`).
+- `chromium-sockets-per-host.patch` (0.18.0, Chromium checkout): at most 16 connections to one
+  host instead of 6 (`g_max_sockets_per_group` in `net/socket/client_socket_pool_manager.cc`;
+  WebSockets keep 255, a proxy 128). Six requests that never finish no longer block every tab's
+  loads from that host; sixteen still do (`docs/NETWORK.md`). Not yet built: it applies cleanly
+  to the 156.0.8078.80 sources (`patch -p1 --dry-run`).
 - `krunk-windowed-hidden.patch`: `CefBrowserHost::WasHidden` works for windowed (Alloy)
   browsers. The native Aura delegate hides or shows the WebContents' own aura window; the
   occlusion tracker then reports it HIDDEN and `WebContentsViewAura` calls `WasHidden()` itself,
