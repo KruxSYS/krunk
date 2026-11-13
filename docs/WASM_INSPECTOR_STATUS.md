@@ -89,8 +89,8 @@ against `ui/dev/wasm-agent-cases.json`, which the core test
 | Enumerate instances and their exports | Instances list. page "instances: …" | `instances()` (added). loader "instances() asks for the list…" (a worker's instance); agent as above | `wasm_memories` (added: instances in a short form). core `the_agent_gets_a_short_form_of_the_instances`; agent as above |
 | Read/write `i8 u8 i16 u16 i32 u32 i64 u64 f32 f64` | watch list (type select, Enter writes); scans in all ten. page "typing a value and Enter writes it"; probe "read i32/i64/f32", "write u64" | `read(o)`, `write(o)`. loader "write u8 / i64 / f64"; agent "GM.wasm: write and read of all thirteen types" | `wasm_read`, `wasm_write`. core cases (every type); agent "wasm_write and reads of i8 … utf16" |
 | Read/write bytes | hex view (type hex digits). page "typing two hex digits writes the byte" | `read/write` type `bytes`, `bytes(o)` (added). loader "write bytes", "bytes({mem, addr})…"; agent "GM.wasm: bytes() (hex read)" | `wasm_read` / `wasm_write` type `bytes` (write added). agent "wasm_read type bytes: a 64-byte hex window" |
-| Read/write UTF-8 | watch list type `utf8` (32 bytes). probe "read utf8 up to the NUL" | `read/write` type `utf8`. loader "write utf8"; agent thirteen types | `wasm_read` / `wasm_write` type `utf8`. agent thirteen types |
-| Read/write UTF-16 | **not in the UI** (the watch list offers the number types and `utf8`; the hex view shows the bytes) | `read/write` type `utf16`. loader "write utf16", "read utf16 with a length"; agent thirteen types | `wasm_read` / `wasm_write` type `utf16`. agent thirteen types |
+| Read/write UTF-8 | watch list type `utf8` (32 bytes). page "text entries: …"; probe "read utf8 up to the NUL" | `read/write` type `utf8`. loader "write utf8"; agent thirteen types | `wasm_read` / `wasm_write` type `utf8`. agent thirteen types |
+| Read/write UTF-16 | watch list type `utf16` (added; 32 bytes). page "text entries: utf8 reads "hi", utf16 reads "hé"", "text entries: Enter writes UTF-16" | `read/write` type `utf16`. loader "write utf16", "read utf16 with a length"; agent thirteen types | `wasm_read` / `wasm_write` type `utf16`. agent thirteen types |
 | Hex read | Hex view, go to address, Live. page "go to 0x800…", "grow: the hex view reaches the last row" | `bytes(o)`; `read` type `bytes` | `wasm_read` type `bytes` with `length` |
 | First scan: exact | Find "Exact value". page "first scan: 2 addresses" | `scan({kind: 'exact'})`. agent "GM.wasm: scan exact, next …" | `wasm_scan` mode first. agent "wasm_scan first exact → next decreased → wasm_results" |
 | First scan: range | "Value between". probe "f32 range scan" | `scan({kind: 'range', value, to})`. loader "scan (range)"; agent "GM.wasm: scan range and unknown, discard" | `wasm_scan` kind range. agent "wasm_scan first: range, and unknown initial value…" |
@@ -104,10 +104,8 @@ against `ui/dev/wasm-agent-cases.json`, which the core test
 | Globals: read | globals table (live). page "globals: the table lists them…" | `globals({inst})`, `instances()` (added). loader "globals({inst, ctx})"; agent "GM.wasm: globals(), setGlobal()…" | `wasm_global` without `value` (added), `wasm_memories`. core cases; agent "wasm_global: reads the globals, writes the mutable one" |
 | Globals: write | Enter in the table. page "globals: Enter writes a mutable global…" | `setGlobal({inst, export, value})` (added). loader "setGlobal(…) gives the value afterwards (a name is not sent)"; agent as above (the constant one rejects) | `wasm_global` with `export` and `value` (added). core cases; agent as above |
 
-Verdict: every operation of the list is on all three surfaces and tested there, with one
-exception stated in the table: **UTF-16 text has no control in the UI** (scripts and tools read
-and write it; the UI shows such bytes in the hex view). Scans in the UI and the tools are for
-the ten number types (text is not scanned for on any surface).
+Verdict: every operation of the list is on all three surfaces and tested there. Scans are for
+the ten number types on every surface (text is not scanned for).
 
 **Granting a user script.** `// @grant GM.wasm` (or `GM_wasm`) in the script's metadata. There is
 no per-grant prompt: the user grants by installing the script in `krunk://scripts` (the source

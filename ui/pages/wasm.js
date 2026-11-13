@@ -8,7 +8,8 @@
   const el = LB.el;
   const $ = function (id) { return document.getElementById(id); };
   const NUM_TYPES = ['i8', 'u8', 'i16', 'u16', 'i32', 'u32', 'i64', 'u64', 'f32', 'f64'];
-  const WATCH_TYPES = NUM_TYPES.concat(['utf8']);
+  const WATCH_TYPES = NUM_TYPES.concat(['utf8', 'utf16']);
+  const TEXT_TYPES = { utf8: 1, utf16: 1 };
   const FIRST = [['exact', 'Exact value'], ['range', 'Value between'], ['bigger', 'Bigger than'], ['smaller', 'Smaller than'], ['unknown', 'Unknown initial value']];
   const NEXT = [['exact', 'Exact value'], ['range', 'Value between'], ['changed', 'Changed'], ['unchanged', 'Unchanged'], ['increased', 'Increased'],
     ['decreased', 'Decreased'], ['increasedBy', 'Increased by'], ['decreasedBy', 'Decreased by']];
@@ -70,7 +71,7 @@
   // What the user typed, as the probe takes it.
   function parseValue(type, text) {
     const t = String(text).trim();
-    if (type === 'utf8') return { value: String(text) };
+    if (TEXT_TYPES[type]) return { value: String(text) };
     if (t === '') return { error: 'Type a value' };
     if (type === 'i64' || type === 'u64') return /^-?\d+$/.test(t) ? { value: t } : { error: 'A whole number' };
     if (type === 'f32' || type === 'f64') { const f = Number(t); return isFinite(f) ? { value: f } : { error: 'A number' }; }
@@ -461,7 +462,7 @@
   // ---------- the watch list ----------
   function probeEntry(w) {
     const e = { mem: w.mem, where: w.where, type: w.type };
-    if (w.type === 'utf8') e.length = TEXT_LENGTH;
+    if (TEXT_TYPES[w.type]) e.length = TEXT_LENGTH;
     return e;
   }
   function addWatch(w) {

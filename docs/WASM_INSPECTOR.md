@@ -50,7 +50,7 @@ What was tested where, and what was shown on Windows: `docs/WASM_INSPECTOR_STATU
   changed, unchanged, increased, decreased, increased by, decreased by). Results list address,
   value now, value at the scan; **Watch** and **Hex** per row.
 - **Watch list:** label, address or pointer path (`0x100040 > 8`: read the 32-bit pointer at
-  0x100040, add 8), type (the number types and `utf8`), live value (Enter writes), **Freeze**,
+  0x100040, add 8), type (the number types, `utf8` and `utf16`; text entries read 32 bytes), live value (Enter writes), **Freeze**,
   Remove; Export and Import as JSON.
 - **Hex view:** a 256-byte window, go to address, type hex digits to change a byte.
 

@@ -132,6 +132,24 @@ module.exports = function ({ openPage, check, lastSent, emit, shot, UI }) {
     await page.click('#add-watch');
     check((await page.locator('#watch tr[data-i]').count()) === 2, 'a malformed address adds nothing');
 
+    // Text: UTF-8 and UTF-16 entries (32 bytes are read; Enter writes the text).
+    await page.evaluate(() => { new Uint8Array(window.__mem.buffer).set([104, 105, 0], 0x700); const d = window.__dv(); d.setUint16(0x740, 104, true); d.setUint16(0x742, 233, true); });
+    for (const t of [['0x700', 'utf8'], ['0x740', 'utf16']]) {
+      await page.fill('#add-where', t[0]);
+      await page.selectOption('#add-type', t[1]);
+      await page.click('#add-watch');
+    }
+    await page.selectOption('#add-type', 'i32');
+    await page.waitForFunction(() => { const i = document.querySelectorAll('#watch input.value'); return i[2] && i[2].value.startsWith('hi') && i[3] && i[3].value.startsWith('hé'); });
+    check(true, 'text entries: utf8 reads "hi", utf16 reads "hé"');
+    const text16 = page.locator('#watch input.value').nth(3);
+    await text16.fill('ok');
+    await text16.press('Enter');
+    await page.waitForFunction(() => window.__dv().getUint16(0x740, true) === 111 && window.__dv().getUint16(0x742, true) === 107);
+    check(true, 'text entries: Enter writes UTF-16');
+    await page.locator('#watch .remove').nth(3).click();
+    await page.locator('#watch .remove').nth(2).click();
+
     // The hex view: go to an address, change a byte in place.
     await page.fill('#hex-goto', '0x800');
     await page.click('#hex-go');
