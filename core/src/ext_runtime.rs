@@ -8,7 +8,7 @@
 //! hidden page, where `importScripts` was an `eval` (blocked by the extensions' CSP), there was
 //! no `self.serviceWorker` and no `install` event, and there were no ports at all.
 
-use crate::ext::{glob_match, origin, Manifest, HOST_SUFFIX};
+use crate::ext::{glob_match, origin, ContentScript, Manifest, HOST_SUFFIX};
 use std::collections::HashMap;
 
 /// The file name of the worker bootstrap Krunk serves next to the service worker script.
@@ -46,7 +46,7 @@ pub fn worker_bootstrap(shim: &str, sw: &str, module: bool) -> String {
            var post = self.postMessage.bind(self), listen = self.addEventListener.bind(self);\n\
            return {\n\
              postMessage: function (m) { post({ __krunk: m }); },\n\
-             addEventListener: function (type, fn) { listen('message', function (e) { if (e.data && e.data.__krunkIn !== undefined) fn({ data: e.data.__krunkIn }); }); }\n\
+             addEventListener: function (type, fn) { listen('message', function (e) { if (e.data && e.data.__krunkIn !== undefined) { e.stopImmediatePropagation(); fn({ data: e.data.__krunkIn }); } }); }\n\
            };\n\
          })();\n",
     );
@@ -202,6 +202,127 @@ function __krunkRun(id, includes, excludes, allFrames, when, files) {
   else window.addEventListener('load', go, { once: true });
 }
 "#;
+
+// ------------------------------------------------------------------ scripting.registerContentScripts
+
+/// Most content scripts an extension may register at runtime.
+pub const MAX_REGISTERED_SCRIPTS: usize = 100;
+
+/// One entry of `chrome.scripting.registerContentScripts` (Chrome's camelCase) as the content
+/// script it is, with its id. The files must be safe paths inside the package.
+pub fn parse_registered(v: &serde_json::Value) -> Result<(String, ContentScript), String> {
+    let id = v.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+    if id.is_empty() || id.starts_with('_') || id.len() > 200 {
+        return Err("Invalid script id".into());
+    }
+    let list = |k: &str| -> Vec<String> {
+        v.get(k)
+            .and_then(|a| a.as_array())
+            .map(|a| a.iter().filter_map(|s| s.as_str().map(str::to_string)).collect())
+            .unwrap_or_default()
+    };
+    let (js, css) = (list("js"), list("css"));
+    if js.is_empty() && css.is_empty() {
+        return Err(format!("Script with ID '{id}' must specify at least one js or css file"));
+    }
+    if let Some(bad) = js.iter().chain(css.iter()).find(|f| !crate::ext::safe_relative_path(f)) {
+        return Err(format!("Script with ID '{id}': '{bad}' is not a file of the extension"));
+    }
+    let matches = list("matches");
+    if matches.is_empty() {
+        return Err(format!("Script with ID '{id}' must specify 'matches'"));
+    }
+    if let Some(bad) = matches.iter().find(|m| crate::ext::MatchPattern::parse(m).is_none()) {
+        return Err(format!("Script with ID '{id}' has invalid value for matches[0]: '{bad}'"));
+    }
+    let world = match v.get("world").and_then(|w| w.as_str()) {
+        Some("MAIN") => Some("MAIN".to_string()),
+        _ => None,
+    };
+    let run_at = match v.get("runAt").and_then(|r| r.as_str()) {
+        Some(r @ ("document_start" | "document_end" | "document_idle")) => Some(r.to_string()),
+        _ => None,
+    };
+    Ok((
+        id,
+        ContentScript {
+            matches,
+            exclude_matches: list("excludeMatches"),
+            js: js.iter().map(|f| f.trim_start_matches('/').to_string()).collect(),
+            css: css.iter().map(|f| f.trim_start_matches('/').to_string()).collect(),
+            run_at,
+            all_frames: v.get("allFrames").and_then(|a| a.as_bool()).unwrap_or(false),
+            match_about_blank: false,
+            world,
+        },
+    ))
+}
+
+/// A registered script as `getRegisteredContentScripts` returns it.
+pub fn registered_json(id: &str, s: &ContentScript) -> serde_json::Value {
+    serde_json::json!({
+        "id": id,
+        "matches": s.matches,
+        "excludeMatches": s.exclude_matches,
+        "js": s.js,
+        "css": s.css,
+        "runAt": s.run_at.clone().unwrap_or_else(|| "document_idle".into()),
+        "allFrames": s.all_frames,
+        "world": s.world.clone().unwrap_or_else(|| "ISOLATED".into()),
+        "persistAcrossSessions": false,
+        "matchOriginAsFallback": false,
+    })
+}
+
+// ------------------------------------------------------------------ errors
+
+/// Most errors kept per extension (in memory; the oldest go first).
+pub const MAX_ERRORS: usize = 50;
+
+/// An error of one of an extension's contexts, for krunk://extensions.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ExtError {
+    pub message: String,
+    /// `file:line` when known (an address on the extension's origin is shown as its path).
+    pub source: String,
+    /// Where it happened: `background`, `popup`, `page`, `offscreen`, `window`, `content script`.
+    pub context: String,
+    /// How often in a row.
+    pub count: u32,
+}
+
+/// Adds an error to an extension's list: a repeat of the last one is counted, the list is
+/// capped, the text is shortened. Returns whether the list changed in a way worth showing
+/// (a repeat past 99 is not).
+pub fn push_error(list: &mut Vec<ExtError>, ext_id: &str, message: &str, file: &str, line: u64, context: &str) -> bool {
+    let message: String = message.trim().chars().take(600).collect();
+    if message.is_empty() {
+        return false;
+    }
+    let own = format!("{}/", origin(ext_id));
+    let file = file.strip_prefix(&own).unwrap_or(file);
+    let file: String = file.chars().take(200).collect();
+    let source = match (file.is_empty(), line) {
+        (true, _) => String::new(),
+        (false, 0) => file,
+        (false, n) => format!("{file}:{n}"),
+    };
+    if let Some(last) = list.last_mut() {
+        if last.message == message && last.source == source && last.context == context {
+            if last.count >= 99 {
+                return false;
+            }
+            last.count += 1;
+            return true;
+        }
+    }
+    list.push(ExtError { message, source, context: context.to_string(), count: 1 });
+    if list.len() > MAX_ERRORS {
+        let extra = list.len() - MAX_ERRORS;
+        list.drain(..extra);
+    }
+    true
+}
 
 // ------------------------------------------------------------------ ports
 
@@ -576,5 +697,51 @@ mod tests {
         let mut b = Broadcast::new(2);
         assert_eq!(b.respond(false, true, json!(null)), Outcome::Wait);
         assert_eq!(b.respond(true, false, json!(null)), Outcome::Answer(json!(null)));
+    }
+
+    #[test]
+    fn registered_scripts_are_checked_and_listed() {
+        let (id, cs) = parse_registered(&json!({
+            "id": "inpage", "matches": ["https://*/*"], "js": ["/scripts/inpage.js"],
+            "runAt": "document_start", "world": "MAIN", "allFrames": true
+        }))
+        .unwrap();
+        assert_eq!(id, "inpage");
+        assert_eq!(cs.js, vec!["scripts/inpage.js"]);
+        assert_eq!(cs.world.as_deref(), Some("MAIN"));
+        assert!(cs.all_frames);
+        let back = registered_json(&id, &cs);
+        assert_eq!(back["runAt"], "document_start");
+        assert_eq!(back["world"], "MAIN");
+        // No id, a file outside the package, no or bad matches: refused.
+        assert!(parse_registered(&json!({ "matches": ["https://*/*"], "js": ["a.js"] })).is_err());
+        assert!(parse_registered(&json!({ "id": "x", "matches": ["https://*/*"], "js": ["../a.js"] })).is_err());
+        assert!(parse_registered(&json!({ "id": "x", "js": ["a.js"] })).is_err());
+        assert!(parse_registered(&json!({ "id": "x", "matches": ["nonsense"], "js": ["a.js"] })).is_err());
+        assert!(parse_registered(&json!({ "id": "x", "matches": ["https://*/*"] })).is_err());
+    }
+
+    #[test]
+    fn errors_are_capped_and_repeats_counted() {
+        let mut list = Vec::new();
+        let file = format!("{}/scripts/a.js", origin(ID));
+        assert!(push_error(&mut list, ID, " boom ", &file, 12, "background"));
+        assert_eq!(list[0].source, "scripts/a.js:12");
+        assert_eq!(list[0].message, "boom");
+        assert!(push_error(&mut list, ID, "boom", &file, 12, "background"));
+        assert_eq!((list.len(), list[0].count), (1, 2));
+        assert!(!push_error(&mut list, ID, "  ", "", 0, "popup"));
+        for i in 0..(MAX_ERRORS + 10) {
+            push_error(&mut list, ID, &format!("e{i}"), "", 0, "popup");
+        }
+        assert_eq!(list.len(), MAX_ERRORS);
+        assert_eq!(list.last().unwrap().message, format!("e{}", MAX_ERRORS + 9));
+        assert_eq!(list.last().unwrap().source, "");
+        // A loop of the same error stops being news.
+        let mut one = Vec::new();
+        for _ in 0..99 {
+            assert!(push_error(&mut one, ID, "again", "", 0, "page"));
+        }
+        assert!(!push_error(&mut one, ID, "again", "", 0, "page"));
     }
 }

@@ -1271,10 +1271,18 @@ pub fn content_bundle(shim: &str, exts: &[BundledExtension]) -> String {
                 run_at = json_str(&s.run_at),
                 css = serde_json::to_string(&s.css).unwrap_or_else(|_| "[]".into()),
             ));
+            // The files of one entry are one body (0.17.0): what the first declares (`const`,
+            // `class`, functions) the next ones see, as in Chrome, where they share the world's
+            // global scope. A file in strict mode keeps that to itself: it gets its own function.
             for src in &s.js {
-                out.push_str("try {\n");
-                out.push_str(src);
-                out.push_str("\n} catch (e) { ext.report(e); }\n");
+                if starts_strict(src) {
+                    out.push_str("(function () {\n");
+                    out.push_str(src);
+                    out.push_str("\n}).call(this);\n");
+                } else {
+                    out.push_str(src);
+                    out.push_str("\n;\n");
+                }
             }
             out.push_str("});\n");
         }
@@ -1282,6 +1290,21 @@ pub fn content_bundle(shim: &str, exts: &[BundledExtension]) -> String {
     }
     out.push_str("})();\n");
     out
+}
+
+/// Does a script start with the `"use strict"` directive (after comments and blank lines)?
+pub fn starts_strict(src: &str) -> bool {
+    let mut rest = src.trim_start_matches('\u{feff}').trim_start();
+    loop {
+        if let Some(r) = rest.strip_prefix("//") {
+            rest = r.split_once('\n').map(|(_, r)| r).unwrap_or("").trim_start();
+        } else if let Some(r) = rest.strip_prefix("/*") {
+            rest = r.split_once("*/").map(|(_, r)| r).unwrap_or("").trim_start();
+        } else {
+            break;
+        }
+    }
+    rest.starts_with("'use strict'") || rest.starts_with("\"use strict\"")
 }
 
 fn json_str(s: &str) -> String {
@@ -1793,5 +1816,31 @@ mod tests {
                 && b.contains("ext.run([\"<all_urls>\"], [], false, \"document_idle\", [\"cs.css\"]")
         );
         assert!(b.contains("console.log(1)") && b.starts_with("(function () {"));
+    }
+
+    #[test]
+    fn files_of_an_entry_share_declarations_unless_strict() {
+        assert!(starts_strict("\u{feff}// c\n/* d */ 'use strict'; var a;"));
+        assert!(starts_strict("\"use strict\";"));
+        assert!(!starts_strict("var a = 'use strict';"));
+        assert!(!starts_strict("(()=>{\"use strict\";})()"));
+        let e = BundledExtension {
+            id: "a".repeat(32),
+            manifest_json: "{}".into(),
+            messages_json: String::new(),
+            scripts: vec![BundledScript {
+                id: "a".repeat(32),
+                matches: vec!["<all_urls>".into()],
+                exclude_matches: vec![],
+                all_frames: false,
+                run_at: "document_idle".into(),
+                js: vec!["const shared = 1".into(), "'use strict'; var own = shared;".into()],
+                css: vec![],
+            }],
+        };
+        let b = content_bundle("function (id) { return { run: function () {} }; }", &[e]);
+        // Not in a block of its own, and no forced strict mode for the bundle.
+        assert!(b.contains("function (chrome, browser) {\nconst shared = 1\n;\n(function () {\n'use strict'; var own = shared;\n}).call(this);"));
+        assert!(!b.starts_with("(function () {\n'use strict'") && !b.contains("try {"));
     }
 }
