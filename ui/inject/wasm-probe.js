@@ -591,7 +591,10 @@
     switch (req.op) {
       case 'list': return list();
       case 'instances': return instances();
-      case 'survey': return { memories: list(), instances: instances() };
+      // `awake` (the host, for workers): after the context ran a task of its own. A worker of a
+      // page kept for Back is frozen: DevTools still reaches it, its tasks do not run, and it
+      // never answers this.
+      case 'survey': return (req.awake ? yieldNow() : P.resolve()).then(function () { return { memories: list(), instances: instances() }; });
       case 'globals': return globals(req);
       case 'setGlobal': return setGlobal(req);
       case 'limits': return LIMITS;

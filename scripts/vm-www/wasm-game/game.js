@@ -5,6 +5,9 @@
   const inWorker = /[?&]worker\b/.test(location.search);
   const $ = (id) => document.getElementById(id);
   document.getElementById('where').textContent = inWorker ? 'The module runs in a dedicated worker.' : 'The module runs in the page.';
+  // `?stuck`: next to the game, a worker that never answers (stuck.js spins): the inspector must
+  // list the page's memory and say that the worker did not answer.
+  if (/[?&]stuck\b/.test(location.search)) new Worker('stuck.js');
   let call;
   if (inWorker) {
     const w = new Worker('worker.js');

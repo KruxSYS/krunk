@@ -16,10 +16,19 @@ Tests, and the short names used in the table:
   Chromium against the test app (page, hook, worker session).
 
 What no automated test covers, for every row: **the Rust host itself**
-(`app/src/browser/wasm.rs`) is compiled and linted for Windows but only runs inside Krunk. Its
-DevTools calls are the ones the e2e check makes by hand; that the host makes them correctly
-(the two queries in a row, the three-argument call, the `list` answer with `instances`) is
-proven only by a run on Windows. The checklist for that run is at the end.
+(`app/src/browser/wasm.rs`, `app/src/ffi/cef/`) is compiled and linted for Windows but only
+runs inside Krunk. Its DevTools calls are the ones the e2e check makes by hand; that the host
+makes them correctly is proven only by a run on Windows (the checklist at the end; results in
+`.pipeline/evidence-0.19.0/vm/`).
+
+Found by that run (2026-11-13) and fixed: calls into a **worker's session never came back**.
+CEF parses a DevTools answer only in the form `{"id":N,"result":{…}}`; the answer of a call
+made in an attached target's (flat) session ends in `,"sessionId":"…"}` and CEF drops it
+(`libcef/browser/devtools/devtools_util.cc: ParseResult`). The observer now takes such answers
+from the raw message (`on_dev_tools_message` → `core::wasm::session_answer`, core test
+`answers_of_a_worker_session_are_read_from_the_raw_message`). Also since then: a context that
+does not answer the two set-up calls is reported after 3 seconds (`SETUP_TIMEOUT_MS`), the page
+runs one search at a time, and its header follows the inspected tab's title.
 
 | Sub-point | Code | Tests | Verdict |
 |---|---|---|---|

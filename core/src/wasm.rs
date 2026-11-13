@@ -435,9 +435,15 @@ pub const CALL_FUNCTION: &str = "function (found, req, more) { return this.call(
 pub const MEMORY_PROTOTYPE: &str = "WebAssembly.Memory.prototype";
 pub const INSTANCE_PROTOTYPE: &str = "WebAssembly.Instance.prototype";
 
-/// What the host asks a context's probe for `list`: `{memories, instances}`.
-pub fn survey_request() -> serde_json::Value {
-    serde_json::json!({ "op": "survey" })
+/// What the host asks a context's probe for `list`: `{memories, instances}`. `awake` (for
+/// workers): answered only once the context ran a task of its own; a worker of a page the tab
+/// keeps for Back (the back/forward cache) is frozen, stays attached, and never does.
+pub fn survey_request(awake: bool) -> serde_json::Value {
+    if awake {
+        serde_json::json!({ "op": "survey", "awake": true })
+    } else {
+        serde_json::json!({ "op": "survey" })
+    }
 }
 
 /// Context numbers: 0 is the page itself, a same-process frame has its DevTools execution
@@ -812,7 +818,9 @@ mod tests {
         assert!(
             probe.contains("function call(found, req, more)") && CALL_FUNCTION.contains("this.call(found, req, more)")
         );
-        assert_eq!(survey_request(), json!({"op": "survey"}));
+        assert_eq!(survey_request(false), json!({"op": "survey"}));
+        assert_eq!(survey_request(true), json!({"op": "survey", "awake": true}));
+        assert!(probe.contains("req.awake ? yieldNow()"));
         for op in ["survey", "instances", "globals", "setGlobal"] {
             assert!(probe.contains(&format!("case '{op}':")), "the probe knows {op}");
         }

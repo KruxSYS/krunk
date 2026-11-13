@@ -37,12 +37,22 @@ use lb_core::wasm::{self, WasmReq, WORKER_CTX_BASE};
 use serde_json::{json, Value};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::rc::Rc;
 
 /// The probes' handles.
 const GROUP: &str = "krunk-wasm";
 /// The handles of a query (the prototypes, the arrays of memories and instances): released
 /// after each call.
 const QUERY_GROUP: &str = "krunk-wasm-found";
+
+/// The group of a context's query: the page and its frames share a DevTools session and are
+/// asked at the same time, so one's release must not take the other's handles.
+fn query_group(target: &Target) -> String {
+    match target {
+        Target::Frame(id) => format!("{QUERY_GROUP}-{id}"),
+        _ => QUERY_GROUP.into(),
+    }
+}
 /// The usual DevTools time limit.
 const CALL_TIMEOUT_MS: i64 = 10_000;
 /// Making a probe and looking for a context's objects are short calls: a context that does not
@@ -68,6 +78,10 @@ struct Worker {
     n: u32,
     session: String,
     url: String,
+    /// It took a probe but ran no task of its own when asked: a worker of a page the tab keeps
+    /// for Back (frozen in the back/forward cache, still attached). Not listed until the tab
+    /// navigates again.
+    asleep: bool,
 }
 
 #[derive(Default)]
@@ -117,11 +131,13 @@ impl Job {
     }
 }
 
+const WORKER_SILENT: &str = "The worker did not answer in time.";
+
 /// The engine's errors, as a user reads them.
 fn friendly(e: String, target: &Target) -> String {
     if e.contains("no answer from the engine") {
         match target {
-            Target::Worker(_) => "The worker did not answer in time.".into(),
+            Target::Worker(_) => WORKER_SILENT.into(),
             _ => "The page did not answer in time (is it paused in the DevTools debugger?).".into(),
         }
     } else if wasm::handle_lost(&e) {
@@ -187,6 +203,10 @@ impl Browser {
                 }
             }
             "Runtime.executionContextsCleared" => {
+                // (Back wakes the workers of the page it returns to.)
+                for w in self.wasm.workers.borrow_mut().get_mut(&tab).into_iter().flatten() {
+                    w.asleep = false;
+                }
                 self.wasm.contexts.borrow_mut().remove(&tab);
                 if let Some(s) = self.wasm.sessions.borrow_mut().get_mut(&tab) {
                     s.probes.retain(|ctx, _| *ctx >= WORKER_CTX_BASE);
@@ -203,7 +223,7 @@ impl Browser {
                 let mut all = self.wasm.workers.borrow_mut();
                 let list = all.entry(tab).or_default();
                 list.retain(|w| w.session != session);
-                list.push(Worker { n, session: session.to_string(), url });
+                list.push(Worker { n, session: session.to_string(), url, asleep: false });
             }
             "Target.detachedFromTarget" => {
                 let Some(session) = params.get("sessionId").and_then(Value::as_str) else { return };
@@ -415,30 +435,61 @@ impl Browser {
                 let url = urls.get(&c.frame).cloned().unwrap_or_else(|| c.origin.clone());
                 targets.push((c.id as u32, "frame", url, Target::Frame(c.id)));
             }
-            for w in b.wasm.workers.borrow().get(&tab).into_iter().flatten() {
+            for w in b.wasm.workers.borrow().get(&tab).into_iter().flatten().filter(|w| !w.asleep) {
                 targets.push((WORKER_CTX_BASE + w.n, "worker", w.url.clone(), Target::Worker(w.session.clone())));
             }
             targets.truncate(MAX_CONTEXTS);
-            targets.reverse();
-            b.wasm_list_next(tab, targets, Vec::new(), done);
+            // Every context at once: one that does not answer costs its own time limit, not
+            // one limit after the other. The rows keep the order of the contexts.
+            let rows: Rc<RefCell<Vec<Option<Value>>>> = Rc::new(RefCell::new(vec![None; targets.len()]));
+            let left = Rc::new(Cell::new(targets.len()));
+            let done = Rc::new(RefCell::new(Some(done)));
+            for (at, (ctx, kind, url, target)) in targets.into_iter().enumerate() {
+                let (rows, left, done) = (rows.clone(), left.clone(), done.clone());
+                b.wasm_list_one(tab, ctx, kind, url, target, move |row| {
+                    rows.borrow_mut()[at] = row;
+                    left.set(left.get() - 1);
+                    if left.get() == 0 {
+                        let out: Vec<Value> = rows.borrow_mut().drain(..).flatten().collect();
+                        if let Some(done) = done.borrow_mut().take() {
+                            done(Ok(json!({ "contexts": out, "unreachable": wasm::UNREACHABLE })));
+                        }
+                    }
+                });
+            }
         });
     }
 
-    /// One context after the other (`left` is in reverse order).
-    fn wasm_list_next(
+    /// One context's row of the list (None: a worker that is asleep, not listed).
+    fn wasm_list_one(
         &self,
         tab: TabId,
-        mut left: Vec<(u32, &'static str, String, Target)>,
-        mut out: Vec<Value>,
-        done: WasmDone,
+        ctx: u32,
+        kind: &'static str,
+        url: String,
+        target: Target,
+        done: impl FnOnce(Option<Value>) + 'static,
     ) {
-        let Some((ctx, kind, url, target)) = left.pop() else {
-            return done(Ok(json!({ "contexts": out, "unreachable": wasm::UNREACHABLE })));
-        };
         let weak = self.me.clone();
+        let worker = matches!(target, Target::Worker(_));
         let each: WasmDone = Box::new(move |r| {
-            let Some(b) = weak.upgrade() else { return done(Err("Krunk is closing".into())) };
+            let Some(b) = weak.upgrade() else { return done(None) };
             let mut row = json!({ "ctx": ctx, "kind": kind, "url": url, "memories": [], "instances": [] });
+            // A worker that has its probe (DevTools reached it) and then ran no task: asleep.
+            let has_probe = b.wasm.sessions.borrow().get(&tab).is_some_and(|s| s.probes.contains_key(&ctx));
+            if worker && has_probe && r.as_ref().is_err_and(|e| e == WORKER_SILENT) {
+                if let Some(w) = b
+                    .wasm
+                    .workers
+                    .borrow_mut()
+                    .get_mut(&tab)
+                    .and_then(|l| l.iter_mut().find(|w| WORKER_CTX_BASE + w.n == ctx))
+                {
+                    w.asleep = true;
+                }
+                info!("tab {tab}: a worker is asleep (of a page kept for Back), not listed");
+                return done(None);
+            }
             match r {
                 Ok(mut v) => {
                     for key in ["memories", "instances"] {
@@ -449,11 +500,11 @@ impl Browser {
                 }
                 Err(e) => row["error"] = json!(e),
             }
-            out.push(row);
-            b.wasm_list_next(tab, left, out, done);
+            done(Some(row));
         });
-        let req = wasm::survey_request();
-        self.wasm_run(Job { tab, ctx, target, req, query: true, timeout: CALL_TIMEOUT_MS, retried: false, done: each });
+        let req = wasm::survey_request(worker);
+        let timeout = if worker { SETUP_TIMEOUT_MS } else { CALL_TIMEOUT_MS };
+        self.wasm_run(Job { tab, ctx, target, req, query: true, timeout, retried: false, done: each });
     }
 
     fn wasm_run(&self, job: Job) {
@@ -527,14 +578,14 @@ impl Browser {
     ) {
         let params = json!({
             "expression": prototype,
-            "objectGroup": QUERY_GROUP, "returnByValue": false, "silent": true,
+            "objectGroup": query_group(&target), "returnByValue": false, "silent": true,
         });
         let weak = self.me.clone();
         let query_target = target.clone();
         self.wasm_cdp(view, &target, "Runtime.evaluate", params, SETUP_TIMEOUT_MS, move |r| {
             let (Some(b), Ok(proto)) = (weak.upgrade(), object_id(r)) else { return done(None) };
             let Some(view) = b.tab_view(tab) else { return done(None) };
-            let params = json!({ "prototypeObjectId": proto, "objectGroup": QUERY_GROUP });
+            let params = json!({ "prototypeObjectId": proto, "objectGroup": query_group(&query_target) });
             // (The query collects garbage first: the full time.)
             b.wasm_cdp(&view, &query_target, "Runtime.queryObjects", params, CALL_TIMEOUT_MS, move |r| {
                 done(r.ok().and_then(|v| v.pointer("/objects/objectId").and_then(Value::as_str).map(str::to_string)));
@@ -561,7 +612,7 @@ impl Browser {
             let Some(b) = weak.upgrade() else { return job.fail("Krunk is closing") };
             if queried {
                 if let Some(view) = b.tab_view(job.tab) {
-                    let group = json!({ "objectGroup": QUERY_GROUP });
+                    let group = json!({ "objectGroup": query_group(&job.target) });
                     b.wasm_cdp(&view, &job.target, "Runtime.releaseObjectGroup", group, CALL_TIMEOUT_MS, |_| {});
                 }
             }
