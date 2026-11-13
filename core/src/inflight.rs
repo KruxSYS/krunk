@@ -177,7 +177,17 @@ impl InFlight {
                 }
                 self.reqs.insert(
                     id,
-                    Req { tab, private, url: hash, host, resource_type, get, started: now, answered: false, reported: false },
+                    Req {
+                        tab,
+                        private,
+                        url: hash,
+                        host,
+                        resource_type,
+                        get,
+                        started: now,
+                        answered: false,
+                        reported: false,
+                    },
                 );
             }
         }
@@ -396,8 +406,22 @@ mod tests {
         assert_eq!(
             r,
             vec![
-                SlowReport { tab: 10, host: Some("slow.example".into()), kind: "fetch", count: 2, waiting: 1, oldest_ms: 40_000 },
-                SlowReport { tab: 10, host: Some("slow.example".into()), kind: "image", count: 1, waiting: 1, oldest_ms: 38_000 },
+                SlowReport {
+                    tab: 10,
+                    host: Some("slow.example".into()),
+                    kind: "fetch",
+                    count: 2,
+                    waiting: 1,
+                    oldest_ms: 40_000
+                },
+                SlowReport {
+                    tab: 10,
+                    host: Some("slow.example".into()),
+                    kind: "image",
+                    count: 1,
+                    waiting: 1,
+                    oldest_ms: 38_000
+                },
                 SlowReport { tab: 11, host: None, kind: "page", count: 1, waiting: 1, oldest_ms: 40_000 },
             ]
         );
@@ -406,10 +430,16 @@ mod tests {
             lines[0],
             "tab 10: 2 fetch requests to slow.example pending for over 30 s (oldest 40 s, 1 without an answer yet)"
         );
-        assert_eq!(lines[1], "tab 10: 1 image request to slow.example pending for over 30 s (oldest 38 s, no answer yet)");
+        assert_eq!(
+            lines[1],
+            "tab 10: 1 image request to slow.example pending for over 30 s (oldest 38 s, no answer yet)"
+        );
         assert_eq!(lines[2], "tab 11: 1 page request (private tab) pending for over 30 s (oldest 40 s, no answer yet)");
         for l in &lines {
-            assert!(!l.contains("token") && !l.contains("secret") && !l.contains("pw") && !l.contains("private.example"), "{l}");
+            assert!(
+                !l.contains("token") && !l.contains("secret") && !l.contains("pw") && !l.contains("private.example"),
+                "{l}"
+            );
         }
         f.finish(5);
         // Not again: neither the same requests nor new ones of that tab and host for a while.

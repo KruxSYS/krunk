@@ -49,6 +49,19 @@ pub trait RequestPolicy: Send + Sync {
     /// A request finished with `bytes` of body received (the task manager's network column).
     fn loaded(&self, _bytes: u64) {}
 
+    /// Request `id` (the engine's identifier, 0 for none) is about to be sent; `get`: its
+    /// method is GET. `true`: it should not wait for the cache (0.18.0, docs/NETWORK.md:
+    /// another tab's request for the same address has no answer yet).
+    fn started(&self, _id: u64, _request: &NetRequest<'_>, _get: bool) -> bool {
+        false
+    }
+
+    /// The headers of request `id`'s answer arrived.
+    fn answered(&self, _id: u64) {}
+
+    /// Request `id` ended: done, failed or cancelled.
+    fn finished(&self, _id: u64) {}
+
     /// A request was answered with a redirect to `new_url` (bounce-tracker bookkeeping).
     fn redirected(&self, _resource_type: i32, _from_url: &str, _new_url: &str) {}
 }
@@ -150,12 +163,28 @@ wrap_resource_request_handler! {
             &self,
             _browser: Option<&mut Browser>,
             _frame: Option<&mut Frame>,
-            _request: Option<&mut Request>,
+            request: Option<&mut Request>,
             _response: Option<&mut Response>,
             _status: UrlrequestStatus,
             received_content_length: i64,
         ) {
             self.policy.loaded(received_content_length.max(0) as u64);
+            if let Some(request) = request {
+                self.policy.finished(request.identifier());
+            }
+        }
+
+        fn on_resource_response(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            request: Option<&mut Request>,
+            _response: Option<&mut Response>,
+        ) -> ::std::os::raw::c_int {
+            if let Some(request) = request {
+                self.policy.answered(request.identifier());
+            }
+            0
         }
 
         fn on_before_resource_load(
@@ -169,12 +198,20 @@ wrap_resource_request_handler! {
             let url = CefString::from(&request.url()).to_string();
             let resource_type = sys::cef_resource_type_t::from(request.resource_type()) as i32;
             let referrer = CefString::from(&request.referrer_url()).to_string();
-            let verdict = self.policy.check(&NetRequest {
-                url: &url,
-                resource_type,
-                initiator: &self.initiator,
-                referrer: &referrer,
-            });
+            let net_request = NetRequest { url: &url, resource_type, initiator: &self.initiator, referrer: &referrer };
+            let verdict = self.policy.check(&net_request);
+            if matches!(verdict, NetVerdict::Allow { .. }) {
+                let get = CefString::from(&request.method()).to_string().eq_ignore_ascii_case("GET");
+                if self.policy.started(request.identifier(), &net_request, get) {
+                    // What a hard reload sends: the cache then starts a new entry instead of
+                    // queueing behind the request that has it (measured, docs/NETWORK.md).
+                    // (A header, not `set_flags`: CEF would replace all the request's load
+                    // flags and drop its credentials mode.)
+                    for (name, value) in [("Cache-Control", "no-cache"), ("Pragma", "no-cache")] {
+                        request.set_header_by_name(Some(&CefString::from(name)), Some(&CefString::from(value)), 1);
+                    }
+                }
+            }
             match verdict {
                 NetVerdict::Block => ReturnValue::CANCEL,
                 NetVerdict::Respond { content_type, body } => {

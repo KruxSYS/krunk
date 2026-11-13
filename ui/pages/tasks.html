@@ -28,6 +28,7 @@
           <th data-sort="private" class="sortable num">Private</th>
           <th data-sort="cpu" class="sortable num">CPU</th>
           <th data-sort="network" class="sortable num">Network</th>
+          <th data-sort="pending" class="sortable num" title="Requests under way and how long the oldest has been waiting">Pending</th>
           <th data-sort="pid" class="sortable num">PID</th>
         </tr>
       </thead>
@@ -36,7 +37,8 @@
   </div>
   <p class="muted note">Memory is the engine's private footprint of the process; working set and private bytes come from
     Windows. CPU is the share of all processors. Network counts what the tabs of a renderer received since the previous
-    second. Ending a renderer shows its tabs the "page crashed" message; the browser process cannot be ended here.
+    second. Pending is the number of requests its tabs wait for, with the age of the oldest once that is over five
+    seconds (an open stream counts, a page that never finishes loading shows here). Ending a renderer shows its tabs the "page crashed" message; the browser process cannot be ended here.
     Refreshes every second (Shift+Esc opens this page).</p>
 </div>
 <script src="shared/bridge.js"></script>

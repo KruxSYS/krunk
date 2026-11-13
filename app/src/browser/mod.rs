@@ -1209,6 +1209,7 @@ impl Browser {
             self.views.borrow().iter().any(|(t, v)| *t != id && self.window_of(*t) == Some(win) && v.view.is_visible())
                 || self.pending_reveal.borrow().kept_tab_of(win).is_some();
         view.set_visible(active && !window.is_minimized() && !other_shown);
+        net.set_tab(id, self.tab(id).is_some_and(|t| t.private));
         self.views.borrow_mut().insert(
             id,
             TabView {
@@ -1540,6 +1541,7 @@ impl Browser {
             v.close();
         }
         let view = self.views.borrow_mut().remove(&id);
+        self.net.forget_tab(id);
         if let Some(v) = view {
             match hand_over.filter(|w| self.may_keep_on_screen(*w, id, &v.view)) {
                 Some(win) => self.keep_on_screen(win, id, v.view),

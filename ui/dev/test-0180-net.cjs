@@ -29,5 +29,30 @@ module.exports = (h) => {
     check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
   }
 
-  return { testNavMenuMiddleClick };
+  // krunk://tasks: the Pending column (requests under way, the oldest one's age).
+  async function testTasksPending(browser) {
+    console.log('tasks: pending requests');
+    const row = (id, title, pending, oldest) => ({ id, kind: 'renderer', title: 'Tab: ' + title, pid: 1000 + id, cpu: 0, memory: 5e7, workingSet: 6e7, private: 5e7,
+      network: 0, pending: pending, pendingOldestMs: oldest, killable: true, tabs: [{ id: id, title: title }] });
+    const rows = [row(1, 'Idle page', 0, 0), row(2, 'Loading page', 3, 1200), row(3, 'Stuck page', 6, 45000), row(4, 'Stream', 1, 600000),
+      { id: 9, kind: 'browser', title: 'Browser', pid: 1, cpu: 0, memory: 1e8, workingSet: 1e8, private: 1e8, network: 0, killable: false, tabs: [] }];
+    const { page, errors } = await openPage(browser, 'https://krunk.invalid/tasks.html', { width: 1100, height: 500 }, 1,
+      (r) => { window.__host.handlers.getTasks = () => r; }, rows);
+    await page.waitForFunction(() => document.querySelectorAll('#rows tr').length === 5);
+    const cells = await page.$$eval('#rows tr', (l) => Object.fromEntries(l.map((tr) => [tr.dataset.id, { text: tr.querySelector('td.pending').textContent, slow: tr.querySelector('td.pending').classList.contains('slow') }])));
+    check(cells['1'].text === '–' && cells['9'].text === '–', 'no pending requests: a dash (also for a task without the field)');
+    check(cells['2'].text === '3' && !cells['2'].slow, 'three young requests: "3"');
+    check(cells['3'].text === '6 (45 s)' && cells['3'].slow, 'six with the oldest at 45 s: "6 (45 s)", marked');
+    check(cells['4'].text === '1 (10 min)', 'a ten-minute stream: "1 (10 min)"');
+    check(await page.$$eval('thead th', (l) => l.map((x) => x.textContent).join('|')) === 'Task|Type|Memory|Working set|Private|CPU|Network|Pending|PID', 'the column sits between Network and PID');
+    await page.click('th[data-sort="pending"]');
+    await page.waitForTimeout(50);
+    check(await page.$eval('#rows tr:first-child', (tr) => tr.dataset.id) === '3', 'sorting by Pending puts the most first');
+    const fits = await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
+    check(fits, 'no horizontal scroll at 1100 px');
+    await shot(page, 'tasks-pending.png');
+    check(errors.length === 0, 'no console errors (' + errors.join(' | ') + ')');
+  }
+
+  return { testNavMenuMiddleClick, testTasksPending };
 };
