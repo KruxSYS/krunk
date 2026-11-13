@@ -45,6 +45,11 @@ function Pop([string]$what) { $r = NavPopup; if ($r) { "$what popup $($r.Left),$
 function BackXY { @((X 22), (Y 58)) }
 function FwdXY { @((X 56), (Y 58)) }
 function ItemXY([int]$i) { $r = NavPopup; @([int]($r.Left + 120 * $c.Scale), [int]($r.Top + (7 + 30 * $i + 15) * $c.Scale)) }
+function MiddleClick([int]$x, [int]$y, [int]$wait = 500) {
+  MoveTo $x $y; Start-Sleep -Milliseconds 80
+  [U]::mouse_event(0x20, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 60
+  [U]::mouse_event(0x40, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds $wait
+}
 function KLog([string]$pattern) { (Get-Content "$profile\Krunk\krunk.log" -ErrorAction SilentlyContinue | Select-String $pattern | ForEach-Object { $_.Line }) -join ' ## ' }
 
 SetKrunk '{"theme":"light"}'
@@ -75,6 +80,28 @@ Log "[$P] after Esc: '$(Title)' $(Pop 'esc')"
 $b = BackXY; RightClick $b[0] $b[1] 1000; Keys '{END}' 300; Keys '{ENTER}' 1500
 Log "[$P] show full history: '$(Title)'"
 Shot "$P-5-history-page"
+# 0.18.0: a middle-click on an entry opens it in a new background tab with the list copied;
+# this tab stays where it is and the menu stays open. Then the new tab (Ctrl+Tab) must be at
+# that entry with Back and Forward both offering entries.
+foreach ($n in 1..5) { SafeGo "http://localhost:8094/nav.html?p=$n" 1500 }
+$b = BackXY; RightClick $b[0] $b[1] 1200
+$it = ItemXY 1; MiddleClick $it[0] $it[1] 2500
+Log "[$P] middle-click on the second entry (P3): this tab '$(Title)' $(Pop 'still open')"
+Shot "$P-5a-middle-click-menu-stays"
+Keys '{ESC}' 500
+Log "[$P] clone fallback line (expected none with the patched engine): $(KLog 'krunkCloneNavigationFrom')"
+SafeKeys '^{TAB}' 1500
+Log "[$P] the new tab: '$(Title)' (expected P3)"
+$b = BackXY; RightClick $b[0] $b[1] 1200
+Log "[$P] new tab back menu (expected 2 entries + full history): $(Pop 'clone back')"
+Shot "$P-5a-clone-back-menu"
+Keys '{ESC}' 500
+$f = FwdXY; RightClick $f[0] $f[1] 1200
+Log "[$P] new tab forward menu (expected 2 entries + full history): $(Pop 'clone forward')"
+Shot "$P-5a-clone-forward-menu"
+Keys '{ESC}' 500
+SafeKeys '^w' 1200
+Log "[$P] after closing the clone: '$(Title)' (expected P5)"
 # The page stays still under the history menu (A, item 6), and under a datalist (A).
 SafeGo 'http://localhost:8094/select.html' 2000
 $b = BackXY; RightClick $b[0] $b[1] 1000

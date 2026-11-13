@@ -129,6 +129,10 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   Back or Forward that many times; "Show full history" opens `krunk://history`. Up/Down, Home/End,
   Enter and Esc work in the menu. A disabled button shows no menu. The list is read from the
   engine each time and is never stored (also not in private windows).
+  Middle-click an entry (0.18.0) to open it in a new background tab next to this one; the new
+  tab gets this tab's whole back/forward list with that entry current, this tab stays where it
+  is and the menu stays open. A private tab's copy is private. (With an engine that lacks
+  Krunk's `chromium-clone-navigation.patch` the new tab opens the entry's address only.)
 - **Dropdowns keep the page still (0.8.0):** while a `<select>` list, a datalist's suggestions or
   one of Krunk's menus (⋮, the history menus, tab and bookmark menus) is open, the mouse wheel
   over the page does nothing, so the list stays where its field is; the wheel over the list
@@ -1476,6 +1480,26 @@ How it works (`vpn/`, `app/src/browser/vpn.rs`):
 - Not supported: a manual proxy at the same time (Settings refuses it), UDP through the VPN (QUIC
   falls back to TCP), OpenVPN profiles with a client certificate in a separate file (inline
   `<cert>`/`<key>` work), and the proxy-related Chromium switches in Advanced.
+
+### Stuck page loads (0.18.0)
+
+Two things in the engine's network stack let one hung request hold up others, in any tab:
+a request for an address that another request is still fetching waits for that one's answer,
+up to 20 s (the HTTP cache), and a host gets at most six connections, so six requests that
+never finish (or six open streams) block everything else for that host. Both were measured;
+the table, the mechanisms and what was not measured (Krunk itself on Windows) are in
+[docs/NETWORK.md](docs/NETWORK.md).
+
+- **Around the cache:** a request for an address that another tab has been waiting on for a
+  second is sent with `Cache-Control: no-cache` (as a hard reload), so it does not queue
+  behind the other one.
+- **Sixteen connections per host** instead of six, with the next engine build
+  (`chromium-sockets-per-host.patch`). It gives room; it does not cure a site that never
+  answers.
+- **krunk://tasks** shows each renderer's **Pending** requests and the age of the oldest
+  (`6 (45 s)`); the tab with many old ones is the one to close.
+- **krunk.log** gets a line for requests pending over 30 s: the tab, the host (never the
+  address or its query; nothing for a private tab), the kind and the number. Rate-limited.
 
 ### Request headers
 

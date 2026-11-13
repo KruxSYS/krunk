@@ -1,0 +1,115 @@
+--- a/third_party/blink/public/devtools_protocol/domains/Page.pdl
++++ b/third_party/blink/public/devtools_protocol/domains/Page.pdl
+@@ -943,6 +943,16 @@
+       # Unique id of the entry to navigate to.
+       integer entryId
+ 
++  # Krunk: gives this page (a new tab that has no history of its own yet) a copy of
++  # another page's back/forward list, as Duplicate does, and goes to one of its entries.
++  # Both pages must belong to the same browser context.
++  experimental command krunkCloneNavigationFrom
++    parameters
++      # The DevTools target id of the page whose history is copied.
++      string targetId
++      # Unique id (in the source page's history) of the entry to go to.
++      integer entryId
++
+   # Print page as PDF.
+   command printToPDF
+     parameters
+--- a/content/browser/devtools/protocol_config.json
++++ b/content/browser/devtools/protocol_config.json
+@@ -161,7 +161,7 @@
+             },
+             {
+                 "domain": "Page",
+-                "include": ["enable", "disable", "reload", "navigate", "stopLoading", "getNavigationHistory", "navigateToHistoryEntry", "resetNavigationHistory", "captureScreenshot",
++                "include": ["enable", "disable", "reload", "navigate", "stopLoading", "getNavigationHistory", "navigateToHistoryEntry", "krunkCloneNavigationFrom", "resetNavigationHistory", "captureScreenshot",
+                     "startScreencast", "stopScreencast", "startScreenRecording", "stopScreenRecording", "screencastFrameAck", "handleJavaScriptDialog", "setColorPickerEnabled",
+                     "bringToFront", "setDownloadBehavior", "getAppManifest", "crash", "close", "setWebLifecycleState", "captureSnapshot", "getInstallabilityErrors", "getManifestIcons", "setBypassCSP", "getAppId", "getSubApps", "getSiblingSubApps", "addCompilationCache", "setPrerenderingAllowed", "getAnnotatedPageContent",
+                     "addScriptToEvaluateOnNewDocument", "removeScriptToEvaluateOnNewDocument", "addScriptToEvaluateOnLoad", "removeScriptToEvaluateOnLoad"],
+--- a/third_party/blink/renderer/core/inspector/inspector_protocol_config.json
++++ b/third_party/blink/renderer/core/inspector/inspector_protocol_config.json
+@@ -91,7 +91,7 @@
+             },
+             {
+                 "domain": "Page",
+-                "exclude": ["getNavigationHistory", "navigateToHistoryEntry", "resetNavigationHistory", "captureScreenshot", "startScreencast", "stopScreencast", "screencastFrameAck", "handleJavaScriptDialog", "setColorPickerEnabled",
++                "exclude": ["getNavigationHistory", "navigateToHistoryEntry", "krunkCloneNavigationFrom", "resetNavigationHistory", "captureScreenshot", "startScreencast", "stopScreencast", "screencastFrameAck", "handleJavaScriptDialog", "setColorPickerEnabled",
+                             "getAppManifest", "getAnnotatedPageContent", "setControlNavigations", "processNavigation", "printToPDF", "bringToFront", "setDownloadBehavior", "navigate", "crash", "close", "setWebLifecycleState", "captureSnapshot", "getInstallabilityErrors", "getManifestIcons", "getAppId", "getSubApps", "getSiblingSubApps", "setSPCTransactionMode", "setRPHRegistrationMode", "setPrerenderingAllowed", "startScreenRecording", "stopScreenRecording"],
+                 "pass_associated_data": [
+                     "addScriptToEvaluateOnNewDocument",
+--- a/content/browser/devtools/protocol/page_handler.h
++++ b/content/browser/devtools/protocol/page_handler.h
+@@ -148,6 +148,8 @@
+       int* current_index,
+       std::unique_ptr<NavigationEntries>* entries) override;
+   Response NavigateToHistoryEntry(int entry_id) override;
++  Response KrunkCloneNavigationFrom(const std::string& target_id,
++                                    int entry_id) override;
+   Response ResetNavigationHistory() override;
+ 
+   void CaptureScreenshot(
+--- a/content/browser/devtools/protocol/page_handler.cc
++++ b/content/browser/devtools/protocol/page_handler.cc
+@@ -1348,6 +1348,60 @@
+   return Response::InvalidParams("No entry with passed id");
+ }
+ 
++// Krunk: middle-click in the Back/Forward history menu opens the entry in a new
++// tab that keeps the whole back/forward list. The new tab's controller takes a
++// copy of the source's entries (what Chrome's Duplicate does), then goes to the
++// chosen entry.
++Response PageHandler::KrunkCloneNavigationFrom(const std::string& target_id,
++                                               int entry_id) {
++  Response response = AssureTopLevelActiveFrame();
++  if (response.IsError()) {
++    return response;
++  }
++  scoped_refptr<DevToolsAgentHost> source_host =
++      DevToolsAgentHost::GetForId(target_id);
++  WebContents* source = source_host ? source_host->GetWebContents() : nullptr;
++  WebContents* target = WebContents::FromRenderFrameHost(host_);
++  if (!source || !target || source == target) {
++    return Response::InvalidParams("No other page with that target id");
++  }
++  // A private profile's history never goes to another profile.
++  if (source->GetBrowserContext() != target->GetBrowserContext()) {
++    return Response::ServerError("The pages belong to different profiles");
++  }
++  NavigationController& from = source->GetController();
++  int index = -1;
++  for (int i = 0; i != from.GetEntryCount(); ++i) {
++    if (from.GetEntryAtIndex(i)->GetUniqueID() == entry_id) {
++      index = i;
++      break;
++    }
++  }
++  if (index < 0) {
++    return Response::InvalidParams("No entry with passed id");
++  }
++  response = CheckNavigationAllowed(from.GetEntryAtIndex(index)->GetURL());
++  if (response.IsError()) {
++    return response;
++  }
++  NavigationController& to = target->GetController();
++  // Only a fresh page: its initial entry, or one about:blank, and nothing
++  // pending (CopyStateFrom replaces the whole list).
++  if (to.GetEntryCount() > 1 || to.GetPendingEntry() ||
++      (to.GetLastCommittedEntry() &&
++       !to.GetLastCommittedEntry()->IsInitialEntry() &&
++       !to.GetLastCommittedEntry()->GetURL().IsAboutBlank())) {
++    return Response::ServerError("This page has a history of its own");
++  }
++  to.CopyStateFrom(&from, /*needs_reload=*/true);
++  if (index == to.GetLastCommittedEntryIndex()) {
++    to.LoadIfNecessary();
++  } else {
++    to.GoToIndex(index);
++  }
++  return Response::Success();
++}
++
+ static bool ReturnTrue(NavigationEntry* entry) {
+   return true;
+ }
