@@ -273,10 +273,17 @@ const TOUR = [
   ['setGlobal', (g) => call('wasm_global', { inst: g.I, export: g.globals.find((x) => x.name === '__stack_pointer').index, value: g.globals.find((x) => x.name === '__stack_pointer').value - 16 })],
   ['globalsAfter', (g) => call('wasm_global', { inst: g.I })],
 ]);
+// Krunk shortens older tool results in what it sends: each result is kept here when it is new
+// (the latest one always comes whole). One tour at a time.
+let tourGot = {};
 function tourSteps() {
+  const keep = (n, r) => {
+    if (n === 0) tourGot = {};
+    if (n > 0 && !(TOUR[n - 1][0] in tourGot)) tourGot[TOUR[n - 1][0]] = toolJson(r[n - 1]) !== null ? toolJson(r[n - 1]) : r[n - 1];
+    return tourGot;
+  };
   const steps = TOUR.map((t, n) => (m, r) => {
-    const got = {};
-    for (let i = 0; i < n; i++) got[TOUR[i][0]] = toolJson(r[i]) !== null ? toolJson(r[i]) : r[i];
+    const got = Object.assign({}, keep(n, r));
     const ctx = ((got.memories || {}).contexts || []).find((c) => (c.memories || []).length);
     if (n > 0 && !ctx) return finish('No WebAssembly memory: ' + String(r[0]).slice(0, 200));
     if (ctx) {
@@ -288,8 +295,8 @@ function tourSteps() {
     try { return t[1](got); } catch (e) { return finish('The tour stopped at ' + t[0] + ': ' + e.message + ' after ' + String(r[n - 1]).slice(0, 200)); }
   });
   steps.push((m, r) => {
-    const out = {};
-    TOUR.forEach((t, i) => { out[t[0]] = toolJson(r[i]) !== null ? toolJson(r[i]) : r[i]; });
+    const out = Object.assign({}, keep(TOUR.length, r));
+    // Short for a chat panel; the checks read all of it.
     return finish('TOUR ' + JSON.stringify(out));
   });
   return steps;

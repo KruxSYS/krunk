@@ -38,20 +38,36 @@ impl Browser {
             self.hints_attached.borrow_mut().remove(&tab);
             self.wasm_workers_forget(tab);
         }
-        // Workers only: an out-of-process frame paused this way did not resume in CEF; frames
-        // need no help (their requests follow the override, nohints.js runs in them).
-        let params = if want {
+        view.devtools_method("Target.setAutoAttach", &Self::hints_attach_params(want, off));
+    }
+
+    /// Workers only: an out-of-process frame paused this way did not resume in CEF; frames
+    /// need no help (their requests follow the override, nohints.js runs in them).
+    fn hints_attach_params(on: bool, wait: bool) -> Value {
+        if on {
             json!({
                 "autoAttach": true,
-                "waitForDebuggerOnStart": off,
+                "waitForDebuggerOnStart": wait,
                 "flatten": true,
                 "filter": [{ "type": "iframe", "exclude": true }, { "type": "page", "exclude": true }, {}],
             })
         } else {
             // (Chromium refuses a filter when auto-attach is switched off.)
             json!({ "autoAttach": false, "waitForDebuggerOnStart": false })
-        };
-        view.devtools_method("Target.setAutoAttach", &params);
+        }
+    }
+
+    /// 0.19.0, the WASM inspector: attaches to the tab's workers anew (off, then on), `done`
+    /// when the engine has named the ones there are. The engine names a worker once, when it
+    /// starts: the workers of a page the tab returned to with Back (out of the back/forward
+    /// cache) are not named again without this. Every worker session of the tab is new after it.
+    pub(super) fn hints_reattach(&self, tab: TabId, done: impl FnOnce() + 'static) {
+        let Some(view) = self.tab_view(tab) else { return done() };
+        self.hints_attached.borrow_mut().insert(tab);
+        view.devtools_method("Target.setAutoAttach", &Self::hints_attach_params(false, false));
+        // (Workers that run are not paused by this.)
+        let params = Self::hints_attach_params(true, self.hints_off());
+        view.devtools_call("Target.setAutoAttach", &params, move |_| done());
     }
 
     /// A worker or frame of `tab` was attached (paused): fix it up, then let it run.

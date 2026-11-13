@@ -82,6 +82,8 @@ struct Worker {
     /// for Back (frozen in the back/forward cache, still attached). Not listed until the tab
     /// navigates again.
     asleep: bool,
+    /// The worker's DevTools target (the same when the tab attaches to it again).
+    target: String,
 }
 
 #[derive(Default)]
@@ -103,6 +105,8 @@ pub(super) struct WasmHost {
     contexts: RefCell<HashMap<TabId, Vec<FrameContext>>>,
     workers: RefCell<HashMap<TabId, Vec<Worker>>>,
     worker_seq: Cell<u32>,
+    /// The targets of the workers found asleep, until the tab navigates.
+    asleep: RefCell<HashMap<TabId, std::collections::HashSet<String>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -207,9 +211,12 @@ impl Browser {
                 for w in self.wasm.workers.borrow_mut().get_mut(&tab).into_iter().flatten() {
                     w.asleep = false;
                 }
+                self.wasm.asleep.borrow_mut().remove(&tab);
                 self.wasm.contexts.borrow_mut().remove(&tab);
+                // A new document: the probes of the old one's workers are of no use either
+                // (the workers ended, or sleep with their page).
                 if let Some(s) = self.wasm.sessions.borrow_mut().get_mut(&tab) {
-                    s.probes.retain(|ctx, _| *ctx >= WORKER_CTX_BASE);
+                    s.probes.clear();
                 }
             }
             "Target.attachedToTarget" => {
@@ -223,7 +230,9 @@ impl Browser {
                 let mut all = self.wasm.workers.borrow_mut();
                 let list = all.entry(tab).or_default();
                 list.retain(|w| w.session != session);
-                list.push(Worker { n, session: session.to_string(), url, asleep: false });
+                let target = params.pointer("/targetInfo/targetId").and_then(Value::as_str).unwrap_or("").to_string();
+                let asleep = self.wasm.asleep.borrow().get(&tab).is_some_and(|a| a.contains(&target));
+                list.push(Worker { n, session: session.to_string(), url, asleep, target });
             }
             "Target.detachedFromTarget" => {
                 let Some(session) = params.get("sessionId").and_then(Value::as_str) else { return };
@@ -264,6 +273,7 @@ impl Browser {
 
     /// The tab's browser is new: nothing of the session is left in it.
     pub(super) fn wasm_tab_created(&self, tab: TabId) {
+        self.wasm.asleep.borrow_mut().remove(&tab);
         self.wasm.sessions.borrow_mut().remove(&tab);
         self.wasm.contexts.borrow_mut().remove(&tab);
         self.wasm.workers.borrow_mut().remove(&tab);
@@ -272,6 +282,7 @@ impl Browser {
     /// A tab is gone: the session of an inspected tab, or (an inspector page) the session of
     /// its tab if no other page inspects it.
     pub(super) fn wasm_tab_gone(&self, tab: TabId) {
+        self.wasm.asleep.borrow_mut().remove(&tab);
         self.wasm.sessions.borrow_mut().remove(&tab);
         self.wasm.contexts.borrow_mut().remove(&tab);
         self.wasm.workers.borrow_mut().remove(&tab);
@@ -421,6 +432,24 @@ impl Browser {
 
     /// `list`: the memories of every context that can be reached.
     fn wasm_list(&self, tab: TabId, view: &View, url: String, done: WasmDone) {
+        // While nothing is held in a worker (no probe there: no scan, no freeze to lose), the
+        // tab's workers are asked for anew: the engine does not name the workers of a page the
+        // tab came back to with Back.
+        let in_workers =
+            self.wasm.sessions.borrow().get(&tab).is_some_and(|s| s.probes.keys().any(|c| *c >= WORKER_CTX_BASE));
+        if in_workers {
+            return self.wasm_list_contexts(tab, view, url, done);
+        }
+        self.wasm.workers.borrow_mut().remove(&tab);
+        let weak = self.me.clone();
+        self.hints_reattach(tab, move || {
+            let Some(b) = weak.upgrade() else { return done(Err("Krunk is closing".into())) };
+            let Some(view) = b.tab_view(tab) else { return done(Err("The tab is gone.".into())) };
+            b.wasm_list_contexts(tab, &view, url, done);
+        });
+    }
+
+    fn wasm_list_contexts(&self, tab: TabId, view: &View, url: String, done: WasmDone) {
         let weak = self.me.clone();
         view.devtools_call("Page.getFrameTree", &json!({}), move |r| {
             let Some(b) = weak.upgrade() else { return done(Err("Krunk is closing".into())) };
@@ -486,6 +515,7 @@ impl Browser {
                     .and_then(|l| l.iter_mut().find(|w| WORKER_CTX_BASE + w.n == ctx))
                 {
                     w.asleep = true;
+                    b.wasm.asleep.borrow_mut().entry(tab).or_default().insert(w.target.clone());
                 }
                 info!("tab {tab}: a worker is asleep (of a page kept for Back), not listed");
                 return done(None);
