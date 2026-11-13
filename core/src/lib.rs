@@ -65,6 +65,7 @@ pub mod update;
 pub mod urlclean;
 pub mod useragents;
 pub mod userscripts;
+pub mod wasm;
 pub mod vault;
 pub mod vpn;
 pub mod vpnpeer;
