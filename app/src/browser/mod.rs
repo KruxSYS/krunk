@@ -4032,7 +4032,10 @@ impl WindowEvents for FrameEvents {
         let Ok(popup) = b.popup.try_borrow() else { return };
         let showing = popup.as_ref().is_some_and(|p| p.open());
         drop(popup);
-        let passive = !showing;
+        // An extension's popup keeps the activation it was given (0.17.0): its page may have
+        // fields to type in (a wallet's password). It used to be taken back at once, so
+        // every key went to the page underneath.
+        let passive = !showing && !b.ext_popup_has_activation();
         if passive {
             let win = self.win;
             b.defer(move |b| {

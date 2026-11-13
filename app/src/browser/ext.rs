@@ -260,11 +260,25 @@ impl ExtHost {
 struct BackgroundEvents;
 impl WindowEvents for BackgroundEvents {}
 
-struct ExtPopupEvents;
+struct ExtPopupEvents(std::rc::Weak<Browser>);
 impl WindowEvents for ExtPopupEvents {
     // Activation and focus bounce between the popup, its browser view and the main window
-    // while it opens, so they decide nothing (0.7.0, R21): `ext_popup_tick` watches the mouse
-    // and the foreground window instead.
+    // while it opens, so they decide nothing about closing it (0.7.0, R21): `ext_popup_tick`
+    // watches the mouse and the foreground window instead.
+
+    /// The popup window itself got the keyboard focus (it was activated by a click on it, or
+    /// Windows gave it back): the page in it gets it, so typing goes to its fields (0.17.0).
+    fn got_focus(&self) {
+        if let Some(b) = self.0.upgrade() {
+            b.defer(|b| {
+                let view =
+                    b.ext.popup.try_borrow().ok().and_then(|p| p.as_ref().filter(|p| p.shown).map(|p| p.view.clone()));
+                if let Some(view) = view {
+                    view.focus();
+                }
+            });
+        }
+    }
 }
 
 fn read_json(path: &Path) -> Option<Value> {
@@ -504,6 +518,7 @@ impl Browser {
                         id: id.clone(),
                         manifest_json: serde_json::to_string(&e.manifest).unwrap_or_else(|_| "{}".into()),
                         messages_json: e.messages_json.clone(),
+                        log_all: runtime::log_all(),
                         scripts: scripts
                             .iter()
                             .filter(|cs| !is_main(cs))
@@ -1125,7 +1140,7 @@ impl Browser {
             width: (rect.width * scale).round() as i32,
             height: (rect.height * scale).round() as i32,
         };
-        let window = match Window::create_popup(f.window, Rc::new(ExtPopupEvents)) {
+        let window = match Window::create_popup(f.window, Rc::new(ExtPopupEvents(self.me.clone()))) {
             Ok(w) => w,
             Err(e) => {
                 warning!("extension popup: {e}");
@@ -1221,6 +1236,15 @@ impl Browser {
         p.view.set_bounds(0, 0, r.width, r.height);
     }
 
+    /// Is an extension's popup shown, or being shown right now (its slot is borrowed by the
+    /// code that activates it)? Then the activation it takes from the frame is wanted.
+    pub(super) fn ext_popup_has_activation(&self) -> bool {
+        match self.ext.popup.try_borrow() {
+            Ok(p) => p.as_ref().is_some_and(|p| p.shown),
+            Err(_) => true,
+        }
+    }
+
     pub(super) fn ext_popup_open(&self) -> bool {
         self.ext.popup.try_borrow().ok().is_some_and(|p| p.as_ref().is_some_and(|p| p.shown))
     }
@@ -1298,9 +1322,11 @@ impl Browser {
                     let file = get_str("file").unwrap_or_default();
                     let line = data.get("line").and_then(|l| l.as_u64()).unwrap_or(0);
                     self.ext_error(ext_id, &text, &file, line, caller.end().context_name());
-                } else {
-                    let text: String = text.chars().take(500).collect();
-                    info!("extension {}: {text}", self.ext_name(ext_id));
+                } else if runtime::log_all() {
+                    // KRUNK_EXT_LOG=1: every console level of the extension's contexts.
+                    let text: String = text.chars().take(2000).collect();
+                    let level: String = get_str("level").unwrap_or_default().chars().take(8).collect();
+                    info!("extension {}: [{} {level}] {text}", self.ext_name(ext_id), caller.end().context_name());
                 }
                 Ok(Value::Null)
             }
@@ -2107,6 +2133,9 @@ impl Browser {
                     ),
                 );
             }
+        }
+        if path == "/_krunk/env.json" {
+            return generated("application/json", json!({ "log": runtime::log_all() }).to_string());
         }
         if path == "/_krunk/messages.json" {
             let body = if messages.is_empty() { "{}".to_string() } else { messages };

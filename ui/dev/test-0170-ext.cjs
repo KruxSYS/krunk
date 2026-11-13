@@ -45,6 +45,7 @@ module.exports = function ({ openPage, check }) {
       if (p === '/_krunk/background.json') return send('application/json', JSON.stringify({ boot: '/__krunk_sw__.js', module: !!background.module, install: !!background.install }));
       if (p === '/__krunk_sw__.js') return send('text/javascript', bootstrap(background.script, !!background.module));
       if (p === '/_krunk/messages.json') return send('application/json', '{}');
+      if (p === '/_krunk/env.json') return send('application/json', JSON.stringify({ log: !!background.log }));
       const rel = p.replace(/^\//, '');
       if (files && files[rel] !== undefined) return send(MIME[rel.split('.').pop()] || 'application/octet-stream', files[rel]);
       const file = path.join(FIXTURE, rel);
@@ -163,6 +164,7 @@ module.exports = function ({ openPage, check }) {
     }));
     check(echo.m && echo.m.echo && echo.m.echo.n === 1 && echo.m.name === 'echo' && echo.same, 'runtime.connect: a message goes to the background\'s onConnect port and its answer comes back');
     check(echo.m.sender && echo.m.sender.url.indexOf('chrome-extension://' + ID + '/options.html') === 0 && echo.m.sender.origin === 'chrome-extension://' + ID, 'port.sender is what the host says (Chrome\'s form of the page address)');
+    check(echo.m.left_out === undefined && Array.isArray(echo.m.kept) && echo.m.kept[0] === null && echo.m.kept[1] === 1, 'a message travels as JSON, as in Chrome: a function in it is left out and does not make postMessage throw (' + JSON.stringify(echo.m.kept) + ')');
     await page.evaluate(() => window.__port.disconnect());
     const threw = await page.evaluate(() => { try { window.__port.postMessage(1); return false; } catch (e) { return /disconnected port/.test(e.message); } });
     check(threw, 'postMessage on a disconnected port throws');
@@ -331,6 +333,8 @@ module.exports = function ({ openPage, check }) {
     check(s.unsupported, 'the "Not in Krunk" list is still there');
     // Open details stay open when the list is drawn again with one more error.
     await page.click('.ext[data-id="' + ID + '"] details.more summary');
+    await page.waitForFunction((id) => document.querySelector('.ext[data-id="' + id + '"] details.more').open, ID);
+    await page.waitForTimeout(50);
     exts[0].errors = errs.concat([{ message: 'Uncaught (in promise) Error: third', source: 'popup.js:9', context: 'popup', count: 1 }]);
     await page.evaluate((l) => window.__host.emit({ event: 'extChanged', extensions: l }), exts);
     s = await st();

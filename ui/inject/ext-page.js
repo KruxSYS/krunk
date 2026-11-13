@@ -36,7 +36,8 @@ if (backgroundPage) {
   try { worker = new G.Worker(info.boot, { type: info.module ? 'module' : 'classic', name: info.install ? 'krunk-sw:install' : 'krunk-sw' }); }
   catch (e) { say('log', { level: 'error', text: 'The background worker did not start: ' + (e && e.message || e) }); say('bgReady', {}); return; }
   var running = false;
-  worker.addEventListener('message', function (e) { var d = e.data; if (d && d.__krunk) { running = true; host.postMessage(d.__krunk); } });
+  var parse = JSON.parse;
+  worker.addEventListener('message', function (e) { var d = e.data; if (d && typeof d.__krunk === 'string') { running = true; host.postMessage(parse(d.__krunk)); } });
   // A worker that never ran (its script did not load): the reason, and queued events are let
   // go so nothing waits for ever. A running worker reports its own errors.
   worker.addEventListener('error', function (e) {
@@ -51,6 +52,9 @@ if (backgroundPage) {
 var pending = {}, nextId = 1;
 var listeners = { message: [], storage: [], actionClicked: [], tabUpdated: [], tabActivated: [], tabRemoved: [], alarm: [], installed: [], startup: [], connect: [], windowRemoved: [], windowFocus: [] };
 var manifest = fetchSync('/manifest.json') || {}, messages = fetchSync('/_krunk/messages.json') || {};
+// What the host says about this run: `log` (KRUNK_EXT_LOG=1) sends every console level of the
+// extension's contexts to krunk.log, not only errors.
+var env = fetchSync('/_krunk/env.json') || {};
 function post(cmd, data) { host.postMessage({ cmd: 'ext', ext: extId, op: cmd, data: data === undefined ? null : data }); }
 function call(cmd, data) {
   return new Promise(function (resolve, reject) {
@@ -98,8 +102,7 @@ host.addEventListener('message', function (e) {
 });
 // Errors of this context, for the extension's Errors list on krunk://extensions (0.17.0).
 function report(e, file, line) {
-  var text; try { text = String(e && (e.stack || e.message) || e); } catch (x) { text = 'error'; }
-  post('log', { level: 'error', text: text.slice(0, 2000), file: file || '', line: line || 0 });
+  post('log', { level: 'error', text: typeof e === 'string' ? e.slice(0, 2000) : show(e).slice(0, 2000), file: file || '', line: line || 0 });
 }
 function cb(promise, callback) {
   if (typeof callback === 'function') { promise.then(function (v) { callback(v); }, function (e) { runtime.lastError = { message: String(e && e.message || e) }; try { callback(); } finally { runtime.lastError = undefined; } }); }
@@ -375,14 +378,38 @@ Object.defineProperty(G, 'browser', { value: proxied, configurable: true, writab
 // Uncaught errors, unhandled rejections and console.error of every context of the extension.
 G.addEventListener('error', function (e) { report(e && (e.error || e.message), e && e.filename, e && e.lineno); });
 G.addEventListener('unhandledrejection', function (e) { report(e && e.reason); });
+// A console argument as text. Only plain data is walked: anything else (a window, a DOM
+// node, a class instance) is named, not read. Walking a global object would run every
+// getter on it (hardened extensions replace those with ones that warn or throw).
+function show(a) {
+  try {
+    if (a === null || a === undefined || typeof a !== 'object' && typeof a !== 'function') return String(a);
+    if (typeof a === 'function') return '[function]';
+    if (typeof a.stack === 'string' || typeof a.message === 'string' && typeof a.name === 'string') return String(a.stack || a.message);
+    var plain = function (v) { var p = Object.getPrototypeOf(v); return Array.isArray(v) || p === Object.prototype || p === null; };
+    if (!plain(a)) return Object.prototype.toString.call(a);
+    return JSON.stringify(a, function (k, v) { return v && typeof v === 'object' && !plain(v) ? Object.prototype.toString.call(v) : v; });
+  } catch (x) { return '[unprintable]'; }
+}
+function shown(args) { return Array.prototype.map.call(args, show).join(' ').slice(0, 2000); }
 if (G.console && typeof G.console.error === 'function') {
   var consoleError = G.console.error;
   try {
     G.console.error = function () {
-      try { report(Array.prototype.map.call(arguments, function (a) { return a && (a.stack || a.message) || (typeof a === 'object' ? JSON.stringify(a) : String(a)); }).join(' ')); } catch (x) { /* a value that cannot be shown */ }
+      try { report(shown(arguments)); } catch (x) { /* a value that cannot be shown */ }
       return consoleError.apply(this, arguments);
     };
   } catch (x) { /* a frozen console */ }
+  if (env.log) ['log', 'info', 'warn', 'debug'].forEach(function (level) {
+    var original = G.console[level];
+    if (typeof original !== 'function') return;
+    try {
+      G.console[level] = function () {
+        try { post('log', { level: level, text: shown(arguments) }); } catch (x) { /* never in the way */ }
+        return original.apply(this, arguments);
+      };
+    } catch (x) { /* a frozen console */ }
+  });
 }
 if (inWorker) {
   // The service worker's own globals (a dedicated worker has none of them). The worker is
@@ -415,21 +442,22 @@ if (inWorker) {
 } else {
   // A page. The action popup tells the host its size (the host sizes the window to the
   // content; it ignores this from any other page).
-  var doc = G.document, lastSize = '';
+  // (Taken now: a hardened page removes these globals later, and the size is measured later.)
+  var doc = G.document, lastSize = '', computed = G.getComputedStyle.bind(G), Resize = G.ResizeObserver, num = G.parseFloat;
   // The window starts at the largest size the popup may have (hidden), so the body's own
   // width (popups set one) and height are the content's; a body without a width keeps the
   // viewport's. Reported on load and whenever the body resizes.
   var sendSize = function () {
     var b = doc.body, de = doc.documentElement; if (!b || !de) return;
-    var cs = G.getComputedStyle(b), ds = G.getComputedStyle(de);
-    var mx = (parseFloat(cs.marginLeft) || 0) + (parseFloat(cs.marginRight) || 0) + (parseFloat(ds.marginLeft) || 0) + (parseFloat(ds.marginRight) || 0);
-    var my = (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0) + (parseFloat(ds.marginTop) || 0) + (parseFloat(ds.marginBottom) || 0);
+    var cs = computed(b), ds = computed(de);
+    var mx = (num(cs.marginLeft) || 0) + (num(cs.marginRight) || 0) + (num(ds.marginLeft) || 0) + (num(ds.marginRight) || 0);
+    var my = (num(cs.marginTop) || 0) + (num(cs.marginBottom) || 0) + (num(ds.marginTop) || 0) + (num(ds.marginBottom) || 0);
     var w = Math.ceil(b.offsetWidth + mx), h = Math.ceil(Math.max(b.offsetHeight + my, b.scrollHeight + my));
     var key = w + 'x' + h; if (key === lastSize || !w || !h) return; lastSize = key;
     post('popupSize', { width: w, height: h });
   };
   G.addEventListener('load', function () { sendSize(); timer(sendSize, 100); timer(sendSize, 500); });
-  if (typeof G.ResizeObserver === 'function') doc.addEventListener('DOMContentLoaded', function () { if (doc.body) new G.ResizeObserver(sendSize).observe(doc.body); });
+  if (typeof Resize === 'function') doc.addEventListener('DOMContentLoaded', function () { if (doc.body) new Resize(sendSize).observe(doc.body); });
   doc.addEventListener('keydown', function (e) { if (e.key === 'Escape') post('closePopup', {}); });
   // window.close() of a page in a view of its own (the popup, a popup window): the host
   // closes the window.

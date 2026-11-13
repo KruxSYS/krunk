@@ -1249,6 +1249,8 @@ pub struct BundledExtension {
     pub manifest_json: String,
     pub messages_json: String,
     pub scripts: Vec<BundledScript>,
+    /// Every console level of the world goes to the log, not only errors (`KRUNK_EXT_LOG=1`).
+    pub log_all: bool,
 }
 
 /// Builds the script that `Page.addScriptToEvaluateOnNewDocument` installs in an isolated
@@ -1269,10 +1271,11 @@ pub fn content_bundle(shim: &str, exts: &[BundledExtension]) -> String {
     out.push_str(";\n");
     for e in exts {
         out.push_str(&format!(
-            "(function () {{ var ext = __krunkShim({id}, {manifest}, {messages});\n",
+            "(function () {{ var ext = __krunkShim({id}, {manifest}, {messages}, {log});\n",
             id = json_str(&e.id),
             manifest = e.manifest_json,
             messages = if e.messages_json.is_empty() { "{}" } else { &e.messages_json },
+            log = e.log_all,
         ));
         for s in &e.scripts {
             out.push_str(&format!(
@@ -1443,6 +1446,7 @@ mod tests {
             id: id.into(),
             manifest_json: "{}".into(),
             messages_json: String::new(),
+            log_all: false,
             scripts: vec![],
         };
         let b = content_bundle("function () {}", std::slice::from_ref(&e));
@@ -1812,6 +1816,7 @@ mod tests {
             id: "a".repeat(32),
             manifest_json: "{\"name\":\"x\"}".into(),
             messages_json: String::new(),
+            log_all: false,
             scripts: vec![BundledScript {
                 id: "a".repeat(32),
                 matches: vec!["<all_urls>".into()],
@@ -1840,6 +1845,7 @@ mod tests {
             id: "a".repeat(32),
             manifest_json: "{}".into(),
             messages_json: String::new(),
+            log_all: false,
             scripts: vec![BundledScript {
                 id: "a".repeat(32),
                 matches: vec!["<all_urls>".into()],
