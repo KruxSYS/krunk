@@ -1,0 +1,22 @@
+<!doctype html>
+<!-- The WASM inspector's check of a shared memory (no module: a WebAssembly.Memory made with
+     shared: true, as a threaded program has). 2024 (i32) is at address 64; "Grow" adds a page and
+     puts 2025 at 65600 (0x10040). The title carries the values: "shared pages=1 a=2024 b=0". -->
+<html><head><meta charset="utf-8"><title>shared</title>
+<style>body { font: 18px "Segoe UI", sans-serif; margin: 32px; } .v { font: bold 28px ui-monospace, Consolas, monospace; } button { font: inherit; padding: 4px 12px; }</style></head><body>
+<h1>A shared WebAssembly memory</h1>
+<p>Pages <span class="v" id="pages">?</span> &nbsp; i32 at 0x40 <span class="v" id="a">?</span> &nbsp; i32 at 0x10040 <span class="v" id="b">?</span></p>
+<p><button id="grow">Grow (+1 page)</button></p>
+<script>
+'use strict';
+const mem = new WebAssembly.Memory({ initial: 1, maximum: 4, shared: true });
+new DataView(mem.buffer).setInt32(64, 2024, true);
+document.getElementById('grow').onclick = () => { if (mem.buffer.byteLength < 4 * 65536) { mem.grow(1); if (!new DataView(mem.buffer).getInt32(65600, true)) new DataView(mem.buffer).setInt32(65600, 2025, true); } };
+setInterval(() => {
+  const dv = new DataView(mem.buffer), pages = mem.buffer.byteLength / 65536;
+  const a = dv.getInt32(64, true), b = pages > 1 ? dv.getInt32(65600, true) : 0;
+  document.getElementById('pages').textContent = pages; document.getElementById('a').textContent = a; document.getElementById('b').textContent = b;
+  document.title = 'shared pages=' + pages + ' a=' + a + ' b=' + b;
+}, 100);
+</script>
+</body></html>

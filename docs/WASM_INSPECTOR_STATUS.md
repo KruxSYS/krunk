@@ -58,9 +58,77 @@ memory, the hook fallback, a back navigation to a page with a worker.
 | Rust→WASM test app | `scripts/vm-www/wasm-game/`: `src/lib.rs`, `build.rs`, `Cargo.toml`, `Cargo.lock`, `build.sh` (`cargo build --release --target wasm32-unknown-unknown`; `./build.sh --check` builds from scratch into a temporary directory and compares with the committed `game.wasm`: identical), `index.html`, `game.js`, `worker.js` | the e2e check runs against it | done: health on a button (Hit/Heal), score (f32), gold behind a pointer, `memory.grow` on a button (a marker 4242 in the new page), a mutable exported global (`__stack_pointer`), an immutable one (`VERSION`), worker variant (`index.html?worker`). Note: stable Rust can't declare a mutable WebAssembly global; the stack pointer, exported by a linker flag in `build.rs`, is the one a Rust module has |
 | Security rules and caps | `wasm::inspectable` (never Krunk's own pages; `wasm_call`, `wasm_hook`); only `Page::Wasm` may send the requests (`protocol.rs`); caps in `LIMITS` (probe) and the constants of `core::wasm` | core `pages_expressions_and_errors`, `the_probe_has_the_same_limits…`, protocol tests; page "a tab on one of Krunk's own pages: says so", "krunk://wasm itself can't compile WebAssembly" | kept. New caps: 256 instances per context, 2000 exports listed per instance, names cut to 200 characters, a global's value text ≤ 64 characters, export place < 1,000,000. "Refused while a password or card field holds a value" is, as before, a rule of the **agent's `wasm_*` tools only** (`app/src/browser/agent/page.rs: tool_wasm`); the page and `GM.wasm` never had it |
 
-Not part of this round (the next milestone): `GM.wasm` and the agent's `wasm_*` tools know
-nothing of instances and globals. They compile and pass as before; the agent's `wasm_memories`
-answer is kept in its old shape (the host's `instances` are taken out for it).
+## The three surfaces, operation by operation
+
+One path for all three: a typed request (`core/src/wasm.rs: WasmReq`, checked by `WasmReq::check`)
+→ the host's session (`app/src/browser/wasm.rs: wasm_call`) → the probe
+(`ui/inject/wasm-probe.js`). Where each surface enters it:
+- **UI** (`krunk://wasm`): `ui/pages/wasm.js: call` → `Request::WasmCall` (`protocol.rs`, only
+  from `Page::Wasm`) → `dispatch_wasm` → `wasm_call`.
+- **Script API** (`GM.wasm`): `ui/inject/userscript-loader.js: wasmApi` builds `{ctx, req}` →
+  the script binding → `app/src/browser/userscripts.rs` (`GmCall::Wasm`: the grant is read from
+  the stored script) → `core::userscripts::wasm_body` (→ `WasmReq::parse`) → `wasm_call`; the
+  answer returns through `core::userscripts::gm_reply`.
+- **AI tool** (`wasm_*`): `core/src/agent/tools.rs` (schemas) → `app/src/browser/agent/page.rs:
+  tool_wasm` (the password/card refusal) → `core::wasm::agent_request` (→ `WasmReq::parse`) →
+  `wasm_call`; `agent_trim_instances` shortens the instance lists of `wasm_memories`.
+
+Tests named below: **page** = `ui/dev/test-0190-wasm.cjs`; **probe** / **loader** =
+`ui/dev/test-wasm-probe.cjs` (its `loader:` checks run the real loader and compare every body
+sent with `ui/dev/wasm-loader-cases.json`, which the core test
+`userscripts::gm_wasm_bodies_from_the_shared_file` passes through `wasm_body`); **agent** =
+`ui/dev/test-wasm-agent.cjs` (the mock provider's scenarios played against the real probe and the
+test game; user scripts run through the real loader; its translation of tool calls is checked
+against `ui/dev/wasm-agent-cases.json`, which the core test
+`wasm::agent_cases_from_the_shared_file` runs through `agent_request` and the tools' schemas);
+**e2e** = `ui/dev/test-wasm-e2e.cjs`.
+
+| Operation | UI | Script API | AI tool |
+|---|---|---|---|
+| Enumerate memories (page, frames, workers) | Memories list, **Find memories**. page "lists the memory with its size"; e2e (page, worker) | `memories()`. loader "memories() is a flat list"; agent "GM.wasm: memories() and instances()" | `wasm_memories`. agent "wasm_memories: the memory (17 pages) and the instance…" |
+| Enumerate instances and their exports | Instances list. page "instances: …" | `instances()` (added). loader "instances() asks for the list…" (a worker's instance); agent as above | `wasm_memories` (added: instances in a short form). core `the_agent_gets_a_short_form_of_the_instances`; agent as above |
+| Read/write `i8 u8 i16 u16 i32 u32 i64 u64 f32 f64` | watch list (type select, Enter writes); scans in all ten. page "typing a value and Enter writes it"; probe "read i32/i64/f32", "write u64" | `read(o)`, `write(o)`. loader "write u8 / i64 / f64"; agent "GM.wasm: write and read of all thirteen types" | `wasm_read`, `wasm_write`. core cases (every type); agent "wasm_write and reads of i8 … utf16" |
+| Read/write bytes | hex view (type hex digits). page "typing two hex digits writes the byte" | `read/write` type `bytes`, `bytes(o)` (added). loader "write bytes", "bytes({mem, addr})…"; agent "GM.wasm: bytes() (hex read)" | `wasm_read` / `wasm_write` type `bytes` (write added). agent "wasm_read type bytes: a 64-byte hex window" |
+| Read/write UTF-8 | watch list type `utf8` (32 bytes). probe "read utf8 up to the NUL" | `read/write` type `utf8`. loader "write utf8"; agent thirteen types | `wasm_read` / `wasm_write` type `utf8`. agent thirteen types |
+| Read/write UTF-16 | **not in the UI** (the watch list offers the number types and `utf8`; the hex view shows the bytes) | `read/write` type `utf16`. loader "write utf16", "read utf16 with a length"; agent thirteen types | `wasm_read` / `wasm_write` type `utf16`. agent thirteen types |
+| Hex read | Hex view, go to address, Live. page "go to 0x800…", "grow: the hex view reaches the last row" | `bytes(o)`; `read` type `bytes` | `wasm_read` type `bytes` with `length` |
+| First scan: exact | Find "Exact value". page "first scan: 2 addresses" | `scan({kind: 'exact'})`. agent "GM.wasm: scan exact, next …" | `wasm_scan` mode first. agent "wasm_scan first exact → next decreased → wasm_results" |
+| First scan: range | "Value between". probe "f32 range scan" | `scan({kind: 'range', value, to})`. loader "scan (range)"; agent "GM.wasm: scan range and unknown, discard" | `wasm_scan` kind range. agent "wasm_scan first: range, and unknown initial value…" |
+| First scan: unknown initial value | "Unknown initial value". page "an unknown-value scan takes a snapshot" | `scan({kind: 'unknown'})`. loader "scan (unknown initial value)"; agent as above | `wasm_scan` kind unknown. agent as above |
+| Next scan: changed / unchanged / increased / decreased / exact | Find select after a first scan. page "next scan narrows to 1 address" (decreased), "grow: a next scan…" (increased); probe (changed, increased, decreasedBy) | `next({scan, kind})`. loader "next (changed / unchanged / increased / decreased)", "next (exact, in a worker)"; agent "GM.wasm: scan exact, next decreased / exact / unchanged / increased / changed" | `wasm_scan` mode next. core cases (all five); agent "wasm_scan next: exact, unchanged, increased, changed each keep the address" |
+| Result lists | results table (100 at a time, Show more to 1000). page "the results list addresses in hex", "a refresh changes the values in place" | `results({scan, offset, limit})`. loader "results" | `wasm_results` (≤ 200). core cases; agent |
+| Freeze / unfreeze | Freeze checkbox. page "a frozen value is written back", "Remove ends the freeze" | `freeze(o)`, `unfreeze(n)`, `frozen()` (added). loader "freeze through a pointer path…", "unfreeze takes the freeze's number", "frozen()"; agent "GM.wasm: pointer path, write, read, freeze (holds through a hit), frozen, unfreeze" | `wasm_freeze`, `wasm_unfreeze`. agent "wasm_write, wasm_read, wasm_freeze", "wasm_unfreeze", health scenario |
+| Watch list | Watch list with labels, Export/Import. page export/import checks | `watch(entries, ctx)` (added: many values in one call; the list itself is the script's). loader "watch(entries, ctx)…"; agent "GM.wasm: watch (address, pointer path, and an error per entry)" | `wasm_watch` (added, ≤ 32 entries). core cases; agent "wasm_watch: the frozen health after a hit (999), the gold through the pointer, raw bytes" |
+| Pointer/offset entries | `0x500 > 8` in the watch list. page "a pointer path is followed" | `where: {base, offsets}` wherever `addr` is taken. loader "ctx and a pointer path pass through" | `offsets` next to `addr`. core cases; agent "wasm_read through a pointer path (offsets [8]) reads the gold" |
+| Across `memory.grow` | sizes follow, results/watch/freeze go on. page "grow: …" (8 checks) | nothing to call: the same numbers stay valid. agent "GM.wasm across memory.grow: the freeze, the new page, the old results, a next scan, 18 pages" | the same. agent "memory.grow: an address past the end is refused before, read after (4242); the freeze holds through it", "…the result list from before and a next scan on it" |
+| Globals: read | globals table (live). page "globals: the table lists them…" | `globals({inst})`, `instances()` (added). loader "globals({inst, ctx})"; agent "GM.wasm: globals(), setGlobal()…" | `wasm_global` without `value` (added), `wasm_memories`. core cases; agent "wasm_global: reads the globals, writes the mutable one" |
+| Globals: write | Enter in the table. page "globals: Enter writes a mutable global…" | `setGlobal({inst, export, value})` (added). loader "setGlobal(…) gives the value afterwards (a name is not sent)"; agent as above (the constant one rejects) | `wasm_global` with `export` and `value` (added). core cases; agent as above |
+
+Verdict: every operation of the list is on all three surfaces and tested there, with one
+exception stated in the table: **UTF-16 text has no control in the UI** (scripts and tools read
+and write it; the UI shows such bytes in the hex view). Scans in the UI and the tools are for
+the ten number types (text is not scanned for on any surface).
+
+**Granting a user script.** `// @grant GM.wasm` (or `GM_wasm`) in the script's metadata. There is
+no per-grant prompt: the user grants by installing the script in `krunk://scripts` (the source
+is in front of them) and sees the tag **WASM memory** on such a script in the list (page test
+"a script with the grant has the "WASM memory" tag…"). Without the grant the script's `GM.wasm`
+and `GM_wasm` are `undefined` (loader "a script without the grant gets neither"; agent "a script
+without @grant GM.wasm has no GM.wasm and no GM_wasm"), and the host refuses a call anyway (it
+reads the grant from the stored script: `userscripts.rs`, core `gm_wasm_grant_call_and_reply`).
+
+**Security rules per surface** (unchanged by this round; decided and written down in
+`docs/WASM_INSPECTOR.md`, "Security notes"): never on Krunk's own pages (all three); typed,
+checked requests (all three); the refusal while a password or card field holds a value stays
+with the agent's tools alone, because only there does what is read leave the computer (to the
+model's provider); a user script already runs inside the page, and the page is the user looking
+at their own tab. Results are scrubbed and capped (8,000 characters) for the agent only.
+
+**Limits:** `docs/WASM_INSPECTOR.md`, "Limits" (scan 512 MiB and 4,194,304 addresses; results
+1000 per request, 200 for the agent; freeze interval 50 ms; 3 s set-up, 10 s per call, 120 s per
+scan from the page and scripts, 10 s for an agent tool; `wasm_watch` 32 entries). Core test
+`the_probe_has_the_same_limits_and_takes_what_the_host_sends` keeps the numbers of the probe and
+of core the same.
 
 ## Checklist for a run in Krunk on the Windows VM
 

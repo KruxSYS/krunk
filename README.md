@@ -991,7 +991,8 @@ macro runner; `Menu::Page` for tabs; `Menu::Panel` for the panel), and `TabMenu`
 - **Input:** click, type_text, fill_fields, select_option, press_keys, scroll, wait_for.
 - **Page changes:** eval_js, edit_page, set_title.
 - **WebAssembly memory (0.19.0):** wasm_memories, wasm_read, wasm_write, wasm_scan (mode first
-  or next), wasm_results, wasm_freeze, wasm_unfreeze (see "WASM memory inspector").
+  or next), wasm_results, wasm_freeze, wasm_unfreeze, wasm_watch, wasm_global (see "WASM memory
+  inspector").
 - **Tabs:** navigate, back, forward, reload, open_tab, switch_tab, close_tab, list_tabs.
 - **Settings:** get_settings, set_setting, set_new_tab_background_url (0.15.0: an https picture,
   at most 15 MB, PNG/JPEG/WebP/GIF/AVIF by its first bytes, stored like one you pick; no extra
@@ -1199,51 +1200,16 @@ its last inspector page closes (scans and freezes are dropped then). A navigatio
 document's scans and freezes by itself. The inspector works in private tabs (its page opens as a
 private tab) and never on Krunk's own pages.
 
-**User scripts: `GM.wasm`** (`@grant GM.wasm` or `GM_wasm`; every function returns a promise; a
-script only reaches the memories of its own tab):
-
-| Function | Arguments | Resolves to |
-|---|---|---|
-| `GM.wasm.memories()` | – | `[{ctx, kind, url, mem, bytes, pages, shared}]` |
-| `GM.wasm.read(o)` | `{mem, addr, type, length?}` | the value (`i64`/`u64` as decimal strings, `bytes` as an array, `utf8`/`utf16` as text) |
-| `GM.wasm.write(o)` | `{mem, addr, type, value}` | the number of bytes written |
-| `GM.wasm.scan(o)` | `{mem, type, kind, value?, to?, align?, epsilon?}` | `{scan, count, truncated, scannedBytes, snapshot}` |
-| `GM.wasm.next(o)` | `{scan, kind, value?, to?}` | the same |
-| `GM.wasm.results(o)` | `{scan, offset?, limit?}` | `{count, rows: [{addr, value, previous}]}` |
-| `GM.wasm.freeze(o)` | `{mem, addr, type, value?}` | the freeze's number |
-| `GM.wasm.unfreeze(n)` | the freeze's number | `true` if it was frozen |
-
-Every `o` may carry `ctx` (a frame or worker from `memories()`; default the page), and
-`where: {base, offsets}` instead of `addr` for a pointer path. Errors reject the promise
-(`no memory 3`, an address past the end, a request over a limit).
-
-```js
-// ==UserScript==
-// @name   Keep the gold
-// @match  https://game.example/*
-// @grant  GM.wasm
-// ==/UserScript==
-(async () => {
-  const [m] = await GM.wasm.memories();
-  const s = await GM.wasm.scan({ mem: m.mem, type: 'i32', kind: 'exact', value: 250 });
-  const { rows } = await GM.wasm.results({ scan: s.scan });
-  if (rows.length === 1) await GM.wasm.freeze({ mem: m.mem, addr: rows[0].addr, type: 'i32', value: 9999 });
-})();
-```
-
-**AI agent tools** (page tools with `eval_js`'s limits: refused on Krunk's own pages and while
-a password or card field holds a value; results are capped and scrubbed like every page tool's):
-
-| Tool | Does |
-|---|---|
-| `wasm_memories` | lists the memories per context |
-| `wasm_read` / `wasm_write` | one value at an address or pointer path (`addr`, `offsets`) |
-| `wasm_scan` | `mode: first` (mem, type, kind, value) or `mode: next` (scan, kind, value) |
-| `wasm_results` | a scan's addresses with the value now and before (at most 200 per call) |
-| `wasm_freeze` / `wasm_unfreeze` | holds a value / stops holding it |
-
-A scan the agent starts must finish within the tool time limit (10 s). Freezes the agent set stay
-until the tab navigates or closes, or an inspector page for the tab is closed.
+**User scripts and the AI agent.** The same operations are there for user scripts as `GM.wasm`
+(`// @grant GM.wasm`; a script with it is tagged **WASM memory** in `krunk://scripts`; without the
+grant `GM.wasm` is `undefined`) and for the AI agent as the `wasm_*` tools (`wasm_memories`,
+`wasm_read`, `wasm_write`, `wasm_scan`, `wasm_results`, `wasm_freeze`, `wasm_unfreeze`,
+`wasm_watch`, `wasm_global`). All three go through the same checked requests and the same probe.
+The agent's tools are refused while a password or card field of the page holds a value (what
+they read goes to the model's provider); the page and user scripts are not (a user script runs
+in the page anyway). The full reference, with every function, its arguments, results, errors, the
+limits and a worked example script: [`docs/WASM_INSPECTOR.md`](docs/WASM_INSPECTOR.md). What is
+tested and what was shown on Windows: `docs/WASM_INSPECTOR_STATUS.md`.
 
 ### Ad and tracker blocking
 - **Engine:** Brave's `adblock` engine with seven bundled lists: EasyList, EasyPrivacy, and the
