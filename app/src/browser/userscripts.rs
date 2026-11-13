@@ -292,6 +292,7 @@ impl Browser {
             return;
         };
         let op = call.op();
+        let call_nonce = call.nonce().to_string();
         match call {
             GmCall::Set { key, value, .. } => {
                 if serde_json::from_str::<Value>(&value).is_err() {
@@ -356,6 +357,43 @@ impl Browser {
                 if let Some((_, ops)) = opened {
                     self.apply(ops);
                 }
+            }
+            GmCall::Wasm { id, body, .. } => {
+                // The answer goes to the document the call came from (a frame's script too).
+                let context = params.get("executionContextId").and_then(Value::as_i64);
+                let Ok(id) = id.parse::<u32>() else { return };
+                let granted = self
+                    .store
+                    .borrow()
+                    .userscript(&script)
+                    .ok()
+                    .flatten()
+                    .and_then(|r| us::parse_meta(&r.source).ok())
+                    .is_some_and(|m| us::grants_wasm(&m));
+                let weak = self.me.clone();
+                let binding = self.userscripts_binding();
+                let nonce = call_nonce;
+                let answer = move |r: Result<Value, String>| {
+                    let Some(view) = weak.upgrade().and_then(|b| b.tab_view(tab)) else { return };
+                    let mut params = json!({
+                        "expression": us::gm_reply(&binding, &nonce, id, &r),
+                        "silent": true, "returnByValue": true,
+                    });
+                    if let Some(c) = context {
+                        params["contextId"] = json!(c);
+                    }
+                    view.devtools_call("Runtime.evaluate", &params, |_| {});
+                };
+                if !granted {
+                    warning!("tab {tab}: userscript {script} wasm: no @grant GM.wasm, refused");
+                    return answer(Err("GM.wasm needs @grant GM.wasm".into()));
+                }
+                match us::wasm_body(&body) {
+                    Ok((ctx, req)) => self.wasm_call(tab, ctx, req, Box::new(answer)),
+                    Err(e) => answer(Err(e)),
+                }
+                // (Not logged per call: a script may read every frame.)
+                return;
             }
             GmCall::Ran { .. } => {
                 if !private {

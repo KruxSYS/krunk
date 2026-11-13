@@ -38,15 +38,15 @@ module.exports = function ({ openPage, check, sent, lastSent, emit, shot }) {
   async function testSessionUsage(browser) {
     console.log('0.16.0: Session usage in the ⋮ menu');
     // (With the update item, as the bound always was: 670 before this row, test-ui's TabWindows.)
-    const { page, errors } = await popup(browser, 280, 700, { kind: 'menu', zoom: 1, canReopen: true, hasVideo: true, update: '0.16.1' });
+    const { page, errors } = await popup(browser, 280, 730, { kind: 'menu', zoom: 1, canReopen: true, hasVideo: true, update: '0.16.1' });
     const labels = await page.$$eval('.item .label', (ns) => ns.map((n) => n.textContent));
     const at = labels.indexOf('Session usage');
     check(at > 0 && labels[at - 1] === 'Cookies and site data' && labels[at + 1] === 'Extensions', '"Session usage" comes after "Cookies and site data" (' + labels.slice(at - 1, at + 2).join(' | ') + ')');
     check(labels.filter((l) => l === 'Session usage').length === 1, 'once');
     const fits = await page.evaluate(() => ({ bottom: document.getElementById('root').getBoundingClientRect().bottom, scroll: document.documentElement.scrollHeight }));
-    check(fits.bottom <= 700 && fits.scroll <= 700, 'the menu with the update item fits its 280x700 bound (' + fits.bottom + ' px)');
+    check(fits.bottom <= 730 && fits.scroll <= 730, 'the menu with the update item fits its 280x730 bound (' + fits.bottom + ' px)');
     const resize = await lastSent(page, 'popupResize');
-    check(resize && resize.height <= 700 && resize.height > 600, 'it asks the host for its own height (' + (resize && resize.height) + ' px)');
+    check(resize && resize.height <= 730 && resize.height > 600, 'it asks the host for its own height (' + (resize && resize.height) + ' px)');
     await shot(page, '0160-menu-session-usage.png');
     await page.locator('.item', { hasText: 'Session usage' }).click();
     const open = await lastSent(page, 'openPage');
@@ -59,7 +59,7 @@ module.exports = function ({ openPage, check, sent, lastSent, emit, shot }) {
     const s = await shell(browser, 1100);
     await s.page.click('#menu');
     const sp = await lastSent(s.page, 'showPopup');
-    check(sp && sp.popup === 'menu' && sp.rect.width === 280 && sp.rect.height === 700, 'the shell asks for the menu with 280x700 (' + JSON.stringify(sp && sp.rect) + ')');
+    check(sp && sp.popup === 'menu' && sp.rect.width === 280 && sp.rect.height === 730, 'the shell asks for the menu with 280x730 (' + JSON.stringify(sp && sp.rect) + ')');
     check(s.errors.length === 0, 'shell: no errors (' + s.errors.join('; ') + ')');
     await s.page.context().close();
   }

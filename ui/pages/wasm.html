@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<!-- 0.15.0: the theme colour from the first frame (CSP allows exactly this block by its hash). -->
+<style>html,body{background:#f3f4f6}@media (prefers-color-scheme:dark){html,body{background:#1f2023}}</style>
+<title>WASM memory inspector</title>
+<link rel="stylesheet" href="shared/common.css">
+<link rel="stylesheet" href="shared/page.css">
+<link rel="stylesheet" href="wasm.css">
+</head>
+<body>
+<div class="page">
+  <div class="page-header">
+    <h1>WASM memory inspector</h1>
+    <button id="reload" class="btn">Find memories</button>
+  </div>
+  <p class="site-line"><span id="tab-title" class="tab-title"></span> <span id="tab-url" class="muted"></span>
+    <span id="private" class="private-tag" hidden>Private tab</span></p>
+  <p id="problem" class="warn" hidden></p>
+
+  <h2>Memories</h2>
+  <div class="card" id="memories"><div class="empty">Looking for WebAssembly memories…</div></div>
+  <p class="muted note"><span id="unreachable"></span>
+    Nothing found although the page uses WebAssembly?
+    <button id="hook" class="link-btn">Hook WebAssembly and reload the tab</button><span id="hook-on" hidden> The hook is on:
+    memories are caught as the page makes them. <button id="hook-off" class="link-btn">Remove the hook and reload</button></span></p>
+
+  <h2>Instances</h2>
+  <div class="card" id="instances"><div class="empty">Looking for WebAssembly instances…</div></div>
+  <div class="card scroll-x" id="instance-card" hidden>
+    <div class="inst-head"><span id="instance-name" class="name"></span> <span id="instance-memories"></span></div>
+    <table class="grid" id="globals-table"><thead><tr><th>Exported global</th><th>Type</th><th>Value</th></tr></thead>
+      <tbody id="globals"></tbody></table>
+    <p id="instance-others" class="muted small inst-others"></p>
+  </div>
+
+  <h2>Scan <span id="scan-memory" class="muted small"></span></h2>
+  <div class="card pad">
+    <div class="bar" id="scan-bar">
+      <label>Type <select id="scan-type" aria-label="Value type"></select></label>
+      <label>Find <select id="scan-kind" aria-label="What to look for"></select></label>
+      <input id="scan-value" type="text" spellcheck="false" autocomplete="off" placeholder="Value" aria-label="Value">
+      <input id="scan-to" type="text" spellcheck="false" autocomplete="off" placeholder="to" aria-label="Upper end of the range" hidden>
+      <button id="scan-first" class="btn primary">First scan</button>
+      <button id="scan-next" class="btn" disabled>Next scan</button>
+      <button id="scan-new" class="btn" disabled>New scan</button>
+    </div>
+    <p id="scan-status" class="muted small" role="status">Choose a memory, then scan for a value the page shows.</p>
+  </div>
+  <div class="card scroll-x" id="results-card" hidden>
+    <table class="grid" id="results-table"><thead><tr><th>Address</th><th>Value</th><th>Previous</th><th></th></tr></thead>
+      <tbody id="results"></tbody></table>
+    <div class="more"><button id="results-more" class="link-btn" hidden>Show more</button></div>
+  </div>
+
+  <h2>Watch list <button id="watch-export" class="link-btn">Export</button> <button id="watch-import" class="link-btn">Import</button></h2>
+  <div class="card scroll-x">
+    <table class="grid" id="watch-table"><thead><tr><th>Label</th><th>Address</th><th>Type</th><th>Value</th><th>Freeze</th><th></th></tr></thead>
+      <tbody id="watch"></tbody></table>
+    <div class="bar add">
+      <input id="add-where" type="text" spellcheck="false" autocomplete="off" placeholder="Address (0x1F40) or pointer path (0x400 &gt; 8 &gt; 0)" aria-label="Address or pointer path">
+      <select id="add-type" aria-label="Value type"></select>
+      <button id="add-watch" class="btn">Add</button>
+    </div>
+  </div>
+
+  <h2>Hex view <span id="hex-memory" class="muted small"></span></h2>
+  <div class="card">
+    <div class="bar add">
+      <input id="hex-goto" type="text" spellcheck="false" autocomplete="off" placeholder="Go to address (0x…)" aria-label="Go to address">
+      <button id="hex-go" class="btn">Go</button>
+      <button id="hex-prev" class="btn" title="Previous page">◀</button>
+      <button id="hex-next" class="btn" title="Next page">▶</button>
+      <label class="check"><input id="hex-live" type="checkbox" checked> Live</label>
+    </div>
+    <div id="hex" class="hx-view" tabindex="0" aria-label="Memory bytes; type hex digits to change the selected byte"></div>
+    <div id="hex-status" class="hx-status">–</div>
+  </div>
+  <p class="muted note">Values are little-endian, as WebAssembly stores them. A frozen value is written back about 20 times
+    a second by the page's own timers (slower while its tab is in the background). Scans, freezes and this list live
+    in memory only: they end with the tab. Nothing here hides the inspection from the page. A memory that grows
+    (<code>memory.grow</code>) keeps its number, its scans, its watch entries and its frozen values. A global's value is
+    written when you press Enter; mutable globals only.</p>
+</div>
+
+<dialog id="io">
+  <form method="dialog">
+    <h2 id="io-title">Watch list</h2>
+    <textarea id="io-text" rows="12" spellcheck="false" aria-label="Watch list as JSON"></textarea>
+    <p id="io-error" class="field-error" role="alert"></p>
+    <div class="buttons">
+      <label class="file-btn btn" id="io-file-label">Open file…<input id="io-file" type="file" accept=".json,application/json" hidden></label>
+      <button type="button" class="btn" id="io-save">Save as file</button>
+      <button type="button" class="btn" id="io-copy">Copy</button>
+      <button type="button" class="btn" value="cancel" id="io-cancel">Close</button>
+      <button type="button" class="btn primary" id="io-ok">Import</button>
+    </div>
+  </form>
+</dialog>
+<script src="shared/bridge.js"></script>
+<script src="shared/page.js"></script>
+<script src="wasm.js"></script>
+</body>
+</html>

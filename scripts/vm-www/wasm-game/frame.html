@@ -1,0 +1,9 @@
+<!doctype html>
+<!-- The WASM inspector's check of a same-process frame: the game runs in an iframe of the same
+     origin; this page itself has no WebAssembly. The inspector must list the memory and the
+     instance as "Frame …/wasm-game/index.html". -->
+<html><head><meta charset="utf-8"><title>WASM game in a frame</title>
+<style>body { font: 16px "Segoe UI", sans-serif; margin: 16px; } iframe { width: 760px; height: 480px; border: 1px solid #999; }</style></head><body>
+<p>The game below runs in a same-origin frame.</p>
+<iframe src="index.html?framed"></iframe>
+</body></html>

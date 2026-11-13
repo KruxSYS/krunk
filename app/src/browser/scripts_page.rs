@@ -100,9 +100,14 @@ impl Browser {
         let userscripts: Vec<Value> = rows
             .into_iter()
             .map(|r| {
-                let (matches, warnings) = match us::parse_meta(&r.source) {
-                    Ok(m) => (m.matches.into_iter().chain(m.includes).collect(), m.warnings),
-                    Err(e) => (Vec::new(), vec![e]),
+                // 0.19.0: a script that may use the WASM memory inspector (`@grant GM.wasm`) says so
+                // in the list.
+                let (matches, warnings, wasm) = match us::parse_meta(&r.source) {
+                    Ok(m) => {
+                        let wasm = us::grants_wasm(&m);
+                        (m.matches.into_iter().chain(m.includes).collect(), m.warnings, wasm)
+                    }
+                    Err(e) => (Vec::new(), vec![e], false),
                 };
                 json!({
                     "id": r.id,
@@ -115,6 +120,7 @@ impl Browser {
                     "lastRun": r.last_run,
                     "updated": r.updated,
                     "warnings": warnings,
+                    "wasm": wasm,
                 })
             })
             .collect();

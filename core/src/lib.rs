@@ -72,6 +72,7 @@ pub mod userscripts;
 pub mod vault;
 pub mod vpn;
 pub mod vpnpeer;
+pub mod wasm;
 pub mod windows;
 pub mod workerfix;
 pub mod zoom;

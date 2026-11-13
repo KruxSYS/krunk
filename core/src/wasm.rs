@@ -1,0 +1,993 @@
+//! The WASM memory inspector (0.19.0): the requests krunk://wasm, user scripts (`GM.wasm`) and
+//! the AI agent's `wasm_*` tools send to the probe (`ui/inject/wasm-probe.js`), checked here
+//! before the host passes them on. The probe checks addresses against the memory itself; this
+//! module keeps out what is malformed or larger than the limits, so nothing else reaches a page.
+
+use serde::{Deserialize, Serialize};
+
+/// The probe's limits (the same numbers as `LIMITS` in wasm-probe.js).
+pub const MAX_SCAN_BYTES: u64 = 512 * 1024 * 1024;
+pub const MAX_RESULTS: u32 = 4 * 1024 * 1024;
+pub const MAX_READ_BYTES: u32 = 64 * 1024;
+pub const MAX_PAGE: u32 = 1000;
+pub const MAX_FREEZES: u32 = 256;
+pub const MAX_WATCH: usize = 256;
+pub const MAX_POINTER_DEPTH: usize = 8;
+/// Instances kept per context, exports listed per instance, characters of an export's name
+/// (the same numbers as `maxInstances`, `maxExports`, `maxNameChars` in wasm-probe.js).
+pub const MAX_INSTANCES: u32 = 256;
+pub const MAX_EXPORTS: u32 = 2000;
+pub const MAX_NAME_CHARS: usize = 200;
+/// An export's place in its instance's exports is below this (the engine's own limit).
+pub const MAX_EXPORT_INDEX: u32 = 1_000_000;
+/// Text of a global's new value (a number, decimal or 0x…).
+pub const MAX_GLOBAL_VALUE_CHARS: usize = 64;
+/// Text of a value (numbers, 64-bit integers as decimal, strings for utf8/utf16).
+pub const MAX_VALUE_CHARS: usize = 64 * 1024;
+
+/// A value's type in memory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ValueType {
+    I8,
+    U8,
+    I16,
+    U16,
+    I32,
+    U32,
+    I64,
+    U64,
+    F32,
+    F64,
+    Bytes,
+    Utf8,
+    Utf16,
+}
+
+impl ValueType {
+    /// A number type (scans work on these only).
+    pub fn is_number(self) -> bool {
+        !matches!(self, ValueType::Bytes | ValueType::Utf8 | ValueType::Utf16)
+    }
+
+    pub fn size(self) -> u32 {
+        match self {
+            ValueType::I8 | ValueType::U8 => 1,
+            ValueType::I16 | ValueType::U16 => 2,
+            ValueType::I32 | ValueType::U32 | ValueType::F32 => 4,
+            ValueType::I64 | ValueType::U64 | ValueType::F64 => 8,
+            ValueType::Bytes | ValueType::Utf8 | ValueType::Utf16 => 1,
+        }
+    }
+}
+
+/// First scans.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FirstScan {
+    Exact,
+    Range,
+    Bigger,
+    Smaller,
+    /// Unknown initial value: a snapshot, compared by the next scan.
+    Unknown,
+}
+
+/// Next scans.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NextScan {
+    Exact,
+    Range,
+    Changed,
+    Unchanged,
+    Increased,
+    Decreased,
+    IncreasedBy,
+    DecreasedBy,
+}
+
+impl NextScan {
+    fn needs_value(self) -> bool {
+        matches!(self, NextScan::Exact | NextScan::Range | NextScan::IncreasedBy | NextScan::DecreasedBy)
+    }
+}
+
+/// An address, or a pointer path: `base`, then for each offset a 32-bit pointer read at the
+/// address plus the offset (`[[base] + o1] + o2`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Where {
+    Addr(u32),
+    Path { base: u32, offsets: Vec<i32> },
+}
+
+/// A watch-list entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WatchEntry {
+    pub mem: u32,
+    #[serde(rename = "where")]
+    pub at: Where,
+    #[serde(rename = "type")]
+    pub ty: ValueType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub length: Option<u32>,
+}
+
+/// A request to the probe, as the probe reads it (`{"op": …}`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "camelCase", deny_unknown_fields)]
+pub enum WasmReq {
+    /// The memories found (number, size, shared or not). The host answers with every context's
+    /// memories and instances.
+    List {},
+    /// The instances the context's probe knows (no new search): their exports by name, kind and
+    /// place; which listed memory an exported memory is; exported globals with type and value.
+    Instances {},
+    /// The exported globals of instance `inst`, with their values now.
+    Globals {
+        inst: u32,
+    },
+    /// Writes a mutable exported global: `export` is its place in the instance's exports (as
+    /// listed; never a name). The probe checks the value against the global's type.
+    SetGlobal {
+        inst: u32,
+        export: u32,
+        value: serde_json::Value,
+    },
+    Read {
+        mem: u32,
+        #[serde(rename = "where")]
+        at: Where,
+        #[serde(rename = "type")]
+        ty: ValueType,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        length: Option<u32>,
+    },
+    Write {
+        mem: u32,
+        #[serde(rename = "where")]
+        at: Where,
+        #[serde(rename = "type")]
+        ty: ValueType,
+        value: serde_json::Value,
+    },
+    /// The hex view: `length` bytes from `addr`.
+    Bytes {
+        mem: u32,
+        addr: u32,
+        length: u32,
+    },
+    WriteBytes {
+        mem: u32,
+        addr: u32,
+        bytes: Vec<u8>,
+    },
+    Scan {
+        mem: u32,
+        #[serde(rename = "type")]
+        ty: ValueType,
+        kind: FirstScan,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        value: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        align: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        epsilon: Option<f64>,
+    },
+    Next {
+        scan: u32,
+        kind: NextScan,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        value: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to: Option<serde_json::Value>,
+    },
+    Results {
+        scan: u32,
+        #[serde(default)]
+        offset: u32,
+        #[serde(default = "default_page")]
+        limit: u32,
+    },
+    Progress {
+        scan: u32,
+    },
+    Discard {
+        scan: u32,
+    },
+    Freeze {
+        mem: u32,
+        #[serde(rename = "where")]
+        at: Where,
+        #[serde(rename = "type")]
+        ty: ValueType,
+        /// None: the value it has now.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        value: Option<serde_json::Value>,
+    },
+    Unfreeze {
+        freeze: u32,
+    },
+    Frozen {},
+    Watch {
+        entries: Vec<WatchEntry>,
+    },
+    /// Ends every scan and freeze of the tab (the inspector page's Reset).
+    Reset {},
+}
+
+fn default_page() -> u32 {
+    100
+}
+
+/// A value as the probe takes it: a number, or (64-bit integers, strings, bytes) the
+/// right JSON shape, within the size limit.
+fn check_value(ty: ValueType, v: &serde_json::Value) -> Result<(), String> {
+    use serde_json::Value as V;
+    let too_long = |s: &str| s.chars().count() > MAX_VALUE_CHARS;
+    match (ty, v) {
+        (ValueType::Bytes, V::Array(a)) if a.len() as u32 <= MAX_READ_BYTES => {
+            if a.iter().all(|b| b.as_u64().is_some_and(|b| b <= 255)) {
+                Ok(())
+            } else {
+                Err("bytes must be numbers 0..255".into())
+            }
+        }
+        (ValueType::Bytes, _) => Err(format!("bytes must be an array of at most {MAX_READ_BYTES} numbers 0..255")),
+        (ValueType::Utf8 | ValueType::Utf16, V::String(s)) if !too_long(s) => Ok(()),
+        (ValueType::Utf8 | ValueType::Utf16, _) => Err("a text value must be a string".into()),
+        (ValueType::I64 | ValueType::U64, V::String(s)) => {
+            let s = s.trim();
+            let ok = if ty == ValueType::U64 { s.parse::<u64>().is_ok() } else { s.parse::<i64>().is_ok() };
+            if ok {
+                Ok(())
+            } else {
+                Err(format!("not a {} value: {s}", if ty == ValueType::U64 { "u64" } else { "i64" }))
+            }
+        }
+        (_, V::Number(n)) => {
+            let f = n.as_f64().unwrap_or(f64::NAN);
+            let (lo, hi, int) = match ty {
+                ValueType::I8 => (i8::MIN as f64, i8::MAX as f64, true),
+                ValueType::U8 => (0.0, u8::MAX as f64, true),
+                ValueType::I16 => (i16::MIN as f64, i16::MAX as f64, true),
+                ValueType::U16 => (0.0, u16::MAX as f64, true),
+                ValueType::I32 => (i32::MIN as f64, i32::MAX as f64, true),
+                ValueType::U32 => (0.0, u32::MAX as f64, true),
+                ValueType::I64 => (-9.007_199_254_740_991e15, 9.007_199_254_740_991e15, true),
+                ValueType::U64 => (0.0, 9.007_199_254_740_991e15, true),
+                ValueType::F32 => (-f32::MAX as f64, f32::MAX as f64, false),
+                _ => (f64::MIN, f64::MAX, false),
+            };
+            if !f.is_finite() {
+                return Err("not a number".into());
+            }
+            if int && f.fract() != 0.0 {
+                return Err(format!("{f} is not a whole number"));
+            }
+            if f < lo || f > hi {
+                return Err(format!("{f} is out of range for {ty:?}").to_lowercase());
+            }
+            Ok(())
+        }
+        (_, V::String(s)) if s.trim().parse::<f64>().is_ok() && !too_long(s) => {
+            check_value(ty, &serde_json::json!(s.trim().parse::<f64>().unwrap_or(0.0)))
+        }
+        _ => Err("the value must be a number".into()),
+    }
+}
+
+/// A global's new value: a number, or its text (decimal, a 64-bit integer, 0x…). The global's
+/// type is known next to it only: the probe refuses what does not fit.
+fn check_global_value(v: &serde_json::Value) -> Result<(), String> {
+    use serde_json::Value as V;
+    match v {
+        V::Number(n) if n.as_f64().is_some_and(f64::is_finite) => Ok(()),
+        V::String(s) if s.chars().count() <= MAX_GLOBAL_VALUE_CHARS => {
+            let t = s.trim();
+            let hex = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X"));
+            let ok = match hex {
+                Some(h) => !h.is_empty() && h.len() <= 16 && h.bytes().all(|b| b.is_ascii_hexdigit()),
+                None => t.parse::<i64>().is_ok() || t.parse::<u64>().is_ok() || t.parse::<f64>().is_ok(),
+            };
+            if ok {
+                Ok(())
+            } else {
+                Err(format!("not a number: {t}"))
+            }
+        }
+        _ => Err("the value must be a number".into()),
+    }
+}
+
+fn check_instance(inst: u32) -> Result<(), String> {
+    if inst < MAX_INSTANCES {
+        Ok(())
+    } else {
+        Err(format!("no instance {inst} (at most {MAX_INSTANCES} are kept)"))
+    }
+}
+
+fn check_where(w: &Where) -> Result<(), String> {
+    match w {
+        Where::Addr(_) => Ok(()),
+        Where::Path { offsets, .. } if offsets.len() <= MAX_POINTER_DEPTH => Ok(()),
+        Where::Path { .. } => Err(format!("a pointer path has at most {MAX_POINTER_DEPTH} offsets")),
+    }
+}
+
+fn check_length(ty: ValueType, length: Option<u32>) -> Result<(), String> {
+    match (ty.is_number(), length) {
+        (true, Some(_)) => Err("a length is for bytes, utf8 and utf16 only".into()),
+        (false, Some(n)) if n > MAX_READ_BYTES => Err(format!("at most {MAX_READ_BYTES} bytes at once")),
+        _ => Ok(()),
+    }
+}
+
+impl WasmReq {
+    /// Parses and checks a request (JSON from a page, a script or the agent).
+    pub fn parse(json: &serde_json::Value) -> Result<WasmReq, String> {
+        let req: WasmReq = serde_json::from_value(json.clone()).map_err(|e| format!("not a valid request: {e}"))?;
+        req.check()?;
+        Ok(req)
+    }
+
+    pub fn check(&self) -> Result<(), String> {
+        match self {
+            WasmReq::Globals { inst } => check_instance(*inst),
+            WasmReq::SetGlobal { inst, export, value } => {
+                check_instance(*inst)?;
+                if *export >= MAX_EXPORT_INDEX {
+                    return Err("no such export".into());
+                }
+                check_global_value(value)
+            }
+            WasmReq::Read { at, ty, length, .. } => {
+                check_where(at)?;
+                check_length(*ty, *length)
+            }
+            WasmReq::Write { at, ty, value, .. } => {
+                check_where(at)?;
+                check_value(*ty, value)
+            }
+            WasmReq::Bytes { length, .. } if *length > MAX_READ_BYTES => {
+                Err(format!("at most {MAX_READ_BYTES} bytes at once"))
+            }
+            WasmReq::WriteBytes { bytes, .. } if bytes.len() as u32 > MAX_READ_BYTES => {
+                Err(format!("at most {MAX_READ_BYTES} bytes at once"))
+            }
+            WasmReq::Scan { ty, kind, value, to, align, epsilon, .. } => {
+                if !ty.is_number() {
+                    return Err("scans are for number types (i8 … f64)".into());
+                }
+                if let Some(a) = align {
+                    if ![1, 2, 4, 8].contains(a) || *a > ty.size() {
+                        return Err("alignment must be 1, 2, 4 or 8 and at most the type's size".into());
+                    }
+                }
+                if epsilon.is_some_and(|e| !e.is_finite() || e < 0.0) {
+                    return Err("epsilon must be a number ≥ 0".into());
+                }
+                match kind {
+                    FirstScan::Unknown => Ok(()),
+                    FirstScan::Range => {
+                        check_value(*ty, value.as_ref().ok_or("a range needs value and to")?)?;
+                        check_value(*ty, to.as_ref().ok_or("a range needs value and to")?)
+                    }
+                    _ => check_value(*ty, value.as_ref().ok_or("this scan needs a value")?),
+                }
+            }
+            WasmReq::Next { kind, value, to, .. } => {
+                if kind.needs_value() && value.is_none() {
+                    return Err("this scan needs a value".into());
+                }
+                if *kind == NextScan::Range && to.is_none() {
+                    return Err("a range needs value and to".into());
+                }
+                Ok(())
+            }
+            WasmReq::Results { limit, .. } if *limit > MAX_PAGE => Err(format!("at most {MAX_PAGE} results at once")),
+            WasmReq::Freeze { at, ty, value, .. } => {
+                check_where(at)?;
+                match value {
+                    Some(v) => check_value(*ty, v),
+                    None => Ok(()),
+                }
+            }
+            WasmReq::Watch { entries } => {
+                if entries.len() > MAX_WATCH {
+                    return Err(format!("at most {MAX_WATCH} watch entries"));
+                }
+                for e in entries {
+                    check_where(&e.at)?;
+                    check_length(e.ty, e.length)?;
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// The request as the probe reads it.
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
+    }
+
+    /// The request changes memory or a global (the agent's step log says so).
+    pub fn writes(&self) -> bool {
+        matches!(
+            self,
+            WasmReq::Write { .. } | WasmReq::WriteBytes { .. } | WasmReq::Freeze { .. } | WasmReq::SetGlobal { .. }
+        )
+    }
+}
+
+/// The DevTools function the host calls on its probe instance (`this`) with the memories and
+/// the instances found by `Runtime.queryObjects` (two arrays, or null) and a request.
+pub const CALL_FUNCTION: &str = "function (found, req, more) { return this.call(found, req, more); }";
+
+/// The expressions whose objects the host looks for in a context (`Runtime.queryObjects` takes
+/// a prototype): the memories, then the instances.
+pub const MEMORY_PROTOTYPE: &str = "WebAssembly.Memory.prototype";
+pub const INSTANCE_PROTOTYPE: &str = "WebAssembly.Instance.prototype";
+
+/// What the host asks a context's probe for `list`: `{memories, instances}`. `awake` (for
+/// workers): answered only once the context ran a task of its own; a worker of a page the tab
+/// keeps for Back (the back/forward cache) is frozen, stays attached, and never does.
+pub fn survey_request(awake: bool) -> serde_json::Value {
+    if awake {
+        serde_json::json!({ "op": "survey", "awake": true })
+    } else {
+        serde_json::json!({ "op": "survey" })
+    }
+}
+
+/// Context numbers: 0 is the page itself, a same-process frame has its DevTools execution
+/// context's number, a dedicated worker `WORKER_CTX_BASE` plus the order it was attached in.
+pub const WORKER_CTX_BASE: u32 = 1_000_000;
+
+/// A DevTools call for a scan may take this long (ms); the others the usual ten seconds.
+pub const SCAN_TIMEOUT_MS: i64 = 120_000;
+
+/// What the inspector can't reach, as the page, the API and the tools say it.
+pub const UNREACHABLE: &str = "Not reachable: frames of other sites (they run in another process), service workers \
+     and shared workers, and a page that is paused in the DevTools debugger.";
+
+impl WasmReq {
+    /// The request scans a memory (a long call).
+    pub fn is_scan(&self) -> bool {
+        matches!(self, WasmReq::Scan { .. } | WasmReq::Next { .. })
+    }
+}
+
+/// May the page at `url` be inspected: a web page or a local file, never one of Krunk's own
+/// pages (or an extension's).
+pub fn inspectable(url: &str) -> bool {
+    let Ok(u) = url::Url::parse(url.trim()) else { return false };
+    match u.scheme() {
+        "file" => true,
+        "http" | "https" => crate::agent::pages::may_act(url).is_ok(),
+        _ => false,
+    }
+}
+
+/// The expression that makes a context's probe instance (the host keeps the object's handle;
+/// the page gets no reference). `hook_key`: the property the document-start hook left its
+/// instance under, taken (and removed) instead when it is there.
+pub fn make_expression(hook_key: Option<&str>) -> String {
+    let probe = crate::assets::inject_script("wasm-probe.js").trim().trim_end_matches(';');
+    let key = serde_json::to_string(&hook_key).unwrap_or_else(|_| "null".into());
+    format!(
+        "(function(){{var k={key};try{{var p=k&&globalThis[k];if(p){{delete globalThis[k];return p;}}}}catch(e){{}}\
+         return ({probe}\n)(globalThis);}})()"
+    )
+}
+
+/// The document-start script of the fallback: a probe instance that hooks `WebAssembly`
+/// before any page script runs, left under `hook_key` (not enumerable) until the host takes it.
+pub fn hook_script(hook_key: &str) -> String {
+    let probe = crate::assets::inject_script("wasm-probe.js").trim().trim_end_matches(';');
+    let key = serde_json::to_string(hook_key).unwrap_or_else(|_| "\"\"".into());
+    format!(
+        "(function(){{try{{var p=({probe}\n)(globalThis);p.hook();\
+         Object.defineProperty(globalThis,{key},{{value:p,configurable:true,enumerable:false,writable:false}});\
+         }}catch(e){{}}}})();"
+    )
+}
+
+/// The answer to a call made in an attached target's session (flat mode), from the raw DevTools
+/// message: `{"id":7,"result":{…},"sessionId":"…"}` or `…"error":{…}…`. The engine's embedding
+/// layer delivers results only in the form `{"id":7,"result":{…}}` and drops these (it takes
+/// everything after `"result":` for the result), so the host reads them itself. None: not an
+/// answer of a session (an event, or the page's own session).
+pub fn session_answer(message: &[u8]) -> Option<(i32, Result<serde_json::Value, String>)> {
+    // Cheap for the many messages that are not: the engine writes the session last.
+    const KEY: &[u8] = b"\"sessionId\":\"";
+    let tail = &message[message.len().saturating_sub(160)..];
+    if !tail.windows(KEY.len()).any(|w| w == KEY) {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_slice(message).ok()?;
+    v.get("sessionId")?.as_str()?;
+    let id = i32::try_from(v.get("id")?.as_i64()?).ok()?;
+    if let Some(e) = v.get("error") {
+        let text = e.get("message").and_then(|m| m.as_str()).unwrap_or("the engine refused the call");
+        return Some((id, Err(text.chars().take(300).collect())));
+    }
+    Some((id, Ok(v.get("result").cloned().unwrap_or(serde_json::Value::Null))))
+}
+
+/// The engine's answer when a probe's handle (or its context) is gone: the page navigated.
+pub fn handle_lost(error: &str) -> bool {
+    let e = error.to_ascii_lowercase();
+    e.contains("could not find object")
+        || e.contains("cannot find context")
+        || e.contains("execution context was destroyed")
+        || e.contains("invalid remote object id")
+        || e.contains("object reference chain")
+        || e.contains("session with given id not found")
+}
+
+/// A thrown error's text for the caller (`exceptionDetails` of a DevTools answer).
+pub fn exception_message(details: &serde_json::Value) -> String {
+    let text = details
+        .pointer("/exception/description")
+        .and_then(|d| d.as_str())
+        .map(|d| d.lines().next().unwrap_or("").to_string())
+        .or_else(|| details.get("text").and_then(|t| t.as_str()).map(str::to_string))
+        .unwrap_or_else(|| "the probe failed".into());
+    let text = text.strip_prefix("Error: ").unwrap_or(&text);
+    text.chars().take(300).collect()
+}
+
+/// The agent's `wasm_*` tools at most give this many scan results per call.
+pub const AGENT_MAX_RESULTS: u64 = 200;
+/// `wasm_watch` reads at most this many entries per call.
+pub const AGENT_MAX_WATCH: usize = 32;
+/// `wasm_memories` names at most this many functions and globals per instance (the counts
+/// say how many there are).
+pub const AGENT_MAX_NAMES: usize = 40;
+
+/// The host's `list` answer as the agent's `wasm_memories` gets it: per instance its number,
+/// the counts by kind, which memories it exports, its globals (place, name, type, mutable,
+/// value) and the first function names; nothing else of the export lists (a module may
+/// export thousands of functions).
+pub fn agent_trim_instances(list: &mut serde_json::Value) {
+    use serde_json::{json, Value};
+    for ctx in list.get_mut("contexts").and_then(Value::as_array_mut).into_iter().flatten() {
+        for inst in ctx.get_mut("instances").and_then(Value::as_array_mut).into_iter().flatten() {
+            let exports = inst.get("exports").and_then(Value::as_array).cloned().unwrap_or_default();
+            let of = |kind: &str| exports.iter().filter(|e| e["kind"] == kind).cloned().collect::<Vec<_>>();
+            let memories: Vec<Value> =
+                of("memory").iter().map(|e| json!({ "name": e["name"], "mem": e["mem"] })).collect();
+            let globals: Vec<Value> = of("global")
+                .iter()
+                .take(AGENT_MAX_NAMES)
+                .map(|e| {
+                    json!({
+                        "export": e["index"], "name": e["name"], "type": e["type"],
+                        "mutable": e["mutable"], "value": e["value"],
+                    })
+                })
+                .collect();
+            let functions: Vec<Value> =
+                of("function").iter().take(AGENT_MAX_NAMES).map(|e| e["name"].clone()).collect();
+            *inst = json!({
+                "inst": inst["inst"], "counts": inst["counts"],
+                "memories": memories, "globals": globals, "functions": functions,
+            });
+        }
+    }
+}
+
+/// A `wasm_*` tool call of the AI agent as the context and the probe's request (`None`: not
+/// one of these tools). The arguments passed the tool's schema.
+pub fn agent_request(tool: &str, args: &serde_json::Value) -> Option<Result<(u32, WasmReq), String>> {
+    use serde_json::{json, Value};
+    let ctx = args.get("ctx").and_then(Value::as_u64).unwrap_or(0) as u32;
+    let get = |k: &str| args.get(k).cloned();
+    // An address, or a pointer path from it.
+    let at = || match args.get("offsets").and_then(Value::as_array) {
+        Some(o) if !o.is_empty() => json!({ "base": args.get("addr"), "offsets": o }),
+        _ => args.get("addr").cloned().unwrap_or(Value::Null),
+    };
+    // One watch entry of the tool as the probe's.
+    let entry = |e: &Value| {
+        let at = match e.get("offsets").and_then(Value::as_array) {
+            Some(o) if !o.is_empty() => json!({ "base": e.get("addr"), "offsets": o }),
+            _ => e.get("addr").cloned().unwrap_or(Value::Null),
+        };
+        let mut out = json!({ "mem": e.get("mem"), "where": at, "type": e.get("type"), "length": e.get("length") });
+        if let Some(o) = out.as_object_mut() {
+            o.retain(|_, v| !v.is_null());
+        }
+        out
+    };
+    let mut req = match tool {
+        "wasm_memories" => json!({ "op": "list" }),
+        "wasm_watch" => {
+            let entries = args.get("entries").and_then(Value::as_array).cloned().unwrap_or_default();
+            if entries.is_empty() || entries.len() > AGENT_MAX_WATCH {
+                return Some(Err(format!("entries: 1 to {AGENT_MAX_WATCH} addresses")));
+            }
+            json!({ "op": "watch", "entries": entries.iter().map(entry).collect::<Vec<_>>() })
+        }
+        // Without a value: the instance's globals. With one: write the global at `export`.
+        "wasm_global" => match args.get("value") {
+            None | Some(Value::Null) => json!({ "op": "globals", "inst": get("inst") }),
+            Some(v) => {
+                if args.get("export").is_none() {
+                    return Some(Err("writing a global needs export (its number in the instance's list)".into()));
+                }
+                json!({ "op": "setGlobal", "inst": get("inst"), "export": get("export"), "value": v })
+            }
+        },
+        "wasm_read" => {
+            json!({ "op": "read", "mem": get("mem"), "where": at(), "type": get("type"), "length": get("length") })
+        }
+        "wasm_write" => {
+            json!({ "op": "write", "mem": get("mem"), "where": at(), "type": get("type"), "value": get("value") })
+        }
+        "wasm_scan" => match args.get("mode").and_then(Value::as_str) {
+            Some("next") => {
+                if args.get("scan").is_none() {
+                    return Some(Err("mode next needs scan (the number a first scan returned)".into()));
+                }
+                json!({ "op": "next", "scan": get("scan"), "kind": get("kind"), "value": get("value"), "to": get("to") })
+            }
+            _ => {
+                if args.get("mem").is_none() || args.get("type").is_none() {
+                    return Some(Err("mode first needs mem and type".into()));
+                }
+                json!({
+                    "op": "scan", "mem": get("mem"), "type": get("type"), "kind": get("kind"),
+                    "value": get("value"), "to": get("to"),
+                })
+            }
+        },
+        "wasm_results" => json!({
+            "op": "results", "scan": get("scan"), "offset": get("offset"),
+            "limit": args.get("limit").and_then(Value::as_u64).unwrap_or(50).min(AGENT_MAX_RESULTS),
+        }),
+        "wasm_freeze" => {
+            json!({ "op": "freeze", "mem": get("mem"), "where": at(), "type": get("type"), "value": get("value") })
+        }
+        "wasm_unfreeze" => json!({ "op": "unfreeze", "freeze": get("freeze") }),
+        _ => return None,
+    };
+    // Arguments left out are left out of the request.
+    if let Some(o) = req.as_object_mut() {
+        o.retain(|_, v| !v.is_null());
+    }
+    Some(WasmReq::parse(&req).map(|r| (ctx, r)).map_err(|e| {
+        // serde's words for a kind that belongs to the other mode.
+        if e.contains("unknown variant") {
+            "that kind does not fit this scan mode".to_string()
+        } else {
+            e
+        }
+    }))
+}
+
+/// The step line of a finished `wasm_*` tool.
+pub fn agent_summary(tool: &str, result: &serde_json::Value) -> String {
+    let count = result.get("count").and_then(|c| c.as_u64());
+    match tool {
+        "wasm_memories" => {
+            let n: usize = result["contexts"]
+                .as_array()
+                .map(|c| c.iter().map(|x| x["memories"].as_array().map_or(0, Vec::len)).sum())
+                .unwrap_or(0);
+            if n == 1 {
+                "Found 1 WebAssembly memory".into()
+            } else {
+                format!("Found {n} WebAssembly memories")
+            }
+        }
+        "wasm_read" => "Read the memory".into(),
+        "wasm_write" => "Wrote the memory".into(),
+        "wasm_scan" => match count {
+            Some(1) => "The scan found 1 address".into(),
+            Some(n) => format!("The scan found {n} addresses"),
+            None => "Scanned the memory".into(),
+        },
+        "wasm_results" => format!("Read {} addresses", result["rows"].as_array().map_or(0, Vec::len)),
+        "wasm_freeze" => "Froze the value".into(),
+        "wasm_unfreeze" => "Unfroze the value".into(),
+        "wasm_watch" => match result.as_array().map_or(0, Vec::len) {
+            1 => "Read 1 value".into(),
+            n => format!("Read {n} values"),
+        },
+        "wasm_global" if result.is_array() => match result.as_array().map_or(0, Vec::len) {
+            1 => "Read 1 global".into(),
+            n => format!("Read {n} globals"),
+        },
+        "wasm_global" => "Wrote the global".into(),
+        _ => "Done".into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn p(v: serde_json::Value) -> Result<WasmReq, String> {
+        WasmReq::parse(&v)
+    }
+
+    #[test]
+    fn requests_round_trip_in_the_probes_shape() {
+        let r = p(json!({"op": "read", "mem": 0, "where": 1024, "type": "i32"})).unwrap();
+        assert_eq!(r.to_json(), json!({"op": "read", "mem": 0, "where": 1024, "type": "i32"}));
+        let r = p(json!({"op": "read", "mem": 1, "where": {"base": 300, "offsets": [8, -4]}, "type": "f32"})).unwrap();
+        assert_eq!(r.to_json()["where"], json!({"base": 300, "offsets": [8, -4]}));
+        let r = p(json!({"op": "scan", "mem": 0, "type": "i32", "kind": "exact", "value": 100})).unwrap();
+        assert_eq!(r.to_json()["kind"], "exact");
+        let r = p(json!({"op": "next", "scan": 3, "kind": "decreasedBy", "value": 10})).unwrap();
+        assert_eq!(r.to_json()["kind"], "decreasedBy");
+        assert_eq!(p(json!({"op": "results", "scan": 1})).unwrap().to_json()["limit"], 100);
+        assert_eq!(p(json!({"op": "list"})).unwrap(), WasmReq::List {});
+        assert!(p(json!({"op": "write", "mem": 0, "where": 8, "type": "bytes", "value": [1, 2, 255]})).is_ok());
+        assert!(p(json!({"op": "write", "mem": 0, "where": 8, "type": "utf8", "value": "héllo"})).is_ok());
+        assert!(p(json!({"op": "freeze", "mem": 0, "where": 8, "type": "i32"})).is_ok(), "freeze at the value it has");
+    }
+
+    #[test]
+    fn malformed_and_oversized_requests_are_refused() {
+        for bad in [
+            json!({"op": "eval", "code": "x"}),
+            json!({"op": "read", "mem": 0, "where": 1, "type": "i33"}),
+            json!({"op": "read", "mem": -1, "where": 1, "type": "i32"}),
+            json!({"op": "read", "mem": 0, "where": 1, "type": "i32", "extra": 1}),
+            json!({"op": "read", "mem": 0, "where": 1, "type": "i32", "length": 4}),
+            json!({"op": "read", "mem": 0, "where": 1, "type": "bytes", "length": 70000}),
+            json!({"op": "read", "mem": 0, "where": {"base": 1, "offsets": [0, 0, 0, 0, 0, 0, 0, 0, 0]}, "type": "i32"}),
+            json!({"op": "write", "mem": 0, "where": 1, "type": "u8", "value": 256}),
+            json!({"op": "write", "mem": 0, "where": 1, "type": "i32", "value": 1.5}),
+            json!({"op": "write", "mem": 0, "where": 1, "type": "i32", "value": "abc"}),
+            json!({"op": "write", "mem": 0, "where": 1, "type": "u64", "value": "-1"}),
+            json!({"op": "write", "mem": 0, "where": 1, "type": "bytes", "value": [256]}),
+            json!({"op": "bytes", "mem": 0, "addr": 0, "length": 1_000_000}),
+            json!({"op": "scan", "mem": 0, "type": "utf8", "kind": "exact", "value": "x"}),
+            json!({"op": "scan", "mem": 0, "type": "i32", "kind": "exact"}),
+            json!({"op": "scan", "mem": 0, "type": "i32", "kind": "range", "value": 1}),
+            json!({"op": "scan", "mem": 0, "type": "i16", "kind": "unknown", "align": 4}),
+            json!({"op": "next", "scan": 1, "kind": "increasedBy"}),
+            json!({"op": "results", "scan": 1, "limit": 5000}),
+        ] {
+            assert!(p(bad.clone()).is_err(), "{bad}");
+        }
+        let many: Vec<_> = (0..=MAX_WATCH).map(|_| json!({"mem": 0, "where": 0, "type": "i32"})).collect();
+        assert!(p(json!({"op": "watch", "entries": many})).is_err());
+    }
+
+    #[test]
+    fn pages_expressions_and_errors() {
+        assert!(inspectable("https://game.example/play") && inspectable("file:///C:/x/index.html"));
+        for no in ["https://krunk.invalid/settings.html", "about:blank", "chrome://gpu", "devtools://devtools/x", ""] {
+            assert!(!inspectable(no), "{no}");
+        }
+        let make = make_expression(Some("k1"));
+        assert!(make.contains("var k=\"k1\"") && make.contains("maxScanBytes") && make.ends_with("(globalThis);})()"));
+        assert!(make_expression(None).contains("var k=null"));
+        let hook = hook_script("k1");
+        assert!(hook.contains("p.hook()") && hook.contains("enumerable:false"));
+        // ui/dev/test-wasm-e2e.cjs runs these very strings in Chromium when it is given them.
+        if let Ok(dir) = std::env::var("KRUNK_WASM_EXPR_OUT") {
+            let dir = std::path::Path::new(&dir);
+            std::fs::write(dir.join("make-hooked.js"), &make).unwrap();
+            std::fs::write(dir.join("make.js"), make_expression(None)).unwrap();
+            std::fs::write(dir.join("hook.js"), &hook).unwrap();
+            let reply = crate::userscripts::gm_reply("__krunkUS_e2e", "nonce-e2e", 1, &Ok(json!({"value": 7})));
+            std::fs::write(dir.join("reply.js"), reply).unwrap();
+        }
+        assert!(
+            handle_lost("Could not find object with given id") && handle_lost("Cannot find context with specified id")
+        );
+        assert!(!handle_lost("address 5 + 4 is past the end of the memory"));
+        let d =
+            json!({"text": "Uncaught (in promise)", "exception": {"description": "Error: no memory 3\n    at mem"}});
+        assert_eq!(exception_message(&d), "no memory 3");
+        let scan = json!({"op": "scan", "mem": 0, "type": "i32", "kind": "unknown"});
+        assert!(p(scan).unwrap().is_scan() && !WasmReq::List {}.is_scan());
+    }
+
+    #[test]
+    fn agent_tools_become_probe_requests() {
+        let r = |tool: &str, args: serde_json::Value| agent_request(tool, &args).unwrap();
+        assert_eq!(r("wasm_memories", json!({})).unwrap(), (0, WasmReq::List {}));
+        let (ctx, req) = r("wasm_read", json!({"ctx": 12, "mem": 1, "addr": 1024, "type": "f32"})).unwrap();
+        assert_eq!((ctx, req.to_json()), (12, json!({"op": "read", "mem": 1, "where": 1024, "type": "f32"})));
+        let (_, req) =
+            r("wasm_write", json!({"mem": 0, "addr": 300, "offsets": [8], "type": "i32", "value": "999"})).unwrap();
+        assert_eq!(req.to_json()["where"], json!({"base": 300, "offsets": [8]}));
+        assert!(req.writes());
+        let (_, req) =
+            r("wasm_scan", json!({"mode": "first", "mem": 0, "type": "i32", "kind": "exact", "value": 100})).unwrap();
+        assert_eq!(req.to_json(), json!({"op": "scan", "mem": 0, "type": "i32", "kind": "exact", "value": 100}));
+        let (_, req) = r("wasm_scan", json!({"mode": "next", "scan": 2, "kind": "decreased"})).unwrap();
+        assert_eq!(req.to_json(), json!({"op": "next", "scan": 2, "kind": "decreased"}));
+        assert!(r("wasm_scan", json!({"mode": "next", "kind": "decreased"})).unwrap_err().contains("needs scan"));
+        assert!(r("wasm_scan", json!({"mode": "first", "kind": "exact", "value": 1}))
+            .unwrap_err()
+            .contains("mem and type"));
+        assert!(r("wasm_scan", json!({"mode": "first", "mem": 0, "type": "i32", "kind": "changed"}))
+            .unwrap_err()
+            .contains("scan mode"));
+        let (_, req) = r("wasm_results", json!({"scan": 2, "limit": 200})).unwrap();
+        assert_eq!(req.to_json()["limit"], 200);
+        assert_eq!(r("wasm_results", json!({"scan": 2})).unwrap().1.to_json()["limit"], 50);
+        let (_, req) = r("wasm_freeze", json!({"mem": 0, "addr": 1024, "type": "i32", "value": 999})).unwrap();
+        assert_eq!(req.to_json(), json!({"op": "freeze", "mem": 0, "where": 1024, "type": "i32", "value": 999}));
+        assert_eq!(r("wasm_unfreeze", json!({"freeze": 3})).unwrap().1, WasmReq::Unfreeze { freeze: 3 });
+        assert!(agent_request("eval_js", &json!({})).is_none());
+        assert_eq!(agent_summary("wasm_scan", &json!({"scan": 1, "count": 1})), "The scan found 1 address");
+        let found = json!({"contexts": [{"memories": [{}, {}]}, {"memories": []}]});
+        assert_eq!(agent_summary("wasm_memories", &found), "Found 2 WebAssembly memories");
+    }
+
+    #[test]
+    fn instance_requests_round_trip_and_are_checked() {
+        assert_eq!(p(json!({"op": "instances"})).unwrap(), WasmReq::Instances {});
+        assert_eq!(p(json!({"op": "instances"})).unwrap().to_json(), json!({"op": "instances"}));
+        let g = p(json!({"op": "globals", "inst": 3})).unwrap();
+        assert_eq!(g, WasmReq::Globals { inst: 3 });
+        assert_eq!(g.to_json(), json!({"op": "globals", "inst": 3}));
+        assert!(!g.writes() && !g.is_scan());
+        let s = p(json!({"op": "setGlobal", "inst": 1, "export": 4, "value": 42})).unwrap();
+        assert_eq!(s.to_json(), json!({"op": "setGlobal", "inst": 1, "export": 4, "value": 42}));
+        assert!(s.writes() && !s.is_scan());
+        for value in
+            [json!(-1), json!(2.5), json!("42"), json!(" -9223372036854775808 "), json!("18446744073709551615")]
+        {
+            assert!(p(json!({"op": "setGlobal", "inst": 0, "export": 0, "value": value})).is_ok(), "{value}");
+        }
+        for value in [json!("0x10"), json!("0XFFFFFFFFFFFFFFFF"), json!("1e3"), json!("NaN"), json!("-Infinity")] {
+            assert!(p(json!({"op": "setGlobal", "inst": 0, "export": 0, "value": value})).is_ok(), "{value}");
+        }
+        for bad in [
+            json!({"op": "instances", "inst": 0}),
+            json!({"op": "globals"}),
+            json!({"op": "globals", "inst": -1}),
+            json!({"op": "globals", "inst": MAX_INSTANCES}),
+            json!({"op": "globals", "inst": 0, "name": "g"}),
+            json!({"op": "setGlobal", "inst": 0, "export": 0}),
+            json!({"op": "setGlobal", "inst": 0, "value": 1}),
+            json!({"op": "setGlobal", "inst": 0, "export": "g_i32", "value": 1}),
+            json!({"op": "setGlobal", "inst": 0, "name": "g_i32", "value": 1}),
+            json!({"op": "setGlobal", "inst": MAX_INSTANCES, "export": 0, "value": 1}),
+            json!({"op": "setGlobal", "inst": 0, "export": MAX_EXPORT_INDEX, "value": 1}),
+            json!({"op": "setGlobal", "inst": 0, "export": 0, "value": "abc"}),
+            json!({"op": "setGlobal", "inst": 0, "export": 0, "value": "0x"}),
+            json!({"op": "setGlobal", "inst": 0, "export": 0, "value": "0x10000000000000000"}),
+            json!({"op": "setGlobal", "inst": 0, "export": 0, "value": ""}),
+            json!({"op": "setGlobal", "inst": 0, "export": 0, "value": "1".repeat(MAX_GLOBAL_VALUE_CHARS + 1)}),
+            json!({"op": "setGlobal", "inst": 0, "export": 0, "value": [1]}),
+            json!({"op": "setGlobal", "inst": 0, "export": 0, "value": null}),
+            json!({"op": "setGlobal", "inst": 0, "export": 0, "value": true}),
+            json!({"op": "survey"}),
+        ] {
+            assert!(p(bad.clone()).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_probe_has_the_same_limits_and_takes_what_the_host_sends() {
+        let probe = crate::assets::inject_script("wasm-probe.js");
+        for (name, n) in [
+            ("maxInstances", u64::from(MAX_INSTANCES)),
+            ("maxExports", u64::from(MAX_EXPORTS)),
+            ("maxNameChars", MAX_NAME_CHARS as u64),
+            ("maxPointerDepth", MAX_POINTER_DEPTH as u64),
+            ("maxFreezes", u64::from(MAX_FREEZES)),
+            ("maxWatch", MAX_WATCH as u64),
+            ("maxPage", u64::from(MAX_PAGE)),
+        ] {
+            assert!(probe.contains(&format!("{name}: {n},")), "{name} is {n} in wasm-probe.js");
+        }
+        assert!(
+            probe.contains("function call(found, req, more)") && CALL_FUNCTION.contains("this.call(found, req, more)")
+        );
+        assert_eq!(survey_request(false), json!({"op": "survey"}));
+        assert_eq!(survey_request(true), json!({"op": "survey", "awake": true}));
+        assert!(probe.contains("req.awake ? yieldNow()"));
+        for op in ["survey", "instances", "globals", "setGlobal"] {
+            assert!(probe.contains(&format!("case '{op}':")), "the probe knows {op}");
+        }
+        assert!(MEMORY_PROTOTYPE.ends_with("Memory.prototype") && INSTANCE_PROTOTYPE.ends_with("Instance.prototype"));
+    }
+
+    #[test]
+    fn answers_of_a_worker_session_are_read_from_the_raw_message() {
+        let ok = br#"{"id":7,"result":{"result":{"type":"object","objectId":"1.2.3"}},"sessionId":"5B2F67CE7CC7C7183FB9A7F7F39CFA13"}"#;
+        let (id, r) = session_answer(ok).unwrap();
+        assert_eq!((id, r.unwrap()["result"]["objectId"].as_str().map(str::to_string)), (7, Some("1.2.3".into())));
+        let err =
+            br#"{"id":8,"error":{"code":-32000,"message":"Cannot find context with specified id"},"sessionId":"AB"}"#;
+        let (id, r) = session_answer(err).unwrap();
+        assert_eq!(id, 8);
+        assert!(handle_lost(&r.unwrap_err()));
+        assert_eq!(session_answer(br#"{"id":9,"result":{},"sessionId":"AB"}"#).unwrap().1.unwrap(), json!({}));
+        // The page's own session, events (also a session's), text that only looks like it.
+        for no in [
+            &br#"{"id":7,"result":{"result":{"type":"string","value":"x"}}}"#[..],
+            br#"{"method":"Runtime.consoleAPICalled","params":{},"sessionId":"AB"}"#,
+            br#"{"id":7,"result":{"result":{"type":"string","value":"\"sessionId\":\"AB\""}}}"#,
+            br#"{"id":7,"result":{},"sessionId":5}"#,
+            br#"{"id":"7","result":{},"sessionId":"AB"}"#,
+            br#"{"id":7,"result":{},"sessionId":"AB""#,
+            b"",
+        ] {
+            assert!(session_answer(no).is_none(), "{}", String::from_utf8_lossy(no));
+        }
+    }
+
+    /// Every operation of the agent's tools, from the file the Node check of the mock
+    /// provider's scenarios reads too (`ui/dev/wasm-agent-cases.json`).
+    #[test]
+    fn agent_cases_from_the_shared_file() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../ui/dev/wasm-agent-cases.json");
+        let doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let cases = doc["cases"].as_array().unwrap();
+        assert!(cases.len() >= 45);
+        for c in cases {
+            let tool = c["tool"].as_str().unwrap();
+            let got = agent_request(tool, &c["args"]).unwrap_or_else(|| panic!("{tool} is a wasm tool"));
+            match c.get("error").and_then(|e| e.as_str()) {
+                Some(part) => {
+                    let e = got.expect_err(&c.to_string());
+                    assert!(e.contains(part), "{c}: {e}");
+                }
+                None => {
+                    // (The arguments are ones the tool's schema lets through.)
+                    let t = crate::agent::tools::find(tool).unwrap();
+                    crate::agent::tools::validate(t, &c["args"]).unwrap_or_else(|e| panic!("{c}: {e}"));
+                    let (ctx, req) = got.unwrap_or_else(|e| panic!("{c}: {e}"));
+                    assert_eq!(u64::from(ctx), c["ctx"].as_u64().unwrap(), "{c}");
+                    assert_eq!(req.to_json(), c["req"], "{c}");
+                }
+            }
+        }
+        // Each tool is in the file, and each of the tools of the agent's list is one of these.
+        for t in crate::agent::tools::TOOLS.iter().filter(|t| t.name.starts_with("wasm_")) {
+            assert!(cases.iter().any(|c| c["tool"] == t.name), "{} has no case", t.name);
+        }
+        assert_eq!(crate::agent::tools::TOOLS.iter().filter(|t| t.name.starts_with("wasm_")).count(), 9);
+    }
+
+    #[test]
+    fn the_agent_gets_a_short_form_of_the_instances() {
+        let mut exports = vec![
+            json!({"index": 0, "name": "memory", "kind": "memory", "mem": 2}),
+            json!({"index": 1, "name": "g", "kind": "global", "type": "i32", "mutable": true, "value": 7}),
+        ];
+        exports.extend((0..500).map(|i| json!({"index": i + 2, "name": format!("f{i}"), "kind": "function"})));
+        let mut list = json!({"contexts": [{"ctx": 0, "kind": "page", "url": "u", "memories": [{"mem": 2}], "instances": [
+            {"inst": 0, "counts": {"function": 500, "memory": 1, "global": 1}, "exports": exports, "omitted": 0}]}]});
+        agent_trim_instances(&mut list);
+        let inst = &list["contexts"][0]["instances"][0];
+        assert_eq!(inst["memories"], json!([{"name": "memory", "mem": 2}]));
+        assert_eq!(inst["globals"], json!([{"export": 1, "name": "g", "type": "i32", "mutable": true, "value": 7}]));
+        assert_eq!(inst["functions"].as_array().unwrap().len(), AGENT_MAX_NAMES);
+        assert_eq!(inst["counts"]["function"], 500);
+        assert!(inst.get("exports").is_none());
+        assert_eq!(list["contexts"][0]["memories"], json!([{"mem": 2}]));
+        assert_eq!(agent_summary("wasm_watch", &json!([{"addr": 1, "value": 2}])), "Read 1 value");
+        assert_eq!(agent_summary("wasm_global", &json!([{}, {}])), "Read 2 globals");
+        assert_eq!(agent_summary("wasm_global", &json!({"value": 1})), "Wrote the global");
+    }
+
+    #[test]
+    fn numbers_may_come_as_text() {
+        // The agent's models send "100" as often as 100.
+        assert!(p(json!({"op": "write", "mem": 0, "where": 1, "type": "i32", "value": "100"})).is_ok());
+        assert!(p(json!({"op": "write", "mem": 0, "where": 1, "type": "f64", "value": " 2.5 "})).is_ok());
+        assert!(p(json!({"op": "write", "mem": 0, "where": 1, "type": "i64", "value": "-9223372036854775808"})).is_ok());
+        assert!(WasmReq::Write { mem: 0, at: Where::Addr(0), ty: ValueType::I8, value: json!(0) }.writes());
+    }
+}

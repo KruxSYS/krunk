@@ -597,6 +597,8 @@ impl Browser {
                 wipe_strings(&mut a);
                 self.tool_fill_password(c, p);
             }
+            // 0.19.0: the WASM memory inspector.
+            n if n.starts_with("wasm_") => self.tool_wasm(c, n, a),
             _ => c.fail("This is not a page tool."),
         }
     }
@@ -1091,6 +1093,41 @@ impl Browser {
     }
 
     // ------------------------------------------------------------ scripts
+
+    /// 0.19.0, the `wasm_*` tools: a request to the WASM inspector of the target tab, with
+    /// `eval_js`'s limits (the built-in-page check was `agent_page_tool`'s). The result is
+    /// scrubbed of the page's secrets and capped like every page tool's.
+    fn tool_wasm(&self, c: Call, name: &'static str, args: Value) {
+        if !c.secrets.is_empty() {
+            return c.refuse("The wasm tools are not available while a password or card field holds a value.");
+        }
+        let (ctx, req) = match lb_core::wasm::agent_request(name, &args) {
+            Some(Ok(r)) => r,
+            Some(Err(e)) => return c.fail(&e),
+            None => return c.fail("This is not a page tool."),
+        };
+        let weak = self.me.clone();
+        self.wasm_call(
+            c.tab,
+            ctx,
+            req,
+            Box::new(move |r| {
+                let Some(b) = weak.upgrade() else { return c.fail("Krunk is closing") };
+                if !b.page_call_live(&c) {
+                    return c.fail("stopped");
+                }
+                match r {
+                    Ok(mut v) => {
+                        // The instances in their short form (a module may export thousands of names).
+                        lb_core::wasm::agent_trim_instances(&mut v);
+                        let summary = lb_core::wasm::agent_summary(name, &v);
+                        c.ok(&v, summary)
+                    }
+                    Err(e) => c.fail(&e),
+                }
+            }),
+        );
+    }
 
     /// Runs the model's code in the page's main world (not the probe's).
     fn tool_eval(&self, c: Call, p: args::EvalJs) {

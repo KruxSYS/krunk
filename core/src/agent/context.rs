@@ -446,6 +446,9 @@ pub fn system_prompt(extra: &str, vision: bool) -> String {
          - Look before you act: use get_text, query, list_links or list_forms to find things, \
          and prefer CSS selectors over coordinates.\n\
          - After an action, check that it worked (read the page again or wait_for a change).\n\
+         - A value inside a WebAssembly game or app (health, score, money) is not in the DOM: \
+         find it in the page's memory with wasm_memories and wasm_scan (scan for the value shown, \
+         let it change, scan again with mode next), then wasm_write or wasm_freeze it.\n\
          - When you need a decision or a detail only the user knows, use ask_user with short \
          options instead of guessing.\n\
          - For a task with several steps, write a plan first with plan_set and keep it current \

@@ -59,10 +59,12 @@ pub enum Page {
     Crashed,
     /// Userscripts and macros with their editor (0.12.0).
     Scripts,
+    /// The WASM memory inspector (0.19.0), opened from a tab's ⋮ menu and bound to that tab.
+    Wasm,
 }
 
 impl Page {
-    pub const ALL: [Page; 19] = [
+    pub const ALL: [Page; 20] = [
         Page::NewTab,
         Page::History,
         Page::Bookmarks,
@@ -82,6 +84,7 @@ impl Page {
         Page::Source,
         Page::Crashed,
         Page::Scripts,
+        Page::Wasm,
     ];
 
     /// Short name used in the display URL (`krunk://<name>`) and file name.
@@ -106,14 +109,16 @@ impl Page {
             Page::Source => "source",
             Page::Crashed => "crashed",
             Page::Scripts => "scripts",
+            Page::Wasm => "wasm",
         }
     }
 
     /// Pages with secrets or privileged data the AI agent may never open (0.12.0): the vault and
     /// payment methods, sync, and the cookie and storage pages (they would bypass the agent's
     /// sensitive-data gate). 0.15.0: the session logs (a record of the user's browsing).
+    /// 0.19.0: the WASM inspector (the agent has its own gated `wasm_*` tools).
     pub fn agent_forbidden(self) -> bool {
-        matches!(self, Page::Passwords | Page::Sync | Page::SiteData | Page::Storage | Page::Sessions)
+        matches!(self, Page::Passwords | Page::Sync | Page::SiteData | Page::Storage | Page::Sessions | Page::Wasm)
     }
 
     /// The real URL loaded in the tab.
@@ -165,7 +170,7 @@ impl Page {
     /// Pages that are only ever needed once: opening one again switches to the open tab
     /// (Chrome does the same for its settings, downloads and history pages).
     pub fn single_instance(self) -> bool {
-        !matches!(self, Page::NewTab | Page::HttpsOnly | Page::SiteData | Page::Source | Page::Crashed)
+        !matches!(self, Page::NewTab | Page::HttpsOnly | Page::SiteData | Page::Source | Page::Crashed | Page::Wasm)
     }
 
     pub fn from_url(url: &str) -> Option<Page> {

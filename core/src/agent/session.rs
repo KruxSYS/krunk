@@ -1159,6 +1159,28 @@ pub fn describe(name: &str, args: &Value) -> String {
             _ => "Wait".into(),
         },
         "eval_js" => "Run JavaScript on the page".into(),
+        // 0.19.0: the WASM memory inspector.
+        "wasm_memories" => "Look for WebAssembly memories".into(),
+        "wasm_read" => {
+            n("addr").map_or("Read WebAssembly memory".into(), |a| format!("Read memory at 0x{:X}", a as u64))
+        }
+        "wasm_write" => {
+            n("addr").map_or("Write WebAssembly memory".into(), |a| format!("Write memory at 0x{:X}", a as u64))
+        }
+        "wasm_scan" => match args.get("mode").and_then(Value::as_str) {
+            Some("next") => "Narrow the memory scan".into(),
+            _ => "Scan WebAssembly memory".into(),
+        },
+        "wasm_results" => "Read the scan's addresses".into(),
+        "wasm_freeze" => {
+            n("addr").map_or("Freeze a memory value".into(), |a| format!("Freeze the value at 0x{:X}", a as u64))
+        }
+        "wasm_unfreeze" => "Unfreeze a memory value".into(),
+        "wasm_watch" => "Read the watched memory values".into(),
+        "wasm_global" => match args.get("value") {
+            None | Some(Value::Null) => "Read the WebAssembly globals".into(),
+            Some(_) => "Write a WebAssembly global".into(),
+        },
         "edit_page" => {
             let sel = s("selector").unwrap_or_else(|| "the page".into());
             match args.get("action").and_then(Value::as_str) {

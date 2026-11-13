@@ -91,6 +91,8 @@ changed in Settings. Built-in pages:
 - `krunk://scripts` (0.12.0): userscripts and macros with their code editor (see below)
 - `krunk://sessions` (0.15.0): your session logs, when Settings → Privacy & security → Keep
   session logs is on (see Privacy below); ⋮ → **Session usage** opens it (0.16.0)
+- `krunk://wasm` (0.19.0): the WASM memory inspector for one tab; ⋮ → **WASM memory inspector**
+  opens it for the tab you are on (see "WASM memory inspector" below)
 
 Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
 
@@ -601,7 +603,8 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
     (document-start | document-end | document-idle) @grant @noframes`.
   - **Grants:** `none`, `GM_addStyle`, `GM_getValue`/`GM_setValue`/`GM_deleteValue`/
     `GM_listValues` (stored per script), `GM_setClipboard`, `GM_notification` (a short message over
-    the tab row) and `GM_openInTab`. `unsafeWindow` is `window`.
+    the tab row) and `GM_openInTab`. `unsafeWindow` is `window`. 0.19.0: `GM.wasm` (also
+    `GM_wasm`), the WASM memory inspector's API (below).
   - **Not supported in 0.12.0:** `GM_xmlhttpRequest`, `@require`, `@resource` and
     regular-expression `@include` (the editor warns).
   - **Where they run:** on web pages only, never on Krunk's own pages, and in private tabs only
@@ -990,6 +993,9 @@ macro runner; `Menu::Page` for tabs; `Menu::Panel` for the panel), and `TabMenu`
 - **Screenshots:** screenshot (to the model as an image when it takes images), save_screenshot.
 - **Input:** click, type_text, fill_fields, select_option, press_keys, scroll, wait_for.
 - **Page changes:** eval_js, edit_page, set_title.
+- **WebAssembly memory (0.19.0):** wasm_memories, wasm_read, wasm_write, wasm_scan (mode first
+  or next), wasm_results, wasm_freeze, wasm_unfreeze, wasm_watch, wasm_global (see "WASM memory
+  inspector").
 - **Tabs:** navigate, back, forward, reload, open_tab, switch_tab, close_tab, list_tabs.
 - **Settings:** get_settings, set_setting, set_new_tab_background_url (0.15.0: an https picture,
   at most 15 MB, PNG/JPEG/WebP/GIF/AVIF by its first bytes, stored like one you pick; no extra
@@ -1017,7 +1023,7 @@ macro runner; `Menu::Page` for tabs; `Menu::Panel` for the panel), and `TabMenu`
   card-like names or labels, or a Luhn-valid 13–19 digit value.
   - Their values are blanked in every result.
   - `fill_fields`, `type_text`, `press_keys` and `edit_page` refuse them.
-  - `eval_js` is refused while one holds a value.
+  - `eval_js` and the `wasm_*` tools are refused while one holds a value.
   - Every result is scrubbed of the page's current secret values, read again after `eval_js` and
     after an agent-started macro, and of any card number.
   - Screenshots mask the fields, and cover cross-origin iframes that look like payment forms.
@@ -1122,6 +1128,91 @@ macro runner; `Menu::Page` for tabs; `Menu::Panel` for the panel), and `TabMenu`
 **Storage** is SQLite schema 7: `userscripts`, `userscript_values` (at most 1 MB per script),
 `macros` (unique hotkeys) and `ai_keys`. All of it is local: no sync, and not in settings export or
 reset.
+
+### WASM memory inspector (0.19.0)
+Games and apps compiled to WebAssembly keep their state (health, score, money, positions) in a
+`WebAssembly.Memory`, not in the page. ⋮ → **WASM memory inspector** opens `krunk://wasm` for the
+tab you are on; the page is bound to that tab (like the site-data page) and works Cheat-Engine
+style:
+- **Memories:** every memory found in the tab, with its size. **Find memories** looks again
+  (a game makes its memory when it starts). A memory that grows (`memory.grow`) keeps its
+  number, its scan results, its watch entries and its frozen values; addresses past the old
+  size become valid, and the list and the hex view show the new size.
+- **Instances:** every `WebAssembly.Instance` found, with its exports by kind (functions,
+  memories, globals, tables, tags) and by name. A memory an instance exports says so in the
+  memory list (`export "memory" of instance 1`); choosing an instance chooses its memory.
+  Memories no instance exports (imported ones, or made by JavaScript) stay listed. The chosen
+  instance's **exported globals** are a table of name, type (`i32 i64 f32 f64`; `v128`,
+  `funcref`, `externref` are shown without a value) and live value; a mutable global takes a
+  new value with Enter, a constant one is shown only. Globals that are not exported can't be
+  reached from JavaScript, so not from here either.
+- **Scan:** a first scan for an exact value, a range, bigger/smaller than, or an unknown initial
+  value (a snapshot); then next scans (exact, range, changed, unchanged, increased, decreased,
+  increased by, decreased by) narrow the addresses down. Types: `i8 u8 i16 u16 i32 u32 i64 u64
+  f32 f64`, little-endian. Floats match within a small tolerance.
+- **Watch list:** label, address or pointer path (`0x400 > 8 > 0`: read the 32-bit pointer at
+  0x400, add 8, read again, add 0), type, the live value (type a new one and press Enter),
+  Freeze, Remove. **Export** and **Import** move the list as JSON (copy, or a file).
+- **Hex view:** a 256-byte window of the memory with go-to-address; click a byte and type hex
+  digits to change it in place.
+
+**How the memories are reached.** Nothing is added to the page's globals:
+- The host asks the engine's DevTools protocol for the objects whose prototype is
+  `WebAssembly.Memory.prototype`, and those of `WebAssembly.Instance.prototype`
+  (`Runtime.queryObjects`), and calls its probe (`ui/inject/wasm-probe.js`) on them with
+  `Runtime.callFunctionOn`. The probe is an object only
+  the host holds a handle to (object group `krunk-wasm`, released when the session ends).
+- The query makes the engine collect garbage, so it runs when memories are listed and when a
+  document is new, not on every read. `memory.grow` replaces a memory's buffer: every operation
+  takes `memory.buffer` again, and a scan that paused for the page takes it again before it goes
+  on. Shared memories (threads) work the same way.
+- **A global's type** is not something JavaScript can ask for: the probe links the global into
+  18-byte modules that import one global of a given type (a wrong type fails to link). Nothing
+  is written to the global for that. Where the page's content security policy forbids compiling
+  WebAssembly, the type is `i64` or `number` and the mutability is unknown.
+- **Contexts:** the page; frames of the same process (in practice: same-site frames), each with
+  its own memories; dedicated workers, through the tab's auto-attached DevTools sessions. Memory
+  numbers, scans and freezes belong to one context (`ctx`, 0 is the page).
+- **Fallback:** "Hook WebAssembly and reload the tab" installs a document-start script that
+  wraps `WebAssembly.Memory`, `instantiate`, `instantiateStreaming` and `Instance` before any
+  page script runs, so memories and instances are caught as they are made. It needs the reload, and it is
+  visible to the page: the wrapped functions, and a random non-enumerable property that holds
+  the probe until the host takes it with its next call. Both ways feed the same list.
+
+**Limits.** A scan covers at most the first 512 MiB of a memory and keeps at most 4,194,304
+addresses (it says so when more matched); 8 scans per context; 1000 results per request (the
+page shows 100 at a time, the agent's tool gives at most 200); reads, writes and the hex view
+64 KiB at once; 256 frozen values and 256 watch entries; pointer paths of at most 8 offsets
+(32-bit pointers: `memory64` modules are not followed); 256 instances per context, 2000 exports
+listed per instance (memories, globals, tables and tags first; the rest are counted), export
+names cut to 200 characters, a global's new value at most 64 characters. Scans run in slices of 30 ms so the page
+keeps running; a scan may take up to two minutes before the host gives up.
+
+**Not reachable:** frames of other sites (they run in another process), service workers and
+shared workers. A page **paused in the DevTools debugger** can't answer: requests time out until
+it runs again. A frozen value is written back by a 50 ms timer of the page itself: about 20
+times a second, slower while the tab is in the background (the engine throttles its timers), and
+the game can still see the other value between two writes.
+
+**No anti-detection.** The inspector does not hide: a page can notice the DevTools session, the
+hook, timing, or simply that its values changed. Online games check their state on the server;
+use it on single-player games and your own apps.
+
+**Sessions** are in memory only, one per inspected tab. They end when the tab closes, or when
+its last inspector page closes (scans and freezes are dropped then). A navigation ends the
+document's scans and freezes by itself. The inspector works in private tabs (its page opens as a
+private tab) and never on Krunk's own pages.
+
+**User scripts and the AI agent.** The same operations are there for user scripts as `GM.wasm`
+(`// @grant GM.wasm`; a script with it is tagged **WASM memory** in `krunk://scripts`; without the
+grant `GM.wasm` is `undefined`) and for the AI agent as the `wasm_*` tools (`wasm_memories`,
+`wasm_read`, `wasm_write`, `wasm_scan`, `wasm_results`, `wasm_freeze`, `wasm_unfreeze`,
+`wasm_watch`, `wasm_global`). All three go through the same checked requests and the same probe.
+The agent's tools are refused while a password or card field of the page holds a value (what
+they read goes to the model's provider); the page and user scripts are not (a user script runs
+in the page anyway). The full reference, with every function, its arguments, results, errors, the
+limits and a worked example script: [`docs/WASM_INSPECTOR.md`](docs/WASM_INSPECTOR.md). What is
+tested and what was shown on Windows: `docs/WASM_INSPECTOR_STATUS.md`.
 
 ### Ad and tracker blocking
 - **Engine:** Brave's `adblock` engine with seven bundled lists: EasyList, EasyPrivacy, and the

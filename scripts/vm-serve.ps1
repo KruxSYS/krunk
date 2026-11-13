@@ -4,7 +4,7 @@
 # (the Local Network Access test fetches them from a public https page).
 param([string]$PrefixList)
 $root = 'C:\pipeline\krunk\www'
-$types = @{ '.html' = 'text/html; charset=utf-8'; '.js' = 'text/javascript'; '.css' = 'text/css'; '.json' = 'application/json';
+$types = @{ '.html' = 'text/html; charset=utf-8'; '.js' = 'text/javascript'; '.css' = 'text/css'; '.json' = 'application/json'; '.wasm' = 'application/wasm';
   '.webm' = 'video/webm'; '.mp4' = 'video/mp4'; '.m4s' = 'video/iso.segment'; '.mpd' = 'application/dash+xml';
   '.m3u8' = 'application/vnd.apple.mpegurl'; '.ts' = 'video/mp2t'; '.png' = 'image/png'; '.txt' = 'text/plain; charset=utf-8' }
 $l = New-Object System.Net.HttpListener
