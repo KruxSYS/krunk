@@ -474,6 +474,28 @@ impl KrunkStore {
         Ok(self.lock().allowlist_remove(&host)?)
     }
 
+    /// Is this site on the "never save passwords here" list (the shared `vault_never` table, the
+    /// same rows Windows uses)? `origin` may be a page address: its origin is what counts.
+    pub fn never_save(&self, origin: String) -> Result<bool, FfiError> {
+        let origin = lb_core::urlclean::origin_of(&origin).unwrap_or(origin);
+        Ok(self.lock().never_save(&origin)?)
+    }
+
+    /// Puts a site on the never-save list. Something without an origin is `FfiError::Invalid`.
+    pub fn never_save_add(&self, origin: String, now: i64) -> Result<(), FfiError> {
+        Ok(self.lock().never_save_add(&origin, now)?)
+    }
+
+    pub fn never_save_remove(&self, origin: String) -> Result<(), FfiError> {
+        let origin = lb_core::urlclean::origin_of(&origin).unwrap_or(origin);
+        Ok(self.lock().never_save_remove(&origin)?)
+    }
+
+    /// The never-save list (origins), sorted.
+    pub fn never_save_list(&self) -> Result<Vec<String>, FfiError> {
+        Ok(self.lock().never_save_list()?)
+    }
+
     /// Compacts the database file.
     pub fn vacuum(&self) -> Result<(), FfiError> {
         Ok(self.lock().vacuum()?)
@@ -510,6 +532,24 @@ mod tests {
     fn bad_path_is_a_database_error() {
         let e = KrunkStore::open("/nonexistent-dir/x/browser.db".into()).err().unwrap();
         assert!(matches!(e, FfiError::Database(_)));
+    }
+
+    #[test]
+    fn never_save_sites() {
+        let s = store();
+        assert!(!s.never_save("https://bank.example/login".into()).unwrap());
+        s.never_save_add("https://bank.example/login?x=1".into(), 5).unwrap();
+        s.never_save_add("http://plain.example:8080/".into(), 6).unwrap();
+        // Asked with a page address or with the origin; another port or scheme is another site.
+        assert!(s.never_save("https://bank.example/other".into()).unwrap());
+        assert!(s.never_save("https://bank.example".into()).unwrap());
+        assert!(!s.never_save("https://bank.example:8443/".into()).unwrap());
+        assert!(!s.never_save("http://bank.example/".into()).unwrap());
+        assert!(!s.never_save("not a url".into()).unwrap());
+        assert!(matches!(s.never_save_add("data:text/html,x".into(), 7), Err(FfiError::Invalid(_))));
+        assert_eq!(s.never_save_list().unwrap(), ["http://plain.example:8080", "https://bank.example"]);
+        s.never_save_remove("https://bank.example/whatever".into()).unwrap();
+        assert_eq!(s.never_save_list().unwrap(), ["http://plain.example:8080"]);
     }
 
     #[test]
