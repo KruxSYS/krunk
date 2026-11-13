@@ -765,7 +765,7 @@
     $('back').disabled = !n.canGoBack;
     $('forward').disabled = !n.canGoForward;
     $('reload-icon').setAttribute('href', n.loading ? '#i-stop' : '#i-reload');
-    $('reload').title = n.loading ? 'Stop (Esc)' : 'Reload (Ctrl+R)';
+    $('reload').title = n.loading ? 'Stop (Esc)' : 'Reload (Ctrl+R). Middle-click: open this page in a new tab';
     // The user's own text stays while they type; a focused but untouched field
     // follows the page (a bookmark opened while the caret was in the field).
     // 0.11.6: a tab's unfinished text comes back with the tab, until its page changes.
@@ -804,12 +804,19 @@
       setPopup('navMenu');
     });
   });
-  $('reload').addEventListener('click', function () {
+  $('reload').addEventListener('click', function (e) {
+    if (e.ctrlKey && state.active != null) { LB.post('duplicateTab', { id: state.active }); return; }
     LB.post(state.nav && state.nav.loading ? 'stop' : 'reload');
   });
   // 0.16.0: the Home button (Settings → Appearance, hidden by default). A click is Alt+Home:
   // the homepage, or the new tab page when none is set; Ctrl+click or a middle-click opens it
   // in a new tab. The host knows the address: the shell only asks.
+  // 0.18.0: a middle-click (or Ctrl+click) on Reload opens the page again in a new tab, as
+  // the Home button does for the home page.
+  $('reload').addEventListener('mousedown', function (e) { if (e.button === 1) e.preventDefault(); });
+  $('reload').addEventListener('auxclick', function (e) {
+    if (e.button === 1 && state.active != null) { e.preventDefault(); LB.post('duplicateTab', { id: state.active }); }
+  });
   $('home').addEventListener('click', function (e) { LB.post('home', { newTab: !!e.ctrlKey }); });
   // A middle press never starts the engine's autoscroll here (it would take the release).
   $('home').addEventListener('mousedown', function (e) { if (e.button === 1) e.preventDefault(); });

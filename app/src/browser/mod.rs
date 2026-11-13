@@ -2553,8 +2553,12 @@ impl Browser {
             Command::SelectTab(i) => self.update_current(|m| m.activate_index(usize::from(i), now)),
             Command::LastTab => self.update_current(|m| m.activate_last(now)),
             Command::FocusAddressBar => self.focus_address_bar(),
-            Command::Reload => self.active_do(|c| c.reload()),
-            Command::HardReload => self.active_do(|c| c.hard_reload()),
+            Command::Reload | Command::HardReload => {
+                if let Some(id) = self.active_id() {
+                    self.free_stuck_connections(id);
+                }
+                self.active_do(|c| if cmd == Command::Reload { c.reload() } else { c.hard_reload() });
+            }
             Command::Stop => self.active_do(|c| c.stop()),
             Command::Back => self.active_do(|c| c.go_back()),
             Command::Forward => self.active_do(|c| c.go_forward()),

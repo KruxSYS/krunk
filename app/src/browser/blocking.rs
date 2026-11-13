@@ -1173,7 +1173,23 @@ impl Browser {
 
     /// Navigates a specific tab as the host. No borrow is held while the
     /// engine runs: it may call back into the browser synchronously.
+    /// Before the host navigates or reloads a tab: a page that waits for six or more answers
+    /// may hold all of a host's connections, and the tab's own next request to that host
+    /// would queue behind them for ever (measured on Windows, docs/NETWORK.md). Stopping the
+    /// page's loads frees them.
+    pub(super) fn free_stuck_connections(&self, id: TabId) {
+        let stuck = self.views.borrow().get(&id).and_then(|v| {
+            let p = v.net.pending(lb_core::storage::now_ms());
+            (p.waiting >= lb_core::inflight::STUCK_WAITING).then(|| (v.view.clone(), p.waiting))
+        });
+        if let Some((view, waiting)) = stuck {
+            info!("tab {id}: {waiting} requests without an answer are stopped before the tab goes on");
+            view.stop();
+        }
+    }
+
     pub(super) fn navigate_tab(&self, id: TabId, url: &str) {
+        self.free_stuck_connections(id);
         let view = self.views.borrow().get(&id).map(|v| {
             v.host_navigation.set(true);
             v.view.clone()

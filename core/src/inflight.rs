@@ -24,6 +24,10 @@ use crate::urlclean;
 pub const BYPASS_AFTER_MS: i64 = 1_000;
 /// A request pending this long is worth a line in the log.
 pub const SLOW_AFTER_MS: i64 = 30_000;
+/// A tab that waits for this many answers may hold every connection the engine opens to one
+/// host (six): before the host navigates or reloads that tab, its loads are stopped, or the
+/// new navigation would wait for one of the very connections the old page holds.
+pub const STUCK_WAITING: u32 = 6;
 /// Requests remembered at once.
 pub const MAX_TRACKED: usize = 4096;
 /// At most one batch of log lines in this time, of at most [`MAX_REPORTS`] lines.
