@@ -37,6 +37,11 @@
     if (bytes >= 1048576) return (bytes / 1048576).toFixed(bytes % 1048576 ? 1 : 0) + ' MiB';
     return Math.round(bytes / 1024) + ' KiB';
   }
+  // "1.1 MiB · 17 pages": the size in bytes moves little when a memory grows by a page.
+  function sizePages(bytes) {
+    const pages = bytes / 65536;
+    return sizeText(bytes) + (Number.isInteger(pages) ? ' · ' + pages.toLocaleString() + (pages === 1 ? ' page' : ' pages') : '');
+  }
   function parseInt2(text) {
     const t = String(text).trim();
     const m = /^(-?)(0x[0-9a-f]+|\d+)$/i.exec(t);
@@ -164,7 +169,7 @@
           el('span', { class: 'name', text: 'Memory ' + m.mem }),
           el('span', { class: 'where', text: KIND[c.kind] + (c.kind === 'page' ? '' : ' ' + c.url), title: c.url }),
           el('span', { class: 'owner', text: ownersOf(c, m.mem).join(', ') }),
-          el('span', { class: 'size', text: sizeText(m.bytes) + (m.shared ? ' · shared' : '') }),
+          el('span', { class: 'size', text: sizePages(m.bytes) + (m.shared ? ' · shared' : '') }),
         ]));
       });
       if (c.error) box.appendChild(el('div', { class: 'ctx-note', text: KIND[c.kind] + ' ' + c.url + ': ' + c.error }));
@@ -301,7 +306,7 @@
   function selected() {
     const s = state.sel;
     $('scan-memory').textContent = s ? memName(s) : '';
-    $('hex-memory').textContent = s ? memName(s) + ', ' + sizeText(s.bytes) : '';
+    $('hex-memory').textContent = s ? memName(s) + ', ' + sizePages(s.bytes) : '';
     state.hex.before = null;
     if (s) hexLoad(Math.min(state.hex.addr, Math.max(0, s.bytes - 16)));
     else { state.hex.bytes = []; hexRender(); }
@@ -584,7 +589,7 @@
     const c = state.contexts.find(function (x) { return x.ctx === s.ctx; });
     const m = c && (c.memories || []).find(function (x) { return x.mem === s.mem; });
     if (m) { m.bytes = bytes; m.pages = bytes / 65536; renderMemories(); }
-    $('hex-memory').textContent = memName(s) + ', ' + sizeText(bytes);
+    $('hex-memory').textContent = memName(s) + ', ' + sizePages(bytes);
   }
   function hexRender() {
     const h = state.hex;

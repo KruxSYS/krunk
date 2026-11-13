@@ -257,7 +257,13 @@ and write the `WebAssembly.Memory` objects of one tab.
   is bound to nothing. The agent can't open it (`agent_forbidden`); it has the gated tools.
 - **Requests are typed and checked** in `core::wasm` before anything reaches a page: a closed
   set of operations (no code, no property names), sizes within the limits. The probe checks
-  addresses against the memory.
+  addresses against the memory. An instance's exported global is named by the instance's number
+  and the export's place in the list, never by its name; only mutable `i32 i64 f32 f64` globals
+  are written, with a value the probe checks against the global's type.
+- **Instances** are listed with what the page's own scripts see of them: export names (cut to
+  200 characters, page-controlled text shown with `textContent`), kinds, and the values of
+  exported globals. To learn a global's type the probe instantiates 18-byte modules of its own
+  in the page's context (one imported global each, no code); they run nothing.
 - **The probe** lives in the inspected page's main world as an object only the host's DevTools
   session has a handle to; it takes the built-ins it uses when it is made. A hostile page can
   still lie to it (replace `WebAssembly.Memory.prototype`'s `buffer` getter, say): what it

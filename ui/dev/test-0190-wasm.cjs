@@ -57,7 +57,7 @@ module.exports = function ({ openPage, check, lastSent, emit, shot, UI }) {
     await page.reload();
     await page.waitForSelector('.inst-row');
     check((await page.textContent('#tab-title')) === 'A game' && (await page.textContent('#tab-url')) === 'https://game.example/play', 'shows the tab it is bound to');
-    check((await page.textContent('.mem-row .name')) === 'Memory 0' && (await page.textContent('.mem-row .size')).startsWith('64 KiB'), 'lists the memory with its size');
+    check((await page.textContent('.mem-row .name')) === 'Memory 0' && (await page.textContent('.mem-row .size')) === '64 KiB · 1 page', 'lists the memory with its size');
     check((await page.locator('.mem-row.selected').count()) === 1, 'the first memory is chosen');
     check((await page.textContent('.ctx-note')).includes('worker.js') && (await page.textContent('.ctx-note')).includes('did not answer'), 'a context that failed is named');
     check(await page.locator('#problem').isHidden(), 'no problem line for a web page');
@@ -149,7 +149,7 @@ module.exports = function ({ openPage, check, lastSent, emit, shot, UI }) {
     await page.evaluate(() => { window.__mem.grow(1); window.__dv().setInt32(0x10010, 4242, true); });
     await page.waitForFunction(() => { const i = document.querySelectorAll('#watch input.value')[2]; return i && i.value === '4242'; });
     check(true, 'grow: the watch entry past the old size now reads the value there');
-    await page.waitForFunction(() => document.querySelector('.mem-row .size').textContent.startsWith('128 KiB') && document.getElementById('hex-memory').textContent.includes('128 KiB'));
+    await page.waitForFunction(() => document.querySelector('.mem-row .size').textContent === '128 KiB · 2 pages' && document.getElementById('hex-memory').textContent === 'Memory 0, 128 KiB · 2 pages');
     check((await page.locator('.mem-row.selected .name').textContent()) === 'Memory 0', 'grow: the memory list and the hex view show the new size (128 KiB), the same memory stays chosen');
     check((await page.textContent('#results tr .addr')) === '0x400' && (await page.textContent('#results tr .value')) === '999', 'grow: the result list from before is still there, with the value of now');
     await page.evaluate(() => window.__dv().setInt32(0x400, 5, true));

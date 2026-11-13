@@ -1131,7 +1131,17 @@ Games and apps compiled to WebAssembly keep their state (health, score, money, p
 tab you are on; the page is bound to that tab (like the site-data page) and works Cheat-Engine
 style:
 - **Memories:** every memory found in the tab, with its size. **Find memories** looks again
-  (a game makes its memory when it starts).
+  (a game makes its memory when it starts). A memory that grows (`memory.grow`) keeps its
+  number, its scan results, its watch entries and its frozen values; addresses past the old
+  size become valid, and the list and the hex view show the new size.
+- **Instances:** every `WebAssembly.Instance` found, with its exports by kind (functions,
+  memories, globals, tables, tags) and by name. A memory an instance exports says so in the
+  memory list (`export "memory" of instance 1`); choosing an instance chooses its memory.
+  Memories no instance exports (imported ones, or made by JavaScript) stay listed. The chosen
+  instance's **exported globals** are a table of name, type (`i32 i64 f32 f64`; `v128`,
+  `funcref`, `externref` are shown without a value) and live value; a mutable global takes a
+  new value with Enter, a constant one is shown only. Globals that are not exported can't be
+  reached from JavaScript, so not from here either.
 - **Scan:** a first scan for an exact value, a range, bigger/smaller than, or an unknown initial
   value (a snapshot); then next scans (exact, range, changed, unchanged, increased, decreased,
   increased by, decreased by) narrow the addresses down. Types: `i8 u8 i16 u16 i32 u32 i64 u64
@@ -1144,18 +1154,24 @@ style:
 
 **How the memories are reached.** Nothing is added to the page's globals:
 - The host asks the engine's DevTools protocol for the objects whose prototype is
-  `WebAssembly.Memory.prototype` (`Runtime.queryObjects`) and calls its probe
-  (`ui/inject/wasm-probe.js`) on them with `Runtime.callFunctionOn`. The probe is an object only
+  `WebAssembly.Memory.prototype`, and those of `WebAssembly.Instance.prototype`
+  (`Runtime.queryObjects`), and calls its probe (`ui/inject/wasm-probe.js`) on them with
+  `Runtime.callFunctionOn`. The probe is an object only
   the host holds a handle to (object group `krunk-wasm`, released when the session ends).
 - The query makes the engine collect garbage, so it runs when memories are listed and when a
   document is new, not on every read. `memory.grow` replaces a memory's buffer: every operation
-  takes `memory.buffer` again. Shared memories (threads) work the same way.
+  takes `memory.buffer` again, and a scan that paused for the page takes it again before it goes
+  on. Shared memories (threads) work the same way.
+- **A global's type** is not something JavaScript can ask for: the probe links the global into
+  18-byte modules that import one global of a given type (a wrong type fails to link). Nothing
+  is written to the global for that. Where the page's content security policy forbids compiling
+  WebAssembly, the type is `i64` or `number` and the mutability is unknown.
 - **Contexts:** the page; frames of the same process (in practice: same-site frames), each with
   its own memories; dedicated workers, through the tab's auto-attached DevTools sessions. Memory
   numbers, scans and freezes belong to one context (`ctx`, 0 is the page).
 - **Fallback:** "Hook WebAssembly and reload the tab" installs a document-start script that
   wraps `WebAssembly.Memory`, `instantiate`, `instantiateStreaming` and `Instance` before any
-  page script runs, so memories are caught as they are made. It needs the reload, and it is
+  page script runs, so memories and instances are caught as they are made. It needs the reload, and it is
   visible to the page: the wrapped functions, and a random non-enumerable property that holds
   the probe until the host takes it with its next call. Both ways feed the same list.
 
@@ -1163,7 +1179,9 @@ style:
 addresses (it says so when more matched); 8 scans per context; 1000 results per request (the
 page shows 100 at a time, the agent's tool gives at most 200); reads, writes and the hex view
 64 KiB at once; 256 frozen values and 256 watch entries; pointer paths of at most 8 offsets
-(32-bit pointers: `memory64` modules are not followed). Scans run in slices of 30 ms so the page
+(32-bit pointers: `memory64` modules are not followed); 256 instances per context, 2000 exports
+listed per instance (memories, globals, tables and tags first; the rest are counted), export
+names cut to 200 characters, a global's new value at most 64 characters. Scans run in slices of 30 ms so the page
 keeps running; a scan may take up to two minutes before the host gives up.
 
 **Not reachable:** frames of other sites (they run in another process), service workers and
