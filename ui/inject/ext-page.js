@@ -36,7 +36,8 @@ if (backgroundPage) {
   try { worker = new G.Worker(info.boot, { type: info.module ? 'module' : 'classic', name: info.install ? 'krunk-sw:install' : 'krunk-sw' }); }
   catch (e) { say('log', { level: 'error', text: 'The background worker did not start: ' + (e && e.message || e) }); say('bgReady', {}); return; }
   var running = false;
-  worker.addEventListener('message', function (e) { var d = e.data; if (d && d.__krunk) { running = true; host.postMessage(d.__krunk); } });
+  var parse = JSON.parse;
+  worker.addEventListener('message', function (e) { var d = e.data; if (d && typeof d.__krunk === 'string') { running = true; host.postMessage(parse(d.__krunk)); } });
   // A worker that never ran (its script did not load): the reason, and queued events are let
   // go so nothing waits for ever. A running worker reports its own errors.
   worker.addEventListener('error', function (e) {
@@ -51,6 +52,9 @@ if (backgroundPage) {
 var pending = {}, nextId = 1;
 var listeners = { message: [], storage: [], actionClicked: [], tabUpdated: [], tabActivated: [], tabRemoved: [], alarm: [], installed: [], startup: [], connect: [], windowRemoved: [], windowFocus: [] };
 var manifest = fetchSync('/manifest.json') || {}, messages = fetchSync('/_krunk/messages.json') || {};
+// What the host says about this run: `log` (KRUNK_EXT_LOG=1) sends every console level of the
+// extension's contexts to krunk.log, not only errors.
+var env = fetchSync('/_krunk/env.json') || {};
 function post(cmd, data) { host.postMessage({ cmd: 'ext', ext: extId, op: cmd, data: data === undefined ? null : data }); }
 function call(cmd, data) {
   return new Promise(function (resolve, reject) {
@@ -375,14 +379,29 @@ Object.defineProperty(G, 'browser', { value: proxied, configurable: true, writab
 // Uncaught errors, unhandled rejections and console.error of every context of the extension.
 G.addEventListener('error', function (e) { report(e && (e.error || e.message), e && e.filename, e && e.lineno); });
 G.addEventListener('unhandledrejection', function (e) { report(e && e.reason); });
+function shown(args) {
+  return Array.prototype.map.call(args, function (a) {
+    try { return a && (a.stack || a.message) || (typeof a === 'object' ? JSON.stringify(a) : String(a)); } catch (x) { return '[unprintable]'; }
+  }).join(' ');
+}
 if (G.console && typeof G.console.error === 'function') {
   var consoleError = G.console.error;
   try {
     G.console.error = function () {
-      try { report(Array.prototype.map.call(arguments, function (a) { return a && (a.stack || a.message) || (typeof a === 'object' ? JSON.stringify(a) : String(a)); }).join(' ')); } catch (x) { /* a value that cannot be shown */ }
+      try { report(shown(arguments)); } catch (x) { /* a value that cannot be shown */ }
       return consoleError.apply(this, arguments);
     };
   } catch (x) { /* a frozen console */ }
+  if (env.log) ['log', 'info', 'warn', 'debug'].forEach(function (level) {
+    var original = G.console[level];
+    if (typeof original !== 'function') return;
+    try {
+      G.console[level] = function () {
+        try { post('log', { level: level, text: shown(arguments).slice(0, 2000) }); } catch (x) { /* never in the way */ }
+        return original.apply(this, arguments);
+      };
+    } catch (x) { /* a frozen console */ }
+  });
 }
 if (inWorker) {
   // The service worker's own globals (a dedicated worker has none of them). The worker is

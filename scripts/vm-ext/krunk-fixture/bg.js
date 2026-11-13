@@ -12,7 +12,8 @@ chrome.runtime.onInstalled.addListener(function (d) { chrome.storage.local.set({
 var windowHello = null;
 chrome.runtime.onConnect.addListener(function (port) {
   if (port.name === 'echo' || port.name === 'cs') {
-    port.onMessage.addListener(function (msg) { port.postMessage({ echo: msg, sender: port.sender, name: port.name }); });
+    // (A function in a message is left out, as JSON does; it must not make postMessage throw.)
+    port.onMessage.addListener(function (msg) { port.postMessage({ echo: msg, sender: port.sender, name: port.name, left_out: function () {}, kept: [undefined, 1] }); });
     port.onDisconnect.addListener(function () { echoDisconnects++; });
   } else if (port.name === 'window') {
     port.onMessage.addListener(function (msg) { if (windowHello) windowHello(msg, port); });

@@ -7,10 +7,13 @@
 // shim (ext-page.js) runs, then the extension's service worker. Hardened extensions (SES,
 // LavaMoat) remove or freeze globals when they start; nothing here is looked up after that.
 (function (sw) {
-  var post = self.postMessage.bind(self), listen = self.addEventListener.bind(self);
+  var post = self.postMessage.bind(self), listen = self.addEventListener.bind(self), toJson = JSON.stringify;
   var bridge = {
-    // To the host, through the hidden background page (which relays).
-    postMessage: function (m) { post({ __krunk: m }); },
+    // To the host, through the hidden background page (which relays). As JSON text, like
+    // every other context's requests and like Chrome's own messaging: a value JSON leaves
+    // out (a function, a symbol) must not make postMessage throw the way a structured
+    // clone would (an extension's port stream ends for good on the first such error).
+    postMessage: function (m) { post({ __krunk: toJson(m) }); },
     // From the host. The extension's own `message` listeners never see these.
     addEventListener: function (type, fn) {
       listen('message', function (e) {

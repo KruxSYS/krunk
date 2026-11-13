@@ -23,6 +23,15 @@ const EXT_WINDOW_MAX: (f64, f64) = (4000.0, 4000.0);
 /// Most windows and offscreen documents one extension may have open.
 const MAX_EXT_WINDOWS: usize = 8;
 
+/// `KRUNK_EXT_LOG=1` in the environment: every console level of the extensions' contexts
+/// (background worker, popup, pages, offscreen documents, windows, content scripts) is written
+/// to krunk.log with its context, not only their errors. For finding out why an extension does
+/// not work; extension output may contain what the user does, so it is off by default.
+pub(super) fn log_all() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("KRUNK_EXT_LOG").is_ok_and(|v| v == "1"))
+}
+
 /// One end of a message or a port.
 #[derive(Debug, Clone, PartialEq)]
 pub(in crate::browser) enum End {

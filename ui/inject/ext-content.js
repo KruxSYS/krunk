@@ -10,7 +10,7 @@
 // arguments only, so `globalThis.chrome` and bundlers' feature tests found nothing), ports
 // (`runtime.connect`, `onConnect` for `tabs.connect`), and a message is answered as "no
 // listener" / "no answer" so the host can tell the sender what Chrome would.
-function (extId, manifest, messages) {
+function (extId, manifest, messages, logAll) {
   'use strict';
   var pending = {}, nextId = 1, listeners = { message: [], storage: [], connect: [] };
   var deliver = window.__krunkExtDeliver;
@@ -79,6 +79,15 @@ function (extId, manifest, messages) {
         return consoleError.apply(this, arguments);
       };
     } catch (x) { /* a frozen console */ }
+    // KRUNK_EXT_LOG=1: every level.
+    if (logAll) ['log', 'info', 'warn', 'debug'].forEach(function (level) {
+      var original = console[level];
+      if (typeof original !== 'function') return;
+      console[level] = function () {
+        try { send('log', { level: level, text: Array.prototype.map.call(arguments, function (a) { try { return a && (a.stack || a.message) || (typeof a === 'object' ? JSON.stringify(a) : String(a)); } catch (x) { return '[unprintable]'; } }).join(' ').slice(0, 2000) }); } catch (x) { /* never in the way */ }
+        return original.apply(this, arguments);
+      };
+    });
   }
   // Ports: the same as in ext-page.js (the host keeps the table).
   var ports = {}, portSeq = 0, rand = window.crypto;

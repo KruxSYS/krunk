@@ -504,6 +504,7 @@ impl Browser {
                         id: id.clone(),
                         manifest_json: serde_json::to_string(&e.manifest).unwrap_or_else(|_| "{}".into()),
                         messages_json: e.messages_json.clone(),
+                        log_all: runtime::log_all(),
                         scripts: scripts
                             .iter()
                             .filter(|cs| !is_main(cs))
@@ -1298,9 +1299,11 @@ impl Browser {
                     let file = get_str("file").unwrap_or_default();
                     let line = data.get("line").and_then(|l| l.as_u64()).unwrap_or(0);
                     self.ext_error(ext_id, &text, &file, line, caller.end().context_name());
-                } else {
-                    let text: String = text.chars().take(500).collect();
-                    info!("extension {}: {text}", self.ext_name(ext_id));
+                } else if runtime::log_all() {
+                    // KRUNK_EXT_LOG=1: every console level of the extension's contexts.
+                    let text: String = text.chars().take(2000).collect();
+                    let level: String = get_str("level").unwrap_or_default().chars().take(8).collect();
+                    info!("extension {}: [{} {level}] {text}", self.ext_name(ext_id), caller.end().context_name());
                 }
                 Ok(Value::Null)
             }
@@ -2107,6 +2110,9 @@ impl Browser {
                     ),
                 );
             }
+        }
+        if path == "/_krunk/env.json" {
+            return generated("application/json", json!({ "log": runtime::log_all() }).to_string());
         }
         if path == "/_krunk/messages.json" {
             let body = if messages.is_empty() { "{}".to_string() } else { messages };
