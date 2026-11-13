@@ -262,7 +262,7 @@ impl Browser {
 
     /// A tab finished a load: if it showed an extension page and shows something else now,
     /// that page's ports close.
-    pub(super) fn ext_tab_left_page(&self, tab: TabId) {
+    pub(in crate::browser) fn ext_tab_left_page(&self, tab: TabId) {
         if self.ext.ports.borrow().is_empty() {
             return;
         }

@@ -1727,7 +1727,7 @@ mod tests {
         let names: Vec<&str> = uses.iter().map(|u| u.api.as_str()).collect();
         assert_eq!(names, vec!["declarativeNetRequest.updateDynamicRules", "runtime", "storage", "tabs", "webRequest"]);
         assert!(uses.iter().filter(|u| u.supported).count() == 3);
-        assert!(uses.iter().any(|u| u.api == "webRequest" && u.reason.contains("blocking network")));
+        assert!(uses.iter().any(|u| u.api == "webRequest" && u.reason.contains("network interception")));
         let msgs = serde_json::json!({"appName": {"message": "Dark Reader"}, "desc": {"message": "d"}});
         assert_eq!(localize("__MSG_appName__: __MSG_desc__ __MSG_missing__", &msgs), "Dark Reader: d ");
         assert_eq!(mime_for("a/b.JS"), "text/javascript; charset=utf-8");
