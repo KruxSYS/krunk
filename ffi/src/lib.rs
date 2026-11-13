@@ -17,6 +17,7 @@ mod store;
 mod tabs;
 mod theme;
 mod urls;
+mod vault;
 
 pub use blocker::*;
 pub use error::{FfiError, SettingsError, SettingsFieldError};
@@ -27,6 +28,7 @@ pub use store::*;
 pub use tabs::*;
 pub use theme::*;
 pub use urls::*;
+pub use vault::*;
 
 /// The shared core's version (the Windows release it came from), e.g. `0.15.3`.
 #[uniffi::export]

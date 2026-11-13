@@ -27,3 +27,5 @@ lb_core = { path = "../core", package = "core" }
 uniffi = "0.32"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+zeroize = "1.8"
+base64ct = { version = "1.8", features = ["alloc"] }
