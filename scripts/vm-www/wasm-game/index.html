@@ -1,0 +1,19 @@
+<!doctype html>
+<!-- The WASM memory inspector's test game (Krunk 0.19.0). game.wasm keeps health (i32), score
+     (f32) and gold (i32, behind a pointer) in its linear memory; the page shows them every
+     100 ms, so a value changed or frozen in memory shows up here. `?worker` runs the module in
+     a dedicated worker instead (the page only displays what the worker reports).
+     The title carries the values for scripted checks: "WASM health=100 score=0 gold=250". -->
+<html><head><meta charset="utf-8"><title>WASM game</title>
+<style>
+  body { font: 18px "Segoe UI", sans-serif; margin: 32px; }
+  .v { font: bold 32px ui-monospace, Consolas, monospace; }
+  button { font: inherit; margin-right: 8px; padding: 4px 12px; }
+  #where { color: #555; }
+</style></head><body>
+<h1>WASM game</h1>
+<p id="where"></p>
+<p>Health <span class="v" id="health">?</span> &nbsp; Score <span class="v" id="score">?</span> &nbsp; Gold <span class="v" id="gold">?</span></p>
+<p><button id="hit">Hit (−10)</button><button id="heal">Heal (+5)</button><button id="pts">Score +1.5</button><button id="spend">Spend 20 gold</button></p>
+<script src="game.js"></script>
+</body></html>
