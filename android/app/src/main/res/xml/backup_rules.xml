@@ -10,4 +10,8 @@
     <exclude domain="database" path="." />
     <exclude domain="sharedpref" path="." />
     <exclude domain="external" path="." />
+    <!-- The password vault (files/krunk-vault, VaultFiles.DIR) never leaves the device: the
+         Keystore key that wraps its key cannot be moved, so a copy would be useless, and it is
+         a secret store. Named here on its own so that no later include can carry it along. -->
+    <exclude domain="file" path="krunk-vault" />
 </full-backup-content>
