@@ -4,11 +4,22 @@ import android.app.Application
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import org.krunk.browser.core.KrunkCore
 import org.krunk.browser.engine.GeckoEngine
 import org.krunk.browser.engine.blocker.AllowList
 import org.krunk.browser.engine.blocker.BlockerController
 import org.krunk.browser.tabs.TabManager
+import org.krunk.browser.vault.KeystoreKeyWrapper
+import org.krunk.browser.vault.VaultBackend
+import org.krunk.browser.vault.VaultBackends
+import org.krunk.browser.vault.VaultController
+import org.krunk.browser.vault.VaultLockSetting
 import org.krunk.ffi.coreVersion
 
 /**
@@ -40,6 +51,28 @@ class KrunkApp : Application() {
     private val tabsLazy = lazy { TabManager(this, core, engine) }
     val tabs: TabManager by tabsLazy
 
+    /** When the vault locks by itself: timer and background grace (see [VaultLockSetting]). */
+    val vaultLock: VaultLockSetting by lazy { VaultLockSetting(core.store::kvGet, core.store::kvSet) }
+
+    /** For what must read vault data while it is locked (the biometric blob); else use [vault]. */
+    val vaultBackend: VaultBackend by lazy { VaultBackends.create(this) }
+
+    private val vaultLazy = lazy {
+        val wrapKey = KeystoreKeyWrapper.onDevice()
+        VaultController(
+            backend = vaultBackend,
+            keyPresent = wrapKey::keyPresent,
+            prepareForNewVault = wrapKey::prepareForNewVault,
+            deleteKey = wrapKey::deleteKey,
+            clock = System::currentTimeMillis,
+            dispatcher = Dispatchers.IO,
+            lockMinutes = { vaultLock.current },
+            backgroundGraceSeconds = { vaultLock.currentGraceSeconds },
+            timerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+        )
+    }
+    val vault: VaultController by vaultLazy
+
     override fun onCreate() {
         super.onCreate()
         // Gecko's child processes run this class too: they must not load the Rust library just
@@ -50,6 +83,19 @@ class KrunkApp : Application() {
                 TAG,
                 "Krunk ${BuildConfig.VERSION_NAME} starting (core ${coreVersion()}, " +
                     "GeckoView ${BuildConfig.GECKOVIEW_VERSION})",
+            )
+            // The vault locks once no activity of Krunk has been on screen for the grace period.
+            // A vault nobody has asked for yet is locked anyway and is not created for this.
+            ProcessLifecycleOwner.get().lifecycle.addObserver(
+                object : DefaultLifecycleObserver {
+                    override fun onStart(owner: LifecycleOwner) {
+                        if (vaultLazy.isInitialized()) vault.onForeground()
+                    }
+
+                    override fun onStop(owner: LifecycleOwner) {
+                        if (vaultLazy.isInitialized()) vault.onBackground()
+                    }
+                },
             )
         }
     }

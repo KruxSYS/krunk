@@ -272,5 +272,10 @@ tiles, favicons, settings in `kv`). The Gecko profile (cookies, site data, cache
 GeckoView's default location under `filesDir`. Backup rules (`res/xml/backup_rules.xml`,
 `data_extraction_rules.xml`, since 0.1.1): cloud backup carries nothing (the database holds
 history and the session next to bookmarks and settings, and cannot be split); device-to-device
-transfer on Android 12+ carries `files/krunk`; the Gecko profile is in neither. A later vault
-must get its own exclude in the device-transfer rules.
+transfer on Android 12+ carries `files/krunk`; the Gecko profile is in neither.
+
+The password vault (0.3.0) is `filesDir/krunk-vault/` (`vault.json`, `state.json`;
+`vault/VaultFiles.kt`): beside `files/krunk`, not in it, and excluded by name in all three rule
+sets. It never leaves the device: the Keystore key that wraps the vault key cannot be moved, so
+a copy would not open. `BackupRulesTest` reads the rule files and fails if an include would
+carry the directory or an exclude no longer names `VaultFiles.DIR`.
