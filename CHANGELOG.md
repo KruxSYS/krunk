@@ -3,6 +3,34 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.19.0 — 2026-11-13
+
+- **WASM memory inspector.** ⋮ → **WASM memory inspector** opens `krunk://wasm` for the tab
+  you are on: a tool for looking into and changing the memory of WebAssembly programs (games,
+  emulators, apps), in the manner of a memory scanner.
+  - It lists the page's WebAssembly **memories** and **instances** (with their exported
+    functions and globals), also those of workers and of frames of the same site, and keeps up
+    when a memory grows.
+  - **Scan** for a value (exact, a range, or "unknown" to start from everything), then narrow
+    the list after the value changed: changed, unchanged, increased, decreased, or a new exact
+    value. Types: 8 to 64 bit integers, floats, text (UTF-8, UTF-16) and raw bytes.
+  - **Edit** what you found, **freeze** it so the program cannot change it, keep a **watch
+    list** with labels (export and import it), follow **pointer paths**, edit exported globals,
+    and read or change bytes in a **hex view**.
+  - Nothing is installed in pages you do not inspect, and nothing is stored: scans, freezes
+    and the watch list end with the tab. Krunk's own pages cannot be inspected.
+- **For user scripts:** `GM.wasm` (with `@grant GM.wasm`) gives a script the same operations:
+  `memories`, `instances`, `read`, `write`, `bytes`, `scan`, `next`, `results`, `freeze`,
+  `unfreeze`, `watch`, `globals`, `setGlobal` and more. Scripts with this grant are marked
+  **WASM memory** on `krunk://scripts`.
+- **For the AI agent:** the tools `wasm_memories`, `wasm_read`, `wasm_write`, `wasm_scan`,
+  `wasm_results`, `wasm_freeze`, `wasm_unfreeze`, `wasm_watch` and `wasm_global`, with the
+  limits of its other page tools (not on Krunk's pages, not while a password field is filled).
+- Limits: a scan covers the first 512 MiB of a memory and keeps about 4 million addresses; a
+  frozen value is rewritten about 20 times a second (slower while its tab is in the
+  background); frames of other sites, service workers and shared workers cannot be reached.
+  Reference: `docs/WASM_INSPECTOR.md`.
+
 ## 0.18.0 — 2026-11-13
 
 - **Pages that got stuck loading, and took other tabs with them.** Two things in the engine

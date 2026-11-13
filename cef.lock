@@ -43,5 +43,9 @@ CEF_ARTIFACT=/work/projects/extra/browser/.pipeline/artifacts/cef/cef_binary_156
 #     (30f00b4c…), libcef.dll 8e5cc766…; 0.12.3-0.17.0 shipped ...-private (d406d15a…, libcef aefc93eb…).
 #     Built in .pipeline/cef-build (another path than the earlier builds): chrome_elf.dll,
 #     dxcompiler.dll, vk_swiftshader.dll and vulkan-1.dll differ from the earlier engine in 8 bytes
-#     each (the debug id), resources.pak by the new protocol command.
+#     each, and nothing else: bytes 4-11 of the CodeView record ("RSDS") in the PE debug
+#     directory, i.e. the first half of the PDB GUID the linker derives from the PDB's contents
+#     (which hold the build tree's paths); the second half is lld's constant "LLD PDB.". Checked
+#     0.19.0 by a byte diff of all four (same size, same code, same timestamps, same checksum).
+#     resources.pak differs by the new protocol command.
 CEF_PATCHES="krunk-windowed-hidden.patch:86e46b0042bc18de8cd385124ce3623bbea1a18f7f9c8737c2000451d3c7f14b chromium-private-media.patch:1316748dc6ffb7d76d16aa02b3c8d4de7e9f4c102dd2565f42332c04e52452d6 chromium-clone-navigation.patch:e70936d42a179a5f7ad56f378a11c838284f73d708e066833f3e7b63e477d5a0 chromium-sockets-per-host.patch:1b6061d9d90a43c466f51aabe8ca06b396bfb98ac05c561b98b8983e68aa811c"
