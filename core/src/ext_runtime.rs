@@ -108,6 +108,75 @@ pub fn unlimited_storage(m: &Manifest) -> bool {
     m.permissions.iter().any(|p| p == "unlimitedStorage")
 }
 
+// ------------------------------------------------------------------ host permissions and CORS
+
+/// One entry of the engine's cross-origin allow-list for an extension's origin: requests
+/// from the extension's own pages and background to `protocol://domain` (and its
+/// subdomains with `subdomains`; an empty domain with `subdomains`: every domain) are not
+/// subject to CORS, as Chrome does it for the manifest's host permissions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CorsGrant {
+    pub protocol: &'static str,
+    pub domain: String,
+    pub subdomains: bool,
+}
+
+/// What one host pattern of a manifest grants. `<all_urls>` and `*://…` are http and https;
+/// a port is dropped (the allow-list has none) and the path does not matter (as in Chrome).
+/// Nothing for `file:`, `ws:`, `wss:`, other schemes, an API permission's name or anything
+/// malformed.
+pub fn cors_grants_of(pattern: &str) -> Vec<CorsGrant> {
+    const WEB: [&str; 2] = ["http", "https"];
+    let grants = |protocols: &[&'static str], domain: &str, subdomains: bool| -> Vec<CorsGrant> {
+        protocols.iter().map(|p| CorsGrant { protocol: p, domain: domain.to_string(), subdomains }).collect()
+    };
+    if pattern == "<all_urls>" {
+        return grants(&WEB, "", true);
+    }
+    let Some((scheme, rest)) = pattern.split_once("://") else { return Vec::new() };
+    let protocols: &[&'static str] = match scheme {
+        "*" => &WEB,
+        "http" => &WEB[..1],
+        "https" => &WEB[1..],
+        _ => return Vec::new(),
+    };
+    let authority = rest.split('/').next().unwrap_or("");
+    // A port: digits or `*` after the colon (IPv6 literals get no entry).
+    let host = match authority.rsplit_once(':') {
+        Some((h, port)) if !port.is_empty() && (port == "*" || port.bytes().all(|b| b.is_ascii_digit())) => h,
+        Some(_) => return Vec::new(),
+        None => authority,
+    };
+    let host = host.to_ascii_lowercase();
+    if host == "*" {
+        return grants(protocols, "", true);
+    }
+    let (domain, subdomains) = match host.strip_prefix("*.") {
+        Some(d) => (d, true),
+        None => (host.as_str(), false),
+    };
+    let label = |l: &str| !l.is_empty() && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    if domain.len() > 253 || !domain.split('.').all(label) {
+        return Vec::new();
+    }
+    grants(protocols, domain, subdomains)
+}
+
+/// The allow-list entries of a manifest: its `host_permissions` and the host patterns among
+/// its `permissions` (as [`crate::ext_guard::host_access`] reads them), each once. Not
+/// optional permissions and not the content scripts' `matches`.
+pub fn cors_grants(m: &Manifest) -> Vec<CorsGrant> {
+    let mut out: Vec<CorsGrant> = Vec::new();
+    for p in m.host_permissions.iter().chain(&m.permissions) {
+        for g in cors_grants_of(p) {
+            if !out.contains(&g) {
+                out.push(g);
+            }
+        }
+    }
+    out
+}
+
 /// A content script for the page's own (MAIN) world: no extension API there, as in Chrome.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MainScript {
@@ -576,6 +645,69 @@ mod tests {
         .unwrap();
         assert!(sandbox_csp(&weak).starts_with("sandbox"));
         assert!(!is_sandbox_page(&weak, "s.html"));
+    }
+
+    #[test]
+    fn host_patterns_become_allow_list_entries() {
+        let g = |protocol: &'static str, domain: &str, subdomains: bool| CorsGrant {
+            protocol,
+            domain: domain.to_string(),
+            subdomains,
+        };
+        let all = vec![g("http", "", true), g("https", "", true)];
+        assert_eq!(cors_grants_of("<all_urls>"), all);
+        assert_eq!(cors_grants_of("*://*/*"), all);
+        assert_eq!(cors_grants_of("https://*/*"), vec![g("https", "", true)]);
+        assert_eq!(cors_grants_of("https://*.example.com/*"), vec![g("https", "example.com", true)]);
+        assert_eq!(cors_grants_of("https://a.test/*"), vec![g("https", "a.test", false)]);
+        assert_eq!(cors_grants_of("https://A.Test/api/*"), vec![g("https", "a.test", false)]);
+        assert_eq!(cors_grants_of("http://localhost:8545/"), vec![g("http", "localhost", false)]);
+        assert_eq!(cors_grants_of("http://localhost:*/*"), vec![g("http", "localhost", false)]);
+        assert_eq!(
+            cors_grants_of("*://127.0.0.1/*"),
+            vec![g("http", "127.0.0.1", false), g("https", "127.0.0.1", false)]
+        );
+        assert_eq!(cors_grants_of("https://a.test"), vec![g("https", "a.test", false)]);
+        for bad in [
+            "file:///*",
+            "file://*/*",
+            "ws://a.test/*",
+            "wss://*/*",
+            "ftp://a.test/*",
+            "chrome-extension://abc/*",
+            "storage",
+            "activeTab",
+            "",
+            "https://",
+            "https:///x",
+            "https://*.*/x",
+            "https://a.*.test/*",
+            "https://*a.test/*",
+            "https://*./x",
+            "https://user@a.test/*",
+            "https://a.test:port/*",
+            "https://a.test:/*",
+            "https://[::1]/*",
+            "https://a..test/*",
+            "https://a test/*",
+        ] {
+            assert_eq!(cors_grants_of(bad), Vec::new(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_manifests_allow_list_is_its_host_permissions_once() {
+        let m = Manifest::parse(
+            r#"{"manifest_version":3,"name":"x","version":"1",
+                "permissions":["storage","https://old.test/*"],
+                "host_permissions":["https://*.example.com/*","https://*.example.com/other/*","file://*/*"],
+                "optional_host_permissions":["<all_urls>"],
+                "content_scripts":[{"matches":["<all_urls>"],"js":["a.js"]}]}"#,
+        )
+        .unwrap();
+        let got: Vec<(&str, String, bool)> =
+            cors_grants(&m).into_iter().map(|g| (g.protocol, g.domain, g.subdomains)).collect();
+        assert_eq!(got, vec![("https", "example.com".to_string(), true), ("https", "old.test".to_string(), false)]);
     }
 
     #[test]

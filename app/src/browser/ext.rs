@@ -173,6 +173,9 @@ pub(super) struct ExtHost {
     /// In memory; the extension sets it again when it starts.
     storage_access: RefCell<HashMap<String, bool>>,
     backgrounds: RefCell<HashMap<String, Background>>,
+    /// The engine's cross-origin allow-list entries in place, by extension id (0.17.0): an
+    /// enabled extension's own origin may fetch from its host permissions without CORS.
+    cors: RefCell<HashMap<String, Vec<lb_core::ext_runtime::CorsGrant>>>,
     popup: RefCell<Option<ExtPopup>>,
     /// Messages waiting for `respond`, with the extension that may answer them and how many
     /// receivers have not answered yet.
@@ -245,6 +248,7 @@ impl ExtHost {
             storage: RefCell::new(HashMap::new()),
             storage_access: RefCell::new(HashMap::new()),
             backgrounds: RefCell::new(HashMap::new()),
+            cors: RefCell::new(HashMap::new()),
             popup: RefCell::new(None),
             pending: RefCell::new(HashMap::new()),
             next_id: Cell::new(1),
@@ -997,7 +1001,49 @@ impl Browser {
         }
     }
 
+    /// Brings the engine's cross-origin allow-list in line with the enabled extensions: as in
+    /// Chrome, an extension's pages and background are exempt from CORS for the hosts its
+    /// manifest names. Only the extension's own origin is ever the source, so its content
+    /// scripts (which run in web origins) gain nothing.
+    fn ext_sync_cors(&self) {
+        let wanted: HashMap<String, Vec<lb_core::ext_runtime::CorsGrant>> = self
+            .ext
+            .exts
+            .borrow()
+            .iter()
+            .filter(|e| e.installed.enabled)
+            .map(|e| (e.installed.id.clone(), lb_core::ext_runtime::cors_grants(&e.manifest)))
+            .collect();
+        let mut have = self.ext.cors.borrow_mut();
+        let ids: Vec<String> = have.keys().chain(wanted.keys()).cloned().collect();
+        for id in ids {
+            let (old, new) = (have.get(&id).cloned().unwrap_or_default(), wanted.get(&id).cloned().unwrap_or_default());
+            if old == new {
+                continue;
+            }
+            let origin = ext::origin(&id);
+            for g in old.iter().filter(|g| !new.contains(g)) {
+                crate::ffi::cef::cross_origin_allow(&origin, g.protocol, &g.domain, g.subdomains, false);
+            }
+            let mut failed = 0;
+            for g in new.iter().filter(|g| !old.contains(g)) {
+                if !crate::ffi::cef::cross_origin_allow(&origin, g.protocol, &g.domain, g.subdomains, true) {
+                    failed += 1;
+                }
+            }
+            if failed > 0 {
+                warning!("extension {id}: {failed} host permission(s) not exempted from CORS (the engine refused)");
+            }
+            if new.is_empty() {
+                have.remove(&id);
+            } else {
+                have.insert(id, new);
+            }
+        }
+    }
+
     fn ext_sync_backgrounds(&self) {
+        self.ext_sync_cors();
         let wanted: Vec<(String, String, bool)> = self
             .ext
             .exts

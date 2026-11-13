@@ -64,6 +64,19 @@ wrap_app! {
                     cl.append_switch_with_value(Some(&key), Some(&CefString::from(value.as_str())));
                 }
             }
+            // Test builds only (`--features devtools-port`, scripts/build-dist.sh --fast):
+            // KRUNK_DEVTOOLS_PORT=9222 opens the engine's DevTools port on 127.0.0.1, so a test
+            // harness can read the console and network of every target, extension workers
+            // included. Release builds do not contain this.
+            #[cfg(feature = "devtools-port")]
+            if let Some(port) = std::env::var("KRUNK_DEVTOOLS_PORT").ok().and_then(|p| p.parse::<u16>().ok()) {
+                warning!("TEST BUILD: DevTools port {port} is open on 127.0.0.1");
+                cl.append_switch_with_value(
+                    Some(&CefString::from("remote-debugging-port")),
+                    Some(&CefString::from(port.to_string().as_str())),
+                );
+                cl.append_switch_with_value(Some(&CefString::from("remote-allow-origins")), Some(&CefString::from("*")));
+            }
         }
 
         fn browser_process_handler(&self) -> Option<BrowserProcessHandler> {

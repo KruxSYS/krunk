@@ -30,7 +30,7 @@ case "${1:-}" in
   --debug) profile=debug ;;
   --dev) dist="$root/target/dev-dist"; features=(--features dev-updates) ;;
   --probe) dist="$root/target/probe-dist"; features=(--features perf-probe) ;;
-  --fast) profile=fast; dist="$root/target/fast-dist" ;;
+  --fast) profile=fast; dist="$root/target/fast-dist"; features=(--features devtools-port) ;;
   "") ;;
   *) echo "usage: $0 [--debug | --dev | --probe | --fast]" >&2; exit 2 ;;
 esac

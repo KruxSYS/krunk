@@ -409,6 +409,20 @@ wrap_task! {
     }
 }
 
+/// One entry of the engine's cross-origin allow-list (UI thread): requests from
+/// `source_origin` to `protocol://domain` (with `subdomains`: its subdomains too; an empty
+/// domain with `subdomains`: every domain) are not subject to CORS. `add` false removes the
+/// entry. Used for an extension's own origin and its host permissions only.
+pub fn cross_origin_allow(source_origin: &str, protocol: &str, domain: &str, subdomains: bool, add: bool) -> bool {
+    let (o, p, d) = (CefString::from(source_origin), CefString::from(protocol), CefString::from(domain));
+    let n = if add {
+        add_cross_origin_whitelist_entry(Some(&o), Some(&p), Some(&d), subdomains as _)
+    } else {
+        remove_cross_origin_whitelist_entry(Some(&o), Some(&p), Some(&d), subdomains as _)
+    };
+    n != 0
+}
+
 /// Runs `f` on the UI thread after the current callback returns. Only call
 /// this on the UI thread (use [`post_ui_from_any`] elsewhere).
 pub fn post_ui(f: impl FnOnce() + 'static) {
