@@ -174,6 +174,14 @@ pub struct Manifest {
     pub minimum_chrome_version: Option<String>,
     pub content_security_policy: Option<serde_json::Value>,
     pub commands: Option<serde_json::Value>,
+    /// Pages that run sandboxed (unique origin, no extension APIs, their own CSP; 0.17.0).
+    pub sandbox: Option<Sandbox>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", default)]
+pub struct Sandbox {
+    pub pages: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -1238,7 +1246,9 @@ pub struct BundledExtension {
 /// bundle for its UI views anyway.
 pub fn content_bundle(shim: &str, exts: &[BundledExtension]) -> String {
     let mut out = String::with_capacity(shim.len() + 4096);
-    out.push_str("(function () {\n'use strict';\n");
+    // Not strict (0.17.0): content scripts run as Chrome runs them, as plain scripts. The shim
+    // is strict on its own.
+    out.push_str("(function () {\n");
     out.push_str(
         "if (!/^https?:$/.test(location.protocol) || /(^|\\.)krunk\\.invalid$/.test(location.hostname)) return;\n",
     );
