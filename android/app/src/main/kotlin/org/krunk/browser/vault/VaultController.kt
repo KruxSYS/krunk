@@ -245,7 +245,8 @@ class VaultController(
         backgroundGraceMs = backgroundGraceSeconds().coerceAtLeast(0) * 1000L
         if (backgroundGraceMs == 0L) {
             lock(LockReason.BACKGROUND)
-        } else if (_state.value == VaultState.UNLOCKED) {
+        } else {
+            // Also when locked: an unlock on its way may still open the vault while away.
             val grace = backgroundGraceMs
             graceJob = timerScope?.launch {
                 delay(grace)
