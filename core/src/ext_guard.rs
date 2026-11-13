@@ -12,16 +12,14 @@ use crate::urlclean::origin_of;
 /// origin). Never the tab's address: that one changes when a navigation starts, while the
 /// old document and its content script still run.
 pub fn content_sender(engine_origin: &str, says_url: &str) -> (String, Option<String>) {
-    let url = if !says_url.is_empty()
-        && says_url.len() <= 4096
-        && origin_of(says_url).is_some_and(|o| o == engine_origin)
-    {
-        says_url.to_string()
-    } else if origin_of(engine_origin).is_some_and(|o| o == engine_origin) {
-        format!("{engine_origin}/")
-    } else {
-        String::new()
-    };
+    let url =
+        if !says_url.is_empty() && says_url.len() <= 4096 && origin_of(says_url).is_some_and(|o| o == engine_origin) {
+            says_url.to_string()
+        } else if origin_of(engine_origin).is_some_and(|o| o == engine_origin) {
+            format!("{engine_origin}/")
+        } else {
+            String::new()
+        };
     let origin = origin_of(&url);
     (url, origin)
 }
@@ -230,6 +228,52 @@ pub fn parse_access_level(level: &str) -> Option<bool> {
     }
 }
 
+// ------------------------------------------------------------------ what goes into the log
+
+/// Text an extension supplies (a message, a file name, the name of a call) as it goes into
+/// krunk.log: at most `max_chars`, and on one line (a line break or another control character
+/// becomes a space, so the text cannot pass for a log line of its own).
+pub fn log_text(text: &str, max_chars: usize) -> String {
+    text.chars()
+        .take(max_chars)
+        .map(|c| if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') { ' ' } else { c })
+        .collect()
+}
+
+/// Most log lines of one kind an extension causes in a minute.
+pub const LOG_LINES_PER_MINUTE: u32 = 120;
+
+/// The count of an extension's log lines of one kind in the current minute.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LogBudget {
+    minute: i64,
+    lines: u32,
+}
+
+/// What to do with a line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogVerdict {
+    Write,
+    /// Write it and say that the rest of this minute is dropped.
+    Last,
+    Drop,
+}
+
+impl LogBudget {
+    pub fn take(&mut self, now_ms: i64) -> LogVerdict {
+        let minute = now_ms.div_euclid(60_000);
+        if minute != self.minute {
+            *self = LogBudget { minute, lines: 0 };
+        }
+        self.lines = self.lines.saturating_add(1);
+        match self.lines.cmp(&LOG_LINES_PER_MINUTE) {
+            std::cmp::Ordering::Less => LogVerdict::Write,
+            std::cmp::Ordering::Equal => LogVerdict::Last,
+            std::cmp::Ordering::Greater => LogVerdict::Drop,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,7 +348,10 @@ mod tests {
         // A replaced value counts once.
         assert!(storage_set_fits(&area, &map(serde_json::json!({ "a": "1234567" })), 18));
         assert!(!storage_set_fits(&area, &map(serde_json::json!({ "a": "12345678" })), 18));
-        assert!(storage_set_fits(&area, &map(serde_json::json!({})), 16) && !storage_set_fits(&area, &map(serde_json::json!({})), 15));
+        assert!(
+            storage_set_fits(&area, &map(serde_json::json!({})), 16)
+                && !storage_set_fits(&area, &map(serde_json::json!({})), 15)
+        );
         assert_eq!(storage_limit("local", false), STORAGE_QUOTA_BYTES);
         assert_eq!(storage_limit("local", true), STORAGE_HARD_CAP_BYTES);
         assert_eq!(storage_limit("session", true), STORAGE_QUOTA_BYTES);
@@ -348,6 +395,25 @@ mod tests {
     }
 
     #[test]
+    fn extension_text_stays_on_its_log_line_and_lines_are_limited() {
+        assert_eq!(
+            log_text("boom\r\n2026-11-13 12:00:00 INFO update installed\u{2028}x\ty\0", 200),
+            "boom  2026-11-13 12:00:00 INFO update installed x y "
+        );
+        assert_eq!(log_text("abcdef", 3), "abc");
+        assert_eq!(log_text("ärger ✓", 50), "ärger ✓");
+        let mut budget = LogBudget::default();
+        let t = 1_800_000_000_000;
+        for _ in 1..LOG_LINES_PER_MINUTE {
+            assert_eq!(budget.take(t), LogVerdict::Write);
+        }
+        assert_eq!(budget.take(t + 1), LogVerdict::Last);
+        assert_eq!(budget.take(t + 2), LogVerdict::Drop);
+        assert_eq!(budget.take(t + 59_000), LogVerdict::Drop, "the same minute");
+        assert_eq!(budget.take(t + 60_000), LogVerdict::Write, "the next minute");
+    }
+
+    #[test]
     fn an_extension_opens_its_own_pages_and_the_web_only() {
         let own = crate::ext::origin(ID);
         for ok in [format!("{own}/home.html#x"), "https://example.com/".into(), "http://localhost:8094/a".into()] {
@@ -373,7 +439,8 @@ mod tests {
 
     #[test]
     fn scripting_needs_a_host_permission_for_the_documents_origin() {
-        let m = manifest(r#","permissions":["scripting","activeTab"],"host_permissions":["https://*.example.com/app/*"]"#);
+        let m =
+            manifest(r#","permissions":["scripting","activeTab"],"host_permissions":["https://*.example.com/app/*"]"#);
         assert!(host_access(&m, "https://www.example.com"));
         assert!(host_access(&m, "https://example.com"));
         assert!(!host_access(&m, "http://example.com") && !host_access(&m, "https://example.org"));
@@ -399,7 +466,10 @@ mod tests {
         let (url, origin) = content_sender("https://evil.example", "https://bank.example/login");
         assert_eq!((url.as_str(), origin.as_deref()), ("https://evil.example/", Some("https://evil.example")));
         let (url, origin) = content_sender("http://localhost:8094", "http://localhost:8094/ext.html");
-        assert_eq!((url.as_str(), origin.as_deref()), ("http://localhost:8094/ext.html", Some("http://localhost:8094")));
+        assert_eq!(
+            (url.as_str(), origin.as_deref()),
+            ("http://localhost:8094/ext.html", Some("http://localhost:8094"))
+        );
         // about:blank and srcdoc frames have their parent's origin.
         let (url, origin) = content_sender("https://a.example", "about:blank");
         assert_eq!((url.as_str(), origin.as_deref()), ("https://a.example/", Some("https://a.example")));

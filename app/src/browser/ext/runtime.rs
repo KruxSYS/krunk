@@ -848,7 +848,8 @@ impl Browser {
     /// on krunk://extensions (in memory, capped; open pages are told at most once a second).
     pub(super) fn ext_error(&self, ext_id: &str, message: &str, file: &str, line: u64, context: &str) {
         let name = self.ext_name(ext_id);
-        let short: String = message.chars().take(500).collect();
+        // In the log: capped, on one line, and not more than so many lines a minute.
+        let short = lb_core::ext_guard::log_text(message, 500);
         let changed = {
             let mut errors = self.ext.errors.borrow_mut();
             rt::push_error(errors.entry(ext_id.to_string()).or_default(), ext_id, message, file, line, context)
@@ -856,9 +857,12 @@ impl Browser {
         if !changed {
             return;
         }
-        if file.is_empty() {
+        if !self.ext_may_log(ext_id, "error") {
+            // Not in the log; the list on krunk://extensions has it.
+        } else if file.is_empty() {
             warning!("extension {name}: {short} [{context}]");
         } else {
+            let file = lb_core::ext_guard::log_text(file, 200);
             warning!("extension {name}: {short} [{context}, {file}:{line}]");
         }
         if !self.ext.errors_dirty.replace(true) {
@@ -870,6 +874,25 @@ impl Browser {
                 }
             });
         }
+    }
+
+    /// May another line of this kind about the extension go to krunk.log now? A limit per
+    /// extension, kind and minute (`ext_guard::LogBudget`): an extension (or a page that makes
+    /// its content script talk) cannot fill the log. With `KRUNK_EXT_LOG=1` nothing is dropped.
+    pub(super) fn ext_may_log(&self, ext_id: &str, kind: &'static str) -> bool {
+        use lb_core::ext_guard::LogVerdict;
+        if log_all() {
+            return true;
+        }
+        let verdict = self.ext.log_budget.borrow_mut().entry((ext_id.to_string(), kind)).or_default().take(now_ms());
+        if verdict == LogVerdict::Last {
+            warning!(
+                "extension {}: {} \"{kind}\" lines in a minute: the rest of this minute is not logged",
+                self.ext_name(ext_id),
+                lb_core::ext_guard::LOG_LINES_PER_MINUTE
+            );
+        }
+        verdict != LogVerdict::Drop
     }
 
     /// An uncaught error in a content-script world (`Runtime.exceptionThrown`): only the

@@ -197,6 +197,8 @@ pub(super) struct ExtHost {
     /// Errors of the extensions' contexts, by extension (in memory).
     errors: RefCell<HashMap<String, Vec<lb_core::ext_runtime::ExtError>>>,
     errors_dirty: Cell<bool>,
+    /// Log lines the extensions caused in this minute, by extension and kind of line.
+    log_budget: RefCell<HashMap<(String, &'static str), lb_core::ext_guard::LogBudget>>,
     /// Per tab: the identifiers of the installed bundle scripts, and the extensions whose
     /// bindings are added.
     scripts: RefCell<HashMap<TabId, Vec<String>>>,
@@ -257,6 +259,7 @@ impl ExtHost {
             registered: RefCell::new(HashMap::new()),
             errors: RefCell::new(HashMap::new()),
             errors_dirty: Cell::new(false),
+            log_budget: RefCell::new(HashMap::new()),
             pending_install: RefCell::new(None),
             popup_closed: RefCell::new((String::new(), 0)),
             scripts: RefCell::new(HashMap::new()),
@@ -776,7 +779,10 @@ impl Browser {
                 let payload = params.get("payload").and_then(|p| p.as_str()).unwrap_or("");
                 let Ok(msg) = serde_json::from_str::<Value>(payload) else { return };
                 let cmd = msg.get("cmd").and_then(|c| c.as_str()).unwrap_or("").to_string();
-                info!("tab {tab}: extension {} call {cmd}", self.ext_name(&ext_id));
+                if self.ext_may_log(&ext_id, "call") {
+                    let shown = lb_core::ext_guard::log_text(&cmd, 60);
+                    info!("tab {tab}: extension {} call {shown}", self.ext_name(&ext_id));
+                }
                 let data = msg.get("data").cloned().unwrap_or(Value::Null);
                 let req = msg.get("id").and_then(|i| i.as_u64());
                 let enabled = self.ext.exts.borrow().iter().any(|e| e.installed.id == ext_id && e.installed.enabled);
@@ -894,7 +900,8 @@ impl Browser {
     ) {
         let origin = self.ext.request_origin.borrow().clone();
         if origin.as_deref() != Some(ext_id) {
-            warning!("extension request for {ext_id} from another origin refused");
+            let shown = lb_core::ext_guard::log_text(ext_id, ext::ID_LEN);
+            warning!("extension request for {shown} from another origin refused");
             return;
         }
         // Which of the extension's contexts: a tab, or the view the message came through.
@@ -912,7 +919,8 @@ impl Browser {
             End::Tab(_) | End::Content { .. } => true,
         };
         if !own_view {
-            warning!("extension request for {ext_id} from another extension's view refused");
+            let shown = lb_core::ext_guard::log_text(ext_id, ext::ID_LEN);
+            warning!("extension request for {shown} from another extension's view refused");
             return;
         }
         // A sandboxed page (manifest `sandbox.pages`) has no extension API, as in Chrome.
@@ -924,14 +932,14 @@ impl Browser {
             .and_then(|u| url::Url::parse(u).ok())
             .map(|u| u.path().to_string())
             .unwrap_or_default();
-        let sandboxed = self
-            .ext
-            .exts
-            .borrow()
-            .iter()
-            .any(|e| e.installed.id == ext_id && lb_core::ext_runtime::is_sandbox_page(&e.manifest, &listed_path(&e.root, &path)));
+        let sandboxed = self.ext.exts.borrow().iter().any(|e| {
+            e.installed.id == ext_id && lb_core::ext_runtime::is_sandbox_page(&e.manifest, &listed_path(&e.root, &path))
+        });
         if sandboxed {
-            warning!("extension {}: a sandboxed page asked for chrome.{op}: refused", self.ext_name(ext_id));
+            if self.ext_may_log(ext_id, "call") {
+                let shown = lb_core::ext_guard::log_text(op, 60);
+                warning!("extension {}: a sandboxed page asked for chrome.{shown}: refused", self.ext_name(ext_id));
+            }
             return;
         }
         let Some(view) = self.ext_end_view(&end) else { return };
@@ -1127,8 +1135,8 @@ impl Browser {
             .borrow()
             .iter()
             .find(|e| e.installed.id == ext_id)
-            .map(|e| e.installed.name.clone())
-            .unwrap_or_else(|| ext_id.to_string())
+            .map(|e| lb_core::ext_guard::log_text(&e.installed.name, 75))
+            .unwrap_or_else(|| lb_core::ext_guard::log_text(ext_id, ext::ID_LEN))
     }
 
     // ------------------------------------------------------------ the action button and popup
@@ -1398,8 +1406,8 @@ impl Browser {
                     self.ext_error(ext_id, &text, &file, line, caller.end().context_name());
                 } else if runtime::log_all() {
                     // KRUNK_EXT_LOG=1: every console level of the extension's contexts.
-                    let text: String = text.chars().take(2000).collect();
-                    let level: String = get_str("level").unwrap_or_default().chars().take(8).collect();
+                    let text = lb_core::ext_guard::log_text(&text, 2000);
+                    let level = lb_core::ext_guard::log_text(&get_str("level").unwrap_or_default(), 8);
                     info!("extension {}: [{} {level}] {text}", self.ext_name(ext_id), caller.end().context_name());
                 }
                 Ok(Value::Null)
@@ -1409,7 +1417,7 @@ impl Browser {
                 return None;
             }
             "unsupported" => {
-                let api: String = get_str("api").unwrap_or_default().chars().take(80).collect();
+                let api = lb_core::ext_guard::log_text(&get_str("api").unwrap_or_default(), 80);
                 // Not an API: bundlers and promise code probe objects for these.
                 if api.starts_with("__") || api == "default" || api == "toJSON" || api.is_empty() {
                     return Some(Ok(Value::Null));
@@ -2300,8 +2308,14 @@ impl Browser {
         if id != ext_id {
             return Err(failed());
         }
-        let root =
-            self.ext.exts.borrow().iter().find(|e| e.installed.id == ext_id).map(|e| e.root.clone()).ok_or_else(failed)?;
+        let root = self
+            .ext
+            .exts
+            .borrow()
+            .iter()
+            .find(|e| e.installed.id == ext_id)
+            .map(|e| e.root.clone())
+            .ok_or_else(failed)?;
         let file = ext::file_path(&root, &rel);
         let meta = std::fs::metadata(&file).map_err(|_| failed())?;
         if !meta.is_file() || meta.len() > MAX_SCRIPT_READ_BYTES {

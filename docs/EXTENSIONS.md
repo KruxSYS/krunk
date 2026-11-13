@@ -207,6 +207,11 @@ The shims report them (they wrap `console.error` and listen for `error` and
 engine (`Runtime.exceptionThrown`, the extensions' worlds only). Page console output of web
 pages is still not logged.
 
+Text an extension supplies reaches krunk.log capped and on one line (control characters
+become spaces: no forged log lines), and at most 120 lines per extension, kind (errors,
+content-script calls) and minute; the Errors list is not affected, and `KRUNK_EXT_LOG=1`
+lifts the limit.
+
 ## Security
 
 Unchanged: extension pages and the worker run under `script-src 'self' 'wasm-unsafe-eval'`
