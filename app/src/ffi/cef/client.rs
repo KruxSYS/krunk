@@ -7,7 +7,7 @@ use super::net::{self, RequestPolicy};
 use super::renderer::{AUDIO_TO_BROWSER, DEBUG_TO_BROWSER, PID_TO_BROWSER, POINTER_TO_BROWSER, TO_BROWSER};
 use super::view::{
     child_window_info, lookup, AuthChallenge, AuthResponder, DownloadControl, DownloadStart, DownloadStatus,
-    DownloadUpdate, KeyPress, LoadingState, MessageSource, NavigationStart, NewWindow, Role, View, ViewInner,
+    DownloadUpdate, KeyPress, LoadingState, Menu, MessageSource, NavigationStart, NewWindow, Role, View, ViewInner,
 };
 use super::{browser_closed, browser_created, post_ui};
 use cef::*;
@@ -20,7 +20,7 @@ use zeroize::Zeroizing;
 
 /// Client for a view (also used for popups the engine creates for it).
 pub(super) fn for_view(inner: &ViewInner) -> Client {
-    ViewClient::new(inner.key, inner.role, inner.private, inner.policy.clone())
+    ViewClient::new(inner.key, inner.role, inner.menu, inner.private, inner.policy.clone())
 }
 
 /// Client for the DevTools docked next to view `owner` (a child window of its frame). It has
@@ -42,6 +42,7 @@ wrap_client! {
     struct ViewClient {
         key: u64,
         role: Role,
+        menu: Menu,
         private: bool,
         policy: Option<Arc<dyn RequestPolicy>>,
     }
@@ -75,9 +76,12 @@ wrap_client! {
         }
 
         fn context_menu_handler(&self) -> Option<ContextMenuHandler> {
-            // The browser's own UI has no context menu; pages get the
-            // engine's menu plus "Inspect".
-            Some(if self.role == Role::Tab { TabMenu::new(self.key) } else { NoMenu::new() })
+            // The browser's own UI has no context menu; pages get the engine's menu plus
+            // Krunk's items, and the AI panel the same menu without the page's own items.
+            Some(match self.menu {
+                Menu::None => NoMenu::new(),
+                Menu::Page | Menu::Panel => TabMenu::new(self.key, self.menu),
+            })
         }
 
         fn jsdialog_handler(&self) -> Option<JsdialogHandler> {
@@ -735,8 +739,8 @@ const MENU_SEL_WINDOW: c_int = 26521;
 const MENU_SEL_PRIVATE: c_int = 26522;
 const MENU_SEL_COPY: c_int = 26523;
 /// CEF's own ids: Copy, and "View page source" (which opened the system text editor).
-const MENU_ID_COPY: c_int = 113;
-const MENU_ID_VIEW_SOURCE: c_int = 132;
+const MENU_ID_COPY: c_int = lb_core::page_menu::id::COPY;
+const MENU_ID_VIEW_SOURCE: c_int = lb_core::page_menu::id::VIEW_SOURCE;
 
 /// The address of the image the context menu is for, if it is for one with contents.
 fn image_url(p: &ContextMenuParams) -> Option<String> {
@@ -745,6 +749,36 @@ fn image_url(p: &ContextMenuParams) -> Option<String> {
     }
     let url = CefString::from(&p.source_url()).to_string();
     (!url.is_empty()).then_some(url)
+}
+
+/// The image items of a view's menu for the image at `url`, with their places in
+/// `ImageAction::ALL` (their command ids count from `MENU_IMAGE_FIRST` in that order). The AI
+/// panel has items only for its own pictures, and only those that can work for them.
+fn image_items(menu: Menu, url: &str) -> Vec<(usize, lb_core::image_menu::ImageAction)> {
+    let panel = menu == Menu::Panel;
+    if panel && !lb_core::image_menu::panel_image(url) {
+        return Vec::new();
+    }
+    let all = lb_core::image_menu::ImageAction::ALL;
+    all.into_iter().enumerate().filter(|(_, a)| !panel || a.in_panel()).collect()
+}
+
+/// The AI panel's menu: of the engine's own items only the editing ones stay (Back, Forward,
+/// Print and "View page source" belong to a page). Their separators are tidied at the end.
+fn keep_panel_items(m: &MenuModel) {
+    for i in (0..m.count()).rev() {
+        if m.type_at(i) != MenuItemType::SEPARATOR && !lb_core::page_menu::panel_keeps(m.command_id_at(i)) {
+            m.remove_at(i);
+        }
+    }
+}
+
+/// No separator first, last or after another one.
+fn tidy_separators(m: &MenuModel) {
+    let separators: Vec<bool> = (0..m.count()).map(|i| m.type_at(i) == MenuItemType::SEPARATOR).collect();
+    for i in lb_core::page_menu::stray_separators(&separators) {
+        m.remove_at(i);
+    }
 }
 
 /// What the open items are for: the link under the pointer (`true`), else a selected address.
@@ -780,9 +814,15 @@ wrap_string_visitor! {
     }
 }
 
+// The page menu, for a tab (`Menu::Page`) and for the AI panel (`Menu::Panel`, 0.16.0): one
+// menu and one dispatch. The panel's differs in three places, all in `on_before_context_menu`:
+// the engine's page items are taken out first, the image items are the panel's, and there is
+// no "Inspect". An empty model shows no menu. The commands go to the view's events, which the
+// host connects to a tab or to the panel's window.
 wrap_context_menu_handler! {
     struct TabMenu {
         key: u64,
+        menu: Menu,
     }
     impl ContextMenuHandler {
         fn on_before_context_menu(
@@ -793,6 +833,10 @@ wrap_context_menu_handler! {
             model: Option<&mut MenuModel>,
         ) {
             let Some(m) = model else { return };
+            let panel = self.menu == Menu::Panel;
+            if panel {
+                keep_panel_items(m);
+            }
             let image = params.as_ref().and_then(|p| image_url(p));
             // Selected text (never a password field's: the engine gives none): "Search … for"
             // after Copy, as in Chrome (0.11.0).
@@ -820,11 +864,12 @@ wrap_context_menu_handler! {
                 }
                 m.insert_separator_at(items.len());
             }
-            // An image: Chrome's four image items first (0.12.2).
-            if image.is_some() {
-                let items = lb_core::image_menu::ImageAction::ALL;
-                for (i, a) in items.iter().enumerate() {
-                    m.insert_item_at(i, MENU_IMAGE_FIRST + i as c_int, Some(&CefString::from(a.label())));
+            // An image: Chrome's four image items first (0.12.2); in the AI panel those that
+            // work for its pictures.
+            let items = image.map(|url| image_items(self.menu, &url)).unwrap_or_default();
+            if !items.is_empty() {
+                for (at, (i, a)) in items.iter().enumerate() {
+                    m.insert_item_at(at, MENU_IMAGE_FIRST + *i as c_int, Some(&CefString::from(a.label())));
                 }
                 if m.count() > items.len() {
                     m.insert_separator_at(items.len());
@@ -839,6 +884,12 @@ wrap_context_menu_handler! {
                     m.insert_item_at(0, MENU_SEARCH, Some(&CefString::from(label.as_str())));
                     m.insert_separator_at(1);
                 }
+            }
+            if panel {
+                // No "Inspect" (only tab views are inspected). Where nothing applies (an
+                // empty part of the panel), nothing is left and no menu shows.
+                tidy_separators(m);
+                return;
             }
             if m.count() > 0 {
                 m.add_separator();

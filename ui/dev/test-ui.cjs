@@ -3429,7 +3429,7 @@ async function testSettings(browser) {
   await tab('appearance');
   const accentRow = '.row:has([data-key="appearance.accent"])';
   check(await page.locator(accentRow + ' .swatch').count() === 8 && await page.locator(accentRow + ' .swatch.on[data-color=""]').count() === 1, 'eight accent swatches, the default selected');
-  check(await page.locator('input[type=color]').count() === 8 && await page.locator('.reset-color').count() === 8, 'a colour dialog and Reset for the accent, toolbar, strip, background, new tab page and (0.15.0) the three gradient colours');
+  check(await page.locator('input[type=color]').count() === 11 && await page.locator('.reset-color').count() === 11, 'a colour dialog and Reset for the accent, toolbar, strip, background, new tab page, (0.15.0) the three gradient colours and (0.15.2) the two tab title colours and the outline');
   await page.click(accentRow + ' .swatch[data-color="#16a34a"]');
   await page.waitForTimeout(60);
   {

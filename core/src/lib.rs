@@ -39,6 +39,7 @@ pub mod navmenu;
 pub mod netscape;
 pub mod omnibox;
 pub mod overlay;
+pub mod page_menu;
 pub mod pages;
 pub mod passgen;
 pub mod permissions;
