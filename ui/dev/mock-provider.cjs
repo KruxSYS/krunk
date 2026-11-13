@@ -49,6 +49,9 @@
 //                             wasm_memories, wasm_scan first (i32 exact 100), click #hit,
 //                             wasm_scan next (decreased), wasm_results, wasm_write 999,
 //                             wasm_freeze 999, then finish with the address and the results
+//   "wasm tools tour"         every wasm_* operation once (scans of each kind, typed writes and
+//                             reads, pointer path, freeze, watch, memory.grow, globals); finishes
+//                             with "TOUR {step: result}" (checked by ui/dev/test-wasm-agent.cjs)
 //   "userscript that keeps the gold"
 //                             save_userscript: a script with @grant GM.wasm that scans for the
 //                             gold (250) and freezes it at 9999 (the title then says gold=9999)
@@ -221,6 +224,77 @@ function toolJson(text) {
   const m = /^[\s\S]*[}\]]/.exec(String(text || ''));
   try { return m ? JSON.parse(m[0]) : null; } catch (_) { return null; }
 }
+// The tour: [name, (got) => call]; `got[name]` is the parsed result of an earlier step.
+const TOUR = [
+  ['memories', () => call('wasm_memories', {})],
+  ['first', (g) => call('wasm_scan', { mode: 'first', mem: g.M, type: 'i32', kind: 'exact', value: 100 })],
+  ['hit1', () => call('click', { selector: '#hit' })],
+  ['decreased', (g) => call('wasm_scan', { mode: 'next', scan: g.first.scan, kind: 'decreased' })],
+  ['results', (g) => call('wasm_results', { scan: g.first.scan, limit: 10 })],
+  ['exact', (g) => call('wasm_scan', { mode: 'next', scan: g.first.scan, kind: 'exact', value: 90 })],
+  ['unchanged', (g) => call('wasm_scan', { mode: 'next', scan: g.first.scan, kind: 'unchanged' })],
+  ['heal', () => call('click', { selector: '#heal' })],
+  ['increased', (g) => call('wasm_scan', { mode: 'next', scan: g.first.scan, kind: 'increased' })],
+  ['hit2', () => call('click', { selector: '#hit' })],
+  ['changed', (g) => call('wasm_scan', { mode: 'next', scan: g.first.scan, kind: 'changed' })],
+  ['range', (g) => call('wasm_scan', { mode: 'first', mem: g.M, type: 'i32', kind: 'range', value: 80, to: 90 })],
+  ['unknown', (g) => call('wasm_scan', { mode: 'first', mem: g.M, type: 'i32', kind: 'unknown' })],
+  ['hit3', () => call('click', { selector: '#hit' })],
+  ['unknownDecreased', (g) => call('wasm_scan', { mode: 'next', scan: g.unknown.scan, kind: 'decreased' })],
+  // The pointer to the player: gold (250) is at [pointer] + 8.
+  ['gold', (g) => call('wasm_scan', { mode: 'first', mem: g.M, type: 'i32', kind: 'exact', value: 250 })],
+  ['goldAt', (g) => call('wasm_results', { scan: g.gold.scan, limit: 5 })],
+  ['pointer', (g) => call('wasm_scan', { mode: 'first', mem: g.M, type: 'u32', kind: 'exact', value: g.goldAt.rows[0].addr - 8 })],
+  ['pointerAt', (g) => call('wasm_results', { scan: g.pointer.scan, limit: 5 })],
+  ['viaPointer', (g) => call('wasm_read', { mem: g.M, addr: g.pointerAt.rows[0].addr, offsets: [8], type: 'i32' })],
+  ['write', (g) => call('wasm_write', { mem: g.M, addr: g.H, type: 'i32', value: 999 })],
+  ['read', (g) => call('wasm_read', { mem: g.M, addr: g.H, type: 'i32' })],
+  ['freeze', (g) => call('wasm_freeze', { mem: g.M, addr: g.H, type: 'i32', value: 999 })],
+  ['hit4', () => call('click', { selector: '#hit' })],
+  ['watch', (g) => call('wasm_watch', { entries: [{ mem: g.M, addr: g.H, type: 'i32' }, { mem: g.M, addr: g.pointerAt.rows[0].addr, offsets: [8], type: 'i32' }, { mem: g.M, addr: g.H, type: 'bytes', length: 4 }] })],
+  // memory.grow, then every type in the new page (which was past the end before).
+  ['beforeGrow', (g) => call('wasm_read', { mem: g.M, addr: g.NEW, type: 'i32' })],
+  ['grow', () => call('click', { selector: '#grow' })],
+  ['hit5', () => call('click', { selector: '#hit' })],
+  ['afterGrow', (g) => call('wasm_watch', { entries: [{ mem: g.M, addr: g.H, type: 'i32' }, { mem: g.M, addr: g.NEW + 16, type: 'i32' }] })],
+  ['oldResults', (g) => call('wasm_results', { scan: g.first.scan, limit: 10 })],
+  ['nextAfterGrow', (g) => call('wasm_scan', { mode: 'next', scan: g.first.scan, kind: 'increased' })],
+  ['unfreeze', (g) => call('wasm_unfreeze', { freeze: g.freeze.freeze })],
+].concat([['i8', -5], ['u8', 250], ['i16', -3000], ['u16', 60000], ['i32', -70000], ['u32', 4000000000], ['i64', '-9007199254740993'], ['u64', '18446744073709551615'], ['f32', 1.5], ['f64', -2.25],
+  ['bytes', [222, 173, 190, 239]], ['utf8', 'héllo'], ['utf16', 'hé']].map((t, i) => ['w_' + t[0], (g) => call('wasm_write', { mem: g.M, addr: g.NEW + 256 + 32 * i, type: t[0], value: t[1] })]), [
+  ['typed', (g) => call('wasm_watch', { entries: ['i8', 'u8', 'i16', 'u16', 'i32', 'u32', 'i64', 'u64', 'f32', 'f64', 'bytes', 'utf8', 'utf16'].map((t, i) => {
+    const e = { mem: g.M, addr: g.NEW + 256 + 32 * i, type: t };
+    if (t === 'bytes' || t === 'utf16') e.length = 4;
+    if (t === 'utf8') e.length = 6;
+    return e;
+  }) })],
+  ['hex', (g) => call('wasm_read', { mem: g.M, addr: g.NEW + 256, type: 'bytes', length: 64 })],
+  ['globals', (g) => call('wasm_global', { inst: g.I })],
+  ['setGlobal', (g) => call('wasm_global', { inst: g.I, export: g.globals.find((x) => x.name === '__stack_pointer').index, value: g.globals.find((x) => x.name === '__stack_pointer').value - 16 })],
+  ['globalsAfter', (g) => call('wasm_global', { inst: g.I })],
+]);
+function tourSteps() {
+  const steps = TOUR.map((t, n) => (m, r) => {
+    const got = {};
+    for (let i = 0; i < n; i++) got[TOUR[i][0]] = toolJson(r[i]) !== null ? toolJson(r[i]) : r[i];
+    const ctx = ((got.memories || {}).contexts || []).find((c) => (c.memories || []).length);
+    if (n > 0 && !ctx) return finish('No WebAssembly memory: ' + String(r[0]).slice(0, 200));
+    if (ctx) {
+      got.M = ctx.memories[0].mem;
+      got.I = (ctx.instances[0] || {}).inst;
+      got.NEW = ctx.memories[0].bytes; // the first address past the end, until the memory grows
+      got.H = got.results && got.results.rows[0] ? got.results.rows[0].addr : undefined;
+    }
+    try { return t[1](got); } catch (e) { return finish('The tour stopped at ' + t[0] + ': ' + e.message + ' after ' + String(r[n - 1]).slice(0, 200)); }
+  });
+  steps.push((m, r) => {
+    const out = {};
+    TOUR.forEach((t, i) => { out[t[0]] = toolJson(r[i]) !== null ? toolJson(r[i]) : r[i]; });
+    return finish('TOUR ' + JSON.stringify(out));
+  });
+  return steps;
+}
+
 // 0.19.0: the WASM memory inspector's scenarios (before the others: their keywords are long).
 const WASM_SCENARIOS = [
   {
@@ -265,6 +339,9 @@ const WASM_SCENARIOS = [
       },
     ],
   },
+  // Every wasm_* operation once, on the wasm game (health 100, gold 250 behind a pointer). Each
+  // step names itself, so the finish text is {name: result} for the checks (test-wasm-agent.cjs).
+  { match: /wasm tools tour/i, steps: tourSteps() },
   {
     match: /userscript that keeps the gold/i,
     steps: [

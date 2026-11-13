@@ -120,6 +120,7 @@
             s.version ? el('span', { class: 'version', text: 'v' + s.version }) : null,
             s.createdByAi ? el('span', { class: 'tag ai', text: 'created by AI' }) : null,
             warnings.length ? el('span', { class: 'tag warn', title: warnings.join('\n'), text: 'uses features Krunk lacks' }) : null,
+            s.wasm ? el('span', { class: 'tag wasm', title: 'This script asks for GM.wasm (@grant GM.wasm): it can read and change the WebAssembly memory of the pages it runs on.', text: 'WASM memory' }) : null,
           ]),
           el('div', { class: 'sub matches', title: matches.join('\n'), text: matches.length ? 'Runs on ' + shown : 'Runs on no site' }),
         ]),

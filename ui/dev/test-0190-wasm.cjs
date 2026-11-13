@@ -267,5 +267,19 @@ module.exports = function ({ openPage, check, lastSent, emit, shot, UI }) {
     await page.context().close();
   }
 
-  return { testWasmPage, testWasmMenu };
+  // krunk://scripts: a script that asks for GM.wasm is marked in the list.
+  async function testWasmScriptTag(browser) {
+    console.log('0.19.0: krunk://scripts marks scripts with @grant GM.wasm');
+    const { page, errors } = await openPage(browser, 'https://krunk.invalid/scripts.html', { width: 1100, height: 700 }, 1, () => {
+      const row = (id, name, wasm) => ({ id: id, name: name, namespace: '', version: '', enabled: true, createdByAi: false, matches: ['*://*/*wasm-game/*'], lastRun: null, updated: 1, warnings: [], wasm: wasm });
+      window.__host.handlers.scriptsList = () => ({ userscripts: [row('a', 'Hold the health', true), row('b', 'Plain', false)], macros: [], running: [], enabled: true });
+    });
+    await page.waitForSelector('#userscripts-list .row.item');
+    const tags = await page.$$eval('#userscripts-list .row.item', (r) => r.map((x) => { const t = x.querySelector('.tag.wasm'); return t ? t.textContent + '|' + t.title : ''; }));
+    check(tags.length === 2 && tags[0].startsWith('WASM memory|') && tags[0].includes('@grant GM.wasm') && tags[1] === '', 'a script with the grant has the "WASM memory" tag (its title says what it allows); one without has none');
+    check(errors.length === 0, 'no errors (' + errors.join(' | ') + ')');
+    await page.context().close();
+  }
+
+  return { testWasmPage, testWasmMenu, testWasmScriptTag };
 };
