@@ -8,6 +8,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import org.krunk.browser.BuildConfig
 import org.krunk.browser.KrunkApp
 import org.krunk.browser.engine.blocker.BlockerController
+import org.krunk.browser.engine.logins.LoginsHub
 import org.krunk.ffi.AndroidSettings
 import org.krunk.ffi.ThemeMode
 import org.mozilla.geckoview.ContentBlocking
@@ -28,6 +29,9 @@ class GeckoEngine(context: Context, automaticUpdates: Boolean, blockerHost: Bloc
     /** The ad and tracker blocker; started with the runtime, before any tab exists. */
     val blocker: BlockerController
 
+    /** Saved logins as the engine may see them (placeholders only), and the vault behind them. */
+    val logins = LoginsHub()
+
     /** Copies of the files pages are given through file fields. */
     val uploads = Uploads(context)
 
@@ -41,6 +45,9 @@ class GeckoEngine(context: Context, automaticUpdates: Boolean, blockerHost: Bloc
             .javaScriptEnabled(true)
             .remoteDebuggingEnabled(BuildConfig.DEBUG)
             .aboutConfigEnabled(BuildConfig.DEBUG)
+            // The engine never fills a sign-in form by itself: every fill goes through the
+            // tab's own prompt, where Krunk knows the tab (see LoginsHub).
+            .loginAutofillEnabled(false)
             // Krunk's promise: nothing of the engine's own background traffic beyond what the
             // user triggers. The engine does not keep it by itself: see EngineConfig. Safe
             // Browsing is off (it means contact with Google); tracker blocking is the bundled
@@ -83,6 +90,7 @@ class GeckoEngine(context: Context, automaticUpdates: Boolean, blockerHost: Bloc
         val settings = builder.build()
         runtime = GeckoRuntime.create(context.applicationContext, settings)
         Log.i(KrunkApp.TAG, "GeckoRuntime ready (GeckoView ${BuildConfig.GECKOVIEW_VERSION})")
+        runtime.autocompleteStorageDelegate = logins.storage
         blocker = BlockerController(runtime, blockerHost)
         blocker.start()
     }

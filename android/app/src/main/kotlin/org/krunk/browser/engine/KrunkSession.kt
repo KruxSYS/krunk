@@ -6,11 +6,19 @@ import android.webkit.MimeTypeMap
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import org.krunk.browser.KrunkApp
+import org.krunk.browser.engine.logins.HttpAuthOffer
+import org.krunk.browser.engine.logins.LoginPage
+import org.krunk.browser.engine.logins.LoginPolicy
+import org.krunk.browser.engine.logins.LoginVault
+import org.krunk.browser.vault.VaultFailure
 import org.krunk.ffi.internalPage
 import org.mozilla.geckoview.AllowOrDeny
+import org.mozilla.geckoview.Autocomplete
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
+import org.mozilla.geckoview.GeckoSession.PromptDelegate.AuthPrompt.AuthOptions.Flags as AuthFlags
 import org.mozilla.geckoview.GeckoSessionSettings
 import org.mozilla.geckoview.WebRequestError
 
@@ -240,6 +248,7 @@ class KrunkSession(
 
     fun close() {
         closed = true
+        loginsClosed()
         engine.blocker.detach(id)
         engine.uploads.clearTab(id)
         gecko.close()
@@ -255,6 +264,7 @@ class KrunkSession(
             hasUserGesture: Boolean,
         ) {
             set { it.locationChanged(url ?: "") }
+            loginsLocationChanged()
         }
 
         override fun onCanGoBack(session: GeckoSession, canGoBack: Boolean) {
@@ -312,6 +322,7 @@ class KrunkSession(
         override fun onPageStart(session: GeckoSession, url: String) {
             promptThrottle.newDocument()
             engine.blocker.newDocument(id)
+            loginsNewDocument(url)
             set { it.pageStarted(url) }
         }
 
@@ -321,6 +332,8 @@ class KrunkSession(
 
         override fun onPageStop(session: GeckoSession, success: Boolean) {
             set { it.pageStopped() }
+            // An HTTP sign-in that was not asked for again worked: offer to save it.
+            httpAuth.onPageStop(success)?.let { offerSave(it.origin, it.username, it.password) }
         }
 
         override fun onSecurityChange(
@@ -423,6 +436,96 @@ class KrunkSession(
         return result
     }
 
+    // ----- saved logins (0.3.0) -----
+
+    private val httpAuth = HttpAuthOffer()
+
+    /** "Fill from vault" was chosen for this origin: the next tap on a sign-in field asks. */
+    private var fillArmedOrigin: String? = null
+
+    /** The picker was closed or used on this page: taps do not bring it back until the next load. */
+    private var fillSuppressed = false
+    private var savePrompt: PagePrompt.LoginSave? = null
+
+    /** This tab's page as the engine's login lookup may know it. */
+    val loginPage: LoginPage get() = LoginPage(current.url, private, fillArmedOrigin)
+
+    /**
+     * "Fill from vault" in the menu: the explicit request a private tab needs, and the way back
+     * to the picker in any tab. False when the page is not a web page.
+     */
+    fun armFill(): Boolean {
+        val origin = originOf(current.url)
+        if (!LoginPolicy.isWeb(origin)) return false
+        fillArmedOrigin = origin
+        fillSuppressed = false
+        return true
+    }
+
+    private fun loginsNewDocument(url: String) {
+        fillSuppressed = false
+        if (fillArmedOrigin != originOf(url)) fillArmedOrigin = null
+    }
+
+    private fun loginsLocationChanged() {
+        if (fillArmedOrigin != null && fillArmedOrigin != originOf(current.url)) fillArmedOrigin = null
+        // A save offer follows the sign-in to the next page of the site, not to another site.
+        savePrompt?.let { if (!LoginPolicy.saveStillValid(id, it.origin, id, current.url)) it.close() }
+    }
+
+    /** The tab is going away: nothing of a sign-in is kept. */
+    private fun loginsClosed() {
+        httpAuth.clear()
+        savePrompt?.close()
+    }
+
+    /** A login was sent from this tab ([origin] is the form's or the server's): ask to save it? */
+    private fun offerSave(origin: String?, username: String?, password: String?) {
+        val vault = engine.logins.vault ?: return
+        if (origin == null || password.isNullOrEmpty()) return
+        val user = username ?: ""
+        val state = vault.state()
+        engine.logins.scope.launch {
+            val known = if (state == LoginVault.State.UNLOCKED) {
+                try {
+                    vault.use { it.saveDecision(origin, user, password) }
+                } catch (e: VaultFailure) {
+                    null
+                }
+            } else {
+                null
+            }
+            val decision = LoginPolicy.save(
+                LoginPolicy.SaveContext(
+                    private = private,
+                    origin = origin,
+                    passwordEmpty = false,
+                    vault = state,
+                    neverSave = vault.neverSave(origin),
+                    offersEnabled = vault.offersEnabled(),
+                    known = known,
+                ),
+            )
+            if (decision !is LoginPolicy.Save.Offer || closed) return@launch
+            savePrompt?.close()
+            val prompt = PagePrompt.LoginSave(
+                tabId = id,
+                site = promptSiteOf(origin),
+                origin = origin,
+                username = user,
+                password = password,
+                kind = decision.kind,
+                warnInsecure = decision.warnInsecure,
+                onClosed = { p ->
+                    if (savePrompt === p) savePrompt = null
+                    listener.onPromptClosed(this@KrunkSession, p)
+                },
+            )
+            savePrompt = prompt
+            listener.onPrompt(this@KrunkSession, prompt)
+        }
+    }
+
     private val prompts = object : GeckoSession.PromptDelegate {
         override fun onAlertPrompt(
             session: GeckoSession,
@@ -487,9 +590,25 @@ class KrunkSession(
         ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
             val options = prompt.authOptions
             val onlyPassword =
-                options.flags and GeckoSession.PromptDelegate.AuthPrompt.AuthOptions.Flags.ONLY_PASSWORD != 0
+                options.flags and AuthFlags.ONLY_PASSWORD != 0
             // The server that asks, which need not be the page's own.
             val server = options.uri?.let { originOf(it)?.substringAfter("://") } ?: promptSite()
+            val challenge = HttpAuthOffer.Challenge(
+                uri = options.uri,
+                proxy = options.flags and AuthFlags.PROXY != 0,
+                crossOriginSubResource =
+                    options.flags and AuthFlags.CROSS_ORIGIN_SUB_RESOURCE !=
+                        0,
+                previousFailed =
+                    options.flags and AuthFlags.PREVIOUS_FAILED != 0,
+            )
+            httpAuth.onChallenge(challenge)
+            val vault = engine.logins.vault
+            val saved = if (vault == null) {
+                HttpAuthOffer.Saved.NONE
+            } else {
+                httpAuth.saved(challenge, private, vault.state(), options.uri?.let { vault.hasHint(it) } == true)
+            }
             return ask(prompt) { answer ->
                 PagePrompt.SignIn(
                     tabId = id,
@@ -499,11 +618,96 @@ class KrunkSession(
                     onlyPassword = onlyPassword,
                     insecure = options.uri?.startsWith("http://", ignoreCase = true) == true,
                     onAnswer = { user, password ->
+                        httpAuth.onAnswered(
+                            challenge,
+                            private,
+                            if (onlyPassword) options.username ?: "" else user,
+                            password,
+                        )
                         answer(if (onlyPassword) prompt.confirm(password) else prompt.confirm(user, password))
                     },
-                    onDismiss = { answer(prompt.dismiss()) },
+                    onDismiss = {
+                        httpAuth.clear()
+                        answer(prompt.dismiss())
+                    },
+                    saved = saved,
+                    authUrl = options.uri ?: "",
                 )
             }
+        }
+
+        /**
+         * A sign-in field was tapped and the engine holds stand-in entries for the page (see
+         * LoginsHub). Krunk decides here, where the tab is known, and hands over one login the
+         * user picks: built by Krunk, never one of the engine's entries.
+         */
+        override fun onLoginSelect(
+            session: GeckoSession,
+            request: GeckoSession.PromptDelegate.AutocompleteRequest<Autocomplete.LoginSelectOption>,
+        ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+            val vault = engine.logins.vault
+            val formOrigin = request.options.firstOrNull()?.value?.origin
+            val pageUrl = current.url
+            val decision = if (vault == null) {
+                LoginPolicy.Fill.No("no vault")
+            } else {
+                LoginPolicy.fill(
+                    LoginPolicy.FillContext(
+                        private = private,
+                        armedOrigin = fillArmedOrigin,
+                        suppressed = fillSuppressed,
+                        pageUrl = pageUrl,
+                        formOrigin = formOrigin,
+                        vault = vault.state(),
+                        hint = vault.hasHint(pageUrl),
+                    ),
+                )
+            }
+            if (decision !is LoginPolicy.Fill.Ask || formOrigin == null) {
+                return GeckoResult.fromValue(request.dismiss())
+            }
+            return ask(request) { answer ->
+                PagePrompt.LoginFill(
+                    tabId = id,
+                    site = promptSiteOf(pageUrl),
+                    pageUrl = pageUrl,
+                    unlockFirst = decision.unlockFirst,
+                    warnInsecure = decision.warnInsecure,
+                    onPick = { secret ->
+                        // Once per page: a filled form does not ask again at the next tap.
+                        fillSuppressed = true
+                        fillArmedOrigin = null
+                        // The tab may have gone elsewhere while the picker was open.
+                        if (originOf(current.url) == originOf(pageUrl)) {
+                            val login = Autocomplete.LoginEntry.Builder()
+                                .origin(formOrigin)
+                                .formActionOrigin(formOrigin)
+                                .username(secret.username)
+                                .password(secret.password)
+                                .build()
+                            answer(request.confirm(Autocomplete.LoginSelectOption(login)))
+                        } else {
+                            answer(request.dismiss())
+                        }
+                    },
+                    onDismiss = {
+                        fillSuppressed = true
+                        answer(request.dismiss())
+                    },
+                )
+            }
+        }
+
+        /**
+         * A form with a password was sent. The engine's request is answered at once (nothing is
+         * stored through the engine); whether Krunk offers to save is its own question.
+         */
+        override fun onLoginSave(
+            session: GeckoSession,
+            request: GeckoSession.PromptDelegate.AutocompleteRequest<Autocomplete.LoginSaveOption>,
+        ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
+            request.options.firstOrNull()?.value?.let { offerSave(it.origin, it.username, it.password) }
+            return GeckoResult.fromValue(request.dismiss())
         }
 
         override fun onChoicePrompt(

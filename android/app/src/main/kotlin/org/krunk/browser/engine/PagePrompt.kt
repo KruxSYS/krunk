@@ -1,5 +1,9 @@
 package org.krunk.browser.engine
 
+import org.krunk.browser.engine.logins.HttpAuthOffer
+import org.krunk.browser.engine.logins.LoginPolicy
+import org.krunk.browser.vault.VaultSecret
+
 /**
  * The site named in a prompt's title: host and port of the page that asks, without the scheme
  * and without any `user@` part (so `https://bank.example@evil.example/` reads "evil.example").
@@ -85,10 +89,64 @@ sealed class PagePrompt {
         val insecure: Boolean,
         private val onAnswer: (user: String, password: String) -> Unit,
         private val onDismiss: () -> Unit,
+        /** What the dialog shows of the vault (0.3.0), for the server at [authUrl]. */
+        val saved: HttpAuthOffer.Saved = HttpAuthOffer.Saved.NONE,
+        val authUrl: String = "",
     ) : PagePrompt() {
         fun answer(user: String, password: String) = onAnswer(user, password)
 
         override fun dismiss() = onDismiss()
+    }
+
+    /**
+     * A sign-in field was tapped on a page the vault has logins for (0.3.0). The engine holds no
+     * password at this point: the picker hands it the one login the user chooses. With
+     * [unlockFirst] the vault password is asked first; with [warnInsecure] the page was loaded
+     * without encryption and the user must confirm before anything is offered.
+     */
+    class LoginFill(
+        override val tabId: UInt,
+        override val site: String,
+        val pageUrl: String,
+        val unlockFirst: Boolean,
+        val warnInsecure: Boolean,
+        private val onPick: (VaultSecret) -> Unit,
+        private val onDismiss: () -> Unit,
+    ) : PagePrompt() {
+        fun pick(secret: VaultSecret) = onPick(secret)
+
+        override fun dismiss() = onDismiss()
+    }
+
+    /**
+     * Offer to save the login a page (or an HTTP sign-in) just sent (0.3.0). Krunk's own
+     * question: the engine's request is answered at once and nothing is stored by the engine.
+     * The password stays in this object until the user answers; it is never shown.
+     */
+    class LoginSave(
+        override val tabId: UInt,
+        override val site: String,
+        val origin: String,
+        val username: String,
+        private val password: String,
+        val kind: LoginPolicy.SaveKind,
+        val warnInsecure: Boolean,
+        private val onClosed: (LoginSave) -> Unit,
+    ) : PagePrompt() {
+        private var closed = false
+
+        /** The login, for the one who stores it. */
+        fun login(): VaultSecret = VaultSecret(username, password)
+
+        /** Answered (saved, never, not now): the dialog goes away. */
+        fun close() {
+            if (!closed) {
+                closed = true
+                onClosed(this)
+            }
+        }
+
+        override fun dismiss() = close()
     }
 
     /** A `<select>` list (or a menu): one option, or several when [multiple]. */

@@ -84,6 +84,11 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
     private val errorPage = ErrorPage(context)
     private val geckoStates = HashMap<UInt, String>()
 
+    init {
+        // The engine's login lookup is answered for the pages the tabs show (see LoginsHub).
+        engine.logins.pages = { sessions.values.map { it.loginPage } }
+    }
+
     /** "Request desktop site" per tab: it outlives the tab's sessions (see [DesktopModes]). */
     private val desktop = DesktopModes()
 

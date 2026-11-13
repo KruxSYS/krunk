@@ -51,6 +51,11 @@ object EngineConfig {
         "browser.safebrowsing.downloads.remote.enabled" to false,
         "browser.safebrowsing.blockedURIs.enabled" to false,
         "browser.safebrowsing.passwords.enabled" to false,
+        // Sign-ins (0.3.0). Krunk's vault decides what is filled and saved: the engine neither
+        // asks to save in private tabs nor suggests passwords of its own or a mail mask.
+        "signon.privateBrowsingCapture.enabled" to false,
+        "signon.generation.enabled" to false,
+        "signon.firefoxRelay.feature" to "disabled",
         // The add-on blocklist does not apply to built-in extensions, and Krunk has no others.
         "extensions.blocklist.enabled" to false,
         // Region lookup at Mozilla's location service.

@@ -68,6 +68,10 @@ fun PagePromptDialog(prompt: PagePrompt) {
 
             is PagePrompt.SignIn -> SignInDialog(prompt)
 
+            is PagePrompt.LoginFill -> LoginFillDialog(prompt)
+
+            is PagePrompt.LoginSave -> LoginSaveDialog(prompt)
+
             is PagePrompt.Choice -> ChoiceDialog(prompt)
 
             is PagePrompt.File -> FilePromptUi(prompt)
@@ -143,58 +147,6 @@ private fun TextPromptDialog(prompt: PagePrompt.Text) {
         },
         confirmButton = {
             TextButton(onClick = { prompt.answer(text) }) { Text(stringResource(android.R.string.ok)) }
-        },
-        dismissButton = {
-            TextButton(onClick = prompt::dismiss) { Text(stringResource(android.R.string.cancel)) }
-        },
-    )
-}
-
-@Composable
-private fun SignInDialog(prompt: PagePrompt.SignIn) {
-    var user by remember { mutableStateOf(prompt.username) }
-    var password by remember { mutableStateOf("") }
-    AlertDialog(
-        onDismissRequest = prompt::dismiss,
-        title = { Text(stringResource(R.string.prompt_sign_in_title, prompt.site)) },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                if (prompt.message.isNotEmpty()) {
-                    Text(prompt.message.bounded(), style = MaterialTheme.typography.bodyMedium)
-                }
-                if (prompt.insecure) {
-                    Text(
-                        stringResource(R.string.prompt_sign_in_insecure),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.padding(top = 8.dp),
-                    )
-                }
-                if (!prompt.onlyPassword) {
-                    OutlinedTextField(
-                        value = user,
-                        onValueChange = { user = it },
-                        singleLine = true,
-                        label = { Text(stringResource(R.string.prompt_username)) },
-                        keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
-                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                    )
-                }
-                OutlinedTextField(
-                    value = password,
-                    onValueChange = { password = it },
-                    singleLine = true,
-                    label = { Text(stringResource(R.string.prompt_password)) },
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
-                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { prompt.answer(user, password) }) {
-                Text(stringResource(R.string.prompt_sign_in))
-            }
         },
         dismissButton = {
             TextButton(onClick = prompt::dismiss) { Text(stringResource(android.R.string.cancel)) }

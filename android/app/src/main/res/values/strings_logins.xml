@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Saved logins in pages and in the HTTP sign-in dialog (0.3.0). -->
+<resources>
+    <string name="login_fill_title">Sign in to %1$s</string>
+    <string name="login_fill_choose">Choose a saved sign-in:</string>
+    <string name="login_fill_none">The vault has no sign-in for this site.</string>
+    <string name="login_fill_no_username">(no user name)</string>
+    <string name="login_fill_other_site">saved on %1$s</string>
+    <string name="login_fill_failed">This sign-in could not be read from the vault.</string>
+    <string name="login_insecure_title">This page is not encrypted</string>
+    <string name="login_insecure_fill">%1$s was loaded without encryption (http). A password filled in here can be read by anyone on the network between you and the site.</string>
+    <string name="login_insecure_fill_anyway">Fill in anyway</string>
+    <string name="login_insecure_save">%1$s was loaded without encryption (http). The password you just sent could be read on the network; saving it does not make it safer.</string>
+    <string name="login_insecure_save_anyway">Save anyway</string>
+    <string name="login_insecure_use_anyway">Use anyway</string>
+    <string name="login_insecure_auth">This server asks without encryption (http). The saved password would travel readable by anyone on the network.</string>
+    <string name="login_save_title">Save this sign-in?</string>
+    <string name="login_update_title">Update the saved password?</string>
+    <string name="login_save_text">%1$s on %2$s</string>
+    <string name="login_save_text_no_user">Password for %1$s</string>
+    <string name="login_save_no_vault">Krunk can keep it in an encrypted vault on this device, opened with a password you choose.</string>
+    <string name="login_save_locked">The vault is locked. Its password is asked when you save.</string>
+    <string name="login_save">Save</string>
+    <string name="login_update">Update</string>
+    <string name="login_create_vault">Create vault</string>
+    <string name="login_not_now">Not now</string>
+    <string name="login_never">Never for this site</string>
+    <string name="login_dont_ask">Don\'t ask again</string>
+    <string name="login_save_failed">The sign-in could not be saved.</string>
+    <string name="login_saved">Sign-in saved in the vault</string>
+    <string name="login_auth_saved">Saved sign-ins</string>
+    <string name="login_auth_use">Use %1$s</string>
+    <string name="login_auth_unlock">Unlock vault for saved sign-ins</string>
+    <string name="login_auth_from_vault">Fill from vault</string>
+    <string name="menu_fill_from_vault">Fill from vault</string>
+    <string name="login_fill_armed">Tap the user name or password field</string>
+    <string name="login_fill_not_here">Nothing to fill on this page</string>
+</resources>
