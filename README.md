@@ -653,7 +653,11 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   errors of its contexts (**Errors**: uncaught errors, rejected promises and `console.error`
   of the background, popup, pages and content scripts, also in `krunk.log`). How the runtime
   works, why MetaMask did not load before 0.17.0 and what is still missing:
-  [docs/EXTENSIONS.md](docs/EXTENSIONS.md). **Isolation:** extensions never run on Krunk's own pages or the shell, not in
+  [docs/EXTENSIONS.md](docs/EXTENSIONS.md). Since 0.17.0 an extension's background and pages
+  reach the hosts its manifest names past CORS, as in Chrome (Krunk relays those requests:
+  no cookies, no streaming). Tested on Windows with MetaMask 13.56 (set-up, unlock after a
+  restart, `window.ethereum`, connect, `personal_sign`), Dark Reader 4.9 and uBlock Origin
+  Lite; not tested: sending a transaction, hardware wallets, other wallets. **Isolation:** extensions never run on Krunk's own pages or the shell, not in
   private tabs unless "Allow in private tabs" is on, and their pages live on their own
   origin `https://<id>.ext.krunk.invalid`; the scope list on `krunk://extensions` shows
   which sites each one may read and change. Since 0.11.7:

@@ -83,7 +83,8 @@ One mapping, applied at the boundaries (`core::ext_runtime::chrome_url` / `krunk
 
 | What | Form | Why |
 |---|---|---|
-| Where pages and files are served, `location`, `runtime.getURL()`, `tabs.Tab.url`, `runtime.getContexts().documentUrl` | `https://<id>.ext.krunk.invalid/…` | it must load: `fetch`, `<iframe src>`, `new Worker`, `tabs.create` use it as is |
+| Where pages and files are served, `location`, `runtime.getURL()` **in pages and content scripts**, `tabs.Tab.url`, `runtime.getContexts().documentUrl` | `https://<id>.ext.krunk.invalid/…` | it must load: `fetch`, `<iframe src>`, `new Worker`, `tabs.create` use it as is |
+| `runtime.getURL()` **in the background worker** | `chrome-extension://<id>/…` | it is compared there with `sender.url` (Dark Reader answers only `[getURL('/ui/popup/index.html'), …].includes(sender.url)`; with Krunk's form its settings page stayed at "Loading"). The worker's `fetch` and `importScripts` and the host's tab and window calls take this form |
 | `sender.url`, `sender.origin` of an extension page or the background (messages and ports) | `chrome-extension://<id>/…` | extensions compare it with the origin they build from `runtime.id` |
 | `runtime.id` | `<id>` | |
 | An address an extension builds itself (`chrome-extension://<id>/page.html`) and passes to `tabs.create`, `tabs.update`, `windows.create`, `offscreen.createDocument` | mapped to Krunk's form | |
@@ -91,16 +92,34 @@ One mapping, applied at the boundaries (`core::ext_runtime::chrome_url` / `krunk
 Content-script senders are web pages: their `url` and `origin` are the page's, with `tab` and
 `frameId` (0 for the top frame).
 
-**To be checked on Windows:** `new URL("chrome-extension://<id>/x").origin` must be
-`"chrome-extension://<id>"` in Krunk's engine (it is in Chrome and in a CEF built with the
-extensions module; in a headless test Chromium it is `"null"`). The fixture's self-test has
-a line for it. If it is `"null"`, the scheme has to be registered as a standard scheme in
-the engine (`OnRegisterCustomSchemes`) — nothing in the shims can change what `URL` computes.
+Checked on Windows (the fixture's self-test): `new URL("chrome-extension://<id>/x").origin`
+is `"chrome-extension://<id>"` in Krunk's engine.
 
-Not done: the `Origin` header of an extension page's network requests is Krunk's
-(`https://<id>.ext.krunk.invalid`), and cross-origin requests follow CORS; Chrome sends
-`chrome-extension://<id>` and exempts the manifest's `host_permissions` from CORS. A server
-that allows a wallet's extension origin by name will refuse these requests.
+### Requests to the manifest's hosts: past CORS, by a relay
+
+Chrome exempts an extension's pages and background from CORS for its `host_permissions`.
+Krunk's extension origins are ordinary web origins to the engine's network service, so a
+`fetch` to a server without `Access-Control-Allow-Origin` failed (`MissingAllowOriginHeader`;
+in MetaMask: no feature flags, no snap updates, "Security check unavailable" on every
+signature). CEF's cross-origin allow-list (`cef_add_cross_origin_whitelist_entry`) alone does
+not help: CEF 156 consults it only for responses the application serves itself, not for
+network responses.
+
+So Krunk serves them itself (`app/src/ffi/cef/relay.rs`): a `fetch`/XHR whose initiator is
+exactly an enabled extension's origin, to a host its manifest grants
+(`core::ext_runtime::cors_grants`, `cors_granted`), is answered by a resource handler that
+makes the request from the browser process, through the profile's network context (proxy,
+VPN, DNS settings apply), and CEF then applies the allow-list that
+`Browser::ext_sync_cors` keeps in step. What this means for an extension:
+
+* no cookies or stored credentials are sent or kept (`credentials: 'include'` is not honoured);
+* the response is buffered (at most 64 MiB): no streaming body, no progress events;
+* `Origin`, `Referer` and `Cookie` headers of the page's request are dropped; the server
+  sees no extension origin (Chrome sends `chrome-extension://<id>`), so a server that allows
+  a wallet's origin by name gets no name to check;
+* only `fetch`/XHR: WebSockets need no exemption, images and scripts follow the page's rules;
+* a web page and a content script (which runs in the page's origin) gain nothing: measured,
+  the same `fetch` from a web page still fails.
 
 ## Ports and messages
 

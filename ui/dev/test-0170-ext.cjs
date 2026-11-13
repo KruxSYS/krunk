@@ -255,7 +255,9 @@ module.exports = function ({ openPage, check }) {
     await page.goto('https://example.test/a?b=1');
     const r = await page.evaluate(({ shim, id }) => {
       const sent = [];
-      window['__krunkExt_' + id] = (json) => { sent.push(JSON.parse(json)); };
+      // The shim keeps the binding it finds at its start (a hardened extension may replace the
+      // global later), so later steps hook in through `window.__onExtCall`.
+      window['__krunkExt_' + id] = (json) => { sent.push(JSON.parse(json)); if (window.__onExtCall) window.__onExtCall(json); };
       const ext = (0, eval)('(' + shim.replace(/^\/\/.*\n/gm, '') + ')')(id, { name: 'x', manifest_version: 3 }, {});
       const out = { global: window.chrome && window.chrome.runtime && window.chrome.runtime.id === id, browser: window.browser === window.chrome, run: typeof ext.run };
       // A port to the background.
@@ -306,7 +308,7 @@ module.exports = function ({ openPage, check }) {
     // web-accessible resource); any other fetch is the page's as before.
     const f = await page.evaluate(async ({ id }) => {
       const reads = [];
-      window['__krunkExt_' + id] = (json) => {
+      window.__onExtCall = (json) => {
         const m = JSON.parse(json);
         if (m.cmd !== 'resource.read') return;
         reads.push(m.data.url);
