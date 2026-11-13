@@ -63,6 +63,9 @@ sealed class Screen {
 
     data object About : Screen()
 
+    /** The password vault. */
+    data object Vault : Screen()
+
     companion object {
         /** `krunk://name` -> screen. */
         fun forPage(name: String): Screen? = when (name) {
@@ -70,6 +73,7 @@ sealed class Screen {
             "history" -> History
             "settings" -> Settings
             "about" -> About
+            "passwords" -> Vault
             else -> null
         }
     }

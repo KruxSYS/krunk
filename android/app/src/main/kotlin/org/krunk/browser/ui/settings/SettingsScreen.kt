@@ -627,6 +627,9 @@ private fun PrivacySection(
     Row(stringResource(R.string.settings_clear_data), stringResource(R.string.settings_clear_data_help)) {
         clear = true
     }
+    Row(stringResource(R.string.settings_passwords), stringResource(R.string.settings_passwords_help)) {
+        vm.push(Screen.Vault)
+    }
     if (clear) ClearDataDialog(vm) { clear = false }
     if (allowedOpen) AllowedSitesDialog(allowHosts, onRemove = vm::removeAllowedSite) { allowedOpen = false }
 }

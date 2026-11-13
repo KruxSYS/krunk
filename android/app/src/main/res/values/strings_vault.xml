@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Strings of the password vault: its screen, the unlock dialog, the entry dialogs. -->
+<resources>
+    <string name="vault_title">Passwords</string>
+    <string name="menu_passwords">Passwords</string>
+    <string name="settings_passwords">Passwords</string>
+    <string name="settings_passwords_help">Saved logins in the vault: view, add, lock</string>
+
+    <!-- No vault yet -->
+    <string name="vault_none_title">Keep your logins in a vault</string>
+    <string name="vault_none_text">Krunk can save the user names and passwords you sign in with and fill them in for you. They are stored encrypted on this device, behind one password that only you know.</string>
+    <string name="vault_create">Create vault</string>
+    <string name="vault_new_password">Vault password</string>
+    <string name="vault_repeat_password">Repeat the password</string>
+    <string name="vault_min_length">At least %1$d characters. A few unrelated words are easy to keep and hard to guess.</string>
+    <string name="vault_no_recovery">If you forget this password, the vault cannot be opened. Krunk for Android has no recovery in this version.</string>
+    <string name="vault_creating">Creating the vault…</string>
+
+    <!-- Locked -->
+    <string name="vault_locked_title">The vault is locked</string>
+    <string name="vault_unlock_title">Unlock vault</string>
+    <string name="vault_password">Vault password</string>
+    <string name="vault_unlock">Unlock</string>
+    <string name="vault_unlocking">Unlocking…</string>
+    <string name="vault_use_fingerprint">Use fingerprint</string>
+    <string name="vault_forgotten">A forgotten password cannot be recovered.</string>
+    <string name="vault_show_password">Show password</string>
+    <string name="vault_hide_password">Hide password</string>
+    <string name="vault_locked_timer">The vault was locked after a while without use</string>
+    <string name="vault_unlock_no_vault">There is no vault yet. Create one under Passwords in the menu.</string>
+
+    <!-- Device key lost -->
+    <string name="vault_key_lost_title">This vault cannot be opened</string>
+    <string name="vault_key_lost_text">The vault file is here, but the key this device kept for it is gone. That happens after app data was restored from a backup or another device, or after the device\'s key store was reset. Without that key the vault cannot be opened, not even with the right password.</string>
+    <string name="vault_key_lost_next">You can delete this vault and create a new one. The logins in it are lost.</string>
+    <string name="vault_destroy">Delete this vault</string>
+    <string name="vault_destroy_title">Delete this vault?</string>
+    <string name="vault_destroy_text">Every login in it is removed for good. Type %1$s to confirm.</string>
+    <string name="vault_destroy_field">Type %1$s</string>
+    <string name="vault_destroy_refused">Type %1$s in capital letters to delete the vault</string>
+    <string name="vault_destroyed">The vault was deleted</string>
+
+    <!-- List -->
+    <string name="vault_search_hint">Search logins</string>
+    <string name="vault_empty">No logins yet. Add one with the plus button.</string>
+    <string name="vault_no_results">No login matches “%1$s”</string>
+    <string name="vault_add">Add login</string>
+    <string name="vault_no_username">No user name</string>
+    <string name="vault_lock_now">Lock now</string>
+    <string name="vault_change_password">Change password</string>
+    <string name="vault_settings">Settings</string>
+
+    <!-- One login -->
+    <string name="vault_field_site">Site</string>
+    <string name="vault_field_site_hint">https://example.com</string>
+    <string name="vault_field_username">User name</string>
+    <string name="vault_field_password">Password</string>
+    <string name="vault_field_password_keep">New password (empty: keep the current one)</string>
+    <string name="vault_field_note">Note</string>
+    <string name="vault_password_hidden">Password, hidden</string>
+    <string name="vault_show">Show</string>
+    <string name="vault_hide">Hide</string>
+    <string name="vault_copy_username">Copy user name</string>
+    <string name="vault_copy_password">Copy password</string>
+    <string name="vault_copied">Copied</string>
+    <string name="vault_copied_password">Copied. Clipboard is cleared in 30 s</string>
+    <string name="vault_edit_title">Edit login</string>
+    <string name="vault_add_title">Add login</string>
+    <string name="vault_delete_title">Delete this login?</string>
+    <string name="vault_delete_text">The login for %1$s with the user name “%2$s” is removed from the vault.</string>
+    <string name="vault_delete_text_no_user">The login for %1$s (no user name) is removed from the vault.</string>
+    <string name="vault_saved">Saved</string>
+    <string name="vault_deleted">Login deleted</string>
+
+    <!-- Change password -->
+    <string name="vault_current_password">Current password</string>
+    <string name="vault_new_vault_password">New password</string>
+    <string name="vault_password_changed">The vault password was changed</string>
+    <string name="vault_change_note">Fingerprint unlock is switched off by a new password; switch it on again afterwards.</string>
+
+    <!-- Vault settings -->
+    <string name="vault_settings_title">Vault settings</string>
+    <string name="vault_lock_timer">Lock after</string>
+    <plurals name="vault_minutes">
+        <item quantity="one">%1$d minute without use</item>
+        <item quantity="other">%1$d minutes without use</item>
+    </plurals>
+    <string name="vault_grace_title">Lock after leaving Krunk</string>
+    <string name="vault_grace_0">At once</string>
+    <string name="vault_grace_30">After 30 seconds</string>
+    <string name="vault_grace_60">After 1 minute</string>
+    <string name="vault_grace_300">After 5 minutes</string>
+    <string name="vault_grace_help">Lets you switch to another app, for example for a sign-in code, and come back without unlocking again.</string>
+    <string name="vault_offer_save">Offer to save sign-ins</string>
+    <string name="vault_bio_switch">Unlock with fingerprint</string>
+    <string name="vault_bio_switch_help">The vault password still works and is still needed after fingerprints change</string>
+    <string name="vault_bio_none_enrolled">No fingerprint enrolled on this device</string>
+    <string name="vault_bio_unsupported_os">Needs Android 11 or newer</string>
+    <string name="vault_bio_unavailable">Not available on this device right now</string>
+    <string name="vault_bio_enable_failed">Fingerprint unlock was not switched on</string>
+    <string name="vault_bio_failed">Fingerprint unlock did not work. Unlock with your password.</string>
+    <string name="vault_bio_off_enrollment">Fingerprints on this device changed. Unlock with your password and switch fingerprint unlock on again in Passwords settings.</string>
+    <string name="vault_bio_off_password">The vault password was changed. Unlock with your password and switch fingerprint unlock on again in Passwords settings.</string>
+    <string name="vault_bio_off_missing">Fingerprint unlock is no longer set up on this device. Unlock with your password and switch it on again in Passwords settings.</string>
+
+    <!-- Failures -->
+    <string name="vault_error_wrong_password">Wrong password</string>
+    <string name="vault_error_rate_limited">Too many attempts. Try again in %1$d s</string>
+    <string name="vault_error_weak_password">The password is too short</string>
+    <string name="vault_error_too_short">Use at least %1$d characters</string>
+    <string name="vault_error_mismatch">The two passwords are not the same</string>
+    <string name="vault_error_key_lost">This device\'s key for the vault is gone. The vault cannot be opened.</string>
+    <string name="vault_error_corrupt">The vault file is damaged</string>
+    <string name="vault_error_io">The vault file could not be read or written</string>
+    <string name="vault_error_not_found">This login is no longer in the vault</string>
+    <string name="vault_error_invalid_site">Enter a web address, such as https://example.com</string>
+    <string name="vault_error_invalid_username">The user name is too long</string>
+    <string name="vault_error_invalid_password">Enter a password (not longer than the vault allows)</string>
+    <string name="vault_error_invalid_note">The note is too long</string>
+    <string name="vault_error_locked">The vault is locked</string>
+    <string name="vault_error_no_vault">There is no vault</string>
+    <string name="vault_error_exists">A vault exists already</string>
+    <string name="vault_error_not_allowed">This login does not belong to the page</string>
+    <string name="vault_error_other">That did not work. Try again.</string>
+</resources>
