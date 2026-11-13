@@ -3,6 +3,34 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.18.0 — 2026-11-13
+
+- **Pages that got stuck loading, and took other tabs with them.** Two things in the engine
+  caused it, both measured in Krunk on Windows (`docs/NETWORK.md`):
+  - *The same address in two tabs.* While one tab waited for a page (or a script, or an API
+    call) that the server was slow to answer, any other tab asking for the same address waited
+    behind it, for up to 20 seconds, even though the server would have answered. Now such a
+    request goes around the engine's cache queue once the first has waited a second: in the
+    test the second tab's request reached the server after 1 second instead of 21.
+  - *Six connections per site.* The engine opened at most six connections to one site. Six
+    requests that never finished (or six open live streams) took them all, and nothing else
+    from that site loaded in any tab, the tab's own Reload included. The limit is now 16, and
+    before you reload a tab or send it elsewhere, Krunk stops what that tab is still waiting
+    for, so a stuck tab can always be reloaded or left.
+  - To see it: `krunk://tasks` has a **Pending** column (how many answers a tab waits for and
+    for how long, red after 30 seconds), and `krunk.log` names the site (never the address)
+    of requests pending for over 30 seconds.
+- **Middle-click in the Back and Forward menus** (right-click or hold the Back or Forward
+  button for the menu) opens that entry in a new background tab next to the current one. The
+  new tab has the whole back/forward list, so Back and Forward work in it; the tab you were
+  in stays where it is.
+- **Middle-click (or Ctrl+click) on Reload** opens the page again in a new tab. Middle-click on
+  the Home button opens the home page in a new tab (since 0.16.0).
+- The engine was rebuilt for this release with two small changes (the tab-history copy and
+  the connection limit); Chromium's version is unchanged (156.0.8078.80).
+- Known limits: sixteen requests that never finish still block a site until their tab is
+  closed or reloaded; a link clicked inside a stuck page is not helped by the reload rule.
+
 ## 0.17.0 — 2026-11-13
 
 - **MetaMask works.** It installed before but never started. Tested with MetaMask 13.56 from

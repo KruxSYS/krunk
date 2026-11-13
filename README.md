@@ -133,6 +133,9 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   tab gets this tab's whole back/forward list with that entry current, this tab stays where it
   is and the menu stays open. A private tab's copy is private. (With an engine that lacks
   Krunk's `chromium-clone-navigation.patch` the new tab opens the entry's address only.)
+  **Reload** (0.18.0): a middle-click or Ctrl+click opens the page again in a new tab. Before a
+  reload or a new address, a tab that still waits for six or more answers has those loads
+  stopped, so a stuck tab can always be reloaded (why: [docs/NETWORK.md](docs/NETWORK.md)).
 - **Dropdowns keep the page still (0.8.0):** while a `<select>` list, a datalist's suggestions or
   one of Krunk's menus (⋮, the history menus, tab and bookmark menus) is open, the mouse wheel
   over the page does nothing, so the list stays where its field is; the wheel over the list
