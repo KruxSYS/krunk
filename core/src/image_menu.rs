@@ -31,6 +31,21 @@ impl ImageAction {
             ImageAction::CopyAddress => "Copy image address",
         }
     }
+
+    /// Does the AI panel's menu offer this item (0.16.0)? Its pictures are the agent's step
+    /// screenshots, which the host has itself: they can be saved and copied. Their addresses
+    /// are on the shell origin, which no tab reaches, so there is nothing to open in a tab and
+    /// no address worth copying.
+    pub fn in_panel(self) -> bool {
+        matches!(self, ImageAction::Save | ImageAction::Copy)
+    }
+}
+
+/// Is this an image the AI panel's menu has items for (0.16.0)? The pictures the panel shows:
+/// a step screenshot on the shell origin (`/agent-shot/…`) or a `data:` image. The host has
+/// the bytes of both; it could not get any other for the panel.
+pub fn panel_image(url: &str) -> bool {
+    crate::assets::agent_shot_request(url).is_some() || data_url(url).is_some()
 }
 
 /// Can the host get this image itself (for Copy and Save)? Web and file images and `data:`
@@ -182,6 +197,24 @@ mod tests {
             fetchable("https://a.example/x.png") && fetchable("HTTP://a.example/") && fetchable("file:///C:/x.png")
         );
         assert!(!fetchable("blob:https://a.example/123") && !fetchable("data:image/png;base64,AA") && !fetchable(""));
+    }
+
+    #[test]
+    fn panel_images_and_items() {
+        assert!(panel_image("https://shell.krunk.invalid/agent-shot/0123456789abcdef0123456789abcdef/3.jpg"));
+        assert!(panel_image("data:image/png;base64,iVBORw0KGgo="));
+        for other in [
+            "https://a.example/x.png",
+            "https://krunk.invalid/agent-shot/ab/3.jpg",
+            "https://shell.krunk.invalid/shared/logo.png",
+            "blob:https://shell.krunk.invalid/1234",
+            "data:image/png;base64,***",
+            "",
+        ] {
+            assert!(!panel_image(other), "{other}");
+        }
+        let offered: Vec<ImageAction> = ImageAction::ALL.into_iter().filter(|a| a.in_panel()).collect();
+        assert_eq!(offered, [ImageAction::Save, ImageAction::Copy]);
     }
 
     #[test]

@@ -15,7 +15,7 @@
 //! * Static declarativeNetRequest rules become filter lines of the blocker.
 
 use super::{Browser, TabId, UI_BACKGROUND};
-use crate::ffi::cef::{Role, Scripts, View, ViewOptions};
+use crate::ffi::cef::{Menu, Role, Scripts, View, ViewOptions};
 use crate::ffi::window::{ScreenRect, Window, WindowEvents};
 use crate::ffi::{dialogs, http};
 use crate::log::{info, warning};
@@ -830,6 +830,7 @@ impl Browser {
     fn ext_view(&self, ext_id: &str, popup: bool) -> View {
         let view = View::new(ViewOptions {
             role: Role::Popup,
+            menu: Menu::None,
             private: false,
             scripts: Scripts::default(),
             background: if popup { UI_BACKGROUND } else { 0 },

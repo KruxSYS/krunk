@@ -36,6 +36,19 @@ pub enum Role {
     Tab,
 }
 
+/// The context menu of a view's page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Menu {
+    /// None: the browser's own UI (the shell, the popup, extension popups, the macro runner).
+    None,
+    /// The page menu (tabs): the engine's items plus Krunk's, "Inspect" last.
+    Page,
+    /// The page menu without what belongs to a page (0.16.0, the AI panel): the engine's
+    /// editing items, the link, image and search items; no Back, Forward, Print, "View page
+    /// source" or "Inspect" (`lb_core::page_menu`). Nothing applicable: no menu.
+    Panel,
+}
+
 /// Content scripts for a tab's renderer (passed at creation).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Scripts {
@@ -93,6 +106,8 @@ impl Scripts {
 /// How to create a view.
 pub struct ViewOptions {
     pub role: Role,
+    /// The page's context menu (its commands go to the view's menu events).
+    pub menu: Menu,
     /// Use the in-memory private profile.
     pub private: bool,
     pub scripts: Scripts,
@@ -460,6 +475,7 @@ pub(super) struct ViewInner {
     pub(super) hang: RefCell<Option<cef::UnresponsiveProcessCallback>>,
     pub key: u64,
     pub role: Role,
+    pub menu: Menu,
     pub private: bool,
     pub scripts: Scripts,
     pub background: u32,
@@ -546,6 +562,7 @@ impl View {
         let inner = Rc::new(ViewInner {
             key,
             role: options.role,
+            menu: options.menu,
             private: options.private,
             scripts: options.scripts,
             background: options.background,
@@ -883,6 +900,16 @@ impl View {
         match self.host() {
             Some(h) => h.set_focus(1),
             None => self.0.pending.borrow_mut().focus = true,
+        }
+    }
+
+    /// Is the keyboard focus in this view (its window or one inside it)?
+    pub fn has_focus(&self) -> bool {
+        let Some(h) = self.hwnd() else { return false };
+        // SAFETY: plain queries; no focus or a window that is gone gives false.
+        unsafe {
+            let focus = windows::Win32::UI::Input::KeyboardAndMouse::GetFocus();
+            !focus.is_invalid() && (focus == h || windows::Win32::UI::WindowsAndMessaging::IsChild(h, focus).as_bool())
         }
     }
 

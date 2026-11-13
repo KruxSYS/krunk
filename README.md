@@ -506,6 +506,12 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
     it works on the tab you are looking at (and may open or switch tabs itself). You see its
     answer as it is written, and each step it takes (expand a step for details, screenshots
     included).
+  - **Right-click in the panel (0.16.0):** Cut, Copy, Paste and Select all in the message box;
+    Copy on selected text of an answer, with "Search … for" and, when the selection is an
+    address, the open items; on a link "Open link in new tab", "Open link in new window", "Open
+    link in private tab" and "Copy link address"; on a step's screenshot (small or enlarged)
+    "Save image as…" and "Copy image". New tabs open in the panel's window. Where none of this
+    applies, no menu opens.
   - **Questions and Stop:** it may ask you a question with buttons. **Stop** (or Esc in the
     panel) ends the task at once: the request to the provider is cancelled, and keys or buttons
     it held are released. The model indicator in the panel switches between the provider's
@@ -734,7 +740,8 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
   between the two (cursor, capture and drag in the window procedure). The DevTools browser has
   a keyboard handler (shortcuts reach Krunk except `keys::devtools_keeps`) and no message
   handler, so it has no privileged channel. Only tab views can be inspected: the shell and
-  popup have no context menu and DevTools commands act on the active tab.
+  popup have no context menu, the AI panel's has no "Inspect" (0.16.0, see the panel below),
+  and DevTools commands act on the active tab.
 - **Popup:** one extra view in an owned `WS_POPUP` tool window, re-owned by the window it opens
   for. It shows the main menu, the tab menu, the shield panel and the save-password and
   fill-login prompts.
@@ -825,7 +832,28 @@ in parts (`more: true`, then the returned `draft`), up to the 200 KB script limi
 only when the last part arrives.
 
 **The panel** is a CEF view per window on its own channel (`shell.krunk.invalid/agent.html`), docked
-right of the tab area. The frame paints and drags its splitter. Its width is a setting.
+right of the tab area. The frame paints and drags its splitter. Its width is a setting. It is
+always docked; nothing moves it into a window of its own.
+
+**The panel's context menu (0.16.0)** is the page menu of tabs, not a second one: a view is
+created with `ViewOptions::menu` (`Menu::None` for the shell, the popup, extension popups and the
+macro runner; `Menu::Page` for tabs; `Menu::Panel` for the panel), and `TabMenu` in
+`app/src/ffi/cef/client.rs` builds and dispatches the menu for both. In panel form:
+- Of the engine's own items only the editing ones stay (`core::page_menu::panel_keeps`: Undo,
+  Redo, Cut, Copy, Paste, Paste as plain text, Delete, Select all, spelling suggestions). Back,
+  Forward, Print and "View page source" are removed, "Inspect" is not added, and an item the
+  engine may add later is not shown either. Leftover separators go
+  (`core::page_menu::stray_separators`); an empty menu does not open.
+- Link items, the open items for a selected address and "Search … for" are the tab's. Their
+  commands reach the host through the same view events, connected by `hook_page_menu` with
+  `MenuFrom::Tab(id)` or `MenuFrom::Panel(window)`: from the panel a tab is never private and
+  goes where Settings → New tabs puts new tabs, in the panel's window. Only `http(s)` addresses
+  get open items (`open_target`), and `open_selection` opens no others.
+- Image items: only "Save image as…" and "Copy image" (`ImageAction::in_panel`), and only for
+  the panel's own pictures (`image_menu::panel_image`: a step screenshot under `/agent-shot/…`
+  or a `data:` image). The host takes the bytes from the agent's screenshot store, with no
+  request; a saved screenshot is named `screenshot-<step>.jpg`. "Open image in new tab" and
+  "Copy image address" are left out: the address is on the shell origin, which no tab can load.
 
 **Tools.**
 - **Reading:** get_page_context, get_html, get_text, query, list_links, list_forms, list_media.
