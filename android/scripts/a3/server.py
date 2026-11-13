@@ -37,6 +37,13 @@ class H(BaseHTTPRequestHandler):
         u = urlsplit(self.path)
         if u.path == "/redir":
             return self._send(302, b"", extra=[("Location", "/landing.html?utm_campaign=y&keep=1&gclid=zz")])
+        if u.path == "/auth":
+            # HTTP sign-in (0.3.0 vault tests): Basic, user "krunk", password "test".
+            import base64
+            want = "Basic " + base64.b64encode(b"krunk:test").decode()
+            if self.headers.get("Authorization") != want:
+                return self._send(401, b"sign in", "text/plain", extra=[("WWW-Authenticate", 'Basic realm="Krunk test"')])
+            return self._send(200, b"<meta name=viewport content='width=device-width'><h2 id=ok>Signed in as krunk</h2>")
         if u.path == "/post":
             n = int(self.headers.get("Content-Length") or 0)
             data = self.rfile.read(n) if n else b""
