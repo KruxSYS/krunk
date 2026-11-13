@@ -369,6 +369,17 @@ wrap_resource_request_handler! {
         initiator: String,
     }
     impl ResourceRequestHandler {
+        // The default answer of the binding would cancel every request of the view.
+        fn on_before_resource_load(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            _request: Option<&mut Request>,
+            _callback: Option<&mut Callback>,
+        ) -> ReturnValue {
+            ReturnValue::CONTINUE
+        }
+
         fn resource_handler(
             &self,
             _browser: Option<&mut Browser>,
