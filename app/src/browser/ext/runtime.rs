@@ -664,6 +664,8 @@ impl Browser {
         }
         self.ext.ports.borrow_mut().drop_ext(ext_id);
         self.ext.pending.borrow_mut().retain(|_, (owner, _, _)| owner != ext_id);
+        // The code that starts next chooses its storage access levels itself.
+        self.ext.storage_access.borrow_mut().retain(|key, _| !key.starts_with(&format!("{ext_id}/")));
     }
 
     /// Krunk is closing: the extensions' windows and offscreen documents go with it.

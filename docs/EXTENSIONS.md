@@ -247,6 +247,12 @@ where the extension may run and never on Krunk's own pages; `scripting.*` needs 
   Chrome. Remaining gap: a sandboxed page of the extension has an opaque origin, so in a tab
   whose address is the extension's a request from an opaque origin is let through when the
   manifest has sandboxed pages.
+* `storage.session` is for the extension's pages and background (Chrome's `TRUSTED_CONTEXTS`):
+  a content script's calls are refused ("Access to storage is not allowed from this context.")
+  and it hears no changes of that area, until a page or the background calls
+  `storage.session.setAccessLevel({ accessLevel: "TRUSTED_AND_UNTRUSTED_CONTEXTS" })`
+  (kept in memory, per extension and area, until the extension restarts; `local` and `sync`
+  can be closed the same way).
 * Sandboxed pages are the one place with `unsafe-eval`: unique origin, no API.
 * Ports per extension are capped (2048), registered scripts (100), windows (8), errors (50).
 

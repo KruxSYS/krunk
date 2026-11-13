@@ -208,6 +208,28 @@ pub fn storage_set_fits(
     now - replaced + added <= limit
 }
 
+// ------------------------------------------------------------------ chrome.storage access levels
+
+/// Chrome's error for a storage area a content script may not use.
+pub const STORAGE_NOT_ALLOWED: &str = "Access to storage is not allowed from this context.";
+
+/// May content scripts (untrusted contexts) use a storage area? `set`: what the extension chose
+/// with `storage.<area>.setAccessLevel` from one of its pages or its background, if anything
+/// (`true`: `TRUSTED_AND_UNTRUSTED_CONTEXTS`). Chrome's defaults: the session area is for
+/// trusted contexts only, the others are open.
+pub fn storage_open_to_content(area: &str, set: Option<bool>) -> bool {
+    set.unwrap_or(area != "session")
+}
+
+/// `accessLevel` of `setAccessLevel`: are content scripts let in?
+pub fn parse_access_level(level: &str) -> Option<bool> {
+    match level {
+        "TRUSTED_CONTEXTS" => Some(false),
+        "TRUSTED_AND_UNTRUSTED_CONTEXTS" => Some(true),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,6 +309,16 @@ mod tests {
         assert_eq!(storage_limit("local", true), STORAGE_HARD_CAP_BYTES);
         assert_eq!(storage_limit("session", true), STORAGE_QUOTA_BYTES);
         assert_eq!(storage_limit("sync", true), STORAGE_QUOTA_BYTES);
+    }
+
+    #[test]
+    fn session_storage_is_closed_to_content_scripts_until_the_extension_opens_it() {
+        assert!(!storage_open_to_content("session", None));
+        assert!(storage_open_to_content("local", None) && storage_open_to_content("sync", None));
+        assert!(storage_open_to_content("session", parse_access_level("TRUSTED_AND_UNTRUSTED_CONTEXTS")));
+        assert!(!storage_open_to_content("local", parse_access_level("TRUSTED_CONTEXTS")));
+        assert_eq!(parse_access_level("trusted_contexts"), None);
+        assert_eq!(parse_access_level(""), None);
     }
 
     #[test]

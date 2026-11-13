@@ -173,7 +173,7 @@ function area(name) {
     remove: function (keys, callback) { return cb(call('storage.remove', { area: name, keys: keys }), callback); },
     clear: function (callback) { return cb(call('storage.clear', { area: name }), callback); },
     getBytesInUse: function (keys, callback) { if (typeof keys === 'function') { callback = keys; keys = null; } return cb(call('storage.bytes', { area: name, keys: keys === undefined ? null : keys }), callback); },
-    setAccessLevel: function (o, callback) { return cb(Promise.resolve(), callback); },
+    setAccessLevel: function (o, callback) { return cb(call('storage.setAccessLevel', { area: name, accessLevel: o && o.accessLevel }), callback); },
     onChanged: event('storage'),
     QUOTA_BYTES: name === 'sync' ? 102400 : 10485760
   };

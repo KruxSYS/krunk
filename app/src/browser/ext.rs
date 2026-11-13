@@ -169,6 +169,9 @@ pub(super) struct ExtHost {
     /// install). Each goes into the extension's own world (0.11.7, audit C4).
     bundles: RefCell<(Bundles, Bundles)>,
     storage: RefCell<HashMap<String, serde_json::Map<String, Value>>>,
+    /// `storage.<area>.setAccessLevel`, by "<id>/<area>": may content scripts use the area?
+    /// In memory; the extension sets it again when it starts.
+    storage_access: RefCell<HashMap<String, bool>>,
     backgrounds: RefCell<HashMap<String, Background>>,
     popup: RefCell<Option<ExtPopup>>,
     /// Messages waiting for `respond`, with the extension that may answer them and how many
@@ -238,6 +241,7 @@ impl ExtHost {
             exts: RefCell::new(Vec::new()),
             bundles: RefCell::new((Vec::new(), Vec::new())),
             storage: RefCell::new(HashMap::new()),
+            storage_access: RefCell::new(HashMap::new()),
             backgrounds: RefCell::new(HashMap::new()),
             popup: RefCell::new(None),
             pending: RefCell::new(HashMap::new()),
@@ -1401,7 +1405,26 @@ impl Browser {
                 Ok(Value::Null)
             }
             "storage.get" | "storage.set" | "storage.remove" | "storage.clear" | "storage.bytes" => {
-                self.ext_storage_op(ext_id, op, &data)
+                // A content script uses the session area only when the extension opened it.
+                let area = data.get("area").and_then(|a| a.as_str()).unwrap_or("local");
+                if matches!(caller, Caller::Content { .. }) && !self.ext_storage_open(ext_id, area) {
+                    Err(lb_core::ext_guard::STORAGE_NOT_ALLOWED.into())
+                } else {
+                    self.ext_storage_op(ext_id, op, &data)
+                }
+            }
+            // From the extension's pages and background only (trusted contexts).
+            "storage.setAccessLevel" => {
+                let area = get_str("area").unwrap_or_default();
+                let level = lb_core::ext_guard::parse_access_level(&get_str("accessLevel").unwrap_or_default());
+                match (caller, level) {
+                    (Caller::Content { .. }, _) => Err(lb_core::ext_guard::STORAGE_NOT_ALLOWED.into()),
+                    (_, Some(open)) if matches!(area.as_str(), "local" | "sync" | "session") => {
+                        self.ext.storage_access.borrow_mut().insert(Self::ext_storage_key(ext_id, &area), open);
+                        Ok(Value::Null)
+                    }
+                    _ => Err("Invalid access level or storage area.".into()),
+                }
             }
             // A content script's `fetch` of a file of its own extension.
             "resource.read" => match caller {
@@ -1860,6 +1883,12 @@ impl Browser {
         format!("{ext_id}/{area}")
     }
 
+    /// May the extension's content scripts use this storage area (and hear its changes)?
+    fn ext_storage_open(&self, ext_id: &str, area: &str) -> bool {
+        let set = self.ext.storage_access.borrow().get(&Self::ext_storage_key(ext_id, area)).copied();
+        lb_core::ext_guard::storage_open_to_content(area, set)
+    }
+
     fn ext_storage_load(&self, ext_id: &str, area: &str) {
         let key = Self::ext_storage_key(ext_id, area);
         if self.ext.storage.borrow().contains_key(&key) {
@@ -1992,13 +2021,16 @@ impl Browser {
             }
             let data = json!({ "changes": changes, "area": area });
             self.ext_send_pages(ext_id, "storageChanged", data.clone());
-            // The extension's content worlds in every tab (only its own, C4).
+            // The extension's content worlds in every tab (only its own, C4), when content
+            // scripts may use the area at all (the session area: only once it was opened).
+            let open = self.ext_storage_open(ext_id, area);
             let targets: Vec<(TabId, i64)> = self
                 .ext
                 .contexts
                 .borrow()
                 .iter()
                 .flat_map(|(t, l)| l.iter().filter(|c| c.ext == ext_id).map(move |c| (*t, c.id)))
+                .filter(|_| open)
                 .collect();
             let msg = json!({ "ext": ext_id, "event": "storageChanged", "changes": data["changes"], "area": area });
             for (tab, ctx) in targets {
