@@ -1028,6 +1028,11 @@ impl Browser {
             .filter(|e| e.installed.enabled)
             .map(|e| (e.installed.id.clone(), lb_core::ext_runtime::cors_grants(&e.manifest)))
             .collect();
+        // The relay takes the same grants (see `ffi::cef::relay`): it is what makes them work
+        // for network responses with this engine.
+        crate::ffi::cef::relay::set_grants(
+            wanted.iter().filter(|(_, g)| !g.is_empty()).map(|(id, g)| (ext::origin(id), g.clone())).collect(),
+        );
         let mut have = self.ext.cors.borrow_mut();
         let ids: Vec<String> = have.keys().chain(wanted.keys()).cloned().collect();
         for id in ids {

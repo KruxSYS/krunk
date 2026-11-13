@@ -668,7 +668,12 @@ wrap_request_handler! {
             _disable_default_handling: Option<&mut c_int>,
         ) -> Option<ResourceRequestHandler> {
             // IO thread: only the Send + Sync policy is used here.
-            self.policy.as_ref().map(|p| net::handler_for(p, request_initiator))
+            // Views without a policy (an extension's own views): only the relay of an
+            // extension's requests to its granted hosts (0.17.0).
+            match self.policy.as_ref() {
+                Some(p) => Some(net::handler_for(p, request_initiator)),
+                None => super::relay::handler_for(request_initiator),
+            }
         }
 
         fn on_render_process_terminated(

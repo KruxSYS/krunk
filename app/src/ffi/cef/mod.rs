@@ -16,6 +16,7 @@ pub mod entry;
 pub mod fetch;
 mod hints;
 mod net;
+pub mod relay;
 mod renderer;
 mod scheme;
 mod scriptlets;

@@ -104,8 +104,14 @@ wrap_resource_request_handler! {
             &self,
             _browser: Option<&mut Browser>,
             _frame: Option<&mut Frame>,
-            _request: Option<&mut Request>,
+            request: Option<&mut Request>,
         ) -> Option<ResourceHandler> {
+            // An extension's page in a tab asking one of its granted hosts (0.17.0).
+            if let Some(r) = request {
+                if super::relay::wanted(&self.initiator, r) {
+                    return Some(super::relay::handler());
+                }
+            }
             let (content_type, body) = self.respond.lock().ok()?.take()?;
             Some(super::scheme::static_handler(super::InternalResponse {
                 status: 200,

@@ -162,6 +162,24 @@ pub fn cors_grants_of(pattern: &str) -> Vec<CorsGrant> {
     grants(protocols, domain, subdomains)
 }
 
+/// Is `url` (http or https) covered by one of the grants? The port does not matter, as in
+/// the engine's allow-list. Never an address on Krunk's own hosts.
+pub fn cors_granted(grants: &[CorsGrant], url: &str) -> bool {
+    let Ok(u) = url::Url::parse(url) else { return false };
+    let Some(host) = u.host_str().map(str::to_ascii_lowercase) else { return false };
+    if host == "krunk.invalid" || host.ends_with(".krunk.invalid") {
+        return false;
+    }
+    grants.iter().any(|g| {
+        g.protocol == u.scheme()
+            && (if g.domain.is_empty() {
+                g.subdomains
+            } else {
+                host == g.domain || (g.subdomains && host.ends_with(&format!(".{}", g.domain)))
+            })
+    })
+}
+
 /// The allow-list entries of a manifest: its `host_permissions` and the host patterns among
 /// its `permissions` (as [`crate::ext_guard::host_access`] reads them), each once. Not
 /// optional permissions and not the content scripts' `matches`.
@@ -693,6 +711,36 @@ mod tests {
         ] {
             assert_eq!(cors_grants_of(bad), Vec::new(), "{bad}");
         }
+    }
+
+    #[test]
+    fn a_grant_covers_its_hosts_only() {
+        let grants = [cors_grants_of("https://*.example.com/*"), cors_grants_of("http://localhost:8545/")].concat();
+        for yes in [
+            "https://example.com/a",
+            "https://api.example.com/x?y",
+            "https://API.Example.com:8443/",
+            "http://localhost:9000/rpc",
+        ] {
+            assert!(cors_granted(&grants, yes), "{yes}");
+        }
+        for no in [
+            "http://example.com/",
+            "https://example.com.evil.test/",
+            "https://notexample.com/",
+            "https://localhost/",
+            "wss://api.example.com/",
+            "file:///c:/x",
+            "not a url",
+        ] {
+            assert!(!cors_granted(&grants, no), "{no}");
+        }
+        let all = cors_grants_of("<all_urls>");
+        assert!(cors_granted(&all, "https://anything.test/") && cors_granted(&all, "http://10.0.0.1/"));
+        assert!(
+            !cors_granted(&all, "https://abc.ext.krunk.invalid/x") && !cors_granted(&all, "https://krunk.invalid/")
+        );
+        assert!(!cors_granted(&[], "https://example.com/"));
     }
 
     #[test]
