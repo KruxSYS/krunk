@@ -23,6 +23,7 @@ import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Masks
+import androidx.compose.material.icons.outlined.Password
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Share
@@ -61,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import org.krunk.browser.R
+import org.krunk.browser.engine.logins.LoginVault
 import org.krunk.browser.tabs.TabUi
 import org.krunk.browser.ui.BrowserViewModel
 import org.krunk.browser.ui.Screen
@@ -213,6 +215,18 @@ fun BrowserMenu(
         Item(stringResource(R.string.menu_passwords), Icons.Outlined.Key) {
             onDismiss()
             vm.push(Screen.Vault)
+        }
+        // The way to a saved login where Krunk does not offer one by itself: a private tab, or
+        // a page whose picker was closed. The next tap on a sign-in field brings the picker.
+        val loginUi = LocalLoginUi.current
+        val vaultState = loginUi?.vault?.state()
+        if (tab != null && (vaultState == LoginVault.State.UNLOCKED || vaultState == LoginVault.State.LOCKED)) {
+            val armed = stringResource(R.string.login_fill_armed)
+            val notHere = stringResource(R.string.login_fill_not_here)
+            Item(stringResource(R.string.menu_fill_from_vault), Icons.Outlined.Password) {
+                onDismiss()
+                onMessage(if (vm.tabs.session(tab.id)?.armFill() == true) armed else notHere)
+            }
         }
         Item(stringResource(R.string.menu_settings), Icons.Outlined.Settings) {
             onDismiss()

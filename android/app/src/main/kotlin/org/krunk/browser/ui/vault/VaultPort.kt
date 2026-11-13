@@ -5,7 +5,6 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.krunk.browser.vault.BioAvailability
 import org.krunk.browser.vault.BioOffReason
-import org.krunk.browser.vault.BioUnlockResult
 import org.krunk.browser.vault.LockReason
 import org.krunk.browser.vault.VaultBackend
 import org.krunk.browser.vault.VaultFailure
@@ -81,7 +80,7 @@ interface BiometricPort {
     /** Throws when the user cancels or the key store refuses. */
     suspend fun enable(activity: Activity)
 
-    suspend fun unlock(activity: Activity): BioUnlockResult
+    suspend fun unlock(activity: Activity): BioUnlockOutcome
 
     fun disable()
 }
@@ -91,3 +90,6 @@ val LOCK_MINUTE_CHOICES = listOf(1, 5, 15, 30, 60)
 
 /** The choices of "Lock after leaving Krunk", in seconds; 0 = at once. */
 val BACKGROUND_GRACE_CHOICES = listOf(0, 30, 60, 300)
+
+/** How a fingerprint unlock ended, as the screens need to know it. */
+enum class BioUnlockOutcome { UNLOCKED, CANCELLED, FELL_BACK, FAILED }

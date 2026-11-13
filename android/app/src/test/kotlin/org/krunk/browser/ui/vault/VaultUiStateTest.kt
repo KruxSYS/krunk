@@ -15,7 +15,6 @@ import org.junit.Test
 import org.krunk.browser.R
 import org.krunk.browser.vault.BioAvailability
 import org.krunk.browser.vault.BioOffReason
-import org.krunk.browser.vault.BioUnlockResult
 import org.krunk.browser.vault.LockReason
 import org.krunk.browser.vault.VaultFailure
 import org.krunk.browser.vault.VaultState
@@ -178,18 +177,18 @@ class VaultUiStateTest {
 
         f.holder.lockNow()
         runCurrent()
-        f.port.biometric.nextResult = BioUnlockResult.FAILED
+        f.port.biometric.nextResult = BioUnlockOutcome.FAILED
         f.holder.unlock.biometric { f.port.biometric.unlockNow() }
         runCurrent()
         assertEquals(VaultText(R.string.vault_bio_failed), unlock().error)
         assertEquals(VaultState.LOCKED, f.model.vault)
 
-        f.port.biometric.nextResult = BioUnlockResult.CANCELLED
+        f.port.biometric.nextResult = BioUnlockOutcome.CANCELLED
         f.holder.unlock.biometric { f.port.biometric.unlockNow() }
         runCurrent()
         assertNull(unlock().error)
 
-        f.port.biometric.nextResult = BioUnlockResult.UNLOCKED
+        f.port.biometric.nextResult = BioUnlockOutcome.UNLOCKED
         f.holder.unlock.biometric { f.port.biometric.unlockNow() }
         runCurrent()
         assertEquals(VaultState.UNLOCKED, f.model.vault)

@@ -35,4 +35,5 @@
     <string name="menu_fill_from_vault">Fill from vault</string>
     <string name="login_fill_armed">Tap the user name or password field</string>
     <string name="login_fill_not_here">Nothing to fill on this page</string>
+    <string name="vault_bio_use_password">Use password</string>
 </resources>

@@ -5,14 +5,18 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import org.krunk.browser.KrunkApp
 import org.krunk.browser.tabs.DebugProps
 import org.krunk.browser.ui.bookmarks.BookmarksScreen
 import org.krunk.browser.ui.browser.BrowserScreen
+import org.krunk.browser.ui.browser.LocalLoginUi
+import org.krunk.browser.ui.browser.LoginUiHost
 import org.krunk.browser.ui.browser.SecureWindowEffect
 import org.krunk.browser.ui.browser.SystemBarsEffect
 import org.krunk.browser.ui.history.HistoryScreen
@@ -21,6 +25,8 @@ import org.krunk.browser.ui.settings.SettingsScreen
 import org.krunk.browser.ui.tabs.TabSwitcherScreen
 import org.krunk.browser.ui.theme.KrunkTheme
 import org.krunk.browser.ui.theme.LocalKrunkDark
+import org.krunk.browser.ui.vault.SecureVaultSurface
+import org.krunk.browser.ui.vault.UnlockVaultDialog
 import org.krunk.browser.ui.vault.VaultScreen
 import org.krunk.browser.ui.vault.VaultSecureFlag
 import org.krunk.browser.ui.vault.vaultPort
@@ -42,32 +48,53 @@ fun KrunkRoot(vm: BrowserViewModel) {
     val vaultOnScreen by VaultSecureFlag.secure.collectAsStateWithLifecycle()
     SecureWindowEffect((!showPrivate && privateOnScreen) || screen == Screen.Vault || vaultOnScreen)
 
-    KrunkTheme(
-        mode = settings.theme,
-        privateMode = activeTab?.private == true && screen == Screen.Browser,
-        appearance = settings.appearance,
-    ) {
-        Surface(Modifier.fillMaxSize()) {
-            BackHandler(enabled = screens.size > 1) { vm.pop() }
-            // The browser screen sets the system bar icons for its own (possibly private) theme;
-            // every other screen needs them set for the theme it is drawn in.
-            if (screen != Screen.Browser) SystemBarsEffect(fullScreen = false, darkTheme = LocalKrunkDark.current)
-            when (screen) {
-                Screen.Browser -> BrowserScreen(vm)
+    // Saved logins in pages: the fill picker, the save offer and the HTTP sign-in dialog reach the
+    // vault, its unlock dialog and the vault screen through this.
+    val krunkApp = LocalContext.current.applicationContext as? KrunkApp
+    val loginUi = remember(krunkApp) {
+        krunkApp?.let { app ->
+            val port = vaultPort(app)
+            LoginUiHost(
+                vault = app.loginVault,
+                now = System::currentTimeMillis,
+                openVault = { vm.push(Screen.Vault) },
+                keepForNewVault = { origin, secret ->
+                    app.engine.logins.keepForNewVault(origin, secret, System.currentTimeMillis())
+                },
+                unlockDialog = { onUnlocked, onDismiss -> UnlockVaultDialog(port, null, onUnlocked, onDismiss) },
+                secure = { SecureVaultSurface() },
+            )
+        }
+    }
 
-                Screen.TabSwitcher -> TabSwitcherScreen(vm)
+    CompositionLocalProvider(LocalLoginUi provides loginUi) {
+        KrunkTheme(
+            mode = settings.theme,
+            privateMode = activeTab?.private == true && screen == Screen.Browser,
+            appearance = settings.appearance,
+        ) {
+            Surface(Modifier.fillMaxSize()) {
+                BackHandler(enabled = screens.size > 1) { vm.pop() }
+                // The browser screen sets the system bar icons for its own (possibly private) theme;
+                // every other screen needs them set for the theme it is drawn in.
+                if (screen != Screen.Browser) SystemBarsEffect(fullScreen = false, darkTheme = LocalKrunkDark.current)
+                when (screen) {
+                    Screen.Browser -> BrowserScreen(vm)
 
-                Screen.Bookmarks -> BookmarksScreen(vm)
+                    Screen.TabSwitcher -> TabSwitcherScreen(vm)
 
-                Screen.History -> HistoryScreen(vm)
+                    Screen.Bookmarks -> BookmarksScreen(vm)
 
-                Screen.Settings -> SettingsScreen(vm)
+                    Screen.History -> HistoryScreen(vm)
 
-                Screen.About -> AboutScreen(vm)
+                    Screen.Settings -> SettingsScreen(vm)
 
-                Screen.Vault -> {
-                    val app = LocalContext.current.applicationContext as? Application
-                    if (app != null) VaultScreen(vm, vaultPort(app))
+                    Screen.About -> AboutScreen(vm)
+
+                    Screen.Vault -> {
+                        val app = LocalContext.current.applicationContext as? Application
+                        if (app != null) VaultScreen(vm, vaultPort(app))
+                    }
                 }
             }
         }

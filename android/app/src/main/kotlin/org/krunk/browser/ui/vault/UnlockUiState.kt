@@ -11,7 +11,6 @@ import kotlinx.coroutines.launch
 import org.krunk.browser.R
 import org.krunk.browser.vault.BioAvailability
 import org.krunk.browser.vault.BioOffReason
-import org.krunk.browser.vault.BioUnlockResult
 import org.krunk.browser.vault.VaultFailure
 
 /** What the unlock form shows. The typed password is not in here: it stays in the form. */
@@ -75,16 +74,16 @@ class UnlockUiState(private val port: VaultPort, private val scope: CoroutineSco
     }
 
     /** [prompt] shows the system's biometric prompt (it needs the activity) and unlocks. */
-    fun biometric(prompt: suspend () -> BioUnlockResult) {
+    fun biometric(prompt: suspend () -> BioUnlockOutcome) {
         val now = _model.value
         if (now.busy || !now.biometricOffered) return
         _model.update { it.copy(busy = true, error = null) }
         scope.launch {
-            var result: BioUnlockResult? = null
+            var result: BioUnlockOutcome? = null
             val failure = failureOf { result = prompt() }
             val error = when {
                 failure != null -> failureText(failure)
-                result == BioUnlockResult.FAILED -> VaultText(R.string.vault_bio_failed)
+                result == BioUnlockOutcome.FAILED -> VaultText(R.string.vault_bio_failed)
                 else -> null
             }
             _model.update { it.copy(busy = false, error = error) }

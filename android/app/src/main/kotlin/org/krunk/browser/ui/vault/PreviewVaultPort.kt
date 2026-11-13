@@ -12,7 +12,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
 import org.krunk.browser.vault.BioAvailability
 import org.krunk.browser.vault.BioOffReason
-import org.krunk.browser.vault.BioUnlockResult
 import org.krunk.browser.vault.LockReason
 import org.krunk.browser.vault.SaveDecision
 import org.krunk.browser.vault.VaultBackend
@@ -145,7 +144,7 @@ class PreviewVaultPort(
 /** Biometric unlock without a sensor: every prompt is answered with [nextResult]. */
 class PreviewBiometric(private val port: PreviewVaultPort) : BiometricPort {
     var available = BioAvailability.AVAILABLE
-    var nextResult = BioUnlockResult.UNLOCKED
+    var nextResult = BioUnlockOutcome.UNLOCKED
 
     private val _enabled = MutableStateFlow(false)
     override val enabled: StateFlow<Boolean> = _enabled
@@ -164,11 +163,11 @@ class PreviewBiometric(private val port: PreviewVaultPort) : BiometricPort {
         _offReason.value = null
     }
 
-    override suspend fun unlock(activity: Activity): BioUnlockResult = unlockNow()
+    override suspend fun unlock(activity: Activity): BioUnlockOutcome = unlockNow()
 
-    fun unlockNow(): BioUnlockResult {
-        if (!_enabled.value) return BioUnlockResult.FAILED
-        if (nextResult == BioUnlockResult.UNLOCKED) port.unlockedByBiometric()
+    fun unlockNow(): BioUnlockOutcome {
+        if (!_enabled.value) return BioUnlockOutcome.FAILED
+        if (nextResult == BioUnlockOutcome.UNLOCKED) port.unlockedByBiometric()
         return nextResult
     }
 

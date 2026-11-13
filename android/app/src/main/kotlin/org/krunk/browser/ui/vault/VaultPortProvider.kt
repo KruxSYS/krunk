@@ -1,12 +1,14 @@
 package org.krunk.browser.ui.vault
 
 import android.app.Application
+import org.krunk.browser.KrunkApp
 
 /**
- * The vault behind the screens: the one place that decides which. For now an in-memory vault
- * that lives as long as the process ([PreviewVaultPort]: nothing is encrypted, nothing is kept);
- * [app] is what the real one is reached through.
+ * The vault behind the screens: the app's own ([AppVaultPort]), one per process. Anything that
+ * is not Krunk's application (a preview) gets an in-memory stand-in.
  */
-fun vaultPort(app: Application): VaultPort = previewPorts.getOrPut(app) { PreviewVaultPort() }
+fun vaultPort(app: Application): VaultPort = ports.getOrPut(app) {
+    if (app is KrunkApp) AppVaultPort(app) else PreviewVaultPort()
+}
 
-private val previewPorts = java.util.concurrent.ConcurrentHashMap<Application, PreviewVaultPort>()
+private val ports = java.util.concurrent.ConcurrentHashMap<Application, VaultPort>()

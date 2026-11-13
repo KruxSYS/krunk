@@ -3,14 +3,22 @@
 Test: `ffi/src/vault/tests.rs` (`vaults_written_on_windows_and_on_android_hold_the_same_logins`,
 `platform_vaults_as_written_do_not_open_off_their_machine`).
 
-## Status: the two files here are STAND-INS
+## Status
 
-`vault-windows-inner.json` and `vault-android-inner.json` were **not** written by Krunk on Windows
-or by Krunk on Android. Both were made on Linux by the shared core
-(`cargo test -p krunk_ffi -- --ignored generate_the_platform_stand_ins`), so today the test proves
-only that the Android object reads what the core writes. They are to be replaced by files produced
-on the platforms, as described below. `vault-windows-dpapi.json` and `vault-android-keystore.json`
-do not exist yet; the second test skips a platform whose file is missing and says so.
+**Windows: real.** `vault-windows-dpapi.json` is the unchanged `vault.json` that Krunk 0.19.0
+(release build, hashes equal to `dist/SHA256SUMS`) wrote on the Windows VM (build 26200.8037,
+account `WIN-QN0ABMLAO9I\\pipe`, throwaway profile) on 2026-11-13: vault created and both logins
+added through `krunk://passwords`. `vault-windows-inner.json` was made from it on the same VM and
+account by `strip-dpapi.ps1` (in this folder): DPAPI `Unprotect` of `vaultKey` with the vault's
+entropy; the two files differ in the `wrap` and `vaultKey` lines only. SHA-256:
+`d5d35fa7…832d` (as written), `58dee4e1…22c2` (inner). Full notes, the screenshot of the passwords
+page and the verification output: `.pipeline/evidence-android-0.3.0/fixtures/windows/README.md`.
+
+**Android: see below** (a stand-in until the emulator pass of M5 replaces it; the section is
+rewritten then).
+
+`vault-android-inner.json`, while a stand-in, was made on Linux by the shared core
+(`cargo test -p krunk_ffi -- --ignored generate_the_platform_stand_ins`).
 
 ## What belongs here
 

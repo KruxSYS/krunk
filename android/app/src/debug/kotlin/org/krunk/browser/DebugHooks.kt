@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.util.Base64
 import android.util.Log
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.MainScope
@@ -13,6 +14,8 @@ import org.krunk.browser.core.KrunkCore
 import org.krunk.browser.engine.GeckoEngine
 import org.krunk.browser.engine.blocker.AllowList
 import org.krunk.browser.engine.blocker.BlockerController
+import org.krunk.browser.vault.KeystoreKeyWrapper
+import org.krunk.browser.vault.VaultFiles
 
 /**
  * Debug builds only (this file is in the `debug` source set): commands for the device checks,
@@ -40,8 +43,11 @@ object DebugHooks {
             context,
             object : BroadcastReceiver() {
                 override fun onReceive(c: Context, intent: Intent) {
-                    if (intent.getStringExtra("cmd") == "recreate-session") {
+                    val cmd = intent.getStringExtra("cmd")
+                    if (cmd == "recreate-session") {
                         recreateSession(c.applicationContext as KrunkApp)
+                    } else if (cmd != null && cmd.startsWith("vault-")) {
+                        vault(cmd, c.applicationContext as KrunkApp)
                     } else {
                         run(intent, engine, core)
                     }
@@ -50,6 +56,46 @@ object DebugHooks {
             IntentFilter(ACTION),
             ContextCompat.RECEIVER_EXPORTED,
         )
+    }
+
+    /**
+     * The vault (0.3.0):
+     *   vault-status     its state
+     *   vault-drop-key   deletes the Keystore key that wraps the vault key (the "key lost" case)
+     *   vault-fixture    writes files/krunk-vault/vault-inner.json: the vault file with only the
+     *                    Keystore layer of `vaultKey` removed (still sealed by the password), for
+     *                    the cross-platform format test
+     */
+    private fun vault(cmd: String, app: KrunkApp) {
+        when (cmd) {
+            "vault-status" -> say(
+                "vault state=${app.vault.state.value} grace=${app.vaultLock.currentGraceSeconds} minutes=${app.vaultLock.current}",
+            )
+
+            "vault-drop-key" -> {
+                KeystoreKeyWrapper.onDevice().deleteKey()
+                app.vault.refresh()
+                say("vault key deleted, state=${app.vault.state.value}")
+            }
+
+            "vault-fixture" -> try {
+                val file = VaultFiles.vaultFile(app.filesDir)
+                val text = file.readText()
+                val wrapped = Regex("\"vaultKey\"\\s*:\\s*\"([^\"]+)\"").find(text)?.groupValues?.get(1)
+                    ?: error("no vaultKey")
+                val inner = KeystoreKeyWrapper.onDevice().unprotect(Base64.decode(wrapped, Base64.DEFAULT))
+                val out = text
+                    .replace(wrapped, Base64.encodeToString(inner, Base64.NO_WRAP))
+                    .replace("\"wrap\":\"android-keystore\"", "\"wrap\":\"none\"")
+                    .replace("\"wrap\": \"android-keystore\"", "\"wrap\": \"none\"")
+                java.io.File(file.parentFile, "vault-inner.json").writeText(out)
+                say("vault fixture written (${out.length} chars, wrap none: ${out.contains("\"none\"")})")
+            } catch (e: Exception) {
+                say("vault fixture failed: ${e.javaClass.simpleName}")
+            }
+
+            else -> say("vault unknown command $cmd")
+        }
     }
 
     private fun say(text: String) {

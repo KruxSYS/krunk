@@ -34,6 +34,7 @@ import org.krunk.browser.engine.logins.HttpAuthOffer
 import org.krunk.browser.engine.logins.LoginPolicy
 import org.krunk.browser.engine.logins.LoginVault
 import org.krunk.browser.engine.originOf
+import org.krunk.browser.ui.vault.SecureDialog
 import org.krunk.browser.vault.SaveDecision
 import org.krunk.browser.vault.VaultFailure
 import org.krunk.browser.vault.VaultMatch
@@ -84,6 +85,7 @@ fun LoginFillDialog(prompt: PagePrompt.LoginFill) {
     val afterWarn = { step = if (host.vault.state() == LoginVault.State.UNLOCKED) FillStep.LIST else FillStep.UNLOCK }
     when (step) {
         FillStep.WARN -> AlertDialog(
+            properties = SecureDialog,
             onDismissRequest = prompt::dismiss,
             title = { Text(stringResource(R.string.login_insecure_title)) },
             text = { Text(stringResource(R.string.login_insecure_fill, prompt.site)) },
@@ -117,6 +119,7 @@ private fun FillList(prompt: PagePrompt.LoginFill, host: LoginUiHost, onLocked: 
     }
     val pageOrigin = originOf(prompt.pageUrl)
     AlertDialog(
+        properties = SecureDialog,
         onDismissRequest = prompt::dismiss,
         title = { Text(stringResource(R.string.login_fill_title, prompt.site)) },
         text = {
@@ -232,6 +235,7 @@ fun LoginSaveDialog(prompt: PagePrompt.LoginSave) {
         }
 
         SaveStep.WARN -> AlertDialog(
+            properties = SecureDialog,
             onDismissRequest = { step = SaveStep.ASK },
             title = { Text(stringResource(R.string.login_insecure_title)) },
             text = { Text(stringResource(R.string.login_insecure_save, prompt.site)) },
@@ -244,6 +248,7 @@ fun LoginSaveDialog(prompt: PagePrompt.LoginSave) {
         )
 
         SaveStep.ASK, SaveStep.SAVING -> AlertDialog(
+            properties = SecureDialog,
             onDismissRequest = prompt::dismiss,
             title = {
                 Text(
@@ -388,6 +393,7 @@ internal fun SignInDialog(prompt: PagePrompt.SignIn) {
     }
     confirmInsecure?.let { m ->
         AlertDialog(
+            properties = SecureDialog,
             onDismissRequest = { confirmInsecure = null },
             title = { Text(stringResource(R.string.login_insecure_title)) },
             text = { Text(stringResource(R.string.login_insecure_auth)) },
@@ -406,6 +412,7 @@ internal fun SignInDialog(prompt: PagePrompt.SignIn) {
         return
     }
     AlertDialog(
+        properties = SecureDialog,
         onDismissRequest = prompt::dismiss,
         title = { Text(stringResource(R.string.prompt_sign_in_title, prompt.site)) },
         text = {
