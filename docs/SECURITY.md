@@ -162,7 +162,7 @@ setting.
 
 **Password and card fields.**
 - Their values are blanked in every result; filling, typing and editing refuse them.
-- `eval_js` is refused while one holds a value.
+- `eval_js` and the `wasm_*` tools (0.19.0) are refused while one holds a value.
 - Every result is scrubbed of the page's current secret values (read again after the model's code
   ran) and of card numbers.
 - Screenshots mask them.
@@ -246,6 +246,29 @@ type, fill or edit a password field. What is allowed, and when:
 - Their GM storage calls use a hidden binding that page scripts can't reach.
 - Macros act on Krunk's web pages through engine input only, never on other programs or
   Windows-wide input, and every stop releases held keys.
+
+**WASM memory inspector (0.19.0).** `krunk://wasm`, `GM.wasm` and the agent's `wasm_*` tools read
+and write the `WebAssembly.Memory` objects of one tab.
+- **What it can reach** is what the page's own scripts (and `eval_js`, and any userscript) could
+  already reach: the tab's memories. It gives no access to other tabs, other sites' frames,
+  Krunk's own pages or anything outside the renderer.
+- **The page is bound by the host** to the tab it was opened from (⋮ menu); its requests name no
+  tab, and only that page kind may send them (`Sender::Page(Page::Wasm)`). Opened by address it
+  is bound to nothing. The agent can't open it (`agent_forbidden`); it has the gated tools.
+- **Requests are typed and checked** in `core::wasm` before anything reaches a page: a closed
+  set of operations (no code, no property names), sizes within the limits. The probe checks
+  addresses against the memory.
+- **The probe** lives in the inspected page's main world as an object only the host's DevTools
+  session has a handle to; it takes the built-ins it uses when it is made. A hostile page can
+  still lie to it (replace `WebAssembly.Memory.prototype`'s `buffer` getter, say): what it
+  returns is page-controlled data, shown as text by the inspector page (`textContent` only) and
+  scrubbed and capped before the agent sees it.
+- **`GM.wasm` answers** go back through a function on `window` the page can find but neither
+  replace nor call usefully: it settles a promise only for the tab's nonce, which page code
+  never sees. The host checks the script's `@grant` again, and a script's calls only ever reach
+  its own tab.
+- **The hook fallback** changes `WebAssembly` in the page and is detectable; so is the DevTools
+  session. Nothing about the inspector is hidden from the page, by design.
 
 ## Addresses from other apps (0.12.1)
 Windows starts Krunk with `"…\Krunk.exe" --single-argument %1` for a link or page the user opens

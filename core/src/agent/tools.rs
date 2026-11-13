@@ -281,7 +281,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "save_userscript",
-        description: "Create (no id) or update a Tampermonkey-style userscript. The source must start with a ==UserScript== metadata block with @name and @match (or @include). A new script is enabled and runs on the target tab at once when it matches. Supported grants: none, GM_addStyle, GM_getValue/GM_setValue/GM_deleteValue/GM_listValues, GM_setClipboard, GM_notification, GM_openInTab. GM_xmlhttpRequest, @require and @resource are not supported. A long script (more than about 20,000 characters) goes in parts: the first with more=true, the next ones with the returned draft id and more=true, the last with the draft id and without more; it is checked and saved when the last part arrives.",
+        description: "Create (no id) or update a Tampermonkey-style userscript. The source must start with a ==UserScript== metadata block with @name and @match (or @include). A new script is enabled and runs on the target tab at once when it matches. Supported grants: none, GM_addStyle, GM_getValue/GM_setValue/GM_deleteValue/GM_listValues, GM_setClipboard, GM_notification, GM_openInTab, and GM.wasm (the WASM memory inspector, every function returns a promise: GM.wasm.memories(), read({mem, addr, type}), write({mem, addr, type, value}), scan({mem, type, kind, value}), next({scan, kind, value}), results({scan, offset, limit}), freeze({mem, addr, type, value}) giving a number for unfreeze(number); a pointer path is where: {base, offsets} instead of addr). GM_xmlhttpRequest, @require and @resource are not supported. A long script (more than about 20,000 characters) goes in parts: the first with more=true, the next ones with the returned draft id and more=true, the last with the draft id and without more; it is checked and saved when the last part arrives.",
         schema: r#"{"type":"object","properties":{
             "id":{"type":"string","maxLength":64},
             "source":{"type":"string","minLength":1,"maxLength":200000,"description":"The script, or one part of it"},
@@ -421,6 +421,82 @@ pub static TOOLS: &[Tool] = &[
             "password":{"type":"string","minLength":1,"maxLength":1000,"description":"mode provided only: the password the user gave"},
             "selector":{"type":"string","maxLength":1000}},"required":["mode"],"additionalProperties":false}"#,
         group: Group::Sensitive(Category::Passwords),
+    },
+    // 0.19.0: the WASM memory inspector (page tools, with eval_js's limits: not on Krunk's own
+    // pages, not while a password or card field holds a value; results capped and scrubbed).
+    Tool {
+        name: "wasm_memories",
+        description: "The WebAssembly memories of the page (games and apps compiled to WASM keep their state there): per context (the page, same-process frames, dedicated workers) each memory's number and size. Frames of other sites, service workers and shared workers are not reachable. Like eval_js, the wasm_* tools are not available on Krunk's own pages or while a password or card field holds a value. Typical use: wasm_scan for a value the page shows, change it in the page, wasm_scan mode next until few addresses are left, then wasm_write or wasm_freeze.",
+        schema: EMPTY,
+        group: Group::Page,
+    },
+    Tool {
+        name: "wasm_read",
+        description: "Read a value from a WebAssembly memory (little-endian). type bytes, utf8 and utf16 read length bytes (default 16, at most 65536).",
+        schema: r#"{"type":"object","properties":{
+            "ctx":{"type":"integer","minimum":0,"description":"Context from wasm_memories (default 0: the page)"},
+            "mem":{"type":"integer","minimum":0},
+            "addr":{"type":"integer","minimum":0,"maximum":4294967295,"description":"Byte address in the memory"},
+            "offsets":{"type":"array","maxItems":8,"items":{"type":"integer"},"description":"Pointer path: for each offset, the 32-bit pointer at the address is read and the offset added"},
+            "type":{"type":"string","enum":["i8","u8","i16","u16","i32","u32","i64","u64","f32","f64","bytes","utf8","utf16"]},
+            "length":{"type":"integer","minimum":0,"maximum":65536}},"required":["mem","addr","type"],"additionalProperties":false}"#,
+        group: Group::Page,
+    },
+    Tool {
+        name: "wasm_write",
+        description: "Write a value into a WebAssembly memory. The page may overwrite it again: use wasm_freeze to hold a value.",
+        schema: r#"{"type":"object","properties":{
+            "ctx":{"type":"integer","minimum":0,"description":"Context from wasm_memories (default 0: the page)"},
+            "mem":{"type":"integer","minimum":0},
+            "addr":{"type":"integer","minimum":0,"maximum":4294967295,"description":"Byte address in the memory"},
+            "offsets":{"type":"array","maxItems":8,"items":{"type":"integer"},"description":"Pointer path: for each offset, the 32-bit pointer at the address is read and the offset added"},
+            "type":{"type":"string","enum":["i8","u8","i16","u16","i32","u32","i64","u64","f32","f64","utf8","utf16"]},
+            "value":{"type":["number","string"],"description":"A number (i64/u64: a decimal string; utf8/utf16: the text)"}},"required":["mem","addr","type","value"],"additionalProperties":false}"#,
+        group: Group::Page,
+    },
+    Tool {
+        name: "wasm_scan",
+        description: "Search a WebAssembly memory for a value, Cheat-Engine style. mode first (needs mem, type, kind exact | range | bigger | smaller | unknown) starts a scan and returns its number and the count of matching addresses; mode next (needs scan, kind exact | range | changed | unchanged | increased | decreased | increasedBy | decreasedBy) keeps the addresses whose value now fits. value (and to, for range) as the kind needs. At most the first 512 MiB are scanned and 4,194,304 addresses kept; 8 scans are kept per context. Read the addresses with wasm_results.",
+        schema: r#"{"type":"object","properties":{
+            "ctx":{"type":"integer","minimum":0},
+            "mode":{"type":"string","enum":["first","next"]},
+            "mem":{"type":"integer","minimum":0},
+            "type":{"type":"string","enum":["i8","u8","i16","u16","i32","u32","i64","u64","f32","f64"]},
+            "scan":{"type":"integer","minimum":0},
+            "kind":{"type":"string","enum":["exact","range","bigger","smaller","unknown","changed","unchanged","increased","decreased","increasedBy","decreasedBy"]},
+            "value":{"type":["number","string"],"description":"A number (i64/u64: a decimal string; utf8/utf16: the text)"},
+            "to":{"type":["number","string"],"description":"Upper end of a range"}},"required":["mode","kind"],"additionalProperties":false}"#,
+        group: Group::Page,
+    },
+    Tool {
+        name: "wasm_results",
+        description: "Addresses a scan found, with the value now and at the scan (at most 200 per call; offset pages).",
+        schema: r#"{"type":"object","properties":{
+            "ctx":{"type":"integer","minimum":0},
+            "scan":{"type":"integer","minimum":0},
+            "offset":{"type":"integer","minimum":0},
+            "limit":{"type":"integer","minimum":1,"maximum":200}},"required":["scan"],"additionalProperties":false}"#,
+        group: Group::Page,
+    },
+    Tool {
+        name: "wasm_freeze",
+        description: "Hold a value in a WebAssembly memory: it is written back about 20 times a second (slower in a background tab) until wasm_unfreeze, a navigation or the tab's end. Without value: the value it has now. At most 256 frozen values. Returns the freeze's number.",
+        schema: r#"{"type":"object","properties":{
+            "ctx":{"type":"integer","minimum":0,"description":"Context from wasm_memories (default 0: the page)"},
+            "mem":{"type":"integer","minimum":0},
+            "addr":{"type":"integer","minimum":0,"maximum":4294967295,"description":"Byte address in the memory"},
+            "offsets":{"type":"array","maxItems":8,"items":{"type":"integer"},"description":"Pointer path: for each offset, the 32-bit pointer at the address is read and the offset added"},
+            "type":{"type":"string","enum":["i8","u8","i16","u16","i32","u32","i64","u64","f32","f64"]},
+            "value":{"type":["number","string"],"description":"A number (i64/u64: a decimal string; utf8/utf16: the text)"}},"required":["mem","addr","type"],"additionalProperties":false}"#,
+        group: Group::Page,
+    },
+    Tool {
+        name: "wasm_unfreeze",
+        description: "Stop holding a frozen value.",
+        schema: r#"{"type":"object","properties":{
+            "ctx":{"type":"integer","minimum":0},
+            "freeze":{"type":"integer","minimum":0}},"required":["freeze"],"additionalProperties":false}"#,
+        group: Group::Page,
     },
     Tool {
         name: "finish",
@@ -940,10 +1016,18 @@ mod tests {
             "plan_update",
             // 0.16.0: passwords on request.
             "fill_password",
+            // 0.19.0: the WASM memory inspector.
+            "wasm_memories",
+            "wasm_read",
+            "wasm_write",
+            "wasm_scan",
+            "wasm_results",
+            "wasm_freeze",
+            "wasm_unfreeze",
         ] {
             assert!(find(n).is_some(), "{n} is missing");
         }
-        assert_eq!(TOOLS.len(), 49);
+        assert_eq!(TOOLS.len(), 56);
     }
 
     /// No tool reaches the vault, cards, sync, the account or API keys (brief C.10). 0.16.0:

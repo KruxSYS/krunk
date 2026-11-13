@@ -440,6 +440,98 @@ pub fn exception_message(details: &serde_json::Value) -> String {
     text.chars().take(300).collect()
 }
 
+/// The agent's `wasm_*` tools at most give this many scan results per call.
+pub const AGENT_MAX_RESULTS: u64 = 200;
+
+/// A `wasm_*` tool call of the AI agent as the context and the probe's request (`None`: not
+/// one of these tools). The arguments passed the tool's schema.
+pub fn agent_request(tool: &str, args: &serde_json::Value) -> Option<Result<(u32, WasmReq), String>> {
+    use serde_json::{json, Value};
+    let ctx = args.get("ctx").and_then(Value::as_u64).unwrap_or(0) as u32;
+    let get = |k: &str| args.get(k).cloned();
+    // An address, or a pointer path from it.
+    let at = || match args.get("offsets").and_then(Value::as_array) {
+        Some(o) if !o.is_empty() => json!({ "base": args.get("addr"), "offsets": o }),
+        _ => args.get("addr").cloned().unwrap_or(Value::Null),
+    };
+    let mut req = match tool {
+        "wasm_memories" => json!({ "op": "list" }),
+        "wasm_read" => {
+            json!({ "op": "read", "mem": get("mem"), "where": at(), "type": get("type"), "length": get("length") })
+        }
+        "wasm_write" => {
+            json!({ "op": "write", "mem": get("mem"), "where": at(), "type": get("type"), "value": get("value") })
+        }
+        "wasm_scan" => match args.get("mode").and_then(Value::as_str) {
+            Some("next") => {
+                if args.get("scan").is_none() {
+                    return Some(Err("mode next needs scan (the number a first scan returned)".into()));
+                }
+                json!({ "op": "next", "scan": get("scan"), "kind": get("kind"), "value": get("value"), "to": get("to") })
+            }
+            _ => {
+                if args.get("mem").is_none() || args.get("type").is_none() {
+                    return Some(Err("mode first needs mem and type".into()));
+                }
+                json!({
+                    "op": "scan", "mem": get("mem"), "type": get("type"), "kind": get("kind"),
+                    "value": get("value"), "to": get("to"),
+                })
+            }
+        },
+        "wasm_results" => json!({
+            "op": "results", "scan": get("scan"), "offset": get("offset"),
+            "limit": args.get("limit").and_then(Value::as_u64).unwrap_or(50).min(AGENT_MAX_RESULTS),
+        }),
+        "wasm_freeze" => {
+            json!({ "op": "freeze", "mem": get("mem"), "where": at(), "type": get("type"), "value": get("value") })
+        }
+        "wasm_unfreeze" => json!({ "op": "unfreeze", "freeze": get("freeze") }),
+        _ => return None,
+    };
+    // Arguments left out are left out of the request.
+    if let Some(o) = req.as_object_mut() {
+        o.retain(|_, v| !v.is_null());
+    }
+    Some(WasmReq::parse(&req).map(|r| (ctx, r)).map_err(|e| {
+        // serde's words for a kind that belongs to the other mode.
+        if e.contains("unknown variant") {
+            "that kind does not fit this scan mode".to_string()
+        } else {
+            e
+        }
+    }))
+}
+
+/// The step line of a finished `wasm_*` tool.
+pub fn agent_summary(tool: &str, result: &serde_json::Value) -> String {
+    let count = result.get("count").and_then(|c| c.as_u64());
+    match tool {
+        "wasm_memories" => {
+            let n: usize = result["contexts"]
+                .as_array()
+                .map(|c| c.iter().map(|x| x["memories"].as_array().map_or(0, Vec::len)).sum())
+                .unwrap_or(0);
+            if n == 1 {
+                "Found 1 WebAssembly memory".into()
+            } else {
+                format!("Found {n} WebAssembly memories")
+            }
+        }
+        "wasm_read" => "Read the memory".into(),
+        "wasm_write" => "Wrote the memory".into(),
+        "wasm_scan" => match count {
+            Some(1) => "The scan found 1 address".into(),
+            Some(n) => format!("The scan found {n} addresses"),
+            None => "Scanned the memory".into(),
+        },
+        "wasm_results" => format!("Read {} addresses", result["rows"].as_array().map_or(0, Vec::len)),
+        "wasm_freeze" => "Froze the value".into(),
+        "wasm_unfreeze" => "Unfroze the value".into(),
+        _ => "Done".into(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -515,6 +607,40 @@ mod tests {
         assert_eq!(exception_message(&d), "no memory 3");
         let scan = json!({"op": "scan", "mem": 0, "type": "i32", "kind": "unknown"});
         assert!(p(scan).unwrap().is_scan() && !WasmReq::List {}.is_scan());
+    }
+
+    #[test]
+    fn agent_tools_become_probe_requests() {
+        let r = |tool: &str, args: serde_json::Value| agent_request(tool, &args).unwrap();
+        assert_eq!(r("wasm_memories", json!({})).unwrap(), (0, WasmReq::List {}));
+        let (ctx, req) = r("wasm_read", json!({"ctx": 12, "mem": 1, "addr": 1024, "type": "f32"})).unwrap();
+        assert_eq!((ctx, req.to_json()), (12, json!({"op": "read", "mem": 1, "where": 1024, "type": "f32"})));
+        let (_, req) =
+            r("wasm_write", json!({"mem": 0, "addr": 300, "offsets": [8], "type": "i32", "value": "999"})).unwrap();
+        assert_eq!(req.to_json()["where"], json!({"base": 300, "offsets": [8]}));
+        assert!(req.writes());
+        let (_, req) =
+            r("wasm_scan", json!({"mode": "first", "mem": 0, "type": "i32", "kind": "exact", "value": 100})).unwrap();
+        assert_eq!(req.to_json(), json!({"op": "scan", "mem": 0, "type": "i32", "kind": "exact", "value": 100}));
+        let (_, req) = r("wasm_scan", json!({"mode": "next", "scan": 2, "kind": "decreased"})).unwrap();
+        assert_eq!(req.to_json(), json!({"op": "next", "scan": 2, "kind": "decreased"}));
+        assert!(r("wasm_scan", json!({"mode": "next", "kind": "decreased"})).unwrap_err().contains("needs scan"));
+        assert!(r("wasm_scan", json!({"mode": "first", "kind": "exact", "value": 1}))
+            .unwrap_err()
+            .contains("mem and type"));
+        assert!(r("wasm_scan", json!({"mode": "first", "mem": 0, "type": "i32", "kind": "changed"}))
+            .unwrap_err()
+            .contains("scan mode"));
+        let (_, req) = r("wasm_results", json!({"scan": 2, "limit": 200})).unwrap();
+        assert_eq!(req.to_json()["limit"], 200);
+        assert_eq!(r("wasm_results", json!({"scan": 2})).unwrap().1.to_json()["limit"], 50);
+        let (_, req) = r("wasm_freeze", json!({"mem": 0, "addr": 1024, "type": "i32", "value": 999})).unwrap();
+        assert_eq!(req.to_json(), json!({"op": "freeze", "mem": 0, "where": 1024, "type": "i32", "value": 999}));
+        assert_eq!(r("wasm_unfreeze", json!({"freeze": 3})).unwrap().1, WasmReq::Unfreeze { freeze: 3 });
+        assert!(agent_request("eval_js", &json!({})).is_none());
+        assert_eq!(agent_summary("wasm_scan", &json!({"scan": 1, "count": 1})), "The scan found 1 address");
+        let found = json!({"contexts": [{"memories": [{}, {}]}, {"memories": []}]});
+        assert_eq!(agent_summary("wasm_memories", &found), "Found 2 WebAssembly memories");
     }
 
     #[test]

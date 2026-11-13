@@ -44,6 +44,14 @@
 //                             makes it and never sends it here (check with --absent, below)
 //   "log in with password X"  fill_password {mode: provided, password: X}, then finish with the
 //                             tool's result (X is in the requests: the user typed it)
+//   0.19.0, the WASM memory inspector (on scripts/vm-www/wasm-game/index.html, health 100):
+//   "find the health value in the wasm game and set it to 999, then freeze it"
+//                             wasm_memories, wasm_scan first (i32 exact 100), click #hit,
+//                             wasm_scan next (decreased), wasm_results, wasm_write 999,
+//                             wasm_freeze 999, then finish with the address and the results
+//   "userscript that keeps the gold"
+//                             save_userscript: a script with @grant GM.wasm that scans for the
+//                             gold (250) and freezes it at 9999 (the title then says gold=9999)
 //   anything else             a short text answer
 // Every request is appended to the log (JSON lines: time, body), and so is every connection
 // that closes before its answer ended: the VM smoke test checks both (Stop closes the
@@ -207,7 +215,86 @@ function partSteps(at) {
 }
 const cut = (name, a) => ({ cut: { name, args: a } });
 
-const SCENARIOS = [
+// The JSON a tool gave (results are JSON text, possibly followed by a paging note).
+function toolJson(text) {
+  try { return JSON.parse(text); } catch (_) { /* cut or annotated */ }
+  const m = /^[\s\S]*[}\]]/.exec(String(text || ''));
+  try { return m ? JSON.parse(m[0]) : null; } catch (_) { return null; }
+}
+// 0.19.0: the WASM memory inspector's scenarios (before the others: their keywords are long).
+const WASM_SCENARIOS = [
+  {
+    match: /health value in the wasm game/i,
+    steps: [
+      () => call('wasm_memories', {}),
+      (m, r) => {
+        const found = toolJson(r[0]);
+        const ctx = found && (found.contexts || []).find((c) => (c.memories || []).length);
+        if (!ctx) return finish('No WebAssembly memory: ' + (r[0] || '').slice(0, 200));
+        return call('wasm_scan', { ctx: ctx.ctx, mode: 'first', mem: ctx.memories[0].mem, type: 'i32', kind: 'exact', value: 100 });
+      },
+      () => call('click', { selector: '#hit' }),
+      (m, r) => {
+        const s = toolJson(r[1]) || {};
+        const found = toolJson(r[0]);
+        const ctx = found && (found.contexts || []).find((c) => (c.memories || []).length);
+        return call('wasm_scan', { ctx: ctx ? ctx.ctx : 0, mode: 'next', scan: s.scan, kind: 'decreased' });
+      },
+      (m, r) => {
+        const found = toolJson(r[0]);
+        const ctx = found && (found.contexts || []).find((c) => (c.memories || []).length);
+        return call('wasm_results', { ctx: ctx ? ctx.ctx : 0, scan: (toolJson(r[3]) || {}).scan, limit: 10 });
+      },
+      (m, r) => {
+        const found = toolJson(r[0]);
+        const ctx = found && (found.contexts || []).find((c) => (c.memories || []).length);
+        const rows = (toolJson(r[4]) || {}).rows || [];
+        if (rows.length !== 1) return finish('The scan left ' + rows.length + ' addresses: ' + (r[4] || '').slice(0, 200));
+        return call('wasm_write', { ctx: ctx.ctx, mem: ctx.memories[0].mem, addr: rows[0].addr, type: 'i32', value: 999 });
+      },
+      (m, r) => {
+        const found = toolJson(r[0]);
+        const ctx = found && (found.contexts || []).find((c) => (c.memories || []).length);
+        const rows = (toolJson(r[4]) || {}).rows || [];
+        return call('wasm_freeze', { ctx: ctx.ctx, mem: ctx.memories[0].mem, addr: rows[0].addr, type: 'i32', value: 999 });
+      },
+      (m, r) => {
+        const rows = (toolJson(r[4]) || {}).rows || [];
+        return finish('Health is at address 0x' + Number(rows[0] && rows[0].addr).toString(16).toUpperCase() + ', set to 999 and frozen. write: '
+          + (r[5] || '').slice(0, 80) + ' | freeze: ' + (r[6] || '').slice(0, 80));
+      },
+    ],
+  },
+  {
+    match: /userscript that keeps the gold/i,
+    steps: [
+      () => call('save_userscript', {
+        source: [
+          '// ==UserScript==',
+          '// @name        Keep the gold',
+          '// @match       *://*/*wasm-game/*',
+          '// @grant       GM.wasm',
+          '// @run-at      document-idle',
+          '// ==/UserScript==',
+          '(async () => {',
+          '  // The game makes its memory a moment after the page loads.',
+          '  let mems = [];',
+          '  for (let i = 0; i < 50 && !mems.length; i++) { mems = await GM.wasm.memories(); if (!mems.length) await new Promise((r) => setTimeout(r, 200)); }',
+          '  if (!mems.length) return;',
+          '  const m = mems[0];',
+          "  const s = await GM.wasm.scan({ ctx: m.ctx, mem: m.mem, type: 'i32', kind: 'exact', value: 250 });",
+          '  const res = await GM.wasm.results({ ctx: m.ctx, scan: s.scan, limit: 5 });',
+          '  if (res.rows.length !== 1) return;',
+          "  await GM.wasm.freeze({ ctx: m.ctx, mem: m.mem, addr: res.rows[0].addr, type: 'i32', value: 9999 });",
+          '})();',
+        ].join('\n'),
+      }),
+      (m, r) => finish('I created the userscript "Keep the gold". ' + (r[0] || '').slice(0, 200)),
+    ],
+  },
+];
+
+const SCENARIOS = WASM_SCENARIOS.concat([
   // ---- 0.16.0: passwords on request ----
   {
     match: /create an account with a generated password/i,
@@ -396,7 +483,7 @@ const SCENARIOS = [
       (m, r) => finish('You answered: ' + (r[0] || '')),
     ],
   },
-];
+]);
 
 // ---- SSE ----
 function sse(res, obj) { res.write('data: ' + JSON.stringify(obj) + '\n\n'); }
