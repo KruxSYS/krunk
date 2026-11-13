@@ -10,11 +10,13 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import org.krunk.browser.core.KrunkCore
 import org.krunk.browser.engine.GeckoEngine
 import org.krunk.browser.engine.blocker.AllowList
 import org.krunk.browser.engine.blocker.BlockerController
 import org.krunk.browser.tabs.TabManager
+import org.krunk.browser.vault.AppLoginVault
 import org.krunk.browser.vault.KeystoreKeyWrapper
 import org.krunk.browser.vault.VaultBackend
 import org.krunk.browser.vault.VaultBackends
@@ -44,6 +46,11 @@ class KrunkApp : Application() {
         GeckoEngine(this, automaticUpdates = settings.filterAutoUpdate, blockerHost = host).also {
             it.applySettings(settings)
             DebugHooks.install(this, it, core)
+            // From here on pages may be offered saved logins: the engine side asks this vault.
+            it.logins.vault = loginVault
+            vaultScope.launch {
+                vault.state.collect { _ -> it.logins.onVaultState(loginVault.state(), System.currentTimeMillis()) }
+            }
             Log.i(TAG, "engine ready after ${SystemClock.uptimeMillis() - startedAt} ms")
         }
     }
@@ -56,6 +63,8 @@ class KrunkApp : Application() {
 
     /** For what must read vault data while it is locked (the biometric blob); else use [vault]. */
     val vaultBackend: VaultBackend by lazy { VaultBackends.create(this) }
+
+    private val vaultScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private val vaultLazy = lazy {
         val wrapKey = KeystoreKeyWrapper.onDevice()
@@ -72,6 +81,9 @@ class KrunkApp : Application() {
         )
     }
     val vault: VaultController by vaultLazy
+
+    /** The vault as the engine side uses it (fill and save prompts); set on the engine below. */
+    val loginVault: AppLoginVault by lazy { AppLoginVault(vault, core.store, System::currentTimeMillis) }
 
     override fun onCreate() {
         super.onCreate()

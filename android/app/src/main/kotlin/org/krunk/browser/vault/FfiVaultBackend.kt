@@ -1,13 +1,13 @@
 package org.krunk.browser.vault
 
+import java.io.File
 import org.krunk.ffi.KrunkVault
+import org.krunk.ffi.SaveDecision as FfiSaveDecision
 import org.krunk.ffi.VaultFfiException
 import org.krunk.ffi.VaultKeyWrapper
+import org.krunk.ffi.VaultState as FfiVaultState
 import org.krunk.ffi.WrapException
 import org.krunk.ffi.vaultMinPasswordLen
-import java.io.File
-import org.krunk.ffi.SaveDecision as FfiSaveDecision
-import org.krunk.ffi.VaultState as FfiVaultState
 
 /**
  * The Keystore wrapper as the shared core calls it. The core hands over the vault key already
@@ -72,8 +72,14 @@ class FfiVaultBackend(dir: File, wrapper: VaultKeyWrapper) : VaultBackend {
     override fun saveLogin(url: String, username: String, password: String, now: Long): String =
         call { vault.saveLogin(url, username, password, now) }
 
-    override fun upsert(id: String?, url: String, username: String, password: String?, note: String?, now: Long): String =
-        call { vault.upsert(id, url, username, password, note, now) }
+    override fun upsert(
+        id: String?,
+        url: String,
+        username: String,
+        password: String?,
+        note: String?,
+        now: Long,
+    ): String = call { vault.upsert(id, url, username, password, note, now) }
 
     override fun delete(id: String) = call { vault.delete(id) }
 
@@ -112,7 +118,7 @@ class FfiVaultBackend(dir: File, wrapper: VaultKeyWrapper) : VaultBackend {
 
     override fun destroy() {
         try {
-            vault.destroy()
+            vault.erase()
         } catch (e: VaultFfiException) {
             throw failure(e)
         }

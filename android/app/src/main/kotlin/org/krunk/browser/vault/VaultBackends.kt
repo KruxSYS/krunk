@@ -6,14 +6,14 @@ import java.io.File
 /** Where the app gets its [VaultBackend] from. */
 object VaultBackends {
     /**
-     * The backend for this install (its files belong under `VaultFiles.dir(app.filesDir)`).
-     * Until the shared core's vault is bound in, a placeholder that reports "no vault" and
-     * refuses every call that would need one.
+     * The backend for this install: the shared core's vault (`core::vault` through UniFFI), its
+     * files under `VaultFiles.dir(app.filesDir)`, its key wrapped by this device's Keystore key.
      */
-    fun create(app: Application): VaultBackend = UnavailableVaultBackend(VaultFiles.dir(app.filesDir))
+    fun create(app: Application): VaultBackend =
+        FfiVaultBackend(VaultFiles.dir(app.filesDir), FfiKeyWrapper(KeystoreKeyWrapper.onDevice()))
 }
 
-/** A build without the vault: there is none, and none can be made. */
+/** No vault at all: there is none, and none can be made (for tests and previews). */
 class UnavailableVaultBackend(val dir: File) : VaultBackend {
     private fun unavailable(): Nothing = throw VaultFailure.Io("vault not built in")
 

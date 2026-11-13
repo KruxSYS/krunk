@@ -795,7 +795,7 @@ impl KrunkVault {
 
     /// Deletes the vault and its side file for good (the "this device's key is gone: delete this
     /// vault and start anew" flow; the caller asks for a typed confirmation first).
-    pub fn destroy(&self) -> VaultResult<()> {
+    pub fn erase(&self) -> VaultResult<()> {
         let _turn = self.turn();
         let mut inner = self.inner();
         inner.vault = None;

@@ -643,10 +643,10 @@ fn a_key_store_that_cannot_protect_leaves_no_vault_behind() {
 }
 
 #[test]
-fn destroy_removes_the_vault_and_its_side_file() {
+fn erase_removes_the_vault_and_its_side_file() {
     let dir = TestDir::new("destroy");
     let v = dir.open();
-    v.destroy().unwrap();
+    v.erase().unwrap();
     assert_eq!(v.state(), VaultState::None);
 
     v.create(s(PW), T0).unwrap();
@@ -657,7 +657,7 @@ fn destroy_removes_the_vault_and_its_side_file() {
     assert!(dir.file().exists() && dir.state_file().exists());
 
     // Locked (the key-lost screen never has the vault open) or unlocked: gone either way.
-    v.destroy().unwrap();
+    v.erase().unwrap();
     assert_eq!(v.state(), VaultState::None);
     assert!(!dir.file().exists() && !dir.state_file().exists());
     assert_eq!(v.bio_blob(), None);
@@ -668,7 +668,7 @@ fn destroy_removes_the_vault_and_its_side_file() {
     // A new vault starts empty.
     v.create(s("another password"), T0).unwrap();
     assert_eq!(v.summaries().unwrap(), []);
-    v.destroy().unwrap();
+    v.erase().unwrap();
     assert_eq!(v.state(), VaultState::None);
     assert_eq!(v.summaries(), Err(VaultFfiError::NoVault));
 }
