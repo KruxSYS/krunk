@@ -86,10 +86,14 @@
   const RealInstance = WA && WA.Instance && protoCtor(WA.Instance), RealModule = WA && WA.Module, RealGlobal = WA && WA.Global;
   const RealMemoryC = WA && WA.Memory, RealTable = WA && WA.Table, RealTag = WA && WA.Tag;
   const own = G.WeakSet ? new G.WeakSet() : null; // the instances the probe makes itself (type checks)
+  // A page that is not cross-origin isolated has no `SharedArrayBuffer` global, yet a shared
+  // WebAssembly.Memory's buffer is one.
+  const tagOf = Object.prototype.toString;
+  function isSab(b) { return !!(G.SharedArrayBuffer && b instanceof G.SharedArrayBuffer) || tagOf.call(b) === '[object SharedArrayBuffer]'; }
   function isA(x, C) { try { return typeof C === 'function' && x instanceof C; } catch (_) { return false; } }
   function adoptMem(m) {
     if (!m || mems.indexOf(m) >= 0) return;
-    try { if (!(m.buffer instanceof ArrayBuffer) && !(G.SharedArrayBuffer && m.buffer instanceof G.SharedArrayBuffer)) return; } catch (_) { return; }
+    try { if (!(m.buffer instanceof ArrayBuffer) && !isSab(m.buffer)) return; } catch (_) { return; }
     mems.push(m);
   }
   function adoptInst(x) {
@@ -117,7 +121,7 @@
     return m;
   }
   function view(m) { const b = m.buffer; return { b: b, dv: new DV(b), u8: new U8(b), len: b.byteLength }; }
-  function isShared(m) { return !!(G.SharedArrayBuffer && m.buffer instanceof G.SharedArrayBuffer); }
+  function isShared(m) { return isSab(m.buffer); }
 
   function list() {
     const out = [];

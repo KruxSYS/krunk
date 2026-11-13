@@ -181,6 +181,7 @@ async function run(check) {
   await runGrow(check, false);
   await runGrow(check, true);
   await runGrowDuringScan(check);
+  await runSharedWithoutGlobal(check);
 }
 
 // Instances: their exports, which listed memory an exported memory is, globals with type and value.
@@ -332,6 +333,17 @@ async function runGrow(check, shared) {
   check(w[0].value === 90 && w[1].value === 777 && w[2].addr === FAR + 8 && /past the end/.test(w[3].error), tag + 'watch: old and new addresses, and the new end');
   const g = await P.call(null, { op: 'scan', mem: 0, type: 'i32', kind: 'exact', value: 777 });
   check(g.count === 1 && g.scannedBytes === 4 * OLD, tag + 'a new scan covers all 4 pages');
+}
+
+// A page that is not cross-origin isolated: no SharedArrayBuffer global, shared memories all the same.
+async function runSharedWithoutGlobal(check) {
+  const scope = Object.assign({}, globalThis, { WebAssembly, Promise, Uint8Array, Uint32Array, Float64Array, Int8Array, Int16Array, Uint16Array, Int32Array, Float32Array, DataView, BigInt,
+    BigInt64Array, BigUint64Array, TextEncoder, TextDecoder, WeakSet, WeakMap, setTimeout, setInterval, clearInterval, performance, SharedArrayBuffer: undefined });
+  const P = make(scope);
+  const sm = new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true });
+  new DataView(sm.buffer).setInt32(64, 2024, true);
+  const l = await P.call([sm], { op: 'list' });
+  check(l.length === 1 && l[0].shared === true && (await P.call(null, { op: 'read', mem: 0, addr: 64, type: 'i32' })).value === 2024, 'a shared memory is listed and read where the page has no SharedArrayBuffer global');
 }
 
 // The page grows the memory while a scan has given it time (scans work in slices).

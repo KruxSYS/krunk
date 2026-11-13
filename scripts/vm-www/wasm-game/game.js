@@ -16,20 +16,25 @@
     const bytes = await (await fetch('game.wasm')).arrayBuffer();
     const { instance } = await WebAssembly.instantiate(bytes, {});
     instance.exports.init();
-    call = async (fn, arg) => instance.exports[fn](arg);
+    // `sp` reads the exported mutable global (not a function of the module).
+    call = async (fn, arg) => (fn === 'sp' ? instance.exports.__stack_pointer.value : instance.exports[fn](arg));
   }
   await call('init');
   async function show() {
     const h = await call('health'), s = await call('score'), g = await call('gold');
+    const pages = await call('pages'), at = await call('marker_addr'), m = await call('marker'), sp = await call('sp');
     $('health').textContent = h; $('score').textContent = Math.round(s * 100) / 100; $('gold').textContent = g;
-    document.title = 'WASM health=' + h + ' score=' + Math.round(s * 100) / 100 + ' gold=' + g;
+    $('pages').textContent = pages; $('sp').textContent = sp;
+    $('marker').textContent = at ? m + ' at 0x' + at.toString(16).toUpperCase() : 'none yet';
+    document.title = 'WASM health=' + h + ' score=' + Math.round(s * 100) / 100 + ' gold=' + g + ' pages=' + pages + ' marker=' + m + ' sp=' + sp;
   }
   $('hit').onclick = () => call('hit', 10).then(show);
   $('heal').onclick = () => call('heal', 5).then(show);
   $('pts').onclick = () => call('add_score', 1.5).then(show);
   $('spend').onclick = () => call('spend', 20).then(show);
-  // Keys for scripted checks: h hit, e heal.
-  addEventListener('keydown', (e) => { if (e.key === 'h') $('hit').click(); if (e.key === 'e') $('heal').click(); });
+  $('grow').onclick = () => call('grow').then(show);
+  // Keys for scripted checks: h hit, e heal, g grow.
+  addEventListener('keydown', (e) => { if (e.key === 'h') $('hit').click(); if (e.key === 'e') $('heal').click(); if (e.key === 'g') $('grow').click(); });
   setInterval(show, 100);
   show();
 })();

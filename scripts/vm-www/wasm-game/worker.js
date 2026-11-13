@@ -3,5 +3,7 @@
 const ready = fetch('game.wasm').then((r) => r.arrayBuffer()).then((b) => WebAssembly.instantiate(b, {})).then(({ instance }) => { instance.exports.init(); return instance.exports; });
 onmessage = async (e) => {
   const ex = await ready;
-  postMessage({ id: e.data.id, value: e.data.fn === 'init' ? 0 : ex[e.data.fn](e.data.arg) });
+  const fn = e.data.fn;
+  // `sp` reads the exported mutable global (not a function of the module).
+  postMessage({ id: e.data.id, value: fn === 'init' ? 0 : fn === 'sp' ? ex.__stack_pointer.value : ex[fn](e.data.arg) });
 };

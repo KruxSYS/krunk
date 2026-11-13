@@ -6,6 +6,7 @@ name = "wasm-game"
 version = "0.1.0"
 edition = "2021"
 publish = false
+build = "build.rs"
 
 [lib]
 crate-type = ["cdylib"]
