@@ -857,11 +857,11 @@ impl Browser {
         if !changed {
             return;
         }
-        if !self.ext_may_log(ext_id, "error") {
-            // Not in the log; the list on krunk://extensions has it.
-        } else if file.is_empty() {
+        // Over the limit it is not in the log; the list on krunk://extensions has it.
+        let logged = self.ext_may_log(ext_id, "error");
+        if logged && file.is_empty() {
             warning!("extension {name}: {short} [{context}]");
-        } else {
+        } else if logged {
             let file = lb_core::ext_guard::log_text(file, 200);
             warning!("extension {name}: {short} [{context}, {file}:{line}]");
         }
