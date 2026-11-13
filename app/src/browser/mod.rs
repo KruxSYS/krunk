@@ -3,8 +3,8 @@
 //! All policy (tabs, shortcuts, origins, navigation, layout) lives in core.
 
 use crate::ffi::cef::{
-    self as engine, DownloadControl, InternalResponse, KeyPress, LoadingState, MessageSource, NewWindow, Role, Scripts,
-    View, ViewOptions,
+    self as engine, DownloadControl, InternalResponse, KeyPress, LoadingState, Menu, MessageSource, NewWindow, Role,
+    Scripts, View, ViewOptions,
 };
 use crate::ffi::window::{ScreenRect, Window, WindowEvents};
 use crate::log::{info, warning};
@@ -776,6 +776,7 @@ impl Browser {
     fn new_shell(&self, window: Window, id: Rc<Cell<Option<WindowId>>>) -> Result<View, String> {
         let shell = View::new(ViewOptions {
             role: Role::Shell,
+            menu: Menu::None,
             private: false,
             scripts: Scripts::default(),
             background: if self.frame_dark() { UI_BACKGROUND_DARK } else { UI_BACKGROUND },
@@ -1147,6 +1148,7 @@ impl Browser {
         };
         let view = View::new(ViewOptions {
             role: Role::Tab,
+            menu: Menu::Page,
             private,
             scripts,
             background: self.tab_background(),
@@ -1476,20 +1478,7 @@ impl Browser {
                 b.view_source(id, Some(url));
             }
         });
-        let weak = self.me.clone();
-        c.on_search_label(move |sel| weak.upgrade().and_then(|b| b.search_selection_label(sel)));
-        let weak = self.me.clone();
-        c.on_search_selection(move |sel| {
-            if let Some(b) = weak.upgrade() {
-                b.search_selection(id, &sel);
-            }
-        });
-        let weak = self.me.clone();
-        c.on_open_selection(move |how, url| {
-            if let Some(b) = weak.upgrade() {
-                b.defer(move |b| b.open_selection(id, how, &url));
-            }
-        });
+        self.hook_page_menu(c, source::MenuFrom::Tab(id));
         let weak = self.me.clone();
         c.on_js_dialog(move |req, responder| {
             if let Some(b) = weak.upgrade() {
@@ -1500,12 +1489,6 @@ impl Browser {
         c.on_js_dialog_reset(move || {
             if let Some(b) = weak.upgrade() {
                 b.defer(move |b| b.js_dialog_reset(id));
-            }
-        });
-        let weak = self.me.clone();
-        c.on_image_menu(move |action, url| {
-            if let Some(b) = weak.upgrade() {
-                b.defer(move |b| b.image_action(id, action, url));
             }
         });
         let weak = self.me.clone();
@@ -2261,27 +2244,28 @@ impl Browser {
 
     // ------------------------------------------------------------ tab operations
 
+    /// Settings → New tabs: where a new tab of window `win` goes.
+    fn new_tab_position(&self, win: WindowId) -> Position {
+        match self.settings.borrow().new_tab_position {
+            lb_core::settings::NewTabPosition::End => Position::End,
+            lb_core::settings::NewTabPosition::AfterCurrent => self
+                .ws
+                .borrow()
+                .model(win)
+                .and_then(|m| m.active_id())
+                .map(Position::AfterOpener)
+                .unwrap_or(Position::End),
+        }
+    }
+
     fn new_tab(&self, url: Option<&str>, private: bool) {
         let Some(win) = self.cur_id() else { return };
         // Settings → New tabs: what a plain new tab opens, and where it goes.
-        let (target, position) = {
-            let s = self.settings.borrow();
-            let target = match url {
-                Some(u) => u.to_string(),
-                None => s.new_tab_target().unwrap_or_default(),
-            };
-            let position = match s.new_tab_position {
-                lb_core::settings::NewTabPosition::End => Position::End,
-                lb_core::settings::NewTabPosition::AfterCurrent => self
-                    .ws
-                    .borrow()
-                    .model(win)
-                    .and_then(|m| m.active_id())
-                    .map(Position::AfterOpener)
-                    .unwrap_or(Position::End),
-            };
-            (target, position)
+        let target = match url {
+            Some(u) => u.to_string(),
+            None => self.settings.borrow().new_tab_target().unwrap_or_default(),
         };
+        let position = self.new_tab_position(win);
         let Some((id, effects)) = self.ws.borrow_mut().open(win, &target, private, position, true, now_ms()) else {
             return;
         };
@@ -3478,6 +3462,7 @@ impl Browser {
         // The popup always uses the default profile, never a private one.
         let c = View::new(ViewOptions {
             role: Role::Popup,
+            menu: Menu::None,
             private: false,
             scripts: Scripts::default(),
             background: self.popup_background(),

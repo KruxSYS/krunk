@@ -1,13 +1,23 @@
 //! The AI agent's side panel (0.12.0): one view per window, docked right of the tab area like
 //! DevTools docked right, with a splitter the frame paints and drags.
 //!
-//! The panel is a `Role::Popup` view (no context menu, no dialogs, links open as tabs) on its
-//! own channel: `https://shell.krunk.invalid/agent.html`, which no tab can reach. It is created
-//! the first time it opens and then hidden and shown. While AI is off there is no panel and no
-//! button. What the panel says is the agent's business (`agent/`); this file only hosts it.
+//! The panel is a `Role::Popup` view (no dialogs, links open as tabs) on its own channel:
+//! `https://shell.krunk.invalid/agent.html`, which no tab can reach. It is created the first
+//! time it opens and then hidden and shown. While AI is off there is no panel and no button.
+//! What the panel says is the agent's business (`agent/`); this file only hosts it. The panel
+//! is always docked: there is no way to move it into a window of its own.
+//!
+//! Its context menu (0.16.0) is the page menu of tabs in its panel form (`Menu::Panel`: the
+//! same handler in `ffi/cef/client.rs` and the same host functions, `hook_page_menu`): Cut,
+//! Copy, Paste and Select all in the message box and on selected text, the open items and
+//! "Copy link address" on a link of an answer, "Search … for" and the open items for selected
+//! text, "Save image as…" and "Copy image" on a step screenshot. What belongs to a page is
+//! left out (Back, Forward, Print, "View page source", "Inspect"), and where nothing applies
+//! no menu shows. New tabs open in the panel's window, as normal (never private) tabs.
 
+use super::source::MenuFrom;
 use super::{Browser, Frame, UI_BACKGROUND, UI_BACKGROUND_DARK};
-use crate::ffi::cef::{Role, Scripts, View, ViewOptions};
+use crate::ffi::cef::{Menu, Role, Scripts, View, ViewOptions};
 use crate::log::{info, warning};
 use lb_core::assets;
 use lb_core::layout::{self, PanelSplit};
@@ -120,6 +130,7 @@ impl Browser {
         let win = f.id;
         let view = View::new(ViewOptions {
             role: Role::Popup,
+            menu: Menu::Panel,
             private: false,
             scripts: Scripts::default(),
             background: if self.frame_dark() { UI_BACKGROUND_DARK } else { UI_BACKGROUND },
@@ -142,6 +153,8 @@ impl Browser {
                 }
             }
         });
+        // The context menu's commands: new tabs go into this window.
+        self.hook_page_menu(&view, MenuFrom::Panel(win));
         let weak = self.me.clone();
         view.on_key(move |key| {
             weak.upgrade().is_some_and(|b| {
@@ -250,7 +263,26 @@ impl Browser {
                 view.set_bounds(s.panel.x, s.panel.y, s.panel.width, s.panel.height);
                 view.set_visible(!f.window.is_minimized());
             }
-            None => view.set_visible(false),
+            None => {
+                // Full screen hides the panel, and a hidden view gets no keys (the engine
+                // hides its content window, see `View::set_visible`), while Windows leaves the
+                // keyboard focus inside it: F11 with the focus in the panel entered full screen,
+                // and no second F11 arrived to leave it. The page takes the focus, as when the
+                // panel is closed (next turn, not inside the layout, and only if the window
+                // is still in front: focusing a view activates its window).
+                let focused = view.has_focus();
+                view.set_visible(false);
+                if focused {
+                    let win = f.id;
+                    self.defer(move |b| {
+                        if b.frame(win).is_some_and(|f| f.window.is_foreground()) {
+                            if let Some(c) = b.active_view_of(win) {
+                                c.focus();
+                            }
+                        }
+                    });
+                }
+            }
         }
     }
 

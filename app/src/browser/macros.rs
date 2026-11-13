@@ -10,7 +10,7 @@
 
 use super::input::{InputDone, KeyAction, MouseButton};
 use super::Browser;
-use crate::ffi::cef::{post_ui_delayed, KeyPress, Role, Scripts, View, ViewOptions};
+use crate::ffi::cef::{post_ui_delayed, KeyPress, Menu, Role, Scripts, View, ViewOptions};
 use crate::ffi::window::{Window, WindowEvents};
 use crate::log::{info, warning};
 use lb_core::agent::{ScriptCard, ScriptKind};
@@ -201,6 +201,7 @@ impl Browser {
         let window = Window::create_popup(app, Rc::new(RunnerEvents))?;
         let view = View::new(ViewOptions {
             role: Role::Popup,
+            menu: Menu::None,
             private: false,
             scripts: Scripts::default(),
             background: 0,
