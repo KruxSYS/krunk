@@ -162,6 +162,8 @@ const PBT_APMSUSPEND: usize = 0x4;
 const MAIN_CLASS: PCWSTR = w!("KrunkWindow");
 const POPUP_CLASS: PCWSTR = w!("KrunkPopup");
 const APP_CLASS: PCWSTR = w!("KrunkApp");
+/// An extension's own small window (`chrome.windows.create({ type: "popup" })`, 0.17.0).
+const EXT_WINDOW_CLASS: PCWSTR = w!("KrunkExtWindow");
 
 /// Screen rectangle in physical pixels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -572,6 +574,36 @@ impl Window {
             )
             .map_err(|e| format!("CreateWindowExW (popup) failed: {e}"))?
         };
+        EVENTS.with(|e| e.borrow_mut().insert(hwnd.0 as isize, events));
+        Ok(Window(hwnd))
+    }
+
+    /// A small top-level window with a normal title bar for an extension's page
+    /// (`chrome.windows.create({ type: "popup" })`, 0.17.0): hidden until shown, sizable,
+    /// closed by its own close button (the events decide).
+    pub fn create_ext_window(title: &str, rect: ScreenRect, events: Rc<dyn WindowEvents>) -> Result<Window, String> {
+        static REGISTERED: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
+        REGISTERED.get_or_init(|| register(EXT_WINDOW_CLASS, 0, ext_window_wndproc)).clone()?;
+        // SAFETY: creating a top-level window on the UI thread.
+        let hwnd = unsafe {
+            let instance = GetModuleHandleW(None).map_err(|e| e.to_string())?;
+            CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                EXT_WINDOW_CLASS,
+                &HSTRING::from(title),
+                WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+                rect.x,
+                rect.y,
+                rect.width,
+                rect.height,
+                None,
+                None,
+                Some(instance.into()),
+                None,
+            )
+            .map_err(|e| format!("CreateWindowExW (extension window) failed: {e}"))?
+        };
+        set_icons(hwnd);
         EVENTS.with(|e| e.borrow_mut().insert(hwnd.0 as isize, events));
         Ok(Window(hwnd))
     }
@@ -1680,6 +1712,21 @@ extern "system" fn transparent_subclass(
     }
     // SAFETY: default subclass processing.
     unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
+}
+
+/// An extension window: as the other plain windows, but it may be small (a browser frame's
+/// minimum size does not apply).
+extern "system" fn ext_window_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if msg == WM_GETMINMAXINFO {
+        // SAFETY: lparam points to a MINMAXINFO for this message.
+        unsafe {
+            let mmi = &mut *(lparam.0 as *mut MINMAXINFO);
+            let s = lb_core::dpi::Scale::new(Window(hwnd).scale());
+            mmi.ptMinTrackSize = POINT { x: s.px(200.0), y: s.px(120.0) };
+        }
+        return LRESULT(0);
+    }
+    wndproc(hwnd, msg, wparam, lparam)
 }
 
 extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {

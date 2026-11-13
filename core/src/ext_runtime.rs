@@ -32,37 +32,15 @@ fn worker_script_name(sw: &str) -> &str {
     sw.rsplit('/').next().unwrap_or(sw)
 }
 
-/// The script a dedicated `Worker` runs as the extension's background: the `chrome.*` shim
-/// (`ext-page.js`, given a bridge to the hidden background page, which relays to the host),
-/// then the extension's service worker, then the `install` and `activate` events. The bridge
-/// takes `postMessage` and `addEventListener` before any extension code runs: hardened code
-/// (SES / LavaMoat) may remove globals afterwards.
-pub fn worker_bootstrap(shim: &str, sw: &str, module: bool) -> String {
-    let name = serde_json::to_string(&format!("./{}", worker_script_name(sw))).unwrap_or_else(|_| "\"\"".into());
-    let mut out = String::with_capacity(shim.len() + 1024);
-    out.push_str(
-        "// Krunk: the extension's background as a worker (0.17.0, core::ext_runtime).\n\
-         var __krunkBridge = (function () {\n\
-           var post = self.postMessage.bind(self), listen = self.addEventListener.bind(self);\n\
-           return {\n\
-             postMessage: function (m) { post({ __krunk: m }); },\n\
-             addEventListener: function (type, fn) { listen('message', function (e) { if (e.data && e.data.__krunkIn !== undefined) { e.stopImmediatePropagation(); fn({ data: e.data.__krunkIn }); } }); }\n\
-           };\n\
-         })();\n",
-    );
-    out.push_str("(function (__lbHost) {\n");
-    out.push_str(shim.trim());
-    out.push_str("\n})(__krunkBridge);\n");
-    if module {
-        out.push_str(&format!(
-            "import({name}).then(function () {{ self.__krunkActivate(); }}, function (e) {{ self.__krunkActivate(e); }});\n"
-        ));
-    } else {
-        out.push_str(&format!(
-            "try {{ importScripts({name}); self.__krunkActivate(); }} catch (e) {{ self.__krunkActivate(e); }}\n"
-        ));
-    }
-    out
+/// The script a dedicated `Worker` runs as the extension's background: `template`
+/// (`ui/inject/ext-worker.js`) with the `chrome.*` shim (`ext-page.js`, given a bridge to the
+/// hidden background page, which relays to the host) and the extension's service worker
+/// filled in. The template takes `postMessage` and `addEventListener` before any extension
+/// code runs: hardened code (SES / LavaMoat) may remove globals afterwards.
+pub fn worker_bootstrap(template: &str, shim: &str, sw: &str, module: bool) -> String {
+    let config = serde_json::json!({ "script": format!("./{}", worker_script_name(sw)), "module": module });
+    // The shim last: its text is not searched for the other marker.
+    template.replacen("/*KRUNK_SW*/null", &config.to_string(), 1).replacen("/*KRUNK_SHIM*/", shim.trim(), 1)
 }
 
 /// An address on an extension's origin as Chrome writes it (`chrome-extension://<id>/path`),
@@ -445,8 +423,9 @@ impl<E: Endpoint> PortTable<E> {
     }
 
     /// A context went away (a tab closed or navigated, the popup closed, the background
-    /// stopped): every port it was on closes from its side. `gone` decides which ends.
-    pub fn context_gone(&mut self, gone: impl Fn(&E) -> bool) -> Vec<PortAction<E>> {
+    /// stopped): every port it was on closes from its side. `gone` decides which ends. Each
+    /// action comes with its extension and port.
+    pub fn context_gone(&mut self, gone: impl Fn(&E) -> bool) -> Vec<(String, String, PortAction<E>)> {
         let ids: Vec<(String, String, E)> = self
             .ports
             .iter()
@@ -460,10 +439,10 @@ impl<E: Endpoint> PortTable<E> {
             .collect();
         let mut out = Vec::new();
         for (id, ext, e) in ids {
-            out.extend(self.close(&ext, &id, &e));
+            out.extend(self.close(&ext, &id, &e).into_iter().map(|a| (ext.clone(), id.clone(), a)));
         }
         // An end that went away is not told about its own ports.
-        out.retain(|a| match a {
+        out.retain(|(_, _, a)| match a {
             PortAction::Disconnect { to, .. } | PortAction::Message { to, .. } => !gone(to),
         });
         out
@@ -536,16 +515,19 @@ mod tests {
         assert_eq!(worker_boot_path("service-worker.js"), "/__krunk_sw__.js");
         assert_eq!(worker_boot_path("/background/sw.js"), "/background/__krunk_sw__.js");
         assert_eq!(worker_boot_path("a/b/c.js"), "/a/b/__krunk_sw__.js");
-        let classic = worker_bootstrap("var shim = 1;", "background/sw.js", false);
-        assert!(classic.contains("importScripts(\"./sw.js\")") && classic.contains("var shim = 1;"));
-        // The bridge takes postMessage before the shim and the extension run.
+        let template =
+            "var b = self.postMessage.bind(self);\n(function () {\n/*KRUNK_SHIM*/\n})();\nstart(/*KRUNK_SW*/null);";
+        let classic = worker_bootstrap(template, "var shim = '/*KRUNK_SW*/null';", "background/sw.js", false);
+        assert!(classic.contains(r#""script":"./sw.js""#) && classic.contains(r#""module":false"#), "{classic}");
+        assert!(!classic.contains("start(/*KRUNK_SW*/null)"));
+        // The shim's own text is left alone, and it runs after the bridge took postMessage.
+        assert!(classic.contains("var shim = '/*KRUNK_SW*/null';"));
         assert!(classic.find("self.postMessage.bind(self)").unwrap() < classic.find("var shim").unwrap());
-        assert!(classic.find("var shim").unwrap() < classic.find("importScripts").unwrap());
-        let module = worker_bootstrap("var shim = 1;", "sw.mjs", true);
-        assert!(module.contains("import(\"./sw.mjs\")") && !module.contains("importScripts("));
+        let module = worker_bootstrap(template, "", "sw.mjs", true);
+        assert!(module.contains(r#""script":"./sw.mjs""#) && module.contains(r#""module":true"#));
         // A file name cannot break out of the string.
-        let odd = worker_bootstrap("", "x\");alert(1);(\".js", false);
-        assert!(odd.contains(r#"importScripts("./x\");alert(1);(\".js")"#));
+        let odd = worker_bootstrap(template, "", "x\");alert(1);(\".js", false);
+        assert!(odd.contains(r#""script":"./x\");alert(1);(\".js""#), "{odd}");
     }
 
     #[test]
@@ -663,13 +645,20 @@ mod tests {
         assert_eq!(
             acts,
             vec![
-                PortAction::Disconnect { to: E::Bg, error: None },
-                PortAction::Disconnect { to: E::Bg, error: Some(NO_RECEIVER.into()) },
+                ("x".to_string(), "p1".to_string(), PortAction::Disconnect { to: E::Bg, error: None }),
+                (
+                    "x".to_string(),
+                    "p3".to_string(),
+                    PortAction::Disconnect { to: E::Bg, error: Some(NO_RECEIVER.into()) }
+                ),
             ]
         );
         assert_eq!(t.len(), 1);
         // The background stopped: tab 2 is told.
-        assert_eq!(t.context_gone(|e| *e == E::Bg), vec![PortAction::Disconnect { to: E::Tab(2), error: None }]);
+        assert_eq!(
+            t.context_gone(|e| *e == E::Bg),
+            vec![("x".to_string(), "p2".to_string(), PortAction::Disconnect { to: E::Tab(2), error: None })]
+        );
         assert!(t.is_empty());
     }
 

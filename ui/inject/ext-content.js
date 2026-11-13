@@ -66,6 +66,20 @@ function (extId, manifest, messages) {
     if (typeof callback === 'function') { promise.then(function (v) { callback(v); }, function (e) { runtime.lastError = { message: String(e && e.message || e) }; try { callback(); } finally { runtime.lastError = undefined; } }); }
     return promise;
   }
+  // Which frame this is, for `sender` (the host checks a sub-frame's address against the
+  // origin the engine reported for this world).
+  function src() { return { top: window.top === window, url: String(location.href).slice(0, 4096) }; }
+  // console.error of this world (its own console object; the page's is another one) goes to
+  // the extension's Errors list.
+  if (window.console && typeof console.error === 'function') {
+    var consoleError = console.error;
+    try {
+      console.error = function () {
+        try { report(Array.prototype.map.call(arguments, function (a) { return a && (a.stack || a.message) || (typeof a === 'object' ? JSON.stringify(a) : String(a)); }).join(' ')); } catch (x) { /* a value that cannot be shown */ }
+        return consoleError.apply(this, arguments);
+      };
+    } catch (x) { /* a frozen console */ }
+  }
   // Ports: the same as in ext-page.js (the host keeps the table).
   var ports = {}, portSeq = 0, rand = window.crypto;
   function portId() {
@@ -137,12 +151,12 @@ function (extId, manifest, messages) {
       var args = Array.prototype.slice.call(arguments);
       var callback = typeof args[args.length - 1] === 'function' ? args.pop() : null;
       var message = (args.length >= 2 && typeof args[0] === 'string' && args[0].length === 32) ? args[1] : args[0];
-      return cb(call('runtime.sendMessage', { message: message === undefined ? null : message }), callback);
+      return cb(call('runtime.sendMessage', { message: message === undefined ? null : message, src: src() }), callback);
     },
     connect: function (a, b) {
       var o = (a && typeof a === 'object') ? a : (b || {}), id = portId(), name = String(o.name || '');
       var port = makePort(id, name, null);
-      send('port.open', { id: id, name: name });
+      send('port.open', { id: id, name: name, src: src() });
       return port;
     },
     onMessage: event('message'),

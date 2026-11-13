@@ -440,7 +440,6 @@ pub struct Browser {
     /// Extensions (0.6.0).
     ext: ext::ExtHost,
     /// The extension request being dispatched came from the action popup (not the background).
-    ext_request_from_popup: Cell<bool>,
     /// `krunk://sitedata` tabs and the site each was opened for.
     site_data: RefCell<HashMap<TabId, storage::SiteDataBinding>>,
     /// Pointer lock and full screen.
@@ -572,7 +571,6 @@ impl Browser {
             address_focus: Cell::new(None),
             auto_pip_tab: Cell::new(None),
             ext: ext::ExtHost::new(),
-            ext_request_from_popup: Cell::new(false),
             site_data: RefCell::new(HashMap::new()),
             pointer: pointer::PointerHost::default(),
             updates: updater::UpdateHost::new(dirs.update_status()),
@@ -1321,6 +1319,7 @@ impl Browser {
         c.on_load_finished(move |error| {
             if let Some(b) = weak.upgrade() {
                 b.ext_tab_event("tabUpdated", serde_json::json!({ "tabId": id }));
+                b.ext_tab_left_page(id);
                 b.navigation_completed(id, &net_done, error.map(LoadFailure::from_net_error));
                 if error.is_none() {
                     b.preview_loaded(id);
@@ -2625,8 +2624,10 @@ impl Browser {
         match protocol::parse_request(sender, json) {
             Ok(env) => {
                 *self.ext.request_origin.borrow_mut() = lb_core::ext::id_of_url(&source.url);
+                *self.ext.request_url.borrow_mut() = Some(source.url.clone());
                 self.dispatch(sender, None, env);
                 *self.ext.request_origin.borrow_mut() = None;
+                *self.ext.request_url.borrow_mut() = None;
             }
             Err(e) => warning!("rejected {sender:?} message: {e}"),
         }
@@ -2637,8 +2638,10 @@ impl Browser {
             Ok(Source::Privileged(sender)) => match protocol::parse_request(sender, json) {
                 Ok(env) => {
                     *self.ext.request_origin.borrow_mut() = lb_core::ext::id_of_url(&source.url);
+                    *self.ext.request_url.borrow_mut() = Some(source.url.clone());
                     self.dispatch(sender, Some(id), env);
                     *self.ext.request_origin.borrow_mut() = None;
+                    *self.ext.request_url.borrow_mut() = None;
                 }
                 Err(e) => warning!("tab {id}: rejected {sender:?} message: {e}"),
             },
