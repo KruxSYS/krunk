@@ -35,6 +35,21 @@ pub fn parse_history(v: &serde_json::Value) -> Option<(usize, Vec<Entry>)> {
     (current < entries.len()).then_some((current, entries))
 }
 
+/// The address of entry `id`, if the list has it (0.18.0: a middle-click opens it in a new tab).
+pub fn entry_url(entries: &[Entry], id: i64) -> Option<&str> {
+    entries.iter().find(|e| e.id == id).map(|e| e.url.as_str()).filter(|u| !u.is_empty())
+}
+
+/// The engine's own command for a new tab with a copy of another tab's history (0.18.0,
+/// `scripts/cef-build/patches/chromium-clone-navigation.patch`).
+pub const CLONE_COMMAND: &str = "Page.krunkCloneNavigationFrom";
+
+/// Did the clone fail because the engine does not have the command (an engine without the
+/// patch)? Then the new tab just loads the entry's address.
+pub fn clone_unsupported(error: &str) -> bool {
+    error.contains(CLONE_COMMAND) || error.contains("wasn't found")
+}
+
 /// What one menu row shows.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -145,5 +160,21 @@ mod tests {
         assert_eq!(label("", "https://x.example/"), "https://x.example/");
         assert_eq!(label("   ", "krunk://newtab"), "krunk://newtab");
         assert_eq!(label(&"é".repeat(300), "u").chars().count(), 200);
+    }
+
+    #[test]
+    fn middle_click_finds_the_entry_and_knows_an_engine_without_the_clone() {
+        let (_, entries) = parse_history(&serde_json::json!({"currentIndex": 1, "entries": [
+            {"id": 4, "url": "https://a.example/", "title": "A"},
+            {"id": 7, "url": "https://b.example/", "title": "B"},
+            {"id": 9, "url": "", "title": "redacted"}
+        ]}))
+        .unwrap();
+        assert_eq!(entry_url(&entries, 4), Some("https://a.example/"));
+        assert_eq!(entry_url(&entries, 9), None, "a redacted entry has no address to open");
+        assert_eq!(entry_url(&entries, 99), None);
+        assert!(clone_unsupported("'Page.krunkCloneNavigationFrom' wasn't found"));
+        assert!(!clone_unsupported("This page has a history of its own"));
+        assert!(!clone_unsupported("the page is not open"));
     }
 }

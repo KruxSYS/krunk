@@ -2967,6 +2967,7 @@ impl Browser {
             Request::HttpAuthCancel { tab_id } => self.http_auth_cancel(tab_id),
             Request::HttpAuthUnlock { tab_id } => self.http_auth_unlock(tab_id),
             Request::NavToEntry { tab_id, entry_id } => self.nav_to_entry(tab_id, entry_id),
+            Request::NavToEntryNewTab { tab_id, entry_id } => self.nav_to_entry_new_tab(tab_id, entry_id),
             Request::TabMenuAction { id, action } => {
                 self.hide_popup();
                 match action {
