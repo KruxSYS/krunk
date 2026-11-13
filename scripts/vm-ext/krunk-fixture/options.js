@@ -30,6 +30,8 @@ function run() {
   lines = [];
   var own = 'chrome-extension://' + chrome.runtime.id, envBefore = null;
   document.getElementById('summary').textContent = 'running…';
+  // What extensions compute themselves and compare senders with (docs/EXTENSIONS.md).
+  check(new URL(own + '/x.html').origin === own, 'engine: new URL("chrome-extension://<id>/x").origin is "chrome-extension://<id>"', new URL(own + '/x.html').origin);
   return step('background: a worker with the service worker globals', function () {
     return withTimeout(chrome.runtime.sendMessage({ kind: 'env' }), 5000, 'env').then(function (env) {
       envBefore = env;
@@ -134,4 +136,10 @@ function run() {
   });
 }
 document.getElementById('run').onclick = run;
+// Three errors in the background (console.error, uncaught, unhandled rejection) and one here:
+// they must show in the extension's Errors list on krunk://extensions and in krunk.log.
+document.getElementById('errors').onclick = function () {
+  chrome.runtime.sendMessage({ kind: 'errors' }).then(function (r) { document.getElementById('summary').textContent = 'made ' + ((r && r.made || 0) + 1) + ' errors: see krunk://extensions'; });
+  console.error('fixture: console.error from the options page');
+};
 if (location.hash === '#selftest') run();

@@ -82,6 +82,15 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
     });
     return false;
   }
+  // Three errors for the Errors list on krunk://extensions: console.error, an uncaught error
+  // and a rejected promise nobody handles.
+  if (msg && msg.kind === 'errors') {
+    console.error('fixture: console.error from the background');
+    setTimeout(function () { throw new Error('fixture: uncaught error in the background'); }, 0);
+    Promise.reject(new Error('fixture: unhandled rejection in the background'));
+    sendResponse({ made: 3 });
+    return false;
+  }
   if (msg && msg.kind === 'offscreen') { offscreenTest().then(sendResponse); return true; }
   if (msg && msg.kind === 'window') { windowTest().then(sendResponse); return true; }
   if (msg && msg.kind === 'register') { registerTest().then(sendResponse); return true; }

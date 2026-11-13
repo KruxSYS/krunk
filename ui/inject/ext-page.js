@@ -35,10 +35,13 @@ if (backgroundPage) {
   var worker;
   try { worker = new G.Worker(info.boot, { type: info.module ? 'module' : 'classic', name: info.install ? 'krunk-sw:install' : 'krunk-sw' }); }
   catch (e) { say('log', { level: 'error', text: 'The background worker did not start: ' + (e && e.message || e) }); say('bgReady', {}); return; }
-  worker.addEventListener('message', function (e) { var d = e.data; if (d && d.__krunk) host.postMessage(d.__krunk); });
-  // A script that does not load or parse (the worker never runs): the reason, and queued
-  // events are let go so nothing waits for ever.
+  var running = false;
+  worker.addEventListener('message', function (e) { var d = e.data; if (d && d.__krunk) { running = true; host.postMessage(d.__krunk); } });
+  // A worker that never ran (its script did not load): the reason, and queued events are let
+  // go so nothing waits for ever. A running worker reports its own errors.
   worker.addEventListener('error', function (e) {
+    if (e && e.preventDefault) e.preventDefault();
+    if (running) return;
     say('log', { level: 'error', text: 'Service worker: ' + (e && e.message || 'the script could not be loaded'), file: e && e.filename || info.boot, line: e && e.lineno || 0 });
     say('bgReady', {});
   });
