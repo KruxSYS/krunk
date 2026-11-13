@@ -13,14 +13,18 @@
 function (extId, manifest, messages, logAll) {
   'use strict';
   var pending = {}, nextId = 1, listeners = { message: [], storage: [], connect: [] };
-  var deliver = window.__krunkExtDeliver;
-  if (!deliver) {
+  // Everything this shim needs from the world's global scope is taken now, and its own two
+  // globals cannot be redefined: a hardened extension (LavaMoat "scuttling") replaces every
+  // configurable or writable global of its world with a getter that throws, once it runs.
+  var timer = window.setTimeout.bind(window), nav = window.navigator, Observer = window.MutationObserver;
+  if (!window.__krunkExtDeliver) {
     var byExt = {};
-    window.__krunkExtDeliver = function (json) {
+    var fixed = function (name, value) { Object.defineProperty(window, name, { value: value, configurable: false, writable: false, enumerable: false }); };
+    fixed('__krunkExtDeliver', function (json) {
       var m; try { m = JSON.parse(json); } catch (e) { return; }
       var target = byExt[m.ext]; if (target) target(m);
-    };
-    window.__krunkExtRegister = function (id, fn) { byExt[id] = fn; };
+    });
+    fixed('__krunkExtRegister', function (id, fn) { byExt[id] = fn; });
   }
   window.__krunkExtRegister(extId, function (m) {
     if (m.reply !== undefined && pending[m.reply]) { var p = pending[m.reply]; delete pending[m.reply]; if (m.error) p.reject(new Error(m.error)); else p.resolve(m.data); }
@@ -50,8 +54,8 @@ function (extId, manifest, messages, logAll) {
       listeners.storage.forEach(function (l) { try { l(m.changes, m.area); } catch (e) { report(e); } });
     }
   });
-  var bindingName = '__krunkExt_' + extId;
-  function host(json) { return window[bindingName](json); }
+  var bindingName = '__krunkExt_' + extId, binding = window[bindingName];
+  function host(json) { if (!binding) binding = window[bindingName]; return binding(json); }
   function send(cmd, data) { try { host(JSON.stringify({ ext: extId, cmd: cmd, data: data })); } catch (e) { /* no binding */ } }
   function call(cmd, data) {
     return new Promise(function (resolve, reject) {
@@ -61,7 +65,21 @@ function (extId, manifest, messages, logAll) {
       catch (e) { delete pending[id]; reject(new Error('Krunk: the extension binding is not available')); }
     });
   }
-  function report(e) { var text; try { text = String(e && (e.stack || e.message) || e); } catch (x) { text = 'error'; } send('log', { level: 'error', text: text.slice(0, 2000) }); }
+  // A console argument as text. Only plain data is walked: anything else (a window, a DOM
+  // node, a class instance) is named, not read. Walking a global object would run every
+  // getter on it (hardened extensions replace those with ones that warn or throw).
+  function show(a) {
+    try {
+      if (a === null || a === undefined || typeof a !== 'object' && typeof a !== 'function') return String(a);
+      if (typeof a === 'function') return '[function]';
+      if (typeof a.stack === 'string' || typeof a.message === 'string' && typeof a.name === 'string') return String(a.stack || a.message);
+      var plain = function (v) { var p = Object.getPrototypeOf(v); return Array.isArray(v) || p === Object.prototype || p === null; };
+      if (!plain(a)) return Object.prototype.toString.call(a);
+      return JSON.stringify(a, function (k, v) { return v && typeof v === 'object' && !plain(v) ? Object.prototype.toString.call(v) : v; });
+    } catch (x) { return '[unprintable]'; }
+  }
+  function shown(args) { return Array.prototype.map.call(args, show).join(' ').slice(0, 2000); }
+  function report(e) { send('log', { level: 'error', text: show(e).slice(0, 2000) }); }
   function cb(promise, callback) {
     if (typeof callback === 'function') { promise.then(function (v) { callback(v); }, function (e) { runtime.lastError = { message: String(e && e.message || e) }; try { callback(); } finally { runtime.lastError = undefined; } }); }
     return promise;
@@ -75,7 +93,7 @@ function (extId, manifest, messages, logAll) {
     var consoleError = console.error;
     try {
       console.error = function () {
-        try { report(Array.prototype.map.call(arguments, function (a) { return a && (a.stack || a.message) || (typeof a === 'object' ? JSON.stringify(a) : String(a)); }).join(' ')); } catch (x) { /* a value that cannot be shown */ }
+        try { send('log', { level: 'error', text: shown(arguments) }); } catch (x) { /* never in the way */ }
         return consoleError.apply(this, arguments);
       };
     } catch (x) { /* a frozen console */ }
@@ -84,7 +102,7 @@ function (extId, manifest, messages, logAll) {
       var original = console[level];
       if (typeof original !== 'function') return;
       console[level] = function () {
-        try { send('log', { level: level, text: Array.prototype.map.call(arguments, function (a) { try { return a && (a.stack || a.message) || (typeof a === 'object' ? JSON.stringify(a) : String(a)); } catch (x) { return '[unprintable]'; } }).join(' ').slice(0, 2000) }); } catch (x) { /* never in the way */ }
+        try { send('log', { level: level, text: shown(arguments) }); } catch (x) { /* never in the way */ }
         return original.apply(this, arguments);
       };
     });
@@ -185,8 +203,8 @@ function (extId, manifest, messages, logAll) {
       });
       return text.replace(/\$(\d)/g, function (_, n) { return list[Number(n) - 1] === undefined ? '' : String(list[Number(n) - 1]); });
     },
-    getUILanguage: function () { return navigator.language; },
-    getAcceptLanguages: function (callback) { return cb(Promise.resolve(navigator.languages.slice()), callback); }
+    getUILanguage: function () { return nav.language; },
+    getAcceptLanguages: function (callback) { return cb(Promise.resolve((nav.languages || [nav.language]).slice()), callback); }
   };
   var chrome = {
     runtime: runtime,
@@ -238,7 +256,7 @@ function (extId, manifest, messages, logAll) {
       // parsing): the stylesheet links wait for one.
       var addCss = function () {
         var root = document.head || document.documentElement;
-        if (!root) { setTimeout(addCss, 0); return; }
+        if (!root) { timer(addCss, 0); return; }
         css.forEach(function (f) { try { var l = document.createElement('link'); l.rel = 'stylesheet'; l.href = runtime.getURL(f); root.appendChild(l); } catch (e) { report(e); } });
       };
       var go = function () {
@@ -246,7 +264,15 @@ function (extId, manifest, messages, logAll) {
         try { body.call(window, proxied, proxied); } catch (e) { report(e); }
       };
       var stage = runAt[when] === undefined ? 2 : runAt[when];
-      if (stage === 0 || document.readyState === 'complete' || (stage === 1 && document.readyState !== 'loading')) go();
+      // document_start is when the document has its root element and nothing else has run,
+      // as in Chrome. The bundle itself runs earlier (the engine runs it when the window
+      // object is made, before the parser creates <html>), and scripts written for Chrome
+      // read document.documentElement at once. The observer's callback is a microtask: it
+      // runs when the parser has inserted the element, before the page's first script.
+      if (stage === 0 && !document.documentElement && Observer) {
+        var seen = new Observer(function () { if (document.documentElement) { seen.disconnect(); go(); } });
+        seen.observe(document, { childList: true });
+      } else if (stage === 0 || document.readyState === 'complete' || (stage === 1 && document.readyState !== 'loading')) go();
       else if (stage === 1) document.addEventListener('DOMContentLoaded', go, { once: true });
       else window.addEventListener('load', go, { once: true });
     },

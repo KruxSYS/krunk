@@ -102,8 +102,7 @@ host.addEventListener('message', function (e) {
 });
 // Errors of this context, for the extension's Errors list on krunk://extensions (0.17.0).
 function report(e, file, line) {
-  var text; try { text = String(e && (e.stack || e.message) || e); } catch (x) { text = 'error'; }
-  post('log', { level: 'error', text: text.slice(0, 2000), file: file || '', line: line || 0 });
+  post('log', { level: 'error', text: typeof e === 'string' ? e.slice(0, 2000) : show(e).slice(0, 2000), file: file || '', line: line || 0 });
 }
 function cb(promise, callback) {
   if (typeof callback === 'function') { promise.then(function (v) { callback(v); }, function (e) { runtime.lastError = { message: String(e && e.message || e) }; try { callback(); } finally { runtime.lastError = undefined; } }); }
@@ -379,11 +378,20 @@ Object.defineProperty(G, 'browser', { value: proxied, configurable: true, writab
 // Uncaught errors, unhandled rejections and console.error of every context of the extension.
 G.addEventListener('error', function (e) { report(e && (e.error || e.message), e && e.filename, e && e.lineno); });
 G.addEventListener('unhandledrejection', function (e) { report(e && e.reason); });
-function shown(args) {
-  return Array.prototype.map.call(args, function (a) {
-    try { return a && (a.stack || a.message) || (typeof a === 'object' ? JSON.stringify(a) : String(a)); } catch (x) { return '[unprintable]'; }
-  }).join(' ');
+// A console argument as text. Only plain data is walked: anything else (a window, a DOM
+// node, a class instance) is named, not read. Walking a global object would run every
+// getter on it (hardened extensions replace those with ones that warn or throw).
+function show(a) {
+  try {
+    if (a === null || a === undefined || typeof a !== 'object' && typeof a !== 'function') return String(a);
+    if (typeof a === 'function') return '[function]';
+    if (typeof a.stack === 'string' || typeof a.message === 'string' && typeof a.name === 'string') return String(a.stack || a.message);
+    var plain = function (v) { var p = Object.getPrototypeOf(v); return Array.isArray(v) || p === Object.prototype || p === null; };
+    if (!plain(a)) return Object.prototype.toString.call(a);
+    return JSON.stringify(a, function (k, v) { return v && typeof v === 'object' && !plain(v) ? Object.prototype.toString.call(v) : v; });
+  } catch (x) { return '[unprintable]'; }
 }
+function shown(args) { return Array.prototype.map.call(args, show).join(' ').slice(0, 2000); }
 if (G.console && typeof G.console.error === 'function') {
   var consoleError = G.console.error;
   try {
@@ -397,7 +405,7 @@ if (G.console && typeof G.console.error === 'function') {
     if (typeof original !== 'function') return;
     try {
       G.console[level] = function () {
-        try { post('log', { level: level, text: shown(arguments).slice(0, 2000) }); } catch (x) { /* never in the way */ }
+        try { post('log', { level: level, text: shown(arguments) }); } catch (x) { /* never in the way */ }
         return original.apply(this, arguments);
       };
     } catch (x) { /* a frozen console */ }
@@ -434,21 +442,22 @@ if (inWorker) {
 } else {
   // A page. The action popup tells the host its size (the host sizes the window to the
   // content; it ignores this from any other page).
-  var doc = G.document, lastSize = '';
+  // (Taken now: a hardened page removes these globals later, and the size is measured later.)
+  var doc = G.document, lastSize = '', computed = G.getComputedStyle.bind(G), Resize = G.ResizeObserver, num = G.parseFloat;
   // The window starts at the largest size the popup may have (hidden), so the body's own
   // width (popups set one) and height are the content's; a body without a width keeps the
   // viewport's. Reported on load and whenever the body resizes.
   var sendSize = function () {
     var b = doc.body, de = doc.documentElement; if (!b || !de) return;
-    var cs = G.getComputedStyle(b), ds = G.getComputedStyle(de);
-    var mx = (parseFloat(cs.marginLeft) || 0) + (parseFloat(cs.marginRight) || 0) + (parseFloat(ds.marginLeft) || 0) + (parseFloat(ds.marginRight) || 0);
-    var my = (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0) + (parseFloat(ds.marginTop) || 0) + (parseFloat(ds.marginBottom) || 0);
+    var cs = computed(b), ds = computed(de);
+    var mx = (num(cs.marginLeft) || 0) + (num(cs.marginRight) || 0) + (num(ds.marginLeft) || 0) + (num(ds.marginRight) || 0);
+    var my = (num(cs.marginTop) || 0) + (num(cs.marginBottom) || 0) + (num(ds.marginTop) || 0) + (num(ds.marginBottom) || 0);
     var w = Math.ceil(b.offsetWidth + mx), h = Math.ceil(Math.max(b.offsetHeight + my, b.scrollHeight + my));
     var key = w + 'x' + h; if (key === lastSize || !w || !h) return; lastSize = key;
     post('popupSize', { width: w, height: h });
   };
   G.addEventListener('load', function () { sendSize(); timer(sendSize, 100); timer(sendSize, 500); });
-  if (typeof G.ResizeObserver === 'function') doc.addEventListener('DOMContentLoaded', function () { if (doc.body) new G.ResizeObserver(sendSize).observe(doc.body); });
+  if (typeof Resize === 'function') doc.addEventListener('DOMContentLoaded', function () { if (doc.body) new Resize(sendSize).observe(doc.body); });
   doc.addEventListener('keydown', function (e) { if (e.key === 'Escape') post('closePopup', {}); });
   // window.close() of a page in a view of its own (the popup, a popup window): the host
   // closes the window.

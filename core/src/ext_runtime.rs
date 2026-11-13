@@ -175,7 +175,13 @@ function __krunkRun(id, includes, excludes, allFrames, when, files) {
   if (!includes.some(function (p) { return __krunkMatch(p, url); })) return;
   if (excludes.some(function (p) { return __krunkMatch(p, url); })) return;
   var go = function () { files.forEach(function (f) { try { f.call(window); } catch (e) { console.error('[' + id + '] ' + (e && e.stack || e)); } }); };
-  if (when === 'document_start' || document.readyState === 'complete' || (when === 'document_end' && document.readyState !== 'loading')) go();
+  // document_start: once the document has its root element, before any of the page's scripts
+  // (as in Chrome; this bundle runs earlier, when the window object is made). The observer's
+  // callback is a microtask, run when the parser has inserted <html>.
+  if (when === 'document_start' && !document.documentElement && typeof MutationObserver === 'function') {
+    var seen = new MutationObserver(function () { if (document.documentElement) { seen.disconnect(); go(); } });
+    seen.observe(document, { childList: true });
+  } else if (when === 'document_start' || document.readyState === 'complete' || (when === 'document_end' && document.readyState !== 'loading')) go();
   else if (when === 'document_end') document.addEventListener('DOMContentLoaded', go, { once: true });
   else window.addEventListener('load', go, { once: true });
 }
