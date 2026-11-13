@@ -329,6 +329,26 @@ fn normalize_entries(mut files: Vec<(String, Vec<u8>)>) -> Vec<(String, Vec<u8>)
     files
 }
 
+/// A request's path as the file system names the file it opens, relative to the package: what
+/// is compared with the manifest's lists (`sandbox.pages`, `web_accessible_resources`).
+/// Decoded and in lower case (`ext_guard::package_path`); for a file that exists the name comes
+/// from the file system, which also opens a file by its short name (`SANDBO~1.HTM`) or with
+/// trailing spaces.
+fn listed_path(root: &Path, url_path: &str) -> String {
+    let rel = lb_core::ext_guard::package_path(url_path);
+    let real = || {
+        if !ext::safe_relative_path(&rel) {
+            return None;
+        }
+        let root = std::fs::canonicalize(root).ok()?;
+        let file = std::fs::canonicalize(ext::file_path(&root, &rel)).ok()?;
+        let inside = file.strip_prefix(&root).ok()?;
+        let names: Vec<String> = inside.components().map(|c| c.as_os_str().to_string_lossy().to_lowercase()).collect();
+        Some(names.join("/"))
+    };
+    real().unwrap_or(rel)
+}
+
 /// The DevTools events `ext_devtools_event` handles.
 const DEVTOOLS_EVENTS: &[&str] = &[
     "Runtime.exceptionThrown",
@@ -909,7 +929,7 @@ impl Browser {
             .exts
             .borrow()
             .iter()
-            .any(|e| e.installed.id == ext_id && lb_core::ext_runtime::is_sandbox_page(&e.manifest, &path));
+            .any(|e| e.installed.id == ext_id && lb_core::ext_runtime::is_sandbox_page(&e.manifest, &listed_path(&e.root, &path)));
         if sandboxed {
             warning!("extension {}: a sandboxed page asked for chrome.{op}: refused", self.ext_name(ext_id));
             return;
@@ -2174,7 +2194,7 @@ impl Browser {
                 e.manifest.background_script().map(|(s, m)| (s.to_string(), m)),
                 e.messages_json.clone(),
                 e.fresh,
-                lb_core::ext_runtime::is_sandbox_page(&e.manifest, &path)
+                lb_core::ext_runtime::is_sandbox_page(&e.manifest, &listed_path(&e.root, &path))
                     .then(|| lb_core::ext_runtime::sandbox_csp(&e.manifest)),
                 lb_core::ext_guard::WebAccess::new(&e.manifest, &[]).web_accessible(&path),
             )

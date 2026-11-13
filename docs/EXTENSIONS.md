@@ -169,6 +169,9 @@ DevTools binding of the content world), never by the message.
 * **Sandboxed pages** (manifest `sandbox.pages`): served with the manifest's
   `content_security_policy.sandbox` (or Chrome's default), always starting with `sandbox`, so
   they have a unique origin; they get no extension API (the host refuses their requests).
+  Which page is sandboxed is decided on the path as the file is found (percent-decoded,
+  without regard to case, by the file system's own name for an existing file), the same form
+  every comparison with a manifest list uses (`core::ext_guard::package_path`).
 * `storage.session` (memory), `storage.local` up to 256 MiB instead of 10 MiB with the
   `unlimitedStorage` permission (requests up to 64 MiB); a `set` over the limit is refused
   whole with "QUOTA_BYTES quota exceeded", and the file is replaced by a rename of a synced

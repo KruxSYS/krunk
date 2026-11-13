@@ -322,6 +322,32 @@ mod tests {
     }
 
     #[test]
+    fn a_sandboxed_page_is_sandboxed_however_its_address_is_spelled() {
+        let m = manifest(r#","sandbox":{"pages":["sandbox.html","/Snaps/index.html","frames/*.html"]}"#);
+        for path in [
+            "/sandbox.html",
+            "/s%61ndbox.html",
+            "/SANDBOX.HTML",
+            "/Sandbox.htm%6c",
+            "//sandbox.html",
+            "/snaps/index.html",
+            "/snaps/INDEX%2Ehtml",
+            "/snaps%2Findex.html",
+            "/frames/a.html",
+            "/Frames/%41.HTML",
+        ] {
+            assert!(crate::ext_runtime::is_sandbox_page(&m, path), "{path}");
+            // The same file is served (`ext::resolve_file` decodes the same way).
+            let url = format!("{}{path}", crate::ext::origin(ID));
+            let served = crate::ext::resolve_file(&url).map(|(_, rel)| manifest_path(&rel));
+            assert_eq!(served, Some(package_path(path)), "{path}");
+        }
+        for path in ["/home.html", "/sandbox.html.js", "/x/sandbox.html", "/sandbox%252Ehtml"] {
+            assert!(!crate::ext_runtime::is_sandbox_page(&m, path), "{path}");
+        }
+    }
+
+    #[test]
     fn an_extension_opens_its_own_pages_and_the_web_only() {
         let own = crate::ext::origin(ID);
         for ok in [format!("{own}/home.html#x"), "https://example.com/".into(), "http://localhost:8094/a".into()] {
