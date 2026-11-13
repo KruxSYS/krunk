@@ -28,7 +28,19 @@ made in an attached target's (flat) session ends in `,"sessionId":"…"}` and CE
 from the raw message (`on_dev_tools_message` → `core::wasm::session_answer`, core test
 `answers_of_a_worker_session_are_read_from_the_raw_message`). Also since then: a context that
 does not answer the two set-up calls is reported after 3 seconds (`SETUP_TIMEOUT_MS`), the page
-runs one search at a time, and its header follows the inspected tab's title.
+runs one search at a time, and its header follows the inspected tab's title. All contexts are
+asked at the same time. A worker of a page the tab keeps for Back (frozen in the back/forward
+cache) stays attached and answers DevTools, so its memory showed up under the next page: the
+host's survey of a worker now waits for a task of the worker's own, which a frozen worker never
+runs, and leaves such a worker out. Result rows are updated in place (a click on Watch during
+the once-a-second refresh was lost).
+
+Windows run of 2026-11-13 (screenshots `y01`–`y13` in `.pipeline/evidence-0.19.0/vm/`): the
+checklist's steps 1–7 and 9–13 passed, the worker variant included (list, scan → Hit →
+Decreased, Grow to 18 pages, global edit), and `index.html?stuck` (a worker that spins) is
+reported as `The worker did not answer in time.` about four seconds after the page opens.
+Not run on Windows: step 8 (a next scan after the growth), a same-process frame, a shared
+memory, the hook fallback, a back navigation to a page with a worker.
 
 | Sub-point | Code | Tests | Verdict |
 |---|---|---|---|

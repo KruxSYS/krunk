@@ -244,6 +244,7 @@ module.exports = function ({ openPage, check, lastSent, emit, shot, UI }) {
     await page.click('#reload');
     await page.waitForFunction(() => !document.getElementById('problem').hidden);
     check((await page.textContent('#problem')).includes('⋮ menu') && await page.locator('#scan-first').isDisabled(), 'opened by address: says how to open it, controls off');
+    check((await page.textContent('#memories')) === 'Nothing to inspect.' && (await page.textContent('#instances')) === 'Nothing to inspect.', 'and the lists do not claim to be looking for anything');
     await page.evaluate(() => { window.__unbound = false; window.__info.inspectable = false; });
     await page.click('#reload');
     await page.waitForFunction(() => !document.getElementById('problem').textContent.includes('⋮'));

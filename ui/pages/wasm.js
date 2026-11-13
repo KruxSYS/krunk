@@ -98,7 +98,12 @@
     $('problem').hidden = !text;
     state.ok = !text;
     ['hook', 'scan-first', 'add-watch', 'hex-go', 'hex-prev', 'hex-next', 'watch-import'].forEach(function (id) { $(id).disabled = !state.ok; });
-    if (!state.ok) { $('scan-next').disabled = true; $('scan-new').disabled = true; }
+    if (!state.ok) {
+      $('scan-next').disabled = true; $('scan-new').disabled = true;
+      // Nothing is being looked for.
+      ['memories', 'instances'].forEach(function (id) { $(id).textContent = ''; $(id).appendChild(el('div', { class: 'empty', text: 'Nothing to inspect.' })); });
+      $('instance-card').hidden = true;
+    }
   }
   function showTab(r) {
     const title = r.open ? (r.title || r.url) : '';
