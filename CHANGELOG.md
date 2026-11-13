@@ -3,6 +3,39 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.16.0 — 2026-11-13
+
+- **Right-click in the AI panel.** The panel now has the same context menu as pages: Cut, Copy,
+  Paste and Select all in the message box and on answers, the link items (open in a new tab,
+  window or private tab, copy the address) on links, and the image items on the step pictures.
+  Krunk has no separate AI window: the "popped-out" panel is the one docked at the side.
+- **Right-click an extension's toolbar icon** for its menu: the extension's page in Krunk,
+  **Options**, **Manage extensions**, **Disable** and **Uninstall…**. Uninstall asks first
+  ("Remove <name>?").
+- **Session usage in the menu.** ⋮ → **Session usage** opens your session logs (krunk://sessions):
+  how long each site and tab was in front, and Krunk's CPU use per session. If logging is off,
+  the page offers to turn it on. (This is the browsing-session screen; there is no screen for
+  the AI's token use.)
+- **Private tabs' titles are readable on every style.** The purple title was hard to read in the
+  dark theme and on coloured tab strips (Midnight, Forest, Ember, Ocean, Glass, purple strips).
+  Krunk now picks a purple that stands out from what is behind the tab, or white or black where
+  no purple does, also under the mouse, on the active private tab and while the window is in
+  the background (at least 4.5:1 on every built-in style). Your own **Tab title colours** now
+  apply to private tabs too.
+- **A Home button, if you want one.** Settings → Appearance → **Show the Home button** adds it
+  after Reload. A click opens your home page (the new tab page if you have none); Ctrl+click or
+  a middle-click opens it in a new tab. The home page's address is right under the switch; it is
+  the same setting as General → On startup → Homepage.
+- **The AI agent keeps a scratchpad.** On longer tasks it writes down a plan and notes, so they
+  don't get lost when a conversation gets long. The notepad button in the panel's header shows
+  them; **Clear** empties them. Kept in memory only: nothing is written to disk, and it is gone
+  with a new conversation or when the window closes.
+- **The AI agent can create or enter a password when you ask for it.** Say "sign up here with a
+  strong password" or "log in with the password …": Krunk asks you first, naming the site. A new
+  password is made by Krunk's own generator, never by the AI, which doesn't get to see it; a
+  card in the panel keeps it for you (**Show**, **Copy**), and Krunk saves the login when you
+  send the form. Without such a request nothing changes: the agent can't touch password fields.
+
 ## 0.15.4 — 2026-11-12
 
 Display scaling. With Windows' Text size setting above 100 %, at display scales of 125 % and
