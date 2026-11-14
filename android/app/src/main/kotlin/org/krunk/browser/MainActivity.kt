@@ -1,6 +1,7 @@
 package org.krunk.browser
 
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -92,6 +93,15 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         app.sitePermissions.android.detach(this)
         super.onDestroy()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // The activity handles rotation itself (configChanges). GeckoView 160 follows the display
+        // on its own (GeckoRuntime registers a display listener that updates its orientation
+        // after a short delay); telling it here as well costs nothing and is immediate, so
+        // `screen.orientation` is right as soon as a page's orientation lock took effect.
+        app.engine.runtime.orientationChanged()
     }
 
     override fun onStart() {

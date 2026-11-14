@@ -1,5 +1,6 @@
 package org.krunk.browser.ui.browser
 
+import android.view.View
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -68,6 +69,7 @@ import org.krunk.browser.engine.originOf
 import org.krunk.browser.tabs.LinkOpen
 import org.krunk.browser.tabs.TabEvent
 import org.krunk.browser.ui.BrowserViewModel
+import org.krunk.browser.ui.LocalScreenOnTop
 import org.krunk.browser.ui.Screen
 import org.krunk.browser.ui.newtab.NewTabScreen
 import org.krunk.browser.ui.tabs.RestoreTabsPrompt
@@ -92,6 +94,11 @@ fun BrowserScreen(vm: BrowserViewModel) {
     val findText by vm.findText.collectAsStateWithLifecycle()
     val page = tab?.page
     val session = tab?.let { vm.tabs.session(it.id) }
+    // False while another screen covers the browser, which stays composed under it so the page
+    // view is not built again on return. Covered, it keeps still (see LocalScreenOnTop): no Back
+    // handling, no system bars, the page view hidden, and every dialog or sheet waits. Anything
+    // new here that opens a window has to wait the same way: `state?.takeIf { onTop }`.
+    val onTop = LocalScreenOnTop.current
     val fullScreen = page?.fullScreen == true
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -109,18 +116,22 @@ fun BrowserScreen(vm: BrowserViewModel) {
     // at the bottom) is filled like the toolbar: a dark gradient there needs light system icons
     // even in the light theme.
     val style = LocalKrunkStyle.current
-    SystemBarsEffect(
-        fullScreen = fullScreen,
-        darkTheme = dark,
-        darkStatusBar = if (top) style.stripDark else dark,
-        darkNavigationBar = if (top) dark else style.stripDark,
-    )
+    if (onTop) {
+        SystemBarsEffect(
+            fullScreen = fullScreen,
+            darkTheme = dark,
+            darkStatusBar = if (top) style.stripDark else dark,
+            darkNavigationBar = if (top) dark else style.stripDark,
+        )
+    }
 
     // Back, in order: find bar, address editing, full screen, page history; else the activity.
-    BackHandler(enabled = findActive) { vm.closeFind() }
-    BackHandler(enabled = !findActive && editing) { vm.stopEditing() }
-    BackHandler(enabled = !findActive && !editing && fullScreen) { session?.exitFullScreen() }
-    BackHandler(enabled = !findActive && !editing && !fullScreen && backAction(page) != BackAction.NONE) {
+    BackHandler(enabled = onTop && findActive) { vm.closeFind() }
+    BackHandler(enabled = onTop && !findActive && editing) { vm.stopEditing() }
+    BackHandler(enabled = onTop && !findActive && !editing && fullScreen) { session?.leaveFullScreen() }
+    BackHandler(
+        enabled = onTop && !findActive && !editing && !fullScreen && backAction(page) != BackAction.NONE,
+    ) {
         vm.tabs.back()
     }
 
@@ -261,6 +272,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
                     PageView(
                         session = session,
                         fullScreen = fullScreen,
+                        visible = onTop,
                         toolbarMaxPx = toolbarHeightPx,
                         onView = { geckoView = it },
                     )
@@ -378,17 +390,17 @@ fun BrowserScreen(vm: BrowserViewModel) {
                     .align(Alignment.BottomCenter)
                     .padding(bottom = if (!top && chromeVisible) ToolbarHeight else 0.dp),
             )
-            RestoreTabsPrompt(vm)
+            if (onTop) RestoreTabsPrompt(vm)
         }
     }
 
     // What the page on screen asks (alert, confirm, prompt, a list, sign-in), one at a time.
     val pagePrompt by vm.tabs.prompt.collectAsStateWithLifecycle()
-    pagePrompt?.let { PagePromptDialog(it) }
+    pagePrompt?.takeIf { onTop }?.let { PagePromptDialog(it) }
     // Android refused a permission a site needed.
     PermissionMessages(vm.engine.permissions, snackbar)
 
-    external?.let { link ->
+    external?.takeIf { onTop }?.let { link ->
         ExternalLinkDialog(
             link = link,
             onOpen = {
@@ -410,7 +422,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
         }
     }
 
-    contextTarget?.let { (tabId, target) ->
+    contextTarget?.takeIf { onTop }?.let { (tabId, target) ->
         val private = tab?.private == true
         val copied = stringResource(R.string.copied)
         val opened = stringResource(R.string.tab_opened_background)
@@ -549,11 +561,18 @@ private fun ProgressLine(progress: Float) {
  * The GeckoView of the active session. Gecko lays the page out with [toolbarMaxPx] reserved for
  * the toolbar and shows the reserved strip as the toolbar slides away (the browser screen
  * reports how far with `setVerticalClipping`), so the page never jumps while the toolbar hides.
+ *
+ * Not [visible] while another screen covers the browser: the view and its session stay as they
+ * are, but an invisible view has no surface (the engine stops drawing, as it does when the app
+ * is in the background), cannot hold the focus or the keyboard, gets no keys or touches and is
+ * not in the accessibility tree. The session itself stays active, as it did while the view was
+ * taken apart for another screen.
  */
 @Composable
 private fun PageView(
     session: KrunkSession,
     fullScreen: Boolean,
+    visible: Boolean,
     toolbarMaxPx: Float,
     onView: (NestedGeckoView?) -> Unit,
 ) {
@@ -567,6 +586,8 @@ private fun PageView(
                 if (view.session != null) view.releaseSession()
                 view.setSession(session.gecko)
             }
+            val visibility = if (visible) View.VISIBLE else View.INVISIBLE
+            if (view.visibility != visibility) view.visibility = visibility
             view.onTouchUp = session::touched
             view.nestedScrollAllowed = !fullScreen
             val max = if (fullScreen) 0 else toolbarMaxPx.toInt()

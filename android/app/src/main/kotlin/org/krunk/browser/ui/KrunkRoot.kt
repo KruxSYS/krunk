@@ -1,20 +1,17 @@
 package org.krunk.browser.ui
 
 import android.app.Application
-import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.krunk.browser.KrunkApp
 import org.krunk.browser.tabs.DebugProps
 import org.krunk.browser.ui.bookmarks.BookmarksScreen
 import org.krunk.browser.ui.browser.BrowserScreen
+import org.krunk.browser.ui.browser.FullScreenEffect
 import org.krunk.browser.ui.browser.LocalLoginUi
 import org.krunk.browser.ui.browser.LoginUiHost
 import org.krunk.browser.ui.browser.SecureWindowEffect
@@ -42,16 +39,16 @@ fun KrunkRoot(vm: BrowserViewModel) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val activeTab by vm.activeTab.collectAsStateWithLifecycle()
     val screens by vm.screens.collectAsStateWithLifecycle()
-    val screen = screens.last()
+    val top = screens.last()
     val hasPrivateTabs by vm.hasPrivateTabs.collectAsStateWithLifecycle()
 
     // Private pages stay out of the Recents thumbnail, screenshots and screen recordings.
     val showPrivate = remember { DebugProps.flag(DebugProps.SHOW_PRIVATE) } // debug builds only
-    val privateOnScreen = activeTab?.private == true || (screen == Screen.TabSwitcher && hasPrivateTabs)
+    val privateOnScreen = activeTab?.private == true || (top == Screen.TabSwitcher && hasPrivateTabs)
     // So does everything of the vault: its screen and each unlock, picker and save dialog (they
     // count themselves in VaultSecureFlag). The debug switch above is for private pages only.
     val vaultOnScreen by VaultSecureFlag.secure.collectAsStateWithLifecycle()
-    SecureWindowEffect((!showPrivate && privateOnScreen) || screen == Screen.Vault || vaultOnScreen)
+    SecureWindowEffect((!showPrivate && privateOnScreen) || top == Screen.Vault || vaultOnScreen)
 
     // Saved logins in pages: the fill picker, the save offer and the HTTP sign-in dialog reach the
     // vault, its unlock dialog and the vault screen through this.
@@ -72,14 +69,17 @@ fun KrunkRoot(vm: BrowserViewModel) {
         }
     }
 
+    // Full screen belongs to the page on screen: ends for a covered or background tab, keeps
+    // the screen on, follows the page's orientation lock.
+    FullScreenEffect(vm, browserOnTop = top == Screen.Browser)
+
     CompositionLocalProvider(LocalLoginUi provides loginUi) {
         KrunkTheme(
             mode = settings.theme,
-            privateMode = activeTab?.private == true && screen == Screen.Browser,
+            privateMode = activeTab?.private == true && top == Screen.Browser,
             appearance = settings.appearance,
         ) {
-            Surface(Modifier.fillMaxSize()) {
-                BackHandler(enabled = screens.size > 1) { vm.pop() }
+            ScreenHost(screens, key = { it.stateKey }, onPop = { vm.pop() }) { screen ->
                 // The browser screen sets the system bar icons for its own (possibly private) theme;
                 // every other screen needs them set for the theme it is drawn in.
                 if (screen != Screen.Browser) SystemBarsEffect(fullScreen = false, darkTheme = LocalKrunkDark.current)

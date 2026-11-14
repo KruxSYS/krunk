@@ -48,6 +48,8 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -71,6 +73,9 @@ import org.krunk.browser.ui.BrowserViewModel
 import org.krunk.browser.ui.newtab.SiteIcon
 import org.krunk.ffi.Bookmark
 
+/** The folder ids from the top level down to the open folder, as saved state. */
+private val FolderStackSaver = listSaver<List<Long>, Long>(save = { it.toList() }, restore = { it })
+
 /**
  * The bookmark manager: the two roots at the top level, folders below, search across all
  * bookmarks, edit/move/delete, new folders, and Netscape HTML import/export through the Android
@@ -86,12 +91,13 @@ fun BookmarksScreen(vm: BrowserViewModel) {
     val snackbar = remember { SnackbarHostState() }
 
     // null = the top level (the two roots); otherwise the open folder and the way back to it.
-    var stack by remember { mutableStateOf<List<Long>>(emptyList()) }
+    // The open folder and the search are kept while another screen covers this one.
+    var stack by rememberSaveable(stateSaver = FolderStackSaver) { mutableStateOf<List<Long>>(emptyList()) }
     val folderId = stack.lastOrNull()
     var folderItem by remember { mutableStateOf<Bookmark?>(null) }
     var items by remember { mutableStateOf<List<Bookmark>>(emptyList()) }
-    var searching by remember { mutableStateOf(false) }
-    var query by remember { mutableStateOf("") }
+    var searching by rememberSaveable { mutableStateOf(false) }
+    var query by rememberSaveable { mutableStateOf("") }
     var refresh by remember { mutableIntStateOf(0) }
 
     var editing by remember { mutableStateOf<Long?>(null) }

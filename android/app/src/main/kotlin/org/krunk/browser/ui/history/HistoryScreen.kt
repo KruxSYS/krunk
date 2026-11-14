@@ -43,6 +43,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,22 +52,23 @@ import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import java.time.Instant
 import java.time.LocalDate
-import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.krunk.browser.R
+import org.krunk.browser.core.HistoryCursor
+import org.krunk.browser.core.HistoryDayKind
+import org.krunk.browser.core.HistoryItem
 import org.krunk.browser.core.HistoryRepository
+import org.krunk.browser.core.HistorySection
 import org.krunk.browser.ui.BrowserViewModel
 import org.krunk.browser.ui.bookmarks.SearchField
 import org.krunk.browser.ui.bookmarks.copyToClipboard
 import org.krunk.browser.ui.newtab.SiteIcon
 import org.krunk.ffi.HistoryEntry
-import org.krunk.ffi.nowMs
 
 /**
  * History: visits newest first, grouped by local day (Today, Yesterday, then dates), loaded a
@@ -82,9 +84,16 @@ fun HistoryScreen(vm: BrowserViewModel) {
     val res = LocalResources.current
     val snackbar = remember { SnackbarHostState() }
 
-    var searching by remember { mutableStateOf(false) }
-    var query by remember { mutableStateOf("") }
-    var entries by remember { mutableStateOf<List<HistoryEntry>>(emptyList()) }
+    // Kept while another screen covers this one: the search and how far the list was loaded
+    // (so the scroll position, which the list state keeps, has its rows again).
+    var searching by rememberSaveable { mutableStateOf(false) }
+    var query by rememberSaveable { mutableStateOf("") }
+    var shownCount by rememberSaveable { mutableIntStateOf(0) }
+    var loaded by remember { mutableStateOf(false) }
+    var entries by remember { mutableStateOf<List<HistoryItem>>(emptyList()) }
+    var sections by remember { mutableStateOf<List<HistorySection>>(emptyList()) }
+    // Where the next page starts: the last row *read*, which a deletion on screen cannot move.
+    var cursor by remember { mutableStateOf<HistoryCursor?>(null) }
     var exhausted by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
     var generation by remember { mutableIntStateOf(0) }
@@ -95,20 +104,48 @@ fun HistoryScreen(vm: BrowserViewModel) {
         if (loading && !reset) return
         loading = true
         try {
-            val before = if (reset) null else entries.lastOrNull()?.ts
+            val before = if (reset) null else cursor
             // A cancelled load (the query changed, the screen left) is not an empty page: it
             // must not mark the list as finished.
             val page = try {
-                repo.page(query.trim(), before)
+                // The first load of a screen that returns reads as much as was shown before.
+                val limit = if (reset &&
+                    !loaded
+                ) {
+                    shownCount.coerceIn(HistoryRepository.PAGE, MAX_RESTORE)
+                } else {
+                    HistoryRepository.PAGE
+                }
+                repo.page(query.trim(), before, limit)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                emptyList()
+                null
             }
-            entries = if (reset) page else entries + page.filter { p -> entries.none { it.id == p.id } }
-            exhausted = page.size < HistoryRepository.PAGE
+            // A newer query replaced the list while this "more" page was read: it belongs nowhere.
+            if (!reset && cursor != before) return
+            if (page == null) {
+                // The read failed: show what there is and stop asking.
+                if (reset) {
+                    entries = emptyList()
+                    sections = emptyList()
+                    cursor = null
+                }
+                exhausted = true
+                return
+            }
+            // Pages are cut by (time, id): nothing of a page can be in the list already.
+            val all = if (reset) page.items else entries + page.items
+            // Day runs are built off the main thread; the rows already carry day and time.
+            val grouped = repo.sections(all)
+            entries = all
+            sections = grouped
+            shownCount = all.size
+            if (reset || page.next != null) cursor = page.next
+            exhausted = page.last
         } finally {
             loading = false
+            if (reset) loaded = true
         }
     }
 
@@ -135,18 +172,16 @@ fun HistoryScreen(vm: BrowserViewModel) {
     }
 
     fun delete(e: HistoryEntry) {
-        entries = entries.filterNot { it.id == e.id }
+        // One pass over rows in memory that already carry their day: no FFI, no date maths.
+        entries = entries.filterNot { it.entry.id == e.id }
+        sections = HistoryRepository.groupByDay(entries)
         scope.launch {
             runCatching { repo.delete(listOf(e.id)) }
             snackbar.showSnackbar(res.getString(R.string.history_entry_deleted))
         }
     }
 
-    val zone = remember { ZoneId.systemDefault() }
-    val now = nowMs()
-    val today = HistoryRepository.localDay(now)
-    val yesterday = HistoryRepository.localDay(now - DAY_MS)
-    val sections = remember(entries) { HistoryRepository.groupByDay(entries) }
+    val now = System.currentTimeMillis()
 
     Scaffold(
         topBar = {
@@ -192,24 +227,28 @@ fun HistoryScreen(vm: BrowserViewModel) {
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
-        if (entries.isEmpty() && !loading) {
+        // The list appears with its first rows, not before: a scroll position kept from an
+        // earlier visit would be lost on a list that is still empty.
+        if (entries.isEmpty()) {
             Box(Modifier.fillMaxSize().padding(padding).padding(32.dp), contentAlignment = Alignment.Center) {
-                Text(
-                    if (query.isNotBlank()) {
-                        stringResource(R.string.history_no_results, query.trim())
-                    } else {
-                        stringResource(R.string.history_empty)
-                    },
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodyLarge,
-                )
+                if (loaded && !loading) {
+                    Text(
+                        if (query.isNotBlank()) {
+                            stringResource(R.string.history_no_results, query.trim())
+                        } else {
+                            stringResource(R.string.history_empty)
+                        },
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                }
             }
         } else {
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(padding)) {
                 for (section in sections) {
                     item(key = "day-${section.day}") {
                         Text(
-                            dayLabel(section.day, today, yesterday),
+                            dayLabel(section.day, now),
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.fillMaxWidth().padding(
@@ -220,10 +259,11 @@ fun HistoryScreen(vm: BrowserViewModel) {
                             ),
                         )
                     }
-                    items(section.entries, key = { it.id }) { e ->
+                    items(section.items, key = { it.entry.id }) { item ->
+                        val e = item.entry
                         HistoryRow(
                             e = e,
-                            time = timeLabel(e.ts, zone),
+                            time = item.time,
                             vm = vm,
                             onOpen = {
                                 vm.goTo(e.url)
@@ -267,6 +307,8 @@ fun HistoryScreen(vm: BrowserViewModel) {
                         // The same clearing as Settings > Clear browsing data > History.
                         val ok = vm.clearBrowsingData(history = true).isSuccess
                         entries = emptyList()
+                        sections = emptyList()
+                        cursor = null
                         generation++
                         val text = if (ok) R.string.history_cleared else R.string.settings_clear_failed
                         snackbar.showSnackbar(res.getString(text))
@@ -347,19 +389,17 @@ private fun HistoryRow(
     }
 }
 
-private const val DAY_MS = 86_400_000L
-
 @Composable
-private fun dayLabel(day: String, today: String, yesterday: String): String = when (day) {
-    today -> stringResource(R.string.history_today)
-    yesterday -> stringResource(R.string.history_yesterday)
-    else -> remember(day) { formatDay(day) }
+private fun dayLabel(day: String, now: Long): String = when (HistoryRepository.dayKind(day, now)) {
+    HistoryDayKind.TODAY -> stringResource(R.string.history_today)
+    HistoryDayKind.YESTERDAY -> stringResource(R.string.history_yesterday)
+    HistoryDayKind.DATE -> remember(day) { formatDay(day) }
 }
+
+/** The most rows read at once when a kept list comes back (one FFI page). */
+private const val MAX_RESTORE = 1000
 
 /** `YYYY-MM-DD` as a full localised date ("Tuesday, 11 November 2026"); the key itself if odd. */
 fun formatDay(day: String): String = runCatching {
     LocalDate.parse(day).format(DateTimeFormatter.ofLocalizedDate(FormatStyle.FULL))
 }.getOrDefault(day)
-
-fun timeLabel(ts: Long, zone: ZoneId): String =
-    Instant.ofEpochMilli(ts).atZone(zone).toLocalTime().format(DateTimeFormatter.ofPattern("HH:mm"))
