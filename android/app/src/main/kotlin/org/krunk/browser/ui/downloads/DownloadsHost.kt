@@ -14,12 +14,16 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.delay
 import org.krunk.browser.R
 import org.krunk.browser.downloads.DownloadController
 import org.krunk.browser.downloads.DownloadMessage
@@ -28,7 +32,9 @@ import org.krunk.browser.downloads.PendingDownload
 /**
  * What downloads show over any screen: the question before a download a page started, Android's
  * notification question at the first download, and short messages. The state behind it lives in
- * the [DownloadController], so nothing is lost when a screen changes.
+ * the [DownloadController], so nothing is lost when a screen changes. Composed exactly once
+ * (outside the per-screen content, which runs for the covered browser too): one dialog, one
+ * permission request, one collector of the messages.
  */
 @Composable
 fun DownloadsHost(downloads: DownloadController) {
@@ -61,6 +67,7 @@ fun DownloadsHost(downloads: DownloadController) {
                 is DownloadMessage.Started -> res.getString(R.string.download_started, message.fileName)
                 DownloadMessage.TooManyQuestions -> res.getString(R.string.downloads_too_many_questions)
                 DownloadMessage.NotificationsOff -> res.getString(R.string.downloads_notifications_off)
+                is DownloadMessage.AlreadySaved -> res.getString(R.string.downloads_already_saved, message.fileName)
             }
             val long = message !is DownloadMessage.Started
             Toast.makeText(context, text, if (long) Toast.LENGTH_LONG else Toast.LENGTH_SHORT).show()
@@ -68,9 +75,18 @@ fun DownloadsHost(downloads: DownloadController) {
     }
 }
 
-/** Asks before a download a page started: the file name and the site it comes from. */
+/**
+ * Asks before a download a page started: the file name and the site it comes from. "Download"
+ * takes taps only after [ARM_DELAY_MS]: a page cannot time its download to a tap the user meant
+ * for the page.
+ */
 @Composable
 private fun DownloadQuestion(download: PendingDownload, waiting: Int, onDownload: () -> Unit, onCancel: () -> Unit) {
+    var armed by remember(download) { mutableStateOf(false) }
+    LaunchedEffect(download) {
+        delay(ARM_DELAY_MS)
+        armed = true
+    }
     AlertDialog(
         onDismissRequest = onCancel,
         title = { Text(stringResource(R.string.download_confirm_title)) },
@@ -102,7 +118,11 @@ private fun DownloadQuestion(download: PendingDownload, waiting: Int, onDownload
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDownload) { Text(stringResource(R.string.download_confirm_yes)) } },
+        confirmButton = {
+            TextButton(onClick = onDownload, enabled = armed) { Text(stringResource(R.string.download_confirm_yes)) }
+        },
         dismissButton = { TextButton(onClick = onCancel) { Text(stringResource(android.R.string.cancel)) } },
     )
 }
+
+private const val ARM_DELAY_MS = 500L
