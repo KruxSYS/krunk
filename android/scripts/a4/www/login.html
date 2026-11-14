@@ -5,4 +5,6 @@
 <input id=p name=password type=password autocomplete=current-password placeholder=password>
 <button id=s>Sign in</button></form>
 <div id=o>u= p=</div>
-<script>setInterval(()=>{o.textContent='u='+u.value+' p='+p.value},400)</script>
+<!-- The values are shown for the device tests. Written only when they change: a page that keeps
+     changing never lets uiautomator see an idle screen. -->
+<script>setInterval(()=>{const t='u='+u.value+' p='+p.value;if(o.textContent!==t)o.textContent=t},400)</script>

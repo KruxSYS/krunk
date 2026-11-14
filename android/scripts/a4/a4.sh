@@ -32,13 +32,16 @@ REL=${REL:-}; APK=$DEBUG_APK; [ -n "$REL" ] && APK=$RELEASE_APK
 # script so both stay the same.
 # shellcheck disable=SC1090
 source <(sed -n '/^dcheck() {/,/^privacy() {/p' "$HERE/a3.sh")
+# A failed dump must not leave the previous screen's nodes to be read again.
+dump() { A "rm -f /sdcard/ui.xml; uiautomator dump ${WIN:+--windows} /sdcard/ui.xml" > /dev/null 2>&1; UI=$(A "cat /sdcard/ui.xml" 2> /dev/null); }
 PW=fixture-password-1
 PW2=second-password-22
 LOGIN="$B/login.html"
 HTTPS_LOGIN=https://the-internet.herokuapp.com/login
 
 type_text() { A "input text '$1'"; sleep 1; }
-field() { tapui text "$1" 1 && type_text "$2"; }            # field LABEL VALUE: tap a text field by its label, type
+field() { tapui text "$1" 1 && type_text "$2"; }
+refield() { tapui text "$1" 1 && A "input keycombination 113 29" && A "input keyevent KEYCODE_DEL" && type_text "$2"; }   # clear first            # field LABEL VALUE: tap a text field by its label, type
 hidekb() { dump; A "dumpsys input_method" 2> /dev/null | grep -q "mInputShown=true" && { A "input keyevent KEYCODE_BACK"; sleep 1; }; return 0; }
 waitfor() { # waitfor text|desc VALUE [seconds] [--contains]
   local i; for i in $(seq 1 "${3:-15}"); do dump; has "$1" "$2" ${4:-} && return 0; sleep 1; done; return 1
@@ -52,38 +55,39 @@ passwords() { menu && tapui text "Passwords" 3; }
 unlock_dialog() { waitfor text "Unlock vault" 8 || waitfor text "The vault is locked" 3; field "Vault password" "${1:-$PW}"; hidekb; tapui text "Unlock" 4; }
 dbgv() { dbg "$@"; sleep 2; T "$E" adb logcat -d -v time -s KrunkGuard:I | grep "debug: vault" | tail -1 | sed 's/.*debug: //'; }
 vstate() { dbgv vault-status | grep -oE 'state=[A-Z_]+' | cut -d= -f2; }
-pagevals() { dump; echo "$UI" | python3 -I "$HERE/uix.py" list | grep -oE 'u=[^ ]* p=[^ ]*' | head -1; }
+pagevals() { dump; echo "$UI" | python3 -I "$HERE/uix.py" list | grep -oE "u=[^' ]* p=[^' ]*" | head -1; }
 open_login() { view "$1" 8; waitfor text "Sign in" 20 --contains || bad "login page did not load ($1)"; }
-tap_user() { tapui text "user" 3 || true; }
+# The test login page has a fixed layout (toolbar at the top); its fields have no names for
+# the accessibility tree, so they are tapped by position.
+tap_user() { tap 518 514 3; }
+tap_pass() { tap 518 688 2; }
+submit() { tap 480 862 "${1:-4}"; }
 
 t_create() {
   fresh "$APK"; launch 9; front create || return
   passwords; waitfor text "Create vault" 10 || { missing "Create vault"; return; }
   shotblack create-none
-  tapui text "Create vault" 2
+  dump; check "the form says there is no recovery" 'has text "cannot be opened" --contains'
   field "Vault password" short1; field "Repeat the password" short1; hidekb; tapui text "Create vault" 2
   dump; check "a 6-character password is refused" 'has text "Use at least" --contains'
-  A "input keyevent KEYCODE_BACK"; sleep 1; tapui text "Create vault" 2
-  field "Vault password" "$PW"; field "Repeat the password" "${PW}x"; hidekb; tapui text "Create vault" 2
+  refield "Vault password" "$PW"; refield "Repeat the password" "${PW}x"; hidekb; tapui text "Create vault" 2
   dump; check "two different passwords are refused" 'has text "The two passwords are not the same"'
-  A "input keyevent KEYCODE_BACK"; sleep 1; tapui text "Create vault" 2
-  dump; check "the dialog says there is no recovery" 'has text "cannot be opened" --contains'
-  field "Vault password" "$PW"; field "Repeat the password" "$PW"; hidekb; tapui text "Create vault" 6
+  refield "Repeat the password" "$PW"; hidekb; tapui text "Create vault" 6
   waitfor text "No logins yet" 15 --contains; check "vault created and open (empty list)" 'has text "No logins yet" --contains'
   [ -z "$REL" ] && check "debug: state UNLOCKED" '[ "$(vstate)" = UNLOCKED ]'
   shotblack create-open
-  tapui desc "More" 2 --contains || tapui desc "Menu" 2; tapui text "Lock now" 3
-  waitfor text "The vault is locked" 6; check "Lock now locks" 'has text "The vault is locked" --contains'
-  # wrong password, twice: the second attempt is held back by the rate limit
+  tapui desc "More" 2; tapui text "Lock now" 3
+  waitfor text "The vault is locked" 6 --contains; check "Lock now locks" 'has text "The vault is locked" --contains'
+  # wrong password, then at once again: the second attempt is held back by the rate limit
   field "Vault password" wrong-password-1; hidekb; tapui text "Unlock" 4
-  waitfor text "Wrong password" 8; check "wrong password is said" 'has text "Wrong password" --contains'
+  waitfor text "Wrong password" 8 --contains; check "wrong password is said" 'has text "Wrong password" --contains'
   tapui text "Unlock" 3; tapui text "Unlock" 1
   dump; check "rate-limit message" 'has text "Too many attempts" --contains'
+  echo "$UI" | python3 -I "$HERE/uix.py" list > "$EV/create-ratelimit-nodes.txt"
   shotblack create-ratelimit
-  [ -z "$REL" ] && { A "am broadcast -a org.krunk.browser.DEBUG --es cmd vault-shot --es name create-ratelimit" > /dev/null; }
-  sleep 6
-  A "input keyevent KEYCODE_BACK"; sleep 1; passwords
-  unlock_dialog "$PW"; waitfor text "No logins yet" 15 --contains
+  sleep 8
+  refield "Vault password" "$PW"; hidekb; tapui text "Unlock" 5
+  waitfor text "No logins yet" 15 --contains
   check "the right password unlocks after the wait" 'has text "No logins yet" --contains'
   stop_clean
 }
@@ -91,8 +95,8 @@ t_create() {
 t_save() { # plain http page: warning before save and before fill
   launch 8; front save || return
   open_login "$LOGIN?save"
-  tap_user; type_text alice; hidekb; tapui text "password" 2; type_text s3cret-one; hidekb
-  local m; m=$(now); tapui text "Sign in" 4
+  tap_user; type_text alice; hidekb; tap_pass; type_text s3cret-one; hidekb
+  local m; m=$(now); submit 4
   waitfor text "Save this sign-in?" 10; check "save offer after submit" 'has text "Save this sign-in?"'
   dump; check "the offer names user and site, not the password" 'has text "alice on" --contains && ! has text "s3cret-one" --contains'
   shot save-offer
@@ -115,34 +119,47 @@ t_save() { # plain http page: warning before save and before fill
   check "the form is filled" '[ "$(pagevals)" = "u=alice p=s3cret-one" ]'
   shot save-filled
   # same login again: no offer
-  tapui text "Sign in" 5; dump
+  submit 5; dump
   check "an unchanged login is not offered again" '! has text "Save this sign-in?" && ! has text "Update the saved password?"'
   # changed password: update
   open_login "$LOGIN?update"
   tap_user; sleep 2; dump; has text "Fill in anyway" && { A "input keyevent KEYCODE_BACK"; sleep 1; }
-  tap_user; type_text alice; hidekb; tapui text "password" 2; type_text s3cret-new; hidekb; tapui text "Sign in" 4
+  tap_user; type_text alice; hidekb; tap_pass; type_text s3cret-new; hidekb; submit 4
   waitfor text "Update the saved password?" 10; check "a changed password offers Update" 'has text "Update the saved password?"'
   shot save-update
   tapui text "Update" 2; dump; has text "Save anyway" && tapui text "Save anyway" 3
   stop_clean
 }
 
-t_https() {
+t_newvault() { # a vault with the test password on the installed app (after keylost)
+  launch 8; front newvault || return
+  passwords; waitfor text "Create vault" 10 || { missing "Create vault"; return; }
+  field "Vault password" "$PW"; field "Repeat the password" "$PW"; hidekb; tapui text "Create vault" 6
+  waitfor text "No logins yet" 15 --contains; check "vault created" 'has text "No logins yet" --contains'
+  A "input keyevent KEYCODE_BACK"; sleep 1
+  stop_clean
+}
+
+t_https() { # a public https login form (fields tapped by position: 1080x2400, toolbar at the top)
   launch 8; front https || return
-  view "$HTTPS_LOGIN" 12; waitfor text "Login Page" 30 --contains || { skip "https test site not reachable"; stop_clean; return; }
-  tapui text "Username" 3 --contains || A "input tap 400 900"; type_text tomsmith; hidekb
-  tapui text "Password" 2 --contains; type_text 'SuperSecretPassword!'; hidekb
-  A "input keyevent KEYCODE_ENTER"; sleep 6
+  view "$HTTPS_LOGIN" 12; waitfor text "Login Page" 30 || { skip "https test site not reachable"; stop_clean; return; }
+  tap 500 1195 2; type_text tomsmith; hidekb; tap 500 1360 2; type_text 'SuperSecretPassword!'; hidekb
+  tapui text " Login" 6
   waitfor text "Save this sign-in?" 10; check "https: save offer" 'has text "Save this sign-in?"'
+  shot https-offer
   tapui text "Save" 3
   dump; check "https: no warning" '! has text "This page is not encrypted"'
   has text "Unlock vault" && unlock_dialog "$PW"; sleep 2
-  view "$HTTPS_LOGIN" 12; waitfor text "Login Page" 30 --contains
-  tapui text "Username" 3 --contains
-  dump; has text "Unlock vault" && unlock_dialog "$PW"
-  waitfor text "Choose a saved sign-in:" 8; check "https: picker without warning" 'has text "tomsmith"'
+  view "$HTTPS_LOGIN" 12; waitfor text "Login Page" 30
+  tap 500 1195 3
+  dump; check "https: no warning before the picker" '! has text "This page is not encrypted"'
+  has text "Unlock vault" && unlock_dialog "$PW"
+  waitfor text "Choose a saved sign-in:" 8; check "https: the picker shows" 'has text "Choose a saved sign-in:"'
   shotblack https-picker
   tapui text "tomsmith" 4; hidekb; shot https-filled
+  tapui text " Login" 8; waitfor text "Secure Area" 15 --contains
+  check "https: signed in with the filled login" 'has text "Secure Area" --contains'
+  dump; check "https: no offer for the unchanged login" '! has text "Save this sign-in?"'
   stop_clean
 }
 
@@ -164,11 +181,11 @@ t_private() {
   launch 8; front private || return
   passwords; dump; has text "The vault is locked" --contains && unlock_dialog "$PW"; sleep 2; A "input keyevent KEYCODE_BACK"; sleep 1
   menu; tapui text "New private tab" 3
-  tapui desc "Address" 2 --contains || A "input tap 400 210"; type_text "${LOGIN#http://}?private"; A "input keyevent KEYCODE_ENTER"; sleep 9
+  tapui desc "Edit address" 2; type_text "${LOGIN#http://}?private"; A "input keyevent KEYCODE_ENTER"; sleep 9
   [ -z "$REL" ] && A "setprop debug.krunk.show_private 1"
   tap_user; sleep 4; dump
   check "private tab: no picker, no warning at the tap" '! has text "Choose a saved sign-in:" && ! has text "This page is not encrypted" && ! has text "Unlock vault"'
-  type_text privuser; hidekb; tapui text "password" 2; type_text privpw99; hidekb; tapui text "Sign in" 5; dump
+  type_text privuser; hidekb; tap_pass; type_text privpw99; hidekb; submit 5; dump
   check "private tab: no save offer" '! has text "Save this sign-in?"'
   A "input keyevent KEYCODE_BACK"; sleep 4
   menu; tapui text "Fill from vault" 2
@@ -187,12 +204,13 @@ t_auth() {
   field "User name" krunk; field "Password" test; hidekb; tapui text "Sign in" 6
   waitfor text "Save this sign-in?" 10; check "HTTP sign-in: save offer after success" 'has text "Save this sign-in?"'
   tapui text "Save" 2; dump; has text "Save anyway" && tapui text "Save anyway" 3
-  A "am force-stop $PKG"; sleep 1; launch 8   # the engine forgets the session's credentials
-  dump; has text "Restore" --contains && tapui text "Restore" 3 --contains
-  passwords; dump; has text "The vault is locked" --contains && unlock_dialog "$PW"; sleep 2; A "input keyevent KEYCODE_BACK"; sleep 1
-  view "$B/auth?2" 6; waitfor text "Sign in to" 10 --contains
-  waitfor text "Use krunk" 6; check "HTTP sign-in: the saved login is offered" 'has text "Use krunk"'
-  shotblack auth-offer || true; shot auth-offer-raw
+  stop_clean; launch 8   # a new process: the engine has forgotten the session's sign-in, the vault is locked
+  view "$B/auth?2" 6; waitfor text "Sign in to" 12 --contains || { missing "sign-in dialog"; return; }
+  dump; check "HTTP sign-in, vault locked: unlock is offered, no login is shown" 'has text "Unlock vault for saved sign-ins" && ! has text "Use krunk"'
+  shot auth-locked
+  tapui text "Unlock vault for saved sign-ins" 2; unlock_dialog "$PW"
+  waitfor text "Use krunk" 8; check "HTTP sign-in: the saved login is offered" 'has text "Use krunk"'
+  shotblack auth-offer
   tapui text "Use krunk" 2
   waitfor text "This page is not encrypted" 4; check "HTTP sign-in over http: confirmation" 'has text "Use anyway"'
   tapui text "Use anyway" 2; tapui text "Sign in" 6
@@ -201,72 +219,91 @@ t_auth() {
   stop_clean
 }
 
+# Start for the tests that begin in the vault screen: a restored tab may be asking to sign in.
+to_vault() {
+  launch 8; dump; has text "Cancel" && has text "Sign in to" --contains && tapui text "Cancel" 2
+  passwords; dump; has text "The vault is locked" --contains && { field "Vault password" "$PW"; hidekb; tapui text "Unlock" 5; }
+  waitfor desc "Add login" 10
+}
+vault_settings() { tapui desc "More" 2 && tapui text "Settings" 2; }
+
 t_screen() {
-  launch 8; front screen || return
-  passwords; dump; has text "The vault is locked" --contains && unlock_dialog "$PW"
-  waitfor text "Search logins" 8
+  to_vault; front screen || return
   shotblack screen-list
   dump; check "the list has the saved logins" 'has text "alice" && has text "krunk"'
-  field "Search logins" kru; hidekb; dump
+  tapui desc "Search" 2; type_text kru; hidekb; dump
   check "search narrows the list" 'has text "krunk" && ! has text "alice"'
   tapui text "krunk" 3
-  dump; check "the password is hidden at first" '! has text "test"'
+  dump; check "the password is hidden at first" 'has desc "Password, hidden" && ! has text "test"'
   tapui text "Show" 2; dump; check "Show reveals it" 'has text "test"'
-  tapui text "Edit" 2 || tapui desc "Edit" 2
-  field "User name" 2; hidekb; tapui text "Save" 3
-  dump; check "edited user name is shown" 'has text "krunk2" --contains'
-  tapui text "Delete" 2 || tapui desc "Delete" 2
-  dump; check "delete asks first" 'has text "Delete this login?"'
-  tapui text "Delete" 3
-  A "input keyevent KEYCODE_BACK"; sleep 1; dump
+  tapui text "Edit" 2
+  tapui text "krunk" 1; type_text 2; hidekb; tapui text "Save" 3
+  A "input keyevent KEYCODE_BACK"; sleep 1; dump; has text "Close" && tapui text "Close" 1
+  tapui desc "Close" 2; dump
+  check "the edited user name is in the list" 'has text "krunk2" --contains'
+  tapui text "krunk2" 3 --contains; tapui text "Delete" 2
+  dump; check "delete asks first, naming site and user" 'has text "Delete this login?" && has text "krunk2" --contains'
+  shot screen-delete-confirm
+  tapui text "Delete" 3; sleep 1; dump; has text "Close" && tapui text "Close" 1
+  dump; check "the login is gone from the list" '! has text "krunk2" --contains && has text "alice"'
   stop_clean
 }
 
 t_timer() { # 1 minute
-  launch 8; front timer || return
-  passwords; dump; has text "The vault is locked" --contains && unlock_dialog "$PW"
-  tapui desc "More" 2 --contains; tapui text "Settings" 2; tapui text "1 minute" 2 --contains; A "input keyevent KEYCODE_BACK"; sleep 1
+  to_vault; front timer || return
+  vault_settings; tapui text "1 minute" 2 --contains; A "input keyevent KEYCODE_BACK"; sleep 1
   shot timer-setting
   sleep 80; dump
   check "locked after a minute without use" 'has text "The vault is locked" --contains'
   shotblack timer-locked
-  unlock_dialog "$PW"; waitfor text "Search logins" 8; check "unlocks again" 'has text "Search logins"'
+  field "Vault password" "$PW"; hidekb; tapui text "Unlock" 5; waitfor desc "Add login" 8; check "unlocks again" 'has desc "Add login"'
   stop_clean
 }
 
 t_grace() { # 30 s grace
-  launch 8; front grace || return
-  passwords; dump; has text "The vault is locked" --contains && unlock_dialog "$PW"
-  tapui desc "More" 2 --contains; tapui text "Settings" 2; tapto text "After 30 seconds" 2; tapui text "15 minutes" 2 --contains; A "input keyevent KEYCODE_BACK"; sleep 1
+  to_vault; front grace || return
+  vault_settings; tapto text "After 30 seconds" 2; tapui text "15 minutes" 2 --contains; A "input keyevent KEYCODE_BACK"; sleep 1
   A "input keyevent KEYCODE_HOME"; sleep 10
   shot grace-recents-home
-  launch 3; dump; check "back after 10 s: still open" 'has text "Search logins"'
+  launch 3; dump; check "back after 10 s: still open" 'has desc "Add login"'
   A "input keyevent KEYCODE_HOME"; sleep 40
   launch 3; dump; check "back after 40 s: locked" 'has text "The vault is locked" --contains'
   shotblack grace-locked
-  unlock_dialog "$PW"; waitfor text "Search logins" 8; check "unlocks again after the background lock" 'has text "Search logins"'
+  field "Vault password" "$PW"; hidekb; tapui text "Unlock" 5; waitfor desc "Add login" 8; check "unlocks again after the background lock" 'has desc "Add login"'
   A "input keyevent KEYCODE_APP_SWITCH"; sleep 3; shot grace-recents; A "input keyevent KEYCODE_HOME"; sleep 1
   stop_clean
 }
 
 t_nobio() {
-  launch 8; front nobio || return
-  passwords; dump; has text "The vault is locked" --contains && unlock_dialog "$PW"
-  tapui desc "More" 2 --contains; tapui text "Settings" 2; scrollto text "Unlock with fingerprint"
+  to_vault; front nobio || return
+  vault_settings; scrollto text "Unlock with fingerprint"
   dump; check "no fingerprint enrolled: the reason is shown" 'has text "No fingerprint enrolled on this device"'
   check "the switch is disabled" '[ "$(attr text "Unlock with fingerprint" enabled --clickable)" = false ]'
   A "am broadcast -a org.krunk.browser.DEBUG --es cmd vault-shot" > /dev/null 2>&1; shot nobio-raw
   stop_clean
 }
 
-t_fixture() {
+add_login() { # add_login SITE USER PASSWORD, in the open vault screen
+  tapui desc "Add login" 2; field "Site" "$1"; field "User name" "$2"; field "Password" "$3"; hidekb; tapui text "Save" 3
+  dump; has text "Close" && tapui text "Close" 1; return 0
+}
+
+t_fixture() { # the vault file for the cross-platform format test, made by the app with the real Keystore
   [ -n "$REL" ] && { skip "fixture (needs a debug build)"; return; }
-  launch 8; front fixture || return
+  fresh "$APK"; launch 9; front fixture || return
+  passwords; waitfor text "Create vault" 10
+  field "Vault password" "fixture%spassword"; field "Repeat the password" "fixture%spassword"; hidekb; tapui text "Create vault" 6
+  waitfor text "No logins yet" 15 --contains || { missing "open vault"; return; }
+  add_login https://bank.example alice s3cret-one
+  add_login https://mail.example:8443 bob s3cret-two
+  dump; check "both logins are in the list" 'has text "alice" && has text "bob"'
   echo "fixture: $(dbgv vault-fixture)"
   local d="$EV/fixture"; mkdir -p "$d"
   T "$E" adb exec-out run-as $PKG cat files/krunk-vault/vault.json > "$d/vault-android-keystore.json"
   T "$E" adb exec-out run-as $PKG cat files/krunk-vault/vault-inner.json > "$d/vault-android-inner.json"
+  A "run-as $PKG ls -la files/krunk-vault/" > "$d/files.txt"
   A "run-as $PKG rm files/krunk-vault/vault-inner.json"
+  A "getprop ro.build.fingerprint" > "$d/device.txt"; A "dumpsys package $PKG" | grep -m2 -E "versionName|versionCode" >> "$d/device.txt"
   check "both files pulled" '[ -s "$d/vault-android-keystore.json" ] && [ -s "$d/vault-android-inner.json" ]'
   stop_clean
 }
@@ -274,16 +311,19 @@ t_fixture() {
 t_keylost() {
   [ -n "$REL" ] && { skip "keylost (needs a debug build)"; return; }
   launch 8; front keylost || return
+  dump; has text "Cancel" && has text "Sign in to" --contains && tapui text "Cancel" 2
   echo "drop key: $(dbgv vault-drop-key)"
   A "input keyevent KEYCODE_HOME"; sleep 3; A "am force-stop $PKG"; launch 8
+  dump; has text "Cancel" && has text "Sign in to" --contains && tapui text "Cancel" 2
   passwords; waitfor text "This vault cannot be opened" 8
   check "key lost: the screen says so, no password is asked" 'has text "This vault cannot be opened" && ! has text "Unlock"'
   shotblack keylost
   check "the vault file is still there" 'A "run-as $PKG ls files/krunk-vault/" | grep -q vault.json'
   tapui text "Delete this vault" 2; field "Type DELETE" delete; hidekb; tapui text "Delete this vault" 2
   dump; check "lower-case confirmation is refused" 'has text "capital letters" --contains'
-  field "Type DELETE" DELETE; hidekb; tapui text "Delete this vault" 3
+  refield "Type DELETE" DELETE; hidekb; tapui text "Delete this vault" 3
   waitfor text "Create vault" 8; check "after deleting: no vault, Create offered" 'has text "Create vault"'
+  check "the vault file is gone" '! A "run-as $PKG ls files/krunk-vault/" | grep -q vault.json'
   stop_clean
 }
 
@@ -311,14 +351,14 @@ t_upgrade() {
   shot upgrade-started
   tapui desc "Tabs" 2 --contains; shot upgrade-tabs; A "input keyevent KEYCODE_BACK"; sleep 1
   menu; tapui text "Bookmarks" 3; dump; check "bookmark kept" 'has text "login" --contains'; A "input keyevent KEYCODE_BACK"; sleep 1
-  passwords; waitfor text "Create vault" 10; tapui text "Create vault" 2
+  passwords; waitfor text "Create vault" 10
   field "Vault password" "$PW"; field "Repeat the password" "$PW"; hidekb; tapui text "Create vault" 6
   waitfor text "No logins yet" 15 --contains; check "upgrade: a vault can be created" 'has text "No logins yet" --contains'
   stop_clean
 }
 
 for t in "$@"; do
-  echo "=== $t"; "t_$t"; alive || { echo "DEVICE NOT ANSWERING"; exit 4; }
+  echo "=== $t"; "t_$t"; [ "$(A "echo up" 2> /dev/null | tr -d "\r")" = up ] || { echo "DEVICE NOT ANSWERING"; exit 4; }
 done
 echo "RESULT pass=$PASS fail=$FAIL skip=$SKIP"
 [ "$FAIL" -eq 0 ]

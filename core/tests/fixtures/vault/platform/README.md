@@ -14,11 +14,18 @@ entropy; the two files differ in the `wrap` and `vaultKey` lines only. SHA-256:
 `d5d35fa7…832d` (as written), `58dee4e1…22c2` (inner). Full notes, the screenshot of the passwords
 page and the verification output: `.pipeline/evidence-android-0.3.0/fixtures/windows/README.md`.
 
-**Android: see below** (a stand-in until the emulator pass of M5 replaces it; the section is
-rewritten then).
+**Android: real.** `vault-android-keystore.json` is the unchanged `files/krunk-vault/vault.json`
+that the debug build of Krunk for Android (main at `3efdf63`, on the way to 0.3.0) wrote on the
+sandbox emulator (Android 16, `sdk_gphone64_x86_64`, no StrongBox: the wrap key is the TEE-backed
+Keystore key) on 2026-11-14: vault created and both logins added through the Passwords screen
+(`android/scripts/a4/a4.sh fixture`). `vault-android-inner.json` was made from it on the same
+install by the debug hook `vault-fixture` (`DebugHooks.kt`): Keystore `unprotect` of `vaultKey`;
+the two files differ in the `wrap` and `vaultKey` lines only. SHA-256: `30c85426ba8ee0ecefbd92d51ccfe099ebed5c1c8631bfbf610c739124000901` (as written),
+`82c182838dcb9b543af6662fc3321ea8cbc6f4de336bd4ba6010cd750cfb4870` (inner). Pulled files and the run's log: `.pipeline/evidence-android-0.3.0/m5/fixture/`,
+`m5/run-fixture.log`.
 
-`vault-android-inner.json`, while a stand-in, was made on Linux by the shared core
-(`cargo test -p krunk_ffi -- --ignored generate_the_platform_stand_ins`).
+Neither file as written can be opened anywhere else; the test checks that this fails cleanly and
+that everything but `wrap` and `vaultKey` equals the inner twin.
 
 ## What belongs here
 
@@ -46,9 +53,9 @@ Content of every file, so the test needs no knowledge of ids, times or the order
 
 The stand-ins use the cost a new vault gets in both apps (Argon2id, 64 MiB, 3 passes, 1 lane).
 
-## Replacing a stand-in
+## Making them again
 
-Put the new files here under the names above and run `cargo test -p krunk_ffi platform`. The
-generator refuses to overwrite a file that exists unless `KRUNK_REGEN_FIXTURES=1` is set, so a
-real file is not replaced by a stand-in by accident. Then rewrite the status section above: say
-which Krunk version, which machine and which strip script produced each file.
+Windows: `strip-dpapi.ps1` here and the steps in the evidence README. Android:
+`android/scripts/a4/a4.sh fixture` on a debug build. `cargo test -p krunk_ffi platform` then
+checks the new files. (The stand-in generator `generate_the_platform_stand_ins` remains as an
+ignored test; it refuses to overwrite a file unless `KRUNK_REGEN_FIXTURES=1` is set.)
