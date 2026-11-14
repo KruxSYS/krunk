@@ -1,6 +1,7 @@
 # Krunk for Android: plan
 
-Status: **in progress** (round 1 delivered Android 0.1.0 and 0.1.1: toolchain, engine spike, core
+Status: **in progress** (0.5.0 delivered milestone A6: the website APK updates itself on request,
+a Play build is ready but not uploaded; round 1 delivered Android 0.1.0 and 0.1.1: toolchain, engine spike, core
 browsing, tabs, new-tab page, bookmarks/history, settings; round 2 so far delivered 0.2.0: ad and
 tracker blocking with uBlock Origin (milestone A3), a quiet engine, themes, and 0.3.0: the
 password vault (milestone A4), with save and fill in pages and optional fingerprint unlock; see
@@ -80,6 +81,24 @@ Spike measurements (sandbox emulator, Android 16 x86_64, software GPU, 4 vCPU):
   first frame, GeckoRuntime ready after ~100 ms, `https://example.com` loaded ~6 s after process start.
 - `ensureBuiltIn` of a bundled extension: works (installed once, persists across restarts).
 - `http://example.com` → `https://example.com/` without any Krunk code (HTTPS-First).
+
+### Decisions taken for Android 0.5.0 (A6, 2026-11-14)
+
+Defaults from §5 stated at the plan review (`.pipeline/plan-android-0.5.0.md`); the operator may
+still override them.
+
+| Decision | Value |
+|---|---|
+| Channels | **Website APK** (`direct` flavour) with a signed in-app update check: published. **Google Play** (`play` flavour): AAB built and listing drafted (`android/play/`, `dist/play/`), **nothing uploaded**. **F-Droid:** later, if there is demand |
+| Update manifest | Channel `android-arm64`, `/updates/android-arm64/latest.json` + `.sig`, signed by `publish-android.sh` with the **existing Windows Ed25519 update key** (same scheme; its public half is compiled into the app). Lists every ABI with URL, size and SHA-256; the app takes its own ABI, the universal APK only as a fallback. Notes are inline |
+| When the app contacts the server | Only on the user's tap on **Check for updates** (manifest + signature) and on **Download and install** (one APK). No start-up check, timer, WorkManager or push; no "check automatically" option. User-Agent `Krunk-Android/<version>`, nothing else |
+| Before the installer | Size and SHA-256 from the signed manifest; package `org.krunk.browser`; exactly the manifest's versionCode; the installed app's signing certificate, which must also be the manifest's. Then `PackageInstaller` (session), the user confirms; "install unknown apps" explained first. Same or lower versionCode = up to date |
+| Play signing | **Not decided** (operator, q10 below). The AAB is signed with the existing release key as a local artefact; no upload key was made |
+| ABIs | `arm64-v8a`, `x86_64` and universal; **no `armeabi-v7a`** (q3 closed) |
+| `UPDATE_BASE_URL` | `https://krunk.209.wf` (q7 closed). Only the `qa` build type (versionCode 6, never published) and debug builds take another address, for the update tests |
+| Versions | 0.5.0 = versionCode 7; `0.5.0-qa` = 6 |
+| Upgrade from 0.4.0 | 0.4.0 has no update check: users install the 0.5.0 APK over it once (said in the changelog and on the site) |
+| QA images | A: the hosted emulator (API 36, x86_64). B: a local software-emulated AVD (API 29, x86_64, no KVM), time-boxed; results in `docs/ANDROID_DEV.md` "QA images (0.5.0)" |
 
 ## 1. Engine
 
@@ -183,17 +202,19 @@ Proposal:
 | A3 ✔ (0.2.0) | Blocking: bundled uBO (pinned version, hash-checked like `ubo-resources.lock`), shield counter and per-site allow via the extension's messaging, uBO list updates on request. Custom lists and protection levels moved to round 3 | 2 weeks |
 | A4 ✔ (0.3.0) | Vault: Keystore-wrapped key, unlock (password, optional biometrics), save/fill prompts through GeckoView autocomplete delegates, saved logins in the HTTP sign-in dialog. The recovery phrase, the password generator and payment cards moved to a later round; so did import/export and a system Autofill service | 3 weeks |
 | A5 ✔ (0.4.0) | Downloads (Krunk's own, from the engine's response stream; pause/resume where the server allows it), site data/cookies screen, permissions prompts and per-site list, web notifications, full screen polish. Pointer lock is not available on Gecko Android (checked with a mouse on the emulator); multi-connection downloads moved to a later round | 2 weeks |
-| A6 | Release: signing, Play listing and APK channel with `update` (android-arm64), crash-free QA on 4–5 devices (Android 10–16, phone + tablet, arm64 + x86_64 emulator) | 2–3 weeks |
+| A6 ✔ (0.5.0) | Release: signing, Play listing and APK channel with `update` (android-arm64), crash-free QA on 4–5 devices (Android 10–16, phone + tablet, arm64 + x86_64 emulator). **As done:** the website APK (`direct` flavour) has the signed, user-started update check; the `play` flavour is built (AAB) and its listing drafted, **not uploaded** (the Play signing choice is the operator's); QA ran on **emulator images only** (see "QA images" in the 0.5.0 decisions), no real devices; F-Droid deferred | 2–3 weeks |
 
 Total: about **15–16 weeks** to a first public beta, then a GeckoView bump every 4 weeks (about
 ½–1 day each, more when APIs change).
 
 ## 7. Open questions
-1. **Distribution:** Play, APK, F-Droid, or a mix (§5)? This decides whether `update` ships on
-   Android at all.
+1. ~~Distribution~~ decided for 0.5.0: the website APK with the in-app update check is the live
+   channel; a Play build exists but is not uploaded; F-Droid later, if there is demand. Still the
+   operator's: whether and when to go to Play (q10).
 2. **Minimum Android version:** recent GeckoView releases no longer support Android 5–7, so
    API 26 (Android 8) is the likely floor anyway; confirm in A0 against the pinned GeckoView.
-3. **ABIs:** arm64-v8a only (smaller), or also armeabi-v7a for old devices?
+3. ~~ABIs~~ closed in 0.5.0: `arm64-v8a` for devices, `x86_64` for the emulator, plus a universal
+   APK; no `armeabi-v7a`.
 4. ~~uBO as a built-in extension~~ closed with 0.2.0: uBlock Origin (GPL-3.0) ships as its own
    signed release file, unmodified, as a separate program next to the MIT app (aggregation, as on
    desktop with its lists); Krunk talks to it only through its messages. Its version and source
@@ -205,8 +226,8 @@ Total: about **15–16 weeks** to a first public beta, then a GeckoView bump eve
    delivers no mouse movement while locked and offers no pointer-capture API. Touch-only for
    games on Android until the engine has it; is that acceptable, or should it be raised upstream?
 6. **Shared account/sync:** wanted in a later round?
-7. ~~Branding/package name~~ `org.krunk.browser` confirmed; the domain for `UPDATE_BASE_URL`
-   is still to be chosen with the distribution channel.
+7. ~~Branding/package name~~ `org.krunk.browser` confirmed; ~~`UPDATE_BASE_URL`~~
+   `https://krunk.209.wf` since 0.5.0.
 8. ~~Play Services FIDO~~ kept (passkeys); `-Pkrunk.noGms=true` documented for devices without
    Google Play services.
 9. **Feature list wording:** confirm/supply the original 17-category list wording so the matrix
@@ -214,9 +235,12 @@ Total: about **15–16 weeks** to a first public beta, then a GeckoView bump eve
 10. ~~Release signing~~ done for 0.1.0 (2026-11-11): the APKs are signed with Krunk's Android
     release key (custody and fingerprint in `docs/ANDROID_DEV.md`) and offered on the website
     as a direct download (`dist/server/publish-android.sh`), without an update check.
-    **Still open: the distribution channel** beyond that (Play, F-Droid, the in-app update
-    check for the APK flavour, §5). Note for Play: Play App Signing can take this key as the
-    app signing key, or a new upload key with this one kept for the website APKs.
+    The website channel and its update check are done (0.5.0). **Still open, the operator's
+    decision: Play signing.** (a) This key becomes Play's app-signing key: one certificate
+    everywhere, users can move between Play and the website APK. (b) A new upload key, and Play
+    makes its own app key: the website APK and the Play install then have different certificates
+    and cannot update each other (switching means uninstalling, which loses the data, including
+    the vault). Until decided, the Play build stays "built, not uploaded" (`android/play/CHECKLIST.md`).
 11. **Google-dependent features** (Lens, Discover feed, Google Password Manager, Safe Browsing):
     marked "not planned" in the matrix with alternatives; override if wanted.
 12. **Tablet coverage:** round 1 verified the sw600dp layout by resizing the phone emulator; a real

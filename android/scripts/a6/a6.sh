@@ -45,8 +45,9 @@ vcode() { A "dumpsys package $PKG" | grep -m1 -oE 'versionCode=[0-9]+' | cut -d=
 vname() { A "dumpsys package $PKG" | grep -m1 -oE 'versionName=[^ ]+' | cut -d= -f2; }
 certof() { A "dumpsys package $PKG" | grep -m1 -oiE 'signatures=.*' ; }
 counts() { SU "sqlite3 $DB \"SELECT count(*) FROM visits; SELECT count(*) FROM bookmarks; SELECT count(*) FROM download_items\""; }
-about() { menu; tapto text "Settings" 2; tapto text "About" 3; }   # Settings > About
-checktap() { about; tapto text "Check for updates" 6; }
+# Settings > About, through its address (krunk://about opens the same screen).
+about() { waitfor desc "Edit address" 20; tapui desc "Edit address" 2 && type_text "krunk://about" && A "input keyevent KEYCODE_ENTER"; sleep 3; }
+checktap() { about; tapui text "Check for updates" 6; }   # exact text: the help text also names it
 
 # The 0.4.0 profile: two visits, a bookmark, a vault with one login, a finished download.
 seed_old() {
@@ -66,6 +67,7 @@ seed_old() {
   A "input keyevent KEYCODE_BACK"; sleep 1; A "input keyevent KEYCODE_BACK"; sleep 1
   local name; name="a6seed-$(date +%s).bin"
   view "$B/file/$name?size=200000" 6; confirm_download seed; sleep 8
+  view "$B/index.html?a6old3" 6   # the restored tab must not be the file (it would ask again)
   check "0.4.0: the seed download finished" '[ "$(rows a6seed)" -ge 1 ]'
   SEEDFILE=$name
   counts > "$EV/$1-db-before.txt" 2>&1
@@ -75,18 +77,20 @@ seed_old() {
 
 # After an upgrade: the data of seed_old is all there.
 verify_data() {
+  local n=$1   # check() evals its condition with its own $1 (the label): use $n there
   counts > "$EV/$1-db-after.txt" 2>&1
   check "$1: history, bookmarks and downloads rows survived" \
-    '[ "$(sed -n 1p "$EV/$1-db-after.txt")" -ge "$(sed -n 1p "$EV/$1-db-before.txt")" ] && [ "$(sed -n 2p "$EV/$1-db-after.txt")" = "$(sed -n 2p "$EV/$1-db-before.txt")" ] && [ "$(sed -n 3p "$EV/$1-db-after.txt")" -ge 1 ]'
+    '[ "$(sed -n 1p "$EV/$n-db-after.txt")" -ge "$(sed -n 1p "$EV/$n-db-before.txt")" ] && [ "$(sed -n 2p "$EV/$n-db-after.txt")" = "$(sed -n 2p "$EV/$n-db-before.txt")" ] && [ "$(sed -n 3p "$EV/$n-db-after.txt")" -ge 1 ]'
   certof > "$EV/$1-cert-after.txt"
-  check "$1: same signing certificate" 'cmp -s "$EV/$1-cert-before.txt" "$EV/$1-cert-after.txt"'
+  check "$1: same signing certificate" 'cmp -s "$EV/$n-cert-before.txt" "$EV/$n-cert-after.txt"'
   launch 12; front "$1" || return
   dump; has text "Restore tabs?" --contains && tapui text "Restore" 4
+  dump; has text "Download this file?" && tapui text "Cancel" 2   # a restored tab on the seed file asks again
   shot "$1-started"
   menu; tapui text "History" 3; shot "$1-history"; dump; check "$1: history shows the old visits" 'has text "a6old" --contains || has text "a5 index" --contains || has text "10.250" --contains'
   A "input keyevent KEYCODE_BACK"; sleep 1
-  menu; tapui text "Bookmarks" 3; shot "$1-bookmarks"; dump; check "$1: the bookmark is there" 'has text "a5" --contains || has text "10.250" --contains || has text "storage" --contains'
-  A "input keyevent KEYCODE_BACK"; sleep 1
+  menu; tapui text "Bookmarks" 3; tapui text "Bookmarks bar" 3; shot "$1-bookmarks"; dump; check "$1: the bookmark is there (Bookmarks bar)" 'has text "a5 storage" --contains'
+  A "input keyevent KEYCODE_BACK"; sleep 1; A "input keyevent KEYCODE_BACK"; sleep 1
   downloads_screen; shot "$1-downloads"; dump; check "$1: the download is listed" 'has text "a6seed" --contains'
   A "input keyevent KEYCODE_BACK"; sleep 1
   menu; tapui text "Passwords" 3; sleep 2
@@ -155,7 +159,8 @@ t_inapp() {
   updsince "$m" > "$EV/inapp-check-requests.txt"
   check "9b: the check fetched the manifest and its signature" 'grep -q "/updates/android-arm64/latest.json " "$EV/inapp-check-requests.txt" && grep -q "latest.json.sig" "$EV/inapp-check-requests.txt"'
   check "9b: User-Agent Krunk-Android/0.5.0-qa" 'grep -q "Krunk-Android/0.5.0-qa" "$EV/inapp-check-requests.txt"'
-  tapui text "What's new" 2 --contains; shot inapp-notes
+  tapui text "What's new" 2 --contains; shot inapp-notes; nodes inapp-notes
+  tapui text "What's new" 2 --contains   # collapse again: the notes push the button off screen
   tapui text "Download and install" 3
   shot inapp-downloading
   local i; for i in $(seq 1 60); do dump; has text "Allow Krunk to install the update?" && break; has text "Update" && break; sleep 3; done
