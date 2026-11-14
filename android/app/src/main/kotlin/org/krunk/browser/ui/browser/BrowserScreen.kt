@@ -120,7 +120,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
     // Back, in order: find bar, address editing, full screen, page history; else the activity.
     BackHandler(enabled = findActive) { vm.closeFind() }
     BackHandler(enabled = !findActive && editing) { vm.stopEditing() }
-    BackHandler(enabled = !findActive && !editing && fullScreen) { session?.exitFullScreen() }
+    BackHandler(enabled = !findActive && !editing && fullScreen) { session?.leaveFullScreen() }
     BackHandler(enabled = !findActive && !editing && !fullScreen && backAction(page) != BackAction.NONE) {
         vm.tabs.back()
     }

@@ -15,6 +15,7 @@ import org.krunk.browser.KrunkApp
 import org.krunk.browser.tabs.DebugProps
 import org.krunk.browser.ui.bookmarks.BookmarksScreen
 import org.krunk.browser.ui.browser.BrowserScreen
+import org.krunk.browser.ui.browser.FullScreenEffect
 import org.krunk.browser.ui.browser.LocalLoginUi
 import org.krunk.browser.ui.browser.LoginUiHost
 import org.krunk.browser.ui.browser.SecureWindowEffect
@@ -70,6 +71,10 @@ fun KrunkRoot(vm: BrowserViewModel) {
             )
         }
     }
+
+    // Full screen belongs to the page on screen: ends for a covered or background tab, keeps
+    // the screen on, follows the page's orientation lock.
+    FullScreenEffect(vm, browserOnTop = screen == Screen.Browser)
 
     CompositionLocalProvider(LocalLoginUi provides loginUi) {
         KrunkTheme(

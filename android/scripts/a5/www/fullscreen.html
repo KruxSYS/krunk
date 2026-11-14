@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Full screen test</title>
+<style>
+  body { font: 16px/1.4 sans-serif; margin: 12px; }
+  button { font-size: 18px; padding: 14px 18px; margin: 6px 6px 6px 0; }
+  #stage {
+    background: #1b5e20; color: #fff; padding: 16px; min-height: 180px;
+    display: flex; flex-direction: column; justify-content: space-between;
+  }
+  #stage:fullscreen { background: #0d47a1; }
+  /* The four corners are marked so a cut-off edge (cutout, system bars) is visible. */
+  #stage:fullscreen .corner { position: fixed; width: 28px; height: 28px; background: #ffeb3b; }
+  .corner { display: none; }
+  #stage:fullscreen .corner { display: block; }
+  .tl { top: 0; left: 0; } .tr { top: 0; right: 0; } .bl { bottom: 0; left: 0; } .br { bottom: 0; right: 0; }
+  pre { white-space: pre-wrap; margin: 8px 0; font-size: 15px; }
+  #log { max-height: 30vh; overflow: auto; background: #eee; color: #000; padding: 6px; }
+</style>
+</head>
+<body>
+<h1>Full screen</h1>
+<div id="stage">
+  <div class="corner tl"></div><div class="corner tr"></div>
+  <div class="corner bl"></div><div class="corner br"></div>
+  <div>
+    <button id="fs">Full screen</button>
+    <button id="fsland">Full screen + landscape</button>
+    <button id="lockonly">Lock landscape only</button>
+    <button id="unlock">Unlock orientation</button>
+    <button id="exit">Exit full screen</button>
+    <button id="exit5">Exit in 5 s</button>
+    <button id="tab">Open a tab</button>
+  </div>
+  <pre id="state">-</pre>
+</div>
+<pre id="log"></pre>
+<p style="height: 150vh">(tall page: the toolbar can hide)</p>
+<script>
+"use strict";
+const stage = document.getElementById("stage");
+const stateEl = document.getElementById("state");
+const logEl = document.getElementById("log");
+let n = 0;
+function log(text) {
+  n += 1;
+  logEl.textContent = n + " " + text + "\n" + logEl.textContent;
+}
+function show() {
+  const el = document.fullscreenElement;
+  const o = screen.orientation;
+  stateEl.textContent =
+    "fullscreenElement: " + (el ? (el.id || el.tagName) : "null") + "\n" +
+    "orientation: " + (o ? o.type + " " + o.angle : "n/a") + "\n" +
+    "window: " + window.innerWidth + "x" + window.innerHeight + "\n" +
+    "screen: " + screen.width + "x" + screen.height + "\n" +
+    "visibility: " + document.visibilityState;
+  // The same as one line in the title, which the tab list shows.
+  document.title = "fs=" + (el ? "yes" : "no") + " " + (o ? o.type : "n/a") +
+    " " + window.innerWidth + "x" + window.innerHeight;
+}
+function lockLandscape() {
+  if (!screen.orientation || !screen.orientation.lock) {
+    log("orientation.lock: not available");
+    return Promise.resolve();
+  }
+  return screen.orientation.lock("landscape").then(
+    () => log("orientation.lock: ok"),
+    (e) => log("orientation.lock: " + e.name + " " + e.message));
+}
+function enter() {
+  return stage.requestFullscreen().then(
+    () => log("requestFullscreen: ok"),
+    (e) => { log("requestFullscreen: " + e.name + " " + e.message); throw e; });
+}
+document.getElementById("fs").onclick = () => { enter().catch(() => {}); };
+document.getElementById("fsland").onclick = () => { enter().then(lockLandscape, () => {}); };
+document.getElementById("lockonly").onclick = () => { lockLandscape(); };
+document.getElementById("unlock").onclick = () => {
+  try { screen.orientation.unlock(); log("orientation.unlock: called"); } catch (e) { log("unlock: " + e.name); }
+};
+function exit() {
+  if (!document.fullscreenElement) { log("exitFullscreen: not in full screen"); return; }
+  document.exitFullscreen().then(() => log("exitFullscreen: ok"), (e) => log("exitFullscreen: " + e.name));
+}
+document.getElementById("exit").onclick = exit;
+document.getElementById("exit5").onclick = () => { log("exit in 5 s"); setTimeout(exit, 5000); };
+document.getElementById("tab").onclick = () => { window.open("fullscreen.html?second", "_blank"); };
+document.addEventListener("fullscreenchange", () => { log("fullscreenchange"); show(); });
+document.addEventListener("fullscreenerror", () => { log("fullscreenerror"); show(); });
+document.addEventListener("visibilitychange", () => { log("visibility " + document.visibilityState); show(); });
+if (screen.orientation) screen.orientation.addEventListener("change", () => { log("orientation change"); show(); });
+window.addEventListener("resize", show);
+show();
+</script>
+</body>
+</html>

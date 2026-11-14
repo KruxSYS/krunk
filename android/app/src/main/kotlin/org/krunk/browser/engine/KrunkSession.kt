@@ -187,7 +187,15 @@ class KrunkSession(
         gecko.reload()
     }
 
-    fun exitFullScreen() = gecko.exitFullScreen()
+    /**
+     * Leaves full screen now. Krunk's own state changes at once, so the bars and the toolbar
+     * come back even when the page is slow (or too busy) to confirm; the page is told as well, so
+     * it does not go on believing it is full screen.
+     */
+    fun leaveFullScreen() {
+        set { if (it.fullScreen) it.copy(fullScreen = false) else it }
+        if (!closed) gecko.exitFullScreen()
+    }
 
     /**
      * Restores a saved state (the engine then loads its current entry). Returns the address of
