@@ -107,8 +107,10 @@ class HistoryRepository(private val store: KrunkStore, private val io: Coroutine
             val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
             return when (day) {
                 today.toString() -> HistoryDayKind.TODAY
+
                 // The calendar day before, not "24 hours ago": right on 23- and 25-hour days too.
                 today.minusDays(1).toString() -> HistoryDayKind.YESTERDAY
+
                 else -> HistoryDayKind.DATE
             }
         }

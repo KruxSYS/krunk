@@ -103,7 +103,10 @@ class FullScreenPolicyTest {
         assertFalse(lock.isWaiting)
         lock.lock(landscape, current = unspecified)
         lock.lock(portrait, current = unspecified)
-        assertEquals(OrientationLock.Outcome(apply = portrait, settle = true), lock.fullScreenChanged(true, unspecified))
+        assertEquals(
+            OrientationLock.Outcome(apply = portrait, settle = true),
+            lock.fullScreenChanged(true, unspecified),
+        )
     }
 
     @Test

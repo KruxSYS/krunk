@@ -95,7 +95,12 @@ class HistoryRepositoryTest {
         val items = readAll(repo, "", 2)
         val sections = repo.sections(items)
         assertEquals(listOf("2026-11-14", "2026-11-13", "2026-11-12"), sections.map { it.day })
-        assertEquals(listOf(listOf("5", "4"), listOf("3"), listOf("2", "1")), sections.map { s -> s.items.map { it.entry.title } })
+        assertEquals(
+            listOf(listOf("5", "4"), listOf("3"), listOf("2", "1")),
+            sections.map { s ->
+                s.items.map { it.entry.title }
+            },
+        )
         assertEquals(listOf("18:00", "09:15"), sections[0].items.map { it.time })
         assertTrue(HistoryRepository.groupByDay(emptyList()).isEmpty())
         // Removing a row regroups without a day left empty.
