@@ -138,7 +138,7 @@
       meta.appendChild(el('a', { href: safePath(f.url), download: '', text: String(f.label || f.name) + (size(f.size) ? ' (' + size(f.size) + ')' : '') }));
     });
     abox.appendChild(meta);
-    abox.appendChild(el('p', { class: 'hint', text: 'A preview for 64-bit ARM phones and tablets: browsing with ad and tracker blocking (uBlock Origin built in), tabs, bookmarks, history, themes and settings. No vault or sync yet. It does not update itself: new versions appear here.' }));
+    abox.appendChild(el('p', { class: 'hint', text: 'A preview for 64-bit ARM phones and tablets: browsing with ad and tracker blocking (uBlock Origin built in), an encrypted password vault that stays on the device, tabs, bookmarks, history, themes and settings. No sync yet. It does not update itself: new versions appear here.' }));
     const sums = el('dl', { class: 'sums' });
     files.forEach(function (f) {
       sums.appendChild(el('dt', { text: String(f.name) }));
