@@ -57,6 +57,9 @@ class GeckoFetcher(private val runtime: () -> GeckoRuntime) : DownloadFetcher {
                 val request = WebRequest.Builder(url)
                 request.method("GET")
                 for (h in headers) request.header(h.name, h.value)
+                // Lets this request through Krunk's engine-request gate (krunk-guard), which
+                // otherwise stops the engine's requests outside a tab; the gate removes it.
+                request.header(FETCH_MARK, "1")
                 if (DownloadNames.isWeb(referrer)) request.referrer(referrer)
                 val flags = if (private) GeckoWebExecutor.FETCH_FLAGS_PRIVATE else GeckoWebExecutor.FETCH_FLAGS_NONE
                 GeckoWebExecutor(runtime()).fetch(request.build(), flags).accept(
@@ -71,7 +74,17 @@ class GeckoFetcher(private val runtime: () -> GeckoRuntime) : DownloadFetcher {
         if (outcome.compareAndSet(WAITING, ABANDONED)) throw SocketTimeoutException("no answer")
         return when (val got = outcome.get()) {
             is WebResponse -> response(got)
-            else -> throw IOException((got as? Throwable)?.javaClass?.simpleName ?: "no response")
+
+            else -> {
+                // The engine's reason, without the address (it may carry a token).
+                Log.w(
+                    KrunkApp.TAG,
+                    "download request failed: ${(got as? Throwable)?.let {
+                        "${it.javaClass.simpleName}: ${it.message}"
+                    }}",
+                )
+                throw IOException((got as? Throwable)?.javaClass?.simpleName ?: "no response")
+            }
         }
     }
 
@@ -80,6 +93,8 @@ class GeckoFetcher(private val runtime: () -> GeckoRuntime) : DownloadFetcher {
     }
 
     companion object {
+        /** See krunk-guard's gate-api.js. */
+        const val FETCH_MARK = "X-Krunk-Fetch"
         private val WAITING = Any()
         private val ABANDONED = Any()
         const val CONNECT_TIMEOUT_MS = 90_000L

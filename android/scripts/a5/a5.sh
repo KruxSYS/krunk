@@ -42,10 +42,12 @@ dlrm() { A "rm -f $DL/report*.bin $DL/slow*.bin $DL/stream*.bin $DL/cut*.bin $DL
 rows() { SU "sqlite3 $DB \"SELECT count(*) FROM download_items WHERE search LIKE ${Q}%$1%${Q}\"" 2> /dev/null | tr -d '\r'; }
 Q="'\\''"
 notif() { A "dumpsys notification --noredact" 2> /dev/null | grep -A40 "pkg=$PKG" ; }   # Krunk's notifications as the system has them
-downloads_screen() { menu && tapui text "Downloads" 3; }
-confirm_download() { waitfor text "Download this file?" 12 || { missing "Download this file?"; return 1; }; shot "$1-question"; tapui text "Download" "${2:-3}"; }
+downloads_screen() { menu && tapto text "Downloads" 3; }
+confirm_download() { waitfor text "Download this file?" 12 || { missing "Download this file?"; return 1; }; shot "$1-question"; sleep 1; tapui text "Download" "${2:-3}"; }   # the button waits 0.5 s (D-16)
+clean() { A "am force-stop $PKG; pm clear $PKG" > /dev/null; A "pm grant $PKG android.permission.POST_NOTIFICATIONS"; }   # no restored tabs re-asking for an old download
 go() { tapui desc "Edit address" 2 && type_text "${1#http://}" && A "input keyevent KEYCODE_ENTER" && sleep "${2:-8}"; }   # type an address into the tab on screen
 type_text() { A "input text '$1'"; sleep 1; }
+tapany() { dump; if has desc "$1" --contains; then tapui desc "$1" "${2:-2}" --contains; else tapui text "$1" "${2:-2}" --contains; fi; }   # an icon (description) or a text button
 linktap() { tapui text "$1" "${2:-3}" --contains; }   # a link of the test page by its text
 home() { view "$B/index.html?$1" 6; waitfor text "Krunk a5 tests" 20 --contains || bad "the test index did not load"; }
 
@@ -78,12 +80,12 @@ t_upgrade() {
   menu; tapui text "Passwords" 3; sleep 2; dump; nodes upgrade-vault
   check "the vault is still there (asks for its password, or offers to create one if there was none)" 'has text "The vault is locked" --contains || has text "Unlock" --contains || has text "Create vault" --contains'
   A "input keyevent KEYCODE_BACK"; sleep 1
-  menu; tapui text "Downloads" 3; shot upgrade-downloads; dump; check "the new Downloads screen opens" 'has text "Downloads"'
+  downloads_screen; shot upgrade-downloads; dump; check "the new Downloads screen opens" 'has text "Downloads"'
   save upgrade; stop_clean
 }
 
 t_cookie() {
-  dlrm; launch 8; front cookie || return
+  dlrm; clean; launch 8; front cookie || return
   local m; m=$(now)
   view "$B/login?c1" 8; waitfor text "Signed in" 20 --contains || bad "sign-in page did not load"
   linktap "Download the report" 3
@@ -101,7 +103,7 @@ t_cookie() {
 }
 
 t_blob() {
-  dlrm; launch 8; front blob || return
+  dlrm; clean; launch 8; front blob || return
   view "$B/blob.html?b1" 8; waitfor text "Save blob" 20 || bad "blob page did not load"
   tapui text "Save blob" 3; confirm_download blob 5; sleep 3
   A "cat $DL/blob-test.txt" > "$EV/blob-test.txt" 2>&1
@@ -117,16 +119,16 @@ t_blob() {
 }
 
 t_resume() {
-  dlrm; launch 8; front resume || return
+  dlrm; clean; launch 8; front resume || return
   view "$B/login?r0" 6
   local m; m=$(now)
-  view "$B/private/slow.bin?size=3000000&rate=150" 4
+  view "$B/private/slow.bin?size=3000000&rate=40" 4
   confirm_download resume 4
   notif > "$EV/resume-notification-running.txt"; shot resume-running-page
   check "a progress notification is shown while it runs" 'grep -q "progress=" "$EV/resume-notification-running.txt" || grep -qi "slow.bin" "$EV/resume-notification-running.txt"'
   downloads_screen; shot resume-running; nodes resume-running
   dump; check "the screen shows it running with bytes" 'has text "slow.bin" --contains && (has text "MB" --contains || has text "kB" --contains || has text "KB" --contains)'
-  tapui desc "Pause" 3 --contains || tapui text "Pause" 3
+  tapany Pause 3
   shot resume-paused; nodes resume-paused; notif > "$EV/resume-notification-paused.txt"
   dump; check "paused is shown" 'has text "Paused" --contains'
   check "the notification says paused" 'grep -qi "paused" "$EV/resume-notification-paused.txt"'
@@ -134,8 +136,8 @@ t_resume() {
   check "the stream was closed by the pause" '[ "$before" -ge 1 ]'
   check "no file is in Downloads while it is paused" '[ -z "$(dlsha slow.bin)" ]'
   sleep 3
-  tapui desc "Resume" 3 --contains || tapui text "Resume" 3
-  local i; for i in $(seq 1 40); do [ -n "$(dlsha slow.bin)" ] && break; sleep 2; done
+  tapany Resume 3
+  local i; for i in $(seq 1 60); do [ -n "$(dlsha slow.bin)" ] && break; sleep 2; done
   since "$m" > "$EV/resume-server.txt"
   check "the rest was asked with Range, If-Range and the cookie" 'grep "GET /private/slow.bin" "$EV/resume-server.txt" | grep "range=bytes=" | grep -v "if-range=-" | grep -q "cookie=yes"'
   check "the file's hash equals the source" '[ "$(dlsha slow.bin)" = "$(sha 3000000)" ]'
@@ -144,40 +146,41 @@ t_resume() {
 }
 
 t_noresume() {
-  dlrm; launch 8; front noresume || return
+  local r; r=$(date +%H%M%S)
+  dlrm; clean; launch 8; front noresume || return
   local m; m=$(now)
-  view "$B/file/stream.bin?size=3000000&rate=300&etag=0&ranges=0" 4
+  view "$B/file/stream.bin?size=3000000&rate=60&etag=0&ranges=0" 4
   confirm_download noresume 4
   downloads_screen; shot noresume-running; nodes noresume-running
   dump; check "no Pause for a download that cannot be continued" '! has desc "Pause" --contains && ! has text "Pause"'
   check "the screen says why" 'has text "cannot be paused" --contains'
-  local i; for i in $(seq 1 20); do [ -n "$(dlsha stream.bin)" ] && break; sleep 2; done
+  local i; for i in $(seq 1 45); do [ -n "$(dlsha stream.bin)" ] && break; sleep 2; done
   check "it still completes with the right hash" '[ "$(dlsha stream.bin)" = "$(sha 3000000)" ]'
   # a stream that breaks: failed, with Restart; never a short file in Downloads
   A "input keyevent KEYCODE_BACK"; sleep 1
-  view "$B/file/cut.bin?size=600000&rate=300&cut=200000&etag=0&ranges=0" 4
+  view "$B/file/cut$r.bin?size=600000&rate=300&cut=200000&etag=0&ranges=0" 4
   confirm_download cut 6; sleep 4
-  check "a broken download leaves no file in Downloads" '[ -z "$(dlsha cut.bin)" ]'
+  check "a broken download leaves no file in Downloads" '[ -z "$(dlsha cut$r.bin)" ]'
   downloads_screen; shot noresume-failed; nodes noresume-failed
   dump; check "it is shown as failed with Restart" 'has text "Restart" --contains || has desc "Restart" --contains'
-  tapui text "Restart" 3 --contains || tapui desc "Restart" 3 --contains
-  for i in $(seq 1 15); do [ -n "$(dlsha cut.bin)" ] && break; sleep 2; done
-  check "Restart downloads the whole file" '[ "$(dlsha cut.bin)" = "$(sha 600000)" ]'
+  tapany Restart 3
+  for i in $(seq 1 15); do [ -n "$(dlsha cut$r.bin)" ] && break; sleep 2; done
+  check "Restart downloads the whole file" '[ "$(dlsha cut$r.bin)" = "$(sha 600000)" ]'
   since "$m" > "$EV/noresume-server.txt"
   # a resumable one that breaks: Retry continues it
   A "input keyevent KEYCODE_BACK"; sleep 1
-  view "$B/file/cut2.bin?size=600000&rate=300&cut=200000" 4
+  view "$B/file/cut2$r.bin?size=600000&rate=300&cut=200000" 4
   confirm_download cut2 6; sleep 4
   downloads_screen; shot noresume-retry; nodes noresume-retry
-  tapui text "Retry" 3 --contains || tapui desc "Retry" 3 --contains
-  for i in $(seq 1 15); do [ -n "$(dlsha cut2.bin)" ] && break; sleep 2; done
-  check "Retry continues a broken resumable download (hash)" '[ "$(dlsha cut2.bin)" = "$(sha 600000)" ]'
-  check "Retry asked for the rest only" 'since "$m" | grep "GET /file/cut2.bin" | grep -q "range=bytes=2"'
+  tapany Retry 3
+  for i in $(seq 1 15); do [ -n "$(dlsha cut2$r.bin)" ] && break; sleep 2; done
+  check "Retry continues a broken resumable download (hash)" '[ "$(dlsha cut2$r.bin)" = "$(sha 600000)" ]'
+  check "Retry asked for the rest only" 'since "$m" | grep "GET /file/cut2$r.bin" | grep -q "range=bytes=2"'
   save noresume; stop_clean
 }
 
 t_open() {
-  launch 8; front open || return
+  clean; launch 8; front open || return
   [ -n "$(dlsha blob-test.txt)" ] || { view "$B/blob.html?o1" 8; tapui text "Save blob" 3; confirm_download open 5; }
   downloads_screen
   T "$E" adb logcat -c
@@ -199,19 +202,19 @@ t_open() {
 }
 
 t_private() {
-  dlrm; launch 8; front private || return
+  dlrm; clean; launch 8; front private || return
   menu; tapui text "New private tab" 3
   [ -z "$REL" ] && A "setprop debug.krunk.show_private 1"
   local m; m=$(now)
   go "$B/login?priv" 8
-  go "$B/private/secret.bin?size=400000&rate=100" 4
+  go "$B/private/secret.bin?size=400000&rate=5" 4
   waitfor text "Download this file?" 12; dump; nodes private-question
   check "the question says what a private download leaves" 'has text "Krunk forgets this download" --contains'
   tapui text "Download" 2
   check "no row while it runs" '[ "$(rows secret)" = 0 ]'
-  menu; tapui text "Downloads" 3; dump; nodes private-running
+  downloads_screen; dump; nodes private-running
   check "listed (marked private) while it runs" 'has text "secret.bin" --contains && has text "Private" --contains'
-  local i; for i in $(seq 1 15); do [ -n "$(dlsha secret.bin)" ] && break; sleep 2; done
+  local i; for i in $(seq 1 60); do [ -n "$(dlsha secret.bin)" ] && break; sleep 2; done
   sleep 2; dump; nodes private-done
   check "the file is the real file, fetched with the private tab's cookie" '[ "$(dlsha secret.bin)" = "$(sha 400000)" ] && since "$m" | grep "GET /private/secret.bin" | grep -q "cookie=yes"'
   check "gone from the list when done" '! has text "secret.bin" --contains'
@@ -224,7 +227,7 @@ t_private() {
   notif > "$EV/private-notification-before.txt"
   # close the private tabs: the notification goes
   tapui desc "Tabs" 2 --contains; dump; nodes private-tabs
-  tapui text "Private" 2 --contains; tapui desc "More" 2 --contains && tapui text "Close all private tabs" 2 && { dump; has text "Close" && tapui text "Close" 2; }
+  tapui text "Private" 2 --contains; tapui desc "Close all private tabs" 2 && { dump; nodes private-closeall; has text "Close" && tapui text "Close" 2; }
   sleep 2; notif > "$EV/private-notification-after.txt"
   check "its notification is gone once the private tabs are closed" '! grep -q "secret.bin" "$EV/private-notification-after.txt"'
   save private; stop_clean

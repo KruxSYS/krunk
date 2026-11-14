@@ -6,7 +6,8 @@
  *     The blocker is recognised by the add-on id on the request's principal, never by its
  *     moz-extension:// address (that is random per install);
  *   - the engine itself (system principal, not a page load, not in a tab): allowed, logged or
- *     cancelled, as set. OCSP checks belong to a page's connection and are never touched;
+ *     cancelled, as set; except Krunk's own downloads, marked with X-Krunk-Fetch (always let
+ *     through, the mark removed). OCSP checks belong to a page's connection and are never touched;
  *   - anything else (pages, Krunk's own extensions): not touched.
  * A second observer reports top-level page loads that the blocker stopped, so Krunk can show its
  * own "blocked" page.
@@ -23,6 +24,8 @@ const PREF_BLOCKER = "krunk.guard.blockerUpdates"; // "open" or anything else (c
 const PREF_ENGINE = "krunk.guard.engineRequests"; // "allow", "block" or anything else (log)
 const MAX_BACKLOG = 200;
 const MAX_URL = 300;
+// Set by Krunk on its own downloads (GeckoFetcher, Android 0.4.0), removed before sending.
+const FETCH_MARK = "X-Krunk-Fetch";
 
 const gate = {
   blockerOpen: false,
@@ -65,6 +68,15 @@ function onOpening(subject) {
       return;
     }
     if (addon) return; // Krunk's own extensions
+    // Krunk's own downloads (link downloads, resume, retry) go through the engine's request
+    // executor, which loads with the system principal and outside any tab. Krunk marks them
+    // with this header; it is taken off here, before the request leaves. Pages never reach
+    // this point (their requests do not have the system principal).
+    if (header(channel, FETCH_MARK) === "1") {
+      channel.setRequestHeader(FETCH_MARK, "", false);
+      report({ k: "engine", url: channel.URI.spec.slice(0, MAX_URL), cancelled: false });
+      return;
+    }
     if (gate.engine === "allow") return;
     const engine =
       !!triggering &&

@@ -41,6 +41,28 @@ object DebugHooks {
     private const val MAX_REPLY = 1500
     private val scope = MainScope()
 
+    /** 0.4.0 M8 diagnosis: which ingredient of a download request the engine refuses. */
+    private fun fetchTest(engine: GeckoEngine, url: String) {
+        val variants = listOf<Pair<String, (org.mozilla.geckoview.WebRequest.Builder) -> Unit>>(
+            "plain" to { _ -> },
+            "get" to { b -> b.method("GET") },
+            "range" to { b -> b.header("Range", "bytes=100-") },
+            "if-range" to { b -> b.header("Range", "bytes=100-").header("If-Range", "\"a5-1-3000000\"") },
+            "accept-enc" to { b -> b.header("Accept-Encoding", "identity") },
+            "referrer" to { b -> b.referrer(url) },
+        )
+        for ((flagName, flags) in listOf("none" to 0, "private" to org.mozilla.geckoview.GeckoWebExecutor.FETCH_FLAGS_PRIVATE)) {
+            for ((name, apply) in variants) {
+                val b = org.mozilla.geckoview.WebRequest.Builder(url).header("X-Krunk-Fetch", "1")
+                apply(b)
+                org.mozilla.geckoview.GeckoWebExecutor(engine.runtime).fetch(b.build(), flags).accept(
+                    { r -> say("fetch-test $flagName/$name: status ${r?.statusCode}"); runCatching { r?.body?.close() } },
+                    { e -> say("fetch-test $flagName/$name: ${e?.javaClass?.simpleName} ${e?.message}") },
+                )
+            }
+        }
+    }
+
     fun install(context: Context, engine: GeckoEngine, core: KrunkCore) {
         ContextCompat.registerReceiver(
             context,
@@ -52,6 +74,8 @@ object DebugHooks {
                     } else if (cmd == "downloads") {
                         val app = c.applicationContext as KrunkApp
                         scope.launch { app.downloads.describe().chunked(MAX_REPLY).forEach(::say) }
+                    } else if (cmd != null && cmd.startsWith("fetch-test ")) {
+                        fetchTest(engine, cmd.removePrefix("fetch-test "))
                     } else if (cmd == "downloads-time-limit") {
                         (c.applicationContext as KrunkApp).downloads.serviceTimeLimit()
                         say("downloads-time-limit: sent")
