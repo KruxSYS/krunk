@@ -149,6 +149,7 @@ static KEYS: &[Key] = &[
     Key { path: "appearance.tabRadius", kind: Kind::Int(0, 16), note: "px, for rounded tabs" },
     Key { path: "appearance.activeHighlight", kind: Kind::Choice(highlights), note: "how the active tab stands out" },
     Key { path: "appearance.accentGlow", kind: Kind::Bool, note: "a glow around the active tab" },
+    Key { path: "appearance.barBorders", kind: Kind::Bool, note: "thin lines under the toolbar and the bookmarks bar" },
     // 0.15.2
     Key {
         path: "appearance.activeOutlineColor",

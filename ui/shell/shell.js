@@ -1505,6 +1505,7 @@
     const hl = a.activeHighlight || 'fill';
     ['fill', 'underline', 'outline', 'none'].forEach(function (s) { root.classList.toggle('hl-' + s, hl === s); });
     root.classList.toggle('accent-glow', !!a.accentGlow);
+    root.classList.toggle('no-bar-borders', a.barBorders === false);
     // 0.15.2: the outline's colour and width, the tab titles' colours.
     set('--outline-c', a.activeOutlineColor);
     set('--outline-w', Number.isFinite(a.activeOutlineWidth) ? a.activeOutlineWidth + 'px' : '');

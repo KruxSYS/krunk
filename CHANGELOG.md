@@ -3,6 +3,12 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.20.1 — 2026-11-14
+
+- **Lines under the bars can be turned off.** Settings → Appearance → Tab and toolbar style →
+  **Lines under the bars**: the thin lines under the toolbar and under the bookmarks bar broke
+  up gradient styles. With the option off, the style runs through the bars without a break.
+
 ## 0.20.0 — 2026-11-14
 
 - **Frost and Neon look like their names.** Settings → Appearance → Tab and toolbar style:

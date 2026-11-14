@@ -202,6 +202,9 @@ pub struct Appearance {
     pub active_highlight: ActiveHighlight,
     /// A soft accent-coloured glow around the active tab.
     pub accent_glow: bool,
+    /// 0.20.1: the thin lines under the toolbar and under the bookmarks bar (on by default).
+    /// Off lets a gradient run through the bars without a break.
+    pub bar_borders: bool,
     /// 0.15.2: the outline of `ActiveHighlight::Outline` (`#rrggbb`, empty = the accent) and its
     /// width in px (1–4).
     pub active_outline_color: String,
@@ -272,6 +275,7 @@ impl Default for Appearance {
             tab_radius: 8,
             active_highlight: ActiveHighlight::Fill,
             accent_glow: false,
+            bar_borders: true,
             active_outline_color: String::new(),
             active_outline_width: 2,
             tab_text_color: String::new(),

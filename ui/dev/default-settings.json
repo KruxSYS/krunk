@@ -110,6 +110,7 @@
     "tabRadius": 8,
     "activeHighlight": "fill",
     "accentGlow": false,
+    "barBorders": true,
     "activeOutlineColor": "",
     "activeOutlineWidth": 2,
     "tabTextColor": "",
