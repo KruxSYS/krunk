@@ -1,0 +1,25 @@
+<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width">
+<title>a5 blob</title>
+<style>body{font:18px sans-serif;margin:16px}button,a{display:block;margin:18px 0;font-size:20px;padding:12px}</style>
+<h2>blob: and data:</h2>
+<button id=blob>Save blob</button>
+<button id=bigblob>Save big blob (2 MB)</button>
+<a id=data download="data-test.txt" href="data:text/plain;charset=utf-8,Krunk%20data%20download%20%E2%9C%93%0A">Save data: link</a>
+<p id=out>ready</p>
+<script>
+function save(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  out.textContent = 'asked for ' + name + ' (' + blob.size + ' bytes)';
+}
+blob.onclick = () => save(new Blob(['Krunk blob download ✓\n', 'line 2\n'], {type: 'text/plain'}), 'blob-test.txt');
+bigblob.onclick = () => {
+  // 2 MiB of a fixed pattern: byte i = i mod 251.
+  const b = new Uint8Array(2 * 1024 * 1024);
+  for (let i = 0; i < b.length; i++) b[i] = i % 251;
+  save(new Blob([b], {type: 'application/octet-stream'}), 'blob-big.bin');
+};
+</script>

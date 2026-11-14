@@ -1,0 +1,34 @@
+<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width">
+<title>a5 permissions</title>
+<style>body{font:18px sans-serif;margin:16px}button{display:block;margin:12px 0;font-size:20px;padding:12px;width:100%}p{margin:4px 0}</style>
+<h2>Permissions</h2>
+<button id=geo>Location</button><p id=geoOut>geo: -</p>
+<button id=notif>Notifications</button><p id=notifOut>notif: -</p>
+<button id=show>Show a notification</button><p id=showOut>show: -</p>
+<button id=cam>Camera</button><p id=camOut>cam: -</p>
+<button id=mic>Microphone</button><p id=micOut>mic: -</p>
+<button id=persist>Persistent storage</button><p id=persistOut>persist: -</p>
+<p id=state>state: -</p>
+<script>
+const set = (id, t) => document.getElementById(id).textContent = t;
+geo.onclick = () => { set('geoOut', 'geo: asking');
+  navigator.geolocation.getCurrentPosition(p => set('geoOut', 'geo: allowed ' + p.coords.latitude.toFixed(2)),
+    e => set('geoOut', 'geo: ' + (e.code === 1 ? 'denied' : 'allowed-but-no-fix code ' + e.code)), {timeout: 8000}); };
+notif.onclick = async () => { set('notifOut', 'notif: asking');
+  try { set('notifOut', 'notif: ' + await Notification.requestPermission()); } catch (e) { set('notifOut', 'notif: error ' + e.name); } };
+show.onclick = () => { try { const n = new Notification('Krunk a5', {body: 'Hello from the test page', tag: 'a5'});
+  n.onclick = () => set('showOut', 'show: clicked'); n.onshow = () => set('showOut', 'show: shown');
+  n.onerror = () => set('showOut', 'show: error'); set('showOut', 'show: created (' + Notification.permission + ')'); }
+  catch (e) { set('showOut', 'show: error ' + e.name); } };
+async function media(kind, id) { set(id, kind + ': asking');
+  try { const s = await navigator.mediaDevices.getUserMedia(kind === 'cam' ? {video: true} : {audio: true});
+    set(id, kind + ': allowed tracks=' + s.getTracks().length); s.getTracks().forEach(t => t.stop()); }
+  catch (e) { set(id, kind + ': ' + (e.name === 'NotAllowedError' ? 'denied' : 'error ' + e.name)); } }
+cam.onclick = () => media('cam', 'camOut');
+mic.onclick = () => media('mic', 'micOut');
+persist.onclick = async () => set('persistOut', 'persist: ' + await navigator.storage.persist());
+(async () => { const out = [];
+  for (const name of ['geolocation', 'notifications', 'camera', 'microphone', 'persistent-storage']) {
+    try { out.push(name + '=' + (await navigator.permissions.query({name})).state); } catch (e) { out.push(name + '=?'); } }
+  set('state', 'state: ' + out.join(' ')); })();
+</script>

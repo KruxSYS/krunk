@@ -1,0 +1,24 @@
+<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width">
+<title>a5 storage</title>
+<style>body{font:18px sans-serif;margin:16px}button{display:block;margin:12px 0;font-size:20px;padding:12px;width:100%}</style>
+<h2>Cookies and storage</h2>
+<button id=store>Store data</button>
+<p id=cookie>cookie: -</p><p id=ls>localStorage: -</p><p id=idb>indexedDB: -</p>
+<script>
+function show() {
+  document.getElementById('cookie').textContent = 'cookie: ' + (document.cookie.includes('a5site=1') ? 'present' : 'none');
+  document.getElementById('ls').textContent = 'localStorage: ' + (localStorage.getItem('a5') ? 'present' : 'none');
+  const r = indexedDB.open('a5db');
+  r.onupgradeneeded = () => r.transaction.abort();
+  r.onsuccess = () => { document.getElementById('idb').textContent = 'indexedDB: present'; r.result.close(); };
+  r.onerror = () => { document.getElementById('idb').textContent = 'indexedDB: none'; };
+}
+store.onclick = () => {
+  document.cookie = 'a5site=1; path=/; max-age=86400';
+  localStorage.setItem('a5', 'x'.repeat(2000));
+  const r = indexedDB.open('a5db', 1);
+  r.onupgradeneeded = () => r.result.createObjectStore('s');
+  r.onsuccess = () => { r.result.close(); show(); };
+};
+show();
+</script>

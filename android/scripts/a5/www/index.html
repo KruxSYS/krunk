@@ -1,0 +1,17 @@
+<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width">
+<title>a5 index</title>
+<style>body{font:18px sans-serif;margin:16px}a,button{display:block;margin:14px 0;font-size:18px;padding:8px}</style>
+<h2>Krunk a5 tests</h2>
+<a href="/login">Sign in (cookie download)</a>
+<a href="/private/report.bin">Report without signing in</a>
+<a id=slow href="/file/slow.bin?size=3000000&rate=150">Slow file (3 MB, 150 KiB/s)</a>
+<a id=noresume href="/file/stream.bin?size=3000000&rate=150&etag=0&ranges=0">Slow file that cannot be continued</a>
+<a id=cut href="/file/cut.bin?size=600000&rate=300&cut=200000">File whose first try breaks</a>
+<a id=nolen href="/file/nolen.bin?size=200000&nolen=1">File of unknown size</a>
+<a id=evil href="/file/x?size=100&name=..%2F..%2Fevil%3Cname%3E.txt">Bad file name</a>
+<a href="/blob.html">blob: and data: downloads</a>
+<a href="/perms.html">Permissions</a>
+<a href="/storage.html">Cookies and storage</a>
+<a href="/fullscreen.html">Full screen</a>
+<a href="/pointerlock.html">Pointer lock</a>
+<form method=post action="/post-file"><button id=post>POST download</button></form>
