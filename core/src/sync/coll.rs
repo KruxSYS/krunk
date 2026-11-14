@@ -974,6 +974,9 @@ mod tests {
             "searchSuggestions",
             "downloadAutoClearDays",
             "sessionLog",
+            // 0.20.1: keeping media tabs awake is about this device's memory (it was in
+            // neither list, so it never synced: this only says so).
+            "keepMediaTabsAwake",
         ];
         let v = serde_json::to_value(Settings::default()).unwrap();
         let unsorted: Vec<&String> = v
