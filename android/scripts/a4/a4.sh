@@ -420,6 +420,11 @@ t_keylost() {
   dump; has text "Cancel" && has text "Sign in to" --contains && tapui text "Cancel" 2
   passwords; waitfor text "This vault cannot be opened" 8
   check "key lost: the screen says so, no password is asked" 'has text "This vault cannot be opened" && ! has text "Unlock"'
+  check "the key-lost screen offers Try again next to Delete" 'has text "Try again" && has text "Delete this vault"'
+  tapui text "Try again" 3; dump
+  check "Try again with the key really gone: locked, and the unlock says the key is gone again" 'has text "The vault is locked" --contains || has text "This vault cannot be opened"'
+  dump; has text "The vault is locked" --contains && { field "Vault password" "$PW"; hidekb; tapui text "Unlock" 5; waitfor text "This vault cannot be opened" 8; }
+  dump; check "after the failed unlock the key-lost screen is back" 'has text "This vault cannot be opened"'
   shotblack keylost
   check "the vault file is still there" 'A "run-as $PKG ls files/krunk-vault/" | grep -q vault.json'
   tapui text "Delete this vault" 2; field "Type DELETE" delete; hidekb; tapui text "Delete this vault" 2

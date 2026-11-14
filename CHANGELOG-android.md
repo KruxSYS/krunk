@@ -90,10 +90,19 @@ no fingerprint can be simulated on the test emulator, so switching it on, unlock
 enrolment and the fall-back to the password are covered by unit tests with stand-ins only; the
 one device check is that the switch is disabled with its reason when no fingerprint is enrolled.
 **StrongBox was not run on a device either:** the emulator has none and used the other Keystore
-path; the StrongBox-first choice is covered by unit tests with a stand-in. Copying to the
-clipboard and its timed clearing are covered by unit tests only.
+path; the StrongBox-first choice is covered by unit tests with a stand-in. The release build was checked on the emulator, including the update from 0.2.0 (tabs, bookmark
+and settings kept), every flow above, the clipboard (a copied password could be pasted at once
+and was gone about 50 seconds later with Krunk left in the background), and a packet capture
+while the vault was unlocked and searched (no packet).
 
-<!-- M7: release-pass results and known issues are added here by the lead -->
+Known limits:
+- The clipboard is cleared by an alarm Android may deliver some seconds late, and later still
+  while the device sleeps.
+- A sign-in form inside a frame of a sibling subdomain was not tried on a device (the rule that
+  refuses it is covered by unit tests and an engine setting).
+- With the vault locked, the offer after signing in always reads "Save this sign-in?", also when
+  the login is known: Krunk cannot tell before the vault is open. Saving then updates the
+  existing login.
 
 ## 0.2.0 — 2026-11-12
 

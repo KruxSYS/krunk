@@ -443,5 +443,8 @@ ids or times.
 - **StrongBox:** the emulator image has none (`pm list features` shows no `strongbox_keystore`)
   and ran the TEE path for real. The StrongBox-first branch and its fallback are covered by
   `KeystoreKeyWrapperTest` and `BiometricUnlockTest` with fakes.
-- Copy to the clipboard and its timed clearing: `VaultClipboardTest` only.
+- Copy to the clipboard and its timed clearing: run on the release build (`a4.sh clip`, and
+  `m7/rel-extra-steps.sh clipbg` for the clear with Krunk in the background, which pastes into
+  Android's Settings search). In the background the timer in the process does not run (Android
+  freezes the process within seconds); an inexact alarm (`ClipClearReceiver`) does the clear.
 - A real device-to-device transfer and an arm64 device.
