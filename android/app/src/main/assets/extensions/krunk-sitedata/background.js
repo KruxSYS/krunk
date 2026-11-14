@@ -4,8 +4,8 @@
 // App -> here:  {t:"list", id}
 // Here -> app:  {t:"ready"}                       after every start of this script
 //               {t:"list", id, cookies, usage, error}
-//                 cookies: [[host, count], ...] or null when the cookies could not be listed
-//                 usage:   [[origin, topHost, bytes], ...] or null when sizes are not available
+//                 cookies: JSON text of [[host, count], ...], or "" when the cookies could not be listed
+//                 usage:   JSON text of [[origin, topHost, bytes], ...], or "" when sizes are not available
 //
 // Cookies: browser.cookies.getAll with firstPartyDomain null (no filter on first-party isolation)
 // and partitionKey {} (cookies kept apart per site as well as ordinary ones): all cookies of the
@@ -36,7 +36,15 @@ async function list(id) {
   } catch (e) {
     errors.push("usage: " + String(e));
   }
-  send({ t: "list", id, cookies, usage, error: errors.join("; ").slice(0, 300) });
+  // As JSON text: GeckoView's message bridge refuses arrays that mix strings and numbers
+  // ("Invalid event data property"), so the rows travel as one string each.
+  send({
+    t: "list",
+    id,
+    cookies: cookies === null ? "" : JSON.stringify(cookies),
+    usage: usage === null ? "" : JSON.stringify(usage),
+    error: errors.join("; ").slice(0, 300),
+  });
 }
 
 port.onMessage.addListener(m => {

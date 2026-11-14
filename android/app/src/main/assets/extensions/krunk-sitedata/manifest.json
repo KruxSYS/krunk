@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Krunk site data",
-  "version": "1.0",
+  "version": "1.1",
   "description": "Tells Krunk, when its site data screen asks, which sites have cookies and how much data each site has stored. Reads names and sizes only, never cookie values or stored content, and makes no network requests.",
   "browser_specific_settings": {
     "gecko": {

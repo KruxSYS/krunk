@@ -51,12 +51,18 @@ object DebugHooks {
             "accept-enc" to { b -> b.header("Accept-Encoding", "identity") },
             "referrer" to { b -> b.referrer(url) },
         )
-        for ((flagName, flags) in listOf("none" to 0, "private" to org.mozilla.geckoview.GeckoWebExecutor.FETCH_FLAGS_PRIVATE)) {
+        for ((flagName, flags) in listOf(
+            "none" to 0,
+            "private" to org.mozilla.geckoview.GeckoWebExecutor.FETCH_FLAGS_PRIVATE,
+        )) {
             for ((name, apply) in variants) {
                 val b = org.mozilla.geckoview.WebRequest.Builder(url).header("X-Krunk-Fetch", "1")
                 apply(b)
                 org.mozilla.geckoview.GeckoWebExecutor(engine.runtime).fetch(b.build(), flags).accept(
-                    { r -> say("fetch-test $flagName/$name: status ${r?.statusCode}"); runCatching { r?.body?.close() } },
+                    { r ->
+                        say("fetch-test $flagName/$name: status ${r?.statusCode}")
+                        runCatching { r?.body?.close() }
+                    },
                     { e -> say("fetch-test $flagName/$name: ${e?.javaClass?.simpleName} ${e?.message}") },
                 )
             }

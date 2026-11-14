@@ -114,7 +114,14 @@ class SiteDataExtension(runtime: GeckoRuntime) {
         val done = waiting.remove(m.optInt("id")) ?: return
         val error = m.optString("error")
         if (error.isNotEmpty()) Log.w(KrunkApp.TAG, "site data: $error")
-        done(EngineSiteData(cookies = cookies(m.optJSONArray("cookies")), usage = usage(m.optJSONArray("usage"))))
+        done(EngineSiteData(cookies = cookies(rows(m, "cookies")), usage = usage(rows(m, "usage"))))
+    }
+
+    /** A list the extension sends as JSON text (see its background.js); null when it sent none. */
+    private fun rows(m: JSONObject, key: String): JSONArray? {
+        val text = m.optString(key)
+        if (text.isEmpty() || text.length > MAX_JSON) return null
+        return runCatching { JSONArray(text) }.getOrNull()
     }
 
     private fun cookies(rows: JSONArray?): Map<String, Int>? {
@@ -169,5 +176,8 @@ class SiteDataExtension(runtime: GeckoRuntime) {
         const val NATIVE_APP = "krunk"
         private const val MAX_ROWS = 20_000
         private const val MAX_TEXT = 2048
+
+        /** The longest list text accepted from the extension (rows are cut to MAX_ROWS anyway). */
+        private const val MAX_JSON = 8_000_000
     }
 }

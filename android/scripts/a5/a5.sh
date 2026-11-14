@@ -345,12 +345,12 @@ t_permchange() { # after perms: flip the stored answers in Settings and see the 
 }
 
 t_sitedata() {
-  launch 8; front sitedata || return
+  stop_clean; launch 8; front sitedata || return
   view "$B/storage.html?s1" 8; waitfor text "Store data" 20
   tapui text "Store data" 4; dump
   check "the page stored a cookie and localStorage" 'has text "cookie: present" && has text "localStorage: present"'
   sleep 5
-  privacy; tapto text "Site data" 5; waitfor text "10.250.136.3" 25 --contains
+  privacy; tapto text "Site data" 5; waitfor text "cookie" 25 --contains
   shot sitedata-list; dump; nodes sitedata-list
   check "the site is listed" 'has text "10.250.136.3" --contains'
   check "with a cookie count" 'has text "cookie" --contains'
@@ -358,7 +358,7 @@ t_sitedata() {
   tapui desc "Clear data of 10.250.136.3" 3 --contains
   shot sitedata-confirm; dump; nodes sitedata-confirm
   check "the confirmation names the site and offers the permissions" 'has text "Clear data of 10.250.136.3?" && has text "Also reset its permissions"'
-  tapui text "Clear data" 6
+  tapui text "Clear" 6
   shot sitedata-cleared; dump; nodes sitedata-cleared
   A "input keyevent KEYCODE_BACK"; sleep 1; A "input keyevent KEYCODE_BACK"; sleep 2
   view "$B/storage.html?s2" 8; waitfor text "Store data" 20; dump; nodes sitedata-page-after; shot sitedata-page-after
@@ -367,18 +367,21 @@ t_sitedata() {
 }
 
 t_history() { # F-54 / F-59: screens keep their place; the page is not rebuilt
-  launch 8; front history || return
+  stop_clean; launch 8; front history || return
+  local m0; m0=$(now)
   local n; for n in 1 2 3; do view "$B/index.html?h$n" 5; done
   menu; tapui text "History" 3; shot history-list; dump; nodes history-list
   check "history lists today's visits" 'has text "Today" --contains'
   A "input keyevent KEYCODE_BACK"; sleep 2
-  # settings scrolled, About on top, back: still scrolled
-  privacy; dump; local before; before=$(echo "$UI" | python3 -I "$HERE/uix.py" find text "Block ads and trackers" | cut -d" " -f2)
-  tapto text "About Krunk" 3 --contains; A "input keyevent KEYCODE_BACK"; sleep 2; dump
-  check "Settings is still scrolled after About was on top" '! has text "Search engine" || [ -n "$before" ]'
-  shot history-settings-back
-  A "input keyevent KEYCODE_BACK"; sleep 2; dump; shot history-page-back
-  check "back on the page with its toolbar" 'has desc "Menu" && has text "Krunk a5 tests" --contains'
+  # Settings scrolled down to its privacy rows, Site permissions pushed on top, Back: still there
+  privacy; scrollto text "Site data"; dump; nodes history-settings-scrolled
+  local before; before=$(echo "$UI" | python3 -I "$HERE/uix.py" find text "Site data" | cut -d" " -f2)
+  tapui text "Site permissions" 3; dump; check "Site permissions is on top" 'has text "Search sites" || has text "No site has a remembered answer" --contains'
+  A "input keyevent KEYCODE_BACK"; sleep 2; dump; nodes history-settings-back; shot history-settings-back
+  local after; after=$(echo "$UI" | python3 -I "$HERE/uix.py" find text "Site data" | cut -d" " -f2)
+  check "Settings kept its scroll position ($before -> $after)" '[ -n "$before" ] && [ "$before" = "$after" ]'
+  A "input keyevent KEYCODE_BACK"; sleep 2; dump; shot history-page-back; nodes history-page-back
+  check "back on the page with its toolbar, page not reloaded" 'has desc "Menu" && has text "Krunk a5 tests" --contains && [ "$(since "$m0" | grep -c "index.html?h3")" = 1 ]'
   # typing still reaches the page chrome after a covered screen (focus / keyboard)
   go "$B/storage.html?h9" 8; dump
   check "the address bar works after returning" 'has text "Store data"'
