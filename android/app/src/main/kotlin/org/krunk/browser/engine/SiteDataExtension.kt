@@ -26,8 +26,8 @@ import org.mozilla.geckoview.WebExtension
  *    `privateBrowsingId: 0` unless the private store is named, and naming it is refused for an
  *    extension that is not allowed in private browsing, which this one never is.
  *  - no WebExtension API for sizes, but a built-in extension is privileged
- *    (`ExtensionData.getIsPrivileged`: `builtIn`) and may carry an experiment API, as
- *    `krunk-guard` does. `usage-api.js` is one function around `Services.qms.getUsage`, the call
+ *    (`ExtensionData.getIsPrivileged`: `builtIn`), which is all an experiment API asks for
+ *    (`canUseAPIExperiment`); `krunk-guard` carries two. `usage-api.js` is one function around `Services.qms.getUsage`, the call
  *    the engine's own `browsingData` API makes (`ext-browsingData.js`): origins with their
  *    stored bytes (localStorage, IndexedDB, Cache API, ...; not cookies, not the HTTP cache).
  *
