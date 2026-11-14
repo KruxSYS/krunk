@@ -1936,8 +1936,10 @@ that cannot leave the device (StrongBox when the device has one).
   It was **not tested on a device** for 0.3.0 (the test emulator cannot simulate a fingerprint;
   unit tests with stand-ins only), and neither was StrongBox.
 - The vault's screens and dialogs are blank in screenshots, screen recordings and Recents. A
-  copied password is marked sensitive and removed from the clipboard after 30 seconds unless
-  something else was copied since.
+  copied password is marked sensitive and removed from the clipboard after 30 seconds: while
+  Krunk is on screen only if the clipboard still holds it; once you have left Krunk the clipboard
+  is cleared whatever is on it, because an app in the background cannot read it. A keyboard with
+  a clipboard history may keep its own copy.
 
 **Data and backup.** Krunk's database is `files/krunk/browser.db` in the app's private storage
 (`/data/data/org.krunk.browser/files/krunk/`); the Gecko profile (cookies, site data, caches) is

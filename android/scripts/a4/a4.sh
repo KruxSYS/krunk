@@ -17,6 +17,8 @@
 #     keylost    (debug build) the Keystore key removed: the "cannot be opened" screen, delete
 #     fixture    (debug build) writes the vault file and its inner twin for the format test
 #     clip       copy a password: pasted at once, gone from the clipboard after 30 s
+#     clipbg     the same with Krunk left in the background (cleared without coming back)
+#     lockprompt a lock while the picker is open takes its content away
 #     finger     whether a fingerprint can be simulated here (recorded, never a failure)
 #     nobio      no fingerprint enrolled: the switch is disabled with its reason
 #   Last, because they can wedge the emulator's display:
@@ -307,6 +309,47 @@ t_finger() { # can a fingerprint be simulated on this device at all? (recorded e
   local out; out=$(T "$E" adb emu finger touch 1 2>&1 | head -2)
   echo "adb emu finger touch 1 -> $out"
   if echo "$out" | grep -qi "error\|KO\|could not"; then skip "fingerprint simulation (no emulator console from here: $out)"; else ok "the emulator console took 'finger touch'"; fi
+}
+
+t_lockprompt() { # a lock while a prompt shows vault content takes that content away (grace: at once)
+  to_vault; front lockprompt || return
+  vault_settings; tapto text "At once" 2; A "input keyevent KEYCODE_BACK"; sleep 1; A "input keyevent KEYCODE_BACK"; sleep 1
+  open_login "$LOGIN?lockprompt"; tap_user
+  waitfor text "This page is not encrypted" 8; tapui text "Fill in anyway" 3
+  waitfor text "Choose a saved sign-in:" 8 || { missing "picker"; return; }
+  A "input keyevent KEYCODE_HOME"; sleep 5; launch 4; dump
+  check "after a lock the open picker shows no login any more" '! has text "alice"'
+  check "it asks for the vault password again" 'has text "Unlock vault" || has text "Vault password"'
+  shotblack lockprompt-after-lock
+  A "input keyevent KEYCODE_BACK"; sleep 1
+  to_vault; vault_settings; tapto text "After 1 minute" 2; A "input keyevent KEYCODE_BACK"; sleep 1
+  stop_clean
+}
+
+t_clipbg() { # copy a password, leave Krunk: 30 s later the clipboard is empty although Krunk never came back
+  to_vault; front clipbg || return
+  tapui text "alice" 3; tapui desc "Copy password" 2
+  A "input keyevent KEYCODE_HOME"; sleep 2
+  local before after
+  before=$(A "su 0 dumpsys clipboard" 2> /dev/null | tr -d '\r')
+  sleep 36
+  after=$(A "su 0 dumpsys clipboard" 2> /dev/null | tr -d '\r')
+  printf 'before:\n%s\nafter:\n%s\n' "$before" "$after" | sed 's/s3cret[^ ]*/<password>/g' > "$EV/clipbg-dumpsys.txt"
+  check "the clipboard held a clip right after the copy" 'echo "$before" | grep -qiE "ClipData|primary|text/plain"'
+  check "36 s later, Krunk still in the background, it no longer does" '! echo "$after" | grep -qiE "ClipData \{|text/plain"'
+  A "am force-stop $PKG"
+}
+
+t_idlecap() { # the vault makes no network requests: capture while unlocking and using the vault screen
+  launch 8; front idlecap || return
+  dump; has text "Cancel" && has text "Sign in to" --contains && tapui text "Cancel" 2
+  sleep 20   # restored tabs finish loading before the capture starts
+  cap_start vault-idle
+  passwords; dump; has text "The vault is locked" --contains && { field "Vault password" "$PW"; hidekb; tapui text "Unlock" 5; }
+  tapui desc "Search" 2; type_text al; hidekb; sleep 60
+  echo "capture: $(cap_stop vault-idle)"
+  check "no packet left the app while the vault was unlocked and used" '[ "$(packets vault-idle)" = 0 ]'
+  stop_clean
 }
 
 t_timer() { # 1 minute

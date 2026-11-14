@@ -24,7 +24,10 @@ The password vault. It installs over 0.2.0 and keeps tabs, bookmarks, history an
   itself again after 30 seconds), copy the user name or the password, add, edit and delete logins
   (delete asks first), Change password and Lock now. A copied password is marked as sensitive, so
   Android 13 and later keep it out of the clipboard preview, and Krunk takes it off the clipboard
-  after 30 seconds unless you copied something else in between.
+  after 30 seconds. While Krunk is on screen it does so only if the clipboard still holds that
+  password; once you have left Krunk it cannot look (Android lets only the app on screen read
+  the clipboard), so it clears the clipboard whatever is on it. A keyboard that keeps a clipboard
+  history may have its own copy.
 - **Locking.** The vault locks:
   - when you choose Lock now;
   - after a time without vault use: 1, 5, 15, 30 or 60 minutes, 15 by default ("Lock after");
