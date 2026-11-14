@@ -8,7 +8,10 @@ import org.junit.Test
 import org.krunk.browser.engine.EngineSiteData
 import org.krunk.browser.engine.OriginUsage
 import org.krunk.ffi.KrunkStore
+import org.krunk.ffi.isSiteName
+import org.krunk.ffi.siteIsRegistrable
 import org.krunk.ffi.siteOfHost
+import org.krunk.ffi.webOrigin
 
 class SiteDataModelTest {
     /** A store with two visited sites and one site that only holds a permission answer. */
@@ -186,5 +189,32 @@ class SiteDataModelTest {
         assertFalse(SiteDataModel.isOfSite("https://exa mple/", "example.co.uk", site))
         assertEquals("a.test", SiteDataModel.hostOf("https://a.test:8443"))
         assertNull(SiteDataModel.hostOf("not a url"))
+    }
+
+    @Test
+    fun theExtensionsHostsAndOriginsAreChecked() {
+        assertEquals(".news.example", SiteDataModel.checkedHost(".news.example", ::isSiteName))
+        assertEquals("10.0.2.2", SiteDataModel.checkedHost("10.0.2.2", ::isSiteName))
+        for (bad in listOf("", ".", "a b", "x/y", "evil.example/../", "<b>")) {
+            assertNull(bad, SiteDataModel.checkedHost(bad, ::isSiteName))
+        }
+        assertEquals(
+            "https://a.test:8443" to "",
+            SiteDataModel.checkedUsage("https://a.test:8443", "", ::webOrigin, ::isSiteName),
+        )
+        assertEquals(
+            "https://w.test" to "top.test",
+            SiteDataModel.checkedUsage("https://w.test", "top.test", ::webOrigin, ::isSiteName),
+        )
+        assertNull(SiteDataModel.checkedUsage("moz-extension://x", "", ::webOrigin, ::isSiteName))
+        assertNull(SiteDataModel.checkedUsage("file:///sdcard/x", "", ::webOrigin, ::isSiteName))
+        assertNull(SiteDataModel.checkedUsage("https://a.test", "a b", ::webOrigin, ::isSiteName))
+    }
+
+    @Test
+    fun aSuffixSiteIsClearedByItsHostOnly() {
+        // GeckoEngine.clearSiteData: the base-domain call only for these.
+        for (site in listOf("example.com", "example.co.uk", "10.0.2.2")) assertTrue(site, siteIsRegistrable(site))
+        for (site in listOf("github.io", "dev", "co.uk", "localhost")) assertFalse(site, siteIsRegistrable(site))
     }
 }

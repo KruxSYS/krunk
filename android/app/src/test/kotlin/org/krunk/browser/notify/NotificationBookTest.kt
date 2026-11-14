@@ -100,4 +100,28 @@ class NotificationBookTest {
         assertEquals(3, small.size)
         assertEquals("d", small[base]?.notification?.text)
     }
+
+    @Test
+    fun aSiteCannotPostWithoutBound() {
+        val book = NotificationBook<Note>(base, maxPerSite = 3, maxLive = 5)
+        val first = book.show(site, "", false, Note("1"))
+        book.show(site, "", false, Note("2"))
+        book.show(site, "", false, Note("3"))
+        // The fourth of the same site: the oldest of that site gives way and is handed back.
+        val fourth = book.show(site, "", false, Note("4"))
+        assertEquals(listOf("1"), fourth.evicted.map { it.notification.text })
+        assertNull(book[first.id])
+        assertEquals(3, book.size)
+        assertEquals(listOf("2"), book.show(site, "t", false, Note("tagged")).evicted.map { it.notification.text })
+        // A replacement (same tag) is no new notification: nothing gives way.
+        assertTrue(book.show(site, "t", false, Note("tagged again")).evicted.isEmpty())
+        // The same site in a private tab, and other sites, count on their own; all together are capped.
+        assertTrue(book.show(site, "", true, Note("p")).evicted.isEmpty())
+        assertTrue(book.show("https://b.test", "", false, Note("b")).evicted.isEmpty())
+        assertEquals(5, book.size)
+        val more = book.show("https://c.test", "", false, Note("c"))
+        assertEquals(listOf("3"), more.evicted.map { it.notification.text })
+        for (i in 0 until 20) book.show("https://c$i.test", "", false, Note("c$i"))
+        assertEquals(5, book.size)
+    }
 }

@@ -75,7 +75,7 @@ class KrunkApp : Application() {
     }
 
     private val siteNotificationsLazy = lazy {
-        SiteNotifications(this) { then -> sitePermissions.ensureNotificationsAllowed(then) }
+        SiteNotifications(this, sitePermissions::notificationsPostable, sitePermissions::notificationDropped)
     }
 
     /** Notifications of sites, shown as Android notifications. */
@@ -92,6 +92,8 @@ class KrunkApp : Application() {
      */
     private fun startSiteFeatures(tabs: TabManager) {
         sitePermissions.reconcile()
+        // The answers are read once, off the main thread; requests are answered from memory.
+        vaultScope.launch(Dispatchers.IO) { sitePermissions.warm() }
         vaultScope.launch {
             var hadPrivate = false
             tabs.tabs.collect { list ->
@@ -160,6 +162,9 @@ class KrunkApp : Application() {
                 "Krunk ${BuildConfig.VERSION_NAME} starting (core ${coreVersion()}, " +
                     "GeckoView ${BuildConfig.GECKOVIEW_VERSION})",
             )
+            // A private page's notification an earlier process left in the shade goes now,
+            // whatever this start is for (the engine and its notifications may not be made).
+            SiteNotifications.sweepPrivate(this)
             // The vault locks once no activity of Krunk has been on screen for the grace period.
             // A vault nobody has asked for yet is locked anyway and is not created for this.
             ProcessLifecycleOwner.get().lifecycle.addObserver(

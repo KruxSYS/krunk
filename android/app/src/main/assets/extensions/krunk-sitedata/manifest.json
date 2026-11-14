@@ -8,6 +8,7 @@
       "id": "sitedata@krunk.org"
     }
   },
+  "incognito": "not_allowed",
   "permissions": [
     "nativeMessaging",
     "geckoViewAddons",

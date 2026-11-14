@@ -7,6 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.krunk.browser.engine.permissions.PermissionPolicy.Decision
 import org.krunk.ffi.KrunkStore
+import org.krunk.ffi.webOrigin
 
 class PermissionPolicyTest {
     private class MapStore : PermissionStore {
@@ -131,6 +132,9 @@ class PermissionPolicyTest {
     fun rememberStoresAndNotRememberingDoesNot() {
         policy.answered(tab, site, false, listOf(PermissionKind.GEOLOCATION), allow = true, remember = false)
         assertTrue(store.rows.isEmpty())
+        // Kept for this tab's page only (the engine's entry is forgotten at once), never stored.
+        assertEquals(Decision.Ask(listOf(PermissionKind.GEOLOCATION)), decide(PermissionKind.GEOLOCATION, tabId = 2u))
+        policy.newDocument(tab)
         assertEquals(Decision.Ask(listOf(PermissionKind.GEOLOCATION)), decide(PermissionKind.GEOLOCATION))
         policy.answered(tab, site, false, listOf(PermissionKind.GEOLOCATION), allow = true, remember = true)
         assertEquals(mapOf((site to "geolocation") to true), store.rows)
@@ -233,7 +237,7 @@ class PermissionPolicyTest {
     fun theSharedTableIsTheStore() {
         val krunk = KrunkStore.inMemory()
         try {
-            val table = TablePermissionStore(krunk) { 1_000L }
+            val table = TablePermissionStore.of(krunk, { 1_000L }, ::webOrigin)
             val onTable = PermissionPolicy(table)
             for (kind in PermissionKind.entries) {
                 if (!kind.rememberAllow) continue
@@ -259,8 +263,9 @@ class PermissionPolicyTest {
             )
             table.clearOrigin("https://a.test")
             assertEquals(listOf("https://b.test:8443"), table.list().map { it.origin })
-            // A row removed behind the policy's back (the site-data screen) counts at once.
+            // A row removed behind the table's back counts once the copy is invalidated.
             krunk.sitePermissionsClearOrigin("https://b.test:8443/")
+            table.invalidate()
             assertEquals(
                 Decision.Ask(listOf(PermissionKind.NOTIFICATIONS)),
                 onTable.decide(3u, "https://b.test:8443", false, listOf(PermissionKind.NOTIFICATIONS)),
@@ -342,22 +347,27 @@ class PermissionPolicyTest {
     @Test
     fun androidsAnswer() {
         val location = listOf(AndroidPermissions.FINE_LOCATION, AndroidPermissions.COARSE_LOCATION)
-        // The approximate location alone is a grant.
-        assertTrue(AndroidPermissions.satisfied(location, setOf(AndroidPermissions.COARSE_LOCATION)))
-        assertFalse(AndroidPermissions.satisfied(location, emptySet()))
-        assertEquals(listOf(AndroidPermissions.Group.LOCATION), AndroidPermissions.missingGroups(location, emptySet()))
+        val coarse = setOf(AndroidPermissions.COARSE_LOCATION)
+        // The approximate location alone is a grant from Android 12 on.
+        assertTrue(AndroidPermissions.satisfied(location, coarse, 35))
+        assertFalse(AndroidPermissions.satisfied(location, coarse, 30))
+        assertFalse(AndroidPermissions.satisfied(location, emptySet(), 35))
+        assertEquals(
+            listOf(AndroidPermissions.Group.LOCATION),
+            AndroidPermissions.missingGroups(location, emptySet(), 35),
+        )
         val media = listOf(AndroidPermissions.CAMERA, AndroidPermissions.RECORD_AUDIO)
-        assertFalse(AndroidPermissions.satisfied(media, setOf(AndroidPermissions.CAMERA)))
+        assertFalse(AndroidPermissions.satisfied(media, setOf(AndroidPermissions.CAMERA), 35))
         assertEquals(
             listOf(AndroidPermissions.Group.MICROPHONE),
-            AndroidPermissions.missingGroups(media, setOf(AndroidPermissions.CAMERA)),
+            AndroidPermissions.missingGroups(media, setOf(AndroidPermissions.CAMERA), 35),
         )
         assertEquals(
             listOf(AndroidPermissions.Group.CAMERA, AndroidPermissions.Group.MICROPHONE),
-            AndroidPermissions.missingGroups(media, emptySet()),
+            AndroidPermissions.missingGroups(media, emptySet(), 35),
         )
-        assertTrue(AndroidPermissions.satisfied(media, media.toSet()))
-        assertTrue(AndroidPermissions.satisfied(emptyList(), emptySet()))
+        assertTrue(AndroidPermissions.satisfied(media, media.toSet(), 35))
+        assertTrue(AndroidPermissions.satisfied(emptyList(), emptySet(), 35))
         assertEquals(AndroidPermissions.Group.OTHER, AndroidPermissions.groupOf("android.permission.READ_CONTACTS"))
     }
 

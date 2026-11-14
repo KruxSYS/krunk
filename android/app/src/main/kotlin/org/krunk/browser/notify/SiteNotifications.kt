@@ -10,6 +10,8 @@ import android.util.Log
 import org.krunk.browser.KrunkApp
 import org.krunk.browser.MainActivity
 import org.krunk.browser.R
+import org.krunk.browser.engine.permissions.SiteLabel
+import org.krunk.ffi.siteOfHost
 import org.krunk.ffi.webOrigin
 import org.mozilla.geckoview.WebNotification
 import org.mozilla.geckoview.WebNotificationDelegate
@@ -31,12 +33,17 @@ import org.mozilla.geckoview.WebNotificationDelegate
  *   died first.
  * - A site's picture (`imageUrl`) is not fetched: it would be a request of Krunk's own.
  *
- * Android's permission to post is asked through [ensureAllowed] when a notification is due and
- * it is missing (a site allowed on the settings screen never passed a prompt).
+ * - At most [NotificationBook.MAX_PER_SITE] live notifications per site and
+ *   [NotificationBook.MAX_LIVE] in all: the oldest gives way (cancelled, the page is told).
+ *
+ * Android's permission to post is asked when the user allows a site to notify (the prompt, or
+ * Allow on the settings screen), never when a notification is due: then it is only checked
+ * ([postable]); without it the notification is dropped and [dropped] tells the user (once).
  */
 class SiteNotifications(
     private val context: Context,
-    private val ensureAllowed: ((granted: Boolean) -> Unit) -> Unit,
+    private val postable: () -> Boolean,
+    private val dropped: () -> Unit,
 ) : WebNotificationDelegate {
     /** What a tap leads to: the site whose tab is to be selected. */
     data class Tap(val origin: String?, val private: Boolean)
@@ -48,22 +55,19 @@ class SiteNotifications(
     private val manager get() = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
 
     init {
-        // What an earlier process left: private ones go, the others keep their ids.
-        try {
-            val left = manager?.activeNotifications.orEmpty().filter { it.id >= Channels.ID_SITE_BASE }
-            val (private, normal) = left.partition { it.notification.extras.getBoolean(EXTRA_PRIVATE) }
-            private.forEach { manager?.cancel(it.id) }
-            book.reserve(normal.map { it.id })
-        } catch (e: RuntimeException) {
-            Log.w(KrunkApp.TAG, "site notifications: the shade could not be read: ${e.javaClass.simpleName}")
-        }
+        // What an earlier process left: private ones go (again: KrunkApp sweeps at start too),
+        // the others keep their ids.
+        book.reserve(sweepPrivate(context))
     }
 
     private fun originOf(n: WebNotification): String? = n.origin?.let(::webOrigin) ?: n.source?.let(::webOrigin)
 
     override fun onShowNotification(notification: WebNotification) {
-        ensureAllowed { granted ->
-            if (granted) show(notification) else notification.dismiss()
+        if (postable()) {
+            show(notification)
+        } else {
+            notification.dismiss()
+            dropped()
         }
     }
 
@@ -75,8 +79,14 @@ class SiteNotifications(
             context.getString(R.string.channel_sites),
         )
         val origin = originOf(n)
-        val site = origin?.substringAfter("://").orEmpty()
+        // The sender is named in a line the page cannot write; one without a web address (a
+        // local file, an extension page) is named as such, so it never reads as Krunk's own.
+        val site = origin?.let { SiteLabel.of(it, ::siteOfHost).text } ?: context.getString(R.string.notify_site_local)
         val shown = book.show(origin, n.tag, n.privateBrowsing, n)
+        for (old in shown.evicted) {
+            nm.cancel(old.id)
+            old.notification.dismiss()
+        }
         val id = shown.id
         val immutable = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         val tap = Intent(context, MainActivity::class.java)
@@ -103,7 +113,7 @@ class SiteNotifications(
             .setContentIntent(PendingIntent.getActivity(context, id, tap, immutable))
             .setDeleteIntent(PendingIntent.getBroadcast(context, id, swipe, immutable))
             .setVisibility(if (n.privateBrowsing) Notification.VISIBILITY_SECRET else Notification.VISIBILITY_PRIVATE)
-        if (site.isNotEmpty()) builder.setSubText(site)
+        builder.setSubText(site)
         if (n.privateBrowsing) builder.addExtras(android.os.Bundle().apply { putBoolean(EXTRA_PRIVATE, true) })
         // A silent notification makes no sound of its own; the channel's setting still rules.
         if (n.silent) builder.setGroupAlertBehavior(Notification.GROUP_ALERT_SUMMARY).setGroup(SILENT_GROUP)
@@ -166,6 +176,26 @@ class SiteNotifications(
         private const val MAX_TEXT = 1000
 
         private fun String.bounded(max: Int): String = if (length > max) take(max) + "…" else this
+
+        /**
+         * Cancels the private site notifications an earlier process left in the shade (it died
+         * before the private tabs closed) and returns the ids of the other site notifications
+         * still there. Run at every start of Krunk's main process, before anything else of the
+         * engine, and again when the notifications object is made.
+         */
+        fun sweepPrivate(context: Context): List<Int> {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                ?: return emptyList()
+            return try {
+                val left = nm.activeNotifications.orEmpty().filter { it.id >= Channels.ID_SITE_BASE }
+                val (private, normal) = left.partition { it.notification.extras.getBoolean(EXTRA_PRIVATE) }
+                private.forEach { nm.cancel(it.tag, it.id) }
+                normal.map { it.id }
+            } catch (e: RuntimeException) {
+                Log.w(KrunkApp.TAG, "site notifications: the shade could not be read: ${e.javaClass.simpleName}")
+                emptyList()
+            }
+        }
     }
 }
 

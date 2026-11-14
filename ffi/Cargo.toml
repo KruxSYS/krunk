@@ -24,6 +24,8 @@ cli = ["uniffi/cli"]
 
 [dependencies]
 lb_core = { path = "../core", package = "core" }
+# The same Public Suffix List crate the core uses (site_is_registrable).
+psl = "2"
 uniffi = "0.32"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

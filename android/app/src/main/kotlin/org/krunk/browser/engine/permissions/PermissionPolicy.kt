@@ -29,8 +29,16 @@ interface PermissionStore {
  *   a one-shot entry). So the engine's store is treated as a copy that must agree:
  *   - an answer that is a row in the table is given to the engine as allow/deny, so both hold it;
  *   - an answer that is *not* a row (not remembered, a default, a private tab) is still written
- *     by the engine; Krunk forgets that entry again when the tab loads another document or
- *     closes ([EngineEntries]);
+ *     by the engine, for the site in every tab, without an end date. Krunk cannot scope it to
+ *     the tab, so it forgets it as early as the engine allows: right after the engine wrote it
+ *     for the kinds where the page needs no entry to keep going (every deny, and the allows of
+ *     location and DRM: [PermissionKind.forgetEngineEntryAtOnce]; this object then answers the
+ *     same page's next request: `deniedThisLoad`/`allowedThisLoad`), else when the tab loads
+ *     another document or closes ([EngineEntries]). What stays (documented, not fixable with
+ *     this engine): a one-time allow of notifications, persistent storage, local network or
+ *     device access, and a default answer for autoplay, reach the same site in another tab and
+ *     last as long as the page that got them, and the settings page shows "Ask" for them
+ *     meanwhile; after a process kill they last until the next start's [EngineAgreement] check;
  *   - a change on the screens changes the engine's entry of that origin in the same step, and
  *     "Ask" removes both, so the next request reaches the delegate and finds no row: a prompt;
  *   - at start the engine's entries are compared with the table once and corrected (a process
@@ -43,7 +51,9 @@ interface PermissionStore {
  *
  * **Prompt spam**: after a deny (a tap on Deny, a dismissed prompt, or Android refusing its own
  * permission) the same kind is denied without a prompt in that tab until it loads another
- * document ([newDocument]), also when the deny was not remembered.
+ * document ([newDocument]), also when the deny was not remembered. "Another document" is a
+ * committed top-level document change (`DocumentChange`), not every load start: a download,
+ * an HTTP 204 or an external-app link does not end it.
  */
 class PermissionPolicy(private val store: PermissionStore) {
     sealed class Decision {
@@ -59,6 +69,9 @@ class PermissionPolicy(private val store: PermissionStore) {
 
     private val privateAnswers = HashMap<Pair<String, String>, Boolean>()
     private val deniedThisLoad = HashMap<UInt, MutableSet<PermissionKind>>()
+
+    /** One-time allows of kinds whose engine entry is forgotten at once, per tab and origin. */
+    private val allowedThisLoad = HashMap<UInt, MutableSet<Pair<String, PermissionKind>>>()
 
     /** The remembered answer: the table's for a normal tab, this session's for a private one. */
     fun remembered(origin: String?, private: Boolean, kind: PermissionKind): Boolean? = when {
@@ -79,6 +92,7 @@ class PermissionPolicy(private val store: PermissionStore) {
             // Also over a stored allow: Android refused its own permission on this page.
             if (deniedThisLoad[tab]?.contains(kind) == true) return Decision.Deny(stored = false)
             if (remembered == true) continue
+            if (origin != null && allowedThisLoad[tab]?.contains(origin to kind) == true) continue
             when (kind.default) {
                 PermissionDefault.ALLOW -> Unit
                 PermissionDefault.DENY -> return Decision.Deny(stored = false)
@@ -104,10 +118,15 @@ class PermissionPolicy(private val store: PermissionStore) {
         remember: Boolean,
     ) {
         if (!allow) deniedForNow(tab, kinds)
-        if (!remember || origin == null) return
+        if (origin == null) return
         for (kind in kinds) {
-            if (allow && !kind.rememberAllow) continue
-            if (private) privateAnswers[origin to kind.key] = allow else store.set(origin, kind.key, allow)
+            val kept = remember && (!allow || kind.rememberAllow)
+            if (kept) {
+                if (private) privateAnswers[origin to kind.key] = allow else store.set(origin, kind.key, allow)
+            } else if (allow && kind.geckoType != null && kind.forgetEngineEntryAtOnce(allow = true)) {
+                // The engine's entry goes at once (see PermissionKind): the page keeps its allow here.
+                allowedThisLoad.getOrPut(tab) { HashSet() } += origin to kind
+            }
         }
     }
 
@@ -130,16 +149,27 @@ class PermissionPolicy(private val store: PermissionStore) {
     /** The user changed an answer on the screens: it counts from the next request on, in every tab. */
     fun changedByUser() {
         deniedThisLoad.clear()
+        allowedThisLoad.clear()
     }
 
     /** The tab loads another document: it may ask again. */
     fun newDocument(tab: UInt) {
         deniedThisLoad.remove(tab)
+        allowedThisLoad.remove(tab)
     }
 
     fun tabClosed(tab: UInt) {
         deniedThisLoad.remove(tab)
+        allowedThisLoad.remove(tab)
     }
+
+    /** "Reset permissions" of [origin]: the private session's remembered answers for it go too. */
+    fun forgetPrivate(origin: String) {
+        privateAnswers.keys.removeAll { it.first == origin }
+    }
+
+    /** The origins the private session holds remembered answers for. */
+    fun privateOrigins(): Set<String> = privateAnswers.keys.mapTo(HashSet()) { it.first }
 
     /** The last private tab closed: nothing of the private session is left. */
     fun privateSessionEnded() {

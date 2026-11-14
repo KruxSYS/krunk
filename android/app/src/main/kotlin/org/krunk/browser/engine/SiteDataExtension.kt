@@ -6,6 +6,9 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import org.json.JSONArray
 import org.json.JSONObject
 import org.krunk.browser.KrunkApp
+import org.krunk.browser.ui.sitedata.SiteDataModel
+import org.krunk.ffi.isSiteName
+import org.krunk.ffi.webOrigin
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.WebExtension
 
@@ -24,7 +27,9 @@ import org.mozilla.geckoview.WebExtension
  *    would leave those out). The extension needs `<all_urls>`: cookies of hosts it has no
  *    permission for are filtered out. Private tabs: the query is bound to
  *    `privateBrowsingId: 0` unless the private store is named, and naming it is refused for an
- *    extension that is not allowed in private browsing, which this one never is.
+ *    extension that is not allowed in private browsing. This one is not: a built-in
+ *    (privileged) extension is given `internal:privateBrowsingAllowed` by the engine unless its
+ *    manifest says `"incognito": "not_allowed"` (`Extension.sys.mjs`), and the manifest says so.
  *  - no WebExtension API for sizes, but a built-in extension is privileged
  *    (`ExtensionData.getIsPrivileged`: `builtIn`), which is all an experiment API asks for
  *    (`canUseAPIExperiment`); `krunk-guard` carries two. `usage-api.js` is one function around `Services.qms.getUsage`, the call
@@ -117,9 +122,9 @@ class SiteDataExtension(runtime: GeckoRuntime) {
         val out = LinkedHashMap<String, Int>()
         for (i in 0 until minOf(rows.length(), MAX_ROWS)) {
             val row = rows.optJSONArray(i) ?: continue
-            val host = row.optString(0)
             val count = row.optInt(1)
-            if (host.isEmpty() || host.length > MAX_TEXT || count <= 0) continue
+            val host = SiteDataModel.checkedHost(row.optString(0), ::isSiteName) ?: continue
+            if (host.length > MAX_TEXT || count <= 0) continue
             out[host] = count
         }
         return out
@@ -130,9 +135,10 @@ class SiteDataExtension(runtime: GeckoRuntime) {
         val out = ArrayList<OriginUsage>()
         for (i in 0 until minOf(rows.length(), MAX_ROWS)) {
             val row = rows.optJSONArray(i) ?: continue
-            val origin = row.optString(0)
-            val top = row.optString(1)
-            if (origin.isEmpty() || origin.length > MAX_TEXT || top.length > MAX_TEXT) continue
+            val raw = row.optString(0)
+            val rawTop = row.optString(1)
+            if (raw.length > MAX_TEXT || rawTop.length > MAX_TEXT) continue
+            val (origin, top) = SiteDataModel.checkedUsage(raw, rawTop, ::webOrigin, ::isSiteName) ?: continue
             out += OriginUsage(origin, top, row.optLong(2).coerceAtLeast(0L))
         }
         return out
