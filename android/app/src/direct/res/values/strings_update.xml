@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The update check of the website APK (direct flavour, 0.5.0). -->
+<resources>
+    <string name="update_title">Updates</string>
+    <string name="update_check">Check for updates</string>
+    <string name="update_check_help">Krunk never checks by itself.</string>
+    <string name="update_checking">Checking…</string>
+    <string name="update_up_to_date">Krunk %1$s is up to date.</string>
+    <string name="update_available">Krunk %1$s is available</string>
+    <string name="update_available_size">%1$s, %2$s APK. Signed with Krunk\'s release key.</string>
+    <string name="update_whats_new">What\'s new</string>
+    <string name="update_download">Download and install</string>
+    <string name="update_downloading">Downloading Krunk %1$s… %2$s of %3$s</string>
+    <string name="update_cancel">Cancel</string>
+    <string name="update_installing">Krunk %1$s is ready. Confirm the installation in Android\'s dialog. Krunk restarts afterwards; your tabs, bookmarks, history, vault and downloads stay.</string>
+    <string name="update_needs_android">Krunk %1$s needs Android with API level %2$d or later; this device has %3$d.</string>
+    <string name="update_try_again">Try again</string>
+    <string name="update_ok">OK</string>
+    <string name="update_detail">Details: %1$s</string>
+    <string name="update_help">What this sends: Krunk contacts %1$s only when you tap \"Check for updates\" (it fetches the update information and its signature) and when you tap \"Download and install\" (it fetches the one APK for this device). The requests carry nothing but the request itself and the User-Agent \"Krunk-Android/%2$s\": no identifiers, no cookies, no settings. The server sees your IP address, as with any request. Krunk checks the signature with the key built into it, and the APK\'s size, SHA-256, package and signing certificate, before Android\'s installer asks you.</string>
+    <string name="update_permission_title">Allow Krunk to install the update?</string>
+    <string name="update_permission_text">Android asks once whether Krunk may install apps. Krunk uses this only to hand Android the Krunk update you just downloaded and that passed every check; Android still asks you before it installs. On the next screen, switch on \"Allow from this source\", then come back.</string>
+    <string name="update_permission_open">Open settings</string>
+    <string name="update_permission_later">Not now</string>
+    <string name="update_permission_waiting">Waiting for the permission to install apps. Allow it in Android\'s settings, or cancel.</string>
+    <string name="update_error_fetch">Could not reach the update server. Check the connection and try again.</string>
+    <string name="update_error_signature">The update information is not signed with Krunk\'s release key. Nothing was installed.</string>
+    <string name="update_error_invalid">The update information is not valid for Krunk for Android. Nothing was installed.</string>
+    <string name="update_error_no_file">The new version has no APK for this device.</string>
+    <string name="update_error_download">The download broke off. Nothing was installed.</string>
+    <string name="update_error_hash">The downloaded file does not match the signed update information (size or SHA-256). It was deleted; nothing was installed.</string>
+    <string name="update_error_package">The downloaded file is not the Krunk version the update information names. It was deleted; nothing was installed.</string>
+    <string name="update_error_certificate">The downloaded file is not signed with the certificate of the installed Krunk. It was deleted; nothing was installed.</string>
+    <string name="update_error_installer">Android\'s installer did not install the update.</string>
+    <string name="update_error_aborted">The installation was cancelled. Nothing was changed.</string>
+</resources>

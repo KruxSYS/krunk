@@ -20,6 +20,7 @@ import org.krunk.browser.engine.blocker.BlockerController
 import org.krunk.browser.engine.permissions.SitePermissions
 import org.krunk.browser.notify.SiteNotifications
 import org.krunk.browser.tabs.TabManager
+import org.krunk.browser.update.UpdateChannel
 import org.krunk.browser.vault.AppLoginVault
 import org.krunk.browser.vault.KeystoreKeyWrapper
 import org.krunk.browser.vault.VaultBackend
@@ -165,6 +166,9 @@ class KrunkApp : Application() {
             // A private page's notification an earlier process left in the shade goes now,
             // whatever this start is for (the engine and its notifications may not be made).
             SiteNotifications.sweepPrivate(this)
+            // A downloaded update APK an earlier run left behind is deleted (direct flavour; no
+            // network: the update check runs only when the user taps it).
+            UpdateChannel.onAppStart(this)
             // The vault locks once no activity of Krunk has been on screen for the grace period.
             // A vault nobody has asked for yet is locked anyway and is not created for this.
             ProcessLifecycleOwner.get().lifecycle.addObserver(

@@ -34,7 +34,7 @@ ADB="${ADB:-$SDK/platform-tools/adb}"
 APP_ID="${APPLICATION_ID:-org.krunk.browser}"
 SHOTS="${KRUNK_SHOTS:-$SRC_DIR/../.pipeline/screenshots/android}"
 PIDFILE="${TMPDIR:-/tmp}/krunk-emu-$AVD_NAME.pid"
-DEFAULT_APK="$ANDROID_DIR/app/build/outputs/apk/debug/app-universal-debug.apk"
+DEFAULT_APK="$ANDROID_DIR/app/build/outputs/apk/direct/debug/app-direct-universal-debug.apk"
 
 pick_serial() {
   if [ -n "${ANDROID_SERIAL:-}" ]; then

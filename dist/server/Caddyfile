@@ -61,7 +61,9 @@
 		}
 	}
 
-	# Krunk's update check: always revalidated, so a new release is seen at once.
+	# Krunk's update checks: always revalidated, so a new release is seen at once. Windows
+	# (updates/win-x64/, publish-release.sh) and, since Android 0.5.0, the website APK
+	# (updates/android-arm64/, publish-android.sh): latest.json and its Ed25519 latest.json.sig.
 	handle /updates/* {
 		root * /srv/releases
 		header Cache-Control "no-cache, no-transform"

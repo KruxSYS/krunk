@@ -11,8 +11,8 @@ E=$SRC/android/scripts/emu.sh
 EV=${EV:-$ROOT/run}
 B="http://${KRUNK_TEST_HOST:-10.250.136.3}:18080"
 PKG=org.krunk.browser
-DEBUG_APK=$SRC/android/app/build/outputs/apk/debug/app-x86_64-debug.apk
-RELEASE_APK=$SRC/android/app/build/outputs/apk/release/app-x86_64-release.apk
+DEBUG_APK=$SRC/android/app/build/outputs/apk/direct/debug/app-direct-x86_64-debug.apk
+RELEASE_APK=$SRC/android/app/build/outputs/apk/direct/release/app-direct-x86_64-release.apk
 T() { timeout "${KRUNK_ADB_TIMEOUT:-45}" "$@"; }
 A() { T "$E" adb shell "$@"; }
 shot() { KRUNK_SHOTS=$EV T "$E" shot "$1" > /dev/null || { echo "NO SCREENSHOT $1 (display not answering)"; return 4; }; }

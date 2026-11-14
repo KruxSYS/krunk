@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The website APK (direct flavour, 0.5.0): the user-started update check may hand a checked
+     Krunk APK to the system installer, which asks the user. The play flavour has none of this. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <application>
+        <receiver
+            android:name=".update.InstallReceiver"
+            android:exported="false" />
+    </application>
+</manifest>

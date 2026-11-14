@@ -138,7 +138,7 @@
       meta.appendChild(el('a', { href: safePath(f.url), download: '', text: String(f.label || f.name) + (size(f.size) ? ' (' + size(f.size) + ')' : '') }));
     });
     abox.appendChild(meta);
-    abox.appendChild(el('p', { class: 'hint', text: 'A preview for 64-bit ARM phones and tablets: browsing with ad and tracker blocking (uBlock Origin built in), an encrypted password vault that stays on the device, its own downloads, per-site permissions and site data, tabs, bookmarks, history, themes and settings. No sync yet. It does not update itself: new versions appear here.' }));
+    abox.appendChild(el('p', { class: 'hint', text: 'A preview for 64-bit ARM phones and tablets: browsing with ad and tracker blocking (uBlock Origin built in), an encrypted password vault that stays on the device, its own downloads, per-site permissions and site data, tabs, bookmarks, history, themes and settings. No sync yet. From 0.5.0 on it checks for a new version when you tap Settings \u203a About \u203a Check for updates, and never by itself. Coming from 0.4.0 or older? Install this APK over it once; your data stays.' }));
     const sums = el('dl', { class: 'sums' });
     files.forEach(function (f) {
       sums.appendChild(el('dt', { text: String(f.name) }));

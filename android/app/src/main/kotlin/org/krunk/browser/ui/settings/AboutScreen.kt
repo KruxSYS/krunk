@@ -37,6 +37,7 @@ import org.krunk.browser.BuildConfig
 import org.krunk.browser.R
 import org.krunk.browser.ui.BrowserViewModel
 import org.krunk.browser.ui.theme.KrunkColors
+import org.krunk.browser.update.UpdateChannel
 import org.krunk.ffi.coreVersion
 
 /** About: the app, engine and core versions, the website, and the open-source licences. */
@@ -99,6 +100,8 @@ fun AboutScreen(vm: BrowserViewModel) {
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                 modifier = Modifier.fillMaxWidth().clickable { open(BuildConfig.SITE_URL) },
             )
+            // The website APK's update check (direct flavour); nothing in the Play build.
+            UpdateChannel.AboutSection()
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             Text(
                 stringResource(R.string.about_licenses),

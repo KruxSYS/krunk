@@ -167,8 +167,27 @@ val signingProps = file(signingPropsPath)
 val allowDebugSignedRelease =
     providers.gradleProperty("krunk.allowDebugSignedRelease").map { it.toBoolean() }.getOrElse(false)
 
+// The update check (direct flavour, 0.5.0): release builds ask https://krunk.209.wf and nothing
+// else. Only the qa build type (and debug builds) take another address, for the end-to-end tests
+// against a staging copy of the site: -Pkrunk.qaUpdateBase=http://10.250.136.3:18090. Setting it
+// while a release variant is built fails the build, so a published APK never carries one.
+val releaseUpdateBase = "https://krunk.209.wf"
+val qaUpdateBase: String? = providers.gradleProperty("krunk.qaUpdateBase").orNull?.takeIf { it.isNotBlank() }
+// The QA build of the 0.5.0 code: lower than 0.5.0 (7) and higher than 0.4.0 (5).
+val qaVersionCode = 6
+
+fun isReleaseTask(name: String) = Regex("(package|bundle|sign|assemble)(Direct|Play)?Release").containsMatchIn(name)
+fun isSignedTask(name: String) = Regex("(package|bundle|sign)(Direct|Play)?(Release|Qa)").containsMatchIn(name)
+
 gradle.taskGraph.whenReady {
-    val packagesRelease = allTasks.any { it.project == project && it.name.startsWith("packageRelease") }
+    val mine = allTasks.filter { it.project == project }
+    if (qaUpdateBase != null && mine.any { isReleaseTask(it.name) }) {
+        throw GradleException(
+            "Krunk: -Pkrunk.qaUpdateBase is only for the qa and debug builds; a release build always uses " +
+                "$releaseUpdateBase. Build the release variants in a separate Gradle run without it.",
+        )
+    }
+    val packagesRelease = mine.any { isSignedTask(it.name) }
     if (packagesRelease && signingProps == null && !allowDebugSignedRelease) {
         throw GradleException(
             "Krunk: no Android release signing properties at $signingPropsPath. A release APK must carry the " +
@@ -180,29 +199,39 @@ gradle.taskGraph.whenReady {
 
 androidComponents {
     onVariants { variant ->
-        val profile = if (variant.buildType == "release") "release" else "debug"
-        val cargo = tasks.register<CargoBuildTask>("cargoBuild${variant.name.replaceFirstChar { it.uppercase() }}") {
-            group = "build"
-            description = "Builds libkrunk_ffi.so (cargo-ndk, $profile) and the UniFFI Kotlin bindings"
-            this.profile.set(profile)
-            srcRoot.set(project.rootDir.parentFile)
-            ffiSources.set(project.rootDir.parentFile.resolve("ffi/src"))
-            coreSources.set(project.rootDir.parentFile.resolve("core/src"))
-            // Everything that changes the built library: manifests and profiles, the lock file,
-            // the build script and its pins, and the wallpaper list compiled into the core.
-            manifests.from(
-                project.rootDir.parentFile.resolve("Cargo.toml"),
-                project.rootDir.parentFile.resolve("Cargo.lock"),
-                project.rootDir.parentFile.resolve("core/Cargo.toml"),
-                project.rootDir.parentFile.resolve("core/build.rs"),
-                project.rootDir.parentFile.resolve("ffi/Cargo.toml"),
-                project.rootDir.parentFile.resolve("ffi/uniffi.toml"),
-                project.rootDir.parentFile.resolve("ui/shared/wallpapers/wallpapers.json"),
-                project.rootDir.resolve("scripts/build-rust.sh"),
-                project.rootDir.resolve("toolchain.lock"),
-            )
-            jniLibsOut.set(layout.buildDirectory.dir("rust/${variant.name}/jniLibs"))
-            kotlinOut.set(layout.buildDirectory.dir("rust/${variant.name}/kotlin"))
+        // One cargo build per profile, whatever the flavour: debug -> debug, release and qa ->
+        // release.
+        val profile = if (variant.buildType == "debug") "debug" else "release"
+        val cargoName = "cargoBuild${profile.replaceFirstChar { it.uppercase() }}"
+        if (variant.buildType == "qa") {
+            variant.outputs.forEach { it.versionCode.set(qaVersionCode) }
+        }
+        val cargo = if (cargoName in tasks.names) {
+            tasks.named<CargoBuildTask>(cargoName)
+        } else {
+            tasks.register<CargoBuildTask>(cargoName) {
+                group = "build"
+                description = "Builds libkrunk_ffi.so (cargo-ndk, $profile) and the UniFFI Kotlin bindings"
+                this.profile.set(profile)
+                srcRoot.set(project.rootDir.parentFile)
+                ffiSources.set(project.rootDir.parentFile.resolve("ffi/src"))
+                coreSources.set(project.rootDir.parentFile.resolve("core/src"))
+                // Everything that changes the built library: manifests and profiles, the lock file,
+                // the build script and its pins, and the wallpaper list compiled into the core.
+                manifests.from(
+                    project.rootDir.parentFile.resolve("Cargo.toml"),
+                    project.rootDir.parentFile.resolve("Cargo.lock"),
+                    project.rootDir.parentFile.resolve("core/Cargo.toml"),
+                    project.rootDir.parentFile.resolve("core/build.rs"),
+                    project.rootDir.parentFile.resolve("ffi/Cargo.toml"),
+                    project.rootDir.parentFile.resolve("ffi/uniffi.toml"),
+                    project.rootDir.parentFile.resolve("ui/shared/wallpapers/wallpapers.json"),
+                    project.rootDir.resolve("scripts/build-rust.sh"),
+                    project.rootDir.resolve("toolchain.lock"),
+                )
+                jniLibsOut.set(layout.buildDirectory.dir("rust/$profile/jniLibs"))
+                kotlinOut.set(layout.buildDirectory.dir("rust/$profile/kotlin"))
+            }
         }
         variant.sources.jniLibs?.addGeneratedSourceDirectory(cargo, CargoBuildTask::jniLibsOut)
         variant.sources.kotlin?.addGeneratedSourceDirectory(cargo, CargoBuildTask::kotlinOut)
@@ -238,8 +267,8 @@ android {
         applicationId = "org.krunk.browser"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "0.4.0"
+        versionCode = 7
+        versionName = "0.5.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             // Devices (arm64-v8a) and the emulator (x86_64); GeckoView's other ABIs are dropped.
@@ -261,6 +290,28 @@ android {
         }
     }
 
+    // Two channels with the same package and key (0.5.0): "direct" is the website APK with the
+    // signed update check (src/direct: the code, the screen, REQUEST_INSTALL_PACKAGES); "play" is
+    // for Google Play, which updates the app itself (src/play: no update code at all).
+    flavorDimensions += "channel"
+    productFlavors {
+        create("direct") {
+            dimension = "channel"
+            buildConfigField("String", "CHANNEL", "\"direct\"")
+        }
+        create("play") {
+            dimension = "channel"
+            buildConfigField("String", "CHANNEL", "\"play\"")
+        }
+    }
+
+    // The App Bundle for Play: per-ABI splits (the default, stated for the reader).
+    bundle {
+        abi {
+            enableSplit = true
+        }
+    }
+
     // Release signing: see signingProps above.
     signingConfigs {
         if (signingProps != null) {
@@ -278,6 +329,8 @@ android {
     buildTypes {
         debug {
             applicationIdSuffix = ""
+            buildConfigField("String", "UPDATE_BASE_URL", "\"${qaUpdateBase ?: releaseUpdateBase}\"")
+            buildConfigField("boolean", "UPDATE_ALLOW_HTTP", "true")
         }
         release {
             signingConfig = if (signingProps != null) {
@@ -289,6 +342,17 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            buildConfigField("String", "UPDATE_BASE_URL", "\"$releaseUpdateBase\"")
+            buildConfigField("boolean", "UPDATE_ALLOW_HTTP", "false")
+        }
+        // The release build of the same code with a lower versionCode and, for the end-to-end
+        // update tests only, another update address. Never published.
+        create("qa") {
+            initWith(getByName("release"))
+            versionNameSuffix = "-qa"
+            matchingFallbacks += "release"
+            buildConfigField("String", "UPDATE_BASE_URL", "\"${qaUpdateBase ?: releaseUpdateBase}\"")
+            buildConfigField("boolean", "UPDATE_ALLOW_HTTP", "true")
         }
     }
 
@@ -379,7 +443,7 @@ val siteDataJsTest = tasks.register<Exec>("siteDataJsTest") {
     commandLine("node", "--test", "src/test/js/sitedata.test.js")
 }
 
-tasks.matching { it.name == "testDebugUnitTest" || it.name == "testReleaseUnitTest" }.configureEach {
+tasks.matching { it.name.startsWith("test") && it.name.endsWith("UnitTest") }.configureEach {
     dependsOn(guardJsTest, siteDataJsTest)
 }
 
