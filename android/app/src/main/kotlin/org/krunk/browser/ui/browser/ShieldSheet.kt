@@ -137,6 +137,8 @@ fun ShieldSheet(
     onReload: () -> Unit,
     onSettings: () -> Unit,
     onDismiss: () -> Unit,
+    /** Opens the page's site permissions; null when the page has none (not a web page, a private tab). */
+    onSitePermissions: (() -> Unit)? = null,
 ) {
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = state) {
@@ -222,6 +224,25 @@ fun ShieldSheet(
                 )
 
                 AllowSwitch.NONE -> Unit
+            }
+            if (onSitePermissions != null) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp)
+                        .clickable(role = Role.Button) {
+                            onDismiss()
+                            onSitePermissions()
+                        }
+                        .padding(vertical = 8.dp),
+                ) {
+                    Text(stringResource(R.string.perm_shield_row), style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        stringResource(R.string.perm_shield_row_help),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             Spacer(Modifier.height(24.dp))
         }

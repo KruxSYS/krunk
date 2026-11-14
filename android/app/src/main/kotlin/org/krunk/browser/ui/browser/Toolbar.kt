@@ -186,6 +186,9 @@ fun BrowserToolbar(
             onReload = { vm.tabs.reload(tab.id) },
             onSettings = { vm.push(org.krunk.browser.ui.Screen.Settings) },
             onDismiss = { sheetOpen = false },
+            onSitePermissions = org.krunk.ffi.webOrigin(pageUrl)?.takeIf { !tab.private }?.let { origin ->
+                { vm.push(org.krunk.browser.ui.Screen.SiteDetail(origin)) }
+            },
         )
     }
     historyList?.let { items ->

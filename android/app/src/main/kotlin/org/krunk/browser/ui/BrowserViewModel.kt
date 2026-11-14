@@ -396,6 +396,8 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
             omnibox.clearCache()
         }
         if (cookies || cache || siteData) engine.clearData(cookies, cache, siteData).await()
+        // "Site data and permissions": Krunk's own record of the answers goes with the engine's.
+        if (siteData) krunk.sitePermissions.clearAll()
         Result.success(Unit)
     } catch (e: kotlinx.coroutines.CancellationException) {
         throw e

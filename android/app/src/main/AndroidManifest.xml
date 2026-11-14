@@ -83,6 +83,11 @@
              writes into cache/capture through this address. Nothing else is exposed. -->
         <!-- Takes a copied vault password off the clipboard 30 s later, also when Krunk is in the
              background by then (VaultClipboard). Only Krunk's own alarm reaches it. -->
+        <!-- A site notification was swiped away (0.4.0). -->
+        <receiver
+            android:name=".notify.SiteNotificationReceiver"
+            android:exported="false" />
+
         <receiver
             android:name=".ui.vault.ClipClearReceiver"
             android:exported="false" />
