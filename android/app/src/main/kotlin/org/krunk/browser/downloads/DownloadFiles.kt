@@ -150,7 +150,8 @@ class MediaStorePublisher(context: Context) : DownloadPublisher {
      * a retry leaves one file. Other apps' rows are neither visible nor touched.
      */
     override fun sweep() {
-        val selection = "${MediaStore.MediaColumns.IS_PENDING} = 1 AND ${MediaStore.MediaColumns.OWNER_PACKAGE_NAME} = ?"
+        val selection =
+            "${MediaStore.MediaColumns.IS_PENDING} = 1 AND ${MediaStore.MediaColumns.OWNER_PACKAGE_NAME} = ?"
         val args = arrayOf(packageName)
         try {
             val ids = ArrayList<Long>()

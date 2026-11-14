@@ -23,7 +23,14 @@ class DownloadPartsTest {
     }
 
     private fun pending(body: InputStream, name: String = "a.bin", tab: UInt? = null, private: Boolean = false) =
-        PendingDownload(DownloadResponse("https://a.test/$name", 200, emptyMap(), body), name, "a.test", private, null, tab)
+        PendingDownload(
+            DownloadResponse("https://a.test/$name", 200, emptyMap(), body),
+            name,
+            "a.test",
+            private,
+            null,
+            tab,
+        )
 
     private val asked = DownloadQuestions.Offer.ASKED
 

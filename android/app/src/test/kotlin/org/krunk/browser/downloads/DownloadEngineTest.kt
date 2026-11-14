@@ -188,7 +188,12 @@ class DownloadEngineTest {
     private var list = DownloadList.load(store, now)
     private var openPart: (File, Boolean) -> OutputStream = { f, append -> java.io.FileOutputStream(f, append) }
 
-    private fun engine(server: DownloadFetcher, executor: Executor = Executor { it.run() }): DownloadEngine = DownloadEngine(
+    private fun engine(
+        server: DownloadFetcher,
+        executor: Executor = Executor {
+            it.run()
+        },
+    ): DownloadEngine = DownloadEngine(
         list = list,
         partDir = partDir,
         fetcher = server,
