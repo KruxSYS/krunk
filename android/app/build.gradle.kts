@@ -369,8 +369,18 @@ val guardJsTest = tasks.register<Exec>("guardJsTest") {
     commandLine("node", "--test", "src/test/js/rewriter.test.js")
 }
 
+// The same for the plain part of the krunk-sitedata extension (which site a cookie or stored
+// data is counted for).
+val siteDataJsTest = tasks.register<Exec>("siteDataJsTest") {
+    group = "verification"
+    description = "Runs the tests of the krunk-sitedata extension's plain part with node"
+    inputs.dir("src/main/assets/extensions/krunk-sitedata")
+    inputs.file("src/test/js/sitedata.test.js")
+    commandLine("node", "--test", "src/test/js/sitedata.test.js")
+}
+
 tasks.matching { it.name == "testDebugUnitTest" || it.name == "testReleaseUnitTest" }.configureEach {
-    dependsOn(guardJsTest)
+    dependsOn(guardJsTest, siteDataJsTest)
 }
 
 // -Pkrunk.noGms=true drops GeckoView's Google Play Services FIDO dependency (WebAuthn/passkeys

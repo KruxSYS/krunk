@@ -1,0 +1,14 @@
+[
+  {
+    "namespace": "krunkSiteData",
+    "functions": [
+      {
+        "name": "usage",
+        "type": "function",
+        "description": "The web origins that have stored data outside private browsing, as JSON: [{origin, partitionKey, bytes}]. partitionKey is the engine's own text (\"\" when the data is the site's own, not kept apart under another site).",
+        "async": true,
+        "parameters": []
+      }
+    ]
+  }
+]

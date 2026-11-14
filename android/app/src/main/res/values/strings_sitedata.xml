@@ -3,4 +3,34 @@
     <!-- Site data (0.4.0) -->
     <string name="settings_site_data">Site data</string>
     <string name="settings_site_data_help">Cookies and stored data, per site</string>
+
+    <string name="site_data_title">Site data</string>
+    <string name="site_data_search_hint">Search sites</string>
+    <string name="site_data_sort">Sort</string>
+    <string name="site_data_sort_name">By name</string>
+    <string name="site_data_sort_last_used">By last used</string>
+    <string name="site_data_loading">Looking up sites…</string>
+    <string name="site_data_note_history">Krunk could not ask the browser engine which sites hold data. This list shows the sites from your history, your site permissions and your open tabs instead, without counts. A cleared site stays listed while it is in your history.</string>
+    <string name="site_data_note_partial">The browser engine gave only part of the answer. Some counts are missing, and sites from your history are listed as well.</string>
+    <string name="site_data_empty">No site holds cookies or stored data.</string>
+    <string name="site_data_empty_history">No sites yet.</string>
+    <string name="site_data_no_results">No site matches “%1$s”.</string>
+    <plurals name="site_data_cookies">
+        <item quantity="one">%d cookie</item>
+        <item quantity="other">%d cookies</item>
+    </plurals>
+    <string name="site_data_no_cookies">No cookies</string>
+    <string name="site_data_stored">%1$s stored</string>
+    <string name="site_data_permissions">Has permissions</string>
+    <string name="site_data_last_used">Last used %1$s</string>
+    <string name="site_data_origins">Addresses of this site</string>
+    <string name="site_data_no_origins">No address of this site is in your history.</string>
+    <string name="site_data_clear">Clear data</string>
+    <string name="site_data_clear_description">Clear data of %1$s</string>
+    <string name="site_data_clear_title">Clear data of %1$s?</string>
+    <string name="site_data_clear_text">This removes what %1$s keeps on this device: its cookies and sign-ins, the data it stored and its cached files. You will be signed out of it. Open tabs of this site are reloaded. Your history stays.</string>
+    <string name="site_data_clear_permissions">Also reset its permissions</string>
+    <string name="site_data_cleared">Cleared the data of %1$s</string>
+    <string name="site_data_cleared_listed">Cleared the data of %1$s. It stays listed while it is in your history.</string>
+    <string name="site_data_clear_failed">Could not clear the data of %1$s</string>
 </resources>
