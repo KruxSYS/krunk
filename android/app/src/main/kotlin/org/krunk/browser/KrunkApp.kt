@@ -12,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import org.krunk.browser.core.KrunkCore
+import org.krunk.browser.downloads.DownloadController
 import org.krunk.browser.engine.GeckoEngine
 import org.krunk.browser.engine.blocker.AllowList
 import org.krunk.browser.engine.blocker.BlockerController
@@ -57,6 +58,9 @@ class KrunkApp : Application() {
 
     private val tabsLazy = lazy { TabManager(this, core, engine) }
     val tabs: TabManager by tabsLazy
+
+    /** Krunk's own downloads (0.4.0): questions, transfers, the list, notifications. */
+    val downloads: DownloadController by lazy { DownloadController(this) }
 
     /** When the vault locks by itself: timer and background grace (see [VaultLockSetting]). */
     val vaultLock: VaultLockSetting by lazy { VaultLockSetting(core.store::kvGet, core.store::kvSet) }

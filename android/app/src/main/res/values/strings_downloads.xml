@@ -3,4 +3,64 @@
     <!-- Downloads (0.4.0) -->
     <string name="menu_downloads">Downloads</string>
     <string name="channel_downloads">Downloads</string>
+
+    <!-- The question before a download a page started, and the short messages -->
+    <string name="download_started">Downloading %1$s</string>
+    <string name="download_confirm_title">Download this file?</string>
+    <string name="download_confirm_from">from %1$s</string>
+    <string name="download_confirm_private">Krunk forgets this download when it is done. The file stays in Downloads after the private tab is closed.</string>
+    <string name="download_confirm_yes">Download</string>
+    <string name="download_confirm_more">%1$d more waiting</string>
+    <string name="downloads_too_many_questions">A page started too many downloads at once. One was dropped.</string>
+    <string name="downloads_notifications_off">Notifications are off. Downloads still run: see them under Menu, Downloads.</string>
+
+    <!-- The downloads screen -->
+    <string name="downloads_title">Downloads</string>
+    <string name="downloads_search_hint">Search downloads</string>
+    <string name="downloads_empty">No downloads yet</string>
+    <string name="downloads_no_results">No downloads match \"%1$s\"</string>
+    <string name="downloads_clear_finished">Clear finished</string>
+    <string name="downloads_more_actions">More</string>
+    <string name="downloads_private">Private</string>
+    <string name="downloads_amount_of">%1$s of %2$s</string>
+    <string name="downloads_speed">%1$s/s</string>
+    <string name="downloads_left_hours">%1$d h %2$d min left</string>
+    <string name="downloads_left_minutes">%1$d min left</string>
+    <string name="downloads_left_seconds">%1$d s left</string>
+    <string name="downloads_status_paused">Paused</string>
+    <string name="downloads_status_failed">Failed</string>
+    <string name="downloads_status_failed_reason">Failed: %1$s</string>
+    <string name="downloads_status_cancelled">Cancelled</string>
+    <string name="downloads_note_cannot_pause">This download cannot be paused, only cancelled.</string>
+    <string name="downloads_note_again_from_page">Download it again from the page.</string>
+    <string name="downloads_open">Open</string>
+    <string name="downloads_share">Share</string>
+    <string name="downloads_pause">Pause</string>
+    <string name="downloads_resume">Resume</string>
+    <string name="downloads_retry">Retry</string>
+    <string name="downloads_restart">Restart</string>
+    <string name="downloads_cancel">Cancel</string>
+    <string name="downloads_remove">Remove from list</string>
+    <string name="downloads_file_gone">The file is no longer there. It was moved or deleted.</string>
+    <string name="downloads_no_app">No app can open this file</string>
+
+    <!-- Notifications -->
+    <plurals name="downloads_service_running">
+        <item quantity="one">Downloading %1$d file</item>
+        <item quantity="other">Downloading %1$d files</item>
+    </plurals>
+    <string name="downloads_note_paused">Paused, %1$s</string>
+    <string name="downloads_note_finished">Download finished</string>
+
+    <!-- Why a download stopped (kept with the entry) -->
+    <string name="downloads_reason_network">The connection was lost</string>
+    <string name="downloads_reason_timed_out">The server did not answer in time</string>
+    <string name="downloads_reason_ended_early">The connection ended before the file was complete</string>
+    <string name="downloads_reason_server_error">The server answered with an error (%1$d)</string>
+    <string name="downloads_reason_cannot_continue">The server cannot continue this download</string>
+    <string name="downloads_reason_part_gone">The part that was already downloaded is gone</string>
+    <string name="downloads_reason_storage">The file could not be written. Is the storage full?</string>
+    <string name="downloads_reason_publish">The file could not be saved to Downloads</string>
+    <string name="downloads_reason_time_limit">Paused by Android: downloads in the background are limited to six hours a day</string>
+    <string name="downloads_reason_time_limit_stopped">Stopped by Android: downloads in the background are limited to six hours a day</string>
 </resources>

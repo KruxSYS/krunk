@@ -888,7 +888,10 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
     }
 
     override fun onExternalResponse(session: KrunkSession, response: WebResponse) {
-        _events.trySend(TabEvent.Download(session.id, response))
+        // Not an event for a screen: the question must not get lost when none is listening, and
+        // the open response is closed by whoever drops it (DownloadController).
+        (engine.appContext as? KrunkApp)?.downloads?.offer(session.private, session.current.url, response)
+            ?: runCatching { response.body?.close() }
     }
 
     override fun onIcons(session: KrunkSession, pageUrl: String, icons: List<IconCandidate>) {

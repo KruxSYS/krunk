@@ -19,6 +19,7 @@ import org.krunk.browser.ui.browser.LocalLoginUi
 import org.krunk.browser.ui.browser.LoginUiHost
 import org.krunk.browser.ui.browser.SecureWindowEffect
 import org.krunk.browser.ui.browser.SystemBarsEffect
+import org.krunk.browser.ui.downloads.DownloadsHost
 import org.krunk.browser.ui.downloads.DownloadsScreen
 import org.krunk.browser.ui.history.HistoryScreen
 import org.krunk.browser.ui.permissions.SiteDetailScreen
@@ -108,6 +109,8 @@ fun KrunkRoot(vm: BrowserViewModel) {
                         if (app != null) VaultScreen(vm, vaultPort(app))
                     }
                 }
+                // Downloads ask and report over whatever screen is up.
+                DownloadsHost(vm.downloads)
             }
         }
     }

@@ -28,12 +28,6 @@ private fun web(uri: String?): Boolean = uri != null && LoadPolicy.isWebUrl(uri.
 private fun copyable(uri: String?): Boolean =
     !uri.isNullOrBlank() && !uri.trim().startsWith("javascript:", ignoreCase = true)
 
-/** Whether the Android `DownloadManager` can fetch this URL (it only speaks http/https). */
-fun downloadable(uri: String?): Boolean {
-    val u = uri?.lowercase() ?: return false
-    return u.startsWith("http://") || u.startsWith("https://")
-}
-
 /**
  * The actions for a long-pressed element, in menu order. Links come first; an image inside a
  * link adds the image entries below. In a private tab "open in new tab" already opens a private

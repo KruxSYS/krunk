@@ -299,6 +299,31 @@ files and fails if an include would carry the directory, if a section no longer 
 exclude, or if the path differs from `VaultFiles.DIR`. A real device-to-device transfer was not
 run.
 
+## Downloads (0.4.0)
+
+Krunk saves downloads itself (`android/.../downloads/`); Android's `DownloadManager` is not used.
+
+- `DownloadEngine` (plain Kotlin, JVM-tested in `DownloadEngineTest`) is the state machine. It
+  saves the engine's own response stream: the `WebResponse` of `onExternalResponse` for a
+  download a page started, or a `GeckoWebExecutor` fetch (`GeckoFetcher`; `FETCH_FLAGS_PRIVATE`
+  for private tabs) for "Download link", "Save image", resume and restart. The rules for going on
+  after a pause and for names come from the core (`ffi/src/downloads.rs`).
+- The list is the core's (`DownloadList`, table `download_items`). A finished state is final
+  there: an error on a download that can go on is *Paused* with a reason (shown as failed, with
+  Retry), one that cannot go on is *Interrupted*, and Restart is a new entry.
+- Bytes go to `files/downloads-part/<random>.part` (never backed up). Only a complete,
+  length-checked file is published: `MediaStore.Downloads` on Android 10 and later, the app's
+  external `Download` folder (shared through the FileProvider) on Android 8 and 9. A finished
+  entry's `path` is `<content uri>/<file name>` (`DownloadPaths`).
+- `DownloadController` (in `KrunkApp`) holds everything that lives with the process: the waiting
+  "Download this file?" questions, the engine, the notifications (`DownloadNotifier`) and the
+  start of `DownloadService` (a `dataSync` foreground service while a transfer runs).
+- Private tabs: listed only while running, never written to the table, the part file has a
+  random name and is swept at the next start; only the saved file remains.
+- Debug builds: `adb shell am broadcast -a org.krunk.browser.DEBUG --es cmd downloads` logs the
+  list, what runs and the part files (tag `KrunkGuard`); `--es cmd downloads-time-limit` acts as
+  if Android's six-hour limit for the service was reached.
+
 ## Vault
 
 The password vault of 0.3.0. What users get is in `README.md` and `CHANGELOG-android.md`; the

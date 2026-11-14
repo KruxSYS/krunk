@@ -87,6 +87,16 @@
             android:name=".ui.vault.ClipClearReceiver"
             android:exported="false" />
 
+        <!-- 0.4.0, downloads: in the foreground while a download is transferred; the buttons of
+             its notifications. Neither can be reached from outside Krunk. -->
+        <service
+            android:name=".downloads.DownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+        <receiver
+            android:name=".downloads.DownloadActionReceiver"
+            android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"

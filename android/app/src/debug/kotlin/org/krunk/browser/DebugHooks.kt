@@ -30,6 +30,9 @@ import org.krunk.browser.vault.VaultFiles
  *   blocker --es channel C --es msg JSON     one message to the blocker (e.g. to force its
  *                                  auto-update on for the gate test)
  *   guard-disable                  disable the guard extension (the "guard lost" test)
+ *   downloads                      the downloads list (newest 20: id, state, bytes, name, reason,
+ *                                  private, path), what runs and the part files
+ *   downloads-time-limit           as if Android's six-hour limit for the service was reached
  *   recreate-session               throw the active tab's engine session away and give the tab a
  *                                  new one, as after a discard or a crash of the page's process
  */
@@ -46,6 +49,12 @@ object DebugHooks {
                     val cmd = intent.getStringExtra("cmd")
                     if (cmd == "recreate-session") {
                         recreateSession(c.applicationContext as KrunkApp)
+                    } else if (cmd == "downloads") {
+                        val app = c.applicationContext as KrunkApp
+                        scope.launch { app.downloads.describe().chunked(MAX_REPLY).forEach(::say) }
+                    } else if (cmd == "downloads-time-limit") {
+                        (c.applicationContext as KrunkApp).downloads.serviceTimeLimit()
+                        say("downloads-time-limit: sent")
                     } else if (cmd != null && cmd.startsWith("vault-")) {
                         vault(cmd, c.applicationContext as KrunkApp)
                     } else {
