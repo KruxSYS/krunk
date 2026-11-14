@@ -3,6 +3,7 @@ package org.krunk.browser.ui.permissions
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -272,7 +273,7 @@ private fun KindLine(row: SitePermissionsUi.KindRow, onChoice: (SitePermissionsU
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Row(Modifier.fillMaxWidth().selectableGroup(), verticalAlignment = Alignment.CenterVertically) {
+        FlowRow(Modifier.fillMaxWidth().selectableGroup()) {
             for (choice in row.choices) {
                 Row(
                     Modifier
