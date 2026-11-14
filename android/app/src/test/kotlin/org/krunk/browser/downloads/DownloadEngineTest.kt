@@ -196,6 +196,9 @@ class DownloadEngineTest {
 
     private fun parts(): List<File> = partDir.listFiles()?.toList() ?: emptyList()
 
+    /** The download that is being transferred (a hook of the server runs inside `start`). */
+    private fun running(): UInt = list.unfinished().filter { it.state == DownloadState.IN_PROGRESS }.maxOf { it.id }
+
     private fun state(id: UInt): DownloadState? = list.get(id)?.state
 
     private fun link(url: String = URL, private: Boolean = false) = DownloadRequest(url, "https://a.test/page", private)
@@ -226,9 +229,8 @@ class DownloadEngineTest {
     fun pauseKeepsThePartAndResumeAppends() {
         val server = FakeServer(bytes(1000))
         val e = engine(server)
-        var id = 0u
-        server.onServed = { if (it == 300) assertTrue(e.pause(id)) }
-        id = e.start(link())!!
+        server.onServed = { if (it == 300) assertTrue(e.pause(running())) }
+        val id = e.start(link())!!
         server.onServed = {}
         assertEquals(DownloadState.PAUSED, state(id))
         assertNull(list.get(id)!!.reason)
@@ -319,18 +321,16 @@ class DownloadEngineTest {
     fun cancelDeletesThePart() {
         val server = FakeServer(bytes(1000))
         val e = engine(server)
-        var id = 0u
-        server.onServed = { if (it == 300) assertTrue(e.cancel(id)) }
-        id = e.start(link())!!
+        server.onServed = { if (it == 300) assertTrue(e.cancel(running())) }
+        val id = e.start(link())!!
         assertEquals(DownloadState.CANCELLED, state(id))
         assertTrue(parts().isEmpty())
         assertTrue(folder.files.isEmpty())
         assertTrue(server.bodies.single().closed)
 
         // A paused one too.
-        var second = 0u
-        server.onServed = { if (it == 300) e.pause(second) }
-        second = e.start(link())!!
+        server.onServed = { if (it == 300) e.pause(running()) }
+        val second = e.start(link())!!
         assertEquals(1, parts().size)
         assertTrue(e.cancel(second))
         assertEquals(DownloadState.CANCELLED, state(second))
@@ -357,13 +357,11 @@ class DownloadEngineTest {
         server.etag = "\"v1\""
         runCatching { first.start(link("https://a.test/secret", private = true)) }.exceptionOrNull() as Died
         // ... and with a paused download whose part file somebody deleted, and one that kept it.
-        var lost = 0u
-        server.onServed = { if (it == 300) first.pause(lost) }
-        lost = first.start(link("https://a.test/lost"))!!
+        server.onServed = { if (it == 300) first.pause(running()) }
+        val lost = first.start(link("https://a.test/lost"))!!
         val lostPart = File(list.get(lost)!!.resume!!.temp)
-        var kept = 0u
-        server.onServed = { if (it == 300) first.pause(kept) }
-        kept = first.start(link("https://a.test/kept"))!!
+        server.onServed = { if (it == 300) first.pause(running()) }
+        val kept = first.start(link("https://a.test/kept"))!!
         server.onServed = {}
         assertEquals(5, parts().size)
         assertTrue(lostPart.delete())
@@ -406,9 +404,8 @@ class DownloadEngineTest {
     fun aServerThatSendsTheWholeFileAgainEndsTheDownloadAndRestartIsNew() {
         val server = FakeServer(bytes(1000))
         val e = engine(server)
-        var id = 0u
-        server.onServed = { if (it == 300) e.pause(id) }
-        id = e.start(link())!!
+        server.onServed = { if (it == 300) e.pause(running()) }
+        val id = e.start(link())!!
         server.onServed = {}
         server.ranges = false // answers 200 with the whole file
 
@@ -432,9 +429,8 @@ class DownloadEngineTest {
     fun aChangedFileEndsTheDownload() {
         val server = FakeServer(bytes(1000))
         val e = engine(server)
-        var id = 0u
-        server.onServed = { if (it == 300) e.pause(id) }
-        id = e.start(link())!!
+        server.onServed = { if (it == 300) e.pause(running()) }
+        val id = e.start(link())!!
         server.onServed = {}
         server.etag = "\"v2\""
         assertTrue(e.resume(id))
@@ -472,10 +468,9 @@ class DownloadEngineTest {
         val server = FakeServer(bytes(700))
         server.sendLength = false
         val e = engine(server)
-        var id = 0u
         var paused: Boolean? = null
-        server.onServed = { if (it == 300) paused = e.pause(id) }
-        id = e.start(link())!!
+        server.onServed = { if (it == 300) paused = e.pause(running()) }
+        val id = e.start(link())!!
         assertEquals(false, paused)
         val entry = list.get(id)!!
         assertEquals(DownloadState.COMPLETED, entry.state)
@@ -490,10 +485,9 @@ class DownloadEngineTest {
         server.disposition = "attachment; filename=\"notes\""
         val e = engine(server)
         val url = "blob:https://a.test/1b9d6bcd"
-        var id = 0u
         var paused: Boolean? = null
-        server.onServed = { paused = e.pause(id) }
-        id = e.start(DownloadRequest(url, "https://a.test/app", false, "notes.txt", server.response(url)))!!
+        server.onServed = { paused = e.pause(running()) }
+        val id = e.start(DownloadRequest(url, "https://a.test/app", false, "notes.txt", server.response(url)))!!
         assertTrue("the engine's stream was used, nothing was fetched", server.requests.isEmpty())
         assertEquals("a blob cannot be paused", false, paused)
         val entry = list.get(id)!!
@@ -553,7 +547,6 @@ class DownloadEngineTest {
     fun aPrivateDownloadIsListedOnlyWhileItRunsAndLeavesNoRow() {
         val server = FakeServer(bytes(1000))
         val e = engine(server)
-        var id = 0u
         var whileRunning: DownloadEntry? = null
         var listed = 0
         server.onServed = {
@@ -562,7 +555,7 @@ class DownloadEngineTest {
                 listed = list.query("", DownloadFilter.ALL, 0u, 10u).items.size
             }
         }
-        id = e.start(link(private = true))!!
+        val id = e.start(link(private = true))!!
         assertEquals(true, whileRunning?.private)
         assertEquals("shown while it runs (so it can be cancelled)", 1, listed)
         assertNull("the page of a private download is not kept", whileRunning?.pageUrl)
@@ -621,9 +614,8 @@ class DownloadEngineTest {
     fun androidsTimeLimitPausesWhatCanGoOnAndEndsTheRest() {
         val server = FakeServer(bytes(1000))
         val e = engine(server)
-        var id = 0u
         server.onServed = { if (it == 300) e.timeLimit() }
-        id = e.start(link())!!
+        val id = e.start(link())!!
         assertEquals(DownloadState.PAUSED, state(id))
         assertEquals("Paused by Android", list.get(id)!!.reason)
 
@@ -638,15 +630,14 @@ class DownloadEngineTest {
     fun removeAndClearFinishedLeaveRunningDownloadsAlone() {
         val server = FakeServer(bytes(1000))
         val e = engine(server)
-        var id = 0u
         var removedWhileRunning: Boolean? = null
         server.onServed = {
             if (it == 300) {
-                removedWhileRunning = e.remove(id)
+                removedWhileRunning = e.remove(running())
                 e.clearFinished()
             }
         }
-        id = e.start(link())!!
+        val id = e.start(link())!!
         assertEquals(false, removedWhileRunning)
         assertEquals(DownloadState.COMPLETED, state(id))
         assertTrue(e.remove(id))
