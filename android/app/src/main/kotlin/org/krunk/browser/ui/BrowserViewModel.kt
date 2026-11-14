@@ -51,6 +51,12 @@ data class AddressFill(val sequence: Int, val text: String) {
 
 /** Which native screen is on top of the browser. */
 sealed class Screen {
+    /**
+     * Names this screen's saved UI state (see [ScreenHost]): the same for equal screens,
+     * different for screens with different arguments.
+     */
+    val stateKey: String get() = toString()
+
     data object Browser : Screen()
 
     data object TabSwitcher : Screen()
@@ -184,18 +190,17 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
     val screen: Screen get() = _screens.value.last()
 
     fun push(screen: Screen) {
-        if (_screens.value.last() == screen) return
-        _screens.value = _screens.value.filterNot { it == screen } + screen
+        _screens.value = ScreenStack.push(_screens.value, screen)
     }
 
     fun pop(): Boolean {
         if (_screens.value.size <= 1) return false
-        _screens.value = _screens.value.dropLast(1)
+        _screens.value = ScreenStack.pop(_screens.value)
         return true
     }
 
     fun showBrowser() {
-        _screens.value = listOf(Screen.Browser)
+        _screens.value = ScreenStack.root(_screens.value)
     }
 
     // ----- address bar -----

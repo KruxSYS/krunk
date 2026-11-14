@@ -43,6 +43,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -83,8 +84,12 @@ fun HistoryScreen(vm: BrowserViewModel) {
     val res = LocalResources.current
     val snackbar = remember { SnackbarHostState() }
 
-    var searching by remember { mutableStateOf(false) }
-    var query by remember { mutableStateOf("") }
+    // Kept while another screen covers this one: the search and how far the list was loaded
+    // (so the scroll position, which the list state keeps, has its rows again).
+    var searching by rememberSaveable { mutableStateOf(false) }
+    var query by rememberSaveable { mutableStateOf("") }
+    var shownCount by rememberSaveable { mutableIntStateOf(0) }
+    var loaded by remember { mutableStateOf(false) }
     var entries by remember { mutableStateOf<List<HistoryItem>>(emptyList()) }
     var sections by remember { mutableStateOf<List<HistorySection>>(emptyList()) }
     // Where the next page starts: the last row *read*, which a deletion on screen cannot move.
@@ -103,7 +108,15 @@ fun HistoryScreen(vm: BrowserViewModel) {
             // A cancelled load (the query changed, the screen left) is not an empty page: it
             // must not mark the list as finished.
             val page = try {
-                repo.page(query.trim(), before)
+                // The first load of a screen that returns reads as much as was shown before.
+                val limit = if (reset &&
+                    !loaded
+                ) {
+                    shownCount.coerceIn(HistoryRepository.PAGE, MAX_RESTORE)
+                } else {
+                    HistoryRepository.PAGE
+                }
+                repo.page(query.trim(), before, limit)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -127,10 +140,12 @@ fun HistoryScreen(vm: BrowserViewModel) {
             val grouped = repo.sections(all)
             entries = all
             sections = grouped
+            shownCount = all.size
             if (reset || page.next != null) cursor = page.next
             exhausted = page.last
         } finally {
             loading = false
+            if (reset) loaded = true
         }
     }
 
@@ -212,17 +227,21 @@ fun HistoryScreen(vm: BrowserViewModel) {
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
-        if (entries.isEmpty() && !loading) {
+        // The list appears with its first rows, not before: a scroll position kept from an
+        // earlier visit would be lost on a list that is still empty.
+        if (entries.isEmpty()) {
             Box(Modifier.fillMaxSize().padding(padding).padding(32.dp), contentAlignment = Alignment.Center) {
-                Text(
-                    if (query.isNotBlank()) {
-                        stringResource(R.string.history_no_results, query.trim())
-                    } else {
-                        stringResource(R.string.history_empty)
-                    },
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodyLarge,
-                )
+                if (loaded && !loading) {
+                    Text(
+                        if (query.isNotBlank()) {
+                            stringResource(R.string.history_no_results, query.trim())
+                        } else {
+                            stringResource(R.string.history_empty)
+                        },
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                }
             }
         } else {
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(padding)) {
@@ -376,6 +395,9 @@ private fun dayLabel(day: String, now: Long): String = when (HistoryRepository.d
     HistoryDayKind.YESTERDAY -> stringResource(R.string.history_yesterday)
     HistoryDayKind.DATE -> remember(day) { formatDay(day) }
 }
+
+/** The most rows read at once when a kept list comes back (one FFI page). */
+private const val MAX_RESTORE = 1000
 
 /** `YYYY-MM-DD` as a full localised date ("Tuesday, 11 November 2026"); the key itself if odd. */
 fun formatDay(day: String): String = runCatching {
