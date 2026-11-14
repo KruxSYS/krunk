@@ -16,7 +16,7 @@ pub struct KrunkStore {
 }
 
 impl KrunkStore {
-    fn lock(&self) -> MutexGuard<'_, Store> {
+    pub(crate) fn lock(&self) -> MutexGuard<'_, Store> {
         // A panic while holding the lock cannot leave a half-written transaction behind (SQLite
         // rolls it back), so a poisoned lock is still usable. Release builds abort on a panic.
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
@@ -48,6 +48,13 @@ pub struct HistoryEntry {
     /// Visit time, ms.
     pub ts: i64,
     pub visit_count: i64,
+}
+
+/// A history row with the local day it belongs to (`YYYY-MM-DD`).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct HistoryRow {
+    pub entry: HistoryEntry,
+    pub day: String,
 }
 
 /// A bookmark or folder. The roots are `BOOKMARKS_BAR` (1) and `OTHER_BOOKMARKS` (2).
@@ -285,6 +292,34 @@ impl KrunkStore {
             .query_history(&text, before, limit)?
             .into_iter()
             .map(|h| HistoryEntry { id: h.id, url: h.url, title: h.title, ts: h.ts, visit_count: h.visit_count })
+            .collect())
+    }
+
+    /// A page of visits matching `text`, newest first, after the last row of the page before
+    /// (`before_ts` and `before_id` of that row, both or neither): visits of one millisecond
+    /// are neither skipped nor repeated. Each row carries its local day (`YYYY-MM-DD`, for
+    /// `utc_offset_ms` of now), so the list is grouped without a call per row.
+    pub fn query_history_page(
+        &self,
+        text: String,
+        before_ts: Option<i64>,
+        before_id: Option<i64>,
+        limit: u32,
+        utc_offset_ms: i64,
+    ) -> Result<Vec<HistoryRow>, FfiError> {
+        let before = match (before_ts, before_id) {
+            (Some(ts), Some(id)) => Some((ts, id)),
+            (None, None) => None,
+            _ => return Err(FfiError::Invalid("a cursor needs the time and the id".into())),
+        };
+        Ok(self
+            .lock()
+            .query_history_page(&text, before, limit)?
+            .into_iter()
+            .map(|h| HistoryRow {
+                day: lb_core::storage::date_ymd(h.ts.saturating_add(utc_offset_ms)),
+                entry: HistoryEntry { id: h.id, url: h.url, title: h.title, ts: h.ts, visit_count: h.visit_count },
+            })
             .collect())
     }
 
@@ -550,6 +585,44 @@ mod tests {
         assert_eq!(s.never_save_list().unwrap(), ["http://plain.example:8080", "https://bank.example"]);
         s.never_save_remove("https://bank.example/whatever".into()).unwrap();
         assert_eq!(s.never_save_list().unwrap(), ["http://plain.example:8080"]);
+    }
+
+    #[test]
+    fn history_pages_by_time_and_id() {
+        let s = store();
+        // Five visits in one millisecond, two around them.
+        s.record_visit("https://example.com/old".into(), "Old".into(), 1_000).unwrap();
+        for n in 0..5 {
+            s.record_visit(format!("https://example.com/same{n}"), "Same".into(), 2_000).unwrap();
+        }
+        s.record_visit("https://example.com/new".into(), "New".into(), 3_000).unwrap();
+        let mut seen = Vec::new();
+        let mut cursor: Option<(i64, i64)> = None;
+        loop {
+            let page = s.query_history_page(String::new(), cursor.map(|c| c.0), cursor.map(|c| c.1), 2, 0).unwrap();
+            if page.is_empty() {
+                break;
+            }
+            assert!(page.len() <= 2);
+            cursor = page.last().map(|r| (r.entry.ts, r.entry.id));
+            seen.extend(page.into_iter().map(|r| r.entry.id));
+        }
+        assert_eq!(seen.len(), 7, "nothing skipped");
+        let mut sorted = seen.clone();
+        sorted.sort_unstable_by(|a, b| b.cmp(a));
+        sorted.dedup();
+        assert_eq!(sorted, seen, "newest first, nothing twice");
+        // The old cursor (time alone) loses the rest of the millisecond.
+        let first = s.query_history(String::new(), None, 2).unwrap();
+        let rest = s.query_history(String::new(), Some(first[1].ts), 100).unwrap();
+        assert!(first.len() + rest.len() < 7);
+        // Search and the day of each row; half a cursor is refused.
+        let hit = s.query_history_page("same3".into(), None, None, 10, 0).unwrap();
+        assert_eq!(hit.len(), 1);
+        assert_eq!(hit[0].day, "1970-01-01");
+        let late = s.query_history_page("same3".into(), None, None, 10, -3_600_000).unwrap();
+        assert_eq!(late[0].day, "1969-12-31");
+        assert!(matches!(s.query_history_page(String::new(), Some(1), None, 10, 0), Err(FfiError::Invalid(_))));
     }
 
     #[test]

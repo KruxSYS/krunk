@@ -9,10 +9,12 @@
 uniffi::setup_scaffolding!();
 
 mod blocker;
+mod downloads;
 mod error;
 mod memory;
 mod navmenu;
 mod settings;
+mod sites;
 mod store;
 mod tabs;
 mod theme;
@@ -20,10 +22,12 @@ mod urls;
 mod vault;
 
 pub use blocker::*;
+pub use downloads::*;
 pub use error::{FfiError, SettingsError, SettingsFieldError};
 pub use memory::*;
 pub use navmenu::*;
 pub use settings::*;
+pub use sites::*;
 pub use store::*;
 pub use tabs::*;
 pub use theme::*;

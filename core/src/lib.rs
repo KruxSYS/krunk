@@ -14,6 +14,7 @@ pub mod certinfo;
 pub mod color;
 pub mod cookies;
 pub mod default_browser;
+pub mod dlresume;
 pub mod dns;
 pub mod downloads;
 pub mod dpi;

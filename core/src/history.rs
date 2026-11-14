@@ -98,6 +98,32 @@ impl Store {
         rows.collect()
     }
 
+    /// A page of visits matching `text` in URL or title, newest first, strictly after the cursor
+    /// `before` = (timestamp, visit id) of the last row of the page before (Krunk for Android
+    /// 0.4.0). Unlike [`Store::query_history`], whose cursor is the timestamp alone, visits that
+    /// share a millisecond are neither skipped nor repeated across pages.
+    pub fn query_history_page(
+        &self,
+        text: &str,
+        before: Option<(i64, i64)>,
+        limit: u32,
+    ) -> DbResult<Vec<HistoryEntry>> {
+        let limit = limit.clamp(1, 1000);
+        let (ts, id) = before.unwrap_or((i64::MAX, i64::MAX));
+        let pattern = like_pattern(text.trim());
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT v.id, u.url, u.title, v.ts, u.visit_count
+             FROM visits v JOIN urls u ON u.id = v.url_id
+             WHERE (v.ts < ?1 OR (v.ts = ?1 AND v.id < ?2))
+               AND (u.url LIKE ?3 ESCAPE '\\' OR u.title LIKE ?3 ESCAPE '\\')
+             ORDER BY v.ts DESC, v.id DESC LIMIT ?4",
+        )?;
+        let rows = stmt.query_map(params![ts, id, pattern, limit], |r| {
+            Ok(HistoryEntry { id: r.get(0)?, url: r.get(1)?, title: r.get(2)?, ts: r.get(3)?, visit_count: r.get(4)? })
+        })?;
+        rows.collect()
+    }
+
     /// Deletes individual visits.
     pub fn delete_visits(&mut self, ids: &[i64]) -> DbResult<usize> {
         let tx = self.conn.transaction()?;
@@ -258,6 +284,30 @@ mod tests {
         s.record_visit("https://rust-lang.org/", "Rust", 3000).unwrap();
         s.record_visit("https://example.com/100%_off", "Sale", 4000).unwrap();
         s
+    }
+
+    #[test]
+    fn pages_by_time_and_id() {
+        let s = Store::open_in_memory().unwrap();
+        for n in 0..7 {
+            s.record_visit(&format!("https://example.com/{n}"), "T", 5000).unwrap();
+        }
+        s.record_visit("https://example.com/older", "Older", 4000).unwrap();
+        let mut ids = Vec::new();
+        let mut before = None;
+        loop {
+            let page = s.query_history_page("", before, 3).unwrap();
+            let Some(last) = page.last() else { break };
+            before = Some((last.ts, last.id));
+            ids.extend(page.iter().map(|e| e.id));
+        }
+        assert_eq!(ids.len(), 8, "every visit once");
+        assert!(ids.windows(2).all(|w| w[0] > w[1]) || ids[..7].windows(2).all(|w| w[0] > w[1]));
+        assert_eq!(s.query_history_page("older", None, 10).unwrap().len(), 1);
+        assert_eq!(s.query_history_page("100%", None, 10).unwrap().len(), 0, "LIKE wildcards are escaped");
+        // The same rows, in the same order, as the query by time alone gives in one page.
+        let all: Vec<i64> = s.query_history("", None, 100).unwrap().iter().map(|e| e.id).collect();
+        assert_eq!(all, ids);
     }
 
     #[test]
