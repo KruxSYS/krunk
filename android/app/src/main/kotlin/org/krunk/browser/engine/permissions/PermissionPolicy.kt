@@ -28,10 +28,9 @@ interface PermissionStore {
  *   store before it asks anyone. It never stores camera or microphone answers (the camera gets
  *   a one-shot entry). So the engine's store is treated as a copy that must agree:
  *   - an answer that is a row in the table is given to the engine as allow/deny, so both hold it;
- *   - an allow that is *not* a row (not remembered, a default, a private tab) is still written
+ *   - an answer that is *not* a row (not remembered, a default, a private tab) is still written
  *     by the engine; Krunk forgets that entry again when the tab loads another document or
- *     closes ([EngineEntries]). A deny that is not a row is answered so that the engine stores
- *     nothing at all;
+ *     closes ([EngineEntries]);
  *   - a change on the screens changes the engine's entry of that origin in the same step, and
  *     "Ask" removes both, so the next request reaches the delegate and finds no row: a prompt;
  *   - at start the engine's entries are compared with the table once and corrected (a process
@@ -124,10 +123,7 @@ class PermissionPolicy(private val store: PermissionStore) {
     fun isRow(origin: String?, private: Boolean, kind: PermissionKind): Boolean =
         !private && origin != null && store.get(origin, kind.key) != null
 
-    /**
-     * Whether a deny must be written into the engine's store too: only when the table holds
-     * that deny (anything else is answered so that the engine stores nothing).
-     */
+    /** The same for a deny: whether the table holds it. */
     fun isDenyRow(origin: String?, private: Boolean, kind: PermissionKind): Boolean =
         !private && origin != null && store.get(origin, kind.key) == false
 
@@ -188,6 +184,9 @@ object EngineAgreement {
     const val ALLOW = 1
     const val DENY = 2
 
+    /** The engine's "ask": the same to a site as no entry. */
+    const val PROMPT = 3
+
     /**
      * The value to set for an engine entry of [geckoType] at [origin] currently holding
      * [engineValue], or null when it already agrees or is none of Krunk's business (private
@@ -202,6 +201,7 @@ object EngineAgreement {
             false -> DENY
             null -> FORGET
         }
+        if (want == FORGET && engineValue == PROMPT) return null
         return if (want == engineValue) null else want
     }
 }

@@ -1,7 +1,10 @@
 package org.krunk.browser.engine.permissions
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
@@ -61,6 +64,8 @@ class SitePermissions(context: Context, store: KrunkStore, private val storage: 
 
     // ----- the tab's life -----
 
+    private val main = Handler(Looper.getMainLooper())
+
     /** The tab loads another document: open prompts are denied, one-time answers end. */
     fun newDocument(tab: UInt) {
         leavePage(tab)
@@ -71,11 +76,16 @@ class SitePermissions(context: Context, store: KrunkStore, private val storage: 
     fun tabClosed(tab: UInt) {
         leavePage(tab)
         policy.tabClosed(tab)
+        // What the prompts dismissed just now made the engine write is forgotten too, but only
+        // once those answers are on their way (they are handed over through this same queue).
+        main.post { entries.take(tab).forEach(::forgetInEngine) }
     }
 
     private fun leavePage(tab: UInt) {
-        open.remove(tab)?.toList()?.forEach { it.dismiss() }
+        // First what the page before left in the engine's store, then its open prompts: their
+        // denies are answers of this moment and stay tracked until the tab moves on again.
         entries.take(tab).forEach(::forgetInEngine)
+        open.remove(tab)?.toList()?.forEach { it.dismiss() }
     }
 
     /** The last private tab closed. */
@@ -124,7 +134,7 @@ class SitePermissions(context: Context, store: KrunkStore, private val storage: 
                         table,
                     )
                     if (value != null) {
-                        storage().setPermission(p, value)
+                        setInEngine(p, value)
                         fixed++
                     }
                 }
@@ -140,7 +150,7 @@ class SitePermissions(context: Context, store: KrunkStore, private val storage: 
             { list ->
                 for (p in list.orEmpty()) {
                     if (p.permission in types && !p.privateMode && webOrigin(p.uri) == origin && p.value != value) {
-                        storage().setPermission(p, value)
+                        setInEngine(p, value)
                     }
                 }
             },
@@ -148,7 +158,25 @@ class SitePermissions(context: Context, store: KrunkStore, private val storage: 
         )
     }
 
-    private fun forgetInEngine(perm: ContentPermission) = storage().setPermission(perm, EngineAgreement.FORGET)
+    private fun forgetInEngine(perm: ContentPermission) = setInEngine(perm, EngineAgreement.FORGET)
+
+    /**
+     * Writes [value] into the engine's entry. Forgetting is two steps: first the documented
+     * `VALUE_PROMPT` (the engine asks again from here on), then value 0, which the engine's
+     * permission manager takes as "remove the entry" (`GeckoViewStorageController.sys.mjs` hands
+     * the number to `Services.perms.addFromPrincipal` as it is), so no row naming the site stays
+     * in the engine's database. 0 is not one of the API's named values, hence the lint note.
+     */
+    @SuppressLint("WrongConstant")
+    private fun setInEngine(perm: ContentPermission, value: Int) {
+        val controller = storage()
+        if (value == EngineAgreement.FORGET) {
+            controller.setPermission(perm, ContentPermission.VALUE_PROMPT)
+            controller.setPermission(perm, EngineAgreement.FORGET)
+        } else {
+            controller.setPermission(perm, value)
+        }
+    }
 
     private fun engineValue(allow: Boolean) = if (allow) EngineAgreement.ALLOW else EngineAgreement.DENY
 
@@ -226,8 +254,12 @@ class SitePermissions(context: Context, store: KrunkStore, private val storage: 
     private inner class Delegate(private val tab: Tab) : GeckoSession.PermissionDelegate {
         override fun onContentPermissionRequest(session: GeckoSession, perm: ContentPermission): GeckoResult<Int> {
             // A type Krunk does not know, or the tracking exception (never a request): refused,
-            // and the engine stores nothing.
-            val kind = PermissionKind.ofGecko(perm.permission) ?: return GeckoResult.fromValue(EngineAgreement.FORGET)
+            // and like every answer without a row forgotten when the tab moves on.
+            val kind = PermissionKind.ofGecko(perm.permission)
+            if (kind == null) {
+                entries.add(tab.id, perm)
+                return GeckoResult.fromValue(ContentPermission.VALUE_DENY)
+            }
             val private = tab.private || perm.privateMode
             val result = GeckoResult<Int>()
             // The engine names the top-level site in `uri` and the frame that asks in
@@ -244,16 +276,21 @@ class SitePermissions(context: Context, store: KrunkStore, private val storage: 
             val kinds = listOf(kind)
 
             fun finish(allow: Boolean) {
-                if (allow) {
-                    val row = policy.isRow(pageOrigin, private, kind)
-                    // The engine writes this allow into its own store: without a row it must
-                    // not outlive the page (storage access keeps its own, dated entry).
-                    if (!row && kind != PermissionKind.STORAGE_ACCESS) entries.add(tab.id, perm)
-                    result.complete(ContentPermission.VALUE_ALLOW)
+                // The engine writes the answer into its own store. Without a row of the table
+                // behind it, it must not outlive the page: it is forgotten when the tab moves
+                // on (never right away: the engine writes after this call has returned).
+                // Storage access is the exception, the engine keeps its own dated entry.
+                val row = if (allow) {
+                    policy.isRow(
+                        pageOrigin,
+                        private,
+                        kind,
+                    )
                 } else {
-                    val row = policy.isDenyRow(pageOrigin, private, kind)
-                    result.complete(if (row) ContentPermission.VALUE_DENY else EngineAgreement.FORGET)
+                    policy.isDenyRow(pageOrigin, private, kind)
                 }
+                if (!row && kind != PermissionKind.STORAGE_ACCESS) entries.add(tab.id, perm)
+                result.complete(if (allow) ContentPermission.VALUE_ALLOW else ContentPermission.VALUE_DENY)
             }
 
             when (val decision = policy.decide(tab.id, pageOrigin, private, kinds)) {
@@ -262,7 +299,6 @@ class SitePermissions(context: Context, store: KrunkStore, private val storage: 
                 is PermissionPolicy.Decision.Deny -> finish(false)
 
                 is PermissionPolicy.Decision.Ask -> {
-                    perm.notifyShown()
                     ask(tab, asker, pageOrigin, private, decision.kinds, emptyList(), policy.canRemember(pageOrigin)) {
                             allow,
                             remember,

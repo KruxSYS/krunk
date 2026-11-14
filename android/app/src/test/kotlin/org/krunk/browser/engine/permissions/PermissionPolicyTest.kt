@@ -292,6 +292,9 @@ class PermissionPolicyTest {
             EngineAgreement.FORGET,
             EngineAgreement.correction(0, "https://b.test", false, EngineAgreement.ALLOW, store),
         )
+        // "Ask" in the engine is as good as no entry.
+        assertNull(EngineAgreement.correction(4, site, false, EngineAgreement.PROMPT, store))
+        assertEquals(EngineAgreement.ALLOW, EngineAgreement.correction(0, site, false, EngineAgreement.PROMPT, store))
         // Not Krunk's: private entries, tracking exceptions, storage access, unknown types, no web origin.
         assertNull(EngineAgreement.correction(0, site, true, EngineAgreement.DENY, store))
         assertNull(EngineAgreement.correction(PermissionKind.GECKO_TRACKING, site, false, EngineAgreement.ALLOW, store))
