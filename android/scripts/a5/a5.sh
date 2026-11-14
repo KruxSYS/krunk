@@ -47,6 +47,18 @@ confirm_download() { waitfor text "Download this file?" 12 || { missing "Downloa
 clean() { A "am force-stop $PKG; pm clear $PKG" > /dev/null; A "pm grant $PKG android.permission.POST_NOTIFICATIONS"; }   # no restored tabs re-asking for an old download
 go() { tapui desc "Edit address" 2 && type_text "${1#http://}" && A "input keyevent KEYCODE_ENTER" && sleep "${2:-8}"; }   # type an address into the tab on screen
 type_text() { A "input text '$1'"; sleep 1; }
+tapbutton() { # tapbutton TEXT [wait]: the last node whose text is exactly TEXT (a page button below a heading of the same words)
+  dump; local xy; xy=$(echo "$UI" | python3 -I "$HERE/uix.py" list | python3 -I -c '
+import re,sys
+want=sys.argv[1]; last=None
+for l in sys.stdin:
+    m=re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]\s+text=.(.*?). desc=", l)
+    if m and m.group(5)==want: last=((int(m.group(1))+int(m.group(3)))//2,(int(m.group(2))+int(m.group(4)))//2)
+print("%d %d"%last if last else "")' "$1")
+  [ -n "$xy" ] || { missing "$1"; return 1; }
+  # shellcheck disable=SC2086
+  tap $xy "${2:-2}"
+}
 tapany() { dump; if has desc "$1" --contains; then tapui desc "$1" "${2:-2}" --contains; else tapui text "$1" "${2:-2}" --contains; fi; }   # an icon (description) or a text button
 linktap() { tapui text "$1" "${2:-3}" --contains; }   # a link of the test page by its text
 # A secure context for permission tests (geolocation and notifications need one; plain http on
@@ -271,10 +283,10 @@ t_perms() {
 }
 
 t_fullscreen() {
-  launch 8; front fullscreen || return
+  stop_clean; launch 8; front fullscreen || return
   view "$B/fullscreen.html?f1" 8
   shot fullscreen-before; dump; nodes fullscreen-before
-  tapui text "Full screen" 4 --contains
+  tapbutton "Full screen" 4
   shot fullscreen-in; dump; nodes fullscreen-in
   A "dumpsys window" | grep -E "mCurrentFocus|InsetsSource.*(statusBars|navigationBars)" | head -6 > "$EV/fullscreen-window-in.txt"
   check "the toolbar is gone in full screen" '! has desc "Menu"'
@@ -282,14 +294,29 @@ t_fullscreen() {
   shot fullscreen-out; dump
   check "Back leaves full screen and the toolbar is back" 'has desc "Menu" && fg fs > /dev/null'
   A "dumpsys window" | grep -E "InsetsSource.*(statusBars|navigationBars)" | head -4 > "$EV/fullscreen-window-out.txt"
-  # rotation last
-  tapui text "Full screen" 4 --contains
+  # an orientation lock from the page (full screen + landscape), Back restores what was there.
+  # No UI dump while the screen is landscape: UiAutomation then fixes the system's rotation at 90
+  # degrees (user_rotation=1), which would look like a lock Krunk did not give back.
+  A "settings put system user_rotation 0"
+  reqo() { A "dumpsys window" | grep -oE "mLastOrientation=[-0-9]+" | head -1 | cut -d= -f2; }
+  tapbutton "Full screen + landscape" 6
+  shot fullscreen-landscape-lock; echo "requested $(reqo)" > "$EV/fullscreen-rotation-locked.txt"
+  check "the page's landscape lock is applied (requested landscape)" 'grep -qE "requested (0|6|8|11)$" "$EV/fullscreen-rotation-locked.txt"'
+  A "input keyevent KEYCODE_BACK"; sleep 4
+  echo "requested $(reqo)" > "$EV/fullscreen-rotation-after.txt"; shot fullscreen-unlocked
+  A "settings put system user_rotation 0"; sleep 3; dump; nodes fullscreen-unlocked
+  check "Back ends full screen and gives the orientation back (requested unspecified, portrait page)" 'grep -q "requested -1" "$EV/fullscreen-rotation-after.txt" && has desc "Menu" && has text "portrait-primary" --contains'
+  # a lock outside full screen is refused
+  tapbutton "Lock landscape only" 4; echo "requested $(reqo)" > "$EV/fullscreen-rotation-lockonly.txt"; dump; nodes fullscreen-lockonly
+  check "a lock outside full screen is refused" 'grep -q "requested -1" "$EV/fullscreen-rotation-lockonly.txt"'
+  # device rotation (last): full screen survives turning the device and returning
+  tapbutton "Full screen" 4
   A "settings put system accelerometer_rotation 0; settings put system user_rotation 1"; sleep 5
   shot fullscreen-landscape
-  A "input keyevent KEYCODE_BACK"; sleep 3
   A "settings put system user_rotation 0"; sleep 5
+  A "input keyevent KEYCODE_BACK"; sleep 3
   shot fullscreen-restored; dump
-  check "after rotating back the toolbar is there in portrait" 'has desc "Menu"'
+  check "after rotating back and Back, the toolbar is there in portrait" 'has desc "Menu"'
   save fullscreen; stop_clean
 }
 
