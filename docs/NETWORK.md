@@ -205,3 +205,43 @@ answer are stopped before the tab goes on`. A link clicked in the page itself is
 Checked on Windows since: the 16-connection engine (rows above, `.pipeline/evidence-0.18.0/engine/`),
 the `krunk://tasks` Pending column and the 30 s log line (`after/s03`, `s04`). Still open: the
 question under "Downloads in parts".
+
+---
+
+# Krunk for Android's own requests: the update check (0.5.0)
+
+This section is about a different topic from the rest of this file: when the Android app itself
+contacts Krunk's server. Pages you open and the engine's traffic are described in
+`docs/ANDROID_DEV.md` ("The quiet engine"). Search suggestions (on by default, never in private
+tabs) and the uBlock Origin list updates (only on request, or with "Update automatically") are
+the app's other requests of its own.
+
+Only the **website APK** (`direct` flavour) has an update check. The Google Play build (`play`)
+has no update code, so it makes none of these requests and has no permission to install apps.
+
+The check runs only when the user starts it, at two moments:
+
+| When | Requests | Sent |
+|---|---|---|
+| The user taps **Settings › About › Check for updates** | `GET https://krunk.209.wf/updates/android-arm64/latest.json`, then `GET …/latest.json.sig` | the request line, `Host`, `User-Agent: Krunk-Android/<version>`, `Accept-Encoding: identity`, `Cache-Control: no-cache`, `Connection` |
+| The user taps **Download and install** on an offered version | `GET https://krunk.209.wf/download/android/<version>/Krunk-android-<version>-<abi>-release.apk`, just the one APK for this device | the same headers |
+
+- No query string and no identifiers: no installation id, device model, Android version or
+  settings. No cookies: the requests go through Android's own HTTP stack, not the engine, so no
+  site data and no Gecko profile are involved. Redirects are not followed. The server sees the
+  IP address, as with any request.
+- **Nothing else:** no check at start-up, no timer, no WorkManager or JobScheduler job, no push.
+  At start-up the app only deletes an update file a previous run left in its own storage, which
+  makes no request. There is no "check automatically" setting.
+- The release notes come inside the signed manifest, so reading them needs no third request.
+- What the app trusts: an Ed25519 signature over the exact manifest bytes, checked with the
+  public key built into the app (`assets/keys/update-signing.pub`, the same key that signs the
+  Windows updates). The APK must then match the manifest's size and SHA-256, be
+  `org.krunk.browser` with the manifest's versionCode, and be signed with the installed app's
+  certificate (also named in the manifest) before Android's installer sees it. The manifest
+  format is in `dist/server/README.md`, and the code is in `core/src/update_android.rs` and
+  `android/app/src/direct/`.
+- Checked on the emulator in 0.5.0 (`.pipeline/evidence-android-0.5.0/`, test 9e): the app was
+  started, left idle for 3 minutes and used to browse two pages. In that time the update server
+  logged no request, and the app's packet capture showed no connection to it. The Check tap then
+  caused exactly the two requests above.

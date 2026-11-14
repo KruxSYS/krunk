@@ -3,6 +3,34 @@
 What changed in each Krunk for Android release, newest first. The Windows browser's list is
 `CHANGELOG.md`.
 
+## 0.5.0 — 2026-11-14
+
+Updates from inside the app, for the APK from the website. It installs over 0.4.0 and keeps tabs,
+bookmarks, history, settings, the password vault and downloads.
+
+- **Coming from 0.4.0 or older? Install this APK over it once.** Those versions cannot check
+  for updates, so the step to 0.5.0 is the same as before: download the APK from
+  krunk.209.wf and install it over the installed Krunk. Your data stays. From 0.5.0 on the app
+  can fetch later versions itself.
+- **Check for updates** (Settings › About). Krunk contacts krunk.209.wf only when you tap it,
+  and fetches two small files: the update information and its signature. If a newer version is
+  there, Krunk shows it with its notes; **Download and install** fetches the one APK for your
+  device, with progress and Cancel. Nothing is checked at start-up, on a timer or in the
+  background. The requests carry the User-Agent `Krunk-Android/0.5.0` and nothing else of
+  yours (no identifiers, no cookies).
+- **Checked before Android sees it.** The update information must carry a valid signature of
+  Krunk's release key, which is built into the app (the key that also signs the Windows
+  updates). The APK must match the size and SHA-256 named there, be Krunk, be exactly the version
+  named, and be signed with the same certificate as the Krunk you have. If any check fails Krunk
+  says which one, deletes the file and installs nothing. Then Android's installer asks you; the
+  first time Android also asks whether Krunk may install apps, and Krunk explains why first.
+  The downloaded file is deleted after the hand-over, on any failure and on cancel.
+- **Same version or older is "up to date":** Krunk never offers a downgrade.
+- **A Google Play build** exists for the first time (built, not published): it has no update
+  check, no update screen and no permission to install apps, because Play updates the app
+  itself. Whether and when it goes to Play is still open.
+- QA ran on emulator images only (Android 16 and Android 10), not on real devices.
+
 ## 0.4.0 — 2026-11-14
 
 Downloads of Krunk's own, site permissions and site data. It installs over 0.3.0 and keeps

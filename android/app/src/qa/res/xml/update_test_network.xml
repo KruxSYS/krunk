@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only in the qa and debug builds: the update check may use a plain-http test server
+     (-Pkrunk.qaUpdateBase, a6.sh). Release builds have no such file and keep Android's default
+     (HTTPS only for the app's own requests). Pages are unaffected: the engine has its own stack. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
