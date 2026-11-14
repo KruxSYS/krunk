@@ -627,6 +627,12 @@ private fun PrivacySection(
     Row(stringResource(R.string.settings_clear_data), stringResource(R.string.settings_clear_data_help)) {
         clear = true
     }
+    Row(stringResource(R.string.settings_site_permissions), stringResource(R.string.settings_site_permissions_help)) {
+        vm.push(Screen.SitePermissions)
+    }
+    Row(stringResource(R.string.settings_site_data), stringResource(R.string.settings_site_data_help)) {
+        vm.push(Screen.SiteData)
+    }
     Row(stringResource(R.string.settings_passwords), stringResource(R.string.settings_passwords_help)) {
         vm.push(Screen.Vault)
     }

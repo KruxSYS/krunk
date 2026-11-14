@@ -19,9 +19,13 @@ import org.krunk.browser.ui.browser.LocalLoginUi
 import org.krunk.browser.ui.browser.LoginUiHost
 import org.krunk.browser.ui.browser.SecureWindowEffect
 import org.krunk.browser.ui.browser.SystemBarsEffect
+import org.krunk.browser.ui.downloads.DownloadsScreen
 import org.krunk.browser.ui.history.HistoryScreen
+import org.krunk.browser.ui.permissions.SiteDetailScreen
+import org.krunk.browser.ui.permissions.SitePermissionsScreen
 import org.krunk.browser.ui.settings.AboutScreen
 import org.krunk.browser.ui.settings.SettingsScreen
+import org.krunk.browser.ui.sitedata.SiteDataScreen
 import org.krunk.browser.ui.tabs.TabSwitcherScreen
 import org.krunk.browser.ui.theme.KrunkTheme
 import org.krunk.browser.ui.theme.LocalKrunkDark
@@ -90,6 +94,14 @@ fun KrunkRoot(vm: BrowserViewModel) {
                     Screen.Settings -> SettingsScreen(vm)
 
                     Screen.About -> AboutScreen(vm)
+
+                    Screen.Downloads -> DownloadsScreen(vm)
+
+                    Screen.SitePermissions -> SitePermissionsScreen(vm)
+
+                    is Screen.SiteDetail -> SiteDetailScreen(vm, screen.origin)
+
+                    Screen.SiteData -> SiteDataScreen(vm)
 
                     Screen.Vault -> {
                         val app = LocalContext.current.applicationContext as? Application

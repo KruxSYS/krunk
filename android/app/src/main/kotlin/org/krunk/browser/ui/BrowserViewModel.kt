@@ -66,6 +66,18 @@ sealed class Screen {
     /** The password vault. */
     data object Vault : Screen()
 
+    /** Krunk's downloads (0.4.0). */
+    data object Downloads : Screen()
+
+    /** Sites with a remembered permission answer (0.4.0). */
+    data object SitePermissions : Screen()
+
+    /** The permissions of one site ([origin] is `scheme://host[:port]`). */
+    data class SiteDetail(val origin: String) : Screen()
+
+    /** Sites with cookies or stored data, and clearing them (0.4.0). */
+    data object SiteData : Screen()
+
     companion object {
         /** `krunk://name` -> screen. */
         fun forPage(name: String): Screen? = when (name) {
@@ -74,6 +86,7 @@ sealed class Screen {
             "settings" -> Settings
             "about" -> About
             "passwords" -> Vault
+            "downloads" -> Downloads
             else -> null
         }
     }

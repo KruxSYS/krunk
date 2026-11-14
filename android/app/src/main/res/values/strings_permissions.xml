@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Site permissions and web notifications (0.4.0) -->
+    <string name="settings_site_permissions">Site permissions</string>
+    <string name="settings_site_permissions_help">Camera, microphone, location, notifications and more, per site</string>
+    <string name="channel_sites">Site notifications</string>
+</resources>

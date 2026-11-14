@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Site data (0.4.0) -->
+    <string name="settings_site_data">Site data</string>
+    <string name="settings_site_data_help">Cookies and stored data, per site</string>
+</resources>

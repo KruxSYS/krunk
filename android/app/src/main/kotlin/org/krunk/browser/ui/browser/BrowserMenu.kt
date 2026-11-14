@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Bookmarks
 import androidx.compose.material.icons.outlined.Computer
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.FindInPage
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Home
@@ -211,6 +212,10 @@ fun BrowserMenu(
         Item(stringResource(R.string.menu_history), Icons.Outlined.History) {
             onDismiss()
             vm.push(Screen.History)
+        }
+        Item(stringResource(R.string.menu_downloads), Icons.Outlined.Download) {
+            onDismiss()
+            vm.push(Screen.Downloads)
         }
         Item(stringResource(R.string.menu_passwords), Icons.Outlined.Key) {
             onDismiss()

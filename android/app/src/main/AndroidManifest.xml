@@ -7,6 +7,25 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <!-- Optional biometric unlock of the password vault (a normal permission, no prompt). -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <!-- 0.4.0, downloads: they go on while Krunk is in the background (a foreground service
+         with its notification). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- 0.4.0, download and site notifications. Asked at the first download or the first site
+         that is allowed to notify (Android 13 and later). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 0.4.0, site permissions: each is asked from Android only when a site asks for it and
+         the user allowed that site. None is needed to use Krunk. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-feature android:name="android.hardware.location" android:required="false" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
 
     <application
         android:name=".KrunkApp"

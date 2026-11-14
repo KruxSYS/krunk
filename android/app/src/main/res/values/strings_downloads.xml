@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Downloads (0.4.0) -->
+    <string name="menu_downloads">Downloads</string>
+    <string name="channel_downloads">Downloads</string>
+</resources>
