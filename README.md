@@ -1857,7 +1857,7 @@ pickers, "leave page?", "send again?", sharing), the password vault with save an
 (since 0.3.0, below) and
 links that open a new tab; tabs with a switcher grid (long press: duplicate, close others), a
 separate private section, recently closed,
-restore after a restart or a crash, and sleeping/discarding of background tabs; the twelve styles
+restore after a restart or a crash, and sleeping/discarding of background tabs; the twenty styles
 and the accent colour of the Windows browser (Settings › Appearance); a native new-tab
 page with your most visited sites, shortcuts and the built-in wallpapers; bookmarks with folders,
 search and Netscape HTML import/export; history by day; settings (search engine, homepage, start-up,
