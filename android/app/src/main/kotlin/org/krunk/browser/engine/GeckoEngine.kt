@@ -101,6 +101,9 @@ class GeckoEngine(context: Context, automaticUpdates: Boolean, blockerHost: Bloc
 
     val icons: IconsExtension by lazy { IconsExtension(runtime) }
 
+    /** Lists the sites that hold cookies or stored data; installed when first asked. */
+    val siteData: SiteDataExtension by lazy { SiteDataExtension(runtime) }
+
     /**
      * The engine's own user agent. Krunk's few requests of its own (favicons, search suggestions)
      * carry it instead of the platform's default, which names the device model and build.
@@ -162,6 +165,19 @@ class GeckoEngine(context: Context, automaticUpdates: Boolean, blockerHost: Bloc
                 flags or StorageController.ClearFlags.SITE_DATA or StorageController.ClearFlags.PERMISSIONS
         }
         return if (flags == 0L) GeckoResult.fromValue(null) else runtime.storageController.clearData(flags)
+    }
+
+    /**
+     * Clears what one site (a registrable domain, an IP address or `localhost`) holds: cookies
+     * and sign-ins, stored data, cached files; with [withPermissions] also the engine's
+     * permission answers for it. The engine clears the site's own data in every tab kind and
+     * what third parties stored while embedded in it. History is Krunk's and is not touched.
+     */
+    fun clearSiteData(site: String, withPermissions: Boolean): GeckoResult<Void> {
+        var flags = StorageController.ClearFlags.COOKIES or StorageController.ClearFlags.DOM_STORAGES or
+            StorageController.ClearFlags.ALL_CACHES or StorageController.ClearFlags.AUTH_SESSIONS
+        if (withPermissions) flags = flags or StorageController.ClearFlags.PERMISSIONS
+        return runtime.storageController.clearDataFromBaseDomain(site, flags)
     }
 }
 
