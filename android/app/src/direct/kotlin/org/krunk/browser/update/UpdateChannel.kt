@@ -124,7 +124,12 @@ private fun UpdateSection() {
                 )
                 if (s.update.notes.isNotBlank()) {
                     TextButton(onClick = { showNotes = !showNotes }) { Text(stringResource(R.string.update_whats_new)) }
-                    if (showNotes) Text(s.update.notes, style = MaterialTheme.typography.bodySmall)
+                    if (showNotes) {
+                        Text(
+                            UpdateRules.plainNotes(s.update.notes),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                 }
                 Spacer(Modifier.height(8.dp))
                 Button(onClick = {

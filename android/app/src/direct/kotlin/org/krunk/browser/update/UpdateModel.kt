@@ -107,6 +107,35 @@ object UpdateRules {
         else -> null
     }
 
+    /**
+     * The release notes (Markdown from CHANGELOG-android.md) as plain text for the offer: list
+     * items become bullets, a wrapped item's lines are joined, `**bold**`, `` `code` `` and
+     * `[text](link)` keep only their text. Paragraph breaks stay.
+     */
+    fun plainNotes(markdown: String): String {
+        val inline = { line: String ->
+            line.replace(Regex("""\*\*(.+?)\*\*"""), "$1")
+                .replace(Regex("""`([^`]*)`"""), "$1")
+                .replace(Regex("""\[([^\]]*)]\([^)]*\)"""), "$1")
+        }
+        val out = ArrayList<String>()
+        for (raw in markdown.replace("\r\n", "\n").split("\n")) {
+            val line = raw.trimEnd()
+            val item = Regex("""^(\s*)[-*] (.*)$""").find(line)
+            when {
+                line.isBlank() -> if (out.isNotEmpty() && out.last().isNotEmpty()) out += ""
+
+                item != null -> out += "  ".repeat(item.groupValues[1].length / 2) + "• " + inline(item.groupValues[2])
+
+                out.isNotEmpty() && out.last().isNotEmpty() -> out[out.size - 1] =
+                    out.last() + " " + inline(line.trim())
+
+                else -> out += inline(line.trim())
+            }
+        }
+        return out.joinToString("\n").trim()
+    }
+
     /** The User-Agent of Krunk's own update requests: nothing but the app and its version. */
     fun userAgent(versionName: String) = "Krunk-Android/$versionName"
 }

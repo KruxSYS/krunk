@@ -179,6 +179,18 @@ class UpdateVerifyTest {
     }
 
     @Test
+    fun releaseNotesAreShownWithoutMarkup() {
+        val md = "Intro line\nwrapped.\n\n" +
+            "- **Bold** item with `code`\n  and a second line.\n" +
+            "- A [link](https://x.example) item\n"
+        assertEquals(
+            "Intro line wrapped.\n\n• Bold item with code and a second line.\n• A link item",
+            UpdateRules.plainNotes(md),
+        )
+        assertEquals("", UpdateRules.plainNotes(""))
+    }
+
+    @Test
     fun userAgentCarriesOnlyTheVersion() {
         assertEquals("Krunk-Android/0.5.0", UpdateRules.userAgent("0.5.0"))
     }
