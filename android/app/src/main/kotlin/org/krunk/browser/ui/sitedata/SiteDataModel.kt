@@ -50,6 +50,29 @@ object SiteDataModel {
     /** The engine keeps at most a few thousand cookies; more than this is not a real answer. */
     const val MAX_COOKIES = 20_000
 
+    /**
+     * A host the site-data extension listed, when it has the shape of one ([isSiteName]: the
+     * core's `isSiteName`, a leading dot allowed); else null and the row is dropped.
+     */
+    fun checkedHost(host: String, isSiteName: (String) -> Boolean): String? =
+        host.takeIf { it.isNotEmpty() && isSiteName(it.removePrefix(".")) }
+
+    /**
+     * An origin the extension listed with stored data, as [webOrigin] writes it (http/https
+     * only), and the host of the top-level site it is kept under ("" for its own data); null
+     * when either is not what it should be.
+     */
+    fun checkedUsage(
+        origin: String,
+        topHost: String,
+        webOrigin: (String) -> String?,
+        isSiteName: (String) -> Boolean,
+    ): Pair<String, String>? {
+        val o = webOrigin(origin) ?: return null
+        if (topHost.isNotEmpty() && !isSiteName(topHost)) return null
+        return o to topHost
+    }
+
     /** One entry per cookie, as `siteSummaries` counts them. */
     fun cookieDomains(engine: EngineSiteData?): List<String> {
         val out = ArrayList<String>()

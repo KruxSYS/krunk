@@ -121,6 +121,31 @@ pub fn site_of_host(host: String) -> String {
     lb_core::cookies::site_of(&host)
 }
 
+/// Whether `host` has the shape of a host or site name (letters, digits, `.-_:[]`, at most 255
+/// characters), as the core checks a site before it uses it.
+#[uniffi::export]
+pub fn is_site_name(host: String) -> bool {
+    sitedata::is_site(&host)
+}
+
+/// Whether clearing `host` as a site (the engine's "base domain" call) touches that site
+/// only: true for a registrable domain (`example.com`, `example.co.uk`) and an IP address;
+/// false for a public suffix (`github.io`, `co.uk`, `dev`), a single-label host such as
+/// `localhost` or an intranet name, and a host below a site, whose "site" would take in more
+/// than the host. Such a host is cleared by its exact name instead.
+#[uniffi::export]
+pub fn site_is_registrable(host: String) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    if host.is_empty() {
+        return false;
+    }
+    let bare = host.trim_start_matches('[').trim_end_matches(']');
+    if bare.parse::<std::net::IpAddr>().is_ok() {
+        return true;
+    }
+    psl::domain_str(&host) == Some(host.as_str())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,6 +196,19 @@ mod tests {
         assert_eq!(web_origin("file:///sdcard/x".into()), None);
         assert_eq!(site_of_host("www.shop.example.co.uk".into()), "example.co.uk");
         assert_eq!(site_of_host("10.0.2.2".into()), "10.0.2.2");
+    }
+
+    #[test]
+    fn registrable_sites_and_suffixes() {
+        for host in ["example.com", "example.co.uk", "Example.COM.", "user.github.io", "10.0.2.2", "[::1]", "::1"] {
+            assert!(site_is_registrable(host.into()), "{host}");
+        }
+        // A suffix, a single label or a host below a site: clearing "by site" would reach further.
+        for host in ["dev", "github.io", "co.uk", "com", "localhost", "intranet", "www.example.com", "", "."] {
+            assert!(!site_is_registrable(host.into()), "{host}");
+        }
+        assert!(is_site_name("example.co.uk".into()) && is_site_name("[::1]".into()));
+        assert!(!is_site_name(String::new()) && !is_site_name("a b".into()) && !is_site_name("x/y".into()));
     }
 
     #[test]

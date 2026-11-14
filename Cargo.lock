@@ -2163,6 +2163,7 @@ version = "0.20.1"
 dependencies = [
  "base64ct",
  "core",
+ "psl",
  "serde",
  "serde_json",
  "uniffi",

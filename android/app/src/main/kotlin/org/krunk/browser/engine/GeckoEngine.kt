@@ -12,6 +12,7 @@ import org.krunk.browser.engine.logins.LoginsHub
 import org.krunk.browser.engine.permissions.SitePermissions
 import org.krunk.ffi.AndroidSettings
 import org.krunk.ffi.ThemeMode
+import org.krunk.ffi.siteIsRegistrable
 import org.mozilla.geckoview.ContentBlocking
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
@@ -172,12 +173,23 @@ class GeckoEngine(context: Context, automaticUpdates: Boolean, blockerHost: Bloc
      * and sign-ins, stored data, cached files; with [withPermissions] also the engine's
      * permission answers for it. The engine clears the site's own data in every tab kind and
      * what third parties stored while embedded in it. History is Krunk's and is not touched.
+     *
+     * A "site" that is a public suffix itself or a single-label host (`github.io`, `dev`,
+     * `localhost`: the row of a host that has no registrable domain) is cleared by its exact
+     * host: the base-domain call matches cookies by root domain (`ClearDataService`'s
+     * `hasRootDomain`) and would sign the user out of every site under that suffix. The
+     * host call runs the same cleaners (the few without a per-host variant clear everything in
+     * both calls: media device ids, HTTP auth, client-auth tokens).
      */
     fun clearSiteData(site: String, withPermissions: Boolean): GeckoResult<Void> {
         var flags = StorageController.ClearFlags.COOKIES or StorageController.ClearFlags.DOM_STORAGES or
             StorageController.ClearFlags.ALL_CACHES or StorageController.ClearFlags.AUTH_SESSIONS
         if (withPermissions) flags = flags or StorageController.ClearFlags.PERMISSIONS
-        return runtime.storageController.clearDataFromBaseDomain(site, flags)
+        return if (siteIsRegistrable(site)) {
+            runtime.storageController.clearDataFromBaseDomain(site, flags)
+        } else {
+            runtime.storageController.clearDataFromHost(site, flags)
+        }
     }
 }
 
