@@ -49,6 +49,11 @@ go() { tapui desc "Edit address" 2 && type_text "${1#http://}" && A "input keyev
 type_text() { A "input text '$1'"; sleep 1; }
 tapany() { dump; if has desc "$1" --contains; then tapui desc "$1" "${2:-2}" --contains; else tapui text "$1" "${2:-2}" --contains; fi; }   # an icon (description) or a text button
 linktap() { tapui text "$1" "${2:-3}" --contains; }   # a link of the test page by its text
+# A secure context for permission tests (geolocation and notifications need one; plain http on
+# an IP is not): a relay on the device makes the test server http://localhost:18081.
+L=http://localhost:18081
+SITE=localhost
+relay() { A "pgrep -f 'p 18081' > /dev/null" || { (timeout 7000 adb -s emulator-5554 shell "toybox nc -s 127.0.0.1 -p 18081 -L toybox nc $(echo ${B#http://} | tr : " ")" > /dev/null 2>&1 &); sleep 2; }; }
 home() { view "$B/index.html?$1" 6; waitfor text "Krunk a5 tests" 20 --contains || bad "the test index did not load"; }
 
 t_upgrade() {
@@ -234,11 +239,11 @@ t_private() {
 }
 
 t_perms() {
-  launch 8; front perms || return
-  view "$B/perms.html?g1" 8; waitfor text "Permissions" 20 || bad "permissions page did not load"
+  relay; launch 8; front perms || return
+  view "$L/perms.html?g1" 8; waitfor text "Permissions" 20 || bad "permissions page did not load"
   tapui text "Location" 3
-  waitfor text "Allow" 8; shot perms-geo-prompt; nodes perms-geo-prompt
-  dump; check "the prompt names the site" 'has text "10.250.136.3" --contains'
+  waitfor text "Allow" 8; sleep 1; shot perms-geo-prompt; nodes perms-geo-prompt
+  dump; check "the prompt names the site" 'has text "$SITE" --contains'
   tapui text "Allow" 3
   dump; nodes perms-geo-android; shot perms-geo-android
   # Android's own dialog, when the app does not hold the permission yet
@@ -246,22 +251,22 @@ t_perms() {
   sleep 6; dump; shot perms-geo-result; nodes perms-geo-result
   check "the page was allowed (a fix or no fix, but not denied)" 'has text "geo: allowed" --contains'
   tapui text "Notifications" 3
-  waitfor text "Deny" 8; shot perms-notif-prompt
+  waitfor text "Deny" 8; sleep 1; shot perms-notif-prompt
   tapui text "Deny" 3
   dump; check "the page was denied" 'has text "notif: denied" --contains'
   # remembered after a reload
-  view "$B/perms.html?g2" 8; waitfor text "state:" 15 --contains
+  view "$L/perms.html?g2" 8; waitfor text "state:" 15 --contains
   dump; nodes perms-reload; shot perms-reload
   check "after a reload: location granted, notifications denied, no prompt" 'has text "geolocation=granted" --contains && has text "notifications=denied" --contains'
   stop_clean; launch 8
-  view "$B/perms.html?g3" 8; waitfor text "state:" 15 --contains
+  view "$L/perms.html?g3" 8; waitfor text "state:" 15 --contains
   tapui text "Location" 5; dump
   check "after a restart: no prompt, still allowed" '! has text "Allow" && has text "geo: allowed" --contains'
   shot perms-restart
   SU "sqlite3 $DB \"SELECT origin, kind, allow FROM site_permissions\"" > "$EV/perms-table.txt" 2>&1
   # change them in the screen
   privacy; tapto text "Site permissions" 3; shot perms-sites; nodes perms-sites
-  tapui text "10.250.136.3" 3 --contains; shot perms-site; nodes perms-site
+  tapui text "$SITE" 3 --contains; shot perms-site; nodes perms-site
   save perms
 }
 
@@ -289,8 +294,8 @@ t_fullscreen() {
 }
 
 t_notify() { # after perms: allow notifications on the site page, then show one and tap it
-  launch 8; front notify || return
-  view "$B/perms.html?n1" 8; waitfor text "Permissions" 20
+  stop_clean; relay; launch 8; front notify || return
+  view "$L/perms.html?n1" 8; waitfor text "Permissions" 20
   tapui text "Notifications" 3
   dump; has text "Allow" && { shot notify-prompt; tapui text "Allow" 3; }
   dump; has text "Allow" --contains && has text "Krunk" --contains && tapui text "Allow" 3   # Android's own dialog
@@ -299,7 +304,7 @@ t_notify() { # after perms: allow notifications on the site page, then show one 
   tapui text "Show a notification" 4
   notif > "$EV/notify-shown.txt"; shot notify-page
   check "an Android notification with the page's text exists" 'grep -q "Hello from the test page" "$EV/notify-shown.txt"'
-  check "it names the site" 'grep -q "10.250.136.3" "$EV/notify-shown.txt"'
+  check "it names the site" 'grep -q "$SITE" "$EV/notify-shown.txt"'
   # another tab on top, then tap the notification
   view "https://example.com/?n2" 8
   A "cmd statusbar expand-notifications"; sleep 2; shot notify-shade
@@ -312,11 +317,30 @@ t_notify() { # after perms: allow notifications on the site page, then show one 
 }
 
 t_permchange() { # after perms: flip the stored answers in Settings and see the page follow
-  launch 8; front permchange || return
+  stop_clean; relay; launch 8; front permchange || return
   privacy; tapto text "Site permissions" 3; shot permchange-sites; dump; nodes permchange-sites
-  check "the site is listed with its answers" 'has text "10.250.136.3" --contains'
-  tapui text "10.250.136.3" 3 --contains; shot permchange-site; dump; nodes permchange-site
-  skip "permchange: the Allow/Deny/Ask controls are tapped by hand in the burst (their layout is read from the node list first)"
+  check "the site is listed with its answers" 'has text "$SITE" --contains'
+  tapui text "$SITE" 3 --contains; shot permchange-site; dump; nodes permchange-site
+  check "the site's page shows Allow / Deny / Ask per permission" 'has text "Notifications" && has text "Ask"'
+  # Notifications: Deny (from t_perms) -> Allow. Rows are: label, then Allow | Deny | Ask under it.
+  local y; y=$(echo "$UI" | python3 -I "$HERE/uix.py" find text "Notifications" | cut -d" " -f2)
+  tap 193 $((y + 100)) 3
+  dump; nodes permchange-android; shot permchange-android
+  has text "Allow" && has text "Don" --contains && tapui text "Allow" 3   # Android's own dialog (P-10: asked here, once)
+  shot permchange-after
+  SU "sqlite3 $DB \"SELECT kind, allow FROM site_permissions WHERE origin = ${Q}$L${Q}\"" > "$EV/permchange-table.txt" 2>&1
+  check "the table now allows notifications" 'grep -q "notifications|1" "$EV/permchange-table.txt"'
+  A "input keyevent KEYCODE_BACK"; sleep 1; A "input keyevent KEYCODE_BACK"; sleep 1; A "input keyevent KEYCODE_BACK"; sleep 1
+  view "$L/perms.html?pc" 8; waitfor text "state:" 15 --contains; dump; nodes permchange-page
+  check "the page sees the change without a restart" 'has text "notifications=granted" --contains'
+  # Location -> Ask: the site asks again
+  privacy; tapto text "Site permissions" 3; tapui text "$L" 3; dump
+  y=$(echo "$UI" | python3 -I "$HERE/uix.py" find text "Location" | cut -d" " -f2)
+  tap 606 $((y + 100)) 3
+  A "input keyevent KEYCODE_BACK"; sleep 1; A "input keyevent KEYCODE_BACK"; sleep 1; A "input keyevent KEYCODE_BACK"; sleep 1
+  view "$L/perms.html?pc2" 8; tapui text "Location" 3; waitfor text "Allow" 8; dump; nodes permchange-ask; shot permchange-ask
+  check "after Ask the site asks again" 'has text "Know your location" --contains'
+  tapui text "Deny" 2
   save permchange
 }
 
