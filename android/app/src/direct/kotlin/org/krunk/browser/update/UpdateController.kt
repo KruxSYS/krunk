@@ -255,12 +255,16 @@ object UpdateController {
     @Suppress("DEPRECATION")
     private fun installedInfo(flags: Int): PackageInfo = app.packageManager.getPackageInfo(app.packageName, flags)
 
-    private fun certFlag(): Int = if (Build.VERSION.SDK_INT >=
-        Build.VERSION_CODES.P
-    ) {
-        PackageManager.GET_SIGNING_CERTIFICATES
+    /**
+     * Both flags on every version: before Android 13 the package manager reads an *archive's*
+     * certificates only when GET_SIGNATURES is asked for; with GET_SIGNING_CERTIFICATES alone
+     * its signingInfo stays empty (seen on API 29: the real update was refused as "wrong
+     * certificate"). An empty answer still fails closed in [UpdateRules.checkApk].
+     */
+    @Suppress("DEPRECATION")
+    private fun certFlag(): Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        PackageManager.GET_SIGNING_CERTIFICATES or PackageManager.GET_SIGNATURES
     } else {
-        @Suppress("DEPRECATION")
         PackageManager.GET_SIGNATURES
     }
 
@@ -277,11 +281,13 @@ object UpdateController {
     @Suppress("DEPRECATION")
     private fun certsOf(info: PackageInfo?): Set<String> {
         if (info == null) return emptySet()
-        val sigs: Array<Signature>? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            info.signingInfo?.apkContentsSigners
+        // signingInfo when the package manager filled it (API 28+), else the older field.
+        val fromSigningInfo: Array<Signature>? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.signingInfo?.apkContentsSigners?.takeIf { it.isNotEmpty() }
         } else {
-            info.signatures
+            null
         }
+        val sigs: Array<Signature>? = fromSigningInfo ?: info.signatures
         return sigs.orEmpty().map {
             UpdateRules.hex(MessageDigest.getInstance("SHA-256").digest(it.toByteArray()))
         }.toSet()
