@@ -243,6 +243,18 @@ class DownloadController(private val app: KrunkApp) : DownloadEngine.Listener {
         }
     }
 
+    /** For the debug hooks: the newest entries, what runs and the part files, as text. */
+    suspend fun describe(): String = withContext(Dispatchers.IO) {
+        val page = runCatching { list.query("", DownloadFilter.ALL, 0u, 20u) }.getOrNull()
+        val parts = File(app.filesDir, DownloadEngine.PART_DIR).listFiles().orEmpty()
+        val lines = page?.items.orEmpty().map { e ->
+            "#${e.id} ${e.state} ${e.received}/${e.total} '${e.fileName}' reason=${e.reason} private=${e.private} " +
+                "resumable=${e.resume != null} path=${e.path}"
+        }
+        "downloads all=${page?.all} running=${_running.value} questions=${questions.waiting} " +
+            "parts=${parts.map { "${it.name}:${it.length()}" }}\n" + lines.joinToString("\n")
+    }
+
     // ----- the engine's events (any thread) -----
 
     override fun onState(entry: DownloadEntry) {
