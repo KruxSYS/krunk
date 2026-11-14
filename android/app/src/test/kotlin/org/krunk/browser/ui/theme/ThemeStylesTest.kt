@@ -89,7 +89,7 @@ class ThemeStylesTest {
     fun everyStyleResolvesToColoursTheAppCanDraw() {
         for (dark in listOf(false, true)) {
             val presets = themePresets("", dark)
-            assertEquals(12, presets.size)
+            assertEquals(20, presets.size)
             assertEquals(presets.size, presets.map { it.id }.distinct().size)
             for (p in presets) {
                 val t = p.theme
