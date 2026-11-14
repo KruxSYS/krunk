@@ -243,6 +243,26 @@ t_tamperapk() {
   refusal othercert "not signed with the certificate of the installed Krunk" download
 }
 
+# 9f: the Play bundle (play.sh, bundletool --local-testing) over a 0.4.0 profile: the data is
+# there, and About has no update section. Needs $KRUNK_PLAY_AAB and an adb server on
+# localhost:5037 for bundletool (a forwarder to the sandbox's remote server).
+t_play() {
+  [ -n "${KRUNK_OLD_APK:-}" ] && [ -n "${KRUNK_PLAY_AAB:-}" ] || { skip "play (KRUNK_OLD_APK / KRUNK_PLAY_AAB)"; return; }
+  seed_old play
+  A "input keyevent KEYCODE_HOME"; sleep 3; A "am force-stop $PKG"
+  env -u ADB_SERVER_SOCKET bash "$A6/play.sh" "$KRUNK_PLAY_AAB" "$KRUNK_OLD_APK" "$EV" 2>&1 | tee "$EV/play-sh.txt"
+  check "9f: bundletool installed the Play build (versionCode 7)" '[ "$(vcode)" = 7 ]'
+  check "9f: no REQUEST_INSTALL_PACKAGES requested" '! grep -q REQUEST_INSTALL_PACKAGES "$EV/play-permissions.txt"'
+  check "9f: no split asks for REQUEST_INSTALL_PACKAGES" '[ -s "$EV/play-split-permissions.txt" ] && ! grep -q REQUEST_INSTALL_PACKAGES "$EV/play-split-permissions.txt"'
+  verify_data play
+  launch 12; front play || return
+  dump; has text "Restore tabs?" --contains && tapui text "Restore" 4
+  dump; has text "Download this file?" && tapui text "Cancel" 2
+  about; dump; nodes play-about; shot play-about
+  check "9f: About has no update section" '! has text "Check for updates" && ! has text "Updates"'
+  save play-about; stop_clean
+}
+
 [ $# -gt 0 ] || { sed -n '2,26p' "$0"; exit 2; }
 for t in "$@"; do
   echo "== $t"

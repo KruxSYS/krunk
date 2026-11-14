@@ -44,7 +44,7 @@ PW2=second-password-22
 LOGIN="$B/login.html"
 HTTPS_LOGIN=https://the-internet.herokuapp.com/login
 
-type_text() { A "input text '$1'"; sleep 1; }
+type_text() { itext "$1"; sleep 1; }
 field() { tapui text "$1" 1 && type_text "$2"; }
 refield() { tapui text "$1" 1 && A "input keycombination 113 29" && A "input keyevent KEYCODE_DEL" && type_text "$2"; }   # clear first            # field LABEL VALUE: tap a text field by its label, type
 hidekb() { dump; A "dumpsys input_method" 2> /dev/null | grep -q "mInputShown=true" && { A "input keyevent KEYCODE_BACK"; sleep 1; }; return 0; }

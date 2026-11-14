@@ -10,7 +10,12 @@ aab=$1 old=$2 ev=$3
 mkdir -p "$ev"
 S="adb -s ${ANDROID_SERIAL:-emulator-5554}"
 PKG=org.krunk.browser
-bt=$(ls "$HOME"/.gradle/caches/modules-2/files-2.1/com.android.tools.build/bundletool/1.18.3/*/bundletool-1.18.3.jar | head -1)
+# The standalone bundletool (the Gradle cache only has the library jar, without a main class):
+#   curl -sSLo ~/.cache/krunk/bundletool/bundletool-all-1.18.3.jar \
+#     https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar
+bt="$HOME/.cache/krunk/bundletool/bundletool-all-1.18.3.jar"
+BT_SHA256=a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29   # GitHub's asset digest
+[ "$(sha256sum "$bt" 2>/dev/null | cut -d' ' -f1)" = "$BT_SHA256" ] || { echo "bundletool missing or not the pinned file: $bt" >&2; exit 1; }
 props="${KRUNK_ANDROID_SIGNING:-$HOME/.config/krunk/android-release.properties}"
 store=$(sed -n 's/^storeFile=//p' "$props"); alias=$(sed -n 's/^keyAlias=//p' "$props")
 tmp=$(mktemp -d "$HOME/.cache/krunk-play.XXXXXX"); chmod 700 "$tmp"; trap 'rm -rf "$tmp"' EXIT
@@ -19,10 +24,10 @@ tmp=$(mktemp -d "$HOME/.cache/krunk-play.XXXXXX"); chmod 700 "$tmp"; trap 'rm -r
 $S shell dumpsys package $PKG | grep -m1 versionName > "$ev/play-before.txt" || true
 java -jar "$bt" build-apks --bundle="$aab" --output="$tmp/krunk.apks" --local-testing --connected-device \
   --device-id="${ANDROID_SERIAL:-emulator-5554}" \
-  --ks="$store" --ks-key-alias="$alias" --ks-pass="file:$tmp/ks.pass" --key-pass="file:$tmp/key.pass" 2>&1 | tail -3
+  --ks="$store" --ks-key-alias="$alias" --ks-pass="file:$tmp/ks.pass" --key-pass="file:$tmp/key.pass"
 unzip -l "$tmp/krunk.apks" > "$ev/play-apkset.txt"
 $S shell input keyevent KEYCODE_HOME; sleep 3; $S shell am force-stop $PKG
-java -jar "$bt" install-apks --apks="$tmp/krunk.apks" --device-id="${ANDROID_SERIAL:-emulator-5554}" 2>&1 | tail -3 | tee "$ev/play-install.txt"
+java -jar "$bt" install-apks --apks="$tmp/krunk.apks" --device-id="${ANDROID_SERIAL:-emulator-5554}" 2>&1 | tee "$ev/play-install.txt"
 $S shell dumpsys package $PKG | grep -m3 -E "versionCode|versionName|splits" > "$ev/play-after.txt"
 $S shell dumpsys package $PKG | sed -n '/requested permissions:/,/install permissions:/p' > "$ev/play-permissions.txt"
 if grep -q REQUEST_INSTALL_PACKAGES "$ev/play-permissions.txt"; then echo "FAIL  play: REQUEST_INSTALL_PACKAGES requested"; else echo "PASS  play: no REQUEST_INSTALL_PACKAGES"; fi

@@ -24,7 +24,9 @@ A() { timeout "${KRUNK_ADB_TIMEOUT:-60}" "$E" adb shell "$@"; }
 wait_s() { sleep "$(( $1 * SLOW_FACTOR ))"; }
 tap() { A input tap "$1" "$2"; wait_s 1; }
 longpress() { A input swipe "$1" "$2" "$1" "$2" 1200; wait_s 2; }
-typetext() { A input text "$1"; wait_s 1; }
+typetext() { # KRUNK_SLOW_TYPE=1: one character per call (the API 29 TCG image drops characters of a burst)
+  if [ "${KRUNK_SLOW_TYPE:-0}" = 1 ]; then local i; for ((i = 0; i < ${#1}; i++)); do
+    if [ "${1:i:2}" = "%s" ]; then A input text %s; i=$((i + 1)); else A input text "'${1:i:1}'"; fi; done; else A input text "$1"; fi; wait_s 1; }
 enter() { A input keyevent 66; }
 back() { A input keyevent 4; wait_s 1; }
 shot() {
@@ -42,6 +44,8 @@ case "${TOOLBAR:-top}" in
   bottom) TB_Y=2265; MENU_SHIFT=0; PAGE_SHIFT=0 ;;
   *) echo "TOOLBAR must be top or bottom" >&2; exit 2 ;;
 esac
+# KRUNK_Y_SHIFT moves the toolbar and the menu rows of a top toolbar (1080x1920: -57).
+YS=${KRUNK_Y_SHIFT:-0}; TB_Y=$((TB_Y + YS)); MENU_SHIFT=$((MENU_SHIFT + YS)); PAGE_SHIFT=$((PAGE_SHIFT + YS))
 MENU_NEW_TAB=$((850 + MENU_SHIFT)); MENU_PRIVATE=$((977 + MENU_SHIFT)); MENU_BOOKMARK=$((1106 + MENU_SHIFT))
 MENU_FIND=$((1357 + MENU_SHIFT)); MENU_BOOKMARKS=$((1738 + MENU_SHIFT)); MENU_HISTORY=$((1866 + MENU_SHIFT))
 MENU_SETTINGS=$((1990 + MENU_SHIFT))
@@ -52,7 +56,11 @@ menu() { tap 1005 "$TB_Y"; wait_s 1; }
 tabs_button() { tap 880 "$TB_Y"; wait_s 3; }
 # One string for the device shell, so the SQL's parentheses and spaces reach sqlite3 intact.
 # Debug builds only (run-as); an error is printed, not hidden.
-db_count() { A "run-as $APP sqlite3 files/krunk/browser.db \"$1\"" | tr -d '\r'; }
+# KRUNK_DB_SU=1 reads it as root instead (a release build on a userdebug image).
+db_count() {
+  if [ "${KRUNK_DB_SU:-0}" = 1 ]; then A "su 0 sqlite3 /data/data/$APP/files/krunk/browser.db \"$1\"" | tr -d '\r'
+  else A "run-as $APP sqlite3 files/krunk/browser.db \"$1\"" | tr -d '\r'; fi
+}
 
 fresh() {
   A am force-stop $APP; A pm clear $APP > /dev/null

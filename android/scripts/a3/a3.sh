@@ -362,7 +362,7 @@ t_realsite() { # one real site: it loads, and the shield counts what was blocked
 t_private() { # private tab: blocked like a normal tab; the sheet has a hint and no switch
   launch 8; front private || return; wait_ready 20   # its own start: the group before may have ended with a stop
   menu; tapui text "New private tab" 4; front private || return
-  local t; t=$(now); tapui desc "Edit address" 2; A "input text '10.250.136.3:18080/ads.html'"; A "input keyevent 66"; sleep 10; dump
+  local t; t=$(now); tapui desc "Edit address" 2; itext "10.250.136.3:18080/ads.html"; A "input keyevent 66"; sleep 10; dump
   check "private tab: blocked ($(served "$t"))" '[ "$(served "$t")" = "/ads.html /ok.png " ]'
   check "private tab: count 5" 'has desc "5 requests blocked on this page"'
   tapui desc "5 requests blocked on this page" 2; dump
@@ -411,7 +411,7 @@ t_rewrite() { # tracking parameters: click, redirect, POST untouched; setting of
   privacy && tapto text "Strip tracking parameters" 3; A "input keyevent KEYCODE_BACK"; sleep 1
   t=$(now); view "$B/links.html" 8; tapui text "1 link with utm_source, fbclid" 6
   check "setting on again: cleaned ($(served "$t"))" 'served "$t" | grep -q "/landing.html?id=5 "'
-  menu; tapui text "New private tab" 4; tapui desc "Edit address" 2; A "input text '10.250.136.3:18080/links.html'"; A "input keyevent 66"; sleep 12
+  menu; tapui text "New private tab" 4; tapui desc "Edit address" 2; itext "10.250.136.3:18080/links.html"; A "input keyevent 66"; sleep 12
   t=$(now); sleep 1; tapui text "1 link with utm_source, fbclid" 6
   check "private tab: cleaned too ($(served "$t"))" 'served "$t" | grep -q "/landing.html?id=5 " && ! served "$t" | grep -q utm_'
   save links-rewrite
@@ -881,10 +881,10 @@ t_upgrade() { # 0.1.1 with tabs, a bookmark, history and a changed setting; 0.2.
   check "allow removed again: filtered, nothing stored" 'has desc "5 requests blocked on this page" && [ -z "$(db "select * from adblock_allowlist")" ]'
   # A private tab: no allow switch; "Open once" on a blocked address is the only allow there is, and it leaves nothing behind.
   local blocked="https://googleads.g.doubleclick.net/pagead/x"
-  menu; tapui text "New private tab" 4; tapui desc "Edit address" 2; A "input text '$B/ads.html'"; A "input keyevent 66"; sleep 10
+  menu; tapui text "New private tab" 4; tapui desc "Edit address" 2; itext "$B/ads.html"; A "input keyevent 66"; sleep 10
   tapui desc "5 requests blocked on this page" 2; dump
   check "private tab: the sheet has no allow switch" '! has text "Block on this site" && has text "5 requests blocked on this page"'
-  back 2; tapui desc "Edit address" 2; A "input text '$blocked'"; A "input keyevent 66"; sleep 8; dump
+  back 2; tapui desc "Edit address" 2; itext "$blocked"; A "input keyevent 66"; sleep 8; dump
   check "private tab: a blocked address shows Krunk's page" 'has text "Open once"'
   tapui text "Open once" 8; dump; check "private tab: Open once goes on to the address" '! has text "Open once"'
   tapui desc "Tabs:" 3 --contains; tapui text "Private (1)" 2; tapui desc "Close " 3 --contains; dump

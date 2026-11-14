@@ -15,6 +15,17 @@ DEBUG_APK=$SRC/android/app/build/outputs/apk/direct/debug/app-direct-x86_64-debu
 RELEASE_APK=$SRC/android/app/build/outputs/apk/direct/release/app-direct-x86_64-release.apk
 T() { timeout "${KRUNK_ADB_TIMEOUT:-45}" "$@"; }
 A() { T "$E" adb shell "$@"; }
+# itext TEXT: `input text` on the device. KRUNK_SLOW_TYPE=1 sends one character per call (the
+# software-emulated API 29 image drops characters of a burst); the timeout grows with the length.
+itext() {
+  [ "${KRUNK_SLOW_TYPE:-0}" = 1 ] || { A "input text '$1'"; return; }
+  local s=$1 i c cmd=""
+  for ((i = 0; i < ${#s}; i++)); do
+    c=${s:i:1}
+    case $c in ' ') cmd+="input text %s; " ;; "'") cmd+="input text \"'\"; " ;; *) cmd+="input text '$c'; " ;; esac
+  done
+  timeout $(( ${#s} * 12 + 30 )) "$E" adb shell "$cmd"
+}
 shot() { KRUNK_SHOTS=$EV T "$E" shot "$1" > /dev/null || { echo "NO SCREENSHOT $1 (display not answering)"; return 4; }; }
 fg() { A "dumpsys activity activities" 2> /dev/null | grep -m1 -E 'topResumedActivity|mResumedActivity' | grep -q "$PKG" || { echo "NOT IN FOREGROUND ($1)"; return 9; }; }
 launch() { A "am start -W -n $PKG/.MainActivity" > /dev/null; sleep "${1:-6}"; }

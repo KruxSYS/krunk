@@ -46,7 +46,7 @@ downloads_screen() { menu && tapto text "Downloads" 3; }
 confirm_download() { waitfor text "Download this file?" 12 || { missing "Download this file?"; return 1; }; shot "$1-question"; sleep 1; tapui text "Download" "${2:-3}"; }   # the button waits 0.5 s (D-16)
 clean() { A "am force-stop $PKG; pm clear $PKG" > /dev/null; A "pm grant $PKG android.permission.POST_NOTIFICATIONS"; }   # no restored tabs re-asking for an old download
 go() { tapui desc "Edit address" 2 && type_text "${1#http://}" && A "input keyevent KEYCODE_ENTER" && sleep "${2:-8}"; }   # type an address into the tab on screen
-type_text() { A "input text '$1'"; sleep 1; }
+type_text() { itext "$1"; sleep 1; }
 tapbutton() { # tapbutton TEXT [wait]: the last node whose text is exactly TEXT (a page button below a heading of the same words)
   dump; local xy; xy=$(echo "$UI" | python3 -I "$HERE/uix.py" list | python3 -I -c '
 import re,sys
@@ -65,7 +65,7 @@ linktap() { tapui text "$1" "${2:-3}" --contains; }   # a link of the test page 
 # an IP is not): a relay on the device makes the test server http://localhost:18081.
 L=http://localhost:18081
 SITE=localhost
-relay() { A "pgrep -f 'p 18081' > /dev/null" || { (timeout 7000 adb -s emulator-5554 shell "toybox nc -s 127.0.0.1 -p 18081 -L toybox nc $(echo ${B#http://} | tr : " ")" > /dev/null 2>&1 &); sleep 2; }; }
+relay() { A "pgrep -f 'p 18081' > /dev/null" || { (timeout 7000 "$E" adb shell "toybox nc -s 127.0.0.1 -p 18081 -L toybox nc $(echo ${B#http://} | tr : " ")" > /dev/null 2>&1 &); sleep 2; }; }
 home() { view "$B/index.html?$1" 6; waitfor text "Krunk a5 tests" 20 --contains || bad "the test index did not load"; }
 
 t_upgrade() {
