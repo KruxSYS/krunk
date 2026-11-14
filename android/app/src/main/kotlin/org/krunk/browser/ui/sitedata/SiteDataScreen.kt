@@ -60,6 +60,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import kotlinx.coroutines.launch
+import org.krunk.browser.KrunkApp
 import org.krunk.browser.R
 import org.krunk.browser.ui.BrowserViewModel
 import org.krunk.browser.ui.bookmarks.SearchField
@@ -73,7 +74,10 @@ import org.krunk.browser.ui.newtab.SiteIcon
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SiteDataScreen(vm: BrowserViewModel) {
-    val controller = remember(vm) { SiteDataController(vm.core, vm.engine, vm.tabs) }
+    val app = LocalContext.current.applicationContext as? KrunkApp
+    val controller = remember(vm, app) {
+        SiteDataController(vm.core, vm.engine, vm.tabs, app?.sitePermissions?.let { it::resetOrigin })
+    }
     val scope = rememberCoroutineScope()
     val res = LocalResources.current
     val snackbar = remember { SnackbarHostState() }

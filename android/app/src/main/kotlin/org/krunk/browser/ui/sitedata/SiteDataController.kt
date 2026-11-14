@@ -2,6 +2,7 @@ package org.krunk.browser.ui.sitedata
 
 import android.util.Log
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -16,7 +17,12 @@ import org.krunk.ffi.siteOfHost
 import org.krunk.ffi.webOrigin
 
 /** The site data screen's work: asking the engine and the store, and clearing one site. */
-class SiteDataController(private val core: KrunkCore, private val engine: GeckoEngine, private val tabs: TabManager) {
+class SiteDataController(
+    private val core: KrunkCore,
+    private val engine: GeckoEngine,
+    private val tabs: TabManager,
+    private val resetPermissions: ((origin: String) -> Unit)? = null,
+) {
     /** What the engine lists, or null when it has not answered within [timeoutMs]. */
     suspend fun engineData(timeoutMs: Long): EngineSiteData? = withTimeoutOrNull(timeoutMs) { engine.siteData.list() }
 
@@ -55,11 +61,20 @@ class SiteDataController(private val core: KrunkCore, private val engine: GeckoE
                 return@withContext false
             }
             if (withPermissions) {
-                core.io { store ->
+                // Through the permissions' own reset when there is one: it also tells the prompt
+                // policy and the engine's copy, so the site asks again at once.
+                val origins = core.io { store ->
                     store.sitePermissionsList().map { it.origin }.distinct()
                         .filter { SiteDataModel.isOfSite(it, site, ::siteOfHost) }
-                        .forEach { store.sitePermissionsClearOrigin(it) }
+                        .also { list ->
+                            if (resetPermissions ==
+                                null
+                            ) {
+                                list.forEach { store.sitePermissionsClearOrigin(it) }
+                            }
+                        }
                 }
+                resetPermissions?.let { reset -> withContext(Dispatchers.Main) { origins.forEach(reset) } }
             }
             tabs.tabs.value
                 .filter { it.live && SiteDataModel.isOfSite(it.page.url.ifEmpty { it.url }, site, ::siteOfHost) }
