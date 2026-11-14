@@ -3,6 +3,7 @@ package org.krunk.browser.downloads
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Notification
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -14,6 +15,7 @@ import android.text.format.Formatter
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import java.security.SecureRandom
 import java.util.Collections
 import org.krunk.browser.KrunkApp
 import org.krunk.browser.MainActivity
@@ -62,6 +64,26 @@ class DownloadNotifier(context: Context) {
     fun cancel(id: UInt) {
         posted -= id
         manager.cancel(Channels.ID_DOWNLOAD_BASE + id.toInt())
+    }
+
+    /**
+     * At the start of the process: Krunk's download notifications that belong to none of
+     * [keep] (the unfinished entries) go, whatever an earlier process left (a private file
+     * name, a "downloading" note with buttons that act on nothing). The kept ones are posted
+     * again by the recovery.
+     */
+    fun sweep(keep: Set<UInt>) {
+        val active = try {
+            context.getSystemService(NotificationManager::class.java)?.activeNotifications
+                ?.filter { it.tag == null }
+                ?.map { it.id }
+                .orEmpty()
+        } catch (e: RuntimeException) {
+            emptyList()
+        }
+        DownloadNoteIds.stale(active, keep, Channels.ID_DOWNLOAD_BASE, Channels.ID_SITE_BASE).forEach {
+            manager.cancel(it)
+        }
     }
 
     /** The foreground service's notification while [count] downloads run. */
@@ -189,7 +211,8 @@ class DownloadNotifier(context: Context) {
             .setAction(name)
             // Makes the intents of different downloads different ones.
             .setData(Uri.parse("krunk-download:$id"))
-            .putExtra(DownloadActionReceiver.EXTRA_ID, id.toLong()),
+            .putExtra(DownloadActionReceiver.EXTRA_ID, id.toLong())
+            .putExtra(DownloadActionReceiver.EXTRA_TOKEN, DownloadActionReceiver.TOKEN),
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 
@@ -209,10 +232,12 @@ class DownloadActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val id = intent.getLongExtra(EXTRA_ID, -1).takeIf { it in 0..UInt.MAX_VALUE.toLong() }?.toUInt() ?: return
         val downloads = (context.applicationContext as? KrunkApp)?.downloads ?: return
+        // A button of an earlier process: its id may by now name another download.
+        val fresh = intent.getLongExtra(EXTRA_TOKEN, 0L) == TOKEN
         when (intent.action) {
-            PAUSE -> downloads.pause(id)
-            RESUME -> downloads.resume(id)
-            CANCEL -> downloads.cancel(id)
+            PAUSE -> downloads.pause(id, fresh)
+            RESUME -> downloads.resume(id, fresh)
+            CANCEL -> downloads.cancel(id, fresh)
         }
     }
 
@@ -221,5 +246,9 @@ class DownloadActionReceiver : BroadcastReceiver() {
         const val RESUME = "org.krunk.browser.downloads.RESUME"
         const val CANCEL = "org.krunk.browser.downloads.CANCEL"
         const val EXTRA_ID = "id"
+        const val EXTRA_TOKEN = "token"
+
+        /** Different in every process: tells this process's buttons from an earlier one's. */
+        val TOKEN: Long = SecureRandom().nextLong().let { if (it == 0L) 1L else it }
     }
 }

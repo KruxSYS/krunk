@@ -890,7 +890,7 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
     override fun onExternalResponse(session: KrunkSession, response: WebResponse) {
         // Not an event for a screen: the question must not get lost when none is listening, and
         // the open response is closed by whoever drops it (DownloadController).
-        (engine.appContext as? KrunkApp)?.downloads?.offer(session.private, session.current.url, response)
+        (engine.appContext as? KrunkApp)?.downloads?.offer(session.private, session.current.url, response, session.id)
             ?: runCatching { response.body?.close() }
     }
 
