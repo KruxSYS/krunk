@@ -1805,7 +1805,7 @@ To reproduce: enable discard in Settings, start with `--sleep-test-seconds=90 --
 open the sites and read `memory-report.log` (steps in `docs/MANUAL_TEST.md`).
 
 ## Krunk for Android (preview)
-Krunk for Android (0.2.0) is an installable preview of the same browser for phones and
+Krunk for Android (0.3.0) is an installable preview of the same browser for phones and
 tablets (Android 8 and later, `arm64-v8a` devices and the `x86_64` emulator). It is built from
 this repository (`android/`, `ffi/`) and shares Krunk's Rust `core` with the Windows app: the same
 address-bar rules (DuckDuckGo by default), the same SQLite database layout for history, bookmarks,
@@ -1853,7 +1853,8 @@ address bar with history, bookmark and search suggestions, automatic HTTPS, Krun
 find in page, desktop-site switch (kept per tab), full screen, share, link long-press menu (new
 tab, private tab, copy, share, save image), search or open selected text, mail and phone links,
 page dialogs (drop-down lists, alert/confirm/prompt, HTTP sign-in, file, date, time and colour
-pickers, "leave page?", "send again?", sharing) and
+pickers, "leave page?", "send again?", sharing), the password vault with save and fill in pages
+(since 0.3.0, below) and
 links that open a new tab; tabs with a switcher grid (long press: duplicate, close others), a
 separate private section, recently closed,
 restore after a restart or a crash, and sleeping/discarding of background tabs; the twelve styles
@@ -1864,14 +1865,79 @@ theme, toolbar position, text size, HTTPS-only, suggestions, clear browsing data
 Light, dark and system themes; phone and tablet layouts; TalkBack-friendly controls.
 
 **Not there yet** (see the matrix for the planned round): custom filter lists and protection
-levels, the password
-vault, a downloads manager (downloads are handed to Android after a question, without the page's
+levels, for the vault a recovery phrase, a password generator, payment cards, import and export of
+logins and a system-wide Autofill service (the vault fills in Krunk's own pages only),
+a downloads manager (downloads are handed to Android after a question, without the page's
 sign-in, so files behind a login may not download), site permissions and cookie
 controls, media controls and picture-in-picture, account and sync, VPN, the AI agent, userscripts,
 extensions, an update check and Play/F-Droid packaging. Builds made without the release key (any
 debug build, or `./gradlew assembleRelease -Pkrunk.allowDebugSignedRelease=true` on another
 machine) are signed with a debug key and cannot be updated in place by a published release:
 uninstall them first.
+
+**Password vault (since 0.3.0).** Krunk keeps the user names and passwords you sign in with in
+a vault, opened with one vault password that only you know (⋮ menu › Passwords, or Settings ›
+Privacy › Passwords). The encryption and the file format are those of the Windows browser
+(Argon2id for the password, XChaCha20-Poly1305 for every login; the names of the sites are
+encrypted too); on Android the vault key is wrapped once more by a key in the Android Keystore
+that cannot leave the device (StrongBox when the device has one).
+- **What a locked vault protects against:** someone who gets hold of the file (a copy, another
+  app, a lost phone examined from outside). The saved logins in a copied file cannot be decrypted
+  on another device, not even with the right password, because the device's key stays in the
+  device.
+- **What the device key does not do:** protect the vault password against guessing. The file
+  contains a check record sealed by the password alone, so someone who has a copy can try
+  passwords on their own computer, slowed only by Argon2id (64 MiB of memory and 3 passes for
+  every guess). Choose a long vault password; a few unrelated words are easy to keep and hard to
+  guess.
+- **What an unlocked vault does not protect against:** someone holding your unlocked phone while
+  the vault is open; malware with root access or a debugger on the app; accessibility services
+  and the keyboard app you allowed, which see what you see and type; and the page itself, since a
+  filled-in password is in the page, as with any password manager.
+- **Where it is:** `files/krunk-vault/vault.json` in the app's private storage (next to it
+  `state.json`: the wait after wrong passwords, the list that lets a locked vault know which sites
+  have logins, and the fingerprint-unlock data; no password is in it). The folder is not in
+  Android's cloud backup and not in the transfer to a new device, and it is bound to this
+  device's key store.
+- **Backing it up by hand:** in this version there is no real way. The file alone cannot be
+  restored anywhere else, because the device key does not travel, and there is no export. The
+  only backup today is to keep your logins somewhere else too, for example in Krunk on Windows,
+  entered there by hand: a vault from Windows does not open on Android or the other way round,
+  and Android has no sync yet. Uninstalling Krunk, clearing its data or resetting the phone
+  removes the vault for good.
+- **A forgotten vault password cannot be recovered** on Android in this version: there is no
+  recovery phrase here. The create and unlock screens say so.
+- **If the device's key is gone** (Android's key store reports it as missing or no longer valid,
+  for example after app data was restored from elsewhere or the key store was reset), Krunk says
+  "This vault cannot be opened" without asking for a password and offers to delete the vault
+  behind a typed confirmation; it never puts a new vault in its place silently. A key store that
+  merely does not answer is reported as such, with "try again", and is not treated as a lost key.
+- **Locking.** Lock now in the Passwords screen; "Lock after" 1, 5, 15, 30 or 60 minutes without
+  vault use (15 by default); and "Lock after leaving Krunk": at once, after 30 seconds, after
+  1 minute (the default) or after 5 minutes. The last one exists so that you can fetch a sign-in
+  code from an authenticator app and come back without unlocking again. The trade-off: the vault
+  stays open for up to the chosen time after you leave Krunk, so someone who takes the unlocked
+  phone in that time finds it open. Choose "At once" to close that. A Krunk that was closed by
+  Android or restarted always begins with a locked vault.
+- **In pages:** after a sign-in Krunk offers to save the login (or to update a changed password;
+  "Never for this site"; the offers can be switched off). To fill, tap the sign-in field and
+  choose a saved login. Krunk never fills by itself, and the engine gets a password only when
+  you pick that login. A locked vault asks for its password at that moment, not while pages load.
+  A sign-in form inside a frame of another site is not filled. The HTTP sign-in dialog offers the
+  saved logins of that server and a save afterwards.
+- **Private tabs:** nothing is offered by itself and nothing is ever offered for saving. "Fill
+  from vault" in the ⋮ menu, then a tap on the sign-in field, shows the saved logins.
+- **Pages without encryption (http):** a warning you have to confirm comes before a password is
+  filled in or saved there, because anyone on the network between you and the site can read it.
+  A login saved on an https page is never offered to an http page.
+- **Fingerprint unlock** is optional and off by default (Android 11 and later, vault settings ›
+  "Unlock with fingerprint"). The vault password always works and is still needed after a new
+  fingerprint is enrolled or the vault password is changed: both switch fingerprint unlock off.
+  It was **not tested on a device** for 0.3.0 (the test emulator cannot simulate a fingerprint;
+  unit tests with stand-ins only), and neither was StrongBox.
+- The vault's screens and dialogs are blank in screenshots, screen recordings and Recents. A
+  copied password is marked sensitive and removed from the clipboard after 30 seconds unless
+  something else was copied since.
 
 **Data and backup.** Krunk's database is `files/krunk/browser.db` in the app's private storage
 (`/data/data/org.krunk.browser/files/krunk/`); the Gecko profile (cookies, site data, caches) is
@@ -1883,7 +1949,8 @@ Device-to-device transfer (the direct copy to a new phone, Android 12 and later)
 (`android/app/src/main/res/xml/backup_rules.xml`, `data_extraction_rules.xml`). To keep bookmarks
 elsewhere, use Bookmarks › Export. `adb backup` is gone in current Android; on a debug build
 `adb shell run-as org.krunk.browser` reaches the files. Private tabs write nothing to the
-database, and their pages are kept out of the Recents thumbnail and screenshots.
+database, and their pages are kept out of the Recents thumbnail and screenshots. The password
+vault (`files/krunk-vault`) is in neither backup nor transfer; see "Password vault" above.
 
 **Promises.** No telemetry; the app makes no network requests of its own: only the pages you
 open, search suggestions while you type (on by default, off in private tabs, can be switched off)

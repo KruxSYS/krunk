@@ -9,9 +9,9 @@ plan and decisions are in `docs/ANDROID_PLAN.md`; the parity matrix is `docs/AND
 | Path | What |
 |---|---|
 | `android/` | Gradle project (Kotlin, Jetpack Compose, Material 3). `app/` is the only module. |
-| `android/app/src/main/kotlin/org/krunk/browser/` | `KrunkApp` (process state), `MainActivity`, `core/` (store + settings on the Rust core), `engine/` (GeckoView runtime, session delegates, error page, the icons extension), `tabs/` (tab manager on `core::tabs`, persistence, favicons, thumbnails, memory policy), `ui/` (Compose screens: browser, tabs, new tab, bookmarks, history, settings, theme). |
+| `android/app/src/main/kotlin/org/krunk/browser/` | `KrunkApp` (process state), `MainActivity`, `core/` (store + settings on the Rust core), `engine/` (GeckoView runtime, session delegates, error page, the icons extension), `tabs/` (tab manager on `core::tabs`, persistence, favicons, thumbnails, memory policy), `vault/` (the password vault: Keystore wrapper, lock controller, biometric unlock; see "Vault"), `ui/` (Compose screens: browser, tabs, new tab, bookmarks, history, settings, theme, `ui/vault/` for the Passwords screen). |
 | `android/app/src/main/assets/` | `error.html` (Krunk's error page), `extensions/krunk-icons/` (bundled WebExtension), `wallpapers/` (copied from `ui/shared/wallpapers` at build time, git-ignored). |
-| `android/scripts/` | `setup-sdk.sh` (toolchain), `build-rust.sh` (cargo-ndk + UniFFI bindings; Gradle calls it), `update-ubo.sh` (the pinned uBlock Origin release; Gradle calls it), `emu.sh` (emulator driver), `flows.sh` (the 0.1.x adb flows), `a3/` (the device checks since 0.2.0: `a3.sh`, its test server and pages). |
+| `android/scripts/` | `setup-sdk.sh` (toolchain), `build-rust.sh` (cargo-ndk + UniFFI bindings; Gradle calls it), `update-ubo.sh` (the pinned uBlock Origin release; Gradle calls it), `emu.sh` (emulator driver), `flows.sh` (the 0.1.x adb flows), `a3/` (the device checks since 0.2.0: `a3.sh`, its test server and pages), `a4/` (the vault's device checks, 0.3.0: `a4.sh` and its login page, on the `a3` helpers and server). |
 | `android/ubo.lock` | The uBlock Origin release built into the app: version, release file, SHA-256. The only place that names it. |
 | `android/app/src/main/assets/extensions/` | `krunk-icons/` (site icons), `krunk-guard/` (Krunk's extension that gates and drives the blocker and rewrites tracking parameters), `ublock0/` (uBlock Origin, unpacked from the pinned release at build time, git-ignored). |
 | `android/THIRD-PARTY-NOTICES.md` | Components and licences; kept equal to the About screen by `LicensesTest`. |
@@ -274,8 +274,174 @@ GeckoView's default location under `filesDir`. Backup rules (`res/xml/backup_rul
 history and the session next to bookmarks and settings, and cannot be split); device-to-device
 transfer on Android 12+ carries `files/krunk`; the Gecko profile is in neither.
 
-The password vault (0.3.0) is `filesDir/krunk-vault/` (`vault.json`, `state.json`;
-`vault/VaultFiles.kt`): beside `files/krunk`, not in it, and excluded by name in all three rule
-sets. It never leaves the device: the Keystore key that wraps the vault key cannot be moved, so
-a copy would not open. `BackupRulesTest` reads the rule files and fails if an include would
-carry the directory or an exclude no longer names `VaultFiles.DIR`.
+The password vault (0.3.0) is `filesDir/krunk-vault/` (`vault/VaultFiles.kt`): beside
+`files/krunk`, not in it.
+
+- `vault.json` is the vault in the format of the Windows browser (`core::vault`): the KDF
+  parameters, the key check, the vault key (sealed by the password's key, then wrapped by the
+  Keystore key: `"wrap": "android-keystore"`) and the encrypted entries.
+- `state.json` is the `ffi` crate's side file (`ffi/src/vault.rs`, written atomically): the unlock
+  rate limiter (failures and the time of the last one), the wrapped key and the tags of the hint
+  index (which sites have logins, usable only with the Keystore key, so that a locked vault can
+  say "this site has logins"), and the biometric blob (the unlock key encrypted under the
+  biometric Keystore key) while fingerprint unlock is on. It holds no password and no entry.
+  Losing it costs the hints until the next unlock and fingerprint unlock until it is switched on
+  again.
+- The settings are not here but in `kv` of `browser.db`: `android.vault.lock_minutes`,
+  `android.vault.background_grace_s`, `android.vault.offer_save`; the never-save sites are the
+  shared core table.
+
+The directory never leaves the device: it is excluded by name from cloud backup and from
+device-to-device transfer in all three rule sets (`backup_rules.xml`; `cloud-backup` and
+`device-transfer` in `data_extraction_rules.xml`), and the Keystore key that wraps the vault key
+cannot be moved, so the logins in a copy could not be decrypted. `BackupRulesTest` reads the rule
+files and fails if an include would carry the directory, if a section no longer names it in an
+exclude, or if the path differs from `VaultFiles.DIR`. A real device-to-device transfer was not
+run.
+
+## Vault
+
+The password vault of 0.3.0. What users get is in `README.md` and `CHANGELOG-android.md`; the
+decisions are in `docs/ANDROID_PLAN.md` ("Decisions taken for Android 0.3.0").
+
+**Layers**, from the bottom:
+
+1. `core::vault` (`core/src/vault.rs`): the scheme and the file format, shared with Windows. Two
+   functions were added for Android and nothing was changed: `Vault::unlock_key` and
+   `Vault::open_with_key` (biometric unlock, so the password itself is never stored).
+2. `ffi/src/vault.rs`: the UniFFI object `KrunkVault` (none / locked / unlocked; create, unlock,
+   lock, change password, summaries, search, reveal, save, delete, `matches_for`,
+   `secret_for_fill`, `for_http_auth`, `has_hint`, the inactivity clock, `erase`), the errors
+   `VaultFfiError`, and the foreign trait `VaultKeyWrapper` (`protect` / `unprotect`): the first
+   callback interface in `ffi/`, implemented in Kotlin. Lists never carry passwords; a password
+   comes back only from `reveal`, `secret_for_fill` and `for_http_auth`. The rate limit is
+   enforced here. Do not name a method `destroy`: generated UniFFI objects have their own.
+3. `vault/KeystoreKeyWrapper.kt` (the wrap key, behind the interface `WrapKeyStore` so JVM tests
+   run every error path with a fake) and `vault/FfiVaultBackend.kt` (`FfiKeyWrapper` hands the
+   wrapper to the core; `FfiVaultBackend` implements `VaultBackend` on `KrunkVault`; tests use
+   `FakeVaultBackend`).
+4. `vault/VaultController.kt`: the lock state (`NONE`, `LOCKED`, `UNLOCKED`, `KEY_LOST`) with an
+   injected clock: Lock now, the timer (`tick` every 15 s and on return to the foreground), the
+   lock after leaving Krunk (`onBackground` / `onForeground`; the timer in the background is best
+   effort, `onForeground` makes up for it before anything is shown). `lockEvents` tells screens
+   to drop what they show. `vault/BiometricUnlock.kt` sits beside it; `vault/VaultLockSetting.kt`
+   holds the two lock settings.
+5. On top, two users: the screens (`ui/vault/*`, which talk to the interface `VaultPort`;
+   `AppVaultPort` is the real one, `PreviewVaultPort` a stand-in) and the engine side
+   (`engine/logins/LoginsHub`, the runtime's `Autocomplete.StorageDelegate`, through
+   `LoginVault` / `vault/AppLoginVault.kt`; `LoginPolicy` and `HttpAuthOffer` are the pure rules;
+   `KrunkSession.onLoginSelect` / `onLoginSave` / `onAuthPrompt` raise the prompts drawn in
+   `ui/browser/LoginPrompts.kt`).
+
+**What the two keys protect.** `vault.json` holds a password check record that is sealed by the
+password's key alone. Someone who has a copy of the file can therefore try passwords against it
+on any machine, slowed only by Argon2id (64 MiB, 3 passes for every guess): the Keystore key does
+**not** protect the password against guessing. What it protects is the content: the vault key is
+wrapped by the device key, so a copied file cannot be decrypted on another device even with the
+right password. Do not write anything else in user-facing text; the advice is a long vault
+password.
+
+**The engine never holds the passwords.** The engine's own filling is off
+(`loginAutofillEnabled(false)` in `GeckoEngine`); `EngineConfig` switches off capture in private
+tabs, generated passwords and Relay. `onLoginFetch(domain)` is runtime-wide and does not say which
+tab asks, so `LoginsHub` answers it with entries that carry `LoginPolicy.PLACEHOLDER_PASSWORD`:
+one per matching login of the pages the open tabs show, or one stand-in (user name
+`LOCKED_PLACEHOLDER_USER`) while the vault is locked and the hint list knows the site. Two engine
+facts to keep: an entry must carry the page's exact origin **including the port** or the engine
+drops it, and the stand-in needs a non-empty user name or the user-name field ignores it. The
+real password goes to the engine in `onLoginSelect`, for the one login the user picked, after
+`secret_for_fill` checked it against the tab's address again. `onLoginSave` also arrives after a
+fill (the engine compared with the placeholder), so Krunk decides new / update / unchanged itself.
+
+**Keystore aliases** (provider `AndroidKeyStore`, AES-256-GCM, blob = version byte `0x01`,
+12-byte IV, ciphertext with tag):
+
+| Alias | What | Notes |
+|---|---|---|
+| `krunk.vault.wrap.v1` | wraps the vault key in `vault.json` | no user authentication; StrongBox first, the TEE-backed key when the device has no StrongBox. Made only by "Create vault" (`prepareForNewVault`); `protect` / `unprotect` never make one |
+| `krunk.vault.bio.v1` | encrypts the unlock key for fingerprint unlock (blob in `state.json`) | user authentication required for every use, strong biometrics only, invalidated by a new enrolment; StrongBox first with the same fallback. "On" is stored nowhere: it is on while key and blob both exist |
+
+**Key loss.** Only a wrap key that the key store reports as **missing or invalidated** makes the
+state `KEY_LOST` ("This vault cannot be opened": shown before any password is asked, the file
+stays as it is, the only way on is "Delete this vault" behind the typed word `DELETE`). A key
+store that merely **fails to answer** is not key loss: it is reported as "key store did not
+answer, try again" (error `KeyUnavailable`) and the vault stays locked. Neither a key nor a vault
+is ever made again silently.
+
+Biometrics use the platform `BiometricPrompt` (no AndroidX Biometric: its stable release needs a
+`FragmentActivity`) and are offered from API 30; the manifest has `USE_BIOMETRIC`.
+
+**Secure windows.** Every composable that shows vault content or asks for the vault password
+calls `SecureVaultSurface()` (`ui/vault/VaultSecureFlag.kt`, a counter); `KrunkRoot` sets
+`FLAG_SECURE` while the count is above zero or the vault screen is open. A new vault dialog must
+do the same.
+
+**Debug hooks** (debug builds only, `src/debug/…/DebugHooks.kt`; sent like the others with
+`adb shell am broadcast -a org.krunk.browser.DEBUG --es cmd <name>`, answered in the log under
+`KrunkGuard`):
+
+- `vault-status`: `vault state=<NONE|LOCKED|UNLOCKED|KEY_LOST> grace=<seconds> minutes=<n>`.
+- `vault-drop-key`: deletes the wrap key (the "key lost" case). The device test restarts the app
+  afterwards.
+- `vault-fixture`: writes `files/krunk-vault/vault-inner.json`, the vault file with only the
+  Keystore layer of `vaultKey` removed (still sealed by the password, `"wrap": "none"`), for the
+  cross-platform format test. The test deletes the file after pulling it.
+
+**Device checks** (`android/scripts/a4/a4.sh`, on the helpers of `a3/`: same `lib.sh`, same
+`uix.py`, same variables `KRUNK_TEST_HOST`, `KRUNK_A3_ROOT`, `EV`, `KRUNK_ADB_TIMEOUT`):
+
+```
+python3 -I android/scripts/a3/server.py android/scripts/a4/www 18080 >> "$KRUNK_A3_ROOT/server.log" &
+android/scripts/a4/a4.sh create save https locked private auth screen timer grace   # in this order
+android/scripts/a4/a4.sh nobio            # no fingerprint enrolled: the switch is disabled, with its reason
+android/scripts/a4/a4.sh keylost          # debug build: the wrap key removed, "cannot be opened", delete
+android/scripts/a4/a4.sh fixture          # debug build: the fixture pair (below)
+android/scripts/a4/a4.sh config           # rotation with the unlock form, dark mode; last
+REL=1 android/scripts/a4/a4.sh create     # the release APK; keylost and fixture are skipped by name
+KRUNK_OLD_APK=<published x86_64 APK> android/scripts/a4/a4.sh upgrade
+```
+
+Each test starts the app itself; `create` installs afresh, the others build on the vault and the
+logins the earlier ones left (vault password `fixture-password-1`). The test server gained
+`/auth` (Basic, `krunk` / `test`) for the HTTP sign-in test. The script ends with
+`RESULT pass=… fail=… skip=…` and a non-zero exit on any failure.
+
+Traps met in the 0.3.0 pass:
+
+- **Screenshots of vault screens are black on purpose** (secure window). `shotblack` asserts
+  exactly that; what was on screen is proven by the PASS lines, which read the accessibility
+  tree (`uiautomator dump`), not by the picture.
+- **A page that keeps changing never lets `uiautomator` see an idle screen**, and a failed dump
+  leaves the previous screen's file to be read again. The login page writes its status line
+  only when it changes, and `a4.sh` deletes the old dump before every new one.
+- The test login page's fields have no names in the accessibility tree: they are tapped by
+  position (1080×2400, toolbar at the top). The same holds for the public https form.
+- The `https` test uses a public form (`https://the-internet.herokuapp.com/login`): it needs
+  the network and that site; the local server is plain http.
+- Two "fails" of `save` in the 0.3.0 pass were the script misreading the page's values while the
+  form was filled (the screenshot shows it). Look at the screenshot before believing a failed
+  value check.
+- `adb shell input text` needs `%s` for a space (the fixture password).
+- No fingerprint can be simulated on the sandbox emulator: `adb emu` has no console port there.
+- Do `config` last, as with `a3.sh`.
+
+**Fixtures** (`core/tests/fixtures/vault/platform/`, README there). A Keystore or DPAPI blob opens
+only on the machine that made it, so each platform has the file as written and an inner twin
+without the platform's wrap. To make the Android pair again: `a4.sh fixture` on a debug build
+(it creates a vault with the password `fixture password`, adds the two logins the README names,
+calls `vault-fixture` and pulls both files into `$EV/fixture/`), copy them over
+`vault-android-keystore.json` and `vault-android-inner.json`, then `cargo test -p krunk_ffi
+platform`. The Windows pair comes from the Windows VM with `strip-dpapi.ps1` in that folder. The
+content must stay what the README lists: the test knows the password and the two logins, not
+ids or times.
+
+**What could not be tested here.**
+
+- **Fingerprint unlock** on a device: switching it on, unlocking, a new enrolment, the fall-back.
+  `BiometricUnlockTest` (fakes with real AES-GCM) is the only cover. On the emulator only the
+  disabled switch with nothing enrolled was checked.
+- **StrongBox:** the emulator image has none (`pm list features` shows no `strongbox_keystore`)
+  and ran the TEE path for real. The StrongBox-first branch and its fallback are covered by
+  `KeystoreKeyWrapperTest` and `BiometricUnlockTest` with fakes.
+- Copy to the clipboard and its timed clearing: `VaultClipboardTest` only.
+- A real device-to-device transfer and an arm64 device.
