@@ -1,8 +1,12 @@
 package org.krunk.browser.ui.vault
 
+import android.app.AlarmManager
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -71,6 +75,7 @@ object VaultClipboard {
     private const val EXTRA_IS_SENSITIVE = "android.content.extra.IS_SENSITIVE"
     private const val RETRY_MS = 1_000L
     private const val MAX_RETRIES = 5
+    private const val ALARM_WINDOW_MS = 5_000L
 
     private val handler = Handler(Looper.getMainLooper())
     private var pendingLabel: String? = null
@@ -98,6 +103,7 @@ object VaultClipboard {
         if (runCatching { cm.setPrimaryClip(clip) }.isFailure) return false
         appContext = context.applicationContext
         pendingLabel = label
+        scheduleAlarm(context.applicationContext)
         dueAt = android.os.SystemClock.elapsedRealtime() + CLEAR_AFTER_MS
         retries = 0
         observeForeground()
@@ -164,6 +170,50 @@ object VaultClipboard {
     private fun forget() {
         pendingLabel = null
         handler.removeCallbacks(check)
+        appContext?.let { cancelAlarm(it) }
+    }
+
+    // Once Krunk is in the background Android may freeze its process within seconds, and the
+    // timer above then does not run until the user comes back. An alarm wakes the app for the
+    // clear. It is not an exact alarm (those need a permission): Android may deliver it some
+    // seconds late, later still while the device sleeps.
+
+    private fun alarmIntent(context: Context): PendingIntent = PendingIntent.getBroadcast(
+        context,
+        0,
+        Intent(context, ClipClearReceiver::class.java),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+
+    private fun scheduleAlarm(context: Context) {
+        val alarms = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        runCatching {
+            alarms.setWindow(
+                AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                android.os.SystemClock.elapsedRealtime() + CLEAR_AFTER_MS,
+                ALARM_WINDOW_MS,
+                alarmIntent(context),
+            )
+        }
+    }
+
+    private fun cancelAlarm(context: Context) {
+        val alarms = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        runCatching { alarms.cancel(alarmIntent(context)) }
+    }
+
+    /**
+     * The alarm set at the copy went off. With the copy still known the usual rule decides (in
+     * the foreground: clear only our own clip; in the background: clear). In a process started
+     * for this alarm nothing is known any more, except that a password was copied 30 s ago and
+     * never cleared: the clipboard is cleared.
+     */
+    fun onAlarm(context: Context) {
+        if (pendingLabel != null) {
+            settle()
+        } else {
+            clipboard(context)?.let { clear(it) }
+        }
     }
 
     private fun observeForeground() {
@@ -182,4 +232,11 @@ object VaultClipboard {
 
     private fun clipboard(context: Context): ClipboardManager? =
         context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+}
+
+/** The alarm of [VaultClipboard]: takes a copied password off the clipboard. Not exported. */
+class ClipClearReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        VaultClipboard.onAlarm(context.applicationContext)
+    }
 }

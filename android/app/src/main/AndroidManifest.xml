@@ -62,6 +62,12 @@
         </activity>
         <!-- Only for a photo a page asks for (a file field with "capture"): the camera app
              writes into cache/capture through this address. Nothing else is exposed. -->
+        <!-- Takes a copied vault password off the clipboard 30 s later, also when Krunk is in the
+             background by then (VaultClipboard). Only Krunk's own alarm reaches it. -->
+        <receiver
+            android:name=".ui.vault.ClipClearReceiver"
+            android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"
