@@ -140,6 +140,29 @@ t_newvault() { # a vault with the test password on the installed app (after keyl
   stop_clean
 }
 
+t_novault() { # no vault yet: the save offer leads to "Create vault", and the login lands in the new vault
+  fresh "$APK"; launch 9; front novault || return
+  open_login "$LOGIN?novault"
+  tap_user; type_text carol; hidekb; tap_pass; type_text first-pass-1; hidekb; submit 4
+  waitfor text "Save this sign-in?" 10; check "no vault: the offer is to create one" 'has text "Create vault" && has text "encrypted vault" --contains'
+  shot novault-offer
+  tapui text "Create vault" 2; dump; has text "Save anyway" && tapui text "Save anyway" 3
+  waitfor text "Repeat the password" 8 || { missing "create form"; return; }
+  field "Vault password" "$PW"; field "Repeat the password" "$PW"; hidekb; tapui text "Create vault" 6
+  waitfor text "carol" 15; check "the login that waited is in the new vault" 'has text "carol"'
+  # change the vault password; the old one no longer unlocks
+  tapui desc "More" 2; tapui text "Change password" 2
+  field "Current password" "$PW"; field "New password" "$PW2"; field "Repeat the password" "$PW2"; hidekb
+  dump; echo "$UI" | python3 -I "$HERE/uix.py" list > "$EV/novault-change-nodes.txt"
+  tapui text "Change password" 6 || tapui text "Change" 6
+  tapui desc "More" 2; tapui text "Lock now" 3
+  field "Vault password" "$PW"; hidekb; tapui text "Unlock" 5
+  dump; check "the old password is refused after a change" 'has text "Wrong password" --contains'
+  sleep 3; refield "Vault password" "$PW2"; hidekb; tapui text "Unlock" 5
+  waitfor text "carol" 10; check "the new password unlocks" 'has text "carol"'
+  stop_clean
+}
+
 t_https() { # a public https login form (fields tapped by position: 1080x2400, toolbar at the top)
   launch 8; front https || return
   view "$HTTPS_LOGIN" 12; waitfor text "Login Page" 30 || { skip "https test site not reachable"; stop_clean; return; }
