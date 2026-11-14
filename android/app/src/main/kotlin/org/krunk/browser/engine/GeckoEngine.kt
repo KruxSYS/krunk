@@ -9,6 +9,7 @@ import org.krunk.browser.BuildConfig
 import org.krunk.browser.KrunkApp
 import org.krunk.browser.engine.blocker.BlockerController
 import org.krunk.browser.engine.logins.LoginsHub
+import org.krunk.browser.engine.permissions.SitePermissions
 import org.krunk.ffi.AndroidSettings
 import org.krunk.ffi.ThemeMode
 import org.mozilla.geckoview.ContentBlocking
@@ -34,6 +35,9 @@ class GeckoEngine(context: Context, automaticUpdates: Boolean, blockerHost: Bloc
 
     /** Copies of the files pages are given through file fields. */
     val uploads = Uploads(context)
+
+    /** Site permissions: every session gets its delegate (set once the store exists, see KrunkApp). */
+    var permissions: SitePermissions? = null
 
     /** For the engine calls that want one (handing a picked file to a page). */
     val appContext: Context = context.applicationContext

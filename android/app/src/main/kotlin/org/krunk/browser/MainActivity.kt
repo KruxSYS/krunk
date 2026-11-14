@@ -6,10 +6,12 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import org.krunk.browser.downloads.DownloadIntents
 import org.krunk.browser.engine.LoadPolicy
 import org.krunk.browser.engine.LoadSource
+import org.krunk.browser.notify.SiteNotifications
 import org.krunk.browser.ui.BrowserViewModel
 import org.krunk.browser.ui.KrunkRoot
 import org.krunk.browser.ui.Screen
@@ -19,6 +21,12 @@ class MainActivity : ComponentActivity() {
     private val vm: BrowserViewModel by viewModels()
     private val app get() = application as KrunkApp
 
+    // Android's own permission dialog, for a site that was allowed camera, location, ... (0.4.0).
+    private val sitePermissionDialog =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            app.sitePermissions.android.onResult()
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
@@ -26,6 +34,7 @@ class MainActivity : ComponentActivity() {
         // the background): the tabs return whatever the start-up setting is.
         app.tabs.start(restoredBySystem = savedInstanceState != null)
         app.downloads.start(app.tabs)
+        app.sitePermissions.android.attach(this, sitePermissionDialog::launch, ::shouldShowRequestPermissionRationale)
         handleIntent(intent, fresh = savedInstanceState == null)
         setContent { KrunkRoot(vm) }
     }
@@ -45,6 +54,16 @@ class MainActivity : ComponentActivity() {
         // A tap on a download notification: Krunk's downloads screen.
         if (intent.action == DownloadIntents.ACTION_SHOW) {
             vm.push(Screen.Downloads)
+            intent.action = null
+            return
+        }
+        if (intent.action == SiteNotifications.ACTION_TAP) {
+            app.siteNotificationTapped(
+                intent.getIntExtra(SiteNotifications.EXTRA_ID, -1),
+                intent.getStringExtra(SiteNotifications.EXTRA_TOKEN),
+                intent.getStringExtra(SiteNotifications.EXTRA_ORIGIN),
+            )
+            vm.showBrowser()
             intent.action = null
             return
         }
@@ -68,6 +87,11 @@ class MainActivity : ComponentActivity() {
         }
         // Consume so a rotation does not reopen it.
         intent.action = null
+    }
+
+    override fun onDestroy() {
+        app.sitePermissions.android.detach(this)
+        super.onDestroy()
     }
 
     override fun onStart() {

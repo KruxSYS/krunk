@@ -37,6 +37,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import org.krunk.browser.R
 import org.krunk.browser.engine.PagePrompt
+import org.krunk.browser.engine.PermissionPrompt
 import org.krunk.browser.ui.components.ColorPickerDialog
 import org.krunk.browser.ui.components.HexColor
 
@@ -91,6 +92,8 @@ fun PagePromptDialog(prompt: PagePrompt) {
             is PagePrompt.Repost -> RepostDialog(prompt)
 
             is PagePrompt.Share -> SharePromptUi(prompt)
+
+            is PermissionPrompt -> PermissionPromptDialog(prompt)
         }
     }
 }

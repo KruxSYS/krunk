@@ -12,6 +12,7 @@ import org.krunk.browser.engine.logins.HttpAuthOffer
 import org.krunk.browser.engine.logins.LoginPage
 import org.krunk.browser.engine.logins.LoginPolicy
 import org.krunk.browser.engine.logins.LoginVault
+import org.krunk.browser.engine.permissions.SitePermissions
 import org.krunk.browser.vault.VaultFailure
 import org.krunk.ffi.internalPage
 import org.mozilla.geckoview.AllowOrDeny
@@ -249,6 +250,7 @@ class KrunkSession(
     fun close() {
         closed = true
         loginsClosed()
+        engine.permissions?.tabClosed(id)
         engine.blocker.detach(id)
         engine.uploads.clearTab(id)
         gecko.close()
@@ -321,6 +323,7 @@ class KrunkSession(
     private val progress = object : GeckoSession.ProgressDelegate {
         override fun onPageStart(session: GeckoSession, url: String) {
             promptThrottle.newDocument()
+            engine.permissions?.newDocument(id)
             engine.blocker.newDocument(id)
             loginsNewDocument(url)
             set { it.pageStarted(url) }
@@ -916,6 +919,15 @@ class KrunkSession(
         gecko.contentDelegate = content
         gecko.historyDelegate = history
         gecko.promptDelegate = prompts
+        gecko.permissionDelegate = engine.permissions?.delegate(
+            SitePermissions.Tab(
+                id = id,
+                private = private,
+                pageUrl = { current.url },
+                show = { listener.onPrompt(this, it) },
+                closed = { listener.onPromptClosed(this, it) },
+            ),
+        )
         if (!openedByPage) gecko.open(engine.runtime)
         engine.icons.listen(gecko) { url, icons -> listener.onIcons(this, url, icons) }
         engine.blocker.attach(id, gecko)

@@ -4,4 +4,75 @@
     <string name="settings_site_permissions">Site permissions</string>
     <string name="settings_site_permissions_help">Camera, microphone, location, notifications and more, per site</string>
     <string name="channel_sites">Site notifications</string>
+
+    <!-- The prompt: "Allow example.com to:" followed by one line per thing it asks for. -->
+    <string name="perm_prompt_title">Allow %1$s to:</string>
+    <string name="perm_prompt_title_page">Allow this page to:</string>
+    <string name="perm_prompt_embedded">%1$s is shown inside a page of %2$s.</string>
+    <string name="perm_ask_camera">Use your camera</string>
+    <string name="perm_ask_microphone">Use your microphone</string>
+    <string name="perm_ask_geolocation">Know your location</string>
+    <string name="perm_ask_notifications">Send you notifications</string>
+    <string name="perm_ask_persistent_storage">Keep its data on this device until you remove it</string>
+    <string name="perm_ask_drm">Play protected media (DRM)</string>
+    <string name="perm_ask_xr">Use virtual reality devices</string>
+    <string name="perm_ask_autoplay_audible">Play media with sound by itself</string>
+    <string name="perm_ask_autoplay_inaudible">Play muted media by itself</string>
+    <string name="perm_ask_storage_access">Use its cookies and site data while you are on %1$s</string>
+    <string name="perm_ask_storage_access_page">Use its cookies and site data inside this page</string>
+    <string name="perm_ask_local_device">Connect to apps and services on this device</string>
+    <string name="perm_ask_local_network">Connect to devices on your local network</string>
+    <string name="perm_prompt_camera_choice">Camera</string>
+    <string name="perm_camera_front">Front camera</string>
+    <string name="perm_camera_back">Back camera</string>
+    <string name="perm_camera_other">Camera %1$d</string>
+    <string name="perm_prompt_remember">Remember for this site</string>
+    <string name="perm_prompt_remember_deny_only">Remember for this site if I deny</string>
+    <string name="perm_prompt_remember_private">Remember until the private tabs are closed</string>
+    <string name="perm_allow">Allow</string>
+    <string name="perm_deny">Deny</string>
+
+    <!-- Android itself refused; %1$s is one or more of the names below, e.g. "the camera and the microphone". -->
+    <string name="perm_android_denied">Android does not let Krunk use %1$s, so the site did not get it.</string>
+    <string name="perm_android_camera">the camera</string>
+    <string name="perm_android_microphone">the microphone</string>
+    <string name="perm_android_location">your location</string>
+    <string name="perm_android_notifications">notifications</string>
+    <string name="perm_android_other">what the site asked for</string>
+    <string name="perm_android_and">%1$s and %2$s</string>
+    <string name="perm_android_settings">Settings</string>
+
+    <!-- Screens -->
+    <string name="perm_sites_title">Site permissions</string>
+    <string name="perm_sites_search">Search sites</string>
+    <string name="perm_sites_empty">No site has a remembered answer. When a site asks for something and you choose Allow or Deny, it is listed here.</string>
+    <string name="perm_sites_none_found">No site matches.</string>
+    <string name="perm_sites_allowed">Allowed: %1$s</string>
+    <string name="perm_sites_denied">Denied: %1$s</string>
+    <string name="perm_sites_remove">Remove all answers for %1$s</string>
+    <string name="perm_sites_remove_title">Remove the answers for this site?</string>
+    <string name="perm_sites_remove_text">%1$s will ask again.</string>
+    <string name="perm_sites_remove_confirm">Remove</string>
+    <string name="perm_detail_reset">Reset permissions</string>
+    <string name="perm_detail_help">Changes apply the next time the site asks.</string>
+    <string name="perm_choice_allow">Allow</string>
+    <string name="perm_choice_deny">Deny</string>
+    <string name="perm_choice_ask">Ask</string>
+    <string name="perm_choice_default_allow">Default (allow)</string>
+    <string name="perm_choice_default_deny">Default (deny)</string>
+    <string name="perm_kind_camera">Camera</string>
+    <string name="perm_kind_microphone">Microphone</string>
+    <string name="perm_kind_geolocation">Location</string>
+    <string name="perm_kind_notifications">Notifications</string>
+    <string name="perm_kind_persistent_storage">Permanent storage</string>
+    <string name="perm_kind_drm">Protected media (DRM)</string>
+    <string name="perm_kind_xr">Virtual reality</string>
+    <string name="perm_kind_autoplay_audible">Autoplay with sound</string>
+    <string name="perm_kind_autoplay_inaudible">Autoplay without sound</string>
+    <string name="perm_kind_storage_access">Cookies of embedded sites</string>
+    <string name="perm_kind_local_device">Apps and services on this device</string>
+    <string name="perm_kind_local_network">Devices on the local network</string>
+    <string name="perm_kind_unknown_help">Set by another version of Krunk</string>
+    <string name="perm_shield_row">Site permissions</string>
+    <string name="perm_shield_row_help">Camera, location, notifications and more for this site</string>
 </resources>

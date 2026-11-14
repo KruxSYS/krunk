@@ -14,8 +14,11 @@ import kotlinx.coroutines.launch
 import org.krunk.browser.core.KrunkCore
 import org.krunk.browser.downloads.DownloadController
 import org.krunk.browser.engine.GeckoEngine
+import org.krunk.browser.engine.LoadSource
 import org.krunk.browser.engine.blocker.AllowList
 import org.krunk.browser.engine.blocker.BlockerController
+import org.krunk.browser.engine.permissions.SitePermissions
+import org.krunk.browser.notify.SiteNotifications
 import org.krunk.browser.tabs.TabManager
 import org.krunk.browser.vault.AppLoginVault
 import org.krunk.browser.vault.KeystoreKeyWrapper
@@ -24,6 +27,7 @@ import org.krunk.browser.vault.VaultBackends
 import org.krunk.browser.vault.VaultController
 import org.krunk.browser.vault.VaultLockSetting
 import org.krunk.ffi.coreVersion
+import org.krunk.ffi.webOrigin
 
 /**
  * Process-wide state: the core store, the single Gecko runtime and the tab manager (Gecko
@@ -49,6 +53,9 @@ class KrunkApp : Application() {
             DebugHooks.install(this, it, core)
             // From here on pages may be offered saved logins: the engine side asks this vault.
             it.logins.vault = loginVault
+            // Site permissions and site notifications (0.4.0).
+            it.permissions = sitePermissions
+            it.runtime.webNotificationDelegate = siteNotifications
             vaultScope.launch {
                 vault.state.collect { _ -> it.logins.onVaultState(loginVault.state(), System.currentTimeMillis()) }
             }
@@ -56,11 +63,64 @@ class KrunkApp : Application() {
         }
     }
 
-    private val tabsLazy = lazy { TabManager(this, core, engine) }
+    private val tabsLazy = lazy { TabManager(this, core, engine).also(::startSiteFeatures) }
     val tabs: TabManager by tabsLazy
 
     /** Krunk's own downloads (0.4.0): questions, transfers, the list, notifications. */
     val downloads: DownloadController by lazy { DownloadController(this) }
+
+    /** What sites may do (camera, location, notifications, ...): prompts, answers, Android's permissions. */
+    val sitePermissions: SitePermissions by lazy {
+        SitePermissions(this, core.store) { engine.runtime.storageController }
+    }
+
+    private val siteNotificationsLazy = lazy {
+        SiteNotifications(this) { then -> sitePermissions.ensureNotificationsAllowed(then) }
+    }
+
+    /** Notifications of sites, shown as Android notifications. */
+    val siteNotifications: SiteNotifications by siteNotificationsLazy
+
+    /** [siteNotifications] when the engine runs; a broadcast must not start it. */
+    val siteNotificationsIfRunning: SiteNotifications?
+        get() = if (siteNotificationsLazy.isInitialized()) siteNotifications else null
+
+    /**
+     * Once the engine and the tabs exist: the engine's copy of the permission answers is checked
+     * against Krunk's, and the end of the private session is watched for (the last private tab
+     * closes: its answers and notifications go).
+     */
+    private fun startSiteFeatures(tabs: TabManager) {
+        sitePermissions.reconcile()
+        vaultScope.launch {
+            var hadPrivate = false
+            tabs.tabs.collect { list ->
+                val hasPrivate = list.any { it.private }
+                if (hadPrivate && !hasPrivate) {
+                    sitePermissions.privateSessionEnded()
+                    siteNotificationsIfRunning?.privateSessionEnded()
+                }
+                hadPrivate = hasPrivate
+            }
+        }
+    }
+
+    /**
+     * A site notification was tapped: the page hears of it and a tab of that site comes to the
+     * front (the site is opened in a new tab when none is left; never for a private page).
+     */
+    fun siteNotificationTapped(id: Int, token: String?, origin: String?) {
+        val tap = siteNotifications.tapped(id, token, origin)
+        val site = tap.origin ?: return
+        val all = tabs.tabs.value
+        val active = tabs.activeId.value
+        val tab = all.firstOrNull { it.id == active && it.private == tap.private && webOrigin(it.url) == site }
+            ?: all.firstOrNull { it.private == tap.private && webOrigin(it.url) == site }
+        when {
+            tab != null -> tabs.activate(tab.id)
+            !tap.private -> tabs.openUntrusted("$site/", LoadSource.EXTERNAL_APP, activate = true, live = true)
+        }
+    }
 
     /** When the vault locks by itself: timer and background grace (see [VaultLockSetting]). */
     val vaultLock: VaultLockSetting by lazy { VaultLockSetting(core.store::kvGet, core.store::kvSet) }
