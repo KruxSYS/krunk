@@ -21,6 +21,7 @@ import org.krunk.ffi.downloadRangeHeaders
 import org.krunk.ffi.downloadResumable
 import org.krunk.ffi.downloadResumeCheck
 import org.krunk.ffi.downloadUniqueName
+import org.krunk.ffi.stripCredentials
 
 /** A response of the engine's network stack whose body is (or may be) saved. */
 class DownloadResponse(val url: String, val status: Int, val headers: Map<String, String>, val body: InputStream?) {
@@ -52,6 +53,12 @@ interface DownloadPublisher {
      */
     @Throws(IOException::class)
     fun publish(part: File, name: String, mime: String?): String
+
+    /**
+     * At the start of the app, before anything is published: removes what an earlier process
+     * left half-published (it died during [publish]), so publishing again leaves one file.
+     */
+    fun sweep() {}
 }
 
 /** A new download. With a [response] the engine's open stream is saved; without, the URL is fetched. */
@@ -116,7 +123,17 @@ class DownloadEngine(
 
     private class Stop(val state: DownloadState)
 
-    private class Job(val id: UInt, val url: String, val part: File, val private: Boolean, val referrer: String?) {
+    private class Job(
+        val id: UInt,
+        /** The address as fetched; may carry `user:password@`, which is never stored (see [start]). */
+        val url: String,
+        val part: File,
+        val private: Boolean,
+        val referrer: String?,
+        /** The address had credentials: they are not stored, so the download cannot go on later. */
+        val credentials: Boolean = false,
+    ) {
+        /** Set under [lock]; the transfer's thread reads it without, and once more under it at its end. */
         @Volatile var stop: Stop? = null
 
         @Volatile var response: DownloadResponse? = null
@@ -152,6 +169,7 @@ class DownloadEngine(
      * unfinished entry (a private download's, a cancelled one's) are deleted.
      */
     fun recover() {
+        runCatching { publisher.sweep() }
         val keep = HashSet<String>()
         for (e in list.unfinished()) {
             val running = synchronized(lock) { jobs[e.id] ?: closing[e.id] }
@@ -163,6 +181,8 @@ class DownloadEngine(
             if (e.state == DownloadState.PAUSED && part != null && part.isFile) {
                 keep += part.name
                 list.progress(e.id, part.length(), null, clock())
+                // Announced like any change: its notification of the last run ("downloading") is replaced.
+                announce(e.id)
             } else {
                 setState(e.id, DownloadState.INTERRUPTED, reasons.partGone)
             }
@@ -179,22 +199,28 @@ class DownloadEngine(
             ?: DownloadNames.of(request.url, null, null, extensionFor)
         val job: Job
         try {
+            // `user:password@` is used for the request but never stored (list, search, resume).
+            val bare = bare(request.url)
+            val page = request.pageUrl?.let(::bare)
             partDir.mkdirs()
             synchronized(lock) {
                 val id = list.start(
-                    DownloadNames.listUrl(request.url),
+                    DownloadNames.listUrl(bare),
                     "$PENDING_DIR/$name",
                     null,
                     clock(),
                     request.private,
-                    request.pageUrl,
+                    page,
                     null,
                 )
-                job = Job(id, request.url, newPartFile(), request.private, request.pageUrl)
+                job = Job(id, request.url, newPartFile(), request.private, page, credentials = bare != request.url)
                 job.name = name
                 jobs[id] = job
             }
         } catch (e: FfiException) {
+            request.response?.close()
+            return null
+        } catch (e: RuntimeException) {
             request.response?.close()
             return null
         }
@@ -206,18 +232,42 @@ class DownloadEngine(
     /** Pauses a running download that can go on later; false when it cannot be paused. */
     fun pause(id: UInt): Boolean = stop(id, DownloadState.PAUSED, null, onlyResumable = true)
 
-    /** Cancels a running or paused download; its part file is deleted. */
+    /**
+     * Cancels a running or paused download; its part file is deleted. Never waits for a
+     * transfer's thread (it may sit in a stalled read or connect for a minute or more): the
+     * entry is cancelled at once, and a thread that still holds the part deletes it when it wakes.
+     */
     fun cancel(id: UInt): Boolean {
         if (stop(id, DownloadState.CANCELLED, null, onlyResumable = false)) return true
         val e = entry(id) ?: return false
         if (e.state != DownloadState.PAUSED) return false
         val part = e.resume?.let { partOf(it) }
-        val waitFor = synchronized(lock) { closing[id] }
+        val deleteNow = synchronized(lock) {
+            if (jobs.containsKey(id)) return false
+            val holder = closing[id]
+            // The paused transfer's thread has not let go yet: it deletes the part at its end.
+            holder?.stop = Stop(DownloadState.CANCELLED)
+            holder == null
+        }
         setState(id, DownloadState.CANCELLED, null)
-        waitFor?.done?.await()
-        part?.delete()
+        // A private download leaves nothing behind (as [write] does for the other ends).
+        if (e.private) remove(id)
+        if (deleteNow) part?.delete()
         return true
     }
+
+    /** True while the file of [id] is being published: too late to pause or cancel it. */
+    fun isFinishing(id: UInt): Boolean = synchronized(lock) { jobs[id]?.finishing == true }
+
+    /**
+     * The last private tab closed: private downloads that wait (paused, or failed and able to
+     * go on) are cancelled, their parts deleted and their entries dropped. Running ones may
+     * finish. Returns the ids that were cancelled.
+     */
+    fun endPrivateSession(): List<UInt> = list.unfinished()
+        .filter { it.private && it.state == DownloadState.PAUSED }
+        .map { it.id }
+        .filter { cancel(it) }
 
     /** Android's time limit for the background service: pause what can go on, end the rest. */
     fun timeLimit() {
@@ -299,6 +349,8 @@ class DownloadEngine(
         try {
             job.previous?.done?.await()
             job.previous = null
+            // Paused or cancelled again while the previous thread let go of the part.
+            if (job.stop != null) return
             val version = job.version
             val offset = if (resuming) job.part.length() else 0L
             var total: Long? = version?.total?.toLong()
@@ -353,6 +405,8 @@ class DownloadEngine(
                 }
                 try {
                     out.flush()
+                    // On the disk before the part counts as complete (and is published).
+                    (out as? FileOutputStream)?.fd?.sync()
                     out.close()
                 } catch (e: IOException) {
                     throw PartWriteException(e)
@@ -367,32 +421,48 @@ class DownloadEngine(
                 job.finishing = true
             }
             complete(job)
-        } catch (e: PartWriteException) {
-            fail(job, reasons.storage)
-        } catch (e: ShortStreamException) {
-            fail(job, reasons.endedEarly)
-        } catch (e: PublishException) {
-            fail(job, reasons.publish)
-        } catch (e: java.net.SocketTimeoutException) {
-            fail(job, reasons.timedOut)
         } catch (e: IOException) {
-            fail(job, reasons.network)
+            // What was written is on the disk before the entry may say "paused".
+            out = closePart(out, sync = true)
+            fail(
+                job,
+                when (e) {
+                    is PartWriteException -> reasons.storage
+                    is ShortStreamException -> reasons.endedEarly
+                    is PublishException -> reasons.publish
+                    is java.net.SocketTimeoutException -> reasons.timedOut
+                    else -> reasons.network
+                },
+            )
         } catch (e: FfiException) {
+            out = closePart(out, sync = true)
             fail(job, reasons.storage)
         } catch (e: RuntimeException) {
+            out = closePart(out, sync = true)
             fail(job, reasons.network)
         } finally {
-            runCatching { out?.close() }
+            // A paused part is on the disk before a resume (which waits for this thread) appends.
+            closePart(out, sync = job.stop?.state == DownloadState.PAUSED)
             job.response?.close()
             given?.close()
-            val end = job.stop?.state
-            if (end != null && end != DownloadState.PAUSED) job.part.delete()
-            synchronized(lock) {
+            // Read under the lock: cancelling a paused download whose part this thread still
+            // holds turns the end into Cancelled and leaves deleting the part to this thread.
+            val end = synchronized(lock) {
                 if (jobs[job.id] === job) jobs.remove(job.id)
                 if (closing[job.id] === job) closing.remove(job.id)
+                job.stop?.state
             }
+            if (end != null && end != DownloadState.PAUSED) job.part.delete()
             job.done.countDown()
         }
+    }
+
+    /** Closes a part file (synced to the disk first when asked); always returns null. */
+    private fun closePart(out: OutputStream?, sync: Boolean): OutputStream? {
+        if (out == null) return null
+        if (sync) runCatching { (out as? FileOutputStream)?.fd?.sync() }
+        runCatching { out.close() }
+        return null
     }
 
     /**
@@ -400,7 +470,10 @@ class DownloadEngine(
      * Returns the announced length (-1: none), or null when the download ended here.
      */
     private fun begin(job: Job, response: DownloadResponse): Long? {
-        val ok = response.status in 200..299 || (response.status == 0 && !DownloadNames.isWeb(job.url))
+        // Only a whole file is saved. A web address must answer 200: a 206 is a fragment, 204
+        // and 205 carry no file, other 2xx are no file either. A `blob:` or `data:` address is
+        // not HTTP: the engine reports 200 or 0 for it, and both mean the whole thing.
+        val ok = response.status == 200 || (response.status == 0 && !DownloadNames.isWeb(job.url))
         if (!ok) {
             settle(job, DownloadState.INTERRUPTED, reasons.serverError.format(response.status))
             return null
@@ -409,12 +482,14 @@ class DownloadEngine(
         // The engine hands out the decoded body: a compressed response's length is not the
         // file's (and such a download cannot go on; the core's rule says the same).
         val encoded = response.header("Content-Encoding")?.trim()?.lowercase().let { it != null && it != "identity" }
-        val version = if (response.status ==
-            206
-        ) {
+        // Not resumable: an address with credentials (they are not kept for a later request), and
+        // a length of 2^63 bytes or more (beyond what a file here can have: treated as unknown).
+        val version = if (job.credentials) {
             null
         } else {
-            downloadResumable(job.url, response.status.toUShort(), headers)
+            downloadResumable(job.url, response.status.toUShort(), headers)?.takeIf {
+                it.total <= Long.MAX_VALUE.toULong()
+            }
         }
         val length = if (encoded) {
             null
@@ -454,11 +529,12 @@ class DownloadEngine(
         synchronized(lock) {
             job.stop = Stop(DownloadState.COMPLETED)
             jobs.remove(job.id)
-            list.setPath(job.id, path)
-            list.setState(job.id, DownloadState.COMPLETED, null, clock())
+            // The file is saved: a list that cannot be written does not undo that.
+            listWrite { list.setPath(job.id, path) }
+            listWrite { list.setState(job.id, DownloadState.COMPLETED, null, clock()) }
             last = entry(job.id)
             // A private download leaves nothing but its file.
-            if (job.private) list.remove(job.id)
+            if (job.private) listWrite { list.remove(job.id) }
         }
         last?.let(listener::onState)
     }
@@ -481,7 +557,15 @@ class DownloadEngine(
         last?.let(listener::onState)
     }
 
-    /** Stops a running transfer from outside. */
+    private inline fun listWrite(block: () -> Unit) {
+        try {
+            block()
+        } catch (e: FfiException) {
+            // The entry keeps what it had.
+        }
+    }
+
+    /** Stops a running transfer from outside. Never waits for its thread. */
     private fun stop(id: UInt, state: DownloadState, reason: String?, onlyResumable: Boolean): Boolean {
         val job: Job
         val last: DownloadEntry?
@@ -494,9 +578,10 @@ class DownloadEngine(
             closing[id] = job
             last = write(job, state, reason)
         }
-        // Wakes the transfer's thread out of a read.
-        job.response?.close()
         last?.let(listener::onState)
+        // Wakes the transfer's thread out of a read where the engine's stream allows it. Closed
+        // on another thread: a stream that blocks in close holds up no other action.
+        job.response?.let { r -> executor.execute { r.close() } }
         return true
     }
 
@@ -522,6 +607,9 @@ class DownloadEngine(
     private fun announce(id: UInt) {
         entry(id)?.let(listener::onState)
     }
+
+    /** The address without `user:password@` (only web addresses carry them). */
+    private fun bare(url: String): String = if (DownloadNames.isWeb(url)) stripCredentials(url) else url
 
     private fun requestHeaders(offset: Long, version: DownloadVersion?): List<HttpHeader> =
         if (offset > 0 && version != null) {
