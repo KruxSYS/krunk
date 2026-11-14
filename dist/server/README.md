@@ -282,7 +282,7 @@ The manifest format:
 
 ## Publish an Android release
 ```sh
-(cd android && ./gradlew assembleRelease)   # signs with the Android release key, docs/ANDROID_DEV.md
+(cd android && ./gradlew assembleDirectRelease)   # in a fresh clone; signs with the Android release key, docs/ANDROID_DEV.md
 # copy the APKs to dist/android/Krunk-android-<version>-<abi>-release.apk, then:
 dist/server/publish-android.sh 0.1.1 --volume live-browser_krunk-releases
 ```
@@ -309,8 +309,47 @@ dist/server/publish-android.sh 0.1.1 --volume live-browser_krunk-releases
   `emulator`, `label`, `url`, `size`, `sha256`). `site/app.js` makes the `device` file the button.
 - Publish only to a server whose `web` image has the `/download/android.json` route: an older
   image would serve that file with the one-year `immutable` header of `/download/*`.
-- There is no Android update manifest yet: the app does not check for updates, and the Windows
-  manifest and its Ed25519 key are not touched.
+- **The in-app update manifest (0.5.0):** the script also writes
+  `updates/android-arm64/latest.json` and `latest.json.sig`. It signs them on this machine with
+  the update key (`--key`, default `~/.config/krunk/update-signing.key`: the same Ed25519 key and
+  scheme as Windows, base64 of the signature over the exact bytes). It then checks the signature
+  against `assets/keys/update-signing.pub`, the key compiled into the app. Once everything is
+  copied, it reads each written file back from the volume and compares the SHA-256s. It refuses
+  to run if:
+  - the update key is missing, or is not that key;
+  - the APK keystore is missing (`--cert-sha256` may only repeat its fingerprint);
+  - an APK has no `REQUEST_INSTALL_PACKAGES` (the website APKs are the `direct` flavour).
+
+  Write order: APKs, `NOTES.md` and `SHA256SUMS`, then `android.json`, then the signature, then
+  the manifest. The Windows manifest, its signature and `download/release.json` are never
+  touched.
+- Manifest (one line, unknown fields ignored by the app, `core/src/update_android.rs`):
+  ```json
+  {"channel":"android-arm64","version":"0.5.0","version_code":7,"released":"2026-11-14",
+   "package":"org.krunk.browser","min_sdk":26,"signing_cert_sha256":"c94b8915…e624",
+   "notes":"<the changelog section>","notes_url":"/download/android/0.5.0/NOTES.md",
+   "files":[{"abi":"arm64-v8a","url":"/download/android/0.5.0/Krunk-android-0.5.0-arm64-v8a-release.apk","size":…,"sha256":"…"},
+            {"abi":"universal",…},{"abi":"x86_64",…}]}
+  ```
+  The app fetches it only when the user taps "Check for updates". It offers a version only if
+  `version_code` is higher than its own, picks the file for its ABI (universal only as a
+  fallback), and installs only an APK that has the listed size and SHA-256, is this package and
+  `version_code`, and carries the installed app's certificate. Caddy serves `/updates/*` with
+  `Cache-Control: no-cache, no-transform` and the JSON/text content types, so Cloudflare
+  revalidates it instead of keeping it for hours.
+- **Keys:** the Android release keystore (`~/.config/krunk/android-release.jks`) signs the APKs.
+  The update key signs the manifests of both platforms. Both stay on the publishing machine, and
+  neither goes into the image, the volume, compose or git. Offline backups of both are still the
+  operator's to make.
+- **Backup of the release volume:** it holds every published file (Windows and Android) and the
+  manifests, and none of it can be rebuilt byte for byte without the keys. An encrypted copy:
+  ```sh
+  docker run --rm --network none -v live-browser_krunk-releases:/r:ro \
+    alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f \
+    tar -C /r -cf - . | age -r <age public key> > krunk-releases-$(date -u +%F).tar.age
+  ```
+  To restore, run `age -d -i <key file> … | docker run -i … tar -C /r -xf -` into the volume. A
+  deploy does not touch the volume: ai-pipe changes the image and compose only.
 
 ## Checks
 ```sh

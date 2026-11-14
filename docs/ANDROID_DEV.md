@@ -39,13 +39,34 @@ feature `cli`), so it always matches the `uniffi` crate version.
 
 ```
 cd android
-./gradlew assembleDebug        # debug APKs: app/build/outputs/apk/debug/app-{arm64-v8a,x86_64,universal}-debug.apk
-./gradlew assembleRelease      # minified (R8), signed with the release key when it is configured (below)
+./gradlew assembleDirectDebug     # debug APKs: app/build/outputs/apk/direct/debug/app-direct-{arm64-v8a,x86_64,universal}-debug.apk
+./gradlew assembleDirectRelease   # the website APKs: minified (R8), signed with the release key (below)
+./gradlew bundlePlayRelease       # the Google Play bundle: app/build/outputs/bundle/playRelease/app-play-release.aab
+./gradlew assembleDirectQa -Pkrunk.qaUpdateBase=http://10.250.136.3:18090   # the update test build (below)
 ```
+
+**Flavours (0.5.0).** Two channels with the same package (`org.krunk.browser`), version and key:
+
+| Flavour | For | Update check | `REQUEST_INSTALL_PACKAGES` | Output |
+|---|---|---|---|---|
+| `direct` | the website APK (krunk.209.wf) | yes, only when the user taps it (`src/direct/`) | yes (`src/direct/AndroidManifest.xml`) | per-ABI + universal APKs |
+| `play` | Google Play (built, not uploaded) | none: `src/play/` has an empty `UpdateChannel` | no | AAB with per-ABI splits |
+
+`main` code reaches the update check only through `org.krunk.browser.update.UpdateChannel`
+(the About section and the start-up cleanup), which each flavour defines. The shared native
+library also carries the FFI verify functions in the Play build, where nothing calls them.
+`assembleDebug` builds both flavours.
+
+**The `qa` build type** is the release code (R8, release key) with versionCode **6** (0.5.0 is
+7) and versionName `0.5.0-qa`, so it installs over 0.4.0 and can update itself to 0.5.0. Only it
+and the debug builds take `-Pkrunk.qaUpdateBase=<url>`, and only they allow plain http to the
+test server (`src/{qa,debug}/res/xml/update_test_network.xml`). With that property set, any
+release task fails the build, so the published APKs always carry `https://krunk.209.wf`. Build the
+release variants and the qa variant in separate Gradle runs. Never publish a qa APK.
 
 `cargoBuildDebug` / `cargoBuildRelease` run `android/scripts/build-rust.sh <profile>`: a host build
 of `krunk_ffi` (bindings + JVM tests), `uniffi-bindgen generate --library`, then `cargo ndk` for
-`arm64-v8a` and `x86_64` into `app/build/rust/<variant>/`. Debug libraries are stripped
+`arm64-v8a` and `x86_64` into `app/build/rust/<profile>/` (one cargo build per profile, shared by the flavours; `qa` uses the release profile). Debug libraries are stripped
 (`llvm-strip`) because AGP keeps debug variants' symbols. The bindings are always generated from
 the **debug** host library: the workspace's release profile strips the UniFFI metadata.
 
@@ -56,7 +77,7 @@ Gradle is capped at 3 GB heap and 4 workers (`gradle.properties`) because the bu
 Checks:
 
 ```
-./gradlew lint ktlintCheck testDebugUnitTest       # Android lint, ktlint (pinned CLI), JVM tests
+./gradlew lintDirectRelease ktlintCheck testDirectDebugUnitTest testPlayDebugUnitTest   # lint, ktlint, JVM tests
 cargo clippy -p krunk_ffi --all-targets -- -D warnings && cargo fmt --check && cargo test -p krunk_ffi
 ```
 
@@ -201,8 +222,9 @@ updates.
 1. Set `versionName` and raise `versionCode` in `android/app/build.gradle.kts`; add the
    `## X.Y.Z — YYYY-MM-DD` section to `CHANGELOG-android.md` (the Windows `CHANGELOG.md` only
    takes Windows versions: the website's build checks its headings).
-2. `cd android && ./gradlew assembleRelease`, then copy the three
-   `app/build/outputs/apk/release/app-<abi>-release.apk` to
+2. In a **fresh `git clone`** (plus `android/local.properties`):
+   `cd android && ./gradlew assembleDirectRelease bundlePlayRelease`, then copy the three
+   `app/build/outputs/apk/direct/release/app-direct-<abi>-release.apk` to
    `dist/android/Krunk-android-<version>-<abi>-release.apk` and refresh `SHA256SUMS`.
 3. Check: `$ANDROID_HOME/build-tools/37.0.0/apksigner verify --print-certs -v <apk>` shows v2 and
    v3 "true" and the fingerprint above. Test the `x86_64` APK on the emulator (cold install:
@@ -217,6 +239,33 @@ updates.
    Android release"). The script refuses APKs that are not signed with the release key's
    certificate, that are not this app in this version, a version that is already published
    (`--force`), and a volume Docker does not know.
+   Since 0.5.0 it also writes `updates/android-arm64/latest.json`, signs it with the **update
+   key** (`~/.config/krunk/update-signing.key`, the Windows update key: its public half
+   `assets/keys/update-signing.pub` is compiled into the app through `ffi/src/update.rs`), checks
+   the signature, and reads every written file back. It refuses to start when either key is
+   missing, when the update key is not the one the app trusts, and APKs without
+   `REQUEST_INSTALL_PACKAGES` (not the `direct` flavour). It needs both keys, so it runs on the
+   publishing machine only.
+
+**Keys and who holds them (0.5.0).**
+
+| Secret | File | Signs | Holder |
+|---|---|---|---|
+| Android release key | `~/.config/krunk/android-release.jks` + `.properties` | every APK and the AAB (v2+v3) | the publishing machine (operator); offline backup still open |
+| Update key (Ed25519) | `~/.config/krunk/update-signing.key` | the Windows and the Android update manifests | the same machine; offline backup still open |
+
+No Play upload key exists. Who signs for Play is the operator's decision (`android/play/CHECKLIST.md`):
+the existing key as Play's app-signing key (one certificate everywhere, users can move between Play
+and the website APK) or a new upload key with a Play-made app key (the two installs cannot update
+each other).
+
+**The Play bundle** (`bundlePlayRelease`) is signed with the release key as a local artefact; it is
+copied to `dist/play/` with the listing drafts from `android/play/`. Nothing is uploaded.
+`android/scripts/a6/play.sh` installs it on the emulator through bundletool (`--local-testing`).
+
+**Update tests** (`android/scripts/a6/`): `updserver.py` is the update server the qa build talks to
+(proxy to the staging site, or a folder of tampered fixtures from `make-fixtures.sh`, logging every
+request); `a6.sh installover inapp quiet tampersig tamperapk` are the checks 9a–9e of the 0.5.0 brief.
 
 ## Emulator
 

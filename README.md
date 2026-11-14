@@ -1805,7 +1805,7 @@ To reproduce: enable discard in Settings, start with `--sleep-test-seconds=90 --
 open the sites and read `memory-report.log` (steps in `docs/MANUAL_TEST.md`).
 
 ## Krunk for Android (preview)
-Krunk for Android (0.4.0) is an installable preview of the same browser for phones and
+Krunk for Android (0.5.0) is an installable preview of the same browser for phones and
 tablets (Android 8 and later, `arm64-v8a` devices and the `x86_64` emulator). It is built from
 this repository (`android/`, `ffi/`) and shares Krunk's Rust `core` with the Windows app: the same
 address-bar rules (DuckDuckGo by default), the same SQLite database layout for history, bookmarks,
@@ -1821,8 +1821,17 @@ browser you downloaded it with. The APKs are signed (APK Signature Scheme v2 and
 Android release key; its certificate's SHA-256 fingerprint is
 `C9:4B:89:15:CD:8B:39:3A:5F:C4:8B:C1:32:A6:DE:02:63:74:E7:63:37:C4:34:1C:59:DD:60:32:83:73:E6:24`
 (check with `apksigner verify --print-certs`). Later releases are signed with the same key, so
-they install over this one and keep your data. There is no update check yet: new versions appear
-on the website.
+they install over this one and keep your data.
+
+**Updates (since 0.5.0).** Settings › About › **Check for updates** asks krunk.209.wf for the
+signed update information (`/updates/android-arm64/latest.json` and its Ed25519 signature, made
+with the same key as the Windows updates) and, after you tap **Download and install**, fetches the
+one APK for your device. Krunk installs only an APK that matches the signed size and SHA-256 and
+carries the installed app's certificate; then Android's installer asks you. Krunk never checks by
+itself: not at start-up, not on a timer, not in the background (`docs/NETWORK.md`, last section).
+**0.4.0 and older have no update check:** install the 0.5.0 APK from the website over them once;
+your data stays. A Google Play build (no update check; Play updates it) is built but not
+published yet.
 
 **Engine.** GeckoView 160 (Firefox's engine as a library, MPL-2.0), not the system WebView and not
 a Chromium build: it lets Krunk run uBlock Origin itself as a built-in extension, keeps
@@ -1869,8 +1878,8 @@ levels, for the vault a recovery phrase, a password generator, payment cards, im
 logins and a system-wide Autofill service (the vault fills in Krunk's own pages only),
 downloads over several connections and a choice of the download folder, pointer lock (the
 engine has none on Android), media controls and picture-in-picture, account and sync, VPN, the AI agent, userscripts,
-extensions, an update check and Play/F-Droid packaging. Builds made without the release key (any
-debug build, or `./gradlew assembleRelease -Pkrunk.allowDebugSignedRelease=true` on another
+extensions, a Play Store listing and F-Droid. Builds made without the release key (any
+debug build, or `./gradlew assembleDirectRelease -Pkrunk.allowDebugSignedRelease=true` on another
 machine) are signed with a debug key and cannot be updated in place by a published release:
 uninstall them first.
 

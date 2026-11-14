@@ -261,7 +261,7 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | AI agent (BYO provider) | yes — 0.12.0 | roadmap | — | 5 |
 | Userscripts, macros | yes — 0.12.0 | roadmap (userscripts via a bundled WebExtension) | — | 5 |
 | VPN (WireGuard/OpenVPN, Krunk-only) | yes — 0.14.0 | roadmap (Android `VpnService`) | — | 5 |
-| Update channel (signed manifest) | yes — Updates | roadmap (`android-arm64` channel for the APK flavour; Play updates itself) | — | 5 |
+| Update channel (signed manifest) | yes — Updates | **yes (0.5.0, website APK only):** Settings › About › Check for updates; channel `android-arm64`, Ed25519-signed with the Windows update key; only when the user taps it (no start-up, timer or background check); size, SHA-256, package, versionCode and signing certificate checked before the system installer. The Play build has none (Play updates it); F-Droid later, if there is demand | — | done |
 | Default browser flow | yes — 0.12.1 | roadmap (`RoleManager.ROLE_BROWSER` request) | — | 3 |
 | Custom Tabs for other apps | n/a | roadmap (`CustomTabsService`) | — | 4 |
 
@@ -277,4 +277,4 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | Home-screen shortcuts / PWA install | no | roadmap (`WebAppManifest`) | — | 4 |
 | Widgets (search widget) | n/a | roadmap | — | 4 |
 | Protocol handlers (`registerProtocolHandler`) | no | roadmap | — | 4 |
-| Installer / portable mode | yes | n/a (APK; Play/F-Droid packaging is round 5) | — | 5 |
+| Installer / portable mode | yes | APK (`direct` flavour, arm64-v8a / x86_64 / universal) installed over the previous version; updates through Android's `PackageInstaller` (the user confirms; "install unknown apps" asked once). A Play bundle (`play` flavour, per-ABI splits) is built but not uploaded; portable mode n/a | — | done (Play upload pending the operator) |

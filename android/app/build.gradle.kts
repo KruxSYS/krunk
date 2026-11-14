@@ -283,7 +283,10 @@ android {
 
     splits {
         abi {
-            isEnable = true
+            // APK splits for the website APKs. AGP 9 refuses them while an App Bundle is built
+            // (issuetracker 402800800); the bundle makes its own per-ABI splits (bundle {} below),
+            // so they are off in a Gradle run that builds a bundle.
+            isEnable = gradle.startParameter.taskNames.none { it.contains("bundle", ignoreCase = true) }
             reset()
             include("arm64-v8a", "x86_64")
             isUniversalApk = true
