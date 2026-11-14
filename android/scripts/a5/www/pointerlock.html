@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pointer lock test</title>
+<style>
+  body { font: 16px/1.4 sans-serif; margin: 12px; }
+  button { font-size: 20px; padding: 18px 22px; margin: 6px 6px 6px 0; }
+  canvas { display: block; width: 100%; height: 220px; background: #263238; touch-action: none; }
+  pre { white-space: pre-wrap; margin: 8px 0; font-size: 15px; }
+  #log { max-height: 30vh; overflow: auto; background: #eee; color: #000; padding: 6px; }
+</style>
+</head>
+<body>
+<h1>Pointer lock</h1>
+<p>Needs a mouse (USB, Bluetooth, or <code>adb shell input mouse</code>). With a real lock the
+cursor disappears and the movement sums keep growing when the mouse is pushed past the screen
+edge.</p>
+<button id="lock">Lock the pointer</button>
+<button id="unlock">exitPointerLock()</button>
+<button id="reset">Reset sums</button>
+<canvas id="c" width="600" height="220"></canvas>
+<pre id="state">-</pre>
+<pre id="log"></pre>
+<script>
+"use strict";
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+const stateEl = document.getElementById("state");
+const logEl = document.getElementById("log");
+let n = 0, sumX = 0, sumY = 0, absX = 0, absY = 0, moves = 0, lockedMoves = 0, lastType = "-";
+let dotX = 300, dotY = 110;
+function log(text) {
+  n += 1;
+  logEl.textContent = n + " " + text + "\n" + logEl.textContent;
+}
+function show() {
+  const el = document.pointerLockElement;
+  stateEl.textContent =
+    "pointerLockElement: " + (el ? (el.id || el.tagName) : "null") + "\n" +
+    "movementX/Y sum: " + sumX + " / " + sumY + "\n" +
+    "|movement| sum: " + absX + " / " + absY + "\n" +
+    "moves: " + moves + " (while locked: " + lockedMoves + ")\n" +
+    "last event: " + lastType;
+  document.title = "lock=" + (el ? "yes" : "no") + " sum=" + sumX + "," + sumY + " moves=" + lockedMoves;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = el ? "#ffeb3b" : "#90a4ae";
+  ctx.beginPath();
+  ctx.arc(dotX, dotY, 10, 0, 6.3);
+  ctx.fill();
+}
+function onMove(e) {
+  moves += 1;
+  lastType = e.type + " (" + (e.pointerType || "mouse") + ") client " + Math.round(e.clientX) + "," +
+    Math.round(e.clientY) + " movement " + e.movementX + "," + e.movementY;
+  if (document.pointerLockElement) {
+    lockedMoves += 1;
+    sumX += e.movementX; sumY += e.movementY;
+    absX += Math.abs(e.movementX); absY += Math.abs(e.movementY);
+    dotX = (dotX + e.movementX + canvas.width) % canvas.width;
+    dotY = (dotY + e.movementY + canvas.height) % canvas.height;
+  }
+  show();
+}
+document.addEventListener("mousemove", onMove);
+document.getElementById("lock").onclick = () => {
+  let p;
+  try { p = canvas.requestPointerLock(); } catch (e) { log("requestPointerLock threw " + e.name); return; }
+  log("requestPointerLock called" + (p && p.then ? " (promise)" : ""));
+  if (p && p.then) p.then(() => log("promise: resolved"), (e) => log("promise: " + e.name + " " + e.message));
+};
+document.getElementById("unlock").onclick = () => { document.exitPointerLock(); log("exitPointerLock called"); };
+document.getElementById("reset").onclick = () => {
+  sumX = sumY = absX = absY = moves = lockedMoves = 0;
+  show();
+};
+document.addEventListener("pointerlockchange", () => {
+  log("pointerlockchange: " + (document.pointerLockElement ? "locked" : "released"));
+  show();
+});
+document.addEventListener("pointerlockerror", () => { log("pointerlockerror"); show(); });
+document.addEventListener("keydown", (e) => { log("keydown " + e.key); });
+show();
+</script>
+</body>
+</html>

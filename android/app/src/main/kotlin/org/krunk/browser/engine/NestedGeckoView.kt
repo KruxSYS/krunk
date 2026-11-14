@@ -20,6 +20,17 @@ import org.mozilla.geckoview.PanZoomController
  * only hears about gestures the browser handles on a vertically scrollable page, and sees
  * unconsumed downward distance only when the page is already at its top, so pull-to-refresh
  * never fights a scroll inside the page.
+ *
+ * Pointer lock (`Element.requestPointerLock()`): nothing here, on purpose. GeckoView 160 has the
+ * web API (libxul carries `dom.pointer-lock.enabled`, the `PointerLockDenied*` reasons and the
+ * `PBrowser::Msg_RequestPointerLock` messages), but its Android side neither captures the mouse
+ * nor tells the app: no class of the AAR uses `requestPointerCapture`, `onCapturedPointerEvent`
+ * or relative axes; `PanZoomController` passes hover moves with absolute positions only; the
+ * only pointer-related call into Java is `setPointerIcon`; and no delegate, `GeckoView:*` event
+ * or actor reports a lock (desktop's `PointerLockParent`/`Child` are not in `omni.ja`). So a
+ * page may see `pointerlockchange`, yet the cursor stays free and stops at the screen edge, and
+ * Krunk cannot know. A "press Back to release the pointer" hint would claim a lock that does
+ * not exist, so there is none. Manual test page: `android/scripts/a5/www/pointerlock.html`.
  */
 open class NestedGeckoView(context: Context) :
     GeckoView(context),
