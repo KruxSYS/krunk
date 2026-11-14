@@ -565,7 +565,7 @@ mod tests {
         assert_eq!(json["gradient"]["stops"], serde_json::json!(["#f97316", "#ec4899", "#8b5cf6"]));
         assert!(json["gradient"]["fg"].is_string() && json["gradient"]["ombreFg"].is_string());
         assert!(serde_json::to_value(ThemeColors::default()).unwrap().get("gradient").is_none());
-        assert_eq!(with_gradient, 17);
+        assert_eq!(with_gradient, 27);
     }
 
     // ---- private tabs (0.16.0) ----
@@ -744,7 +744,7 @@ mod tests {
     #[test]
     fn private_titles_reach_aa_on_every_preset_theme_and_state() {
         let looks = preset_looks();
-        assert_eq!(looks.len(), 12);
+        assert_eq!(looks.len(), 20);
         let mut checked = 0;
         for (name, a) in &looks {
             for dark in [false, true] {
@@ -765,7 +765,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(checked, 12 * 2 * 7);
+        assert_eq!(checked, 20 * 2 * 7);
         // The other looks reach it too, except the gradient no colour reads on from end to
         // end: there the title is the best of the candidates.
         for (name, a) in other_looks() {

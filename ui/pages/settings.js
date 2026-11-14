@@ -1016,8 +1016,16 @@
     forest: { tabStyle: 'gradient', toolbarStyle: 'gradient', gradient: ['#14532d', '#166534', '#0f766e'], gradientAngle: 90, tabShape: 'rounded', activeHighlight: 'fill', accentGlow: false },
     ember: { tabStyle: 'gradient', toolbarStyle: 'gradient', gradient: ['#7f1d1d', '#c2410c', ''], gradientAngle: 135, tabShape: 'rounded', activeHighlight: 'underline', accentGlow: true },
     candy: { tabStyle: 'ombre', toolbarStyle: 'gradient', gradient: ['#f9a8d4', '#c4b5fd', '#93c5fd'], gradientAngle: 90, tabShape: 'pill', activeHighlight: 'fill', accentGlow: false },
-    frost: { tabStyle: 'glass', toolbarStyle: 'glass', gradient: ['', '', ''], gradientAngle: 90, tabShape: 'pill', activeHighlight: 'outline', accentGlow: false },
-    neon: { tabStyle: 'solid', toolbarStyle: 'solid', gradient: ['', '', ''], gradientAngle: 90, tabShape: 'square', activeHighlight: 'outline', accentGlow: true },
+    frost: { tabStyle: 'gradient', toolbarStyle: 'gradient', gradient: ['#dbeafe', '#f0f9ff', '#bae6fd'], gradientAngle: 100, tabShape: 'pill', activeHighlight: 'outline', accentGlow: true, colors: { accent: '#38bdf8', activeOutlineColor: '#ffffff' } },
+    neon: { tabStyle: 'gradient', toolbarStyle: 'gradient', gradient: ['#0a0a14', '#170a2e', '#0a0a14'], gradientAngle: 90, tabShape: 'rounded', activeHighlight: 'outline', accentGlow: true, colors: { accent: '#22f5ff', activeOutlineColor: '#ff2bd6' } },
+    synthwave: { tabStyle: 'ombre', toolbarStyle: 'gradient', gradient: ['#2e1065', '#a21caf', '#be185d'], gradientAngle: 90, tabShape: 'rounded', activeHighlight: 'outline', accentGlow: true, colors: { accent: '#f472b6', activeOutlineColor: '#22d3ee' } },
+    matrix: { tabStyle: 'gradient', toolbarStyle: 'gradient', gradient: ['#020a04', '#06200e', '#020a04'], gradientAngle: 90, tabShape: 'square', activeHighlight: 'underline', accentGlow: true, colors: { accent: '#22c55e' } },
+    graphite: { tabStyle: 'gradient', toolbarStyle: 'gradient', gradient: ['#111827', '#374151', '#1f2937'], gradientAngle: 90, tabShape: 'square', activeHighlight: 'underline', accentGlow: false },
+    citrus: { tabStyle: 'gradient', toolbarStyle: 'gradient', gradient: ['#fde047', '', '#fb923c'], gradientAngle: 90, tabShape: 'rounded', activeHighlight: 'fill', accentGlow: false, colors: { accent: '#ea580c' } },
+    mint: { tabStyle: 'gradient', toolbarStyle: 'gradient', gradient: ['#d1fae5', '#a7f3d0', '#99f6e4'], gradientAngle: 120, tabShape: 'pill', activeHighlight: 'underline', accentGlow: false, colors: { accent: '#059669' } },
+    sakura: { tabStyle: 'gradient', toolbarStyle: 'gradient', gradient: ['#fce7f3', '#fff1f2', '#fbcfe8'], gradientAngle: 90, tabShape: 'pill', activeHighlight: 'outline', accentGlow: true, colors: { accent: '#ec4899' } },
+    coffee: { tabStyle: 'gradient', toolbarStyle: 'gradient', gradient: ['#3f2a1d', '#6b4423', '#8a5a36'], gradientAngle: 90, tabShape: 'rounded', activeHighlight: 'fill', accentGlow: false, colors: { accent: '#d6a05c' } },
+    royal: { tabStyle: 'gradient', toolbarStyle: 'gradient', gradient: ['#3b0764', '#6b21a8', '#4c1d95'], gradientAngle: 135, tabShape: 'rounded', activeHighlight: 'underline', accentGlow: true, colors: { accent: '#fbbf24' } },
   };
   function presetValues(p) {
     return { tabStyle: p.tabStyle, toolbarStyle: p.toolbarStyle, gradientFrom: p.gradient[0], gradientVia: p.gradient[1], gradientTo: p.gradient[2],
@@ -1041,7 +1049,16 @@
   $('appearance.preset').addEventListener('change', function () {
     const next = collect();
     const p = STYLE_PRESETS[this.value];
-    if (p) Object.assign(next.appearance, presetValues(p), { roundedTabs: p.tabShape !== 'square' });
+    if (p) {
+      // A style's own colours come with it; those the previous style had set leave with it
+      // (Preset::apply in core/src/style.rs).
+      const old = (STYLE_PRESETS[next.appearance.preset] || {}).colors || {}, own = p.colors || {};
+      ['accent', 'activeOutlineColor', 'tabTextColor', 'activeTabTextColor'].forEach(function (k) {
+        if (own[k]) next.appearance[k] = own[k];
+        else if (old[k] && String(next.appearance[k] || '').toLowerCase() === old[k]) next.appearance[k] = '';
+      });
+      Object.assign(next.appearance, presetValues(p), { roundedTabs: p.tabShape !== 'square' });
+    }
     next.appearance.preset = p ? this.value : '';
     save(next);
   });

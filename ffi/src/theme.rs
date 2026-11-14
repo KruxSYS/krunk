@@ -133,7 +133,8 @@ impl ThemeAppearance {
 #[uniffi::export]
 pub fn theme_with_preset(appearance: ThemeAppearance, id: String) -> ThemeAppearance {
     let Some(p) = style::preset(&id) else { return appearance };
-    let mut a = Appearance { accent: appearance.accent, ..Appearance::default() };
+    // The old style's id too: its own accent leaves with it (0.20.0).
+    let mut a = Appearance { accent: appearance.accent, preset: appearance.preset, ..Appearance::default() };
     p.apply(&mut a);
     ThemeAppearance::from_core(&a)
 }
@@ -523,7 +524,7 @@ mod tests {
             }
         }
         assert_eq!(checked, style::PRESETS.len() * ACCENTS.len() * 4);
-        assert_eq!(style::PRESETS.len(), 12);
+        assert_eq!(style::PRESETS.len(), 20);
     }
 
     #[test]
@@ -534,7 +535,8 @@ mod tests {
             assert_eq!(ids, style::PRESETS.iter().map(|p| p.id).collect::<Vec<_>>());
             assert_eq!(list[0].label, "Classic");
             for p in &list {
-                assert_eq!(p.theme, resolve_theme(of_preset(&p.id, ""), dark, false), "{}", p.id);
+                let chosen = theme_with_preset(default_settings().appearance, p.id.clone());
+                assert_eq!(p.theme, resolve_theme(chosen, dark, false), "{}", p.id);
                 assert_eq!(p.theme.dark, dark);
             }
             // No two previews are the same picture: fill, colours, shape or highlight differ.
@@ -544,9 +546,16 @@ mod tests {
                 }
             }
         }
-        // The accent reaches the previews.
+        // The accent reaches the previews, except where the style brings its own (0.20.0).
         let pink = theme_presets("#db2777".into(), false);
-        assert!(pink.iter().all(|p| p.theme.accent == "#db2777"));
+        for p in &pink {
+            let own = style::preset(&p.id).unwrap().colors.accent;
+            assert_eq!(p.theme.accent, if own.is_empty() { "#db2777" } else { own }, "{}", p.id);
+        }
+        // Leaving such a style takes its accent away again.
+        let neon = theme_with_preset(default_settings().appearance, "neon".into());
+        assert_eq!(neon.accent, "#22f5ff");
+        assert_eq!(theme_with_preset(neon, "classic".into()).accent, "");
     }
 
     #[test]
@@ -616,7 +625,7 @@ mod tests {
             (mono.shape, mono.highlight, mono.toolbar_fill),
             (ThemeShape::Square, ThemeHighlight::Underline, ToolbarFill::Solid)
         );
-        assert_eq!((t("neon", false).shape, t("neon", false).highlight), (ThemeShape::Square, ThemeHighlight::Outline));
+        assert_eq!((t("neon", false).shape, t("neon", false).highlight), (ThemeShape::Rounded, ThemeHighlight::Outline));
     }
 
     #[test]

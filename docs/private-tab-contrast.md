@@ -43,8 +43,16 @@ dragged tab are the theme's own, the same on every style).
 | Forest | 1.00 | 4.60 | 1.00 | 4.60 |
 | Ember | 1.00 | 5.17 | 1.00 | 4.61 |
 | Candy | 1.55 | 5.73 | 1.55 | 4.61 |
-| Frost | 1.29 | 4.97 | 1.29 | 4.61 |
-| Neon | 1.55 | 5.73 | 1.55 | 4.61 |
+| Frost | 1.75 | 5.35 | 1.75 | 4.61 |
+| Neon | 2.38 | 6.89 | 1.76 | 4.61 |
+| Synthwave | 1.55 | 5.73 | 1.55 | 4.61 |
+| Matrix | 2.29 | 6.32 | 1.76 | 4.61 |
+| Graphite | 1.43 | 5.58 | 1.43 | 4.61 |
+| Citrus | 1.08 | 4.84 | 1.08 | 4.61 |
+| Mint | 1.80 | 5.53 | 1.76 | 4.61 |
+| Sakura | 1.68 | 5.13 | 1.68 | 4.61 |
+| Coffee | 1.00 | 4.91 | 1.00 | 4.61 |
+| Royal | 1.19 | 4.72 | 1.19 | 4.61 |
 
 ## Worst case of other looks
 
@@ -206,34 +214,146 @@ lightness, so the title gets the best there is.
 | Candy | dark | hovered, window in the background | `#3a3c42` | `#9ca3af` | 4.34 | `#c4b5fd` | 5.97 |
 | Candy | dark | active, window in the background | `#3b2a5c` | `#6d28d9` | 1.76 | `#a78bfa` | 4.61 |
 | Candy | dark | dragged in from another window | `#2b2d31` | `#6d28d9` | 1.94 | `#a78bfa` | 5.06 |
-| Frost | light | inactive | `#adc9fb` | `#6d28d9` | 4.23 | `#5b21b6` | 5.35 |
-| Frost | light | hovered | `#b9d1fc` | `#6d28d9` | 3.44 | `#5b21b6` | 5.81 |
+| Frost | light | inactive | `#bae6fd` | `#6d28d9` | 5.35 | `#6d28d9` | 5.35 |
+| Frost | light | hovered | `#c4eafd` | `#6d28d9` | 4.26 | `#6d28d9` | 5.59 |
 | Frost | light | active | `#ede9fe` | `#6d28d9` | 5.98 | `#6d28d9` | 5.98 |
-| Frost | light | inactive, window in the background | `#adc9fb` | `#6b7280` | 2.88 | `#5b21b6` | 5.35 |
-| Frost | light | hovered, window in the background | `#b9d1fc` | `#6b7280` | 2.51 | `#5b21b6` | 5.81 |
+| Frost | light | inactive, window in the background | `#bae6fd` | `#6b7280` | 3.64 | `#6d28d9` | 5.35 |
+| Frost | light | hovered, window in the background | `#c4eafd` | `#6b7280` | 3.10 | `#6d28d9` | 5.59 |
 | Frost | light | active, window in the background | `#ede9fe` | `#6d28d9` | 5.98 | `#6d28d9` | 5.98 |
 | Frost | light | dragged in from another window | `#ffffff` | `#6d28d9` | 7.10 | `#6d28d9` | 7.10 |
-| Frost | dark | inactive | `#294971` | `#6d28d9` | 1.29 | `#c4b5fd` | 4.97 |
-| Frost | dark | hovered | `#233e60` | `#6d28d9` | 1.29 | `#c4b5fd` | 5.89 |
+| Frost | dark | inactive | `#bae6fd` | `#6d28d9` | 5.35 | `#6d28d9` | 5.35 |
+| Frost | dark | hovered | `#c4eafd` | `#6d28d9` | 4.26 | `#6d28d9` | 5.59 |
 | Frost | dark | active | `#3b2a5c` | `#6d28d9` | 1.76 | `#a78bfa` | 4.61 |
-| Frost | dark | inactive, window in the background | `#294971` | `#9ca3af` | 3.61 | `#c4b5fd` | 4.97 |
-| Frost | dark | hovered, window in the background | `#233e60` | `#9ca3af` | 2.92 | `#c4b5fd` | 5.89 |
+| Frost | dark | inactive, window in the background | `#bae6fd` | `#9ca3af` | 1.91 | `#6d28d9` | 5.35 |
+| Frost | dark | hovered, window in the background | `#c4eafd` | `#9ca3af` | 1.75 | `#6d28d9` | 5.59 |
 | Frost | dark | active, window in the background | `#3b2a5c` | `#6d28d9` | 1.76 | `#a78bfa` | 4.61 |
 | Frost | dark | dragged in from another window | `#2b2d31` | `#6d28d9` | 1.94 | `#a78bfa` | 5.06 |
-| Neon | light | inactive | `#f3f4f6` | `#6d28d9` | 6.45 | `#6d28d9` | 6.45 |
-| Neon | light | hovered | `#e5e7eb` | `#6d28d9` | 5.73 | `#6d28d9` | 5.73 |
+| Neon | light | inactive | `#170a2e` | `#6d28d9` | 2.64 | `#a78bfa` | 6.89 |
+| Neon | light | hovered | `#140927` | `#6d28d9` | 2.38 | `#a78bfa` | 7.02 |
 | Neon | light | active | `#ede9fe` | `#6d28d9` | 5.98 | `#6d28d9` | 5.98 |
-| Neon | light | inactive, window in the background | `#f3f4f6` | `#6b7280` | 4.39 | `#6d28d9` | 6.45 |
-| Neon | light | hovered, window in the background | `#e5e7eb` | `#6b7280` | 3.90 | `#6d28d9` | 5.73 |
+| Neon | light | inactive, window in the background | `#170a2e` | `#6b7280` | 3.88 | `#a78bfa` | 6.89 |
+| Neon | light | hovered, window in the background | `#140927` | `#6b7280` | 3.38 | `#a78bfa` | 7.02 |
 | Neon | light | active, window in the background | `#ede9fe` | `#6d28d9` | 5.98 | `#6d28d9` | 5.98 |
 | Neon | light | dragged in from another window | `#ffffff` | `#6d28d9` | 7.10 | `#6d28d9` | 7.10 |
-| Neon | dark | inactive | `#1f2023` | `#6d28d9` | 2.29 | `#a78bfa` | 5.98 |
-| Neon | dark | hovered | `#3a3c42` | `#6d28d9` | 1.55 | `#c4b5fd` | 5.97 |
+| Neon | dark | inactive | `#170a2e` | `#6d28d9` | 2.64 | `#a78bfa` | 6.89 |
+| Neon | dark | hovered | `#140927` | `#6d28d9` | 2.38 | `#a78bfa` | 7.02 |
 | Neon | dark | active | `#3b2a5c` | `#6d28d9` | 1.76 | `#a78bfa` | 4.61 |
-| Neon | dark | inactive, window in the background | `#1f2023` | `#9ca3af` | 6.41 | `#a78bfa` | 5.98 |
-| Neon | dark | hovered, window in the background | `#3a3c42` | `#9ca3af` | 4.34 | `#c4b5fd` | 5.97 |
+| Neon | dark | inactive, window in the background | `#170a2e` | `#9ca3af` | 7.38 | `#a78bfa` | 6.89 |
+| Neon | dark | hovered, window in the background | `#140927` | `#9ca3af` | 5.92 | `#a78bfa` | 7.02 |
 | Neon | dark | active, window in the background | `#3b2a5c` | `#6d28d9` | 1.76 | `#a78bfa` | 4.61 |
 | Neon | dark | dragged in from another window | `#2b2d31` | `#6d28d9` | 1.94 | `#a78bfa` | 5.06 |
+| Synthwave | light | inactive | `#f3f4f6` | `#6d28d9` | 6.45 | `#6d28d9` | 6.45 |
+| Synthwave | light | hovered | `#e5e7eb` | `#6d28d9` | 5.73 | `#6d28d9` | 5.73 |
+| Synthwave | light | active | `#ede9fe` | `#6d28d9` | 5.98 | `#6d28d9` | 5.98 |
+| Synthwave | light | inactive, window in the background | `#f3f4f6` | `#6b7280` | 4.39 | `#6d28d9` | 6.45 |
+| Synthwave | light | hovered, window in the background | `#e5e7eb` | `#6b7280` | 3.90 | `#6d28d9` | 5.73 |
+| Synthwave | light | active, window in the background | `#ede9fe` | `#6d28d9` | 5.98 | `#6d28d9` | 5.98 |
+| Synthwave | light | dragged in from another window | `#ffffff` | `#6d28d9` | 7.10 | `#6d28d9` | 7.10 |
+| Synthwave | dark | inactive | `#1f2023` | `#6d28d9` | 2.29 | `#a78bfa` | 5.98 |
+| Synthwave | dark | hovered | `#3a3c42` | `#6d28d9` | 1.55 | `#c4b5fd` | 5.97 |
+| Synthwave | dark | active | `#3b2a5c` | `#6d28d9` | 1.76 | `#a78bfa` | 4.61 |
+| Synthwave | dark | inactive, window in the background | `#1f2023` | `#9ca3af` | 6.41 | `#a78bfa` | 5.98 |
+| Synthwave | dark | hovered, window in the background | `#3a3c42` | `#9ca3af` | 4.34 | `#c4b5fd` | 5.97 |
+| Synthwave | dark | active, window in the background | `#3b2a5c` | `#6d28d9` | 1.76 | `#a78bfa` | 4.61 |
+| Synthwave | dark | dragged in from another window | `#2b2d31` | `#6d28d9` | 1.94 | `#a78bfa` | 5.06 |
+| Matrix | light | inactive | `#06200e` | `#6d28d9` | 2.42 | `#a78bfa` | 6.32 |
+| Matrix | light | hovered | `#051b0c` | `#6d28d9` | 2.29 | `#a78bfa` | 6.60 |
+| Matrix | light | active | `#ede9fe` | `#6d28d9` | 5.98 | `#6d28d9` | 5.98 |
+| Matrix | light | inactive, window in the background | `#06200e` | `#6b7280` | 3.55 | `#a78bfa` | 6.32 |
+| Matrix | light | hovered, window in the background | `#051b0c` | `#6b7280` | 3.07 | `#a78bfa` | 6.60 |
+| Matrix | light | active, window in the background | `#ede9fe` | `#6d28d9` | 5.98 | `#6d28d9` | 5.98 |
+| Matrix | light | dragged in from another window | `#ffffff` | `#6d28d9` | 7.10 | `#6d28d9` | 7.10 |
+| Matrix | dark | inactive | `#06200e` | `#6d28d9` | 2.42 | `#a78bfa` | 6.32 |
+| Matrix | dark | hovered | `#051b0c` | `#6d28d9` | 2.29 | `#a78bfa` | 6.60 |
+| Matrix | dark | active | `#3b2a5c` | `#6d28d9` | 1.76 | `#a78bfa` | 4.61 |
+| Matrix | dark | inactive, window in the background | `#06200e` | `#9ca3af` | 6.77 | `#a78bfa` | 6.32 |
+| Matrix | dark | hovered, window in the background | `#051b0c` | `#9ca3af` | 5.26 | `#a78bfa` | 6.60 |
+| Matrix | dark | active, window in the background | `#3b2a5c` | `#6d28d9` | 1.76 | `#a78bfa` | 4.61 |
+| Matrix | dark | dragged in from another window | `#2b2d31` | `#6d28d9` | 1.94 | `#a78bfa` | 5.06 |
+| Graphite | light | inactive | `#374151` | `#6d28d9` | 1.45 | `#c4b5fd` | 5.58 |
+| Graphite | light | hovered | `#2f3745` | `#6d28d9` | 1.43 | `#c4b5fd` | 6.48 |
+| Graphite | light | active | `#ede9fe` | `#6d28d9` | 5.98 | `#6d28d9` | 5.98 |
+| Graphite | light | inactive, window in the background | `#374151` | `#6b7280` | 2.13 | `#c4b5fd` | 5.58 |
+| Graphite | light | hovered, window in the background | `#2f3745` | `#6b7280` | 1.90 | `#c4b5fd` | 6.48 |
+| Graphite | light | active, window in the background | `#ede9fe` | `#6d28d9` | 5.98 | `#6d28d9` | 5.98 |
+| Graphite | light | dragged in from another window | `#ffffff` | `#6d28d9` | 7.10 | `#6d28d9` | 7.10 |
+| Graphite | dark | inactive | `#374151` | `#6d28d9` | 1.45 | `#c4b5fd` | 5.58 |
+| Graphite | dark | hovered | `#2f3745` | `#6d28d9` | 1.43 | `#c4b5fd` | 6.48 |
+| Graphite | dark | active | `#3b2a5c` | `#6d28d9` | 1.76 | `#a78bfa` | 4.61 |
+| Graphite | dark | inactive, window in the background | `#374151` | `#9ca3af` | 4.05 | `#c4b5fd` | 5.58 |
+| Graphite | dark | hovered, window in the background | `#2f3745` | `#9ca3af` | 3.21 | `#c4b5fd` | 6.48 |
+| Graphite | dark | active, window in the background | `#3b2a5c` | `#6d28d9` | 1.76 | `#a78bfa` | 4.61 |
+| Graphite | dark | dragged in from another window | `#2b2d31` | `#6d28d9` | 1.94 | `#a78bfa` | 5.06 |
+| Citrus | light | inactive | `#fb923c` | `#6d28d9` | 3.13 | `#4c1d95` | 4.84 |
+| Citrus | light | hovered | `#fca259` | `#6d28d9` | 2.60 | `#4c1d95` | 5.45 |
+| Citrus | light | active | `#ede9fe` | `#6d28d9` | 5.98 | `#6d28d9` | 5.98 |
+| Citrus | light | inactive, window in the background | `#fb923c` | `#6b7280` | 2.13 | `#4c1d95` | 4.84 |
+| Citrus | light | hovered, window in the background | `#fca259` | `#6b7280` | 1.89 | `#4c1d95` | 5.45 |
+| Citrus | light | active, window in the background | `#ede9fe` | `#6d28d9` | 5.98 | `#6d28d9` | 5.98 |
+| Citrus | light | dragged in from another window | `#ffffff` | `#6d28d9` | 7.10 | `#6d28d9` | 7.10 |
+| Citrus | dark | inactive | `#fb923c` | `#6d28d9` | 3.13 | `#4c1d95` | 4.84 |
+| Citrus | dark | hovered | `#fca259` | `#6d28d9` | 2.60 | `#4c1d95` | 5.45 |
+| Citrus | dark | active | `#3b2a5c` | `#6d28d9` | 1.76 | `#a78bfa` | 4.61 |
+| Citrus | dark | inactive, window in the background | `#fb923c` | `#9ca3af` | 1.12 | `#4c1d95` | 4.84 |
+| Citrus | dark | hovered, window in the background | `#fca259` | `#9ca3af` | 1.08 | `#4c1d95` | 5.45 |
+| Citrus | dark | active, window in the background | `#3b2a5c` | `#6d28d9` | 1.76 | `#a78bfa` | 4.61 |
+| Citrus | dark | dragged in from another window | `#2b2d31` | `#6d28d9` | 1.94 | `#a78bfa` | 5.06 |
+| Mint | light | inactive | `#a5f3d3` | `#6d28d9` | 5.53 | `#6d28d9` | 5.53 |
+| Mint | light | hovered | `#b4f5d7` | `#6d28d9` | 4.35 | `#6d28d9` | 5.74 |
+| Mint | light | active | `#ede9fe` | `#6d28d9` | 5.98 | `#6d28d9` | 5.98 |
+| Mint | light | inactive, window in the background | `#a5f3d3` | `#6b7280` | 3.76 | `#6d28d9` | 5.53 |
+| Mint | light | hovered, window in the background | `#b4f5d7` | `#6b7280` | 3.20 | `#6d28d9` | 5.74 |
+| Mint | light | active, window in the background | `#ede9fe` | `#6d28d9` | 5.98 | `#6d28d9` | 5.98 |
+| Mint | light | dragged in from another window | `#ffffff` | `#6d28d9` | 7.10 | `#6d28d9` | 7.10 |
+| Mint | dark | inactive | `#a5f3d3` | `#6d28d9` | 5.53 | `#6d28d9` | 5.53 |
+| Mint | dark | hovered | `#b4f5d7` | `#6d28d9` | 4.35 | `#6d28d9` | 5.74 |
+| Mint | dark | active | `#3b2a5c` | `#6d28d9` | 1.76 | `#a78bfa` | 4.61 |
+| Mint | dark | inactive, window in the background | `#a5f3d3` | `#9ca3af` | 1.97 | `#6d28d9` | 5.53 |
+| Mint | dark | hovered, window in the background | `#b4f5d7` | `#9ca3af` | 1.80 | `#6d28d9` | 5.74 |
+| Mint | dark | active, window in the background | `#3b2a5c` | `#6d28d9` | 1.76 | `#a78bfa` | 4.61 |
+| Mint | dark | dragged in from another window | `#2b2d31` | `#6d28d9` | 1.94 | `#a78bfa` | 5.06 |
+| Sakura | light | inactive | `#fbcfe8` | `#6d28d9` | 5.13 | `#6d28d9` | 5.13 |
+| Sakura | light | hovered | `#fcd6eb` | `#6d28d9` | 4.12 | `#6d28d9` | 5.39 |
+| Sakura | light | active | `#ede9fe` | `#6d28d9` | 5.98 | `#6d28d9` | 5.98 |
+| Sakura | light | inactive, window in the background | `#fbcfe8` | `#6b7280` | 3.49 | `#6d28d9` | 5.13 |
+| Sakura | light | hovered, window in the background | `#fcd6eb` | `#6b7280` | 2.98 | `#6d28d9` | 5.39 |
+| Sakura | light | active, window in the background | `#ede9fe` | `#6d28d9` | 5.98 | `#6d28d9` | 5.98 |
+| Sakura | light | dragged in from another window | `#ffffff` | `#6d28d9` | 7.10 | `#6d28d9` | 7.10 |
+| Sakura | dark | inactive | `#fbcfe8` | `#6d28d9` | 5.13 | `#6d28d9` | 5.13 |
+| Sakura | dark | hovered | `#fcd6eb` | `#6d28d9` | 4.12 | `#6d28d9` | 5.39 |
+| Sakura | dark | active | `#3b2a5c` | `#6d28d9` | 1.76 | `#a78bfa` | 4.61 |
+| Sakura | dark | inactive, window in the background | `#fbcfe8` | `#9ca3af` | 1.83 | `#6d28d9` | 5.13 |
+| Sakura | dark | hovered, window in the background | `#fcd6eb` | `#9ca3af` | 1.68 | `#6d28d9` | 5.39 |
+| Sakura | dark | active, window in the background | `#3b2a5c` | `#6d28d9` | 1.76 | `#a78bfa` | 4.61 |
+| Sakura | dark | dragged in from another window | `#2b2d31` | `#6d28d9` | 1.94 | `#a78bfa` | 5.06 |
+| Coffee | light | inactive | `#8a5a36` | `#6d28d9` | 1.01 | `#ede9fe` | 4.91 |
+| Coffee | light | hovered | `#754d2e` | `#6d28d9` | 1.00 | `#ede9fe` | 6.19 |
+| Coffee | light | active | `#ede9fe` | `#6d28d9` | 5.98 | `#6d28d9` | 5.98 |
+| Coffee | light | inactive, window in the background | `#8a5a36` | `#6b7280` | 1.20 | `#ede9fe` | 4.91 |
+| Coffee | light | hovered, window in the background | `#754d2e` | `#6b7280` | 1.18 | `#ede9fe` | 6.19 |
+| Coffee | light | active, window in the background | `#ede9fe` | `#6d28d9` | 5.98 | `#6d28d9` | 5.98 |
+| Coffee | light | dragged in from another window | `#ffffff` | `#6d28d9` | 7.10 | `#6d28d9` | 7.10 |
+| Coffee | dark | inactive | `#8a5a36` | `#6d28d9` | 1.01 | `#ede9fe` | 4.91 |
+| Coffee | dark | hovered | `#754d2e` | `#6d28d9` | 1.00 | `#ede9fe` | 6.19 |
+| Coffee | dark | active | `#3b2a5c` | `#6d28d9` | 1.76 | `#a78bfa` | 4.61 |
+| Coffee | dark | inactive, window in the background | `#8a5a36` | `#9ca3af` | 2.29 | `#ede9fe` | 4.91 |
+| Coffee | dark | hovered, window in the background | `#754d2e` | `#9ca3af` | 2.02 | `#ede9fe` | 6.19 |
+| Coffee | dark | active, window in the background | `#3b2a5c` | `#6d28d9` | 1.76 | `#a78bfa` | 4.61 |
+| Coffee | dark | dragged in from another window | `#2b2d31` | `#6d28d9` | 1.94 | `#a78bfa` | 5.06 |
+| Royal | light | inactive | `#6b21a8` | `#6d28d9` | 1.22 | `#c4b5fd` | 4.72 |
+| Royal | light | hovered | `#5b1c8f` | `#6d28d9` | 1.19 | `#c4b5fd` | 5.66 |
+| Royal | light | active | `#ede9fe` | `#6d28d9` | 5.98 | `#6d28d9` | 5.98 |
+| Royal | light | inactive, window in the background | `#6b21a8` | `#6b7280` | 1.80 | `#c4b5fd` | 4.72 |
+| Royal | light | hovered, window in the background | `#5b1c8f` | `#6b7280` | 1.72 | `#c4b5fd` | 5.66 |
+| Royal | light | active, window in the background | `#ede9fe` | `#6d28d9` | 5.98 | `#6d28d9` | 5.98 |
+| Royal | light | dragged in from another window | `#ffffff` | `#6d28d9` | 7.10 | `#6d28d9` | 7.10 |
+| Royal | dark | inactive | `#6b21a8` | `#6d28d9` | 1.22 | `#c4b5fd` | 4.72 |
+| Royal | dark | hovered | `#5b1c8f` | `#6d28d9` | 1.19 | `#c4b5fd` | 5.66 |
+| Royal | dark | active | `#3b2a5c` | `#6d28d9` | 1.76 | `#a78bfa` | 4.61 |
+| Royal | dark | inactive, window in the background | `#6b21a8` | `#9ca3af` | 3.43 | `#c4b5fd` | 4.72 |
+| Royal | dark | hovered, window in the background | `#5b1c8f` | `#9ca3af` | 2.95 | `#c4b5fd` | 5.66 |
+| Royal | dark | active, window in the background | `#3b2a5c` | `#6d28d9` | 1.76 | `#a78bfa` | 4.61 |
+| Royal | dark | dragged in from another window | `#2b2d31` | `#6d28d9` | 1.94 | `#a78bfa` | 5.06 |
 
 ## Other looks
 

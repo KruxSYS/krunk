@@ -262,7 +262,7 @@ module.exports = (h) => {
     console.log('0.15.0 theme: Settings style card');
     const defaults = JSON.parse(fs.readFileSync(path.join(__dirname, 'default-settings.json'), 'utf8'));
     const presets = rustPresets();
-    check(Object.keys(presets).length === 12, 'read the twelve presets from core/src/style.rs (' + Object.keys(presets).join(', ') + ')');
+    check(Object.keys(presets).length === 20, 'read the twenty presets from core/src/style.rs (' + Object.keys(presets).join(', ') + ')');
     for (const theme of ['light', 'dark']) {
       const { page, errors, external } = await openPage(browser, 'https://krunk.invalid/settings.html#appearance', { width: 1000, height: 1400 }, 1, styleSettingsMock,
         Object.assign({}, defaults, { theme: theme }));

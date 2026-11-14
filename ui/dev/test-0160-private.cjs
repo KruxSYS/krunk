@@ -97,8 +97,8 @@ module.exports = (h) => {
   // ------------------------------------------------- every look, both themes, every state
   async function testPrivateTabContrast(browser) {
     console.log('0.16.0 private tabs: title contrast on every style');
-    check(CASES.length >= 12 && CASES.slice(0, 12).map((c) => c.appearance.preset).join() === 'classic,sunset,ocean,glass,mono,aurora,midnight,forest,ember,candy,frost,neon',
-      'the fixture from core holds the twelve built-in styles and ' + (CASES.length - 12) + ' other looks');
+    check(CASES.length >= 20 && CASES.slice(0, 20).map((c) => c.appearance.preset).join() === 'classic,sunset,ocean,glass,mono,aurora,midnight,forest,ember,candy,frost,neon,synthwave,matrix,graphite,citrus,mint,sakura,coffee,royal',
+      'the fixture from core holds the twenty built-in styles and ' + (CASES.length - 20) + ' other looks');
     for (const theme of ['light', 'dark']) {
       const o = await openShell(browser);
       const page = o.page;
@@ -137,7 +137,7 @@ module.exports = (h) => {
           await activate(page, 2);
           await settle(page);
           seen['active' + win] = state('active' + win, await measure(o, tabSel(2)), want.activeFg, model.active);
-          if (focused && ['Classic', 'Sunset', 'Midnight', 'Glass'].includes(c.name)) await shot(page, 'private-' + c.appearance.preset + '-' + theme + '.png');
+          if (focused && (process.env.SHOT_ALL || ['Classic', 'Sunset', 'Midnight', 'Glass'].includes(c.name))) await shot(page, 'private-' + c.appearance.preset + '-' + theme + '.png');
           await activate(page, 3);
         }
         await focus(page, true);

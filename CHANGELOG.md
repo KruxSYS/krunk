@@ -3,6 +3,19 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.20.0 — 2026-11-14
+
+- **Frost and Neon look like their names.** Settings → Appearance → Tab and toolbar style:
+  - **Frost** is now icy: pale blue-white bars, pill tabs, a white outline and a cold blue glow
+    around the active tab (it was the Glass style with pill tabs).
+  - **Neon** is now a neon sign: near-black bars, a hot pink outline with a cyan glow around
+    the active tab (it was a plain style with an outline).
+- **Eight new styles:** Synthwave, Matrix, Graphite, Citrus, Mint, Sakura, Coffee and Royal.
+- **A style can bring its colours.** Frost, Neon and several of the new styles set the accent
+  colour (Frost, Neon and Synthwave also the outline's). Choosing another style afterwards takes those colours away again; colours you
+  chose yourself are kept. If you used Frost or Neon before, your look stays as it was:
+  choose the style again to get the new one.
+
 ## 0.19.0 — 2026-11-13
 
 - **WASM memory inspector.** ⋮ → **WASM memory inspector** opens `krunk://wasm` for the tab
