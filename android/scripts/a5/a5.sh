@@ -43,7 +43,9 @@ rows() { SU "sqlite3 $DB \"SELECT count(*) FROM download_items WHERE search LIKE
 Q="'\\''"
 notif() { A "dumpsys notification --noredact" 2> /dev/null | grep -A40 "pkg=$PKG" ; }   # Krunk's notifications as the system has them
 downloads_screen() { menu && tapui text "Downloads" 3; }
-confirm_download() { waitfor text "Download" 10 || return 1; shot "$1-question"; tapui text "Download" "${2:-3}"; }
+confirm_download() { waitfor text "Download this file?" 12 || { missing "Download this file?"; return 1; }; shot "$1-question"; tapui text "Download" "${2:-3}"; }
+go() { tapui desc "Edit address" 2 && type_text "${1#http://}" && A "input keyevent KEYCODE_ENTER" && sleep "${2:-8}"; }   # type an address into the tab on screen
+type_text() { A "input text '$1'"; sleep 1; }
 linktap() { tapui text "$1" "${2:-3}" --contains; }   # a link of the test page by its text
 home() { view "$B/index.html?$1" 6; waitfor text "Krunk a5 tests" 20 --contains || bad "the test index did not load"; }
 
@@ -148,7 +150,7 @@ t_noresume() {
   confirm_download noresume 4
   downloads_screen; shot noresume-running; nodes noresume-running
   dump; check "no Pause for a download that cannot be continued" '! has desc "Pause" --contains && ! has text "Pause"'
-  check "the screen says why" 'has text "cannot be paused" --contains || has text "can.t be paused" --contains'
+  check "the screen says why" 'has text "cannot be paused" --contains'
   local i; for i in $(seq 1 20); do [ -n "$(dlsha stream.bin)" ] && break; sleep 2; done
   check "it still completes with the right hash" '[ "$(dlsha stream.bin)" = "$(sha 3000000)" ]'
   # a stream that breaks: failed, with Restart; never a short file in Downloads
@@ -198,11 +200,33 @@ t_open() {
 
 t_private() {
   dlrm; launch 8; front private || return
-  menu; tapui text "New private tab" 4
+  menu; tapui text "New private tab" 3
+  [ -z "$REL" ] && A "setprop debug.krunk.show_private 1"
   local m; m=$(now)
-  view "$B/index.html?p0" 2   # a VIEW intent opens a normal tab; the private one is driven by its address bar instead
+  go "$B/login?priv" 8
+  go "$B/private/secret.bin?size=400000&rate=100" 4
+  waitfor text "Download this file?" 12; dump; nodes private-question
+  check "the question says what a private download leaves" 'has text "Krunk forgets this download" --contains'
+  tapui text "Download" 2
+  check "no row while it runs" '[ "$(rows secret)" = 0 ]'
+  menu; tapui text "Downloads" 3; dump; nodes private-running
+  check "listed (marked private) while it runs" 'has text "secret.bin" --contains && has text "Private" --contains'
+  local i; for i in $(seq 1 15); do [ -n "$(dlsha secret.bin)" ] && break; sleep 2; done
+  sleep 2; dump; nodes private-done
+  check "the file is the real file, fetched with the private tab's cookie" '[ "$(dlsha secret.bin)" = "$(sha 400000)" ] && since "$m" | grep "GET /private/secret.bin" | grep -q "cookie=yes"'
+  check "gone from the list when done" '! has text "secret.bin" --contains'
+  check "no row in the database" '[ "$(rows secret)" = 0 ]'
+  SU "grep -c secret $DB $DB-wal 2>/dev/null" > "$EV/private-grep-db.txt" 2>&1
+  check "the name is nowhere in the database files" '! grep -qE ":[1-9]" "$EV/private-grep-db.txt"'
+  SU "ls /data/data/$PKG/files/downloads-part/ 2>/dev/null | wc -l" > "$EV/private-parts.txt"
+  check "no part file is left" '[ "$(tr -d "\r\n " < "$EV/private-parts.txt")" = 0 ]'
   A "input keyevent KEYCODE_BACK"; sleep 1
-  skip "private: driven by hand below when the address bar helper is not available"
+  notif > "$EV/private-notification-before.txt"
+  # close the private tabs: the notification goes
+  tapui desc "Tabs" 2 --contains; dump; nodes private-tabs
+  tapui text "Private" 2 --contains; tapui desc "More" 2 --contains && tapui text "Close all private tabs" 2 && { dump; has text "Close" && tapui text "Close" 2; }
+  sleep 2; notif > "$EV/private-notification-after.txt"
+  check "its notification is gone once the private tabs are closed" '! grep -q "secret.bin" "$EV/private-notification-after.txt"'
   save private; stop_clean
 }
 
@@ -259,6 +283,92 @@ t_fullscreen() {
   shot fullscreen-restored; dump
   check "after rotating back the toolbar is there in portrait" 'has desc "Menu"'
   save fullscreen; stop_clean
+}
+
+t_notify() { # after perms: allow notifications on the site page, then show one and tap it
+  launch 8; front notify || return
+  view "$B/perms.html?n1" 8; waitfor text "Permissions" 20
+  tapui text "Notifications" 3
+  dump; has text "Allow" && { shot notify-prompt; tapui text "Allow" 3; }
+  dump; has text "Allow" --contains && has text "Krunk" --contains && tapui text "Allow" 3   # Android's own dialog
+  sleep 2; dump; nodes notify-asked
+  check "the page has the notification permission" 'has text "notif: granted" --contains'
+  tapui text "Show a notification" 4
+  notif > "$EV/notify-shown.txt"; shot notify-page
+  check "an Android notification with the page's text exists" 'grep -q "Hello from the test page" "$EV/notify-shown.txt"'
+  check "it names the site" 'grep -q "10.250.136.3" "$EV/notify-shown.txt"'
+  # another tab on top, then tap the notification
+  view "https://example.com/?n2" 8
+  A "cmd statusbar expand-notifications"; sleep 2; shot notify-shade
+  WIN=1 dump; WIN=1 tapui text "Krunk a5" 4 --contains
+  A "cmd statusbar collapse"; sleep 2
+  dump; nodes notify-after-tap; shot notify-after-tap
+  check "the tap brings the site's tab back" 'fg notify > /dev/null && has text "Permissions"'
+  check "the page heard the click" 'has text "show: clicked" --contains'
+  save notify; stop_clean
+}
+
+t_permchange() { # after perms: flip the stored answers in Settings and see the page follow
+  launch 8; front permchange || return
+  privacy; tapto text "Site permissions" 3; shot permchange-sites; dump; nodes permchange-sites
+  check "the site is listed with its answers" 'has text "10.250.136.3" --contains'
+  tapui text "10.250.136.3" 3 --contains; shot permchange-site; dump; nodes permchange-site
+  skip "permchange: the Allow/Deny/Ask controls are tapped by hand in the burst (their layout is read from the node list first)"
+  save permchange
+}
+
+t_sitedata() {
+  launch 8; front sitedata || return
+  view "$B/storage.html?s1" 8; waitfor text "Store data" 20
+  tapui text "Store data" 4; dump
+  check "the page stored a cookie and localStorage" 'has text "cookie: present" && has text "localStorage: present"'
+  sleep 5
+  privacy; tapto text "Site data" 5; waitfor text "10.250.136.3" 25 --contains
+  shot sitedata-list; dump; nodes sitedata-list
+  check "the site is listed" 'has text "10.250.136.3" --contains'
+  check "with a cookie count" 'has text "cookie" --contains'
+  check "the engine answered (no fallback note)" '! has text "could not ask the browser engine" --contains'
+  tapui desc "Clear data of 10.250.136.3" 3 --contains
+  shot sitedata-confirm; dump; nodes sitedata-confirm
+  check "the confirmation names the site and offers the permissions" 'has text "Clear data of 10.250.136.3?" && has text "Also reset its permissions"'
+  tapui text "Clear data" 6
+  shot sitedata-cleared; dump; nodes sitedata-cleared
+  A "input keyevent KEYCODE_BACK"; sleep 1; A "input keyevent KEYCODE_BACK"; sleep 2
+  view "$B/storage.html?s2" 8; waitfor text "Store data" 20; dump; nodes sitedata-page-after; shot sitedata-page-after
+  check "the page no longer sees its cookie or its storage" 'has text "cookie: none" && has text "localStorage: none"'
+  save sitedata; stop_clean
+}
+
+t_history() { # F-54 / F-59: screens keep their place; the page is not rebuilt
+  launch 8; front history || return
+  local n; for n in 1 2 3; do view "$B/index.html?h$n" 5; done
+  menu; tapui text "History" 3; shot history-list; dump; nodes history-list
+  check "history lists today's visits" 'has text "Today" --contains'
+  A "input keyevent KEYCODE_BACK"; sleep 2
+  # settings scrolled, About on top, back: still scrolled
+  privacy; dump; local before; before=$(echo "$UI" | python3 -I "$HERE/uix.py" find text "Block ads and trackers" | cut -d" " -f2)
+  tapto text "About Krunk" 3 --contains; A "input keyevent KEYCODE_BACK"; sleep 2; dump
+  check "Settings is still scrolled after About was on top" '! has text "Search engine" || [ -n "$before" ]'
+  shot history-settings-back
+  A "input keyevent KEYCODE_BACK"; sleep 2; dump; shot history-page-back
+  check "back on the page with its toolbar" 'has desc "Menu" && has text "Krunk a5 tests" --contains'
+  # typing still reaches the page chrome after a covered screen (focus / keyboard)
+  go "$B/storage.html?h9" 8; dump
+  check "the address bar works after returning" 'has text "Store data"'
+  save history; stop_clean
+}
+
+t_pointer() { # recorded, never a failure: what requestPointerLock() does with a mouse
+  launch 8; front pointer || return
+  view "$B/pointerlock.html?p1" 8; shot pointer-before; dump; nodes pointer-before
+  A "input mouse tap 540 900"; sleep 2
+  dump; nodes pointer-after-click; shot pointer-locked
+  A "input mouse motionevent MOVE 600 1000" 2> /dev/null; A "input mouse swipe 540 900 800 1200 400" 2> /dev/null; sleep 2
+  dump; nodes pointer-after-move; shot pointer-moved
+  echo "$UI" | python3 -I "$HERE/uix.py" list | grep -iE "lock|movement|pointer" > "$EV/pointer-result.txt"
+  cat "$EV/pointer-result.txt"
+  A "input keyevent KEYCODE_BACK"; sleep 2; dump; nodes pointer-after-back
+  save pointer; stop_clean
 }
 
 [ $# -gt 0 ] || { sed -n '2,24p' "$0"; exit 2; }
