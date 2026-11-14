@@ -482,6 +482,22 @@ class VaultControllerTest {
     }
 
     @Test
+    fun aKeyStoreThatOnlyFailedLeavesTheVaultLockedNotLost() = runTest {
+        val vault = controller()
+        vault.create(PASSWORD)
+        vault.lock()
+        backend.keyUnavailable = true
+        failureOf<VaultFailure.KeyUnavailable> { vault.unlock(PASSWORD) }
+        // No "this vault cannot be opened, delete it": nothing is known about the key.
+        assertEquals(VaultState.LOCKED, vault.state.value)
+        vault.refresh()
+        assertEquals(VaultState.LOCKED, vault.state.value)
+        backend.keyUnavailable = false
+        vault.unlock(PASSWORD)
+        assertEquals(VaultState.UNLOCKED, vault.state.value)
+    }
+
+    @Test
     fun anUnlockThatFindsTheKeyUnusableIsKeyLost() = runTest {
         val vault = controller()
         vault.create(PASSWORD)

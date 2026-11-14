@@ -49,6 +49,9 @@ class FakeVaultBackend : VaultBackend {
     /** The device key is gone: [unlock] and [unlockWithKey] throw [VaultFailure.KeyLost]. */
     var keyLost = false
 
+    /** The key store does not answer: [unlock] throws [VaultFailure.KeyUnavailable]. */
+    var keyUnavailable = false
+
     /** When set, [create] throws it and makes nothing. */
     var failCreate: VaultFailure? = null
 
@@ -81,6 +84,7 @@ class FakeVaultBackend : VaultBackend {
     override fun unlock(password: String, now: Long) {
         val expected = this.password ?: throw VaultFailure.NoVault()
         if (keyLost) throw VaultFailure.KeyLost("fake: no device key")
+        if (keyUnavailable) throw VaultFailure.KeyUnavailable("fake: key store silent")
         val wait = retryWaitMs(now)
         if (wait > 0) throw VaultFailure.RateLimited(wait)
         if (password != expected) {
