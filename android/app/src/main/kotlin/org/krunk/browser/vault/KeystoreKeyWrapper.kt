@@ -60,8 +60,10 @@ class WrapFailure(val kind: WrapFailureKind, val detail: String) : Exception("$k
 
 /**
  * Wraps the vault key (already sealed with the vault password by the core) with a key that
- * never leaves this device's key store, so a copied vault file cannot even be guessed at
- * elsewhere. The key needs no user authentication: the vault password is what guards the vault.
+ * never leaves this device's key store, so the logins in a copied vault file cannot be read
+ * elsewhere, not even with the right password. (The password itself can still be guessed at
+ * from a copied file: its check record is sealed by the password's key alone. Argon2id is what
+ * slows that.) The key needs no user authentication: the vault password guards the vault.
  *
  * Blob: version byte 0x01, 12-byte IV, ciphertext with the GCM tag.
  *
@@ -138,14 +140,20 @@ internal object AndroidKeys {
         keyStore.getKey(alias, null) as? SecretKey ?: throw KeyFailure.Missing()
     }
 
+    /**
+     * Is there a key under [alias]? A key store that cannot be asked counts as **yes**: "no"
+     * leads the user to "this vault cannot be opened, delete it", and that must be said only
+     * when the key store itself says the key is gone. If the key really is gone, the unlock
+     * finds out.
+     */
     fun exists(alias: String): Boolean = try {
         KeyStore.getInstance(PROVIDER).apply { load(null) }.containsAlias(alias)
     } catch (_: GeneralSecurityException) {
-        false
+        true
     } catch (_: IOException) {
-        false
+        true
     } catch (_: RuntimeException) {
-        false
+        true
     }
 
     fun delete(alias: String) {

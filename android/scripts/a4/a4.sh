@@ -15,6 +15,8 @@
 #     grace      lock after leaving Krunk: back within 30 s still open, later locked
 #     keylost    (debug build) the Keystore key removed: the "cannot be opened" screen, delete
 #     fixture    (debug build) writes the vault file and its inner twin for the format test
+#     clip       copy a password: pasted at once, gone from the clipboard after 30 s
+#     finger     whether a fingerprint can be simulated here (recorded, never a failure)
 #     nobio      no fingerprint enrolled: the switch is disabled with its reason
 #   Last, because they can wedge the emulator's display:
 #     config     rotation with the unlock dialog open, dark mode
@@ -272,6 +274,28 @@ t_screen() {
   stop_clean
 }
 
+t_clip() { # copy a password: it can be pasted, and 30 s later the clipboard no longer holds it
+  to_vault; front clip || return
+  tapui text "alice" 3; tapui desc "Copy password" 2
+  dump; has text "Close" && tapui text "Close" 1
+  A "input keyevent KEYCODE_BACK"; sleep 2
+  tapui desc "Edit address" 2; A "input keyevent 279"; sleep 2; dump
+  check "the copied password can be pasted at once" 'has text "s3cret" --contains'
+  shot clip-pasted
+  A "input keycombination 113 29"; A "input keyevent KEYCODE_DEL"; sleep 34
+  A "input keyevent 279"; sleep 2; dump
+  check "35 s later the clipboard no longer holds it" '! has text "s3cret" --contains'
+  shot clip-cleared
+  A "input keycombination 113 29"; A "input keyevent KEYCODE_DEL"; A "input keyevent KEYCODE_BACK"; A "input keyevent KEYCODE_BACK"
+  stop_clean
+}
+
+t_finger() { # can a fingerprint be simulated on this device at all? (recorded either way)
+  local out; out=$(T "$E" adb emu finger touch 1 2>&1 | head -2)
+  echo "adb emu finger touch 1 -> $out"
+  if echo "$out" | grep -qi "error\|KO\|could not"; then skip "fingerprint simulation (no emulator console from here: $out)"; else ok "the emulator console took 'finger touch'"; fi
+}
+
 t_timer() { # 1 minute
   to_vault; front timer || return
   vault_settings; tapui text "1 minute" 2 --contains; A "input keyevent KEYCODE_BACK"; sleep 1
@@ -359,6 +383,11 @@ t_config() {
   A "settings put system user_rotation 0"; sleep 4
   A "cmd uimode night yes"; sleep 4; dump; check "dark mode: still the vault screen" 'has text "Vault password"'
   A "cmd uimode night no"; sleep 3
+  A "wm density 480"; sleep 5; dump   # 1080 px at 480 dpi = 360 dp wide
+  check "360 dp wide: the vault screen still shows its field and button" 'has text "Vault password" && has text "Unlock"'
+  shotblack config-360dp
+  echo "$UI" | python3 -I "$HERE/uix.py" list > "$EV/config-360dp-nodes.txt"
+  A "wm density reset"; sleep 4
   stop_clean
 }
 

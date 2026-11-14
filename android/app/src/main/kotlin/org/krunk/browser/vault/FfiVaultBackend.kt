@@ -133,6 +133,7 @@ class FfiVaultBackend(dir: File, wrapper: VaultKeyWrapper) : VaultBackend {
             is VaultFfiException.RateLimited -> VaultFailure.RateLimited(e.waitMs.toLong())
             is VaultFfiException.WeakPassword -> VaultFailure.WeakPassword()
             is VaultFfiException.KeyLost -> VaultFailure.KeyLost(e.detail)
+            is VaultFfiException.KeyUnavailable -> VaultFailure.KeyUnavailable(e.detail)
             is VaultFfiException.Corrupt -> VaultFailure.Corrupt(e.detail)
             is VaultFfiException.Locked -> VaultFailure.Locked()
             is VaultFfiException.NoVault -> VaultFailure.NoVault()

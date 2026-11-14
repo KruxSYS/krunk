@@ -27,6 +27,10 @@ const STATE_FILE: &str = "state.json";
 
 // ------------------------------------------------------------------------------ key wrapper
 
+/// How a wrapper failure that says nothing about the key itself starts (see [`WrapError::Failed`]
+/// and `VaultFfiError::KeyUnavailable`): the core carries a wrapper's failure as text only.
+const WRAP_FAILED: &str = "device key failed: ";
+
 /// Why the device key could not wrap or unwrap.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Error)]
 pub enum WrapError {
@@ -43,7 +47,7 @@ impl fmt::Display for WrapError {
         match self {
             WrapError::KeyMissing { detail } => write!(f, "device key missing: {detail}"),
             WrapError::KeyInvalidated { detail } => write!(f, "device key invalidated: {detail}"),
-            WrapError::Failed { detail } => write!(f, "device key failed: {detail}"),
+            WrapError::Failed { detail } => write!(f, "{WRAP_FAILED}{detail}"),
         }
     }
 }
@@ -102,6 +106,11 @@ pub enum VaultFfiError {
     KeyLost {
         detail: String,
     },
+    /// The device's key store failed without saying that the key is gone (it did not answer,
+    /// or the wrapped key did not verify). Nothing is known about the vault: try again.
+    KeyUnavailable {
+        detail: String,
+    },
     /// The vault file failed authentication or does not parse.
     Corrupt {
         detail: String,
@@ -135,6 +144,7 @@ impl fmt::Display for VaultFfiError {
                 write!(f, "the vault password must be at least {} characters", core_vault::MIN_MASTER_LEN)
             }
             VaultFfiError::KeyLost { detail } => write!(f, "this device's vault key is not usable: {detail}"),
+            VaultFfiError::KeyUnavailable { detail } => write!(f, "this device's key store did not work: {detail}"),
             VaultFfiError::Corrupt { detail } => write!(f, "the vault file is damaged: {detail}"),
             VaultFfiError::Locked => write!(f, "the vault is locked"),
             VaultFfiError::NoVault => write!(f, "there is no vault"),
@@ -155,6 +165,9 @@ impl From<VaultError> for VaultFfiError {
             VaultError::WrongPassword => VaultFfiError::WrongPassword,
             VaultError::RateLimited { wait_ms } => VaultFfiError::RateLimited { wait_ms },
             VaultError::Corrupt(detail) => VaultFfiError::Corrupt { detail },
+            // A key store that failed without saying the key is gone may work at the next try:
+            // that must never be shown as "this vault cannot be opened, delete it".
+            VaultError::Wrap(detail) if detail.starts_with(WRAP_FAILED) => VaultFfiError::KeyUnavailable { detail },
             VaultError::Wrap(detail) => VaultFfiError::KeyLost { detail },
             VaultError::WeakPassword => VaultFfiError::WeakPassword,
             VaultError::InvalidEntry(detail) => VaultFfiError::InvalidEntry { detail: detail.to_string() },
@@ -551,9 +564,19 @@ impl KrunkVault {
         let _turn = self.turn();
         let path = self.vault_path();
         let locks = {
-            let inner = self.inner();
+            let mut inner = self.inner();
             if !core_vault::exists(&path) {
                 return Err(VaultFfiError::NoVault);
+            }
+            // Open already (two unlocks in a row): nothing to do, and the open vault is not
+            // replaced by a copy read from the file a moment ago.
+            if inner.vault.is_some() {
+                return Ok(());
+            }
+            // A failure recorded while the clock was ahead must not hold the vault shut until
+            // real time catches up: at most one delay is served from now.
+            if inner.state.rate.last_failure_ms > now {
+                inner.state.rate.last_failure_ms = now;
             }
             let wait_ms = inner.state.rate.wait_ms(now);
             if wait_ms > 0 {
@@ -630,7 +653,10 @@ impl KrunkVault {
         vault.change_password(&old, &new, self.wrapper())?;
         inner.used_since = true;
         inner.state.bio = None;
-        self.persist(&inner).map_err(|e| VaultFfiError::Io { detail: e.to_string() })
+        // The password is changed once the vault file is written; the side file is best effort
+        // (a blob that stayed behind holds the old key and opens nothing).
+        let _ = self.persist(&inner);
+        Ok(())
     }
 
     pub fn summaries(&self) -> VaultResult<Vec<VaultEntrySummary>> {

@@ -55,6 +55,8 @@ fun failureText(failure: Throwable): VaultText = when (failure) {
 
     is VaultFailure.KeyLost -> VaultText(R.string.vault_error_key_lost)
 
+    is VaultFailure.KeyUnavailable -> VaultText(R.string.vault_error_key_unavailable)
+
     is VaultFailure.Corrupt -> VaultText(R.string.vault_error_corrupt)
 
     is VaultFailure.Io -> VaultText(R.string.vault_error_io)

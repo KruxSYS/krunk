@@ -128,6 +128,12 @@ sealed class VaultFailure(detail: String) : Exception(detail) {
     /** The Keystore key that wraps the vault key is gone or unusable on this device. */
     class KeyLost(detail: String) : VaultFailure(detail)
 
+    /**
+     * The key store failed without saying the key is gone (it did not answer, or the wrapped
+     * key did not verify). Nothing is known about the vault; the next try may work.
+     */
+    class KeyUnavailable(detail: String) : VaultFailure(detail)
+
     class Corrupt(detail: String) : VaultFailure(detail)
 
     class Locked : VaultFailure("vault is locked")

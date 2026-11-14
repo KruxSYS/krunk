@@ -790,7 +790,7 @@ fn the_exported_constructor_wraps_with_the_foreign_key_wrapper() {
     wrapper.throws.store(true, Ordering::SeqCst);
     assert_eq!(
         v.unlock(s(PW), T0),
-        Err(VaultFfiError::KeyLost { detail: s("device key failed: java.lang.IllegalStateException") })
+        Err(VaultFfiError::KeyUnavailable { detail: s("device key failed: java.lang.IllegalStateException") })
     );
     wrapper.throws.store(false, Ordering::SeqCst);
     wrapper.missing.store(false, Ordering::SeqCst);
@@ -1073,4 +1073,68 @@ fn platform_vaults_as_written_do_not_open_off_their_machine() {
             "{written}: untouched"
         );
     }
+}
+
+/// A key store in the three states Kotlin can report.
+struct ForeignFailing(Mutex<Option<WrapError>>);
+
+impl VaultKeyWrapper for ForeignFailing {
+    fn protect(&self, data: Vec<u8>) -> Result<Vec<u8>, WrapError> {
+        Ok(xor(&data))
+    }
+    fn unprotect(&self, data: Vec<u8>) -> Result<Vec<u8>, WrapError> {
+        match self.0.lock().unwrap().clone() {
+            Some(e) => Err(e),
+            None => Ok(xor(&data)),
+        }
+    }
+}
+
+#[test]
+fn a_key_store_that_only_failed_is_not_a_lost_key() {
+    let dir = TestDir::new("key-unavailable");
+    let wrapper = Arc::new(ForeignFailing(Mutex::new(None)));
+    let v = KrunkVault::new(dir.dir().to_string_lossy().into_owned(), wrapper.clone());
+    v.create(s(PW), T0).unwrap();
+    v.lock();
+    let before = std::fs::read(dir.file()).unwrap();
+
+    // The key store did not answer: nothing is known about the key. Not "key lost".
+    *wrapper.0.lock().unwrap() = Some(WrapError::Failed { detail: s("KeyStoreException") });
+    assert!(matches!(v.unlock(s(PW), T0), Err(VaultFfiError::KeyUnavailable { .. })));
+    // The key store says the key is gone or dead: key lost.
+    *wrapper.0.lock().unwrap() = Some(WrapError::KeyMissing { detail: s("no key") });
+    assert!(matches!(v.unlock(s(PW), T0), Err(VaultFfiError::KeyLost { .. })));
+    *wrapper.0.lock().unwrap() = Some(WrapError::KeyInvalidated { detail: s("invalidated") });
+    assert!(matches!(v.unlock(s(PW), T0), Err(VaultFfiError::KeyLost { .. })));
+    assert_eq!(std::fs::read(dir.file()).unwrap(), before, "the file is never touched");
+    assert_eq!(v.retry_wait_ms(T0), 0, "none of them counts as a wrong password");
+    // It works again: so does the vault.
+    *wrapper.0.lock().unwrap() = None;
+    v.unlock(s(PW), T0).unwrap();
+}
+
+#[test]
+fn a_clock_that_was_ahead_does_not_hold_the_vault_shut() {
+    let dir = TestDir::new("clock-back");
+    let v = dir.open();
+    v.create(s(PW), T0).unwrap();
+    v.lock();
+    // One wrong password while the clock is a day ahead.
+    let ahead = T0 + 86_400_000;
+    assert_eq!(v.unlock(s("wrong password"), ahead), Err(VaultFfiError::WrongPassword));
+    // The clock is put right: the one-second delay is served from now, not for a day.
+    assert!(matches!(v.unlock(s(PW), T0), Err(VaultFfiError::RateLimited { wait_ms }) if wait_ms <= 1_000));
+    v.unlock(s(PW), T0 + 1_000).unwrap();
+}
+
+#[test]
+fn an_unlock_of_an_open_vault_keeps_the_open_one() {
+    let dir = TestDir::new("unlock-open");
+    let v = dir.open();
+    v.create(s(PW), T0).unwrap();
+    let id = add(&v, "https://bank.example/", "alice", "s3cret-one", T0);
+    v.unlock(s(PW), T0).unwrap();
+    assert_eq!(v.state(), VaultState::Unlocked);
+    assert_eq!(v.reveal(id).unwrap(), "s3cret-one");
 }
