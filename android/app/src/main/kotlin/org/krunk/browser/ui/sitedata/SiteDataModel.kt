@@ -115,11 +115,11 @@ object SiteDataModel {
     }
 
     /** Cookies, stored data or a permission answer, as far as known. */
-    fun holdsSomething(row: SiteRow): Boolean =
-        (row.cookies ?: 0) > 0 || (row.bytes ?: 0L) > 0L || row.hasPermissions
+    fun holdsSomething(row: SiteRow): Boolean = (row.cookies ?: 0) > 0 || (row.bytes ?: 0L) > 0L || row.hasPermissions
 
     fun sorted(rows: List<SiteRow>, order: SiteOrder): List<SiteRow> = when (order) {
         SiteOrder.NAME -> rows.sortedBy { it.site }
+
         // Most recent first; sites without a visit after them, by name.
         SiteOrder.LAST_USED -> rows.sortedWith(
             compareByDescending<SiteRow> { it.lastUsed ?: Long.MIN_VALUE }.thenBy { it.site },
@@ -153,7 +153,11 @@ object SiteDataModel {
 
     /** Whether a page at [url] belongs to [site] (open tabs of a cleared site are reloaded). */
     fun isOfSite(url: String, site: String, siteOfHost: (String) -> String): Boolean {
-        if (!url.startsWith("http://", ignoreCase = true) && !url.startsWith("https://", ignoreCase = true)) return false
+        if (!url.startsWith("http://", ignoreCase = true) &&
+            !url.startsWith("https://", ignoreCase = true)
+        ) {
+            return false
+        }
         val host = hostOf(url) ?: return false
         return siteOfHost(host) == site
     }

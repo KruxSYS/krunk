@@ -67,7 +67,10 @@ class SiteDataModelTest {
         assertEquals(1_300L, news.bytes)
         assertEquals(9_000L, news.lastUsed)
         val storage = l.rows.first { it.site == "example.co.uk" }
-        assertEquals(Triple(0, 70L, listOf("https://app.storage.example.co.uk")), Triple(storage.cookies, storage.bytes, storage.origins))
+        assertEquals(
+            Triple(0, 70L, listOf("https://app.storage.example.co.uk")),
+            Triple(storage.cookies, storage.bytes, storage.origins),
+        )
         val tracker = l.rows.first { it.site == "tracker.test" }
         assertEquals(Triple(4, 0L, emptyList<String>()), Triple(tracker.cookies, tracker.bytes, tracker.origins))
         // Data kept under a site Krunk has no record of is still listed, so it can be cleared.
@@ -101,7 +104,9 @@ class SiteDataModelTest {
         assertEquals(emptyList<String>(), SiteDataModel.cookieDomains(null))
         assertEquals(
             listOf("a.test", "a.test", "b.test"),
-            SiteDataModel.cookieDomains(EngineSiteData(mapOf("a.test" to 2, "b.test" to 1, "" to 3, "c.test" to -1), null)),
+            SiteDataModel.cookieDomains(
+                EngineSiteData(mapOf("a.test" to 2, "b.test" to 1, "" to 3, "c.test" to -1), null),
+            ),
         )
         val huge = SiteDataModel.cookieDomains(EngineSiteData(mapOf("a.test" to Int.MAX_VALUE, "b.test" to 5), null))
         assertEquals(SiteDataModel.MAX_COOKIES, huge.size)

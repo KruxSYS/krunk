@@ -16,11 +16,7 @@ import org.krunk.ffi.siteOfHost
 import org.krunk.ffi.webOrigin
 
 /** The site data screen's work: asking the engine and the store, and clearing one site. */
-class SiteDataController(
-    private val core: KrunkCore,
-    private val engine: GeckoEngine,
-    private val tabs: TabManager,
-) {
+class SiteDataController(private val core: KrunkCore, private val engine: GeckoEngine, private val tabs: TabManager) {
     /** What the engine lists, or null when it has not answered within [timeoutMs]. */
     suspend fun engineData(timeoutMs: Long): EngineSiteData? = withTimeoutOrNull(timeoutMs) { engine.siteData.list() }
 
