@@ -175,6 +175,9 @@ struct TabView {
     stage_since: Cell<i64>,
     /// The page is playing audio (never put to sleep).
     audio: Rc<Cell<bool>>,
+    /// Media is playing, with or without sound (0.20.1: not put to sleep unless the user
+    /// turned `keepMediaTabsAwake` off).
+    media: Rc<Cell<bool>>,
     /// The page uses the camera / the microphone (the address bar's chip).
     media_use: Cell<(bool, bool)>,
     /// Downloads in progress started by this tab (never put to sleep).
@@ -1173,6 +1176,12 @@ impl Browser {
         let popup = adopted.is_some();
         let (view, net) = adopted.unwrap_or_else(|| self.new_tab_view(private));
         let host_navigation = Rc::new(Cell::new(false));
+        let media = Rc::new(Cell::new(false));
+        let media2 = media.clone();
+        view.on_media(move |playing| {
+            info!("tab {id}: media {}", if playing { "playing" } else { "stopped" });
+            media2.set(playing);
+        });
         let audio = Rc::new(Cell::new(false));
         let audio2 = audio.clone();
         let weak_audio = self.me.clone();
@@ -1224,6 +1233,7 @@ impl Browser {
                 stage: Cell::new(lb_core::memory::Stage::Awake),
                 stage_since: Cell::new(now_ms()),
                 audio,
+                media,
                 media_use: Cell::new((false, false)),
                 downloads: Rc::new(Cell::new(0)),
                 devtools: Cell::new(false),

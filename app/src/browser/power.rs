@@ -62,6 +62,7 @@ impl Browser {
     pub(super) fn power_tick(&self) {
         let now = now_ms();
         let policy = self.power_policy();
+        let keep_media = self.settings.borrow().keep_media_tabs_awake;
         // Shown tabs are exempt: the active tab of every visible (not minimized) window.
         let frames = self.all_frames();
         let shown = |w| frames.iter().any(|f| f.id == w && f.window.is_visible() && !f.window.is_minimized());
@@ -77,7 +78,11 @@ impl Browser {
                         live: true,
                         active: active.contains(&t.id),
                         pinned: false,
-                        playing_audio: v.audio.get(),
+                        // 0.20.1: also a call (camera or microphone in use), and media that
+                        // plays without sound unless the user turned that off.
+                        playing_audio: v.audio.get()
+                            || v.media_use.get() != (false, false)
+                            || (keep_media && v.media.get()),
                         downloading: v.downloads.get() > 0,
                         inspecting: v.devtools.get(),
                         private: t.private,

@@ -6,6 +6,7 @@
   "bookmarksBar": "always",
   "hardwareAcceleration": true,
   "tabSleepMinutes": 5,
+  "keepMediaTabsAwake": true,
   "tabDiscardEnabled": false,
   "autoPip": false,
   "tabDiscardMinutes": 30,

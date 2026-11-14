@@ -137,9 +137,9 @@ wrap_client! {
                 return 1;
             }
             if name == AUDIO_TO_BROWSER {
-                let playing = message.argument_list().is_some_and(|a| a.bool(0) == 1);
+                let level = message.argument_list().map_or(0, |a| a.int(0));
                 if let Some(view) = lookup(self.key) {
-                    view.frame_audio(Some(CefString::from(&frame.identifier()).to_string()), playing);
+                    view.frame_audio(Some(CefString::from(&frame.identifier()).to_string()), level);
                 }
                 return 1;
             }
@@ -298,7 +298,7 @@ wrap_load_handler! {
             }
             if let Some(view) = lookup(self.key) {
                 // A new document: frames of the old one no longer play.
-                view.frame_audio(None, false);
+                view.frame_audio(None, 0);
                 view.ev.load_start.with(|f| f());
             }
         }

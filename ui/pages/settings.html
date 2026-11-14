@@ -242,6 +242,10 @@
           <p class="field-error" data-error-for="tabSleepMinutes"></p></div>
         <div class="control"><input type="number" id="tabSleepMinutes" data-key="tabSleepMinutes" data-type="number" min="0" max="1440"> <span class="unit">min</span></div>
       </div>
+      <div class="row setting" data-keywords="sleep media video music audio playing muted background tabs awake">
+        <div class="text"><label for="keepMediaTabsAwake">Keep tabs with playing media awake</label><p class="desc">A background tab whose video or music is playing is not put to sleep or unloaded, also when it is muted. Tabs that play sound or use the camera or microphone always stay awake.</p></div>
+        <div class="control"><input type="checkbox" id="keepMediaTabsAwake" data-key="keepMediaTabsAwake"></div>
+      </div>
       <div class="row setting" data-keywords="unload discard background tabs free memory">
         <div class="text"><label for="tabDiscardEnabled">Unload background tabs to free memory</label><p class="desc">An unloaded tab reloads when you return to it.</p></div>
         <div class="control"><input type="checkbox" id="tabDiscardEnabled" data-key="tabDiscardEnabled"></div>

@@ -427,6 +427,10 @@ pub struct Settings {
     pub hardware_acceleration: bool,
     /// Minutes in the background before a tab is put to sleep; 0 = never.
     pub tab_sleep_minutes: u32,
+    /// 0.20.1: a background tab whose media is playing is not put to sleep or unloaded, also
+    /// when the media is muted (on by default). Tabs that play sound, and tabs that use the
+    /// camera or the microphone, stay awake whatever this says.
+    pub keep_media_tabs_awake: bool,
     pub tab_discard_enabled: bool,
     /// Switching away from a tab that plays a video puts the video in the floating window
     /// (Picture-in-Picture) and takes it back when the tab is shown again (Krunk 0.6.0).
@@ -777,6 +781,7 @@ impl Default for Settings {
             bookmarks_bar: BookmarksBar::Always,
             hardware_acceleration: true,
             tab_sleep_minutes: 5,
+            keep_media_tabs_awake: true,
             tab_discard_enabled: false,
             auto_pip: false,
             tab_discard_minutes: 30,

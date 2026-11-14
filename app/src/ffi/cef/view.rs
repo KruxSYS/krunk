@@ -305,6 +305,8 @@ pub(super) struct Events {
     pub created: Slot<dyn FnMut()>,
     pub crashed: Slot<dyn FnMut(String)>,
     pub audio: Slot<dyn FnMut(bool)>,
+    /// 0.20.1: media is playing in some frame, with or without sound.
+    pub media: Slot<dyn FnMut(bool)>,
     /// A frame's pointer-lock message: (frame identifier, JSON).
     pub pointer: Slot<dyn FnMut(String, String)>,
     pub fullscreen: Slot<dyn FnMut(bool)>,
@@ -491,6 +493,8 @@ pub(super) struct ViewInner {
     pub cert_error: RefCell<Option<lb_core::certinfo::SslReport>>,
     /// Frames (by identifier) that report playing audio.
     audible_frames: RefCell<std::collections::HashSet<String>>,
+    /// Frames that play media without sound (0.20.1).
+    silent_frames: RefCell<std::collections::HashSet<String>>,
     /// A tab view out of sight (0.7.4): its window stays shown, outside the frame's client
     /// area, instead of being hidden (see `set_visible`).
     parked: Cell<bool>,
@@ -577,6 +581,7 @@ impl View {
             media_prompts: RefCell::new(std::collections::HashMap::new()),
             media_next: Cell::new(0),
             audible_frames: RefCell::new(std::collections::HashSet::new()),
+            silent_frames: RefCell::new(std::collections::HashSet::new()),
             parked: Cell::new(false),
             bounds: Cell::new(None),
             devtools_id: Cell::new(0),
@@ -1563,6 +1568,11 @@ impl View {
         self.0.ev.audio.set(Box::new(f));
     }
 
+    /// The page started or stopped playing media, with or without sound (any frame; 0.20.1).
+    pub fn on_media(&self, f: impl FnMut(bool) + 'static) {
+        self.0.ev.media.set(Box::new(f));
+    }
+
     /// Adds a listener for DevTools protocol events (after a domain was enabled with a method
     /// call) of the `methods` named; returns its id for [`View::remove_devtools_listener`]. An
     /// enabled domain sends much more (console messages, frame events) and none of that is
@@ -1756,23 +1766,38 @@ impl ViewInner {
 
     /// A frame reported its audio state (`frame` = None: forget all frames,
     /// e.g. a new top-level document).
-    pub(super) fn frame_audio(&self, frame: Option<String>, playing: bool) {
-        let (before, after) = {
+    /// `level`: 2 = audio, 1 = media without sound, 0 = nothing.
+    pub(super) fn frame_audio(&self, frame: Option<String>, level: i32) {
+        let (before, after, media_before, media_after) = {
             let mut set = self.audible_frames.borrow_mut();
+            let mut silent = self.silent_frames.borrow_mut();
             let before = !set.is_empty();
+            let media_before = before || !silent.is_empty();
             match frame {
-                Some(f) if playing => {
-                    set.insert(f);
-                }
                 Some(f) => {
-                    set.remove(&f);
+                    if level >= 2 {
+                        set.insert(f.clone());
+                    } else {
+                        set.remove(&f);
+                    }
+                    if level == 1 {
+                        silent.insert(f);
+                    } else {
+                        silent.remove(&f);
+                    }
                 }
-                None => set.clear(),
+                None => {
+                    set.clear();
+                    silent.clear();
+                }
             }
-            (before, !set.is_empty())
+            (before, !set.is_empty(), media_before, !set.is_empty() || !silent.is_empty())
         };
         if before != after {
             self.ev.audio.with(|f| f(after));
+        }
+        if media_before != media_after {
+            self.ev.media.with(|f| f(media_after));
         }
     }
 

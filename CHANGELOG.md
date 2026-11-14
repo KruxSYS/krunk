@@ -8,6 +8,11 @@ What changed in each Krunk release, newest first. Krunk for Android has its own 
 - **Lines under the bars can be turned off.** Settings → Appearance → Tab and toolbar style →
   **Lines under the bars**: the thin lines under the toolbar and under the bookmarks bar broke
   up gradient styles. With the option off, the style runs through the bars without a break.
+- **Background tabs with playing media stay awake.** A tab whose video or music is playing is
+  no longer put to sleep or unloaded when the media is muted or silent (before, only a tab
+  that played sound was spared), and neither is a tab that uses the camera or the microphone.
+  With Settings → General → Tabs and memory → **Keep tabs with playing media awake** turned
+  off, muted media does not keep a tab awake; tabs that play sound always stay awake.
 
 ## 0.20.0 — 2026-11-14
 
