@@ -13,6 +13,8 @@ What changed in each Krunk release, newest first. Krunk for Android has its own 
   that played sound was spared), and neither is a tab that uses the camera or the microphone.
   With Settings → General → Tabs and memory → **Keep tabs with playing media awake** turned
   off, muted media does not keep a tab awake; tabs that play sound always stay awake.
+  Note: the engine itself pauses a video without sound when its tab goes to the background, as
+  Chrome does; this release does not change that.
 
 ## 0.20.0 — 2026-11-14
 
