@@ -126,9 +126,23 @@ class DownloadPartsTest {
     fun partFilesAreNeverBackedUpOrTransferred() {
         // Gradle runs the tests in the module directory.
         val rule = """<exclude domain="file" path="${DownloadEngine.PART_DIR}" />"""
-        fun count(name: String) = File("src/main/res/xml/$name").readText().split(rule).size - 1
-        assertEquals(1, count("backup_rules.xml"))
-        assertEquals("cloud backup and device transfer", 2, count("data_extraction_rules.xml"))
+        val backup = File("src/main/res/xml/backup_rules.xml").readText()
+        val extraction = File("src/main/res/xml/data_extraction_rules.xml").readText()
+        assertEquals(1, backup.split(rule).size - 1)
+        assertFalse(backup.contains("<include"))
+        val cloud = extraction.substringAfter("<cloud-backup>").substringBefore("</cloud-backup>")
+        assertEquals(1, cloud.split(rule).size - 1)
+        assertFalse(cloud.contains("<include"))
+        // A device transfer carries one directory only, and the part files are not in it.
+        val transfer = extraction.substringAfter("<device-transfer>").substringBefore("</device-transfer>")
+        assertEquals(
+            listOf("""<include domain="file" path="krunk" />"""),
+            Regex("<include[^>]*>").findAll(transfer).map {
+                it.value
+            }.toList(),
+        )
+        assertFalse(DownloadEngine.PART_DIR.startsWith("krunk/"))
+        assertEquals("downloads-part", DownloadEngine.PART_DIR)
     }
 
     @Test

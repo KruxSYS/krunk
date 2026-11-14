@@ -16,6 +16,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -32,6 +33,7 @@ import org.krunk.browser.downloads.PendingDownload
 @Composable
 fun DownloadsHost(downloads: DownloadController) {
     val context = LocalContext.current
+    val res = LocalResources.current
 
     val asked by downloads.questions.current.collectAsStateWithLifecycle()
     asked?.let { question ->
@@ -53,12 +55,12 @@ fun DownloadsHost(downloads: DownloadController) {
         }
     }
 
-    LaunchedEffect(downloads) {
+    LaunchedEffect(downloads, res) {
         downloads.messages.collect { message ->
             val text = when (message) {
-                is DownloadMessage.Started -> context.getString(R.string.download_started, message.fileName)
-                DownloadMessage.TooManyQuestions -> context.getString(R.string.downloads_too_many_questions)
-                DownloadMessage.NotificationsOff -> context.getString(R.string.downloads_notifications_off)
+                is DownloadMessage.Started -> res.getString(R.string.download_started, message.fileName)
+                DownloadMessage.TooManyQuestions -> res.getString(R.string.downloads_too_many_questions)
+                DownloadMessage.NotificationsOff -> res.getString(R.string.downloads_notifications_off)
             }
             val long = message !is DownloadMessage.Started
             Toast.makeText(context, text, if (long) Toast.LENGTH_LONG else Toast.LENGTH_SHORT).show()
