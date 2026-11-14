@@ -3,6 +3,81 @@
 What changed in each Krunk for Android release, newest first. The Windows browser's list is
 `CHANGELOG.md`.
 
+## 0.4.0 — 2026-11-14
+
+Downloads of Krunk's own, site permissions and site data. It installs over 0.3.0 and keeps
+tabs, bookmarks, history, settings and the password vault.
+
+- **Downloads are Krunk's own.** Until now Krunk handed a download to Android's download
+  manager, which asked the server for the file a second time, without the page's cookies. Now
+  Krunk saves the answer the page itself received:
+  - a file behind a sign-in is the file, not the sign-in page;
+  - files a page makes itself (`blob:` and `data:` links, "Export" buttons) are saved;
+  - a download a page starts still asks first, with the cleaned file name and the site; the
+    Download button reacts only after half a second, so a page cannot catch a tap with it;
+  - files go to the device's Downloads folder (Android 10 and later; no storage permission is
+    asked), and a file appears there only when it is complete.
+- **Downloads screen** (⋮ menu › Downloads): running and finished downloads with their size,
+  speed and time left; open, share, pause, resume, retry, restart, cancel, remove from the list,
+  clear the finished ones, search. A notification shows the progress and the result (tap a
+  finished one to open the file); downloads go on while Krunk is in the background.
+- **Pause, resume and retry** where the server allows it (it must name the file's size and
+  version and answer range requests): Krunk asks for the rest of the same version of the file,
+  with your cookies. Where the server does not allow it, Krunk says the download cannot be
+  paused, and a failed one offers Restart instead of starting over by itself. Files a page made
+  itself cannot be continued: download them again from the page.
+- **If Krunk is closed during a download**, the next start shows it as paused (it can go on) or
+  failed, never as finished. Android limits downloads in the background to six hours a day;
+  when that is used up, Krunk pauses what can go on and says so.
+- **Private tabs:** a download from a private tab is in the list only while it runs, is never
+  written to Krunk's database, and its notification goes when you close the last private tab.
+  The file itself stays in Downloads. Paused private downloads end with the private session.
+- **Site permissions.** Sites can now ask for the camera, the microphone, your location,
+  notifications, keeping their data, protected media (DRM) and, inside another site, its cookies.
+  Krunk asks you, naming the site the answer is for (and the embedded site that asked, when it
+  is a frame); Allow or Deny, remembered for that site unless you untick "Remember". Private
+  tabs remember nothing after the last private tab closes. Android's own permission is asked
+  only when a site you allowed needs it; if Android refuses, Krunk says which permission is
+  missing. "Approximate location" is enough where Android allows it (Android 12 and later).
+  Sound that starts by itself stays blocked and muted video stays allowed; both can be changed
+  per site. Virtual-reality devices are denied unless you allow them for a site.
+- **Settings › Privacy › Site permissions** lists the sites with an answer; each site has a page
+  with every permission as Allow, Deny or Ask, and "Reset permissions". Changes apply the next
+  time the site asks, without a restart. The shield sheet of a page leads to its site's page.
+- **Site notifications** arrive as Android notifications in their own channel, named with the
+  site; tapping one returns to the site's tab. At most ten per site are kept.
+- **Settings › Privacy › Site data** lists the sites that hold cookies or stored data, with the
+  number of cookies and the stored size, read from the engine by a small built-in extension that
+  reads names and sizes only. Clearing a site asks first and removes its cookies and sign-ins,
+  stored data and cached files (with its permissions if you leave the box ticked); its open tabs
+  are reloaded. A site that is itself a shared hosting domain (`github.io` and the like) is
+  cleared on its own name only, never with every site under it. "Clear browsing data" is
+  unchanged.
+- **Full screen:** a video may turn the screen to landscape while it is full screen; leaving
+  full screen in any way (Back, the page, another tab or screen) brings back the bars, the
+  toolbar and the orientation; the screen stays on while a page is full screen.
+- **Pointer lock** is not available on Android: the engine reports a lock to the page but sends
+  no mouse movement while locked. Krunk adds nothing that pretends otherwise.
+- **History** pages through long lists without losing visits of the same instant and groups
+  them by day off the main thread. **Screens keep their place** (scroll position, folder,
+  search) when another screen was opened on top, and the page is not reloaded on return.
+
+New Android permissions, none needed to use Krunk: notifications; camera, microphone and
+location (asked only for a site you allowed); running downloads in the background.
+
+Not in this release: downloads over several connections, a choice of the download folder,
+opening a downloaded APK (Android's installer needs a permission Krunk does not ask for), the
+Permissions API reporting "prompt" for a remembered location answer (the site is answered
+without a prompt all the same).
+
+Tested on the Android 16 emulator (x86_64), on the release build: the upgrade from 0.3.0, a
+download behind a sign-in cookie, `blob:` and `data:` downloads, pause and resume with the file
+checked byte for byte, a server that cannot continue, open and share, a private-tab download,
+permission prompts allowed, denied, remembered and changed, a site notification and its tap, site
+data listed and cleared, screens keeping their place, pointer lock, full screen with an
+orientation lock and a rotation. Not tested on a device: real camera and microphone capture, a
+real location fix, notification delivery on a phone, arm64.
+
 ## 0.3.0 — 2026-11-14
 
 The password vault. It installs over 0.2.0 and keeps tabs, bookmarks, history and settings.

@@ -11,7 +11,7 @@ plan and decisions are in `docs/ANDROID_PLAN.md`; the parity matrix is `docs/AND
 | `android/` | Gradle project (Kotlin, Jetpack Compose, Material 3). `app/` is the only module. |
 | `android/app/src/main/kotlin/org/krunk/browser/` | `KrunkApp` (process state), `MainActivity`, `core/` (store + settings on the Rust core), `engine/` (GeckoView runtime, session delegates, error page, the icons extension), `tabs/` (tab manager on `core::tabs`, persistence, favicons, thumbnails, memory policy), `vault/` (the password vault: Keystore wrapper, lock controller, biometric unlock; see "Vault"), `ui/` (Compose screens: browser, tabs, new tab, bookmarks, history, settings, theme, `ui/vault/` for the Passwords screen). |
 | `android/app/src/main/assets/` | `error.html` (Krunk's error page), `extensions/krunk-icons/` (bundled WebExtension), `wallpapers/` (copied from `ui/shared/wallpapers` at build time, git-ignored). |
-| `android/scripts/` | `setup-sdk.sh` (toolchain), `build-rust.sh` (cargo-ndk + UniFFI bindings; Gradle calls it), `update-ubo.sh` (the pinned uBlock Origin release; Gradle calls it), `emu.sh` (emulator driver), `flows.sh` (the 0.1.x adb flows), `a3/` (the device checks since 0.2.0: `a3.sh`, its test server and pages), `a4/` (the vault's device checks, 0.3.0: `a4.sh` and its login page, on the `a3` helpers and server). |
+| `android/scripts/` | `setup-sdk.sh` (toolchain), `build-rust.sh` (cargo-ndk + UniFFI bindings; Gradle calls it), `update-ubo.sh` (the pinned uBlock Origin release; Gradle calls it), `emu.sh` (emulator driver), `flows.sh` (the 0.1.x adb flows), `a3/` (the device checks since 0.2.0: `a3.sh`, its test server and pages), `a4/` (the vault's device checks, 0.3.0: `a4.sh` and its login page, on the `a3` helpers and server), `a5/` (downloads, permissions, site data, full screen, 0.4.0: `a5.sh`, its own test server and pages). |
 | `android/ubo.lock` | The uBlock Origin release built into the app: version, release file, SHA-256. The only place that names it. |
 | `android/app/src/main/assets/extensions/` | `krunk-icons/` (site icons), `krunk-guard/` (Krunk's extension that gates and drives the blocker and rewrites tracking parameters), `krunk-sitedata/` (lists the sites with cookies and stored data for Settings → Site data), `ublock0/` (uBlock Origin, unpacked from the pinned release at build time, git-ignored). |
 | `android/THIRD-PARTY-NOTICES.md` | Components and licences; kept equal to the About screen by `LicensesTest`. |
@@ -130,7 +130,11 @@ packet that is not the restored page's.
 
 The gate in `krunk-guard` is the second line: an observer on every request cancels uBlock Origin's
 own requests unless an update the user started is running, and cancels requests the engine
-itself starts outside a page.
+itself starts outside a page. Krunk's own downloads go through `GeckoWebExecutor`, which loads
+exactly like that (system principal, no tab): `GeckoFetcher` marks them with the header
+`X-Krunk-Fetch: 1`, which the gate lets through and removes before the request leaves (since
+0.4.0, guard 1.3; without it every link download, resume and restart fails with
+`WebRequestError` `ERROR_UNKNOWN` and nothing reaches the network).
 
 **Start order and the engine's late start-up.** Page loads wait until the guard has reported in
 and the blocker filters (`engine/blocker/BlockerStart.kt`, at most 10 s). GeckoView starts the
@@ -323,6 +327,23 @@ Krunk saves downloads itself (`android/.../downloads/`); Android's `DownloadMana
 - Debug builds: `adb shell am broadcast -a org.krunk.browser.DEBUG --es cmd downloads` logs the
   list, what runs and the part files (tag `KrunkGuard`); `--es cmd downloads-time-limit` acts as
   if Android's six-hour limit for the service was reached.
+
+**Device checks (`android/scripts/a5/a5.sh`, 0.4.0).** Its own test server (cookie-gated file,
+slow/ranged/unranged/cut/unknown-size files with a fixed content hash, `blob:`/`data:`, a
+permissions page and a storage page):
+```sh
+python3 -I android/scripts/a5/server.py android/scripts/a5/www 18080 >> "$KRUNK_A3_ROOT/server.log" &
+KRUNK_OLD_APK=<published x86_64 APK> REL=1 android/scripts/a5/a5.sh upgrade
+REL=1 android/scripts/a5/a5.sh cookie blob resume noresume open private perms permchange notify sitedata history pointer fullscreen
+```
+Traps: geolocation and notifications need a secure context, so the permission tests load the
+pages through a relay on the device (`http://localhost:18081`, `relay` in the script); the
+Download button of the question waits 0.5 s; the server cuts a `cut=` file only once per server
+run (the script uses new names); a `uiautomator dump` while the screen is in landscape makes
+UiAutomation fix the system rotation at 90° (`user_rotation=1`), which looks like an orientation
+lock Krunk did not give back; a restored tab whose address is a download asks for it again.
+The debug build answers `--es cmd 'fetch-test <url>'` (each ingredient of a download request
+through `GeckoWebExecutor`, logged under `KrunkGuard`).
 
 ## Vault
 

@@ -1805,7 +1805,7 @@ To reproduce: enable discard in Settings, start with `--sleep-test-seconds=90 --
 open the sites and read `memory-report.log` (steps in `docs/MANUAL_TEST.md`).
 
 ## Krunk for Android (preview)
-Krunk for Android (0.3.0) is an installable preview of the same browser for phones and
+Krunk for Android (0.4.0) is an installable preview of the same browser for phones and
 tablets (Android 8 and later, `arm64-v8a` devices and the `x86_64` emulator). It is built from
 this repository (`android/`, `ffi/`) and shares Krunk's Rust `core` with the Windows app: the same
 address-bar rules (DuckDuckGo by default), the same SQLite database layout for history, bookmarks,
@@ -1867,13 +1867,24 @@ Light, dark and system themes; phone and tablet layouts; TalkBack-friendly contr
 **Not there yet** (see the matrix for the planned round): custom filter lists and protection
 levels, for the vault a recovery phrase, a password generator, payment cards, import and export of
 logins and a system-wide Autofill service (the vault fills in Krunk's own pages only),
-a downloads manager (downloads are handed to Android after a question, without the page's
-sign-in, so files behind a login may not download), site permissions and cookie
-controls, media controls and picture-in-picture, account and sync, VPN, the AI agent, userscripts,
+downloads over several connections and a choice of the download folder, pointer lock (the
+engine has none on Android), media controls and picture-in-picture, account and sync, VPN, the AI agent, userscripts,
 extensions, an update check and Play/F-Droid packaging. Builds made without the release key (any
 debug build, or `./gradlew assembleRelease -Pkrunk.allowDebugSignedRelease=true` on another
 machine) are signed with a debug key and cannot be updated in place by a published release:
 uninstall them first.
+
+**Downloads, site permissions and site data (since 0.4.0).** Krunk saves downloads itself from
+the answer the page received, so a file behind a sign-in is the file and `blob:`/`data:` links
+work; a download a page starts asks first. ⋮ menu › Downloads lists them with open, share, pause,
+resume, retry and restart; a notification shows the progress, and downloads go on in the
+background. Pause and resume work where the server allows it; otherwise Krunk says so and offers
+Restart. A private tab's download leaves only the file. Sites can ask for the camera, the
+microphone, your location, notifications and more: Krunk asks, naming the site, and remembers
+the answer per site (Settings › Privacy › Site permissions, or the shield sheet of a page, to
+change it); Android's own permission is asked only when a site you allowed needs it. Settings ›
+Privacy › Site data lists the sites that hold cookies or stored data and clears one site after
+asking. Full screen gives the screen, the toolbar and the orientation back in every way out.
 
 **Password vault (since 0.3.0).** Krunk keeps the user names and passwords you sign in with in
 a vault, opened with one vault password that only you know (⋮ menu › Passwords, or Settings ›

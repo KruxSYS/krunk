@@ -23,6 +23,12 @@ scripted device tests of the vault on the debug build (`android/scripts/a4/a4.sh
 `.pipeline/evidence-android-0.3.0/m5/`). "done, not run on a device" means built and covered by
 unit tests with stand-ins, but never exercised on an emulator or a phone.
 
+**Round 3, first part (0.4.0).** Rows changed by Android 0.4.0 say so. **(v)** there means:
+checked on the sandbox emulator (Android 16 x86_64) on the **release build** by the scripted
+device tests of the round (`android/scripts/a5/a5.sh`; evidence in
+`.pipeline/evidence-android-0.4.0/m8/`). Real camera and microphone capture, a real location fix
+and notification delivery on a phone were not run.
+
 **Columns.** *Windows Krunk*: yes / partial / no, with the README section or CHANGELOG version
 (and the `core` module when the logic is shared). *Android 0.1.0*: done / partial / roadmap /
 not planned. *Engine*: the GeckoView API that provides it, or the limitation. *Round*: the Android
@@ -66,8 +72,8 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | Page zoom: pinch | n/a | done (+ "force zoom" setting) | `forceUserScalableEnabled` | 1 |
 | Default zoom setting | yes — Usage › Zoom; `core::zoom` | partial — GeckoView has no page-zoom API; `default_zoom` scales text instead | `fontSizeFactor` | 2 |
 | Text scaling (system font scale / in-app) | partial — UI font only | done | `automaticFontSizeAdjustment` / `fontSizeFactor` | 1 |
-| Full-screen web content | yes — F11, 0.2.0 | done (v) (system bars hidden, back exits) | `ContentDelegate.onFullScreen` | 1 |
-| Pointer lock (games with a mouse) | yes — `core::pointer_lock` | roadmap (unverified on Gecko Android; plan §1) | — | 3 |
+| Full-screen web content | yes — F11, 0.2.0 | done (v) (system bars hidden, back exits. 0.4.0 (v): a page may lock the orientation while it is full screen and gets the old one back on every way out; a lock outside full screen is refused; screen kept on; full screen ends when another tab or screen comes on top) | `ContentDelegate.onFullScreen`, `OrientationController.OrientationDelegate` | 1 |
+| Pointer lock (games with a mouse) | yes — `core::pointer_lock` | **not available on Gecko Android** (v) (0.4.0: `requestPointerLock()` resolves and `pointerlockchange` fires, but no mouse movement reaches the page while locked; GeckoView has no pointer-capture API. Krunk adds no hint and fakes nothing) | — (none in GeckoView 160) | 3 |
 | Translate | no | roadmap (Firefox Translations is local/offline; needs the models' download flow) | `TranslationsController` | 3 |
 | Print / save as PDF | yes — Ctrl+P | roadmap | `GeckoSession.saveAsPdf`, `PrintDelegate` | 3 |
 | PDF viewer | yes — 0.11.3 | roadmap (pdf.js is built into Gecko; needs testing) | Gecko pdf.js | 3 |
@@ -84,7 +90,7 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | Open in new tab / private tab | yes — 0.15.3 | done (v) (long-press menu) | `onContextMenu` | 1 |
 | Copy link, copy link text | yes (address) / no (text) | done / done (title or alt text; the engine exposes no selection) | `ContextElement` | 1 |
 | Share link, share page | no | done (Android share sheet) | — | 1 |
-| Download link / save image, open image in new tab | yes — 0.12.2 (images) | done (Android `DownloadManager`) | `ContextElement.srcUri` | 1 |
+| Download link / save image, open image in new tab | yes — 0.12.2 (images) | done (v) (0.4.0: through Krunk's own downloads, with the page's cookies and referrer, `GeckoWebExecutor`) | `ContextElement.srcUri` | 1 |
 | `window.open` / `target=_blank` into a new tab | yes | done since 0.1.1 (0.1.0 handed the engine an already open session and the new window failed); the address bar stays empty until the new window has loaded something | `onNewSession` | 1 |
 | `mailto:` handler | yes — 0.11.3 | done (v) (0.2.0: `mailto:` and `tel:` links go to Android's mail and phone apps: at once after a tap (within 2 s), otherwise Krunk asks first, naming the address or number. `intent:` and other app links are not handed over) | `onLoadRequest` | 2 |
 | Selected address text → open | yes — 0.15.2 | done (v) (0.2.0: "Open example.com/docs" in the same menu when the selection is one web address; never in a password field) | `SelectionActionDelegate` | 2 |
@@ -170,8 +176,8 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | Toolbar position, force zoom, follow-system font (Android-only, `kv["android.settings"]`) | n/a | done (v: toolbar position) | — | 1 |
 | Clear browsing data (history, cookies, cache, site data) | yes | done | `StorageController.clearData` | 1 |
 | Clear on exit | yes — `ClearOnExit` | roadmap | — | 2 |
-| Cookies and site-data list per site (`krunk://storage`) | yes — 0.2.0 | roadmap (`clearDataFromHost`; listing via a WebExtension `cookies` API) | `StorageController` | 3 |
-| Site permissions defaults and per-site list | yes — Site permissions | roadmap | `PermissionDelegate` | 3 |
+| Cookies and site-data list per site (`krunk://storage`) | yes — 0.2.0 | done (v) (0.4.0: Settings › Privacy › Site data: sites with cookie count and stored size, from a built-in extension (`cookies.getAll`, quota usage) with a fallback list from history and permissions; per-site clearing with a confirmation, permissions optional; a public-suffix site is cleared by its own host only. Cookie values are not shown) | `StorageController.clearDataFromBaseDomain` / `clearDataFromHost`, WebExtension `cookies` | 3 |
+| Site permissions defaults and per-site list | yes — Site permissions | done (v) (0.4.0: prompts for camera, microphone, location, notifications, persistent storage, DRM, storage access, local network/device; XR and audible autoplay default deny, muted autoplay default allow; Settings › Privacy › Site permissions with Allow / Deny / Ask per site and kind; the shield sheet opens the page's site. (v) for location, notifications, the list and the change; camera and microphone only through the prompt logic, no real capture on the emulator) | `PermissionDelegate`, `StorageController.setPermission` | 3 |
 | Settings search box | yes — 0.5.0 | roadmap | — | 2 |
 | About (versions, licences, link) | yes — `krunk://about` | done (0.2.0: lists uBlock Origin with the bundled version and the filter lists inside it with their licences) | — | 1 |
 | Data location documented; backup rules (0.1.1: no cloud backup; device-to-device transfer carries the database; Gecko profile never) | n/a | done (README; 0.3.0: the vault directory `files/krunk-vault` is excluded by name from cloud backup and from device-to-device transfer, and `BackupRulesTest` fails if a rule would carry it. A real device-to-device transfer was not run) | — | 1, 2 |
@@ -181,9 +187,9 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 
 | Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
 |---|---|---|---|---|
-| Download page (cards, search, filters, auto-remove) | yes — 0.15.0; `core::downloads` | roadmap (hand-off to Android `DownloadManager` only in 0.1.0) | `onExternalResponse` | 3 |
-| Pause / resume / retry, multi-connection | yes — `core::segdl` | roadmap | — | 3 |
-| Open downloaded files, notifications | yes | roadmap | — | 3 |
+| Download page (cards, search, filters, auto-remove) | yes — 0.15.0; `core::downloads` | done (v) (0.4.0: ⋮ › Downloads, Krunk's own: the engine's response stream is saved (cookies, `blob:`, `data:`), the list is `core::downloads` through `ffi`; search; no filter chips or auto-remove yet) | `onExternalResponse`, `GeckoWebExecutor` | 3 |
+| Pause / resume / retry, multi-connection | yes — `core::segdl` | done (v) for one connection (0.4.0: Range + If-Range with the saved validator, `core::dlresume`; "cannot be paused" and Restart where the server does not allow it; never a silent restart). Multi-connection: roadmap | — | 3 |
+| Open downloaded files, notifications | yes | done (v) (0.4.0: open and share through `content://`, a notification for running, paused, finished and failed downloads, a `dataSync` foreground service in the background) | — | 3 |
 
 ## 11. Passwords & autofill
 
@@ -245,7 +251,7 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | Codecs (H.264/AAC, VP8/9, AV1, Opus, …) | yes — own CEF build | partial — Gecko uses the device's codecs (MediaCodec); untested in 0.1.0 | — | 3 |
 | Picture-in-Picture | yes — 0.6.0 | roadmap (Android PiP via `MediaSession.Delegate` + activity PiP) | `MediaSession` | 3 |
 | Media session / notification controls | yes — 0.11.0 | roadmap | `MediaSession` | 3 |
-| Autoplay control | no | roadmap | `autoplayDefault` | 3 |
+| Autoplay control | no | done (0.4.0: per site, muted allowed and audible blocked by default; not run on a device) | `PERMISSION_AUTOPLAY_*` | 3 |
 | DRM (Widevine) | partial — L3 opt-in | roadmap (Widevine L1/L3 through Gecko's GMP) | — | 3 |
 
 ## 16. AI agent, scripts, VPN, updates, default browser
@@ -267,7 +273,7 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | Share sheet (page, link) | no | done | — | 1 |
 | Default browser (`APP_BROWSER` category) | yes | partial — selectable in Android settings; in-app prompt is round 3 | — | 3 |
 | Backup / device transfer rules | n/a | done | — | 1 |
-| Web notifications | yes | roadmap (`WebNotificationDelegate` + notification permission) | — | 3 |
+| Web notifications | yes | done (v) (0.4.0: shown as Android notifications in the "Site notifications" channel, named with the site; the tap returns to the site's tab. The page's own click handler after the tap was not observed on the emulator) | `WebNotificationDelegate` | 3 |
 | Home-screen shortcuts / PWA install | no | roadmap (`WebAppManifest`) | — | 4 |
 | Widgets (search widget) | n/a | roadmap | — | 4 |
 | Protocol handlers (`registerProtocolHandler`) | no | roadmap | — | 4 |

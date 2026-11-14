@@ -75,7 +75,13 @@ t_upgrade() {
   if [ -z "${KRUNK_KEEP_DATA:-}" ]; then
     fresh "$KRUNK_OLD_APK"; launch 9
     view "$B/index.html?old1" 8; view "$B/storage.html?old2" 8
-    menu; tapui desc "Bookmark" 2 --contains; A "input keyevent KEYCODE_BACK"
+    menu; tapui text "Bookmark this page" 3
+    # a vault on 0.3.0 (one login), to see it again after the upgrade
+    menu; tapto text "Passwords" 3; waitfor text "Create vault" 10
+    tapui text "Vault password" 1 && type_text "upgrade-pass-1"; tapui text "Repeat the password" 1 && type_text "upgrade-pass-1"
+    A "input keyevent KEYCODE_BACK"; sleep 1; tapui text "Create vault" 6
+    waitfor text "No logins yet" 15 --contains; dump; nodes upgrade-vault-before
+    check "0.3.0: a vault was created" 'has text "No logins yet" --contains'
     stop_clean
   fi
   A "dumpsys package $PKG" | grep -m1 versionName > "$EV/upgrade-before.txt"
@@ -95,7 +101,10 @@ t_upgrade() {
   A "input keyevent KEYCODE_BACK"; sleep 1
   menu; tapui text "Bookmarks" 3; shot upgrade-bookmarks; A "input keyevent KEYCODE_BACK"; sleep 1
   menu; tapui text "Passwords" 3; sleep 2; dump; nodes upgrade-vault
-  check "the vault is still there (asks for its password, or offers to create one if there was none)" 'has text "The vault is locked" --contains || has text "Unlock" --contains || has text "Create vault" --contains'
+  check "the vault from 0.3.0 is still there (locked, asks for its password)" 'has text "The vault is locked" --contains || has text "Unlock" --contains'
+  tapui text "Vault password" 1 && type_text "upgrade-pass-1"; A "input keyevent KEYCODE_BACK"; sleep 1; tapui text "Unlock" 5
+  dump; nodes upgrade-vault-open
+  check "the vault opens with its 0.3.0 password" 'has text "No logins yet" --contains'
   A "input keyevent KEYCODE_BACK"; sleep 1
   downloads_screen; shot upgrade-downloads; dump; check "the new Downloads screen opens" 'has text "Downloads"'
   save upgrade; stop_clean

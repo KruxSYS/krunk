@@ -182,7 +182,7 @@ Proposal:
 | A2 ✔ (round 1) | Data: history, bookmarks, new-tab top sites (frecency), settings through `core` | 2 weeks |
 | A3 ✔ (0.2.0) | Blocking: bundled uBO (pinned version, hash-checked like `ubo-resources.lock`), shield counter and per-site allow via the extension's messaging, uBO list updates on request. Custom lists and protection levels moved to round 3 | 2 weeks |
 | A4 ✔ (0.3.0) | Vault: Keystore-wrapped key, unlock (password, optional biometrics), save/fill prompts through GeckoView autocomplete delegates, saved logins in the HTTP sign-in dialog. The recovery phrase, the password generator and payment cards moved to a later round; so did import/export and a system Autofill service | 3 weeks |
-| A5 | Downloads, site data/cookies screen, permissions prompts, full screen and pointer lock polish | 2 weeks |
+| A5 ✔ (0.4.0) | Downloads (Krunk's own, from the engine's response stream; pause/resume where the server allows it), site data/cookies screen, permissions prompts and per-site list, web notifications, full screen polish. Pointer lock is not available on Gecko Android (checked with a mouse on the emulator); multi-connection downloads moved to a later round | 2 weeks |
 | A6 | Release: signing, Play listing and APK channel with `update` (android-arm64), crash-free QA on 4–5 devices (Android 10–16, phone + tablet, arm64 + x86_64 emulator) | 2–3 weeks |
 
 Total: about **15–16 weeks** to a first public beta, then a GeckoView bump every 4 weeks (about
@@ -201,8 +201,9 @@ Total: about **15–16 weeks** to a first public beta, then a GeckoView bump eve
    `android/THIRD-PARTY-NOTICES.md` list it with its licence and the lists inside it, the licence
    text is in the APK, and the build proves the APK's copy equals the release. One note for the
    operator: Peter Lowe's list inside it asks for non-commercial use.
-5. **Pointer lock:** if A0 shows Gecko on Android lacks it with a mouse, is touch-only acceptable
-   for games on Android?
+5. **Pointer lock:** checked in 0.4.0: GeckoView 160 on Android reports a lock to the page but
+   delivers no mouse movement while locked and offers no pointer-capture API. Touch-only for
+   games on Android until the engine has it; is that acceptable, or should it be raised upstream?
 6. **Shared account/sync:** wanted in a later round?
 7. ~~Branding/package name~~ `org.krunk.browser` confirmed; the domain for `UPDATE_BASE_URL`
    is still to be chosen with the distribution channel.
