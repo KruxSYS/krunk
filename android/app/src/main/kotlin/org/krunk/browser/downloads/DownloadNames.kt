@@ -1,7 +1,11 @@
 package org.krunk.browser.downloads
 
+import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
 import org.krunk.browser.ui.browser.downloadFileName
 import org.krunk.ffi.downloadCleanName
+import org.krunk.ffi.downloadUniqueName
 
 /** File names and addresses of downloads as the list keeps them. */
 object DownloadNames {
@@ -55,6 +59,46 @@ object DownloadPaths {
         val uri = path.substring(0, cut)
         if (!uri.startsWith("content://")) return null
         return Published(uri, path.substring(cut + 1))
+    }
+}
+
+/** Android 8 and 9: a complete file copied into the app's own Downloads folder. */
+object FolderCopy {
+    private const val MAX_TRIES = 20
+
+    /**
+     * Creates [name] (or the next free variant of it) in [dir] and copies [part] there. Never
+     * replaces or deletes a file that was there before: the name is taken atomically
+     * (`createNewFile`), and on a failure only the file this call created is deleted.
+     */
+    @Throws(IOException::class)
+    fun copyNew(part: File, dir: File, name: String): File {
+        val tried = ArrayList<String>()
+        var candidate = name
+        repeat(MAX_TRIES) {
+            val target = File(dir, candidate)
+            if (target.createNewFile()) {
+                try {
+                    part.inputStream().use { input ->
+                        FileOutputStream(target).use { out ->
+                            input.copyTo(out)
+                            out.fd.sync()
+                        }
+                    }
+                    return target
+                } catch (e: IOException) {
+                    target.delete()
+                    throw e
+                } catch (e: RuntimeException) {
+                    target.delete()
+                    throw IOException(e)
+                }
+            }
+            // Somebody has it (it appeared since the name was chosen, or differs only in case).
+            tried += candidate
+            candidate = downloadUniqueName(name, dir.list().orEmpty().toList() + tried)
+        }
+        throw IOException("no free name")
     }
 }
 

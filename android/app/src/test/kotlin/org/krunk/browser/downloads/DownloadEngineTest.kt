@@ -5,7 +5,10 @@ import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.security.MessageDigest
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executor
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -89,7 +92,11 @@ class DownloadEngineTest {
 
         /** The stream ends cleanly here although the file is longer. */
         var endAt: Int? = null
+
+        /** Sent as `Content-Length` of a whole answer instead of the real length. */
+        var length: String? = null
         var onServed: (Int) -> Unit = {}
+        val urls = ArrayList<String>()
         val requests = ArrayList<List<HttpHeader>>()
         val referrers = ArrayList<String?>()
         val privateFlags = ArrayList<Boolean>()
@@ -102,6 +109,7 @@ class DownloadEngineTest {
             referrer: String?,
             private: Boolean,
         ): DownloadResponse {
+            urls += url
             requests += headers
             referrers += referrer
             privateFlags += private
@@ -124,6 +132,7 @@ class DownloadEngineTest {
         ): DownloadResponse {
             val h = HashMap<String, String>(extra)
             if (sendLength) h["Content-Length"] = (data.size - from).toString()
+            if (from == 0) length?.let { h["Content-Length"] = it }
             etag?.let { h["ETag"] = it }
             if (ranges) h["Accept-Ranges"] = "bytes"
             disposition?.let { h["Content-Disposition"] = it }
@@ -137,10 +146,17 @@ class DownloadEngineTest {
     private class FakeFolder : DownloadPublisher {
         val files = LinkedHashMap<String, ByteArray>()
         var fail = false
+        var sweeps = 0
+        var onPublish: () -> Unit = {}
 
         override fun taken(): List<String> = files.keys.toList()
 
+        override fun sweep() {
+            sweeps++
+        }
+
         override fun publish(part: File, name: String, mime: String?): String {
+            onPublish()
             if (fail) throw IOException("no space")
             files[name] = part.readBytes()
             return DownloadPaths.join("content://fake/${files.size}", name)
@@ -148,7 +164,7 @@ class DownloadEngineTest {
     }
 
     private class Events : DownloadEngine.Listener {
-        val states = ArrayList<DownloadEntry>()
+        val states: MutableList<DownloadEntry> = java.util.Collections.synchronizedList(ArrayList())
         var progress = 0
 
         override fun onState(entry: DownloadEntry) {
@@ -172,17 +188,24 @@ class DownloadEngineTest {
     private var list = DownloadList.load(store, now)
     private var openPart: (File, Boolean) -> OutputStream = { f, append -> java.io.FileOutputStream(f, append) }
 
-    private fun engine(server: DownloadFetcher): DownloadEngine = DownloadEngine(
+    private fun engine(
+        server: DownloadFetcher,
+        executor: Executor = Executor {
+            it.run()
+        },
+    ): DownloadEngine = DownloadEngine(
         list = list,
         partDir = partDir,
         fetcher = server,
         publisher = folder,
         reasons = reasons,
         clock = {
-            now += 100
-            now
+            synchronized(this) {
+                now += 100
+                now
+            }
         },
-        executor = Executor { it.run() },
+        executor = executor,
         listener = events,
         extensionFor = { if (it == "text/plain") "txt" else null },
         openPart = { f, append -> openPart(f, append) },
@@ -371,7 +394,14 @@ class DownloadEngineTest {
         // The next start of the app: a new list on the same database, the same folder.
         list = DownloadList.load(store, now)
         val second = engine(server)
+        events.states.clear()
         second.recover()
+        assertEquals("half-published files of the last run are swept first", 1, folder.sweeps)
+        // Every recovered entry is announced (its old "downloading" notification is replaced).
+        val announced = events.states.associate { it.id to it.state }
+        assertEquals(DownloadState.PAUSED, announced[resumable])
+        assertEquals(DownloadState.PAUSED, announced[kept])
+        assertEquals(DownloadState.INTERRUPTED, announced[lost])
 
         val entry = list.get(resumable)!!
         assertEquals(DownloadState.PAUSED, entry.state)
@@ -643,6 +673,175 @@ class DownloadEngineTest {
         assertTrue(e.remove(id))
         assertNull(list.get(id))
         assertNotNull("the file stays", folder.files["file.bin"])
+    }
+
+    /** A stream that serves [first] bytes, then hangs in `read` until [release] (close does not wake it, like Gecko's). */
+    private class StalledBody(private val data: ByteArray, private val first: Int) : InputStream() {
+        val reached = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        private var served = false
+
+        override fun read(): Int = throw UnsupportedOperationException()
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            if (!served) {
+                served = true
+                System.arraycopy(data, 0, b, off, first)
+                return first
+            }
+            reached.countDown()
+            release.await()
+            throw java.net.SocketTimeoutException("read timed out")
+        }
+    }
+
+    private fun stalledServer(data: ByteArray, body: StalledBody) = DownloadFetcher { url, _, _, _ ->
+        DownloadResponse(url, 200, mapOf("Content-Length" to "${data.size}", "ETag" to "\"v1\""), body)
+    }
+
+    private fun waitUntil(what: String, check: () -> Boolean) {
+        val end = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+        while (!check()) {
+            assertTrue(what, System.nanoTime() < end)
+            Thread.sleep(10)
+        }
+    }
+
+    @Test
+    fun pauseAndCancelOfAStalledDownloadActAtOnceAndTheThreadCleansUpWhenItWakes() {
+        val pool = Executors.newCachedThreadPool()
+        try {
+            val data = bytes(1000)
+            // Paused while the read hangs: the entry is paused at once, the part kept.
+            val pausedBody = StalledBody(data, 300)
+            val e = engine(stalledServer(data, pausedBody), pool)
+            val paused = e.start(link())!!
+            assertTrue(pausedBody.reached.await(10, TimeUnit.SECONDS))
+            assertTrue(e.pause(paused))
+            assertEquals(DownloadState.PAUSED, state(paused))
+            assertEquals(DownloadState.PAUSED, events.last(paused).state)
+            pausedBody.release.countDown()
+            waitUntil("the paused transfer ends") { e.runningCount() == 0 && parts().single().length() == 300L }
+            assertEquals("waking up does not turn the pause into a failure", DownloadState.PAUSED, state(paused))
+            assertNull(list.get(paused)!!.reason)
+
+            // Paused, then cancelled while the read still hangs: nothing waits for the thread.
+            val body = StalledBody(data, 300)
+            val e2 = engine(stalledServer(data, body), pool)
+            val id = e2.start(link("https://a.test/other.bin"))!!
+            assertTrue(body.reached.await(10, TimeUnit.SECONDS))
+            val started = System.nanoTime()
+            assertTrue(e2.pause(id))
+            assertTrue(e2.cancel(id))
+            val took = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)
+            assertTrue("pause and cancel took $took ms", took < 2_000)
+            assertEquals(DownloadState.CANCELLED, state(id))
+            assertEquals(DownloadState.CANCELLED, events.last(id).state)
+            assertEquals("the part is still held by the stalled thread", 2, parts().size)
+            body.release.countDown()
+            waitUntil("the woken thread deletes the cancelled part") { parts().size == 1 }
+            assertEquals(DownloadState.CANCELLED, state(id))
+            assertTrue(folder.files.isEmpty())
+        } finally {
+            pool.shutdownNow()
+        }
+    }
+
+    @Test
+    fun onlyAWholeFirstAnswerIsSaved() {
+        for (status in listOf(206, 204, 205, 203)) {
+            val server = FakeServer(bytes(100))
+            server.status = status
+            val id = engine(server).start(link())!!
+            assertEquals("$status", DownloadState.INTERRUPTED, state(id))
+            assertEquals("server error $status", list.get(id)!!.reason)
+            assertTrue(folder.files.isEmpty())
+            assertTrue(parts().isEmpty())
+        }
+    }
+
+    @Test
+    fun aLengthBeyondTwoToTheSixtyThreeIsUnknownAndCannotBePaused() {
+        for (huge in listOf("18446744073709551615", "9223372036854775808")) {
+            val server = FakeServer(bytes(700))
+            server.sendLength = false
+            server.length = huge
+            val e = engine(server)
+            var paused: Boolean? = null
+            server.onServed = { if (it == 300) paused = e.pause(running()) }
+            val id = e.start(link("https://a.test/$huge.bin"))!!
+            assertEquals(false, paused)
+            val entry = list.get(id)!!
+            assertNull("not resumable", entry.resume)
+            assertEquals("complete at a clean end, as without a length", DownloadState.COMPLETED, entry.state)
+            assertArrayEquals(server.data, folder.files["$huge.bin"])
+        }
+    }
+
+    @Test
+    fun credentialsInTheAddressAreUsedButNeverStored() {
+        val server = FakeServer(bytes(1000))
+        val e = engine(server)
+        var paused: Boolean? = null
+        var listed: DownloadEntry? = null
+        server.onServed = {
+            if (it == 300) {
+                listed = list.get(running())
+                paused = e.pause(running())
+            }
+        }
+        val id = e.start(DownloadRequest("https://ann:secret@a.test/dl/file.bin", "https://bo:pw@a.test/page", false))!!
+        assertEquals("https://ann:secret@a.test/dl/file.bin", server.urls.single())
+        assertEquals("https://a.test/dl/file.bin", listed?.url)
+        assertEquals("https://a.test/page", listed?.pageUrl)
+        assertNull("no resume (it would need the credentials again)", listed?.resume)
+        assertEquals(false, paused)
+        val entry = list.get(id)!!
+        assertEquals(DownloadState.COMPLETED, entry.state)
+        assertEquals("https://a.test/dl/file.bin", entry.url)
+        assertTrue(list.query("secret", DownloadFilter.ALL, 0u, 10u).items.isEmpty())
+        assertTrue(list.query("ann", DownloadFilter.ALL, 0u, 10u).items.isEmpty())
+    }
+
+    @Test
+    fun theEndOfThePrivateSessionCancelsWaitingPrivateDownloadsAndLetsRunningOnesFinish() {
+        val server = FakeServer(bytes(1000))
+        val e = engine(server)
+        server.onServed = { if (it == 300) e.pause(running()) }
+        val waiting = e.start(link("https://a.test/a.bin", private = true))!!
+        val normal = e.start(link("https://a.test/b.bin"))!!
+        assertEquals(DownloadState.PAUSED, state(waiting))
+        assertEquals(2, parts().size)
+
+        var ended: List<UInt>? = null
+        server.onServed = { if (it == 300) ended = e.endPrivateSession() }
+        val goingOn = e.start(link("https://a.test/c.bin", private = true))!!
+        assertEquals("only the waiting private one", listOf(waiting), ended)
+        assertNull("its entry is gone", list.get(waiting))
+        assertEquals(DownloadState.CANCELLED, events.last(waiting).state)
+        assertFalse(e.resume(waiting))
+        assertEquals("the running private one finished", DownloadState.COMPLETED, events.last(goingOn).state)
+        assertArrayEquals(server.data, folder.files["c.bin"])
+        assertEquals("a paused normal download stays", DownloadState.PAUSED, state(normal))
+        assertEquals(1, parts().size)
+    }
+
+    @Test
+    fun cancelWhileTheFileIsBeingSavedIsRefusedAndSaid() {
+        val server = FakeServer(bytes(100))
+        val e = engine(server)
+        var finishing: Boolean? = null
+        var cancelled: Boolean? = null
+        folder.onPublish = {
+            val id = list.unfinished().single().id
+            finishing = e.isFinishing(id)
+            cancelled = e.cancel(id)
+        }
+        val id = e.start(link())!!
+        assertEquals(true, finishing)
+        assertEquals(false, cancelled)
+        assertEquals(DownloadState.COMPLETED, state(id))
+        assertFalse(e.isFinishing(id))
     }
 
     private companion object {

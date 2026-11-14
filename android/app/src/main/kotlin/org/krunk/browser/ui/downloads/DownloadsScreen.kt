@@ -113,8 +113,8 @@ fun DownloadsScreen(vm: BrowserViewModel) {
 
     fun run(row: DownloadRow, action: RowAction) {
         when (action) {
-            RowAction.OPEN -> report(DownloadOpener.open(context, row.path))
-            RowAction.SHARE -> report(DownloadOpener.share(context, row.path, shareTitle))
+            RowAction.OPEN -> scope.launch { report(DownloadOpener.open(context, row.path)) }
+            RowAction.SHARE -> scope.launch { report(DownloadOpener.share(context, row.path, shareTitle)) }
             RowAction.PAUSE -> downloads.pause(row.id)
             RowAction.RESUME, RowAction.RETRY -> downloads.resume(row.id)
             RowAction.RESTART -> downloads.restart(row.id)

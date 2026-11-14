@@ -11,7 +11,8 @@
     <string name="download_confirm_private">Krunk forgets this download when it is done. The file stays in Downloads after the private tab is closed.</string>
     <string name="download_confirm_yes">Download</string>
     <string name="download_confirm_more">%1$d more waiting</string>
-    <string name="downloads_too_many_questions">A page started too many downloads at once. One was dropped.</string>
+    <string name="downloads_too_many_questions">A page started too many downloads at once. The extra ones were dropped.</string>
+    <string name="downloads_already_saved">Too late to cancel: %1$s is already saved in Downloads.</string>
     <string name="downloads_notifications_off">Notifications are off. Downloads still run: see them under Menu, Downloads.</string>
 
     <!-- The downloads screen -->

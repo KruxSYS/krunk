@@ -109,9 +109,10 @@ fun KrunkRoot(vm: BrowserViewModel) {
                         if (app != null) VaultScreen(vm, vaultPort(app))
                     }
                 }
-                // Downloads ask and report over whatever screen is up.
-                DownloadsHost(vm.downloads)
             }
+            // Downloads ask and report over whatever screen is up. Outside ScreenHost: its content
+            // runs for the covered browser and the screen on top, this must run once.
+            DownloadsHost(vm.downloads)
         }
     }
 }

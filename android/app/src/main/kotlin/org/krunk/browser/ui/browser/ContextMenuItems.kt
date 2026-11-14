@@ -93,9 +93,15 @@ private const val MAX_NAME_BYTES = 200
  * characters that reorder or hide text (a right-to-left override makes `photo[RLO]gpj.apk` read
  * as `photoapk.jpg`), no leading dots (hidden files), no trailing dots or spaces, and short
  * enough in bytes. Too long a name keeps its end, where the extension is.
+ *
+ * For names the filter is wider than [isDeceptive]: every invisible format character (Unicode
+ * category Cf: bidi marks incl. U+061C, word joiners U+2060–U+2064, U+206A–U+206F, soft hyphen,
+ * U+FFF9–U+FFFB, tags), line and paragraph separators (Zl, Zp) and controls (Cc) go, and a run
+ * of spaces of any width (U+00A0, U+2000–U+200A, U+3000 …) becomes one plain space, so padding
+ * cannot push the real extension out of view (`invoice.pdf[200 × U+3000].apk`).
  */
 private fun sanitize(name: String, fallback: String): String {
-    val cleaned = name
+    val cleaned = nameText(name)
         .replace('\\', '_')
         .replace('/', '_')
         .filterNot(::isDeceptive)
@@ -104,6 +110,29 @@ private fun sanitize(name: String, fallback: String): String {
         .trimEnd('.', ' ')
     if (cleaned.isEmpty()) return fallback
     return lastBytes(cleaned, MAX_NAME_BYTES)
+}
+
+/** [s] without invisible characters and with every run of whitespace as one space (see [sanitize]). */
+private fun nameText(s: String): String {
+    val out = StringBuilder(s.length)
+    var space = false
+    var i = 0
+    while (i < s.length) {
+        val cp = s.codePointAt(i)
+        i += Character.charCount(cp)
+        when (Character.getType(cp).toByte()) {
+            Character.FORMAT, Character.CONTROL, Character.LINE_SEPARATOR, Character.PARAGRAPH_SEPARATOR -> Unit
+
+            Character.SPACE_SEPARATOR -> space = true
+
+            else -> {
+                if (space && out.isNotEmpty()) out.append(' ')
+                space = false
+                out.appendCodePoint(cp)
+            }
+        }
+    }
+    return out.toString()
 }
 
 /** The end of [s] that fits into [max] UTF-8 bytes, never cutting a character in two. */
