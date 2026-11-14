@@ -217,7 +217,12 @@ class FakeVaultBackend : VaultBackend {
         this.blob = blob?.copyOf()
     }
 
+    /** How often [touch] was called. */
+    var touches = 0
+        private set
+
     override fun touch(now: Long) {
+        touches++
         lastUse = now
     }
 

@@ -35,6 +35,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -287,6 +288,7 @@ private fun KeyLostPane(holder: VaultUiState, modifier: Modifier) {
         Text(stringResource(R.string.vault_key_lost_title), style = MaterialTheme.typography.headlineSmall)
         Text(stringResource(R.string.vault_key_lost_text), style = MaterialTheme.typography.bodyMedium)
         Text(stringResource(R.string.vault_key_lost_next), style = MaterialTheme.typography.bodyMedium)
+        OutlinedButton(onClick = holder::recheckKey) { Text(stringResource(R.string.vault_key_lost_retry)) }
         Button(
             onClick = holder::askDestroy,
             colors = ButtonDefaults.buttonColors(

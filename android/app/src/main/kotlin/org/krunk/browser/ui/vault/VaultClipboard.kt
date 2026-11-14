@@ -39,9 +39,15 @@ enum class ClipAction {
  */
 fun clipExpiryAction(pending: Boolean, due: Boolean, foreground: Boolean, holdsOurClip: Boolean?): ClipAction = when {
     !pending || !due -> ClipAction.NOTHING
-    !foreground -> ClipAction.WAIT_FOR_FOREGROUND
+
+    // In the background the clipboard cannot be read (Android 10+), but it can be cleared: the
+    // password goes, even at the price of clearing something copied elsewhere meanwhile.
+    !foreground -> ClipAction.CLEAR
+
     holdsOurClip == null -> ClipAction.RETRY
+
     holdsOurClip -> ClipAction.CLEAR
+
     else -> ClipAction.FORGET
 }
 

@@ -78,6 +78,26 @@ class HttpAuthOfferTest {
     }
 
     @Test
+    fun aSignInIsNotOfferedOnALoadThatWentToAnotherServer() {
+        val o = HttpAuthOffer()
+        o.onAnswered(challenge(), private = false, "alice", "pw")
+        o.onPageStart("https://intranet.example/next")
+        assertEquals("alice", o.onPageStop(success = true)?.username)
+        o.onAnswered(challenge(), private = false, "alice", "pw")
+        o.onPageStart("https://elsewhere.example/")
+        assertNull(o.onPageStop(success = true))
+    }
+
+    @Test
+    fun aLockTakesTheListOutOfTheOpenDialog() {
+        assertEquals(Saved.UNLOCK, HttpAuthOffer.afterLock(Saved.LIST, private = false))
+        assertEquals(Saved.UNLOCK, HttpAuthOffer.afterLock(Saved.UNLOCK, private = false))
+        assertEquals(Saved.EXPLICIT, HttpAuthOffer.afterLock(Saved.LIST, private = true))
+        assertEquals(Saved.EXPLICIT, HttpAuthOffer.afterLock(Saved.EXPLICIT, private = true))
+        assertEquals(Saved.NONE, HttpAuthOffer.afterLock(Saved.NONE, private = false))
+    }
+
+    @Test
     fun nothingIsKeptForAPrivateTabAProxyOrAnEmptyPassword() {
         val o = HttpAuthOffer()
         o.onAnswered(challenge(), private = true, "alice", "pw")

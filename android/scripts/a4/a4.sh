@@ -7,6 +7,7 @@
 #     save       sign in on the http test page: warning, save; on return the picker fills;
 #                a changed password offers "Update"
 #     https      a public https login form: save without a warning, fill on return
+#     autofocus  a page that focuses its sign-in field by itself gets no picker
 #     locked     locked vault: quiet on load, unlock asked at the tap on the field
 #     private    private tab: no picker, no save offer; "Fill from vault" fills
 #     auth       HTTP sign-in dialog: save after success, saved login offered next time
@@ -185,6 +186,18 @@ t_https() { # a public https login form (fields tapped by position: 1080x2400, t
   tapui text " Login" 8; waitfor text "Secure Area" 15 --contains
   check "https: signed in with the filled login" 'has text "Secure Area" --contains'
   dump; check "https: no offer for the unchanged login" '! has text "Save this sign-in?"'
+  stop_clean
+}
+
+t_autofocus() { # a page that focuses its sign-in field by itself gets no picker and no unlock dialog
+  launch 8; front autofocus || return
+  dump; has text "Cancel" && has text "Sign in to" --contains && tapui text "Cancel" 2
+  view "$B/login-autofocus.html" 8; waitfor text "focus by the page" 20; sleep 5; dump
+  check "focus set by the page: no picker, no warning, no unlock dialog" '! has text "This page is not encrypted" && ! has text "Unlock vault" && ! has text "Choose a saved sign-in:"'
+  shot autofocus-quiet
+  tap 518 688 3; dump   # a real tap on the password field
+  check "a real tap on the same page brings the warning" 'has text "This page is not encrypted"'
+  A "input keyevent KEYCODE_BACK"; sleep 1
   stop_clean
 }
 

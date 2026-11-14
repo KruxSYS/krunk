@@ -56,6 +56,13 @@ object EngineConfig {
         "signon.privateBrowsingCapture.enabled" to false,
         "signon.generation.enabled" to false,
         "signon.firefoxRelay.feature" to "disabled",
+        // The engine keeps a stand-in entry only for a form of exactly the origin Krunk named
+        // (the tab's own): never for a sibling subdomain or the https twin of an http page. A
+        // form in a frame of another origin is therefore never offered anything.
+        "signon.includeOtherSubdomainsInLookup" to false,
+        "signon.schemeUpgrades" to false,
+        // No sign-in "recipes" fetched from Mozilla.
+        "signon.recipes.remoteRecipes.enabled" to false,
         // The add-on blocklist does not apply to built-in extensions, and Krunk has no others.
         "extensions.blocklist.enabled" to false,
         // Region lookup at Mozilla's location service.

@@ -1,6 +1,8 @@
 package org.krunk.browser.vault
 
 import android.util.Log
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import org.krunk.browser.KrunkApp
 import org.krunk.browser.engine.logins.LoginVault
 import org.krunk.browser.engine.originOf
@@ -26,6 +28,10 @@ class AppLoginVault(
     override fun hasHint(url: String): Boolean = controller.hasHint(url)
 
     override suspend fun <T> use(block: (VaultBackend) -> T): T = controller.use(block)
+
+    override suspend fun <T> peek(block: (VaultBackend) -> T): T = controller.peek(block)
+
+    override val locked: Flow<Unit> = controller.lockEvents.map { }
 
     override fun neverSave(origin: String): Boolean = try {
         originOf(origin)?.let { store.neverSave(it) } ?: false

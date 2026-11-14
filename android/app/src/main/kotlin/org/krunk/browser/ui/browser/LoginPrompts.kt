@@ -27,6 +27,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.krunk.browser.R
 import org.krunk.browser.engine.PagePrompt
@@ -82,6 +83,8 @@ fun LoginFillDialog(prompt: PagePrompt.LoginFill) {
             },
         )
     }
+    // A lock while the picker is open: what it showed of the vault goes, the unlock is asked again.
+    LaunchedEffect(prompt) { host.vault.locked.collect { if (step == FillStep.LIST) step = FillStep.UNLOCK } }
     val afterWarn = { step = if (host.vault.state() == LoginVault.State.UNLOCKED) FillStep.LIST else FillStep.UNLOCK }
     when (step) {
         FillStep.WARN -> AlertDialog(
@@ -108,6 +111,13 @@ private fun FillList(prompt: PagePrompt.LoginFill, host: LoginUiHost, onLocked: 
     val scope = rememberCoroutineScope()
     var matches by remember { mutableStateOf<List<VaultMatch>?>(null) }
     var failed by remember { mutableStateOf(false) }
+    // The rows take a tap only after a moment: a dialog that appears under a finger already on
+    // its way down must not turn that tap into a choice.
+    var armed by remember { mutableStateOf(false) }
+    LaunchedEffect(prompt) {
+        delay(ROW_DELAY_MS)
+        armed = true
+    }
     LaunchedEffect(prompt) {
         try {
             matches = host.vault.use { it.matchesFor(prompt.pageUrl) }
@@ -136,7 +146,7 @@ private fun FillList(prompt: PagePrompt.LoginFill, host: LoginUiHost, onLocked: 
                             Column(
                                 Modifier
                                     .fillMaxWidth()
-                                    .clickable {
+                                    .clickable(enabled = armed) {
                                         scope.launch {
                                             try {
                                                 prompt.pick(host.vault.use { it.secretForFill(m.id, prompt.pageUrl) })
@@ -178,6 +188,8 @@ private fun FillList(prompt: PagePrompt.LoginFill, host: LoginUiHost, onLocked: 
         },
     )
 }
+
+private const val ROW_DELAY_MS = 500L
 
 private enum class SaveStep { ASK, WARN, UNLOCK, SAVING }
 
@@ -357,6 +369,22 @@ internal fun SignInDialog(prompt: PagePrompt.SignIn) {
     var matches by remember { mutableStateOf<List<VaultMatch>>(emptyList()) }
     var confirmInsecure by remember { mutableStateOf<VaultMatch?>(null) }
 
+    // The password in the field came from the vault (not typed): a lock takes it out again.
+    var fromVault by remember { mutableStateOf(false) }
+    if (host != null) {
+        LaunchedEffect(prompt) {
+            host.vault.locked.collect {
+                matches = emptyList()
+                confirmInsecure = null
+                if (fromVault) {
+                    password = ""
+                    fromVault = false
+                }
+                saved = HttpAuthOffer.afterLock(saved, prompt.private)
+            }
+        }
+    }
+
     fun use(m: VaultMatch) {
         val h = host ?: return
         scope.launch {
@@ -364,6 +392,7 @@ internal fun SignInDialog(prompt: PagePrompt.SignIn) {
                 val secret = h.vault.use { it.secretForFill(m.id, prompt.authUrl) }
                 if (!prompt.onlyPassword) user = secret.username
                 password = secret.password
+                fromVault = true
             } catch (e: VaultFailure) {
                 saved = HttpAuthOffer.Saved.NONE
             }
@@ -486,7 +515,10 @@ internal fun SignInDialog(prompt: PagePrompt.SignIn) {
                 }
                 OutlinedTextField(
                     value = password,
-                    onValueChange = { password = it },
+                    onValueChange = {
+                        password = it
+                        fromVault = false
+                    },
                     singleLine = true,
                     label = { Text(stringResource(R.string.prompt_password)) },
                     visualTransformation = PasswordVisualTransformation(),

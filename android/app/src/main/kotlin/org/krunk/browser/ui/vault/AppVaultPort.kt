@@ -49,6 +49,8 @@ class AppVaultPort(private val app: KrunkApp) : VaultPort {
 
     override suspend fun destroy() = controller.destroy()
 
+    override fun recheckKey() = controller.recheckKey()
+
     override val lockMinutes: StateFlow<Int> = app.vaultLock.minutes
 
     override fun setLockMinutes(minutes: Int) {

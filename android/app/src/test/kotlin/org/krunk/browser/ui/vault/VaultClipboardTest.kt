@@ -23,11 +23,12 @@ class VaultClipboardTest {
     }
 
     @Test
-    fun inTheBackgroundTheDecisionWaitsForTheForeground() {
-        // Whatever a read would have said: in the background it is not trusted.
+    fun inTheBackgroundThePasswordIsClearedWithoutLooking() {
+        // The clipboard cannot be read there, and a password must not stay on it: cleared when
+        // the time is up, whatever a read would have said.
         for (holds in listOf(true, false, null)) {
             assertEquals(
-                ClipAction.WAIT_FOR_FOREGROUND,
+                ClipAction.CLEAR,
                 clipExpiryAction(pending = true, due = true, foreground = false, holdsOurClip = holds),
             )
         }

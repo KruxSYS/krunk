@@ -92,6 +92,7 @@ sealed class PagePrompt {
         /** What the dialog shows of the vault (0.3.0), for the server at [authUrl]. */
         val saved: HttpAuthOffer.Saved = HttpAuthOffer.Saved.NONE,
         val authUrl: String = "",
+        val private: Boolean = false,
     ) : PagePrompt() {
         fun answer(user: String, password: String) = onAnswer(user, password)
 

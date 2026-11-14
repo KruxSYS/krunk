@@ -44,6 +44,9 @@ interface VaultPort {
     /** The "device key lost" way out: removes the vault; the state becomes NONE. */
     suspend fun destroy()
 
+    /** "Try again" on the key-lost screen: the key store is asked anew. */
+    fun recheckKey()
+
     val biometric: BiometricPort
 
     /** The lock timer (minutes without vault use). */

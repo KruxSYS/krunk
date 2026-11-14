@@ -4,7 +4,9 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.krunk.browser.KrunkApp
 import org.krunk.browser.engine.originOf
@@ -53,9 +55,21 @@ class LoginsHub {
 
     private var pending: Pending? = null
 
+    private var pendingExpiry: Job? = null
+
     fun keepForNewVault(origin: String, secret: VaultSecret, now: Long) {
-        pending = Pending(origin, secret, now + PENDING_MS)
+        val kept = Pending(origin, secret, now + PENDING_MS)
+        pending = kept
+        // Forgotten when the time is up, whether or not a vault was made.
+        pendingExpiry?.cancel()
+        pendingExpiry = scope.launch {
+            delay(PENDING_MS)
+            if (pending === kept) pending = null
+        }
     }
+
+    /** For tests: is a login waiting for a new vault? */
+    fun hasPending(): Boolean = pending != null
 
     /** The vault changed state: an open one takes the waiting login; a lock forgets it. */
     fun onVaultState(state: LoginVault.State, now: Long) {
@@ -98,16 +112,21 @@ class LoginsHub {
                 )
 
                 else -> scope.launch {
-                    val entries = try {
-                        v.use { b ->
+                    // Whatever happens, the engine gets its answer: a lookup left open would
+                    // hold up the page's form handling.
+                    var entries = emptyList<Autocomplete.LoginEntry>()
+                    try {
+                        // peek: the engine asking is not the user using the vault.
+                        entries = v.peek { b ->
                             origins.flatMap { o ->
                                 b.matchesFor(o.origin).map { placeholder(it.id, o.origin, it.username) }
                             }
                         }
                     } catch (e: VaultFailure) {
-                        emptyList()
+                        // Locked meanwhile, or the vault could not answer: nothing to offer.
+                    } finally {
+                        result.complete(entries.toTypedArray())
                     }
-                    result.complete(entries.toTypedArray())
                 }
             }
             return result

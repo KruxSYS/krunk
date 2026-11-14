@@ -1,0 +1,10 @@
+<!doctype html><meta name=viewport content="width=device-width,initial-scale=1"><title>login</title>
+<style>input,button{font-size:22px;display:block;margin:14px 0;width:90%;padding:10px}</style>
+<h3>Sign in</h3>
+<!-- For the device tests: the page puts the focus into the password field by itself, at load
+     and again by script. Krunk must not show its picker or unlock dialog for that. -->
+<form method=post action=/post><input id=u name=username autocomplete=username placeholder=user>
+<input id=p name=password type=password autocomplete=current-password placeholder=password autofocus>
+<button id=s>Sign in</button></form>
+<div id=o>focus by the page</div>
+<script>setTimeout(()=>{u.focus();setTimeout(()=>p.focus(),300)},1500)</script>

@@ -207,8 +207,10 @@ internal object AndroidKeys {
         throw e
     } catch (_: KeyPermanentlyInvalidatedException) {
         throw KeyFailure.Invalidated()
-    } catch (_: UnrecoverableKeyException) {
-        throw KeyFailure.Invalidated()
+    } catch (e: UnrecoverableKeyException) {
+        // Thrown for a key that is gone for good and also when the key store merely could not
+        // load it: not proof of a lost key, so the caller may try again.
+        throw KeyFailure.Other(e.javaClass.simpleName)
     } catch (e: GeneralSecurityException) {
         // AEADBadTagException, KeyStoreException, InvalidKeyException, ...
         throw KeyFailure.Other(e.javaClass.simpleName)

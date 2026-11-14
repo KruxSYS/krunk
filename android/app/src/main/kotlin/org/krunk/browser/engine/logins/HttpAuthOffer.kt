@@ -23,6 +23,15 @@ class HttpAuthOffer {
         EXPLICIT,
     }
 
+    companion object {
+        /** What the dialog shows of the vault once the vault has locked while it was open. */
+        fun afterLock(shown: Saved, private: Boolean): Saved = when (shown) {
+            Saved.NONE -> Saved.NONE
+            Saved.EXPLICIT -> Saved.EXPLICIT
+            Saved.LIST, Saved.UNLOCK -> if (private) Saved.EXPLICIT else Saved.UNLOCK
+        }
+    }
+
     data class Challenge(
         /** The address of the server that asks. */
         val uri: String?,
@@ -70,6 +79,12 @@ class HttpAuthOffer {
         } else {
             Sent(origin, username, password)
         }
+    }
+
+    /** A new top-level load began: a sign-in sent to another server is not offered on it. */
+    fun onPageStart(url: String) {
+        val s = sent ?: return
+        if (originOf(url) != s.origin) sent = null
     }
 
     /** The dialog was closed without an answer, or the tab went elsewhere. */

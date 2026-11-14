@@ -567,6 +567,12 @@ fn the_inactivity_lock_counts_from_the_last_use() {
     add(&v, "https://bank.example/", "alice", "pw", T0 + 20 * MINUTE);
     assert!(!v.autolock_due(T0 + 34 * MINUTE, 15));
     assert!(v.autolock_due(T0 + 35 * MINUTE, 15));
+    // What the engine asks by itself (logins for a page, "is this login new?") is not a use.
+    v.matches_for(s("https://bank.example/")).unwrap();
+    v.for_http_auth(s("https://bank.example/")).unwrap();
+    v.save_decision(s("https://bank.example/"), s("alice"), s("pw")).unwrap();
+    assert!(v.autolock_due(T0 + 35 * MINUTE, 15), "still due: nobody used the vault");
+    v.touch(T0 + 20 * MINUTE);
     // One without a time (a listing) is a use by the time of the next check.
     v.summaries().unwrap();
     assert!(!v.autolock_due(T0 + 36 * MINUTE, 15));

@@ -37,6 +37,20 @@ class EngineConfigTest {
     }
 
     @Test
+    fun signInPrefsKeepTheEngineToTheExactOriginAndOutOfPrivateTabs() {
+        for (auto in listOf(false, true)) {
+            val prefs = EngineConfig.prefs(automaticUpdates = auto).toMap()
+            // A stand-in entry is good for a form of exactly the tab's origin: no sibling
+            // subdomain (a frame of another origin), no https twin of an http page.
+            assertEquals(false, prefs["signon.includeOtherSubdomainsInLookup"])
+            assertEquals(false, prefs["signon.schemeUpgrades"])
+            assertEquals(false, prefs["signon.privateBrowsingCapture.enabled"])
+            assertEquals(false, prefs["signon.generation.enabled"])
+            assertEquals(false, prefs["signon.recipes.remoteRecipes.enabled"])
+        }
+    }
+
+    @Test
     fun automaticUpdatesTurnRemoteSettingsOnAndOpenTheGateButNothingElse() {
         val on = EngineConfig.yaml(automaticUpdates = true)
         assertFalse(on.contains("MOZ_REMOTE_SETTINGS_DISABLED"))

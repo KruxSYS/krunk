@@ -76,6 +76,13 @@ class BiometricUnlockTest {
     private var availability = BioAvailability.AVAILABLE
     private var now = 1_000_000L
 
+    /** A vault may only be deleted once its device key is lost. */
+    private suspend fun loseTheDeviceKey(s: Setup) {
+        s.vault.lock()
+        backend.keyLost = true
+        runCatching { s.vault.unlock(PASSWORD) }
+    }
+
     private class Setup(val vault: VaultController, val bio: BiometricUnlock)
 
     /** A vault that exists and is unlocked, with biometric unlock off. */
@@ -373,6 +380,7 @@ class BiometricUnlockTest {
     fun destroyingTheVaultRemovesTheKey() = runTest {
         val s = setup()
         s.bio.enable()
+        loseTheDeviceKey(s)
         s.vault.destroy()
         assertFalse(keys.exists())
         assertFalse(s.bio.enabled.value)
@@ -386,6 +394,7 @@ class BiometricUnlockTest {
         val shown = prompt.shown
         assertEquals(BioUnlockResult.Unlocked, s.bio.unlock())
         assertEquals(shown, prompt.shown)
+        loseTheDeviceKey(s)
         s.vault.destroy()
         assertEquals(BioUnlockResult.Failed, s.bio.unlock())
     }

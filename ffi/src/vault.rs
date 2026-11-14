@@ -456,6 +456,15 @@ impl KrunkVault {
     }
 
     /// Runs `f` on the open vault; counts as use.
+    /// Like [`read`](Self::read) for what the engine asks by itself (a page with a sign-in form
+    /// was loaded, a form was sent): it is not the user using the vault and must not keep the
+    /// inactivity lock from falling.
+    fn peek<T>(&self, f: impl FnOnce(&Vault) -> VaultResult<T>) -> VaultResult<T> {
+        let inner = self.inner();
+        let Some(vault) = inner.vault.as_ref() else { return Err(self.missing()) };
+        f(vault)
+    }
+
     fn read<T>(&self, f: impl FnOnce(&Vault) -> VaultResult<T>) -> VaultResult<T> {
         let mut inner = self.inner();
         let Some(vault) = inner.vault.as_ref() else { return Err(self.missing()) };
@@ -717,7 +726,7 @@ impl KrunkVault {
     /// The logins to offer on the page at `url`: its own origin's, or (only when it has none,
     /// https only) those of the same registrable domain. Sorted by user name.
     pub fn matches_for(&self, url: String) -> VaultResult<Vec<VaultMatch>> {
-        self.read(|v| {
+        self.peek(|v| {
             Ok(v.matches_for(&url)
                 .into_iter()
                 .map(|(e, kind)| VaultMatch {
@@ -732,7 +741,7 @@ impl KrunkVault {
 
     /// The logins for an HTTP sign-in dialog of the server at `url`: its exact origin only.
     pub fn for_http_auth(&self, url: String) -> VaultResult<Vec<VaultMatch>> {
-        self.read(|v| {
+        self.peek(|v| {
             let mut out: Vec<VaultMatch> = v
                 .for_origin(&url)
                 .into_iter()
@@ -765,7 +774,7 @@ impl KrunkVault {
     /// with the entry of the same origin and user name.
     pub fn save_decision(&self, url: String, username: String, password: String) -> VaultResult<SaveDecision> {
         let password = Zeroizing::new(password);
-        self.read(|v| {
+        self.peek(|v| {
             Ok(match v.for_origin(&url).into_iter().find(|e| e.username == username) {
                 Some(e) if *e.password == *password => SaveDecision::Unchanged,
                 Some(e) => SaveDecision::Update { id: e.id.clone() },

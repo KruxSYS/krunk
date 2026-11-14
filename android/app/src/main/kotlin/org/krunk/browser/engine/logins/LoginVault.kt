@@ -14,6 +14,15 @@ interface LoginVault {
     /** Runs [block] off the main thread on the open vault; `VaultFailure.Locked` otherwise. */
     suspend fun <T> use(block: (VaultBackend) -> T): T
 
+    /**
+     * Like [use] for what the engine asks by itself (a page with a sign-in form was loaded, a
+     * form was sent): not a use of the vault, so it does not delay the inactivity lock.
+     */
+    suspend fun <T> peek(block: (VaultBackend) -> T): T
+
+    /** Emits each time the vault locks: open pickers and dialogs drop what they show of it. */
+    val locked: kotlinx.coroutines.flow.Flow<Unit>
+
     /** "Never for this site". */
     fun neverSave(origin: String): Boolean
 

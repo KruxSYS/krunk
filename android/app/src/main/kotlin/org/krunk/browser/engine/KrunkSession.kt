@@ -463,6 +463,7 @@ class KrunkSession(
     }
 
     private fun loginsNewDocument(url: String) {
+        httpAuth.onPageStart(url)
         fillSuppressed = false
         if (fillArmedOrigin != originOf(url)) fillArmedOrigin = null
     }
@@ -482,13 +483,15 @@ class KrunkSession(
     /** A login was sent from this tab ([origin] is the form's or the server's): ask to save it? */
     private fun offerSave(origin: String?, username: String?, password: String?) {
         val vault = engine.logins.vault ?: return
-        if (origin == null || password.isNullOrEmpty()) return
+        // A private tab: nothing is asked of the vault, nothing is kept.
+        if (private || origin == null || password.isNullOrEmpty()) return
         val user = username ?: ""
         val state = vault.state()
         engine.logins.scope.launch {
             val known = if (state == LoginVault.State.UNLOCKED) {
                 try {
-                    vault.use { it.saveDecision(origin, user, password) }
+                    // peek: a form being sent is not the user using the vault.
+                    vault.peek { it.saveDecision(origin, user, password) }
                 } catch (e: VaultFailure) {
                     null
                 }
@@ -507,6 +510,8 @@ class KrunkSession(
                 ),
             )
             if (decision !is LoginPolicy.Save.Offer || closed) return@launch
+            // The tab went elsewhere while the vault was asked: no offer on another site.
+            if (!LoginPolicy.saveStillValid(id, origin, id, current.url) && originOf(current.url) != null) return@launch
             savePrompt?.close()
             val prompt = PagePrompt.LoginSave(
                 tabId = id,
@@ -632,6 +637,7 @@ class KrunkSession(
                     },
                     saved = saved,
                     authUrl = options.uri ?: "",
+                    private = private,
                 )
             }
         }
@@ -660,6 +666,9 @@ class KrunkSession(
                         formOrigin = formOrigin,
                         vault = vault.state(),
                         hint = vault.hasHint(pageUrl),
+                        recentTap = LoginPolicy.recentTap(
+                            lastTouchAt.takeIf { it > 0 }?.let { SystemClock.uptimeMillis() - it },
+                        ),
                     ),
                 )
             }
@@ -692,6 +701,8 @@ class KrunkSession(
                     },
                     onDismiss = {
                         fillSuppressed = true
+                        // "Fill from vault" was for this one picker, not for every later tap.
+                        fillArmedOrigin = null
                         answer(request.dismiss())
                     },
                 )

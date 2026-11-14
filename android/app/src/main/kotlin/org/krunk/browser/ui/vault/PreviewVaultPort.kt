@@ -104,6 +104,8 @@ class PreviewVaultPort(
         if (wasOpen) _lockEvents.tryEmit(LockReason.DESTROYED)
     }
 
+    override fun recheckKey() = Unit
+
     override fun setLockMinutes(minutes: Int) {
         if (minutes in LOCK_MINUTE_CHOICES) _lockMinutes.value = minutes
     }

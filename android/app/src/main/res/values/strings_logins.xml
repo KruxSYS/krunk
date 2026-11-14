@@ -37,4 +37,5 @@
     <string name="login_fill_not_here">Nothing to fill on this page</string>
     <string name="vault_bio_use_password">Use password</string>
     <string name="vault_error_key_unavailable">This device\'s key store did not answer. Try again; if it stays like this, restart the device. The vault is untouched.</string>
+    <string name="vault_key_lost_retry">Try again</string>
 </resources>

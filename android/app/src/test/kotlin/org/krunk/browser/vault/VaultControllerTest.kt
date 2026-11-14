@@ -482,6 +482,50 @@ class VaultControllerTest {
     }
 
     @Test
+    fun onlyAVaultWithALostKeyCanBeDeleted() = runTest {
+        val vault = controller()
+        vault.create(PASSWORD)
+        failureOf<VaultFailure.NotAllowed> { vault.destroy() }
+        vault.lock()
+        failureOf<VaultFailure.NotAllowed> { vault.destroy() }
+        assertEquals(VaultFileState.LOCKED, backend.state())
+        assertTrue(keyPresent)
+    }
+
+    @Test
+    fun tryAgainOnTheKeyLostScreenAsksTheKeyStoreAnew() = runTest {
+        val vault = controller()
+        vault.create(PASSWORD)
+        vault.lock()
+        backend.keyLost = true
+        failureOf<VaultFailure.KeyLost> { vault.unlock(PASSWORD) }
+        assertEquals(VaultState.KEY_LOST, vault.state.value)
+        // Still gone: asking again does not unlock anything, the next unlock says so again.
+        vault.recheckKey()
+        assertEquals(VaultState.LOCKED, vault.state.value)
+        failureOf<VaultFailure.KeyLost> { vault.unlock(PASSWORD) }
+        assertEquals(VaultState.KEY_LOST, vault.state.value)
+        // It was only out of reach: the vault is back.
+        backend.keyLost = false
+        vault.recheckKey()
+        vault.unlock(PASSWORD)
+        assertEquals(VaultState.UNLOCKED, vault.state.value)
+    }
+
+    @Test
+    fun whatTheEngineAsksByItselfDoesNotDelayTheLock() = runTest {
+        val vault = controller()
+        vault.create(PASSWORD)
+        val touches = backend.touches
+        vault.peek { it.matchesFor("https://bank.example/") }
+        assertEquals("peek is not a use", touches, backend.touches)
+        vault.use { it.matchesFor("https://bank.example/") }
+        assertEquals(touches + 1, backend.touches)
+        vault.lock()
+        failureOf<VaultFailure.Locked> { vault.peek { it.matchesFor("https://bank.example/") } }
+    }
+
+    @Test
     fun aKeyStoreThatOnlyFailedLeavesTheVaultLockedNotLost() = runTest {
         val vault = controller()
         vault.create(PASSWORD)

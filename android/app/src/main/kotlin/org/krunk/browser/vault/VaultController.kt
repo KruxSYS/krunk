@@ -229,6 +229,24 @@ class VaultController(
         }
     }
 
+    /**
+     * Like [use] for what the engine asks by itself (logins for a loaded page, "is this login
+     * new?"): it does not count as the user using the vault, so it never delays the lock.
+     */
+    suspend fun <T> peek(block: (VaultBackend) -> T): T {
+        if (_state.value != VaultState.UNLOCKED) throw VaultFailure.Locked()
+        return withContext(dispatcher) { block(backend) }
+    }
+
+    /**
+     * "Try again" on the key-lost screen: asks the key store anew. A key that is really gone is
+     * found gone again; one that was only out of reach gives the locked vault back.
+     */
+    fun recheckKey() {
+        synchronized(gate) { keyLost = false }
+        refresh()
+    }
+
     /** Works while locked: does this site have logins? */
     fun hasHint(url: String): Boolean = _state.value != VaultState.NONE && backend.hasHint(url)
 
@@ -292,6 +310,8 @@ class VaultController(
 
     /** The way out of [VaultState.KEY_LOST]: removes the vault, its side file and the device key. */
     suspend fun destroy() = ops.withLock {
+        // The way out of a lost key only: an open or merely locked vault is never deleted here.
+        if (_state.value != VaultState.KEY_LOST) throw VaultFailure.NotAllowed()
         withContext(dispatcher) {
             backend.lock()
             backend.destroy()

@@ -19,7 +19,21 @@ class LoginPolicyTest {
         form: String? = "https://shop.example",
         vault: State = State.UNLOCKED,
         hint: Boolean = true,
-    ) = LoginPolicy.fill(LoginPolicy.FillContext(private, armed, suppressed, url, form, vault, hint))
+        tap: Boolean = true,
+    ) = LoginPolicy.fill(LoginPolicy.FillContext(private, armed, suppressed, url, form, vault, hint, tap))
+
+    @Test
+    fun onlyATapBringsThePickerNeverAFocusThePageSetItself() {
+        assertTrue(fill(tap = false) is Fill.No)
+        assertTrue(fill(tap = false, vault = State.LOCKED) is Fill.No)
+        // Not even in a tab armed with "Fill from vault": it waits for the tap too.
+        assertTrue(fill(tap = false, armed = "https://shop.example") is Fill.No)
+        assertTrue(LoginPolicy.recentTap(0))
+        assertTrue(LoginPolicy.recentTap(LoginPolicy.TAP_WINDOW_MS))
+        assertFalse(LoginPolicy.recentTap(LoginPolicy.TAP_WINDOW_MS + 1))
+        assertFalse("never touched", LoginPolicy.recentTap(null))
+        assertFalse(LoginPolicy.recentTap(-5))
+    }
 
     @Test
     fun anOpenVaultOffersOnAnHttpsPage() {

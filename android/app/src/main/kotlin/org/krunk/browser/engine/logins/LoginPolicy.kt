@@ -22,6 +22,11 @@ object LoginPolicy {
     /** The user name of the entry that stands for "there are logins, unlock to see them". */
     const val LOCKED_PLACEHOLDER_USER = "Krunk"
 
+    /** How long after a touch on the page a field's request for a login counts as the user's. */
+    const val TAP_WINDOW_MS = 3_000L
+
+    fun recentTap(sinceTouchMs: Long?): Boolean = sinceTouchMs != null && sinceTouchMs in 0..TAP_WINDOW_MS
+
     /** The password every entry handed to the engine carries until the user picks one. */
     const val PLACEHOLDER_PASSWORD = "krunk-vault-placeholder"
 
@@ -44,6 +49,12 @@ object LoginPolicy {
         val vault: LoginVault.State,
         /** Locked vault: the hint list knows logins for the page. */
         val hint: Boolean,
+        /**
+         * The user touched the page a moment ago ([TAP_WINDOW_MS]). The engine asks whenever a
+         * sign-in field gets the focus, also when the page's script put it there; only a tap
+         * may bring Krunk's picker or unlock dialog.
+         */
+        val recentTap: Boolean = true,
     )
 
     sealed class Fill {
@@ -60,6 +71,7 @@ object LoginPolicy {
         val armed = c.armedOrigin != null && c.armedOrigin == page
         if (c.private && !armed) return Fill.No("private tab")
         if (c.suppressed && !armed) return Fill.No("closed on this page")
+        if (!c.recentTap) return Fill.No("no tap")
         val insecure = isPlainHttp(c.pageUrl)
         return when (c.vault) {
             LoginVault.State.NONE -> Fill.No("no vault")

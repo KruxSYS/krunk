@@ -403,6 +403,9 @@ class VaultUiState(
         _model.update { it.copy(dialog = VaultDialog.ConfirmDestroy()) }
     }
 
+    /** "Try again" on the key-lost screen. */
+    fun recheckKey() = port.recheckKey()
+
     /** Deletes the vault only when [typed] is the word asked for. */
     fun destroy(typed: String) {
         val dialog = _model.value.dialog as? VaultDialog.ConfirmDestroy ?: return
