@@ -3,6 +3,95 @@
 What changed in each Krunk for Android release, newest first. The Windows browser's list is
 `CHANGELOG.md`.
 
+## 0.3.0 — 2026-11-14
+
+The password vault. It installs over 0.2.0 and keeps tabs, bookmarks, history and settings.
+
+- **Password vault.** Krunk can keep the user names and passwords you sign in with, encrypted on
+  the device behind one vault password that only you know (at least 8 characters). The
+  encryption and the file format are those of the Windows browser: Argon2id turns the password
+  into the key, XChaCha20-Poly1305 seals every login, and the names of the sites are encrypted
+  too. On Android the vault key is wrapped once more by a key in the Android Keystore that cannot
+  leave the device (StrongBox when the device has one, otherwise the device's secure hardware).
+  In the app, wrong passwords slow the next attempt down, up to a minute.
+  - What the device key protects: the saved logins. A copy of the vault file cannot be decrypted
+    on another device, not even with the right password.
+  - What it does not protect: the vault password against guessing. Someone who has a copy of the
+    file can try passwords against it on their own computer; only Argon2id slows that down
+    (64 MiB of memory and 3 passes for every guess). Choose a long vault password.
+- **Passwords screen** (⋮ menu › Passwords, or Settings › Privacy › Passwords): create the vault,
+  unlock it, search the logins, view one (the password stays hidden until you tap Show and hides
+  itself again after 30 seconds), copy the user name or the password, add, edit and delete logins
+  (delete asks first), Change password and Lock now. A copied password is marked as sensitive, so
+  Android 13 and later keep it out of the clipboard preview, and Krunk takes it off the clipboard
+  after 30 seconds unless you copied something else in between.
+- **Locking.** The vault locks:
+  - when you choose Lock now;
+  - after a time without vault use: 1, 5, 15, 30 or 60 minutes, 15 by default ("Lock after");
+  - after you leave Krunk: at once, after 30 seconds, after 1 minute (the default) or after 5
+    minutes ("Lock after leaving Krunk"). The time is there so that you can switch to another
+    app, for example an authenticator app for a sign-in code, and come back without unlocking
+    again. It also means the vault stays open for that long after you leave Krunk; choose
+    "At once" to close that;
+  - always when Krunk's process ends: a newly started Krunk has a locked vault.
+- **Saving and filling in pages.**
+  - After you sign in on a site, Krunk offers to save the login, or to update it when the
+    password changed; a login that is already saved is not offered again. "Never for this site"
+    stops the offers for one site, "Offer to save sign-ins" in the vault's settings switches them
+    off altogether. Without a vault the offer leads to "Create vault" and the login is saved into
+    the new vault; "Don't ask again" there switches the offers off.
+  - Tap a sign-in field on a site with saved logins and Krunk shows them to choose from. Krunk
+    never fills a form by itself, and the engine does not hold your passwords: it gets the one
+    login you picked, at the moment you pick it.
+  - A locked vault stays quiet while pages load. The vault password is asked when you tap the
+    field of a site that has logins, or when you choose Save.
+  - "Fill from vault" in the ⋮ menu brings the choice back on a page where you closed it.
+- **Private tabs:** nothing is offered by itself and there is never an offer to save. "Fill from
+  vault" in the ⋮ menu is the explicit way: after it, a tap on the sign-in field shows the saved
+  logins.
+- **Pages without encryption (http):** before a password is filled in or saved there, Krunk shows
+  a warning that you have to confirm. A login saved on an https page is never offered to an http
+  page.
+- **Sign-in forms inside a frame of another site are not filled.** The login belongs to the site
+  in the address bar; a form that another site embedded gets nothing. This is stricter than the
+  Windows browser, which offers such a form the logins of the frame's own site.
+- **HTTP sign-in dialog:** it lists the saved logins of that server ("Use …"), offers "Unlock
+  vault for saved sign-ins" when the vault is locked, and Krunk offers to save after a sign-in
+  that worked. Proxies get no offer.
+- **Fingerprint unlock** (optional, off by default, Android 11 and later): "Unlock with
+  fingerprint" in the vault's settings. The vault password always works and is not stored for
+  this. Enrolling a new fingerprint on the device switches it off, and so does changing the
+  vault password; switch it on again afterwards.
+- **Screens of the vault are blank in screenshots, screen recordings and Recents:** the Passwords
+  screen, the unlock dialog, the choice of logins and the save offer.
+- **One new permission:** use biometrics (for fingerprint unlock; Android does not ask for it).
+
+What the vault on Android does not have in this version:
+
+- **No recovery phrase. A forgotten vault password cannot be recovered**; the create and unlock
+  screens say so.
+- No payment cards, no sync, no import or export of logins, no password generator, and Krunk is
+  not a system-wide Autofill service: it fills in its own pages only.
+- **The vault stays on this device.** It is not in Android's cloud backup and not in the transfer
+  to a new device, and its file cannot be opened anywhere else, because the Keystore key does not
+  leave the device. A vault file from the Windows browser does not open on Android, and one from
+  Android does not open on Windows, in this version.
+- **When the device's key is gone.** If Android's key store reports the key as missing or no
+  longer valid (app data restored from elsewhere, key store reset), Krunk says "This vault cannot
+  be opened", asks for no password and offers to delete the vault behind a typed confirmation; it
+  never replaces a vault silently. If the key store merely does not answer, Krunk says so and
+  asks you to try again; the vault is not treated as lost.
+
+Tested: on the emulator only (Android 16, x86_64). **Fingerprint unlock was not run on a device:**
+no fingerprint can be simulated on the test emulator, so switching it on, unlocking, a new
+enrolment and the fall-back to the password are covered by unit tests with stand-ins only; the
+one device check is that the switch is disabled with its reason when no fingerprint is enrolled.
+**StrongBox was not run on a device either:** the emulator has none and used the other Keystore
+path; the StrongBox-first choice is covered by unit tests with a stand-in. Copying to the
+clipboard and its timed clearing are covered by unit tests only.
+
+<!-- M7: release-pass results and known issues are added here by the lead -->
+
 ## 0.2.0 — 2026-11-12
 
 Ad and tracker blocking, a quieter engine, a wider address bar and themes. It installs over 0.1.0

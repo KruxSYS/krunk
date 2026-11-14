@@ -2,7 +2,9 @@
 
 Status: **in progress** (round 1 delivered Android 0.1.0 and 0.1.1: toolchain, engine spike, core
 browsing, tabs, new-tab page, bookmarks/history, settings; round 2 so far delivered 0.2.0: ad and
-tracker blocking with uBlock Origin (milestone A3), a quiet engine, themes; see `docs/ANDROID_FEATURES.md` for the parity
+tracker blocking with uBlock Origin (milestone A3), a quiet engine, themes, and 0.3.0: the
+password vault (milestone A4), with save and fill in pages and optional fingerprint unlock; see
+`docs/ANDROID_FEATURES.md` for the parity
 matrix and `docs/ANDROID_DEV.md` for the build). Goal: a Krunk for Android phones and tablets with
 the same promises as the desktop version:
 - ad and tracker blocking that also works on YouTube
@@ -46,6 +48,29 @@ last change what users get and should be confirmed by the operator.
 | Tracking parameters | Request-level rewriting in `krunk-guard` (`webRequest`, top-level GET only), rules from `core::urlclean` |
 | Themes | The twelve styles of `core::style` and the accent, resolved in `ffi/src/theme.rs`; shape and active-tab mark are mapped, a gradient runs along the toolbar, private tabs keep one fixed look |
 | 0.1.x | No separate fix release: the 0.2.0 changelog opens with the plain statement that 0.1.0 and 0.1.1 contacted Mozilla and Google in the background |
+
+### Decisions taken for Android 0.3.0 (A4, 2026-11-13)
+
+Taken at the plan review of 2026-11-13 as assumptions the operator can overrule; the lock after
+leaving Krunk was changed by the operator during the work. The spike that the design rests on ran
+on the sandbox emulator before any feature code was written.
+
+| Decision | Value |
+|---|---|
+| Biometric unlock | **Optional, off by default**, in addition to the vault password, which always works. Switching it on encrypts the vault's unlock key (never the password) under a second Keystore key that works only after a strong biometric match and is invalidated by a new enrolment. A new enrolment, a changed vault password or a missing blob switch it off, and the password dialog says why |
+| Import of logins | **None** in 0.3.0 (not part of A4). No export either |
+| Lock timer | 1, 5, 15, 30 or 60 minutes without vault use, **default 15**, as on Windows. An **Android-only setting** (`kv` row `android.vault.lock_minutes`), not the shared `vaultAutolockMinutes`: the settings record the Android app gets from the core does not carry that field |
+| Lock after leaving Krunk | **Operator's change (2026-11-13):** not at once but after a grace period, so that a visit to an authenticator app does not lock the vault. Choices: at once, 30 seconds, **1 minute (default)**, 5 minutes (`kv` row `android.vault.background_grace_s`). Back within the time: still unlocked; back later: locked before anything of the vault is shown; a best-effort timer also locks while Krunk stays in the background. The vault's windows stay blank in Recents throughout. Cost: the vault is open for up to that time after the user left; "At once" is selectable |
+| Private tabs | Nothing is offered by itself and there is never a save offer. The menu item **"Fill from vault"** arms the tab for the page's origin; the next tap on the sign-in field opens the picker. (As built the item is in the menu of every tab with a vault: in a normal tab it brings back a picker the user closed) |
+| Forms in frames of another origin | **Not filled.** Filling is tied to the tab's top-level address, and a form whose origin differs from it gets nothing. Stricter than Windows |
+| Passwords and the engine | **Withheld until the user picks one.** GeckoView facts from the spike: with `loginAutofillEnabled(false)` the engine never fills by itself but still calls the runtime-wide `Autocomplete.StorageDelegate.onLoginFetch(domain)` on page load and at every field tap, without saying which tab asks; a tap then brings `PromptDelegate.onLoginSelect(session, …)` with the tab known; confirming a self-built `LoginSelectOption` fills the form. Krunk therefore answers the fetch with entries that carry a placeholder instead of the password (one per matching login with the vault open, one stand-in with the vault locked and logins known for the site), and hands the real password of the one picked login to the engine in the tab's own prompt. Three things the spike added: the entries must carry the page's origin including the port; the locked stand-in needs a user name; the engine also asks to save in private tabs, so `signon.privateBrowsingCapture.enabled` is off and Krunk refuses there as well. `onLoginSave(session, …)` also arrives after a fill, so Krunk compares with the vault itself (new, update, unchanged). The engine's password generator and Relay offer are off |
+| Keystore wrap | The vault key, already sealed by the password, is wrapped by an AES-256-GCM key in the Android Keystore (`krunk.vault.wrap.v1`, no user authentication, **StrongBox first**, otherwise the TEE-backed key). The key is made **only by "Create vault"**. **What the wrap protects** (corrected by the security review, finding R-1): the saved logins, because a copied file cannot be decrypted on another device even with the right password. **What it does not protect:** the password against guessing. `vault.json` holds a password check record sealed by the password-derived key alone, so someone with a copy of the file can try passwords offline, slowed only by Argon2id (64 MiB, 3 passes per guess); hence the advice to choose a long vault password. **Key loss:** only a key the key store reports as missing or invalidated makes the vault "key lost" ("This vault cannot be opened", shown before a password is asked; the file stays as it is; the only way on is "Delete this vault" behind a typed confirmation). A key store that merely fails to answer is reported as "key store did not answer, try again" (error `KeyUnavailable`), not as key loss. A key or a vault is **never recreated silently** |
+| File location | `filesDir/krunk-vault/` (`vault.json`, `state.json`): beside `files/krunk`, not in it, and excluded by name from cloud backup and from device-to-device transfer in both rule files. `BackupRulesTest` holds the rules and the path constant together. Even a copy that travelled could not be decrypted (its key stays behind) |
+| Fixtures both ways | A DPAPI or Keystore blob opens only where it was made, so each platform has a pair in `core/tests/fixtures/vault/platform/`: the file as written (Krunk 0.19.0 on the Windows VM; the Android debug build on the emulator with the real Keystore) and an inner twin with only the platform wrap removed on that machine. The `ffi` tests open both twins with the fixture password and find the same logins, and check that the files as written fail cleanly elsewhere. Vaults of formats 2, 3 and 4 keep what the Android app does not show (cards, recovery slot, sync part) |
+| Biometric library | The **platform** `BiometricPrompt` and `BiometricManager.canAuthenticate(BIOMETRIC_STRONG)`, offered on **Android 11 and later** (API 30). **No AndroidX Biometric:** its only stable release (1.1.0) needs a `FragmentActivity`, and 1.4.0 is a beta. No new dependency; one new normal permission (`USE_BIOMETRIC`) |
+
+Not run on a device: fingerprint unlock (no fingerprint can be simulated on the sandbox emulator)
+and StrongBox (the image has none); both are covered by JVM tests with stand-ins only.
 
 Spike measurements (sandbox emulator, Android 16 x86_64, software GPU, 4 vCPU):
 - APK (debug, unstripped Gecko): arm64-v8a 153 MB, x86_64 161 MB, universal 274 MB. `libkrunk_ffi.so`
@@ -107,7 +132,7 @@ as an AAR.
 | `storage`, `history`, `bookmarks`, `frecency`, `netscape` | as is | the same SQLite schema, so a later sync/import shares the format |
 | `urlclean` (tracking params, address-bar input) | as is | |
 | `settings` | split | shared fields as is; desktop-only ones (Chromium switches, GPU) are hidden on Android |
-| `vault`, `passgen`, `secret` | as is | crypto is portable. Desktop wraps the vault key with DPAPI; Android wraps it with an **Android Keystore** AES key (StrongBox when available, optionally user-auth-bound for biometric unlock) |
+| `vault`, `passgen`, `secret` | `vault` as is (0.3.0); `passgen` not used yet | crypto is portable: the same scheme and file format. Desktop wraps the vault key with DPAPI; Android wraps it with an **Android Keystore** AES-256-GCM key (StrongBox when available, otherwise TEE-backed; no user authentication, the password guards the vault). As built: two additive core functions (`Vault::unlock_key`, `Vault::open_with_key`) for biometric unlock, where a second, user-authentication-bound Keystore key encrypts the unlock key; the `ffi` object `KrunkVault` with the foreign trait `VaultKeyWrapper`; a side file `state.json` (unlock rate limiter, the locked-vault hint index, the biometric blob). The file as written opens only on the device that made it; the wrap protects the content of a copied file, not the password against offline guessing (see the 0.3.0 decisions). Not on Android yet: cards, the recovery phrase, the generator |
 | `update` | as is | a new channel `android-arm64` in the same signed manifest format (only for APK distribution, see §5) |
 | `filterlists`, `preprocess`, `blocker` | not needed at first | uBO does the work; `blocker` stays an option if uBO-as-extension must be replaced |
 | `cookies` (third-party policy) | not needed | Gecko's Total Cookie Protection / `cookieBehavior` settings |
@@ -123,8 +148,11 @@ as an AAR.
   but desktop layouts and hover-based UI don't fit touch, and a privileged web UI in the same
   engine as web content repeats the origin-isolation work done on desktop. Some strings and the
   settings model (via `core`) are shared instead.
-- **Autofill:** Krunk's vault offers logins in its own pages through the GeckoView
-  `Autocomplete` delegate. Being a system-wide Android Autofill service is a later option.
+- **Autofill** (as built in 0.3.0): Krunk's vault offers logins in its own pages through
+  GeckoView's `Autocomplete` storage delegate and the login prompts of `PromptDelegate`. There is
+  **no silent fill**: the engine's own filling is off, the engine hears placeholders instead of
+  passwords, and a login is filled only after the user tapped the field and picked it in Krunk's
+  own picker. Being a system-wide Android Autofill service is a later option.
 
 ## 4. Sync
 Desktop has end-to-end encrypted sync since 0.9.0 (`docs/sync/`); the protocol already accepts
@@ -153,7 +181,7 @@ Proposal:
 | A1 ✔ (round 1) | App skeleton: Compose chrome, tabs (GeckoSession per tab, session restore), address bar with `core::urlclean` via UniFFI, private tabs (separate runtime context) | 3 weeks |
 | A2 ✔ (round 1) | Data: history, bookmarks, new-tab top sites (frecency), settings through `core` | 2 weeks |
 | A3 ✔ (0.2.0) | Blocking: bundled uBO (pinned version, hash-checked like `ubo-resources.lock`), shield counter and per-site allow via the extension's messaging, uBO list updates on request. Custom lists and protection levels moved to round 3 | 2 weeks |
-| A4 | Vault: Keystore-wrapped key, unlock (password, optional biometrics), save/fill prompts through GeckoView autocomplete delegates | 3 weeks |
+| A4 ✔ (0.3.0) | Vault: Keystore-wrapped key, unlock (password, optional biometrics), save/fill prompts through GeckoView autocomplete delegates, saved logins in the HTTP sign-in dialog. The recovery phrase, the password generator and payment cards moved to a later round; so did import/export and a system Autofill service | 3 weeks |
 | A5 | Downloads, site data/cookies screen, permissions prompts, full screen and pointer lock polish | 2 weeks |
 | A6 | Release: signing, Play listing and APK channel with `update` (android-arm64), crash-free QA on 4–5 devices (Android 10–16, phone + tablet, arm64 + x86_64 emulator) | 2–3 weeks |
 
@@ -192,3 +220,15 @@ Total: about **15–16 weeks** to a first public beta, then a GeckoView bump eve
     marked "not planned" in the matrix with alternatives; override if wanted.
 12. **Tablet coverage:** round 1 verified the sw600dp layout by resizing the phone emulator; a real
     tablet AVD needs KVM (absent in the sandbox).
+13. **Recovery phrase on Android** (open since 0.3.0): the vault format has the recovery slot and
+    Windows has the screens, Android has neither the screen to make a phrase nor the one to use
+    it. Until then a forgotten vault password cannot be recovered on Android, and the app says
+    so. Wanted, and in which round?
+14. **Carrying a vault between devices** (open since 0.3.0): the vault file is bound to the
+    device's Keystore key, is in no backup or transfer, and there is no import or export, so a
+    new phone starts with an empty vault and a Windows vault does not open on Android. The
+    intended answer is sync (§4, question 6); an export/import file would be the smaller step.
+    Which one, and when?
+15. **System Autofill service** (open since 0.3.0): Krunk fills in its own pages only. Offering
+    the vault to other apps through Android's Autofill framework is a separate piece of work
+    with its own security review. Wanted?
