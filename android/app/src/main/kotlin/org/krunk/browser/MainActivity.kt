@@ -91,8 +91,15 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        app.sitePermissions.android.detach(this)
+        // Not finishing: the system recreates the activity, and Android hands the result of a
+        // permission dialog that is still open to the new one (AndroidPermissionGate).
+        app.sitePermissions.android.detach(this, finishing = isFinishing && !isChangingConfigurations)
         super.onDestroy()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        app.sitePermissions.android.resumed(this)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {

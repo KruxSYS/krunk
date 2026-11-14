@@ -11,6 +11,7 @@ import org.krunk.browser.core.KrunkCore
 import org.krunk.browser.engine.EngineSiteData
 import org.krunk.browser.engine.GeckoEngine
 import org.krunk.browser.engine.await
+import org.krunk.browser.engine.permissions.SitePermissionReset
 import org.krunk.browser.tabs.TabManager
 import org.krunk.ffi.FfiException
 import org.krunk.ffi.siteOfHost
@@ -21,7 +22,7 @@ class SiteDataController(
     private val core: KrunkCore,
     private val engine: GeckoEngine,
     private val tabs: TabManager,
-    private val resetPermissions: ((origin: String) -> Unit)? = null,
+    private val permissions: SitePermissionReset? = null,
 ) {
     /** What the engine lists, or null when it has not answered within [timeoutMs]. */
     suspend fun engineData(timeoutMs: Long): EngineSiteData? = withTimeoutOrNull(timeoutMs) { engine.siteData.list() }
@@ -62,19 +63,19 @@ class SiteDataController(
             }
             if (withPermissions) {
                 // Through the permissions' own reset when there is one: it also tells the prompt
-                // policy and the engine's copy, so the site asks again at once.
+                // policy and the engine's copy, so the site asks again at once, and drops what the
+                // private session remembered for the site's origins.
                 val origins = core.io { store ->
                     store.sitePermissionsList().map { it.origin }.distinct()
                         .filter { SiteDataModel.isOfSite(it, site, ::siteOfHost) }
-                        .also { list ->
-                            if (resetPermissions ==
-                                null
-                            ) {
-                                list.forEach { store.sitePermissionsClearOrigin(it) }
-                            }
-                        }
+                        .also { list -> if (permissions == null) list.forEach { store.sitePermissionsClearOrigin(it) } }
                 }
-                resetPermissions?.let { reset -> withContext(Dispatchers.Main) { origins.forEach(reset) } }
+                permissions?.let { reset ->
+                    withContext(Dispatchers.Main) {
+                        val private = reset.privateOrigins().filter { SiteDataModel.isOfSite(it, site, ::siteOfHost) }
+                        (origins + private).distinct().forEach(reset::resetOrigin)
+                    }
+                }
             }
             tabs.tabs.value
                 .filter { it.live && SiteDataModel.isOfSite(it.page.url.ifEmpty { it.url }, site, ::siteOfHost) }

@@ -398,7 +398,9 @@ fun BrowserScreen(vm: BrowserViewModel) {
     val pagePrompt by vm.tabs.prompt.collectAsStateWithLifecycle()
     pagePrompt?.takeIf { onTop }?.let { PagePromptDialog(it) }
     // Android refused a permission a site needed.
-    PermissionMessages(vm.engine.permissions, snackbar)
+    // Collected only while the browser is on top: a message raised meanwhile waits in its
+    // channel instead of timing out unseen under the covering screen.
+    if (onTop) PermissionMessages(vm.engine.permissions, snackbar)
 
     external?.takeIf { onTop }?.let { link ->
         ExternalLinkDialog(

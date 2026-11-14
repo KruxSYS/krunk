@@ -76,7 +76,7 @@ import org.krunk.browser.ui.newtab.SiteIcon
 fun SiteDataScreen(vm: BrowserViewModel) {
     val app = LocalContext.current.applicationContext as? KrunkApp
     val controller = remember(vm, app) {
-        SiteDataController(vm.core, vm.engine, vm.tabs, app?.sitePermissions?.let { it::resetOrigin })
+        SiteDataController(vm.core, vm.engine, vm.tabs, app?.sitePermissions)
     }
     val scope = rememberCoroutineScope()
     val res = LocalResources.current

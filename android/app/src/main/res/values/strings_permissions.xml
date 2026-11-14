@@ -4,11 +4,15 @@
     <string name="settings_site_permissions">Site permissions</string>
     <string name="settings_site_permissions_help">Camera, microphone, location, notifications and more, per site</string>
     <string name="channel_sites">Site notifications</string>
+    <!-- The sender line of a notification from a page without a web address (a file, an extension page). -->
+    <string name="notify_site_local">A page without a web address</string>
 
     <!-- The prompt: "Allow example.com to:" followed by one line per thing it asks for. -->
     <string name="perm_prompt_title">Allow %1$s to:</string>
-    <string name="perm_prompt_title_page">Allow this page to:</string>
     <string name="perm_prompt_embedded">%1$s is shown inside a page of %2$s.</string>
+    <!-- A frame of another site inside the page asked; the answer is the page's (%2$s). -->
+    <string name="perm_prompt_frame">Asked by %1$s, shown inside this page. Your answer applies to %2$s.</string>
+    <string name="perm_prompt_frame_no_address">Asked by a frame inside this page. Your answer applies to %1$s.</string>
     <string name="perm_ask_camera">Use your camera</string>
     <string name="perm_ask_microphone">Use your microphone</string>
     <string name="perm_ask_geolocation">Know your location</string>

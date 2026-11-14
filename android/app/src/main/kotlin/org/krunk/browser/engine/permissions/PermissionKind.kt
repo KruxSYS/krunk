@@ -40,6 +40,24 @@ enum class PermissionKind(
     LOCAL_NETWORK("localNetwork", PermissionDefault.ASK, 10),
     ;
 
+    /**
+     * Whether the engine's own entry for an answer of this kind that is not a row of the table
+     * (a one-time answer, a default, a private tab's) is forgotten right after the engine wrote
+     * it, instead of when the tab leaves the page. Then it cannot reach the same site in another
+     * tab, and Krunk's per-tab memory of the answer ([PermissionPolicy]) serves the page's next
+     * request without a prompt. Denies of every kind the user is asked about; allows only where
+     * the engine needs no entry to keep serving the page: a location fix and a DRM key session
+     * are handed over when allowed, while notifications (checked at every `new Notification`),
+     * persistent storage (`persisted()`) and local network/device access (checked per
+     * connection) read the entry again and keep it until the tab leaves the page. Autoplay is
+     * asked for at every play, and storage access keeps the engine's own dated entry.
+     */
+    fun forgetEngineEntryAtOnce(allow: Boolean): Boolean = when (this) {
+        STORAGE_ACCESS, AUTOPLAY_AUDIBLE, AUTOPLAY_INAUDIBLE -> false
+        GEOLOCATION, DRM -> true
+        else -> !allow
+    }
+
     companion object {
         /** The engine's number of the tracking-protection exception: known, never asked, never stored. */
         const val GECKO_TRACKING = 7
@@ -99,21 +117,45 @@ object AndroidPermissions {
         else -> Group.OTHER
     }
 
+    /** Android 12: the user can hand out the approximate location only. */
+    const val SDK_APPROXIMATE_LOCATION = 31
+
+    /** Both location permissions: what is checked for any location request. */
+    val LOCATION = listOf(FINE_LOCATION, COARSE_LOCATION)
+
     /**
-     * Whether Android's answer is enough. Location: the user may hand out the approximate
-     * location only, which is a grant (the engine then gets coarse fixes). Everything else
-     * must be granted.
+     * Whether the engine can serve a page's location with what is [granted]. The engine itself
+     * asks only for `ACCESS_FINE_LOCATION` after a site was allowed (`GeckoViewPermission.sys.mjs`:
+     * `getAppPermissions([PERM_ACCESS_FINE_LOCATION])`), but what it then does works with the
+     * approximate permission alone from Android 12 on: `GeckoAppShell.updateLocationListeners`
+     * takes `LocationManager.getBestProvider(criteria, enabledOnly = true)` and
+     * `getLastKnownLocation` of every provider, which Android 12+ allows with
+     * `ACCESS_COARSE_LOCATION` and answers with coarsened fixes. Before Android 12 the GPS
+     * provider throws without the precise permission (and Android's dialog had no "approximate"
+     * choice), so there precise is required.
      */
-    fun satisfied(asked: List<String>, granted: Set<String>): Boolean {
-        val location = asked.filter { groupOf(it) == Group.LOCATION }
-        val rest = asked - location.toSet()
-        return rest.all { it in granted } && (location.isEmpty() || location.any { it in granted })
+    fun locationUsable(granted: Set<String>, sdk: Int): Boolean =
+        FINE_LOCATION in granted || (sdk >= SDK_APPROXIMATE_LOCATION && COARSE_LOCATION in granted)
+
+    /**
+     * Whether Android's answer is enough for [asked]: everything but location must be granted;
+     * location by [locationUsable], whichever of the two was asked ([granted] holds the state of
+     * both location permissions when location was asked: see [toCheck]).
+     */
+    fun satisfied(asked: List<String>, granted: Set<String>, sdk: Int): Boolean {
+        val rest = asked.filter { groupOf(it) != Group.LOCATION }
+        val location = rest.size < asked.size
+        return rest.all { it in granted } && (!location || locationUsable(granted, sdk))
     }
 
+    /** What to check when [asked] is asked for: with location, both location permissions. */
+    fun toCheck(asked: List<String>): List<String> =
+        if (asked.any { groupOf(it) == Group.LOCATION }) (asked + LOCATION).distinct() else asked
+
     /** The groups that are still missing after Android's answer, for the message. */
-    fun missingGroups(asked: List<String>, granted: Set<String>): List<Group> {
+    fun missingGroups(asked: List<String>, granted: Set<String>, sdk: Int): List<Group> {
         val out = LinkedHashSet<Group>()
-        val locationOk = asked.any { groupOf(it) == Group.LOCATION && it in granted }
+        val locationOk = locationUsable(granted, sdk)
         for (p in asked) {
             val g = groupOf(p)
             if (g == Group.LOCATION) {

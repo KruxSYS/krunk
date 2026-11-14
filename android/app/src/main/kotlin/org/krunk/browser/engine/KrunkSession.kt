@@ -15,6 +15,7 @@ import org.krunk.browser.engine.logins.LoginVault
 import org.krunk.browser.engine.permissions.SitePermissions
 import org.krunk.browser.vault.VaultFailure
 import org.krunk.ffi.internalPage
+import org.krunk.ffi.webOrigin
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.Autocomplete
 import org.mozilla.geckoview.GeckoResult
@@ -275,6 +276,8 @@ class KrunkSession(
         ) {
             set { it.locationChanged(url ?: "") }
             loginsLocationChanged()
+            // Site permissions end with the document, not with every load start (DocumentChange).
+            if (document.locationChanged(url ?: "")) engine.permissions?.newDocument(id)
         }
 
         override fun onCanGoBack(session: GeckoSession, canGoBack: Boolean) {
@@ -331,7 +334,7 @@ class KrunkSession(
     private val progress = object : GeckoSession.ProgressDelegate {
         override fun onPageStart(session: GeckoSession, url: String) {
             promptThrottle.newDocument()
-            engine.permissions?.newDocument(id)
+            document.pageStart()
             engine.blocker.newDocument(id)
             loginsNewDocument(url)
             set { it.pageStarted(url) }
@@ -342,6 +345,7 @@ class KrunkSession(
         }
 
         override fun onPageStop(session: GeckoSession, success: Boolean) {
+            document.pageStop()
             set { it.pageStopped() }
             // An HTTP sign-in that was not asked for again worked: offer to save it.
             httpAuth.onPageStop(success)?.let { offerSave(it.origin, it.username, it.password) }
@@ -414,6 +418,9 @@ class KrunkSession(
     // ----- page prompts -----
 
     private val promptThrottle = PromptThrottle()
+
+    /** When the top-level document changed (for site permissions). */
+    private val document = DocumentChange(::webOrigin)
 
     /** The host of the page that is asking (the dialog's title). */
     private fun promptSite(): String = promptSiteOf(current.url)

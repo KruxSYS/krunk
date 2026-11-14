@@ -27,6 +27,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -36,13 +37,21 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import kotlinx.coroutines.delay
 import org.krunk.browser.R
 import org.krunk.browser.engine.PermissionPrompt
 import org.krunk.browser.engine.permissions.AndroidDenied
 import org.krunk.browser.engine.permissions.AndroidPermissions
 import org.krunk.browser.engine.permissions.CameraChoice
 import org.krunk.browser.engine.permissions.PermissionKind
+import org.krunk.browser.engine.permissions.SiteLabel
 import org.krunk.browser.engine.permissions.SitePermissions
 
 /** What the site wants, as a line of the prompt. */
@@ -84,36 +93,80 @@ private fun cameraLabel(index: Int, camera: CameraChoice): String = when (camera
     CameraChoice.Facing.OTHER -> camera.name.ifBlank { stringResource(R.string.perm_camera_other, index + 1) }
 }
 
+/** Where the site goes in the title's text. */
+private const val SITE_MARK = "￼"
+
 /**
- * A site's permission request. The title names the site that asks; when that is a frame of
- * another site (or a site asking for its cookies inside the page), the page's site is named
- * too. Allow and Deny; "Remember" is ticked from the start; Back or a tap outside is a deny
- * for this time that is not remembered.
+ * The time Allow stays disabled after the prompt came on screen (also again after Krunk comes
+ * back to the front): a tap meant for the page, which the page may have lured to that place,
+ * must not land on Allow. Deny is live at once.
+ */
+const val PERMISSION_ALLOW_DELAY_MS = 500L
+
+/** "Allow example.com to:" with the registrable domain in bold (see [SiteLabel]). */
+@Composable
+private fun titleText(site: SiteLabel): AnnotatedString {
+    val template = stringResource(R.string.perm_prompt_title, SITE_MARK)
+    return buildAnnotatedString {
+        append(template.substringBefore(SITE_MARK))
+        append(site.scheme + site.sub)
+        withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(site.registrable) }
+        append(site.port)
+        append(template.substringAfter(SITE_MARK, ""))
+    }
+}
+
+/**
+ * A site's permission request. The title names the site that gets the answer (the page's; for
+ * storage access the embedded site that asks, with the page named too); a frame of another site
+ * that asked is named on its own line. Allow and Deny; "Remember" is ticked from the start;
+ * Back or a tap outside is a deny for this time that is not remembered. Allow is enabled only
+ * [PERMISSION_ALLOW_DELAY_MS] after the dialog appeared: it is composed afresh whenever it
+ * comes on screen (its tab is shown, the browser is uncovered), and the delay starts again
+ * whenever Krunk is resumed.
  */
 @Composable
 fun PermissionPromptDialog(prompt: PermissionPrompt) {
     var remember by remember { mutableStateOf(true) }
     var camera by remember { mutableStateOf(prompt.cameras.firstOrNull()?.id) }
     val denyOnly = prompt.kinds.none { it.rememberAllow }
+    var armed by remember(prompt) { mutableStateOf(false) }
+    var resumes by remember(prompt) { mutableIntStateOf(0) }
+    LifecycleResumeEffect(prompt) {
+        armed = false
+        resumes++
+        onPauseOrDispose { armed = false }
+    }
+    LaunchedEffect(prompt, resumes) {
+        if (resumes > 0) {
+            delay(PERMISSION_ALLOW_DELAY_MS)
+            armed = true
+        }
+    }
+    val embeddedIn = prompt.embeddedIn?.text.orEmpty()
     AlertDialog(
         onDismissRequest = prompt::dismiss,
-        title = {
-            Text(
-                if (prompt.site.isEmpty()) {
-                    stringResource(R.string.perm_prompt_title_page)
-                } else {
-                    stringResource(R.string.perm_prompt_title, prompt.site)
-                },
-            )
-        },
+        title = { Text(titleText(prompt.title)) },
         text = {
             Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) {
                 for (kind in prompt.kinds) {
-                    Text(askLine(kind, prompt.embeddedIn), style = MaterialTheme.typography.bodyLarge)
+                    Text(askLine(kind, embeddedIn), style = MaterialTheme.typography.bodyLarge)
                 }
-                if (prompt.embeddedIn.isNotEmpty() && prompt.site.isNotEmpty()) {
+                val note = when {
+                    prompt.embeddedIn != null ->
+                        stringResource(R.string.perm_prompt_embedded, prompt.title.text, embeddedIn)
+
+                    prompt.frame != null ->
+                        stringResource(R.string.perm_prompt_frame, prompt.frame.text, prompt.title.text)
+
+                    prompt.frameWithoutAddress ->
+                        stringResource(R.string.perm_prompt_frame_no_address, prompt.title.text)
+
+                    else -> null
+                }
+                if (note != null) {
                     Text(
-                        stringResource(R.string.perm_prompt_embedded, prompt.site, prompt.embeddedIn),
+                        note,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 8.dp),
@@ -167,7 +220,10 @@ fun PermissionPromptDialog(prompt: PermissionPrompt) {
             }
         },
         confirmButton = {
-            TextButton(onClick = { prompt.answer(allow = true, remember = remember, cameraId = camera) }) {
+            TextButton(
+                onClick = { prompt.answer(allow = true, remember = remember, cameraId = camera) },
+                enabled = armed,
+            ) {
                 Text(stringResource(R.string.perm_allow))
             }
         },
