@@ -18,6 +18,7 @@ mod sites;
 mod store;
 mod tabs;
 mod theme;
+mod update;
 mod urls;
 mod vault;
 
@@ -31,6 +32,7 @@ pub use sites::*;
 pub use store::*;
 pub use tabs::*;
 pub use theme::*;
+pub use update::*;
 pub use urls::*;
 pub use vault::*;
 

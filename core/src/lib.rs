@@ -67,6 +67,7 @@ pub mod sync;
 pub mod tabs;
 pub mod toggle;
 pub mod update;
+pub mod update_android;
 pub mod urlclean;
 pub mod useragents;
 pub mod userscripts;

@@ -129,7 +129,7 @@ impl Config {
     }
 }
 
-fn check_scheme(u: &Url, allow_http: bool) -> Result<(), UpdateError> {
+pub(crate) fn check_scheme(u: &Url, allow_http: bool) -> Result<(), UpdateError> {
     match u.scheme() {
         "https" => Ok(()),
         "http" if allow_http => Ok(()),
@@ -192,7 +192,20 @@ pub struct Manifest {
 
 /// Checks the signature over the exact manifest bytes, then the manifest.
 pub fn verify(manifest: &[u8], signature: &[u8], cfg: &Config) -> Result<Manifest, UpdateError> {
-    if manifest.len() > MAX_MANIFEST_BYTES {
+    check_signature(manifest, signature, &cfg.public_key, MAX_MANIFEST_BYTES)?;
+    parse_manifest(manifest, cfg)
+}
+
+/// The signature check shared by every channel (`win-x64` here, `android-arm64` in
+/// `update_android`): `signature` is the base64 of an Ed25519 signature over the exact bytes of
+/// `manifest`, made with the release key whose public half is `public_key`.
+pub(crate) fn check_signature(
+    manifest: &[u8],
+    signature: &[u8],
+    public_key: &[u8; 32],
+    max_manifest: usize,
+) -> Result<(), UpdateError> {
+    if manifest.len() > max_manifest {
         return Err(UpdateError::TooLarge("the manifest"));
     }
     if signature.len() > MAX_SIGNATURE_BYTES {
@@ -201,9 +214,8 @@ pub fn verify(manifest: &[u8], signature: &[u8], cfg: &Config) -> Result<Manifes
     let sig_text = std::str::from_utf8(signature).map_err(|_| UpdateError::BadSignatureEncoding)?.trim();
     let sig_bytes = Base64::decode_vec(sig_text).map_err(|_| UpdateError::BadSignatureEncoding)?;
     let sig_bytes: [u8; 64] = sig_bytes.try_into().map_err(|_| UpdateError::BadSignatureEncoding)?;
-    let key = VerifyingKey::from_bytes(&cfg.public_key).map_err(|_| UpdateError::BadPublicKey)?;
-    key.verify_strict(manifest, &Signature::from_bytes(&sig_bytes)).map_err(|_| UpdateError::BadSignature)?;
-    parse_manifest(manifest, cfg)
+    let key = VerifyingKey::from_bytes(public_key).map_err(|_| UpdateError::BadPublicKey)?;
+    key.verify_strict(manifest, &Signature::from_bytes(&sig_bytes)).map_err(|_| UpdateError::BadSignature)
 }
 
 /// The manifest's contents (after its signature was checked).
@@ -254,7 +266,7 @@ pub fn parse_version(v: &str) -> Result<Version, UpdateError> {
     Version::parse(v.trim()).map_err(|_| UpdateError::BadVersion(v.chars().take(40).collect()))
 }
 
-fn parse_sha256(hex: &str) -> Option<[u8; 32]> {
+pub(crate) fn parse_sha256(hex: &str) -> Option<[u8; 32]> {
     if hex.len() != 64 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
