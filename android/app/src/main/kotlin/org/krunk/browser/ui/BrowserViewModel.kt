@@ -20,6 +20,7 @@ import org.krunk.browser.KrunkApp
 import org.krunk.browser.R
 import org.krunk.browser.core.KrunkCore
 import org.krunk.browser.core.SettingsRepository
+import org.krunk.browser.downloads.DownloadController
 import org.krunk.browser.engine.GeckoEngine
 import org.krunk.browser.engine.await
 import org.krunk.browser.engine.blocker.AllowList
@@ -101,6 +102,7 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
     val core: KrunkCore get() = krunk.core
     val engine: GeckoEngine get() = krunk.engine
     val tabs: TabManager get() = krunk.tabs
+    val downloads: DownloadController get() = krunk.downloads
     val settingsRepo: SettingsRepository get() = krunk.core.settings
 
     val settings: StateFlow<AndroidSettings> get() = settingsRepo.settings

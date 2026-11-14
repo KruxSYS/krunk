@@ -14,4 +14,7 @@
          Keystore key that wraps its key cannot be moved, so a copy would be useless, and it is
          a secret store. Named here on its own so that no later include can carry it along. -->
     <exclude domain="file" path="krunk-vault" />
+    <!-- Part files of downloads (files/downloads-part, DownloadEngine.PART_DIR): unfinished
+         pieces, also of private downloads; deleted at the next start when nobody owns them. -->
+    <exclude domain="file" path="downloads-part" />
 </full-backup-content>

@@ -103,7 +103,6 @@ fun BrowserScreen(vm: BrowserViewModel) {
     var geckoView by remember { mutableStateOf<NestedGeckoView?>(null) }
     var contextTarget by remember { mutableStateOf<Pair<UInt, ContextTarget>?>(null) }
     var refreshing by remember { mutableStateOf(false) }
-    var download by remember { mutableStateOf<PendingDownload?>(null) }
     var external by remember { mutableStateOf<ExternalLink?>(null) }
 
     // The strip behind the status bar (toolbar at the top) or behind the navigation bar (toolbar
@@ -161,8 +160,6 @@ fun BrowserScreen(vm: BrowserViewModel) {
         }
     }
 
-    val downloadStarted = stringResource(R.string.download_started)
-    val downloadUnsupported = stringResource(R.string.download_unsupported)
     val pageUnavailable = stringResource(R.string.page_unavailable)
     val noAppForLink = stringResource(R.string.external_no_app)
 
@@ -181,14 +178,6 @@ fun BrowserScreen(vm: BrowserViewModel) {
                 is TabEvent.ContextMenu -> {
                     val private = vm.tabs.tabs.value.firstOrNull { it.id == ev.tabId }?.private == true
                     if (contextActions(ev.target, private).isNotEmpty()) contextTarget = ev.tabId to ev.target
-                }
-
-                // A page started this download: nothing is fetched or stored before the user
-                // said yes. One question at a time; further ones are dropped while it is open.
-                is TabEvent.Download -> {
-                    val private = vm.tabs.tabs.value.firstOrNull { it.id == ev.tabId }?.private == true
-                    val asked = Downloads.describe(ev.response, private)
-                    if (download == null) download = asked else Downloads.discard(asked)
                 }
 
                 // A mail or phone link: straight to Android when the user tapped it, else asked
@@ -407,20 +396,6 @@ fun BrowserScreen(vm: BrowserViewModel) {
             onCancel = { external = null },
         )
     }
-    download?.let { asked ->
-        DownloadQuestion(
-            download = asked,
-            onDownload = {
-                download = null
-                val name = Downloads.start(context, asked)
-                toast(if (name != null) downloadStarted.format(name) else downloadUnsupported)
-            },
-            onCancel = {
-                download = null
-                Downloads.discard(asked)
-            },
-        )
-    }
 
     // A page can go full screen on any tap and then draw its own "browser": say which site it is
     // and how to get out, every time.
@@ -481,10 +456,9 @@ fun BrowserScreen(vm: BrowserViewModel) {
                         toast(copied)
                     }
 
-                    ContextAction.DOWNLOAD_LINK -> {
-                        val name = Downloads.enqueueUrl(context, link)
-                        toast(if (name != null) downloadStarted.format(name) else downloadUnsupported)
-                    }
+                    // Fetched by the engine itself, as the tab would: its cookies, its referrer.
+                    ContextAction.DOWNLOAD_LINK ->
+                        vm.downloads.download(link, vm.tabs.session(tabId)?.current?.url, private)
 
                     ContextAction.OPEN_IMAGE_NEW_TAB -> {
                         val id = vm.tabs.openUntrusted(
@@ -497,47 +471,14 @@ fun BrowserScreen(vm: BrowserViewModel) {
                         if (id != null && !vm.tabs.linkTabInFront(LinkOpen.LINK_MENU)) toast(opened)
                     }
 
-                    ContextAction.SAVE_IMAGE, ContextAction.SAVE_MEDIA -> {
-                        val name = Downloads.enqueueUrl(context, src)
-                        toast(if (name != null) downloadStarted.format(name) else downloadUnsupported)
-                    }
+                    ContextAction.SAVE_IMAGE, ContextAction.SAVE_MEDIA ->
+                        vm.downloads.download(src, vm.tabs.session(tabId)?.current?.url, private)
 
                     ContextAction.COPY_IMAGE_LINK -> if (!Share.copy(context, "URL", src, private)) toast(copied)
                 }
             },
         )
     }
-}
-
-/** Asks before a download a page started: the file name and the site it comes from. */
-@Composable
-private fun DownloadQuestion(download: PendingDownload, onDownload: () -> Unit, onCancel: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onCancel,
-        title = { Text(stringResource(R.string.download_confirm_title)) },
-        text = {
-            Column {
-                Text(download.fileName, style = MaterialTheme.typography.bodyLarge)
-                if (download.host.isNotEmpty()) {
-                    Text(
-                        stringResource(R.string.download_confirm_from, download.host),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 4.dp),
-                    )
-                }
-                if (download.private) {
-                    Text(
-                        stringResource(R.string.download_confirm_private),
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(top = 12.dp),
-                    )
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDownload) { Text(stringResource(R.string.download_confirm_yes)) } },
-        dismissButton = { TextButton(onClick = onCancel) { Text(stringResource(android.R.string.cancel)) } },
-    )
 }
 
 /**

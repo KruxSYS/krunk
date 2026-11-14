@@ -62,12 +62,6 @@
     <string name="tab_opened_background">New tab opened</string>
 
     <!-- Downloads -->
-    <string name="download_started">Downloading %1$s</string>
-    <string name="download_unsupported">This link cannot be downloaded</string>
-    <string name="download_confirm_title">Download this file?</string>
-    <string name="download_confirm_from">from %1$s</string>
-    <string name="download_confirm_private">It will stay in the system\'s download list after the private tab is closed.</string>
-    <string name="download_confirm_yes">Download</string>
     <string name="share_chooser">Share</string>
 
     <!-- The database could not be opened at start-up -->

@@ -25,11 +25,9 @@ data class TabUi(
     val isNewTab: Boolean get() = internalPage == "newtab"
 }
 
-/** One-off events the UI reacts to (menus, downloads, prompts). */
+/** One-off events the UI reacts to (menus, prompts). */
 sealed class TabEvent {
     data class ContextMenu(val tabId: UInt, val target: org.krunk.browser.engine.ContextTarget) : TabEvent()
-
-    data class Download(val tabId: UInt, val response: org.mozilla.geckoview.WebResponse) : TabEvent()
 
     /** A `mailto:` or `tel:` link of the tab on screen, for Android's mail app or dialer. */
     data class External(val tabId: UInt, val link: org.krunk.browser.engine.ExternalLink, val ask: Boolean) : TabEvent()
