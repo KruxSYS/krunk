@@ -2,11 +2,14 @@ package org.krunk.browser.downloads
 
 import android.content.ActivityNotFoundException
 import android.content.ClipData
+import android.content.ContentResolver
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
@@ -21,8 +24,9 @@ import java.io.IOException
 import java.net.SocketTimeoutException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.krunk.browser.KrunkApp
 import org.krunk.ffi.HttpHeader
 import org.mozilla.geckoview.GeckoRuntime
@@ -41,9 +45,13 @@ class GeckoFetcher(private val runtime: () -> GeckoRuntime) : DownloadFetcher {
 
     override fun fetch(url: String, headers: List<HttpHeader>, referrer: String?, private: Boolean): DownloadResponse {
         val done = CountDownLatch(1)
-        val answer = AtomicReference<WebResponse?>()
-        val failure = AtomicReference<Throwable?>()
-        val abandoned = AtomicBoolean(false)
+        // One state for "waiting", "answered" and "abandoned": whichever side comes second sees
+        // the other's word, so a response that arrives after the waiter gave up is closed.
+        val outcome = AtomicReference<Any?>(WAITING)
+        fun answer(value: Any) {
+            if (!outcome.compareAndSet(WAITING, value)) (value as? WebResponse)?.let { closeBody(it) }
+            done.countDown()
+        }
         main.post {
             try {
                 val request = WebRequest.Builder(url)
@@ -52,32 +60,28 @@ class GeckoFetcher(private val runtime: () -> GeckoRuntime) : DownloadFetcher {
                 if (DownloadNames.isWeb(referrer)) request.referrer(referrer)
                 val flags = if (private) GeckoWebExecutor.FETCH_FLAGS_PRIVATE else GeckoWebExecutor.FETCH_FLAGS_NONE
                 GeckoWebExecutor(runtime()).fetch(request.build(), flags).accept(
-                    { response ->
-                        // Nobody waits any more: an open response must not be left behind.
-                        if (abandoned.get()) runCatching { response?.body?.close() } else answer.set(response)
-                        done.countDown()
-                    },
-                    { error ->
-                        failure.set(error ?: IOException("request failed"))
-                        done.countDown()
-                    },
+                    { response -> answer(response ?: IOException("no response")) },
+                    { error -> answer(error ?: IOException("request failed")) },
                 )
             } catch (e: RuntimeException) {
-                failure.set(e)
-                done.countDown()
+                answer(e)
             }
         }
-        if (!done.await(CONNECT_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-            abandoned.set(true)
-            // It may have arrived between the wait and the flag.
-            answer.getAndSet(null)?.let { runCatching { it.body?.close() } }
-            throw SocketTimeoutException("no answer")
+        done.await(CONNECT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        if (outcome.compareAndSet(WAITING, ABANDONED)) throw SocketTimeoutException("no answer")
+        return when (val got = outcome.get()) {
+            is WebResponse -> response(got)
+            else -> throw IOException((got as? Throwable)?.javaClass?.simpleName ?: "no response")
         }
-        val response = answer.get() ?: throw IOException(failure.get()?.javaClass?.simpleName ?: "no response")
-        return response(response)
+    }
+
+    private fun closeBody(response: WebResponse) {
+        runCatching { response.body?.close() }
     }
 
     companion object {
+        private val WAITING = Any()
+        private val ABANDONED = Any()
         const val CONNECT_TIMEOUT_MS = 90_000L
         const val READ_TIMEOUT_MS = 60_000L
 
@@ -93,6 +97,7 @@ class GeckoFetcher(private val runtime: () -> GeckoRuntime) : DownloadFetcher {
 @RequiresApi(Build.VERSION_CODES.Q)
 class MediaStorePublisher(context: Context) : DownloadPublisher {
     private val resolver = context.applicationContext.contentResolver
+    private val packageName = context.packageName
     private val collection: Uri = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
 
     /** Krunk's own files there (others' are not visible; the system renames on a clash with those). */
@@ -140,6 +145,40 @@ class MediaStorePublisher(context: Context) : DownloadPublisher {
         }
     }
 
+    /**
+     * Krunk's own rows that are still pending (the process died while publishing): deleted, so
+     * a retry leaves one file. Other apps' rows are neither visible nor touched.
+     */
+    override fun sweep() {
+        val selection = "${MediaStore.MediaColumns.IS_PENDING} = 1 AND ${MediaStore.MediaColumns.OWNER_PACKAGE_NAME} = ?"
+        val args = arrayOf(packageName)
+        try {
+            val ids = ArrayList<Long>()
+            val cursor = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val query = Bundle().apply {
+                    putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_ONLY)
+                    putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
+                    putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, args)
+                }
+                resolver.query(collection, arrayOf(MediaStore.MediaColumns._ID), query, null)
+            } else {
+                @Suppress("DEPRECATION")
+                resolver.query(
+                    MediaStore.setIncludePending(collection),
+                    arrayOf(MediaStore.MediaColumns._ID),
+                    selection,
+                    args,
+                    null,
+                )
+            }
+            cursor?.use { c -> while (c.moveToNext()) ids += c.getLong(0) }
+            for (id in ids) runCatching { resolver.delete(ContentUris.withAppendedId(collection, id), null, null) }
+            if (ids.isNotEmpty()) Log.i(KrunkApp.TAG, "downloads: ${ids.size} half-published files removed")
+        } catch (e: RuntimeException) {
+            Log.w(KrunkApp.TAG, "downloads: pending files not swept: ${e.javaClass.simpleName}")
+        }
+    }
+
     private companion object {
         const val COPY_BUFFER = 256 * 1024
     }
@@ -160,15 +199,12 @@ class AppFolderPublisher(context: Context) : DownloadPublisher {
     override fun publish(part: File, name: String, mime: String?): String {
         val dir = dir() ?: throw IOException("no external storage")
         dir.mkdirs()
-        val target = File(dir, name)
+        val target = FolderCopy.copyNew(part, dir, name)
         try {
-            part.copyTo(target, overwrite = false)
             val uri = FileProvider.getUriForFile(context, "${context.packageName}$AUTHORITY_SUFFIX", target)
-            return DownloadPaths.join(uri.toString(), name)
-        } catch (e: IOException) {
-            target.delete()
-            throw e
+            return DownloadPaths.join(uri.toString(), target.name)
         } catch (e: RuntimeException) {
+            // Only the file this call created.
             target.delete()
             throw IOException(e)
         }
@@ -229,18 +265,26 @@ object DownloadOpener {
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 
-    fun open(context: Context, path: String): Result {
-        val intent = viewIntent(context, path) ?: return Result.GONE
-        if (!exists(context, intent.data ?: return Result.GONE)) return Result.GONE
+    /**
+     * Opens the file of a finished entry. The checks (the file still there, its type) ask the
+     * media provider and run on [Dispatchers.IO]; the activity starts from the caller's thread.
+     */
+    suspend fun open(context: Context, path: String): Result {
+        val intent = withContext(Dispatchers.IO) {
+            viewIntent(context, path)?.takeIf { i -> i.data?.let { exists(context, it) } == true }
+        } ?: return Result.GONE
         return launch(context, intent)
     }
 
-    fun share(context: Context, path: String, chooserTitle: CharSequence?): Result {
+    /** Shares the file of a finished entry; checks on [Dispatchers.IO] as for [open]. */
+    suspend fun share(context: Context, path: String, chooserTitle: CharSequence?): Result {
         val file = DownloadPaths.split(path) ?: return Result.GONE
         val uri = Uri.parse(file.uri)
-        if (!exists(context, uri)) return Result.GONE
+        val type = withContext(Dispatchers.IO) {
+            if (exists(context, uri)) mime(context, uri, file.fileName) else null
+        } ?: return Result.GONE
         val send = Intent(Intent.ACTION_SEND).apply {
-            type = mime(context, uri, file.fileName)
+            this.type = type
             putExtra(Intent.EXTRA_STREAM, uri)
             // The chooser passes the grant on through the clip data.
             clipData = ClipData.newRawUri(file.fileName, uri)
