@@ -72,28 +72,46 @@ class SiteDataExtension(runtime: GeckoRuntime) {
         ext.setMessageDelegate(
             object : WebExtension.MessageDelegate {
                 override fun onConnect(port: WebExtension.Port) {
-                    this@SiteDataExtension.port = port
+                    Log.i(KrunkApp.TAG, "site data extension connected")
                     port.setDelegate(
                         object : WebExtension.PortDelegate {
                             override fun onPortMessage(message: Any, port: WebExtension.Port) {
-                                if (port === this@SiteDataExtension.port) (message as? JSONObject)?.let(::fromExtension)
+                                val m = message as? JSONObject ?: return
+                                // The extension answers "connected" on the port it is listening on:
+                                // that is the live connection, whichever of the delivered ones it is.
+                                if (m.optString("t") == CONNECTED) {
+                                    adopt(port)
+                                    return
+                                }
+                                if (port === this@SiteDataExtension.port) fromExtension(m)
                             }
 
                             override fun onDisconnect(port: WebExtension.Port) {
                                 if (port !== this@SiteDataExtension.port) return
+                                Log.i(KrunkApp.TAG, "site data extension disconnected")
                                 this@SiteDataExtension.port = null
                                 // What was sent on this port is never answered.
                                 answerAll { it !in unsent }
                             }
                         },
                     )
-                    val queued = unsent.toList()
-                    unsent.clear()
-                    queued.forEach { (id, message) -> send(id, message) }
+                    // The extension trusts a connection only once the app answers it (its
+                    // background.js): a connection it made before this delegate existed is never
+                    // delivered here, and it reconnects by itself until one is answered.
+                    runCatching { port.postMessage(JSONObject().put("t", "hello")) }
                 }
             },
             NATIVE_APP,
         )
+    }
+
+    /** [port] has answered: it is the extension's live connection. What waited for one goes now. */
+    private fun adopt(port: WebExtension.Port) {
+        this.port = port
+        Log.i(KrunkApp.TAG, "site data extension listening")
+        val queued = unsent.toList()
+        unsent.clear()
+        queued.forEach { (id, message) -> send(id, message) }
     }
 
     private fun fail() {
@@ -109,11 +127,16 @@ class SiteDataExtension(runtime: GeckoRuntime) {
 
     private fun send(id: Int, message: JSONObject) {
         val sent = runCatching { port?.postMessage(message.put("id", id)) }.getOrNull() != null
-        if (!sent) waiting.remove(id)?.invoke(null)
+        if (!sent) {
+            Log.w(KrunkApp.TAG, "site data request ${message.optString("t")} $id not sent")
+            waiting.remove(id)?.invoke(null)
+        }
     }
 
     private fun fromExtension(m: JSONObject) {
         val t = m.optString("t")
+        val error = m.optString("error")
+        if (error.isNotEmpty()) Log.w(KrunkApp.TAG, "site data: $error")
         if (t != "list" && t != "certs") return
         waiting.remove(m.optInt("id"))?.invoke(m)
     }
@@ -189,6 +212,9 @@ class SiteDataExtension(runtime: GeckoRuntime) {
         const val EXTENSION_ID = "sitedata@krunk.org"
         const val RESOURCE_URI = "resource://android/assets/extensions/krunk-sitedata/"
         const val NATIVE_APP = "krunk"
+
+        /** What the extension sends on the connection it listens on (its background.js). */
+        private const val CONNECTED = "connected"
         private const val MAX_ROWS = 20_000
         private const val MAX_TEXT = 2048
 

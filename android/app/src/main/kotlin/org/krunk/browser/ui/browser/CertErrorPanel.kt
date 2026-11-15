@@ -87,23 +87,31 @@ internal fun PageCertError(
         )
         Button(onClick = onBack) { Text(stringResource(R.string.cert_back)) }
         if (error.overridable) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(top = 16.dp)
-                    .toggleable(value = keep, role = Role.Checkbox, enabled = !busy) { keep = it },
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Checkbox(checked = keep, onCheckedChange = null, enabled = !busy)
-                Column(Modifier.padding(start = 8.dp)) {
-                    Text(stringResource(R.string.cert_remember), style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        stringResource(
-                            if (error.private) R.string.cert_private_temporary else R.string.cert_remember_help,
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+            // A private tab's exception is always temporary, so there is nothing to remember.
+            if (error.private) {
+                Text(
+                    stringResource(R.string.cert_private_temporary),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 16.dp),
+                )
+            } else {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(top = 16.dp)
+                        .toggleable(value = keep, role = Role.Checkbox, enabled = !busy) { keep = it },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(checked = keep, onCheckedChange = null, enabled = !busy)
+                    Column(Modifier.padding(start = 8.dp)) {
+                        Text(stringResource(R.string.cert_remember), style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            stringResource(R.string.cert_remember_help),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
             OutlinedButton(

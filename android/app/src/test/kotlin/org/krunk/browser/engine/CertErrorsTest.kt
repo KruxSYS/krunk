@@ -1,5 +1,8 @@
 package org.krunk.browser.engine
 
+import java.security.cert.X509Certificate
+import java.util.Base64
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -137,5 +140,50 @@ class CertErrorsTest {
         // Any other load ends it.
         assertNull(s.pageStarted("https://other.example/").loadError)
         assertNull(s.requested(cert.url).loadError)
+    }
+
+    /**
+     * The error screen's data comes from the certificate the site presented. GeckoView 160 hands
+     * no certificate to `onLoadError` (the probe in [CertProbe] reads it), so a load error alone
+     * makes no screen, and a certificate does.
+     */
+    @Test
+    fun theErrorScreenIsBuiltFromTheCertificate() {
+        val cert = javaClass.getResourceAsStream("/cert/krunk-test.der")!!.use {
+            java.security.cert.CertificateFactory.getInstance("X.509").generateCertificate(it) as X509Certificate
+        }
+        val inDates = cert.notBefore.time + 86_400_000L
+        fun error(url: String, code: Int = WebRequestError.ERROR_SECURITY_BAD_CERT, now: Long = inDates) =
+            CertErrors.fromCertificate(url, code, cert, private = false, nowMs = now)
+        val e = error("https://krunk.test/path")!!
+        assertEquals("krunk.test", e.host)
+        assertEquals(443, e.port)
+        assertEquals(
+            "37:07:BD:9E:51:F4:3F:30:CD:94:84:05:90:96:9C:6F:6E:C9:91:B8:43:B4:05:0C:2C:9A:DC:45:7D:C0:4D:F5",
+            e.sha256,
+        )
+        assertArrayEquals(cert.encoded, Base64.getDecoder().decode(e.derBase64))
+        assertEquals(CertProblem.SELF_SIGNED, e.problem)
+        assertTrue(e.overridable)
+        assertEquals(8443, error("https://krunk.test:8443/")!!.port)
+        // The address's host is not one the certificate is for.
+        assertEquals(CertProblem.WRONG_HOST, error("https://other.test/")!!.problem)
+        // Past its end date.
+        assertEquals(CertProblem.EXPIRED, error("https://krunk.test/", now = cert.notAfter.time + 1_000)!!.problem)
+        // A site that demands a valid certificate gets the screen but no "Continue anyway".
+        assertFalse(error("https://krunk.test/", WebRequestError.ERROR_BAD_HSTS_CERT)!!.overridable)
+        // Other errors and other addresses get no screen.
+        assertNull(error("https://krunk.test/", WebRequestError.ERROR_UNKNOWN_HOST))
+        assertNull(error("http://krunk.test/"))
+        // No certificate from the engine, no screen.
+        assertNull(
+            CertErrors.fromLoadError(
+                "https://krunk.test/",
+                WebRequestError.ERROR_SECURITY_BAD_CERT,
+                null,
+                false,
+                inDates,
+            ),
+        )
     }
 }

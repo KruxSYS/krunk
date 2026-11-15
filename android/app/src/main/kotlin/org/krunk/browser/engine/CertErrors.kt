@@ -1,9 +1,9 @@
 package org.krunk.browser.engine
 
-import android.util.Base64
 import java.net.IDN
 import java.security.MessageDigest
 import java.security.cert.X509Certificate
+import java.util.Base64
 import java.util.Locale
 import org.mozilla.geckoview.WebRequestError
 
@@ -188,13 +188,19 @@ object CertErrors {
         "${host.lowercase(Locale.ROOT)}|$port|${normalizeFingerprint(sha256) ?: sha256}"
 
     /**
-     * What the error screen needs from a failed load, or null when it is not a certificate error
-     * or the address has no host. Not JVM-tested (needs a real certificate).
+     * What the error screen needs from a failed load, or null when it is not a certificate error,
+     * the address has no host, or the engine handed over no certificate. GeckoView 160 always
+     * passes null to `onLoadError`; [CertProbe] reads the certificate instead and this is then
+     * [fromCertificate].
      */
-    fun fromLoadError(url: String, code: Int, cert: X509Certificate?, private: Boolean, nowMs: Long): CertError? {
+    fun fromLoadError(url: String, code: Int, cert: X509Certificate?, private: Boolean, nowMs: Long): CertError? =
+        cert?.let { fromCertificate(url, code, it, private, nowMs) }
+
+    /** What the error screen needs for [cert]: null when it is not a certificate error or the address has no host. */
+    fun fromCertificate(url: String, code: Int, cert: X509Certificate, private: Boolean, nowMs: Long): CertError? {
         if (!isCertificateError(code)) return null
         val (host, port) = hostAndPort(url) ?: return null
-        val der = cert?.let { runCatching { it.encoded }.getOrNull() } ?: return null
+        val der = runCatching { cert.encoded }.getOrNull() ?: return null
         val names = runCatching {
             cert.subjectAlternativeNames
                 ?.filter { (it[0] as? Int) == SAN_DNS || (it[0] as? Int) == SAN_IP }
@@ -205,7 +211,7 @@ object CertErrors {
             url = url,
             host = host,
             port = port,
-            derBase64 = Base64.encodeToString(der, Base64.NO_WRAP),
+            derBase64 = Base64.getEncoder().encodeToString(der),
             sha256 = sha256(der),
             problem = problem(host, nowMs, cert.notBefore.time, cert.notAfter.time, names, selfIssued),
             overridable = overridable(code, true, url),

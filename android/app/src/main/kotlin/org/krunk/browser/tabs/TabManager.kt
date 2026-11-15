@@ -729,6 +729,7 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
             listener = this,
             errorPage = errorPage,
             recordHistory = !info.private,
+            scope = scope,
             desktopMode = desktop[id],
         )
         sessions[id] = s
@@ -875,7 +876,16 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         // The engine loads the new session itself: create it without a load.
         val info = model.tab(r.id) ?: return null
         // Unopened: the engine opens the session of a new window itself.
-        val s = KrunkSession(r.id, info.private, engine, this, errorPage, !info.private, openedByPage = true)
+        val s = KrunkSession(
+            r.id,
+            info.private,
+            engine,
+            this,
+            errorPage,
+            !info.private,
+            scope,
+            openedByPage = true,
+        )
         sessions[r.id] = s
         apply(r.effects.filterNot { it is TabEffect.CreateView })
         refresh()

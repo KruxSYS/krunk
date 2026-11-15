@@ -3,6 +3,7 @@ package org.krunk.browser.engine
 import android.os.SystemClock
 import android.util.Log
 import android.webkit.MimeTypeMap
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -95,6 +96,8 @@ class KrunkSession(
     private val listener: SessionListener,
     private val errorPage: ErrorPage,
     private val recordHistory: Boolean,
+    /** Runs the tab's own work (the certificate probe of a failed load) and outlives single events. */
+    private val scope: CoroutineScope,
     /**
      * The session of a window a page opened (`target=_blank`, `window.open`). The engine opens
      * such a session itself and refuses one that is already open, so it is handed over unopened;
@@ -334,7 +337,32 @@ class KrunkSession(
                     loading = false,
                 )
             }
+            // A certificate error arrives without its certificate (see [CertProbe]): read it, and
+            // give the error screen what it needs when it comes back. Until then, and if it never
+            // does, the engine's own error page stays as it is.
+            if (cert == null && CertErrors.isCertificateError(error.code)) readCertificate(u, error.code)
             return GeckoResult.fromValue(page)
+        }
+    }
+
+    /**
+     * Reads the certificate of the failed load at [url] and adds it to the tab's error, unless the
+     * tab has moved on or the error has already got one in the meantime.
+     */
+    private fun readCertificate(url: String, code: Int) {
+        val (host, port) = CertErrors.hostAndPort(url) ?: return
+        scope.launch {
+            val cert = CertProbe.fetch(host, port) ?: return@launch
+            val error =
+                CertErrors.fromCertificate(url, code, cert, private, System.currentTimeMillis()) ?: return@launch
+            set { state ->
+                val failed = state.loadError
+                if (failed == null || failed.uri != url || failed.cert != null) {
+                    state
+                } else {
+                    state.copy(loadError = failed.copy(cert = error))
+                }
+            }
         }
     }
 
