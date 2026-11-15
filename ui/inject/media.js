@@ -85,6 +85,32 @@ function scan() {
   last = json;
   host.postMessage({ lb: 'media', videos: info });
 }
+function videoAt(doc, x, y, depth) {
+  var els = doc.elementsFromPoint(x, y);
+  for (var i = 0; i < els.length; i++) {
+    var el = els[i];
+    if (el.tagName === 'VIDEO') return el;
+    if ((el.tagName === 'IFRAME' || el.tagName === 'FRAME') && depth < 8) {
+      var inner = null;
+      try { inner = el.contentDocument; } catch (e) { /* another site */ }
+      if (inner) {
+        var r = el.getBoundingClientRect();
+        return videoAt(inner, x - r.left - el.clientLeft, y - r.top - el.clientTop, depth + 1);
+      }
+      return null;
+    }
+  }
+  return null;
+}
+function clickedVideo(x, y, src) {
+  var v = null;
+  try { v = videoAt(document, x, y, 0); } catch (e) { v = null; }
+  if (v) return v;
+  var all = [];
+  docsOf().forEach(function (doc) { all.push.apply(all, doc.querySelectorAll('video')); });
+  if (src) v = all.filter(function (x) { return (x.currentSrc || x.src) === src; })[0];
+  return v || (all.length === 1 ? all[0] : null);
+}
 function schedule() { if (timer === null) timer = setTimeout(scan, 120); }
 
 document.addEventListener('krunk-pip', function (e) {
@@ -105,6 +131,13 @@ document.addEventListener('krunk-pip', function (e) {
     var cur = videos.filter(function (x) { return x.ownerDocument.pictureInPictureElement === x; })[0];
     expectedExit = !!cur;
     p = cur ? cur.ownerDocument.exitPictureInPicture().then(function () { return { exited: true }; }) : Promise.resolve({ exited: false });
+  } else if (d.at) {
+    // The context menu's item (0.22.0): the video under the menu's point (through
+    // same-origin frames and overlays), else the one with the menu's address.
+    var cv = clickedVideo(d.at.x, d.at.y, d.src);
+    if (!cv) p = Promise.reject(new Error('no video at the point'));
+    else if (cv.disablePictureInPicture) p = Promise.reject(new Error('disablePictureInPicture'));
+    else p = cv.requestPictureInPicture().then(function (w) { return { width: w.width, height: w.height }; });
   } else {
     var t = videos[d.index];
     p = t ? t.requestPictureInPicture().then(function (w) { return { width: w.width, height: w.height }; }) : Promise.reject(new Error('no such video'));

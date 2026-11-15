@@ -735,6 +735,8 @@ const MENU_SEL_WINDOW: c_int = 26521;
 const MENU_SEL_PRIVATE: c_int = 26522;
 const MENU_SEL_COPY: c_int = 26523;
 /// CEF's own ids: Copy, and "View page source" (which opened the system text editor).
+/// "Picture-in-picture" / "Exit picture-in-picture" on a video (0.22.0).
+const MENU_PIP: c_int = 26530;
 const MENU_ID_COPY: c_int = 113;
 const MENU_ID_VIEW_SOURCE: c_int = 132;
 
@@ -745,6 +747,11 @@ fn image_url(p: &ContextMenuParams) -> Option<String> {
     }
     let url = CefString::from(&p.source_url()).to_string();
     (!url.is_empty()).then_some(url)
+}
+
+/// The address of the video the context menu is for, if it is for one ("" without a `src`).
+fn video_src(p: &ContextMenuParams) -> Option<String> {
+    (p.media_type() == ContextMenuMediaType::VIDEO).then(|| CefString::from(&p.source_url()).to_string())
 }
 
 /// What the open items are for: the link under the pointer (`true`), else a selected address.
@@ -794,6 +801,7 @@ wrap_context_menu_handler! {
         ) {
             let Some(m) = model else { return };
             let image = params.as_ref().and_then(|p| image_url(p));
+            let video = params.as_ref().and_then(|p| video_src(p)).is_some();
             // Selected text (never a password field's: the engine gives none): "Search … for"
             // after Copy, as in Chrome (0.11.0).
             let target = params.as_ref().and_then(|p| open_target(p));
@@ -828,6 +836,15 @@ wrap_context_menu_handler! {
                 }
                 if m.count() > items.len() {
                     m.insert_separator_at(items.len());
+                }
+            }
+            // A video: Picture-in-Picture first, unless the page has none that allows it.
+            if video {
+                if let Some(label) = lookup(self.key).and_then(|v| v.ev.pip_label.with(|f| f()).flatten()) {
+                    m.insert_item_at(0, MENU_PIP, Some(&CefString::from(label.as_str())));
+                    if m.count() > 1 {
+                        m.insert_separator_at(1);
+                    }
                 }
             }
             let label = lookup(self.key).and_then(|v| v.ev.search_label.with(|f| f(&selection)).flatten());
@@ -881,6 +898,13 @@ wrap_context_menu_handler! {
                 let target = params.as_ref().and_then(|p| open_target(p));
                 if let (Some((url, _)), Some(view)) = (target, lookup(self.key)) {
                     view.ev.open_selection.with(|f| f(how, url));
+                }
+                return 1;
+            }
+            if command_id == MENU_PIP {
+                let at = params.as_ref().map(|p| (p.xcoord(), p.ycoord(), video_src(p).unwrap_or_default()));
+                if let (Some((x, y, src)), Some(view)) = (at, lookup(self.key)) {
+                    view.ev.pip_menu.with(|f| f(x, y, src));
                 }
                 return 1;
             }

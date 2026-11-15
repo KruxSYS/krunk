@@ -125,7 +125,7 @@ impl Browser {
         );
     }
 
-    fn image_toast(&self, tab: TabId, message: &str) {
+    pub(super) fn image_toast(&self, tab: TabId, message: &str) {
         if let Some(win) = self.window_of(tab).or_else(|| self.cur_id()) {
             self.post_shell_to(win, &Event::Toast { message: message.to_string() });
         }

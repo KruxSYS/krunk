@@ -383,6 +383,12 @@ pub const FILTER_LISTS: &[&str] = &[
 /// Lists added after the first release, by revision: settings saved before
 /// a revision get its lists enabled once (the user never saw them).
 const LISTS_ADDED: &[(u32, &[&str])] = &[(1, &["ublock-quick-fixes", "ublock-badware"])];
+/// The current defaults revision (see `Settings::defaults_version`). 1 (0.22.0): Google
+/// instead of DuckDuckGo as the search engine and homepage.
+pub const DEFAULTS_VERSION: u32 = 1;
+/// The homepage default before `DEFAULTS_VERSION` 1.
+const OLD_DEFAULT_HOMEPAGE: &str = "https://duckduckgo.com/";
+
 /// The current filter-list revision (see `Settings::filter_lists_rev`).
 pub const FILTER_LISTS_REV: u32 = 1;
 
@@ -406,6 +412,10 @@ impl ClearOnExit {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
+    /// Which defaults revision these settings were written with; files without it are 0
+    /// and get `migrate_defaults` on load (see `DEFAULTS_VERSION`).
+    #[serde(default)]
+    pub defaults_version: u32,
     // Search & startup
     pub search_engine: SearchEngine,
     pub custom_search_url: String,
@@ -761,10 +771,11 @@ pub const DEVTOOLS_SIZE_RANGE: std::ops::RangeInclusive<f64> = 100.0..=4000.0;
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            search_engine: SearchEngine::DuckDuckGo,
+            defaults_version: DEFAULTS_VERSION,
+            search_engine: SearchEngine::Google,
             custom_search_url: String::new(),
             startup: Startup::RestoreSession,
-            homepage: "https://duckduckgo.com/".into(),
+            homepage: "https://www.google.com/".into(),
             bookmarks_bar: BookmarksBar::Always,
             hardware_acceleration: true,
             tab_sleep_minutes: 5,
@@ -1185,6 +1196,21 @@ impl Settings {
         lists
     }
 
+    /// Moves settings written before the current defaults to them. Version 1: an engine
+    /// still at DuckDuckGo becomes Google, a homepage still at DuckDuckGo's address becomes
+    /// Google's (an old file can't tell a chosen DuckDuckGo from the default one).
+    pub fn migrate_defaults(&mut self) {
+        if self.defaults_version < 1 {
+            if self.search_engine == SearchEngine::DuckDuckGo {
+                self.search_engine = SearchEngine::Google;
+            }
+            if self.homepage.trim().trim_end_matches('/') == OLD_DEFAULT_HOMEPAGE.trim_end_matches('/') {
+                self.homepage = Settings::default().homepage;
+            }
+        }
+        self.defaults_version = self.defaults_version.max(DEFAULTS_VERSION);
+    }
+
     /// Loads settings from JSON, resetting any invalid field to its default
     /// instead of failing (a corrupt settings file must not brick startup).
     pub fn from_json_lenient(json: &str) -> Settings {
@@ -1218,6 +1244,7 @@ impl Settings {
             }
         }
         s.filter_lists_rev = FILTER_LISTS_REV;
+        s.migrate_defaults();
         // 0.5 and earlier had two toggles instead of the protection levels.
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(json) {
             if v.get("protection").is_none() {
@@ -1625,7 +1652,7 @@ mod tests {
     #[test]
     fn search_name_follows_the_engine() {
         let mut s = Settings::default();
-        assert_eq!(s.search_name(), "DuckDuckGo");
+        assert_eq!(s.search_name(), "Google");
         s.search_engine = SearchEngine::Brave;
         assert_eq!(s.search_name(), "Brave Search");
         s.search_engine = SearchEngine::Custom;
@@ -1688,9 +1715,33 @@ mod tests {
     fn defaults_are_valid() {
         let s = Settings::default();
         assert_eq!(s.validate(), Ok(()));
-        assert_eq!(s.search_engine, SearchEngine::DuckDuckGo);
+        assert_eq!(s.search_engine, SearchEngine::Google);
+        assert_eq!(s.homepage, "https://www.google.com/");
+        assert_eq!(s.defaults_version, DEFAULTS_VERSION);
         assert!(s.hardware_acceleration && s.adblock_enabled);
         assert_eq!(s.tab_sleep_minutes, 5);
+    }
+
+    #[test]
+    fn old_duckduckgo_defaults_move_to_google_once() {
+        let old = Settings::from_json_lenient(r#"{"searchEngine":"duckDuckGo","homepage":"https://duckduckgo.com/"}"#);
+        assert_eq!((old.search_engine, old.homepage.as_str()), (SearchEngine::Google, "https://www.google.com/"));
+        assert_eq!(old.defaults_version, DEFAULTS_VERSION);
+        // Other choices stay.
+        let other = Settings::from_json_lenient(r#"{"searchEngine":"brave","homepage":"https://duckduckgo.com/?ia=web"}"#);
+        assert_eq!((other.search_engine, other.homepage.as_str()), (SearchEngine::Brave, "https://duckduckgo.com/?ia=web"));
+        // An empty old file had the old defaults.
+        assert_eq!(Settings::from_json_lenient("{}").search_engine, SearchEngine::Google);
+        // DuckDuckGo chosen after the migration is kept.
+        let json = serde_json::to_string(&Settings {
+            search_engine: SearchEngine::DuckDuckGo,
+            homepage: "https://duckduckgo.com/".into(),
+            ..old
+        })
+        .unwrap();
+        assert!(json.contains("\"defaultsVersion\":1"), "{json}");
+        let kept = Settings::from_json_lenient(&json);
+        assert_eq!((kept.search_engine, kept.homepage.as_str()), (SearchEngine::DuckDuckGo, "https://duckduckgo.com/"));
     }
 
     #[test]

@@ -151,13 +151,110 @@
   let dragUrl = null;
   function clearMarks() { box.querySelectorAll('.drop-before, .drop-after').forEach((n) => n.classList.remove('drop-before', 'drop-after')); }
   function reorderTo(target, after) {
-    const order = tiles.map((t) => t.url).filter((u) => u !== dragUrl);
+    const order = tiles.map((t) => t.url).filter((u) => u !== dragUrl && !(pendingRemoval && pendingRemoval.tile.url === u));
     let i = order.indexOf(target.url);
     if (i < 0) return;
     if (after) i += 1;
     order.splice(i, 0, dragUrl);
     LB.request('reorderTiles', { urls: order }).then(load, function (e) { Page.toast(e.message); });
   }
+
+  // ---------- tile menu (0.22.0) ----------
+  // One "⋮" button per tile opens a small menu: Pin/Unpin, Edit, Remove. Arrow keys move
+  // between the items, Escape or a click elsewhere closes it and focus goes back.
+  let openMenu = null;
+  function closeMenu(refocus) {
+    if (!openMenu) return;
+    const m = openMenu;
+    openMenu = null;
+    m.menu.remove();
+    m.button.setAttribute('aria-expanded', 'false');
+    m.button.closest('.tile-wrap')?.classList.remove('menu-open');
+    if (refocus) m.button.focus();
+  }
+  function moreButton(t) {
+    const b = el('button', { type: 'button', class: 'tile-more', title: 'Options for ' + t.title, 'aria-label': 'Options for ' + t.title, 'aria-haspopup': 'menu', 'aria-expanded': 'false', draggable: 'false', text: '⋮' });
+    // Nothing from here reaches the link (or starts a drag of it).
+    ['mousedown', 'mouseup', 'auxclick', 'dragstart'].forEach((k) => b.addEventListener(k, function (e) { e.stopPropagation(); if (k !== 'mousedown') e.preventDefault(); }));
+    b.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      const was = openMenu && openMenu.button === b;
+      closeMenu(false);
+      if (!was) showMenu(b, t, e.detail === 0);
+    });
+    b.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); closeMenu(false); showMenu(b, t, true); }
+    });
+    return b;
+  }
+  function showMenu(b, t, focusFirst) {
+    const item = (label, fn) => el('button', { type: 'button', role: 'menuitem', class: 'tile-menu-item', text: label, onclick: function (e) { e.preventDefault(); e.stopPropagation(); closeMenu(false); fn(); } });
+    const menu = el('div', { class: 'tile-menu', role: 'menu', 'aria-label': t.title }, [
+      item(t.pinned ? 'Unpin' : 'Pin', function () {
+        LB.request(t.pinned ? 'unpinSite' : 'pinSite', t.pinned ? { url: t.url } : { url: t.url, title: t.title }).then(load, function (err) { Page.toast(err.message); });
+      }),
+      item('Edit…', function () { openTileDialog(t); }),
+      item('Remove', function () { removeTile(t); }),
+    ]);
+    menu.addEventListener('keydown', function (e) {
+      const items = Array.from(menu.querySelectorAll('[role=menuitem]'));
+      const i = items.indexOf(document.activeElement);
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMenu(true); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); items[(i + 1) % items.length].focus(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length].focus(); }
+      else if (e.key === 'Home') { e.preventDefault(); items[0].focus(); }
+      else if (e.key === 'End') { e.preventDefault(); items[items.length - 1].focus(); }
+      else if (e.key === 'Tab') closeMenu(false);
+    });
+    ['mousedown', 'mouseup', 'dragstart'].forEach((k) => menu.addEventListener(k, function (e) { e.stopPropagation(); }));
+    const wrap = b.closest('.tile-wrap');
+    wrap.appendChild(menu);
+    wrap.classList.add('menu-open');
+    b.setAttribute('aria-expanded', 'true');
+    openMenu = { button: b, menu: menu };
+    if (focusFirst) menu.querySelector('[role=menuitem]').focus();
+  }
+  document.addEventListener('mousedown', function (e) { if (openMenu && !openMenu.menu.contains(e.target) && e.target !== openMenu.button) closeMenu(false); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && openMenu) closeMenu(true); });
+
+  // Remove takes the tile away at once and does it for real after a few seconds, unless Undo.
+  let pendingRemoval = null;
+  const undoBar = el('div', { class: 'undo-toast', role: 'status', hidden: true }, [
+    el('span', { class: 'undo-text' }),
+    el('button', { type: 'button', class: 'link undo-btn', text: 'Undo' }),
+  ]);
+  document.body.appendChild(undoBar);
+  undoBar.querySelector('.undo-btn').addEventListener('click', function () {
+    if (!pendingRemoval) return;
+    clearTimeout(pendingRemoval.timer);
+    pendingRemoval = null;
+    undoBar.hidden = true;
+    render(tiles);
+  });
+  function commitRemoval() {
+    const p = pendingRemoval;
+    if (!p) return Promise.resolve();
+    clearTimeout(p.timer);
+    pendingRemoval = null;
+    undoBar.hidden = true;
+    const t = p.tile;
+    tiles = tiles.filter(function (x) { return x.url !== t.url; });
+    const req = t.pinned ? LB.request('unpinSite', { url: t.url }).then(function () { return LB.request('hideSite', { url: t.url }); })
+      : LB.request('hideSite', { url: t.url });
+    return req.catch(function (err) { Page.toast(err.message); });
+  }
+  function removeTile(t) {
+    const prev = commitRemoval();
+    const all = tiles;
+    pendingRemoval = { tile: t, timer: setTimeout(function () { commitRemoval().then(load); }, 6000) };
+    render(all);
+    undoBar.querySelector('.undo-text').textContent = 'Removed “' + (t.title || t.url) + '”';
+    undoBar.hidden = false;
+    undoBar.querySelector('.undo-btn').focus();
+    return prev;
+  }
+  window.addEventListener('pagehide', function () { commitRemoval(); });
 
   function render(list) {
     tiles = list;
@@ -167,28 +264,16 @@
       box.appendChild(el('p', { id: 'empty', text: 'Sites you visit often will appear here.' }));
     }
     list.forEach(function (t) {
-      const pinBtn = Page.iconButton('pin', t.pinned ? 'Unpin' : 'Pin', function (e) {
-        e.preventDefault();
-        LB.request(t.pinned ? 'unpinSite' : 'pinSite', t.pinned ? { url: t.url } : { url: t.url, title: t.title }).then(load);
-      });
-      pinBtn.classList.add('pin');
-      pinBtn.setAttribute('aria-pressed', t.pinned ? 'true' : 'false');
-      // 0.15.0: one action cluster in the top-right corner, the pin at the corner. A pinned
-      // tile keeps its filled pin there when not hovered (no separate badge).
+      if (pendingRemoval && pendingRemoval.tile.url === t.url) return;
+      // 0.22.0: the link holds only the avatar, the label and (pinned) a pin mark; the actions
+      // are behind one "⋮" button next to it (a sibling, so a click on it never reaches the
+      // link), with a hit area larger than its icon.
       const tile = el('a', { class: 'tile' + (t.pinned ? ' pinned' : ''), href: t.url, title: t.title + '\n' + t.url, draggable: 'true', 'data-url': t.url }, [
         el('span', { class: 'avatar' }, [Page.favicon(t.url, t.favicon)]),
         el('span', { class: 'label', text: t.title }),
-        el('span', { class: 'tools' }, [
-          pinBtn,
-          Page.iconButton('edit', 'Edit', function (e) { e.preventDefault(); openTileDialog(t); }),
-          Page.iconButton('close', 'Remove', function (e) {
-            e.preventDefault();
-            const req = t.pinned ? LB.request('unpinSite', { url: t.url }).then(function () { return LB.request('hideSite', { url: t.url }); })
-              : LB.request('hideSite', { url: t.url });
-            req.then(load);
-          }),
-        ]),
+        t.pinned ? el('span', { class: 'pin-mark', title: 'Pinned', 'aria-label': 'Pinned' }, [Page.svg(Page.ICONS.pin)]) : null,
       ]);
+      const wrap = el('div', { class: 'tile-wrap' }, [tile, moreButton(t)]);
       tile.addEventListener('dragstart', function (e) { dragUrl = t.url; tile.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', t.url); });
       tile.addEventListener('dragend', function () { dragUrl = null; tile.classList.remove('dragging'); clearMarks(); });
       tile.addEventListener('dragover', function (e) {
@@ -205,7 +290,7 @@
         const r = tile.getBoundingClientRect();
         reorderTo(t, e.clientX > r.left + r.width / 2);
       });
-      box.appendChild(tile);
+      box.appendChild(wrap);
     });
     // "Add" tile: a custom entry by hand.
     const add = el('a', { class: 'tile add', href: '#', id: 'add-tile', title: 'Add shortcut' }, [

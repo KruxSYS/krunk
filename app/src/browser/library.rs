@@ -78,7 +78,7 @@ impl Browser {
                 self.reply_db(tab, req_id, self.store.borrow().reorder_tiles(&urls))
             }
             Request::AddTile { url, title } => {
-                let u = urlclean::input_to_url(url.trim(), "https://duckduckgo.com/?q={searchTerms}");
+                let u = urlclean::input_to_url(url.trim(), self.settings.borrow().search_template());
                 if !bookmarkable(&u) {
                     return self.reply(tab, Event::err(req_id, "Enter a web address"));
                 }
@@ -90,7 +90,7 @@ impl Browser {
                 self.reply_db(tab, req_id, self.store.borrow().pin_site(&u, &t))
             }
             Request::EditTile { url, new_url, title } => {
-                let u = urlclean::input_to_url(new_url.trim(), "https://duckduckgo.com/?q={searchTerms}");
+                let u = urlclean::input_to_url(new_url.trim(), self.settings.borrow().search_template());
                 if !bookmarkable(&u) {
                     return self.reply(tab, Event::err(req_id, "Enter a web address"));
                 }

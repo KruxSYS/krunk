@@ -98,7 +98,73 @@ fn pip_expression(index: Option<u32>) -> String {
     )
 }
 
+/// The evaluate expression for the context menu's item: the video at CSS point `x`,`y` of the
+/// main frame, else the one playing `src`.
+fn pip_at_expression(x: f64, y: f64, src: &str) -> String {
+    let src = serde_json::to_string(src).unwrap_or_else(|_| "\"\"".into());
+    format!(
+        "(function(){{var r=null;document.dispatchEvent(new CustomEvent('krunk-pip',{{detail:{{at:{{x:{x},y:{y}}},\
+         src:{src},done:function(p){{r=p}}}}}}));return r||Promise.reject(new Error('no media script'))}})()"
+    )
+}
+
 impl Browser {
+    /// The context menu on a video (0.22.0): "Exit picture-in-picture" while one of the tab's
+    /// videos is in it, else "Picture-in-picture" if the page has a video that allows it (the
+    /// media script lists only those; which one was clicked is checked when chosen).
+    pub(super) fn pip_menu_label(&self, tab: TabId) -> Option<String> {
+        let views = self.views.try_borrow().ok()?;
+        let videos = views.get(&tab)?.net.videos.borrow();
+        if videos.iter().any(|v| v.pip) {
+            Some("Exit picture-in-picture".into())
+        } else {
+            (!videos.is_empty()).then(|| "Picture-in-picture".into())
+        }
+    }
+
+    /// The context menu's item was chosen: leave PiP, or send the clicked video (by the
+    /// menu's point, else by its address) with a user gesture, as the toolbar button does.
+    pub(super) fn pip_menu(&self, tab: TabId, x: i32, y: i32, src: String) {
+        let in_pip = self.views.borrow().get(&tab).is_some_and(|v| v.net.videos.borrow().iter().any(|v| v.pip));
+        if in_pip {
+            self.pip_exit(tab);
+            return;
+        }
+        let Some(view) = self.tab_view(tab) else { return };
+        // The menu's point is in view DIP; the page's are CSS pixels.
+        let zoom = view.zoom().max(0.01);
+        let params = serde_json::json!({
+            "expression": pip_at_expression(f64::from(x) / zoom, f64::from(y) / zoom, &src),
+            "userGesture": true,
+            "awaitPromise": true,
+            "returnByValue": true,
+        });
+        let weak = self.me.clone();
+        view.devtools_call("Runtime.evaluate", &params, move |r| {
+            let why = match r {
+                Ok(v) if v.get("exceptionDetails").is_none() => {
+                    info!("tab {tab}: picture-in-picture from the context menu");
+                    return;
+                }
+                Ok(v) => v
+                    .pointer("/exceptionDetails/exception/description")
+                    .and_then(|d| d.as_str())
+                    .map(|d| d.lines().next().unwrap_or("").to_string())
+                    .unwrap_or_else(|| "refused".into()),
+                Err(e) => e,
+            };
+            warning!("tab {tab}: picture-in-picture from the context menu refused: {why}");
+            let message = if why.contains("disablePictureInPicture") {
+                "This video doesn't allow picture-in-picture"
+            } else {
+                "This video can't be shown in picture-in-picture"
+            };
+            if let Some(b) = weak.upgrade() {
+                b.defer(move |b| b.image_toast(tab, message));
+            }
+        });
+    }
+
     /// The page's media script reported its videos (main frame only, for the page shown).
     pub(super) fn media_changed(&self, tab: TabId, origin: &str, videos: Vec<VideoInfo>) {
         let Some(net) = self.views.borrow().get(&tab).map(|v| v.net.clone()) else { return };

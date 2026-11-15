@@ -1458,6 +1458,14 @@ impl Browser {
             }
         });
         let weak = self.me.clone();
+        c.on_pip_label(move || weak.upgrade().and_then(|b| b.pip_menu_label(id)));
+        let weak = self.me.clone();
+        c.on_pip_menu(move |x, y, src| {
+            if let Some(b) = weak.upgrade() {
+                b.defer(move |b| b.pip_menu(id, x, y, src));
+            }
+        });
+        let weak = self.me.clone();
         c.on_inspect(move |at| {
             if let Some(b) = weak.upgrade() {
                 b.open_devtools(id, at);

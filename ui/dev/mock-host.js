@@ -79,7 +79,7 @@
       }
       case 'navigate': {
         const t = s.tabs.find(function (x) { return x.id === s.active; });
-        if (t) { t.url = 'https://duckduckgo.com/?q=' + encodeURIComponent(msg.input); t.loading = true; }
+        if (t) { t.url = 'https://www.google.com/search?q=' + encodeURIComponent(msg.input); t.loading = true; }
         host.tabsEvent(); host.navEvent();
         break;
       }
