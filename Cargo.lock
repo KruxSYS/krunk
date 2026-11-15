@@ -178,7 +178,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "app"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "base64ct",
  "cef",
@@ -849,7 +849,7 @@ dependencies = [
 
 [[package]]
 name = "core"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "adblock",
  "aes 0.9.4",
@@ -2159,7 +2159,7 @@ dependencies = [
 
 [[package]]
 name = "krunk_ffi"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "base64ct",
  "core",
@@ -3946,7 +3946,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vpn"
-version = "0.22.0"
+version = "0.22.1"
 dependencies = [
  "base64ct",
  "boringtun",

@@ -3243,7 +3243,8 @@ impl Browser {
             | Request::VpnRemove { .. }
             | Request::VpnCredentials { .. }
             | Request::VpnConnect { .. }
-            | Request::VpnDisconnect {}) => self.dispatch_vpn(sender, tab, req_id, r),
+            | Request::VpnDisconnect {}
+            | Request::VpnScope { .. }) => self.dispatch_vpn(sender, tab, req_id, r),
             r @ (Request::ScriptsList
             | Request::ScriptGet { .. }
             | Request::ScriptSave { .. }

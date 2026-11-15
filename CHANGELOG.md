@@ -3,6 +3,11 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.22.1 — 2026-11-15
+
+- **The VPN's "Use for" choice works.** In 0.22.0, choosing "Private tabs only" in the VPN popup
+  was ignored and the VPN kept covering every tab. It now takes effect at once and is remembered.
+
 ## 0.22.0 — 2026-11-15
 
 - **VPN: no more random "Connection has been reset".** The cause: Krunk's VPN network stack
