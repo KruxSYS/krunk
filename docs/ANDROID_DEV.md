@@ -267,6 +267,44 @@ copied to `dist/play/` with the listing drafts from `android/play/`. Nothing is 
 (proxy to the staging site, or a folder of tampered fixtures from `make-fixtures.sh`, logging every
 request); `a6.sh installover inapp quiet tampersig tamperapk` are the checks 9a–9e of the 0.5.0 brief.
 
+## QA images (0.5.0)
+
+QA ran on emulator images only; no real devices.
+- **A**: hosted emulator-5554, Android 16 (API 36), x86_64, 1080×2400. Every update test ran with
+  the final artefacts (fresh clone of a94a728) except where a commit is named.
+- **B**: local software-emulated AVD `krunk_api29`, Android 10 (API 29) Google APIs, x86_64,
+  1080×1920, no KVM (`.pipeline/evidence-android-0.5.0/m7/SETUP.md`). It boots in about 3 min with no Krunk ANRs, but every input
+  call takes 3–9 s and GeckoView's page nodes reach uiautomator late, which the harnesses depend
+  on. The B rows used the 723eef0 build: it differs from a94a728 only in how the offer's release
+  notes are displayed.
+
+| Flow | A: API 36 | B: API 29 (TCG) | Evidence |
+|---|---|---|---|
+| 9a install-over 0.4.0 → 0.5.0 (history, bookmark, vault login, download, same cert) | pass 10/10 (723eef0 build; the a94a728 9b covers the same data checks) | pass 10/10 | .pipeline/evidence-android-0.5.0/m6/9abd-723eef0.log, .pipeline/evidence-android-0.5.0/m7/9a-installover-api29.log |
+| 9b in-app update qa → 0.5.0 via staging (check, offer, permission flow, Android confirm, vc 7, data, no leftover) | pass 17/17 | pass 13/14: the data was checked through the database; the UI relaunch timed out after 12 s on TCG and was checked by hand (.pipeline/evidence-android-0.5.0/m7/run/inapp-after-update-manual.png) | .pipeline/evidence-android-0.5.0/m6/9bcd-a94a728.log, .pipeline/evidence-android-0.5.0/m7/9b-inapp-api29.log |
+| 9c tampered manifest (one byte; another key) | pass 6/6 | not run (time box; refused before any download, no API-dependent code) | .pipeline/evidence-android-0.5.0/m6/9bcd-a94a728.log |
+| 9d tampered APK (hash; other certificate) | pass 6/6 | not run (time box) | .pipeline/evidence-android-0.5.0/m6/9bcd-a94a728.log |
+| 9e no unprompted traffic (start, 3 min idle, 2 pages, then Check: 2 requests) | pass 2/2 + pcap (6bbf968 build; update code unchanged except the certificate read) | not run | .pipeline/evidence-android-0.5.0/m6/run-6bbf968/quiet-* |
+| 9f Play bundle via bundletool over 0.4.0 (no update UI, no REQUEST_INSTALL_PACKAGES) | pass 12/12 (6bbf968 AAB; play has no update code) | not run | .pipeline/evidence-android-0.5.0/m6/9f-play.log |
+| Round 1 flows (flows.sh: load, search, suggestions, link in new tab, tabs, private, bookmark, settings, restore) | pass (screenshots; bookmark/settings frames black because the private tab before them keeps FLAG_SECURE, which is correct) | partly: page load, restore, tabs, menu by hand (.pipeline/evidence-android-0.5.0/m7/SETUP.md); script not run (needs 1080×2400 coordinates) | .pipeline/evidence-android-0.5.0/qa-a/flows-contact.png |
+| Round 2 a3 gate idle/allow/blocked | pass 4/4 (2 debug-only skipped) | not run (time box, harness needs page nodes) | .pipeline/evidence-android-0.5.0/qa-a/a3-gate.log |
+| Round 2 a3 ui (toolbar, menu, shield, private, settings) | pass 40/40 | not run (same) | .pipeline/evidence-android-0.5.0/qa-a/a3-ui.log |
+| Round 3 a4 vault create/save/locked/screen | create, save, https, locked: pass 33/33. screen: fail 15/16 from test order (needs the logins "alice" and "krunk" from the full sequence; my partial run had deleted alice). Vault code unchanged since 0.4.0 | partly: vault create, add login, unlock in 9a/9b | .pipeline/evidence-android-0.5.0/qa-a/a4.log |
+| Round 4 a5 cookie/blob/resume/noresume/open/private/sitedata/history | pass (all checks of these flows) | download to Downloads via MediaStore: pass (9a/9b seed). Cookie download after a link click: **fail**: the server sent the file but no "Download this file?" question appeared (logcat: window without input channel); not seen on API 36 | .pipeline/evidence-android-0.5.0/qa-a/a5-main.log, .pipeline/evidence-android-0.5.0/m7/manual/ |
+| Round 4 a5 perms | pass except "after a reload: … no prompt", which failed the same way in 0.4.0 | not run | .pipeline/evidence-android-0.5.0/qa-a/a5-relay.log |
+| Round 4 a5 notify | pass 5/5 from a clean state | not run (harness) | .pipeline/evidence-android-0.5.0/qa-a/a5-notify.log |
+| Tablet / sw600dp (`wm size 1600x2560`, `wm density 320`) | not run this round | not run: time box; no KVM tablet AVD, the hosted emulator is one fixed AVD | — |
+
+Bugs found by this QA:
+- **Fixed (723eef0):** on Android 9–12 the update check refused the genuine APK as "wrong
+  certificate", because `getPackageArchiveInfo` reads an archive's certificates only with
+  `GET_SIGNATURES` before Android 13. Found on B; 9b passes on B since.
+- **Open:** on B, the link-click cookie download showed no question. Unclear whether it is the app
+  or TCG timing. Retest on a real Android 10 device or a KVM API 29 image.
+- **Fixed (a94a728):** the release notes in the offer showed raw Markdown.
+
+How to run image B again: `.pipeline/evidence-android-0.5.0/m7/start-api29.sh` and `m7/env.sh` (local adb `-P 5038 -s emulator-5580`, `KRUNK_SLOW_TYPE=1`). The update tests of the two images share `updserver.py`'s control file: never run them at the same time.
+
 ## Emulator
 
 ```
