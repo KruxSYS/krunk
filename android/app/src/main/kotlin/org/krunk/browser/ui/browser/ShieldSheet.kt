@@ -23,7 +23,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -44,6 +43,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.krunk.browser.R
+import org.krunk.browser.ui.theme.KrunkSwitch
 
 /** The icon of a shield mode; each mode has its own, so the states differ without colour. */
 private fun shieldIcon(mode: ShieldMode): ImageVector = when (mode) {
@@ -210,7 +210,7 @@ fun ShieldSheet(
                             )
                         }
                         Spacer(Modifier.width(16.dp))
-                        Switch(checked = blocking, onCheckedChange = null)
+                        KrunkSwitch(checked = blocking, onCheckedChange = null)
                     }
                 }
 

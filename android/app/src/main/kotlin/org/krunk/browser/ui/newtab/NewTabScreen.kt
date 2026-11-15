@@ -433,7 +433,18 @@ private fun AddTile(onAdd: () -> Unit, textColor: Color, mutedColor: Color) {
             }
         }
         Spacer(Modifier.height(6.dp))
-        Text(label, color = textColor.copy(alpha = 0.8f), style = MaterialTheme.typography.labelMedium, maxLines = 2)
+        // Centred on both axes in the label's line box, also when it wraps to two lines.
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            Text(
+                label,
+                color = textColor.copy(alpha = 0.8f),
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 }
 

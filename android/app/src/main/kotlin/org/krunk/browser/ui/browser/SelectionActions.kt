@@ -11,7 +11,7 @@ sealed interface SelectionAction {
     /** The address the entry opens (in a new tab next to the current one, same privacy). */
     val url: String
 
-    /** "Search DuckDuckGo for …". */
+    /** "Search Google for …". */
     data class Search(override val label: String, override val url: String) : SelectionAction
 
     /** The selection is an address: open it. */
