@@ -668,6 +668,8 @@ pub struct AApproval {
     agreed: Option<keys::Agreed>,
     n_box: Option<keys::BoxN>,
     confirmed: bool,
+    /// The server listed the request as one for the passwords key only; `box_N` must agree.
+    pub asked_pak: bool,
 }
 
 pub fn approvals(api: &Api) -> SResult<Vec<ApprovalItem>> {
@@ -688,6 +690,7 @@ impl AApproval {
             agreed: None,
             n_box: None,
             confirmed: false,
+            asked_pak: item.wants_pak(),
         })
     }
 
@@ -749,6 +752,9 @@ impl AApproval {
         if !self.confirmed {
             return Err(SyncFail::BadAnswer("not confirmed"));
         }
+        if !self.asked_pak {
+            return Err(SyncFail::BadAnswer("the device asked to join"));
+        }
         let ag = self.agreed.as_ref().ok_or(SyncFail::BadAnswer("not agreed"))?;
         let nb = self.n_box.as_ref().ok_or(SyncFail::BadAnswer("box_N"))?;
         let pin = st.ak.clone().ok_or(SyncFail::BadAnswer("no keys"))?;
@@ -769,6 +775,9 @@ impl AApproval {
     pub fn admit(&self, api: &Api, st: &SyncState, pak: Option<&keys::PakPin>) -> SResult<AkPin> {
         if !self.confirmed {
             return Err(SyncFail::BadAnswer("not confirmed"));
+        }
+        if self.asked_pak || self.wants_pak() {
+            return Err(SyncFail::BadAnswer("the device asked for the passwords key only"));
         }
         let ag = self.agreed.as_ref().ok_or(SyncFail::BadAnswer("not agreed"))?;
         let nb = self.n_box.as_ref().ok_or(SyncFail::BadAnswer("box_N"))?;

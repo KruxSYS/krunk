@@ -27,6 +27,9 @@ pub struct ApprovalRow {
     pub label: String,
     pub platform: String,
     pub country: Option<String>,
+    /// A device that already syncs asks for the passwords key only (0.21.1).
+    #[serde(default)]
+    pub passwords_only: bool,
 }
 
 /// The approval this device is answering.
@@ -38,6 +41,9 @@ pub struct Approving {
     /// The 6 digits to type on the new device, once both sides have them.
     pub code: Option<String>,
     pub done: bool,
+    /// The request is for the passwords key only (0.21.1).
+    #[serde(default)]
+    pub passwords_only: bool,
 }
 
 /// A collection and whether this device syncs it.

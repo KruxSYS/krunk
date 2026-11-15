@@ -122,10 +122,12 @@
     const list = $('approval-list');
     list.textContent = '';
     $('approvals').hidden = !v.approvals.length || !!v.approving;
-    $('share-row').hidden = !v.passwords;
+    // The share choice is for new devices; a device that syncs asks for the passwords anyway.
+    $('share-row').hidden = !v.passwords || v.approvals.every(function (a) { return a.passwordsOnly; });
     v.approvals.forEach(function (a) {
       list.appendChild(el('li', { class: 'approval' }, [
-        el('span', { class: 'who', text: a.label + (a.country ? ' · ' + a.country : '') }),
+        el('span', { class: 'who', text: a.label + (a.country ? ' · ' + a.country : '') +
+          (a.passwordsOnly ? ' asks for your passwords' : '') }),
         el('button', { class: 'btn primary', text: 'Approve', onclick: function () {
           LB.post('syncApprove', { id: a.id, sharePasswords: $('share-passwords').checked });
         } }),
@@ -137,13 +139,14 @@
     if (ap) {
       if (ap.done) {
         $('approving-title').textContent = ap.label + ' is approved';
-        $('approving-text').textContent = 'It now has your sync keys.';
+        $('approving-text').textContent = ap.passwordsOnly ? 'It now has your passwords key: its passwords sync.'
+          : 'It now has your sync keys.';
         $('approving-code').textContent = '';
         $('approving-cancel').textContent = 'Close';
       } else {
-        $('approving-title').textContent = 'Approve ' + ap.label;
-        $('approving-text').textContent = ap.code ? 'Type this code on the new device. Only continue if it asked just now.'
-          : 'Waiting for the new device…';
+        $('approving-title').textContent = (ap.passwordsOnly ? 'Give your passwords to ' : 'Approve ') + ap.label;
+        $('approving-text').textContent = ap.code ? 'Type this code on the ' + (ap.passwordsOnly ? 'other' : 'new') +
+          ' device. Only continue if it asked just now.' : 'Waiting for the ' + (ap.passwordsOnly ? 'other' : 'new') + ' device…';
         $('approving-code').textContent = ap.code || '';
         $('approving-cancel').textContent = 'Cancel';
       }

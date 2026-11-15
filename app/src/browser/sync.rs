@@ -131,7 +131,8 @@ pub(super) struct SyncHost {
     joining: RefCell<Option<NApproval>>,
     /// The approval this device answers, its code once known, and whether passwords are shared.
     approving: RefCell<Option<(AApproval, Option<String>, bool)>>,
-    approving_done: RefCell<Option<String>>,
+    /// The device just approved, and whether it got only the passwords key.
+    approving_done: RefCell<Option<(String, bool)>>,
     devices: RefCell<Vec<DeviceWire>>,
     approvals: RefCell<Vec<ApprovalItem>>,
     rotation_pending: Cell<bool>,
@@ -183,6 +184,19 @@ impl Default for SyncHost {
         }
     }
 }
+
+/// Whether typed text can be the sync passphrase (7 words) or a recovery key at all: checked
+/// before the escrow is fetched, which is rate-limited and mailed to the user (0.21.1).
+fn secret_shaped(text: &str, recovery: bool) -> bool {
+    if recovery {
+        lb_core::sync::codes::parse_recovery_key(text).is_ok()
+    } else {
+        lb_core::sync::keys::looks_like_passphrase(text)
+    }
+}
+
+const NOT_A_SECRET: &str = "That isn't your sync passphrase: it is 7 words that Krunk showed once when sync was \
+     first turned on (or use the recovery key, KRNK-…). Your account and vault passwords don't work here.";
 
 fn fail_text(e: &SyncFail) -> String {
     use lb_core::sync::api::ApiError as A;
@@ -333,6 +347,7 @@ impl Browser {
                         label: lb_core::account::display_label(&a.device.label),
                         platform: a.device.platform.clone(),
                         country: a.device.country.clone(),
+                        passwords_only: a.wants_pak(),
                     })
                     .collect();
                 let approving = match (&*self.sync.approving.borrow(), &*self.sync.approving_done.borrow()) {
@@ -341,10 +356,15 @@ impl Browser {
                         label: a.device.label.clone(),
                         code: code.clone(),
                         done: false,
+                        passwords_only: a.asked_pak,
                     }),
-                    (None, Some(label)) => {
-                        Some(Approving { id: String::new(), label: label.clone(), code: None, done: true })
-                    }
+                    (None, Some((label, passwords_only))) => Some(Approving {
+                        id: String::new(),
+                        label: label.clone(),
+                        code: None,
+                        done: true,
+                        passwords_only: *passwords_only,
+                    }),
                     _ => None,
                 };
                 // This device first, then by name: the order doesn't jump between refreshes.
@@ -718,6 +738,12 @@ impl Browser {
         }
         let Some((_, acc, _)) = self.sync_me() else { return };
         let secret = Zeroizing::new(secret.to_string());
+        let recovery = recovery || secret.trim().to_ascii_uppercase().starts_with("KRNK-");
+        if !secret_shaped(&secret, recovery) {
+            let passwords = matches!(&*self.sync.stage.borrow(), Stage::Join { passwords: true, .. });
+            self.set_sync_stage(Stage::Join { passwords, message: Some(NOT_A_SECRET.into()) });
+            return;
+        }
         let secret = if recovery { SyncSecret::RecoveryKey(secret) } else { SyncSecret::Passphrase(secret) };
         self.set_sync_stage(Stage::Working(
             "Checking your passphrase or recovery key… (this takes a few seconds)".into(),
@@ -855,14 +881,23 @@ impl Browser {
             return;
         }
         let Some(item) = self.sync.approvals.borrow().iter().find(|a| a.approval_id == id).cloned() else { return };
-        let share = share && self.vault_unlocked() && self.sync_pak().is_some();
+        let has_pak = self.vault_unlocked() && self.sync_pak().is_some();
+        // A device that syncs asks for the passwords key only: there is nothing to give without
+        // the open vault (0.21.1).
+        if item.wants_pak() && !has_pak {
+            self.set_sync_stage(Stage::On(Some(
+                "Unlock your passwords first (Passwords in the menu), then approve: the device asks for them.".into(),
+            )));
+            return;
+        }
+        let share = (share || item.wants_pak()) && has_pak;
         *self.sync.approving_done.borrow_mut() = None;
         self.sync_call(
             "sync-approve",
             move |api| AApproval::respond(api, &item),
             move |b, r| match r {
                 Ok(a) => {
-                    info!("sync: answering a device that asks to join");
+                    info!("sync: answering a device that asks {}", if a.asked_pak { "for the passwords key" } else { "to join" });
                     *b.sync.approving.borrow_mut() = Some((a, None, share));
                     b.push_sync();
                 }
@@ -1094,7 +1129,12 @@ impl Browser {
             move |api| {
                 let step = a.poll(api, &acc, &device);
                 let admitted = match &step {
-                    Ok(AStep::Confirmed) => Some(a.admit(api, &st, pak.as_ref())),
+                    // A device that syncs gets the passwords key only (0.21.1); ak_dir stays.
+                    Ok(AStep::Confirmed) if a.asked_pak => Some(match pak.as_ref() {
+                        Some(p) => a.admit_pak(api, &st, p).map(|()| None),
+                        None => Err(SyncFail::BadAnswer("the passwords are locked")),
+                    }),
+                    Ok(AStep::Confirmed) => Some(a.admit(api, &st, pak.as_ref()).map(Some)),
                     _ => None,
                 };
                 (step, admitted, a)
@@ -1102,13 +1142,19 @@ impl Browser {
             move |b, (step, admitted, a)| {
                 b.sync.busy.set(false);
                 match (step, admitted) {
-                    (_, Some(Ok(pin))) => {
+                    (_, Some(Ok(None))) => {
+                        info!("sync: a device that syncs got the passwords key");
+                        *b.sync.approving_done.borrow_mut() = Some((a.device.label.clone(), true));
+                        b.sync_refresh_soon();
+                        b.push_sync();
+                    }
+                    (_, Some(Ok(Some(pin)))) => {
                         if let Some(st) = b.sync.state.borrow_mut().as_mut() {
                             st.ak = Some(pin);
                         }
                         b.sync_save();
                         info!("sync: a new device was approved (passwords shared: {share})");
-                        *b.sync.approving_done.borrow_mut() = Some(a.device.label.clone());
+                        *b.sync.approving_done.borrow_mut() = Some((a.device.label.clone(), false));
                         b.sync_refresh_soon();
                         b.push_sync();
                     }
@@ -1631,6 +1677,12 @@ impl Browser {
         let Some(mut st) = self.sync.state.borrow().clone() else { return };
         let mut pak = if self.vault_unlocked() { self.sync_pak() } else { None };
         let secret = Zeroizing::new(secret.to_string());
+        let recovery = recovery || secret.trim().to_ascii_uppercase().starts_with("KRNK-");
+        if !secret_shaped(&secret, recovery) {
+            *self.sync.status.borrow_mut() = Some(NOT_A_SECRET.into());
+            self.push_sync();
+            return;
+        }
         let secret = if recovery { SyncSecret::RecoveryKey(secret) } else { SyncSecret::Passphrase(secret) };
         // `busy` keeps runs and the keys polling away while the directories change.
         self.sync.busy.set(true);
