@@ -3,6 +3,12 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.22.3 — 2026-11-15
+
+- **Sync works again with a big history.** Sync stopped with "Something went wrong with sync"
+  once the history held more than 200 pages of one site: Krunk then failed to find a page it
+  already had, tried to add it twice and gave up, on every run. It finds it now.
+
 ## 0.22.2 — 2026-11-15
 
 - **No more long sync waits.** "Sync will try again in 60 min" and "Too many attempts. Try again

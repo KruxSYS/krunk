@@ -3,6 +3,12 @@
 What changed in each Krunk for Android release, newest first. The Windows browser's list is
 `CHANGELOG.md`.
 
+## 0.7.3 — 2026-11-15
+
+- **Sync works again with a big history.** Sync stopped with "Something went wrong with sync"
+  once the history held more than 200 pages of one site: Krunk then failed to find a page it
+  already had, tried to add it twice and gave up, on every run. It finds it now.
+
 ## 0.7.2 — 2026-11-15
 
 - **Sync works again after the account's keys change.** Since a device switched sync to the

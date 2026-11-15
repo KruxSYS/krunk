@@ -240,6 +240,26 @@ fn history_is_a_union_of_visits() {
     assert!(!snap(&b).history.contains_key("https://page.example/"));
 }
 
+/// 0.22.3: a site with more than 200 pages in the history. The lookup of the local row was one
+/// query capped at 200 rows for the whole site, so the exact row could be left out; the apply
+/// inserted it again and the UNIQUE constraint on `urls.url` failed every run from then on.
+#[test]
+fn a_site_with_many_pages_still_merges_its_history() {
+    let mem = Mem::new();
+    let mut a = dev("dev-a", 1);
+    let mut b = dev("dev-b", 2);
+    for i in 0..300 {
+        b.store.record_visit(&format!("https://busy.example/p/{i:04}"), "P", 1_000 + i).unwrap();
+    }
+    b.store.record_visit("https://busy.example/target", "T", 5_000).unwrap();
+    a.store.record_visit("https://busy.example/target", "T", 6_000).unwrap();
+    sync(&mut a, &mem);
+    sync(&mut b, &mem);
+    sync(&mut a, &mem);
+    assert_eq!(snap(&b).history["https://busy.example/target"], vec![6_000, 5_000]);
+    assert_eq!(snap(&a).history["https://busy.example/target"], vec![6_000, 5_000]);
+}
+
 #[test]
 fn below_the_horizon_a_full_reconcile_deletes_nothing() {
     let mem = Mem::new();

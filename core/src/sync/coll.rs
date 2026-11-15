@@ -644,16 +644,29 @@ pub fn repair_tree(conn: &Connection) -> DbResult<()> {
 type UrlRow = (i64, String, String, i64, i64);
 
 fn url_rows(conn: &Connection, nk: &str) -> DbResult<Vec<UrlRow>> {
+    let row = |r: &rusqlite::Row<'_>| -> DbResult<UrlRow> { Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)) };
+    // The exact row first, never capped (0.22.3): with one `url = ?1 OR <same site>` query
+    // capped at 200 rows, a site with more pages than that could leave the exact row out; the
+    // apply then inserted it again and the UNIQUE constraint stopped every sync run.
+    let mut out: Vec<UrlRow> =
+        conn.prepare("SELECT id, url, title, visit_count, last_visit FROM urls WHERE url = ?1")?
+            .query_map([nk], row)?
+            .collect::<DbResult<_>>()?;
+    // Then variants of the same page stored under another spelling (the same site, bounded).
     let host_end = nk.find("://").map(|i| i + 3).and_then(|s| nk[s..].find('/').map(|j| s + j)).unwrap_or(nk.len());
     let prefix = nk[..host_end].to_ascii_lowercase();
     let mut st = conn.prepare(
-        "SELECT id, url, title, visit_count, last_visit FROM urls WHERE url = ?1 OR (lower(url) >= ?2 AND lower(url) < ?3) LIMIT 200",
+        "SELECT id, url, title, visit_count, last_visit FROM urls
+         WHERE lower(url) >= ?1 AND lower(url) < ?2 AND url <> ?3 LIMIT 2000",
     )?;
-    let rows = st.query_map(params![nk, prefix, format!("{prefix}\u{10ffff}")], |r| {
-        Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
-    })?;
-    let rows: Vec<(i64, String, String, i64, i64)> = rows.collect::<DbResult<_>>()?;
-    Ok(rows.into_iter().filter(|(_, u, _, _, _)| u == nk || history_key(u).as_deref() == Some(nk)).collect())
+    let variants = st.query_map(params![prefix, format!("{prefix}\u{10ffff}"), nk], row)?;
+    for v in variants {
+        let v = v?;
+        if history_key(&v.1).as_deref() == Some(nk) {
+            out.push(v);
+        }
+    }
+    Ok(out)
 }
 
 fn visits_of(conn: &Connection, ids: &[i64]) -> DbResult<Vec<i64>> {
@@ -723,11 +736,14 @@ fn apply_history(
     let (id, existing): (i64, Vec<i64>) = match rows.iter().find(|x| x.1 == nk).or(rows.first()) {
         Some(x) => (x.0, visits_of(conn, &[x.0])?),
         None => {
+            // Never fails on an existing row (the lookup above is bounded for variants).
             conn.execute(
-                "INSERT INTO urls(url, title, visit_count, last_visit) VALUES (?1, ?2, 0, 0)",
+                "INSERT INTO urls(url, title, visit_count, last_visit) VALUES (?1, ?2, 0, 0)
+                 ON CONFLICT(url) DO NOTHING",
                 params![nk, title],
             )?;
-            (conn.last_insert_rowid(), vec![])
+            let id: i64 = conn.query_row("SELECT id FROM urls WHERE url = ?1", [nk], |r| r.get(0))?;
+            (id, visits_of(conn, &[id])?)
         }
     };
     let have: HashSet<i64> = existing.iter().copied().collect();
