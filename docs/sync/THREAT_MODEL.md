@@ -108,6 +108,10 @@ in `PROTOCOL.md` (§ references below); architecture is in `PLAN.md`.
 - **R3, deletion and withholding** by the server: no defence beyond detection by devices that
   have local state. Users keep local copies; there are no server-side backups of plaintext.
 - **R4, rollback on a first restore** to an older, consistently signed state.
+- **R5b, the vault-password wrap (0.21.1):** the escrow can hold RR under the user's vault
+  password (PROTOCOL §5.4). Whoever holds the server database can guess that password offline;
+  each guess costs Argon2id 128 MiB, t = 3, but a weak vault password falls. Chosen by the
+  operator for usability ("one password"); users are told the vault password protects synced data.
 - **R5, weak user-chosen passphrase:** mitigated by the generated default and the strength gate,
   but a determined user can still choose a memorable one that just meets the gate.
 - **R6, metadata:** the server learns the account email, device count, platforms, collection

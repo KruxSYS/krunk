@@ -226,6 +226,25 @@ protect *local* files (§8).
 - Restorers start from the latest anchor and walk forward under §4.4. Existing devices never
   need `escrow_mac` [R20].
 
+### 5.4 The vault-password wrap (0.21.1 / Android 0.6.2)
+
+The escrow may carry a third wrap of RR, `rr_wrap_vault = {n, ct, commit, kdf}`, under
+`KEK = Argon2id(vault password as typed, UTF-8, kdf.salt, kdf.m_kib/t/p)` (floor: 128 MiB, t = 3).
+Its AAD and commit labels use the kind `vault` (`krunk-sync/v1/rr/vault`,
+`krunk-sync/v1/rr-commit/vault`). It makes the password-vault master password the one secret a
+user types:
+
+- the first device sets up with it (passphrase and recovery key are still generated for the
+  wraps the format requires, but never shown);
+- a new device restores with it (`unwrap_rr` with the vault kind, then §6.3 as usual);
+- a device that syncs and holds AK and PAK adopts it by minting a new RR (`rr_gen + 1`, new
+  `esc_pk`, escrow seals replaced, both heads re-signed with `escrow_mac` under the new RR, one
+  commit with the escrow). It does so when `sync/state.escrow_vault` is false, after a vault
+  password change, or when the keys need re-securing (§7 step 8). The old passphrase and recovery
+  key stop working then.
+
+`GET keys/escrow` mails the user only when the fetching device holds no keys yet.
+
 ## 6. Flows
 
 ### 6.1 Link (device grant, modelled on RFC 8628)
