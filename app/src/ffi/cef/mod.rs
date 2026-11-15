@@ -276,29 +276,23 @@ pub fn set_doh(mode: &str, templates: &str) -> bool {
 /// sets the `proxy` preference to `fixed_servers` with `server` (`http://127.0.0.1:<port>`) on
 /// the default and the private profile (also one created later) and keeps WebRTC from sending
 /// UDP outside it; `None` goes back to the system's settings. True when every profile took it.
+/// With `private_only` (0.22.0) only the private profile gets it and the default one goes back
+/// to the system's settings.
 ///
 /// When every profile took it, the engine's open connections (HTTP/2 and QUIC sessions, idle
 /// and pending sockets, WebSocket pools) are closed in both profiles so they come back the new
-/// At a start without the VPN: removes a VPN proxy the engine kept on disk from an earlier
-/// run, and only then (0.14.1: resetting the preference when nothing was set made the engine
-/// log an observer-list check at every start). True when one was removed.
-pub fn clear_stale_vpn_proxy() -> bool {
-    let Some(ctx) = request_context_get_global_context() else { return false };
-    if !app::vpn_proxy_left(&ctx) {
-        return false;
-    }
-    set_vpn_proxy(None)
-}
-
 /// way. WebRTC peer connections can't be moved: they keep their path until they end.
-pub fn set_vpn_proxy(proxy: Option<(String, String)>) -> bool {
+pub fn set_vpn_proxy(proxy: Option<(String, String)>, private_only: bool) -> bool {
     let private = PRIVATE_CONTEXT.with(|c| c.borrow().clone());
     // A private context that is still initializing gets the proxy in its handler (before any
     // of its browsers exists); setting preferences on it now would be refused.
     let private = private.filter(|_| PRIVATE_READY.get());
     let mut contexts: Vec<RequestContext> = request_context_get_global_context().into_iter().collect();
     contexts.extend(private);
-    let ok = app::set_vpn_proxy(proxy.map(|(server, bypass)| app::VpnProxy { server, bypass }), &mut contexts);
+    let ok = app::set_vpn_proxy(
+        proxy.map(|(server, bypass)| app::VpnProxy { server, bypass, private_only }),
+        &mut contexts,
+    );
     if ok {
         for ctx in &contexts {
             let mut done = ConnectionsClosed::new(if ctx.is_global() != 0 { "default" } else { "private" });
@@ -310,6 +304,17 @@ pub fn set_vpn_proxy(proxy: Option<(String, String)>) -> bool {
         );
     }
     ok
+}
+
+/// At a start without the VPN: removes a VPN proxy the engine kept on disk from an earlier
+/// run, and only then (0.14.1: resetting the preference when nothing was set made the engine
+/// log an observer-list check at every start). True when one was removed.
+pub fn clear_stale_vpn_proxy() -> bool {
+    let Some(ctx) = request_context_get_global_context() else { return false };
+    if !app::vpn_proxy_left(&ctx) {
+        return false;
+    }
+    set_vpn_proxy(None, false)
 }
 
 wrap_completion_callback! {

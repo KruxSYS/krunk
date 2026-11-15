@@ -131,6 +131,8 @@ pub(super) struct NetShared {
     /// 0.14.0: the VPN should run and neither it nor its stand-in is the engine's proxy: every
     /// web request is refused (only Krunk's own pages load).
     offline: AtomicBool,
+    /// 0.22.0: the VPN is for private tabs only: `offline` refuses only their requests.
+    offline_private_only: AtomicBool,
 }
 
 impl NetShared {
@@ -208,7 +210,9 @@ impl NetShared {
         self.hops.lock().map(|mut h| std::mem::take(&mut *h)).unwrap_or_default()
     }
 
-    pub fn set_offline(&self, on: bool) {
+    /// `private_only` (0.22.0): only private tabs are refused (the VPN is for them only).
+    pub fn set_offline(&self, on: bool, private_only: bool) {
+        self.offline_private_only.store(private_only, Relaxed);
         self.offline.store(on, Relaxed);
     }
 
@@ -271,6 +275,8 @@ struct TabShared {
     blocked: AtomicU32,
     /// Bytes received by this tab's requests (the task manager's network rate).
     received: AtomicU64,
+    /// A private tab (0.22.0: the VPN may be for private tabs only).
+    private: bool,
 }
 
 /// The network policy of one tab (runs on the IO thread).
@@ -300,7 +306,9 @@ impl RequestPolicy for TabPolicy {
         }
         let own_host =
             || urlclean::host_of(req.url).is_some_and(|h| h == "krunk.invalid" || h.ends_with(".krunk.invalid"));
-        if self.net.offline.load(Relaxed) && blocker::is_filterable(req.url) && !own_host() {
+        let offline = self.net.offline.load(Relaxed)
+            && (self.tab.private || !self.net.offline_private_only.load(Relaxed));
+        if offline && blocker::is_filterable(req.url) && !own_host() {
             // The VPN couldn't start: nothing leaves (fail-closed), not even past the engine's
             // missing proxy setting.
             return NetVerdict::Block;
@@ -413,9 +421,9 @@ pub(super) struct TabNet {
 }
 
 impl TabNet {
-    pub fn new(net: Arc<NetShared>) -> TabNet {
+    pub fn new(net: Arc<NetShared>, private: bool) -> TabNet {
         TabNet {
-            io: Arc::new(TabShared::default()),
+            io: Arc::new(TabShared { private, ..TabShared::default() }),
             net,
             login_form: Cell::new(false),
             videos: RefCell::new(Vec::new()),

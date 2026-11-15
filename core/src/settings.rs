@@ -579,6 +579,27 @@ pub struct VpnSettings {
     /// 0.14.2: addresses of the local network ([`LOCAL_NETWORK_BYPASS`]) skip the VPN, so
     /// routers, printers and home servers stay reachable while connected. Off by default.
     pub allow_local_network: bool,
+    /// 0.22.0: which tabs use the VPN (the popup's selector). Applied at once.
+    pub scope: VpnScope,
+}
+
+/// Which of the engine's traffic goes through the VPN (0.22.0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum VpnScope {
+    /// Only private tabs: normal tabs and Krunk's own requests go direct.
+    Private,
+    /// Every tab and Krunk's own requests (updates, sync, extensions); unknown values too
+    /// (`serde(other)` must be the last variant).
+    #[default]
+    #[serde(other)]
+    Everywhere,
+}
+
+impl VpnScope {
+    pub fn private_only(self) -> bool {
+        self == VpnScope::Private
+    }
 }
 
 /// What skips the VPN with `vpn.allow_local_network` (0.14.2), in Chromium's proxy-bypass
@@ -1882,14 +1903,21 @@ mod tests {
                 show_button: false,
                 auto_connect: false,
                 active_profile: String::new(),
-                allow_local_network: false
+                allow_local_network: false,
+                scope: VpnScope::Everywhere,
             }
         );
         let j = serde_json::to_value(&d).unwrap();
         assert_eq!(
             j["vpn"],
-            serde_json::json!({ "showButton": false, "autoConnect": false, "activeProfile": "", "allowLocalNetwork": false })
+            serde_json::json!({ "showButton": false, "autoConnect": false, "activeProfile": "", "allowLocalNetwork": false, "scope": "everywhere" })
         );
+        // 0.22.0: the scope; a value from elsewhere falls back to everywhere (never resets all).
+        let p: Settings = serde_json::from_str(r#"{"vpn":{"scope":"private"}}"#).unwrap();
+        assert!(p.vpn.scope.private_only());
+        let p: Settings = serde_json::from_str(r#"{"vpn":{"autoConnect":true,"scope":"later"}}"#).unwrap();
+        assert_eq!(p.vpn.scope, VpnScope::Everywhere);
+        assert!(p.vpn.auto_connect);
         // Auto-connect needs a profile.
         let mut s =
             Settings { vpn: VpnSettings { auto_connect: true, ..VpnSettings::default() }, ..Settings::default() };
@@ -1914,7 +1942,8 @@ mod tests {
                 show_button: true,
                 auto_connect: false,
                 active_profile: "ab12".into(),
-                allow_local_network: false
+                allow_local_network: false,
+                scope: VpnScope::Everywhere,
             }
         );
         let l = Settings::from_json_lenient(r#"{"vpn":{"showButton":true,"autoConnect":true,"activeProfile":"A/B"}}"#);

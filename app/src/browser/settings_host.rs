@@ -251,7 +251,10 @@ impl Browser {
             self.sessionlog_settings_changed(old, new);
         }
         if old.vpn != new.vpn {
-            self.vpn_settings_changed(old.vpn.allow_local_network != new.vpn.allow_local_network);
+            self.vpn_settings_changed(
+                old.vpn.allow_local_network != new.vpn.allow_local_network,
+                old.vpn.scope != new.vpn.scope,
+            );
         }
         // 0.15.0: finished downloads older than the new limit leave the list at once.
         if old.download_auto_clear_days != new.download_auto_clear_days {

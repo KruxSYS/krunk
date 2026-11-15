@@ -18,6 +18,14 @@ const WEBRTC_VPN: &str = "disable_non_proxied_udp";
 pub(super) struct VpnProxy {
     pub server: String,
     pub bypass: String,
+    /// 0.22.0: only the private context uses it; the global one stays direct.
+    pub private_only: bool,
+}
+
+/// The VPN's proxy as `ctx` should have it: none for the global context when the VPN is for
+/// private tabs only.
+fn proxy_for<'a>(ctx: &RequestContext, proxy: Option<&'a VpnProxy>) -> Option<&'a VpnProxy> {
+    proxy.filter(|p| !(p.private_only && ctx.is_global() != 0))
 }
 
 thread_local! {
@@ -176,9 +184,11 @@ pub(super) fn apply_profile_prefs(ctx: &mut RequestContext) -> bool {
     let applied = prefs.iter().filter(|(name, value)| set_pref(ctx, name, *value)).count();
     let scope = if ctx.is_global() != 0 { "default" } else { "private" };
     info!("engine preferences applied ({scope} profile): {applied}/{}", prefs.len());
-    // 0.14.0: a context created while the VPN runs (the private one) uses it from the start.
-    match VPN_PROXY.with(|v| v.borrow().clone()) {
-        Some(p) => apply_vpn(ctx, Some(&p)),
+    // 0.14.0: a context created while the VPN runs (the private one) uses it from the start;
+    // 0.22.0: with the VPN for private tabs only, the global context is left direct.
+    let proxy = VPN_PROXY.with(|v| v.borrow().clone());
+    match proxy_for(ctx, proxy.as_ref()) {
+        Some(p) => apply_vpn(ctx, Some(p)),
         None => true,
     }
 }
@@ -216,12 +226,19 @@ pub(super) fn vpn_proxy_left(ctx: &RequestContext) -> bool {
 }
 
 /// The VPN's proxy for every context: the global one now, the private one now (when it exists)
-/// and whenever it is created. True when the engine took it everywhere.
+/// and whenever it is created; with `private_only` the global context goes back to the system's
+/// settings instead. True when the engine took it everywhere.
 pub(super) fn set_vpn_proxy(proxy: Option<VpnProxy>, contexts: &mut [RequestContext]) -> bool {
     VPN_PROXY.with(|v| *v.borrow_mut() = proxy.clone());
     let mut ok = true;
     for ctx in contexts {
-        ok &= apply_vpn(ctx, proxy.as_ref());
+        let want = proxy_for(ctx, proxy.as_ref());
+        // Private tabs only, and the global context holds none of ours: already direct
+        // (resetting an unset proxy preference makes the engine log a check failure, 0.14.1).
+        if proxy.is_some() && want.is_none() && !vpn_proxy_left(ctx) {
+            continue;
+        }
+        ok &= apply_vpn(ctx, want);
     }
     ok
 }

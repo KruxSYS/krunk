@@ -1076,7 +1076,7 @@ impl Browser {
 
     /// A new (not started) tab view, with its network state.
     fn new_tab_view(&self, private: bool) -> (View, Rc<TabNet>) {
-        let net = Rc::new(TabNet::new(self.net.clone()));
+        let net = Rc::new(TabNet::new(self.net.clone(), private));
         let scripts = {
             let s = self.settings.borrow();
             #[cfg_attr(not(feature = "perf-probe"), allow(unused_mut))]
