@@ -225,6 +225,16 @@ pub struct ApprovalItem {
     pub state: String,
     pub device: ApprovalDevice,
     pub expires_in: i64,
+    /// `"join"` (a new device) or `"pak"` (a device that syncs asks for the passwords key only;
+    /// servers before 0.21.1 don't send it).
+    #[serde(default)]
+    pub kind: Option<String>,
+}
+
+impl ApprovalItem {
+    pub fn wants_pak(&self) -> bool {
+        self.kind.as_deref() == Some(keys::WANT_PAK)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -544,6 +554,35 @@ impl NApproval {
         Ok(NApproval { id: c.approval_id, side, agreed: None, box_a: None })
     }
 
+    /// "Ask my PC" (Android 0.6.2): a device that syncs asks another for the passwords key, with
+    /// its listed general key and a new vault key. Finish with [`NApproval::finish_pak`].
+    pub fn start_pak(api: &Api, st: &SyncState) -> SResult<NApproval> {
+        let side = keys::new_side_pak(&st.device_sk)?;
+        #[derive(Deserialize)]
+        struct Created {
+            approval_id: String,
+        }
+        let c: Created =
+            api.post("approvals", &json!({"commit_n": b64(&side.commit), "kind": keys::WANT_PAK}))?;
+        Ok(NApproval { id: c.approval_id, side, agreed: None, box_a: None })
+    }
+
+    /// The passwords key arrived: checks it against `pak_dir` and adds this device's vault key.
+    /// The caller keeps the returned state in the unlocked vault.
+    pub fn finish_pak(&self, api: &Api, st: &SyncState) -> SResult<keys::PakState> {
+        let ag = self.agreed.as_ref().ok_or(SyncFail::BadAnswer("not ready"))?;
+        let box_a = self.box_a.as_ref().ok_or(SyncFail::BadAnswer("no keys yet"))?;
+        let acc = st.account_bytes().map_err(|_| SyncFail::BadAnswer("account id"))?;
+        let (_, pak) = head(api)?.ok_or(SyncFail::BadAnswer("no keyset"))?;
+        let mut p = keys::n_accept_pak(ag, &self.side, box_a, acc, &pak, st.esc_pk)?;
+        let v = self.side.vault.as_ref().ok_or(SyncFail::BadAnswer("no vault key"))?;
+        let pd = dir::parse_pak(&pak.bytes)?;
+        let (c, pin) = keys::add_vault_key(&p, &pd, acc, &st.device_id, &v.pk, api.now_ms as u64)?;
+        commit(api, &c)?;
+        p.pak = pin;
+        Ok(p)
+    }
+
     pub fn poll(&mut self, api: &Api, account_id: &AccountId, my_id: &str, name: &str) -> SResult<NStep> {
         let v: ApprovalView = match api.get(&format!("approvals/{}", self.id)) {
             Ok(v) => v,
@@ -697,6 +736,32 @@ impl AApproval {
 
     pub fn cancel(&self, api: &Api) {
         let _ = api.post_empty(&format!("approvals/{}/cancel", self.id), &json!({}));
+    }
+
+    /// Whether the confirmed device asked for the passwords key only (then [`Self::admit_pak`]).
+    pub fn wants_pak(&self) -> bool {
+        self.n_box.as_ref().is_some_and(|b| b.want.is_some())
+    }
+
+    /// Hands the passwords key to a device that already syncs ("Ask my PC"). Commits nothing:
+    /// the device adds its own vault key. `pak`: this device's PAK (the vault is unlocked).
+    pub fn admit_pak(&self, api: &Api, st: &SyncState, pak: &keys::PakPin) -> SResult<()> {
+        if !self.confirmed {
+            return Err(SyncFail::BadAnswer("not confirmed"));
+        }
+        let ag = self.agreed.as_ref().ok_or(SyncFail::BadAnswer("not agreed"))?;
+        let nb = self.n_box.as_ref().ok_or(SyncFail::BadAnswer("box_N"))?;
+        let pin = st.ak.clone().ok_or(SyncFail::BadAnswer("no keys"))?;
+        let (ak_blob, pak_blob) = head(api)?.ok_or(SyncFail::BadAnswer("no keyset"))?;
+        if dir::hash(&ak_blob.bytes) != pin.hash || dir::hash(&pak_blob.bytes) != pak.hash {
+            return Err(SyncFail::BadAnswer("the keys changed: refresh first"));
+        }
+        let head_dir = dir::parse_ak(&ak_blob.bytes)?;
+        let pd = dir::parse_pak(&pak_blob.bytes)?;
+        let esc_pk: [u8; 32] = unb64(&pd.esc_pk)?.try_into().map_err(|_| SyncFail::BadAnswer("esc_pk"))?;
+        let box_a = keys::a_share_pak(ag, &head_dir, &self.device.id, nb, pak, pak.hash, esc_pk)?;
+        api.post_empty(&format!("approvals/{}/keys", self.id), &json!({"box_A": b64(&box_a)}))?;
+        Ok(())
     }
 
     /// Adds the new device to `ak_dir` and hands it the keys. `pak`: share passwords too (the

@@ -173,6 +173,16 @@ pub fn new_passphrase() -> KResult<Zeroizing<String>> {
     Ok(Zeroizing::new(words.join("-")))
 }
 
+/// Whether typed text can be a sync passphrase at all: after [`normalize_passphrase`], exactly
+/// [`PASSPHRASE_WORDS`] words of the BIP-39 English list (the only passphrases Krunk makes).
+/// Lets a caller refuse a vault or account password before fetching the escrow (which is
+/// rate-limited and mailed to the user).
+pub fn looks_like_passphrase(typed: &str) -> bool {
+    let n = normalize_passphrase(typed);
+    let words: Vec<&str> = n.split('-').collect();
+    words.len() == PASSPHRASE_WORDS && words.iter().all(|w| bip39::Language::English.find_word(w).is_some())
+}
+
 /// A typed passphrase as the KDF sees it: trimmed, lowercase, words joined by single `-`
 /// (spaces and dashes are the same).
 pub fn normalize_passphrase(typed: &str) -> Zeroizing<String> {
@@ -821,6 +831,9 @@ pub struct NewSide {
     /// N's long-term keys, sent inside `box_N` (so the server can't swap them).
     pub device: KeyPair,
     pub vault: Option<KeyPair>,
+    /// A device that already syncs asks only for the passwords key (Android 0.6.2): `device` is
+    /// its listed general key, and `box_N` says so (`BoxN::want`).
+    pub want_pak: bool,
 }
 
 pub fn new_side(with_vault: bool) -> KResult<NewSide> {
@@ -833,8 +846,28 @@ pub fn new_side(with_vault: bool) -> KResult<NewSide> {
         nonce,
         device: KeyPair::generate()?,
         vault: if with_vault { Some(KeyPair::generate()?) } else { None },
+        want_pak: false,
     })
 }
+
+/// The side of a device that syncs and asks another for the passwords key only ("Ask my PC",
+/// Android 0.6.2): its own general key (already in `ak_dir`) and a new vault key.
+pub fn new_side_pak(device_sk: &Key) -> KResult<NewSide> {
+    let e = KeyPair::generate()?;
+    let nonce = crypto::random::<32>()?;
+    Ok(NewSide {
+        commit: sas::commit(&e.pk, &nonce),
+        epk: e.pk,
+        esk: e.sk,
+        nonce,
+        device: KeyPair::from_secret(**device_sk),
+        vault: Some(KeyPair::generate()?),
+        want_pak: true,
+    })
+}
+
+/// `BoxN::want` of a request for the passwords key only.
+pub const WANT_PAK: &str = "pak";
 
 /// The values both sides put into the transcript.
 pub struct ApprovalCtx<'a> {
@@ -894,6 +927,18 @@ pub struct BoxN {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pk_vault: Option<String>,
     pub name: String,
+    /// `Some("pak")`: the device already syncs and asks for the passwords key only. Inside the
+    /// box, so the server can't turn a join into such a request or back (an approver that
+    /// doesn't know the field refuses the box).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub want: Option<String>,
+}
+
+#[cfg(test)]
+impl BoxN {
+    fn clone_for_test(&self) -> BoxN {
+        BoxN { pk_general: self.pk_general.clone(), pk_vault: self.pk_vault.clone(), name: self.name.clone(), want: self.want.clone() }
+    }
 }
 
 /// N, once A answered: the SAS to compare and `box_N` to reveal.
@@ -906,8 +951,12 @@ pub fn n_agree(
 ) -> KResult<(Agreed, Vec<u8>)> {
     let dh = sas::dh(&side.esk, epk_a)?;
     let ag = agree(ctx, &dh, &side.commit, epk_a, nonce_a, &side.epk, &side.nonce)?;
-    let body =
-        BoxN { pk_general: b64(&side.device.pk), pk_vault: side.vault.as_ref().map(|v| b64(&v.pk)), name: name.into() };
+    let body = BoxN {
+        pk_general: b64(&side.device.pk),
+        pk_vault: side.vault.as_ref().map(|v| b64(&v.pk)),
+        name: name.into(),
+        want: side.want_pak.then(|| WANT_PAK.to_string()),
+    };
     #[allow(clippy::expect_used)] // plain fields
     let pt = Zeroizing::new(serde_json::to_vec(&body).expect("BoxN serializes"));
     let bx = sas::box_seal(&ag.k_na, Direction::NToA, &pt)?;
@@ -958,6 +1007,9 @@ pub fn a_agree(
         let vpk: [u8; 32] = unb64(v)?.try_into().map_err(|_| KeyError::Protocol("pk"))?;
         crypto::check_public_key(&vpk)?;
     }
+    if b.want.as_deref().is_some_and(|w| w != WANT_PAK) {
+        return Err(KeyError::Protocol("box_N asks for something unknown"));
+    }
     Ok((ag, b))
 }
 
@@ -998,6 +1050,9 @@ pub fn a_admit(
     pak: Option<&PakPin>,
     now_ms: u64,
 ) -> KResult<(Commit, Vec<u8>, [u8; 32])> {
+    if n_box.want.is_some() {
+        return Err(KeyError::Protocol("the device asks for the passwords key only"));
+    }
     let pk: [u8; 32] = unb64(&n_box.pk_general)?.try_into().map_err(|_| KeyError::Protocol("pk"))?;
     let next = with_device(head_dir, head, me, n_id, n_short, &pk, now_ms)?;
     let blob = dir::sign_ak(&next, &head.ak, None, None, &head.account_id)?;
@@ -1086,6 +1141,99 @@ pub fn n_accept(
         esc_pk: unb64(&p.esc_pk)?.try_into().map_err(|_| KeyError::Protocol("esc_pk"))?,
     };
     Ok((joined, p))
+}
+
+/// What A gives a device that asks for the passwords key only, inside `box_A`.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PakPayload {
+    pub kind: String,
+    pub pak: String,
+    pub pak_epoch: u32,
+    pub pak_dir_head: String,
+    pub esc_pk: String,
+}
+
+/// A answers a request for the passwords key only ("Ask my PC"): the device must be an active
+/// member of A's verified `ak_dir` under the same general key it put in `box_N`, and ask with a
+/// vault key. Nothing is committed: N adds its own vault key with [`add_vault_key`].
+pub fn a_share_pak(
+    ag: &Agreed,
+    head_dir: &AkDir,
+    n_id: &str,
+    n_box: &BoxN,
+    pak: &PakPin,
+    pak_dir_hash: [u8; 32],
+    esc_pk: [u8; 32],
+) -> KResult<Vec<u8>> {
+    if n_box.want.as_deref() != Some(WANT_PAK) {
+        return Err(KeyError::Protocol("the device asks to join, not for the passwords key"));
+    }
+    if n_box.pk_vault.is_none() {
+        return Err(KeyError::Protocol("no vault key"));
+    }
+    let listed = head_dir.devices.iter().find(|d| d.id == n_id).ok_or(KeyError::Protocol("not listed"))?;
+    if listed.pk != n_box.pk_general || head_dir.revoked.iter().any(|r| r == n_id) {
+        return Err(KeyError::Protocol("the device's key isn't the one in the account directory"));
+    }
+    let payload = PakPayload {
+        kind: WANT_PAK.into(),
+        pak: b64(pak.pak.as_ref()),
+        pak_epoch: pak.pak_epoch,
+        pak_dir_head: b64(&pak_dir_hash),
+        esc_pk: b64(&esc_pk),
+    };
+    #[allow(clippy::expect_used)] // plain fields
+    let pt = Zeroizing::new(serde_json::to_vec(&payload).expect("PakPayload serializes"));
+    Ok(sas::box_seal(&ag.k_an, Direction::AToN, &pt)?)
+}
+
+/// N opens a [`PakPayload`] and checks it against the `pak_dir` it fetched: the head hash, the
+/// MAC under the received PAK, the epoch, and the escrow key it pinned when it joined.
+pub fn n_accept_pak(
+    ag: &Agreed,
+    side: &NewSide,
+    box_a: &[u8],
+    account_id: AccountId,
+    pak_blob: &Blob,
+    pinned_esc_pk: Option<[u8; 32]>,
+) -> KResult<PakState> {
+    let pt = sas::box_open(&ag.k_an, Direction::AToN, box_a).map_err(|_| KeyError::Protocol("box_A"))?;
+    let p: PakPayload = serde_json::from_slice(&pt).map_err(|_| KeyError::Protocol("box_A"))?;
+    if p.kind != WANT_PAK {
+        return Err(KeyError::Protocol("box_A"));
+    }
+    let v = side.vault.as_ref().ok_or(KeyError::Protocol("no vault key"))?;
+    if b64(&dir::hash(&pak_blob.bytes)) != p.pak_dir_head {
+        return Err(KeyError::Dir(DirError::Fork));
+    }
+    let k: [u8; 32] = unb64(&p.pak)?.try_into().map_err(|_| KeyError::Protocol("pak"))?;
+    let k = Zeroizing::new(k);
+    crypto::hmac_verify(dir::pak_mac_key(&k, &account_id, p.pak_epoch).as_ref(), &pak_blob.bytes, &pak_blob.mac)?;
+    let pd = dir::parse_pak(&pak_blob.bytes)?;
+    if pd.pak_epoch != p.pak_epoch {
+        return Err(KeyError::Protocol("pak epoch"));
+    }
+    if pd.esc_pk != p.esc_pk {
+        return Err(KeyError::Dir(DirError::EscrowKeyChanged));
+    }
+    let esc_pk: [u8; 32] = unb64(&pd.esc_pk)?.try_into().map_err(|_| KeyError::Protocol("esc_pk"))?;
+    if pinned_esc_pk.is_some_and(|pin| pin != esc_pk) {
+        return Err(KeyError::Dir(DirError::EscrowKeyChanged));
+    }
+    Ok(PakState {
+        vault_sk: v.sk.clone(),
+        pak: PakPin {
+            pak_epoch: p.pak_epoch,
+            pak: k,
+            seq: pd.seq,
+            hash: dir::hash(&pak_blob.bytes),
+            esc_pk,
+            rr_gen: pd.rr_gen,
+        },
+        pak_old: vec![],
+        book: Default::default(),
+    })
 }
 
 /// After receiving PAK, N adds its own vault key to `pak_dir` (PROTOCOL §6.2 step 5).
@@ -1314,5 +1462,88 @@ mod tests {
         let nd = dir::parse_pak(&c2.pak_dir.unwrap().bytes).unwrap();
         assert!(nd.vault_keys.iter().any(|v| v.device == "dev-n") && nd.seals.iter().any(|s| s.to == "dev-n"));
         assert_eq!(pin.seq, 2);
+    }
+
+    #[test]
+    fn a_device_that_syncs_gets_the_passwords_key_by_approval() {
+        let plan = plan_setup(ACC, me("dev-a", 0), true).unwrap();
+        let (commit, joined_a) = setup_commit(&plan, 1).unwrap();
+        let ak_blob = commit.ak_dir.clone().unwrap();
+        let pak_blob = commit.pak_dir.clone().unwrap();
+        let head = joined_a.ak.head(ACC);
+        let head_dir = dir::parse_ak(&ak_blob.bytes).unwrap();
+        let pak_pin = &joined_a.pak.as_ref().unwrap().pak;
+        let ctx = |id| ApprovalCtx {
+            account_id: &ACC,
+            approval_id: id,
+            dev_id_a: "dev-a",
+            dev_id_n: "dev-n",
+            n_label: "Krunk on Android",
+            n_platform: "android",
+        };
+        // N joined earlier without its vault: no PAK.
+        let n0 = new_side(false).unwrap();
+        let a0 = approver_side().unwrap();
+        let (ag_n0, box_n0) = n_agree(&n0, &ctx("appr-1"), &a0.epk, &a0.nonce, "Phone").unwrap();
+        let (ag_a0, nb0) = a_agree(&a0, &ctx("appr-1"), &n0.commit, &n0.epk, &n0.nonce, &box_n0).unwrap();
+        let (c, box_a0, _) =
+            a_admit(&ag_a0, &head, &head_dir, pak_pin.hash, pak_pin.esc_pk, "dev-a", "dev-n", 1, &nb0, None, 2)
+                .unwrap();
+        let ak_now = c.ak_dir.unwrap();
+        let (jn, _) = n_accept(&ag_n0, &n0, &box_a0, ACC, "dev-n", &ak_now, &pak_blob).unwrap();
+        assert!(jn.pak.is_none());
+        let dir_now = dir::parse_ak(&ak_now.bytes).unwrap();
+
+        // "Ask my PC": the same device key, a new vault key, and the request named in box_N.
+        let n = new_side_pak(&jn.device_sk).unwrap();
+        assert_eq!(n.device.pk, n0.device.pk);
+        let a = approver_side().unwrap();
+        let (ag_n, box_n) = n_agree(&n, &ctx("appr-2"), &a.epk, &a.nonce, "Phone").unwrap();
+        let (ag_a, nb) = a_agree(&a, &ctx("appr-2"), &n.commit, &n.epk, &n.nonce, &box_n).unwrap();
+        assert_eq!(nb.want.as_deref(), Some(WANT_PAK));
+        a_check_tag(&ag_a, &n_confirm(&ag_n, &ag_a.sas_text()).unwrap()).unwrap();
+        // It can't be admitted as a new device (that would replace its key in ak_dir).
+        assert!(a_admit(&ag_a, &head, &dir_now, pak_pin.hash, pak_pin.esc_pk, "dev-a", "dev-n", 1, &nb, None, 3)
+            .is_err());
+        // A device that isn't listed, or listed under another key, gets nothing.
+        assert!(a_share_pak(&ag_a, &head_dir, "dev-n", &nb, pak_pin, pak_pin.hash, pak_pin.esc_pk).is_err());
+        let mut other_key = nb.clone_for_test();
+        other_key.pk_general = b64(&[7; 32]);
+        assert!(a_share_pak(&ag_a, &dir_now, "dev-n", &other_key, pak_pin, pak_pin.hash, pak_pin.esc_pk).is_err());
+        // A join request isn't answered with the passwords key only.
+        assert!(a_share_pak(&ag_a0, &dir_now, "dev-n", &nb0, pak_pin, pak_pin.hash, pak_pin.esc_pk).is_err());
+
+        let box_a = a_share_pak(&ag_a, &dir_now, "dev-n", &nb, pak_pin, pak_pin.hash, pak_pin.esc_pk).unwrap();
+        // A changed escrow key, or another pak_dir than A saw, is refused.
+        assert!(matches!(
+            n_accept_pak(&ag_n, &n, &box_a, ACC, &pak_blob, Some([9; 32])).err(),
+            Some(KeyError::Dir(DirError::EscrowKeyChanged))
+        ));
+        assert!(matches!(
+            n_accept_pak(&ag_n, &n, &box_a, ACC, &ak_now, Some(pak_pin.esc_pk)).err(),
+            Some(KeyError::Dir(DirError::Fork))
+        ));
+        // A box_A of a join doesn't pass as one of these.
+        assert!(n_accept_pak(&ag_n0, &n0, &box_a0, ACC, &pak_blob, None).is_err());
+        let st = n_accept_pak(&ag_n, &n, &box_a, ACC, &pak_blob, Some(pak_pin.esc_pk)).unwrap();
+        assert_eq!(*st.pak.pak, *pak_pin.pak);
+        // N adds its new vault key, signed under PAK.
+        let pd = dir::parse_pak(&pak_blob.bytes).unwrap();
+        let vpk = n.vault.as_ref().unwrap().pk;
+        let (c2, _) = add_vault_key(&st, &pd, ACC, "dev-n", &vpk, 4).unwrap();
+        let nd = dir::parse_pak(&c2.pak_dir.unwrap().bytes).unwrap();
+        assert!(nd.vault_keys.iter().any(|v| v.device == "dev-n") && nd.seals.iter().any(|s| s.to == "dev-n"));
+    }
+
+    #[test]
+    fn only_sync_passphrases_look_like_one() {
+        let p = new_passphrase().unwrap();
+        assert!(looks_like_passphrase(&p));
+        assert!(looks_like_passphrase(&format!("  {}  ", p.replace('-', " ").to_uppercase())));
+        assert!(!looks_like_passphrase("My vault password 123"));
+        assert!(!looks_like_passphrase("correct horse battery staple"));
+        assert!(!looks_like_passphrase("abandon ability able about above absent absorb abstract"));
+        assert!(!looks_like_passphrase("abandon ability able about above absent qwerty"));
+        assert!(!looks_like_passphrase(""));
     }
 }
