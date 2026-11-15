@@ -71,7 +71,7 @@ pub trait VaultKeyWrapper: Send + Sync {
 }
 
 /// [`VaultKeyWrapper`] as the core's `KeyWrapper`.
-struct ForeignWrapper(Arc<dyn VaultKeyWrapper>);
+pub(crate) struct ForeignWrapper(pub(crate) Arc<dyn VaultKeyWrapper>);
 
 impl KeyWrapper for ForeignWrapper {
     fn name(&self) -> &'static str {
@@ -86,7 +86,7 @@ impl KeyWrapper for ForeignWrapper {
     }
 }
 
-type BoxedWrapper = Box<dyn KeyWrapper + Send + Sync>;
+pub(crate) type BoxedWrapper = Box<dyn KeyWrapper + Send + Sync>;
 
 // ------------------------------------------------------------------------------ errors
 
@@ -494,6 +494,25 @@ impl KrunkVault {
             self.entries_changed(&mut inner);
         }
         out.map_err(Into::into)
+    }
+}
+
+/// For sync (Android 0.6.0): the open vault, without counting as the user's use.
+impl KrunkVault {
+    /// `f` on the open vault; `None` while it is locked.
+    pub(crate) fn sync_view<T>(&self, f: impl FnOnce(&Vault) -> T) -> Option<T> {
+        let inner = self.inner();
+        inner.vault.as_ref().map(f)
+    }
+
+    /// `f` on the open vault with the device's wrapper, then the hints follow the entries;
+    /// `None` while it is locked.
+    pub(crate) fn sync_change<T>(&self, f: impl FnOnce(&mut Vault, &dyn KeyWrapper) -> T) -> Option<T> {
+        let mut inner = self.inner();
+        let vault = inner.vault.as_mut()?;
+        let out = f(vault, self.wrapper.as_ref());
+        self.entries_changed(&mut inner);
+        Some(out)
     }
 }
 
