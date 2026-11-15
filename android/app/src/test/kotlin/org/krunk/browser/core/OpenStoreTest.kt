@@ -17,7 +17,7 @@ class OpenStoreTest {
         // The session still works on it: settings load, rows can be written and read.
         opened.store.kvSet("k", "v")
         assertEquals("v", opened.store.kvGet("k"))
-        assertEquals(defaultSettings(), SettingsRepository(opened.store).current)
+        assertEquals(DefaultsMigration.migrate(defaultSettings(), 0), SettingsRepository(opened.store).current)
         opened.store.destroy()
     }
 

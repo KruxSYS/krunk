@@ -5,16 +5,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SelectionActionsTest {
-    private val ddg = "https://duckduckgo.com/?q={searchTerms}"
-    private fun of(selection: String) = SelectionActions.of(selection, "DuckDuckGo", ddg) { "Open $it" }
+    private val google = "https://www.google.com/search?q={searchTerms}"
+    private fun of(selection: String) = SelectionActions.of(selection, "Google", google) { "Open $it" }
 
     @Test
     fun selectedTextCanBeSearchedWithTheEngineInEffect() {
         assertEquals(
             listOf<SelectionAction>(
                 SelectionAction.Search(
-                    "Search DuckDuckGo for “krunk browser”",
-                    "https://duckduckgo.com/?q=krunk+browser",
+                    "Search Google for “krunk browser”",
+                    "https://www.google.com/search?q=krunk+browser",
                 ),
             ),
             of("krunk  browser\n"),

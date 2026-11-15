@@ -21,7 +21,7 @@ import org.krunk.ffi.settingsSearchTemplate
  */
 class SettingsRepository(private val store: KrunkStore) {
     // Unreadable settings must not stop the app from starting: the defaults apply until a save.
-    private val _settings = MutableStateFlow(runCatching { store.loadSettings() }.getOrElse { defaultSettings() })
+    private val _settings = MutableStateFlow(loadMigrated())
     val settings: StateFlow<AndroidSettings> = _settings.asStateFlow()
 
     val current: AndroidSettings get() = _settings.value
@@ -29,7 +29,7 @@ class SettingsRepository(private val store: KrunkStore) {
     /** The search URL template in effect (engine preset or the custom URL). */
     val searchTemplate: String get() = settingsSearchTemplate(current)
 
-    /** "DuckDuckGo", "Google", ... or the custom engine's host. */
+    /** "Google", "DuckDuckGo", ... or the custom engine's host. */
     val searchName: String get() = settingsSearchName(current)
 
     /** `null` for Krunk's new-tab page, else the URL a new tab opens. */
@@ -55,6 +55,23 @@ class SettingsRepository(private val store: KrunkStore) {
     }
 
     private val writeLock = Mutex()
+
+    /**
+     * The stored settings, moved off old defaults once ([DefaultsMigration]). A new install has
+     * no settings row and gets the defaults the same way. Unreadable settings are not migrated
+     * (and not overwritten): the defaults apply and the marker stays unset for the next start.
+     */
+    private fun loadMigrated(): AndroidSettings {
+        val loaded = runCatching { store.loadSettings() }.getOrElse { return defaultSettings() }
+        return runCatching {
+            val from = store.kvGet(DefaultsMigration.KEY)?.toIntOrNull() ?: 0
+            if (from >= DefaultsMigration.CURRENT) return loaded
+            val next = DefaultsMigration.migrate(loaded, from)
+            if (next != loaded) store.saveSettings(next)
+            store.kvSet(DefaultsMigration.KEY, DefaultsMigration.CURRENT.toString())
+            next
+        }.getOrElse { loaded }
+    }
 
     suspend fun reload() {
         _settings.value = withContext(Dispatchers.IO) { store.loadSettings() }

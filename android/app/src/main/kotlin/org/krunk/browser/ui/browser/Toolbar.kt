@@ -41,7 +41,11 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineHeightStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -224,12 +228,21 @@ private fun TabCounter(count: Int, onClick: () -> Unit, onLongClick: () -> Unit)
             Modifier.size(24.dp).border(2.dp, color, RoundedCornerShape(5.dp)),
             contentAlignment = Alignment.Center,
         ) {
+            // Font padding trimmed and the line box centred on the glyphs: the digits sit in
+            // the optical middle of the square for 1, 2 digits and the overflow sign alike.
+            val size = if (count > 9) 11.sp else 13.sp
             Text(
                 text = if (count > 99) "∞" else count.toString(),
                 color = color,
-                fontSize = if (count > 9) 11.sp else 13.sp,
-                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center,
                 maxLines = 1,
+                style = TextStyle(
+                    fontSize = size,
+                    lineHeight = size,
+                    fontWeight = FontWeight.Bold,
+                    platformStyle = PlatformTextStyle(includeFontPadding = false),
+                    lineHeightStyle = LineHeightStyle(LineHeightStyle.Alignment.Center, LineHeightStyle.Trim.Both),
+                ),
             )
         }
     }

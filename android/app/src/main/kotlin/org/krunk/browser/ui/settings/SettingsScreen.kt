@@ -41,7 +41,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -76,6 +75,7 @@ import org.krunk.browser.R
 import org.krunk.browser.core.Wallpapers
 import org.krunk.browser.ui.BrowserViewModel
 import org.krunk.browser.ui.Screen
+import org.krunk.browser.ui.theme.KrunkSwitch
 import org.krunk.ffi.AndroidSettings
 import org.krunk.ffi.LinkTabsMode
 import org.krunk.ffi.NewTabMode
@@ -835,7 +835,7 @@ private fun SwitchRow(title: String, summary: String?, checked: Boolean, onChang
     ListItem(
         headlineContent = { Text(title) },
         supportingContent = summary?.let { { Text(it, maxLines = 3) } },
-        trailingContent = { Switch(checked = checked, onCheckedChange = null) },
+        trailingContent = { KrunkSwitch(checked = checked, onCheckedChange = null) },
         // A switch is "on" or "off" to a screen reader, not "selected".
         modifier = Modifier.toggleable(value = checked, role = Role.Switch, onValueChange = onChange),
     )
