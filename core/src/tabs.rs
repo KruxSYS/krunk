@@ -620,6 +620,7 @@ fn page_title(p: Page) -> &'static str {
         Page::Source => "Page source",
         Page::Crashed => "Page stopped",
         Page::Scripts => "Scripts and macros",
+        Page::CertError => "Not secure",
     }
 }
 

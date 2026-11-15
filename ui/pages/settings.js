@@ -34,6 +34,8 @@
     }
     // The per-site answers change while the page is open (prompts in other tabs).
     if (name === 'permissions' && typeof loadPermissions === 'function') loadPermissions();
+    // So do the certificate exceptions (an interstitial in another tab).
+    if (name === 'privacy' && typeof loadCertExceptions === 'function') loadCertExceptions();
     // The Account card on screen: a signed-in device may check with the server (0.8.0).
     if (name === 'account') LB.post('accountState', { check: true });
   }
@@ -971,6 +973,26 @@
   }
   function loadAllowlist() { return LB.request('getAllowlist').then(renderAllowlist); }
 
+  // Certificate exceptions ("Continue anyway" with "Remember for this site").
+  function loadCertExceptions() {
+    return LB.request('certExceptions').then(function (list) {
+      const body = $('cert-rows');
+      body.textContent = '';
+      if (!list.length) { body.appendChild(el('tr', {}, [el('td', { colspan: '4', class: 'muted', text: 'None.' })])); return; }
+      list.forEach(function (c) {
+        const site = c.port === 443 ? c.host : c.host + ':' + c.port;
+        const fp = el('td', { class: 'mono', text: c.sha256.slice(0, 8) + '…' + c.sha256.slice(-8) });
+        fp.title = c.sha256;
+        body.appendChild(el('tr', {}, [
+          el('td', { text: site }), fp, el('td', { text: new Date(c.added).toLocaleDateString() }),
+          el('td', {}, [el('button', { class: 'btn small', text: 'Remove', onclick: function () {
+            LB.request('certExceptionRemove', { host: c.host, port: c.port, sha256: c.sha256 }).then(loadCertExceptions, loadCertExceptions);
+          } })]),
+        ]));
+      });
+    }).catch(function () {});
+  }
+
   $('allow-form').addEventListener('submit', function (e) {
     e.preventDefault();
     const host = $('allow-host').value.trim();
@@ -1307,6 +1329,7 @@
     render();
     loadFilterStatus();
     loadAllowlist();
+    loadCertExceptions();
     loadBounceStatus();
     loadDnsStatus();
     loadUpdates();

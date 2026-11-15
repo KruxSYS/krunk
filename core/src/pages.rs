@@ -59,10 +59,13 @@ pub enum Page {
     Crashed,
     /// Userscripts and macros with their editor (0.12.0).
     Scripts,
+    /// A site's certificate was refused (0.20.x): what is wrong, Back to safety, and
+    /// "Continue anyway" where the engine allows it (`lb_core::cert_exceptions`).
+    CertError,
 }
 
 impl Page {
-    pub const ALL: [Page; 19] = [
+    pub const ALL: [Page; 20] = [
         Page::NewTab,
         Page::History,
         Page::Bookmarks,
@@ -82,6 +85,7 @@ impl Page {
         Page::Source,
         Page::Crashed,
         Page::Scripts,
+        Page::CertError,
     ];
 
     /// Short name used in the display URL (`krunk://<name>`) and file name.
@@ -106,6 +110,7 @@ impl Page {
             Page::Source => "source",
             Page::Crashed => "crashed",
             Page::Scripts => "scripts",
+            Page::CertError => "cert-error",
         }
     }
 
@@ -165,7 +170,10 @@ impl Page {
     /// Pages that are only ever needed once: opening one again switches to the open tab
     /// (Chrome does the same for its settings, downloads and history pages).
     pub fn single_instance(self) -> bool {
-        !matches!(self, Page::NewTab | Page::HttpsOnly | Page::SiteData | Page::Source | Page::Crashed)
+        !matches!(
+            self,
+            Page::NewTab | Page::HttpsOnly | Page::SiteData | Page::Source | Page::Crashed | Page::CertError
+        )
     }
 
     pub fn from_url(url: &str) -> Option<Page> {
@@ -187,6 +195,10 @@ pub fn display_url(url: &str) -> String {
     }
     // A crashed page keeps its address in the bar (Reload goes back there).
     if let Some(target) = crashed_target(url) {
+        return target;
+    }
+    // So does the certificate interstitial (as in Chrome); the bar marks it not secure.
+    if let Some(target) = crate::cert_exceptions::interstitial_target(url) {
         return target;
     }
     match Page::from_url(url) {

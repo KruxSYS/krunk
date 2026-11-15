@@ -6,8 +6,9 @@
 use super::net::{self, RequestPolicy};
 use super::renderer::{AUDIO_TO_BROWSER, DEBUG_TO_BROWSER, PID_TO_BROWSER, POINTER_TO_BROWSER, TO_BROWSER};
 use super::view::{
-    child_window_info, lookup, AuthChallenge, AuthResponder, DownloadControl, DownloadStart, DownloadStatus,
-    DownloadUpdate, KeyPress, LoadingState, MessageSource, NavigationStart, NewWindow, Role, View, ViewInner,
+    child_window_info, lookup, AuthChallenge, AuthResponder, CertErrorSeen, DownloadControl, DownloadStart,
+    DownloadStatus, DownloadUpdate, KeyPress, LoadingState, MessageSource, NavigationStart, NewWindow, Role, View,
+    ViewInner,
 };
 use super::{browser_closed, browser_created, post_ui};
 use cef::*;
@@ -575,23 +576,43 @@ wrap_request_handler! {
             c_int::from(!allow)
         }
 
-        /// The engine refuses the navigation (the default: no "proceed anyway"); what it
-        /// found is kept for the lock popup.
+        /// UI thread, main-frame navigations only (the engine blocks sub-resources itself).
+        /// What the engine found is kept for the lock popup and the address bar. The tab
+        /// decides: continue past an exception the user made, else refuse (the default) and
+        /// the tab shows its interstitial when the load fails. With no callback the engine
+        /// allows no exception (HSTS, pinned keys).
         fn on_certificate_error(
             &self,
             _browser: Option<&mut Browser>,
-            _cert_error: Errorcode,
+            cert_error: Errorcode,
             request_url: Option<&CefString>,
             ssl_info: Option<&mut Sslinfo>,
-            _callback: Option<&mut Callback>,
+            callback: Option<&mut Callback>,
         ) -> c_int {
-            if let (Some(view), Some(info)) = (lookup(self.key), ssl_info) {
-                let report = ssl_report(
-                    text(request_url),
-                    false, info.cert_status(), SslVersion::default(), SslContentStatus::default(), info.x509_certificate());
-                *view.cert_error.borrow_mut() = Some(report);
+            let Some(view) = lookup(self.key) else { return 0 };
+            let url = text(request_url);
+            let report = ssl_info.map(|info| {
+                ssl_report(
+                    url.clone(),
+                    false, info.cert_status(), SslVersion::default(), SslContentStatus::default(), info.x509_certificate())
+            });
+            let seen = CertErrorSeen {
+                url,
+                error: sys::cef_errorcode_t::from(cert_error) as i32,
+                sha256: report.as_ref().and_then(|r| r.chain.first()).map(|der| lb_core::cert_exceptions::sha256_hex(der)),
+                overridable: callback.is_some(),
+            };
+            if report.is_some() {
+                *view.cert_error.borrow_mut() = report;
             }
-            0
+            let proceed = view.ev.cert_error.with(|f| f(&seen)).unwrap_or(false);
+            match callback {
+                Some(cb) if proceed => {
+                    cb.cont();
+                    1
+                }
+                _ => 0,
+            }
         }
 
         fn on_open_urlfrom_tab(

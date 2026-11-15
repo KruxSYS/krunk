@@ -52,6 +52,7 @@ mod blocking;
 mod bookmarks_bar;
 mod bounce;
 mod cdp;
+mod certs;
 mod devtools;
 mod dns_host;
 mod downloads;
@@ -1242,6 +1243,9 @@ impl Browser {
             true
         });
         let weak = self.me.clone();
+        let net_cert = net.clone();
+        c.on_cert_error(move |seen| weak.upgrade().is_some_and(|b| b.cert_error_seen(id, &net_cert, seen)));
+        let weak = self.me.clone();
         c.on_loading(move |state: LoadingState| {
             if let Some(b) = weak.upgrade() {
                 if let Some(v) = b.views.try_borrow_mut().ok().as_mut().and_then(|v| v.get_mut(&id)) {
@@ -1488,6 +1492,7 @@ impl Browser {
             |b: &Self| b.views.borrow().iter().filter(|(t, v)| **t != id && v.view.is_private()).count();
         if self.views.borrow().get(&id).is_some_and(|v| v.view.is_private()) && private_views(self) == 0 {
             self.clear_private_pdfs();
+            self.cert_private_closed();
         }
         self.ext_detach_tab(id);
         self.userscripts_detach_tab(id);
@@ -3056,6 +3061,10 @@ impl Browser {
             | Request::UpdateFilterLists
             | Request::GetFilterStatus
             | Request::HttpsOnlyProceed { .. }) => self.dispatch_blocking(tab, req_id, r),
+            r @ (Request::CertProceed { .. }
+            | Request::CertBack {}
+            | Request::CertExceptions
+            | Request::CertExceptionRemove { .. }) => self.dispatch_certs(tab, req_id, r),
             r @ (Request::StorageList
             | Request::StorageUsage { .. }
             | Request::StorageCookies { .. }

@@ -22,7 +22,7 @@ const NO_ACT: &str =
 
 /// Built-in pages the agent may open, unless forbidden (see [`Page::agent_forbidden`]).
 fn page_allowed(p: Page) -> bool {
-    !p.agent_forbidden() && !matches!(p, Page::Source | Page::Crashed | Page::HttpsOnly)
+    !p.agent_forbidden() && !matches!(p, Page::Source | Page::Crashed | Page::HttpsOnly | Page::CertError)
 }
 
 /// The pages the agent may open, by their `krunk://` names (for the system prompt and context).
@@ -122,6 +122,8 @@ mod tests {
             "krunk://source",
             "krunk://crashed",
             "krunk://https-only",
+            "krunk://cert-error",
+            "https://krunk.invalid/cert-error.html?url=https://a.example/",
             "krunk://nope",
             "https://krunk.invalid/passwords.html",
             "https://krunk.invalid/passwords.html#cards",

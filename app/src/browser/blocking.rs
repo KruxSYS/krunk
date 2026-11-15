@@ -13,6 +13,7 @@ use crate::ffi::window::AppNotifier;
 use crate::log::{info, warning};
 use lb_core::assets;
 use lb_core::blocker::{self, Allowlist, Blocker, Decision, ResourceKind, ScriptletEngine};
+use lb_core::cert_exceptions::{CertProblem, SessionExceptions};
 use lb_core::cookies;
 use lb_core::filterlists::{self, Rebuilt, SourceSet, UpdateState, MAX_LIST_BYTES};
 use lb_core::headers::Headers;
@@ -90,6 +91,10 @@ pub(super) struct FilterState {
     pub ext: RefCell<String>,
     /// Hosts the user allowed over plain HTTP this session (HTTPS-only).
     pub http_exceptions: RefCell<HashSet<String>>,
+    /// Certificates the user continued past for this session, without "Remember" (default
+    /// profile) and in private tabs (dropped with the last private tab).
+    pub cert_session: RefCell<SessionExceptions>,
+    pub cert_private: RefCell<SessionExceptions>,
 }
 
 impl FilterState {
@@ -104,6 +109,8 @@ impl FilterState {
             user: RefCell::new(String::new()),
             ext: RefCell::new(String::new()),
             http_exceptions: RefCell::new(HashSet::new()),
+            cert_session: RefCell::default(),
+            cert_private: RefCell::default(),
         }
     }
 }
@@ -410,6 +417,11 @@ pub(super) struct TabNet {
     pub visit_pending: Cell<bool>,
     /// The blocked count last written to the log.
     logged_blocked: Cell<u32>,
+    /// The certificate error the tab hit last, kept while its interstitial shows: "Continue
+    /// anyway" must match it.
+    pub cert_problem: RefCell<Option<CertProblem>>,
+    /// That error was just refused: the failed load shows the interstitial.
+    pub cert_refused: Cell<bool>,
 }
 
 impl TabNet {
@@ -428,6 +440,8 @@ impl TabNet {
             rewrites: Cell::new(0),
             visit_pending: Cell::new(false),
             logged_blocked: Cell::new(0),
+            cert_problem: RefCell::new(None),
+            cert_refused: Cell::new(false),
         }
     }
 
@@ -845,9 +859,12 @@ impl Browser {
             // The upgrade is done; later http:// links upgrade afresh.
             *net.upgraded_from.borrow_mut() = None;
         }
+        let cert_refused = net.cert_refused.replace(false);
         if let Some(page) = urlclean::https_only_fallback(upgraded.as_deref(), failure) {
             *net.upgraded_from.borrow_mut() = None;
             self.defer(move |b| b.navigate_tab(id, &page));
+        } else if cert_refused && failure.is_some() {
+            self.show_cert_interstitial(id, net);
         }
     }
 
