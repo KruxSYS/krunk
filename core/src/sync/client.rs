@@ -381,6 +381,32 @@ pub fn restore_finish(api: &Api, plan: &RestorePlan, me: &Me, with_vault: bool) 
     Ok((j, gen))
 }
 
+/// "Add passwords" on a device that syncs without the passwords key (Android 0.6.1): the
+/// passphrase or recovery key opens the escrow fetched before (`fetch_escrow`), the account
+/// directory found from the anchor must be the one this device pinned (anything else is a
+/// fork), and this device's vault key joins `pak_dir`. The caller stores the returned state in
+/// the unlocked vault. A wrong secret fails before any request.
+pub fn add_passwords(
+    api: &Api,
+    st: &mut SyncState,
+    escrow: &keys::EscrowWire,
+    secret: &Secret,
+) -> SResult<keys::PakState> {
+    let acc = st.account_bytes().map_err(|_| SyncFail::BadAnswer("account id"))?;
+    // `restore_with` checks the secret first: a wrong one costs no request and changes nothing.
+    let plan = restore_with(api, escrow, secret, acc)?;
+    if refresh(api, st, None)? == Refresh::SelfRevoked {
+        return Err(SyncFail::Api(ApiError::Unauthorized));
+    }
+    let pin = st.ak.clone().ok_or(SyncFail::BadAnswer("no keys"))?;
+    if plan.ak_head.hash != pin.hash || plan.ak_head.epoch != pin.epoch {
+        return Err(dir::DirError::Fork.into());
+    }
+    let (c, pak) = keys::add_vault_from_restore(&plan, &st.device_id, api.now_ms as u64)?;
+    commit(api, &c)?;
+    Ok(pak)
+}
+
 /// "Finish securing" after a rotation: the passphrase or recovery key gives RR, the chain from
 /// the last anchor must arrive at the heads this device pinned (anything else is a fork), and
 /// both heads are committed again as a new anchor.

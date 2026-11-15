@@ -60,4 +60,11 @@
     <string name="sync_remote_tabs_none">No open tabs from other devices yet.</string>
     <string name="sync_alarm_title">Sync stopped</string>
     <string name="sync_open_tab">Open</string>
+    <string name="sync_open_passwords">Open Passwords</string>
+    <string name="sync_join_vault_first">To bring your passwords along, create or unlock your password vault first (Passwords), then come back. Without it, everything else syncs and you can add passwords later.</string>
+    <string name="sync_pw_on">Passwords sync while your password vault is unlocked.</string>
+    <string name="sync_pw_locked">Passwords: unlock your password vault to sync them.</string>
+    <string name="sync_pw_no_vault">Passwords don\'t sync on this phone yet: it has no password vault. Create one in Passwords, then come back here to add your passwords.</string>
+    <string name="sync_pw_not_here">Passwords don\'t sync on this phone yet. Enter your sync passphrase or recovery key to add them: your saved passwords then come into this phone\'s vault.</string>
+    <string name="sync_pw_add">Add passwords</string>
 </resources>

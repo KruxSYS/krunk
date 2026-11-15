@@ -441,3 +441,54 @@ fn passwords_sync_through_unlocked_vaults_only() {
     assert!(b.vault.sync_view(|v| v.sync_part().is_none()).unwrap());
     assert_eq!(b.vault.summaries().unwrap().len(), 2);
 }
+
+/// 0.6.1: a phone that joined without a vault gets the passwords key later with "Add passwords"
+/// (the operator's report: the vault stayed empty).
+#[test]
+fn a_phone_that_joined_without_its_vault_adds_passwords_later() {
+    let srv = Srv::new();
+    let mut a = Phone::new("addpw-a");
+    a.vault.create("vault password a".into(), 1).unwrap();
+    a.vault.save_login("https://site.example/".into(), "alice".into(), "s3cret".into(), 2).unwrap();
+    a.sign_in(&srv, "dev-a");
+    let (passphrase, rk) = a.set_up(&srv);
+    a.engine.run(&srv, now()).unwrap();
+    a.engine.run(&srv, now()).unwrap();
+
+    // The phone joins with no vault at all: everything but passwords syncs.
+    let mut b = Phone::new("addpw-b");
+    b.sign_in(&srv, "dev-b");
+    b.engine.turn_on(&srv, now()).unwrap();
+    b.engine.restore_try(&srv, rk, true, now()).unwrap();
+    b.engine.restore_confirm(&srv, now()).unwrap();
+    b.engine.run(&srv, now()).unwrap();
+    assert_eq!(b.engine.status().passwords, PasswordsSync::NoVault);
+
+    // A vault now, but no passwords key yet: the status says so.
+    b.vault.create("vault password b".into(), 3).unwrap();
+    assert_eq!(b.engine.status().passwords, PasswordsSync::NotOnThisDevice);
+    assert!(b.vault.summaries().unwrap().is_empty());
+
+    // A wrong passphrase changes nothing.
+    let escrow_before = srv.count("keys/escrow");
+    let wrong = b.engine.add_passwords(&srv, "abandon ability able about above absent absorb".into(), false, now());
+    assert!(matches!(wrong, Err(SyncFfiError::WrongSecret { .. })), "{wrong:?}");
+    assert_eq!(b.engine.status().passwords, PasswordsSync::NotOnThisDevice);
+    // The right one: the key is in the vault, and the next run brings the logins.
+    b.engine.add_passwords(&srv, passphrase, false, now()).unwrap();
+    assert_eq!(srv.count("keys/escrow"), escrow_before + 1, "one escrow fetch for both tries");
+    assert_eq!(b.engine.status().passwords, PasswordsSync::On);
+    let r = b.engine.run(&srv, now()).unwrap();
+    assert!(r.changed.passwords, "{r:?}");
+    assert_eq!(b.vault.summaries().unwrap()[0].username, "alice");
+
+    // And the other way: a login made on the phone reaches the first device.
+    b.vault.save_login("https://phone.example/".into(), "bob".into(), "p".into(), 4).unwrap();
+    b.engine.run(&srv, now()).unwrap();
+    a.engine.run(&srv, now()).unwrap();
+    assert_eq!(a.vault.summaries().unwrap().len(), 2);
+
+    // A locked vault reads as "locked", not as "not on this device".
+    b.vault.lock();
+    assert_eq!(b.engine.status().passwords, PasswordsSync::VaultLocked);
+}

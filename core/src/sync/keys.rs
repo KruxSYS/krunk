@@ -628,6 +628,25 @@ pub fn restore_commit(plan: &RestorePlan, me: &Me, with_vault: bool, now_ms: u64
     Ok((commit, joined))
 }
 
+/// A device that already syncs but has no passwords key (it joined with its vault locked or
+/// missing) gets PAK from the escrow: its own vault key is added to `pak_dir` and PAK sealed to
+/// it, signed under PAK like any device's addition (PROTOCOL §6.2 step 5); no re-anchor, the
+/// account directory is untouched. Android 0.6.1; Windows doesn't call it.
+pub fn add_vault_from_restore(plan: &RestorePlan, me: &str, now_ms: u64) -> KResult<(Commit, PakState)> {
+    let acc = plan.account_id;
+    let vault = KeyPair::generate()?;
+    let pak_dir = with_vault_key(&plan.pak_dir, &plan.pak_head, me, me, &vault.pk, now_ms)?;
+    let blob = dir::sign_pak(&pak_dir, &plan.pak_head.pak, None, None, &acc)?;
+    let mut pin = PakPin::from_head(&plan.pak_head);
+    pin.seq = pak_dir.seq;
+    pin.hash = dir::hash(&blob.bytes);
+    let commit = Commit { pak_dir: Some(blob), if_pak_prev_hash: Some(plan.pak_head.hash), ..Default::default() };
+    Ok((
+        commit,
+        PakState { vault_sk: vault.sk.clone(), pak: pin, pak_old: plan.pak_old.clone(), book: Default::default() },
+    ))
+}
+
 /// A restore while a removal waits for its rotation and no device is online to do it (PROTOCOL
 /// §7 step 8): the restorer joins *and* rotates in one commit — the next `ak_dir` epoch with this
 /// device in and the devices the server no longer lists out, and with `rotate_pak` the next PAK

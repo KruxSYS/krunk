@@ -115,6 +115,12 @@ class SyncController(
 
     suspend fun cancel() = call { it.cancel() }
 
+    /** "Add passwords" (0.6.1): the passphrase or recovery key gives this phone the passwords key. */
+    suspend fun addPasswords(secret: String, recoveryKey: Boolean): Result<Unit> = runCatchingSync {
+        call { it.addPasswords(secret, recoveryKey) }
+        syncNowLater()
+    }
+
     suspend fun setCollection(name: String, on: Boolean): Result<Unit> =
         runCatchingSync { call { it.setCollection(name, on) } }
 

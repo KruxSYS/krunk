@@ -332,6 +332,26 @@ pub struct SyncStatus {
     pub next_run_ms: Option<i64>,
     /// A removal elsewhere waits for a device to re-secure sync (Finish on Windows).
     pub rotation_pending: bool,
+    /// Whether passwords sync on this device, and if not, why (0.6.1).
+    pub passwords: PasswordsSync,
+}
+
+/// Passwords on this device (0.6.1): they need the passwords key, which lives in the vault.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum PasswordsSync {
+    /// Sync is off.
+    Off,
+    /// They sync (while the vault is unlocked).
+    On,
+    /// Switched off on this device.
+    SwitchedOff,
+    /// The vault is locked: unlock it to sync passwords (or to see whether they can).
+    VaultLocked,
+    /// There is no vault here yet: create one, then "Add passwords".
+    NoVault,
+    /// The vault is open but holds no passwords key (the device joined without it): "Add
+    /// passwords" with the passphrase or recovery key.
+    NotOnThisDevice,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -628,7 +648,9 @@ impl Engine {
             }
             _ => (Vec::new(), 0),
         };
+        let passwords = self.passwords_state(&collections);
         SyncStatus {
+            passwords,
             stage,
             email: self.account.as_ref().map(|a| a.email.clone()),
             device_name: self.account.as_ref().map(|a| a.label.clone()),
@@ -1060,6 +1082,60 @@ impl Engine {
         self.message = None;
     }
 
+    // ---- passwords on a device that syncs (0.6.1) ---------------------------------------------
+
+    fn passwords_state(&self, collections: &[CollectionState]) -> PasswordsSync {
+        if self.sync.is_none() {
+            return PasswordsSync::Off;
+        }
+        if collections.iter().any(|c| c.name == "passwords" && !c.on) {
+            return PasswordsSync::SwitchedOff;
+        }
+        match self.vault.as_ref().map(|v| v.state()) {
+            None | Some(crate::vault::VaultState::None) => PasswordsSync::NoVault,
+            Some(crate::vault::VaultState::Locked) => PasswordsSync::VaultLocked,
+            Some(crate::vault::VaultState::Unlocked) => {
+                if self.pak().is_some() {
+                    PasswordsSync::On
+                } else {
+                    PasswordsSync::NotOnThisDevice
+                }
+            }
+        }
+    }
+
+    /// "Add passwords": the passphrase or recovery key gives this device the passwords key, kept
+    /// in the unlocked vault; the next run brings the logins. One escrow fetch serves every try
+    /// (a wrong secret is retried locally, as in a restore).
+    pub(crate) fn add_passwords(&mut self, http: &dyn HttpClient, secret: String, recovery: bool, now: i64) -> R<()> {
+        self.load();
+        let Some(mut st) = self.sync.clone() else { return Err(not_now("Sync is off.")) };
+        if !self.vault_open() {
+            return Err(not_now("Unlock your passwords first (Passwords in the menu)."));
+        }
+        if self.pak().is_some() {
+            return Ok(());
+        }
+        let secret = secret_of(secret, recovery)?;
+        let token = self.access(http, now)?;
+        let api = Self::api(http, &token, now);
+        if self.escrow.is_none() {
+            self.escrow = Some(client::fetch_escrow(&api).map_err(|e| sync_err(&e))?);
+        }
+        let escrow = self.escrow.clone().ok_or_else(|| not_now("Try again."))?;
+        let pak = client::add_passwords(&api, &mut st, &escrow, &secret).map_err(|e| sync_err(&e))?;
+        self.escrow = None;
+        self.sync = Some(st);
+        self.save_state()?;
+        self.set_pak(Some(&pak));
+        if self.pak().is_none() {
+            return Err(local_err("the vault could not keep the passwords key"));
+        }
+        self.next_run_ms = now;
+        self.message = Some("Passwords sync on this device now.".into());
+        Ok(())
+    }
+
     // ---- running -------------------------------------------------------------------------------
 
     /// One run: the AK collections through the engine, then the passwords if the vault is open.
@@ -1424,6 +1500,11 @@ impl KrunkSync {
 
     pub fn set_collection(&self, name: String, on: bool) -> Result<(), SyncFfiError> {
         self.engine().set_collection(name, on, crate::now_ms())
+    }
+
+    /// "Add passwords" (0.6.1): `secret` is the passphrase or the recovery key.
+    pub fn add_passwords(&self, secret: String, is_recovery_key: bool) -> Result<(), SyncFfiError> {
+        self.engine().add_passwords(&Foreign(self.transport.as_ref()), secret, is_recovery_key, crate::now_ms())
     }
 
     pub fn remote_tabs(&self) -> Vec<DeviceTabs> {

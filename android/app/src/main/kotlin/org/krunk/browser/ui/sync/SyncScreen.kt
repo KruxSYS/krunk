@@ -58,10 +58,12 @@ import org.krunk.browser.engine.LoadSource
 import org.krunk.browser.sync.SyncController
 import org.krunk.browser.sync.sentence
 import org.krunk.browser.ui.BrowserViewModel
+import org.krunk.browser.ui.Screen
 import org.krunk.browser.ui.vault.SecureVaultSurface
 import org.krunk.browser.ui.vault.VaultClipboard
 import org.krunk.ffi.DeviceTabs
 import org.krunk.ffi.LinkPoll
+import org.krunk.ffi.PasswordsSync
 import org.krunk.ffi.SetupSecretsText
 import org.krunk.ffi.SyncFfiException
 import org.krunk.ffi.SyncStage
@@ -145,7 +147,12 @@ fun SyncScreen(vm: BrowserViewModel) {
                     }
                 }
 
-                is SyncStage.Join -> Join(app, busy, onAsk = { share -> act { sync.joinStart(share) } }) { secret, rk ->
+                is SyncStage.Join -> Join(
+                    app,
+                    busy,
+                    onOpenVault = { vm.push(Screen.Vault) },
+                    onAsk = { share -> act { sync.joinStart(share) } },
+                ) { secret, rk ->
                     act { sync.restoreTry(secret, rk) }
                 }
 
@@ -280,12 +287,23 @@ private fun Secret(label: String, value: String, onCopy: () -> Unit) {
 }
 
 @Composable
-private fun Join(app: KrunkApp, busy: Boolean, onAsk: (Boolean) -> Unit, onRestore: (String, Boolean) -> Unit) {
+private fun Join(
+    app: KrunkApp,
+    busy: Boolean,
+    onOpenVault: () -> Unit,
+    onAsk: (Boolean) -> Unit,
+    onRestore: (String, Boolean) -> Unit,
+) {
     SecureVaultSurface()
     var share by remember { mutableStateOf(true) }
     var secret by remember { mutableStateOf("") }
     val vaultOpen = app.vault.state.collectAsState().value == org.krunk.browser.vault.VaultState.UNLOCKED
     Text(stringResource(R.string.sync_join_text))
+    // 0.6.1: the passwords key is kept in the vault, so it comes along only into an open vault.
+    if (!vaultOpen) {
+        Text(stringResource(R.string.sync_join_vault_first), style = MaterialTheme.typography.bodySmall)
+        OutlinedButton(onClick = onOpenVault) { Text(stringResource(R.string.sync_open_passwords)) }
+    }
     Button(enabled = !busy, onClick = { onAsk(share && vaultOpen) }) { Text(stringResource(R.string.sync_join_ask)) }
     if (vaultOpen) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -397,6 +415,9 @@ private fun On(
         )
     }
     Button(enabled = !busy, onClick = { act { sync.syncNow() } }) { Text(stringResource(R.string.sync_now)) }
+    Passwords(st.passwords, busy, onOpenVault = { vm.push(Screen.Vault) }) { secret, rk ->
+        act { sync.addPasswords(secret, rk) }
+    }
 
     Text(stringResource(R.string.sync_types_title), style = MaterialTheme.typography.titleMedium)
     for (c in st.collections) {
@@ -439,4 +460,42 @@ private fun typeLabel(name: String): Int = when (name) {
     "pins" -> R.string.sync_type_pins
     "allowlist" -> R.string.sync_type_allowlist
     else -> R.string.sync_type_tabs
+}
+
+/** Whether passwords sync here (0.6.1), and the way to fix it when they don't. */
+@Composable
+private fun Passwords(state: PasswordsSync, busy: Boolean, onOpenVault: () -> Unit, onAdd: (String, Boolean) -> Unit) {
+    when (state) {
+        PasswordsSync.ON -> Text(stringResource(R.string.sync_pw_on), style = MaterialTheme.typography.bodySmall)
+
+        PasswordsSync.VAULT_LOCKED -> {
+            Text(stringResource(R.string.sync_pw_locked), style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = onOpenVault) { Text(stringResource(R.string.sync_open_passwords)) }
+        }
+
+        PasswordsSync.NO_VAULT -> {
+            Text(stringResource(R.string.sync_pw_no_vault), style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = onOpenVault) { Text(stringResource(R.string.sync_open_passwords)) }
+        }
+
+        PasswordsSync.NOT_ON_THIS_DEVICE -> {
+            SecureVaultSurface()
+            var secret by remember { mutableStateOf("") }
+            Text(stringResource(R.string.sync_pw_not_here), style = MaterialTheme.typography.bodySmall)
+            OutlinedTextField(
+                value = secret,
+                onValueChange = { secret = it.take(256) },
+                label = { Text(stringResource(R.string.sync_restore_label)) },
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Button(enabled = !busy && secret.isNotBlank(), onClick = {
+                onAdd(secret, secret.trim().uppercase().startsWith("KRNK-"))
+            }) { Text(stringResource(R.string.sync_pw_add)) }
+        }
+
+        PasswordsSync.SWITCHED_OFF, PasswordsSync.OFF -> Unit
+    }
 }
