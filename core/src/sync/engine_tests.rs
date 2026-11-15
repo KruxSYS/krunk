@@ -504,3 +504,194 @@ fn a_fresh_device_syncing_first_keeps_the_other_devices_settings() {
     sync(&mut b, &mem);
     assert_eq!(b.store.load_settings().unwrap().homepage, crate::settings::Settings::default().homepage);
 }
+
+// ---- Android 0.6.0: first-sync merges and the conflict cases, as Windows handles them ----------
+
+fn tick() {
+    // Edits compare by time (ms); keep two edits apart.
+    std::thread::sleep(std::time::Duration::from_millis(3));
+}
+
+fn second() {
+    std::thread::sleep(std::time::Duration::from_millis(1_100));
+}
+
+fn titles(d: &Dev) -> Vec<String> {
+    snap(d).bookmarks
+}
+
+#[test]
+fn a_first_sync_into_an_empty_device_takes_everything() {
+    let mem = Mem::new();
+    let mut a = dev("dev-a", 1);
+    a.store.add_bookmark(BOOKMARKS_BAR, "News", "https://news.example/").unwrap();
+    a.store.record_visit("https://page.example/", "P", now_ms() - 1_000).unwrap();
+    let mut s = a.store.load_settings().unwrap();
+    s.homepage = "https://home.example/".into();
+    a.store.save_settings(&s).unwrap();
+    sync(&mut a, &mem);
+    let mut b = dev("dev-b", 2); // empty local
+    let rb = sync(&mut b, &mem);
+    assert!(rb.pulled > 0 && rb.changed.bookmarks && rb.changed.history && rb.changed.settings, "{rb:?}");
+    assert_eq!(snap(&b), snap(&a));
+    // B had nothing of its own: only its own device name and tabs go up, no copy of A's data.
+    let before = mem.0.borrow().records.len();
+    sync(&mut a, &mem);
+    assert_eq!(snap(&a), snap(&b));
+    assert!(mem.0.borrow().records.len() <= before + 2);
+}
+
+#[test]
+fn a_first_sync_into_an_empty_account_uploads_and_keeps_local_data() {
+    let mem = Mem::new();
+    let mut a = dev("dev-a", 1);
+    let f = a.store.add_folder(BOOKMARKS_BAR, "Work").unwrap();
+    a.store.add_bookmark(f, "Mail", "https://mail.example/").unwrap();
+    a.store.record_visit("https://page.example/", "P", now_ms() - 1_000).unwrap();
+    let before = snap(&a);
+    let r = sync(&mut a, &mem); // empty remote
+    assert_eq!(r.pulled, 0);
+    assert!(r.pushed >= 3, "{r:?}");
+    assert_eq!(snap(&a), before, "nothing local changed");
+    let text = serde_json::to_string(&server_plaintexts(&mem)).unwrap();
+    assert!(text.contains("https://mail.example/") && text.contains("https://page.example/"));
+}
+
+#[test]
+fn a_bookmark_edited_on_both_sides_merges_per_field_group() {
+    let mem = Mem::new();
+    let mut a = dev("dev-a", 1);
+    let mut b = dev("dev-b", 2);
+    let id = a.store.add_bookmark(BOOKMARKS_BAR, "Old", "https://x.example/").unwrap();
+    a.store.add_folder(BOOKMARKS_BAR, "Folder").unwrap();
+    sync(&mut a, &mem);
+    sync(&mut b, &mem);
+    // A renames (text group); B moves it into the folder (position group): both survive.
+    tick();
+    a.store.edit_bookmark(id, "Renamed on A", None).unwrap();
+    let bid = b.store.search_bookmarks("Old").unwrap()[0].id;
+    let folder = b.store.children(BOOKMARKS_BAR).unwrap().into_iter().find(|c| c.is_folder).unwrap().id;
+    tick();
+    b.store.move_bookmark(bid, folder, 0).unwrap();
+    sync(&mut a, &mem);
+    sync(&mut b, &mem);
+    sync(&mut a, &mem);
+    assert_eq!(titles(&a), titles(&b));
+    assert!(titles(&a).iter().any(|l| l == "    - Renamed on A https://x.example/"), "{:#?}", titles(&a));
+    // Both rename (same group): the later edit wins on both.
+    tick();
+    a.store.edit_bookmark(id, "A's title", None).unwrap();
+    tick();
+    b.store.edit_bookmark(bid, "B's later title", Some("https://y.example/")).unwrap();
+    sync(&mut a, &mem);
+    sync(&mut b, &mem);
+    sync(&mut a, &mem);
+    assert_eq!(titles(&a), titles(&b));
+    assert!(titles(&a).iter().any(|l| l.contains("- B's later title https://y.example/")), "{:#?}", titles(&a));
+    assert!(!titles(&a).iter().any(|l| l.contains("A's title")));
+}
+
+#[test]
+fn delete_versus_edit_converges_in_both_orders() {
+    for delete_first in [true, false] {
+        let mem = Mem::new();
+        let mut a = dev("dev-a", 1);
+        let mut b = dev("dev-b", 2);
+        let id = a.store.add_bookmark(BOOKMARKS_BAR, "Shared", "https://s.example/").unwrap();
+        sync(&mut a, &mem);
+        sync(&mut b, &mem);
+        let bid = b.store.search_bookmarks("Shared").unwrap()[0].id;
+        if delete_first {
+            tick();
+            a.store.delete_bookmark(id).unwrap();
+            tick();
+            b.store.edit_bookmark(bid, "Edited later", None).unwrap();
+        } else {
+            tick();
+            b.store.edit_bookmark(bid, "Edited first", None).unwrap();
+            tick();
+            a.store.delete_bookmark(id).unwrap();
+        }
+        sync(&mut a, &mem);
+        sync(&mut b, &mem);
+        sync(&mut a, &mem);
+        sync(&mut b, &mem);
+        assert_eq!(snap(&a), snap(&b), "converged (delete first: {delete_first})");
+    }
+}
+
+#[test]
+fn a_setting_changed_on_both_sides_takes_the_later_change() {
+    let set = |d: &Dev, home: &str| {
+        let mut s = d.store.load_settings().unwrap();
+        s.homepage = home.into();
+        d.store.save_settings(&s).unwrap();
+    };
+    let home = |d: &Dev| d.store.load_settings().unwrap().homepage;
+    // The local change is later than the remote record: it wins.
+    let mem = Mem::new();
+    let mut a = dev("dev-a", 1);
+    let mut b = dev("dev-b", 2);
+    sync(&mut a, &mem);
+    sync(&mut b, &mem);
+    set(&a, "https://from-a.example/");
+    sync(&mut a, &mem);
+    // The queue's time has second resolution (the v6 triggers' strftime('%s')): a local
+    // change within the same second as the remote push loses. Windows behaves the same.
+    second();
+    set(&b, "https://from-b-later.example/");
+    let r = sync(&mut b, &mem);
+    assert!(r.conflicts > 0 || r.pulled > 0, "{r:?}");
+    sync(&mut a, &mem);
+    assert_eq!((home(&a), home(&b)), ("https://from-b-later.example/".into(), "https://from-b-later.example/".into()));
+    // The remote record is later than the local change: the remote one wins.
+    set(&b, "https://b-earlier.example/");
+    second();
+    set(&a, "https://a-later.example/");
+    sync(&mut a, &mem);
+    sync(&mut b, &mem);
+    sync(&mut a, &mem);
+    assert_eq!((home(&a), home(&b)), ("https://a-later.example/".into(), "https://a-later.example/".into()));
+}
+
+#[test]
+fn a_synced_setting_a_newer_version_wrote_is_kept_by_an_older_device() {
+    // F-69 with sync: a value this version can't read arrives (as a newer Krunk on another
+    // device would send it); the device's other settings stay, and saving them never replaces it.
+    let mem = Mem::new();
+    let mut b = dev("dev-b", 2);
+    let mut s = b.store.load_settings().unwrap();
+    s.homepage = "https://b-home.example/".into();
+    s.mark_edited("homepage");
+    b.store.save_settings(&s).unwrap();
+    // The newer device's record, sealed as the engine seals one.
+    let acc = super::state::parse_account_id(ACC).unwrap();
+    let keys = envelope::collection_keys(&AK, &acc, "settings", 1);
+    let id = envelope::record_id(&keys.ik, b"searchEngine");
+    let plain = envelope::RecordPlain {
+        ver: (now_ms() as u64) << 16,
+        dev: 9,
+        deleted: false,
+        data: serde_json::json!({"key": "searchEngine", "value": "engineFromTheFuture"}),
+    };
+    let env = envelope::seal_record(&keys.ck, &acc, "settings", &id, 1, &plain, None).unwrap();
+    {
+        let mut srv = mem.0.borrow_mut();
+        srv.head += 1;
+        let seq = srv.head;
+        srv.records.insert(("settings".into(), env.id.clone()), (seq, serde_json::to_value(&env).unwrap()));
+    }
+    sync(&mut b, &mem);
+    let st = b.store.load_settings().unwrap();
+    assert_eq!(st.homepage, "https://b-home.example/", "B's other settings stay");
+    assert_eq!(st.search_engine, crate::settings::Settings::default().search_engine, "shown as the fallback");
+    let row = |b: &Dev| -> Value { serde_json::from_str(&b.store.kv_get("settings").unwrap().unwrap()).unwrap() };
+    assert_eq!(row(&b)["searchEngine"], "engineFromTheFuture", "stored as it came");
+    b.store.save_settings(&st).unwrap();
+    assert_eq!(row(&b)["searchEngine"], "engineFromTheFuture", "a later save keeps it");
+    // And B never sends its fallback back over it.
+    sync(&mut b, &mem);
+    let up = server_plaintexts(&mem);
+    let rec = up.iter().find(|p| p["data"]["key"] == "searchEngine").unwrap();
+    assert_eq!(rec["data"]["value"], "engineFromTheFuture");
+}

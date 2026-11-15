@@ -54,6 +54,12 @@ pub struct Server {
 #[derive(Clone)]
 pub struct Mem(pub Rc<RefCell<Server>>);
 
+impl Default for Mem {
+    fn default() -> Self {
+        Mem::new()
+    }
+}
+
 impl Mem {
     pub fn new() -> Mem {
         Mem(Rc::new(RefCell::new(Server { epoch: 1, pak_epoch: 1, ..Default::default() })))

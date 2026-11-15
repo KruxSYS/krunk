@@ -20,7 +20,7 @@ use crate::settings::Settings;
 use crate::storage::{DbResult, OTHER_BOOKMARKS, ROOT_GUID_BAR, ROOT_GUID_OTHER};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// The AK collections this version syncs, in the order a first sync pushes them.
 pub const AK: [&str; 7] = ["device_meta", "settings", "allowlist", "pins", "bookmarks", "history", "tabs"];
@@ -141,7 +141,16 @@ pub fn local_data(conn: &Connection, c: &str, nk: &str, item: Option<&SyncItem>,
     match c {
         "bookmarks" => bookmark_data(conn, nk, item),
         "history" => history_data(conn, nk, item),
-        "settings" => Ok(settings_json(conn)?.get(nk).cloned().map(|v| json!({"key": nk, "value": v}))),
+        "settings" => {
+            // F-69: a value this version can't read (a newer version's) is not this device's to
+            // change: it reports what sync last recorded, so its fallback never goes up over it.
+            if settings_refused(conn)?.contains(nk) {
+                if let Some(d) = item.and_then(|i| i.extra.get("data")).filter(|d| d.is_object()) {
+                    return Ok(Some(d.clone()));
+                }
+            }
+            Ok(settings_json(conn)?.get(nk).cloned().map(|v| json!({"key": nk, "value": v})))
+        }
         "pins" => conn
             .query_row("SELECT title, state, position FROM tiles WHERE url = ?1", [nk], |r| {
                 Ok(json!({"url": nk, "title": r.get::<_, String>(0)?, "state": if r.get::<_, i64>(1)? == 1 { "pinned" } else { "hidden" },
@@ -232,6 +241,13 @@ pub fn is_default_setting(data: &Value) -> bool {
     }
     let (Some(k), Some(v)) = (data.get("key").and_then(Value::as_str), data.get("value")) else { return false };
     DEFAULTS.with(|d| d.get(k) == Some(v))
+}
+
+/// The settings the stored row has but this version refused (F-69).
+fn settings_refused(conn: &Connection) -> DbResult<BTreeSet<String>> {
+    let raw: Option<String> =
+        conn.query_row("SELECT value FROM kv WHERE key = 'settings'", [], |r| r.get(0)).optional()?;
+    Ok(raw.map(|r| Settings::from_json_lenient(&r).preserved.invalid.into_keys().collect()).unwrap_or_default())
 }
 
 fn settings_json(conn: &Connection) -> DbResult<serde_json::Map<String, Value>> {
@@ -762,7 +778,10 @@ fn apply_setting(
         let json = Value::Object(cur).to_string();
         let s = Settings::from_json_lenient(&json);
         if s.validate().is_ok() {
-            let out = serde_json::to_string(&s).unwrap_or(json);
+            // F-69: a value this version can't read (from a newer version or another platform)
+            // and keys it doesn't know stay in the row as they came; only the typed fields are
+            // normalized.
+            let out = s.to_json_preserving(Some(&json)).unwrap_or(json);
             conn.execute("INSERT INTO kv(key, value) VALUES ('settings', ?1) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [out])?;
             ch.settings = true;
         }

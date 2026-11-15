@@ -284,8 +284,9 @@ impl KrunkStore {
         }
         // Both rows or neither: a failure between them must not leave half of a change stored
         // while the caller is told that nothing was saved.
-        let shared =
-            core.to_json_preserving(stored.as_deref()).map_err(|e| SettingsError::Database { detail: e.to_string() })?;
+        let shared = core
+            .to_json_preserving(stored.as_deref())
+            .map_err(|e| SettingsError::Database { detail: e.to_string() })?;
         let extras = settings.extras_json();
         store.kv_set_many(&[("settings", shared.as_str()), (EXTRAS_KEY, extras.as_str())])?;
         Ok(())

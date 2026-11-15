@@ -342,8 +342,20 @@ pub fn setup(api: &Api, plan: &SetupPlan) -> SResult<(Joined, String)> {
 /// A restore, up to the device list the user confirms: the escrow, the passphrase or recovery
 /// key, the anchor and the chain to the heads.
 pub fn restore_begin(api: &Api, secret: &Secret, account_id: AccountId) -> SResult<RestorePlan> {
-    let escrow: EscrowWire = api.get("keys/escrow")?;
-    let rr = keys::unwrap_rr(&escrow, secret, &account_id)?;
+    let escrow = fetch_escrow(api)?;
+    restore_with(api, &escrow, secret, account_id)
+}
+
+/// `GET keys/escrow` on its own (rate-limited to 5 a day and mailed), so a caller can try
+/// several secrets against one answer ([`restore_with`]; Android 0.6.0).
+pub fn fetch_escrow(api: &Api) -> SResult<EscrowWire> {
+    api.get("keys/escrow")
+}
+
+/// [`restore_begin`] with an escrow fetched before: a wrong secret fails here without a
+/// request (`KeyError` from the commit check); the right one fetches the chain and opens it.
+pub fn restore_with(api: &Api, escrow: &EscrowWire, secret: &Secret, account_id: AccountId) -> SResult<RestorePlan> {
+    let rr = keys::unwrap_rr(escrow, secret, &account_id)?;
     let chain: ChainWire = api.get("keys/chain?from=anchor")?;
     let ak: Vec<Blob> = chain.ak.iter().map(BlobWire::to_blob).collect::<SResult<_>>()?;
     let pak: Vec<Blob> = chain.pak.iter().map(BlobWire::to_blob).collect::<SResult<_>>()?;

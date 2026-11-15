@@ -11,6 +11,11 @@ rust-version.workspace = true
 name = "lb_core"
 path = "src/lib.rs"
 
+[features]
+# Android 0.6.0: the in-memory sync server (sync::memserver) for other crates' tests (ffi's
+# dev-dependencies only; never in a build that ships).
+test-support = []
+
 [dependencies]
 adblock = { version = "0.13", default-features = false, features = ["embedded-domain-resolver", "full-regex-handling"] }
 miniz_oxide = "0.9"

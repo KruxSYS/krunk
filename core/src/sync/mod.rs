@@ -65,8 +65,8 @@ impl std::error::Error for SyncError {}
 
 #[cfg(test)]
 mod engine_tests;
-#[cfg(test)]
-mod memserver;
+#[cfg(any(test, feature = "test-support"))]
+pub mod memserver;
 #[cfg(test)]
 mod pak_tests;
 #[cfg(test)]
