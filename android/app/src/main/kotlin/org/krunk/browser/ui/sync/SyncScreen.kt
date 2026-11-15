@@ -63,6 +63,7 @@ import org.krunk.browser.ui.vault.SecureVaultSurface
 import org.krunk.browser.ui.vault.VaultClipboard
 import org.krunk.ffi.DeviceTabs
 import org.krunk.ffi.LinkPoll
+import org.krunk.ffi.PasswordsAsk
 import org.krunk.ffi.PasswordsSync
 import org.krunk.ffi.SetupSecretsText
 import org.krunk.ffi.SyncFfiException
@@ -415,9 +416,7 @@ private fun On(
         )
     }
     Button(enabled = !busy, onClick = { act { sync.syncNow() } }) { Text(stringResource(R.string.sync_now)) }
-    Passwords(st.passwords, busy, onOpenVault = { vm.push(Screen.Vault) }) { secret, rk ->
-        act { sync.addPasswords(secret, rk) }
-    }
+    Passwords(st, sync, busy, onOpenVault = { vm.push(Screen.Vault) })
 
     Text(stringResource(R.string.sync_types_title), style = MaterialTheme.typography.titleMedium)
     for (c in st.collections) {
@@ -462,10 +461,26 @@ private fun typeLabel(name: String): Int = when (name) {
     else -> R.string.sync_type_tabs
 }
 
-/** Whether passwords sync here (0.6.1), and the way to fix it when they don't. */
+/**
+ * Whether passwords sync here and, when the phone has no passwords key yet, how to get it
+ * (0.6.2): "Ask my PC" (the PC approves and shows 6 digits) or the sync passphrase / recovery
+ * key. Its own errors show right under its buttons, not at the end of the screen.
+ */
 @Composable
-private fun Passwords(state: PasswordsSync, busy: Boolean, onOpenVault: () -> Unit, onAdd: (String, Boolean) -> Unit) {
-    when (state) {
+private fun Passwords(st: SyncStatus, sync: SyncController, screenBusy: Boolean, onOpenVault: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    fun run(block: suspend () -> Result<*>) {
+        if (busy) return
+        busy = true
+        error = null
+        scope.launch {
+            block().onFailure { e -> error = (e as? SyncFfiException)?.sentence ?: e.message }
+            busy = false
+        }
+    }
+    when (st.passwords) {
         PasswordsSync.ON -> Text(stringResource(R.string.sync_pw_on), style = MaterialTheme.typography.bodySmall)
 
         PasswordsSync.VAULT_LOCKED -> {
@@ -480,8 +495,55 @@ private fun Passwords(state: PasswordsSync, busy: Boolean, onOpenVault: () -> Un
 
         PasswordsSync.NOT_ON_THIS_DEVICE -> {
             SecureVaultSurface()
-            var secret by remember { mutableStateOf("") }
+            val ask = st.passwordsAsk
             Text(stringResource(R.string.sync_pw_not_here), style = MaterialTheme.typography.bodySmall)
+            when (ask) {
+                PasswordsAsk.NONE -> Button(enabled = !busy && !screenBusy, onClick = {
+                    run { sync.passwordsAskStart() }
+                }) {
+                    Text(stringResource(R.string.sync_pw_ask))
+                }
+
+                PasswordsAsk.WAITING -> {
+                    Text(stringResource(R.string.sync_pw_ask_waiting), style = MaterialTheme.typography.bodySmall)
+                    CircularProgressIndicator()
+                }
+
+                PasswordsAsk.ENTER_CODE -> {
+                    var code by remember { mutableStateOf("") }
+                    OutlinedTextField(
+                        value = code,
+                        onValueChange = { v -> code = v.filter { it.isDigit() }.take(6) },
+                        label = { Text(stringResource(R.string.sync_pw_ask_code)) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        singleLine = true,
+                    )
+                    Button(enabled = !busy && code.length == 6, onClick = { run { sync.passwordsAskCode(code) } }) {
+                        Text(stringResource(R.string.sync_pw_ask_send))
+                    }
+                }
+
+                PasswordsAsk.CONFIRMED -> {
+                    Text(stringResource(R.string.sync_pw_ask_confirmed), style = MaterialTheme.typography.bodySmall)
+                    CircularProgressIndicator()
+                }
+            }
+            if (ask != PasswordsAsk.NONE) {
+                OutlinedButton(onClick = {
+                    scope.launch { sync.cancel() }
+                }) { Text(stringResource(R.string.sync_cancel)) }
+                // Every 3 s while the request is open (as the join request).
+                LaunchedEffect(Unit) {
+                    while (true) {
+                        delay(3_000)
+                        sync.passwordsAskPoll().onFailure { e ->
+                            error = (e as? SyncFfiException)?.sentence ?: e.message
+                        }
+                    }
+                }
+            }
+            var secret by remember { mutableStateOf("") }
+            Text(stringResource(R.string.sync_pw_or), style = MaterialTheme.typography.bodySmall)
             OutlinedTextField(
                 value = secret,
                 onValueChange = { secret = it.take(256) },
@@ -491,9 +553,16 @@ private fun Passwords(state: PasswordsSync, busy: Boolean, onOpenVault: () -> Un
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
-            Button(enabled = !busy && secret.isNotBlank(), onClick = {
-                onAdd(secret, secret.trim().uppercase().startsWith("KRNK-"))
+            OutlinedButton(enabled = !busy && !screenBusy && secret.isNotBlank(), onClick = {
+                run { sync.addPasswords(secret, secret.trim().uppercase().startsWith("KRNK-")) }
             }) { Text(stringResource(R.string.sync_pw_add)) }
+            if (busy) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.padding(end = 8.dp))
+                    Text(stringResource(R.string.sync_pw_checking), style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
 
         PasswordsSync.SWITCHED_OFF, PasswordsSync.OFF -> Unit

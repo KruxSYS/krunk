@@ -65,6 +65,13 @@
     <string name="sync_pw_on">Passwords sync while your password vault is unlocked.</string>
     <string name="sync_pw_locked">Passwords: unlock your password vault to sync them.</string>
     <string name="sync_pw_no_vault">Passwords don\'t sync on this phone yet: it has no password vault. Create one in Passwords, then come back here to add your passwords.</string>
-    <string name="sync_pw_not_here">Passwords don\'t sync on this phone yet. Enter your sync passphrase or recovery key to add them: your saved passwords then come into this phone\'s vault.</string>
+    <string name="sync_pw_not_here">Passwords don\'t sync on this phone yet. Ask your PC for them: open Krunk on the PC, go to Settings › Account &amp; sync and approve this phone there.</string>
+    <string name="sync_pw_ask">Ask my PC</string>
+    <string name="sync_pw_ask_waiting">Waiting for your PC… Open Krunk on the PC, go to Settings › Account &amp; sync, and approve this phone (its passwords vault must be unlocked).</string>
+    <string name="sync_pw_ask_code">Type the 6 digits your PC shows</string>
+    <string name="sync_pw_ask_send">Send code</string>
+    <string name="sync_pw_ask_confirmed">Code sent. The passwords key is on its way…</string>
+    <string name="sync_pw_or">Or, without the PC: your sync passphrase (7 words, shown once when sync was first turned on) or recovery key (KRNK-…). Not your vault password.</string>
+    <string name="sync_pw_checking">Checking… this takes a few seconds.</string>
     <string name="sync_pw_add">Add passwords</string>
 </resources>

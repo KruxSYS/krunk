@@ -18,6 +18,8 @@ import org.krunk.ffi.DeviceTabs
 import org.krunk.ffi.KrunkSync
 import org.krunk.ffi.LinkInfo
 import org.krunk.ffi.LinkPoll
+import org.krunk.ffi.PasswordsAsk
+import org.krunk.ffi.PasswordsSync
 import org.krunk.ffi.RunReport
 import org.krunk.ffi.SyncChanged
 import org.krunk.ffi.SyncFfiException
@@ -120,6 +122,18 @@ class SyncController(
         call { it.addPasswords(secret, recoveryKey) }
         syncNowLater()
     }
+
+    /** "Ask my PC" (0.6.2): another device that holds the passwords key gives it to this phone. */
+    suspend fun passwordsAskStart(): Result<Unit> = runCatchingSync { call { it.passwordsAskStart() } }
+
+    suspend fun passwordsAskPoll(): Result<PasswordsAsk> = runCatchingSync {
+        val before = _status.value?.passwords
+        val r = call { it.passwordsAskPoll() }
+        if (before != PasswordsSync.ON && _status.value?.passwords == PasswordsSync.ON) syncNowLater()
+        r
+    }
+
+    suspend fun passwordsAskCode(code: String): Result<Unit> = runCatchingSync { call { it.passwordsAskCode(code) } }
 
     suspend fun setCollection(name: String, on: Boolean): Result<Unit> =
         runCatchingSync { call { it.setCollection(name, on) } }
