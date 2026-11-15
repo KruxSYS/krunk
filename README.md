@@ -1805,7 +1805,7 @@ To reproduce: enable discard in Settings, start with `--sleep-test-seconds=90 --
 open the sites and read `memory-report.log` (steps in `docs/MANUAL_TEST.md`).
 
 ## Krunk for Android (preview)
-Krunk for Android (0.5.0) is an installable preview of the same browser for phones and
+Krunk for Android (0.6.0) is an installable preview of the same browser for phones and
 tablets (Android 8 and later, `arm64-v8a` devices and the `x86_64` emulator). It is built from
 this repository (`android/`, `ffi/`) and shares Krunk's Rust `core` with the Windows app: the same
 address-bar rules (DuckDuckGo by default), the same SQLite database layout for history, bookmarks,
@@ -1832,6 +1832,39 @@ itself: not at start-up, not on a timer, not in the background (`docs/NETWORK.md
 **0.4.0 and older have no update check:** install the 0.5.0 APK from the website over them once;
 your data stays. A Google Play build (no update check; Play updates it) is built but not
 published yet.
+
+**Krunk account and sync (since 0.6.0).** Settings › Account & sync signs the phone in to the
+Krunk account you use on Windows. As on Windows, it is a sign-in by code: the app shows a code and
+opens the approval page, where you approve the phone with your account password. Then **Turn on
+sync** gets the keys in one of three ways:
+- **From a device that syncs:** Windows' krunk://sync shows "A device asks to join"; Approve shows
+  6 digits that you type on the phone (a wrong code ends the request).
+- **With the sync passphrase or recovery key:** Krunk lists the devices that keep access before
+  it joins.
+- **As the first device:** for an account that doesn't sync yet, the phone makes the passphrase
+  and the recovery key.
+
+Behaviour:
+- **Shared code, same rules:** the keys, the merge and the conflict rules are Windows' code (the
+  shared Rust core through `ffi::KrunkSync`), so the data is end-to-end encrypted exactly as on
+  Windows.
+- **What syncs:** bookmarks, history, settings, open tabs, new tab pins, ad-blocker exceptions and
+  device names; passwords and the never-save list while the vault is unlocked. Phone-only
+  settings (toolbar position, text size) stay on the phone.
+- **The status** shows the address, the last sync and its result, a switch per kind of data,
+  **Sync now** and the other devices' open tabs.
+- **When it runs:** only while Krunk is open: a minute after start, every 5 minutes, and 30 s
+  after a change.
+- **No request before sign-in:** nothing goes to krunk.209.wf before you tap Sign in (checked
+  with a packet capture of the app's traffic).
+- **Stored where:** `files/krunk-sync/account.json` (the sign-in) and `sync.json` (sync's keys), in
+  the core's formats, wrapped by the key store key `krunk.sync.wrap.v1`. They are excluded from
+  every backup and phone-to-phone transfer; the passwords key lives only inside the vault.
+- **Removed elsewhere, or signed out:** the phone deletes its sign-in, its sync keys (also the
+  vault's part) and sync's bookkeeping. Your data stays unless you also remove what came from sync.
+- **Not on the phone yet:** approving or removing other devices, Finish securing, and the QR
+  sign-in. Use Windows or the website for those.
+- Design: `docs/sync/`; Android specifics: `docs/ANDROID_PLAN.md` §4.
 
 **Engine.** GeckoView 160 (Firefox's engine as a library, MPL-2.0), not the system WebView and not
 a Chromium build: it lets Krunk run uBlock Origin itself as a built-in extension, keeps

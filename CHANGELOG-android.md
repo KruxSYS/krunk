@@ -3,6 +3,43 @@
 What changed in each Krunk for Android release, newest first. The Windows browser's list is
 `CHANGELOG.md`.
 
+## 0.6.0 — 2026-11-15
+
+Your Krunk account and sync on the phone. It installs over 0.5.0 and keeps tabs, bookmarks,
+history, settings, the password vault and downloads.
+
+- **Sign in** (Settings › Account & sync) to the Krunk account you use on Windows. Krunk shows a
+  code and opens the approval page in a tab; you approve this phone there with your account
+  password. Nothing is sent to krunk.209.wf before you tap Sign in.
+- **Turn on sync** and get the keys in one of three ways:
+  - from a device that already syncs: Windows shows 6 digits, you type them on the phone;
+  - with your sync passphrase or recovery key: a wrong one is refused with a clear message, and
+    nothing changes on the phone;
+  - for an account that doesn't sync yet, the phone is the first device: Krunk shows the
+    passphrase and the recovery key once, and asks you to type back part of the key.
+- **What syncs:** the same as on Windows, encrypted on the phone before it leaves:
+  - bookmarks, history, settings, open tabs and new tab pins;
+  - ad-blocker exceptions and device names;
+  - passwords and the never-save list, while your vault is unlocked.
+  The first sync merges what the phone already has. Phone-only settings (toolbar position,
+  text size) stay on the phone.
+- **The status** shows your address, the last sync and how it went, waiting changes, a switch
+  per kind of data, **Sync now** and the open tabs of your other devices. Sync runs while Krunk
+  is open (a minute after start, every 5 minutes, 30 seconds after a change), never in the
+  background.
+- **Conflicts** are settled as on Windows, by the same code: bookmarks merge per field, history
+  is the union of visits, settings and logins take the later change.
+- **Removed on another device or on the website?** Krunk says so, stops syncing and deletes this
+  phone's sync keys and sign-in. Your data on the phone stays.
+- **Sign out** keeps your data, or also removes what came from sync, as you choose.
+- **Stored where:** the sign-in and sync's keys are in the app's private storage, wrapped by a key
+  of the phone's key store. They are in no backup and no phone-to-phone transfer: a new phone
+  signs in again. The passwords key lives only inside the vault.
+- Tested end to end against a test copy of the server, with Windows Krunk on a Windows VM and an
+  Android 16 emulator. Not tested on real phones.
+- Not on the phone yet: approving or removing other devices, "Finish securing" after a removal,
+  and signing in by scanning the account page's QR code. Use Windows or the website for those.
+
 ## 0.5.0 — 2026-11-14
 
 Updates from inside the app, for the APK from the website. It installs over 0.4.0 and keeps tabs,
