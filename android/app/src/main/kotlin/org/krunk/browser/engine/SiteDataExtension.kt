@@ -38,15 +38,18 @@ import org.mozilla.geckoview.WebExtension
  *
  * The answer may be missing (the extension is not up yet, did not install, a part failed): the
  * screen then works from Krunk's own records (`ui/sitedata/SiteDataModel`). Main thread only.
+ *
+ * The same extension carries the certificate exceptions (`certs-api.js`); [CertOverrides] talks
+ * to it through [request].
  */
 class SiteDataExtension(runtime: GeckoRuntime) {
     private var port: WebExtension.Port? = null
     private var failed = false
     private var nextId = 1
 
-    /** Requests without an answer yet; the ones in [unsent] wait for the port. */
-    private val waiting = HashMap<Int, (EngineSiteData?) -> Unit>()
-    private val unsent = ArrayList<Int>()
+    /** Requests without an answer yet (the raw answer, null for none); the ones in [unsent] wait for the port. */
+    private val waiting = HashMap<Int, (JSONObject?) -> Unit>()
+    private val unsent = LinkedHashMap<Int, JSONObject>()
 
     init {
         runtime.webExtensionController.ensureBuiltIn(RESOURCE_URI, EXTENSION_ID).accept(
@@ -84,9 +87,9 @@ class SiteDataExtension(runtime: GeckoRuntime) {
                             }
                         },
                     )
-                    val ids = unsent.toList()
+                    val queued = unsent.toList()
                     unsent.clear()
-                    ids.forEach(::send)
+                    queued.forEach { (id, message) -> send(id, message) }
                 }
             },
             NATIVE_APP,
@@ -101,20 +104,25 @@ class SiteDataExtension(runtime: GeckoRuntime) {
     private fun answerAll(which: (Int) -> Boolean) {
         val ids = waiting.keys.filter(which)
         ids.forEach { id -> waiting.remove(id)?.invoke(null) }
-        unsent.removeAll(ids.toSet())
+        ids.forEach { unsent.remove(it) }
     }
 
-    private fun send(id: Int) {
-        val sent = runCatching { port?.postMessage(JSONObject().put("t", "list").put("id", id)) }.getOrNull() != null
+    private fun send(id: Int, message: JSONObject) {
+        val sent = runCatching { port?.postMessage(message.put("id", id)) }.getOrNull() != null
         if (!sent) waiting.remove(id)?.invoke(null)
     }
 
     private fun fromExtension(m: JSONObject) {
-        if (m.optString("t") != "list") return
-        val done = waiting.remove(m.optInt("id")) ?: return
+        val t = m.optString("t")
+        if (t != "list" && t != "certs") return
+        waiting.remove(m.optInt("id"))?.invoke(m)
+    }
+
+    private fun siteData(m: JSONObject?): EngineSiteData? {
+        if (m == null || m.optString("t") != "list") return null
         val error = m.optString("error")
         if (error.isNotEmpty()) Log.w(KrunkApp.TAG, "site data: $error")
-        done(EngineSiteData(cookies = cookies(rows(m, "cookies")), usage = usage(rows(m, "usage"))))
+        return EngineSiteData(cookies = cookies(rows(m, "cookies")), usage = usage(rows(m, "usage")))
     }
 
     /** A list the extension sends as JSON text (see its background.js); null when it sent none. */
@@ -156,7 +164,14 @@ class SiteDataExtension(runtime: GeckoRuntime) {
      * install or went away. While it is still starting the call waits; callers set the limit
      * (`withTimeoutOrNull`).
      */
-    suspend fun list(): EngineSiteData? = suspendCancellableCoroutine { cont ->
+    suspend fun list(): EngineSiteData? = siteData(request(JSONObject().put("t", "list")))
+
+    /**
+     * Sends [message] to the extension and returns its answer (the message it sent back with the
+     * same id), or null when there is none: the extension did not install or went away. While it
+     * is still starting the call waits; callers set the limit (`withTimeoutOrNull`).
+     */
+    suspend fun request(message: JSONObject): JSONObject? = suspendCancellableCoroutine { cont ->
         if (failed) {
             cont.resume(null)
             return@suspendCancellableCoroutine
@@ -167,7 +182,7 @@ class SiteDataExtension(runtime: GeckoRuntime) {
             waiting.remove(id)
             unsent.remove(id)
         }
-        if (port == null) unsent += id else send(id)
+        if (port == null) unsent[id] = message else send(id, message)
     }
 
     companion object {

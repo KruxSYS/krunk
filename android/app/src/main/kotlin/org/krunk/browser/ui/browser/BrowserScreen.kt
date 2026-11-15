@@ -137,8 +137,9 @@ fun BrowserScreen(vm: BrowserViewModel) {
 
     val crashed = page?.crashed == true
     val blockedUrl = page?.blocked
-    val toolbarMayHide =
-        !editing && !findActive && !fullScreen && tab?.isNewTab == false && !crashed && blockedUrl == null
+    val certError = page?.loadError?.cert
+    val toolbarMayHide = !editing && !findActive && !fullScreen && tab?.isNewTab == false && !crashed &&
+        blockedUrl == null && certError == null
     SideEffect {
         toolbarScroll.heightPx = toolbarHeightPx
         toolbarScroll.enabled = toolbarMayHide
@@ -243,6 +244,15 @@ fun BrowserScreen(vm: BrowserViewModel) {
                     url = blockedUrl,
                     onBack = { vm.tabs.leaveBlocked() },
                     onOpenOnce = { vm.tabs.openBlockedOnce() },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(top = if (top) ToolbarHeight else 0.dp, bottom = if (!top) ToolbarHeight else 0.dp),
+                )
+            } else if (certError != null) {
+                PageCertError(
+                    error = certError,
+                    onBack = { vm.tabs.leaveCertError() },
+                    onContinue = { keep, onDone -> vm.tabs.continuePastCertError(remember = keep, onDone = onDone) },
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(top = if (top) ToolbarHeight else 0.dp, bottom = if (!top) ToolbarHeight else 0.dp),

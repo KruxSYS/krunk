@@ -1,0 +1,37 @@
+[
+  {
+    "namespace": "krunkCerts",
+    "functions": [
+      {
+        "name": "add",
+        "type": "function",
+        "description": "Accepts one certificate for host:port (the engine's certificate override). Private tabs: always temporary. Resolves with the certificate's SHA-256 fingerprint (AA:BB:...).",
+        "async": true,
+        "parameters": [
+          { "name": "host", "type": "string" },
+          { "name": "port", "type": "integer" },
+          { "name": "derBase64", "type": "string" },
+          { "name": "temporary", "type": "boolean" },
+          { "name": "isPrivate", "type": "boolean" }
+        ]
+      },
+      {
+        "name": "remove",
+        "type": "function",
+        "description": "Removes the exceptions for host:port, of normal and private tabs.",
+        "async": true,
+        "parameters": [
+          { "name": "host", "type": "string" },
+          { "name": "port", "type": "integer" }
+        ]
+      },
+      {
+        "name": "list",
+        "type": "function",
+        "description": "The exceptions of normal tabs, as JSON: [{host, port, sha256}].",
+        "async": true,
+        "parameters": []
+      }
+    ]
+  }
+]

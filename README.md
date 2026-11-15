@@ -1928,6 +1928,15 @@ change it); Android's own permission is asked only when a site you allowed needs
 Privacy › Site data lists the sites that hold cookies or stored data and clears one site after
 asking. Full screen gives the screen, the toolbar and the orientation back in every way out.
 
+**Certificate errors.** When a site's certificate cannot be verified (self-signed, expired, for
+another name, unknown issuer), Krunk shows the host, what is wrong and the certificate's SHA-256,
+with **Back to safety** and, below it, **Continue anyway**. Continuing accepts that one
+certificate for that host and port until Krunk is closed; tick **Remember for this site** to keep
+it. A site that shows a different certificate later asks again; private tabs never keep an
+exception. Sites that demand a valid certificate (HSTS) and broken connections have no Continue.
+Settings › Privacy › Certificate exceptions lists the accepted certificates and removes one at
+once.
+
 **Password vault (since 0.3.0).** Krunk keeps the user names and passwords you sign in with in
 a vault, opened with one vault password that only you know (⋮ menu › Passwords, or Settings ›
 Privacy › Passwords). The encryption and the file format are those of the Windows browser

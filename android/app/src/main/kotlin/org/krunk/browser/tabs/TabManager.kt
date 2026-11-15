@@ -997,6 +997,29 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         engine.blocker.openOnce(host) { sessions[id]?.takeIf { it === s }?.load(url) }
     }
 
+    // ----- certificate errors -----
+
+    /** "Back to safety" on the certificate screen: the previous page, or the tab closes when there is none. */
+    fun leaveCertError(id: UInt? = activeId.value) {
+        val s = sessions[id ?: return] ?: return
+        if (s.current.canGoBack) s.goBack() else close(id)
+    }
+
+    /**
+     * "Continue anyway" on the certificate screen. What is accepted comes from the tab's own
+     * record of the failed load (host, port, the exact certificate), never from the page; then
+     * the address is loaded again. [onDone] gets false when the engine did not take it.
+     */
+    fun continuePastCertError(id: UInt? = activeId.value, remember: Boolean, onDone: (Boolean) -> Unit = {}) {
+        val s = sessions[id ?: return] ?: return
+        val error = s.current.loadError?.cert?.takeIf { it.overridable } ?: return
+        scope.launch {
+            val ok = engine.certs.add(error, remember)
+            if (ok && sessions[id] === s && s.current.loadError?.cert == error) s.load(error.url)
+            onDone(ok)
+        }
+    }
+
     override fun onCrashed(session: KrunkSession) {
         val id = session.id
         if (sessions[id] !== session) return

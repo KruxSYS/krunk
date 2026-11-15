@@ -1,8 +1,8 @@
 {
   "manifest_version": 2,
   "name": "Krunk site data",
-  "version": "1.1",
-  "description": "Tells Krunk, when its site data screen asks, which sites have cookies and how much data each site has stored. Reads names and sizes only, never cookie values or stored content, and makes no network requests.",
+  "version": "1.2",
+  "description": "Tells Krunk, when its site data screen asks, which sites have cookies and how much data each site has stored, and keeps the certificate exceptions the user accepts on Krunk's certificate error screen. Reads names and sizes only, never cookie values or stored content, and makes no network requests.",
   "browser_specific_settings": {
     "gecko": {
       "id": "sitedata@krunk.org"
@@ -32,6 +32,20 @@
         "paths": [
           [
             "krunkSiteData"
+          ]
+        ]
+      }
+    },
+    "krunkCerts": {
+      "schema": "certs-schema.json",
+      "parent": {
+        "scopes": [
+          "addon_parent"
+        ],
+        "script": "certs-api.js",
+        "paths": [
+          [
+            "krunkCerts"
           ]
         ]
       }
