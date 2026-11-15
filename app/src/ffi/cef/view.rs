@@ -359,6 +359,12 @@ pub(super) struct Events {
     pub js_dialog_reset: Slot<dyn FnMut()>,
     /// An image item of the context menu was chosen (0.12.2): the image's address.
     pub image_menu: Slot<dyn FnMut(lb_core::image_menu::ImageAction, String)>,
+    /// The context menu is for a video (0.22.0): the Picture-in-Picture item's label, `None`
+    /// hides it.
+    pub pip_label: Slot<dyn FnMut() -> Option<String>>,
+    /// The Picture-in-Picture item was chosen: the menu's point (view DIP) and the video's
+    /// address.
+    pub pip_menu: Slot<dyn FnMut(i32, i32, String)>,
 }
 
 /// An HTTP authentication challenge of a site (0.8.0): Basic or Digest from a server, never a
@@ -1703,6 +1709,14 @@ impl View {
 
     pub fn on_image_menu(&self, f: impl FnMut(lb_core::image_menu::ImageAction, String) + 'static) {
         self.0.ev.image_menu.set(Box::new(f));
+    }
+
+    pub fn on_pip_label(&self, f: impl FnMut() -> Option<String> + 'static) {
+        self.0.ev.pip_label.set(Box::new(f));
+    }
+
+    pub fn on_pip_menu(&self, f: impl FnMut(i32, i32, String) + 'static) {
+        self.0.ev.pip_menu.set(Box::new(f));
     }
 
     /// The main frame's current document as HTML (the source viewer's fallback when the

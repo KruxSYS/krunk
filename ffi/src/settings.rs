@@ -338,7 +338,7 @@ impl AndroidSettings {
     }
 }
 
-/// The defaults (DuckDuckGo, restore session, system theme, toolbar at the top, ...).
+/// The defaults (Google, restore session, system theme, toolbar at the top, ...).
 #[uniffi::export]
 pub fn default_settings() -> AndroidSettings {
     AndroidSettings::from_core(&Settings::default(), None)
@@ -352,7 +352,7 @@ pub fn settings_search_template(settings: AndroidSettings) -> String {
     s.search_template().to_string()
 }
 
-/// The engine name in effect ("DuckDuckGo", or the custom template's host).
+/// The engine name in effect ("Google", or the custom template's host).
 #[uniffi::export]
 pub fn settings_search_name(settings: AndroidSettings) -> String {
     let mut s = Settings::default();
@@ -376,7 +376,7 @@ mod tests {
     #[test]
     fn defaults_match_windows() {
         let d = default_settings();
-        assert_eq!(d.search_engine, SearchEngineId::DuckDuckGo);
+        assert_eq!(d.search_engine, SearchEngineId::Google);
         assert_eq!(d.startup, StartupMode::RestoreSession);
         assert_eq!(d.theme, ThemeMode::System);
         assert!(d.search_suggestions);
@@ -385,8 +385,8 @@ mod tests {
         assert_eq!(d.tab_sleep_minutes, 5);
         assert_eq!(d.toolbar_position, ToolbarPosition::Top);
         assert_eq!(ToolbarPosition::default(), ToolbarPosition::Top);
-        assert_eq!(settings_search_template(d.clone()), "https://duckduckgo.com/?q={searchTerms}");
-        assert_eq!(settings_search_name(d.clone()), "DuckDuckGo");
+        assert_eq!(settings_search_template(d.clone()), "https://www.google.com/search?q={searchTerms}");
+        assert_eq!(settings_search_name(d.clone()), "Google");
         assert_eq!(settings_new_tab_target(d), None);
     }
 

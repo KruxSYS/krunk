@@ -159,7 +159,7 @@ impl Browser {
     }
 
     /// A toast in the window of the menu's tab or panel.
-    fn image_toast(&self, from: MenuFrom, message: &str) {
+    pub(super) fn image_toast(&self, from: MenuFrom, message: &str) {
         let win = match from {
             MenuFrom::Tab(tab) => self.window_of(tab).or_else(|| self.cur_id()),
             MenuFrom::Panel(win) => Some(win),
