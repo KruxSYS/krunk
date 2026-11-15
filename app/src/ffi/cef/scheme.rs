@@ -116,13 +116,25 @@ wrap_resource_handler! {
                 *h = 0;
             }
             let state = self.state.clone();
-            let callback = CallbackHandle(callback.clone());
+            let callback = CallbackHandle(Arc::new(Mutex::new(Some(callback.clone()))));
+            // 0.22.0: a watchdog answers 404 if the UI thread did not in time, so a held
+            // callback never keeps the request (and the page's load) open for good.
+            let (watch_state, watch_cb) = (state.clone(), callback.clone());
+            super::post_io_delayed(INTERNAL_TIMEOUT_MS, move || {
+                if let Some(cb) = watch_cb.take() {
+                    if let Ok(mut s) = watch_state.lock() {
+                        s.response.get_or_insert_with(InternalResponse::not_found);
+                    }
+                    cb.cont();
+                }
+            });
             post_ui_from_any(move || {
+                let Some(cb) = callback.take() else { return };
                 let response = super::internal_response(&url);
                 if let Ok(mut s) = state.lock() {
                     s.response = Some(response);
                 }
-                callback.0.cont();
+                cb.cont();
             });
             1
         }
@@ -191,11 +203,22 @@ wrap_resource_handler! {
     }
 }
 
-/// A CEF callback moved to the UI thread. CEF callbacks are reference
-/// counted with atomic counts and may be executed on any thread.
-struct CallbackHandle(Callback);
-// SAFETY: see above; the handle is only used to call `cont` once.
+/// How long an internal request may wait for the UI thread's answer (0.22.0).
+const INTERNAL_TIMEOUT_MS: i64 = 10_000;
+
+/// A CEF callback moved to the UI thread, shared with its watchdog: whoever takes it first
+/// continues it. CEF callbacks are reference counted with atomic counts and may be executed
+/// on any thread.
+#[derive(Clone)]
+struct CallbackHandle(Arc<Mutex<Option<Callback>>>);
+// SAFETY: see above; the callback is behind a mutex and `cont` is called once.
 unsafe impl Send for CallbackHandle {}
+
+impl CallbackHandle {
+    fn take(&self) -> Option<Callback> {
+        self.0.lock().ok().and_then(|mut c| c.take())
+    }
+}
 
 /// `"text/html; charset=utf-8"` -> `("text/html", Some("utf-8"))`.
 fn split_content_type(value: &str) -> (&str, Option<&str>) {

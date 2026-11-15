@@ -8,9 +8,10 @@
 //! (a full-size `Page.captureScreenshot`, cut and scaled to 280 px wide with WIC on a job
 //! thread) taken only from the active tab: when the user
 //! leaves it (it stays on screen a moment after the switch) and a while after it finished
-//! loading. A background tab is never captured again. They are kept in memory only (also for
-//! private tabs), at most [`CACHE_CAP`], and dropped with their tab. With the setting off there
-//! are no cards and no captures.
+//! loading. A background tab is never captured again. They are kept in memory only, at most
+//! [`CACHE_CAP`], and dropped with their tab. Private tabs (0.22.0) never get a picture: they are
+//! never captured, nothing is stored for them and anything cached is dropped; their card shows
+//! the title and the site only. With the setting off there are no cards and no captures.
 
 use super::{Browser, PopupSlot};
 use crate::ffi::window::WindowEvents;
@@ -75,7 +76,14 @@ impl Browser {
         let Some((title, url, private)) = self.tab(id).map(|t| (t.title.clone(), t.url.clone(), t.private)) else {
             return;
         };
-        let thumbnail = if active { None } else { self.preview_get(id) };
+        let thumbnail = if active || private {
+            if private {
+                self.preview_drop(id);
+            }
+            None
+        } else {
+            self.preview_get(id)
+        };
         let host = urlclean::host_of(&url).unwrap_or_default();
         let url = lb_core::pages::display_url(&url);
         let Some(w) = self.window() else { return };
@@ -120,6 +128,10 @@ impl Browser {
     }
 
     fn preview_put(&self, id: TabId, url: String) {
+        if self.is_private_tab(id) {
+            self.preview_drop(id);
+            return;
+        }
         let mut cache = self.preview.cache.borrow_mut();
         cache.retain(|(t, _)| *t != id);
         cache.push_back((id, url));
@@ -128,9 +140,21 @@ impl Browser {
         }
     }
 
+    /// Is tab `id` private (or gone: treated alike, nothing is kept for it)?
+    fn is_private_tab(&self, id: TabId) -> bool {
+        self.tab(id).is_none_or(|t| t.private)
+    }
+
+    /// Drops the cached picture of tab `id`, if any.
+    fn preview_drop(&self, id: TabId) {
+        if let Ok(mut cache) = self.preview.cache.try_borrow_mut() {
+            cache.retain(|(t, _)| *t != id);
+        }
+    }
+
     /// The tab closed: its picture goes.
     pub(super) fn preview_forget(&self, id: TabId) {
-        self.preview.cache.borrow_mut().retain(|(t, _)| *t != id);
+        self.preview_drop(id);
         if self.preview.shown.get() == Some(id) {
             self.hide_tab_preview();
         }
@@ -148,7 +172,7 @@ impl Browser {
 
     /// Tab `id` finished loading: if it is the active tab, its picture a little later.
     pub(super) fn preview_loaded(&self, id: TabId) {
-        if !self.previews_on() || self.active_id() != Some(id) {
+        if !self.previews_on() || self.active_id() != Some(id) || self.is_private_tab(id) {
             return;
         }
         self.preview.after_load.set(Some(id));
@@ -175,6 +199,10 @@ impl Browser {
         if !self.previews_on() {
             return;
         }
+        if self.is_private_tab(id) {
+            self.preview_drop(id);
+            return;
+        }
         let loaded = self.views.borrow().get(&id).is_some_and(|v| v.loaded_once.get() && v.view.is_visible());
         let blank = self.tab(id).is_none_or(|t| lb_core::pages::is_blank(&t.url));
         let Some(view) = self.tab_view(id).filter(|_| loaded && !blank) else { return };
@@ -195,7 +223,8 @@ impl Browser {
                 move || crate::ffi::image::thumbnail_jpeg(&jpeg, tw as u32, th as u32),
                 move |b, small| match small {
                     // A tab closed meanwhile is not cached again.
-                    Some(small) if b.tab(id).is_some() && b.previews_on() => {
+                    // Nor a private one (0.22.0; checked again: `preview_put` drops it too).
+                    Some(small) if !b.is_private_tab(id) && b.previews_on() => {
                         b.preview_put(id, format!("data:image/jpeg;base64,{}", Base64::encode_string(&small)));
                     }
                     Some(_) => {}

@@ -1062,8 +1062,9 @@
   const tl = { tabs: [], active: null, shown: [], sel: 0 };
   // 0.15.0: the tab hover card: a picture of the page (not for the active tab, and only once one
   // was taken), the title and the site. Text as text; the picture only as a JPEG data URL.
+  // 0.22.0: a private tab never has a picture (title and site only), even if one were sent.
   function renderTabPreview(c) {
-    const pic = typeof c.thumbnail === 'string' && /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(c.thumbnail) ? c.thumbnail : null;
+    const pic = !c.private && typeof c.thumbnail === 'string' && /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(c.thumbnail) ? c.thumbnail : null;
     return [el('div', { class: 'tab-preview' + (c.active ? ' active' : ''), id: 'tab-preview' }, [
       pic ? el('div', { class: 'tp-thumb' }, [el('img', { src: pic, alt: '' })]) : null,
       el('div', { class: 'tp-title', id: 'tp-title', text: c.title || 'New tab' }),

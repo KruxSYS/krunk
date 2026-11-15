@@ -17,7 +17,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{
     IsWindowVisible, SetWindowPos, ShowWindow, HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
@@ -339,27 +339,58 @@ pub struct AuthChallenge {
     pub scheme: String,
 }
 
-/// Answers an HTTP authentication challenge exactly once. Dropped without an answer, it
-/// cancels (the page then shows the server's 401 page).
-pub struct AuthResponder(Option<cef::AuthCallback>);
+/// How long a held HTTP authentication callback may wait for an answer (0.22.0). A challenge
+/// that waits for a background tab or a hidden dialog holds its request, and with it a
+/// connection of the engine's per-host pool; after this it is refused by the watchdog.
+pub const AUTH_TIMEOUT_MS: i64 = 120_000;
+
+/// The callback slot an [`AuthResponder`] and its watchdog share: whoever takes it first answers.
+#[derive(Clone)]
+struct AuthSlot(Arc<Mutex<Option<cef::AuthCallback>>>);
 
 // SAFETY: CEF's auth callback is a reference-counted object whose Continue and Cancel may be
-// called on any thread; the wrapper only moves it from the IO thread to the UI thread.
-unsafe impl Send for AuthResponder {}
+// called on any thread; the slot only moves it between the IO and UI threads, behind a mutex.
+unsafe impl Send for AuthSlot {}
+unsafe impl Sync for AuthSlot {}
+
+impl AuthSlot {
+    fn take(&self) -> Option<cef::AuthCallback> {
+        self.0.lock().ok().and_then(|mut s| s.take())
+    }
+}
+
+/// Answers an HTTP authentication challenge exactly once. Dropped without an answer, it
+/// cancels (the page then shows the server's 401 page). Unanswered after [`AUTH_TIMEOUT_MS`],
+/// the watchdog cancels it (0.22.0).
+pub struct AuthResponder(AuthSlot);
 
 impl AuthResponder {
     pub(super) fn new(cb: cef::AuthCallback) -> AuthResponder {
-        AuthResponder(Some(cb))
+        let slot = AuthSlot(Arc::new(Mutex::new(Some(cb))));
+        let watchdog = slot.clone();
+        super::post_io_delayed(AUTH_TIMEOUT_MS, move || {
+            use cef::ImplAuthCallback;
+            if let Some(cb) = watchdog.take() {
+                crate::log::warning!("http auth: a sign-in waited {} s unanswered; refused", AUTH_TIMEOUT_MS / 1000);
+                cb.cancel();
+            }
+        });
+        AuthResponder(slot)
     }
 
-    pub fn answer(mut self, username: &str, password: &str) {
+    /// Still waiting (neither answered nor refused by the watchdog)?
+    pub fn is_live(&self) -> bool {
+        self.0 .0.lock().is_ok_and(|s| s.is_some())
+    }
+
+    pub fn answer(self, username: &str, password: &str) {
         use cef::ImplAuthCallback;
         if let Some(cb) = self.0.take() {
             cb.cont(Some(&cef::CefString::from(username)), Some(&cef::CefString::from(password)));
         }
     }
 
-    pub fn cancel(mut self) {
+    pub fn cancel(self) {
         use cef::ImplAuthCallback;
         if let Some(cb) = self.0.take() {
             cb.cancel();
