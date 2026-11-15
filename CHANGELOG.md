@@ -3,6 +3,21 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.22.0 — 2026-11-15
+
+- **VPN: fewer "Connection has been reset" errors.** DIAG_VPN
+- **VPN for private tabs only.** The VPN popout has a new choice: "Enable everywhere" (as
+  before) or "Private tabs only", where only private tabs go through the VPN and normal tabs,
+  extensions and Krunk's own updates go direct. It takes effect at once and is remembered.
+- **Picture-in-picture from the right-click menu** on videos ("Exit picture-in-picture" while one
+  is floating). Videos that forbid picture-in-picture don't show it.
+- **New-tab shortcuts are harder to misclick:** edit and remove moved into a small "⋮" menu in
+  the tile corner, and a removed shortcut can be brought back with Undo.
+- **Google is the default search engine and homepage** for new profiles. Profiles still set to
+  DuckDuckGo switch to Google once. DDG_NOTE
+- **Private tabs never get a hover preview picture:** their hover card shows the title only.
+- **Gmail and other heavy sites no longer stall until a restart.** DIAG_GMAIL
+
 ## 0.21.1 — 2026-11-15
 
 - **One password for sync: your vault password.** Turning sync on asks for the password that

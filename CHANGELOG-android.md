@@ -3,6 +3,14 @@
 What changed in each Krunk for Android release, newest first. The Windows browser's list is
 `CHANGELOG.md`.
 
+## 0.7.0 — 2026-11-15
+
+- **Google is the default search engine and homepage** for new installs. Phones still on the old
+  defaults switch to Google once.
+- The tab count next to the address bar is centred in its box.
+- "Add shortcut" is centred in its tile.
+- Switches show their knob when off too, in light and dark themes.
+
 ## 0.6.2 — 2026-11-15
 
 - **One password for sync: your vault password.** To sync this phone, sign in to your Krunk
