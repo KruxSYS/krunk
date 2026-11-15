@@ -74,8 +74,8 @@ used. It installs per user without administrator rights, or runs portable from a
   instead (see "Updates" below).
 
 ## Usage
-Type a URL or search words in the address bar. Search uses DuckDuckGo by default; this can be
-changed in Settings. Built-in pages:
+Type a URL or search words in the address bar. Search uses Google by default (since 0.22.0; profiles still on the old DuckDuckGo default
+switch once); this can be changed in Settings. Built-in pages:
 - `krunk://settings`
 - `krunk://history`
 - `krunk://bookmarks`
@@ -167,7 +167,7 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   (`appearance.showHomeButton`). The Home button sits after Reload; a click does what Alt+Home
   does: it opens the home page, or the new tab page when the home page is empty. Ctrl+click or
   a middle-click opens it in a new tab. The **Home page** field under the switch is the same
-  setting as General → On startup → Homepage (`homepage`; `https://duckduckgo.com/` by
+  setting as General → On startup → Homepage (`homepage`; `https://www.google.com/` by
   default): editing either one changes both. The change shows at once in every window. In a
   window too narrow for everything the Home button goes in the last step, with downloads, VPN
   and AI; Back, Forward and Reload stay.
@@ -1548,6 +1548,9 @@ in Windows: no network adapter, no routes, no driver, no administrator rights, a
 are not affected. "Show the VPN button in the toolbar" (off by default) adds a button before the
 shield whose popup shows the state, the profile, the tunnel address and the traffic, with
 Connect and Disconnect. "Connect when Krunk starts" connects before any page loads.
+The popup's scope choice (0.22.0) is **Enable everywhere** (the default: every tab, private ones
+too, and Krunk's own requests) or **Private tabs only** (only the private profile uses the VPN;
+normal tabs, extensions, updates and sync go direct). It applies at once and is remembered.
 
 How it works (`vpn/`, `app/src/browser/vpn.rs`):
 - The tunnel runs inside Krunk's process, in user space: WireGuard through boringtun's protocol
