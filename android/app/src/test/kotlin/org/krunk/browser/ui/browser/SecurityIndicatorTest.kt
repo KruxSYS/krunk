@@ -53,6 +53,23 @@ class SecurityIndicatorTest {
     }
 
     @Test
+    fun thePillShowsTheWholeAddressAsHostAndRest() {
+        assertEquals(PillParts("example.com", ""), pillParts("https://example.com/"))
+        assertEquals(PillParts("example.com", "/Some/Path?q=1#x"), pillParts("https://EXAMPLE.com/Some/Path?q=1#x"))
+        assertEquals(PillParts("example.com", "?q=1"), pillParts("https://example.com?q=1"))
+        assertEquals(PillParts("example.com:8080", "/x"), pillParts("http://example.com:8080/x"))
+        // The host is never taken from the path or the user part.
+        assertEquals(
+            PillParts("login.bank.example.evil.tld", "/bank.example/"),
+            pillParts("https://login.bank.example.evil.tld/bank.example/"),
+        )
+        assertEquals(PillParts("evil.example", "/login"), pillParts("https://bank.example:pw@evil.example/login"))
+        assertEquals(PillParts("example.com", "/ab"), pillParts("https://example.com/a‮b"))
+        // Not a web page: all of it in the host part.
+        assertEquals(PillParts("krunk://settings", ""), pillParts("krunk://settings"))
+    }
+
+    @Test
     fun thePillNeverShowsTheUserPart() {
         assertEquals("evil.example", pillText("https://bank.example@evil.example/"))
         assertEquals("evil.example", pillText("https://bank.example:pw@evil.example/login"))

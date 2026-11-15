@@ -3,6 +3,12 @@
 What changed in each Krunk for Android release, newest first. The Windows browser's list is
 `CHANGELOG.md`.
 
+## 0.7.1 — 2026-11-15
+
+- **The address bar shows the whole address**, like Firefox: the site's name in the normal
+  colour and the rest of the address (the page's path) in grey after it. When the address is too
+  long, the end of the path is cut, never the site's name.
+
 ## 0.7.0 — 2026-11-15
 
 - **Google is the default search engine and homepage** for new installs. Phones still on the old

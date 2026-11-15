@@ -110,7 +110,8 @@ fun AddressPill(
         loadError = page?.loadError != null,
         pending = page?.pendingUrl != null,
     )
-    val text = if (tab == null || tab.isNewTab) "" else pillText(tab.displayUrl)
+    val parts = if (tab == null || tab.isNewTab) null else pillParts(tab.displayUrl)
+    val text = parts?.host.orEmpty()
     val editLabel = stringResource(R.string.address_edit)
     val style = LocalKrunkStyle.current
     Box(modifier.height(AddressPillTouchHeight), contentAlignment = Alignment.Center) {
@@ -132,7 +133,9 @@ fun AddressPill(
         // What lies on the field is drawn in the field's colours, not in the toolbar's (a
         // gradient toolbar has white icons; the field under them is light).
         CompositionLocalProvider(LocalContentColor provides style.pillText) {
-            PillContent(tab, text, placeholder, indicator, compact, hasLeading, leading, trailing)
+            PillContent(
+                tab, text, parts?.rest.orEmpty(), placeholder, indicator, compact, hasLeading, leading, trailing,
+            )
         }
     }
 }
@@ -142,6 +145,7 @@ fun AddressPill(
 private fun PillContent(
     tab: TabUi?,
     text: String,
+    rest: String,
     placeholder: String,
     indicator: SecurityIndicator,
     compact: Boolean,
@@ -201,22 +205,49 @@ private fun PillContent(
             if (indicator != SecurityIndicator.NONE || (text.isNotEmpty() && tab?.internalPage == null)) {
                 Spacer(Modifier.width(8.dp))
             }
-            Text(
-                text = text.ifEmpty { placeholder },
-                modifier = Modifier.weight(1f),
-                // An address reads left to right in every locale, and when it does not fit its end
-                // (the registrable domain) stays: "…bank.example", never "login.ba…".
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    textDirection = if (text.isEmpty()) TextDirection.Content else TextDirection.Ltr,
-                ),
-                color = if (text.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else style.pillText,
-                maxLines = 1,
-                overflow = if (text.isEmpty()) TextOverflow.Ellipsis else TextOverflow.StartEllipsis,
-            )
+            if (text.isEmpty()) {
+                Text(
+                    text = placeholder,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            } else {
+                // The whole address, like Firefox (0.7.1): the host in the normal colour, the
+                // path and the rest after it in grey. The host is laid out first and gets the room
+                // it needs; when even it does not fit, its end (the registrable domain) stays:
+                // "…bank.example", never "login.ba…". The rest takes what is left, cut at its end.
+                // An address reads left to right in every locale.
+                val ltr = MaterialTheme.typography.bodyLarge.copy(textDirection = TextDirection.Ltr)
+                Row(Modifier.weight(1f)) {
+                    Text(
+                        text = text,
+                        style = ltr,
+                        color = style.pillText,
+                        maxLines = 1,
+                        overflow = TextOverflow.StartEllipsis,
+                    )
+                    if (rest.isNotEmpty()) {
+                        Text(
+                            text = rest,
+                            modifier = Modifier.weight(1f),
+                            style = ltr,
+                            color = style.pillText.copy(alpha = PILL_REST_ALPHA),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
             trailing()
         }
     }
 }
+
+/** How strongly the part of the address after the host is drawn (grey on any pill colour). */
+private const val PILL_REST_ALPHA = 0.6f
 
 @Composable
 private fun SiteIcon(tab: TabUi?) {

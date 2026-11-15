@@ -77,3 +77,24 @@ fun pillText(displayUrl: String): String {
     if (origin == null || (scheme != "http" && scheme != "https")) return addressText(displayUrl)
     return origin.substringAfter("://").filterNot(::isDeceptive)
 }
+
+/**
+ * The address as the pill shows it (0.7.1, like Firefox): the whole address without
+ * `https://`, as the [host] (what [pillText] gives, drawn in the normal colour) and the [rest]
+ * after it (path, query, fragment; drawn in grey). A lone `/` is dropped. Addresses that are not
+ * web pages have everything in [host].
+ */
+data class PillParts(val host: String, val rest: String)
+
+fun pillParts(displayUrl: String): PillParts {
+    val host = pillText(displayUrl)
+    val origin = originOf(displayUrl)
+    val scheme = origin?.substringBefore("://")
+    if (origin == null || (scheme != "http" && scheme != "https")) return PillParts(host, "")
+    // The authority ends at the first '/', '?' or '#' after "://" (a user:password@ part has none
+    // of them), so what follows is the path and the rest, never a host spoofed into the path.
+    val start = displayUrl.indexOf("://") + 3
+    val end = displayUrl.indexOfAny(charArrayOf('/', '?', '#'), start).takeIf { it >= 0 } ?: displayUrl.length
+    val rest = displayUrl.substring(end).take(MAX_SHOWN).filterNot(::isDeceptive)
+    return PillParts(host, if (rest == "/") "" else rest)
+}
