@@ -248,8 +248,22 @@ impl TabModel {
 
     /// The non-private tabs and the active index as JSON (`kv["session"]`, the same shape
     /// Windows stores: `{"tabs":[{"url","title"}],"active":n}`).
+    ///
+    /// Since 0.6.0 it also carries Windows' multi-window form (`version` 2 and one window with the
+    /// web pages only): sync's `tabs` collection reads that part, so the other devices list this
+    /// phone's open pages, never Krunk's own pages. Restoring reads the flat fields as before.
     pub fn session_json(&self) -> String {
-        serde_json::to_string(&self.lock().session()).unwrap_or_else(|_| "{\"tabs\":[],\"active\":0}".to_string())
+        let s = self.lock().session();
+        let web: Vec<&lb_core::tabs::SessionTab> = s.tabs.iter().filter(|t| is_web_page(&t.url)).collect();
+        let active_url = s.tabs.get(s.active).map(|t| t.url.as_str());
+        let web_active = web.iter().position(|t| Some(t.url.as_str()) == active_url).unwrap_or(0);
+        serde_json::to_string(&serde_json::json!({
+            "tabs": s.tabs,
+            "active": s.active,
+            "version": 2,
+            "windows": [{ "tabs": web, "active": web_active }],
+        }))
+        .unwrap_or_else(|_| "{\"tabs\":[],\"active\":0}".to_string())
     }
 
     /// Restores a session: every tab unloaded except the active one. Also accepts Windows'
@@ -263,6 +277,11 @@ impl TabModel {
         session.active -= skipped_before;
         Ok(effects(self.lock().restore(&session, now)))
     }
+}
+
+/// A web page (not one of Krunk's own pages, which live at `https://krunk.invalid/`).
+fn is_web_page(url: &str) -> bool {
+    (url.starts_with("https://") || url.starts_with("http://")) && !url.starts_with("https://krunk.invalid/")
 }
 
 /// What `core::tabs` restores from a session: web pages and Krunk's own pages.
@@ -318,6 +337,22 @@ mod tests {
         assert!(!json.contains("private.example"));
         m.close(p.id, 3);
         assert!(m.closed_tabs().is_empty(), "private tabs are not remembered");
+    }
+
+    /// 0.6.0: sync's `tabs` collection reads the multi-window part (web pages only).
+    #[test]
+    fn the_session_carries_the_web_pages_for_sync() {
+        let m = TabModel::new();
+        m.open("https://krunk.invalid/newtab.html".into(), false, None, true, true, 1);
+        let b = m.open("https://b.example/".into(), false, None, true, true, 2);
+        m.set_title(b.id, "B".into());
+        let s: lb_core::windows::SessionV2 = serde_json::from_str(&m.session_json()).unwrap();
+        assert_eq!(s.version, 2);
+        assert_eq!(s.tabs.len(), 2, "the flat list keeps every tab for the restore");
+        assert_eq!(s.windows.len(), 1);
+        let w = &s.windows[0];
+        assert_eq!(w.tabs.iter().map(|t| t.url.as_str()).collect::<Vec<_>>(), vec!["https://b.example/"]);
+        assert_eq!(w.active, 0);
     }
 
     #[test]

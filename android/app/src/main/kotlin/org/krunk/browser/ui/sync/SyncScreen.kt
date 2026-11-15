@@ -168,7 +168,8 @@ fun SyncScreen(vm: BrowserViewModel) {
                 }
             }
             if (busy) CircularProgressIndicator(Modifier.semantics { contentDescription = "working" })
-            error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            // The core also puts most failures into the status message: never the same sentence twice.
+            error?.takeIf { it != st.message }?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         }
     }
 }
@@ -317,7 +318,17 @@ private fun RestoreConfirm(
 ) {
     Text(stringResource(R.string.sync_restore_confirm_title), style = MaterialTheme.typography.titleMedium)
     for (d in stage.devices) Text("• $d")
-    if (stage.revoked > 0u) Text(pluralStringResource(R.plurals.sync_restore_confirm_revoked, stage.revoked.toInt(), stage.revoked.toInt()))
+    if (stage.revoked >
+        0u
+    ) {
+        Text(
+            pluralStringResource(
+                R.plurals.sync_restore_confirm_revoked,
+                stage.revoked.toInt(),
+                stage.revoked.toInt(),
+            ),
+        )
+    }
     Button(enabled = !busy, onClick = onConfirm) { Text(stringResource(R.string.sync_restore_confirm)) }
     OutlinedButton(onClick = onCancel) { Text(stringResource(R.string.sync_cancel)) }
 }
@@ -380,7 +391,10 @@ private fun On(
     if (st.pending >
         0
     ) {
-        Text(pluralStringResource(R.plurals.sync_pending, st.pending.toInt(), st.pending.toInt()), style = MaterialTheme.typography.bodySmall)
+        Text(
+            pluralStringResource(R.plurals.sync_pending, st.pending.toInt(), st.pending.toInt()),
+            style = MaterialTheme.typography.bodySmall,
+        )
     }
     Button(enabled = !busy, onClick = { act { sync.syncNow() } }) { Text(stringResource(R.string.sync_now)) }
 

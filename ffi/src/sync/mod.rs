@@ -962,7 +962,8 @@ impl Engine {
         let with_vault = share_passwords && self.vault_open();
         self.joining = Some(NApproval::start(&api, with_vault).map_err(|e| sync_err(&e))?);
         self.stage = Stage::Joining { enter_code: false };
-        self.message = Some("Open krunk://sync on a device that syncs and approve this one.".into());
+        // The screen says what to do on the other device.
+        self.message = None;
         Ok(())
     }
 
