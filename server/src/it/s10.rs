@@ -541,8 +541,10 @@ async fn pre_0007_data_survives_the_expand_step() {
     crate::db::expand(&db).await.unwrap(); // idempotent
     let after: i64 = sqlx::query_scalar(count).fetch_one(&db).await.unwrap();
     assert_eq!(before, after);
-    let max: i64 = sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations").fetch_one(&db).await.unwrap();
-    assert_eq!(max, 6, "0007 is not a sqlx migration");
+    // (Ordinary sqlx migrations follow from 0008 on, db.rs.)
+    let n7: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM _sqlx_migrations WHERE version = 7").fetch_one(&db).await.unwrap();
+    assert_eq!(n7, 0, "0007 is not a sqlx migration");
     let steps: Vec<String> = sqlx::query_scalar("SELECT step FROM krunk_schema_steps").fetch_all(&db).await.unwrap();
     assert_eq!(steps, ["0007_account_section"]);
     // The earlier api's migrator still accepts this database.

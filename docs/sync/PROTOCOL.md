@@ -874,8 +874,8 @@ The cryptographic checks happen on the clients (§4.4).
 ### 11.6 Approvals (relay for §6.2)
 | Method | Path | Auth | Request | Response | Rate limit |
 |---|---|---|---|---|---|
-| POST | `approvals` | device (no keys yet) | `{commit_N}` | `{approval_id, expires_in:600}` | 5/day/account |
-| GET | `approvals` | device (with keys) | – | `[{approval_id, device:{id,label,platform,country}, state}]` | 120/h |
+| POST | `approvals` | device (no keys yet; with keys for `kind:"pak"`) | `{commit_N, kind?}` | `{approval_id, expires_in:600}` | 5/day/account |
+| GET | `approvals` | device (with keys) | – | `[{approval_id, kind, device:{id,label,platform,country}, state}]` | 120/h |
 | POST | `approvals/{id}/respond` | device A | `{epk_A, nonce_A}` | 204 | – |
 | POST | `approvals/{id}/reveal` | device N | `{epk_N, nonce_N, box_N}` | 204 | – |
 | POST | `approvals/{id}/confirm` | device N | `{tag_N}` | 204 | – |
@@ -923,6 +923,15 @@ The server enforces the order of steps, allows a single attempt, and deletes the
   side) → 204 ends it at once (a wrong SAS, a bad tag, or the user gave up); N must ask again.
   Creating one is mailed to the account (`approval_requested`), as is every escrow fetch
   (`escrow_fetched`).
+- **Approval kinds (addition after 0.20.1):** `POST approvals` takes an optional `kind`,
+  `"join"` (the default, all of the above: a device without keys; one with keys gets 409) or
+  `"pak"`: a device that already has the keys but lacks the passwords key asks another device
+  for it (a device without keys gets 409 "join sync first"); any other value is 400. The SAS
+  relay (respond, reveal, confirm, keys, cancel, `GET approvals/{id}`) is the same for both, with
+  the keyed requester in N's role. `GET approvals` and `GET approvals/{id}` show `kind` on each
+  approval; `GET approvals` and `pending_approvals` in `sync/state` leave out the caller's own
+  request. A `pak` request is mailed as `pak_approval_requested`, and shares the 5/day limit.
+  The server changes no device's key state when an approval of either kind completes.
 - **Body limits** are per route group: 16 KiB by default, 512 KiB for `keys/commit`, 2 MiB for
   `records/batch` and `rekey/batch`, and 2 MiB as the ceiling for any request.
 - **Records (S7):**
