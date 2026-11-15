@@ -7,6 +7,12 @@
 //! (A: `box_A`, after committing N into `ak_dir`). Each step happens once; a wrong order is 409.
 //! The approval is deleted when N has collected `box_A`, when either side cancels (a SAS
 //! mismatch), or after 10 minutes. At most 5 are created per account per day, each one mailed.
+//!
+//! Kinds (`kind`, 0.20.x addition): `join` (the default) is the above, asked by a device without
+//! keys. `pak` is asked by a device that already has the keys but lacks the passwords key: the
+//! same relay, only creation, listing and the mail differ. The server changes no device's key
+//! state when either kind completes (A commits N into `ak_dir`, or N its own `pak_dir`, through
+//! `keys/commit`).
 
 use crate::api::{ApiError, ApiResult, Client, JsonBody};
 use crate::crypto;
@@ -52,14 +58,32 @@ async fn has_keys(db: &sqlx::PgPool, device: Uuid) -> Result<bool, sqlx::Error> 
 #[serde(deny_unknown_fields)]
 pub struct CreateReq {
     commit_n: String,
+    #[serde(default)]
+    kind: Option<String>,
 }
 
-/// `POST approvals {commit_N}` (a device without keys) → `{approval_id, expires_in}`. An earlier
+/// `POST approvals {commit_N, kind?}` → `{approval_id, expires_in}`. `kind` "join" (the default;
+/// a device without keys) or "pak" (a device with keys that lacks the passwords key). An earlier
 /// open approval of the same device is replaced.
 pub async fn create(State(state): State<AppState>, d: DeviceAuth, JsonBody(req): JsonBody<CreateReq>) -> ApiResult {
     let commit = b32(&req.commit_n)?;
-    if has_keys(&state.db, d.device_id).await? {
-        return Err(ApiError::new(StatusCode::CONFLICT, "conflict", "This device already has the keys."));
+    let pak = match req.kind.as_deref() {
+        None | Some("join") => false,
+        Some("pak") => true,
+        Some(_) => return Err(bad()),
+    };
+    match (pak, has_keys(&state.db, d.device_id).await?) {
+        (false, true) => {
+            return Err(ApiError::new(StatusCode::CONFLICT, "conflict", "This device already has the keys."));
+        }
+        (true, false) => {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "conflict",
+                "This device has no keys yet; join sync first.",
+            ));
+        }
+        _ => {}
     }
     if crate::keys::state_row(&mut *state.db.acquire().await?, d.account_id, false).await?.is_none() {
         return Err(crate::keys::no_keyset());
@@ -69,14 +93,15 @@ pub async fn create(State(state): State<AppState>, d: DeviceAuth, JsonBody(req):
     let mut tx = state.db.begin().await?;
     sqlx::query("DELETE FROM approvals WHERE new_device_id = $1").bind(d.device_id).execute(&mut *tx).await?;
     sqlx::query(
-        "INSERT INTO approvals (id, account_id, new_device_id, step, commit_n, expires_at)
-         VALUES ($1, $2, $3, 'requested', $4, now() + make_interval(secs => $5))",
+        "INSERT INTO approvals (id, account_id, new_device_id, step, commit_n, expires_at, kind)
+         VALUES ($1, $2, $3, 'requested', $4, now() + make_interval(secs => $5), $6)",
     )
     .bind(id)
     .bind(d.account_id)
     .bind(d.device_id)
     .bind(&commit)
     .bind(APPROVAL_TTL_S as f64)
+    .bind(if pak { "pak" } else { "join" })
     .execute(&mut *tx)
     .await?;
     let (email, label): (String, String) = sqlx::query_as(
@@ -85,9 +110,10 @@ pub async fn create(State(state): State<AppState>, d: DeviceAuth, JsonBody(req):
     .bind(d.device_id)
     .fetch_one(&mut *tx)
     .await?;
-    mail::enqueue(&mut tx, Some(d.account_id), &email, Template::ApprovalRequested, json!({ "label": label })).await?;
+    let t = if pak { Template::PakApprovalRequested } else { Template::ApprovalRequested };
+    mail::enqueue(&mut tx, Some(d.account_id), &email, t, json!({ "label": label })).await?;
     tx.commit().await?;
-    tracing::info!(approval = %id, "approval requested");
+    tracing::info!(approval = %id, pak, "approval requested");
     Ok(Json(json!({"approval_id": id, "expires_in": APPROVAL_TTL_S})).into_response())
 }
 
@@ -95,6 +121,7 @@ pub async fn create(State(state): State<AppState>, d: DeviceAuth, JsonBody(req):
 struct ListRow {
     id: Uuid,
     step: String,
+    kind: String,
     device_id: Uuid,
     label: String,
     platform: String,
@@ -102,18 +129,19 @@ struct ListRow {
     expires_in: f64,
 }
 
-/// `GET approvals` (a device with keys) → the open approvals of the account.
+/// `GET approvals` (a device with keys) → the open approvals of the account, but not the caller's
+/// own (a `pak` request comes from a device with keys).
 pub async fn list(State(state): State<AppState>, d: DeviceAuth) -> ApiResult {
     hit(&state.db, rl::APPROVALS_LIST, &rl::id_key(&d.device_id)).await?;
     if !has_keys(&state.db, d.device_id).await? {
         return Err(ApiError::forbidden());
     }
     let rows: Vec<ListRow> = sqlx::query_as(
-        "SELECT a.id, a.step, n.id AS device_id, n.label, n.platform, n.last_country AS country,
+        "SELECT a.id, a.step, a.kind, n.id AS device_id, n.label, n.platform, n.last_country AS country,
                 extract(epoch FROM a.expires_at - now())::float8 AS expires_in
          FROM approvals a JOIN devices n ON n.id = a.new_device_id
          WHERE a.account_id = $1 AND a.expires_at > now() AND n.revoked_at IS NULL
-           AND (a.approver_device_id IS NULL OR a.approver_device_id = $2)
+           AND (a.approver_device_id IS NULL OR a.approver_device_id = $2) AND a.new_device_id <> $2
          ORDER BY a.created_at",
     )
     .bind(d.account_id)
@@ -126,6 +154,7 @@ pub async fn list(State(state): State<AppState>, d: DeviceAuth) -> ApiResult {
             json!({
                 "approval_id": r.id,
                 "state": r.step,
+                "kind": r.kind,
                 "device": {"id": r.device_id, "label": r.label, "platform": r.platform, "country": r.country},
                 "expires_in": r.expires_in.max(0.0) as i64,
             })
@@ -139,6 +168,7 @@ struct Row {
     new_device_id: Uuid,
     approver_device_id: Option<Uuid>,
     step: String,
+    kind: String,
     commit_n: Vec<u8>,
     epk_a: Option<Vec<u8>>,
     nonce_a: Option<Vec<u8>>,
@@ -156,7 +186,7 @@ struct Row {
 async fn load(conn: &mut sqlx::PgConnection, account_id: Uuid, id: &str, lock: bool) -> Result<Row, ApiError> {
     let id: Uuid = id.parse().map_err(|_| device_not_found())?;
     let sql = format!(
-        "SELECT a.new_device_id, a.approver_device_id, a.step, a.commit_n, a.epk_a, a.nonce_a, a.epk_n, a.nonce_n,
+        "SELECT a.new_device_id, a.approver_device_id, a.step, a.kind, a.commit_n, a.epk_a, a.nonce_a, a.epk_n, a.nonce_n,
                 a.box_n, a.tag_n, a.box_a, n.label, n.platform, n.last_country AS country,
                 extract(epoch FROM a.expires_at - now())::float8 AS expires_in
          FROM approvals a JOIN devices n ON n.id = a.new_device_id
@@ -337,13 +367,13 @@ pub async fn get_one(State(state): State<AppState>, d: DeviceAuth, Path(id): Pat
     let device = json!({"id": r.new_device_id, "label": r.label, "platform": r.platform, "country": r.country});
     let out = if r.new_device_id == d.device_id {
         json!({
-            "approval_id": id, "state": r.step, "device": device, "expires_in": r.expires_in.max(0.0) as i64,
+            "approval_id": id, "state": r.step, "kind": r.kind, "device": device, "expires_in": r.expires_in.max(0.0) as i64,
             "approver": r.approver_device_id,
             "epk_A": b(&r.epk_a), "nonce_A": b(&r.nonce_a), "box_A": b(&r.box_a),
         })
     } else if r.approver_device_id == Some(d.device_id) || (r.approver_device_id.is_none() && caller_has_keys) {
         json!({
-            "approval_id": id, "state": r.step, "device": device, "expires_in": r.expires_in.max(0.0) as i64,
+            "approval_id": id, "state": r.step, "kind": r.kind, "device": device, "expires_in": r.expires_in.max(0.0) as i64,
             "commit_N": crypto::b64url(&r.commit_n), "epk_N": b(&r.epk_n), "nonce_N": b(&r.nonce_n),
             "box_N": b(&r.box_n), "tag_N": b(&r.tag_n),
         })

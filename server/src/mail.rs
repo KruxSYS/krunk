@@ -30,6 +30,7 @@ pub enum Template {
     TokenReuse,
     EscrowFetched,
     ApprovalRequested,
+    PakApprovalRequested,
     QrSignIn,
     AccountDeleted,
     SyncReset,
@@ -49,6 +50,7 @@ impl Template {
             Template::TokenReuse => "token_reuse",
             Template::EscrowFetched => "escrow_fetched",
             Template::ApprovalRequested => "approval_requested",
+            Template::PakApprovalRequested => "pak_approval_requested",
             Template::QrSignIn => "qr_sign_in",
             Template::AccountDeleted => "account_deleted",
             Template::SyncReset => "sync_reset",
@@ -59,7 +61,7 @@ impl Template {
         Template::ALL.into_iter().find(|t| t.name() == n)
     }
 
-    pub const ALL: [Template; 14] = [
+    pub const ALL: [Template; 15] = [
         Template::Verify,
         Template::RegisterExists,
         Template::Reset,
@@ -71,6 +73,7 @@ impl Template {
         Template::TokenReuse,
         Template::EscrowFetched,
         Template::ApprovalRequested,
+        Template::PakApprovalRequested,
         Template::QrSignIn,
         Template::AccountDeleted,
         Template::SyncReset,
@@ -89,6 +92,7 @@ impl Template {
             Template::TokenReuse => include_str!("../templates/token_reuse.txt"),
             Template::EscrowFetched => include_str!("../templates/escrow_fetched.txt"),
             Template::ApprovalRequested => include_str!("../templates/approval_requested.txt"),
+            Template::PakApprovalRequested => include_str!("../templates/pak_approval_requested.txt"),
             Template::QrSignIn => include_str!("../templates/qr_sign_in.txt"),
             Template::AccountDeleted => include_str!("../templates/account_deleted.txt"),
             Template::SyncReset => include_str!("../templates/sync_reset.txt"),

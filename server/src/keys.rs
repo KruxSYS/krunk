@@ -393,9 +393,12 @@ pub async fn sync_state(State(state): State<AppState>, d: DeviceAuth) -> ApiResu
     let mut conn = state.db.acquire().await?;
     let st = state_row(&mut conn, d.account_id, false).await?;
     let pending: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM approvals WHERE account_id = $1 AND expires_at > now() AND step IN ('requested', 'confirmed')",
+        // Not the caller's own request (a `pak` approval comes from a device with keys).
+        "SELECT count(*) FROM approvals WHERE account_id = $1 AND expires_at > now() AND step IN ('requested', 'confirmed')
+           AND new_device_id <> $2",
     )
     .bind(d.account_id)
+    .bind(d.device_id)
     .fetch_one(&mut *conn)
     .await?;
     let remaining_old = crate::records::remaining_old(&mut conn, d.account_id).await?;

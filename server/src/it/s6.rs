@@ -533,6 +533,106 @@ async fn approvals_relay_in_order_once() {
 }
 
 #[tokio::test]
+async fn pak_approvals_from_a_keyed_device() {
+    let Some(e) = env().await else { return };
+    let s = setup(&e, "pak@example.org").await;
+    let a = &s.a;
+    let mut owner = s.owner;
+    // B has the keys but not the passwords key; K has no keys at all.
+    let b = new_dev(&e, &mut owner).await;
+    let k = new_dev(&e, &mut owner).await;
+    sqlx::query("UPDATE devices SET has_keys = true WHERE id = $1::uuid").bind(&b.id).execute(&e.db).await.unwrap();
+    let keys_of = |id: String| {
+        let db = e.db.clone();
+        async move {
+            sqlx::query_scalar::<_, bool>("SELECT has_keys FROM devices WHERE id = $1::uuid")
+                .bind(id)
+                .fetch_one(&db)
+                .await
+                .unwrap()
+        }
+    };
+    let k32 = |x: u8| b64url(&[x; 32]);
+    let boxv = |x: u8| b64url(&[x; 64]);
+    let r = k.post(&e, "approvals", json!({"commit_n": k32(1), "kind": "pak"})).await;
+    assert_eq!(r.status, StatusCode::CONFLICT, "a keyless device joins first: {}", r.raw);
+    assert!(r.raw.contains("no keys yet"), "{}", r.raw);
+    assert_eq!(
+        b.post(&e, "approvals", json!({"commit_n": k32(1), "kind": "join"})).await.status,
+        StatusCode::CONFLICT,
+        "join from a keyed device is refused as before"
+    );
+    assert_eq!(b.post(&e, "approvals", json!({"commit_n": k32(1)})).await.status, StatusCode::CONFLICT);
+    for kind in [json!("bogus"), json!(""), json!(1)] {
+        let r = b.post(&e, "approvals", json!({"commit_n": k32(1), "kind": kind})).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{kind}: {}", r.raw);
+    }
+    // A pak request is mailed with its own template; an earlier one of the device is replaced.
+    let before = outbox(&e.db).await.len();
+    let first = b.post(&e, "approvals", json!({"commit_n": k32(1), "kind": "pak"})).await;
+    assert_eq!(first.status, StatusCode::OK, "{}", first.raw);
+    let r = b.post(&e, "approvals", json!({"commit_n": k32(1), "kind": "pak"})).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.raw);
+    let id = r.body["approval_id"].as_str().unwrap().to_string();
+    let mails: Vec<_> = outbox(&e.db).await[before..].iter().map(|m| m.1.clone()).collect();
+    assert_eq!(mails, ["pak_approval_requested", "pak_approval_requested"]);
+    assert_eq!(sqlx::query_scalar::<_, i64>("SELECT count(*) FROM approvals").fetch_one(&e.db).await.unwrap(), 1);
+    // K's join request sits beside it.
+    let jr = k.post(&e, "approvals", json!({"commit_n": k32(1)})).await;
+    assert_eq!(jr.status, StatusCode::OK, "{}", jr.raw);
+    let jid = jr.body["approval_id"].as_str().unwrap().to_string();
+    // A lists both with their kinds; B, with keys, lists K's but never its own.
+    let list = a.get(&e, "approvals").await.body;
+    let kinds: Vec<_> = list
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| (i["approval_id"].as_str().unwrap(), i["kind"].as_str().unwrap()))
+        .collect();
+    assert_eq!(kinds, [(id.as_str(), "pak"), (jid.as_str(), "join")]);
+    assert_eq!(list[0]["device"]["id"], b.id);
+    let mine = b.get(&e, "approvals").await;
+    assert_eq!(mine.status, StatusCode::OK);
+    let ids: Vec<_> =
+        mine.body.as_array().unwrap().iter().map(|i| i["approval_id"].as_str().unwrap().to_string()).collect();
+    assert_eq!(ids, std::slice::from_ref(&jid));
+    assert_eq!(a.get(&e, "sync/state").await.body["pending_approvals"], 2);
+    assert_eq!(b.get(&e, "sync/state").await.body["pending_approvals"], 1, "not its own request");
+    assert_eq!(k.post(&e, &format!("approvals/{jid}/cancel"), json!({})).await.status, StatusCode::NO_CONTENT);
+    // The relay is the same; B is N throughout, although it has keys.
+    let p = |x: &str| format!("approvals/{id}/{x}");
+    assert_eq!(
+        b.post(&e, &p("respond"), json!({"epk_A": k32(5), "nonce_A": k32(6)})).await.status,
+        StatusCode::FORBIDDEN,
+        "B can't answer itself"
+    );
+    let n_view = b.get(&e, &format!("approvals/{id}")).await.body;
+    assert_eq!((n_view["kind"].as_str(), n_view.get("commit_N")), (Some("pak"), None), "{n_view}");
+    assert_eq!(
+        a.post(&e, &p("respond"), json!({"epk_A": k32(5), "nonce_A": k32(6)})).await.status,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(b.get(&e, &format!("approvals/{id}")).await.body["approver"], a.id);
+    assert_eq!(
+        b.post(&e, &p("reveal"), json!({"epk_N": k32(2), "nonce_N": k32(3), "box_N": boxv(4)})).await.status,
+        StatusCode::NO_CONTENT
+    );
+    let seen = a.get(&e, &format!("approvals/{id}")).await.body;
+    assert_eq!(
+        (seen["kind"].as_str(), seen["commit_N"].as_str(), seen["box_N"].as_str()),
+        (Some("pak"), Some(k32(1).as_str()), Some(boxv(4).as_str()))
+    );
+    assert_eq!(b.post(&e, &p("confirm"), json!({"tag_N": k32(7)})).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(a.post(&e, &p("keys"), json!({"box_A": boxv(9)})).await.status, StatusCode::NO_CONTENT);
+    let done = b.get(&e, &format!("approvals/{id}")).await.body;
+    assert_eq!((done["state"].as_str(), done["box_A"].as_str()), (Some("done"), Some(boxv(9).as_str())));
+    assert_eq!(b.get(&e, &format!("approvals/{id}")).await.status, StatusCode::NOT_FOUND);
+    // Nothing about the key state of any device changed.
+    assert!(keys_of(b.id.clone()).await && keys_of(a.id.clone()).await);
+    assert!(!keys_of(k.id.clone()).await);
+}
+
+#[tokio::test]
 async fn the_device_api_lists_devices_and_sessions() {
     let Some(e) = env().await else { return };
     let s = setup(&e, "devapi@example.org").await;
