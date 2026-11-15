@@ -155,7 +155,8 @@
     "showButton": false,
     "autoConnect": false,
     "activeProfile": "",
-    "allowLocalNetwork": false
+    "allowLocalNetwork": false,
+    "scope": "everywhere"
   },
   "tabHoverPreview": true,
   "searchSuggestions": true,

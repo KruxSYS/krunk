@@ -16,7 +16,9 @@ impl Browser {
         // 0.14.0: while the VPN runs (or should), names are resolved inside the tunnel: the
         // engine's own DNS-over-HTTPS is off and the stub refuses every query (nothing is asked
         // over the system's network).
-        let vpn = self.vpn_engaged();
+        // 0.22.0: with the VPN for private tabs only, normal tabs keep the DNS settings (private
+        // tabs' names are resolved by the VPN's proxy).
+        let vpn = self.vpn_engaged() && !self.vpn_private_only();
         if let Some(e) = self.dns.borrow().as_ref() {
             e.set_refusing(vpn);
         }

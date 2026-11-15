@@ -158,6 +158,9 @@ pub struct VpnView {
     /// The profile the VPN runs with, or else the one used last (`vpn.active_profile`).
     pub active: String,
     pub show_button: bool,
+    /// 0.22.0: every tab, or private tabs only (`vpn.scope`).
+    #[serde(default)]
+    pub scope: crate::settings::VpnScope,
 }
 
 /// What the blob holds: the profile file (after the import rewrite) and the OpenVPN user name
@@ -543,8 +546,10 @@ mod tests {
             profiles: vec![VpnProfileView::new(&VpnProfile { has_credentials: true, ..profile("b", 2) })],
             active: "b".into(),
             show_button: true,
+            scope: crate::settings::VpnScope::Private,
         };
         let j = serde_json::to_value(&v).unwrap();
+        assert_eq!(j["scope"], "private");
         assert_eq!(j["status"]["state"], "connected");
         assert_eq!(j["status"]["sinceMs"], 5);
         assert_eq!(j["status"]["tunnelIp"], serde_json::Value::Null);

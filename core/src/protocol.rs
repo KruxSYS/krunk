@@ -1892,6 +1892,10 @@ pub enum Request {
         id: String,
     },
     VpnDisconnect {},
+    /// 0.22.0: which tabs use the VPN (`vpn.scope`), from the popup's selector; applied at once.
+    VpnScope {
+        scope: crate::settings::VpnScope,
+    },
     /// krunk://scripts (0.12.0).
     ScriptsList,
     ScriptGet {
@@ -2204,6 +2208,7 @@ impl Sender {
                     | R::Quit
                     | R::VpnConnect { .. }
                     | R::VpnDisconnect {}
+                    | R::VpnScope { .. }
             ),
             Sender::Page(Page::NewTab) => matches!(
                 req,
@@ -2327,6 +2332,7 @@ impl Sender {
                     | R::VpnCredentials { .. }
                     | R::VpnConnect { .. }
                     | R::VpnDisconnect {}
+                    | R::VpnScope { .. }
             ),
             Sender::Page(Page::Sync) => matches!(
                 req,
@@ -3383,6 +3389,7 @@ mod tests {
             (r#"{"cmd":"vpnCredentials","id":"ab","username":"alice","password":"pw-SECRET"}"#, &[settings]),
             (r#"{"cmd":"vpnConnect","id":"ab"}"#, &[settings, Sender::Popup]),
             (r#"{"cmd":"vpnDisconnect"}"#, &[settings, Sender::Popup]),
+            (r#"{"cmd":"vpnScope","scope":"private"}"#, &[settings, Sender::Popup]),
         ];
         for (msg, allowed) in cases {
             for s in every_sender() {

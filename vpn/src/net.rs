@@ -31,8 +31,19 @@ pub const MAX_TCP: usize = 256;
 /// retransmits).
 const RX_QUEUE: usize = 4096;
 const RX_QUEUE_BYTES: usize = 16 * 1024 * 1024;
-/// A TCP connection that gets no ACK for this long is aborted.
+/// A TCP connection whose peer sends nothing for this long is aborted. smoltcp counts this
+/// from the peer's last packet even on an idle connection with nothing to send, so without
+/// keep-alives every connection that stood still this long died silently (0.22.0).
+#[cfg(not(test))]
 const TCP_TIMEOUT: Duration = Duration::from_secs(60);
+#[cfg(test)]
+const TCP_TIMEOUT: Duration = Duration::from_millis(1500);
+/// An idle connection sends a keep-alive this often; the peer's ACK keeps it within
+/// `TCP_TIMEOUT` (three tries before it gives up), and NATs on the way keep their mapping.
+#[cfg(not(test))]
+const TCP_KEEP_ALIVE: Duration = Duration::from_secs(20);
+#[cfg(test)]
+const TCP_KEEP_ALIVE: Duration = Duration::from_millis(400);
 /// A closed connection that never finishes its FIN handshake is aborted after this long.
 const LINGER: Duration = Duration::from_secs(30);
 
@@ -292,7 +303,21 @@ impl Netstack {
     /// Opens a TCP connection through the tunnel; waits until it is established.
     pub async fn tcp_connect(&self, dst: SocketAddr, timeout: Duration) -> io::Result<TcpStream> {
         if self.inner.tcp_open.load(Ordering::Relaxed) >= MAX_TCP {
-            return Err(io::Error::other("too many connections through the VPN"));
+            // Dropped connections still finishing their close count too: make room by giving
+            // up on the ones with nothing left to deliver before refusing a new one.
+            let mut st = lock(&self.inner.stack);
+            let st = &mut *st;
+            st.dead.retain(|&(h, _, _)| {
+                if st.sockets.get::<tcp::Socket>(h).send_queue() > 0 {
+                    return true;
+                }
+                st.sockets.remove(h);
+                self.inner.tcp_open.fetch_sub(1, Ordering::Relaxed);
+                false
+            });
+            if self.inner.tcp_open.load(Ordering::Relaxed) >= MAX_TCP {
+                return Err(io::Error::other("too many connections through the VPN"));
+            }
         }
         let stream = {
             let mut st = lock(&self.inner.stack);
@@ -303,6 +328,7 @@ impl Netstack {
                 tcp::Socket::new(tcp::SocketBuffer::new(vec![0; TCP_RX]), tcp::SocketBuffer::new(vec![0; TCP_TX]));
             s.set_nagle_enabled(false);
             s.set_timeout(Some(smoltcp::time::Duration::from_millis(TCP_TIMEOUT.as_millis() as u64)));
+            s.set_keep_alive(Some(smoltcp::time::Duration::from_millis(TCP_KEEP_ALIVE.as_millis() as u64)));
             let st = &mut *st;
             let port = Self::port(st);
             s.connect(st.iface.context(), IpEndpoint::from(dst), (IpAddress::from(local), port))
@@ -764,6 +790,35 @@ mod tests {
         let e = c.read(&mut buf).await.unwrap_err();
         assert_eq!(e.kind(), io::ErrorKind::ConnectionReset);
         task.abort();
+        a.close();
+        b.close();
+    }
+
+    /// 0.22.0: a connection the peer leaves silent for longer than `TCP_TIMEOUT` (an idle
+    /// CONNECT tunnel, a pooled keep-alive socket, a paused video) still works afterwards.
+    /// Before, smoltcp's timeout closed it without a word and the next read was a reset.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_idle_connection_outlives_the_timeout() {
+        let a = Netstack::new();
+        let b = Netstack::new();
+        a.configure(vec![IpNet::parse("10.0.0.1/24").unwrap()], 1400);
+        b.configure(vec![IpNet::parse("10.0.0.2/24").unwrap()], 1400);
+        a.set_sink(Some(Arc::new(Wire(b.clone()))));
+        b.set_sink(Some(Arc::new(Wire(a.clone()))));
+        let server = listen(&b, 8080);
+        let task = tokio::spawn(async move {
+            let mut server = server;
+            accepted(&server).await;
+            tokio::time::sleep(TCP_TIMEOUT * 2).await;
+            server.write_all(b"late").await.unwrap();
+            server.shutdown().await.unwrap();
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        });
+        let mut c = a.tcp_connect("10.0.0.2:8080".parse().unwrap(), Duration::from_secs(5)).await.unwrap();
+        let mut got = Vec::new();
+        tokio::time::timeout(Duration::from_secs(10), c.read_to_end(&mut got)).await.unwrap().unwrap();
+        assert_eq!(got, b"late");
+        task.await.unwrap();
         a.close();
         b.close();
     }

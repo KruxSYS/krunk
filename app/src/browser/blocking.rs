@@ -143,6 +143,8 @@ pub(super) struct NetShared {
     ext_access: RwLock<Arc<HashMap<String, lb_core::ext_guard::WebAccess>>>,
     /// 0.18.0: the requests under way, of all tabs (`lb_core::inflight`).
     inflight: Mutex<lb_core::inflight::InFlight>,
+    /// 0.22.0: the VPN is for private tabs only: `offline` refuses only their requests.
+    offline_private_only: AtomicBool,
 }
 
 impl NetShared {
@@ -246,7 +248,9 @@ impl NetShared {
         self.hops.lock().map(|mut h| std::mem::take(&mut *h)).unwrap_or_default()
     }
 
-    pub fn set_offline(&self, on: bool) {
+    /// `private_only` (0.22.0): only private tabs are refused (the VPN is for them only).
+    pub fn set_offline(&self, on: bool, private_only: bool) {
+        self.offline_private_only.store(private_only, Relaxed);
         self.offline.store(on, Relaxed);
     }
 
@@ -356,7 +360,9 @@ impl RequestPolicy for TabPolicy {
         }
         let own_host =
             || urlclean::host_of(req.url).is_some_and(|h| h == "krunk.invalid" || h.ends_with(".krunk.invalid"));
-        if self.net.offline.load(Relaxed) && blocker::is_filterable(req.url) && !own_host() {
+        let offline = self.net.offline.load(Relaxed)
+            && (self.tab.private.load(Relaxed) || !self.net.offline_private_only.load(Relaxed));
+        if offline && blocker::is_filterable(req.url) && !own_host() {
             // The VPN couldn't start: nothing leaves (fail-closed), not even past the engine's
             // missing proxy setting.
             return NetVerdict::Block;
@@ -519,9 +525,9 @@ impl TabNet {
         }
     }
 
-    pub fn new(net: Arc<NetShared>) -> TabNet {
+    pub fn new(net: Arc<NetShared>, private: bool) -> TabNet {
         TabNet {
-            io: Arc::new(TabShared::default()),
+            io: Arc::new(TabShared { private: AtomicBool::new(private), ..TabShared::default() }),
             net,
             login_form: Cell::new(false),
             videos: RefCell::new(Vec::new()),

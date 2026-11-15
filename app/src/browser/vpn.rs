@@ -193,7 +193,7 @@ impl Browser {
     fn vpn_block(&self, error: &str) -> bool {
         let installed = match Block::start() {
             Ok(b) => {
-                let ok = engine::set_vpn_proxy(Some((format!("http://{}", b.addr), self.vpn_bypass())));
+                let ok = self.engine_vpn_proxy(&b.addr.to_string());
                 if ok {
                     *self.vpn.block.borrow_mut() = Some(b);
                 } else {
@@ -209,7 +209,7 @@ impl Browser {
             }
         };
         self.vpn.offline.set(!installed);
-        self.net.set_offline(!installed);
+        self.net.set_offline(!installed, self.vpn_private_only());
         self.vpn_route_changed();
         let server = self.vpn.status.borrow().server.clone();
         *self.vpn.status.borrow_mut() = VpnStatus {
@@ -242,6 +242,18 @@ impl Browser {
         self.running_settings.vpn_bypass_list_with(local)
     }
 
+    /// 0.22.0: the VPN is for private tabs only (`vpn.scope`): normal tabs and Krunk's own
+    /// requests go direct, and only private tabs are refused while it is down.
+    pub(super) fn vpn_private_only(&self) -> bool {
+        self.settings.borrow().vpn.scope.private_only()
+    }
+
+    /// Points the engine at the local proxy `addr` (the VPN's or the stand-in's), for the
+    /// contexts the scope says. True when the engine took it.
+    fn engine_vpn_proxy(&self, addr: &str) -> bool {
+        engine::set_vpn_proxy(Some((format!("http://{addr}"), self.vpn_bypass())), self.vpn_private_only())
+    }
+
     /// The local proxy Krunk's traffic goes to now (the VPN's or the stand-in's), `host:port`.
     pub(super) fn vpn_proxy_addr(&self) -> Option<String> {
         if let Some(r) = self.vpn.running.borrow().as_ref() {
@@ -253,11 +265,14 @@ impl Browser {
     /// How Krunk's own requests reach the network: through the VPN while it runs, else as the
     /// proxy setting says (`UpdaterProxy::Skip` for SOCKS, which WinHTTP can't use, and while
     /// Krunk is offline because the VPN couldn't start).
+    /// With the VPN for private tabs only they follow normal tabs: direct (0.22.0).
     pub(super) fn own_proxy(&self) -> UpdaterProxy {
-        if self.vpn.offline.get() {
+        let private_only = self.vpn_private_only();
+        if self.vpn.offline.get() && !private_only {
             return UpdaterProxy::Skip;
         }
-        lb_core::settings::krunk_proxy(&self.settings.borrow().proxy, self.vpn_proxy_addr().as_deref())
+        let vpn = if private_only { None } else { self.vpn_proxy_addr() };
+        lb_core::settings::krunk_proxy(&self.settings.borrow().proxy, vpn.as_deref())
     }
 
     /// [`Browser::own_proxy`] for WinHTTP, with the route generation of now; `None`: don't.
@@ -267,7 +282,7 @@ impl Browser {
 
     /// Why [`Browser::own_route`] said no: `socks` (a SOCKS proxy), or that Krunk is offline.
     pub(super) fn own_route_skipped(&self, socks: &str) -> String {
-        if self.vpn.offline.get() {
+        if self.vpn.offline.get() && !self.vpn_private_only() {
             "skipped: the VPN couldn't start (Krunk stays offline until you connect or turn auto-connect off)".into()
         } else {
             socks.into()
@@ -303,6 +318,7 @@ impl Browser {
             profiles: self.vpn.profiles.borrow().clone(),
             active,
             show_button: self.settings.borrow().vpn.show_button,
+            scope: self.settings.borrow().vpn.scope,
         }
     }
 
@@ -368,7 +384,7 @@ impl Browser {
                 let r = self.vpn_set_credentials(&id, Zeroizing::new(username), password);
                 self.vpn_answer(to, req_id, r);
             }
-            Request::VpnConnect { .. } | Request::VpnDisconnect {}
+            Request::VpnConnect { .. } | Request::VpnDisconnect {} | Request::VpnScope { .. }
                 if sender == Sender::Popup && !v::popup_may_control(self.popup_kind()) =>
             {
                 // The popup browser also shows menus and other panels: only the VPN popup itself
@@ -386,6 +402,11 @@ impl Browser {
             Request::VpnDisconnect {} => {
                 self.vpn_disconnect();
                 self.vpn_answer(to, req_id, Ok(()));
+            }
+            Request::VpnScope { scope } => {
+                // Applied by `vpn_settings_changed` (the engine, Krunk's requests, the block).
+                let r = self.try_change_settings(move |s| s.vpn.scope = scope);
+                self.vpn_answer(to, req_id, r);
             }
             _ => {}
         }
@@ -591,10 +612,10 @@ impl Browser {
         let vpn = krunk_vpn::Vpn::start(profile, creds, Box::new(crate::ffi::peer::peer_allowed), Box::new(on_status))
             .map_err(|e| e.to_string())?;
         let addr = vpn.proxy_addr();
-        if !engine::set_vpn_proxy(Some((format!("http://{addr}"), self.vpn_bypass()))) {
+        if !self.engine_vpn_proxy(&addr.to_string()) {
             // Back to what was there (another VPN, the stand-in, or nothing).
             let before = self.vpn_proxy_addr().map(|a| (format!("http://{a}"), self.vpn_bypass()));
-            engine::set_vpn_proxy(before);
+            engine::set_vpn_proxy(before, self.vpn_private_only());
             stop_later(vpn);
             return Err("The engine did not take the VPN's proxy; nothing was changed".into());
         }
@@ -606,7 +627,7 @@ impl Browser {
             stop_later(old.vpn);
         }
         self.vpn.offline.set(false);
-        self.net.set_offline(false);
+        self.net.set_offline(false, false);
         self.vpn_route_changed();
         info!("vpn: started a {} profile; Krunk's traffic goes through the local proxy {addr}", row.kind.as_str());
         if self.settings.borrow().vpn.active_profile != id {
@@ -619,7 +640,7 @@ impl Browser {
     /// Stops the VPN (or the stand-in): the engine and Krunk's requests go direct again.
     pub(super) fn vpn_disconnect(&self) {
         let engaged = self.vpn_engaged();
-        if engaged && !engine::set_vpn_proxy(None) {
+        if engaged && !engine::set_vpn_proxy(None, false) {
             warning!("vpn: the engine kept the VPN's proxy setting; its connections fail until Krunk restarts");
         }
         self.vpn.block.borrow_mut().take();
@@ -629,7 +650,7 @@ impl Browser {
             stop_later(r.vpn);
         }
         self.vpn.offline.set(false);
-        self.net.set_offline(false);
+        self.net.set_offline(false, false);
         *self.vpn.status.borrow_mut() = VpnStatus { since_ms: now_ms(), ..VpnStatus::default() };
         if engaged {
             self.vpn_route_changed();
@@ -656,18 +677,31 @@ impl Browser {
         self.vpn_push();
     }
 
-    /// A VPN setting changed (the button, auto-connect, the profile used last).
-    pub(super) fn vpn_settings_changed(&self, bypass_changed: bool) {
-        // The local network's bypass changed while the engine uses the VPN's proxy (or the
-        // stand-in): the engine takes the new list at once (0.14.2).
-        if bypass_changed {
+    /// A VPN setting changed (the button, auto-connect, the profile used last, the local
+    /// network's bypass, the scope).
+    pub(super) fn vpn_settings_changed(&self, bypass_changed: bool, scope_changed: bool) {
+        // The local network's bypass or the scope changed while the engine uses the VPN's proxy
+        // (or the stand-in): the engine takes it at once (0.14.2, 0.22.0), and its open
+        // connections are closed so they come back the new way.
+        if bypass_changed || scope_changed {
             if let Some(addr) = self.vpn_proxy_addr() {
-                let local = self.settings.borrow().vpn.allow_local_network;
-                if engine::set_vpn_proxy(Some((format!("http://{addr}"), self.vpn_bypass()))) {
+                if !self.engine_vpn_proxy(&addr) {
+                    warning!("vpn: the engine did not take the new proxy settings");
+                } else if bypass_changed {
+                    let local = self.settings.borrow().vpn.allow_local_network;
                     info!("vpn: the local network {} the VPN", if local { "now skips" } else { "goes through" });
-                } else {
-                    warning!("vpn: the engine did not take the new bypass list");
                 }
+            }
+        }
+        if scope_changed {
+            let private_only = self.vpn_private_only();
+            info!("vpn: {}", if private_only { "for private tabs only" } else { "for every tab" });
+            if self.vpn.offline.get() {
+                self.net.set_offline(true, private_only);
+            }
+            if self.vpn_engaged() {
+                // Krunk's own requests and the DNS settings follow normal tabs.
+                self.vpn_route_changed();
             }
         }
         self.vpn_push();

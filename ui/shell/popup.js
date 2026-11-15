@@ -468,13 +468,14 @@
     const engaged = st !== 'stopped';
     const profiles = c.profiles || [];
     const active = profiles.find((p) => p.id === c.active) || null;
+    const privateOnly = c.scope === 'private';
     if (vpn.picked && !profiles.some((p) => p.id === vpn.picked)) vpn.picked = null;
     const look = st === 'connected' ? 'ok' : st === 'failed' ? 'warn' : (st === 'stopped' ? 'plain' : 'busy');
     const head = el('div', { class: 'pop-head' }, [
       el('div', { class: 'pop-icon vpn-' + look, 'aria-hidden': 'true' }, [el('span', { text: st === 'connected' ? '●' : st === 'failed' ? '!' : st === 'stopped' ? '○' : '◐' })]),
       el('div', { class: 'pop-titles' }, [
-        el('h2', { class: 'pop-title', id: 'vpn-title', text: VPN_TITLE[st] || 'VPN' }),
-        el('div', { class: 'pop-sub', id: 'vpn-sub', text: engaged && active ? active.name + ' · ' + (c.status.server || active.server) : 'Only Krunk\'s connections use the VPN' }),
+        el('h2', { class: 'pop-title', id: 'vpn-title', text: (st === 'connected' && privateOnly ? 'VPN on for private tabs only' : VPN_TITLE[st]) || 'VPN' }),
+        el('div', { class: 'pop-sub', id: 'vpn-sub', text: engaged && active ? active.name + ' · ' + (c.status.server || active.server) : privateOnly ? 'Only private tabs use the VPN' : 'Only Krunk\'s connections use the VPN' }),
       ]),
     ]);
     const parts = [head];
@@ -492,6 +493,14 @@
         if (again) again.focus();
       });
       parts.push(el('label', { class: 'vpn-pick' }, [el('span', { text: 'Profile' }), sel]));
+      // 0.22.0: which tabs use it; the host applies it at once (and closes open connections).
+      const scope = el('select', { id: 'vpn-scope', class: 'vpn-select', 'aria-label': 'Use the VPN for' }, [
+        el('option', { value: 'everywhere', selected: !privateOnly, text: 'Enable everywhere' }),
+        el('option', { value: 'private', selected: privateOnly, text: 'Private tabs only' }),
+      ]);
+      scope.value = privateOnly ? 'private' : 'everywhere';
+      scope.addEventListener('change', function () { vpnAsk('vpnScope', { scope: scope.value }); });
+      parts.push(el('label', { class: 'vpn-pick' }, [el('span', { text: 'Use for' }), scope]));
       const picked = profiles.find((p) => p.id === chosen);
       const other = engaged && active && chosen !== active.id;
       if (picked && picked.needsCredentials && !picked.hasCredentials) {
@@ -501,7 +510,7 @@
       if (c.status && c.status.error && (st === 'failed' || st === 'reconnecting')) {
         parts.push(el('div', { class: 'pop-card warning', id: 'vpn-error', role: 'alert', text: c.status.error }));
       }
-      if (st === 'failed') parts.push(el('div', { class: 'pop-card plain-note', text: 'Krunk\'s connections are stopped until the VPN connects again or you disconnect.' }));
+      if (st === 'failed') parts.push(el('div', { class: 'pop-card plain-note', text: privateOnly ? 'Private tabs are stopped until the VPN connects again or you disconnect.' : 'Krunk\'s connections are stopped until the VPN connects again or you disconnect.' }));
       if (st === 'connected' || st === 'reconnecting') {
         const kv = (k, v, id) => el('div', { class: 'kv' }, [el('span', { class: 'k', text: k }), el('span', { class: 'v', id: id, text: v })]);
         parts.push(el('div', { class: 'pop-card vpn-stats' }, [
