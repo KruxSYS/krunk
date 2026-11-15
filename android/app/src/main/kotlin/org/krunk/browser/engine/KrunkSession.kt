@@ -326,7 +326,14 @@ class KrunkSession(
         override fun onLoadError(session: GeckoSession, uri: String?, error: WebRequestError): GeckoResult<String>? {
             val u = uri ?: ""
             val page = errorPage.dataUri(u, error.category, error.code)
-            set { it.copy(loadError = LoadError(u, error.category, error.code, page), progress = 0f, loading = false) }
+            val cert = CertErrors.fromLoadError(u, error.code, error.certificate, private, System.currentTimeMillis())
+            set {
+                it.copy(
+                    loadError = LoadError(u, error.category, error.code, page, cert),
+                    progress = 0f,
+                    loading = false,
+                )
+            }
             return GeckoResult.fromValue(page)
         }
     }

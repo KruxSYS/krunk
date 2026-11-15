@@ -85,6 +85,9 @@ sealed class Screen {
     /** Sites with cookies or stored data, and clearing them (0.4.0). */
     data object SiteData : Screen()
 
+    /** Certificates the user chose to accept ("Continue anyway"), and removing them. */
+    data object CertExceptions : Screen()
+
     /** Krunk account and sync (0.6.0). */
     data object Sync : Screen()
 

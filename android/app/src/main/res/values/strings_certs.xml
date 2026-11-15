@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Certificate error screen (shown over Krunk's error page) -->
+    <string name="cert_title">This connection is not secure</string>
+    <string name="cert_problem_expired">The certificate of %1$s has expired.</string>
+    <string name="cert_problem_not_yet_valid">The certificate of %1$s is not valid yet. Check the date on this phone.</string>
+    <string name="cert_problem_wrong_host">The certificate was issued for other names, not for %1$s.</string>
+    <string name="cert_problem_self_signed">The certificate of %1$s was signed by the site itself; no trusted authority vouches for it.</string>
+    <string name="cert_problem_untrusted">The certificate of %1$s was not issued by an authority Krunk trusts.</string>
+    <string name="cert_hsts">This site asks browsers to accept only a valid certificate, so you can’t continue.</string>
+    <string name="cert_risk">If you continue, the connection is not secure: anyone on the network may read or change it. Someone may be pretending to be this site.</string>
+    <string name="cert_fingerprint">Certificate SHA-256</string>
+    <string name="cert_back">Back to safety</string>
+    <string name="cert_continue">Continue anyway</string>
+    <string name="cert_remember">Remember for this site</string>
+    <string name="cert_remember_help">Until the site shows another certificate. Without this, only until Krunk is closed.</string>
+    <string name="cert_private_temporary">In a private tab this is only until Krunk is closed.</string>
+    <string name="cert_failed">Krunk could not accept this certificate.</string>
+
+    <!-- Settings › Privacy › Certificate exceptions -->
+    <string name="settings_cert_exceptions">Certificate exceptions</string>
+    <string name="settings_cert_exceptions_help">Sites whose untrusted certificate you chose to accept</string>
+    <string name="cert_exceptions_title">Certificate exceptions</string>
+    <string name="cert_exceptions_empty">No exceptions. When you continue past a certificate warning, the site is listed here.</string>
+    <string name="cert_exceptions_unavailable">The list could not be read.</string>
+    <string name="cert_exceptions_temporary">Until Krunk is closed</string>
+    <string name="cert_exceptions_remove_for">Remove the exception for %1$s</string>
+</resources>

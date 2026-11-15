@@ -1,5 +1,5 @@
-// Krunk site data: the background script. It answers one question of the app over one
-// native-messaging port, and does nothing until asked.
+// Krunk site data: the background script. It answers the app over one native-messaging port
+// (site data, and the certificate exceptions further down), and does nothing until asked.
 //
 // App -> here:  {t:"list", id}
 // Here -> app:  {t:"ready"}                       after every start of this script
@@ -47,8 +47,30 @@ async function list(id) {
   });
 }
 
+// Certificate exceptions (certs-api.js). Every call answers {t:"certs", id, ok, result, error}.
+//   {t:"cert-add", id, host, port, der, temporary, private}  result: the SHA-256 fingerprint
+//   {t:"cert-remove", id, host, port}
+//   {t:"cert-list", id}                                      result: JSON text [{host, port, sha256}]
+async function certs(m) {
+  try {
+    let result = "";
+    if (m.t === "cert-add") {
+      result = await browser.krunkCerts.add(m.host, m.port, m.der, m.temporary === true, m.private === true);
+    } else if (m.t === "cert-remove") {
+      await browser.krunkCerts.remove(m.host, m.port);
+    } else {
+      result = await browser.krunkCerts.list();
+    }
+    send({ t: "certs", id: m.id, ok: true, result: String(result || ""), error: "" });
+  } catch (e) {
+    send({ t: "certs", id: m.id, ok: false, result: "", error: String(e).slice(0, 300) });
+  }
+}
+
 port.onMessage.addListener(m => {
-  if (m && m.t === "list") list(m.id);
+  if (!m) return;
+  if (m.t === "list") list(m.id);
+  else if (m.t === "cert-add" || m.t === "cert-remove" || m.t === "cert-list") certs(m);
 });
 
 send({ t: "ready" });

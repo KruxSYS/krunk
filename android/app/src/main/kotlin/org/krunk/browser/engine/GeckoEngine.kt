@@ -105,6 +105,9 @@ class GeckoEngine(context: Context, automaticUpdates: Boolean, blockerHost: Bloc
     /** Lists the sites that hold cookies or stored data; installed when first asked. */
     val siteData: SiteDataExtension by lazy { SiteDataExtension(runtime) }
 
+    /** Certificate exceptions ("Continue anyway"), through the same extension. */
+    val certs: CertOverrides by lazy { CertOverrides(siteData) }
+
     /**
      * The engine's own user agent. Krunk's few requests of its own (favicons, search suggestions)
      * carry it instead of the platform's default, which names the device model and build.

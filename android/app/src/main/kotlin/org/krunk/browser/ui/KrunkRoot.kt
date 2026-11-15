@@ -22,6 +22,7 @@ import org.krunk.browser.ui.history.HistoryScreen
 import org.krunk.browser.ui.permissions.SiteDetailScreen
 import org.krunk.browser.ui.permissions.SitePermissionsScreen
 import org.krunk.browser.ui.settings.AboutScreen
+import org.krunk.browser.ui.settings.CertExceptionsScreen
 import org.krunk.browser.ui.settings.SettingsScreen
 import org.krunk.browser.ui.sitedata.SiteDataScreen
 import org.krunk.browser.ui.sync.SyncScreen
@@ -104,6 +105,8 @@ fun KrunkRoot(vm: BrowserViewModel) {
                     is Screen.SiteDetail -> SiteDetailScreen(vm, screen.origin)
 
                     Screen.SiteData -> SiteDataScreen(vm)
+
+                    Screen.CertExceptions -> CertExceptionsScreen(vm)
 
                     Screen.Sync -> SyncScreen(vm)
 

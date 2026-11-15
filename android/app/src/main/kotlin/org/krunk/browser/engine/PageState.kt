@@ -50,7 +50,14 @@ data class PageState(
  * A failed load: the address that failed and the error. [pageUri] is the `data:` address of the
  * error page Krunk handed to the engine for it ("" when unknown).
  */
-data class LoadError(val uri: String, val category: Int, val code: Int, val pageUri: String = "")
+data class LoadError(
+    val uri: String,
+    val category: Int,
+    val code: Int,
+    val pageUri: String = "",
+    /** The load failed on the site's certificate: Krunk's certificate screen is shown over the page. */
+    val cert: CertError? = null,
+)
 
 /** One entry of a tab's back/forward list. */
 data class HistoryPage(val url: String, val title: String)
@@ -94,7 +101,8 @@ fun PageState.pageStarted(startedUrl: String): PageState {
         title = "",
         progress = 0.05f,
         loading = true,
-        loadError = null,
+        // Krunk's own error page starting to show is still the failed load, not a new one.
+        loadError = loadError?.takeIf { it.pageUri.isNotEmpty() && it.pageUri == startedUrl },
         crashed = false,
         loadingUrl = startedUrl,
         blocked = null,
