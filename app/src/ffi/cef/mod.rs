@@ -30,7 +30,7 @@ pub use net::{NetRequest, NetVerdict, RequestPolicy};
 pub use scheme::InternalResponse;
 pub use scriptlets::set_scriptlets;
 pub use view::{
-    with_batched_moves, AuthChallenge, AuthResponder, CertErrorSeen, ClearKinds, DownloadControl, DownloadStart,
+    with_batched_moves, AuthChallenge, AuthResponder, AUTH_TIMEOUT_MS, CertErrorSeen, ClearKinds, DownloadControl, DownloadStart,
     DownloadStatus, DownloadUpdate, JsDialogRequest, JsDialogResponder, KeyPress, LoadingState, Menu, MessageSource,
     NewWindow, OpenIn, Role, Scripts, View, ViewOptions,
 };
@@ -465,6 +465,13 @@ wrap_task! {
             }
         }
     }
+}
+
+/// Runs `f` on the engine's IO thread after `delay_ms` milliseconds; callable from any thread.
+/// The watchdogs of held network callbacks (0.22.0) use it: it does not need the UI thread.
+pub fn post_io_delayed(delay_ms: i64, f: impl FnOnce() + Send + 'static) {
+    let mut task = SendTask::new(Arc::new(Mutex::new(Some(Box::new(f)))));
+    post_delayed_task(ThreadId::IO, Some(&mut task), delay_ms);
 }
 
 /// Runs `f` on the UI thread; callable from any engine thread.

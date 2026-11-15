@@ -13,7 +13,7 @@
 //! refused. Only Cancel (or Esc), closing the tab or the tab navigating elsewhere refuse it.
 
 use super::Browser;
-use crate::ffi::cef::{AuthChallenge, AuthResponder};
+use crate::ffi::cef::{AuthChallenge, AuthResponder, AUTH_TIMEOUT_MS};
 use crate::log::info;
 use lb_core::http_auth::{accepted, clean_realm, Arrival, AuthTabs, ANSWER_WINDOW_MS};
 use lb_core::protocol::{AuthLogin, PopupContent, UnlockPurpose};
@@ -32,6 +32,8 @@ const RESHOW_DELAY_MS: i64 = 150;
 pub(super) struct Pending {
     responder: AuthResponder,
     failed: bool,
+    /// When it arrived (0.22.0: unanswered ones expire, see `http_auth_expire`).
+    at: i64,
 }
 
 /// The last answer: to tell a refused one (a new challenge right after it) and, for typed
@@ -58,6 +60,7 @@ impl Browser {
             responder.cancel();
             return;
         };
+        self.http_auth_expire();
         let realm = clean_realm(&challenge.realm);
         let failed = self.http_auth.answered.borrow().as_ref().is_some_and(|a| {
             a.tab == tab && a.origin == origin && a.realm == realm && now_ms() - a.at < ANSWER_WINDOW_MS
@@ -66,7 +69,7 @@ impl Browser {
             // The last answer was refused: nothing to save.
             self.http_auth.answered.borrow_mut().take();
         }
-        let arrival = self.http_auth.tabs.borrow_mut().arrive(tab, origin, realm, Pending { responder, failed });
+        let arrival = self.http_auth.tabs.borrow_mut().arrive(tab, origin, realm, Pending { responder, failed, at: now_ms() });
         match arrival {
             Arrival::Duplicate(p) => {
                 // The same challenge again while its dialog is open or waiting: one is enough.
@@ -93,6 +96,7 @@ impl Browser {
     /// Shows the dialog of the current window's active tab if it waits for a sign-in, its
     /// dialog is not on screen, no other popup is open and Krunk has the foreground.
     pub(super) fn http_auth_reshow(&self) {
+        self.http_auth_expire();
         let active = self.active_id();
         let Some(tab) = active.filter(|t| self.http_auth.tabs.borrow().should_show(*t, active)) else { return };
         if self.popup_kind().is_some() || !crate::ffi::window::foreground_is_ours() {
@@ -231,6 +235,38 @@ impl Browser {
                 b.http_auth_reshow();
             }
         });
+    }
+
+    /// 0.22.0: drops the waiting sign-ins the watchdog refused or that are older than
+    /// `AUTH_TIMEOUT_MS`, so a forgotten challenge (a background tab, a hidden dialog) neither
+    /// holds its request and connection nor fills its tab's queue for good.
+    fn http_auth_expire(&self) {
+        let now = now_ms();
+        let mut expired = Vec::new();
+        {
+            let Ok(mut t) = self.http_auth.tabs.try_borrow_mut() else { return };
+            let tabs: Vec<TabId> = t.tabs().collect();
+            for tab in tabs {
+                // Oldest first: the queue of a tab is in arrival order.
+                while t.open(tab).is_some_and(|c| !c.payload.responder.is_live() || now - c.payload.at > AUTH_TIMEOUT_MS) {
+                    if let Some(c) = t.take(tab) {
+                        expired.push((tab, c.payload));
+                    }
+                }
+            }
+        }
+        if expired.is_empty() {
+            return;
+        }
+        let shown = self.popup.try_borrow().ok().and_then(|p| p.as_ref().and_then(|p| p.content.clone()));
+        for (tab, p) in expired {
+            info!("http auth: tab {tab}: a sign-in expired unanswered; refused");
+            p.responder.cancel();
+            if matches!(&shown, Some(PopupContent::HttpAuth { tab_id, .. }) if *tab_id == tab) {
+                self.hide_popup();
+            }
+            self.send_tab_update(tab);
+        }
     }
 
     /// The tab closed or its page navigates elsewhere: its sign-ins are refused.
