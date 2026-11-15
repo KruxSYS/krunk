@@ -141,6 +141,8 @@ pub fn recovery_kek(rk: &[u8; 20], account_id: &AccountId) -> Key {
 pub enum WrapKind {
     Passphrase,
     RecoveryKey,
+    /// The password-vault master password (0.21.1 / Android 0.6.2): the one secret users type.
+    Vault,
 }
 
 impl WrapKind {
@@ -148,6 +150,7 @@ impl WrapKind {
         match self {
             WrapKind::Passphrase => "pp",
             WrapKind::RecoveryKey => "rk",
+            WrapKind::Vault => "vault",
         }
     }
 }

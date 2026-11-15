@@ -224,6 +224,21 @@ fn local_err(e: impl std::fmt::Display) -> SyncFfiError {
     SyncFfiError::Local { text: format!("Krunk couldn't save its sync data on this device ({e}).") }
 }
 
+const WRONG_VAULT_PW: &str =
+    "That vault password doesn't open your sync data. Type the vault password you use on your other device.";
+
+const NO_VAULT_COPY: &str = "Your other device hasn't switched to the vault password yet. Update Krunk there, \
+     unlock your passwords on it once, then try again here.";
+
+/// Errors of the vault-password paths, in their words.
+fn vault_err(e: &SyncFail) -> SyncFfiError {
+    match e {
+        SyncFail::Keys(KeyError::WrongSecret) => SyncFfiError::WrongSecret { text: WRONG_VAULT_PW.into() },
+        SyncFail::Keys(KeyError::NoVaultWrap) => SyncFfiError::NotNow { text: NO_VAULT_COPY.into() },
+        e => sync_err(e),
+    }
+}
+
 /// The same sentences as Windows' `fail_text`.
 fn sync_text(e: &SyncFail) -> String {
     match e {
@@ -926,6 +941,84 @@ impl Engine {
         Ok(())
     }
 
+    /// First device, the one-password way (0.21.1): the vault password protects the keys; no
+    /// passphrase or recovery key is shown. The vault must be open (Kotlin creates or unlocks it
+    /// with the same password first).
+    pub(crate) fn setup_vault(&mut self, http: &dyn HttpClient, password: String, now: i64) -> R<()> {
+        self.load();
+        if self.sync.is_some() {
+            return Ok(());
+        }
+        if !self.vault_open() {
+            return Err(not_now("Unlock your passwords first (Passwords in the menu)."));
+        }
+        let (account, acc, device) = self.ids()?;
+        let token = self.access(http, now)?;
+        let api = Self::api(http, &token, now);
+        let short = client::my_short(&api, &device).map_err(|e| sync_err(&e))?;
+        let pw = Zeroizing::new(password);
+        let plan = keys::plan_setup_vault(acc, Me { device_id: device.clone(), short }, &pw)
+            .map_err(|e| sync_err(&e.into()))?;
+        match client::setup(&api, &plan) {
+            Ok((joined, gen)) => {
+                let me = Me { device_id: device, short };
+                self.plan = None;
+                self.started(client::new_state(&account, &me, &joined, gen), joined.pak.as_ref(), now)?;
+                self.message = Some("Sync is on. On your other devices, sign in and type this vault password.".into());
+                Ok(())
+            }
+            Err(SyncFail::Api(ApiError::Conflict(_))) => {
+                self.stage = Stage::Join { passwords: true };
+                let text = "Another device has set up sync meanwhile. Type your vault password to join it.";
+                self.message = Some(text.into());
+                Err(SyncFfiError::NotNow { text: text.into() })
+            }
+            Err(e) => Err(sync_err(&e)),
+        }
+    }
+
+    /// The vault was created, unlocked or its password changed with `password` (0.21.1). With
+    /// sync on: a phone without the passwords key gets it with this password (when the account
+    /// has a vault-password copy); a phone with it makes the vault password the account's one
+    /// secret when the server has no copy yet, the password `changed`, or a removal left the
+    /// keys to re-secure. Errors are kept in the status (the vault screen shows nothing of it).
+    pub(crate) fn vault_password(&mut self, http: &dyn HttpClient, password: String, changed: bool, now: i64) {
+        self.load();
+        let Some(mut st) = self.sync.clone() else { return };
+        if !matches!(self.stage, Stage::On) || !self.vault_open() || password.is_empty() {
+            return;
+        }
+        let Ok(token) = self.access(http, now) else { return };
+        let api = Self::api(http, &token, now);
+        let Ok(server) = client::state(&api) else { return };
+        match self.pak() {
+            None => {
+                if !server.escrow_vault {
+                    return;
+                }
+                if let Err(e) = self.add_passwords_with(http, SyncSecret::Vault(Zeroizing::new(password)), now) {
+                    self.message = Some(e.text().to_string());
+                }
+            }
+            Some(mut pak) => {
+                if server.escrow_vault && !changed && !st.secure_needed {
+                    return;
+                }
+                match client::set_vault_root(&api, &mut st, &mut pak, &password) {
+                    Ok(()) => {
+                        self.sync = Some(st);
+                        let _ = self.save_state();
+                        self.set_pak(Some(&pak));
+                        self.rotation_pending = false;
+                    }
+                    Err(e) => {
+                        self.last_result = Some(sync_text(&e));
+                    }
+                }
+            }
+        }
+    }
+
     /// Restore, step 1 of 3: fetches the escrow (once per attempt: it is limited to 5 a day).
     pub(crate) fn restore_begin(&mut self, http: &dyn HttpClient, now: i64) -> R<()> {
         if !matches!(self.stage, Stage::Join { .. } | Stage::RestoreConfirm { .. }) {
@@ -950,6 +1043,19 @@ impl Engine {
         now: i64,
     ) -> R<SyncStage> {
         let secret = secret_of(secret, recovery)?;
+        self.restore_try_with(http, secret, now)
+    }
+
+    /// Restore with the vault password (0.21.1): the one secret users type.
+    pub(crate) fn restore_vault(&mut self, http: &dyn HttpClient, password: String, now: i64) -> R<SyncStage> {
+        if password.is_empty() || password.len() > MAX_SECRET {
+            return Err(SyncFfiError::WrongSecret { text: WRONG_VAULT_PW.into() });
+        }
+        self.restore_try_with(http, SyncSecret::Vault(Zeroizing::new(password)), now)
+    }
+
+    fn restore_try_with(&mut self, http: &dyn HttpClient, secret: SyncSecret, now: i64) -> R<SyncStage> {
+        let vault = matches!(secret, SyncSecret::Vault(_));
         if self.escrow.is_none() {
             self.restore_begin(http, now)?;
         }
@@ -957,7 +1063,15 @@ impl Engine {
         let token = self.access(http, now)?;
         let api = Self::api(http, &token, now);
         let escrow = self.escrow.as_ref().ok_or_else(|| not_now("Start again with Turn on sync."))?;
-        let plan = client::restore_with(&api, escrow, &secret, acc).map_err(|e| sync_err(&e))?;
+        let plan = match client::restore_with(&api, escrow, &secret, acc) {
+            Ok(p) => p,
+            Err(e) => {
+                if matches!(e, SyncFail::Keys(KeyError::NoVaultWrap)) {
+                    self.escrow = None;
+                }
+                return Err(if vault { vault_err(&e) } else { sync_err(&e) });
+            }
+        };
         let listed = client::devices(&api).map_err(|e| sync_err(&e))?;
         let devices: Vec<String> = plan
             .ak_dir
@@ -1144,6 +1258,15 @@ impl Engine {
     /// in the unlocked vault; the next run brings the logins. One escrow fetch serves every try
     /// (a wrong secret is retried locally, as in a restore).
     pub(crate) fn add_passwords(&mut self, http: &dyn HttpClient, secret: String, recovery: bool, now: i64) -> R<()> {
+        let secret = secret_of(secret, recovery)?;
+        self.add_passwords_with(http, secret, now)
+    }
+
+    pub(crate) fn add_passwords_with_pub(&mut self, http: &dyn HttpClient, secret: SyncSecret, now: i64) -> R<()> {
+        self.add_passwords_with(http, secret, now)
+    }
+
+    fn add_passwords_with(&mut self, http: &dyn HttpClient, secret: SyncSecret, now: i64) -> R<()> {
         self.load();
         let Some(mut st) = self.sync.clone() else { return Err(not_now("Sync is off.")) };
         if !self.vault_open() {
@@ -1152,14 +1275,20 @@ impl Engine {
         if self.pak().is_some() {
             return Ok(());
         }
-        let secret = secret_of(secret, recovery)?;
+        let vault = matches!(secret, SyncSecret::Vault(_));
         let token = self.access(http, now)?;
         let api = Self::api(http, &token, now);
         if self.escrow.is_none() {
             self.escrow = Some(client::fetch_escrow(&api).map_err(|e| sync_err(&e))?);
         }
         let escrow = self.escrow.clone().ok_or_else(|| not_now("Try again."))?;
-        let pak = client::add_passwords(&api, &mut st, &escrow, &secret).map_err(|e| sync_err(&e))?;
+        let pak = client::add_passwords(&api, &mut st, &escrow, &secret).map_err(|e| {
+            if matches!(e, SyncFail::Keys(KeyError::NoVaultWrap)) {
+                // Fetched before the other device added its copy: fetch again next time.
+                self.escrow = None;
+            }
+            if vault { vault_err(&e) } else { sync_err(&e) }
+        })?;
         self.escrow = None;
         self.sync = Some(st);
         self.save_state()?;
@@ -1633,6 +1762,33 @@ impl KrunkSync {
 
     pub fn set_collection(&self, name: String, on: bool) -> Result<(), SyncFfiError> {
         self.engine().set_collection(name, on, crate::now_ms())
+    }
+
+    /// Join with the vault password (0.21.1): goes on to the devices to confirm, as a restore.
+    pub fn restore_vault(&self, password: String) -> Result<SyncStage, SyncFfiError> {
+        self.engine().restore_vault(&Foreign(self.transport.as_ref()), password, crate::now_ms())
+    }
+
+    /// First device: sync on, protected by the vault password (0.21.1).
+    pub fn setup_vault(&self, password: String) -> Result<(), SyncFfiError> {
+        self.engine().setup_vault(&Foreign(self.transport.as_ref()), password, crate::now_ms())
+    }
+
+    /// Passwords on a phone that syncs without them, with the vault password (0.21.1).
+    pub fn add_passwords_vault(&self, password: String) -> Result<(), SyncFfiError> {
+        if password.is_empty() || password.len() > MAX_SECRET {
+            return Err(SyncFfiError::WrongSecret { text: WRONG_VAULT_PW.into() });
+        }
+        self.engine().add_passwords_with_pub(
+            &Foreign(self.transport.as_ref()),
+            SyncSecret::Vault(Zeroizing::new(password)),
+            crate::now_ms(),
+        )
+    }
+
+    /// Call after the vault was created, unlocked with its password, or the password changed.
+    pub fn vault_password(&self, password: String, changed: bool) {
+        self.engine().vault_password(&Foreign(self.transport.as_ref()), password, changed, crate::now_ms())
     }
 
     /// "Add passwords" (0.6.1): `secret` is the passphrase or the recovery key.

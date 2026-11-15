@@ -30,6 +30,9 @@ pub enum KeyError {
     /// The other side broke the protocol (a commitment or tag that doesn't verify, keys that
     /// don't match the directories).
     Protocol(&'static str),
+    /// The escrow has no copy under the vault password yet: unlock the vault once on a device
+    /// that syncs (it adds one).
+    NoVaultWrap,
 }
 
 impl std::fmt::Display for KeyError {
@@ -40,6 +43,7 @@ impl std::fmt::Display for KeyError {
             KeyError::WrongSecret => f.write_str("the passphrase or recovery key is wrong"),
             KeyError::SasMismatch => f.write_str("the code doesn't match"),
             KeyError::Protocol(w) => write!(f, "protocol: {w}"),
+            KeyError::NoVaultWrap => f.write_str("no vault password copy of the keys yet"),
         }
     }
 }
@@ -239,6 +243,16 @@ impl RrWrapWire {
     }
 }
 
+/// RR under the password-vault master password, with its own KDF salt and parameters.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VaultWrapWire {
+    pub n: String,
+    pub ct: String,
+    pub commit: String,
+    pub kdf: PpKdf,
+}
+
 /// `keys/escrow` and the escrow part of `keys/commit`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EscrowWire {
@@ -248,6 +262,18 @@ pub struct EscrowWire {
     pub rr_wrap_pp: RrWrapWire,
     pub rr_wrap_rk: RrWrapWire,
     pub pp_kdf: PpKdf,
+    /// RR under the vault password (0.21.1): the only secret a user types to add a device.
+    /// Escrows from before it have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rr_wrap_vault: Option<VaultWrapWire>,
+}
+
+/// RR wrapped under the vault password (Argon2id at the sync floor, a fresh salt).
+fn vault_wrap(rr: &[u8; 32], vault_pw: &str, rr_gen: u32, account_id: &AccountId) -> KResult<VaultWrapWire> {
+    let salt = crypto::random::<16>()?;
+    let kek = crypto::passphrase_kek(vault_pw.as_bytes(), &salt, &PASSPHRASE_KDF)?;
+    let w = RrWrapWire::from(&crypto::rr_wrap(&kek, rr, WrapKind::Vault, account_id, rr_gen)?);
+    Ok(VaultWrapWire { n: w.n, ct: w.ct, commit: w.commit, kdf: pp_kdf(&salt) })
 }
 
 /// The wraps of a new recovery root under the passphrase and the recovery key.
@@ -267,6 +293,7 @@ fn escrow_for(
         rr_wrap_pp: RrWrapWire::from(&crypto::rr_wrap(&kek_pp, rr, WrapKind::Passphrase, account_id, rr_gen)?),
         rr_wrap_rk: RrWrapWire::from(&crypto::rr_wrap(&kek_rk, rr, WrapKind::RecoveryKey, account_id, rr_gen)?),
         pp_kdf: pp_kdf(salt),
+        rr_wrap_vault: None,
     })
 }
 
@@ -284,6 +311,8 @@ fn pp_kdf(salt: &[u8; 16]) -> PpKdf {
 pub enum Secret {
     Passphrase(Zeroizing<String>),
     RecoveryKey(Zeroizing<String>),
+    /// The password-vault master password, as typed.
+    Vault(Zeroizing<String>),
 }
 
 /// The recovery root from the escrow: the KDF parameters must meet the floor, the commitment is
@@ -299,6 +328,18 @@ pub fn unwrap_rr(escrow: &EscrowWire, secret: &Secret, account_id: &AccountId) -
             let salt: [u8; 16] = unb64(&k.salt)?.try_into().map_err(|_| KeyError::Protocol("pp salt"))?;
             let kek = crypto::passphrase_kek(normalize_passphrase(p).as_bytes(), &salt, &params)?;
             crypto::rr_unwrap(&kek, &escrow.rr_wrap_pp.to_wrap()?, WrapKind::Passphrase, account_id, escrow.rr_gen)
+        }
+        Secret::Vault(pw) => {
+            let w = escrow.rr_wrap_vault.as_ref().ok_or(KeyError::NoVaultWrap)?;
+            let k = &w.kdf;
+            if k.alg != "argon2id" {
+                return Err(KeyError::Dir(DirError::Malformed("vault kdf")));
+            }
+            let params = KdfParams { m_kib: k.m_kib, t: k.t, p: k.p };
+            let salt: [u8; 16] = unb64(&k.salt)?.try_into().map_err(|_| KeyError::Protocol("vault salt"))?;
+            let kek = crypto::passphrase_kek(pw.as_bytes(), &salt, &params)?;
+            let wrap = RrWrapWire { n: w.n.clone(), ct: w.ct.clone(), commit: w.commit.clone() }.to_wrap()?;
+            crypto::rr_unwrap(&kek, &wrap, WrapKind::Vault, account_id, escrow.rr_gen)
         }
         Secret::RecoveryKey(text) => {
             let rk = codes::parse_recovery_key(text).map_err(|_| KeyError::WrongSecret)?;
@@ -365,6 +406,16 @@ pub struct SetupPlan {
     device: KeyPair,
     vault: Option<KeyPair>,
     salt: [u8; 16],
+    /// The vault password (0.21.1): RR is wrapped under it too, the one secret users type.
+    vault_pw: Option<Zeroizing<String>>,
+}
+
+/// [`plan_setup`] where the vault password is the secret users type (0.21.1): the passphrase
+/// and recovery key are still made (the server and older apps need their wraps) but not shown.
+pub fn plan_setup_vault(account_id: AccountId, me: Me, vault_pw: &str) -> KResult<SetupPlan> {
+    let mut p = plan_setup(account_id, me, true)?;
+    p.vault_pw = Some(Zeroizing::new(vault_pw.to_string()));
+    Ok(p)
 }
 
 /// `with_vault`: the password vault takes part (its key pair is made now and PAK goes into it).
@@ -382,6 +433,7 @@ pub fn plan_setup(account_id: AccountId, me: Me, with_vault: bool) -> KResult<Se
         device: KeyPair::generate()?,
         vault: if with_vault { Some(KeyPair::generate()?) } else { None },
         salt: crypto::random::<16>()?,
+        vault_pw: None,
     })
 }
 
@@ -436,7 +488,10 @@ pub fn setup_commit(plan: &SetupPlan, now_ms: u64) -> KResult<(Commit, Joined)> 
     };
     let ak_blob = dir::sign_ak(&ak_dir, &plan.ak, None, Some(&plan.rr), &acc)?;
     let pak_blob = dir::sign_pak(&pak_dir, &plan.pak, None, Some(&plan.rr), &acc)?;
-    let escrow = escrow_for(&plan.rr, &plan.passphrase, &plan.rk, &plan.salt, 1, &acc)?;
+    let mut escrow = escrow_for(&plan.rr, &plan.passphrase, &plan.rk, &plan.salt, 1, &acc)?;
+    if let Some(pw) = &plan.vault_pw {
+        escrow.rr_wrap_vault = Some(vault_wrap(&plan.rr, pw, 1, &acc)?);
+    }
     let joined = Joined {
         device_sk: plan.device.sk.clone(),
         ak: AkPin { epoch: 1, ak: plan.ak.clone(), seq: 1, hash: dir::hash(&ak_blob.bytes), min_record_epoch: 1 },
@@ -817,6 +872,67 @@ pub fn reanchor_commit(plan: &RestorePlan, me: &str, now_ms: u64) -> KResult<(Co
         },
         out_ak,
         out_pak,
+    ))
+}
+
+/// A device that syncs and holds AK and PAK makes a new recovery root RR′ (`rr_gen + 1`) with a
+/// copy under the vault password (0.21.1): an account set up with a passphrase becomes one where
+/// the vault password is all a new device needs, a changed vault password is wrapped anew, and
+/// the heads are re-anchored (as "Finish securing" does). The passphrase and recovery key of the
+/// old root stop working; new ones are made for the server's format but never shown.
+/// `ak_blob`/`pak_blob` are the current heads, already verified by this device.
+pub fn new_root_commit(
+    acc: AccountId,
+    ak: &AkPin,
+    pak: &PakPin,
+    ak_blob: &Blob,
+    pak_blob: &Blob,
+    vault_pw: &str,
+    me: &str,
+    now_ms: u64,
+) -> KResult<(Commit, HeadAt, HeadAt, [u8; 32], u32)> {
+    let rr = Zeroizing::new(crypto::random::<32>()?);
+    let esc = crypto::escrow_keypair(&rr, &acc);
+    let salt = crypto::random::<16>()?;
+    let rk = Zeroizing::new(crypto::random::<{ codes::RECOVERY_KEY_BYTES }>()?);
+    let pp = new_passphrase()?;
+    let mut a = dir::parse_ak(&ak_blob.bytes)?;
+    let mut p = dir::parse_pak(&pak_blob.bytes)?;
+    let rr_gen = p.rr_gen + 1;
+    a.seq += 1;
+    a.prev_hash = b64(&dir::hash(&ak_blob.bytes));
+    a.created_ms = now_ms;
+    a.created_by = me.into();
+    a.seals.retain(|s| s.to != "escrow");
+    a.seals.push(seal(SealKind::Ak, &ak.ak, &acc, a.epoch, "escrow", &esc.pk)?);
+    p.seq += 1;
+    p.prev_hash = b64(&dir::hash(&pak_blob.bytes));
+    p.created_ms = now_ms;
+    p.created_by = me.into();
+    p.esc_pk = b64(&esc.pk);
+    p.rr_gen = rr_gen;
+    p.pp_kdf = pp_kdf(&salt);
+    p.seals.retain(|s| s.to != "escrow");
+    p.seals.push(seal(SealKind::Pak, &pak.pak, &acc, p.pak_epoch, "escrow", &esc.pk)?);
+    let new_ak = dir::sign_ak(&a, &ak.ak, None, Some(&rr), &acc)?;
+    let new_pak = dir::sign_pak(&p, &pak.pak, None, Some(&rr), &acc)?;
+    let mut escrow = escrow_for(&rr, &pp, &rk, &salt, rr_gen, &acc)?;
+    escrow.rr_wrap_vault = Some(vault_wrap(&rr, vault_pw, rr_gen, &acc)?);
+    let out_ak = (a.seq, dir::hash(&new_ak.bytes));
+    let out_pak = (p.seq, dir::hash(&new_pak.bytes));
+    Ok((
+        Commit {
+            ak_dir: Some(new_ak),
+            pak_dir: Some(new_pak),
+            if_ak_prev_hash: Some(dir::hash(&ak_blob.bytes)),
+            if_pak_prev_hash: Some(dir::hash(&pak_blob.bytes)),
+            escrow: Some(escrow),
+            ..Default::default()
+        },
+        out_ak,
+        out_pak,
+        esc.pk,
+        rr_gen,
     ))
 }
 

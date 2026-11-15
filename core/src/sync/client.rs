@@ -186,6 +186,9 @@ pub struct StateWire {
     pub rekey: Rekey,
     pub head_seq: i64,
     pub pending_approvals: i64,
+    /// The escrow has a copy under the vault password (0.21.1 servers; older ones say nothing).
+    #[serde(default)]
+    pub escrow_vault: bool,
     pub quota: QuotaWire,
 }
 
@@ -415,6 +418,43 @@ pub fn add_passwords(
     let (c, pak) = keys::add_vault_from_restore(&plan, &st.device_id, api.now_ms as u64)?;
     commit(api, &c)?;
     Ok(pak)
+}
+
+/// The vault password becomes the account's one secret (0.21.1): a new recovery root wrapped
+/// under it, committed with the current heads re-anchored (see [`keys::new_root_commit`]).
+/// Needs AK and PAK (the vault unlocked). `st` and `pak` get the new pins; the caller saves both.
+pub fn set_vault_root(api: &Api, st: &mut SyncState, pak: &mut keys::PakState, vault_pw: &str) -> SResult<()> {
+    if refresh(api, st, Some(pak))? == Refresh::SelfRevoked {
+        return Err(SyncFail::Api(ApiError::Unauthorized));
+    }
+    let acc = st.account_bytes().map_err(|_| SyncFail::BadAnswer("account id"))?;
+    let ak = st.ak.clone().ok_or(SyncFail::BadAnswer("no keys"))?;
+    let (ak_blob, pak_blob) = head(api)?.ok_or(SyncFail::BadAnswer("no keyset"))?;
+    if dir::hash(&ak_blob.bytes) != ak.hash || dir::hash(&pak_blob.bytes) != pak.pak.hash {
+        return Err(SyncFail::BadAnswer("the keys changed: refresh first"));
+    }
+    let (c, (ak_seq, ak_hash), (pak_seq, pak_hash), esc_pk, rr_gen) = keys::new_root_commit(
+        acc,
+        &ak,
+        &pak.pak,
+        &ak_blob,
+        &pak_blob,
+        vault_pw,
+        &st.device_id,
+        api.now_ms as u64,
+    )?;
+    commit(api, &c)?;
+    if let Some(a) = st.ak.as_mut() {
+        a.seq = ak_seq;
+        a.hash = ak_hash;
+    }
+    st.esc_pk = Some(esc_pk);
+    st.secure_needed = false;
+    pak.pak.seq = pak_seq;
+    pak.pak.hash = pak_hash;
+    pak.pak.esc_pk = esc_pk;
+    pak.pak.rr_gen = rr_gen;
+    Ok(())
 }
 
 /// "Finish securing" after a rotation: the passphrase or recovery key gives RR, the chain from
