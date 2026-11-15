@@ -135,6 +135,18 @@ pub struct NavigationStart {
     pub redirected: bool,
 }
 
+/// The engine refused a site's certificate for a main-frame navigation.
+#[derive(Debug, Clone)]
+pub struct CertErrorSeen {
+    pub url: String,
+    /// The engine's net error (`ERR_CERT_*`).
+    pub error: i32,
+    /// The leaf certificate's SHA-256 (lower-case hex), when the engine sent it.
+    pub sha256: Option<String>,
+    /// False when the engine allows no exception (HSTS, pinned keys: no callback).
+    pub overridable: bool,
+}
+
 /// Loading state of the top-level document.
 #[derive(Debug, Clone, Copy)]
 pub struct LoadingState {
@@ -285,6 +297,8 @@ type SearchLabelFn = dyn FnMut(&str) -> Option<String>;
 #[derive(Default)]
 pub(super) struct Events {
     pub before_browse: Slot<dyn FnMut(&NavigationStart) -> bool>,
+    /// A certificate error: return true to continue past it (an exception the user made).
+    pub cert_error: Slot<dyn FnMut(&CertErrorSeen) -> bool>,
     pub loading: Slot<dyn FnMut(LoadingState)>,
     pub load_finished: Slot<dyn FnMut(Option<i32>)>,
     pub load_start: Slot<dyn FnMut()>,
@@ -1218,9 +1232,17 @@ impl View {
     }
 
     /// The latest navigation was refused for a certificate error (the engine's error page
-    /// shows): the address bar must not show a lock.
+    /// shows), or the page is there past one ("Continue anyway"; the engine then remembers
+    /// the decision for the session and reports the error bits on the entry only): the
+    /// address bar must not show a lock.
     pub fn has_cert_error(&self) -> bool {
-        self.0.cert_error.borrow().is_some()
+        if self.0.cert_error.borrow().is_some() {
+            return true;
+        }
+        self.host()
+            .and_then(|h| h.visible_navigation_entry())
+            .and_then(|e| e.sslstatus())
+            .is_some_and(|s| !lb_core::certinfo::cert_status_names(*s.cert_status().as_ref() as i32 as u32).is_empty())
     }
 
     /// Calls a DevTools protocol method on this browser (fire and forget).
@@ -1406,6 +1428,11 @@ impl View {
     /// A top-level navigation is starting; return `false` to cancel it.
     pub fn on_before_browse(&self, f: impl FnMut(&NavigationStart) -> bool + 'static) {
         self.0.ev.before_browse.set(Box::new(f));
+    }
+
+    /// The engine refused a site's certificate; return true to continue anyway.
+    pub fn on_cert_error(&self, f: impl FnMut(&CertErrorSeen) -> bool + 'static) {
+        self.0.ev.cert_error.set(Box::new(f));
     }
 
     /// Loading started or stopped, or the history changed.

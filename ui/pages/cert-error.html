@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<!-- 0.15.0: the theme colour from the first frame (CSP allows exactly this block by its hash). -->
+<style>html,body{background:#f3f4f6}@media (prefers-color-scheme:dark){html,body{background:#1f2023}}</style>
+<title>Not secure</title>
+<link rel="stylesheet" href="shared/common.css">
+<link rel="stylesheet" href="cert-error.css">
+</head>
+<body>
+<main>
+  <div class="badge" aria-hidden="true">!</div>
+  <h1>This site’s certificate can’t be trusted</h1>
+  <p><strong id="host"></strong>: <span id="reason"></span>.</p>
+  <p class="muted">The connection to this site is not secure; anyone on the network may read or change it. Someone could be pretending to be this site to steal your passwords, messages or payment details.</p>
+  <p class="url" id="url"></p>
+  <p class="fp">Certificate SHA-256: <span id="sha"></span></p>
+  <p class="muted" id="no-continue" hidden>This site requires a secure connection; Krunk can’t continue.</p>
+  <div class="buttons">
+    <button id="back" class="btn primary">Back to safety</button>
+    <button id="continue" class="btn" hidden>Continue anyway</button>
+  </div>
+  <label class="remember" id="remember-row" hidden><input type="checkbox" id="remember"> Remember for this site</label>
+  <p class="muted small" id="remember-desc" hidden>Only for this exact certificate: if the site shows a different one, Krunk asks again. Without it, Krunk forgets your choice when it closes. Remembered sites are listed in Settings › Privacy &amp; security.</p>
+  <p class="muted small" id="private-desc" hidden>In private tabs Krunk forgets your choice when the last private tab closes.</p>
+</main>
+<script src="shared/bridge.js"></script>
+<script src="cert-error.js"></script>
+</body>
+</html>

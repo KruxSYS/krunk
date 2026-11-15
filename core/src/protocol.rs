@@ -1743,6 +1743,24 @@ pub enum Request {
     HttpsOnlyProceed {
         url: String,
     },
+    /// From the certificate interstitial (`krunk://cert-error`): "Continue anyway" to `url`
+    /// past the certificate `sha256`, remembered for the site when `remember`. The host
+    /// checks both against the error the tab really hit.
+    CertProceed {
+        url: String,
+        sha256: String,
+        remember: bool,
+    },
+    /// "Back to safety" on the interstitial: the page before the refused address.
+    CertBack {},
+    /// Settings: the remembered certificate exceptions, newest first.
+    CertExceptions,
+    /// Settings: forget one (it takes effect at once).
+    CertExceptionRemove {
+        host: String,
+        port: u16,
+        sha256: String,
+    },
 
     // ---- 0.12.0: the AI agent, userscripts and macros ----
     /// The shell's agent button (also Ctrl+Shift+Space): show or hide the window's panel.
@@ -2264,6 +2282,8 @@ impl Sender {
                     | R::GetAllowlist
                     | R::AllowlistAdd { .. }
                     | R::AllowlistRemove { .. }
+                    | R::CertExceptions
+                    | R::CertExceptionRemove { .. }
                     | R::Restart
                     | R::ClearBrowsingData { .. }
                     | R::VaultStatus
@@ -2412,6 +2432,7 @@ impl Sender {
             ),
             Sender::Page(Page::Wasm) => matches!(req, R::WasmInfo {} | R::WasmCall { .. } | R::WasmHook { .. }),
             Sender::Page(Page::HttpsOnly) => matches!(req, R::HttpsOnlyProceed { .. }),
+            Sender::Page(Page::CertError) => matches!(req, R::CertProceed { .. } | R::CertBack {}),
             Sender::Page(Page::Adblock) => matches!(
                 req,
                 R::GetBlocked {}
@@ -4081,6 +4102,10 @@ mod tests {
                 data: ClearData { cookies: true, cache: true, site_data: true, since: Some(1), ..ClearData::default() },
             },
             Request::HttpsOnlyProceed { url: "http://a.example/".into() },
+            Request::CertProceed { url: "https://a.example/".into(), sha256: "ab".repeat(32), remember: true },
+            Request::CertBack {},
+            Request::CertExceptions,
+            Request::CertExceptionRemove { host: "a.example".into(), port: 8443, sha256: "ab".repeat(32) },
             Request::GetFilterStatus,
             Request::RequestFill,
             Request::GetNeverSave,
@@ -5539,5 +5564,43 @@ mod tests {
         }
         .to_json();
         assert!(!j.contains("password\":"), "{j}");
+    }
+    #[test]
+    fn certificate_exception_commands_only_from_their_pages() {
+        let sha = "ab".repeat(32);
+        let proceed =
+            format!(r#"{{"cmd":"certProceed","url":"https://a.example/","sha256":"{sha}","remember":false}}"#);
+        let remove = format!(r#"{{"cmd":"certExceptionRemove","host":"a.example","port":443,"sha256":"{sha}"}}"#);
+        let page = Sender::Page(Page::CertError);
+        let settings = Sender::Page(Page::Settings);
+        assert!(parse_request(page, &proceed).is_ok());
+        assert!(parse_request(page, r#"{"cmd":"certBack"}"#).is_ok());
+        assert!(parse_request(settings, r#"{"cmd":"certExceptions"}"#).is_ok());
+        assert!(parse_request(settings, &remove).is_ok());
+        // The interstitial can't read or change the list; Settings can't continue past a certificate.
+        assert_eq!(parse_request(page, r#"{"cmd":"certExceptions"}"#), Err(ProtocolError::Forbidden));
+        assert_eq!(parse_request(page, &remove), Err(ProtocolError::Forbidden));
+        assert_eq!(parse_request(settings, &proceed), Err(ProtocolError::Forbidden));
+        for s in [
+            Sender::Shell,
+            Sender::Popup,
+            Sender::Ext,
+            Sender::Agent,
+            Sender::Runner,
+            Sender::Page(Page::HttpsOnly),
+            Sender::Page(Page::NewTab),
+        ] {
+            for json in [proceed.as_str(), remove.as_str(), r#"{"cmd":"certExceptions"}"#, r#"{"cmd":"certBack"}"#] {
+                assert_eq!(parse_request(s, json), Err(ProtocolError::Forbidden), "{s:?} {json}");
+            }
+        }
+        // Web content never gets them.
+        assert!(parse_content(&proceed).is_err() && parse_content(&remove).is_err());
+        // The page's fields are exactly these.
+        assert!(parse_request(
+            page,
+            r#"{"cmd":"certProceed","url":"https://a.example/","sha256":"x","remember":true,"host":"b"}"#
+        )
+        .is_err());
     }
 }

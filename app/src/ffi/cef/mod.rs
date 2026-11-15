@@ -30,9 +30,9 @@ pub use net::{NetRequest, NetVerdict, RequestPolicy};
 pub use scheme::InternalResponse;
 pub use scriptlets::set_scriptlets;
 pub use view::{
-    with_batched_moves, AuthChallenge, AuthResponder, ClearKinds, DownloadControl, DownloadStart, DownloadStatus,
-    DownloadUpdate, JsDialogRequest, JsDialogResponder, KeyPress, LoadingState, Menu, MessageSource, NewWindow, OpenIn,
-    Role, Scripts, View, ViewOptions,
+    with_batched_moves, AuthChallenge, AuthResponder, CertErrorSeen, ClearKinds, DownloadControl, DownloadStart,
+    DownloadStatus, DownloadUpdate, JsDialogRequest, JsDialogResponder, KeyPress, LoadingState, Menu, MessageSource,
+    NewWindow, OpenIn, Role, Scripts, View, ViewOptions,
 };
 
 use crate::log::{info, warning};
@@ -311,6 +311,17 @@ pub fn set_vpn_proxy(proxy: Option<(String, String)>) -> bool {
         );
     }
     ok
+}
+
+/// Forgets the certificate decisions the engine keeps for the session in both profiles
+/// (after "Continue anyway" it lets the same certificate through without asking again).
+/// Krunk's own exceptions are asked afresh at the next certificate error, so a removed one
+/// takes effect at once.
+pub fn clear_certificate_exceptions() {
+    let private = PRIVATE_CONTEXT.with(|c| c.borrow().clone()).filter(|_| PRIVATE_READY.get());
+    for ctx in request_context_get_global_context().into_iter().chain(private) {
+        ctx.clear_certificate_exceptions(None);
+    }
 }
 
 wrap_completion_callback! {
