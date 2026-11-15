@@ -334,6 +334,21 @@ pub struct SyncStatus {
     pub rotation_pending: bool,
     /// Whether passwords sync on this device, and if not, why (0.6.1).
     pub passwords: PasswordsSync,
+    /// "Ask my PC" for the passwords key (0.6.2): where the request stands.
+    pub passwords_ask: PasswordsAsk,
+}
+
+/// A request to another device for the passwords key (0.6.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum PasswordsAsk {
+    /// None open.
+    None,
+    /// Waiting for the other device to answer.
+    Waiting,
+    /// The other device shows 6 digits: type them here.
+    EnterCode,
+    /// The code was sent; the key is on its way.
+    Confirmed,
 }
 
 /// Passwords on this device (0.6.1): they need the passwords key, which lives in the vault.
@@ -468,6 +483,8 @@ pub(crate) struct Engine {
     escrow: Option<EscrowWire>,
     restore: Option<RestorePlan>,
     joining: Option<NApproval>,
+    /// "Ask my PC" (0.6.2): the open request for the passwords key and where it stands.
+    asking: Option<(NApproval, PasswordsAsk)>,
     backoff: Backoff,
     next_run_ms: i64,
     wait_until_ms: i64,
@@ -483,12 +500,24 @@ fn secret_of(text: String, recovery: bool) -> R<SyncSecret> {
     }
     let z = Zeroizing::new(text);
     // A typed `KRNK-…` is a recovery key whatever the switch says (as on Windows).
-    Ok(if recovery || z.trim().to_ascii_uppercase().starts_with("KRNK-") {
-        SyncSecret::RecoveryKey(z)
+    let recovery = recovery || z.trim().to_ascii_uppercase().starts_with("KRNK-");
+    // Checked here, before the escrow is fetched (rate-limited, and mailed to the user): a
+    // vault or account password can't be either (0.6.2).
+    let shaped = if recovery {
+        lb_core::sync::codes::parse_recovery_key(&z).is_ok()
     } else {
-        SyncSecret::Passphrase(z)
-    })
+        lb_core::sync::keys::looks_like_passphrase(&z)
+    };
+    if !shaped {
+        return Err(SyncFfiError::WrongSecret { text: NOT_A_SECRET.into() });
+    }
+    Ok(if recovery { SyncSecret::RecoveryKey(z) } else { SyncSecret::Passphrase(z) })
 }
+
+/// What `secret_of` says to text that is no sync passphrase or recovery key at all.
+const NOT_A_SECRET: &str = "That isn't your sync passphrase. It is 7 words that Krunk showed once when sync was \
+     first turned on (or use the recovery key, KRNK-…). Your vault password doesn't work here: \
+     use Ask my PC instead.";
 
 impl Engine {
     pub(crate) fn new(
@@ -519,6 +548,7 @@ impl Engine {
             escrow: None,
             restore: None,
             joining: None,
+            asking: None,
             backoff: Backoff::default(),
             next_run_ms: 0,
             wait_until_ms: 0,
@@ -661,6 +691,7 @@ impl Engine {
             pending,
             next_run_ms: self.sync.as_ref().map(|_| self.next_run_ms.max(self.wait_until_ms)),
             rotation_pending: self.rotation_pending,
+            passwords_ask: self.asking.as_ref().map_or(PasswordsAsk::None, |(_, s)| *s),
         }
     }
 
@@ -1076,6 +1107,11 @@ impl Engine {
                 n.cancel(&Self::api(http, &token, now));
             }
         }
+        if let Some((n, _)) = self.asking.take() {
+            if let Ok(token) = self.access(http, now) {
+                n.cancel(&Self::api(http, &token, now));
+            }
+        }
         if self.sync.is_none() && self.account.is_some() {
             self.stage = Stage::Off;
         }
@@ -1134,6 +1170,103 @@ impl Engine {
         self.next_run_ms = now;
         self.message = Some("Passwords sync on this device now.".into());
         Ok(())
+    }
+
+    /// "Ask my PC" (0.6.2): asks a device that holds the passwords key for it. The other device
+    /// approves on its Account & sync page and shows 6 digits, typed here
+    /// ([`Self::passwords_ask_code`]).
+    pub(crate) fn passwords_ask_start(&mut self, http: &dyn HttpClient, now: i64) -> R<()> {
+        self.load();
+        let Some(st) = self.sync.clone() else { return Err(not_now("Sync is off.")) };
+        if !self.vault_open() {
+            return Err(not_now("Unlock your passwords first (Passwords in the menu)."));
+        }
+        if self.pak().is_some() {
+            return Ok(());
+        }
+        let token = self.access(http, now)?;
+        let api = Self::api(http, &token, now);
+        if let Some((old, _)) = self.asking.take() {
+            old.cancel(&api);
+        }
+        let n = NApproval::start_pak(&api, &st).map_err(|e| sync_err(&e))?;
+        self.asking = Some((n, PasswordsAsk::Waiting));
+        self.message = None;
+        Ok(())
+    }
+
+    /// Polls the request (every 3 s while the screen shows it).
+    pub(crate) fn passwords_ask_poll(&mut self, http: &dyn HttpClient, now: i64) -> R<PasswordsAsk> {
+        let Some((mut n, state)) = self.asking.take() else { return Ok(PasswordsAsk::None) };
+        let Some(st) = self.sync.clone() else { return Err(not_now("Sync is off.")) };
+        let (_, acc, device) = self.ids()?;
+        let token = self.access(http, now)?;
+        let api = Self::api(http, &token, now);
+        match n.poll(&api, &acc, &device, &self.label) {
+            Ok(NStep::Ready) => {
+                if !self.vault_open() {
+                    self.asking = Some((n, state));
+                    return Err(not_now("Unlock your passwords to receive the key."));
+                }
+                let pak = n.finish_pak(&api, &st).map_err(|e| sync_err(&e))?;
+                self.set_pak(Some(&pak));
+                if self.pak().is_none() {
+                    return Err(local_err("the vault could not keep the passwords key"));
+                }
+                self.next_run_ms = now;
+                self.message = Some("Passwords sync on this device now.".into());
+                Ok(PasswordsAsk::None)
+            }
+            Ok(NStep::EnterCode) => {
+                let s = if state == PasswordsAsk::Confirmed { state } else { PasswordsAsk::EnterCode };
+                self.asking = Some((n, s));
+                Ok(s)
+            }
+            Ok(NStep::Gone) => {
+                self.message = Some("The request was cancelled or ran out of time. Ask again.".into());
+                Ok(PasswordsAsk::None)
+            }
+            Ok(NStep::Waiting(_)) => {
+                self.asking = Some((n, state));
+                Ok(state)
+            }
+            Err(e) => {
+                self.asking = Some((n, state));
+                Err(sync_err(&e))
+            }
+        }
+    }
+
+    /// The 6 digits the other device shows. A wrong code cancels the request: ask again.
+    pub(crate) fn passwords_ask_code(&mut self, http: &dyn HttpClient, code: String, now: i64) -> R<()> {
+        let code: String = code.chars().filter(|c| !c.is_whitespace()).collect();
+        if code.len() != 6 || !code.chars().all(|c| c.is_ascii_digit()) {
+            return Err(SyncFfiError::WrongCode { text: "Type the 6 digits the other device shows.".into() });
+        }
+        let Some((mut n, state)) = self.asking.take() else { return Err(not_now("No request is waiting.")) };
+        if state != PasswordsAsk::EnterCode {
+            self.asking = Some((n, state));
+            return Err(not_now("Wait until the other device shows the code."));
+        }
+        let token = self.access(http, now)?;
+        let api = Self::api(http, &token, now);
+        match n.confirm(&api, &code) {
+            Ok(()) => {
+                self.asking = Some((n, PasswordsAsk::Confirmed));
+                self.message = Some("Waiting for the passwords key…".into());
+                Ok(())
+            }
+            Err(e) => {
+                self.message = None;
+                Err(match sync_err(&e) {
+                    SyncFfiError::WrongCode { .. } => SyncFfiError::WrongCode {
+                        text: "That isn't the code the other device shows. The request was cancelled: ask again."
+                            .into(),
+                    },
+                    other => other,
+                })
+            }
+        }
     }
 
     // ---- running -------------------------------------------------------------------------------
@@ -1505,6 +1638,19 @@ impl KrunkSync {
     /// "Add passwords" (0.6.1): `secret` is the passphrase or the recovery key.
     pub fn add_passwords(&self, secret: String, is_recovery_key: bool) -> Result<(), SyncFfiError> {
         self.engine().add_passwords(&Foreign(self.transport.as_ref()), secret, is_recovery_key, crate::now_ms())
+    }
+
+    /// "Ask my PC" (0.6.2): asks a device that holds the passwords key for it.
+    pub fn passwords_ask_start(&self) -> Result<(), SyncFfiError> {
+        self.engine().passwords_ask_start(&Foreign(self.transport.as_ref()), crate::now_ms())
+    }
+
+    pub fn passwords_ask_poll(&self) -> Result<PasswordsAsk, SyncFfiError> {
+        self.engine().passwords_ask_poll(&Foreign(self.transport.as_ref()), crate::now_ms())
+    }
+
+    pub fn passwords_ask_code(&self, code: String) -> Result<(), SyncFfiError> {
+        self.engine().passwords_ask_code(&Foreign(self.transport.as_ref()), code, crate::now_ms())
     }
 
     pub fn remote_tabs(&self) -> Vec<DeviceTabs> {

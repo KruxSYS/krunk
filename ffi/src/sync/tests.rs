@@ -469,8 +469,17 @@ fn a_phone_that_joined_without_its_vault_adds_passwords_later() {
     assert_eq!(b.engine.status().passwords, PasswordsSync::NotOnThisDevice);
     assert!(b.vault.summaries().unwrap().is_empty());
 
-    // A wrong passphrase changes nothing.
+    // The vault password (the operator's 0.6.1 report) isn't a sync passphrase at all: refused
+    // at once, with no escrow fetch (no "recovery data downloaded" mail).
     let escrow_before = srv.count("keys/escrow");
+    for typed in ["vault password b", "KRNK-NOPE-NOPE"] {
+        match b.engine.add_passwords(&srv, typed.into(), false, now()) {
+            Err(SyncFfiError::WrongSecret { text }) => assert!(text.contains("vault password"), "{text}"),
+            other => panic!("{other:?}"),
+        }
+    }
+    assert_eq!(srv.count("keys/escrow"), escrow_before);
+    // A wrong passphrase changes nothing.
     let wrong = b.engine.add_passwords(&srv, "abandon ability able about above absent absorb".into(), false, now());
     assert!(matches!(wrong, Err(SyncFfiError::WrongSecret { .. })), "{wrong:?}");
     assert_eq!(b.engine.status().passwords, PasswordsSync::NotOnThisDevice);
