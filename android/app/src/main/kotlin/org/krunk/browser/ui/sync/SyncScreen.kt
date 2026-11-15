@@ -61,6 +61,8 @@ import org.krunk.browser.ui.BrowserViewModel
 import org.krunk.browser.ui.Screen
 import org.krunk.browser.ui.vault.SecureVaultSurface
 import org.krunk.browser.ui.vault.VaultClipboard
+import org.krunk.browser.vault.VaultFailure
+import org.krunk.browser.vault.VaultState
 import org.krunk.ffi.DeviceTabs
 import org.krunk.ffi.LinkPoll
 import org.krunk.ffi.PasswordsAsk
@@ -138,23 +140,37 @@ fun SyncScreen(vm: BrowserViewModel) {
                     SignOutButton(sync, busy) { act(it) }
                 }
 
-                SyncStage.Setup -> {
-                    val s = secrets
-                    if (s == null) {
-                        // The secrets are shown once; after a restart of the screen, start again.
-                        LaunchedEffect(Unit) { sync.cancel() }
-                    } else {
-                        Setup(s, busy) { group -> act { sync.setupConfirm(group).onSuccess { secrets = null } } }
+                // 0.6.2: the vault password is the one secret. The first device turns sync on
+                // with it; a joining phone types its PC's vault password. Either way this phone's
+                // vault gets (or is opened with) the same password.
+                SyncStage.Setup -> VaultPasswordStep(
+                    title = stringResource(R.string.sync_vault_setup_title),
+                    text = stringResource(R.string.sync_vault_setup_text),
+                    button = stringResource(R.string.sync_turn_on),
+                    busy = busy,
+                    onCancel = { scope.launch { sync.cancel() } },
+                ) { pw ->
+                    act {
+                        openVaultWith(app, pw).fold(
+                            onSuccess = { sync.setupVault(pw).onSuccess { secrets = null } },
+                            onFailure = { Result.failure<Unit>(it) },
+                        )
                     }
                 }
 
-                is SyncStage.Join -> Join(
-                    app,
-                    busy,
-                    onOpenVault = { vm.push(Screen.Vault) },
-                    onAsk = { share -> act { sync.joinStart(share) } },
-                ) { secret, rk ->
-                    act { sync.restoreTry(secret, rk) }
+                is SyncStage.Join -> VaultPasswordStep(
+                    title = stringResource(R.string.sync_vault_join_title),
+                    text = stringResource(R.string.sync_vault_join_text),
+                    button = stringResource(R.string.sync_vault_continue),
+                    busy = busy,
+                    onCancel = { scope.launch { sync.cancel() } },
+                ) { pw ->
+                    act {
+                        // A phone vault with another password stays locked; sync still joins and
+                        // the passwords come once the vault is opened with the PC's password.
+                        openVaultWith(app, pw)
+                        sync.restoreVault(pw)
+                    }
                 }
 
                 is SyncStage.RestoreConfirm -> RestoreConfirm(stage, busy, onConfirm = {
@@ -495,66 +511,20 @@ private fun Passwords(st: SyncStatus, sync: SyncController, screenBusy: Boolean,
 
         PasswordsSync.NOT_ON_THIS_DEVICE -> {
             SecureVaultSurface()
-            val ask = st.passwordsAsk
-            Text(stringResource(R.string.sync_pw_not_here), style = MaterialTheme.typography.bodySmall)
-            when (ask) {
-                PasswordsAsk.NONE -> Button(enabled = !busy && !screenBusy, onClick = {
-                    run { sync.passwordsAskStart() }
-                }) {
-                    Text(stringResource(R.string.sync_pw_ask))
-                }
-
-                PasswordsAsk.WAITING -> {
-                    Text(stringResource(R.string.sync_pw_ask_waiting), style = MaterialTheme.typography.bodySmall)
-                    CircularProgressIndicator()
-                }
-
-                PasswordsAsk.ENTER_CODE -> {
-                    var code by remember { mutableStateOf("") }
-                    OutlinedTextField(
-                        value = code,
-                        onValueChange = { v -> code = v.filter { it.isDigit() }.take(6) },
-                        label = { Text(stringResource(R.string.sync_pw_ask_code)) },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                        singleLine = true,
-                    )
-                    Button(enabled = !busy && code.length == 6, onClick = { run { sync.passwordsAskCode(code) } }) {
-                        Text(stringResource(R.string.sync_pw_ask_send))
-                    }
-                }
-
-                PasswordsAsk.CONFIRMED -> {
-                    Text(stringResource(R.string.sync_pw_ask_confirmed), style = MaterialTheme.typography.bodySmall)
-                    CircularProgressIndicator()
-                }
-            }
-            if (ask != PasswordsAsk.NONE) {
-                OutlinedButton(onClick = {
-                    scope.launch { sync.cancel() }
-                }) { Text(stringResource(R.string.sync_cancel)) }
-                // Every 3 s while the request is open (as the join request).
-                LaunchedEffect(Unit) {
-                    while (true) {
-                        delay(3_000)
-                        sync.passwordsAskPoll().onFailure { e ->
-                            error = (e as? SyncFfiException)?.sentence ?: e.message
-                        }
-                    }
-                }
-            }
             var secret by remember { mutableStateOf("") }
-            Text(stringResource(R.string.sync_pw_or), style = MaterialTheme.typography.bodySmall)
+            Text(stringResource(R.string.sync_pw_not_here), style = MaterialTheme.typography.bodySmall)
             OutlinedTextField(
                 value = secret,
                 onValueChange = { secret = it.take(256) },
-                label = { Text(stringResource(R.string.sync_restore_label)) },
+                label = { Text(stringResource(R.string.sync_vault_field)) },
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
-            OutlinedButton(enabled = !busy && !screenBusy && secret.isNotBlank(), onClick = {
-                run { sync.addPasswords(secret, secret.trim().uppercase().startsWith("KRNK-")) }
+            Button(enabled = !busy && !screenBusy && secret.isNotEmpty(), onClick = {
+                val pw = secret
+                run { sync.addPasswordsVault(pw) }
             }) { Text(stringResource(R.string.sync_pw_add)) }
             if (busy) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -567,4 +537,64 @@ private fun Passwords(st: SyncStatus, sync: SyncController, screenBusy: Boolean,
 
         PasswordsSync.SWITCHED_OFF, PasswordsSync.OFF -> Unit
     }
+}
+
+/**
+ * One vault-password field (0.6.2): the first device turning sync on, or a phone joining. The
+ * password is the phone's vault password too ([openVaultWith]).
+ */
+@Composable
+private fun VaultPasswordStep(
+    title: String,
+    text: String,
+    button: String,
+    busy: Boolean,
+    onCancel: () -> Unit,
+    onGo: (String) -> Unit,
+) {
+    var pw by remember { mutableStateOf("") }
+    SecureVaultSurface()
+    Text(title, style = MaterialTheme.typography.titleMedium)
+    Text(text, style = MaterialTheme.typography.bodySmall)
+    OutlinedTextField(
+        value = pw,
+        onValueChange = { pw = it.take(256) },
+        label = { Text(stringResource(R.string.sync_vault_field)) },
+        visualTransformation = PasswordVisualTransformation(),
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Button(enabled = !busy && pw.isNotEmpty(), onClick = {
+        val typed = pw
+        pw = ""
+        onGo(typed)
+    }) { Text(button) }
+    if (busy) Text(stringResource(R.string.sync_pw_checking), style = MaterialTheme.typography.bodySmall)
+    OutlinedButton(onClick = onCancel) { Text(stringResource(R.string.sync_cancel)) }
+}
+
+/**
+ * Opens this phone's vault with [pw], making it first when there is none, so the vault password
+ * is the same here as on the other devices. A failure says why in plain words.
+ */
+private suspend fun openVaultWith(app: KrunkApp, pw: String): Result<Unit> = runCatching {
+    when (app.vault.state.value) {
+        VaultState.NONE -> app.vault.create(pw)
+        VaultState.LOCKED -> app.vault.unlock(pw)
+        VaultState.UNLOCKED, VaultState.KEY_LOST -> Unit
+    }
+}.recoverCatching { e ->
+    throw IllegalStateException(
+        when (e) {
+            is VaultFailure.WrongPassword -> app.getString(R.string.sync_vault_other_pw)
+
+            is VaultFailure.WeakPassword -> app.getString(
+                R.string.sync_vault_weak,
+                app.vaultBackend.minPasswordLength(),
+            )
+
+            else -> e.message ?: "The password vault could not be opened."
+        },
+    )
 }

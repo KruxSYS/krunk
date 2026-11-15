@@ -3,6 +3,17 @@
 What changed in each Krunk for Android release, newest first. The Windows browser's list is
 `CHANGELOG.md`.
 
+## 0.6.2 — 2026-11-15
+
+- **One password for sync: your vault password.** To sync this phone, sign in to your Krunk
+  account and type your vault password (the one on your PC). Bookmarks, history, tabs, settings
+  and passwords all come along. If the phone has no password vault yet, that same password makes
+  it. No sync passphrase, no recovery key, no codes.
+- **A phone that syncs without your passwords:** type your PC's vault password under Passwords in
+  Account & sync, or simply unlock this phone's vault with it. Your PC must run Krunk 0.21.1 and
+  have its passwords unlocked once after updating.
+- Errors show right under the button you pressed.
+
 ## 0.6.1 — 2026-11-15
 
 Passwords that didn't come along with sync, and a way past bad certificates. It installs over

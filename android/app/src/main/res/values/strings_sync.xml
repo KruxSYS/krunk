@@ -65,7 +65,7 @@
     <string name="sync_pw_on">Passwords sync while your password vault is unlocked.</string>
     <string name="sync_pw_locked">Passwords: unlock your password vault to sync them.</string>
     <string name="sync_pw_no_vault">Passwords don\'t sync on this phone yet: it has no password vault. Create one in Passwords, then come back here to add your passwords.</string>
-    <string name="sync_pw_not_here">Passwords don\'t sync on this phone yet. Ask your PC for them: open Krunk on the PC, go to Settings › Account &amp; sync and approve this phone there.</string>
+    <string name="sync_pw_not_here">Passwords don\'t sync on this phone yet. Type your vault password (the one on your PC) to bring them.</string>
     <string name="sync_pw_ask">Ask my PC</string>
     <string name="sync_pw_ask_waiting">Waiting for your PC… Open Krunk on the PC, go to Settings › Account &amp; sync, and approve this phone (its passwords vault must be unlocked).</string>
     <string name="sync_pw_ask_code">Type the 6 digits your PC shows</string>
@@ -74,4 +74,12 @@
     <string name="sync_pw_or">Or, without the PC: your sync passphrase (7 words, shown once when sync was first turned on) or recovery key (KRNK-…). Not your vault password.</string>
     <string name="sync_pw_checking">Checking… this takes a few seconds.</string>
     <string name="sync_pw_add">Add passwords</string>
+    <string name="sync_vault_field">Vault password</string>
+    <string name="sync_vault_setup_title">Turn on sync with your vault password</string>
+    <string name="sync_vault_setup_text">Your vault password (the one that unlocks your saved passwords) also protects your synced data. On your other devices you sign in and type this same password. If this phone has no password vault yet, this makes one with it.</string>
+    <string name="sync_vault_join_title">Your account already syncs</string>
+    <string name="sync_vault_join_text">Type your vault password: the one you unlock your passwords with on your PC. Your bookmarks, history, tabs, settings and passwords then come to this phone.</string>
+    <string name="sync_vault_continue">Continue</string>
+    <string name="sync_vault_other_pw">This phone\'s password vault has a different password. Sync goes on; to bring your passwords, open the vault with your PC\'s vault password.</string>
+    <string name="sync_vault_weak">The vault password needs at least %1$d characters.</string>
 </resources>

@@ -3,6 +3,20 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.21.1 — 2026-11-15
+
+- **One password for sync: your vault password.** Turning sync on asks for the password that
+  unlocks your saved passwords, and nothing else: no sync passphrase or recovery key to write
+  down. On another computer or your phone you sign in to your Krunk account and type that same
+  vault password once; bookmarks, history, tabs, settings and passwords come along.
+- **Already syncing?** Unlock your passwords once after updating: Krunk switches your sync over
+  to the vault password by itself. Your old sync passphrase and recovery key stop working then.
+- "Finish securing" after removing a device needs no passphrase any more: unlocking your
+  passwords does it.
+- No more "your sync recovery data was downloaded" mails from devices that already sync; a new
+  device signing in still sends one.
+- Choose a strong vault password: it now also protects your synced data on the server.
+
 ## 0.21.0 — 2026-11-15
 
 - **Continue past a certificate warning.** When a site's certificate can't be trusted

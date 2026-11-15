@@ -35,15 +35,25 @@ class AppVaultPort(private val app: KrunkApp) : VaultPort {
     override val state: StateFlow<VaultState> = controller.state
     override val lockEvents: SharedFlow<LockReason> = controller.lockEvents
 
-    override suspend fun create(password: String) = controller.create(password)
+    // 0.6.2: the vault password is also sync's one secret; the sync core gets it after each use.
+    override suspend fun create(password: String) {
+        controller.create(password)
+        app.sync.vaultPasswordLater(password, changed = false)
+    }
 
-    override suspend fun unlock(password: String) = controller.unlock(password)
+    override suspend fun unlock(password: String) {
+        controller.unlock(password)
+        app.sync.vaultPasswordLater(password, changed = false)
+    }
 
     override fun retryWaitMs(): Long = controller.retryWaitMs()
 
     override fun lock(reason: LockReason) = controller.lock(reason)
 
-    override suspend fun changePassword(old: String, new: String) = controller.changePassword(old, new)
+    override suspend fun changePassword(old: String, new: String) {
+        controller.changePassword(old, new)
+        app.sync.vaultPasswordLater(new, changed = true)
+    }
 
     override suspend fun <T> use(block: (VaultBackend) -> T): T = controller.use(block)
 

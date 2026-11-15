@@ -123,6 +123,34 @@ class SyncController(
         syncNowLater()
     }
 
+    /** Join with the vault password (0.6.2): the one secret; goes on to the devices to confirm. */
+    suspend fun restoreVault(password: String): Result<SyncStage> =
+        runCatchingSync { call { it.restoreVault(password) } }
+
+    /** First device: sync on, protected by the vault password (0.6.2). */
+    suspend fun setupVault(password: String): Result<Unit> = runCatchingSync {
+        call { it.setupVault(password) }
+        syncNowLater()
+    }
+
+    /** Passwords on a phone that syncs without them, with the vault password (0.6.2). */
+    suspend fun addPasswordsVault(password: String): Result<Unit> = runCatchingSync {
+        call { it.addPasswordsVault(password) }
+        syncNowLater()
+    }
+
+    /**
+     * The vault was created, unlocked with its password, or the password [changed] (0.6.2): the
+     * core makes it protect sync's keys, or brings the passwords key with it. In the background.
+     */
+    fun vaultPasswordLater(password: String, changed: Boolean) {
+        scope.launch {
+            val before = _status.value?.passwords
+            runCatching { call { it.vaultPassword(password, changed) } }
+            if (before != PasswordsSync.ON && _status.value?.passwords == PasswordsSync.ON) syncNow()
+        }
+    }
+
     /** "Ask my PC" (0.6.2): another device that holds the passwords key gives it to this phone. */
     suspend fun passwordsAskStart(): Result<Unit> = runCatchingSync { call { it.passwordsAskStart() } }
 
