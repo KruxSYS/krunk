@@ -5,7 +5,13 @@ What changed in each Krunk release, newest first. Krunk for Android has its own 
 
 ## 0.22.0 — 2026-11-15
 
-- **VPN: fewer "Connection has been reset" errors.** DIAG_VPN
+- **VPN: no more random "Connection has been reset".** The cause: Krunk's VPN network stack
+  closed any connection that had been quiet for 60 seconds, without telling the server. Idle
+  HTTPS connections, paused video downloads and long-polling pages died silently, and the next
+  use showed "Connection has been reset". Connections through the VPN now send a keep-alive
+  every 20 seconds, so they stay open, and a server that is really gone is still noticed
+  within a minute. Closed connections also free their slot sooner, so a burst of requests is
+  no longer refused.
 - **VPN for private tabs only.** The VPN popout has a new choice: "Enable everywhere" (as
   before) or "Private tabs only", where only private tabs go through the VPN and normal tabs,
   extensions and Krunk's own updates go direct. It takes effect at once and is remembered.
@@ -14,9 +20,18 @@ What changed in each Krunk release, newest first. Krunk for Android has its own 
 - **New-tab shortcuts are harder to misclick:** edit and remove moved into a small "⋮" menu in
   the tile corner, and a removed shortcut can be brought back with Undo.
 - **Google is the default search engine and homepage** for new profiles. Profiles still set to
-  DuckDuckGo switch to Google once. DDG_NOTE
+  DuckDuckGo switch to Google once. Krunk can't tell a profile that chose
+  DuckDuckGo from one that kept the old default, so every profile still on DuckDuckGo switches;
+  pick it again in Settings → Search to keep it.
 - **Private tabs never get a hover preview picture:** their hover card shows the title only.
-- **Gmail and other heavy sites no longer stall until a restart.** DIAG_GMAIL
+- **Pages that stopped loading until a restart (seen with Gmail).** Our best explanation: Krunk
+  held some network requests open with no time limit, mainly site sign-in prompts waiting for
+  a background tab or a hidden dialog. Each held request blocked one of the engine's few
+  connections to that site, and enough of them stalled the site's later loads. Unanswered
+  sign-in prompts are now refused after 2 minutes, and Krunk's own pages always answer within
+  10 seconds, so one stuck request can't block later loads.
+- **Sync errors say what went wrong:** instead of only "Sync will try again in 60 min", the
+  status line now gives the reason first.
 
 ## 0.21.1 — 2026-11-15
 
