@@ -7,6 +7,34 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) const EXTRAS_KEY: &str = "android.settings";
 
+/// The shared settings (dotted camelCase paths in `kv["settings"]`) the Android app shows and
+/// edits; everything else there is desktop-only and saved as stored.
+const ANDROID_FIELDS: [&str; 18] = [
+    "searchEngine",
+    "customSearchUrl",
+    "homepage",
+    "startup",
+    "newTabPage",
+    "newTabUrl",
+    "searchSuggestions",
+    "httpsOnly",
+    "stripTrackingParams",
+    "adblockEnabled",
+    "theme",
+    "defaultZoom",
+    "appearance",
+    "ntp",
+    "tabSleepMinutes",
+    "tabDiscardEnabled",
+    "tabDiscardMinutes",
+    "linkTabs",
+];
+
+/// Is `path` (or the object it is in) a field the Android app edits? `userAgent` too.
+pub(crate) fn android_owned(path: &str) -> bool {
+    path == "userAgent" || ANDROID_FIELDS.iter().any(|f| path == *f || path.starts_with(&format!("{f}.")))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum StartupMode {
     NewTab,
@@ -588,5 +616,28 @@ mod tests {
         s.new_tab_page = NewTabMode::Homepage;
         s.homepage = "https://krunk.209.wf/".into();
         assert_eq!(settings_new_tab_target(s), Some("https://krunk.209.wf/".into()));
+    }
+
+    /// F-69: values Android can't read (a newer Windows', a desktop-only field it refuses)
+    /// neither block an Android save nor get replaced by it.
+    #[test]
+    fn unreadable_values_survive_an_android_save() {
+        let store = KrunkStore::in_memory().unwrap();
+        let row = r#"{"theme":"themeFromTheFuture","downloadConnections":999,"futureKnob":{"a":1},"homepage":"https://h.example/"}"#;
+        store.kv_set("settings".into(), row.into()).unwrap();
+        let mut s = store.load_settings().unwrap();
+        assert_eq!(s.homepage, "https://h.example/", "the other fields are kept");
+        s.https_only = !s.https_only;
+        store.save_settings(s.clone()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&store.kv_get("settings".into()).unwrap().unwrap()).unwrap();
+        assert_eq!(v["theme"], "themeFromTheFuture");
+        assert_eq!(v["downloadConnections"], 999);
+        assert_eq!(v["futureKnob"]["a"], 1);
+        assert_eq!(v["httpsOnly"], s.https_only);
+        // The user picks the theme shown (System): that is stored, not the newer value.
+        store.save_settings_edited(s, vec!["theme".into(), "notAField".into()]).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&store.kv_get("settings".into()).unwrap().unwrap()).unwrap();
+        assert_eq!(v["theme"], "system");
+        assert_eq!(v["downloadConnections"], 999, "a desktop-only value is never Android's to reset");
     }
 }

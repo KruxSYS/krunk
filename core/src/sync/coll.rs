@@ -208,10 +208,13 @@ pub fn device_names(conn: &Connection) -> DbResult<BTreeMap<String, String>> {
 
 /// Rename a device (krunk://sync): kept and queued as its `device_meta` record.
 pub fn rename_device(conn: &Connection, device_id: &str, name: &str, now_ms: i64) -> DbResult<()> {
-    let mut m = meta_map(conn, "device_names")?;
-    m.insert(device_id.into(), Value::String(name.chars().take(64).collect()));
-    set_meta_map(conn, "device_names", &m)?;
-    local::enqueue(conn, "device_meta", device_id, now_ms)
+    // Atomic (F-66): the name and its queue entry land together.
+    crate::storage::atomic(conn, |tx| {
+        let mut m = meta_map(tx, "device_names")?;
+        m.insert(device_id.into(), Value::String(name.chars().take(64).collect()));
+        set_meta_map(tx, "device_names", &m)?;
+        local::enqueue(tx, "device_meta", device_id, now_ms)
+    })
 }
 
 /// The open tabs of the other devices, as their `tabs` records said.

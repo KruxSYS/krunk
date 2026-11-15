@@ -172,32 +172,37 @@ impl Store {
     /// The pinned tiles in this order (URLs not pinned are ignored; a URL that is a
     /// most-visited tile is pinned by the reorder, keeping its title from history).
     pub fn reorder_tiles(&self, urls: &[String]) -> DbResult<()> {
-        for (i, url) in urls.iter().enumerate() {
-            let title: String = self
-                .conn
-                .query_row("SELECT title FROM urls WHERE url = ?1", [url], |r| r.get(0))
-                .optional()?
-                .unwrap_or_default();
-            self.conn.execute(
-                "INSERT INTO tiles(url, title, state, position) VALUES (?1, ?2, ?3, ?4)
+        // Atomic (F-66): the new order is stored whole or not at all.
+        crate::storage::atomic(&self.conn, |tx| {
+            for (i, url) in urls.iter().enumerate() {
+                let title: String = tx
+                    .query_row("SELECT title FROM urls WHERE url = ?1", [url], |r| r.get(0))
+                    .optional()?
+                    .unwrap_or_default();
+                tx.execute(
+                    "INSERT INTO tiles(url, title, state, position) VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT(url) DO UPDATE SET state = excluded.state, position = excluded.position,
                  title = CASE WHEN tiles.title = '' THEN excluded.title ELSE tiles.title END",
-                params![url, title, TILE_PINNED, i as i64],
-            )?;
-        }
-        Ok(())
+                    params![url, title, TILE_PINNED, i as i64],
+                )?;
+            }
+            Ok(())
+        })
     }
 
     /// Changes a pinned tile's address and title (its position stays).
     pub fn edit_tile(&self, url: &str, new_url: &str, title: &str) -> DbResult<bool> {
-        if url != new_url {
-            self.conn.execute("DELETE FROM tiles WHERE url = ?1", [new_url])?;
-        }
-        let n = self.conn.execute(
-            "UPDATE tiles SET url = ?2, title = ?3 WHERE url = ?1 AND state = ?4",
-            params![url, new_url, title, TILE_PINNED],
-        )?;
-        Ok(n > 0)
+        // Atomic (F-66): a tile at `new_url` is only removed if the edit lands.
+        crate::storage::atomic(&self.conn, |tx| {
+            if url != new_url {
+                tx.execute("DELETE FROM tiles WHERE url = ?1", [new_url])?;
+            }
+            let n = tx.execute(
+                "UPDATE tiles SET url = ?2, title = ?3 WHERE url = ?1 AND state = ?4",
+                params![url, new_url, title, TILE_PINNED],
+            )?;
+            Ok(n > 0)
+        })
     }
 
     /// Removes a tile from the grid (history itself is kept).

@@ -45,17 +45,20 @@ impl Store {
         if !should_record(url) {
             return Ok(None);
         }
-        self.conn.execute(
-            "INSERT INTO urls(url, title, visit_count, last_visit) VALUES (?1, ?2, 1, ?3)
+        // Atomic (F-66): the URL row and its visit land together or not at all.
+        crate::storage::atomic(&self.conn, |tx| {
+            tx.execute(
+                "INSERT INTO urls(url, title, visit_count, last_visit) VALUES (?1, ?2, 1, ?3)
              ON CONFLICT(url) DO UPDATE SET
                 visit_count = visit_count + 1,
                 last_visit = max(last_visit, excluded.last_visit),
                 title = CASE WHEN excluded.title <> '' THEN excluded.title ELSE title END",
-            params![url, title, ts],
-        )?;
-        let url_id: i64 = self.conn.query_row("SELECT id FROM urls WHERE url = ?1", [url], |r| r.get(0))?;
-        self.conn.execute("INSERT INTO visits(url_id, ts) VALUES (?1, ?2)", params![url_id, ts])?;
-        Ok(Some(self.conn.last_insert_rowid()))
+                params![url, title, ts],
+            )?;
+            let url_id: i64 = tx.query_row("SELECT id FROM urls WHERE url = ?1", [url], |r| r.get(0))?;
+            tx.execute("INSERT INTO visits(url_id, ts) VALUES (?1, ?2)", params![url_id, ts])?;
+            Ok(Some(tx.last_insert_rowid()))
+        })
     }
 
     /// Updates the title once the page has reported it.

@@ -556,6 +556,32 @@ pub struct Settings {
     /// Finished downloads older than this many days leave the list at start; 0 = never.
     pub download_auto_clear_days: u32,
     pub session_log: SessionLogSettings,
+
+    /// F-69 (Android 0.6.0): what the lenient load could not take into the typed fields (a
+    /// value from a newer version or another platform, an unknown key), and the fields a caller
+    /// explicitly set. Never serialized; `Store::save_settings` writes the raw values back.
+    #[serde(skip)]
+    pub preserved: Preserved,
+}
+
+/// Raw values kept by [`Settings::from_json_lenient`] (keys are dotted camelCase paths, e.g.
+/// `appearance.tabShape`). Ignored by `==`, so it never makes two settings differ.
+#[derive(Debug, Clone, Default)]
+pub struct Preserved {
+    /// Fields whose stored value was refused (type, unknown variant or validation): the
+    /// typed field holds its default, this holds what was stored.
+    pub invalid: std::collections::BTreeMap<String, serde_json::Value>,
+    /// Keys this version doesn't know.
+    pub unknown: std::collections::BTreeMap<String, serde_json::Value>,
+    /// Fields the user set (even to the value they already showed): their preserved raw value
+    /// is not written back.
+    pub edited: std::collections::BTreeSet<String>,
+}
+
+impl PartialEq for Preserved {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
 }
 
 /// Session logs (0.15.0, `krunk://sessions`). Off by default: while off nothing is sampled,
@@ -771,6 +797,96 @@ impl Default for MacrosSettings {
 /// DevTools sizes kept in settings are within this range (DIP).
 pub const DEVTOOLS_SIZE_RANGE: std::ops::RangeInclusive<f64> = 100.0..=4000.0;
 
+/// Keys earlier versions wrote and `from_json_lenient` migrates: dropped, not preserved.
+const RETIRED_KEYS: [&str; 2] = ["showBookmarksBar", "appearance.roundedTabs"];
+
+fn value_at<'a>(v: &'a serde_json::Value, path: &str) -> Option<&'a serde_json::Value> {
+    path.split('.').try_fold(v, |cur, k| cur.as_object()?.get(k))
+}
+
+fn set_value_at(v: &mut serde_json::Value, path: &str, val: serde_json::Value) {
+    let mut cur = v;
+    let mut parts = path.split('.').peekable();
+    while let Some(k) = parts.next() {
+        let Some(obj) = cur.as_object_mut() else { return };
+        if parts.peek().is_none() {
+            obj.insert(k.to_string(), val);
+            return;
+        }
+        cur = obj.entry(k.to_string()).or_insert_with(|| serde_json::Value::Object(Default::default()));
+    }
+}
+
+/// F-69: parses settings field by field. A field whose value doesn't deserialize keeps its
+/// default (nested objects are tried key by key); its raw value and every key this version
+/// doesn't know are returned in [`Preserved`].
+fn lenient_parse(json: &str) -> (Settings, Preserved) {
+    use serde_json::Value;
+    let mut pres = Preserved::default();
+    let Ok(raw) = serde_json::from_str::<Value>(json) else { return (Settings::default(), pres) };
+    let Value::Object(_) = raw else { return (Settings::default(), pres) };
+    let parsed = match serde_json::from_value::<Settings>(raw.clone()) {
+        Ok(s) => s,
+        Err(_) => {
+            let mut acc = serde_json::to_value(Settings::default()).unwrap_or(Value::Null);
+            merge_fields(&mut acc, "", &raw, &mut pres);
+            serde_json::from_value::<Settings>(acc).unwrap_or_default()
+        }
+    };
+    // Whatever serde dropped (keys this version has no field for) is kept raw.
+    if let Ok(back) = serde_json::to_value(&parsed) {
+        collect_unknown(&raw, &back, "", &mut pres);
+    }
+    for k in RETIRED_KEYS {
+        pres.unknown.remove(k);
+    }
+    for k in pres.invalid.keys() {
+        pres.unknown.remove(k);
+    }
+    (parsed, pres)
+}
+
+fn join(prefix: &str, k: &str) -> String {
+    if prefix.is_empty() {
+        k.to_string()
+    } else {
+        format!("{prefix}.{k}")
+    }
+}
+
+fn merge_fields(acc: &mut serde_json::Value, prefix: &str, src: &serde_json::Value, pres: &mut Preserved) {
+    let Some(obj) = src.as_object() else { return };
+    for (k, val) in obj {
+        let path = join(prefix, k);
+        let Some(current) = value_at(acc, &path).cloned() else {
+            // Not a field here: collect_unknown keeps it.
+            continue;
+        };
+        let mut trial = acc.clone();
+        set_value_at(&mut trial, &path, val.clone());
+        if serde_json::from_value::<Settings>(trial.clone()).is_ok() {
+            *acc = trial;
+        } else if val.is_object() && current.is_object() {
+            merge_fields(acc, &path, val, pres);
+        } else {
+            pres.invalid.insert(path, val.clone());
+        }
+    }
+}
+
+fn collect_unknown(raw: &serde_json::Value, back: &serde_json::Value, prefix: &str, pres: &mut Preserved) {
+    let (Some(r), Some(b)) = (raw.as_object(), back.as_object()) else { return };
+    for (k, v) in r {
+        let path = join(prefix, k);
+        match b.get(k) {
+            None => {
+                pres.unknown.insert(path, v.clone());
+            }
+            Some(bv) => collect_unknown(v, bv, &path, pres),
+        }
+    }
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Settings {
@@ -836,6 +952,7 @@ impl Default for Settings {
             search_suggestions: true,
             download_auto_clear_days: 0,
             session_log: SessionLogSettings::default(),
+            preserved: Preserved::default(),
         }
     }
 }
@@ -1213,7 +1330,10 @@ impl Settings {
     /// Loads settings from JSON, resetting any invalid field to its default
     /// instead of failing (a corrupt settings file must not brick startup).
     pub fn from_json_lenient(json: &str) -> Settings {
-        let mut s: Settings = serde_json::from_str(json).unwrap_or_default();
+        // F-69: field by field, so one value this version can't read (a newer version's, another
+        // platform's) costs only that field; it and unknown keys are kept raw in `preserved`.
+        let (mut s, mut pres) = lenient_parse(json);
+        let raw: Option<serde_json::Value> = serde_json::from_str(json).ok();
         // 0.3 and earlier: `showBookmarksBar: false` hid the bar.
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(json) {
             if v.get("bookmarksBar").is_none() && v.get("showBookmarksBar") == Some(&serde_json::Value::Bool(false)) {
@@ -1255,6 +1375,18 @@ impl Settings {
         if let Err(errs) = s.validate() {
             let d = Settings::default();
             for e in errs {
+                // The stored value stays on disk (Store::save_settings writes it back unless
+                // the user changes the field); in memory the field falls back as before.
+                if let Some(raw) = raw.as_ref() {
+                    let one = [e.field];
+                    let paths: &[&str] =
+                        if e.field == "customSearchUrl" { &["customSearchUrl", "searchEngine"] } else { &one };
+                    for p in paths {
+                        if let Some(v) = value_at(raw, p) {
+                            pres.invalid.entry(p.to_string()).or_insert_with(|| v.clone());
+                        }
+                    }
+                }
                 match e.field {
                     "customSearchUrl" => {
                         s.search_engine = d.search_engine;
@@ -1302,7 +1434,38 @@ impl Settings {
                 s.startup = d.startup;
             }
         }
+        s.preserved = pres;
         s
+    }
+
+    /// Marks a field (dotted camelCase path) as set by the user, so a raw value preserved for
+    /// it is not written back by the next save, even if the new value equals the fallback.
+    pub fn mark_edited(&mut self, path: &str) {
+        self.preserved.edited.insert(path.to_string());
+    }
+
+    /// The JSON to store for `self`, given the row stored now (F-69): the serialized settings,
+    /// plus every key this version doesn't know, plus the raw value of every field the stored
+    /// row had but this version refused, unless the caller changed that field or marked it
+    /// edited. A value from a newer version is therefore never replaced by a reset.
+    pub fn to_json_preserving(&self, stored: Option<&str>) -> serde_json::Result<String> {
+        let mut out = serde_json::to_value(self)?;
+        if let Some(stored) = stored {
+            let loaded = Settings::from_json_lenient(stored);
+            let loaded_v = serde_json::to_value(&loaded)?;
+            for (p, raw) in &loaded.preserved.unknown {
+                if value_at(&out, p).is_none() {
+                    set_value_at(&mut out, p, raw.clone());
+                }
+            }
+            for (p, raw) in &loaded.preserved.invalid {
+                let edited = self.preserved.edited.iter().any(|e| e == p || p.starts_with(&format!("{e}.")));
+                if !edited && value_at(&out, p) == value_at(&loaded_v, p) {
+                    set_value_at(&mut out, p, raw.clone());
+                }
+            }
+        }
+        serde_json::to_string(&out)
     }
 
     /// Did a field that only takes effect after a restart change compared

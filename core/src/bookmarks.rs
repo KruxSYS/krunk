@@ -274,21 +274,30 @@ impl Store {
 
     /// Star button: removes all bookmarks for `url` if any exist, otherwise
     /// adds one to the bookmarks bar. Returns the new bookmarked state.
+    /// Atomic (F-66): a failure part-way leaves every bookmark as it was.
     pub fn toggle_bookmark(&mut self, url: &str, title: &str) -> DbResult<bool> {
-        let ids = self.bookmarks_for_url(url)?;
-        if ids.is_empty() {
-            self.add_bookmark(BOOKMARKS_BAR, title, url)?;
-            Ok(true)
-        } else {
+        crate::storage::atomic(&self.conn, |tx| {
+            let ids = self.bookmarks_for_url(url)?;
+            if ids.is_empty() {
+                self.add_bookmark(BOOKMARKS_BAR, title, url)?;
+                return Ok(true);
+            }
             for id in ids {
-                self.delete_bookmark(id)?;
+                let parent: Option<i64> = tx
+                    .query_row("SELECT parent FROM bookmarks WHERE id = ?1", [id], |r| r.get(0))
+                    .optional()?
+                    .flatten();
+                tx.execute("DELETE FROM bookmarks WHERE id = ?1", [id])?;
+                if let Some(p) = parent {
+                    renumber(tx, p)?;
+                }
             }
             Ok(false)
-        }
+        })
     }
 }
 
-fn renumber(tx: &rusqlite::Transaction<'_>, parent: i64) -> DbResult<()> {
+fn renumber(tx: &rusqlite::Connection, parent: i64) -> DbResult<()> {
     let ids: Vec<i64> = {
         let mut stmt = tx.prepare("SELECT id FROM bookmarks WHERE parent = ?1 ORDER BY position, id")?;
         let rows = stmt.query_map([parent], |r| r.get(0))?;

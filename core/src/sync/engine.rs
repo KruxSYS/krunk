@@ -139,8 +139,11 @@ pub fn run(api: &Api, store: &mut Store, st: &mut SyncState, opts: &RunOpts) -> 
         store.sync_applying(coll::repair_tree)?;
     }
     if ctx.initial || report.full || local::meta_get(store.sync_conn(), "reconcile")?.is_some() {
-        coll::enqueue_all(store.sync_conn(), &ctx)?;
-        local::meta_del(store.sync_conn(), "reconcile")?;
+        // Atomic (F-66): the whole first-sync queue, then the reconcile flag cleared.
+        crate::storage::atomic(store.sync_conn(), |tx| {
+            coll::enqueue_all(tx, &ctx)?;
+            local::meta_del(tx, "reconcile")
+        })?;
     }
     if writes_frozen {
         report.frozen = true;

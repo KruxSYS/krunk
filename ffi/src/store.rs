@@ -251,22 +251,41 @@ impl KrunkStore {
         Ok(AndroidSettings::from_core(&core, extras.as_deref()))
     }
 
-    /// Validates and saves. Desktop-only fields already stored keep their values.
+    /// Validates and saves. Desktop-only fields already stored keep their values, and so do
+    /// values this version can't read (F-69): a field keeps its stored raw value unless this
+    /// save changes it.
     pub fn save_settings(&self, settings: AndroidSettings) -> Result<(), SettingsError> {
+        self.save_settings_edited(settings, Vec::new())
+    }
+
+    /// [`Self::save_settings`], with the fields (dotted camelCase paths of the shared settings,
+    /// e.g. `searchEngine`) the user set in this change, even to the value already shown: a raw
+    /// value another platform stored there is then replaced, not kept.
+    pub fn save_settings_edited(&self, settings: AndroidSettings, edited: Vec<String>) -> Result<(), SettingsError> {
         let mut store = self.lock();
+        let stored = store.kv_get("settings")?;
         let mut core = store.load_settings()?;
         settings.apply_to_core(&mut core);
+        for e in edited.iter().filter(|e| crate::settings::android_owned(e)) {
+            core.mark_edited(e);
+        }
         if let Err(errors) = core.validate() {
-            return Err(SettingsError::Validation {
-                errors: errors
-                    .into_iter()
-                    .map(|e| crate::SettingsFieldError { field: e.field.to_string(), message: e.message })
-                    .collect(),
-            });
+            // Only the fields Android edits can be wrong here: a desktop-only field is saved as
+            // it was stored, so its problem is not the user's to fix on the phone.
+            let errors: Vec<_> = errors.into_iter().filter(|e| crate::settings::android_owned(e.field)).collect();
+            if !errors.is_empty() {
+                return Err(SettingsError::Validation {
+                    errors: errors
+                        .into_iter()
+                        .map(|e| crate::SettingsFieldError { field: e.field.to_string(), message: e.message })
+                        .collect(),
+                });
+            }
         }
         // Both rows or neither: a failure between them must not leave half of a change stored
         // while the caller is told that nothing was saved.
-        let shared = serde_json::to_string(&core).map_err(|e| SettingsError::Database { detail: e.to_string() })?;
+        let shared =
+            core.to_json_preserving(stored.as_deref()).map_err(|e| SettingsError::Database { detail: e.to_string() })?;
         let extras = settings.extras_json();
         store.kv_set_many(&[("settings", shared.as_str()), (EXTRAS_KEY, extras.as_str())])?;
         Ok(())

@@ -232,6 +232,25 @@ pub struct Store {
     pub(crate) conn: Connection,
 }
 
+/// Runs `f` atomically on `conn` (F-66): in a savepoint, so it is all-or-nothing both on its own
+/// and inside a caller's transaction (an import, a sync apply), where a nested `BEGIN` would fail.
+pub(crate) fn atomic<R>(
+    conn: &rusqlite::Connection,
+    f: impl FnOnce(&rusqlite::Connection) -> DbResult<R>,
+) -> DbResult<R> {
+    conn.execute_batch("SAVEPOINT krunk_atomic")?;
+    match f(conn) {
+        Ok(r) => {
+            conn.execute_batch("RELEASE krunk_atomic")?;
+            Ok(r)
+        }
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK TO krunk_atomic; RELEASE krunk_atomic");
+            Err(e)
+        }
+    }
+}
+
 impl Store {
     pub fn open(path: &Path) -> DbResult<Store> {
         Store::init(Connection::open(path)?)
@@ -391,8 +410,11 @@ impl Store {
     }
 
     /// Saves settings. Callers must have validated them.
+    /// F-69: keys this version doesn't know and values it refused stay as stored, unless the
+    /// caller changed (or marked edited) that field ([`Settings::to_json_preserving`]).
     pub fn save_settings(&self, s: &Settings) -> DbResult<()> {
-        let json = serde_json::to_string(s).map_err(|e| DbError::ToSqlConversionFailure(Box::new(e)))?;
+        let stored = self.kv_get("settings")?;
+        let json = s.to_json_preserving(stored.as_deref()).map_err(|e| DbError::ToSqlConversionFailure(Box::new(e)))?;
         self.kv_set("settings", &json)
     }
 
@@ -858,5 +880,173 @@ mod tests {
         s.conn.execute("DELETE FROM sync_meta WHERE key = 'applying'", []).unwrap();
         s.allowlist_remove("allow.example").unwrap();
         assert_eq!(queue(&s), vec![("allowlist".to_string(), "allow.example".to_string())]);
+    }
+}
+
+/// F-66 and F-69 (Android 0.6.0): multi-statement writes are all-or-nothing, and settings
+/// survive values this version can't read.
+#[cfg(test)]
+mod f66_f69_tests {
+    use super::*;
+    use crate::settings::{SearchEngine, Settings, Theme};
+
+    fn count(s: &Store, sql: &str) -> i64 {
+        s.conn.query_row(sql, [], |r| r.get(0)).unwrap()
+    }
+
+    /// A trigger that makes the statement it names fail, as a full disk or a crash would.
+    fn fail_on(s: &Store, sql: &str) {
+        s.conn.execute_batch(sql).unwrap();
+    }
+
+    #[test]
+    fn record_visit_failing_at_the_visit_leaves_no_url_row() {
+        let s = Store::open_in_memory().unwrap();
+        fail_on(&s, "CREATE TEMP TRIGGER f BEFORE INSERT ON visits BEGIN SELECT RAISE(ABORT, 'injected'); END;");
+        assert!(s.record_visit("https://a.example/", "A", 5).is_err());
+        assert_eq!(count(&s, "SELECT count(*) FROM urls"), 0, "no URL without its visit");
+        // An existing URL keeps its count too.
+        s.conn.execute_batch("DROP TRIGGER f").unwrap();
+        s.record_visit("https://a.example/", "A", 5).unwrap();
+        fail_on(&s, "CREATE TEMP TRIGGER f BEFORE INSERT ON visits BEGIN SELECT RAISE(ABORT, 'injected'); END;");
+        assert!(s.record_visit("https://a.example/", "A", 6).is_err());
+        assert_eq!(count(&s, "SELECT visit_count FROM urls"), 1);
+        assert_eq!(count(&s, "SELECT last_visit FROM urls"), 5);
+    }
+
+    #[test]
+    fn reorder_tiles_failing_part_way_keeps_the_old_order() {
+        let s = Store::open_in_memory().unwrap();
+        s.pin_site("https://a.example/", "A").unwrap();
+        s.pin_site("https://b.example/", "B").unwrap();
+        fail_on(
+            &s,
+            "CREATE TEMP TRIGGER f BEFORE UPDATE ON tiles WHEN new.url = 'https://a.example/'
+             BEGIN SELECT RAISE(ABORT, 'injected'); END;",
+        );
+        let urls = vec!["https://b.example/".to_string(), "https://a.example/".to_string()];
+        assert!(s.reorder_tiles(&urls).is_err());
+        let order: Vec<String> = s.pinned_tiles(10).unwrap().into_iter().map(|t| t.url).collect();
+        assert_eq!(order, vec!["https://a.example/", "https://b.example/"], "b's move was rolled back");
+    }
+
+    #[test]
+    fn edit_tile_failing_keeps_the_tile_it_would_replace() {
+        let s = Store::open_in_memory().unwrap();
+        s.pin_site("https://a.example/", "A").unwrap();
+        s.pin_site("https://b.example/", "B").unwrap();
+        fail_on(&s, "CREATE TEMP TRIGGER f BEFORE UPDATE ON tiles BEGIN SELECT RAISE(ABORT, 'injected'); END;");
+        assert!(s.edit_tile("https://a.example/", "https://b.example/", "A2").is_err());
+        assert_eq!(count(&s, "SELECT count(*) FROM tiles"), 2, "b was not deleted");
+    }
+
+    #[test]
+    fn toggle_bookmark_failing_part_way_removes_none() {
+        let mut s = Store::open_in_memory().unwrap();
+        let first = s.add_bookmark(BOOKMARKS_BAR, "A", "https://a.example/").unwrap();
+        s.add_bookmark(OTHER_BOOKMARKS, "A again", "https://a.example/").unwrap();
+        fail_on(
+            &s,
+            &format!(
+                "CREATE TEMP TRIGGER f BEFORE DELETE ON bookmarks WHEN old.id <> {first}
+                 BEGIN SELECT RAISE(ABORT, 'injected'); END;"
+            ),
+        );
+        assert!(s.toggle_bookmark("https://a.example/", "A").is_err());
+        assert_eq!(s.bookmarks_for_url("https://a.example/").unwrap().len(), 2, "both bookmarks still there");
+        s.conn.execute_batch("DROP TRIGGER f").unwrap();
+        assert!(!s.toggle_bookmark("https://a.example/", "A").unwrap());
+        assert!(s.bookmarks_for_url("https://a.example/").unwrap().is_empty());
+        assert!(s.toggle_bookmark("https://a.example/", "A").unwrap());
+    }
+
+    fn stored(s: &Store) -> serde_json::Value {
+        serde_json::from_str(&s.kv_get("settings").unwrap().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn an_unknown_key_round_trips() {
+        let s = Store::open_in_memory().unwrap();
+        s.kv_set(
+            "settings",
+            r#"{"homepage":"https://h.example/","fromTheFuture":{"x":1},"appearance":{"newKnob":true}}"#,
+        )
+        .unwrap();
+        let mut st = s.load_settings().unwrap();
+        assert_eq!(st.homepage, "https://h.example/");
+        assert!(st.preserved.unknown.contains_key("fromTheFuture"));
+        st.https_only = !st.https_only;
+        s.save_settings(&st).unwrap();
+        let v = stored(&s);
+        assert_eq!(v["fromTheFuture"], serde_json::json!({"x": 1}));
+        assert_eq!(v["appearance"]["newKnob"], serde_json::json!(true));
+        assert_eq!(v["httpsOnly"], serde_json::json!(st.https_only));
+    }
+
+    #[test]
+    fn a_newer_value_keeps_the_other_fields_and_is_written_back_raw() {
+        let s = Store::open_in_memory().unwrap();
+        s.kv_set(
+            "settings",
+            r#"{"searchEngine":"engineFromTheFuture","homepage":"https://h.example/","theme":"dark","appearance":{"tabShape":"hexagon"}}"#,
+        )
+        .unwrap();
+        let st = s.load_settings().unwrap();
+        assert_eq!(st.homepage, "https://h.example/", "not reset");
+        assert_eq!(st.theme, Theme::Dark, "not reset");
+        assert_eq!(st.search_engine, Settings::default().search_engine, "falls back in memory");
+        assert_eq!(st.preserved.invalid.get("searchEngine"), Some(&serde_json::json!("engineFromTheFuture")));
+        assert!(st.preserved.invalid.contains_key("appearance.tabShape"));
+        // Saving another change never writes the fallback over the newer value.
+        let mut changed = st.clone();
+        changed.homepage = "https://other.example/".into();
+        s.save_settings(&changed).unwrap();
+        let v = stored(&s);
+        assert_eq!(v["searchEngine"], "engineFromTheFuture");
+        assert_eq!(v["appearance"]["tabShape"], "hexagon");
+        assert_eq!(v["homepage"], "https://other.example/");
+        // A fresh Settings (as the Windows settings page sends) keeps them too.
+        let page = Settings { homepage: "https://third.example/".into(), theme: Theme::Dark, ..Settings::default() };
+        s.save_settings(&page).unwrap();
+        assert_eq!(stored(&s)["searchEngine"], "engineFromTheFuture");
+    }
+
+    #[test]
+    fn a_user_who_picks_the_shown_default_gets_it_stored() {
+        let s = Store::open_in_memory().unwrap();
+        s.kv_set("settings", r#"{"searchEngine":"engineFromTheFuture"}"#).unwrap();
+        let mut st = s.load_settings().unwrap();
+        st.search_engine = SearchEngine::DuckDuckGo; // the value already shown
+        st.mark_edited("searchEngine");
+        s.save_settings(&st).unwrap();
+        assert_eq!(stored(&s)["searchEngine"], serde_json::to_value(SearchEngine::DuckDuckGo).unwrap());
+        assert!(s.load_settings().unwrap().preserved.invalid.is_empty());
+        // A changed value needs no mark.
+        s.kv_set("settings", r#"{"searchEngine":"engineFromTheFuture"}"#).unwrap();
+        let mut st = s.load_settings().unwrap();
+        st.search_engine = SearchEngine::Google;
+        s.save_settings(&st).unwrap();
+        assert_eq!(stored(&s)["searchEngine"], serde_json::to_value(SearchEngine::Google).unwrap());
+    }
+
+    #[test]
+    fn an_invalid_value_from_validation_stays_stored() {
+        let s = Store::open_in_memory().unwrap();
+        s.kv_set("settings", r#"{"homepage":"not a url","theme":"light"}"#).unwrap();
+        let st = s.load_settings().unwrap();
+        assert_eq!(st.homepage, Settings::default().homepage);
+        assert_eq!(st.theme, Theme::Light);
+        s.save_settings(&st).unwrap();
+        assert_eq!(stored(&s)["homepage"], "not a url", "never written back as a reset");
+    }
+
+    #[test]
+    fn retired_keys_are_still_migrated_and_dropped() {
+        let s = Store::open_in_memory().unwrap();
+        s.kv_set("settings", r#"{"showBookmarksBar":false}"#).unwrap();
+        let st = s.load_settings().unwrap();
+        assert_eq!(st.bookmarks_bar, crate::settings::BookmarksBar::Never);
+        s.save_settings(&st).unwrap();
+        assert!(stored(&s).get("showBookmarksBar").is_none());
     }
 }
