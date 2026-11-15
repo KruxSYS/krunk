@@ -382,6 +382,7 @@ impl Browser {
         }
         let path = self.dirs.vault();
         let password = password.into_zeroizing();
+        let for_sync = password.clone();
         self.spawn_job(
             "vault-setup",
             move || Vault::create(&path, &password, KdfParams::default(), &Dpapi),
@@ -393,6 +394,7 @@ impl Browser {
                         b.vault_opened(v);
                         b.reply(tab, Event::ok(req_id, ()));
                         b.after_unlock();
+                        b.sync_vault_password(for_sync, false);
                     }
                     Err(e) => b.reply(tab, Event::err(req_id, vault_error_message(&e))),
                 }
@@ -437,6 +439,7 @@ impl Browser {
         }
         let path = self.dirs.vault();
         let password = password.into_zeroizing();
+        let for_sync = password.clone();
         self.spawn_job(
             "vault-unlock",
             move || Vault::open(&path, &password, &Dpapi),
@@ -452,6 +455,7 @@ impl Browser {
                         b.vault_opened(v);
                         b.reply(tab, Event::ok(req_id, ()));
                         b.after_unlock();
+                        b.sync_vault_password(for_sync, false);
                     }
                     Err(VaultError::WrongPassword) => {
                         b.vaults.rate.borrow_mut().record_failure(now);
@@ -685,6 +689,7 @@ impl Browser {
             return;
         };
         let (old, new) = (old.into_zeroizing(), new.into_zeroizing());
+        let for_sync = new.clone();
         self.spawn_job(
             "vault-rekey",
             move || {
@@ -699,6 +704,7 @@ impl Browser {
                     Ok(()) => {
                         info!("master password changed");
                         b.reply(tab, Event::ok(req_id, ()));
+                        b.sync_vault_password(for_sync, true);
                     }
                     Err(e) => b.reply(tab, Event::err(req_id, vault_error_message(&e))),
                 }

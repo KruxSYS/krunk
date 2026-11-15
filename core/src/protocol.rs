@@ -888,11 +888,18 @@ pub enum Request {
     /// The recovery key (and passphrase) to the private clipboard, or into a file.
     SyncSetupCopy,
     SyncSetupSave,
-    /// Restore with the passphrase (`recovery`: false) or the recovery key.
+    /// Restore with the passphrase (`recovery`: false) or the recovery key; `vault`: the secret
+    /// is the password-vault master password (0.21.1, the one secret the page asks for).
     SyncRestore {
         secret: Secret,
         #[serde(default)]
         recovery: bool,
+        #[serde(default)]
+        vault: bool,
+    },
+    /// The first device turns sync on with the vault password (0.21.1).
+    SyncSetupVault {
+        password: Secret,
     },
     /// The user confirmed the device list a restore found.
     SyncRestoreConfirm,
@@ -2329,6 +2336,7 @@ impl Sender {
                     | R::SyncSetupCopy
                     | R::SyncSetupSave
                     | R::SyncRestore { .. }
+                    | R::SyncSetupVault { .. }
                     | R::SyncRestoreConfirm
                     | R::SyncConfirmRotation
                     | R::SyncFinishSecuring { .. }
@@ -3952,7 +3960,8 @@ mod tests {
             Request::SyncSetupConfirm { group: "ABCD".into(), understood: true },
             Request::SyncSetupCopy,
             Request::SyncSetupSave,
-            Request::SyncRestore { secret: Secret::from("words"), recovery: false },
+            Request::SyncRestore { secret: Secret::from("words"), recovery: false, vault: false },
+            Request::SyncSetupVault { password: Secret::from("vault pw") },
             Request::SyncRestoreConfirm,
             Request::SyncConfirmRotation,
             Request::SyncFinishSecuring { secret: Secret::from("words"), recovery: false },
@@ -5169,7 +5178,8 @@ mod tests {
             Request::SyncSetupConfirm { group: "ABCD".into(), understood: true },
             Request::SyncSetupCopy,
             Request::SyncSetupSave,
-            Request::SyncRestore { secret: Secret::from("words"), recovery: false },
+            Request::SyncRestore { secret: Secret::from("words"), recovery: false, vault: false },
+            Request::SyncSetupVault { password: Secret::from("vault pw") },
             Request::SyncRestoreConfirm,
             Request::SyncConfirmRotation,
             Request::SyncFinishSecuring { secret: Secret::from("words"), recovery: false },

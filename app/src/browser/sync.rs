@@ -501,7 +501,9 @@ impl Browser {
             Request::SyncSetupConfirm { group, understood } => self.sync_setup_confirm(&group, understood),
             Request::SyncSetupCopy => self.sync_setup_copy(tab, req_id),
             Request::SyncSetupSave => self.sync_setup_save(tab, req_id),
-            Request::SyncRestore { secret, recovery } => self.sync_restore(secret, recovery),
+            Request::SyncRestore { secret, vault: true, .. } => self.sync_restore_vault(secret),
+            Request::SyncRestore { secret, recovery, .. } => self.sync_restore(secret, recovery),
+            Request::SyncSetupVault { password } => self.sync_setup_vault(password),
             Request::SyncRestoreConfirm => self.sync_restore_confirm(),
             Request::SyncJoin { passwords } => self.sync_join(passwords),
             Request::SyncJoinCode { code } => self.sync_join_code(code),
@@ -730,6 +732,166 @@ impl Browser {
             Ok(()) => self.reply(Some(tab), Event::ok(req_id, serde_json::json!({ "saved": true }))),
             Err(_) => self.reply(Some(tab), Event::err(req_id, "The file could not be written")),
         }
+    }
+
+    /// Join with the vault password (0.21.1): the restore path with the account's one secret.
+    fn sync_restore_vault(&self, password: lb_core::secret::Secret) {
+        if !matches!(&*self.sync.stage.borrow(), Stage::Join { .. }) {
+            return;
+        }
+        let Some((_, acc, _)) = self.sync_me() else { return };
+        let secret = SyncSecret::Vault(Zeroizing::new(password.to_string()));
+        self.set_sync_stage(Stage::Working("Checking your vault password… (this takes a few seconds)".into()));
+        self.sync_call(
+            "sync-restore-vault",
+            move |api| {
+                let plan = client::restore_begin(api, &secret, acc)?;
+                let devices = client::devices(api)?;
+                Ok::<_, SyncFail>((plan, devices))
+            },
+            move |b, r| match r {
+                Ok((plan, devices)) => {
+                    let names: Vec<String> = plan
+                        .ak_dir
+                        .devices
+                        .iter()
+                        .map(|d| {
+                            devices
+                                .iter()
+                                .find(|x| x.id == d.id)
+                                .map(|x| x.label.clone())
+                                .unwrap_or_else(|| format!("Device #{}", d.short))
+                        })
+                        .collect();
+                    let revoked = plan.ak_dir.revoked.len();
+                    *b.sync.restore.borrow_mut() = Some(plan);
+                    b.set_sync_stage(Stage::RestoreConfirm { devices: names, revoked });
+                }
+                Err(e) => {
+                    info!("sync: vault-password restore failed ({e})");
+                    let text = match &e {
+                        SyncFail::Keys(KeyError::WrongSecret) => {
+                            "That vault password doesn't open your sync data. Type the vault password of your other device."
+                                .into()
+                        }
+                        SyncFail::Keys(KeyError::NoVaultWrap) => "Your other device hasn't switched to the vault password yet. \
+                             Update Krunk there and unlock your passwords on it once, then try again."
+                            .into(),
+                        e => fail_text(e),
+                    };
+                    b.set_sync_stage(Stage::Join { passwords: false, message: Some(text) });
+                }
+            },
+        );
+    }
+
+    /// First device (0.21.1): sync on, protected by the vault password. It must be this
+    /// computer's vault password (checked against the vault), so it stays one password.
+    fn sync_setup_vault(&self, password: lb_core::secret::Secret) {
+        let passwords = match &*self.sync.stage.borrow() {
+            Stage::Setup { passwords, .. } => *passwords,
+            _ => return,
+        };
+        let Some((account, acc, device)) = self.sync_me() else { return };
+        let Some(short) = self.sync.plan.borrow().as_ref().map(|p| p.me.short) else { return };
+        let pw = Zeroizing::new(password.to_string());
+        let vault_path = self.dirs.vault();
+        self.set_sync_stage(Stage::Working("Turning on sync… (this takes a few seconds)".into()));
+        self.sync_call(
+            "sync-setup-vault",
+            move |api| {
+                if lb_core::vault::Vault::open(&vault_path, &pw, &Dpapi).is_err() {
+                    return Err(SyncFail::Keys(KeyError::WrongSecret));
+                }
+                let plan = keys::plan_setup_vault(acc, Me { device_id: device.clone(), short }, &pw)?;
+                let (joined, gen) = client::setup(api, &plan)?;
+                Ok::<_, SyncFail>((joined, gen, Me { device_id: device, short }))
+            },
+            move |b, r| match r {
+                Ok((joined, gen, me)) => {
+                    *b.sync.plan.borrow_mut() = None;
+                    *b.sync.state.borrow_mut() = Some(client::new_state(&account, &me, &joined, gen));
+                    b.sync_save();
+                    if let Some(p) = &joined.pak {
+                        b.sync_set_pak(Some(p));
+                    }
+                    b.sync_started();
+                    b.set_sync_stage(Stage::On(Some(
+                        "Sync is on. On your other devices, sign in and type this vault password.".into(),
+                    )));
+                }
+                Err(e) => {
+                    info!("sync: setup with the vault password failed ({e})");
+                    let text = match &e {
+                        SyncFail::Keys(KeyError::WrongSecret) => {
+                            "That isn't this computer's vault password. Type the password you unlock your passwords with."
+                                .into()
+                        }
+                        e => fail_text(e),
+                    };
+                    b.set_sync_stage(Stage::Setup { passwords, message: Some(text) });
+                }
+            },
+        );
+    }
+
+    /// The vault was created, unlocked or its password changed (0.21.1). With sync on: makes the
+    /// vault password the account's one secret when the server has no copy under it yet, the
+    /// password changed, or a removal left the keys to re-secure; without the passwords key
+    /// here, gets it with this password.
+    pub(super) fn sync_vault_password(&self, pw: Zeroizing<String>, changed: bool) {
+        if !matches!(&*self.sync.stage.borrow(), Stage::On(_)) || self.sync.running.get() || self.sync.busy.get() {
+            return;
+        }
+        let Some(mut st) = self.sync.state.borrow().clone() else { return };
+        let mut pak = self.sync_pak();
+        self.sync.busy.set(true);
+        self.sync_call(
+            "sync-vault-password",
+            move |api| {
+                let server = client::state(api)?;
+                match pak.as_mut() {
+                    Some(p) => {
+                        if server.escrow_vault && !changed && !st.secure_needed {
+                            return Ok(None);
+                        }
+                        client::set_vault_root(api, &mut st, p, &pw)?;
+                    }
+                    None => {
+                        if !server.escrow_vault {
+                            return Ok(None);
+                        }
+                        let escrow = client::fetch_escrow(api)?;
+                        pak = Some(client::add_passwords(api, &mut st, &escrow, &SyncSecret::Vault(pw))?);
+                    }
+                }
+                Ok::<_, SyncFail>(Some((st, pak)))
+            },
+            |b, r| {
+                b.sync.busy.set(false);
+                match r {
+                    Ok(Some((st, pak))) => {
+                        *b.sync.state.borrow_mut() = Some(st);
+                        b.sync_save();
+                        if let Some(p) = &pak {
+                            if b.vault_unlocked() {
+                                b.sync_set_pak(Some(p));
+                            }
+                        }
+                        info!("sync: the vault password protects the sync keys");
+                        *b.sync.status.borrow_mut() = None;
+                        b.sync.next_run_ms.set(now_ms());
+                        b.push_sync();
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        info!("sync: the vault password could not be set up for sync ({e})");
+                        *b.sync.status.borrow_mut() = Some(fail_text(&e));
+                        b.push_sync();
+                    }
+                }
+            },
+        );
     }
 
     fn sync_restore(&self, secret: lb_core::secret::Secret, recovery: bool) {

@@ -45,29 +45,19 @@
     <p class="working"><span class="spinner" aria-hidden="true"></span> <span id="working-text"></span></p>
   </section>
 
-  <!-- First device: passphrase and recovery key -->
+  <!-- First device: the vault password protects sync (0.21.1) -->
   <section class="card" id="v-setup" hidden>
-    <h2>Save your passphrase and recovery key</h2>
-    <p>These two keep your synced data private. With either one, you can restore your data on a new device if you lose
-      all the others. <strong>Write them down or save them somewhere safe now: they are shown only once.</strong></p>
-    <dl class="secrets">
-      <dt>Passphrase</dt><dd><code id="setup-passphrase" class="secret"></code></dd>
-      <dt>Recovery key</dt><dd><code id="setup-recovery" class="secret"></code></dd>
-    </dl>
-    <div class="acts">
-      <button class="btn" id="setup-copy">Copy both</button>
-      <button class="btn" id="setup-save">Save to a file…</button>
-      <span class="status" id="setup-saved" role="status"></span>
-    </div>
+    <h2>Turn on sync with your vault password</h2>
+    <p>Your vault password (the one that unlocks your saved passwords) also protects your synced data. On your other
+      devices you sign in and type this same password: that's all.</p>
+    <p class="hint" id="setup-novault" hidden>You have no password vault yet. <a href="krunk://passwords">Create one</a>
+      first, then come back here.</p>
     <form id="setup-form" autocomplete="off" novalidate>
-      <label for="setup-group">To confirm you saved the recovery key, type its last group of 4 characters (before the
-        last dash):</label>
-      <input type="text" id="setup-group" maxlength="4" spellcheck="false" autocapitalize="characters">
-      <label class="check"><input type="checkbox" id="setup-understood"> <span>I understand: if I lose my passphrase, my
-        recovery key and all my devices, my synced data can't be recovered.</span></label>
+      <label for="setup-vault-pw">Vault password:</label>
+      <input type="password" id="setup-vault-pw" spellcheck="false" autocomplete="off">
       <p class="error" id="setup-error" role="alert" hidden></p>
       <div class="acts">
-        <button class="btn primary" type="submit" id="setup-confirm">Set up sync</button>
+        <button class="btn primary" type="submit" id="setup-confirm">Turn on sync</button>
         <button class="btn" type="button" id="setup-cancel">Cancel</button>
       </div>
     </form>
@@ -76,29 +66,13 @@
   <!-- The account already syncs -->
   <section class="card" id="v-join" hidden>
     <h2>Your account already uses sync</h2>
-    <p>Get your sync keys onto this device in one of two ways.</p>
+    <p>Type your vault password: the one you unlock your passwords with on your other device.</p>
     <p class="error" id="join-error" role="alert" hidden></p>
-    <div class="ways">
-      <div class="way">
-        <h3>Approve from another device</h3>
-        <p>On a device that already syncs, open <strong>krunk://sync</strong>. It shows this request: compare the
-          6 digits it shows, and type them here.</p>
-        <label class="check"><input type="checkbox" id="join-passwords"> <span>Also ask for my passwords</span></label>
-        <div class="acts"><button class="btn primary" id="join-ask">Ask my other devices</button></div>
-      </div>
-      <div class="way">
-        <h3>Enter your passphrase or recovery key</h3>
-        <form id="restore-form" autocomplete="off" novalidate>
-          <div class="radios" role="radiogroup">
-            <label><input type="radio" name="kind" value="passphrase" checked> Passphrase</label>
-            <label><input type="radio" name="kind" value="recovery"> Recovery key</label>
-          </div>
-          <input type="password" id="restore-secret" spellcheck="false" autocomplete="off" aria-label="Passphrase or recovery key">
-          <div class="acts"><button class="btn" type="submit" id="restore-go">Restore</button></div>
-        </form>
-        <p class="hint" id="restore-vault-hint"></p>
-      </div>
-    </div>
+    <form id="restore-form" autocomplete="off" novalidate>
+      <input type="password" id="restore-secret" spellcheck="false" autocomplete="off" aria-label="Vault password">
+      <div class="acts"><button class="btn primary" type="submit" id="restore-go">Continue</button></div>
+    </form>
+    <p class="hint" id="restore-vault-hint"></p>
     <div class="acts"><button class="btn" id="join-cancel">Cancel</button></div>
   </section>
 
@@ -172,16 +146,8 @@
 
     <section class="card" id="secure" hidden>
       <h2>Finish securing your account</h2>
-      <p>Sync has new keys since a device was removed. Enter your passphrase or recovery key once, so that a
-        restore can never be steered to the old keys.</p>
-      <form id="secure-form" autocomplete="off" novalidate>
-        <div class="radios" role="radiogroup">
-          <label><input type="radio" name="secure-kind" value="passphrase" checked> Passphrase</label>
-          <label><input type="radio" name="secure-kind" value="recovery"> Recovery key</label>
-        </div>
-        <input type="password" id="secure-secret" spellcheck="false" autocomplete="off" aria-label="Passphrase or recovery key">
-        <div class="acts"><button class="btn primary" type="submit" id="secure-go">Finish securing</button></div>
-      </form>
+      <p>Sync has new keys since a device was removed. Unlock your passwords on this computer (with your vault
+        password) and Krunk finishes this by itself.</p>
     </section>
 
     <section class="card">

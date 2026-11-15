@@ -43,22 +43,18 @@
     }
     if (v.state === 'working') $('working-text').textContent = v.message;
     if (v.state === 'setup') {
-      $('setup-passphrase').textContent = v.passphrase;
-      $('setup-recovery').textContent = v.recoveryKey;
+      $('setup-novault').hidden = vault.exists;
+      $('setup-form').hidden = !vault.exists;
       setText('setup-error', v.message);
     }
     if (v.state === 'join') {
       setText('join-error', v.message);
-      const canPw = vault.exists && !vault.locked;
-      $('join-passwords').disabled = !canPw;
-      $('join-passwords').checked = canPw && v.passwords;
       $('restore-secret').value = '';
-      // Typing the passphrase or recovery key is the usual next step.
       if (shown !== 'join') $('restore-secret').focus();
       $('restore-vault-hint').textContent = !vault.exists
-        ? 'Your passwords are restored only into a password vault: set one up first (Passwords page) if you want them.'
-        : vault.locked ? 'Unlock your password vault first if you want your passwords restored too.'
-          : 'Your passwords are restored into your unlocked password vault.';
+        ? 'Your passwords come along once this computer has a password vault: create it on the Passwords page with the same password.'
+        : vault.locked ? 'Unlock your password vault first so your passwords come along too.'
+          : 'Your passwords come into this computer\'s vault.';
     }
     if (v.state === 'restoreConfirm') {
       const list = $('restore-devices');
@@ -181,28 +177,21 @@
 
   $('go-account').addEventListener('click', function () { LB.post('openPage', { page: 'settings', section: 'account' }); });
   $('turn-on').addEventListener('click', function () { LB.post('syncTurnOn', { passwords: $('off-passwords').checked }); });
-  $('setup-copy').addEventListener('click', function () {
-    LB.request('syncSetupCopy').then(function () { $('setup-saved').textContent = 'Copied. The clipboard is cleared in a minute.'; },
-      function (e) { $('setup-saved').textContent = e.message; });
-  });
-  $('setup-save').addEventListener('click', function () {
-    LB.request('syncSetupSave').then(function (r) { if (r && r.saved) $('setup-saved').textContent = 'Saved.'; },
-      function (e) { $('setup-saved').textContent = e.message; });
-  });
+  // 0.21.1: the vault password is the one secret (first device and joining alike).
   $('setup-form').addEventListener('submit', function (e) {
     e.preventDefault();
-    LB.post('syncSetupConfirm', { group: $('setup-group').value.trim(), understood: $('setup-understood').checked });
+    const pw = $('setup-vault-pw').value;
+    if (!pw) { $('setup-vault-pw').focus(); return; }
+    $('setup-vault-pw').value = '';
+    LB.post('syncSetupVault', { password: pw });
   });
   $('setup-cancel').addEventListener('click', function () { LB.post('syncCancel'); });
-  $('join-ask').addEventListener('click', function () { LB.post('syncJoin', { passwords: $('join-passwords').checked }); });
   $('restore-form').addEventListener('submit', function (e) {
     e.preventDefault();
     const secret = $('restore-secret').value;
-    if (!secret.trim()) { $('restore-secret').focus(); return; }
-    // A recovery key is recognised by its prefix, whichever kind is ticked.
-    const recovery = document.querySelector('input[name=kind]:checked').value === 'recovery' || /^\s*KRNK-/i.test(secret);
+    if (!secret) { $('restore-secret').focus(); return; }
     $('restore-secret').value = '';
-    LB.post('syncRestore', { secret: secret, recovery: recovery });
+    LB.post('syncRestore', { secret: secret, vault: true });
   });
   $('join-cancel').addEventListener('click', function () { LB.post('syncCancel'); });
   $('restore-confirm').addEventListener('click', function () { LB.post('syncRestoreConfirm'); });
@@ -217,14 +206,6 @@
   $('approving-cancel').addEventListener('click', function () { LB.post('syncApproveCancel'); });
   $('sync-now').addEventListener('click', function () { LB.post('syncNow'); });
   $('confirm-go').addEventListener('click', function () { LB.post('syncConfirmRotation'); });
-  $('secure-form').addEventListener('submit', function (e) {
-    e.preventDefault();
-    const secret = $('secure-secret').value.trim();
-    if (!secret) { $('secure-secret').focus(); return; }
-    const recovery = document.querySelector('input[name=secure-kind]:checked').value === 'recovery';
-    LB.post('syncFinishSecuring', { secret: secret, recovery: recovery });
-    $('secure-secret').value = '';
-  });
   $('alarm-off').addEventListener('click', function () { LB.post('syncTurnOff', { deleteData: false }); });
   $('turn-off').addEventListener('click', function () {
     const del = $('off-delete').checked;
