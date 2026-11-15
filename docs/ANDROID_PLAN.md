@@ -174,9 +174,31 @@ as an AAR.
   own picker. Being a system-wide Android Autofill service is a later option.
 
 ## 4. Sync
-Desktop has end-to-end encrypted sync since 0.9.0 (`docs/sync/`); the protocol already accepts
-`platform: "android"` and `core::sync` is meant to be shared through UniFFI (round 4). Until then,
-manual import/export of bookmarks (Netscape HTML via `core::netscape`) covers moving devices.
+Desktop has end-to-end encrypted sync since 0.9.0 (`docs/sync/`). **Android has it since 0.6.0**,
+through the same `core::sync` code (UniFFI object `KrunkSync`, `ffi/src/sync/`), so the keys, the
+directories, the merge and the conflict rules are the shared code; Kotlin only supplies the HTTPS
+transport (`SyncHttp`), the Keystore key and the screen.
+
+As built in 0.6.0 (round 4, plan `.pipeline/plan-android-sync.md`):
+- **Sign-in is the device link** (PROTOCOL §6.1, platform `android`): the app shows a code and
+  opens the approval page in a tab; the user approves with the account password on the website.
+  The keys then come from a device that syncs (6 digits typed on the phone, §6.2), from the sync
+  passphrase or recovery key (§6.3; one escrow fetch per attempt, a wrong secret retried
+  locally), or, for an account that doesn't sync yet, the phone is the first device (§6.4).
+- **What syncs:** what Windows syncs, nothing new: bookmarks, history, settings (the 20
+  allowlisted keys), open tabs, passwords and the never-save list (vault unlocked), new tab
+  pins, ad-blocker exceptions, device names. Payment cards are not synced on either platform.
+  Android-only settings (`kv["android.settings"]`: toolbar position, text size …) stay on the
+  phone (decision D2, for the operator to confirm).
+- **Storage:** `files/krunk-sync/account.json` and `sync.json` (the core's formats), wrapped by
+  the Keystore key `krunk.sync.wrap.v1`; excluded from every backup; a `browser.db` copied by a
+  device transfer forgets its sync bookkeeping at the first start.
+- **Schedule:** in the foreground only (a minute after start, every 5 minutes, 30 s after a local
+  change, Sync now); no background work, no request before sign-in.
+- **Sign-out and a device removed elsewhere** delete the tokens, the keys (also the vault's sync
+  part) and the bookkeeping; local data stays unless the user also removes what came from sync.
+- **Not on Android yet:** approving or removing other devices, Finish securing after a removal,
+  the QR claim (`link/pair/claim`): done on Windows or on the website.
 
 ## 5. Distribution and updates
 | Channel | Self-update | Notes |
@@ -225,7 +247,8 @@ Total: about **15–16 weeks** to a first public beta, then a GeckoView bump eve
 5. **Pointer lock:** checked in 0.4.0: GeckoView 160 on Android reports a lock to the page but
    delivers no mouse movement while locked and offers no pointer-capture API. Touch-only for
    games on Android until the engine has it; is that acceptable, or should it be raised upstream?
-6. **Shared account/sync:** wanted in a later round?
+6. ~~Shared account/sync~~ answered in 0.6.0: yes, built in round 4 with the shared core
+   (§4). Open for the operator: whether the Android-only settings should ever sync (D2).
 7. ~~Branding/package name~~ `org.krunk.browser` confirmed; ~~`UPDATE_BASE_URL`~~
    `https://krunk.209.wf` since 0.5.0.
 8. ~~Play Services FIDO~~ kept (passkeys); `-Pkrunk.noGms=true` documented for devices without

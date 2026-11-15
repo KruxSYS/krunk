@@ -29,6 +29,11 @@ device tests of the round (`android/scripts/a5/a5.sh`; evidence in
 `.pipeline/evidence-android-0.4.0/m8/`). Real camera and microphone capture, a real location fix
 and notification delivery on a phone were not run.
 
+**Round 4 (0.6.0).** Account and sync (§13 and the Sync row of §7). **(v, staging)** there means:
+checked end to end against a **staging** copy of the server with Windows Krunk on the Windows VM
+and the Android 16 emulator (evidence in `.pipeline/evidence-android-0.6.0/`); the live server
+was not used for these tests.
+
 **Columns.** *Windows Krunk*: yes / partial / no, with the README section or CHANGELOG version
 (and the `core` module when the logic is shared). *Android 0.1.0*: done / partial / roadmap /
 not planned. *Engine*: the GeckoView API that provides it, or the limitation. *Round*: the Android
@@ -156,7 +161,7 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | Bookmarks bar | yes — 0.4.0 | not planned on phones (folder "Bookmarks bar" is shown in the manager) | — | — |
 | Reading list | no | roadmap | — | 4 |
 | Offline saving (save page) | no | roadmap | `saveAsPdf` / WebExtension | 4 |
-| Sync | yes — 0.9.0 (beta) | roadmap (`core::sync` via UniFFI; the protocol already names `platform: android`) | — | 4 |
+| Sync | yes — 0.9.0 (beta) | done (v, staging) (0.6.0, bookmarks both ways, merged on the first sync; see §13) | — | 4 |
 
 ## 8. History
 
@@ -233,8 +238,8 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 
 | Feature | Windows Krunk | Android 0.1.0 | Engine | Round |
 |---|---|---|---|---|
-| Krunk account sign-in (device code, QR pairing) | yes — 0.8.0, 0.13.0; `core::account` | roadmap (protocol allows `platform: "android"`) | — | 4 |
-| End-to-end encrypted sync of bookmarks, history, settings, tabs, passwords | yes — 0.9.0; `core::sync` | roadmap (same data formats already in use) | — | 4 |
+| Krunk account sign-in (device code, QR pairing) | yes — 0.8.0, 0.13.0; `core::account` | done (v, staging) (0.6.0: Settings › Account & sync › Sign in shows the code and opens the approval page in a tab; tokens through `ffi::KrunkSync`, refresh token wrapped by the Keystore key `krunk.sync.wrap.v1`. Not on Android: scanning the account page's QR code (native `link/pair/claim`)) | — | 4 |
+| End-to-end encrypted sync of bookmarks, history, settings, tabs, passwords | yes — 0.9.0; `core::sync` | done (v, staging) (0.6.0: the shared `core::sync` engine through UniFFI: the same data types as Windows, incl. new tab pins, ad-blocker exceptions and the never-save list; passwords while the vault is unlocked; keys by approval from a syncing device (6 digits), by passphrase or recovery key, or as the first device; status, per-type switches, Sync now, other devices' tabs; foreground-only schedule. Android-only settings stay on the phone. Not on Android: approving/removing other devices, Finish securing) | — | 4 |
 
 ## 14. Extensions
 
