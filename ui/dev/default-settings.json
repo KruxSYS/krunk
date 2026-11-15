@@ -1,8 +1,9 @@
 {
-  "searchEngine": "duckDuckGo",
+  "defaultsVersion": 1,
+  "searchEngine": "google",
   "customSearchUrl": "",
   "startup": "restoreSession",
-  "homepage": "https://duckduckgo.com/",
+  "homepage": "https://www.google.com/",
   "bookmarksBar": "always",
   "hardwareAcceleration": true,
   "tabSleepMinutes": 5,

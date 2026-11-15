@@ -1016,17 +1016,17 @@ mod f66_f69_tests {
         let s = Store::open_in_memory().unwrap();
         s.kv_set("settings", r#"{"searchEngine":"engineFromTheFuture"}"#).unwrap();
         let mut st = s.load_settings().unwrap();
-        st.search_engine = SearchEngine::DuckDuckGo; // the value already shown
+        st.search_engine = SearchEngine::Google; // the value already shown
         st.mark_edited("searchEngine");
         s.save_settings(&st).unwrap();
-        assert_eq!(stored(&s)["searchEngine"], serde_json::to_value(SearchEngine::DuckDuckGo).unwrap());
+        assert_eq!(stored(&s)["searchEngine"], serde_json::to_value(SearchEngine::Google).unwrap());
         assert!(s.load_settings().unwrap().preserved.invalid.is_empty());
         // A changed value needs no mark.
         s.kv_set("settings", r#"{"searchEngine":"engineFromTheFuture"}"#).unwrap();
         let mut st = s.load_settings().unwrap();
-        st.search_engine = SearchEngine::Google;
+        st.search_engine = SearchEngine::DuckDuckGo;
         s.save_settings(&st).unwrap();
-        assert_eq!(stored(&s)["searchEngine"], serde_json::to_value(SearchEngine::Google).unwrap());
+        assert_eq!(stored(&s)["searchEngine"], serde_json::to_value(SearchEngine::DuckDuckGo).unwrap());
     }
 
     #[test]

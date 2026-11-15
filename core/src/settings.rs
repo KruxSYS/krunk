@@ -1901,7 +1901,8 @@ mod tests {
         assert_eq!(old.startup, Startup::Homepage);
         assert!(!old.appearance.show_home_button, "the 0.4 key does not turn the 0.16.0 button on");
         let strict: Settings = serde_json::from_str(r#"{"showHomeButton":true}"#).unwrap();
-        assert_eq!(strict, Settings::default());
+        // A file without `defaultsVersion` is an old one (0): `from_json_lenient` migrates it.
+        assert_eq!(strict, Settings { defaults_version: 0, ..Settings::default() });
         let json: serde_json::Value = serde_json::to_value(&old).unwrap();
         let top = json.as_object().unwrap();
         assert!(top.keys().all(|k| k != "showHomeButton" && k != "homeButton"), "{json}");
@@ -1929,7 +1930,7 @@ mod tests {
     #[test]
     fn home_goes_to_the_homepage_or_the_new_tab_page() {
         let d = Settings::default();
-        assert_eq!(d.home_target(), "https://duckduckgo.com/", "the default homepage is unchanged");
+        assert_eq!(d.home_target(), "https://www.google.com/", "the default homepage (0.22.0)");
         let s = Settings { homepage: "https://start.example/".into(), ..Settings::default() };
         assert_eq!(s.home_target(), "https://start.example/");
         for empty in ["", "  "] {

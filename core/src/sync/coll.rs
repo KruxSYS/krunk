@@ -965,6 +965,7 @@ mod tests {
             "downloadDir",
             "extraFlags",
             "filterListsRev",
+            "defaultsVersion",
             "hardwareAcceleration",
             "headers",
             "linkTabs",

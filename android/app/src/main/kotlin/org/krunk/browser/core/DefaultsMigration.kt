@@ -14,7 +14,7 @@ object DefaultsMigration {
     /** 1: DuckDuckGo engine and homepage → Google (0.7.0). */
     const val CURRENT = 1
 
-    const val GOOGLE_HOMEPAGE = "https://www.google.com"
+    const val GOOGLE_HOMEPAGE = "https://www.google.com/"
 
     private val OLD_HOMEPAGES = setOf("https://duckduckgo.com/", "https://duckduckgo.com")
 

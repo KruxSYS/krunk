@@ -1787,7 +1787,8 @@ impl Browser {
             (_, sapi::Next::RetryIn(ms)) => {
                 self.sync.wait_until_ms.set(now + ms);
                 self.sync.next_run_ms.set(now + ms);
-                format!("Sync will try again in {} min", (ms + 59_999) / 60_000)
+                // The reason too (0.22.0): the bare retry line hid what failed.
+                format!("{} Sync will try again in {} min.", fail_text(e), (ms + 59_999) / 60_000)
             }
             (_, sapi::Next::SignedOut) => {
                 "This device is signed out of the Krunk account. Sign in again in Settings → Account.".into()

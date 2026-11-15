@@ -17,7 +17,7 @@ class DefaultsMigrationTest {
     fun oldDefaultsMoveToGoogle() {
         val s = DefaultsMigration.migrate(old, 0)
         assertEquals(SearchEngineId.GOOGLE, s.searchEngine)
-        assertEquals("https://www.google.com", s.homepage)
+        assertEquals("https://www.google.com/", s.homepage)
     }
 
     @Test
@@ -34,7 +34,7 @@ class DefaultsMigrationTest {
         try {
             store.saveSettings(old)
             assertEquals(SearchEngineId.GOOGLE, SettingsRepository(store).current.searchEngine)
-            assertEquals("https://www.google.com", store.loadSettings().homepage)
+            assertEquals("https://www.google.com/", store.loadSettings().homepage)
             assertEquals(DefaultsMigration.CURRENT.toString(), store.kvGet(DefaultsMigration.KEY))
             // The user goes back to DuckDuckGo: the next start keeps it.
             store.saveSettings(old)
@@ -51,7 +51,7 @@ class DefaultsMigrationTest {
             val store = KrunkStore.open(File(dir, "browser.db").path)
             val s = SettingsRepository(store).current
             assertEquals(SearchEngineId.GOOGLE, s.searchEngine)
-            assertEquals("https://www.google.com", s.homepage)
+            assertEquals("https://www.google.com/", s.homepage)
             store.destroy()
         } finally {
             dir.deleteRecursively()
