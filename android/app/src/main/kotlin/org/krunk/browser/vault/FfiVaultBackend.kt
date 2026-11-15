@@ -31,7 +31,9 @@ class FfiKeyWrapper(private val keys: KeystoreKeyWrapper) : VaultKeyWrapper {
 
 /** The vault of the shared core (`core::vault` through `ffi/src/vault.rs`). */
 class FfiVaultBackend(dir: File, wrapper: VaultKeyWrapper) : VaultBackend {
-    private val vault = KrunkVault(dir.absolutePath, wrapper)
+    /** The core object itself, for sync (passwords sync through the open vault, 0.6.0). */
+    val ffi: KrunkVault = KrunkVault(dir.absolutePath, wrapper)
+    private val vault get() = ffi
 
     private inline fun <T> call(block: () -> T): T = try {
         block()

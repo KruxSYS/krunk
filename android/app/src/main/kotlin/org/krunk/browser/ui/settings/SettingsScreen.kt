@@ -207,7 +207,12 @@ private fun SectionBody(
     onAbout: () -> Unit,
 ) {
     when (section) {
-        SettingsSection.GENERAL -> GeneralSection(s, update)
+        SettingsSection.GENERAL -> {
+            Row(stringResource(R.string.sync_settings_row), stringResource(R.string.sync_settings_row_help)) {
+                vm.push(Screen.Sync)
+            }
+            GeneralSection(s, update)
+        }
 
         SettingsSection.APPEARANCE -> AppearanceSection(s, update)
 

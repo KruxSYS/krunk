@@ -17,4 +17,6 @@
     <!-- Part files of downloads (files/downloads-part, DownloadEngine.PART_DIR): unfinished
          pieces, also of private downloads; deleted at the next start when nobody owns them. -->
     <exclude domain="file" path="downloads-part" />
+    <!-- Krunk account and sync (files/krunk-sync, 0.6.0): the sign-in and sync's keys. -->
+    <exclude domain="file" path="krunk-sync" />
 </full-backup-content>

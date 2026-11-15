@@ -24,6 +24,7 @@ import org.krunk.browser.ui.permissions.SitePermissionsScreen
 import org.krunk.browser.ui.settings.AboutScreen
 import org.krunk.browser.ui.settings.SettingsScreen
 import org.krunk.browser.ui.sitedata.SiteDataScreen
+import org.krunk.browser.ui.sync.SyncScreen
 import org.krunk.browser.ui.tabs.TabSwitcherScreen
 import org.krunk.browser.ui.theme.KrunkTheme
 import org.krunk.browser.ui.theme.LocalKrunkDark
@@ -103,6 +104,8 @@ fun KrunkRoot(vm: BrowserViewModel) {
                     is Screen.SiteDetail -> SiteDetailScreen(vm, screen.origin)
 
                     Screen.SiteData -> SiteDataScreen(vm)
+
+                    Screen.Sync -> SyncScreen(vm)
 
                     Screen.Vault -> {
                         val app = LocalContext.current.applicationContext as? Application

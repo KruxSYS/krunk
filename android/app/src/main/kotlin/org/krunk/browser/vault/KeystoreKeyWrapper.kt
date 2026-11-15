@@ -71,36 +71,51 @@ class WrapFailure(val kind: WrapFailureKind, val detail: String) : Exception("$k
  * never make one: with the key gone, a new key could not open the existing vault, and making
  * one silently would hide that the vault is lost.
  */
-class KeystoreKeyWrapper(private val store: WrapKeyStore) {
-    fun keyPresent(): Boolean = store.exists(ALIAS)
+class KeystoreKeyWrapper(
+    private val store: WrapKeyStore,
+    private val alias: String = ALIAS,
+    /**
+     * Make the key on the first [protect] (sync's key, 0.6.0: it wraps only what the next
+     * sign-in writes, so a new key never hides lost data). The vault's key is never made here.
+     */
+    private val createOnProtect: Boolean = false,
+) {
+    fun keyPresent(): Boolean = store.exists(alias)
 
     /** A fresh key for a new vault: StrongBox if the device has one, else the TEE. */
     @Throws(WrapFailure::class)
     fun prepareForNewVault() = guarded {
         try {
-            store.generate(ALIAS, strongBox = true)
+            store.generate(alias, strongBox = true)
         } catch (_: StrongBoxUnavailable) {
-            store.generate(ALIAS, strongBox = false)
+            store.generate(alias, strongBox = false)
         }
     }
 
     @Throws(WrapFailure::class)
     fun protect(data: ByteArray): ByteArray = guarded {
-        if (!store.exists(ALIAS)) throw KeyFailure.Missing()
-        val (iv, ct) = store.encrypt(ALIAS, data)
+        if (!store.exists(alias)) {
+            if (!createOnProtect) throw KeyFailure.Missing()
+            try {
+                store.generate(alias, strongBox = true)
+            } catch (_: StrongBoxUnavailable) {
+                store.generate(alias, strongBox = false)
+            }
+        }
+        val (iv, ct) = store.encrypt(alias, data)
         if (iv.size != IV_LENGTH) throw WrapFailure(WrapFailureKind.FAILED, "IV of ${iv.size} bytes")
         byteArrayOf(VERSION) + iv + ct
     }
 
     @Throws(WrapFailure::class)
     fun unprotect(data: ByteArray): ByteArray = guarded {
-        if (!store.exists(ALIAS)) throw KeyFailure.Missing()
+        if (!store.exists(alias)) throw KeyFailure.Missing()
         if (data.size < 1 + IV_LENGTH + TAG_LENGTH) throw WrapFailure(WrapFailureKind.FAILED, "blob too short")
         if (data[0] != VERSION) throw WrapFailure(WrapFailureKind.FAILED, "blob version ${data[0]}")
-        store.decrypt(ALIAS, data.copyOfRange(1, 1 + IV_LENGTH), data.copyOfRange(1 + IV_LENGTH, data.size))
+        store.decrypt(alias, data.copyOfRange(1, 1 + IV_LENGTH), data.copyOfRange(1 + IV_LENGTH, data.size))
     }
 
-    fun deleteKey() = store.delete(ALIAS)
+    fun deleteKey() = store.delete(alias)
 
     /** Nothing but [WrapFailure] leaves this class, whatever the key store does. */
     private inline fun <T> guarded(block: () -> T): T = try {
@@ -119,12 +134,19 @@ class KeystoreKeyWrapper(private val store: WrapKeyStore) {
 
     companion object {
         const val ALIAS = "krunk.vault.wrap.v1"
+
+        /** Sync's key (0.6.0): wraps account.json's refresh token and sync.json's state key. */
+        const val SYNC_ALIAS = "krunk.sync.wrap.v1"
         const val VERSION: Byte = 0x01
         const val IV_LENGTH = 12
         const val TAG_LENGTH = 16
 
         /** The wrapper on the device's real key store. */
         fun onDevice(): KeystoreKeyWrapper = KeystoreKeyWrapper(AndroidWrapKeyStore())
+
+        /** Sync's wrapper on the device's key store (made at the first sign-in). */
+        fun forSync(): KeystoreKeyWrapper =
+            KeystoreKeyWrapper(AndroidWrapKeyStore(), SYNC_ALIAS, createOnProtect = true)
     }
 }
 

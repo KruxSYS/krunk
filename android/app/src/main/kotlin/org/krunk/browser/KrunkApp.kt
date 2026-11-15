@@ -19,14 +19,20 @@ import org.krunk.browser.engine.blocker.AllowList
 import org.krunk.browser.engine.blocker.BlockerController
 import org.krunk.browser.engine.permissions.SitePermissions
 import org.krunk.browser.notify.SiteNotifications
+import org.krunk.browser.sync.SyncController
+import org.krunk.browser.sync.SyncHttp
 import org.krunk.browser.tabs.TabManager
 import org.krunk.browser.update.UpdateChannel
 import org.krunk.browser.vault.AppLoginVault
+import org.krunk.browser.vault.FfiKeyWrapper
+import org.krunk.browser.vault.FfiVaultBackend
 import org.krunk.browser.vault.KeystoreKeyWrapper
 import org.krunk.browser.vault.VaultBackend
 import org.krunk.browser.vault.VaultBackends
 import org.krunk.browser.vault.VaultController
 import org.krunk.browser.vault.VaultLockSetting
+import org.krunk.browser.vault.VaultState
+import org.krunk.ffi.KrunkSync
 import org.krunk.ffi.coreVersion
 import org.krunk.ffi.webOrigin
 
@@ -152,6 +158,44 @@ class KrunkApp : Application() {
     /** The vault as the engine side uses it (fill and save prompts); set on the engine below. */
     val loginVault: AppLoginVault by lazy { AppLoginVault(vault, core.store, System::currentTimeMillis) }
 
+    /**
+     * Krunk account and sync (0.6.0). Made on first use; making it reads local files only, and
+     * nothing goes to the network before the user signs in.
+     */
+    private val syncLazy = lazy {
+        val http = SyncHttp(
+            base = BuildConfig.SYNC_BASE_URL,
+            allowHttp = BuildConfig.SYNC_ALLOW_HTTP,
+            userAgent = "Krunk/${BuildConfig.VERSION_NAME} (Android)",
+            log = BuildConfig.SYNC_LOG,
+        )
+        val core = KrunkSync(
+            dir = SyncController.dir(filesDir).absolutePath,
+            db = this.core.databaseFile.absolutePath,
+            transport = http,
+            wrapper = FfiKeyWrapper(KeystoreKeyWrapper.forSync()),
+            vault = (vaultBackend as? FfiVaultBackend)?.ffi,
+            label = "Krunk on Android ${Build.VERSION.RELEASE}",
+            version = BuildConfig.VERSION_NAME,
+            verifyBase = BuildConfig.SYNC_VERIFY_BASE.ifEmpty { null },
+        )
+        SyncController(core, vaultScope, Dispatchers.IO, System::currentTimeMillis) { changed ->
+            vaultScope.launch {
+                if (changed.settings) {
+                    this@KrunkApp.core.settings.reload()
+                    if (tabsLazy.isInitialized()) engine.applySettings(this@KrunkApp.core.settings.current)
+                }
+                if (changed.allowlist && tabsLazy.isInitialized()) engine.blocker.allowListChanged()
+                if ((changed.passwords || changed.neverSave) && vaultLazy.isInitialized()) vault.refresh()
+            }
+        }.also { c ->
+            vaultScope.launch {
+                vault.state.collect { if (it == VaultState.UNLOCKED) c.vaultUnlocked() }
+            }
+        }
+    }
+    val sync: SyncController by syncLazy
+
     override fun onCreate() {
         super.onCreate()
         // Gecko's child processes run this class too: they must not load the Rust library just
@@ -175,10 +219,14 @@ class KrunkApp : Application() {
                 object : DefaultLifecycleObserver {
                     override fun onStart(owner: LifecycleOwner) {
                         if (vaultLazy.isInitialized()) vault.onForeground()
+                        // Sync's schedule runs only while Krunk is on screen (no request before
+                        // sign-in: the schedule only reads local state until then).
+                        sync.onForeground()
                     }
 
                     override fun onStop(owner: LifecycleOwner) {
                         if (vaultLazy.isInitialized()) vault.onBackground()
+                        if (syncLazy.isInitialized()) sync.onBackground()
                     }
                 },
             )

@@ -85,6 +85,9 @@ sealed class Screen {
     /** Sites with cookies or stored data, and clearing them (0.4.0). */
     data object SiteData : Screen()
 
+    /** Krunk account and sync (0.6.0). */
+    data object Sync : Screen()
+
     companion object {
         /** `krunk://name` -> screen. */
         fun forPage(name: String): Screen? = when (name) {
@@ -94,6 +97,7 @@ sealed class Screen {
             "about" -> About
             "passwords" -> Vault
             "downloads" -> Downloads
+            "sync" -> Sync
             else -> null
         }
     }

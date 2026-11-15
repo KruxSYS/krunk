@@ -173,14 +173,38 @@ val allowDebugSignedRelease =
 // while a release variant is built fails the build, so a published APK never carries one.
 val releaseUpdateBase = "https://krunk.209.wf"
 val qaUpdateBase: String? = providers.gradleProperty("krunk.qaUpdateBase").orNull?.takeIf { it.isNotBlank() }
-// The QA build of the 0.5.0 code: lower than 0.5.0 (7) and higher than 0.4.0 (5).
-val qaVersionCode = 6
+// Krunk account and sync (0.6.0): release builds talk to https://krunk.209.wf only (HTTPS, the
+// approval page must be on that site). The qa build type (and debug builds) take a staging stack
+// for the end-to-end tests: -Pkrunk.qaSyncBase=http://10.250.136.3:18082. Like qaUpdateBase it
+// fails any release build, so a published APK never carries one.
+val releaseSyncBase = "https://krunk.209.wf"
+val qaSyncBase: String? = providers.gradleProperty("krunk.qaSyncBase").orNull?.takeIf { it.isNotBlank() }
+// The QA build of the 0.6.0 code: lower than 0.6.0 (8), installs over 0.5.0 (7) with -r.
+val qaVersionCode = 7
+
+/**
+ * Sync's build fields: the site, whether plain HTTP is allowed (a staging stack only), the site
+ * the approval page must be on (empty = any https page, staging only) and the request log
+ * (method, path and status in logcat; never in release builds).
+ */
+fun com.android.build.api.dsl.ApplicationBuildType.syncFields(staging: String?) {
+    buildConfigField("String", "SYNC_BASE_URL", "\"${staging ?: releaseSyncBase}\"")
+    buildConfigField("boolean", "SYNC_ALLOW_HTTP", (staging != null).toString())
+    buildConfigField("String", "SYNC_VERIFY_BASE", if (staging != null) "\"\"" else "\"$releaseSyncBase\"")
+    buildConfigField("boolean", "SYNC_LOG", (name != "release").toString())
+}
 
 fun isReleaseTask(name: String) = Regex("(package|bundle|sign|assemble)(Direct|Play)?Release").containsMatchIn(name)
 fun isSignedTask(name: String) = Regex("(package|bundle|sign)(Direct|Play)?(Release|Qa)").containsMatchIn(name)
 
 gradle.taskGraph.whenReady {
     val mine = allTasks.filter { it.project == project }
+    if (qaSyncBase != null && mine.any { isReleaseTask(it.name) }) {
+        throw GradleException(
+            "Krunk: -Pkrunk.qaSyncBase is only for the qa and debug builds; a release build always uses " +
+                "$releaseSyncBase. Build the release variants in a separate Gradle run without it.",
+        )
+    }
     if (qaUpdateBase != null && mine.any { isReleaseTask(it.name) }) {
         throw GradleException(
             "Krunk: -Pkrunk.qaUpdateBase is only for the qa and debug builds; a release build always uses " +
@@ -267,8 +291,8 @@ android {
         applicationId = "org.krunk.browser"
         minSdk = 26
         targetSdk = 35
-        versionCode = 7
-        versionName = "0.5.0"
+        versionCode = 8
+        versionName = "0.6.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             // Devices (arm64-v8a) and the emulator (x86_64); GeckoView's other ABIs are dropped.
@@ -334,6 +358,7 @@ android {
             applicationIdSuffix = ""
             buildConfigField("String", "UPDATE_BASE_URL", "\"${qaUpdateBase ?: releaseUpdateBase}\"")
             buildConfigField("boolean", "UPDATE_ALLOW_HTTP", "true")
+            syncFields(qaSyncBase)
         }
         release {
             signingConfig = if (signingProps != null) {
@@ -347,6 +372,7 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             buildConfigField("String", "UPDATE_BASE_URL", "\"$releaseUpdateBase\"")
             buildConfigField("boolean", "UPDATE_ALLOW_HTTP", "false")
+            syncFields(null)
         }
         // The release build of the same code with a lower versionCode and, for the end-to-end
         // update tests only, another update address. Never published.
@@ -356,6 +382,7 @@ android {
             matchingFallbacks += "release"
             buildConfigField("String", "UPDATE_BASE_URL", "\"${qaUpdateBase ?: releaseUpdateBase}\"")
             buildConfigField("boolean", "UPDATE_ALLOW_HTTP", "true")
+            syncFields(qaSyncBase)
         }
     }
 

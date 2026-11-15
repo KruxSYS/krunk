@@ -17,6 +17,10 @@
         <!-- Part files of downloads (files/downloads-part, DownloadEngine.PART_DIR): unfinished
              pieces, also of private downloads; deleted at the next start when nobody owns them. -->
         <exclude domain="file" path="downloads-part" />
+        <!-- Krunk account and sync (files/krunk-sync, SyncController.dir, 0.6.0): the sign-in
+             and sync's keys, wrapped by a Keystore key that never leaves the device. Named on its
+             own so that no later include can carry it along. -->
+        <exclude domain="file" path="krunk-sync" />
     </cloud-backup>
     <device-transfer>
         <include domain="file" path="krunk" />
@@ -27,5 +31,8 @@
         <!-- Part files of downloads (files/downloads-part) lie beside files/krunk, the only
              directory included here, so they are not transferred. (Lint refuses an exclude of a
              path that no include covers.) -->
+        <!-- Krunk account and sync (files/krunk-sync, 0.6.0) lies beside files/krunk too, so it
+             stays on this device: the new phone signs in again. The transferred browser.db
+             carries sync's bookkeeping without the keys; KrunkSync forgets it at the first start. -->
     </device-transfer>
 </data-extraction-rules>

@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Krunk account and sync (0.6.0). -->
+<resources>
+    <string name="sync_title">Account &amp; sync</string>
+    <string name="sync_settings_row">Account &amp; sync</string>
+    <string name="sync_settings_row_help">Sign in to your Krunk account and sync bookmarks, history, settings, open tabs and passwords with your other devices</string>
+    <string name="sync_signed_out_text">Sign in to the Krunk account you use on Windows. Your data is encrypted on this device before it leaves; the server can\'t read it. Nothing is sent until you sign in.</string>
+    <string name="sync_sign_in">Sign in</string>
+    <string name="sync_linking_text">Approve this device on krunk.209.wf: open the page below (or go to krunk.209.wf/link on another device), sign in there and check this code:</string>
+    <string name="sync_open_approval">Open approval page</string>
+    <string name="sync_cancel">Cancel</string>
+    <string name="sync_signed_in_as">Signed in as %1$s</string>
+    <string name="sync_device_name">This device: %1$s</string>
+    <string name="sync_turn_on">Turn on sync</string>
+    <string name="sync_turn_on_help">Bookmarks, history, settings, new tab pins, ad-blocker exceptions, open tabs and, with your passwords unlocked, passwords. Phone-only settings (toolbar position, text size) stay on this device.</string>
+    <string name="sync_sign_out">Sign out</string>
+    <string name="sync_sign_out_title">Sign out of your Krunk account?</string>
+    <string name="sync_sign_out_text">This device\'s sync keys and sign-in are deleted. Your bookmarks, history and passwords stay on this device unless you also remove what came from sync.</string>
+    <string name="sync_sign_out_keep">Sign out, keep data</string>
+    <string name="sync_sign_out_remove">Sign out and remove synced data</string>
+    <string name="sync_setup_title">Your sync passphrase and recovery key</string>
+    <string name="sync_setup_text">This is the first device of your account to sync. Write these down and keep them safe and private: with either one you can restore your synced data on a new device. The Krunk website never asks for them.</string>
+    <string name="sync_passphrase">Passphrase</string>
+    <string name="sync_recovery_key">Recovery key</string>
+    <string name="sync_copy">Copy</string>
+    <string name="sync_setup_group">Last group of the recovery key (4 characters before the last dash)</string>
+    <string name="sync_setup_confirm">I saved them: turn on sync</string>
+    <string name="sync_join_text">Your account already syncs on another device. Get the keys from it, or restore with your sync passphrase or recovery key.</string>
+    <string name="sync_join_ask">Ask a device that syncs</string>
+    <string name="sync_join_share_passwords">Ask for passwords too</string>
+    <string name="sync_restore_label">Passphrase or recovery key (KRNK-…)</string>
+    <string name="sync_restore">Restore</string>
+    <string name="sync_restore_working">Checking… (this takes a few seconds)</string>
+    <string name="sync_restore_confirm_title">These devices keep access to your sync data</string>
+    <plurals name="sync_restore_confirm_revoked">
+        <item quantity="one">%1$d removed device doesn\'t.</item>
+        <item quantity="other">%1$d removed devices don\'t.</item>
+    </plurals>
+    <string name="sync_restore_confirm">These are my devices: continue</string>
+    <string name="sync_joining_text">Open krunk://sync on your Windows device and approve this one. It then shows 6 digits.</string>
+    <string name="sync_joining_code">The 6 digits the other device shows</string>
+    <string name="sync_joining_confirm">Confirm</string>
+    <string name="sync_status_title">Sync</string>
+    <string name="sync_last">Last sync: %1$s</string>
+    <string name="sync_last_never">Not synced yet</string>
+    <plurals name="sync_pending">
+        <item quantity="one">%1$d change waiting</item>
+        <item quantity="other">%1$d changes waiting</item>
+    </plurals>
+    <string name="sync_now">Sync now</string>
+    <string name="sync_types_title">What syncs on this device</string>
+    <string name="sync_type_bookmarks">Bookmarks</string>
+    <string name="sync_type_passwords">Passwords (while unlocked)</string>
+    <string name="sync_type_history">History</string>
+    <string name="sync_type_settings">Settings</string>
+    <string name="sync_type_pins">New tab pins</string>
+    <string name="sync_type_allowlist">Ad-blocker exceptions</string>
+    <string name="sync_type_tabs">Open tabs</string>
+    <string name="sync_remote_tabs">Tabs from other devices</string>
+    <string name="sync_remote_tabs_none">No open tabs from other devices yet.</string>
+    <string name="sync_alarm_title">Sync stopped</string>
+    <string name="sync_open_tab">Open</string>
+</resources>
