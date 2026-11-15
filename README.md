@@ -233,6 +233,15 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   - The lock (or the "i" on http) opens the site-information popup: whether the connection is
     secure, the protocol, the certificate chain with validity, names, algorithms and SHA-256
     fingerprints, and what is wrong with a bad certificate (the engine reports no cipher).
+  - **Certificate warnings (0.21.0; Android 0.6.1):** a certificate Krunk can't trust opens
+    Krunk's own warning page (`krunk://cert-error`): the site, the reason, the SHA-256
+    fingerprint, **Back to safety** and, unless the site demands a valid certificate (HSTS),
+    **Continue anyway**. **Remember for this site** keeps the choice for the site (host and port)
+    and that exact certificate in `kv["cert_exceptions"]` (never synced); a different
+    certificate gets the warning again. Without it, and always in private tabs, the choice lasts
+    until Krunk closes (private: the last private tab). The page's request is only accepted when
+    it matches the error the tab really hit. Settings → Privacy & security → Certificate
+    exceptions lists and removes them.
   - **Inline completion (0.6.0):** a visited address that starts with what you type is completed
     after the caret and selected. Since 0.7.2 typing on along it keeps it in place: the bar never
     shows only the typed letters or empties between keystrokes. Backspace or Delete removes the

@@ -3,6 +3,34 @@
 What changed in each Krunk for Android release, newest first. The Windows browser's list is
 `CHANGELOG.md`.
 
+## 0.6.1 — 2026-11-15
+
+Passwords that didn't come along with sync, and a way past bad certificates. It installs over
+0.6.0 and keeps everything.
+
+- **Passwords sync after all.** A phone that joined sync while its vault was locked or not yet
+  created never got the passwords key, so its vault stayed empty. Settings › Account & sync now
+  says whether passwords sync on this phone, and if not, why: vault locked, no vault yet, not
+  added on this phone, or switched off. **Add passwords** fixes the last case with your sync
+  passphrase or recovery key; a wrong one changes nothing. Joining now tells you to create or
+  unlock the vault first to bring passwords along.
+- **Continue past a certificate warning.** When a site's certificate can't be trusted
+  (self-signed, expired, issued for another name, unknown authority), Krunk shows the site, the
+  reason and the certificate's SHA-256 fingerprint, with **Back to safety** and
+  **Continue anyway**:
+  - **Remember for this site** keeps the choice for that site and that exact certificate. If
+    the site later shows a different certificate, Krunk warns again. Without it, the choice
+    lasts until Krunk is closed;
+  - in a private tab the choice always lasts only until Krunk is closed;
+  - sites that demand a valid certificate (HSTS) get no Continue button;
+  - Settings › Privacy › **Certificate exceptions** lists what you remembered; Remove one and
+    Krunk warns again.
+  The engine doesn't hand the certificate of a failed load to the app, so Krunk makes one extra
+  connection to the site to read it (nothing is sent over it).
+- Settings › Site data and Certificate exceptions no longer sometimes fail to load right after
+  Krunk starts.
+- Tested on an Android 16 emulator. Not tested on real phones.
+
 ## 0.6.0 — 2026-11-15
 
 Your Krunk account and sync on the phone. It installs over 0.5.0 and keeps tabs, bookmarks,

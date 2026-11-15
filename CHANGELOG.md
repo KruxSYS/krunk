@@ -3,6 +3,25 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.21.0 — 2026-11-15
+
+- **Continue past a certificate warning.** When a site's certificate can't be trusted
+  (self-signed, expired, issued for another name, unknown authority), Krunk's own warning page
+  shows the site, the reason and the certificate's SHA-256 fingerprint, with **Back to safety**
+  and **Continue anyway**:
+  - **Remember for this site** keeps the choice for that site and that exact certificate. If
+    the site later shows a different certificate, Krunk warns again. Without it, the choice
+    lasts until Krunk is closed;
+  - in private tabs a choice lasts only until the last private tab closes;
+  - where the engine allows no exception (HSTS sites), there is no Continue button;
+  - Settings → Privacy & security → **Certificate exceptions** lists what you remembered, with
+    Remove. The list stays on this computer; it is not synced.
+- **Settings keep what they don't understand.** A settings value Krunk can't read (from a newer
+  Krunk, or damaged) no longer resets your other settings to their defaults, and settings a
+  newer version added are kept when this one saves.
+- **Safer writes.** Recording a visit, starring a page and reordering or editing new tab tiles
+  are each saved as one step, so a crash in between can't leave half of it behind.
+
 ## 0.20.1 — 2026-11-14
 
 - **Lines under the bars can be turned off.** Settings → Appearance → Tab and toolbar style →
