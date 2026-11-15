@@ -401,6 +401,11 @@ pub async fn sync_state(State(state): State<AppState>, d: DeviceAuth) -> ApiResu
     .bind(d.device_id)
     .fetch_one(&mut *conn)
     .await?;
+    let escrow_vault: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM escrow WHERE account_id = $1 AND rr_wrap_vault IS NOT NULL)")
+            .bind(d.account_id)
+            .fetch_one(&mut *conn)
+            .await?;
     let remaining_old = crate::records::remaining_old(&mut conn, d.account_id).await?;
     let q = &state.config.quota;
     Ok(Json(json!({
@@ -412,6 +417,7 @@ pub async fn sync_state(State(state): State<AppState>, d: DeviceAuth) -> ApiResu
         "rekey": {"remaining_old": remaining_old},
         "head_seq": st.as_ref().map_or(0, |s| s.head_seq),
         "pending_approvals": pending,
+        "escrow_vault": escrow_vault,
         "quota": {
             "records": st.as_ref().map_or(0, |s| s.records),
             "bytes": st.as_ref().map_or(0, |s| s.bytes),
@@ -482,25 +488,29 @@ struct EscrowRow {
     rr_wrap_pp: Value,
     rr_wrap_rk: Value,
     pp_kdf: Value,
+    rr_wrap_vault: Option<Value>,
 }
 
-/// `GET keys/escrow` → the recovery root's wraps (5 per day per account; every fetch is mailed).
+/// `GET keys/escrow` → the recovery root's wraps (5 per day per account). A fetch by a device
+/// that holds no keys yet (a new device restoring) is mailed; devices that sync aren't (0.21.1).
 pub async fn keys_escrow(State(state): State<AppState>, d: DeviceAuth) -> ApiResult {
     hit(&state.db, rl::KEYS_ESCROW, &rl::id_key(&d.account_id)).await?;
     let mut tx = state.db.begin().await?;
     let row: Option<EscrowRow> =
-        sqlx::query_as("SELECT rr_gen, rr_wrap_pp, rr_wrap_rk, pp_kdf FROM escrow WHERE account_id = $1")
+        sqlx::query_as("SELECT rr_gen, rr_wrap_pp, rr_wrap_rk, pp_kdf, rr_wrap_vault FROM escrow WHERE account_id = $1")
             .bind(d.account_id)
             .fetch_optional(&mut *tx)
             .await?;
     let row = row.ok_or_else(no_keyset)?;
-    let (email, label): (String, String) = sqlx::query_as(
-        "SELECT a.email::text, d.label FROM accounts a JOIN devices d ON d.account_id = a.id WHERE d.id = $1",
+    let (email, label, keyed): (String, String, bool) = sqlx::query_as(
+        "SELECT a.email::text, d.label, d.has_keys FROM accounts a JOIN devices d ON d.account_id = a.id WHERE d.id = $1",
     )
     .bind(d.device_id)
     .fetch_one(&mut *tx)
     .await?;
-    mail::enqueue(&mut tx, Some(d.account_id), &email, Template::EscrowFetched, json!({ "label": label })).await?;
+    if !keyed {
+        mail::enqueue(&mut tx, Some(d.account_id), &email, Template::EscrowFetched, json!({ "label": label })).await?;
+    }
     tx.commit().await?;
     tracing::info!(device = %d.device_id, "escrow fetched");
     Ok(Json(json!({
@@ -509,6 +519,7 @@ pub async fn keys_escrow(State(state): State<AppState>, d: DeviceAuth) -> ApiRes
         "rr_wrap_pp": row.rr_wrap_pp,
         "rr_wrap_rk": row.rr_wrap_rk,
         "pp_kdf": row.pp_kdf,
+        "rr_wrap_vault": row.rr_wrap_vault,
     }))
     .into_response())
 }
@@ -530,16 +541,51 @@ pub struct EscrowIn {
     pub rr_wrap_pp: RrWrapIn,
     pub rr_wrap_rk: RrWrapIn,
     pub pp_kdf: Value,
+    /// The recovery root under the password-vault master password (0.21.1).
+    #[serde(default)]
+    pub rr_wrap_vault: Option<VaultWrapIn>,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct VaultKdfIn {
+    pub alg: String,
+    pub m_kib: u32,
+    pub t: u32,
+    pub p: u32,
+    pub salt: String,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct VaultWrapIn {
+    pub n: String,
+    pub ct: String,
+    pub commit: String,
+    pub kdf: VaultKdfIn,
 }
 
 impl EscrowIn {
     fn valid(&self) -> bool {
-        let w = |x: &RrWrapIn| {
-            crypto::b64url_decode::<24>(&x.n).is_some()
-                && crypto::b64url_decode::<48>(&x.ct).is_some()
-                && crypto::b64url_decode::<32>(&x.commit).is_some()
+        let w = |n: &str, ct: &str, commit: &str| {
+            crypto::b64url_decode::<24>(n).is_some()
+                && crypto::b64url_decode::<48>(ct).is_some()
+                && crypto::b64url_decode::<32>(commit).is_some()
         };
-        self.rr_gen >= 1 && w(&self.rr_wrap_pp) && w(&self.rr_wrap_rk) && self.pp_kdf.to_string().len() <= 512
+        let vault_ok = self.rr_wrap_vault.as_ref().is_none_or(|v| {
+            let k = &v.kdf;
+            w(&v.n, &v.ct, &v.commit)
+                && k.alg == "argon2id"
+                && (131_072..=1_048_576).contains(&k.m_kib)
+                && (3..=10).contains(&k.t)
+                && (1..=8).contains(&k.p)
+                && crypto::b64url_decode::<16>(&k.salt).is_some()
+        });
+        self.rr_gen >= 1
+            && w(&self.rr_wrap_pp.n, &self.rr_wrap_pp.ct, &self.rr_wrap_pp.commit)
+            && w(&self.rr_wrap_rk.n, &self.rr_wrap_rk.ct, &self.rr_wrap_rk.commit)
+            && self.pp_kdf.to_string().len() <= 512
+            && vault_ok
     }
 }
 
@@ -756,15 +802,21 @@ pub async fn keys_commit(
     }
     if let Some(e) = &req.escrow {
         sqlx::query(
-            "INSERT INTO escrow (account_id, rr_gen, rr_wrap_pp, rr_wrap_rk, pp_kdf) VALUES ($1, $2, $3, $4, $5)
+            "INSERT INTO escrow (account_id, rr_gen, rr_wrap_pp, rr_wrap_rk, pp_kdf, rr_wrap_vault)
+             VALUES ($1, $2, $3, $4, $5, $6)
              ON CONFLICT (account_id) DO UPDATE SET rr_gen = excluded.rr_gen, rr_wrap_pp = excluded.rr_wrap_pp,
-                 rr_wrap_rk = excluded.rr_wrap_rk, pp_kdf = excluded.pp_kdf, updated_at = now()",
+                 rr_wrap_rk = excluded.rr_wrap_rk, pp_kdf = excluded.pp_kdf,
+                 rr_wrap_vault = excluded.rr_wrap_vault, updated_at = now()",
         )
         .bind(d.account_id)
         .bind(e.rr_gen as i32)
         .bind(serde_json::to_value(&e.rr_wrap_pp).map_err(|_| ApiError::server_error())?)
         .bind(serde_json::to_value(&e.rr_wrap_rk).map_err(|_| ApiError::server_error())?)
         .bind(&e.pp_kdf)
+        .bind(match &e.rr_wrap_vault {
+            Some(v) => Some(serde_json::to_value(v).map_err(|_| ApiError::server_error())?),
+            None => None,
+        })
         .execute(&mut *tx)
         .await?;
     }

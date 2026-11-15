@@ -319,18 +319,20 @@ async fn commits_are_checked_for_structure() {
 }
 
 #[tokio::test]
-async fn escrow_fetches_are_mailed_and_limited() {
+async fn escrow_fetches_are_limited_and_mailed_only_for_new_devices() {
     let Some(e) = env().await else { return };
     let s = setup(&e, "escrow@example.org").await;
     let before = outbox(&e.db).await.len();
     for _ in 0..5 {
         let r = s.a.get(&e, "keys/escrow").await;
         assert_eq!(r.status, StatusCode::OK);
-        assert_eq!(keys_of(&r.body), ["account_id", "pp_kdf", "rr_gen", "rr_wrap_pp", "rr_wrap_rk"]);
+        assert_eq!(keys_of(&r.body), ["account_id", "pp_kdf", "rr_gen", "rr_wrap_pp", "rr_wrap_rk", "rr_wrap_vault"]);
+        assert!(r.body["rr_wrap_vault"].is_null());
         assert_eq!(r.body["account_id"], b64url(s.acc.as_bytes()));
     }
     let ob = outbox(&e.db).await;
-    assert_eq!(ob[before..].iter().filter(|m| m.1 == "escrow_fetched").count(), 5);
+    // The device holds keys: no mail (0.21.1; a new device restoring is mailed).
+    assert_eq!(ob[before..].iter().filter(|m| m.1 == "escrow_fetched").count(), 0);
     let r = s.a.get(&e, "keys/escrow").await;
     assert_eq!((r.status, err(&r)), (StatusCode::TOO_MANY_REQUESTS, "rate_limited"));
 }
