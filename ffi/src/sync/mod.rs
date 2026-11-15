@@ -244,7 +244,7 @@ fn sync_text(e: &SyncFail) -> String {
     match e {
         SyncFail::Api(ApiError::Offline(_)) => OFFLINE_TEXT.into(),
         SyncFail::Api(ApiError::Unauthorized) => REMOVED_TEXT.into(),
-        SyncFail::Api(ApiError::RateLimited(s)) => format!("Too many attempts. Try again in {} minutes.", s.div_ceil(60)),
+        SyncFail::Api(ApiError::RateLimited(s)) => format!("Too many attempts. Try again in {} s.", (*s).clamp(1, 60)),
         SyncFail::Api(ApiError::Conflict(_)) => "Someone changed sync's keys meanwhile. Try again.".into(),
         SyncFail::Api(ApiError::RotationPending) => {
             "A device was removed, and another device is re-securing sync. Try again in a minute.".into()
@@ -271,7 +271,7 @@ fn sync_err(e: &SyncFail) -> SyncFfiError {
     match e {
         SyncFail::Api(ApiError::Offline(_)) => SyncFfiError::Offline { text },
         SyncFail::Api(ApiError::Unauthorized) => SyncFfiError::Revoked { text },
-        SyncFail::Api(ApiError::RateLimited(s)) => SyncFfiError::RateLimited { text, retry_after_s: *s },
+        SyncFail::Api(ApiError::RateLimited(s)) => SyncFfiError::RateLimited { text, retry_after_s: (*s).clamp(1, 60) },
         SyncFail::Keys(KeyError::WrongSecret) => SyncFfiError::WrongSecret { text },
         SyncFail::Keys(KeyError::SasMismatch) => SyncFfiError::WrongCode { text },
         SyncFail::Keys(k) if k.is_alarm() => SyncFfiError::Alarm { text },

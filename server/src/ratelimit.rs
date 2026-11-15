@@ -60,14 +60,15 @@ pub const SESSIONS_REVOKE_ALL: Limit = l("sessions-revoke-all/account", 10, HOUR
 // S6 (PROTOCOL §11.4–§11.6, §11.8).
 pub const SYNC_STATE: Limit = l("sync-state/device", 120, HOUR);
 pub const KEYS_HEAD: Limit = l("keys-head/device", 120, HOUR);
-pub const KEYS_CHAIN: Limit = l("keys-chain/device", 20, HOUR);
-pub const KEYS_ESCROW: Limit = l("keys-escrow/account", 5, DAY);
+pub const KEYS_CHAIN: Limit = l("keys-chain/device", 20, MIN);
+/// 0.22.2: every wait a user can hit while setting up sync is at most a minute (was 5 a day).
+pub const KEYS_ESCROW: Limit = l("keys-escrow/account", 5, MIN);
 pub const KEYS_COMMIT: Limit = l("keys-commit/device", 60, HOUR);
 /// Every commit keeps a directory version for good: a cap per account too (0.11.7, audit S6).
 /// Linking, approvals and rotations need a handful a day.
 pub const KEYS_COMMIT_ACCOUNT: Limit = l("keys-commit/account", 200, DAY);
 pub const ROTATION_CLAIM: Limit = l("rotation-claim/device", 20, HOUR);
-pub const APPROVALS_CREATE: Limit = l("approvals-create/account", 5, DAY);
+pub const APPROVALS_CREATE: Limit = l("approvals-create/account", 5, MIN);
 pub const APPROVALS_LIST: Limit = l("approvals-list/device", 120, HOUR);
 /// One poll per 2 seconds while an approval runs (PROTOCOL §11.6).
 pub const APPROVAL_POLL: Limit = l("approval-poll/device", 30, MIN);
@@ -81,7 +82,7 @@ pub const RECORDS_WRITE: Limit = l("records-write/device", 600, HOUR);
 pub const REKEY: Limit = l("rekey/device", 600, HOUR);
 // 0.13.0 (PROTOCOL §6.5, §11.2): "Add a device" by QR. The desktop page polls every 2 s for
 // 5 minutes; a phone polls every 2 s. Claims count whether or not the token is known.
-pub const PAIR_START: Limit = l("pair-start/account", 10, HOUR);
+pub const PAIR_START: Limit = l("pair-start/account", 10, MIN);
 pub const PAIR_STATUS: Limit = l("pair-status/session", 300, 10 * MIN);
 pub const PAIR_CLAIM_IP: Limit = l("pair-claim/ip", 20, HOUR);
 pub const PAIR_POLL_IP: Limit = l("pair-poll/ip", 600, HOUR);
@@ -90,7 +91,7 @@ pub const PAIR_ACT: Limit = l("pair-act/account", 30, HOUR);
 pub const USAGE: Limit = l("usage/session", 60, MIN);
 pub const ACTIVITY: Limit = l("activity/session", 60, MIN);
 pub const EXPORT: Limit = l("export/account", 5, HOUR);
-pub const SYNC_RESET: Limit = l("sync-reset/account", 3, DAY);
+pub const SYNC_RESET: Limit = l("sync-reset/account", 3, MIN);
 pub const DELETE_ACCOUNT: Limit = l("delete/account", 5, DAY);
 pub const DELETE_IP: Limit = l("delete/ip", 5, HOUR);
 

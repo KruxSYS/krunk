@@ -3,6 +3,15 @@
 What changed in each Krunk for Android release, newest first. The Windows browser's list is
 `CHANGELOG.md`.
 
+## 0.7.2 — 2026-11-15
+
+- **Sync works again after the account's keys change.** Since a device switched sync to the
+  vault password, this phone said "Krunk couldn't reach krunk.209.wf" when it synced or added
+  passwords: it refused one of its own requests (an address with a comma in it) and called that
+  "offline". Nothing ever reached the server.
+- **No more long waits.** When sync has to wait (too many attempts, the server busy), it waits a
+  minute at most, never an hour.
+
 ## 0.7.1 — 2026-11-15
 
 - **The address bar shows the whole address**, like Firefox: the site's name in the normal

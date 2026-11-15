@@ -526,7 +526,7 @@ async fn approvals_relay_in_order_once() {
     );
     crate::jobs::run_once(&e.db, 90).await.unwrap();
     assert_eq!(sqlx::query_scalar::<_, i64>("SELECT count(*) FROM approvals").fetch_one(&e.db).await.unwrap(), 0);
-    // 5 per account per day (3 used).
+    // 5 per account per minute (3 used; 0.22.2, was per day).
     for _ in 0..2 {
         assert_eq!(n.post(&e, "approvals", json!({"commit_n": k32(1)})).await.status, StatusCode::OK);
     }

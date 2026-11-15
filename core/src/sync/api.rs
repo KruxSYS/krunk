@@ -152,7 +152,8 @@ pub struct Backoff {
 }
 
 impl Backoff {
-    pub const MAX_MS: i64 = 60 * 60_000;
+    /// 0.22.2: never more than a minute (it was an hour).
+    pub const MAX_MS: i64 = 60_000;
 
     /// The delay after one more failure.
     pub fn fail(&mut self) -> i64 {
@@ -183,7 +184,7 @@ pub enum Next {
 pub fn next_step(e: &ApiError, backoff: &mut Backoff) -> Next {
     match e {
         ApiError::Offline(_) | ApiError::Server(_) => Next::RetryIn(backoff.fail()),
-        ApiError::RateLimited(s) => Next::RetryIn((*s as i64).max(1) * 1000),
+        ApiError::RateLimited(s) => Next::RetryIn((*s as i64).clamp(1, 60) * 1000),
         ApiError::Unauthorized => Next::SignedOut,
         ApiError::RotationPending => Next::Frozen,
         ApiError::Gone => Next::Reconcile,
@@ -274,16 +275,16 @@ pub(crate) mod tests {
         assert_eq!(steps[1], Next::Stop, "a conflict is merged by the caller, not retried blindly");
         assert_eq!(steps[2], Next::Reconcile);
         assert_eq!(steps[3], Next::Frozen);
-        assert_eq!(steps[4], Next::RetryIn(120_000));
+        assert_eq!(steps[4], Next::RetryIn(60_000), "a Retry-After of 120 s waits a minute at most");
         assert_eq!(steps[9], Next::RetryIn(60_000), "the first server error: 1 minute");
-        assert_eq!(steps[10], Next::RetryIn(120_000), "then 2");
+        assert_eq!(steps[10], Next::RetryIn(60_000), "and never more than a minute");
     }
 
     #[test]
-    fn backoff_doubles_to_an_hour_and_resets() {
+    fn backoff_is_at_most_a_minute_and_resets() {
         let mut b = Backoff::default();
-        let mins: Vec<i64> = (0..9).map(|_| b.fail() / 60_000).collect();
-        assert_eq!(mins, [1, 2, 4, 8, 16, 32, 60, 60, 60]);
+        let secs: Vec<i64> = (0..9).map(|_| b.fail() / 1000).collect();
+        assert_eq!(secs, [60; 9]);
         b.reset();
         assert_eq!(b.fail(), 60_000);
     }

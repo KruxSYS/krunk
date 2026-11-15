@@ -400,7 +400,8 @@ fn errors_map_to_plain_language() {
         assert!(format!("{f:?}").starts_with(kind), "{e:?} → {f:?}");
         assert!(!f.text().is_empty() && !f.text().contains("dns"), "no transport detail: {}", f.text());
     }
-    assert!(sync_err(&SyncFail::Api(ApiError::RateLimited(120))).text().contains("2 minutes"));
+    // 0.22.2 / 0.7.2: a wait is never shown (or kept) longer than a minute.
+    assert!(sync_err(&SyncFail::Api(ApiError::RateLimited(120))).text().contains("60 s"));
 }
 
 #[test]

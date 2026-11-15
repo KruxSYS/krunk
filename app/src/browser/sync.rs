@@ -203,7 +203,7 @@ fn fail_text(e: &SyncFail) -> String {
     match e {
         SyncFail::Api(A::Offline(_)) => OFFLINE_TEXT.into(),
         SyncFail::Api(A::Unauthorized) => "This device is signed out of the Krunk account. Sign in again in Settings → Account.".into(),
-        SyncFail::Api(A::RateLimited(s)) => format!("Too many attempts. Try again in {} minutes.", s.div_ceil(60)),
+        SyncFail::Api(A::RateLimited(s)) => format!("Too many attempts. Try again in {} s.", (*s).clamp(1, 60)),
         SyncFail::Api(A::Conflict(_)) => "Someone changed sync's keys meanwhile. Try again.".into(),
         SyncFail::Api(A::RotationPending) => {
             "A device was removed, and another device is re-securing sync. Try again in a minute.".into()
@@ -1214,7 +1214,7 @@ impl Browser {
     fn sync_poll_failed(&self, e: &SyncFail) {
         if let SyncFail::Api(ApiError::RateLimited(s)) = e {
             let mut ps = self.sync.poll_state.get();
-            ps.rate_limited(now_ms(), *s);
+            ps.rate_limited(now_ms(), (*s).min(60));
             self.sync.poll_state.set(ps);
             info!("sync: the server asks to wait {s} s");
         }

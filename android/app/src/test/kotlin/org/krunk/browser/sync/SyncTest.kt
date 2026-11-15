@@ -19,6 +19,8 @@ class SyncTest {
             "records?since=12&limit=500",
             "approvals/abc-1/confirm",
             "keys/chain?from=anchor",
+            // The core's real key refresh (core/src/sync/client.rs).
+            "keys/chain?from=3,1",
         )) {
             assertTrue(ok, SyncHttp.pathAllowed(ok))
         }

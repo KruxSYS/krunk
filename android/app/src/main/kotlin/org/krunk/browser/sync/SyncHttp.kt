@@ -105,10 +105,14 @@ class SyncHttp(
         const val MAX_BODY = 1 shl 20
         private val METHODS = setOf("GET", "POST", "PUT", "DELETE")
 
-        /** A path below `/api/v1/` as the core makes them: no scheme, host, `..` or odd characters. */
+        /**
+         * A path below `/api/v1/` as the core makes them: no scheme, host, `..` or odd characters.
+         * The comma is the core's `keys/chain?from=<ak>,<pak>` (0.7.2: without it every phone
+         * failed with "couldn't reach" once the account's keys had changed).
+         */
         fun pathAllowed(path: String): Boolean = path.isNotEmpty() && path.length <= 512 &&
             !path.startsWith("/") && !path.contains("..") && !path.contains("//") &&
-            path.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it in "/_-.?=&%" }
+            path.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it in "/_-.?=&%," }
 
         /** Release builds: `https://` only. */
         fun baseAllowed(base: String, allowHttp: Boolean): Boolean =
