@@ -29,6 +29,7 @@ import org.krunk.browser.engine.blocker.Shield
 import org.krunk.browser.engine.blocker.UpdateState
 import org.krunk.browser.tabs.TabManager
 import org.krunk.browser.tabs.TabUi
+import org.krunk.browser.ui.browser.InlineFill
 import org.krunk.ffi.AddressSuggestion
 import org.krunk.ffi.AndroidSettings
 import org.krunk.ffi.FfiException
@@ -229,6 +230,10 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
     }
     private val _suggestions = MutableStateFlow<List<AddressSuggestion>>(emptyList())
     val suggestions: StateFlow<List<AddressSuggestion>> = _suggestions.asStateFlow()
+
+    /** The inline completion for what was typed (0.7.4; the core's, as on Windows). */
+    private val _inline = MutableStateFlow<InlineFill?>(null)
+    val inline: StateFlow<InlineFill?> = _inline.asStateFlow()
     private var suggestJob: Job? = null
     val omnibox = Omnibox(krunk.core) { krunk.engine.defaultUserAgent }
 
@@ -236,6 +241,7 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
         // A new editing session starts from the address, not from the last suggestion that was
         // filled in (the editor applies any pending fill once when it appears).
         _fill.value = AddressFill.NONE
+        _inline.value = null
         _typed.value = initial
         _editing.value = true
         querySuggestions(initial)
@@ -250,6 +256,7 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
         _editing.value = false
         _typed.value = ""
         _suggestions.value = emptyList()
+        _inline.value = null
         suggestJob?.cancel()
     }
 
@@ -257,12 +264,16 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
         suggestJob?.cancel()
         if (text.isBlank()) {
             _suggestions.value = emptyList()
+            _inline.value = null
             return
         }
         val private = activeTab.value?.private == true
         suggestJob = viewModelScope.launch {
             val local = omnibox.local(text)
             _suggestions.value = local.rows
+            if (_typed.value == text) {
+                _inline.value = local.inline?.let { InlineFill(forText = text, text = it.text, url = it.url) }
+            }
             if (!private && settings.value.searchSuggestions) {
                 delay(150)
                 val merged = omnibox.withRemote(local.rows, text, settings.value.searchEngine)

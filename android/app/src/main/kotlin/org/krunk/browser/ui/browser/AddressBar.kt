@@ -53,18 +53,30 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.krunk.browser.R
@@ -277,6 +289,10 @@ private fun SiteIcon(tab: TabUi?) {
 fun AddressEditor(vm: BrowserViewModel, placeholder: String, modifier: Modifier = Modifier) {
     val typed by vm.typed.collectAsStateWithLifecycle()
     var value by remember { mutableStateOf(TextFieldValue(typed, TextRange(0, typed.length))) }
+    // What the user typed, without a completed tail, and whether the last edit typed forward.
+    var lastTyped by remember { mutableStateOf(typed) }
+    var mayComplete by remember { mutableStateOf(false) }
+    val inline by vm.inline.collectAsStateWithLifecycle()
     val focus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     LaunchedEffect(Unit) {
@@ -287,7 +303,30 @@ fun AddressEditor(vm: BrowserViewModel, placeholder: String, modifier: Modifier 
     // round trip through the view model would lag a keystroke behind and drop characters).
     val fill by vm.fill.collectAsStateWithLifecycle()
     LaunchedEffect(fill.sequence) {
-        if (fill.appliesTo(value.text)) value = TextFieldValue(fill.text, TextRange(fill.text.length))
+        if (fill.appliesTo(value.text)) {
+            value = TextFieldValue(fill.text, TextRange(fill.text.length))
+            lastTyped = fill.text
+            mayComplete = false
+        }
+    }
+    // Enter: on a completion, to the page it stands for; otherwise what is in the field.
+    // Inline completion (0.7.4): the core's answer for exactly what was typed, drawn after the
+    // text as a highlighted tail. It is never put into the field itself: the keyboard composes
+    // words, and text changed under it loses typed letters (seen with Gboard).
+    val fillNow = inline
+    val full = completedText(lastTyped, fillNow)
+    val atEnd = value.selection.collapsed && value.selection.end == value.text.length
+    val tail = if (mayComplete && full != null && value.text == lastTyped &&
+        atEnd
+    ) {
+        full.substring(lastTyped.length)
+    } else {
+        null
+    }
+    val tailStyle = SpanStyle(background = MaterialTheme.colorScheme.primary.copy(alpha = 0.25f))
+    // Enter: on a completion, to the page it stands for; otherwise what is in the field.
+    val submit = {
+        if (tail != null && fillNow != null) vm.goTo(fillNow.url) else vm.go(value.text)
     }
     Surface(
         modifier = modifier.height(AddressPillHeight),
@@ -316,10 +355,31 @@ fun AddressEditor(vm: BrowserViewModel, placeholder: String, modifier: Modifier 
                 BasicTextField(
                     value = value,
                     onValueChange = {
+                        val textChanged = it.text != value.text
                         value = it
-                        vm.setTyped(it.text)
+                        if (textChanged) {
+                            mayComplete = typedForward(lastTyped, it.text)
+                            lastTyped = it.text
+                            vm.setTyped(it.text)
+                        }
                     },
-                    modifier = Modifier.fillMaxWidth().focusRequester(focus),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(focus)
+                        // A hardware Enter would first replace the selected completion (typing
+                        // into the selection): it goes like the keyboard's Go key instead.
+                        .onPreviewKeyEvent { e ->
+                            val enter = e.key == Key.Enter || e.key == Key.NumPadEnter
+                            if (enter && e.type == KeyEventType.KeyDown) submit()
+                            enter
+                        },
+                    visualTransformation = if (tail !=
+                        null
+                    ) {
+                        CompletionTail(tail, tailStyle)
+                    } else {
+                        VisualTransformation.None
+                    },
                     textStyle = LocalTextStyle.current.merge(MaterialTheme.typography.bodyLarge)
                         .copy(color = LocalKrunkStyle.current.pillText),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
@@ -329,12 +389,14 @@ fun AddressEditor(vm: BrowserViewModel, placeholder: String, modifier: Modifier 
                         imeAction = ImeAction.Go,
                         autoCorrectEnabled = false,
                     ),
-                    keyboardActions = KeyboardActions(onGo = { vm.go(value.text) }),
+                    keyboardActions = KeyboardActions(onGo = { submit() }),
                 )
             }
             if (value.text.isNotEmpty()) {
                 IconButton(onClick = {
                     value = TextFieldValue("")
+                    lastTyped = ""
+                    mayComplete = false
                     vm.setTyped("")
                 }) {
                     Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.address_clear))
@@ -423,5 +485,21 @@ private fun SuggestionRow(row: AddressSuggestion, onPick: () -> Unit, onFill: ()
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+/** Draws [tail] after the typed text (display only: offsets in the tail map to the text's end). */
+private class CompletionTail(private val tail: String, private val style: SpanStyle) : VisualTransformation {
+    override fun filter(text: AnnotatedString): TransformedText {
+        val shown = buildAnnotatedString {
+            append(text)
+            withStyle(style) { append(tail) }
+        }
+        val end = text.length
+        val map = object : OffsetMapping {
+            override fun originalToTransformed(offset: Int): Int = offset
+            override fun transformedToOriginal(offset: Int): Int = offset.coerceAtMost(end)
+        }
+        return TransformedText(shown, map)
     }
 }

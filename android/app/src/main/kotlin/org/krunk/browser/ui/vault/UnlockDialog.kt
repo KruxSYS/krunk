@@ -31,6 +31,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -125,6 +126,16 @@ internal fun UnlockFields(
     onBiometric: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // 0.7.4: with fingerprint unlock on, the system's prompt opens by itself, once each time the
+    // form appears (the button below asks again after a cancel; the password still works).
+    var askedOnce by rememberSaveable { mutableStateOf(false) }
+    val askNow by rememberUpdatedState(onBiometric)
+    LaunchedEffect(model.biometricOffered) {
+        if (model.biometricOffered && !askedOnce && !model.busy && model.waitSeconds == 0) {
+            askedOnce = true
+            askNow()
+        }
+    }
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         bioOffText(model.offReason)?.let {
             Text(

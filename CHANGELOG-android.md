@@ -3,6 +3,14 @@
 What changed in each Krunk for Android release, newest first. The Windows browser's list is
 `CHANGELOG.md`.
 
+## 0.7.4 — 2026-11-16
+
+- **The address bar completes what you type.** Type the start of a site you have visited
+  ("exa") and the rest appears highlighted ("example.com"); press Go or Enter to open it, keep
+  typing to narrow it, or delete a letter to type something else.
+- **Fingerprint unlock asks by itself.** With fingerprint unlock on, unlocking your passwords
+  shows the fingerprint prompt at once; "Use fingerprint" is still there if you cancel it.
+
 ## 0.7.3 — 2026-11-15
 
 - **Sync works again with a big history.** Sync stopped with "Something went wrong with sync"
