@@ -185,6 +185,7 @@ class KrunkApp : Application() {
                     this@KrunkApp.core.settings.reload()
                     if (tabsLazy.isInitialized()) engine.applySettings(this@KrunkApp.core.settings.current)
                 }
+                if (changed.history) this@KrunkApp.core.historySynced()
                 if (changed.allowlist && tabsLazy.isInitialized()) engine.blocker.allowListChanged()
                 if ((changed.passwords || changed.neverSave) && vaultLazy.isInitialized()) vault.refresh()
             }

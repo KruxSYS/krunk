@@ -4,13 +4,18 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
@@ -21,6 +26,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
@@ -50,6 +56,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import java.time.LocalDate
@@ -57,8 +65,10 @@ import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import org.krunk.browser.R
+import org.krunk.browser.core.HistoryChip
 import org.krunk.browser.core.HistoryCursor
 import org.krunk.browser.core.HistoryDayKind
 import org.krunk.browser.core.HistoryItem
@@ -68,12 +78,17 @@ import org.krunk.browser.ui.BrowserViewModel
 import org.krunk.browser.ui.bookmarks.SearchField
 import org.krunk.browser.ui.bookmarks.copyToClipboard
 import org.krunk.browser.ui.newtab.SiteIcon
+import org.krunk.ffi.HistoryDevice
 import org.krunk.ffi.HistoryEntry
 
 /**
  * History: visits newest first, grouped by local day (Today, Yesterday, then dates), loaded a
  * page at a time while scrolling; search; swipe or long-press to delete one visit; "Clear
- * history". Private tabs never write visits, so there is nothing to filter here.
+ * history". Private tabs never write visits.
+ *
+ * A row of chips under the top bar picks the device whose visits are shown: this device (the
+ * default), each other synced device, unknown devices, or all. Paging, search and "Clear
+ * history" work inside that filter; under "All" and "Unknown device" each row names its device.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -98,6 +113,11 @@ fun HistoryScreen(vm: BrowserViewModel) {
     var loading by remember { mutableStateOf(false) }
     var generation by remember { mutableIntStateOf(0) }
     var confirmClear by remember { mutableStateOf(false) }
+    // The device filter ("this", "all", "unknown" or a sync device id), kept across rotation.
+    var filter by rememberSaveable { mutableStateOf(HistoryRepository.THIS) }
+    var devices by remember { mutableStateOf<List<HistoryDevice>>(emptyList()) }
+    var devicesGeneration by remember { mutableIntStateOf(0) }
+    val chips = remember(devices) { HistoryRepository.chips(devices) }
 
     suspend fun loadMore(reset: Boolean) {
         // A new query always loads; only "more of the same" waits for the load under way.
@@ -116,7 +136,7 @@ fun HistoryScreen(vm: BrowserViewModel) {
                 } else {
                     HistoryRepository.PAGE
                 }
-                repo.page(query.trim(), before, limit)
+                repo.page(query.trim(), before, limit, filter = filter)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -149,9 +169,24 @@ fun HistoryScreen(vm: BrowserViewModel) {
         }
     }
 
-    LaunchedEffect(query, generation) {
+    LaunchedEffect(query, generation, filter) {
         if (query.isNotBlank()) delay(200)
         loadMore(reset = true)
+    }
+
+    // The device list: when the screen opens and after deletions and sync runs. A device whose
+    // visits are all gone loses its chip, and its selection falls back to this device.
+    LaunchedEffect(devicesGeneration) {
+        val list = runCatching { repo.devices() }.getOrNull() ?: return@LaunchedEffect
+        devices = list
+        filter = HistoryRepository.keep(filter, HistoryRepository.chips(list))
+    }
+    LaunchedEffect(Unit) {
+        // A StateFlow repeats its value at once: only later runs matter.
+        vm.core.historySyncs.drop(1).collect {
+            generation++
+            devicesGeneration++
+        }
     }
 
     val listState = rememberLazyListState()
@@ -177,11 +212,25 @@ fun HistoryScreen(vm: BrowserViewModel) {
         sections = HistoryRepository.groupByDay(entries)
         scope.launch {
             runCatching { repo.delete(listOf(e.id)) }
+            devicesGeneration++
             snackbar.showSnackbar(res.getString(R.string.history_entry_deleted))
         }
     }
 
     val now = System.currentTimeMillis()
+    val names = remember(devices) { devices.associate { it.key to it.name } }
+    val thisDevice = stringResource(R.string.history_device_this)
+    val unknownDevice = stringResource(R.string.history_device_unknown)
+    val allDevices = stringResource(R.string.history_device_all)
+    fun label(key: String, name: String?): String = HistoryRepository.label(
+        key,
+        name,
+        thisDevice,
+        unknownDevice,
+        allDevices,
+    ) { res.getString(R.string.history_device_other, it) }
+    val selectedLabel = label(filter, names[filter])
+    val showDevice = filter == HistoryRepository.ALL || filter == HistoryRepository.UNKNOWN
 
     Scaffold(
         topBar = {
@@ -227,68 +276,85 @@ fun HistoryScreen(vm: BrowserViewModel) {
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
-        // The list appears with its first rows, not before: a scroll position kept from an
-        // earlier visit would be lost on a list that is still empty.
-        if (entries.isEmpty()) {
-            Box(Modifier.fillMaxSize().padding(padding).padding(32.dp), contentAlignment = Alignment.Center) {
-                if (loaded && !loading) {
-                    Text(
-                        if (query.isNotBlank()) {
-                            stringResource(R.string.history_no_results, query.trim())
-                        } else {
-                            stringResource(R.string.history_empty)
-                        },
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            DeviceChips(chips, filter, { label(it.filter, it.name) }) {
+                if (it != filter) {
+                    filter = it
+                    scope.launch { listState.scrollToItem(0) }
                 }
             }
-        } else {
-            LazyColumn(state = listState, modifier = Modifier.fillMaxSize().padding(padding)) {
-                for (section in sections) {
-                    item(key = "day-${section.day}") {
+            // The list appears with its first rows, not before: a scroll position kept from an
+            // earlier visit would be lost on a list that is still empty.
+            if (entries.isEmpty()) {
+                Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+                    if (loaded && !loading) {
                         Text(
-                            dayLabel(section.day, now),
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.fillMaxWidth().padding(
-                                start = 16.dp,
-                                top = 16.dp,
-                                end = 16.dp,
-                                bottom = 4.dp,
-                            ),
-                        )
-                    }
-                    items(section.items, key = { it.entry.id }) { item ->
-                        val e = item.entry
-                        HistoryRow(
-                            e = e,
-                            time = item.time,
-                            vm = vm,
-                            onOpen = {
-                                vm.goTo(e.url)
-                                vm.showBrowser()
+                            when {
+                                query.isNotBlank() -> stringResource(R.string.history_no_results, query.trim())
+
+                                filter == HistoryRepository.THIS || filter == HistoryRepository.ALL ->
+                                    stringResource(R.string.history_empty)
+
+                                else -> stringResource(R.string.history_empty_device, selectedLabel)
                             },
-                            onOpenNewTab = {
-                                vm.tabs.openTab(e.url, activate = true, live = true)
-                                vm.showBrowser()
-                            },
-                            onCopy = {
-                                copyToClipboard(context, e.url)
-                                scope.launch { snackbar.showSnackbar(res.getString(R.string.copied)) }
-                            },
-                            onDelete = { delete(e) },
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodyLarge,
                         )
                     }
                 }
-                if (!exhausted) {
-                    item(key = "more") {
-                        Text(
-                            stringResource(R.string.history_load_more),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.fillMaxWidth().padding(16.dp),
-                        )
+            } else {
+                LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                    for (section in sections) {
+                        item(key = "day-${section.day}") {
+                            Text(
+                                dayLabel(section.day, now),
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.fillMaxWidth().padding(
+                                    start = 16.dp,
+                                    top = 16.dp,
+                                    end = 16.dp,
+                                    bottom = 4.dp,
+                                ),
+                            )
+                        }
+                        items(section.items, key = { it.entry.id }) { item ->
+                            val e = item.entry
+                            HistoryRow(
+                                e = e,
+                                time = item.time,
+                                device = if (showDevice) {
+                                    val key = HistoryRepository.keyOf(e.device)
+                                    label(key, names[key])
+                                } else {
+                                    null
+                                },
+                                vm = vm,
+                                onOpen = {
+                                    vm.goTo(e.url)
+                                    vm.showBrowser()
+                                },
+                                onOpenNewTab = {
+                                    vm.tabs.openTab(e.url, activate = true, live = true)
+                                    vm.showBrowser()
+                                },
+                                onCopy = {
+                                    copyToClipboard(context, e.url)
+                                    scope.launch { snackbar.showSnackbar(res.getString(R.string.copied)) }
+                                },
+                                onDelete = { delete(e) },
+                            )
+                        }
+                    }
+                    if (!exhausted) {
+                        item(key = "more") {
+                            Text(
+                                stringResource(R.string.history_load_more),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -296,20 +362,29 @@ fun HistoryScreen(vm: BrowserViewModel) {
     }
 
     if (confirmClear) {
+        // The filter the dialog was opened for.
+        val target = filter
+        val question = when (target) {
+            HistoryRepository.ALL -> stringResource(R.string.history_clear_confirm_all)
+            HistoryRepository.THIS -> stringResource(R.string.history_clear_confirm_this)
+            HistoryRepository.UNKNOWN -> stringResource(R.string.history_clear_confirm_unknown)
+            else -> stringResource(R.string.history_clear_confirm_other, selectedLabel)
+        }
+        val kept = stringResource(R.string.history_clear_confirm_kept)
         AlertDialog(
             onDismissRequest = { confirmClear = false },
             title = { Text(stringResource(R.string.history_clear_confirm_title)) },
-            text = { Text(stringResource(R.string.history_clear_confirm_text)) },
+            text = { Text("$question $kept") },
             confirmButton = {
                 TextButton(onClick = {
                     confirmClear = false
                     scope.launch {
-                        // The same clearing as Settings > Clear browsing data > History.
-                        val ok = vm.clearBrowsingData(history = true).isSuccess
+                        val ok = vm.clearHistoryIn(target).isSuccess
                         entries = emptyList()
                         sections = emptyList()
                         cursor = null
                         generation++
+                        devicesGeneration++
                         val text = if (ok) R.string.history_cleared else R.string.settings_clear_failed
                         snackbar.showSnackbar(res.getString(text))
                     }
@@ -322,11 +397,39 @@ fun HistoryScreen(vm: BrowserViewModel) {
     }
 }
 
+/** The device filter: one chip per choice, in a row that scrolls sideways. */
+@Composable
+private fun DeviceChips(
+    chips: List<HistoryChip>,
+    selected: String,
+    label: (HistoryChip) -> String,
+    onSelect: (String) -> Unit,
+) {
+    val description = stringResource(R.string.history_filter_devices)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp)
+            .semantics { contentDescription = description },
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        for (chip in chips) {
+            FilterChip(
+                selected = chip.filter == selected,
+                onClick = { onSelect(chip.filter) },
+                label = { Text(label(chip), maxLines = 1) },
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 private fun HistoryRow(
     e: HistoryEntry,
     time: String,
+    device: String?,
     vm: BrowserViewModel,
     onOpen: () -> Unit,
     onOpenNewTab: () -> Unit,
@@ -366,7 +469,21 @@ private fun HistoryRow(
         Box {
             ListItem(
                 headlineContent = { Text(e.title.ifBlank { e.url }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                supportingContent = { Text("$time · ${e.url}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                supportingContent = {
+                    Column {
+                        Text("$time · ${e.url}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        // Under "All" and "Unknown device": the device the visit was made on.
+                        if (device != null) {
+                            Text(
+                                device,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                },
                 leadingContent = { SiteIcon(e.url, vm.tabs.favicons, size = 32.dp, fallbackText = e.title) },
                 colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
                 modifier = Modifier.fillMaxWidth().combinedClickable(onClick = onOpen, onLongClick = { menu = true }),

@@ -4,6 +4,9 @@ import android.content.Context
 import android.util.Log
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import org.krunk.ffi.FfiException
 import org.krunk.ffi.KrunkStore
@@ -27,6 +30,15 @@ class KrunkCore(context: Context) {
      */
     val storageError: String? = opened.error
     val settings: SettingsRepository = SettingsRepository(store)
+
+    private val _historySyncs = MutableStateFlow(0)
+
+    /** Counts sync runs that changed history, so an open History screen reads it again. */
+    val historySyncs: StateFlow<Int> = _historySyncs.asStateFlow()
+
+    fun historySynced() {
+        _historySyncs.value++
+    }
 
     suspend fun <T> io(block: (KrunkStore) -> T): T = withContext(Dispatchers.IO) { block(store) }
 
