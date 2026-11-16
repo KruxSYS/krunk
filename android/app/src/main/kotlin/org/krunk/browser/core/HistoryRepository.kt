@@ -6,6 +6,7 @@ import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.krunk.ffi.HistoryDevice
 import org.krunk.ffi.HistoryEntry
 import org.krunk.ffi.KrunkStore
 
@@ -31,6 +32,12 @@ data class HistorySection(
     val items: List<HistoryItem>,
 )
 
+/**
+ * One chip of the device filter. [filter] is what the store takes (`"this"`, `"unknown"`, a sync
+ * device id, `"all"`); [name] is the device's sync name (only for another device, may be absent).
+ */
+data class HistoryChip(val filter: String, val name: String?)
+
 /** What a day header says: today, yesterday, or the date itself. */
 enum class HistoryDayKind { TODAY, YESTERDAY, DATE }
 
@@ -54,15 +61,23 @@ class HistoryRepository(private val store: KrunkStore, private val io: Coroutine
         before: HistoryCursor?,
         limit: Int = PAGE,
         zone: ZoneId = ZoneId.systemDefault(),
+        filter: String = ALL,
     ): HistoryPage = withContext(io) {
         val n = limit.coerceIn(1, 1000)
-        val rows = store.queryHistoryPage(text, before?.ts, before?.id, n.toUInt(), 0L)
+        val rows = store.queryHistoryPageIn(text, before?.ts, before?.id, n.toUInt(), 0L, filter)
         HistoryPage(
             items = rows.map { item(it.entry, zone) },
             next = rows.lastOrNull()?.let { HistoryCursor(it.entry.ts, it.entry.id) },
             last = rows.size < n,
         )
     }
+
+    /** The devices that have visits here (this first, unknown last). */
+    suspend fun devices(): List<HistoryDevice> = withContext(io) { store.historyDevices() }
+
+    /** Deletes visits with `from <= ts < to` inside [filter]. */
+    suspend fun deleteRange(from: Long, to: Long, filter: String): Long =
+        withContext(io) { store.deleteHistoryRangeIn(from, to, filter).toLong() }
 
     suspend fun delete(ids: List<Long>): Long = withContext(io) { store.deleteVisits(ids).toLong() }
 
@@ -73,6 +88,61 @@ class HistoryRepository(private val store: KrunkStore, private val io: Coroutine
 
     companion object {
         const val PAGE = 100
+
+        /** Filter keys the store knows besides a sync device id. */
+        const val ALL = "all"
+        const val THIS = "this"
+        const val UNKNOWN = "unknown"
+
+        /**
+         * The filter chips for [devices] (as `historyDevices` lists them): this device always
+         * first (even without visits), the other devices in the given order, unknown when it has
+         * visits, and all last.
+         */
+        fun chips(devices: List<HistoryDevice>): List<HistoryChip> {
+            val others = devices.filter { it.key != THIS && it.key != UNKNOWN && it.key != ALL }
+            return buildList {
+                add(HistoryChip(THIS, null))
+                others.forEach { add(HistoryChip(it.key, it.name?.takeIf { n -> n.isNotBlank() })) }
+                if (devices.any { it.key == UNKNOWN }) add(HistoryChip(UNKNOWN, null))
+                add(HistoryChip(ALL, null))
+            }
+        }
+
+        /**
+         * [selected] if [chips] still has it, else this device (the chip of a device whose
+         * visits were all removed goes away).
+         */
+        fun keep(selected: String, chips: List<HistoryChip>): String =
+            if (chips.any { it.filter == selected }) selected else THIS
+
+        /** The filter key of a visit's `device`: `""` this, `null` (or a `#` stand-in) unknown. */
+        fun keyOf(device: String?): String = when {
+            device == null || device.startsWith("#") -> UNKNOWN
+            device.isEmpty() -> THIS
+            else -> device
+        }
+
+        /** The first characters of a device id, for a device without a name. */
+        fun shortId(id: String): String = id.filter { it.isLetterOrDigit() }.take(6).ifEmpty { id.take(6) }
+
+        /**
+         * The label of the device with filter [key] and sync [name]. [other] gets the short id
+         * of a device without a name ("Other device 3fa2c1").
+         */
+        fun label(
+            key: String,
+            name: String?,
+            thisDevice: String,
+            unknown: String,
+            all: String,
+            other: (String) -> String,
+        ): String = when (key) {
+            THIS -> thisDevice
+            UNKNOWN -> unknown
+            ALL -> all
+            else -> name?.takeIf { it.isNotBlank() } ?: other(shortId(key))
+        }
 
         private val TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 

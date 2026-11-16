@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import org.krunk.browser.KrunkApp
 import org.krunk.browser.R
+import org.krunk.browser.core.HistoryRepository
 import org.krunk.browser.core.KrunkCore
 import org.krunk.browser.core.SettingsRepository
 import org.krunk.browser.downloads.DownloadController
@@ -397,7 +398,7 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Settings > Clear browsing data, and History > Clear all. History means everything Krunk
+     * Settings > Clear browsing data. History means everything Krunk
      * keeps about visited pages: visits, the favicon table (one row per visited host), the
      * recently closed list, remembered suggestions; open tabs stay. Cookies, cache and site data
      * are the engine's, and the call returns when it has finished. A failure is returned, not
@@ -428,6 +429,32 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
         throw e
     } catch (e: Throwable) {
         Log.w(KrunkApp.TAG, "clearing browsing data failed", e)
+        Result.failure(e)
+    }
+
+    /**
+     * The History screen's "Clear history" inside a device filter (`"all"`, `"this"`,
+     * `"unknown"` or a sync device id; see `KrunkStore.clearHistoryIn`). Clearing everything or
+     * this device's visits also forgets what the tabs keep about closed pages.
+     */
+    suspend fun clearHistoryIn(filter: String): Result<Long> = try {
+        val all = filter == HistoryRepository.ALL
+        val n = core.io { store ->
+            val n = store.clearHistoryIn(filter).toLong()
+            if (all) store.clearFavicons()
+            // Rewrites the file, so the deleted rows are not left in free pages.
+            store.vacuum()
+            n
+        }
+        if (all || filter == HistoryRepository.THIS) {
+            tabs.forgetHistory()
+            omnibox.clearCache()
+        }
+        Result.success(n)
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        Log.w(KrunkApp.TAG, "clearing history failed", e)
         Result.failure(e)
     }
 

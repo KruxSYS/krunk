@@ -117,7 +117,7 @@ class HistoryRepositoryTest {
         val before = at("2026-10-25T00:30:00")
         val after = at("2026-10-26T00:30:00")
         assertEquals(25L * 3_600_000, after - before)
-        fun entry(id: Long, ts: Long) = org.krunk.ffi.HistoryEntry(id, "https://example.com/$id", "", ts, 1)
+        fun entry(id: Long, ts: Long) = org.krunk.ffi.HistoryEntry(id, "https://example.com/$id", "", ts, 1, "")
         val rows = listOf(entry(2, after), entry(1, before)).map { HistoryRepository.item(it, berlin) }
         assertEquals(listOf("2026-10-26", "2026-10-25"), rows.map { it.day })
         assertEquals(listOf("00:30", "00:30"), rows.map { it.time })
