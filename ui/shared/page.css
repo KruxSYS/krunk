@@ -41,3 +41,15 @@ select, input[type=text] { height: 30px; padding: 0 8px; border: 1px solid var(-
 .lb-dialog .lb-dialog-text { margin: 0 0 12px; line-height: 1.5; }
 .lb-dialog input[type=text] { width: 100%; }
 .btn.danger-fill { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+/* Filter chips (downloads; 0.23.0 also the history page's devices). */
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { height: 30px; padding: 0 12px; border: 1px solid var(--border); border-radius: 15px; background: var(--bg-raised);
+        color: var(--fg); cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.chip:hover { background: var(--bg-hover); }
+.chip .n { color: var(--fg-muted); font-variant-numeric: tabular-nums; font-size: 0.923rem; }
+.chip .n:empty { display: none; }
+.chip[aria-pressed="true"] { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); color: var(--fg); font-weight: 600; }
+.chip[aria-pressed="true"] .n { color: inherit; }
+.chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.history-devices { margin: 0 0 12px; }

@@ -1,13 +1,50 @@
 // History page: search, delete single visits or a time range, and clear
-// browsing data.
+// browsing data. 0.23.0: per device — "This device" by default, the other synced
+// devices by name, unknown (synced before devices were recorded) and all.
 (function () {
   'use strict';
   const el = LB.el;
   const list = document.getElementById('list');
   const more = document.getElementById('more');
+  const chips = document.getElementById('devices');
   const PAGE = 100;
   let entries = [];
   let query = '';
+  let device = 'this';
+  let names = {};
+
+  function deviceName(key) {
+    if (key === 'this') return 'This device';
+    if (key === 'unknown') return 'Unknown device';
+    if (key === 'all') return 'All devices';
+    return names[key] || ('Device ' + String(key).slice(0, 6));
+  }
+
+  // A row's device key from the visit's `device` ("" this device, id, null unknown).
+  function rowDevice(e) {
+    if (e.device === '') return 'this';
+    if (e.device == null) return 'unknown';
+    return e.device;
+  }
+
+  function renderChips(devs) {
+    names = {};
+    const counts = {};
+    devs.forEach(function (d) { counts[d.key] = d.visits; if (d.name) names[d.key] = d.name; });
+    const keys = ['this'].concat(devs.map(function (d) { return d.key; }).filter(function (k) { return k !== 'this'; }), ['all']);
+    if (keys.indexOf(device) < 0) device = 'this';
+    chips.textContent = '';
+    keys.forEach(function (k) {
+      chips.appendChild(el('button', { type: 'button', class: 'chip', 'data-device': k, 'aria-pressed': String(k === device) }, [
+        deviceName(k) + ' ',
+        el('span', { class: 'n', text: k === 'all' ? '' : String(counts[k] || 0) }),
+      ]));
+    });
+  }
+
+  function loadDevices() {
+    return LB.request('historyDevices', {}).then(renderChips, function () { renderChips([]); });
+  }
 
   function dayLabel(ts) {
     const d = new Date(ts);
@@ -21,7 +58,7 @@
   function render() {
     list.textContent = '';
     if (!entries.length) {
-      list.appendChild(el('div', { class: 'card' }, [el('div', { class: 'empty', text: query ? 'No matches.' : 'No history yet.' })]));
+      list.appendChild(el('div', { class: 'card' }, [el('div', { class: 'empty', text: query ? 'No matches.' : (device === 'all' ? 'No history yet.' : 'No history from ' + (device === 'this' ? 'this device' : deviceName(device)) + '.') })]));
       return;
     }
     let card = null;
@@ -40,7 +77,7 @@
         Page.favicon(e.url),
         el('span', { class: 'main' }, [
           el('a', { href: e.url, title: e.url, text: e.title || e.url }),
-          el('span', { class: 'sub', text: Page.host(e.url) }),
+          el('span', { class: 'sub', text: device === 'this' || device === rowDevice(e) ? Page.host(e.url) : Page.host(e.url) + ' · ' + deviceName(rowDevice(e)) }),
         ]),
         el('span', { class: 'actions' }, [
           Page.iconButton('close', 'Remove from history', function () { remove([e.id]); }),
@@ -51,7 +88,7 @@
 
   function load(append) {
     const before = append && entries.length ? entries[entries.length - 1].ts : null;
-    LB.request('queryHistory', { text: query, before: before, limit: PAGE }).then(function (rows) {
+    LB.request('queryHistory', { text: query, before: before, limit: PAGE, device: device }).then(function (rows) {
       entries = append ? entries.concat(rows) : rows;
       more.hidden = rows.length < PAGE;
       render();
@@ -71,17 +108,30 @@
     load(false);
   }, 150));
   more.addEventListener('click', function () { load(true); });
+  chips.addEventListener('click', function (e) {
+    const b = e.target.closest('.chip');
+    if (!b) return;
+    device = b.getAttribute('data-device');
+    chips.querySelectorAll('.chip').forEach(function (c) { c.setAttribute('aria-pressed', String(c === b)); });
+    load(false);
+  });
 
   document.getElementById('delete-range').addEventListener('click', function () {
     const sel = document.getElementById('range');
     const v = sel.value;
     const now = Date.now();
     const from = v === 'all' ? 0 : now - Number(v);
-    Page.confirm('Delete history from ' + sel.options[sel.selectedIndex].text.toLowerCase() + '?', { ok: 'Delete', danger: true }).then(function (yes) {
+    const span = sel.options[sel.selectedIndex].text.toLowerCase();
+    const text = device === 'all'
+      ? 'Delete the history of all devices from ' + span + '? It is deleted on your other synced devices too.'
+      : device === 'this'
+        ? 'Delete this device\'s history from ' + span + '? It is deleted on your other synced devices too.'
+        : 'Hide the history of ' + deviceName(device) + ' from ' + span + ' on this device? It stays on ' + deviceName(device) + '.';
+    Page.confirm(text, { ok: 'Delete', danger: true }).then(function (yes) {
       if (!yes) return;
-      LB.request('deleteHistoryRange', { from: from, to: now + 1 }).then(function () {
+      LB.request('deleteHistoryRange', { from: from, to: now + 1, device: device === 'all' ? '' : device }).then(function () {
         Page.toast('History deleted');
-        load(false);
+        loadDevices().then(function () { load(false); });
       });
     });
   });
@@ -101,10 +151,10 @@
     };
     LB.request('clearBrowsingData', { data: data }).then(function () {
       Page.toast('Browsing data cleared');
-      load(false);
+      loadDevices().then(function () { load(false); });
     }, function (err) { Page.toast(err.message); });
   });
 
   LB.post('ready');
-  load(false);
+  loadDevices().then(function () { load(false); });
 })();

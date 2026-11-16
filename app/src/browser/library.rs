@@ -101,13 +101,16 @@ impl Browser {
             Request::HideSite { url } => self.reply_db(tab, req_id, self.store.borrow().hide_site(&url)),
 
             // ---- history ----
-            Request::QueryHistory { text, before, limit } => {
-                self.reply_db(tab, req_id, self.store.borrow().query_history(&text, before, limit))
+            Request::QueryHistory { text, before, limit, device } => {
+                let filter = history::HistoryFilter::parse(&device);
+                self.reply_db(tab, req_id, self.store.borrow().query_history_in(&text, before, limit, &filter))
             }
             Request::DeleteHistory { ids } => self.reply_db(tab, req_id, self.store.borrow_mut().delete_visits(&ids)),
-            Request::DeleteHistoryRange { from, to } => {
-                self.reply_db(tab, req_id, self.store.borrow_mut().delete_history_range(from, to))
+            Request::DeleteHistoryRange { from, to, device } => {
+                let filter = history::HistoryFilter::parse(&device);
+                self.reply_db(tab, req_id, self.store.borrow_mut().delete_history_range_in(from, to, &filter))
             }
+            Request::HistoryDevices => self.reply_db(tab, req_id, self.store.borrow().history_devices()),
             Request::ClearBrowsingData { data } => self.clear_browsing_data(tab, req_id, data),
 
             // ---- bookmarks ----

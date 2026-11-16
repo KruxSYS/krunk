@@ -1375,6 +1375,10 @@ pub enum Request {
         before: Option<i64>,
         #[serde(default = "default_limit")]
         limit: u32,
+        /// 0.23.0: the device filter (`"this"`, `"unknown"`, a sync device id; empty or
+        /// `"all"` = every device).
+        #[serde(default)]
+        device: String,
     },
     DeleteHistory {
         ids: Vec<i64>,
@@ -1382,7 +1386,12 @@ pub enum Request {
     DeleteHistoryRange {
         from: i64,
         to: i64,
+        /// 0.23.0: only this device filter's visits (see `QueryHistory`); empty = all, synced.
+        #[serde(default)]
+        device: String,
     },
+    /// 0.23.0: the devices with visits here (the history page's filter chips).
+    HistoryDevices,
     ClearBrowsingData {
         data: ClearData,
     },
@@ -2229,6 +2238,7 @@ impl Sender {
                 R::QueryHistory { .. }
                     | R::DeleteHistory { .. }
                     | R::DeleteHistoryRange { .. }
+                    | R::HistoryDevices
                     | R::ClearBrowsingData { .. }
             ),
             Sender::Page(Page::Bookmarks) => matches!(
@@ -4071,8 +4081,9 @@ mod tests {
                 title: "C".into(),
             },
             Request::PinSite { url: "https://a.example/".into(), title: "A".into() },
-            Request::QueryHistory { text: "q".into(), before: Some(5), limit: 10 },
-            Request::DeleteHistoryRange { from: 1, to: 2 },
+            Request::QueryHistory { text: "q".into(), before: Some(5), limit: 10, device: "this".into() },
+            Request::DeleteHistoryRange { from: 1, to: 2, device: String::new() },
+            Request::HistoryDevices,
             Request::ClearBrowsingData { data: ClearData { history: true, ..ClearData::default() } },
             Request::MoveBookmark { id: 1, parent: 2, index: 0 },
             Request::SuggestPick { tab_id: 3, frame_id: "f1".into(), entry_id: "e1".into() },

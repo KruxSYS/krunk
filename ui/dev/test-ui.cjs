@@ -1537,13 +1537,26 @@ async function testHistory(browser) {
     ['https://docs.rs/serde/latest/serde/', 'serde - Rust', 1.2],
     ['https://github.com/rust-lang/rust', 'rust-lang/rust: Empowering everyone', 1.4],
     ['https://en.wikipedia.org/wiki/Rust_(programming_language)', 'Rust (programming language) - Wikipedia', 3.2],
-  ].map(([url, title, days], i) => ({ id: i + 1, url, title, ts: now - days * DAY, visitCount: 1 + i }));
+  ].map(([url, title, days], i) => ({ id: i + 1, url, title, ts: now - days * DAY, visitCount: 1 + i, device: i === 2 ? 'dev-w' : '' }));
   const { page, errors, external } = await openPage(browser, 'https://krunk.invalid/history.html', { width: 1100, height: 700 }, 1,
     (rows) => {
-      window.__host.handlers.queryHistory = (m) => rows.filter((r) => !m.text || (r.title + r.url).toLowerCase().includes(m.text.toLowerCase()));
+      const inFilter = (r, d) => !d || d === 'all' || (d === 'this' ? r.device === '' : r.device === d);
+      window.__host.handlers.queryHistory = (m) => rows.filter((r) => inFilter(r, m.device) && (!m.text || (r.title + r.url).toLowerCase().includes(m.text.toLowerCase())));
+      window.__host.handlers.historyDevices = () => [{ key: 'this', name: null, visits: 5 }, { key: 'dev-w', name: 'Windows PC', visits: 1 }];
     }, all);
   await page.waitForSelector('.row');
+  // 0.23.0: this device's history by default, the others by name, and all.
+  check((await lastSent(page, 'queryHistory')).device === 'this', 'opens on this device');
+  check((await page.locator('.row').count()) === 5, 'lists this device\'s 5 visits');
+  { const chipText = (await page.locator('#devices .chip').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ').trim()).join('|'); check(chipText === 'This device 5|Windows PC 1|All devices', 'device chips: ' + chipText); }
+  await page.click('#devices .chip[data-device="dev-w"]');
+  await page.waitForTimeout(50);
+  check((await lastSent(page, 'queryHistory')).device === 'dev-w' && (await page.locator('.row').count()) === 1, 'the Windows PC chip shows its visit');
+  await page.click('#devices .chip[data-device="all"]');
+  await page.waitForTimeout(50);
   check((await page.locator('.row').count()) === 6, 'lists 6 visits');
+  check((await page.locator('.row').nth(2).innerText()).includes('Windows PC'), 'all: a row names its device');
+  await shot(page, 'history-devices.png');
   check((await page.locator('.group-title').count()) >= 3, 'grouped by day');
   await page.fill('#q', 'rust');
   await page.waitForTimeout(300);
