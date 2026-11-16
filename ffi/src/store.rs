@@ -48,6 +48,23 @@ pub struct HistoryEntry {
     /// Visit time, ms.
     pub ts: i64,
     pub visit_count: i64,
+    /// The device of the visit (Android 0.8.0): `""` this device, a sync device id, or `None`
+    /// unknown (synced before devices were recorded).
+    pub device: Option<String>,
+}
+
+/// A device with visits in the history: the history screen's filter chips (Android 0.8.0).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct HistoryDevice {
+    /// The filter key: `"this"`, `"unknown"` or a sync device id.
+    pub key: String,
+    /// The device's name from sync, if it has one.
+    pub name: Option<String>,
+    pub visits: i64,
+}
+
+fn entry_of(h: lb_core::history::HistoryEntry) -> HistoryEntry {
+    HistoryEntry { id: h.id, url: h.url, title: h.title, ts: h.ts, visit_count: h.visit_count, device: h.device }
 }
 
 /// A history row with the local day it belongs to (`YYYY-MM-DD`).
@@ -307,12 +324,7 @@ impl KrunkStore {
     /// Visits matching `text` (empty = all), newest first, older than `before` (ms, exclusive)
     /// when given, at most `limit` (1-1000).
     pub fn query_history(&self, text: String, before: Option<i64>, limit: u32) -> Result<Vec<HistoryEntry>, FfiError> {
-        Ok(self
-            .lock()
-            .query_history(&text, before, limit)?
-            .into_iter()
-            .map(|h| HistoryEntry { id: h.id, url: h.url, title: h.title, ts: h.ts, visit_count: h.visit_count })
-            .collect())
+        Ok(self.lock().query_history(&text, before, limit)?.into_iter().map(entry_of).collect())
     }
 
     /// A page of visits matching `text`, newest first, after the last row of the page before
@@ -327,20 +339,56 @@ impl KrunkStore {
         limit: u32,
         utc_offset_ms: i64,
     ) -> Result<Vec<HistoryRow>, FfiError> {
+        self.query_history_page_in(text, before_ts, before_id, limit, utc_offset_ms, "all".into())
+    }
+
+    /// [`KrunkStore::query_history_page`] inside a device filter: `"all"`, `"this"`, `"unknown"`
+    /// or a sync device id (a [`HistoryDevice::key`]).
+    pub fn query_history_page_in(
+        &self,
+        text: String,
+        before_ts: Option<i64>,
+        before_id: Option<i64>,
+        limit: u32,
+        utc_offset_ms: i64,
+        filter: String,
+    ) -> Result<Vec<HistoryRow>, FfiError> {
         let before = match (before_ts, before_id) {
             (Some(ts), Some(id)) => Some((ts, id)),
             (None, None) => None,
             _ => return Err(FfiError::Invalid("a cursor needs the time and the id".into())),
         };
+        let filter = lb_core::history::HistoryFilter::parse(&filter);
         Ok(self
             .lock()
-            .query_history_page(&text, before, limit)?
+            .query_history_page_in(&text, before, limit, &filter)?
             .into_iter()
             .map(|h| HistoryRow {
                 day: lb_core::storage::date_ymd(h.ts.saturating_add(utc_offset_ms)),
-                entry: HistoryEntry { id: h.id, url: h.url, title: h.title, ts: h.ts, visit_count: h.visit_count },
+                entry: entry_of(h),
             })
             .collect())
+    }
+
+    /// The devices with visits here: this device first, then by name, unknown last.
+    pub fn history_devices(&self) -> Result<Vec<HistoryDevice>, FfiError> {
+        Ok(self
+            .lock()
+            .history_devices()?
+            .into_iter()
+            .map(|d| HistoryDevice { key: d.key, name: d.name, visits: d.visits })
+            .collect())
+    }
+
+    /// Clears one device filter's history: `"all"` everywhere (synced), `"this"` this device's
+    /// visits here and on the other devices, another device's (or `"unknown"`) only here.
+    pub fn clear_history_in(&self, filter: String) -> Result<u64, FfiError> {
+        Ok(self.lock().clear_history_in(&lb_core::history::HistoryFilter::parse(&filter))? as u64)
+    }
+
+    /// [`KrunkStore::delete_history_range`] inside a device filter.
+    pub fn delete_history_range_in(&self, from: i64, to: i64, filter: String) -> Result<u64, FfiError> {
+        Ok(self.lock().delete_history_range_in(from, to, &lb_core::history::HistoryFilter::parse(&filter))? as u64)
     }
 
     pub fn delete_visits(&self, ids: Vec<i64>) -> Result<u64, FfiError> {
@@ -643,6 +691,21 @@ mod tests {
         let late = s.query_history_page("same3".into(), None, None, 10, -3_600_000).unwrap();
         assert_eq!(late[0].day, "1969-12-31");
         assert!(matches!(s.query_history_page(String::new(), Some(1), None, 10, 0), Err(FfiError::Invalid(_))));
+    }
+
+    #[test]
+    fn history_by_device() {
+        let s = store();
+        s.record_visit("https://a.example/".into(), "A".into(), 1_000).unwrap();
+        let devs = s.history_devices().unwrap();
+        assert_eq!(devs, vec![HistoryDevice { key: "this".into(), name: None, visits: 1 }]);
+        let mine = s.query_history_page_in(String::new(), None, None, 10, 0, "this".into()).unwrap();
+        assert_eq!(mine[0].entry.device.as_deref(), Some(""));
+        assert!(s.query_history_page_in(String::new(), None, None, 10, 0, "dev-x".into()).unwrap().is_empty());
+        assert!(s.query_history_page_in(String::new(), None, None, 10, 0, "unknown".into()).unwrap().is_empty());
+        assert_eq!(s.clear_history_in("dev-x".into()).unwrap(), 0);
+        assert_eq!(s.clear_history_in("this".into()).unwrap(), 1);
+        assert_eq!(s.visit_total().unwrap(), 0);
     }
 
     #[test]
