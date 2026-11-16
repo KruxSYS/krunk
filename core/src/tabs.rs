@@ -32,6 +32,13 @@ pub struct Tab {
     /// The tab this one was opened from, while that relationship still
     /// matters for choosing the next active tab (cleared on manual switch).
     pub opener: Option<TabId>,
+    /// The tab this one was opened from, for Android's Back (close and return there). Unlike
+    /// `opener` it survives switching tabs and navigating; it is cleared only when that tab
+    /// closes (or leaves this model).
+    pub back_opener: Option<TabId>,
+    /// Opened for another app (Android: a VIEW/SEND intent). Back on its first page closes it
+    /// and returns to that app.
+    pub from_app: bool,
     /// Unix ms of the last time the tab was active (used by tab sleeping).
     pub last_active: i64,
     /// Live but put to sleep (low memory / suspended); shown dimmed.
@@ -200,6 +207,8 @@ impl TabModel {
                 private,
                 state,
                 opener,
+                back_opener: opener,
+                from_app: false,
                 last_active: now,
                 asleep: false,
             },
@@ -267,6 +276,9 @@ impl TabModel {
         for t in &mut self.tabs {
             if t.opener == Some(id) {
                 t.opener = None;
+            }
+            if t.back_opener == Some(id) {
+                t.back_opener = None;
             }
         }
         if self.active == Some(id) {
@@ -353,6 +365,8 @@ impl TabModel {
                 private: false,
                 state: LoadState::Live,
                 opener: None,
+                back_opener: None,
+                from_app: false,
                 last_active: now,
                 asleep: false,
             },
@@ -379,6 +393,8 @@ impl TabModel {
                 private: src.private,
                 state: LoadState::Live,
                 opener: None,
+                back_opener: None,
+                from_app: false,
                 last_active: now,
                 asleep: false,
             },
@@ -397,6 +413,9 @@ impl TabModel {
         for t in &mut self.tabs {
             if t.opener == Some(id) {
                 t.opener = None;
+            }
+            if t.back_opener == Some(id) {
+                t.back_opener = None;
             }
         }
         let mut effects = Vec::new();
@@ -418,6 +437,7 @@ impl TabModel {
     pub fn insert(&mut self, mut tab: Tab, index: usize, activate: bool, now: i64) -> Vec<Effect> {
         let id = tab.id;
         tab.opener = None;
+        tab.back_opener = None;
         let to = index.min(self.tabs.len());
         self.tabs.insert(to, tab);
         if activate || self.active.is_none() {
@@ -537,6 +557,13 @@ impl TabModel {
     pub fn set_asleep(&mut self, id: TabId, asleep: bool) {
         if let Some(t) = self.get_mut(id) {
             t.asleep = asleep && t.is_live();
+        }
+    }
+
+    /// Marks a tab as opened for another app (see [`Tab::from_app`]).
+    pub fn set_from_app(&mut self, id: TabId, from_app: bool) {
+        if let Some(t) = self.get_mut(id) {
+            t.from_app = from_app;
         }
     }
 
@@ -794,6 +821,71 @@ mod tests {
         m.activate(child2, 6);
         let e = m.close(child2, 7);
         assert_eq!(e.last(), Some(&Effect::Activate { from: None, to: 2 }), "right neighbour");
+    }
+
+    #[test]
+    fn back_opener_survives_switching_and_navigating() {
+        let mut m = three(0);
+        let (child, _) = m.open("https://child.example/", false, Position::AfterOpener(1), true, true, 2);
+        assert_eq!(m.get(child).unwrap().back_opener, Some(1));
+        m.activate(3, 3);
+        m.activate(child, 4);
+        m.set_url(child, "https://child.example/next");
+        let t = m.get(child).unwrap();
+        assert_eq!(t.opener, None, "the desktop link is forgotten");
+        assert_eq!(t.back_opener, Some(1), "Back's link is not");
+        // A tab without an opener has none; an unknown opener is not recorded.
+        let (plain, _) = m.open("https://p.example/", false, Position::End, false, true, 5);
+        assert_eq!(m.get(plain).unwrap().back_opener, None);
+        let (orphan, _) = m.open("https://o.example/", false, Position::AfterOpener(99), false, true, 5);
+        assert_eq!(m.get(orphan).unwrap().back_opener, None);
+    }
+
+    #[test]
+    fn back_opener_is_cleared_when_the_opener_closes() {
+        let mut m = three(0);
+        let (child, _) = m.open("https://child.example/", false, Position::AfterOpener(2), false, true, 2);
+        m.close(1, 3);
+        assert_eq!(m.get(child).unwrap().back_opener, Some(2), "another tab closing keeps it");
+        m.close(2, 4);
+        assert_eq!(m.get(child).unwrap().back_opener, None);
+        // Close others / taking the opener away clear it too.
+        let mut m = three(0);
+        let (child, _) = m.open("https://child.example/", false, Position::AfterOpener(1), false, true, 2);
+        m.close_many(child, CloseMany::Others, 3);
+        assert_eq!(m.get(child).unwrap().back_opener, None);
+        let mut m = three(0);
+        let (child, _) = m.open("https://child.example/", false, Position::AfterOpener(1), false, true, 2);
+        let (mut taken, _) = m.take(1, 3).unwrap();
+        assert_eq!(m.get(child).unwrap().back_opener, None);
+        // A tab moved into another model has no opener there.
+        taken.back_opener = Some(7);
+        let mut other = TabModel::new();
+        other.insert(taken, 0, true, 5);
+        assert_eq!(other.tabs()[0].back_opener, None);
+    }
+
+    #[test]
+    fn from_app_is_set_by_the_host() {
+        let mut m = three(0);
+        assert!(m.tabs().iter().all(|t| !t.from_app));
+        m.set_from_app(2, true);
+        assert!(m.get(2).unwrap().from_app);
+        m.set_from_app(2, false);
+        assert!(!m.get(2).unwrap().from_app);
+        m.set_from_app(99, true);
+    }
+
+    /// `Tab` itself is never stored: sessions keep `SessionTab`s, which are unchanged, so a
+    /// session saved by an older Krunk restores with neither link set.
+    #[test]
+    fn sessions_saved_before_back_openers_still_restore() {
+        let s: Session =
+            serde_json::from_str(r#"{"tabs":[{"url":"https://a.example/","title":"A"}],"active":0}"#).unwrap();
+        let mut m = TabModel::new();
+        m.restore(&s, 1);
+        let t = &m.tabs()[0];
+        assert_eq!((t.back_opener, t.from_app), (None, false));
     }
 
     #[test]

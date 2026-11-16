@@ -462,6 +462,9 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
      * ([LoadSource.EXTERNAL_APP]) or a link or image address of a page ([LoadSource.PAGE], with
      * the page's tab as [opener]). Only web addresses are opened, and the engine loads them
      * without the app's privileges. Returns null when the address is refused.
+     *
+     * [fromApp]: Back on the tab's first page closes it and puts Krunk in the background (the
+     * default for [LoadSource.EXTERNAL_APP]; false for addresses that only load like one).
      */
     fun openUntrusted(
         url: String,
@@ -470,12 +473,13 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         activate: Boolean = true,
         opener: UInt? = null,
         live: Boolean = false,
+        fromApp: Boolean = source == LoadSource.EXTERNAL_APP,
     ): UInt? {
         if (source == LoadSource.USER || !LoadPolicy.isWebUrl(url)) {
             Log.w(KrunkApp.TAG, "refused to open an address that is not a web address (source $source)")
             return null
         }
-        return open(url, source, private, activate, opener, live)
+        return open(url, source, private, activate, opener, live, fromApp)
     }
 
     private fun open(
@@ -485,11 +489,13 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         activate: Boolean,
         opener: UInt?,
         live: Boolean,
+        fromApp: Boolean = false,
     ): UInt {
         // Tracking parameters go before the first request, also for links from other apps and
         // from the link menu (HTTPS-only is the engine's job: it knows its exceptions).
         val url = if (target.isEmpty() || internalPage(target) != null) target else cleaned(target)
         val r = model.open(url, private, opener, activate, live, nowMs())
+        if (fromApp) model.setFromApp(r.id, true)
         if (source != LoadSource.USER) loadSources[r.id] = LoadOrigin(source, opener)
         apply(r.effects)
         refresh()
@@ -508,6 +514,16 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         forget(id)
         refresh()
         scheduleSave()
+    }
+
+    /**
+     * Back on a tab opened from another tab: [opener] comes to the front first (so the core does
+     * not pick a neighbour, which might load for a moment), then [id] closes.
+     */
+    fun closeToOpener(id: UInt, opener: UInt) {
+        if (model.tab(opener) == null) return close(id)
+        apply(model.activate(opener, nowMs()))
+        close(id)
     }
 
     /**
@@ -823,6 +839,8 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
                 page = page,
                 favicon = if (t.private) null else favicons.cached(url),
                 thumbnail = thumbnails[t.id],
+                backOpener = t.backOpener,
+                fromApp = t.fromApp,
             )
         }
         _tabs.value = list
