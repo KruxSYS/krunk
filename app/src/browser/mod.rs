@@ -3086,6 +3086,7 @@ impl Browser {
             | Request::SyncSetupCopy
             | Request::SyncSetupSave
             | Request::SyncRestore { .. }
+            | Request::SyncSetupVault { .. }
             | Request::SyncRestoreConfirm
             | Request::SyncConfirmRotation
             | Request::SyncFinishSecuring { .. }

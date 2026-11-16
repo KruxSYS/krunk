@@ -15,6 +15,9 @@ What changed in each Krunk release, newest first. Krunk for Android has its own 
   keep using every device's history.
 - **Works with older versions.** Devices still on 0.22 or Android 0.7 keep syncing; their new
   visits are named by their device. Nothing in your history is lost by the update.
+- **Turning on sync with your vault password works.** Since 0.21.1, "Turn on sync" on a computer
+  that was the first to sync asked for the vault password and then did nothing: the request never
+  reached the part of Krunk that handles it (found in the end-to-end check on the VM).
 
 ## 0.22.3 — 2026-11-15
 
