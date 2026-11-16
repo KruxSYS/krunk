@@ -3,6 +3,21 @@
 What changed in each Krunk for Android release, newest first. The Windows browser's list is
 `CHANGELOG.md`.
 
+## 0.8.0 — 2026-11-16
+
+- **Back returns to the tab that opened the link.** A link opened in a new tab (a link that opens
+  a new window, or "Open in new tab") closes on Back once it has no earlier page, and you are
+  back on the page you came from, even after switching tabs in between, as long as that tab is
+  still open (until Krunk is restarted). A link opened from another app closes on Back and
+  returns you to that app.
+- **Back twice to leave.** With nothing left to go back to, Back shows "Press back again to exit";
+  only a second Back within 2 seconds leaves Krunk. Your tabs stay as they are.
+- **History per device.** The History screen opens on **This device**; chips show each of your
+  other synced devices by name, **Unknown device** (visits synced before this version) and
+  **All**. Search works inside the chosen chip, and under All each entry names its device.
+  Clearing This device's history removes it on your other devices too; another device's is only
+  hidden on this phone. Address suggestions still use every device's history.
+
 ## 0.7.4 — 2026-11-16
 
 - **The address bar completes what you type.** Type the start of a site you have visited

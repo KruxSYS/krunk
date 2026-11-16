@@ -3,6 +3,19 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.23.0 — 2026-11-16
+
+- **History per device.** Every visit now remembers which device it was made on.
+  `krunk://history` opens on **This device**; chips above the list show each of your other synced
+  devices by name, **Unknown device** (visits synced before this version) and **All devices**.
+  Search works inside the chosen device, and each row under All names its device.
+- **Deleting follows the chip.** Deleting a time range of This device removes those visits here
+  and on your other devices; for another device it only hides them here (they stay on that
+  device). All devices and Clear browsing data still clear everywhere. Address-bar suggestions
+  keep using every device's history.
+- **Works with older versions.** Devices still on 0.22 or Android 0.7 keep syncing; their new
+  visits are named by their device. Nothing in your history is lost by the update.
+
 ## 0.22.3 — 2026-11-15
 
 - **Sync works again with a big history.** Sync stopped with "Something went wrong with sync"

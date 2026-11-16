@@ -1448,8 +1448,20 @@ passphrase or recovery key.
   re-secures your sync with new keys, which the removed device never gets. Afterwards **Finish
   securing** asks for the passphrase or recovery key once.
 - **Conflicts:** bookmarks merge per field (place and name separately) and keep one tree; history
-  is the union of visits; settings and logins take the later change. A login that lost a conflict
+  is the union of visits, each kept with the device it was made on; settings and logins take the
+  later change. A login that lost a conflict
   is kept inside the vault for 30 days. The same login saved on two devices becomes one.
+- **History per device (0.23.0, Android 0.8.0):** every visit records the device it was made on
+  (its sync device id; the name is the one in Sync settings). `krunk://history` and the Android
+  History screen open on **This device** and have a chip per other device by name, **Unknown
+  device** and **All**; search works inside the chosen one. Deleting follows the chip: clearing
+  This device removes its visits here and on the other devices; another device's visits are only
+  hidden here (they stay on that device); **All** (and Clear browsing data) clears every device.
+  Address-bar suggestions still use every device's history. The device rides inside the
+  encrypted history record (no server change); 0.22.x and Android 0.7.x devices keep syncing, and
+  their new visits are named by their device. Visits synced before the upgrade show as
+  **Unknown device** (on a profile that never synced history they are This device's); nothing is
+  lost.
 - **Turn off** on a device: keep what it has, or remove what came from sync. The account and the
   other devices are unaffected.
 - **What stays on this device:** proxy, DNS, user agent, downloads folder, update and window
