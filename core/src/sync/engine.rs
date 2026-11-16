@@ -138,6 +138,17 @@ pub fn run(api: &Api, store: &mut Store, st: &mut SyncState, opts: &RunOpts) -> 
     if report.changed.bookmarks {
         store.sync_applying(coll::repair_tree)?;
     }
+    // Visits from clients before 0.23.0 named only by short id: the device list names them
+    // (best effort; the next run tries again).
+    if coll::has_unresolved_visits(store.sync_conn())? {
+        if let Ok(list) = client::devices(api) {
+            let pairs: Vec<(u16, String)> = list.into_iter().map(|d| (d.short, d.id)).collect();
+            let own = st.dev_short;
+            if store.sync_applying(|c| coll::resolve_visit_devices(c, &pairs, own))? {
+                report.changed.history = true;
+            }
+        }
+    }
     if ctx.initial || report.full || local::meta_get(store.sync_conn(), "reconcile")?.is_some() {
         // Atomic (F-66): the whole first-sync queue, then the reconcile flag cleared.
         crate::storage::atomic(store.sync_conn(), |tx| {

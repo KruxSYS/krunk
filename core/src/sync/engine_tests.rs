@@ -715,3 +715,175 @@ fn a_synced_setting_a_newer_version_wrote_is_kept_by_an_older_device() {
     let rec = up.iter().find(|p| p["data"]["key"] == "searchEngine").unwrap();
     assert_eq!(rec["data"]["value"], "engineFromTheFuture");
 }
+
+// ---- Per-device history (Windows 0.23.0 / Android 0.8.0) ---------------------------------------
+
+use crate::history::HistoryFilter;
+
+fn ts_in(d: &Dev, f: &HistoryFilter) -> Vec<i64> {
+    d.store.query_history_in("", None, 1000, f).unwrap().into_iter().map(|e| e.ts).collect()
+}
+
+fn of(id: &str) -> HistoryFilter {
+    HistoryFilter::Device(id.into())
+}
+
+/// Rewrites every history record on the server as `edit` says and gives it a new seq, as a
+/// client wrote it (an older one without `by`, a stale copy, ...).
+fn rewrite_history(mem: &Mem, edit: impl Fn(&mut super::envelope::RecordPlain)) {
+    let acc = super::state::parse_account_id(ACC).unwrap();
+    let mut s = mem.0.borrow_mut();
+    let keys: Vec<(String, String)> = s.records.keys().filter(|k| k.0 == "history").cloned().collect();
+    for k in keys {
+        let env: Envelope = serde_json::from_value(s.records[&k].1.clone()).unwrap();
+        let ck = envelope::collection_keys(&AK, &acc, &env.c, env.e);
+        let mut plain = envelope::open_record(&ck.ck, &acc, &env).unwrap();
+        edit(&mut plain);
+        let id = unb64_id(&env.id);
+        let sealed = envelope::seal_record(&ck.ck, &acc, &env.c, &id, env.e, &plain, None).unwrap();
+        s.head += 1;
+        let seq = s.head;
+        s.records.insert(k, (seq, serde_json::to_value(sealed).unwrap()));
+    }
+}
+
+fn unb64_id(id: &str) -> [u8; envelope::ID_LEN] {
+    let v = super::envelope::unb64(id).unwrap();
+    v.try_into().unwrap()
+}
+
+#[test]
+fn the_same_page_on_two_devices_keeps_both_devices() {
+    let mem = Mem::new();
+    let mut a = dev("dev-a", 1);
+    let mut b = dev("dev-b", 2);
+    a.store.record_visit("https://page.example/", "P", 1_000).unwrap();
+    b.store.record_visit("https://page.example/", "P", 2_000).unwrap();
+    // The same millisecond on both: two visits, one per device.
+    a.store.record_visit("https://page.example/", "P", 3_000).unwrap();
+    b.store.record_visit("https://page.example/", "P", 3_000).unwrap();
+    sync(&mut a, &mem);
+    sync(&mut b, &mem);
+    sync(&mut a, &mem);
+    for (me, other, mine, theirs) in
+        [(&a, "dev-b", vec![3_000, 1_000], vec![3_000, 2_000]), (&b, "dev-a", vec![3_000, 2_000], vec![3_000, 1_000])]
+    {
+        assert_eq!(ts_in(me, &HistoryFilter::ThisDevice), mine);
+        assert_eq!(ts_in(me, &of(other)), theirs);
+        assert_eq!(ts_in(me, &HistoryFilter::All).len(), 4);
+        assert!(ts_in(me, &HistoryFilter::Unknown).is_empty());
+    }
+    let devs = a.store.history_devices().unwrap();
+    assert_eq!(devs.iter().map(|d| d.key.as_str()).collect::<Vec<_>>(), ["this", "dev-b"]);
+    assert_eq!(devs[1].name.as_deref(), Some("Device dev-b"));
+    // Search inside a filter.
+    a.store.record_visit("https://other.example/", "Other", 4_000).unwrap();
+    assert_eq!(a.store.query_history_in("other", None, 10, &of("dev-b")).unwrap().len(), 0);
+    assert_eq!(a.store.query_history_in("other", None, 10, &HistoryFilter::ThisDevice).unwrap().len(), 1);
+}
+
+#[test]
+fn clearing_this_device_clears_its_visits_everywhere_and_nothing_else() {
+    let mem = Mem::new();
+    let mut a = dev("dev-a", 1);
+    let mut b = dev("dev-b", 2);
+    a.store.record_visit("https://shared.example/", "S", 1_000).unwrap();
+    a.store.record_visit("https://only-a.example/", "A", 1_500).unwrap();
+    b.store.record_visit("https://shared.example/", "S", 2_000).unwrap();
+    sync(&mut a, &mem);
+    sync(&mut b, &mem);
+    sync(&mut a, &mem);
+    a.store.clear_history_in(&HistoryFilter::ThisDevice).unwrap();
+    sync(&mut a, &mem);
+    sync(&mut b, &mem);
+    sync(&mut a, &mem);
+    for d in [&a, &b] {
+        assert_eq!(snap(d).history.keys().collect::<Vec<_>>(), ["https://shared.example/"], "only-a went everywhere");
+        assert_eq!(snap(d).history["https://shared.example/"], vec![2_000], "b's visit stays");
+    }
+    assert!(ts_in(&b, &of("dev-a")).is_empty());
+    assert_eq!(ts_in(&b, &HistoryFilter::ThisDevice), vec![2_000]);
+
+    // Another device's history cleared here stays cleared here only.
+    b.store.clear_history_in(&of("dev-a")).unwrap();
+    a.store.record_visit("https://shared.example/", "S", 5_000).unwrap();
+    sync(&mut a, &mem);
+    sync(&mut b, &mem);
+    assert_eq!(ts_in(&a, &HistoryFilter::All), vec![5_000, 2_000], "a keeps everything");
+    assert_eq!(ts_in(&b, &of("dev-a")), vec![5_000], "a's new visit comes, nothing older");
+
+    // Clear everything reaches every device.
+    b.store.clear_history_in(&HistoryFilter::All).unwrap();
+    sync(&mut b, &mem);
+    sync(&mut a, &mem);
+    assert!(snap(&a).history.is_empty() && snap(&b).history.is_empty());
+}
+
+#[test]
+fn a_stale_copy_does_not_bring_back_deleted_visits() {
+    let mem = Mem::new();
+    let mut a = dev("dev-a", 1);
+    let mut b = dev("dev-b", 2);
+    a.store.record_visit("https://page.example/", "P", 1_000).unwrap();
+    a.store.record_visit("https://page.example/", "P", 1_100).unwrap();
+    b.store.record_visit("https://page.example/", "P", 2_000).unwrap();
+    sync(&mut a, &mem);
+    sync(&mut b, &mem);
+    sync(&mut a, &mem);
+    let old: Vec<Value> =
+        server_plaintexts(&mem).into_iter().filter(|p| p["data"]["url"] == "https://page.example/").collect();
+    let id = a.store.query_history_in("", None, 10, &HistoryFilter::ThisDevice).unwrap()[0].id;
+    a.store.delete_visits(&[id]).unwrap(); // the 1_100 visit
+    sync(&mut a, &mem);
+    sync(&mut b, &mem);
+    assert_eq!(ts_in(&b, &of("dev-a")), vec![1_000]);
+    // Somebody writes the old copy again (a's entry with its older v).
+    let stale = old[0]["data"].clone();
+    rewrite_history(&mem, |p| p.data = stale.clone());
+    sync(&mut b, &mem);
+    sync(&mut a, &mem);
+    assert_eq!(ts_in(&b, &of("dev-a")), vec![1_000], "not resurrected on b");
+    assert_eq!(ts_in(&a, &HistoryFilter::ThisDevice), vec![1_000], "nor on a");
+}
+
+#[test]
+fn records_of_older_clients_keep_every_visit() {
+    let mem = Mem::new();
+    let mut a = dev("dev-a", 1);
+    let mut b = dev("dev-b", 2);
+    mem.0.borrow_mut().devices.push(super::memserver::MemDevice {
+        id: "dev-c".into(),
+        short: 3,
+        revoked: false,
+        had_keys: true,
+    });
+    a.store.record_visit("https://page.example/", "P", 1_000).unwrap();
+    sync(&mut a, &mem);
+    // An old client (0.22.x, short id 3) wrote the page first: a plain union, no `by`.
+    rewrite_history(&mem, |p| {
+        p.dev = 3;
+        p.data.as_object_mut().unwrap().remove("by");
+        p.data["visits"] = serde_json::json!([1_000, 500]);
+    });
+    sync(&mut b, &mem);
+    assert_eq!(ts_in(&b, &HistoryFilter::Unknown), vec![1_000, 500], "never seen before: unknown");
+    // b knows the page now; the old client visits it again.
+    rewrite_history(&mem, |p| {
+        p.dev = 3;
+        p.data["visits"] = serde_json::json!([3_000, 1_000, 500]);
+    });
+    sync(&mut b, &mem);
+    assert_eq!(ts_in(&b, &of("dev-c")), vec![3_000], "the newer visit is the writer's");
+    // a's own entry claims its unknown visit on b; a never loses its own.
+    rewrite_history(&mem, |p| {
+        p.dev = 1;
+        p.data["by"] = serde_json::json!({"dev-a": {"v": 9_999_999_999_999i64, "t": [1_000]}});
+    });
+    sync(&mut b, &mem);
+    assert_eq!(ts_in(&b, &of("dev-a")), vec![1_000]);
+    assert_eq!(ts_in(&b, &HistoryFilter::Unknown), vec![500]);
+    assert_eq!(ts_in(&b, &HistoryFilter::All).len(), 3, "no visit lost");
+    sync(&mut a, &mem);
+    assert_eq!(ts_in(&a, &HistoryFilter::ThisDevice), vec![1_000]);
+    assert_eq!(ts_in(&a, &HistoryFilter::All), vec![3_000, 1_000, 500]);
+}

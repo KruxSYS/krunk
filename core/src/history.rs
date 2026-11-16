@@ -17,6 +17,111 @@ pub struct HistoryEntry {
     pub ts: i64,
     /// Total visits to this URL.
     pub visit_count: i64,
+    /// The device the visit was made on (0.23.0): `Some("")` this device, `Some(id)` another
+    /// synced device, `None` unknown (synced before devices were recorded).
+    pub device: Option<String>,
+}
+
+/// Schema v11 (Windows 0.23.0 / Android 0.8.0): the device of each visit, and the other devices'
+/// visits deleted here (so the next record from that device doesn't bring them back).
+///
+/// `visits.device`: `''` = this device (also after a sync re-join under a new id), a sync device
+/// id = that device, `'#<short>'` = a device known only by its short id until the engine
+/// resolves it, `NULL` = unknown (synced before 0.23.0).
+pub(crate) const SCHEMA_V11: &str = "
+ALTER TABLE visits ADD COLUMN device TEXT DEFAULT '';
+CREATE INDEX visits_device_ts ON visits(device, ts);
+CREATE TABLE history_hidden (
+    nk     TEXT NOT NULL,
+    device TEXT NOT NULL,
+    ts     INTEGER NOT NULL,
+    PRIMARY KEY (nk, device, ts)
+) WITHOUT ROWID;
+";
+
+/// A deleted visit of this device queues its page, so the change reaches the other devices.
+pub(crate) const SCHEMA_V11_TRIGGERS: &str = "
+CREATE TRIGGER sync_q_visits_del AFTER DELETE ON visits WHEN OLD.device = '' AND @TRACK
+BEGIN INSERT INTO sync_queue SELECT 'history', u.url, @NOW FROM urls u WHERE u.id = OLD.url_id
+      AND NOT EXISTS (SELECT 1 FROM sync_queue q WHERE q.collection = 'history' AND q.natural_key = u.url); END;
+";
+
+/// Existing visits: a profile that never synced history made every one of them here; on one
+/// that did, local and synced visits can't be told apart any more, so they are "unknown" until
+/// an upgraded device claims its own.
+pub(crate) fn upgrade_v11(tx: &rusqlite::Transaction<'_>) -> DbResult<()> {
+    tx.execute(
+        "UPDATE visits SET device = NULL WHERE EXISTS (SELECT 1 FROM sync_items WHERE collection = 'history')",
+        [],
+    )?;
+    Ok(())
+}
+
+/// Which visits a history view, a search or a clear covers (0.23.0).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum HistoryFilter {
+    #[default]
+    All,
+    ThisDevice,
+    /// Visits whose device isn't known.
+    Unknown,
+    /// Another device, by its sync device id.
+    Device(String),
+}
+
+impl HistoryFilter {
+    /// `""`/`"all"`, `"this"`, `"unknown"`, else a device id.
+    pub fn parse(s: &str) -> HistoryFilter {
+        match s {
+            "" | "all" => HistoryFilter::All,
+            "this" => HistoryFilter::ThisDevice,
+            "unknown" => HistoryFilter::Unknown,
+            id => HistoryFilter::Device(id.to_string()),
+        }
+    }
+
+    pub fn key(&self) -> &str {
+        match self {
+            HistoryFilter::All => "all",
+            HistoryFilter::ThisDevice => "this",
+            HistoryFilter::Unknown => "unknown",
+            HistoryFilter::Device(id) => id,
+        }
+    }
+
+    /// The SQL parameters of [`FILTER_SQL`]: kind and device id.
+    fn params(&self) -> (&'static str, &str) {
+        match self {
+            HistoryFilter::All => ("all", ""),
+            HistoryFilter::ThisDevice => ("this", ""),
+            HistoryFilter::Unknown => ("unknown", ""),
+            HistoryFilter::Device(id) => ("dev", id.as_str()),
+        }
+    }
+}
+
+/// The filter as SQL on `visits v`, with `?{K}` the kind and `?{D}` the device id.
+fn filter_sql(k: usize, d: usize) -> String {
+    format!(
+        "(?{k} = 'all' OR (?{k} = 'this' AND v.device = '') \
+         OR (?{k} = 'unknown' AND (v.device IS NULL OR v.device LIKE '#%')) OR (?{k} = 'dev' AND v.device = ?{d}))"
+    )
+}
+
+/// A visit's stored device as the API reports it (`'#short'` not resolved yet = unknown).
+fn device_out(d: Option<String>) -> Option<String> {
+    d.filter(|d| !d.starts_with('#'))
+}
+
+/// A device that has visits in the history (the history page's filter).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryDevice {
+    /// `"this"`, `"unknown"` or a sync device id (a [`HistoryFilter`] key).
+    pub key: String,
+    /// The device's name from sync (`None` for this device, unknown, or a device without one).
+    pub name: Option<String>,
+    pub visits: i64,
 }
 
 /// Only real web pages go into history (no built-in pages, data:, about:).
@@ -56,7 +161,7 @@ impl Store {
                 params![url, title, ts],
             )?;
             let url_id: i64 = tx.query_row("SELECT id FROM urls WHERE url = ?1", [url], |r| r.get(0))?;
-            tx.execute("INSERT INTO visits(url_id, ts) VALUES (?1, ?2)", params![url_id, ts])?;
+            tx.execute("INSERT INTO visits(url_id, ts, device) VALUES (?1, ?2, '')", params![url_id, ts])?;
             Ok(Some(tx.last_insert_rowid()))
         })
     }
@@ -86,18 +191,29 @@ impl Store {
     /// Visits matching `text` in URL or title, newest first. `before` pages
     /// through results (exclusive upper bound on the timestamp).
     pub fn query_history(&self, text: &str, before: Option<i64>, limit: u32) -> DbResult<Vec<HistoryEntry>> {
+        self.query_history_in(text, before, limit, &HistoryFilter::All)
+    }
+
+    /// [`Store::query_history`] inside a device filter (0.23.0).
+    pub fn query_history_in(
+        &self,
+        text: &str,
+        before: Option<i64>,
+        limit: u32,
+        filter: &HistoryFilter,
+    ) -> DbResult<Vec<HistoryEntry>> {
         let limit = limit.clamp(1, 1000);
         let before = before.unwrap_or(i64::MAX);
         let pattern = like_pattern(text.trim());
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT v.id, u.url, u.title, v.ts, u.visit_count
+        let (k, d) = filter.params();
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "SELECT v.id, u.url, u.title, v.ts, u.visit_count, v.device
              FROM visits v JOIN urls u ON u.id = v.url_id
-             WHERE v.ts < ?1 AND (u.url LIKE ?2 ESCAPE '\\' OR u.title LIKE ?2 ESCAPE '\\')
+             WHERE v.ts < ?1 AND (u.url LIKE ?2 ESCAPE '\\' OR u.title LIKE ?2 ESCAPE '\\') AND {}
              ORDER BY v.ts DESC, v.id DESC LIMIT ?3",
-        )?;
-        let rows = stmt.query_map(params![before, pattern, limit], |r| {
-            Ok(HistoryEntry { id: r.get(0)?, url: r.get(1)?, title: r.get(2)?, ts: r.get(3)?, visit_count: r.get(4)? })
-        })?;
+            filter_sql(4, 5)
+        ))?;
+        let rows = stmt.query_map(params![before, pattern, limit, k, d], entry)?;
         rows.collect()
     }
 
@@ -111,33 +227,76 @@ impl Store {
         before: Option<(i64, i64)>,
         limit: u32,
     ) -> DbResult<Vec<HistoryEntry>> {
+        self.query_history_page_in(text, before, limit, &HistoryFilter::All)
+    }
+
+    /// [`Store::query_history_page`] inside a device filter (Android 0.8.0).
+    pub fn query_history_page_in(
+        &self,
+        text: &str,
+        before: Option<(i64, i64)>,
+        limit: u32,
+        filter: &HistoryFilter,
+    ) -> DbResult<Vec<HistoryEntry>> {
         let limit = limit.clamp(1, 1000);
         let (ts, id) = before.unwrap_or((i64::MAX, i64::MAX));
         let pattern = like_pattern(text.trim());
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT v.id, u.url, u.title, v.ts, u.visit_count
+        let (k, d) = filter.params();
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "SELECT v.id, u.url, u.title, v.ts, u.visit_count, v.device
              FROM visits v JOIN urls u ON u.id = v.url_id
              WHERE (v.ts < ?1 OR (v.ts = ?1 AND v.id < ?2))
-               AND (u.url LIKE ?3 ESCAPE '\\' OR u.title LIKE ?3 ESCAPE '\\')
+               AND (u.url LIKE ?3 ESCAPE '\\' OR u.title LIKE ?3 ESCAPE '\\') AND {}
              ORDER BY v.ts DESC, v.id DESC LIMIT ?4",
-        )?;
-        let rows = stmt.query_map(params![ts, id, pattern, limit], |r| {
-            Ok(HistoryEntry { id: r.get(0)?, url: r.get(1)?, title: r.get(2)?, ts: r.get(3)?, visit_count: r.get(4)? })
-        })?;
+            filter_sql(5, 6)
+        ))?;
+        let rows = stmt.query_map(params![ts, id, pattern, limit, k, d], entry)?;
         rows.collect()
     }
 
-    /// Deletes individual visits.
+    /// The devices with visits here, this device first, then by name; unknown last (0.23.0).
+    pub fn history_devices(&self) -> DbResult<Vec<HistoryDevice>> {
+        let names = crate::sync::coll::device_names(&self.conn)?;
+        let mut st = self.conn.prepare(
+            "SELECT CASE WHEN device = '' THEN 'this' WHEN device IS NULL OR device LIKE '#%' THEN 'unknown'
+                    ELSE device END AS k, count(*) FROM visits GROUP BY k",
+        )?;
+        let mut out: Vec<HistoryDevice> = st
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
+            .collect::<DbResult<Vec<_>>>()?
+            .into_iter()
+            .map(|(key, visits)| HistoryDevice { name: names.get(&key).cloned(), key, visits })
+            .collect();
+        let rank = |d: &HistoryDevice| match d.key.as_str() {
+            "this" => 0,
+            "unknown" => 2,
+            _ => 1,
+        };
+        out.sort_by(|a, b| {
+            rank(a).cmp(&rank(b)).then_with(|| {
+                a.name.as_deref().unwrap_or("").to_lowercase().cmp(&b.name.as_deref().unwrap_or("").to_lowercase())
+            })
+        });
+        Ok(out)
+    }
+
+    /// Deletes individual visits. This device's are deleted on the other devices too; another
+    /// device's only here (they stay hidden when that device's record comes again).
     pub fn delete_visits(&mut self, ids: &[i64]) -> DbResult<usize> {
         let tx = self.conn.transaction()?;
-        let mut n = 0;
-        {
-            let mut del = tx.prepare_cached("DELETE FROM visits WHERE id = ?1")?;
+        let rows = {
+            let mut st = tx.prepare_cached(
+                "SELECT v.id, v.url_id, u.url, v.device, v.ts FROM visits v JOIN urls u ON u.id = v.url_id WHERE v.id = ?1",
+            )?;
+            let mut rows = Vec::new();
             for id in ids {
-                n += del.execute([id])?;
+                if let Some(r) = st.query_row([id], visit_row).optional()? {
+                    rows.push(r);
+                }
             }
-        }
-        recount(&tx)?;
+            rows
+        };
+        let n = delete_rows(&tx, &rows, false)?;
         tx.commit()?;
         Ok(n)
     }
@@ -157,10 +316,45 @@ impl Store {
         Ok(n)
     }
 
+    /// Deletes visits with `from <= ts < to` inside a device filter. [`HistoryFilter::All`] is
+    /// [`Store::delete_history_range`]; a narrower filter deletes this device's visits everywhere
+    /// and another device's only here.
+    pub fn delete_history_range_in(&mut self, from: i64, to: i64, filter: &HistoryFilter) -> DbResult<usize> {
+        if *filter == HistoryFilter::All {
+            return self.delete_history_range(from, to);
+        }
+        let tx = self.conn.transaction()?;
+        let (k, d) = filter.params();
+        let rows = {
+            let mut st = tx.prepare(&format!(
+                "SELECT v.id, v.url_id, u.url, v.device, v.ts FROM visits v JOIN urls u ON u.id = v.url_id
+                 WHERE v.ts >= ?1 AND v.ts < ?2 AND {}",
+                filter_sql(3, 4)
+            ))?;
+            let r = st.query_map(params![from, to, k, d], visit_row)?;
+            r.collect::<DbResult<Vec<_>>>()?
+        };
+        let n = delete_rows(&tx, &rows, false)?;
+        tx.commit()?;
+        Ok(n)
+    }
+
     pub fn clear_history(&mut self) -> DbResult<()> {
         let tx = self.conn.transaction()?;
-        tx.execute_batch("DELETE FROM visits; DELETE FROM urls;")?;
+        tx.execute_batch("DELETE FROM visits; DELETE FROM urls; DELETE FROM history_hidden;")?;
         tx.commit()
+    }
+
+    /// Clears the history of one device filter (0.23.0). "All" clears everything on every
+    /// device ([`Store::clear_history`]); "this device" its own visits here and on the other
+    /// devices; another device's (or the unknown) visits are cleared only here.
+    pub fn clear_history_in(&mut self, filter: &HistoryFilter) -> DbResult<usize> {
+        if *filter == HistoryFilter::All {
+            let n = self.visit_total()? as usize;
+            self.clear_history()?;
+            return Ok(n);
+        }
+        self.delete_history_range_in(i64::MIN, i64::MAX, filter)
     }
 
     /// Web origins (`scheme://host[:port]`) with a visit at or after
@@ -261,6 +455,73 @@ impl Store {
         self.conn.execute(&format!("DELETE FROM urls WHERE url IN ({marks})"), params_from_iter(urls))?;
         Ok(())
     }
+}
+
+fn entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryEntry> {
+    Ok(HistoryEntry {
+        id: r.get(0)?,
+        url: r.get(1)?,
+        title: r.get(2)?,
+        ts: r.get(3)?,
+        visit_count: r.get(4)?,
+        device: device_out(r.get(5)?),
+    })
+}
+
+/// (visit id, url id, url, device, ts)
+type VisitRow = (i64, i64, String, Option<String>, i64);
+
+fn visit_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<VisitRow> {
+    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+}
+
+/// Deletes visits. This device's are queued for sync by their trigger; another device's are
+/// remembered in `history_hidden` (unless `everywhere`). A page left without visits is deleted
+/// on every device only when one of this device's visits went (or `everywhere`); otherwise only
+/// here, without a tombstone (that would delete the other device's own visits).
+fn delete_rows(tx: &rusqlite::Transaction<'_>, rows: &[VisitRow], everywhere: bool) -> DbResult<usize> {
+    let mut n = 0;
+    let mut own_urls = std::collections::HashSet::new();
+    let mut urls = std::collections::BTreeSet::new();
+    {
+        let mut del = tx.prepare_cached("DELETE FROM visits WHERE id = ?1")?;
+        let mut hide = tx.prepare_cached("INSERT OR IGNORE INTO history_hidden(nk, device, ts) VALUES (?1, ?2, ?3)")?;
+        for (id, url_id, url, device, ts) in rows {
+            urls.insert(*url_id);
+            if device.as_deref() == Some("") {
+                own_urls.insert(*url_id);
+            } else if !everywhere {
+                let nk = crate::sync::normalize::history_key(url).unwrap_or_else(|| url.clone());
+                hide.execute(params![nk, device.as_deref().unwrap_or("?"), ts])?;
+            }
+            n += del.execute([id])?;
+        }
+    }
+    if !everywhere {
+        let quiet: Vec<i64> = {
+            let mut empty = tx.prepare_cached("SELECT NOT EXISTS (SELECT 1 FROM visits WHERE url_id = ?1)")?;
+            let mut q = Vec::new();
+            for id in urls.iter().filter(|u| !own_urls.contains(u)) {
+                if empty.query_row([id], |r| r.get::<_, bool>(0))? {
+                    q.push(*id);
+                }
+            }
+            q
+        };
+        if !quiet.is_empty() {
+            // As the sync engine applies: the triggers don't queue a tombstone.
+            let was = crate::sync::local::meta_get(tx, "applying")?;
+            crate::sync::local::meta_set(tx, "applying", "1")?;
+            for id in &quiet {
+                tx.execute("DELETE FROM urls WHERE id = ?1", [id])?;
+            }
+            if was.is_none() {
+                tx.execute("DELETE FROM sync_meta WHERE key = 'applying'", [])?;
+            }
+        }
+    }
+    recount(tx)?;
+    Ok(n)
 }
 
 /// Recomputes visit counts after visits were deleted and drops URLs with no
@@ -442,5 +703,48 @@ mod tests {
         );
         assert_eq!(s.visited_origins(Some(1_500)).unwrap(), ["http://b.example:8080", "https://a.example"]);
         assert!(s.visited_origins(Some(9_000)).unwrap().is_empty());
+    }
+
+    /// A 0.22.x / Android 0.7.4 profile: v10, visits without devices. Nothing is lost; a profile
+    /// that never synced history owns them all, one that did has them as "unknown".
+    #[test]
+    fn upgrade_to_v11_keeps_every_visit() {
+        for synced in [false, true] {
+            let dir = std::env::temp_dir().join(format!("krunk-hist-v11-{}-{synced}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let path = dir.join("browser.db");
+            {
+                let s = Store::open_at_version(&path, 10).unwrap();
+                s.conn.execute_batch(
+                    "INSERT INTO urls(id, url, title, visit_count, last_visit) VALUES (1, 'https://a.example/', 'A', 2, 2000);
+                     INSERT INTO visits(url_id, ts) VALUES (1, 1000), (1, 2000);",
+                ).unwrap();
+                if synced {
+                    s.conn
+                        .execute(
+                            "INSERT INTO sync_items(collection, natural_key, record_id, server_seq, ver, bucket)
+                         VALUES ('history', 'https://a.example/', x'00', 1, 1, 0)",
+                            [],
+                        )
+                        .unwrap();
+                }
+            }
+            let s = Store::open(&path).unwrap();
+            let v: i64 = s.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+            assert_eq!(v, 11);
+            assert_eq!(s.visit_total().unwrap(), 2);
+            let all = s.query_history_in("", None, 10, &HistoryFilter::All).unwrap();
+            assert_eq!(all.len(), 2);
+            let mine = s.query_history_in("", None, 10, &HistoryFilter::ThisDevice).unwrap().len();
+            let unknown = s.query_history_in("", None, 10, &HistoryFilter::Unknown).unwrap().len();
+            assert_eq!((mine, unknown), if synced { (0, 2) } else { (2, 0) });
+            // New visits are this device's.
+            s.record_visit("https://a.example/", "A", 3000).unwrap();
+            assert_eq!(
+                s.query_history_in("", None, 10, &HistoryFilter::ThisDevice).unwrap()[0].device.as_deref(),
+                Some("")
+            );
+        }
     }
 }

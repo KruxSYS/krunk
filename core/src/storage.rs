@@ -16,7 +16,7 @@ pub const BOOKMARKS_BAR: i64 = 1;
 /// Id of the "Other bookmarks" root folder.
 pub const OTHER_BOOKMARKS: i64 = 2;
 
-const SCHEMA_VERSION: i64 = 10;
+const SCHEMA_VERSION: i64 = 11;
 
 /// Fixed sync guids of the two root folders (PROTOCOL §9.5): "bar" and "other".
 pub const ROOT_GUID_BAR: [u8; 16] = [0x01; 16];
@@ -203,8 +203,10 @@ BEGIN INSERT INTO sync_queue SELECT CASE NEW.key WHEN 'settings' THEN 'settings'
 const TRACKING: &str = "(EXISTS (SELECT 1 FROM sync_meta WHERE key = 'track' AND value = '1') \
      AND NOT EXISTS (SELECT 1 FROM sync_meta WHERE key = 'applying'))";
 
+const NOW_MS: &str = "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)";
+
 fn sync_triggers() -> String {
-    SYNC_TRIGGERS.replace("@TRACK", TRACKING).replace("@NOW", "(CAST(strftime('%s', 'now') AS INTEGER) * 1000)")
+    SYNC_TRIGGERS.replace("@TRACK", TRACKING).replace("@NOW", NOW_MS)
 }
 
 /// `YYYY-MM-DD` of a Unix-millisecond time (UTC; folder names, not display).
@@ -369,6 +371,15 @@ impl Store {
             let tx = self.conn.transaction()?;
             tx.execute_batch(crate::sessionlog::SCHEMA_V10)?;
             tx.pragma_update(None, "user_version", 10)?;
+            tx.commit()?;
+        }
+        // 0.23.0 / Android 0.8.0: each visit names the device it was made on (per-device history).
+        if version < 11 && max >= 11 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(crate::history::SCHEMA_V11)?;
+            tx.execute_batch(&crate::history::SCHEMA_V11_TRIGGERS.replace("@TRACK", TRACKING).replace("@NOW", NOW_MS))?;
+            crate::history::upgrade_v11(&tx)?;
+            tx.pragma_update(None, "user_version", 11)?;
             tx.commit()?;
         }
         Ok(())

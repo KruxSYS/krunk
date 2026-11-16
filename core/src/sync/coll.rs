@@ -140,7 +140,7 @@ pub fn natural_key(c: &str, data: &Value) -> Option<String> {
 pub fn local_data(conn: &Connection, c: &str, nk: &str, item: Option<&SyncItem>, ctx: &Ctx) -> DbResult<Option<Value>> {
     match c {
         "bookmarks" => bookmark_data(conn, nk, item),
-        "history" => history_data(conn, nk, item),
+        "history" => history_data(conn, nk, item, ctx),
         "settings" => {
             // F-69: a value this version can't read (a newer version's) is not this device's to
             // change: it reports what sync last recorded, so its fallback never goes up over it.
@@ -644,14 +644,15 @@ pub fn repair_tree(conn: &Connection) -> DbResult<()> {
 type UrlRow = (i64, String, String, i64, i64);
 
 fn url_rows(conn: &Connection, nk: &str) -> DbResult<Vec<UrlRow>> {
-    let row = |r: &rusqlite::Row<'_>| -> DbResult<UrlRow> { Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)) };
+    let row =
+        |r: &rusqlite::Row<'_>| -> DbResult<UrlRow> { Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)) };
     // The exact row first, never capped (0.22.3): with one `url = ?1 OR <same site>` query
     // capped at 200 rows, a site with more pages than that could leave the exact row out; the
     // apply then inserted it again and the UNIQUE constraint stopped every sync run.
-    let mut out: Vec<UrlRow> =
-        conn.prepare("SELECT id, url, title, visit_count, last_visit FROM urls WHERE url = ?1")?
-            .query_map([nk], row)?
-            .collect::<DbResult<_>>()?;
+    let mut out: Vec<UrlRow> = conn
+        .prepare("SELECT id, url, title, visit_count, last_visit FROM urls WHERE url = ?1")?
+        .query_map([nk], row)?
+        .collect::<DbResult<_>>()?;
     // Then variants of the same page stored under another spelling (the same site, bounded).
     let host_end = nk.find("://").map(|i| i + 3).and_then(|s| nk[s..].find('/').map(|j| s + j)).unwrap_or(nk.len());
     let prefix = nk[..host_end].to_ascii_lowercase();
@@ -669,13 +670,19 @@ fn url_rows(conn: &Connection, nk: &str) -> DbResult<Vec<UrlRow>> {
     Ok(out)
 }
 
-fn visits_of(conn: &Connection, ids: &[i64]) -> DbResult<Vec<i64>> {
+/// The local visits of these `urls` rows: (visit id, device, ts), newest first. `device`: `''`
+/// this device, a sync device id, `'#short'` (to be resolved), `None` unknown.
+type LocalVisit = (i64, Option<String>, i64);
+
+fn local_visits(conn: &Connection, ids: &[i64]) -> DbResult<Vec<LocalVisit>> {
     let mut out = Vec::new();
+    let mut st =
+        conn.prepare_cached("SELECT id, device, ts FROM visits WHERE url_id = ?1 ORDER BY ts DESC LIMIT 2000")?;
     for id in ids {
-        let mut st = conn.prepare("SELECT ts FROM visits WHERE url_id = ?1 ORDER BY ts DESC LIMIT 20")?;
-        let r = st.query_map([id], |r| r.get(0))?;
-        out.extend(r.collect::<DbResult<Vec<i64>>>()?);
+        let r = st.query_map([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        out.extend(r.collect::<DbResult<Vec<LocalVisit>>>()?);
     }
+    out.sort_unstable_by_key(|v| std::cmp::Reverse(v.2));
     Ok(out)
 }
 
@@ -686,25 +693,71 @@ fn newest(mut v: Vec<i64>) -> Vec<i64> {
     v
 }
 
-fn history_data(conn: &Connection, nk: &str, item: Option<&SyncItem>) -> DbResult<Option<Value>> {
+/// The per-device part of a history record (0.23.0): device id → `{"v": owner's change time,
+/// "t": [its newest visits]}`. Only the owner changes its entry; the others copy it, and the
+/// higher `v` wins, so a stale copy never brings back visits the owner deleted. Older clients
+/// don't know it and read `visits`, the union, as before.
+type By = serde_json::Map<String, Value>;
+
+fn by_of(d: Option<&Value>) -> By {
+    d.and_then(|d| d.get("by")).and_then(Value::as_object).cloned().unwrap_or_default()
+}
+
+fn entry_v(e: &Value) -> i64 {
+    e.get("v").and_then(Value::as_i64).unwrap_or(0)
+}
+
+fn entry_t(e: &Value) -> Vec<i64> {
+    e.get("t")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_i64).take(VISITS_KEPT).collect())
+        .unwrap_or_default()
+}
+
+fn flat_visits(d: Option<&Value>) -> Vec<i64> {
+    d.and_then(|d| d.get("visits"))
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_i64).collect())
+        .unwrap_or_default()
+}
+
+fn history_data(conn: &Connection, nk: &str, item: Option<&SyncItem>, ctx: &Ctx) -> DbResult<Option<Value>> {
     let rows = url_rows(conn, nk)?;
     if rows.is_empty() {
         return Ok(None);
     }
     let ids: Vec<i64> = rows.iter().map(|r| r.0).collect();
-    let mut visits = visits_of(conn, &ids)?;
-    if let Some(prev) = item.and_then(|i| i.extra.get("data")).and_then(|d| d.get("visits")).and_then(Value::as_array) {
-        visits.extend(prev.iter().filter_map(Value::as_i64));
+    let local = local_visits(conn, &ids)?;
+    let prev = item.and_then(|i| i.extra.get("data")).filter(|d| d.is_object());
+    let mut by = by_of(prev);
+    // This device's entry: its own visits here; a new `v` only when they changed.
+    let own = newest(local.iter().filter(|v| v.1.as_deref() == Some("")).map(|v| v.2).collect());
+    let prev_own = by.get(ctx.device_id).map(entry_t);
+    match &prev_own {
+        Some(p) if *p == own => {}
+        None if own.is_empty() => {}
+        _ => {
+            let v = ctx.now_ms.max(by.get(ctx.device_id).map(entry_v).unwrap_or(0) + 1);
+            by.insert(ctx.device_id.to_string(), json!({"v": v, "t": own}));
+        }
     }
+    // The union for clients before 0.23.0, without this device's visits it deleted.
+    let removed: HashSet<i64> = prev_own.unwrap_or_default().into_iter().filter(|t| !own.contains(t)).collect();
+    let mut visits: Vec<i64> = local.iter().map(|v| v.2).collect();
+    visits.extend(flat_visits(prev).into_iter().filter(|t| !removed.contains(t)));
     let visits = newest(visits);
     let count: i64 = rows
         .iter()
         .map(|r| r.3)
         .sum::<i64>()
-        .max(item.and_then(|i| i.extra.get("data")).and_then(|d| d["count"].as_i64()).unwrap_or(0))
+        .max(prev.and_then(|d| d["count"].as_i64()).unwrap_or(0))
         .max(visits.len() as i64);
     let title = rows.iter().max_by_key(|r| r.4).map(|r| r.2.clone()).unwrap_or_default();
-    Ok(Some(json!({"url": nk, "title": title, "visits": visits, "count": count})))
+    let mut out = json!({"url": nk, "title": title, "visits": visits, "count": count});
+    if !by.is_empty() {
+        out["by"] = Value::Object(by);
+    }
+    Ok(Some(out))
 }
 
 fn apply_history(
@@ -712,6 +765,7 @@ fn apply_history(
     nk: &str,
     r: &RecordPlain,
     item: Option<&SyncItem>,
+    ctx: &Ctx,
     ch: &mut Changed,
 ) -> DbResult<Value> {
     let mut extra = item.map(|i| i.extra.clone()).filter(Value::is_object).unwrap_or_else(|| json!({}));
@@ -730,11 +784,10 @@ fn apply_history(
         return Ok(extra);
     }
     let d = &r.data;
-    let remote_visits: Vec<i64> =
-        d["visits"].as_array().map(|a| a.iter().filter_map(Value::as_i64).collect()).unwrap_or_default();
+    let prev = item.and_then(|i| i.extra.get("data")).filter(|d| d.is_object());
     let title: String = d["title"].as_str().unwrap_or_default().chars().take(1024).collect();
-    let (id, existing): (i64, Vec<i64>) = match rows.iter().find(|x| x.1 == nk).or(rows.first()) {
-        Some(x) => (x.0, visits_of(conn, &[x.0])?),
+    let id: i64 = match rows.iter().find(|x| x.1 == nk).or(rows.first()) {
+        Some(x) => x.0,
         None => {
             // Never fails on an existing row (the lookup above is bounded for variants).
             conn.execute(
@@ -742,27 +795,113 @@ fn apply_history(
                  ON CONFLICT(url) DO NOTHING",
                 params![nk, title],
             )?;
-            let id: i64 = conn.query_row("SELECT id FROM urls WHERE url = ?1", [nk], |r| r.get(0))?;
-            (id, visits_of(conn, &[id])?)
+            conn.query_row("SELECT id FROM urls WHERE url = ?1", [nk], |r| r.get(0))?
         }
     };
-    let have: HashSet<i64> = existing.iter().copied().collect();
-    let mut added = 0;
-    for ts in remote_visits.iter().filter(|t| !have.contains(t)) {
-        conn.execute("INSERT INTO visits(url_id, ts) VALUES (?1, ?2)", params![id, ts])?;
-        added += 1;
+    let mut ids: Vec<i64> = rows.iter().map(|x| x.0).collect();
+    if !ids.contains(&id) {
+        ids.push(id);
     }
-    let last = remote_visits.iter().chain(existing.iter()).copied().max().unwrap_or(0);
-    let local_last = existing.iter().copied().max().unwrap_or(0);
+    let mut local = local_visits(conn, &ids)?;
+    let local_last = local.iter().map(|v| v.2).max().unwrap_or(0);
+    let hidden: HashSet<i64> = {
+        let mut st = conn.prepare_cached("SELECT ts FROM history_hidden WHERE nk = ?1")?;
+        let r = st.query_map([nk], |r| r.get(0))?;
+        r.collect::<DbResult<_>>()?
+    };
+    let mut changed = false;
+
+    // Per-device entries: each newer one replaces that device's visits here (in its window).
+    let mut by = by_of(prev);
+    for (dev, e) in by_of(Some(d)) {
+        if dev == ctx.device_id || by.get(&dev).is_some_and(|p| entry_v(p) >= entry_v(&e)) {
+            continue; // this device's own visits are its own; an older copy changes nothing
+        }
+        let t = entry_t(&e);
+        let oldest = t.iter().copied().min();
+        for v in local.iter().filter(|v| v.1.as_deref() == Some(dev.as_str())) {
+            if !t.contains(&v.2) && oldest.is_none_or(|o| v.2 >= o) {
+                conn.execute("DELETE FROM visits WHERE id = ?1", [v.0])?;
+                changed = true;
+            }
+        }
+        for ts in t.iter().filter(|ts| !hidden.contains(ts)) {
+            if local.iter().any(|v| v.1.as_deref() == Some(dev.as_str()) && v.2 == *ts) {
+                continue;
+            }
+            // A visit kept without its device (synced before 0.23.0) is this one.
+            if let Some(v) = local.iter().find(|v| v.2 == *ts && v.1.as_deref().is_none_or(|x| x.starts_with('#'))) {
+                conn.execute("UPDATE visits SET device = ?2 WHERE id = ?1", params![v.0, dev])?;
+            } else {
+                conn.execute("INSERT INTO visits(url_id, ts, device) VALUES (?1, ?2, ?3)", params![id, ts, dev])?;
+            }
+            changed = true;
+        }
+        by.insert(dev, e);
+    }
+    if changed {
+        local = local_visits(conn, &ids)?;
+    }
+
+    // The union: visits no entry names come from a client before 0.23.0. Those newer than what
+    // this device knew of the page are the writer's; older ones are unknown.
+    let named: HashSet<i64> = by.values().flat_map(entry_t).chain(local.iter().map(|v| v.2)).collect();
+    let prev_max = prev.map(|p| flat_visits(Some(p)).into_iter().max().unwrap_or(0));
+    let writer = if r.dev == ctx.dev_short { String::new() } else { format!("#{}", r.dev) };
+    for ts in flat_visits(Some(d)).into_iter().take(VISITS_KEPT) {
+        if named.contains(&ts) || hidden.contains(&ts) {
+            continue;
+        }
+        let device = match prev_max {
+            Some(m) if d.get("by").is_none() && ts > m => Some(writer.clone()),
+            _ => None,
+        };
+        conn.execute("INSERT INTO visits(url_id, ts, device) VALUES (?1, ?2, ?3)", params![id, ts, device])?;
+        changed = true;
+    }
+
+    let last: i64 =
+        conn.query_row("SELECT coalesce(max(v.ts), 0) FROM visits v WHERE v.url_id = ?1", [id], |r| r.get(0))?;
     let count = d["count"].as_i64().unwrap_or(0);
     conn.execute(
-        "UPDATE urls SET visit_count = max(visit_count, ?2), last_visit = max(last_visit, ?3),
+        "UPDATE urls SET visit_count = max(visit_count, ?2), last_visit = ?3,
                 title = CASE WHEN ?4 THEN ?5 ELSE title END WHERE id = ?1",
         params![id, count, last, last > local_last || local_last == 0, title],
     )?;
-    ch.history |= added > 0;
-    extra["data"] = d.clone();
+    // Every visit of the page went (its devices deleted theirs): the page goes here too.
+    for x in &ids {
+        if conn.query_row("SELECT NOT EXISTS (SELECT 1 FROM visits WHERE url_id = ?1)", [x], |r| r.get::<_, bool>(0))? {
+            conn.execute("DELETE FROM urls WHERE id = ?1", [x])?;
+            changed = true;
+        }
+    }
+    ch.history |= changed;
+    let mut data = d.clone();
+    if by.is_empty() {
+        if let Some(o) = data.as_object_mut() {
+            o.remove("by");
+        }
+    } else {
+        data["by"] = Value::Object(by);
+    }
+    extra["data"] = data;
     Ok(extra)
+}
+
+/// Visits a client before 0.23.0 brought are kept as `'#short'` (the writer's short device id);
+/// once per run they get the device's id from the account's device list.
+pub fn resolve_visit_devices(conn: &Connection, devices: &[(u16, String)], own_short: u16) -> DbResult<bool> {
+    let mut changed = false;
+    for (short, id) in devices {
+        let dev = if *short == own_short { "" } else { id.as_str() };
+        changed |=
+            conn.execute("UPDATE visits SET device = ?2 WHERE device = ?1", params![format!("#{short}"), dev])? > 0;
+    }
+    Ok(changed)
+}
+
+pub fn has_unresolved_visits(conn: &Connection) -> DbResult<bool> {
+    conn.query_row("SELECT EXISTS (SELECT 1 FROM visits WHERE device LIKE '#%')", [], |r| r.get(0))
 }
 
 // ---- Settings, pins, allowlist, tabs, device names ------------------------------------------------------
@@ -895,7 +1034,7 @@ pub fn apply(
 ) -> DbResult<Value> {
     match c {
         "bookmarks" => apply_bookmark(conn, nk, r, item, ctx, ch),
-        "history" => apply_history(conn, nk, r, item, ch),
+        "history" => apply_history(conn, nk, r, item, ctx, ch),
         "settings" => apply_setting(conn, nk, r, item, ctx, ch),
         "pins" => apply_pin(conn, nk, r, item, ctx, ch),
         "allowlist" => apply_allow(conn, nk, r, item, ctx, ch),
