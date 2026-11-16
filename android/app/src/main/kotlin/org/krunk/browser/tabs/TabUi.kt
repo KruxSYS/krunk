@@ -21,6 +21,10 @@ data class TabUi(
     val page: PageState,
     val favicon: Bitmap? = null,
     val thumbnail: Bitmap? = null,
+    /** The tab it was opened from (kept across tab switches), for Back: close and return there. */
+    val backOpener: UInt? = null,
+    /** Opened for another app (an intent): Back on its first page closes it and leaves Krunk. */
+    val fromApp: Boolean = false,
 ) {
     val isNewTab: Boolean get() = internalPage == "newtab"
 }

@@ -1,6 +1,8 @@
 package org.krunk.browser.ui.browser
 
+import android.os.SystemClock
 import android.view.View
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -57,7 +59,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import org.krunk.browser.R
-import org.krunk.browser.engine.BackAction
 import org.krunk.browser.engine.ContextTarget
 import org.krunk.browser.engine.ExternalLink
 import org.krunk.browser.engine.KrunkSelectionDelegate
@@ -125,14 +126,52 @@ fun BrowserScreen(vm: BrowserViewModel) {
         )
     }
 
-    // Back, in order: find bar, address editing, full screen, page history; else the activity.
-    BackHandler(enabled = onTop && findActive) { vm.closeFind() }
-    BackHandler(enabled = onTop && !findActive && editing) { vm.stopEditing() }
-    BackHandler(enabled = onTop && !findActive && !editing && fullScreen) { session?.leaveFullScreen() }
-    BackHandler(
-        enabled = onTop && !findActive && !editing && !fullScreen && backAction(page) != BackAction.NONE,
-    ) {
-        vm.tabs.back()
+    // Back, in order (see decideBack): find bar, address editing, full screen, page history, the
+    // tab it was opened from, the app it was opened for; else a second Back within two seconds
+    // puts Krunk in the background (the tabs stay, the activity is not finished).
+    var exitArmedAt by remember { mutableStateOf<Long?>(null) }
+    val exitHint = stringResource(R.string.back_exit_hint)
+    BackHandler(enabled = onTop) {
+        val current = tab
+        val opener = current?.backOpener?.takeIf { o -> tabs.any { it.id == o } }
+        val now = SystemClock.elapsedRealtime()
+        val decision = decideBack(
+            BackInput(
+                findActive = findActive,
+                editing = editing,
+                fullScreen = fullScreen,
+                backAction = backAction(page),
+                backOpenerAlive = opener != null,
+                fromApp = current?.fromApp == true,
+                exitArmedAtMs = exitArmedAt,
+                nowMs = now,
+            ),
+        )
+        if (decision != BackDecision.ArmExit) exitArmedAt = null
+        when (decision) {
+            BackDecision.CloseFind -> vm.closeFind()
+
+            BackDecision.StopEditing -> vm.stopEditing()
+
+            BackDecision.LeaveFullScreen -> session?.leaveFullScreen()
+
+            BackDecision.PageBack -> vm.tabs.back()
+
+            BackDecision.CloseToOpener ->
+                if (current != null && opener != null) vm.tabs.closeToOpener(current.id, opener)
+
+            BackDecision.CloseAndBackground -> {
+                current?.let { vm.tabs.close(it.id) }
+                context.findActivity()?.moveTaskToBack(true)
+            }
+
+            BackDecision.Exit -> context.findActivity()?.moveTaskToBack(true)
+
+            BackDecision.ArmExit -> {
+                exitArmedAt = now
+                Toast.makeText(context, exitHint, Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     val crashed = page?.crashed == true

@@ -42,6 +42,10 @@ pub struct TabInfo {
     pub asleep: bool,
     pub opener: Option<u32>,
     pub last_active: i64,
+    /// The tab it was opened from, for Back (kept across tab switches; cleared when that tab closes).
+    pub back_opener: Option<u32>,
+    /// Opened for another app: Back on its first page closes it and returns there.
+    pub from_app: bool,
 }
 
 fn info(t: &tabs::Tab) -> TabInfo {
@@ -56,6 +60,8 @@ fn info(t: &tabs::Tab) -> TabInfo {
         asleep: t.asleep,
         opener: t.opener,
         last_active: t.last_active,
+        back_opener: t.back_opener,
+        from_app: t.from_app,
     }
 }
 
@@ -222,6 +228,11 @@ impl TabModel {
         self.lock().set_asleep(id, asleep);
     }
 
+    /// Marks a tab as opened for another app (an intent).
+    pub fn set_from_app(&self, id: u32, from_app: bool) {
+        self.lock().set_from_app(id, from_app);
+    }
+
     pub fn set_loading(&self, id: u32, loading: bool) {
         self.lock().set_loading(id, loading);
     }
@@ -305,6 +316,10 @@ mod tests {
         let b = m.open("https://example.com/".into(), false, Some(a.id), false, false, 2);
         assert!(!m.tab(b.id).unwrap().live);
         assert_eq!(m.tab(b.id).unwrap().opener, Some(a.id));
+        assert_eq!(m.tab(b.id).unwrap().back_opener, Some(a.id));
+        assert!(!m.tab(b.id).unwrap().from_app);
+        m.set_from_app(b.id, true);
+        assert!(m.tab(b.id).unwrap().from_app);
         assert_eq!(m.count(), 2);
         let e = m.activate(b.id, 3);
         assert!(e.contains(&TabEffect::CreateView { id: b.id }));

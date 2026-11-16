@@ -455,7 +455,13 @@ private fun On(
                 trailingContent = {
                     TextButton(onClick = {
                         // Another device's address: opened like a link, never privileged.
-                        vm.tabs.openUntrusted(t.url, LoadSource.EXTERNAL_APP, activate = true, live = true)
+                        vm.tabs.openUntrusted(
+                            t.url,
+                            LoadSource.EXTERNAL_APP,
+                            activate = true,
+                            live = true,
+                            fromApp = false,
+                        )
                         vm.showBrowser()
                     }) { Text(stringResource(R.string.sync_open_tab)) }
                 },
