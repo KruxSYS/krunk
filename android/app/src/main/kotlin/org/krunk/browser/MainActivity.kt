@@ -50,7 +50,9 @@ class MainActivity : ComponentActivity() {
         setContent { KrunkRoot(vm) }
         // "Open VPN settings" on the VPN error page (0.10.0). Set for this activity, cleared in
         // onDestroy so a finished activity is never kept alive by the hook.
-        val onErrorAction: (ErrorPageAction) -> Unit = { if (it == ErrorPageAction.OpenVpnSettings) vm.openVpnSettings() }
+        val onErrorAction: (ErrorPageAction) -> Unit = { action ->
+            if (action == ErrorPageAction.OpenVpnSettings) vm.openVpnSettings()
+        }
         errorAction = onErrorAction
         ErrorPage.onAction = onErrorAction
     }

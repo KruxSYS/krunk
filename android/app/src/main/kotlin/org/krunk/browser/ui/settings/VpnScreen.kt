@@ -218,7 +218,6 @@ fun VpnScreen(vm: BrowserViewModel) {
             // ----- on / off -----
             VpnSwitchRow(stringResource(R.string.vpn_use), vpnStatusText(state), s.enabled) { on ->
                 act { if (on) vpn.connect(selected) else vpn.disconnect() }
-                if (on) pick = null
             }
             error?.let {
                 Text(
@@ -346,7 +345,6 @@ fun VpnScreen(vm: BrowserViewModel) {
             confirmButton = {
                 TextButton(onClick = {
                     removing = null
-                    if (pick == p.id) pick = null
                     act { vpn.remove(p.id) }
                 }) { Text(stringResource(R.string.vpn_remove)) }
             },
