@@ -861,7 +861,11 @@
       accountShow('account-qr-hint', !!qr);
       const tick = function () {
         const left = Math.max(0, Math.round((c.expiresAtMs - Date.now()) / 1000));
-        $('account-wait').textContent = 'Waiting for the approval… The code works for ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') + ' more.';
+        // 0.24.0: past the deadline the host may still be waiting (the server keeps a code that a
+        // registration is attached to): no 0:00, until the host sends the new deadline or the end.
+        $('account-wait').textContent = left > 0
+          ? 'Waiting for the approval… The code works for ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') + ' more.'
+          : 'Waiting for the approval…';
       };
       tick();
       accountTimer = setInterval(tick, 1000);

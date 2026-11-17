@@ -51,6 +51,9 @@ pub(super) struct AccountHost {
     /// Bumped by every new action, so answers to an abandoned one are ignored.
     generation: Cell<u32>,
     last_check_ms: Cell<i64>,
+    /// 0.24.0: when this Krunk signs its own website in (one per run: a sign-out on the site
+    /// holds until restart).
+    auto_sign_in: RefCell<acct::AutoSignIn>,
 }
 
 impl Default for AccountHost {
@@ -62,6 +65,7 @@ impl Default for AccountHost {
             waiting: RefCell::new(Vec::new()),
             generation: Cell::new(0),
             last_check_ms: Cell::new(0),
+            auto_sign_in: RefCell::default(),
         }
     }
 }
@@ -301,10 +305,22 @@ impl Browser {
                     return;
                 }
                 let poll = acct::poll_answer(&answer);
-                let next =
-                    b.with_account_stage(
-                        |s| if let Stage::Linking(l) = s { Some(l.next(poll, now_ms())) } else { None },
-                    );
+                let next = b.with_account_stage(|s| {
+                    if let Stage::Linking(l) = s {
+                        let before = l.expires_at_ms;
+                        Some((l.next(poll, now_ms()), l.expires_at_ms != before))
+                    } else {
+                        None
+                    }
+                });
+                // The server keeps the code waiting past its 10 minutes (a registration from the
+                // /link tab): the card gets the new deadline, or its countdown would sit at 0:00.
+                let next = next.map(|(n, moved)| {
+                    if moved {
+                        b.push_account();
+                    }
+                    n
+                });
                 match next {
                     Some(Next::Poll(ms)) => b.account_poll_later(gen, ms),
                     Some(Next::SignedIn(t)) => b.account_finish(gen, t),
@@ -472,6 +488,64 @@ impl Browser {
                 }
             },
         );
+    }
+
+    /// 0.24.0: a top-level navigation of tab `id` to `url` is about to start. When this Krunk,
+    /// signed in to the account, should sign its own website in (the rules are
+    /// `acct::AutoSignIn`'s), this returns true: the caller cancels the navigation and the tab
+    /// goes to the sign-in page with a single-use code instead. Whatever fails on the way opens
+    /// `url` as it was (the 30 s guard lets that through, so the page shows its form). The code
+    /// and the address with it are never logged.
+    pub(super) fn auto_sign_in_navigation(&self, id: TabId, url: &str) -> bool {
+        // Every navigation of every tab comes here: only the sign-in page is worth a look.
+        if !url.contains(acct::LOGIN_PAGE) {
+            return false;
+        }
+        // A tab that can't be looked up counts as private.
+        let private = self.tab(id).is_none_or(|t| t.private);
+        let signed_in = self.with_account_stage(|s| matches!(s, Stage::SignedIn { .. }));
+        let Some(next) = self.account.auto_sign_in.borrow_mut().check(url, base(), now_ms(), signed_in, private) else {
+            return false;
+        };
+        let Some(proxy) = self.account_proxy() else { return false };
+        info!("tab {id}: signing the website in with this Krunk's account");
+        let original = url.to_string();
+        // Out of the engine's callback: the token refresh may answer at once.
+        self.defer(move |b| {
+            b.refresh_access(false, move |b, token| {
+                let token = match token {
+                    Ok(t) => t,
+                    Err(f) => {
+                        info!("tab {id}: website sign-in skipped ({f:?})");
+                        b.navigate_tab(id, &original);
+                        return;
+                    }
+                };
+                b.spawn_job(
+                    "account-web-sign-in",
+                    move || {
+                        acct::parse::<acct::WebSignInCode>(&call(
+                            &proxy,
+                            "POST",
+                            acct::WEB_SIGN_IN,
+                            Some(&token),
+                            Some("{}"),
+                        ))
+                    },
+                    move |b, r: Result<acct::WebSignInCode, Failure>| match r {
+                        Ok(c) => {
+                            let url = Zeroizing::new(acct::auto_sign_in_url(base(), &c.code, next.as_deref()));
+                            b.navigate_tab(id, &url);
+                        }
+                        Err(f) => {
+                            info!("tab {id}: website sign-in skipped ({f:?})");
+                            b.navigate_tab(id, &original);
+                        }
+                    },
+                );
+            });
+        });
+        true
     }
 
     /// The account and device ids of a signed-in device (sync needs them; no network).

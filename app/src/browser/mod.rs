@@ -1295,6 +1295,11 @@ impl Browser {
                 }
                 return false;
             }
+            // 0.24.0: signed in to the account, Krunk signs its own website in; the tab goes on
+            // to the sign-in page with a code (or to this address if that fails).
+            if b.auto_sign_in_navigation(id, &nav.url) {
+                return false;
+            }
             if !nav.redirected {
                 net_start.note_navigation(&nav.url, host);
             }

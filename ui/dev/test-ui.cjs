@@ -5604,6 +5604,10 @@ async function testAccountCard(browser) {
     check((await page.textContent('#account-code')) === 'ABCD-EFGH' && await vis('account-copy') && await vis('account-cancel') && await vis('account-reopen'), theme + ': linking: the code, Copy, Open again, Cancel');
     check(/9:(2|3)\d more/.test(await page.textContent('#account-wait')), theme + ': a countdown (' + (await page.textContent('#account-wait')) + ')');
     await shot(page, 'account-linking-' + theme + '.png');
+    // 0.24.0: past the code's deadline the host may still wait (registration): no 0:00.
+    await emit(page, { event: 'account', card: { state: 'linking', userCode: 'ABCD-EFGH', verifyUrl: 'https://krunk.209.wf/link?code=ABCD-EFGH', expiresAtMs: Date.now() - 1000 } });
+    await page.waitForTimeout(60);
+    check((await page.textContent('#account-wait')) === 'Waiting for the approval…', theme + ': past the deadline: waiting, no 0:00 (' + (await page.textContent('#account-wait')) + ')');
     await page.click('#account-reopen');
     check((await lastSent(page, 'accountReopen')) !== undefined, theme + ': Open the page again');
     await page.click('#account-cancel');
