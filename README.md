@@ -2002,7 +2002,8 @@ Disconnect and the scope).
   without an answer. The
   engine is pointed at the proxy by a channel filter in Krunk's built-in `krunk-guard` extension
   (the pattern of Firefox's IP Protection), with the engine's proxy settings as a backstop that
-  also points at the proxy without the credential. These settings live on the engine's default
+  points at a closed port, so a connection the filter misses fails instead of going direct (the
+  real port and the credential are never in the engine's settings). These settings live on the engine's default
   branch and are never saved: after a restart with the VPN off nothing of it is left. While the
   VPN is on, DNS prefetch, HTTPS DNS records, DNS-over-HTTPS, HTTP/3 and WebTransport are off,
   and WebRTC uses no local addresses and no direct UDP (calls need a TURN server reachable over
