@@ -39,6 +39,10 @@ pub const UNLINK: &str = "/api/v1/device/unlink";
 pub const ME: &str = "/api/v1/device/me";
 /// The account page on the website (Manage account).
 pub const ACCOUNT_PAGE: &str = "/account/";
+/// A single-use code that signs the website in (service 2026-11-17, see [`AutoSignIn`]).
+pub const WEB_SIGN_IN: &str = "/api/v1/device/web-sign-in";
+/// The website's sign-in page: every visit without a website session ends here.
+pub const LOGIN_PAGE: &str = "/account/login";
 
 /// `base` (the build's site address) + `path`.
 pub fn endpoint(base: &str, path: &str) -> String {
@@ -274,6 +278,85 @@ pub fn poll_answer(answer: &Answer) -> Poll {
         },
         other => Poll::Failed(failure(other)),
     }
+}
+
+// ---- Website sign-in from a signed-in Krunk (Krunk 0.24.0, service 2026-11-17) ----------------
+
+/// `POST device/web-sign-in` → the code for `/account/login?auto=`.
+#[derive(Deserialize)]
+pub struct WebSignInCode {
+    pub code: Secret,
+}
+
+/// Decides when Krunk, signed in to the account, signs its own website in. The host asks
+/// [`AutoSignIn::check`] for every top-level navigation of a tab; on `Some(next)` it cancels the
+/// navigation, asks the server for a code ([`WEB_SIGN_IN`], with the device's access token) and
+/// opens [`auto_sign_in_url`]; if that fails it opens the original address (the guard below then
+/// lets it through). The website takes the code out of the address bar and trades it for a
+/// session (`web/device-sign-in`).
+///
+/// - Only the build's own site (exact origin), only its sign-in page, never a private tab, only
+///   while this Krunk is signed in to the account.
+/// - Never when the page already carries a code (`auto`) or comes from a sign-out on the website
+///   (`signed_out`): a sign-out there keeps the site signed out until Krunk restarts.
+/// - At most once per [`AutoSignIn::RETRY_MS`]: a failure can't make a loop.
+#[derive(Debug, Default)]
+pub struct AutoSignIn {
+    signed_out: bool,
+    last_ms: Option<i64>,
+}
+
+impl AutoSignIn {
+    pub const RETRY_MS: i64 = 30_000;
+
+    /// `Some(next)` (the page's `next` parameter, if it has one) when Krunk should sign the site
+    /// in for this navigation to `url`. Counts as an attempt.
+    pub fn check(
+        &mut self,
+        url: &str,
+        site: &str,
+        now_ms: i64,
+        signed_in: bool,
+        private: bool,
+    ) -> Option<Option<String>> {
+        let (Ok(u), Ok(base)) = (url::Url::parse(url), url::Url::parse(site)) else { return None };
+        if u.scheme() != "https" || u.origin() != base.origin() || u.path() != LOGIN_PAGE {
+            return None;
+        }
+        let mut next = None;
+        for (k, v) in u.query_pairs() {
+            match &*k {
+                "signed_out" => {
+                    self.signed_out = true;
+                    return None;
+                }
+                "auto" => return None,
+                "next" => next = Some(v.into_owned()),
+                _ => {}
+            }
+        }
+        if !signed_in || private || self.signed_out {
+            return None;
+        }
+        if self.last_ms.is_some_and(|t| now_ms - t < Self::RETRY_MS && now_ms >= t) {
+            return None;
+        }
+        self.last_ms = Some(now_ms);
+        Some(next)
+    }
+}
+
+/// The sign-in page with the code (and `next`, carried over).
+pub fn auto_sign_in_url(site: &str, code: &str, next: Option<&str>) -> String {
+    let mut u = url::Url::parse(&endpoint(site, LOGIN_PAGE)).expect("the build's site is a valid URL");
+    {
+        let mut q = u.query_pairs_mut();
+        q.append_pair("auto", code);
+        if let Some(n) = next {
+            q.append_pair("next", n);
+        }
+    }
+    u.into()
 }
 
 /// A sign-in waiting for the approval on the website.
@@ -585,6 +668,55 @@ mod tests {
         assert!(matches!(l.clone().next(Poll::Denied, 3_300_000), Next::Stop(DENIED_TEXT)));
         // ... and the cap an hour after the start, whatever it says.
         assert!(matches!(l.next(Poll::Pending, start + 3_595_000), Next::Stop(EXPIRED_TEXT)));
+    }
+
+    #[test]
+    fn the_website_is_signed_in_on_its_sign_in_page_only() {
+        let site = "https://krunk.209.wf";
+        let mut a = AutoSignIn::default();
+        let login = "https://krunk.209.wf/account/login?next=%2Faccount%2F%23add-device";
+        assert_eq!(a.check(login, site, 0, true, false), Some(Some("/account/#add-device".into())));
+        // Once per 30 s: a failed attempt can't loop.
+        assert_eq!(a.check(login, site, 10_000, true, false), None);
+        assert_eq!(a.check("https://krunk.209.wf/account/login", site, 40_000, true, false), Some(None));
+        let mut a = AutoSignIn::default();
+        for (url, why) in [
+            ("https://krunk.209.wf/account/", "not the sign-in page"),
+            ("https://krunk.209.wf/account/login/", "not exactly the sign-in page"),
+            ("http://krunk.209.wf/account/login", "not https"),
+            ("https://evil.example/account/login", "another site"),
+            ("https://krunk.209.wf.evil.example/account/login", "a look-alike host"),
+            ("https://krunk.209.wf:8443/account/login", "another port"),
+            ("https://krunk.209.wf/account/login?auto=abc", "already carries a code"),
+            ("not a url", "junk"),
+        ] {
+            assert_eq!(a.check(url, site, 0, true, false), None, "{why}");
+        }
+        assert_eq!(a.check(login, site, 0, false, false), None, "signed out of the account");
+        assert_eq!(a.check(login, site, 0, true, true), None, "a private tab");
+        // A sign-out on the website keeps it signed out (until Krunk restarts: a new guard).
+        assert_eq!(a.check("https://krunk.209.wf/account/login?signed_out=1", site, 0, true, false), None);
+        assert_eq!(a.check(login, site, 100_000, true, false), None);
+        assert_eq!(
+            AutoSignIn::default().check(login, site, 100_000, true, false),
+            Some(Some("/account/#add-device".into()))
+        );
+        // A staging build's own site.
+        assert!(AutoSignIn::default()
+            .check("https://krunk.test/account/login", "https://krunk.test/", 0, true, false)
+            .is_some());
+    }
+
+    #[test]
+    fn the_auto_sign_in_address() {
+        assert_eq!(
+            auto_sign_in_url("https://krunk.209.wf", "c0de_-x", Some("/link?code=ABCD-EFGH")),
+            "https://krunk.209.wf/account/login?auto=c0de_-x&next=%2Flink%3Fcode%3DABCD-EFGH"
+        );
+        assert_eq!(auto_sign_in_url("https://krunk.209.wf/", "c", None), "https://krunk.209.wf/account/login?auto=c");
+        let c: WebSignInCode = parse(&Ok((200, br#"{"code":"secret-code","expires_in":60}"#.to_vec()))).unwrap();
+        assert_eq!(&*c.code, "secret-code");
+        assert!(!format!("{:?}", c.code).contains("secret-code"));
     }
 
     #[test]
