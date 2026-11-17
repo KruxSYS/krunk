@@ -78,14 +78,25 @@ class VpnController(
     private val _state = MutableStateFlow(VpnUiState())
     val state: StateFlow<VpnUiState> = _state.asStateFlow()
 
-    /** The proxy port while the VPN's proxy is up. */
-    fun proxyPort(): Int? = synchronized(lock) { port }
+    // Snapshots for the main thread, written by [publish] (under [lock]) at every change. The
+    // main thread must never wait for [lock]: a start or stop holds it while the old tunnel
+    // ends, which can take seconds (an ANR on the emulator, a9 0.10.0).
+    @Volatile private var onNow = false
 
-    /** The session token as 64 hex chars (for `BlockerController` and [VpnRoute] only). */
-    fun token(): String? = synchronized(lock) { tokenHex }
+    @Volatile private var portNow: Int? = null
 
-    /** True while the VPN is on (for the engine's start-up prefs, with [proxyPort]). */
-    fun isOn(): Boolean = synchronized(lock) { settings.enabled }
+    @Volatile private var tokenNow: String? = null
+
+    @Volatile private var guardNow: List<Any?>? = null
+
+    /** The proxy port while the VPN's proxy is up. Never blocks. */
+    fun proxyPort(): Int? = portNow
+
+    /** The session token as 64 hex chars (for `BlockerController` and [VpnRoute] only). Never blocks. */
+    fun token(): String? = tokenNow
+
+    /** True while the VPN is on (for the engine's start-up prefs, with [proxyPort]). Never blocks. */
+    fun isOn(): Boolean = onNow
 
     /** Reads settings and the profile list (blocking; files and the key store). */
     fun load() = synchronized(lock) {
@@ -209,7 +220,8 @@ class VpnController(
      * again; one that is reconnecting is told to try now (its back-off is reset).
      */
     suspend fun onForeground() {
-        val (on, st, up) = synchronized(lock) { Triple(settings.enabled, status?.state, port != null) }
+        // Snapshots, not [lock]: this may run on the main thread.
+        val (on, st, up) = Triple(onNow, state.value.status?.state, portNow != null)
         if (!on) return
         when {
             st == VpnState.RECONNECTING && up -> engine.networkChanged()
@@ -218,9 +230,11 @@ class VpnController(
     }
 
     /** Sends the current guard values again (the engine was just made and missed them). */
-    fun resendGuard() = synchronized(lock) {
-        lastGuard = null
-        publish()
+    fun resendGuard() {
+        // Without [lock] (called on the main thread when the engine is ready): the last values,
+        // or the current settings before anything was published.
+        val g = guardNow ?: return
+        guard.setVpn(g[0] as Boolean, g[1] as Boolean, g[2] as Int?, g[3] as String?, g[4] as String, g[5] as Boolean)
     }
 
     private suspend fun change(update: (VpnSettings) -> VpnSettings): Result<Unit> = locked {
@@ -322,7 +336,15 @@ class VpnController(
         publish()
     }
 
-    private fun onStatus(gen: Int, s: VpnStatus) = synchronized(lock) {
+    private fun onStatus(gen: Int, s: VpnStatus) {
+        // Checked before [lock]: a stopping run reports "stopped" from the thread its stop is
+        // waiting for (Vpn::drop joins it) while the stop holds [lock]; waiting for the lock here
+        // would deadlock. [generation] is bumped before every stop and start.
+        if (gen != generation) return
+        synchronized(lock) { onStatusLocked(gen, s) }
+    }
+
+    private fun onStatusLocked(gen: Int, s: VpnStatus) {
         if (gen != generation || port == null) return
         if (status?.state != s.state) log("vpn: ${s.state}${s.error?.let { " ($it)" } ?: ""}")
         status = s
@@ -345,6 +367,10 @@ class VpnController(
         _state.value = VpnUiState(settings, profiles, if (on) status else null, phase)
         val scope = if (settings.scope == VpnScope.PRIVATE) "private" else "all"
         val g = listOf(on, on && !up, livePort, livePass, scope, settings.lanDirect)
+        onNow = on
+        portNow = livePort
+        tokenNow = livePass
+        guardNow = g
         if (g != lastGuard) {
             lastGuard = g
             guard.setVpn(on, on && !up, livePort, livePass, scope, settings.lanDirect)

@@ -185,8 +185,11 @@ impl KrunkVpn {
             (Some(u), Some(p)) => Some(Credentials { username: Zeroizing::new(u), password: Zeroizing::new(p) }),
             _ => None,
         };
-        let mut running = self.running();
-        if let Some(old) = running.take() {
+        // The old VPN is stopped outside the lock: its stop waits for its runtime thread (up to a
+        // few seconds), and status()/refused_recently() must not wait that long (they run on the
+        // app's main thread; an ANR on the emulator, a9 0.10.0).
+        let old = self.running().take();
+        if let Some(old) = old {
             old.stop();
         }
         let vpn = Vpn::start_authenticated(profile, creds, auth, Box::new(move |s| listener.on_status(status(s))))
@@ -195,7 +198,10 @@ impl KrunkVpn {
                 other => VpnError::Start { reason: other.to_string() },
             })?;
         let port = vpn.proxy_addr().port();
-        *running = Some(vpn);
+        if let Some(other) = self.running().replace(vpn) {
+            // Another start raced this one (the app serialises them; never expected).
+            other.stop();
+        }
         Ok(port)
     }
 

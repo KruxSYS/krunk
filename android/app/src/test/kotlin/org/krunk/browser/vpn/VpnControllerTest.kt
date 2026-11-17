@@ -40,8 +40,17 @@ class VpnControllerTest {
             return 40000 + started
         }
 
+        /** Like Vpn::drop: the last status comes from the runtime thread, and stop joins it. */
+        var reportOnStop = false
+
         override fun stop() {
             stopped++
+            val l = listener
+            if (reportOnStop && l != null) {
+                val t = Thread { l(VpnStatus(VpnState.STOPPED, null, 3, 0, 0, null, "vpn.example.net:51820")) }
+                t.start()
+                t.join()
+            }
         }
 
         override fun stopForExit() = Unit
@@ -83,6 +92,23 @@ class VpnControllerTest {
     }
 
     private fun status(state: VpnState) = VpnStatus(state, null, 2, 0, 0, "10.8.0.2", "vpn.example.net:51820")
+
+    /** a9 0.10.0: switching profiles hung (ANR) when the old run reported "stopped" during its stop. */
+    @Test(timeout = 10_000)
+    fun aStopThatReportsFromItsOwnThreadDoesNotDeadlock() = runBlocking {
+        engine.reportOnStop = true
+        val c = controller()
+        c.load()
+        val a = c.save(c.importFile("a.conf", "[Interface]".toByteArray()) as ImportResult.Ok, null).getOrThrow()
+        val b = c.save(c.importFile("b.conf", "[Interface]".toByteArray()) as ImportResult.Ok, null).getOrThrow()
+        c.connect(a.id).getOrThrow()
+        c.select(b.id).getOrThrow() // stop (reports from another thread) + start
+        c.disconnect().getOrThrow()
+        assertEquals(VpnPhase.OFF, c.state.value.phase)
+        // Main-thread accessors never wait for the controller's lock.
+        assertEquals(false, c.isOn())
+        assertEquals(null, c.proxyPort())
+    }
 
     @Test
     fun aPickIsSavedAtOnceAlsoWhileOff() = runBlocking {
