@@ -3,6 +3,20 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.24.0 — 2026-11-17
+
+- **Krunk signs you in to krunk.209.wf.** When Krunk is signed in to your Krunk account (with or
+  without sync), opening krunk.209.wf signs the website in too: you land on your account page with
+  no password. The website lists it as "Signed in by Krunk" in your activity and marks the browser
+  in Signed-in browsers.
+- **Signing out on the website sticks.** If you sign out on the website, Krunk leaves it signed
+  out until you restart Krunk. Private windows never sign the website in. Sensitive actions on the
+  website (such as deleting your account) still ask for your password.
+- **Sign in waits for your confirmation mail.** If you create your account from the page that
+  Sign in opens, Krunk now keeps waiting (up to an hour) while you confirm your email address, and
+  signs in as soon as you click the link in the mail. The Account card in Settings shows
+  "Waiting for the approval…" instead of a countdown stuck at 0:00.
+
 ## 0.23.0 — 2026-11-16
 
 - **History per device.** Every visit now remembers which device it was made on.
