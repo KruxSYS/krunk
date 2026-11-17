@@ -3,7 +3,8 @@
 #
 #   android/scripts/a9/a9.sh up | down          test servers + relays on this sandbox, VPN testbed on dind
 #   android/scripts/a9/a9.sh profiles           device copies of the testbed profiles -> /sdcard/Download
-#   android/scripts/a9/a9.sh <step>...          t1 t2 t3 t4 t5 t6 t7 t8 leakgrep (see each function)
+#   android/scripts/a9/a9.sh <step>...          t1 t2 t3 t5 t6 t7 t8 leakgrep (see each function); t4 (sync,
+#                                               favicons, suggestions) is driven from the evidence notes
 #
 # Environment: EV evidence folder (default .pipeline/evidence-android-0.10.0/run), APK (release
 # x86_64 APK for `fresh`). Results: one line per check in $EV/results.txt.
@@ -55,12 +56,15 @@ up() {
   pgrep -f "a9/testserver.py 18080" > /dev/null || nohup python3 -I "$HERE/testserver.py" 18080 "$SLOG" 3478 > "$EV/testserver.out" 2>&1 &
   pgrep -f "relay.py udp 18551" > /dev/null || nohup python3 -I "$HERE/relay.py" udp 18551 dind 8551 > "$EV/relay-wg.out" 2>&1 &
   pgrep -f "relay.py tcp 18194" > /dev/null || nohup python3 -I "$HERE/relay.py" tcp 18194 dind 8194 > "$EV/relay-ovpn.out" 2>&1 &
+  # https behind the tunnel (T1): a self-signed server from the 0.6.1 certificate tests.
+  local bc=$PIPE/evidence-android-0.6.1/tools
+  pgrep -f "badcert.py 18443" > /dev/null || nohup python3 -I "$bc/badcert.py" 18443 "$bc/cert1.pem" "$bc/key1.pem" > "$EV/badcert.out" 2>&1 &
   sleep 1
-  pgrep -af "a9/(testserver|relay)" | grep -v pgrep
+  pgrep -af "a9/(testserver|relay)|badcert" | grep -v pgrep
 }
 
 down() {
-  for p in $(pgrep -f "a9/(testserver|relay).py"); do kill "$p"; done
+  for p in $(pgrep -f "a9/(testserver|relay).py|badcert.py 18443"); do kill "$p"; done
   echo "servers stopped (testbed left up; '$TB down -v --rmi local' removes it)"
 }
 
@@ -121,6 +125,157 @@ leakgrep() {
   # The session token: 64 hex chars next to "krunk" would be the SOCKS password.
   grep -qE 'krunk:[0-9a-f]{64}|[0-9a-f]{64}' "$EV/logcat-full.txt" && result LEAK INFO "64-hex string in logcat (check: $(grep -oE '[0-9a-f]{64}' "$EV/logcat-full.txt" | head -1 | cut -c1-8)…)" ||
     result LEAK PASS "no 64-hex token in logcat"
+}
+
+# ---------------------------------------------------------------- UI helpers (uiautomator)
+U="$HERE/../a3/uix.py"
+dump() { A "uiautomator dump /sdcard/ui.xml" > /dev/null 2>&1; UI=$(A "cat /sdcard/ui.xml"); }
+has() { echo "$UI" | python3 -I "$U" has "$@"; }
+tapt() { # tapt text|desc VALUE [--contains]
+  dump; local xy; xy=$(echo "$UI" | python3 -I "$U" find "$1" "$2" ${3:-}) || { echo "MISSING $2"; return 1; }
+  # shellcheck disable=SC2086
+  A input tap $xy; sleep 2
+}
+waitt() { # waitt text|desc VALUE seconds [--contains]: 0 when seen
+  local i; for ((i = 0; i < $3; i += 2)); do dump; has "$1" "$2" ${4:-} && return 0; sleep 2; done; return 1
+}
+
+# Krunk's sockets (uid of the app, from /proc/net as root): every remote must be the loopback
+# proxy or the VPN endpoint (the tunnel runs in Krunk's process). Anything else is a direct
+# connection = a leak. Samples every second into $EV/sockets-<tag>.txt until the step ends.
+ENDPOINT_RE=${ENDPOINT_RE:-'^0388FA0A:'}   # 10.250.136.3 little-endian hex = the WG/OpenVPN relay
+sockwatch_start() {
+  local uid tag=$1; uid=$(app_uid)
+  ( while :; do
+      R "cat /proc/net/tcp /proc/net/tcp6 /proc/net/udp /proc/net/udp6" 2> /dev/null |
+        awk -v u="$uid" '$8 == u && $3 !~ /^0+:0000$/ && $3 !~ /^0+:0000$/ { print $3 }' |
+        grep -vE '^0100007F:|^0000000000000000FFFF00000100007F:|^00000000000000000000000001000000:|^00000000000000000000000000000000:' |
+        grep -vE "$ENDPOINT_RE" | sed "s/^/$(date +%T) /"
+      sleep 1
+    done ) > "$EV/sockets-$tag.txt" 2>&1 &
+  SOCKWATCH=$!
+}
+sockwatch_stop() { # sockwatch_stop TID: PASS when no foreign remote was seen
+  kill "$SOCKWATCH" 2> /dev/null; wait "$SOCKWATCH" 2> /dev/null
+  local f="$EV/sockets-$2.txt"
+  [ -s "$f" ] && result "$1" FAIL "Krunk had direct sockets: $(sort -u -k2 "$f" | head -3 | tr '\n' ' ')" ||
+    result "$1" PASS "Krunk's sockets: only the proxy and the VPN endpoint ($2)"
+}
+
+# Import a profile pushed by `profiles` through the share path (content:// of MediaStore).
+share_import() { # share_import FILE
+  local id uri
+  id=$(A "content query --uri content://media/external/downloads --projection _id --where \"_display_name='$1'\"" | grep -oE '_id=[0-9]+' | tail -1 | cut -d= -f2)
+  [ -n "$id" ] || { echo "no MediaStore row for $1"; return 1; }
+  uri="content://media/external/downloads/$id"
+  A "am start -a android.intent.action.SEND -t application/octet-stream --eu android.intent.extra.STREAM $uri --grant-read-uri-permission -n $PKG/.MainActivity" > /dev/null
+  waitt text "Import this VPN profile?" 20 || { result IMP FAIL "no import dialog for $1"; shot "import-$1-missing"; return 1; }
+  shot "import-$1"
+  tapt text "Save"
+}
+
+vpn_screen() { A "am start -a android.intent.action.VIEW -d krunk://vpn $PKG" > /dev/null 2>&1; sleep 3; dump; has text "Use the VPN" || {
+  tapt desc "Menu" && tapt text "Settings" && tapt text "Privacy & security" --contains; tapt text "VPN"; }; }
+vpn_on() { # vpn_on PROFILE_NAME: select and switch on; waits for "Connected"
+  vpn_screen; tapt text "Use $1" --contains || tapt desc "Use $1" --contains
+  dump; [ "$(echo "$UI" | python3 -I "$U" attr text "Use the VPN" checked --clickable)" = true ] || tapt text "Use the VPN"
+  waitt text "Connected" 40 --contains && { shot "vpn-connected-$1"; return 0; }
+  shot "vpn-not-connected-$1"; return 1
+}
+vpn_off() { vpn_screen; dump; [ "$(echo "$UI" | python3 -I "$U" attr text "Use the VPN" checked --clickable)" = true ] && tapt text "Use the VPN"; }
+
+page_has() { # page_has TEXT [seconds]
+  waitt text "$1" "${2:-30}" --contains
+}
+
+# T1: split profile; inside.test exists only behind the tunnel's DNS; http + https through it.
+t1() {
+  stop_clean; launch; vpn_on "wg-split" || { result T1 FAIL "VPN did not connect (wg-split)"; return 1; }
+  sockwatch_start t1
+  view "http://inside.test/" 12
+  page_has "client=10.66.0" && result T1 PASS "http://inside.test/ answered from the tunnel (client=10.66.0.x)" || result T1 FAIL "inside.test not loaded through the tunnel"
+  shot t1-inside-http
+  # The system resolver does not know the name (it exists only in the tunnel's DNS).
+  A "toybox nslookup inside.test 2>&1" | grep -qiE "can't|not found|NXDOMAIN|fail|timed" &&
+    result T1 PASS "system resolver does not know inside.test" || result T1 INFO "system nslookup inside.test: $(A 'toybox nslookup inside.test 2>&1' | tail -1)"
+  sockwatch_stop T1 t1
+}
+
+# T1b (https) + T3 with the full-tunnel profile: the sandbox sees tunnel traffic from 10.250.137.2.
+t3() {
+  stop_clean; launch; vpn_on "wg-full" || { result T3 FAIL "VPN did not connect (wg-full)"; return 1; }
+  sockwatch_start t3
+  local m; m=$(mark)
+  view "http://10.250.137.3:18080/page?t3" 10
+  view "http://10.250.137.3:18080/ws.html" 10
+  page_has "ws: echo hello" 10 && result T3 PASS "WebSocket echo through the tunnel" || result T3 FAIL "WebSocket echo missing"
+  A "nohup toybox nc -s 127.0.0.1 -p 18081 -L toybox nc 10.250.136.3 18080 > /dev/null 2>&1 &"
+  view "http://localhost:18081/sw.html" 15
+  page_has "sw: fetched" 15 && result T3 PASS "service worker fetch answered" || result T3 FAIL "service worker fetch missing"
+  view "http://10.250.137.3:18080/dl.bin" 6; tapt text "Download"; sleep 6
+  since "$m" > "$EV/t3-server.txt"
+  for path in '/page?t3' '/ws' '/from-sw' '/dl.bin'; do
+    grep -F "\"path\": \"$path" "$EV/t3-server.txt" | grep -q '"10.250.137.2"' && result T3 PASS "$path arrived from the tunnel" || result T3 FAIL "$path not seen from the tunnel"
+  done
+  grep -c '"/dl.bin"' "$EV/t3-server.txt" | grep -qE '^[2-9]' && result T3 PASS "download fetched again by Krunk's downloader through the tunnel" || result T3 INFO "dl.bin requests: $(grep -c '/dl.bin' "$EV/t3-server.txt")"
+  grep '"10.250.136.2"' "$EV/t3-server.txt" | grep -v 'localhost:18081' | grep -q . && result T3 FAIL "direct requests seen: $(grep '"10.250.136.2"' "$EV/t3-server.txt" | grep -v localhost | head -2)" || result T3 PASS "no direct request (apart from the localhost page, direct by design)"
+  # Private tab: new private tab, type the address.
+  tapt desc "Menu" && tapt text "New private tab"; tapt desc "Edit address"; A "input text 10.250.137.3:18080/private-t3"; A input keyevent ENTER; sleep 10
+  since "$m" | grep '/private-t3' | grep -q '"10.250.137.2"' && result T3 PASS "private tab through the tunnel" || result T3 FAIL "private tab request not seen from the tunnel"
+  # https through the tunnel: a self-signed server reachable only via the tunnel → its warning page.
+  view "https://10.250.137.3:18443/" 12; shot t1-https-badcert
+  dump; has text "Continue anyway" --contains || has text "certificate" --contains && result T1 PASS "https server behind the tunnel reached (certificate warning shown)" || result T1 FAIL "https through the tunnel: no answer"
+  sockwatch_stop T3 t3
+}
+
+# T5: server stopped → VPN not connected page within ~20 s, nothing direct; WebRTC gets nothing.
+t5() {
+  stop_clean; launch; vpn_on "wg-full" || { result T5 FAIL "VPN did not connect"; return 1; }
+  local m u0; m=$(mark); u0=$(grep -c udp_from "$SLOG")
+  view "http://10.250.137.3:18080/rtc.html?t5" 14
+  page_has "rtc: 0 candidates" 6 && result T5 PASS "WebRTC: 0 ICE candidates while the VPN is on" || { dump; result T5 FAIL "WebRTC page: $(echo "$UI" | grep -o 'rtc: [^"]*' | head -1)"; }
+  [ "$(grep -c udp_from "$SLOG")" = "$u0" ] && result T5 PASS "no UDP from the emulator at the STUN sink" || result T5 FAIL "UDP seen at the STUN sink"
+  sockwatch_start t5
+  $TB stop wg > /dev/null 2>&1
+  local t0=$SECONDS
+  view "http://10.250.137.3:18080/t5-after-stop?r=$RANDOM" 2
+  if page_has "VPN not connected" 40; then result T5 PASS "VPN not connected page after $((SECONDS - t0)) s"; else result T5 FAIL "no VPN error page within 40 s"; fi
+  shot t5-not-connected
+  view "http://10.250.136.3:18080/t5-direct-bait?r=$RANDOM" 15
+  since "$m" | grep -E 't5-after-stop|t5-direct-bait' | grep -q . && result T5 FAIL "a request arrived while the server was down" || result T5 PASS "the sandbox saw no request while the server was down"
+  sockwatch_stop T5 t5
+  $TB start wg > /dev/null 2>&1
+}
+
+# T6: restart with the VPN off → direct, no proxy prefs; restart with connect-at-start → the
+# restored tab waits and loads through the tunnel.
+t6() {
+  vpn_off; local m; m=$(mark)
+  view "http://10.250.136.3:18080/t6-off" 10; stop_clean
+  R "grep -E 'network\\.proxy|peerconnection|krunk\\.vpn' /data/data/$PKG/files/mozilla/*/prefs.js" > "$EV/t6-prefs.txt"
+  [ -s "$EV/t6-prefs.txt" ] && result T6 FAIL "prefs.js holds: $(head -2 "$EV/t6-prefs.txt")" || result T6 PASS "prefs.js has no proxy/VPN prefs"
+  launch 10; view "http://10.250.136.3:18080/t6-off-again" 10
+  since "$m" | grep '/t6-off-again' | grep -q '"10.250.136.2"' && result T6 PASS "VPN off after restart: direct" || result T6 FAIL "VPN off after restart: page not loaded direct"
+  # Connect at start: on, the option on, a tunnel-only page as the current tab, restart.
+  vpn_on "wg-full"; vpn_screen; dump
+  [ "$(echo "$UI" | python3 -I "$U" attr text "Connect when Krunk starts" checked --clickable)" = true ] || tapt text "Connect when Krunk starts"
+  view "http://10.250.137.3:18080/t6-restore" 10; stop_clean; m=$(mark)
+  sockwatch_start t6; launch 25
+  since "$m" | grep '/t6-restore' | grep -q '"10.250.137.2"' && result T6 PASS "restored tab loaded through the tunnel after start" || result T6 FAIL "restored tab not seen from the tunnel"
+  sockwatch_stop T6 t6
+}
+
+# T8: Wi-Fi ↔ mobile: the tunnel reconnects within a few seconds.
+t8() {
+  vpn_on "wg-full" || { result T8 FAIL "VPN did not connect"; return 1; }
+  local m t0; A svc wifi disable; sleep 3; t0=$SECONDS; m=$(mark)
+  view "http://10.250.137.3:18080/t8-mobile?r=$RANDOM" 2
+  for ((i = 0; i < 30; i++)); do since "$m" | grep -q t8-mobile && break; sleep 1; done
+  since "$m" | grep -q t8-mobile && result T8 PASS "after Wi-Fi off: page through the tunnel in $((SECONDS - t0)) s" || result T8 FAIL "after Wi-Fi off: no page in 30 s"
+  A svc wifi enable; sleep 3; t0=$SECONDS; m=$(mark)
+  view "http://10.250.137.3:18080/t8-wifi?r=$RANDOM" 2
+  for ((i = 0; i < 30; i++)); do since "$m" | grep -q t8-wifi && break; sleep 1; done
+  since "$m" | grep -q t8-wifi && result T8 PASS "after Wi-Fi on: page through the tunnel in $((SECONDS - t0)) s" || result T8 FAIL "after Wi-Fi on: no page in 30 s"
 }
 
 [ $# -gt 0 ] || { sed -n '2,20p' "$0"; exit 2; }
