@@ -30,6 +30,7 @@ use lb_core::sync::state::{self, parse_account_id, SyncState};
 use lb_core::sync::{coll, local, pak, rotate};
 use lb_core::vault::VaultSync;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use zeroize::Zeroizing;
 
@@ -802,6 +803,27 @@ impl Engine {
                 Err(SyncFfiError::Revoked { text: REMOVED_TEXT.into() })
             }
             Err(f) => Err(account_err(f)),
+        }
+    }
+
+    /// The website's sign-in page with a fresh single-use code (0.11.0, core [`acct::AutoSignIn`]):
+    /// signs the site in to this device's account. The answer carries a secret: never log it.
+    pub(crate) fn web_sign_in_url(&mut self, http: &dyn HttpClient, next: Option<&str>, now: i64) -> R<String> {
+        self.load();
+        let Some(site) = self.verify_base.clone() else { return Err(not_now("No website in this build.")) };
+        let token = self.access(http, now)?;
+        let r =
+            acct::parse::<acct::WebSignInCode>(&acct_call(http, "POST", acct::WEB_SIGN_IN, Some(&token), Some("{}")));
+        match r {
+            Ok(c) => Ok(acct::auto_sign_in_url(&site, &c.code, next)),
+            Err(f) => {
+                // A stale access token: the next attempt renews it (the account stays; a removed
+                // device is found by the refresh then).
+                if f == Failure::SignedOut {
+                    self.access = None;
+                }
+                Err(account_err(f))
+            }
         }
     }
 
@@ -1646,6 +1668,46 @@ fn coll_tabs_max() -> usize {
 pub struct KrunkSync {
     transport: Arc<dyn SyncTransport>,
     engine: Mutex<Engine>,
+    /// The site the website sign-in goes to (`verify_base`; none in test builds).
+    site: Option<String>,
+    /// Signed in to the account, as of the end of the last engine call (read on the main thread
+    /// by [`auto_sign_in_check`](Self::auto_sign_in_check), which must not wait for the engine).
+    signed_in: AtomicBool,
+    /// The one website sign-in guard of the app process (core [`acct::AutoSignIn`]).
+    auto: Mutex<acct::AutoSignIn>,
+}
+
+/// A navigation that becomes a website sign-in (0.11.0): `next`, the sign-in page's own `next`.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct AutoSignInTarget {
+    pub next: Option<String>,
+}
+
+/// The engine while a call runs; afterwards [`KrunkSync::signed_in`] follows its account.
+struct EngineGuard<'a> {
+    engine: MutexGuard<'a, Engine>,
+    signed_in: &'a AtomicBool,
+}
+
+impl std::ops::Deref for EngineGuard<'_> {
+    type Target = Engine;
+    fn deref(&self) -> &Engine {
+        &self.engine
+    }
+}
+
+impl std::ops::DerefMut for EngineGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Engine {
+        &mut self.engine
+    }
+}
+
+impl Drop for EngineGuard<'_> {
+    fn drop(&mut self) {
+        if self.engine.loaded {
+            self.signed_in.store(self.engine.account.is_some(), Ordering::Relaxed);
+        }
+    }
 }
 
 impl std::fmt::Debug for KrunkSync {
@@ -1655,8 +1717,8 @@ impl std::fmt::Debug for KrunkSync {
 }
 
 impl KrunkSync {
-    fn engine(&self) -> MutexGuard<'_, Engine> {
-        self.engine.lock().unwrap_or_else(|e| e.into_inner())
+    fn engine(&self) -> EngineGuard<'_> {
+        EngineGuard { engine: self.engine.lock().unwrap_or_else(|e| e.into_inner()), signed_in: &self.signed_in }
     }
 }
 
@@ -1678,6 +1740,7 @@ impl KrunkSync {
         version: String,
         verify_base: Option<String>,
     ) -> Arc<Self> {
+        let site = verify_base.clone();
         let engine = Engine::new(
             PathBuf::from(dir),
             PathBuf::from(db),
@@ -1687,7 +1750,13 @@ impl KrunkSync {
             version,
             verify_base,
         );
-        Arc::new(KrunkSync { transport, engine: Mutex::new(engine) })
+        Arc::new(KrunkSync {
+            transport,
+            engine: Mutex::new(engine),
+            site,
+            signed_in: AtomicBool::new(false),
+            auto: Mutex::new(acct::AutoSignIn::default()),
+        })
     }
 
     pub fn status(&self) -> SyncStatus {
@@ -1811,5 +1880,22 @@ impl KrunkSync {
 
     pub fn remote_tabs(&self) -> Vec<DeviceTabs> {
         self.engine().remote_tabs()
+    }
+
+    /// Website sign-in (0.11.0), for every top-level navigation of a tab: `Some` when Krunk
+    /// should cancel it and open [`web_sign_in_url`](Self::web_sign_in_url) instead. No network,
+    /// no files; main thread. "Signed in" is the state after the last call ([`status`](Self::status)
+    /// runs at every app start), so it never waits for a running sync.
+    pub fn auto_sign_in_check(&self, url: String, private: bool) -> Option<AutoSignInTarget> {
+        let site = self.site.as_deref()?;
+        let signed_in = self.signed_in.load(Ordering::Relaxed);
+        let mut auto = self.auto.lock().unwrap_or_else(|e| e.into_inner());
+        auto.check(&url, site, crate::now_ms(), signed_in, private).map(|next| AutoSignInTarget { next })
+    }
+
+    /// The website's sign-in page with a fresh single-use code (blocking: off the main thread).
+    /// The address is a secret: never log it.
+    pub fn web_sign_in_url(&self, next: Option<String>) -> Result<String, SyncFfiError> {
+        self.engine().web_sign_in_url(&Foreign(self.transport.as_ref()), next.as_deref(), crate::now_ms())
     }
 }

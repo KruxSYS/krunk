@@ -502,3 +502,128 @@ fn a_phone_that_joined_without_its_vault_adds_passwords_later() {
     b.vault.lock();
     assert_eq!(b.engine.status().passwords, PasswordsSync::VaultLocked);
 }
+
+/// The account endpoints behind the Kotlin-side transport interface, for tests of the
+/// [`KrunkSync`] object itself ([`Srv`]'s in-memory server can't cross threads).
+#[derive(Default)]
+struct AccountFront {
+    approved: std::sync::atomic::AtomicBool,
+    revoked: std::sync::atomic::AtomicBool,
+    seen: Mutex<Vec<String>>,
+}
+
+impl AccountFront {
+    fn count(&self, path: &str) -> usize {
+        self.seen.lock().unwrap().iter().filter(|p| p.as_str() == path).count()
+    }
+}
+
+impl SyncTransport for AccountFront {
+    fn call(
+        &self,
+        method: String,
+        path: String,
+        bearer: Option<String>,
+        body: Option<Vec<u8>>,
+    ) -> Result<HttpAnswer, TransportError> {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.seen.lock().unwrap().push(path.clone());
+        let json: serde_json::Value = body.and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        let r = match (method.as_str(), path.as_str()) {
+            ("POST", "link/authorize") => ok(serde_json::json!({
+                "device_code": "dc1", "user_code": "ABCD-EFGH",
+                "verification_uri_complete": "https://krunk.209.wf/link?code=ABCD-EFGH",
+                "expires_in": 600, "interval": 5
+            })),
+            ("POST", "link/token") if self.approved.load(SeqCst) => ok(serde_json::json!({
+                "device_id": "dev-w", "account_id": ACC, "access_token": "at-w", "refresh_token": "r-w"
+            })),
+            ("POST", "link/token") => err(400, "authorization_pending"),
+            ("POST", "token/refresh") if self.revoked.load(SeqCst) => err(401, "unauthorized"),
+            ("POST", "token/refresh") => ok(serde_json::json!({ "access_token": "at-w", "refresh_token": "r-w" })),
+            ("GET", "device/me") => ok(
+                serde_json::json!({ "email": "fx@example.com", "account_id": ACC, "device_id": "dev-w", "label": "Krunk on Android 16" }),
+            ),
+            ("POST", "device/web-sign-in") if self.revoked.load(SeqCst) || bearer.as_deref() != Some("at-w") => {
+                err(401, "unauthorized")
+            }
+            ("POST", "device/web-sign-in") => {
+                assert_eq!(json, serde_json::json!({}));
+                ok(serde_json::json!({ "code": "c0de-w_x", "expires_in": 60 }))
+            }
+            _ => err(404, "not_found"),
+        };
+        let r = r.map_err(|detail| TransportError::Offline { detail })?;
+        Ok(HttpAnswer { status: r.status, body: r.body, retry_after: r.retry_after, date: r.date })
+    }
+}
+
+struct PlainWrap;
+
+impl VaultKeyWrapper for PlainWrap {
+    fn protect(&self, data: Vec<u8>) -> Result<Vec<u8>, crate::vault::WrapError> {
+        Ok(data)
+    }
+    fn unprotect(&self, data: Vec<u8>) -> Result<Vec<u8>, crate::vault::WrapError> {
+        Ok(data)
+    }
+}
+
+#[test]
+fn a_signed_in_phone_signs_the_website_in() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let root = std::env::temp_dir().join(format!("krunk-ffi-sync-web-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let srv = Arc::new(AccountFront::default());
+    let make = |site: Option<&str>| {
+        KrunkSync::new(
+            root.join("krunk-sync").to_string_lossy().into_owned(),
+            root.join("browser.db").to_string_lossy().into_owned(),
+            srv.clone(),
+            Arc::new(PlainWrap),
+            None,
+            "Krunk on Android 16".into(),
+            "0.11.0".into(),
+            site.map(str::to_string),
+        )
+    };
+    let login = "https://krunk.209.wf/account/login?next=%2Faccount%2F".to_string();
+    let k = make(Some("https://krunk.209.wf"));
+    assert_eq!(k.status().stage, SyncStage::SignedOut);
+    assert_eq!(k.auto_sign_in_check(login.clone(), false), None, "signed out: never");
+    assert!(matches!(k.web_sign_in_url(None), Err(SyncFfiError::SignedOut { .. })));
+    assert_eq!(srv.count("device/web-sign-in"), 0);
+
+    k.link_start().unwrap();
+    srv.approved.store(true, SeqCst);
+    assert_eq!(k.link_poll().unwrap(), LinkPoll::SignedIn { email: "fx@example.com".into() });
+    // Signed in (sync off): the check knows without another status call.
+    assert_eq!(k.auto_sign_in_check(login.clone(), true), None, "private tab: never");
+    assert_eq!(k.auto_sign_in_check("https://krunk.209.wf/account/".into(), false), None, "other pages: no");
+    assert_eq!(k.auto_sign_in_check(login.clone(), false), Some(AutoSignInTarget { next: Some("/account/".into()) }));
+    assert_eq!(k.auto_sign_in_check(login.clone(), false), None, "once per 30 s");
+    // The real path through the transport (Kotlin's allowlist has to pass it as well).
+    let url = k.web_sign_in_url(Some("/account/".into())).unwrap();
+    assert_eq!(url, "https://krunk.209.wf/account/login?auto=c0de-w_x&next=%2Faccount%2F");
+    assert_eq!(srv.count("device/web-sign-in"), 1);
+    // A sign-out on the website keeps it signed out until the app restarts.
+    assert_eq!(k.auto_sign_in_check("https://krunk.209.wf/account/login?signed_out=1".into(), false), None);
+
+    // An app restart: a new object (the account is read by the first status call).
+    let k = make(Some("https://krunk.209.wf"));
+    assert_eq!(k.auto_sign_in_check(login.clone(), false), None, "before the first status call");
+    k.status();
+    assert!(k.auto_sign_in_check(login.clone(), false).is_some(), "after a restart");
+    // A test build against a staging stack has no site: never.
+    let staging = make(None);
+    staging.status();
+    assert_eq!(staging.auto_sign_in_check(login.clone(), false), None);
+
+    // The device removed on the website: no code, and the phone notices it is signed out.
+    srv.revoked.store(true, SeqCst);
+    let e = k.web_sign_in_url(None);
+    assert!(matches!(e, Err(SyncFfiError::Revoked { .. })), "{e:?}");
+    assert_eq!(k.status().stage, SyncStage::SignedOut);
+    let _ = std::fs::remove_dir_all(&root);
+}
