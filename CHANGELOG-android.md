@@ -3,6 +3,28 @@
 What changed in each Krunk for Android release, newest first. The Windows browser's list is
 `CHANGELOG.md`.
 
+## 0.10.0 — 2026-11-17
+
+- **A VPN for Krunk only.** Settings › Privacy & security › **VPN** imports a WireGuard (`.conf`)
+  or OpenVPN (`.ovpn`) file from your VPN provider: pick it with **Import profile**, or share or
+  open it from your file manager or mail app. Krunk shows what it found, and any option it will
+  ignore, before saving. Turn on **Use the VPN** and Krunk's pages, private tabs, downloads and
+  its own requests (sync, updates, site icons, search suggestions) go through your VPN. Other
+  apps are not affected: no system VPN, no key icon.
+- **Nothing slips out.** While the VPN is on but not connected, Krunk loads nothing and shows
+  **VPN not connected** with Retry and a way to the VPN settings. Nothing goes around the VPN.
+  An address your profile does not cover shows **Not reachable through this VPN**.
+- **Everywhere or private tabs only.** With **Private tabs only**, only private tabs (and what
+  Krunk fetches for them) use the VPN. **Connect when Krunk starts** connects before the first
+  page loads; **Reach the local network directly** lets your router and printers through.
+- **See it at a glance.** A mark next to the shield shows the VPN's state (green connected,
+  amber connecting, red not connected). Tap it for the profile, your address in the tunnel, the
+  traffic, Connect / Disconnect and the scope. **Show the VPN in the address bar** hides it.
+- Switching between Wi-Fi and mobile data reconnects the VPN at once. Profiles are stored
+  encrypted with a key kept by Android, are never synced and stay out of backups.
+- While the VPN is on, DNS prefetching, DNS over HTTPS, HTTP/3 and WebRTC's direct connections
+  are off, so nothing leaves outside the tunnel.
+
 ## 0.9.0 — 2026-11-17
 
 - **See who a site's certificate belongs to.** Tap the shield or the lock in the address bar:
