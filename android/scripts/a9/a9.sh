@@ -193,7 +193,7 @@ share_import() { # share_import FILE
 saf_import() { # saf_import FILE
   vpn_screen; tapt text "Import profile" || return 1; sleep 2; dump
   has desc "List view" && tapt desc "List view"
-  tapt text "$1" || { result IMP FAIL "$1 not in the picker"; return 1; }
+  scroll_to text "$1" > /dev/null; tapt text "$1" || { result IMP FAIL "$1 not in the picker"; return 1; }
   waitt text "Import this VPN profile?" 15 || { result IMP FAIL "no import dialog for $1"; shot "import-$1-missing"; return 1; }
   shot "import-$1"; result IMP PASS "import dialog for $1 (picker)"
   tapt text "Save"
@@ -202,6 +202,12 @@ saf_import() { # saf_import FILE
 scroll_to() { # scroll_to text|desc VALUE: swipe up until it is on screen (at most 12 swipes)
   local i; for ((i = 0; i < 12; i++)); do dump; has "$1" "$2" && return 0; A input swipe 540 1800 540 900 300; sleep 1; done
   echo "MISSING $2 (scrolled)"; return 1
+}
+
+settings_row() { # settings_row TEXT: Menu → Settings → scroll to TEXT → tap it
+  local i; for ((i = 0; i < 4; i++)); do dump; has desc "Menu" && break; A input keyevent KEYCODE_BACK; sleep 1; done
+  tapt desc "Menu" && tapt text "Settings" || return 1
+  scroll_to text "$1" > /dev/null && tapt text "$1"
 }
 
 vpn_screen() { # Menu → Settings → Privacy & security → VPN (krunk://vpn is not an internal page)
@@ -295,15 +301,15 @@ t4() {
     result T4 FAIL "favicon not seen from the tunnel"
   since "$m" | grep '"/fav.png"' | grep -q '"10.250.136.2"' && result T4 FAIL "favicon fetched direct"
   # Search suggestions (public engine: only path is the tunnel; proof = they appear + sockwatch).
-  tapt desc "Edit address"; A "input text krunkvpn"; sleep 6; dump; shot t4-suggestions-up
-  [ "$(echo "$UI" | grep -o 'text="krunkvpn[^"]*"' | sort -u | wc -l)" -ge 2 ] && result T4 PASS "search suggestions arrive while connected" || result T4 INFO "no engine suggestions visible (setting off or engine silent)"
+  tapt desc "Edit address"; A "input text wikipedi"; sleep 8; dump; shot t4-suggestions-up
+  [ "$(echo "$UI" | grep -oi 'text="wikipedi[^"]*"' | sort -u | wc -l)" -ge 2 ] && result T4 PASS "search suggestions arrive while connected" || result T4 INFO "no engine suggestions visible (setting off or engine silent)"
   A input keyevent KEYCODE_BACK; A input keyevent KEYCODE_BACK
   # Update check (qaUpdateBase = the test server through the tunnel).
-  A "am start -a android.intent.action.VIEW -d krunk://about $PKG" > /dev/null 2>&1; sleep 3
+  settings_row "Version, engine, licences"; scroll_to text "Check for updates" > /dev/null
   tapt text "Check for updates" --contains; sleep 6; shot t4-update-check-up
   since "$m" | grep -E '"/updates/' | grep -q '"10.250.137.2"' && result T4 PASS "update check through the tunnel" || result T4 FAIL "update check not seen from the tunnel"
   # Sync: "Sign in" makes the first request (link start) to the staging stack.
-  A "am start -a android.intent.action.VIEW -d krunk://sync $PKG" > /dev/null 2>&1; sleep 3
+  settings_row "Account & sync"
   tapt text "Sign in"; waitt text "Approve this device" 20 --contains && result T4 PASS "staging answered sync's first request" || result T4 FAIL "no answer from staging"
   shot t4-sync-up
   tail -n +"$((r0 + 1))" "$RLOG" | grep -q '"10.250.137.2"' && result T4 PASS "sync reached staging through the tunnel" || result T4 FAIL "sync connection not seen from the tunnel"
@@ -311,13 +317,13 @@ t4() {
   # Server down: every one of them fails, nothing direct.
   $TB stop wg > /dev/null 2>&1; sleep 3
   m=$(mark); r0=$(wc -l < "$RLOG")
-  A "am start -a android.intent.action.VIEW -d krunk://about $PKG" > /dev/null 2>&1; sleep 3
+  settings_row "Version, engine, licences"; scroll_to text "Check for updates" > /dev/null
   tapt text "Check for updates" --contains; sleep 25; shot t4-update-check-down
-  A "am start -a android.intent.action.VIEW -d krunk://sync $PKG" > /dev/null 2>&1; sleep 3
+  settings_row "Account & sync"
   tapt text "Sign in"; sleep 25; shot t4-sync-down
   waitt text "Approve this device" 2 --contains && result T4 FAIL "sync answered while the VPN server is down"
-  tapt desc "Edit address"; A "input text krunkdown"; sleep 8; dump; shot t4-suggestions-down
-  [ "$(echo "$UI" | grep -o 'text="krunkdown[^"]*"' | sort -u | wc -l)" -le 1 ] && result T4 PASS "no engine suggestions while the server is down" || result T4 FAIL "suggestions arrived while the server is down"
+  tapt desc "Edit address"; A "input text wikipedi"; sleep 8; dump; shot t4-suggestions-down
+  [ "$(echo "$UI" | grep -oi 'text="wikipedi[^"]*"' | sort -u | wc -l)" -le 1 ] && result T4 PASS "no engine suggestions while the server is down" || result T4 FAIL "suggestions arrived while the server is down"
   A input keyevent KEYCODE_BACK; A input keyevent KEYCODE_BACK
   [ "$(since "$m" | wc -l)" = 0 ] && result T4 PASS "test server saw nothing while down (update check failed)" || result T4 FAIL "requests arrived while down: $(since "$m" | head -2)"
   [ "$(tail -n +"$((r0 + 1))" "$RLOG" | wc -l)" = 0 ] && result T4 PASS "staging relay saw nothing while down (sync failed)" || result T4 FAIL "sync connections while down"

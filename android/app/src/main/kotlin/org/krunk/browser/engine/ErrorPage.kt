@@ -51,8 +51,10 @@ class ErrorPage(context: Context) {
             append("</button>")
             for (action in vpnKind?.let(ErrorPageVpn::actions).orEmpty()) {
                 // The action's address is a constant of ours: nothing from the page goes in here.
-                append("<button class=\"secondary\" onclick=\"location.href='").append(action.url).append("'\">")
-                append(escape(action.label)).append("</button>")
+                // A link, not a script: the engine marks a tapped link as a user gesture (a
+                // location change from onclick was not delivered as one on the device).
+                append("<a class=\"button secondary\" href=\"").append(escape(action.url)).append("\">")
+                append(escape(action.label)).append("</a>")
             }
         }
         val html = template

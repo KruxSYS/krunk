@@ -383,6 +383,15 @@ class KrunkSession(
 
     private val progress = object : GeckoSession.ProgressDelegate {
         override fun onPageStart(session: GeckoSession, url: String) {
+            // A link of Krunk's error page ("Open VPN settings"). The engine does not ask
+            // onLoadRequest for navigations away from its error pages (seen on the emulator,
+            // 0.10.0): only the page start shows them. Carried out only while this tab shows a
+            // load error; the start is stopped, the error page stays.
+            if (ErrorPageAction.fromUrl(url) != null && current.loadError != null) {
+                ErrorPage.dispatch(url, showsError = true, userGesture = true)
+                session.stop()
+                return
+            }
             promptThrottle.newDocument()
             document.pageStart()
             engine.blocker.newDocument(id)
