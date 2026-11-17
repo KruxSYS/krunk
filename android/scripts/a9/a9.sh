@@ -112,8 +112,10 @@ t2() {
 
 # T7: no VPN network, no key icon (VpnService not used), other apps direct.
 t7() {
-  local n; n=$(A dumpsys connectivity | grep -c "VPN CONNECTED\|type: VPN\|NetworkAgentInfo.*VPN")
-  [ "$n" = 0 ] && result T7 PASS "dumpsys connectivity: no VPN network" || result T7 FAIL "dumpsys connectivity shows $n VPN lines"
+  # A VPN network shows as a network agent of type VPN (ni{VPN ...}); "NOT_VPN" capability text
+  # and SystemUI's standing LISTEN request for VPNs are not one.
+  local n; n=$(A dumpsys connectivity | grep -c "NetworkAgentInfo{.*ni{VPN")
+  [ "$n" = 0 ] && result T7 PASS "dumpsys connectivity: no VPN network agent" || result T7 FAIL "dumpsys connectivity shows $n VPN network agents"
   A dumpsys connectivity > "$EV/t7-dumpsys-connectivity.txt"
   local m; m=$(mark)
   A "printf 'GET /t7-shell HTTP/1.0\r\n\r\n' | toybox timeout 5 toybox nc 10.250.136.3 18080" > /dev/null
@@ -209,12 +211,21 @@ vpn_screen() { # Menu → Settings → Privacy & security → VPN (krunk://vpn i
   scroll_to text "VPN" || return 1
   tapt text "VPN"; waitt text "Use the VPN" 6
 }
-vpn_on() { # vpn_on PROFILE_NAME: select and switch on; waits for "Connected"
-  vpn_screen; tapt text "Use $1" --contains || tapt desc "Use $1" --contains
-  dump; [ "$(echo "$UI" | python3 -I "$U" attr text "Use the VPN" checked --clickable)" = true ] || tapt text "Use the VPN"
-  waitt text "Connected" 40 --contains && { shot "vpn-connected-$1"; return 0; }
-  shot "vpn-not-connected-$1"; return 1
+vpn_on() { # vpn_on PROFILE [SUBNET_PREFIX]: off, select, on, wait for "Connected · <ip>" (in SUBNET)
+  vpn_screen || return 1
+  dump; if [ "$(echo "$UI" | python3 -I "$U" attr text "Use the VPN" checked --clickable)" = true ]; then
+    tapt text "Use the VPN"; waitt text "Off" 15
+  fi
+  tapt desc "Use $1" || { scroll_to desc "Use $1" && tapt desc "Use $1"; }
+  dump; [ "$(echo "$UI" | python3 -I "$U" attr desc "Use $1" checked --clickable)" = true ] ||
+    [ "$(echo "$UI" | python3 -I "$U" attr desc "Use $1" selected --clickable)" = true ] || { echo "profile $1 not selected"; shot "vpn-select-$1-failed"; return 1; }
+  tapt text "Use the VPN"
+  if waitt text "Connected · ${2:-}" 60 --contains; then
+    shot "vpn-connected-$1"; A input keyevent KEYCODE_BACK; sleep 1; return 0
+  fi
+  shot "vpn-not-connected-$1"; A input keyevent KEYCODE_BACK; sleep 1; return 1
 }
+
 vpn_off() { vpn_screen; dump; [ "$(echo "$UI" | python3 -I "$U" attr text "Use the VPN" checked --clickable)" = true ] && tapt text "Use the VPN"; }
 
 page_has() { # page_has TEXT [seconds]
@@ -223,14 +234,14 @@ page_has() { # page_has TEXT [seconds]
 
 # T1: split profile; inside.test exists only behind the tunnel's DNS; http + https through it.
 t1() {
-  stop_clean; launch; vpn_on "wg-split" || { result T1 FAIL "VPN did not connect (wg-split)"; return 1; }
+  stop_clean; launch; vpn_on "wg-split" 10.66.0 || { result T1 FAIL "VPN did not connect (wg-split)"; return 1; }
   sockwatch_start t1
   view "http://inside.test/" 12
   page_has "client=10.66.0" && result T1 PASS "http://inside.test/ answered from the tunnel (client=10.66.0.x)" || result T1 FAIL "inside.test not loaded through the tunnel"
   shot t1-inside-http
   # The system resolver does not know the name (it exists only in the tunnel's DNS).
-  A "toybox nslookup inside.test 2>&1" | grep -qiE "can't|not found|NXDOMAIN|fail|timed" &&
-    result T1 PASS "system resolver does not know inside.test" || result T1 INFO "system nslookup inside.test: $(A 'toybox nslookup inside.test 2>&1' | tail -1)"
+  A "ping -c 1 -W 2 inside.test 2>&1" | grep -qiE "unknown host|bad address|not known" &&
+    result T1 PASS "system resolver does not know inside.test (ping: unknown host)" || result T1 INFO "system ping inside.test: $(A 'ping -c 1 -W 2 inside.test 2>&1' | tail -1)"
   sockwatch_stop T1 t1
 }
 
@@ -252,7 +263,9 @@ t3() {
   done
   grep -c '"/dl.bin"' "$EV/t3-server.txt" | grep -qE '^[2-9]' && result T3 PASS "download fetched again by Krunk's downloader through the tunnel" || result T3 INFO "dl.bin requests: $(grep -c '/dl.bin' "$EV/t3-server.txt")"
   grep '"10.250.136.2"' "$EV/t3-server.txt" | grep -v 'localhost:18081' | grep -q . && result T3 FAIL "direct requests seen: $(grep '"10.250.136.2"' "$EV/t3-server.txt" | grep -v localhost | head -2)" || result T3 PASS "no direct request (apart from the localhost page, direct by design)"
-  # Private tab: new private tab, type the address.
+  # Private tab: new private tab, type the address (from a clean start: the download dialog and
+  # its notification can hide the toolbar).
+  stop_clean; launch 8
   tapt desc "Menu" && tapt text "New private tab"; tapt desc "Edit address"; A "input text 10.250.137.3:18080/private-t3"; A input keyevent ENTER; sleep 10
   since "$m" | grep '/private-t3' | grep -q '"10.250.137.2"' && result T3 PASS "private tab through the tunnel" || result T3 FAIL "private tab request not seen from the tunnel"
   # https through the tunnel: a self-signed server reachable only via the tunnel → its warning page.
@@ -327,7 +340,7 @@ ovpn() {
   local proto net
   for proto in tcp:10.89.0 udp:10.88.0; do
     net=${proto#*:}; proto=${proto%%:*}
-    if vpn_on "ovpn-$proto"; then
+    if vpn_on "ovpn-$proto" "$net"; then
       view "http://inside.test/?ovpn-$proto" 12
       page_has "client=$net" && result M6 PASS "OpenVPN $proto: inside.test answered from $net.x" || result M6 FAIL "OpenVPN $proto: inside.test not loaded"
       shot "ovpn-$proto-inside"
@@ -341,9 +354,9 @@ ovpn() {
   shot ovpn-down
   since "$m" | grep -q ovpn-down-bait && result M6 FAIL "request arrived direct while OpenVPN was down" || result M6 PASS "nothing direct while OpenVPN was down"
   $TB start ovpn > /dev/null 2>&1; sleep 8
-  vpn_on "ovpn-wrongpw"; dump; shot ovpn-wrong-password
+  vpn_on "ovpn-wrongpw"; vpn_screen; dump; shot ovpn-wrong-password
   has text "Failed" --contains && result M6 PASS "wrong password: $(echo "$UI" | grep -o 'Failed: [^"]*' | head -1)" || result M6 FAIL "wrong password: no failure shown"
-  vpn_on "ovpn-badca"; dump; shot ovpn-bad-ca
+  vpn_on "ovpn-badca"; vpn_screen; dump; shot ovpn-bad-ca
   has text "Failed" --contains && result M6 PASS "other CA: $(echo "$UI" | grep -o 'Failed: [^"]*' | head -1)" || result M6 FAIL "other CA: no failure shown"
   sockwatch_stop M6 ovpn
   vpn_off
