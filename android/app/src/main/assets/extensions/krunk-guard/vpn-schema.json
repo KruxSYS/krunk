@@ -1,0 +1,21 @@
+[
+  {
+    "namespace": "krunkVpn",
+    "functions": [
+      {
+        "name": "configure",
+        "type": "function",
+        "description": "Turns the VPN route on, off or to 'pending' from the app's message as JSON: {on, pending?, port?, pass?, scope, lan}. Resolves to the state as JSON: {installed, held, error?}.",
+        "async": true,
+        "parameters": [{ "name": "json", "type": "string" }]
+      },
+      {
+        "name": "state",
+        "type": "function",
+        "description": "Resolves to the state as JSON: {installed, held}.",
+        "async": true,
+        "parameters": []
+      }
+    ]
+  }
+]

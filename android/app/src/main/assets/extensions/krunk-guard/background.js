@@ -8,12 +8,17 @@
 //                {t:"blocker", id, channel, msg}   one message for the blocker
 //                {t:"strip", on}             tracking-parameter rewriting on or off
 //                {t:"rewritten", id, url}    the answer to a "rewrite" question ("" = leave it)
-// Guard -> app:  {t:"ready", gate}           after every start of this script
+//                {t:"vpn", on, pending?, port?, user?, pass?, scope, lan}
+//                                            the VPN route (vpn-api.js): on with the proxy, on but
+//                                            not up yet (hold), or off. Never logged: it holds
+//                                            the proxy's password
+// Guard -> app:  {t:"ready", gate, vpn:{installed}}   after every start of this script
 //                {t:"gate", gate}            the gate's state after a change
 //                {t:"event", e}              something the gate did (a cancelled request, a page
 //                                            the blocker stopped)
 //                {t:"blocker-reply", id, ok, result | error}
 //                {t:"rewrite", id, url}      may this top-level address be cleaned?
+//                {t:"vpn-state", installed, held, error?}   after each "vpn" message
 "use strict";
 
 const port = browser.runtime.connectNative("krunk");
@@ -76,12 +81,26 @@ browser.webRequest.onBeforeRequest.addListener(details => rewriter.onBeforeReque
 browser.webRequest.onCompleted.addListener(details => rewriter.forget(details.requestId), MAIN_FRAMES);
 browser.webRequest.onErrorOccurred.addListener(details => rewriter.forget(details.requestId), MAIN_FRAMES);
 
+// ----- VPN -----
+
+// The message goes to the parent process as it is; nothing of it is kept or logged here.
+const toVpn = m =>
+  browser.krunkVpn
+    .configure(JSON.stringify(m))
+    .then(text => send(Object.assign({ t: "vpn-state" }, JSON.parse(text))))
+    .catch(e => send({ t: "vpn-state", installed: false, held: 0, error: String(e) }));
+
+const vpnInstalled = () =>
+  browser.krunkVpn
+    .state()
+    .then(text => JSON.parse(text).installed === true)
+    .catch(() => false);
+
 // ----- app -----
 
 const ready = () =>
-  browser.krunkGate
-    .state()
-    .then(text => send({ t: "ready", gate: JSON.parse(text) }))
+  Promise.all([browser.krunkGate.state(), vpnInstalled()])
+    .then(([text, installed]) => send({ t: "ready", gate: JSON.parse(text), vpn: { installed } }))
     .catch(e => send({ t: "ready", error: String(e) }));
 
 port.onMessage.addListener(m => {
@@ -100,6 +119,9 @@ port.onMessage.addListener(m => {
       break;
     case "strip":
       rewriter.setOn(m.on === true);
+      break;
+    case "vpn":
+      toVpn(m);
       break;
     case "rewritten": {
       const answer = questions.get(m.id);

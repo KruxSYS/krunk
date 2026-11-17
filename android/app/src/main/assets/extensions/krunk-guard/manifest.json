@@ -1,8 +1,8 @@
 {
   "manifest_version": 2,
   "name": "Krunk guard",
-  "version": "1.3",
-  "description": "Krunk's own companion to the bundled blocker: keeps the blocker's network requests behind a gate, passes Krunk's settings to it through the blocker's own messaging, and removes tracking parameters from top-level navigations.",
+  "version": "1.4",
+  "description": "Krunk's own companion to the bundled blocker: keeps the blocker's network requests behind a gate, passes Krunk's settings to it through the blocker's own messaging, removes tracking parameters from top-level navigations, and routes the engine's connections through Krunk's VPN while it is on.",
   "browser_specific_settings": {
     "gecko": {
       "id": "guard@krunk.org"
@@ -33,6 +33,23 @@
         "paths": [
           [
             "krunkGate"
+          ]
+        ],
+        "events": [
+          "startup"
+        ]
+      }
+    },
+    "krunkVpn": {
+      "schema": "vpn-schema.json",
+      "parent": {
+        "scopes": [
+          "addon_parent"
+        ],
+        "script": "vpn-api.js",
+        "paths": [
+          [
+            "krunkVpn"
           ]
         ],
         "events": [
