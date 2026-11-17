@@ -78,6 +78,23 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
             </intent-filter>
+            <!-- 0.10.0, VPN profiles opened with or shared to Krunk: the VPN screen asks before
+                 anything is saved. Only content: addresses are read (MainActivity). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:mimeType="application/x-openvpn-profile" />
+                <data android:mimeType="application/x-wireguard-profile" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/x-openvpn-profile" />
+                <data android:mimeType="application/x-wireguard-profile" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
         </activity>
         <!-- Only for a photo a page asks for (a file field with "capture"): the camera app
              writes into cache/capture through this address. Nothing else is exposed. -->

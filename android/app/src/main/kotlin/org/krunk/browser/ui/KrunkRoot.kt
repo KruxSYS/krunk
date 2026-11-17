@@ -24,6 +24,7 @@ import org.krunk.browser.ui.permissions.SitePermissionsScreen
 import org.krunk.browser.ui.settings.AboutScreen
 import org.krunk.browser.ui.settings.CertExceptionsScreen
 import org.krunk.browser.ui.settings.SettingsScreen
+import org.krunk.browser.ui.settings.VpnScreen
 import org.krunk.browser.ui.sitedata.SiteDataScreen
 import org.krunk.browser.ui.sync.SyncScreen
 import org.krunk.browser.ui.tabs.TabSwitcherScreen
@@ -109,6 +110,8 @@ fun KrunkRoot(vm: BrowserViewModel) {
                     Screen.CertExceptions -> CertExceptionsScreen(vm)
 
                     Screen.Sync -> SyncScreen(vm)
+
+                    Screen.Vpn -> VpnScreen(vm)
 
                     Screen.Vault -> {
                         val app = LocalContext.current.applicationContext as? Application

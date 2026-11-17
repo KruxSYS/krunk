@@ -644,6 +644,9 @@ private fun PrivacySection(
     Row(stringResource(R.string.settings_passwords), stringResource(R.string.settings_passwords_help)) {
         vm.push(Screen.Vault)
     }
+    Row(stringResource(R.string.vpn_settings_row), stringResource(R.string.vpn_settings_row_help)) {
+        vm.openVpnSettings()
+    }
     if (clear) ClearDataDialog(vm) { clear = false }
     if (allowedOpen) AllowedSitesDialog(allowHosts, onRemove = vm::removeAllowedSite) { allowedOpen = false }
 }

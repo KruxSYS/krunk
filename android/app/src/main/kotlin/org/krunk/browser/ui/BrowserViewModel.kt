@@ -31,6 +31,8 @@ import org.krunk.browser.engine.blocker.UpdateState
 import org.krunk.browser.tabs.TabManager
 import org.krunk.browser.tabs.TabUi
 import org.krunk.browser.ui.browser.InlineFill
+import org.krunk.browser.vpn.ImportResult
+import org.krunk.browser.vpn.VpnController
 import org.krunk.ffi.AddressSuggestion
 import org.krunk.ffi.AndroidSettings
 import org.krunk.ffi.FfiException
@@ -93,6 +95,9 @@ sealed class Screen {
     /** Krunk account and sync (0.6.0). */
     data object Sync : Screen()
 
+    /** Settings › Privacy & security › VPN (0.10.0); also `krunk://vpn` and [BrowserViewModel.openVpnSettings]. */
+    data object Vpn : Screen()
+
     companion object {
         /** `krunk://name` -> screen. */
         fun forPage(name: String): Screen? = when (name) {
@@ -103,6 +108,7 @@ sealed class Screen {
             "passwords" -> Vault
             "downloads" -> Downloads
             "sync" -> Sync
+            "vpn" -> Vpn
             else -> null
         }
     }
@@ -118,6 +124,9 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
     val engine: GeckoEngine get() = krunk.engine
     val tabs: TabManager get() = krunk.tabs
     val downloads: DownloadController get() = krunk.downloads
+
+    /** The in-browser VPN (0.10.0). */
+    val vpn: VpnController get() = krunk.vpn
     val settingsRepo: SettingsRepository get() = krunk.core.settings
 
     val settings: StateFlow<AndroidSettings> get() = settingsRepo.settings
@@ -213,6 +222,28 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
     fun showBrowser() {
         _screens.value = ScreenStack.root(_screens.value)
     }
+
+    // ----- VPN (0.10.0) -----
+
+    /** Opens Settings › Privacy & security › VPN (the VPN error page's "Open VPN settings", the sheet). */
+    fun openVpnSettings() = push(Screen.Vpn)
+
+    private val _vpnImport = MutableStateFlow<ImportResult?>(null)
+
+    /**
+     * A profile another app handed over (share / open with), checked by the core and not saved:
+     * the VPN screen asks about it. Never in saved state (it holds the profile).
+     */
+    val vpnImport: StateFlow<ImportResult?> = _vpnImport.asStateFlow()
+
+    fun offerVpnImport(result: ImportResult) {
+        (_vpnImport.value as? ImportResult.Ok)?.bytes?.fill(0)
+        _vpnImport.value = result
+        openVpnSettings()
+    }
+
+    /** The VPN screen took the offered import (it saves or drops it itself). */
+    fun takeVpnImport(): ImportResult? = _vpnImport.value.also { _vpnImport.value = null }
 
     // ----- address bar -----
 

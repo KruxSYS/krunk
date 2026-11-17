@@ -1,7 +1,9 @@
 package org.krunk.browser
 
+import android.content.ContentResolver
 import android.content.Intent
 import android.content.res.Configuration
+import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -9,6 +11,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.core.content.IntentCompat
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import org.krunk.browser.downloads.DownloadIntents
 import org.krunk.browser.engine.LoadPolicy
 import org.krunk.browser.engine.LoadSource
@@ -16,6 +21,9 @@ import org.krunk.browser.notify.SiteNotifications
 import org.krunk.browser.ui.BrowserViewModel
 import org.krunk.browser.ui.KrunkRoot
 import org.krunk.browser.ui.Screen
+import org.krunk.browser.ui.settings.VpnImportSniff
+import org.krunk.browser.ui.settings.importVpnUri
+import org.krunk.browser.vpn.ImportResult
 import org.krunk.ffi.searchUrl
 
 class MainActivity : ComponentActivity() {
@@ -68,6 +76,12 @@ class MainActivity : ComponentActivity() {
             intent.action = null
             return
         }
+        // A VPN profile file opened with or shared to Krunk (0.10.0): the VPN screen asks about it.
+        vpnProfileUri(intent)?.let { uri ->
+            lifecycleScope.launch { vm.offerVpnImport(importVpnUri(this@MainActivity, app.vpn, uri)) }
+            intent.action = null
+            return
+        }
         // What another app sends is never trusted: only web addresses are opened, and they are
         // loaded as external links (LoadPolicy). Addresses are not written to the log.
         val url = when (intent.action) {
@@ -76,18 +90,61 @@ class MainActivity : ComponentActivity() {
             }
 
             Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)?.takeIf { it.isNotBlank() }?.let { text ->
-                // A shared link opens; any other text is searched for (never loaded as an address).
-                LoadPolicy.urlInSharedText(text)
-                    ?: searchUrl(LoadPolicy.searchText(text), app.core.settings.searchTemplate)
+                // A VPN profile shared as text goes to the VPN screen if the core agrees it is one.
+                val kind = VpnImportSniff.kind(text)
+                if (kind != null) {
+                    lifecycleScope.launch {
+                        val result = app.vpn.importFile(VpnImportSniff.fileName(kind), text.toByteArray(Charsets.UTF_8))
+                        if (result is ImportResult.Ok) vm.offerVpnImport(result) else openShared(sharedTextUrl(text))
+                    }
+                    null
+                } else {
+                    sharedTextUrl(text)
+                }
             }
 
             else -> null
         }
+        openShared(url)
+        // Consume so a rotation does not reopen it.
+        intent.action = null
+    }
+
+    /** A shared link opens; any other text is searched for (never loaded as an address). */
+    private fun sharedTextUrl(text: String): String =
+        LoadPolicy.urlInSharedText(text) ?: searchUrl(LoadPolicy.searchText(text), app.core.settings.searchTemplate)
+
+    private fun openShared(url: String?) {
         if (url != null && app.tabs.openUntrusted(url, LoadSource.EXTERNAL_APP, activate = true, live = true) != null) {
             vm.showBrowser()
         }
-        // Consume so a rotation does not reopen it.
-        intent.action = null
+    }
+
+    /**
+     * The profile file of a VIEW or SEND intent with a VPN profile type (the manifest's
+     * filters), or a `content:` file named `.conf` / `.ovpn`. Only `content:` addresses: other
+     * apps' `file:` paths are not readable without storage permission.
+     */
+    private fun vpnProfileUri(intent: Intent): Uri? {
+        val uri = when (intent.action) {
+            Intent.ACTION_VIEW -> intent.data
+            Intent.ACTION_SEND -> IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+            else -> null
+        } ?: return null
+        if (uri.scheme != ContentResolver.SCHEME_CONTENT) return null
+        val type = intent.type ?: contentResolver.getType(uri)
+        val named = uri.lastPathSegment.orEmpty().lowercase().let { it.endsWith(".conf") || it.endsWith(".ovpn") }
+        // A text file shared as a file (not as text) means nothing else to a browser: the core decides.
+        val sharedText = intent.action == Intent.ACTION_SEND && type?.startsWith("text/") == true
+        return uri.takeIf { type in VPN_TYPES || named || sharedText }
+    }
+
+    private companion object {
+        val VPN_TYPES = setOf(
+            "application/x-openvpn-profile",
+            "application/x-wireguard-profile",
+            "application/octet-stream",
+        )
     }
 
     override fun onDestroy() {

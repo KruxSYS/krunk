@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,6 +50,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.launch
 import org.krunk.browser.R
 import org.krunk.browser.engine.CertErrors
 import org.krunk.browser.engine.CertProbe
@@ -113,6 +115,12 @@ fun BrowserToolbar(
         allowedEntry = allowedEntry,
         startedUnprotected = vm.engine.blocker.startedUnprotected,
     )
+    // The VPN mark (0.10.0): while the VPN is on and shown in the address bar.
+    val vpnState by vm.vpn.state.collectAsStateWithLifecycle()
+    val vpnPhase = vpnMark(vpnState)
+    var vpnSheet by remember { mutableStateOf(false) }
+    val vpnScope = rememberCoroutineScope()
+    val showShield = shield.mode != ShieldMode.HIDDEN || webPage
 
     // The theme's toolbar: a plain surface, a gradient or the tinted glass, with its own colour
     // for text and icons (the address field inside brings its own, see AddressPill).
@@ -137,9 +145,10 @@ fun BrowserToolbar(
                 onClick = { vm.startEditing(if (tab == null || tab.isNewTab) "" else tab.displayUrl) },
                 modifier = Modifier.weight(1f).padding(horizontal = ToolbarLayout.PILL_PADDING_DP.dp),
                 compact = !layout.showNotSecureWords,
-                hasLeading = shield.mode != ShieldMode.HIDDEN || webPage,
+                hasLeading = showShield || vpnPhase != null,
                 leading = {
-                    if (shield.mode != ShieldMode.HIDDEN || webPage) ShieldButton(shield) { sheet = false }
+                    if (showShield) ShieldButton(shield) { sheet = false }
+                    if (vpnPhase != null) VpnMarkButton(vpnPhase) { vpnSheet = true }
                 },
                 onSecurityClick = if (webPage) {
                     { sheet = true }
@@ -223,6 +232,16 @@ fun BrowserToolbar(
             probe = CertErrors.hostAndPort(pageUrl)
                 ?.takeIf { connection == ConnectionKind.BROKEN && security?.certificate == null }
                 ?.let { (host, port) -> suspend { CertProbe.fetch(host, port, tab.private) } },
+        )
+    }
+    if (vpnSheet) {
+        VpnSheet(
+            state = vpnState,
+            onConnect = { vpnScope.launch { vm.vpn.connect() } },
+            onDisconnect = { vpnScope.launch { vm.vpn.disconnect() } },
+            onScope = { s -> vpnScope.launch { vm.vpn.setScope(s) } },
+            onSettings = { vm.openVpnSettings() },
+            onDismiss = { vpnSheet = false },
         )
     }
     historyList?.let { items ->

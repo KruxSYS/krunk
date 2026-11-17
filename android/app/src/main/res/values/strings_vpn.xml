@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The in-browser VPN (0.10.0): Settings › Privacy & security › VPN, the address bar's mark and sheet. -->
+<resources>
+    <string name="vpn_title">VPN</string>
+    <string name="vpn_settings_row">VPN</string>
+    <string name="vpn_settings_row_help">Send Krunk\'s traffic through a WireGuard or OpenVPN profile</string>
+
+    <string name="vpn_use">Use the VPN</string>
+    <string name="vpn_status_off">Off</string>
+    <string name="vpn_status_connecting">Connecting…</string>
+    <string name="vpn_status_connected">Connected</string>
+    <string name="vpn_status_connected_ip">Connected · %1$s</string>
+    <string name="vpn_status_failed">Failed: %1$s</string>
+    <string name="vpn_status_failed_plain">Not connected</string>
+
+    <string name="vpn_profiles">Profiles</string>
+    <string name="vpn_profiles_empty">No profiles yet. Import a WireGuard (.conf) or OpenVPN (.ovpn) file from your VPN provider.</string>
+    <string name="vpn_profile_line">%1$s · %2$s</string>
+    <string name="vpn_profile_select">Use %1$s</string>
+    <string name="vpn_profile_remove">Remove %1$s</string>
+    <string name="vpn_profile_sign_in">Sign-in details for %1$s</string>
+    <string name="vpn_import">Import profile</string>
+    <string name="vpn_import_too_large">This file is larger than 64 KB and is not a VPN profile.</string>
+    <string name="vpn_import_unreadable">The file could not be read.</string>
+    <string name="vpn_import_title">Import this VPN profile?</string>
+    <string name="vpn_import_name">Name: %1$s</string>
+    <string name="vpn_import_kind">Type: %1$s</string>
+    <string name="vpn_import_server">Server: %1$s</string>
+    <string name="vpn_import_warnings">Warnings</string>
+    <string name="vpn_import_failed_title">Not imported</string>
+    <string name="vpn_save">Save</string>
+    <string name="vpn_cancel">Cancel</string>
+    <string name="vpn_ok">OK</string>
+    <string name="vpn_remove_title">Remove %1$s?</string>
+    <string name="vpn_remove_text">The profile and its sign-in details are deleted from this device.</string>
+    <string name="vpn_remove">Remove</string>
+    <string name="vpn_credentials_title">Sign in to %1$s</string>
+    <string name="vpn_credentials_text">This profile needs the user name and password from your VPN provider. They are stored encrypted on this device.</string>
+    <string name="vpn_username">User name</string>
+    <string name="vpn_password">Password</string>
+
+    <string name="vpn_connect_at_start">Connect when Krunk starts</string>
+    <string name="vpn_connect_at_start_help">Otherwise the VPN is off after Krunk was closed</string>
+    <string name="vpn_scope">Use the VPN for</string>
+    <string name="vpn_scope_all">Everywhere</string>
+    <string name="vpn_scope_private">Private tabs only</string>
+    <string name="vpn_lan_direct">Reach the local network directly</string>
+    <string name="vpn_lan_direct_help">Addresses in your home or office network (router, printer) do not go through the VPN</string>
+    <string name="vpn_show_in_address_bar">Show the VPN in the address bar</string>
+    <string name="vpn_footer">The VPN covers only Krunk\'s own traffic. Other apps on this device are not affected. While the VPN is on but not connected, Krunk loads nothing rather than going around it.</string>
+
+    <string name="vpn_mark_connected">VPN connected</string>
+    <string name="vpn_mark_connecting">VPN connecting</string>
+    <string name="vpn_mark_failed">VPN not connected</string>
+    <string name="vpn_sheet_tunnel_ip">Tunnel address: %1$s</string>
+    <string name="vpn_sheet_traffic">Received %1$s · Sent %2$s</string>
+    <string name="vpn_sheet_no_profile">No profile chosen</string>
+    <string name="vpn_connect">Connect</string>
+    <string name="vpn_disconnect">Disconnect</string>
+    <string name="vpn_open_settings">VPN settings</string>
+</resources>
