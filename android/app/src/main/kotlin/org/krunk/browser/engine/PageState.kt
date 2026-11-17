@@ -24,6 +24,13 @@ data class PageState(
      * (it comes back if that load never commits).
      */
     val secureBeforeLoad: Boolean? = null,
+    /**
+     * The engine's full report on the page's connection (certificate included), for the shield
+     * sheet. Taken down whenever a new document starts loading, kept aside like [secureBeforeLoad]
+     * until the load commits.
+     */
+    val security: PageSecurity? = null,
+    val securityBeforeLoad: PageSecurity? = null,
     val canGoBack: Boolean = false,
     val canGoForward: Boolean = false,
     val fullScreen: Boolean = false,
@@ -108,11 +115,18 @@ fun PageState.pageStarted(startedUrl: String): PageState {
         blocked = null,
         secure = if (sameSite) secure else null,
         secureBeforeLoad = if (sameSite) secureBeforeLoad else secure ?: secureBeforeLoad,
+        // The certificate belongs to one document: a new one reports its own (the engine reports
+        // on every location change), so not even a same-site load keeps the old one on screen.
+        security = null,
+        securityBeforeLoad = security ?: securityBeforeLoad,
     )
 }
 
 /** The engine reports on the connection of the page it shows. */
 fun PageState.securityChanged(isSecure: Boolean): PageState = copy(secure = isSecure)
+
+/** The engine reports on the connection of the page it shows, with everything it knows about it. */
+fun PageState.securityChanged(info: PageSecurity): PageState = copy(secure = info.secure, security = info)
 
 /** The engine reports a new top-level location. */
 fun PageState.locationChanged(newUrl: String): PageState {
@@ -123,9 +137,22 @@ fun PageState.locationChanged(newUrl: String): PageState {
         // Krunk's own error page (exactly the one handed over) or the failed address itself:
         // the bar keeps the address that failed.
         err != null && (newUrl == err.uri || (err.pageUri.isNotEmpty() && newUrl == err.pageUri)) ->
-            copy(url = err.uri, pendingUrl = null, committed = true, secureBeforeLoad = null)
+            copy(
+                url = err.uri,
+                pendingUrl = null,
+                committed = true,
+                secureBeforeLoad = null,
+                securityBeforeLoad = null,
+            )
 
-        else -> copy(url = newUrl, pendingUrl = null, loadError = null, committed = true, secureBeforeLoad = null)
+        else -> copy(
+            url = newUrl,
+            pendingUrl = null,
+            loadError = null,
+            committed = true,
+            secureBeforeLoad = null,
+            securityBeforeLoad = null,
+        )
     }
 }
 
@@ -133,8 +160,15 @@ fun PageState.locationChanged(newUrl: String): PageState {
  * The page's process crashed or was killed by the system. The engine has closed the session:
  * nothing is loading any more, full screen is over, and the tab needs a new session to continue.
  */
-fun PageState.crashed(): PageState =
-    copy(crashed = true, loading = false, progress = 0f, fullScreen = false, pendingUrl = null)
+fun PageState.crashed(): PageState = copy(
+    crashed = true,
+    loading = false,
+    progress = 0f,
+    fullScreen = false,
+    pendingUrl = null,
+    security = null,
+    securityBeforeLoad = null,
+)
 
 /**
  * The blocker stopped the top-level load to [url]: nothing was requested and nothing committed.
@@ -176,6 +210,8 @@ fun PageState.pageStopped(): PageState = copy(
     // Nothing committed since the lock was set aside: the old page is still shown, with its lock.
     secure = secure ?: secureBeforeLoad,
     secureBeforeLoad = null,
+    security = security ?: securityBeforeLoad,
+    securityBeforeLoad = null,
 )
 
 /**

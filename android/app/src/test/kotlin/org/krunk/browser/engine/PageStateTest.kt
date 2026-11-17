@@ -198,4 +198,63 @@ class PageStateTest {
         assertTrue(s.committed)
         assertEquals(ABOUT_BLANK, s.url)
     }
+
+    // ----- the connection report for the shield sheet (0.9.0) -----
+
+    private val secureInfo = PageSecurity(secure = true, host = "bank.example")
+
+    @Test
+    fun theConnectionReportBelongsToOneDocument() {
+        var s = PageState().locationChanged(bank).securityChanged(secureInfo)
+        assertEquals(secureInfo, s.security)
+        assertEquals(true, s.secure)
+        // Even a load on the same site drops it until the engine reports on the new document.
+        s = s.pageStarted("https://bank.example/account")
+        assertNull(s.security)
+        s = s.locationChanged("https://bank.example/account")
+        assertNull(s.security)
+        assertNull(s.pageStopped().security)
+        val other = PageSecurity(secure = false, isException = true)
+        s = s.securityChanged(other).pageStopped()
+        assertEquals(other, s.security)
+        assertEquals(false, s.secure)
+    }
+
+    @Test
+    fun aLoadThatNeverCommitsGivesTheOldConnectionReportBack() {
+        var s = PageState().locationChanged(bank).securityChanged(secureInfo)
+        s = s.requested(evil).pageStarted(evil) // answers with a download
+        assertNull(s.security)
+        s = s.pageStopped()
+        assertEquals(secureInfo, s.security)
+        assertNull(s.securityBeforeLoad)
+    }
+
+    @Test
+    fun aCrashDropsTheConnectionReport() {
+        val s = PageState().locationChanged(bank).securityChanged(secureInfo).crashed()
+        assertNull(s.security)
+    }
+
+    @Test
+    fun connectionKinds() {
+        val exception = PageSecurity(secure = false, isException = true)
+        val broken = PageSecurity(secure = false, mixedPassive = MixedContent.LOADED)
+        val plain = PageSecurity(secure = false)
+        assertEquals(ConnectionKind.KRUNK_PAGE, connectionKind(newTab, internal = true, security = null))
+        assertEquals(ConnectionKind.NONE, connectionKind(bank, internal = false, security = null))
+        assertEquals(ConnectionKind.NONE, connectionKind("about:blank", internal = false, security = plain))
+        assertEquals(ConnectionKind.SECURE, connectionKind(bank, internal = false, security = secureInfo))
+        assertEquals(ConnectionKind.EXCEPTION, connectionKind(bank, internal = false, security = exception))
+        assertEquals(ConnectionKind.BROKEN, connectionKind(bank, internal = false, security = broken))
+        assertTrue(broken.mixedLoaded)
+        assertEquals(
+            ConnectionKind.NOT_SECURE,
+            connectionKind("http://bank.example/", internal = false, security = plain),
+        )
+        assertEquals(
+            ConnectionKind.NOT_SECURE,
+            connectionKind("HTTP://bank.example/", internal = false, security = plain),
+        )
+    }
 }

@@ -390,7 +390,7 @@ class KrunkSession(
             session: GeckoSession,
             securityInfo: GeckoSession.ProgressDelegate.SecurityInformation,
         ) {
-            set { it.securityChanged(securityInfo.isSecure) }
+            set { it.securityChanged(pageSecurity(securityInfo)) }
         }
 
         override fun onSessionStateChange(session: GeckoSession, sessionState: GeckoSession.SessionState) {
@@ -986,3 +986,21 @@ class KrunkSession(
 
 /** A page's title for a share is a label, not content: bounded. */
 private const val MAX_SHARE_TITLE = 200
+
+/** GeckoView's report on a page's connection as Krunk keeps it. */
+private fun pageSecurity(info: GeckoSession.ProgressDelegate.SecurityInformation): PageSecurity {
+    fun mixed(mode: Int) = when (mode) {
+        GeckoSession.ProgressDelegate.SecurityInformation.CONTENT_LOADED -> MixedContent.LOADED
+        GeckoSession.ProgressDelegate.SecurityInformation.CONTENT_BLOCKED -> MixedContent.BLOCKED
+        else -> MixedContent.NONE
+    }
+    return PageSecurity(
+        secure = info.isSecure,
+        host = info.host.orEmpty(),
+        origin = info.origin.orEmpty(),
+        isException = info.isException,
+        mixedActive = mixed(info.mixedModeActive),
+        mixedPassive = mixed(info.mixedModePassive),
+        certificate = info.certificate,
+    )
+}
