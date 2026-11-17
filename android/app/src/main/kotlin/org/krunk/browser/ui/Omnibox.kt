@@ -1,13 +1,13 @@
 package org.krunk.browser.ui
 
 import android.util.Log
-import java.net.HttpURLConnection
 import java.net.URL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.krunk.browser.KrunkApp
 import org.krunk.browser.core.KrunkCore
 import org.krunk.browser.core.readCapped
+import org.krunk.browser.vpn.VpnRoute
 import org.krunk.ffi.AddressSuggestion
 import org.krunk.ffi.OmniboxResult
 import org.krunk.ffi.SearchEngineId
@@ -37,6 +37,7 @@ class Omnibox(private val core: KrunkCore, private val userAgent: () -> String =
         rows: List<AddressSuggestion>,
         typed: String,
         engine: SearchEngineId,
+        forPrivateTab: Boolean,
     ): List<AddressSuggestion>? {
         val template = core.settings.searchTemplate
         if (!suggestWanted(typed, template)) return null
@@ -45,7 +46,9 @@ class Omnibox(private val core: KrunkCore, private val userAgent: () -> String =
         // switch suggestions off for that text.
         val key = "$engine\n$typed"
         val remote = synchronized(cache) { cache[key] }
-            ?: withContext(Dispatchers.IO) { fetch(url) }?.also { synchronized(cache) { cache[key] = it } }
+            ?: withContext(Dispatchers.IO) {
+                fetch(url, forPrivateTab)
+            }?.also { synchronized(cache) { cache[key] = it } }
             ?: return null
         if (remote.isEmpty()) return null
         return mergeSearchSuggestions(rows, typed, remote, template)
@@ -57,9 +60,9 @@ class Omnibox(private val core: KrunkCore, private val userAgent: () -> String =
     }
 
     /** The engine's suggestions, or null when the request failed (not worth remembering). */
-    private fun fetch(url: String): List<String>? {
+    private fun fetch(url: String, forPrivateTab: Boolean): List<String>? {
         return try {
-            val conn = URL(url).openConnection() as HttpURLConnection
+            val conn = VpnRoute.open(URL(url), forPrivateTab)
             conn.connectTimeout = 3000
             conn.readTimeout = 3000
             conn.useCaches = false

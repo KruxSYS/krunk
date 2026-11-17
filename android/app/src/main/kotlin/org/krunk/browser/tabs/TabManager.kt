@@ -925,7 +925,7 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
 
     override fun onIcons(session: KrunkSession, pageUrl: String, icons: List<IconCandidate>) {
         if (session.private) return
-        scope.launch { favicons.fetch(pageUrl, icons) { refresh() } }
+        scope.launch { favicons.fetch(pageUrl, icons, session.private) { refresh() } }
     }
 
     private val lastSeen = HashMap<UInt, PageState>()

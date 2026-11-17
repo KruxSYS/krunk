@@ -4,10 +4,10 @@ import android.util.Log
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InterruptedIOException
-import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
 import java.net.URL
 import javax.net.ssl.SSLException
+import org.krunk.browser.vpn.VpnRoute
 import org.krunk.ffi.HttpAnswer
 import org.krunk.ffi.SyncTransport
 import org.krunk.ffi.TransportException
@@ -39,7 +39,8 @@ class SyncHttp(
         if (method !in METHODS || !pathAllowed(path)) throw TransportException.Offline("refused request")
         val url = base.trimEnd('/') + "/api/v1/" + path
         val conn = try {
-            URL(url).openConnection() as HttpURLConnection
+            // Through the VPN when it is on for every tab; refused while it is down (0.10.0).
+            VpnRoute.open(URL(url), forPrivateTab = false)
         } catch (e: IOException) {
             throw TransportException.Offline(e.javaClass.simpleName)
         }

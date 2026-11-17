@@ -32,6 +32,12 @@ import org.krunk.browser.vault.VaultBackends
 import org.krunk.browser.vault.VaultController
 import org.krunk.browser.vault.VaultLockSetting
 import org.krunk.browser.vault.VaultState
+import org.krunk.browser.vpn.NoVpnEngine
+import org.krunk.browser.vpn.VpnController
+import org.krunk.browser.vpn.VpnGuardSink
+import org.krunk.browser.vpn.VpnNetworkWatch
+import org.krunk.browser.vpn.VpnSettingsFile
+import org.krunk.browser.vpn.VpnStore
 import org.krunk.ffi.KrunkSync
 import org.krunk.ffi.coreVersion
 import org.krunk.ffi.webOrigin
@@ -55,6 +61,13 @@ class KrunkApp : Application() {
                 runCatching { core.store.kvSet(AllowList.KV_LISTS_UPDATED, at.toString()) }
             }
         }
+
+        // The VPN (0.10.0) starts before the engine when "Connect when Krunk starts" is on, so its
+        // port is known for the engine's start-up prefs; on and not up: the engine starts closed.
+        // MERGE(M2): pass `vpnPrefs = if (vpn.isOn()) EngineConfig.vpnPrefs(vpnPort) else emptyList()`
+        // to GeckoEngine below once M2's parameter exists; until then the port is not used.
+        @Suppress("UNUSED_VARIABLE")
+        val vpnPort = vpn.startAtLaunch()
         GeckoEngine(this, automaticUpdates = settings.filterAutoUpdate, blockerHost = host).also {
             it.applySettings(settings)
             DebugHooks.install(this, it, core)
@@ -66,9 +79,38 @@ class KrunkApp : Application() {
             vaultScope.launch {
                 vault.state.collect { _ -> it.logins.onVaultState(loginVault.state(), System.currentTimeMillis()) }
             }
+            // The guard (made with the engine) gets the VPN's current values.
+            vpn.resendGuard()
             Log.i(TAG, "engine ready after ${SystemClock.uptimeMillis() - startedAt} ms")
         }
     }
+
+    /**
+     * Where the VPN's proxy values go for the engine's guard (contract §3).
+     * MERGE(M2): `if (engineMade) engine.blocker.setVpn(VpnGuardConfig(on, pending, port, pass, scope, lan))`;
+     * does nothing until M2's `BlockerController.setVpn` exists. It must not make the engine.
+     */
+    private val vpnGuard = VpnGuardSink { _, _, _, _, _, _ -> }
+
+    private val vpnLazy = lazy {
+        VpnController(
+            // MERGE(M1): `FfiVpnEngine()` once `org.krunk.ffi.KrunkVpn` is built
+            // (vpn/FfiVpnEngine.kt.pending -> FfiVpnEngine.kt).
+            engine = NoVpnEngine,
+            store = VpnStore.onDevice(filesDir),
+            settingsFile = VpnSettingsFile(VpnStore.dir(filesDir)),
+            io = Dispatchers.IO,
+            guard = vpnGuard,
+            log = { Log.i(TAG, it) },
+        ).also { c ->
+            c.load()
+            // Wi-Fi <-> mobile, new addresses: the tunnel rebinds and handshakes at once.
+            VpnNetworkWatch(c::networkChanged).register(this)
+        }
+    }
+
+    /** The in-browser VPN (0.10.0); made with the engine (main process only). */
+    val vpn: VpnController by vpnLazy
 
     private val tabsLazy = lazy { TabManager(this, core, engine).also(::startSiteFeatures) }
     val tabs: TabManager by tabsLazy
@@ -223,6 +265,8 @@ class KrunkApp : Application() {
                         // Sync's schedule runs only while Krunk is on screen (no request before
                         // sign-in: the schedule only reads local state until then).
                         sync.onForeground()
+                        // A VPN that failed or is reconnecting tries again now (plan §6.1).
+                        if (vpnLazy.isInitialized()) vaultScope.launch { vpn.onForeground() }
                     }
 
                     override fun onStop(owner: LifecycleOwner) {

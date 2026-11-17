@@ -356,7 +356,7 @@ class KrunkSession(
     private fun readCertificate(url: String, code: Int) {
         val (host, port) = CertErrors.hostAndPort(url) ?: return
         scope.launch {
-            val cert = CertProbe.fetch(host, port) ?: return@launch
+            val cert = CertProbe.fetch(host, port, private) ?: return@launch
             val error =
                 CertErrors.fromCertificate(url, code, cert, private, System.currentTimeMillis()) ?: return@launch
             set { state ->

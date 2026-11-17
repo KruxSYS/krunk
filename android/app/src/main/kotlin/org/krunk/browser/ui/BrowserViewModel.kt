@@ -277,7 +277,7 @@ class BrowserViewModel(app: Application) : AndroidViewModel(app) {
             }
             if (!private && settings.value.searchSuggestions) {
                 delay(150)
-                val merged = omnibox.withRemote(local.rows, text, settings.value.searchEngine)
+                val merged = omnibox.withRemote(local.rows, text, settings.value.searchEngine, private)
                 if (merged != null && _typed.value == text) _suggestions.value = merged
             }
         }

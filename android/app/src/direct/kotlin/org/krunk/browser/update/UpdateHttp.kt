@@ -7,6 +7,7 @@ import java.net.URL
 import java.security.MessageDigest
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.ensureActive
+import org.krunk.browser.vpn.VpnRoute
 
 /**
  * Krunk's own update requests, through the platform's HTTP stack (not the engine: no cookies, no
@@ -18,7 +19,8 @@ class UpdateHttp(private val userAgent: String) {
     class HttpFailure(message: String) : IOException(message)
 
     private fun open(url: String): HttpURLConnection {
-        val conn = URL(url).openConnection() as HttpURLConnection
+        // Through the VPN when it is on for every tab; refused while it is down (0.10.0).
+        val conn = VpnRoute.open(URL(url), forPrivateTab = false)
         conn.instanceFollowRedirects = false
         conn.useCaches = false
         conn.connectTimeout = 15_000

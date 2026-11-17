@@ -19,4 +19,6 @@
     <exclude domain="file" path="downloads-part" />
     <!-- Krunk account and sync (files/krunk-sync, 0.6.0): the sign-in and sync's keys. -->
     <exclude domain="file" path="krunk-sync" />
+    <!-- The VPN (files/krunk-vpn, 0.10.0): profiles and credentials, never synced. -->
+    <exclude domain="file" path="krunk-vpn" />
 </full-backup-content>

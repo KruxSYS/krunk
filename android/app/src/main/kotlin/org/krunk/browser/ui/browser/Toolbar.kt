@@ -222,7 +222,7 @@ fun BrowserToolbar(
             // Only when the engine gave no certificate for an https page, and only on request.
             probe = CertErrors.hostAndPort(pageUrl)
                 ?.takeIf { connection == ConnectionKind.BROKEN && security?.certificate == null }
-                ?.let { (host, port) -> suspend { CertProbe.fetch(host, port) } },
+                ?.let { (host, port) -> suspend { CertProbe.fetch(host, port, tab.private) } },
         )
     }
     historyList?.let { items ->

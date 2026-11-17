@@ -10,6 +10,10 @@ import javax.net.ssl.X509ExtendedTrustManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.krunk.browser.KrunkApp
+import org.krunk.browser.vpn.Route
+import org.krunk.browser.vpn.VpnNotConnected
+import org.krunk.browser.vpn.VpnRoute
+import org.krunk.browser.vpn.VpnSockets
 
 /**
  * The certificate a site presents, read from the site itself.
@@ -24,25 +28,49 @@ import org.krunk.browser.KrunkApp
  *
  * The connection is unauthenticated by design (it only exists to see the certificate) and sends
  * nothing but the handshake.
+ *
+ * With the VPN on (0.10.0) the probe takes the same way as the page ([VpnRoute], the private flag
+ * of the tab): through the VPN's proxy with Krunk's own CONNECT, or not at all while it is down.
  */
 object CertProbe {
     private const val CONNECT_TIMEOUT_MS = 5_000
     private const val READ_TIMEOUT_MS = 5_000
 
     /** The site's certificate, or null when it cannot be read (unreachable, not TLS, too slow). */
-    suspend fun fetch(host: String, port: Int): X509Certificate? = withContext(Dispatchers.IO) {
-        runCatching { handshake(host, port) }
+    suspend fun fetch(host: String, port: Int, forPrivateTab: Boolean): X509Certificate? = withContext(Dispatchers.IO) {
+        runCatching { handshake(host, port, forPrivateTab) }
             .onFailure { Log.d(KrunkApp.TAG, "certificate probe of ${CertErrors.hostPort(host, port)} failed: $it") }
             .getOrNull()
     }
 
-    private fun handshake(host: String, port: Int): X509Certificate? {
+    private fun handshake(host: String, port: Int, forPrivateTab: Boolean): X509Certificate? {
         val context = SSLContext.getInstance("TLS")
         context.init(null, arrayOf(TrustAny), null)
-        val socket = context.socketFactory.createSocket() as SSLSocket
+        val socket = when (VpnRoute.decide(host, forPrivateTab)) {
+            Route.BLOCKED -> throw VpnNotConnected()
+
+            Route.PROXY -> {
+                val tunnel = VpnSockets.connectThrough(host, port, CONNECT_TIMEOUT_MS)
+                try {
+                    context.socketFactory.createSocket(tunnel, host, port, true) as SSLSocket
+                } catch (e: Exception) {
+                    runCatching { tunnel.close() }
+                    throw e
+                }
+            }
+
+            Route.DIRECT -> (context.socketFactory.createSocket() as SSLSocket).also {
+                try {
+                    it.soTimeout = READ_TIMEOUT_MS
+                    it.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
+                } catch (e: Exception) {
+                    runCatching { it.close() }
+                    throw e
+                }
+            }
+        }
         try {
             socket.soTimeout = READ_TIMEOUT_MS
-            socket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
             // The name the site is reached by, as a browser sends it (never for an IP address).
             if (!isIpAddress(host)) {
                 socket.sslParameters = socket.sslParameters.apply { serverNames = listOf(SNIHostName(host)) }

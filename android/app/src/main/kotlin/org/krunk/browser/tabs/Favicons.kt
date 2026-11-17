@@ -5,7 +5,6 @@ import android.graphics.BitmapFactory
 import android.util.Log
 import android.util.LruCache
 import java.io.ByteArrayOutputStream
-import java.net.HttpURLConnection
 import java.net.URL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -13,6 +12,7 @@ import org.krunk.browser.KrunkApp
 import org.krunk.browser.core.KrunkCore
 import org.krunk.browser.core.readCapped
 import org.krunk.browser.engine.IconCandidate
+import org.krunk.browser.vpn.VpnRoute
 import org.krunk.ffi.hostOf
 import org.krunk.ffi.nowMs
 
@@ -59,7 +59,8 @@ class Favicons(private val core: KrunkCore, private val userAgent: () -> String 
         return bmp
     }
 
-    suspend fun fetch(pageUrl: String, icons: List<IconCandidate>, onDone: () -> Unit) {
+    /** [forPrivateTab]: the page is in a private tab (decides the VPN route, see [VpnRoute]). */
+    suspend fun fetch(pageUrl: String, icons: List<IconCandidate>, forPrivateTab: Boolean, onDone: () -> Unit) {
         val host = hostOf(pageUrl) ?: return
         // A host without a usable icon is not asked again on every page load.
         if (cache.get(host) != null || host in inFlight || host in missing) return
@@ -76,7 +77,7 @@ class Favicons(private val core: KrunkCore, private val userAgent: () -> String 
                 ).distinct()
             for (href in candidates.take(3)) {
                 // Only the small copy is kept, in memory as on disk.
-                val bmp = withContext(Dispatchers.IO) { download(href)?.let(::scaled) } ?: continue
+                val bmp = withContext(Dispatchers.IO) { download(href, forPrivateTab)?.let(::scaled) } ?: continue
                 val png = withContext(Dispatchers.IO) { encode(bmp) }
                 if (png.size <= MAX_PNG) {
                     withContext(Dispatchers.IO) { runCatching { core.store.setFavicon(host, png, nowMs()) } }
@@ -111,10 +112,10 @@ class Favicons(private val core: KrunkCore, private val userAgent: () -> String 
         return s
     }
 
-    private fun download(href: String): Bitmap? {
+    private fun download(href: String, forPrivateTab: Boolean): Bitmap? {
         if (href.isEmpty() || !(href.startsWith("https://") || href.startsWith("http://"))) return null
         return try {
-            val conn = URL(href).openConnection() as HttpURLConnection
+            val conn = VpnRoute.open(URL(href), forPrivateTab)
             conn.connectTimeout = 5000
             conn.readTimeout = 5000
             conn.instanceFollowRedirects = true
