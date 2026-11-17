@@ -246,7 +246,13 @@ pub(crate) async fn serve_client(mut client: TcpStream, shared: Arc<Shared>, aut
     if reply(&mut client, REP_OK).await.is_err() {
         return;
     }
-    if crate::proxy::pipe_tunnel(&mut client, upstream).await {
+    // When the tunnel goes down the connection is reset at once (see proxy::handle), so the
+    // engine does not wait for its own timeout on a pooled connection.
+    let cut = tokio::select! {
+        cut = crate::proxy::pipe_tunnel(&mut client, upstream) => cut,
+        _ = shared.disconnected() => true,
+    };
+    if cut {
         crate::proxy::abort(&client);
     }
 }

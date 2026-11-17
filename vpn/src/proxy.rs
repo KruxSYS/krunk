@@ -522,9 +522,23 @@ async fn handle(mut client: TcpStream, shared: Arc<Shared>, auth: Option<Arc<Pro
             return;
         }
     };
-    let cut = match req.target {
-        Target::Connect { .. } => tunnel(&mut client, upstream, leftover).await,
-        Target::Forward { .. } => forward(&mut client, upstream, &req, leftover, IDLE_BODY).await,
+    let piped = async {
+        match req.target {
+            Target::Connect { .. } => tunnel(&mut client, upstream, leftover).await,
+            Target::Forward { .. } => forward(&mut client, upstream, &req, leftover, IDLE_BODY).await,
+        }
+    };
+    let cut = if auth.is_some() {
+        // Android: when the tunnel goes down, a connection piped through it is reset at once
+        // instead of hanging until the engine's own timeout (a pooled keep-alive connection
+        // otherwise kept a page loading for about a minute, a9 T5). The engine then retries on
+        // a new connection and gets the fail-closed refusal. Windows keeps its 0.14 behaviour.
+        tokio::select! {
+            cut = piped => cut,
+            _ = shared.disconnected() => true,
+        }
+    } else {
+        piped.await
     };
     if cut {
         abort(&client);

@@ -8,7 +8,7 @@
 //! ```
 //! The tests run one at a time (one test stops and starts the servers).
 
-use krunk_vpn::{import, Credentials, State, Status, Vpn};
+use krunk_vpn::{import, Credentials, ProxyAuth, State, Status, Vpn};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::process::Command;
@@ -248,4 +248,69 @@ fn server_stopped_gives_503_then_reconnects() {
     let last = ovpn.log.lock().unwrap().last().cloned().unwrap();
     ovpn.vpn.stop();
     assert_eq!(last.state, State::Connected);
+}
+
+/// An authenticated SOCKS5 CONNECT to `ip:port` (Android's proxy); the stream after reply 0.
+fn socks_connect(proxy: SocketAddr, hex: &str, ip: [u8; 4], port: u16) -> std::io::Result<TcpStream> {
+    let mut s = TcpStream::connect(proxy)?;
+    s.set_read_timeout(Some(Duration::from_secs(30)))?;
+    let mut m = vec![5, 1, 2, 1, 5];
+    m.extend_from_slice(b"krunk");
+    m.push(hex.len() as u8);
+    m.extend_from_slice(hex.as_bytes());
+    m.extend_from_slice(&[5, 1, 0, 1]);
+    m.extend_from_slice(&ip);
+    m.extend_from_slice(&port.to_be_bytes());
+    s.write_all(&m)?;
+    let mut r = [0u8; 14];
+    s.read_exact(&mut r)?;
+    if r[..4] != [5, 2, 1, 0] || r[5] != 0 {
+        return Err(std::io::Error::other(format!("refused: {r:?}")));
+    }
+    Ok(s)
+}
+
+/// Android 0.10.0 (a9 T5): a connection piped through the tunnel is reset as soon as the tunnel
+/// goes down, so the engine does not wait a minute for its own timeout on a pooled connection.
+#[cfg(feature = "openvpn")]
+#[test]
+fn authenticated_pipes_are_reset_when_the_tunnel_drops() {
+    let Some(_g) = testbed() else { return };
+    let token: [u8; 32] = std::array::from_fn(|i| i as u8 * 3);
+    let hex: String = token.iter().map(|b| format!("{b:02x}")).collect();
+    let (profile, _) = import("wg.conf", &state_file("wg", "/state/wg/client.conf")).expect("import");
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let l = log.clone();
+    let vpn = Vpn::start_authenticated(
+        profile,
+        None,
+        ProxyAuth::new(&token),
+        Box::new(move |s| l.lock().unwrap().push(s.clone())),
+    )
+    .expect("start");
+    let r = Running { vpn, log };
+    wait_state(&r, State::Connected, Duration::from_secs(30));
+    let proxy = r.vpn.proxy_addr();
+    // An idle piped connection to the inside echo, like a pooled keep-alive connection.
+    let mut idle = socks_connect(proxy, &hex, [10, 77, 0, 10], 80).expect("tunnel up");
+    let restart = Restart("wg");
+    compose(&["stop", "-t", "1", "wg"]);
+    // New connection attempts make the tunnel notice the dead peer.
+    let t = Instant::now();
+    while r.vpn.status().state == State::Connected {
+        assert!(t.elapsed() < Duration::from_secs(45), "tunnel never noticed the server stopped");
+        let _ = socks_connect(proxy, &hex, [10, 77, 0, 10], 80);
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    let down_at = Instant::now();
+    idle.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let mut b = [0u8; 16];
+    match idle.read(&mut b) {
+        Ok(0) | Err(_) if down_at.elapsed() < Duration::from_secs(5) => {}
+        other => {
+            panic!("idle piped connection not reset when the tunnel dropped: {other:?} after {:?}", down_at.elapsed())
+        }
+    }
+    drop(restart);
+    r.vpn.stop();
 }
