@@ -195,7 +195,7 @@ async fn an_expired_denied_or_full_link_still_verifies() {
          SELECT gen_random_uuid(), a.id, n, 'windows', 'old', '0.1.0' FROM accounts a, generate_series(0, $1 - 1) n
          WHERE a.email = 'full@example.org'",
     )
-    .bind(e.state.config.quota_max_devices as i32)
+    .bind(e.state.config.quota_max_devices)
     .execute(&e.db)
     .await
     .unwrap();
