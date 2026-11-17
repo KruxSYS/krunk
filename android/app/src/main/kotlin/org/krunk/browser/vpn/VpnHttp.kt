@@ -1,159 +1,40 @@
 package org.krunk.browser.vpn
 
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.FileNotFoundException
 import java.io.FilterInputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
-import java.net.InetAddress
-import java.net.InetSocketAddress
+import java.net.HttpURLConnection
 import java.net.Socket
+import java.net.URL
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SNIHostName
+import javax.net.ssl.SSLPeerUnverifiedException
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
 
 /**
- * Krunk's own CONNECT through the VPN's proxy, for what does not go through HttpURLConnection
- * (the certificate probe) and for [VpnTunnelConnection].
- *
- * The proxy closes a connection with a missing or wrong credential without any answer: an EOF
- * before the reply is [VpnNotConnected], never a reason to go direct.
+ * Krunk's own HTTP/1.1 client through the VPN's SOCKS5 proxy ([VpnSocks]), as an
+ * [HttpURLConnection] so that the call sites keep their code: one request per connection
+ * (`Connection: close`), no cache, no compression, answers with Content-Length, chunked or until
+ * close. `https` gets the platform's TLS with SNI and host-name verification. Redirects are
+ * followed (at most [MAX_REDIRECTS], GET/HEAD only, http/https only, always through the VPN)
+ * when [getInstanceFollowRedirects] is set, as the platform does. [tlsSocket] is replaced in JVM
+ * tests.
  */
-object VpnSockets {
-    const val LOOPBACK = "127.0.0.1"
-    private const val MAX_HEAD = 8 * 1024
-
-    /**
-     * A socket to [host]:[port] through the proxy of [VpnRoute.state], ready for TLS; the caller
-     * closes it. [VpnNotConnected] when there is no proxy now.
-     */
-    @Throws(IOException::class)
-    fun connectThrough(host: String, port: Int, timeoutMs: Int): Socket {
-        val s = VpnRoute.state
-        val proxyPort = s.port ?: throw VpnNotConnected()
-        val token = s.tokenHex ?: throw VpnNotConnected()
-        return connectThrough(host, port, timeoutMs, proxyPort, token)
-    }
-
-    @Throws(IOException::class)
-    fun connectThrough(host: String, port: Int, timeoutMs: Int, proxyPort: Int, tokenHex: String): Socket {
-        val socket = Socket()
-        try {
-            socket.soTimeout = timeoutMs
-            socket.tcpNoDelay = true
-            socket.connect(InetSocketAddress(InetAddress.getByName(LOOPBACK), proxyPort), timeoutMs)
-            val target = authority(host, port)
-            val head = "CONNECT $target HTTP/1.1\r\n" +
-                "Host: $target\r\n" +
-                "Proxy-Authorization: ${VpnRoute.proxyAuthorization(tokenHex)}\r\n" +
-                "\r\n"
-            socket.getOutputStream().apply {
-                write(head.toByteArray(Charsets.US_ASCII))
-                flush()
-            }
-            val reply = readHead(socket.getInputStream()) ?: throw VpnNotConnected()
-            val code = statusCode(reply.firstOrNull()) ?: throw IOException("bad proxy reply")
-            when (code) {
-                200 -> return socket
-                503 -> throw VpnNotConnected()
-                else -> throw IOException("proxy answered $code")
-            }
-        } catch (e: IOException) {
-            runCatching { socket.close() }
-            throw e
-        }
-    }
-
-    /** `host:port`, IPv6 literals in brackets. */
-    fun authority(host: String, port: Int): String {
-        val h = host.removePrefix("[").removeSuffix("]")
-        return if (':' in h) "[$h]:$port" else "$h:$port"
-    }
-
-    /** "HTTP/1.1 200 Connection established" → 200. */
-    fun statusCode(line: String?): Int? {
-        val parts = line?.split(' ') ?: return null
-        if (parts.size < 2 || !parts[0].startsWith("HTTP/1.")) return null
-        return parts[1].toIntOrNull()?.takeIf { it in 100..999 }
-    }
-
-    /**
-     * The lines of an HTTP head, read byte by byte (nothing after it is consumed: TLS follows).
-     * Null on EOF before the first byte.
-     */
-    @Throws(IOException::class)
-    fun readHead(input: InputStream): List<String>? {
-        val buf = ByteArrayOutputStream()
-        while (true) {
-            val b = input.read()
-            if (b < 0) {
-                if (buf.size() == 0) return null
-                throw IOException("proxy closed the connection")
-            }
-            buf.write(b)
-            if (buf.size() > MAX_HEAD) throw IOException("proxy reply too long")
-            val bytes = buf.toByteArray()
-            val n = bytes.size
-            if (n >= 4 && bytes[n - 4] == '\r'.code.toByte() && bytes[n - 3] == '\n'.code.toByte() &&
-                bytes[n - 2] == '\r'.code.toByte() && bytes[n - 1] == '\n'.code.toByte()
-            ) {
-                return String(bytes, 0, n - 4, Charsets.ISO_8859_1).split("\r\n")
-            }
-        }
-    }
-}
-
-/**
- * An [SSLSocketFactory] whose sockets reach their host through [VpnSockets.connectThrough]. Only
- * the `createSocket(host, port)` forms make sense; wrapping an already connected socket would
- * mean a connection was opened outside the VPN, so that form is refused.
- */
-class TunnelSslSocketFactory(
-    private val timeoutMs: Int,
-    private val tls: SSLSocketFactory = SSLSocketFactory.getDefault() as SSLSocketFactory,
-) : SSLSocketFactory() {
-    override fun getDefaultCipherSuites(): Array<String> = tls.defaultCipherSuites
-
-    override fun getSupportedCipherSuites(): Array<String> = tls.supportedCipherSuites
-
-    override fun createSocket(host: String, port: Int): Socket {
-        val plain = VpnSockets.connectThrough(host, port, timeoutMs)
-        return try {
-            (tls.createSocket(plain, host, port, true) as SSLSocket).apply {
-                // The name is checked as the platform's HttpsURLConnection does.
-                sslParameters = sslParameters.apply { endpointIdentificationAlgorithm = "HTTPS" }
-            }
-        } catch (e: IOException) {
-            runCatching { plain.close() }
-            throw e
-        }
-    }
-
-    override fun createSocket(s: Socket?, host: String?, port: Int, autoClose: Boolean): Socket =
-        throw IOException("refused: a socket opened outside the VPN")
-
-    override fun createSocket(host: String, port: Int, localHost: InetAddress?, localPort: Int): Socket =
-        createSocket(host, port)
-
-    override fun createSocket(host: InetAddress, port: Int): Socket = createSocket(host.hostAddress ?: "", port)
-
-    override fun createSocket(address: InetAddress, port: Int, localAddress: InetAddress?, localPort: Int): Socket =
-        createSocket(address, port)
-}
-
-/**
- * A minimal HTTP/1.1 client over Krunk's own CONNECT ([VpnRoute.useConnectHelper]): one request
- * per connection (`Connection: close`), no redirects, no cache, no compression, answers with
- * Content-Length, chunked or until close. It covers what Krunk's own call sites use of
- * HttpURLConnection. [tlsSocket] is replaced in JVM tests (plain HTTP behind the CONNECT).
- */
-class VpnTunnelConnection internal constructor(
-    url: java.net.URL,
+class VpnHttp internal constructor(
+    url: URL,
     private val proxyPort: Int,
     private val tokenHex: String,
     private val tlsSocket: (Socket, String, Int) -> Socket,
-) : java.net.HttpURLConnection(url) {
-    constructor(url: java.net.URL, proxyPort: Int, tokenHex: String) : this(url, proxyPort, tokenHex, ::defaultTls)
+) : HttpURLConnection(url) {
+    constructor(url: URL, proxyPort: Int, tokenHex: String) : this(url, proxyPort, tokenHex, ::defaultTls)
 
+    /** Where the request goes now (changes with redirects). */
+    private var target: URL = url
     private val requestProps = LinkedHashMap<String, String>()
     private var socket: Socket? = null
     private var body: ByteArrayOutputStream? = null
@@ -164,9 +45,10 @@ class VpnTunnelConnection internal constructor(
     private var statusText = ""
 
     init {
-        instanceFollowRedirects = false
         useCaches = false
     }
+
+    override fun getURL(): URL = target
 
     override fun setRequestProperty(key: String, value: String?) {
         super.setRequestProperty(key, value)
@@ -183,12 +65,15 @@ class VpnTunnelConnection internal constructor(
 
     override fun connect() {
         if (connected) return
-        val host = url.host
-        val port = if (url.port > 0) url.port else url.defaultPort
+        val u = target
+        val https = u.protocol.equals("https", ignoreCase = true)
+        if (!https && !u.protocol.equals("http", ignoreCase = true)) throw IOException("not http")
+        val host = u.host
+        val port = if (u.port > 0) u.port else u.defaultPort
         val timeout = if (connectTimeout > 0) connectTimeout else 30_000
-        val plain = VpnSockets.connectThrough(host, port, timeout, proxyPort, tokenHex)
+        val plain = VpnSocks.connect(proxyPort, tokenHex, host, port, timeout)
         val s = try {
-            tlsSocket(plain, host, port)
+            if (https) tlsSocket(plain, host, port) else plain
         } catch (e: IOException) {
             runCatching { plain.close() }
             throw e
@@ -207,21 +92,37 @@ class VpnTunnelConnection internal constructor(
 
     private fun answer() {
         if (answered) return
+        var hops = 0
+        while (true) {
+            exchange()
+            val location = header("Location")
+            val redirect = instanceFollowRedirects && status in REDIRECTS && location != null &&
+                (method == "GET" || method == "HEAD") && hops < MAX_REDIRECTS
+            if (!redirect) break
+            val next = runCatching { URL(target, location) }.getOrNull()
+            if (next == null || !(next.protocol == "https" || next.protocol == "http")) break
+            hops++
+            disconnect()
+            connected = false
+            target = next
+        }
+        answered = true
+    }
+
+    /** One request and the head of its answer. */
+    private fun exchange() {
         connect()
         val s = socket ?: throw IOException("not connected")
         val payload = body?.toByteArray()
-        val path = (url.path.ifEmpty { "/" }) + (url.query?.let { "?$it" } ?: "")
+        val u = target
+        val path = (u.path.ifEmpty { "/" }) + (u.query?.let { "?$it" } ?: "")
         val head = StringBuilder()
         head.append(method).append(' ').append(path).append(" HTTP/1.1\r\n")
-        head.append("Host: ").append(if (url.port > 0) "${url.host}:${url.port}" else url.host).append("\r\n")
+        head.append("Host: ").append(if (u.port > 0) "${u.host}:${u.port}" else u.host).append("\r\n")
         head.append("Connection: close\r\n")
         for ((k, v) in requestProps) {
             val lower = k.lowercase()
-            if (lower == "host" || lower == "connection" || lower == "proxy-authorization" ||
-                lower == "content-length"
-            ) {
-                continue
-            }
+            if (lower in SKIPPED) continue
             if ('\r' in v || '\n' in v || '\r' in k || '\n' in k) continue
             head.append(k).append(": ").append(v).append("\r\n")
         }
@@ -235,8 +136,8 @@ class VpnTunnelConnection internal constructor(
         var lines: List<String>
         var code: Int
         while (true) {
-            lines = VpnSockets.readHead(input) ?: throw IOException("connection closed without an answer")
-            code = VpnSockets.statusCode(lines.first()) ?: throw IOException("bad answer")
+            lines = readHead(input) ?: throw IOException("connection closed without an answer")
+            code = statusCode(lines.first()) ?: throw IOException("bad answer")
             // Interim answers (100 Continue, 103 Early Hints) are skipped.
             if (code !in 100..199) break
         }
@@ -249,12 +150,11 @@ class VpnTunnelConnection internal constructor(
         val noBody = method == "HEAD" || code == 204 || code == 304
         val length = header("Content-Length")?.toLongOrNull()
         responseStream = when {
-            noBody -> java.io.ByteArrayInputStream(ByteArray(0))
+            noBody -> ByteArrayInputStream(ByteArray(0))
             header("Transfer-Encoding")?.contains("chunked", ignoreCase = true) == true -> ChunkedStream(input)
             length != null -> LimitedStream(input, length)
             else -> input
         }
-        answered = true
     }
 
     private fun header(name: String): String? =
@@ -294,10 +194,10 @@ class VpnTunnelConnection internal constructor(
     override fun getInputStream(): InputStream {
         answer()
         if (status >= 400) {
-            if (status == 404 || status == 410) throw java.io.FileNotFoundException(url.toString())
+            if (status == 404 || status == 410) throw FileNotFoundException(target.toString())
             throw IOException("Server returned HTTP response code: $status")
         }
-        return responseStream ?: java.io.ByteArrayInputStream(ByteArray(0))
+        return responseStream ?: ByteArrayInputStream(ByteArray(0))
     }
 
     override fun getErrorStream(): InputStream? = if (answered && status >= 400) responseStream else null
@@ -371,16 +271,65 @@ class VpnTunnelConnection internal constructor(
     }
 
     companion object {
-        private fun defaultTls(plain: Socket, host: String, port: Int): Socket {
-            val factory = SSLSocketFactory.getDefault() as SSLSocketFactory
+        const val MAX_REDIRECTS = 5
+        private val REDIRECTS = setOf(301, 302, 303, 307, 308)
+        private val SKIPPED = setOf("host", "connection", "content-length", "transfer-encoding")
+        private const val MAX_HEAD = 64 * 1024
+
+        /** TLS over a tunnel socket with [factory]: SNI for names, the platform's name check. */
+        fun tls(plain: Socket, host: String, port: Int, factory: SSLSocketFactory = defaultFactory()): SSLSocket {
             val tls = factory.createSocket(plain, host, port, true) as SSLSocket
-            tls.sslParameters = tls.sslParameters.apply { endpointIdentificationAlgorithm = "HTTPS" }
-            tls.startHandshake()
-            if (!javax.net.ssl.HttpsURLConnection.getDefaultHostnameVerifier().verify(host, tls.session)) {
+            try {
+                tls.sslParameters = tls.sslParameters.apply {
+                    endpointIdentificationAlgorithm = "HTTPS"
+                    if (!isAddress(host)) serverNames = listOf(SNIHostName(host))
+                }
+                tls.startHandshake()
+                return tls
+            } catch (e: IOException) {
                 runCatching { tls.close() }
-                throw javax.net.ssl.SSLPeerUnverifiedException("certificate does not match $host")
+                throw e
+            }
+        }
+
+        private fun defaultFactory() = SSLSocketFactory.getDefault() as SSLSocketFactory
+
+        private fun defaultTls(plain: Socket, host: String, port: Int): Socket {
+            val tls = tls(plain, host, port)
+            if (!HttpsURLConnection.getDefaultHostnameVerifier().verify(host, tls.session)) {
+                runCatching { tls.close() }
+                throw SSLPeerUnverifiedException("certificate does not match $host")
             }
             return tls
+        }
+
+        private fun isAddress(host: String) = ':' in host || host.all { it in '0'..'9' || it == '.' }
+
+        /** "HTTP/1.1 200 OK" → 200. */
+        fun statusCode(line: String?): Int? {
+            val parts = line?.split(' ') ?: return null
+            if (parts.size < 2 || !parts[0].startsWith("HTTP/1.")) return null
+            return parts[1].toIntOrNull()?.takeIf { it in 100..999 }
+        }
+
+        /** The lines of an HTTP head; null on EOF before its first byte. */
+        fun readHead(input: InputStream): List<String>? {
+            val buf = ByteArrayOutputStream()
+            var last = 0
+            while (true) {
+                val b = input.read()
+                if (b < 0) {
+                    if (buf.size() == 0) return null
+                    throw IOException("connection closed in the answer's head")
+                }
+                buf.write(b)
+                last = (last shl 8) or b
+                if (buf.size() > MAX_HEAD) throw IOException("answer head too long")
+                if (last == 0x0d0a0d0a) {
+                    val bytes = buf.toByteArray()
+                    return String(bytes, 0, bytes.size - 4, Charsets.ISO_8859_1).split("\r\n")
+                }
+            }
         }
     }
 }

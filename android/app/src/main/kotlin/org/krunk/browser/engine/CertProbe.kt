@@ -13,7 +13,7 @@ import org.krunk.browser.KrunkApp
 import org.krunk.browser.vpn.Route
 import org.krunk.browser.vpn.VpnNotConnected
 import org.krunk.browser.vpn.VpnRoute
-import org.krunk.browser.vpn.VpnSockets
+import org.krunk.browser.vpn.VpnSocks
 
 /**
  * The certificate a site presents, read from the site itself.
@@ -30,7 +30,7 @@ import org.krunk.browser.vpn.VpnSockets
  * nothing but the handshake.
  *
  * With the VPN on (0.10.0) the probe takes the same way as the page ([VpnRoute], the private flag
- * of the tab): through the VPN's proxy with Krunk's own CONNECT, or not at all while it is down.
+ * of the tab): through the VPN's SOCKS5 proxy ([VpnSocks], the name resolved there), or not at all while it is down.
  */
 object CertProbe {
     private const val CONNECT_TIMEOUT_MS = 5_000
@@ -50,7 +50,7 @@ object CertProbe {
             Route.BLOCKED -> throw VpnNotConnected()
 
             Route.PROXY -> {
-                val tunnel = VpnSockets.connectThrough(host, port, CONNECT_TIMEOUT_MS)
+                val tunnel = VpnSocks.connect(host, port, CONNECT_TIMEOUT_MS)
                 try {
                     context.socketFactory.createSocket(tunnel, host, port, true) as SSLSocket
                 } catch (e: Exception) {

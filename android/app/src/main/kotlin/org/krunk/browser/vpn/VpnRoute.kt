@@ -2,10 +2,7 @@ package org.krunk.browser.vpn
 
 import java.io.IOException
 import java.net.HttpURLConnection
-import java.net.InetSocketAddress
-import java.net.Proxy
 import java.net.URL
-import java.util.Base64
 
 /** Krunk's own request may not go out: the VPN is on but its proxy is not up (fail-closed). */
 class VpnNotConnected : IOException("VPN not connected")
@@ -107,16 +104,6 @@ object VpnRoute {
     var state: VpnRouteState = VpnRouteState()
         internal set
 
-    /**
-     * How `https` requests through the proxy are made. False: the platform's HttpURLConnection
-     * with an HTTP proxy and the `Proxy-Authorization` request property (Android's internal
-     * OkHttp copies it onto its CONNECT — to be confirmed on a device, T4). True: Krunk's own
-     * CONNECT ([VpnSockets.connectThrough]) and TLS, through [VpnTunnelConnection]. Flip if the
-     * device test shows the proxy closing the platform's CONNECTs.
-     */
-    @Volatile
-    var useConnectHelper: Boolean = false
-
     fun decide(host: String, forPrivateTab: Boolean, s: VpnRouteState = state): Route = VpnRouteRules.decide(
         vpnOn = s.vpnOn,
         connected = s.connected && s.port != null && s.tokenHex != null,
@@ -129,8 +116,10 @@ object VpnRoute {
 
     /**
      * Opens [url] the way the VPN says: direct (VPN off, out of scope, localhost, LAN with the
-     * option), through its proxy with the session's credential, or not at all ([VpnNotConnected]).
-     * With the VPN off this is exactly `url.openConnection()`.
+     * option), through its SOCKS5 proxy with the session's credential ([VpnHttp] over
+     * [VpnSocks]; the proxy resolves the name), or not at all ([VpnNotConnected]). Never the
+     * platform's proxy support or `java.net.Authenticator` (process-wide). With the VPN off this
+     * is exactly `url.openConnection()`.
      */
     @Throws(IOException::class)
     fun open(url: URL, forPrivateTab: Boolean): HttpURLConnection {
@@ -143,14 +132,7 @@ object VpnRoute {
             Route.PROXY -> {
                 val port = s.port ?: throw VpnNotConnected()
                 val token = s.tokenHex ?: throw VpnNotConnected()
-                if (useConnectHelper && url.protocol.equals("https", ignoreCase = true)) {
-                    VpnTunnelConnection(url, port, token)
-                } else {
-                    val proxy = Proxy(Proxy.Type.HTTP, InetSocketAddress(VpnSockets.LOOPBACK, port))
-                    (url.openConnection(proxy) as HttpURLConnection).apply {
-                        setRequestProperty("Proxy-Authorization", proxyAuthorization(token))
-                    }
-                }
+                VpnHttp(url, port, token)
             }
         }
     }
@@ -160,8 +142,4 @@ object VpnRoute {
     fun check(host: String, forPrivateTab: Boolean) {
         if (decide(host, forPrivateTab) == Route.BLOCKED) throw VpnNotConnected()
     }
-
-    /** `Basic base64("krunk:" + hex)`. */
-    fun proxyAuthorization(tokenHex: String): String =
-        "Basic " + Base64.getEncoder().encodeToString("krunk:$tokenHex".toByteArray(Charsets.US_ASCII))
 }

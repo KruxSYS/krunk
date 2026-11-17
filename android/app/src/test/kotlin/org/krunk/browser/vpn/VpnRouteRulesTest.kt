@@ -119,16 +119,11 @@ class VpnRouteRulesTest {
         }
         VpnRoute.state = VpnRouteState()
         val conn = VpnRoute.open(URL("http://example.com/"), forPrivateTab = false)
+        assertFalse(conn is VpnHttp)
         assertFalse(conn.usingProxy())
-        assertNull(conn.getRequestProperty("Proxy-Authorization"))
-    }
-
-    @Test
-    fun theCredentialHeader() {
-        // base64("krunk:" + 64 x "0")
-        val hex = "0".repeat(64)
-        val expected = "Basic " + java.util.Base64.getEncoder().encodeToString("krunk:$hex".toByteArray())
-        assertEquals(expected, VpnRoute.proxyAuthorization(hex))
-        assertTrue(expected.startsWith("Basic a3J1bms6"))
+        // Up: Krunk's own client over SOCKS5; localhost stays the platform's.
+        VpnRoute.state = VpnRouteState(vpnOn = true, connected = true, port = 1, tokenHex = "ab".repeat(32))
+        assertTrue(VpnRoute.open(URL("https://example.com/"), forPrivateTab = false) is VpnHttp)
+        assertFalse(VpnRoute.open(URL("http://localhost:8080/"), forPrivateTab = false) is VpnHttp)
     }
 }
