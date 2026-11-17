@@ -30,6 +30,13 @@
 /* globals ExtensionAPI, Services, Cc, Ci, Cr, ChromeUtils */
 "use strict";
 
+// Gecko loads all parent experiment scripts of an extension into ONE shared global scope (here
+// gate-api.js and this file). A top-level const of the same name throws at load and takes the
+// whole guard down (0.10.0: "redeclaration of const stateJson"); a same-named function would
+// silently replace the other script's. So everything here lives in this function's scope and
+// only `krunkVpn` (or the node test's exports) leaves it.
+(function (global) {
+
 const HOLD_MS = 20_000;
 const MAX_HELD = 500;
 const PROXY_USER = "krunk";
@@ -457,7 +464,7 @@ if (typeof module !== "undefined") {
   // node tests (src/test/js/vpn.test.js) with stand-ins for the engine's globals.
   module.exports = { VPN_PREFS, isLocalHost, isLan, decide, parseConfig, change, configure, route, resume, shutdown, vpn };
 } else {
-  this.krunkVpn = class extends ExtensionAPI {
+  global.krunkVpn = class extends ExtensionAPI {
     onStartup() {
       try {
         resume();
@@ -484,3 +491,4 @@ if (typeof module !== "undefined") {
     }
   };
 }
+})(this);

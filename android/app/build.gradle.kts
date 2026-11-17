@@ -460,7 +460,7 @@ val guardJsTest = tasks.register<Exec>("guardJsTest") {
     description = "Runs the tests of the krunk-guard rewriter with node"
     inputs.dir("src/main/assets/extensions/krunk-guard")
     inputs.dir("src/test/js")
-    commandLine("node", "--test", "src/test/js/rewriter.test.js", "src/test/js/vpn.test.js")
+    commandLine("node", "--test", "src/test/js/rewriter.test.js", "src/test/js/vpn.test.js", "src/test/js/experiments.test.js")
 }
 
 // The same for the plain part of the krunk-sitedata extension (which site a cookie or stored
