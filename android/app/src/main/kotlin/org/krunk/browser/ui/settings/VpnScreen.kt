@@ -46,7 +46,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -168,9 +167,7 @@ fun VpnScreen(vm: BrowserViewModel) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val s = state.settings
-    // The profile chosen while the VPN is off; it is stored when the VPN is turned on.
-    var pick by rememberSaveable { mutableStateOf<String?>(null) }
-    val selected = (pick ?: s.selectedProfileId)?.takeIf { id -> state.profiles.any { it.id == id } }
+    val selected = s.selectedProfileId?.takeIf { id -> state.profiles.any { it.id == id } }
         ?: state.profiles.singleOrNull()?.id
     var error by remember { mutableStateOf<String?>(null) }
     // Dialogs. The import holds the profile: plain `remember`, never saved state.
@@ -248,13 +245,8 @@ fun VpnScreen(vm: BrowserViewModel) {
                     ProfileRow(
                         profile = p,
                         selected = p.id == selected,
-                        onSelect = {
-                            if (s.enabled) {
-                                if (p.id != s.selectedProfileId) act { vpn.connect(p.id) }
-                            } else {
-                                pick = p.id
-                            }
-                        },
+                        // Saved at once (VpnController.select); reconnects if the VPN is on.
+                        onSelect = { if (p.id != s.selectedProfileId) act { vpn.select(p.id) } },
                         onCredentials = { credsFor = p },
                         onRemove = { removing = p },
                     )

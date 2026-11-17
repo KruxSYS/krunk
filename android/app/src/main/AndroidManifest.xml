@@ -79,14 +79,15 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
             <!-- 0.10.0, VPN profiles opened with or shared to Krunk: the VPN screen asks before
-                 anything is saved. Only content: addresses are read (MainActivity). -->
+                 anything is saved. Only content: addresses are read (MainActivity). "Open with"
+                 is offered only for the VPN profile types, not for application/octet-stream
+                 (Krunk would be offered for every binary file); sharing one still works. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:scheme="content" />
                 <data android:mimeType="application/x-openvpn-profile" />
                 <data android:mimeType="application/x-wireguard-profile" />
-                <data android:mimeType="application/octet-stream" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />

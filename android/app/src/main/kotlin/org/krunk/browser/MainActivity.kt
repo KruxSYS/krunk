@@ -15,6 +15,8 @@ import androidx.core.content.IntentCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import org.krunk.browser.downloads.DownloadIntents
+import org.krunk.browser.engine.ErrorPage
+import org.krunk.browser.engine.ErrorPageAction
 import org.krunk.browser.engine.LoadPolicy
 import org.krunk.browser.engine.LoadSource
 import org.krunk.browser.notify.SiteNotifications
@@ -46,6 +48,11 @@ class MainActivity : ComponentActivity() {
         app.sitePermissions.android.attach(this, sitePermissionDialog::launch, ::shouldShowRequestPermissionRationale)
         handleIntent(intent, fresh = savedInstanceState == null)
         setContent { KrunkRoot(vm) }
+        // "Open VPN settings" on the VPN error page (0.10.0). Set for this activity, cleared in
+        // onDestroy so a finished activity is never kept alive by the hook.
+        val onErrorAction: (ErrorPageAction) -> Unit = { if (it == ErrorPageAction.OpenVpnSettings) vm.openVpnSettings() }
+        errorAction = onErrorAction
+        ErrorPage.onAction = onErrorAction
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -147,7 +154,10 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    private var errorAction: ((ErrorPageAction) -> Unit)? = null
+
     override fun onDestroy() {
+        if (ErrorPage.onAction === errorAction) ErrorPage.onAction = null
         // Not finishing: the system recreates the activity, and Android hands the result of a
         // permission dialog that is still open to the new one (AndroidPermissionGate).
         app.sitePermissions.android.detach(this, finishing = isFinishing && !isChangingConfigurations)

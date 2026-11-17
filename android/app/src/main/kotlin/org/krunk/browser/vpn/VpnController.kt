@@ -168,6 +168,18 @@ class VpnController(
         startLocked()
     }
 
+    /**
+     * Makes [profileId] the selected profile and saves the choice at once (also while the VPN is
+     * off). While it is on, the VPN reconnects with that profile.
+     */
+    suspend fun select(profileId: String): Result<Unit> = locked {
+        if (!VpnStore.validId(profileId) || profiles.none { it.id == profileId }) return@locked
+        if (settings.selectedProfileId == profileId) return@locked
+        settings = settings.copy(selectedProfileId = profileId)
+        saveSettings()
+        if (settings.enabled) startLocked() else publish()
+    }
+
     /** Turns the VPN off: everything goes direct again. */
     suspend fun disconnect(): Result<Unit> = locked {
         settings = settings.copy(enabled = false)

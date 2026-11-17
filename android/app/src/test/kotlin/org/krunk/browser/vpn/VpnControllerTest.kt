@@ -85,6 +85,33 @@ class VpnControllerTest {
     private fun status(state: VpnState) = VpnStatus(state, null, 2, 0, 0, "10.8.0.2", "vpn.example.net:51820")
 
     @Test
+    fun aPickIsSavedAtOnceAlsoWhileOff() = runBlocking {
+        val c = controller()
+        c.load()
+        val a = c.save(c.importFile("a.conf", "[Interface]".toByteArray()) as ImportResult.Ok, null).getOrThrow()
+        val b = c.save(c.importFile("b.conf", "[Interface]".toByteArray()) as ImportResult.Ok, null).getOrThrow()
+        assertEquals(a.id, c.state.value.settings.selectedProfileId)
+        // Off: saved, nothing started.
+        c.select(b.id).getOrThrow()
+        assertEquals(b.id, c.state.value.settings.selectedProfileId)
+        assertEquals(0, engine.started)
+        // A fresh controller reads the choice back from the settings file.
+        val again = controller()
+        again.load()
+        assertEquals(b.id, again.state.value.settings.selectedProfileId)
+        // Unknown or malformed ids change nothing.
+        c.select("nope").getOrThrow()
+        c.select("../x").getOrThrow()
+        assertEquals(b.id, c.state.value.settings.selectedProfileId)
+        // On: a new pick reconnects with that profile.
+        c.connect()
+        assertEquals(1, engine.started)
+        c.select(a.id).getOrThrow()
+        assertEquals(a.id, c.state.value.settings.selectedProfileId)
+        assertEquals(2, engine.started)
+    }
+
+    @Test
     fun connectStatusDisconnect() = runBlocking {
         val c = controller()
         c.load()
