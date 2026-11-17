@@ -52,13 +52,13 @@ krunk_ports() {
 
 up() {
   $TB up -d --build > /dev/null && $TB ps --format '{{.Service}} {{.Status}}'
-  pgrep -f "a9/testserver.py 18080" > /dev/null || nohup python3 -I "$HERE/testserver.py" 18080 "$SLOG" 3478 > "$EV/testserver.out" 2>&1 &
-  pgrep -f "relay.py udp 18551" > /dev/null || nohup python3 -I "$HERE/relay.py" udp 18551 dind 8551 > "$EV/relay-wg.out" 2>&1 &
-  pgrep -f "relay.py tcp 18194" > /dev/null || nohup python3 -I "$HERE/relay.py" tcp 18194 dind 8194 > "$EV/relay-ovpn.out" 2>&1 &
-  pgrep -f "relay.py udp 18195" > /dev/null || nohup python3 -I "$HERE/relay.py" udp 18195 dind 8194 > "$EV/relay-ovpn-udp.out" 2>&1 &
+  pgrep -f "a9/testserver.py 18080" > /dev/null || { nohup python3 -I "$HERE/testserver.py" 18080 "$SLOG" 3478 > "$EV/testserver.out" 2>&1 < /dev/null & }
+  pgrep -f "relay.py udp 18551" > /dev/null || { nohup python3 -I "$HERE/relay.py" udp 18551 dind 8551 > "$EV/relay-wg.out" 2>&1 < /dev/null & }
+  pgrep -f "relay.py tcp 18194" > /dev/null || { nohup python3 -I "$HERE/relay.py" tcp 18194 dind 8194 > "$EV/relay-ovpn.out" 2>&1 < /dev/null & }
+  pgrep -f "relay.py udp 18195" > /dev/null || { nohup python3 -I "$HERE/relay.py" udp 18195 dind 8194 > "$EV/relay-ovpn-udp.out" 2>&1 < /dev/null & }
   # https behind the tunnel (T1): a self-signed server from the 0.6.1 certificate tests.
   local bc=$PIPE/evidence-android-0.6.1/tools
-  pgrep -f "badcert.py 18443" > /dev/null || nohup python3 -I "$bc/badcert.py" 18443 "$bc/cert1.pem" "$bc/key1.pem" > "$EV/badcert.out" 2>&1 &
+  pgrep -f "badcert.py 18443" > /dev/null || { nohup python3 -I "$bc/badcert.py" 18443 "$bc/cert1.pem" "$bc/key1.pem" > "$EV/badcert.out" 2>&1 < /dev/null & }
   sleep 1
   pgrep -af "a9/(testserver|relay)|badcert" | grep -v pgrep
 }
@@ -242,7 +242,7 @@ t3() {
 t4() {
   [ -n "${STAGE_PORT:-}" ] || { result T4 FAIL "STAGE_PORT not set (service_stage first)"; return 1; }
   local RLOG=$EV/relay-sync.log
-  pgrep -f "relay.py tcp 18082" > /dev/null || nohup python3 -I "$HERE/relay.py" tcp 18082 dind "$STAGE_PORT" "$RLOG" > "$EV/relay-sync.out" 2>&1 &
+  pgrep -f "relay.py tcp 18082" > /dev/null || { nohup python3 -I "$HERE/relay.py" tcp 18082 dind "$STAGE_PORT" "$RLOG" > "$EV/relay-sync.out" 2>&1 < /dev/null & }
   sleep 1; touch "$RLOG"
   stop_clean; launch; vpn_on "wg-full" || { result T4 FAIL "VPN did not connect"; return 1; }
   sockwatch_start t4
