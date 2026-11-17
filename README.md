@@ -1994,9 +1994,12 @@ Disconnect and the scope).
 - **How it works.** The same `vpn` crate as on Windows, inside `libkrunk_ffi.so`: WireGuard
   (boringtun) or OpenVPN 3 Core in user space, smoltcp as the TCP/IP stack, and a proxy on
   `127.0.0.1` (a random port). Android cannot tell which app opened a loopback connection, so each
-  VPN session has a new random 32-byte credential that only Krunk's process knows: the engine
-  connects with SOCKS5 and that credential as the password, Krunk's own requests send it as
-  `Proxy-Authorization`; any other app that finds the port is disconnected without an answer. The
+  VPN session has a new random 32-byte credential that only Krunk's process knows. Both the engine
+  and Krunk's own requests connect with SOCKS5 (RFC 1928) and that credential as the password
+  (RFC 1929, user `krunk`); host names are sent to the proxy unresolved, so the phone's DNS never
+  sees them. GeckoView does not send `Proxy-Authorization` to an HTTP proxy and would ask the
+  user on a 407, which is why it is SOCKS5. Any other app that finds the port is disconnected
+  without an answer. The
   engine is pointed at the proxy by a channel filter in Krunk's built-in `krunk-guard` extension
   (the pattern of Firefox's IP Protection), with the engine's proxy settings as a backstop that
   also points at the proxy without the credential. These settings live on the engine's default

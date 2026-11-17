@@ -3,10 +3,10 @@
 //! One [`KrunkVpn`] per app. It imports profiles and runs at most one VPN: a WireGuard (and, with
 //! the `openvpn` feature, OpenVPN) tunnel in user space with a local proxy on
 //! `127.0.0.1:<port>`. Android has no owner check for loopback peers, so the app hands in a
-//! per-session random token: GeckoView must connect with SOCKS5 username `krunk` / password
-//! = the token as 64 lowercase hex characters, Krunk's own requests with HTTP and
-//! `Proxy-Authorization: Basic base64("krunk:" + hex)`. Anything else is closed without a
-//! reply. Scope ("private tabs only") and "reach the local network directly" are decided before
+//! per-session random token: GeckoView and Krunk's own requests (`VpnSocks` in Kotlin) connect
+//! with SOCKS5, username `krunk`, password = the token as 64 lowercase hex characters. Anything
+//! else is closed without a reply. (The proxy also takes an HTTP head with
+//! `Proxy-Authorization: Basic base64("krunk:" + hex)`; the app does not use it.) Scope ("private tabs only") and "reach the local network directly" are decided before
 //! a request reaches the proxy (the engine's channel filter, the app's `VpnRoute`): the proxy
 //! only ever sends through the tunnel, or refuses.
 //!

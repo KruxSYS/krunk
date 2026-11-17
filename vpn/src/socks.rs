@@ -9,7 +9,8 @@
 //!   with a prompt to the user (Android 0.10.0 spike S2), but it sends SOCKS5 credentials. User
 //!   `krunk`, password the token as 64 lowercase hex characters. Only CONNECT; host names are
 //!   resolved inside the tunnel like everything else.
-//! - **HTTP** with `Proxy-Authorization: Basic base64("krunk:" + hex)`: Krunk's own requests.
+//! - **HTTP** with `Proxy-Authorization: Basic base64("krunk:" + hex)`: accepted for clients that
+//!   can set the header; Krunk for Android uses SOCKS5 for its own requests as well.
 //!
 //! A connection that does not authenticate is closed without any reply (no 407, no SOCKS
 //! "no acceptable method" or RFC 1929 failure byte), within [`AUTH_TIMEOUT`]. The only byte a
