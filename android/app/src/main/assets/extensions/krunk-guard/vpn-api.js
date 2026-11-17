@@ -416,7 +416,8 @@ function configure(json) {
       vpn.cfg = next;
       applyPrefs(next.pending ? 1 : next.port);
       register();
-      rerouteHeld();
+      // The same config again keeps held channels on their running time limit.
+      if (what !== "same") rerouteHeld();
     }
   } catch (e) {
     return stateJson("failed: " + (e && e.name ? e.name : "error"));
