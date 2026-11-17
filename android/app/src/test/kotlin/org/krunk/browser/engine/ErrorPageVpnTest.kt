@@ -43,7 +43,10 @@ class ErrorPageVpnTest {
             VpnErrorKind.NOT_REACHABLE,
             ErrorPageVpn.kind(true, true, WebRequestError.ERROR_CONNECTION_REFUSED, true),
         )
-        assertEquals(VpnErrorKind.NOT_REACHABLE, ErrorPageVpn.kind(true, true, WebRequestError.ERROR_UNKNOWN_HOST, true))
+        assertEquals(
+            VpnErrorKind.NOT_REACHABLE,
+            ErrorPageVpn.kind(true, true, WebRequestError.ERROR_UNKNOWN_HOST, true),
+        )
         // Not refused by the proxy: the site's own refusal, the normal page.
         assertNull(ErrorPageVpn.kind(true, true, WebRequestError.ERROR_CONNECTION_REFUSED, false))
         assertNull(ErrorPageVpn.kind(true, true, WebRequestError.ERROR_NET_TIMEOUT, true))

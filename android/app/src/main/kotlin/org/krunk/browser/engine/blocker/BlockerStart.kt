@@ -317,7 +317,6 @@ class VpnGuardConfig private constructor(
         }
 
         /** The VPN is on, its proxy not up yet. */
-        fun pending(scope: VpnGuardScope, lan: Boolean): VpnGuardConfig =
-            VpnGuardConfig(true, null, null, scope, lan)
+        fun pending(scope: VpnGuardScope, lan: Boolean): VpnGuardConfig = VpnGuardConfig(true, null, null, scope, lan)
     }
 }

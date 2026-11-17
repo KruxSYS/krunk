@@ -24,10 +24,13 @@ object ErrorPageVpn {
     fun kind(vpnOn: Boolean, connected: Boolean, errorCode: Int, refusedRecently: Boolean): VpnErrorKind? = when {
         !vpnOn -> null
         !connected -> if (networkish(errorCode)) VpnErrorKind.NOT_CONNECTED else null
-        refusedRecently && (errorCode == WebRequestError.ERROR_CONNECTION_REFUSED ||
-            errorCode == WebRequestError.ERROR_UNKNOWN_HOST) -> VpnErrorKind.NOT_REACHABLE
+        refusedRecently && refusalCode(errorCode) -> VpnErrorKind.NOT_REACHABLE
         else -> null
     }
+
+    /** How Gecko shows the proxy's "outside the routes" (2) and "name not found" (4) replies. */
+    private fun refusalCode(code: Int): Boolean =
+        code == WebRequestError.ERROR_CONNECTION_REFUSED || code == WebRequestError.ERROR_UNKNOWN_HOST
 
     /** Errors a missing tunnel can cause: the connection, the name, the proxy, being offline. */
     fun networkish(code: Int): Boolean = code == WebRequestError.ERROR_CONNECTION_REFUSED ||
