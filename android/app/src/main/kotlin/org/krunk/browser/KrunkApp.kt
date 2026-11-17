@@ -32,7 +32,7 @@ import org.krunk.browser.vault.VaultBackends
 import org.krunk.browser.vault.VaultController
 import org.krunk.browser.vault.VaultLockSetting
 import org.krunk.browser.vault.VaultState
-import org.krunk.browser.vpn.NoVpnEngine
+import org.krunk.browser.vpn.FfiVpnEngine
 import org.krunk.browser.vpn.VpnController
 import org.krunk.browser.vpn.VpnGuardSink
 import org.krunk.browser.vpn.VpnNetworkWatch
@@ -94,9 +94,7 @@ class KrunkApp : Application() {
 
     private val vpnLazy = lazy {
         VpnController(
-            // MERGE(M1): `FfiVpnEngine()` once `org.krunk.ffi.KrunkVpn` is built
-            // (vpn/FfiVpnEngine.kt.pending -> FfiVpnEngine.kt).
-            engine = NoVpnEngine,
+            engine = FfiVpnEngine(),
             store = VpnStore.onDevice(filesDir),
             settingsFile = VpnSettingsFile(VpnStore.dir(filesDir)),
             io = Dispatchers.IO,

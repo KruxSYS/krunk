@@ -2,9 +2,9 @@ package org.krunk.browser.vpn
 
 import org.krunk.ffi.KrunkVpn
 import org.krunk.ffi.VpnException
-import org.krunk.ffi.VpnStatusListener
 import org.krunk.ffi.VpnState as FfiState
 import org.krunk.ffi.VpnStatus as FfiStatus
+import org.krunk.ffi.VpnStatusListener
 
 /**
  * [VpnEngine] on the FFI object `KrunkVpn` (contract §2). The only file of the app that names
@@ -63,7 +63,7 @@ class FfiVpnEngine(private val vpn: KrunkVpn = KrunkVpn()) : VpnEngine {
     } catch (e: VpnException) {
         throw when (e) {
             is VpnException.Import -> VpnEngineException.Import(e.reason)
-            is VpnException.Unsupported -> VpnEngineException.Unsupported()
+            is VpnException.Unsupported -> VpnEngineException.Unsupported(e.reason)
             is VpnException.NeedsCredentials -> VpnEngineException.NeedsCredentials()
             is VpnException.Start -> VpnEngineException.Start(e.reason)
             is VpnException.BadToken -> VpnEngineException.BadToken()

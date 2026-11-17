@@ -72,7 +72,7 @@ data class VpnStatus(
 sealed class VpnEngineException(message: String) : Exception(message) {
     class Import(val reason: String) : VpnEngineException(reason)
 
-    class Unsupported : VpnEngineException("OpenVPN is not supported on Android yet")
+    class Unsupported(val reason: String = "OpenVPN is not supported on Android yet") : VpnEngineException(reason)
 
     class NeedsCredentials : VpnEngineException("This profile needs a user name and password")
 
