@@ -27,11 +27,18 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -42,7 +49,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.security.cert.X509Certificate
+import kotlinx.coroutines.delay
 import org.krunk.browser.R
+import org.krunk.browser.engine.ConnectionKind
+import org.krunk.browser.engine.PageSecurity
 import org.krunk.browser.ui.theme.KrunkSwitch
 
 /** The icon of a shield mode; each mode has its own, so the states differ without colour. */
@@ -82,7 +93,8 @@ fun shieldDescription(ui: ShieldUi): String = when (ui.mode) {
 
     ShieldMode.STARTING -> stringResource(R.string.shield_starting)
 
-    ShieldMode.HIDDEN -> ""
+    // The sheet still opens for a web page the blocker does not judge (its connection).
+    ShieldMode.HIDDEN -> stringResource(R.string.conn_site_info)
 }
 
 /**
@@ -139,14 +151,37 @@ fun ShieldSheet(
     onDismiss: () -> Unit,
     /** Opens the page's site permissions; null when the page has none (not a web page, a private tab). */
     onSitePermissions: (() -> Unit)? = null,
+    /** The page's connection (the "Connection" part); [ConnectionKind.NONE] leaves it out. */
+    connection: ConnectionKind = ConnectionKind.NONE,
+    security: PageSecurity? = null,
+    /** Opened from the lock in the address bar: the sheet scrolls to the Connection part. */
+    focusConnection: Boolean = false,
+    onForgetException: () -> Unit = {},
+    probe: (suspend () -> X509Certificate?)? = null,
 ) {
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val scroll = rememberScrollState()
+    // Where the Connection title sits in the sheet's content (-1 until laid out). Opened from the
+    // lock, the sheet scrolls it to the top once (as far as the content lets it).
+    var connectionTop by remember { mutableIntStateOf(-1) }
+    if (focusConnection && connection != ConnectionKind.NONE && connectionTop >= 0) {
+        LaunchedEffect(Unit) {
+            delay(FOCUS_DELAY_MS)
+            scroll.animateScrollTo(connectionTop)
+        }
+    }
+    // A web page without the blocker's shield (an address the blocker does not judge, such as
+    // an IP address) still has a connection to show: the sheet is then about the site only.
+    val blocker = ui.mode != ShieldMode.HIDDEN
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = state) {
-        Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp)) {
+        Column(Modifier.fillMaxWidth().verticalScroll(scroll).padding(horizontal = 24.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(shieldIcon(ui.mode), contentDescription = null, tint = shieldTint(ui.mode))
                 Spacer(Modifier.width(12.dp))
-                Text(stringResource(R.string.shield_sheet_title), style = MaterialTheme.typography.titleLarge)
+                Text(
+                    stringResource(if (blocker) R.string.shield_sheet_title else R.string.conn_site_info),
+                    style = MaterialTheme.typography.titleLarge,
+                )
             }
             if (site.isNotEmpty()) {
                 Text(
@@ -158,11 +193,13 @@ fun ShieldSheet(
                     modifier = Modifier.padding(top = 4.dp),
                 )
             }
-            Text(
-                shieldDescription(ui),
-                style = MaterialTheme.typography.headlineSmall,
-                modifier = Modifier.padding(top = 16.dp),
-            )
+            if (blocker) {
+                Text(
+                    shieldDescription(ui),
+                    style = MaterialTheme.typography.headlineSmall,
+                    modifier = Modifier.padding(top = 16.dp),
+                )
+            }
             when (ui.mode) {
                 ShieldMode.UNFILTERED -> {
                     Text(stringResource(R.string.shield_unfiltered_help), Modifier.padding(top = 8.dp))
@@ -244,7 +281,19 @@ fun ShieldSheet(
                     )
                 }
             }
+            ConnectionSection(
+                kind = connection,
+                security = security,
+                onForgetException = {
+                    onDismiss()
+                    onForgetException()
+                },
+                probe = probe,
+                titleModifier = Modifier.onGloballyPositioned { connectionTop = it.positionInParent().y.toInt() },
+            )
             Spacer(Modifier.height(24.dp))
         }
     }
 }
+
+private const val FOCUS_DELAY_MS = 350L

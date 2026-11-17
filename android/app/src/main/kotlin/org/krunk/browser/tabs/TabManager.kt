@@ -26,6 +26,7 @@ import org.json.JSONObject
 import org.krunk.browser.KrunkApp
 import org.krunk.browser.core.KrunkCore
 import org.krunk.browser.engine.BackAction
+import org.krunk.browser.engine.CertErrors
 import org.krunk.browser.engine.ContextTarget
 import org.krunk.browser.engine.ErrorPage
 import org.krunk.browser.engine.ExternalLink
@@ -1044,6 +1045,23 @@ class TabManager(context: Context, val core: KrunkCore, val engine: GeckoEngine)
         scope.launch {
             val ok = engine.certs.add(error, remember)
             if (ok && sessions[id] === s && s.current.loadError?.cert == error) s.load(error.url)
+            onDone(ok)
+        }
+    }
+
+    /**
+     * "Forget this exception" in the shield sheet: drops the certificate the user accepted for
+     * the tab's site (host and port of its committed address, normal and private tabs alike) and
+     * loads the page again, which brings the certificate warning back. [onDone] gets false when
+     * the engine did not answer.
+     */
+    fun forgetCertException(id: UInt? = activeId.value, onDone: (Boolean) -> Unit = {}) {
+        val s = sessions[id ?: return] ?: return
+        val url = s.current.url
+        val (host, port) = CertErrors.hostAndPort(url) ?: return
+        scope.launch {
+            val ok = engine.certs.remove(host, port)
+            if (ok && sessions[id] === s && s.current.url == url) s.reload()
             onDone(ok)
         }
     }

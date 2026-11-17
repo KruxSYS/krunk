@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
@@ -111,6 +113,8 @@ fun AddressPill(
     compact: Boolean = true,
     hasLeading: Boolean = false,
     leading: @Composable () -> Unit = {},
+    /** Tapping the lock / "not secure" sign: opens the site's connection details; null = not a button. */
+    onSecurityClick: (() -> Unit)? = null,
     trailing: @Composable () -> Unit = {},
 ) {
     val page = tab?.page
@@ -146,7 +150,8 @@ fun AddressPill(
         // gradient toolbar has white icons; the field under them is light).
         CompositionLocalProvider(LocalContentColor provides style.pillText) {
             PillContent(
-                tab, text, parts?.rest.orEmpty(), placeholder, indicator, compact, hasLeading, leading, trailing,
+                tab, text, parts?.rest.orEmpty(), placeholder, indicator, compact, hasLeading, leading,
+                onSecurityClick, trailing,
             )
         }
     }
@@ -163,6 +168,7 @@ private fun PillContent(
     compact: Boolean,
     hasLeading: Boolean,
     leading: @Composable () -> Unit,
+    onSecurityClick: (() -> Unit)?,
     trailing: @Composable () -> Unit,
 ) {
     val style = LocalKrunkStyle.current
@@ -181,81 +187,112 @@ private fun PillContent(
                 )
                 Spacer(Modifier.width(6.dp))
             }
-            when (indicator) {
-                SecurityIndicator.SECURE -> Icon(
-                    Icons.Filled.Lock,
-                    contentDescription = stringResource(R.string.address_secure),
-                    modifier = Modifier.size(16.dp),
-                    tint = style.secure,
-                )
-
-                // On a phone the words "Not secure" would take the room the site's name needs
-                // (seen on the device: nothing of the host was left). The red sign says it there;
-                // the words are added where the toolbar is wide enough for both.
-                SecurityIndicator.INSECURE -> Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Outlined.Info,
-                        contentDescription = stringResource(R.string.address_not_secure),
-                        modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.error,
-                    )
-                    if (!compact) {
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            stringResource(R.string.address_not_secure),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.error,
-                            maxLines = 1,
-                        )
-                    }
-                }
-
-                SecurityIndicator.NONE -> if (text.isNotEmpty() && tab?.internalPage == null) {
-                    SiteIcon(tab)
-                }
+            // The sign is a button (to the site's connection details) when there is one: a 32 dp
+            // wide, full-height target, so the site's name moves only a little.
+            val signClick = onSecurityClick?.takeIf { indicator != SecurityIndicator.NONE }
+            val signButton = signClick != null
+            val sign = if (signClick != null) {
+                Modifier
+                    .clip(CircleShape)
+                    .clickable(role = Role.Button, onClick = signClick)
+                    .heightIn(min = AddressPillTouchHeight)
+                    .padding(horizontal = 8.dp)
+            } else {
+                Modifier
             }
-            if (indicator != SecurityIndicator.NONE || (text.isNotEmpty() && tab?.internalPage == null)) {
+            Box(sign, contentAlignment = Alignment.Center) {
+                SecuritySign(indicator, compact, tab, text)
+            }
+            if (!signButton &&
+                (indicator != SecurityIndicator.NONE || (text.isNotEmpty() && tab?.internalPage == null))
+            ) {
                 Spacer(Modifier.width(8.dp))
             }
-            if (text.isEmpty()) {
+            PillText(text, rest, placeholder, trailing)
+        }
+    }
+}
+
+/** The lock, the "not secure" sign (with its words on a wide toolbar) or the site's icon. */
+@Composable
+private fun SecuritySign(indicator: SecurityIndicator, compact: Boolean, tab: TabUi?, text: String) {
+    val style = LocalKrunkStyle.current
+    when (indicator) {
+        SecurityIndicator.SECURE -> Icon(
+            Icons.Filled.Lock,
+            contentDescription = stringResource(R.string.address_secure),
+            modifier = Modifier.size(16.dp),
+            tint = style.secure,
+        )
+
+        // On a phone the words "Not secure" would take the room the site's name needs
+        // (seen on the device: nothing of the host was left). The red sign says it there;
+        // the words are added where the toolbar is wide enough for both.
+        SecurityIndicator.INSECURE -> Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.Outlined.Info,
+                contentDescription = stringResource(R.string.address_not_secure),
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.error,
+            )
+            if (!compact) {
+                Spacer(Modifier.width(4.dp))
                 Text(
-                    text = placeholder,
+                    stringResource(R.string.address_not_secure),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.error,
+                    maxLines = 1,
+                )
+            }
+        }
+
+        SecurityIndicator.NONE -> if (text.isNotEmpty() && tab?.internalPage == null) {
+            SiteIcon(tab)
+        }
+    }
+}
+
+/** The site's name and the rest of the address (or the placeholder), then [trailing]. */
+@Composable
+private fun RowScope.PillText(text: String, rest: String, placeholder: String, trailing: @Composable () -> Unit) {
+    val style = LocalKrunkStyle.current
+    if (text.isEmpty()) {
+        Text(
+            text = placeholder,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    } else {
+        // The whole address, like Firefox (0.7.1): the host in the normal colour, the
+        // path and the rest after it in grey. The host is laid out first and gets the room
+        // it needs; when even it does not fit, its end (the registrable domain) stays:
+        // "…bank.example", never "login.ba…". The rest takes what is left, cut at its end.
+        // An address reads left to right in every locale.
+        val ltr = MaterialTheme.typography.bodyLarge.copy(textDirection = TextDirection.Ltr)
+        Row(Modifier.weight(1f)) {
+            Text(
+                text = text,
+                style = ltr,
+                color = style.pillText,
+                maxLines = 1,
+                overflow = TextOverflow.StartEllipsis,
+            )
+            if (rest.isNotEmpty()) {
+                Text(
+                    text = rest,
                     modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = ltr,
+                    color = style.pillText.copy(alpha = PILL_REST_ALPHA),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-            } else {
-                // The whole address, like Firefox (0.7.1): the host in the normal colour, the
-                // path and the rest after it in grey. The host is laid out first and gets the room
-                // it needs; when even it does not fit, its end (the registrable domain) stays:
-                // "…bank.example", never "login.ba…". The rest takes what is left, cut at its end.
-                // An address reads left to right in every locale.
-                val ltr = MaterialTheme.typography.bodyLarge.copy(textDirection = TextDirection.Ltr)
-                Row(Modifier.weight(1f)) {
-                    Text(
-                        text = text,
-                        style = ltr,
-                        color = style.pillText,
-                        maxLines = 1,
-                        overflow = TextOverflow.StartEllipsis,
-                    )
-                    if (rest.isNotEmpty()) {
-                        Text(
-                            text = rest,
-                            modifier = Modifier.weight(1f),
-                            style = ltr,
-                            color = style.pillText.copy(alpha = PILL_REST_ALPHA),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
             }
-            trailing()
         }
     }
+    trailing()
 }
 
 /** How strongly the part of the address after the host is drawn (grey on any pill colour). */

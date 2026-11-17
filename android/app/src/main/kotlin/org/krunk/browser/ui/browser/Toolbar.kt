@@ -50,7 +50,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.krunk.browser.R
+import org.krunk.browser.engine.CertErrors
+import org.krunk.browser.engine.CertProbe
+import org.krunk.browser.engine.ConnectionKind
 import org.krunk.browser.engine.blocker.AllowList
+import org.krunk.browser.engine.connectionKind
 import org.krunk.browser.tabs.TabUi
 import org.krunk.browser.ui.BrowserViewModel
 import org.krunk.browser.ui.theme.LocalKrunkStyle
@@ -83,7 +87,9 @@ fun BrowserToolbar(
     val widthDp = with(LocalDensity.current) { LocalWindowInfo.current.containerSize.width.toDp() }
     val layout = toolbarLayout(widthDp.value.toInt())
     var menuOpen by remember { mutableStateOf(false) }
-    var sheetOpen by remember { mutableStateOf(false) }
+    // The shield sheet: null when closed, else whether it was opened from the lock (it then
+    // scrolls to its Connection part).
+    var sheet by remember { mutableStateOf<Boolean?>(null) }
     var historyList by remember { mutableStateOf<List<NavItem>?>(null) }
     val placeholder = stringResource(R.string.address_placeholder, vm.settingsRepo.searchName)
     val goHome = { vm.goTo(vm.settingsRepo.current.homepage.ifBlank { newTabUrl() }) }
@@ -94,6 +100,8 @@ fun BrowserToolbar(
     val allowHosts by vm.allowHosts.collectAsStateWithLifecycle()
     val isPage = tab != null && !tab.isNewTab && tab.internalPage == null && session != null
     val pageUrl = if (isPage) tab?.url.orEmpty() else ""
+    // A web page always has a sheet (its connection), even where the blocker shows no shield.
+    val webPage = pageUrl.startsWith("http://", ignoreCase = true) || pageUrl.startsWith("https://", ignoreCase = true)
     val allowedEntry = remember(allowHosts, pageUrl) {
         AllowList.siteOf(pageUrl)?.let { allowEntryFor(allowHosts, it) }
     }
@@ -129,9 +137,14 @@ fun BrowserToolbar(
                 onClick = { vm.startEditing(if (tab == null || tab.isNewTab) "" else tab.displayUrl) },
                 modifier = Modifier.weight(1f).padding(horizontal = ToolbarLayout.PILL_PADDING_DP.dp),
                 compact = !layout.showNotSecureWords,
-                hasLeading = shield.mode != ShieldMode.HIDDEN,
+                hasLeading = shield.mode != ShieldMode.HIDDEN || webPage,
                 leading = {
-                    if (shield.mode != ShieldMode.HIDDEN) ShieldButton(shield) { sheetOpen = true }
+                    if (shield.mode != ShieldMode.HIDDEN || webPage) ShieldButton(shield) { sheet = false }
+                },
+                onSecurityClick = if (webPage) {
+                    { sheet = true }
+                } else {
+                    null
                 },
             ) {
                 if (tab != null && !tab.isNewTab && session != null) {
@@ -181,18 +194,35 @@ fun BrowserToolbar(
         }
     }
 
-    if (sheetOpen && tab != null) {
+    val focusConnection = sheet
+    if (focusConnection != null && tab != null) {
+        val security = page?.security
+        // Krunk's certificate screen or error page stands for a load that failed: no connection.
+        val connection = if (page?.loadError != null) {
+            ConnectionKind.NONE
+        } else {
+            connectionKind(pageUrl, internal = false, security = security)
+        }
+        val forgetFailed = stringResource(R.string.conn_forget_failed)
         ShieldSheet(
             ui = shield,
-            site = AllowList.siteOf(pageUrl).orEmpty(),
+            site = AllowList.siteOf(pageUrl) ?: CertErrors.hostAndPort(pageUrl)?.first.orEmpty(),
             privateTab = tab.private,
             onAllow = { allowed -> vm.setSiteAllowed(tab.id, pageUrl, allowed) },
             onReload = { vm.tabs.reload(tab.id) },
             onSettings = { vm.push(org.krunk.browser.ui.Screen.Settings) },
-            onDismiss = { sheetOpen = false },
+            onDismiss = { sheet = null },
             onSitePermissions = org.krunk.ffi.webOrigin(pageUrl)?.takeIf { !tab.private }?.let { origin ->
                 { vm.push(org.krunk.browser.ui.Screen.SiteDetail(origin)) }
             },
+            connection = connection,
+            security = security,
+            focusConnection = focusConnection,
+            onForgetException = { vm.tabs.forgetCertException(tab.id) { ok -> if (!ok) onMessage(forgetFailed) } },
+            // Only when the engine gave no certificate for an https page, and only on request.
+            probe = CertErrors.hostAndPort(pageUrl)
+                ?.takeIf { connection == ConnectionKind.BROKEN && security?.certificate == null }
+                ?.let { (host, port) -> suspend { CertProbe.fetch(host, port) } },
         )
     }
     historyList?.let { items ->
