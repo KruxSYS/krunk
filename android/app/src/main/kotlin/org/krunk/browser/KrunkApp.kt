@@ -17,6 +17,7 @@ import org.krunk.browser.engine.EngineConfig
 import org.krunk.browser.engine.ErrorPage
 import org.krunk.browser.engine.GeckoEngine
 import org.krunk.browser.engine.LoadSource
+import org.krunk.browser.engine.VpnLoadGuard
 import org.krunk.browser.engine.blocker.AllowList
 import org.krunk.browser.engine.blocker.BlockerController
 import org.krunk.browser.engine.blocker.VpnGuardConfig
@@ -41,6 +42,7 @@ import org.krunk.browser.vpn.VpnController
 import org.krunk.browser.vpn.VpnGuardSink
 import org.krunk.browser.vpn.VpnNetworkWatch
 import org.krunk.browser.vpn.VpnPhase
+import org.krunk.browser.vpn.VpnScope
 import org.krunk.browser.vpn.VpnSettingsFile
 import org.krunk.browser.vpn.VpnStore
 import org.krunk.ffi.KrunkSync
@@ -89,9 +91,17 @@ class KrunkApp : Application() {
             // The guard (made with the engine) gets the VPN's current values; the error page
             // learns whether a failed load is the VPN's doing.
             vpn.resendGuard()
+            // "Connected" for the page means usable: the tunnel is up AND the engine is routed
+            // through it (krunk-guard's filter installed).
+            val engine = it
+            val filterInstalled = { engine.blocker.vpnFilterInstalled.value }
+            VpnLoadGuard.blocking = { privateTab ->
+                vpn.isOn() && !filterInstalled() &&
+                    (vpn.state.value.settings.scope == VpnScope.ALL || privateTab)
+            }
             ErrorPage.vpnSource = object : ErrorPage.VpnSource {
                 override val vpnOn get() = vpn.isOn()
-                override val connected get() = vpn.state.value.phase == VpnPhase.CONNECTED
+                override val connected get() = vpn.state.value.phase == VpnPhase.CONNECTED && filterInstalled()
                 override fun refusedRecently(host: String) = vpn.refusedRecently(host)
             }
             Log.i(TAG, "engine ready after ${SystemClock.uptimeMillis() - startedAt} ms")

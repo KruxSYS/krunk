@@ -322,6 +322,17 @@ class KrunkSession(
                 }
             }
             val internal = internalPage(request.uri) != null
+            // VPN on but the engine not routed through it (krunk-guard's filter missing): never
+            // direct. The tab shows "VPN not connected" instead.
+            if (!internal && VpnLoadGuard.refuses(request.uri, private)) {
+                val page = errorPage.dataUri(
+                    request.uri,
+                    WebRequestError.ERROR_CATEGORY_PROXY,
+                    WebRequestError.ERROR_PROXY_CONNECTION_REFUSED,
+                )
+                session.load(GeckoSession.Loader().uri(page))
+                return GeckoResult.fromValue(AllowOrDeny.DENY)
+            }
             return GeckoResult.fromValue(if (internal) AllowOrDeny.DENY else AllowOrDeny.ALLOW)
         }
 
