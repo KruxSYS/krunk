@@ -236,6 +236,7 @@ pub(crate) async fn serve_client(mut client: TcpStream, shared: Arc<Shared>, aut
     let upstream = match opened {
         Ok(s) => s,
         Err(fail) => {
+            let fail = crate::proxy::settle(&shared, fail).await;
             if fail.is_refusal() {
                 shared.note_refused(&host.to_string());
             }

@@ -514,6 +514,7 @@ async fn handle(mut client: TcpStream, shared: Arc<Shared>, auth: Option<Arc<Pro
     let upstream = match opened {
         Ok(s) => s,
         Err(fail) => {
+            let fail = if auth.is_some() { settle(&shared, fail).await } else { fail };
             if fail.is_refusal() {
                 shared.note_refused(&host.to_string());
             }
@@ -636,6 +637,25 @@ pub(crate) async fn open(shared: &Shared, host: &Host, port: u16) -> Result<crat
         Err(OpenFail::TimedOut)
     } else {
         Err(OpenFail::Refused)
+    }
+}
+
+/// How long a timeout through the tunnel waits for the tunnel's own liveness check before it is
+/// reported (Android): WireGuard decides a silent peer is gone ~16 s after it sent something, and
+/// the timed-out DNS query or SYN was exactly that.
+const SETTLE: Duration = Duration::from_secs(20);
+
+/// Android (authenticated proxy): a timeout through the tunnel is often the first sign that the
+/// server is gone (an idle tunnel has not noticed yet; tunnel DNS gives up after a few seconds).
+/// Wait for the liveness check: if the tunnel goes down meanwhile the answer is "not connected"
+/// (the engine shows "VPN not connected"), else the timeout stands.
+pub(crate) async fn settle(shared: &Shared, fail: OpenFail) -> OpenFail {
+    if !matches!(fail, OpenFail::DnsTimeout | OpenFail::TimedOut) {
+        return fail;
+    }
+    match tokio::time::timeout(SETTLE, shared.disconnected()).await {
+        Ok(()) => OpenFail::NotConnected,
+        Err(_) => fail,
     }
 }
 

@@ -314,3 +314,56 @@ fn authenticated_pipes_are_reset_when_the_tunnel_drops() {
     drop(restart);
     r.vpn.stop();
 }
+
+/// SOCKS5 CONNECT by name; the reply code (0 = connected) and the time it took.
+fn socks_connect_name(proxy: SocketAddr, hex: &str, host: &str, port: u16) -> (u8, Duration) {
+    let t = Instant::now();
+    let mut s = TcpStream::connect(proxy).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
+    let mut m = vec![5, 1, 2, 1, 5];
+    m.extend_from_slice(b"krunk");
+    m.push(hex.len() as u8);
+    m.extend_from_slice(hex.as_bytes());
+    m.extend_from_slice(&[5, 1, 0, 3, host.len() as u8]);
+    m.extend_from_slice(host.as_bytes());
+    m.extend_from_slice(&port.to_be_bytes());
+    s.write_all(&m).unwrap();
+    let mut r = [0u8; 14];
+    s.read_exact(&mut r).unwrap();
+    assert_eq!(r[..4], [5, 2, 1, 0], "auth");
+    (r[5], t.elapsed())
+}
+
+/// Android 0.10.0 (final smoke): with an idle tunnel and the server gone, a request by name timed
+/// out in the tunnel's DNS before the tunnel noticed, and the page said "took too long". The
+/// proxy now waits for the liveness check and answers "not connected" (SOCKS reply 1).
+#[cfg(feature = "openvpn")]
+#[test]
+fn a_dns_timeout_on_a_dead_tunnel_is_not_connected() {
+    let Some(_g) = testbed() else { return };
+    let token: [u8; 32] = std::array::from_fn(|i| i as u8 * 5);
+    let hex: String = token.iter().map(|b| format!("{b:02x}")).collect();
+    let (profile, _) = import("wg.conf", &state_file("wg", "/state/wg/client.conf")).expect("import");
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let l = log.clone();
+    let vpn = Vpn::start_authenticated(
+        profile,
+        None,
+        ProxyAuth::new(&token),
+        Box::new(move |s| l.lock().unwrap().push(s.clone())),
+    )
+    .expect("start");
+    let r = Running { vpn, log };
+    wait_state(&r, State::Connected, Duration::from_secs(30));
+    let proxy = r.vpn.proxy_addr();
+    assert_eq!(socks_connect_name(proxy, &hex, "inside.test", 80).0, 0, "works while up");
+    let restart = Restart("wg");
+    compose(&["stop", "-t", "1", "wg"]);
+    std::thread::sleep(Duration::from_secs(3));
+    // A fresh name (no cached answer).
+    let (code, took) = socks_connect_name(proxy, &hex, "nocache-inside.test", 80);
+    assert_eq!(code, 1, "expected 'not connected' (1), got {code} after {took:?}");
+    assert!(took < Duration::from_secs(30), "{took:?}");
+    drop(restart);
+    r.vpn.stop();
+}
