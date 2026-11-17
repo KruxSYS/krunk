@@ -56,7 +56,7 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | Automatic HTTPS upgrade (HTTPS-first) | no (HTTPS-only mode only) | done (v) — Gecko's HTTPS-First is on by default (verified: `http://example.com` loads as https) | Gecko default | 1 |
 | HTTPS-only mode | yes — Privacy; `settings.https_only` | done (`allowInsecureConnections = HTTPS_ONLY`) | `GeckoRuntimeSettings` | 1 |
 | Copy / paste / edit URL; paste-and-go | yes — 0.6.0 | done (platform text field menu) | — | 1 |
-| Site info / certificate popup | yes — 0.5.0; `core::certinfo` | roadmap | `SecurityInformation.certificate` | 3 |
+| Site info / certificate popup | yes — 0.5.0; `core::certinfo` | done (v) (0.9.0: the shield sheet's Connection part: issued to/by, validity, SHA-256 (long-press copy), names, folded details (serial, algorithms, key, SHA-1); exception warning + Forget this exception; mixed content; http. The lock opens it there. Leaf certificate only, from the engine; no chain. A page with mixed passive content gets no certificate from GeckoView: Show certificate runs `CertProbe` on request and says so. Emulator-tested) | `SecurityInformation.certificate` / `isException` | 3 |
 | Voice search | no | roadmap (Android `RecognizerIntent`, on-device where available) | — | 3 |
 | QR code scanning | no (sign-in QR only) | roadmap (needs a camera permission flow; CameraX/ML Kit-free decoder) | — | 3 |
 | Search the selection ("Search DuckDuckGo for …") | yes — 0.11.0 | done (v) (0.2.0: "Search DuckDuckGo for …" in the menu over selected text, next to Copy; a new tab with the same privacy; the label and address come from `core`) | `SelectionActionDelegate` | 2 |

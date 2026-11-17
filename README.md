@@ -1958,6 +1958,18 @@ with **Back to safety** and, below it, **Continue anyway**. Continuing accepts t
 certificate for that host and port until Krunk is closed; tick **Remember for this site** to keep
 it. A site that shows a different certificate later asks again; private tabs never keep an
 exception. Sites that demand a valid certificate (HSTS) and broken connections have no Continue.
+
+**Connection details (0.9.0).** The shield sheet has a **Connection** part under the blocker: for
+https the certificate as the engine reported it (issued to, issued by, valid from/until in the
+phone's date format, the SHA-256 fingerprint, long-press to copy, the names it is for, and folded
+**Certificate details** with serial number, signature algorithm, public key and SHA-1); a warning
+and **Forget this exception** when you accepted the certificate yourself (the page reloads and the
+warning comes back); a line when parts of the page came without encryption; "Connection is not
+secure" for http. The lock (or the red sign) in the address bar opens the same sheet at that
+part; it opens for every web page, also where the blocker shows no shield (an IP address). For a
+page the engine counts as not fully secure it gives no certificate; there **Show certificate**
+reads it over a separate connection, only when tapped, and says so. Nothing of it is stored,
+synced or logged.
 Settings › Privacy › Certificate exceptions lists the accepted certificates and removes one at
 once.
 

@@ -3,6 +3,19 @@
 What changed in each Krunk for Android release, newest first. The Windows browser's list is
 `CHANGELOG.md`.
 
+## 0.9.0 — 2026-11-17
+
+- **See who a site's certificate belongs to.** Tap the shield or the lock in the address bar:
+  under the blocking part, **Connection** says whether the connection is secure and shows the
+  certificate: who it was issued to and by, when it is valid, its SHA-256 fingerprint (long-press
+  to copy) and the names it covers. **Certificate details** adds the serial number, the
+  algorithms and the SHA-1 fingerprint. The lock opens the sheet right at this part.
+- **Forget a certificate you accepted.** On a site where you chose "Continue anyway", the sheet
+  says so plainly and offers **Forget this exception**; the page reloads and the warning is back.
+- **Plain http and mixed pages say so.** An http page shows "Connection is not secure"; an https
+  page that loaded parts without encryption says that too.
+- The sheet now also opens on sites the blocker doesn't judge, such as an IP address.
+
 ## 0.8.0 — 2026-11-16
 
 - **Back returns to the tab that opened the link.** A link opened in a new tab (a link that opens
