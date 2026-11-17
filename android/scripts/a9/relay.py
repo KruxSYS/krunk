@@ -1,10 +1,12 @@
 """Plain TCP or UDP port forwarder for the device tests (the emulator reaches this sandbox at
 10.250.136.3, the VPN testbed listens on the dind daemon).
-    python3 -I relay.py tcp|udp LISTEN_PORT TARGET_HOST TARGET_PORT
-UDP: one upstream socket per client address (WireGuard needs a stable 5-tuple)."""
-import asyncio, socket, sys
+    python3 -I relay.py tcp|udp LISTEN_PORT TARGET_HOST TARGET_PORT [LOGFILE]
+UDP: one upstream socket per client address (WireGuard needs a stable 5-tuple). With LOGFILE every
+TCP connection's source address is logged (one JSON line), so a test can tell tunnel from direct."""
+import asyncio, json, socket, sys, time
 
 proto, listen, host, port = sys.argv[1], int(sys.argv[2]), sys.argv[3], int(sys.argv[4])
+LOG = sys.argv[5] if len(sys.argv) > 5 else None
 
 
 async def pipe(r, w):
@@ -22,6 +24,9 @@ async def pipe(r, w):
 
 
 async def tcp_client(cr, cw):
+    if LOG:
+        with open(LOG, "a") as f:
+            f.write(json.dumps({"t": round(time.time(), 3), "relay": listen, "src": cw.get_extra_info("peername")[0]}) + "\n")
     try:
         ur, uw = await asyncio.open_connection(host, port)
     except OSError:

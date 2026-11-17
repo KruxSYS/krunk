@@ -3,8 +3,7 @@
 #
 #   android/scripts/a9/a9.sh up | down          test servers + relays on this sandbox, VPN testbed on dind
 #   android/scripts/a9/a9.sh profiles           device copies of the testbed profiles -> /sdcard/Download
-#   android/scripts/a9/a9.sh <step>...          t1 t2 t3 t5 t6 t7 t8 leakgrep (see each function); t4 (sync,
-#                                               favicons, suggestions) is driven from the evidence notes
+#   android/scripts/a9/a9.sh <step>...          t1 t2 t3 t4 t5 t6 t7 t8 ovpn leakgrep (see each function)
 #
 # Environment: EV evidence folder (default .pipeline/evidence-android-0.10.0/run), APK (release
 # x86_64 APK for `fresh`). Results: one line per check in $EV/results.txt.
@@ -56,6 +55,7 @@ up() {
   pgrep -f "a9/testserver.py 18080" > /dev/null || nohup python3 -I "$HERE/testserver.py" 18080 "$SLOG" 3478 > "$EV/testserver.out" 2>&1 &
   pgrep -f "relay.py udp 18551" > /dev/null || nohup python3 -I "$HERE/relay.py" udp 18551 dind 8551 > "$EV/relay-wg.out" 2>&1 &
   pgrep -f "relay.py tcp 18194" > /dev/null || nohup python3 -I "$HERE/relay.py" tcp 18194 dind 8194 > "$EV/relay-ovpn.out" 2>&1 &
+  pgrep -f "relay.py udp 18195" > /dev/null || nohup python3 -I "$HERE/relay.py" udp 18195 dind 8194 > "$EV/relay-ovpn-udp.out" 2>&1 &
   # https behind the tunnel (T1): a self-signed server from the 0.6.1 certificate tests.
   local bc=$PIPE/evidence-android-0.6.1/tools
   pgrep -f "badcert.py 18443" > /dev/null || nohup python3 -I "$bc/badcert.py" 18443 "$bc/cert1.pem" "$bc/key1.pem" > "$EV/badcert.out" 2>&1 &
@@ -76,6 +76,8 @@ profiles() {
   sed -i 's/^Endpoint = .*/Endpoint = 10.250.136.3:18551/' "$PROF"/wg-*.conf
   $TB exec -T ovpn cat /state/ovpn/client-tcp.ovpn | sed 's/^remote .*/remote 10.250.136.3 18194 tcp/' > "$PROF/ovpn-tcp.ovpn"
   $TB exec -T ovpn cat /state/ovpn/client-tcp-badca.ovpn | sed 's/^remote .*/remote 10.250.136.3 18194 tcp/' > "$PROF/ovpn-badca.ovpn"
+  $TB exec -T ovpn cat /state/ovpn/client-udp.ovpn | sed 's/^remote .*/remote 10.250.136.3 18195 udp/' > "$PROF/ovpn-udp.ovpn"
+  cp "$PROF/ovpn-tcp.ovpn" "$PROF/ovpn-wrongpw.ovpn"
   chmod 600 "$PROF"/*
   for f in "$PROF"/*; do adb -s "$DEV" push "$f" /sdcard/Download/ > /dev/null; done
   A ls -l /sdcard/Download | grep -E "conf|ovpn"
@@ -226,6 +228,94 @@ t3() {
   view "https://10.250.137.3:18443/" 12; shot t1-https-badcert
   dump; has text "Continue anyway" --contains || has text "certificate" --contains && result T1 PASS "https server behind the tunnel reached (certificate warning shown)" || result T1 FAIL "https through the tunnel: no answer"
   sockwatch_stop T3 t3
+}
+
+# T4: Krunk's own requests through the VPN, and nothing direct when it is down. Needs the qa APK
+# (release code) built with -Pkrunk.qaSyncBase=http://10.250.137.3:18082
+# -Pkrunk.qaUpdateBase=http://10.250.137.3:18080 (addresses reachable only through the tunnel),
+# and STAGE_PORT = the staging stack's port on dind (service_stage); the relay logs sources.
+t4() {
+  [ -n "${STAGE_PORT:-}" ] || { result T4 FAIL "STAGE_PORT not set (service_stage first)"; return 1; }
+  local RLOG=$EV/relay-sync.log
+  pgrep -f "relay.py tcp 18082" > /dev/null || nohup python3 -I "$HERE/relay.py" tcp 18082 dind "$STAGE_PORT" "$RLOG" > "$EV/relay-sync.out" 2>&1 &
+  sleep 1; touch "$RLOG"
+  stop_clean; launch; vpn_on "wg-full" || { result T4 FAIL "VPN did not connect"; return 1; }
+  sockwatch_start t4
+  local m r0; m=$(mark); r0=$(wc -l < "$RLOG")
+  # Favicon: Krunk fetches the icon of a page it shows.
+  view "http://10.250.137.3:18080/favpage" 12
+  since "$m" | grep '"/fav.png"' | grep -q '"10.250.137.2"' && result T4 PASS "favicon fetched through the tunnel ($(since "$m" | grep -c '/fav.png') requests)" ||
+    result T4 FAIL "favicon not seen from the tunnel"
+  since "$m" | grep '"/fav.png"' | grep -q '"10.250.136.2"' && result T4 FAIL "favicon fetched direct"
+  # Search suggestions (public engine: only path is the tunnel; proof = they appear + sockwatch).
+  tapt desc "Edit address"; A "input text krunkvpn"; sleep 6; dump; shot t4-suggestions-up
+  [ "$(echo "$UI" | grep -o 'text="krunkvpn[^"]*"' | sort -u | wc -l)" -ge 2 ] && result T4 PASS "search suggestions arrive while connected" || result T4 INFO "no engine suggestions visible (setting off or engine silent)"
+  A input keyevent KEYCODE_BACK; A input keyevent KEYCODE_BACK
+  # Update check (qaUpdateBase = the test server through the tunnel).
+  A "am start -a android.intent.action.VIEW -d krunk://about $PKG" > /dev/null 2>&1; sleep 3
+  tapt text "Check for updates" --contains; sleep 6; shot t4-update-check-up
+  since "$m" | grep -E '"/updates/' | grep -q '"10.250.137.2"' && result T4 PASS "update check through the tunnel" || result T4 FAIL "update check not seen from the tunnel"
+  # Sync: "Sign in" makes the first request (link start) to the staging stack.
+  A "am start -a android.intent.action.VIEW -d krunk://sync $PKG" > /dev/null 2>&1; sleep 3
+  tapt text "Sign in"; waitt text "Approve this device" 20 --contains && result T4 PASS "staging answered sync's first request" || result T4 FAIL "no answer from staging"
+  shot t4-sync-up
+  tail -n +"$((r0 + 1))" "$RLOG" | grep -q '"10.250.137.2"' && result T4 PASS "sync reached staging through the tunnel" || result T4 FAIL "sync connection not seen from the tunnel"
+  tapt text "Cancel"
+  # Server down: every one of them fails, nothing direct.
+  $TB stop wg > /dev/null 2>&1; sleep 3
+  m=$(mark); r0=$(wc -l < "$RLOG")
+  A "am start -a android.intent.action.VIEW -d krunk://about $PKG" > /dev/null 2>&1; sleep 3
+  tapt text "Check for updates" --contains; sleep 25; shot t4-update-check-down
+  A "am start -a android.intent.action.VIEW -d krunk://sync $PKG" > /dev/null 2>&1; sleep 3
+  tapt text "Sign in"; sleep 25; shot t4-sync-down
+  waitt text "Approve this device" 2 --contains && result T4 FAIL "sync answered while the VPN server is down"
+  tapt desc "Edit address"; A "input text krunkdown"; sleep 8; dump; shot t4-suggestions-down
+  [ "$(echo "$UI" | grep -o 'text="krunkdown[^"]*"' | sort -u | wc -l)" -le 1 ] && result T4 PASS "no engine suggestions while the server is down" || result T4 FAIL "suggestions arrived while the server is down"
+  A input keyevent KEYCODE_BACK; A input keyevent KEYCODE_BACK
+  [ "$(since "$m" | wc -l)" = 0 ] && result T4 PASS "test server saw nothing while down (update check failed)" || result T4 FAIL "requests arrived while down: $(since "$m" | head -2)"
+  [ "$(tail -n +"$((r0 + 1))" "$RLOG" | wc -l)" = 0 ] && result T4 PASS "staging relay saw nothing while down (sync failed)" || result T4 FAIL "sync connections while down"
+  sockwatch_stop T4 t4
+  $TB start wg > /dev/null 2>&1
+}
+
+# M6: OpenVPN on Android — TCP and UDP through the tunnel, a wrong password, another CA.
+# Testbed user krunk / krunk-test; OpenVPN pushes the inside network (10.77.0.0/24, DNS .53).
+ovpn_creds() { # ovpn_creds USER PASS: fill the sign-in dialog that follows the import
+  waitt text "Sign in to" 10 --contains || { result M6 FAIL "no sign-in dialog"; return 1; }
+  shot "ovpn-credentials-dialog"
+  tapt text "User name"; A "input text $1"; tapt text "Password"; A "input text $2"
+  tapt text "Save"
+}
+ovpn() {
+  stop_clean; launch
+  share_import ovpn-tcp.ovpn && ovpn_creds krunk krunk-test
+  share_import ovpn-udp.ovpn && ovpn_creds krunk krunk-test
+  share_import ovpn-wrongpw.ovpn && ovpn_creds krunk wrong-password
+  share_import ovpn-badca.ovpn && ovpn_creds krunk krunk-test
+  sockwatch_start ovpn
+  local proto net
+  for proto in tcp:10.89.0 udp:10.88.0; do
+    net=${proto#*:}; proto=${proto%%:*}
+    if vpn_on "ovpn-$proto"; then
+      view "http://inside.test/?ovpn-$proto" 12
+      page_has "client=$net" && result M6 PASS "OpenVPN $proto: inside.test answered from $net.x" || result M6 FAIL "OpenVPN $proto: inside.test not loaded"
+      shot "ovpn-$proto-inside"
+    else result M6 FAIL "OpenVPN $proto did not connect"; fi
+  done
+  # Fail-closed with OpenVPN (UDP): the server stops → VPN not connected, nothing direct.
+  local m; m=$(mark)
+  $TB stop ovpn > /dev/null 2>&1
+  view "http://10.250.136.3:18080/ovpn-down-bait?r=$RANDOM" 2
+  page_has "VPN not connected" 60 && result M6 PASS "OpenVPN server down: VPN not connected page" || result M6 FAIL "OpenVPN server down: no VPN error page"
+  shot ovpn-down
+  since "$m" | grep -q ovpn-down-bait && result M6 FAIL "request arrived direct while OpenVPN was down" || result M6 PASS "nothing direct while OpenVPN was down"
+  $TB start ovpn > /dev/null 2>&1; sleep 8
+  vpn_on "ovpn-wrongpw"; dump; shot ovpn-wrong-password
+  has text "Failed" --contains && result M6 PASS "wrong password: $(echo "$UI" | grep -o 'Failed: [^"]*' | head -1)" || result M6 FAIL "wrong password: no failure shown"
+  vpn_on "ovpn-badca"; dump; shot ovpn-bad-ca
+  has text "Failed" --contains && result M6 PASS "other CA: $(echo "$UI" | grep -o 'Failed: [^"]*' | head -1)" || result M6 FAIL "other CA: no failure shown"
+  sockwatch_stop M6 ovpn
+  vpn_off
 }
 
 # T5: server stopped → VPN not connected page within ~20 s, nothing direct; WebRTC gets nothing.

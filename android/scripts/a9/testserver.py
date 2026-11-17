@@ -10,6 +10,7 @@ def log(**kw):
     with open(LOG, "a") as f: f.write(json.dumps(kw) + "\n")
 PAGES = {
  "/page": ("text/html", "<!doctype html><meta name=viewport content='width=device-width'><title>tun page</title><h1 id=h>page ok</h1><p id=src>SRC</p><img src='/img.png'>"),
+ "/favpage": ("text/html", "<!doctype html><meta name=viewport content='width=device-width'><title>fav page</title><link rel=icon href='/fav.png'><h1>fav page</h1>"),
  "/sw.html": ("text/html", """<!doctype html><meta name=viewport content='width=device-width'><title>sw</title><h1 id=s>sw: waiting</h1><script>
 navigator.serviceWorker.register('/sw.js').then(()=>navigator.serviceWorker.ready).then(async()=>{
  if(!navigator.serviceWorker.controller){location.reload();return}
@@ -48,6 +49,11 @@ async def handle(r, w):
         if p in PAGES:
             ct, body = PAGES[p]; body = body.replace("SRC", "seen from " + peer).encode()
             extra = ""
+        elif p == "/fav.png":
+            # A 1x1 PNG.
+            ct, extra = "image/png", ""
+            body = bytes.fromhex("89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+                                 "1f15c4890000000d49444154789c6360f8cf000000030101005d2e6f300000000049454e44ae426082")
         elif p == "/dl.bin":
             ct, body, extra = "application/octet-stream", b"x" * 4096, "Content-Disposition: attachment; filename=s2-download.bin\r\n"
         else:
