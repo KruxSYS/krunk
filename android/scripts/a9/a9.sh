@@ -220,10 +220,11 @@ vpn_on() { # vpn_on PROFILE [SUBNET_PREFIX]: off, select, on, wait for "Connecte
   dump; [ "$(echo "$UI" | python3 -I "$U" attr desc "Use $1" checked --clickable)" = true ] ||
     [ "$(echo "$UI" | python3 -I "$U" attr desc "Use $1" selected --clickable)" = true ] || { echo "profile $1 not selected"; shot "vpn-select-$1-failed"; return 1; }
   tapt text "Use the VPN"
-  if waitt text "Connected · ${2:-}" 60 --contains; then
-    shot "vpn-connected-$1"; A input keyevent KEYCODE_BACK; sleep 1; return 0
-  fi
-  shot "vpn-not-connected-$1"; A input keyevent KEYCODE_BACK; sleep 1; return 1
+  local ok=1
+  if waitt text "Connected · ${2:-}" 60 --contains; then shot "vpn-connected-$1"; ok=0; else shot "vpn-not-connected-$1"; fi
+  # Back to the browser (VPN screen → Settings → browser).
+  local i; for ((i = 0; i < 4; i++)); do dump; has desc "Menu" && break; A input keyevent KEYCODE_BACK; sleep 1; done
+  return $ok
 }
 
 vpn_off() { vpn_screen; dump; [ "$(echo "$UI" | python3 -I "$U" attr text "Use the VPN" checked --clickable)" = true ] && tapt text "Use the VPN"; }
@@ -266,6 +267,8 @@ t3() {
   # Private tab: new private tab, type the address (from a clean start: the download dialog and
   # its notification can hide the toolbar).
   stop_clean; launch 8
+  # Without "Connect when Krunk starts" the VPN is off after a restart (by design): on again.
+  vpn_on "wg-full" || { result T3 FAIL "VPN did not reconnect for the private tab"; return 1; }
   tapt desc "Menu" && tapt text "New private tab"; tapt desc "Edit address"; A "input text 10.250.137.3:18080/private-t3"; A input keyevent ENTER; sleep 10
   since "$m" | grep '/private-t3' | grep -q '"10.250.137.2"' && result T3 PASS "private tab through the tunnel" || result T3 FAIL "private tab request not seen from the tunnel"
   # https through the tunnel: a self-signed server reachable only via the tunnel → its warning page.
@@ -360,6 +363,24 @@ ovpn() {
   has text "Failed" --contains && result M6 PASS "other CA: $(echo "$UI" | grep -o 'Failed: [^"]*' | head -1)" || result M6 FAIL "other CA: no failure shown"
   sockwatch_stop M6 ovpn
   vpn_off
+}
+
+# M6 fail-closed with OpenVPN (UDP): the server stops. OpenVPN notices only after the server's
+# ping-restart (testbed: keepalive 10 60 → ~60 s of silence), so up to 150 s; nothing direct.
+ovpn_down() {
+  vpn_on "ovpn-udp" 10.88.0 || { result M6 FAIL "OpenVPN udp did not connect"; return 1; }
+  sockwatch_start ovpndown
+  local m t0; m=$(mark)
+  $TB stop ovpn > /dev/null 2>&1; t0=$SECONDS
+  # Inside the profile's routes (an address outside them is refused at once as "Not reachable
+  # through this VPN"), and only reachable through the tunnel.
+  view "http://inside.test/ovpn-down-bait?r=$RANDOM" 2
+  if page_has "VPN not connected" 150; then result M6 PASS "OpenVPN server down: VPN not connected page after $((SECONDS - t0)) s (server keepalive 10 60)"
+  else result M6 FAIL "OpenVPN server down: no VPN error page within 150 s"; fi
+  shot ovpn-down
+  since "$m" | grep -q ovpn-down-bait && result M6 FAIL "request arrived direct while OpenVPN was down" || result M6 PASS "nothing direct while OpenVPN was down"
+  sockwatch_stop M6 ovpndown
+  $TB start ovpn > /dev/null 2>&1
 }
 
 # T5: server stopped → VPN not connected page within ~20 s, nothing direct; WebRTC gets nothing.
