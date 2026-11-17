@@ -2015,9 +2015,13 @@ Disconnect and the scope).
   foreground service and no notification. When Android suspends or stops the app (Doze, battery
   savers, which differ per phone maker), the tunnel stops with it and reconnects when Krunk comes
   back. Fail-closed holds throughout. A change of network (Wi-Fi ↔ mobile) reconnects at once.
+- **How fast "not connected" shows:** WireGuard notices a dead server after about 17 s. OpenVPN
+  notices it when the server's keepalive says so (often 60–120 s); until then a page through the
+  dead tunnel ends as "The site took too long" — nothing goes direct in the meantime either.
 - **Not covered:** other apps; UDP through the tunnel (so no HTTP/3 and no direct WebRTC media);
   OpenVPN's interactive challenges (MFA codes). Tested on the x86_64 emulator against Krunk's own
-  test servers only, not on an arm64 phone and not with a commercial provider.
+  test servers (WireGuard, OpenVPN over UDP and TCP), not on an arm64 phone and not with a
+  commercial provider.
 
 **Password vault (since 0.3.0).** Krunk keeps the user names and passwords you sign in with in
 a vault, opened with one vault password that only you know (⋮ menu › Passwords, or Settings ›
